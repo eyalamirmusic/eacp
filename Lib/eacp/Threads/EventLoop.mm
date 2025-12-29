@@ -9,21 +9,17 @@ void EventLoop::run()
 
 void EventLoop::quit()
 {
-    CFRunLoopRef mainLoop = CFRunLoopGetMain();
+    auto mainLoop = CFRunLoopGetMain();
 
     CFRunLoopStop(mainLoop);
     CFRunLoopWakeUp(mainLoop);
 }
 
-void EventLoop::call(const Callback& func)
+void EventLoop::call(Callback func)
 {
-    auto impl = CFRunLoopGetMain();
+    auto mainLoop = CFRunLoopGetMain();
 
-    CFRunLoopPerformBlock(impl, kCFRunLoopCommonModes, ^{
-      if (func)
-          func();
-    });
-
-    CFRunLoopWakeUp(impl);
+    CFRunLoopPerformBlock(mainLoop, kCFRunLoopCommonModes, ^{ func(); });
+    CFRunLoopWakeUp(mainLoop);
 }
 } // namespace eacp::Threads

@@ -10,7 +10,7 @@ struct EventLoop
 {
     void run();
     void quit();
-    void call(const Callback& func);
+    void call (Callback func);
 };
 
 EventLoop& getEventLoop();
