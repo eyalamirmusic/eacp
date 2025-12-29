@@ -4,11 +4,18 @@
 
 namespace eacp::ObjC
 {
+struct DoNotRetainMode
+{
+};
+
 template <typename T>
 class Ptr
 {
 public:
-    Ptr(T* obj) { set(obj); }
+    Ptr() = default;
+    Ptr(T* obj) { reset(obj); }
+
+    Ptr(T* obj, DoNotRetainMode) { set(obj); }
 
     ~Ptr() { release(); }
 
@@ -35,7 +42,7 @@ public:
             CFRetain((__bridge CFTypeRef) ptr);
     }
 
-    void setAndRetain(T* other)
+    void reset(T* other)
     {
         if (ptr != other)
         {
@@ -44,22 +51,36 @@ public:
         }
     }
 
-    Ptr(const Ptr& other) { setAndRetain(other.ptr); }
+    Ptr(const Ptr& other) { reset(other.ptr); }
 
     Ptr& operator=(T* other)
     {
-        set(other);
+        reset(other);
         return *this;
     }
 
     Ptr& operator=(const Ptr& other)
     {
-        setAndRetain(other.ptr);
+        reset(other.ptr);
         return *this;
     }
 
-    T* get() const { return ptr; }
-    T* operator->() const { return ptr; }
+    operator bool() const { return ptr != nullptr; }
+
+    bool operator==(T* other) const { return ptr == other; }
+    bool operator!=(T* other) const { return !operator==(other); }
+
+    bool operator==(const Ptr& other) const { return ptr != other.ptr; }
+    bool operator!=(const Ptr& other) const = default;
+
+    template <typename A>
+    bool isKindOfClass() const
+    { return [ptr isKindOfClass:[NSHTTPURLResponse class]]; }
+
+    T* get() { return ptr; }
+    const T* get() const { return ptr; }
+
+    const T* operator->() const { return ptr; }
     T* operator->() { return ptr; }
 
 private:
@@ -75,6 +96,10 @@ T* createNew()
 { return [alloc<T>() init]; }
 
 template <typename T>
+Ptr<T> attachPtr(T* object)
+{ return {object, DoNotRetainMode()}; }
+
+template <typename T>
 Ptr<T> makePtr()
-{ return {createNew<T>()}; }
+{ return attachPtr(createNew<T>()); }
 } // namespace eacp::ObjC

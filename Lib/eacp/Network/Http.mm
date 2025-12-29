@@ -3,6 +3,7 @@
 #include "../ObjC/ObjC.h"
 #include "../ObjC/AutoReleasePool.h"
 #include "../ObjC/Strings.h"
+#include "../Threads/TaskSemaphore.h"
 #include <stdexcept>
 
 namespace eacp::HTTP
@@ -42,9 +43,9 @@ NSMutableURLRequest* getRequest(const Request& req)
 
 struct SafeResult
 {
-    NSData* __strong data = nil;
-    NSURLResponse* __strong response = nil;
-    NSError* __strong error = nil;
+    ObjC::Ptr<NSData> data;
+    ObjC::Ptr<NSURLResponse> response;
+    ObjC::Ptr<NSError> error;
 };
 
 NSURLSession* getSharedSession()
@@ -53,28 +54,27 @@ NSURLSession* getSharedSession()
 SafeResult performSyncRequest(NSURLRequest* request)
 {
     auto result = SafeResult();
-    auto semaphore = dispatch_semaphore_create(0);
 
-    auto cppHandler = [&result, semaphore](NSData* d, NSURLResponse* r, NSError* e)
+    auto semaphore = Threads::TaskSemaphore();
+
+    auto cppHandler =
+        [&result, &semaphore](NSData* data, NSURLResponse* res, NSError* error)
     {
-        result.data = d;
-        result.response = r;
-        result.error = e;
+        result.data = data;
+        result.response = res;
+        result.error = error;
 
-        dispatch_semaphore_signal(semaphore);
+        semaphore.signal();
     };
 
     [[getSharedSession()
         dataTaskWithRequest:request
-          completionHandler:^(NSData* d, NSURLResponse* r, NSError* e) {
-            cppHandler(d, r, e);
+          completionHandler:^(NSData* data, NSURLResponse* res, NSError* error) {
+            cppHandler(data, res, error);
           }] resume];
 
-    // 5. Wait
-    dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+    semaphore.wait();
 
-    // 6. Return
-    // ARC handles the ownership transfer of the internal pointers here.
     return result;
 }
 
@@ -83,41 +83,38 @@ Response httpRequestInternal(const Request& req)
     auto request = getRequest(req);
     auto raw = performSyncRequest(request);
 
-    // 3. Handle Errors
     if (raw.error)
-        throw std::runtime_error(Strings::toStdString(raw.error));
+        throw std::runtime_error(Strings::toStdString(raw.error.get()));
 
     auto response = Response();
 
-    if ([raw.response isKindOfClass:[NSHTTPURLResponse class]])
+    if (raw.response.isKindOfClass<NSHTTPURLResponse>())
     {
-        auto httpResponse = (NSHTTPURLResponse*) raw.response;
+        auto httpResponse = (NSHTTPURLResponse*) raw.response.get();
         response.statusCode = (int) httpResponse.statusCode;
     }
 
-    response.content = Strings::toStdString(raw.data);
+    response.content = Strings::toStdString(raw.data.get());
 
     return response;
 }
-// --- Public Interface: Catches exceptions and returns Response struct ---
+
 Response httpRequest(const Request& req)
 {
     auto res = Response();
     auto pool = ObjC::AutoReleasePool();
 
-    @autoreleasepool
+    try
     {
-        try
-        {
-            res = httpRequestInternal(req);
-        }
-        catch (const std::exception& e)
-        {
-            res.error = e.what();
-            res.statusCode = 0; // Or generic error code like 500
-        }
+        return httpRequestInternal(req);
+    }
+    catch (const std::exception& e)
+    {
+        res.error = e.what();
+        res.statusCode = 0;
     }
 
     return res;
 }
+
 } // namespace eacp::HTTP
