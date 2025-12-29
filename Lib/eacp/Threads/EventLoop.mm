@@ -1,17 +1,20 @@
 #include "EventLoop.h"
 #import <Foundation/Foundation.h>
+#import <Cocoa/Cocoa.h>
 
 namespace eacp::Threads
 {
+NSApplication* getApp()
+{ return [NSApplication sharedApplication]; }
 
 void EventLoop::run()
-{ CFRunLoopRun(); }
+{ [getApp() run]; }
 
 void EventLoop::quit()
 {
     auto mainLoop = CFRunLoopGetMain();
 
-    CFRunLoopStop(mainLoop);
+    [getApp() stop:nil];
     CFRunLoopWakeUp(mainLoop);
 }
 

@@ -6,7 +6,10 @@ set(CMAKE_OBJCXX_STANDARD 20)
 add_library(eacp STATIC)
 target_include_directories(eacp PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(eacp PRIVATE
-        "-framework foundation")
+        "-framework foundation"
+        "-framework cocoa")
+
+set_default_warnings_level(eacp)
 
 add_subdirectory(eacp)
 

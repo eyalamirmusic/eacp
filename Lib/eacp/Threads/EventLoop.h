@@ -1,11 +1,9 @@
 #pragma once
 
-#include <functional>
+#include "../Utils/Common.h"
 
 namespace eacp::Threads
 {
-using Callback = std::function<void()>;
-
 struct EventLoop
 {
     void run();
