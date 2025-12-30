@@ -40,16 +40,54 @@
 namespace eacp::Graphics
 {
 
+NSWindowStyleMask getFlag(WindowFlags flag)
+{
+    switch (flag)
+    {
+        case WindowFlags::Borderless:
+            return NSWindowStyleMaskBorderless;
+        case WindowFlags::Titled:
+            return NSWindowStyleMaskTitled;
+        case WindowFlags::Closable:
+            return NSWindowStyleMaskClosable;
+        case WindowFlags::Miniaturizable:
+            return NSWindowStyleMaskMiniaturizable;
+        case WindowFlags::Resizable:
+            return NSWindowStyleMaskResizable;
+        case WindowFlags::UnifiedTitleAndToolbar:
+            return NSWindowToolbarStyleUnified;
+        case WindowFlags::FullScreen:
+            return NSWindowStyleMaskFullScreen;
+        case WindowFlags::FullSizeContentView:
+            return NSWindowStyleMaskFullSizeContentView;
+        case WindowFlags::UtilityWindow:
+            return NSWindowStyleMaskUtilityWindow;
+        case WindowFlags::DocModalWindow:
+            return NSWindowStyleMaskDocModalWindow;
+        case WindowFlags::NonactivatingPanel:
+            return NSWindowStyleMaskNonactivatingPanel;
+        case WindowFlags::HUDWindow:
+            return NSWindowStyleMaskHUDWindow;
+    }
+
+    return {};
+}
+
+NSWindowStyleMask getStyle(const WindowOptions& options)
+{
+    auto res = NSWindowStyleMask();
+
+    for (auto& flag: options.flags)
+        res |= getFlag(flag);
+
+    return res;
+}
+
 struct Window::Impl
 {
     Impl(const WindowOptions& options)
     {
-        NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
-                                  | NSWindowStyleMaskMiniaturizable;
-
-        if (options.resizable)
-            style |= NSWindowStyleMaskResizable;
-
+        auto style = getStyle(options);
         auto contentRect = NSMakeRect(0, 0, options.width, options.height);
 
         handle = [[NSWindow alloc] initWithContentRect:contentRect
