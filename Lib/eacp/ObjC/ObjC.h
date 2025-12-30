@@ -75,7 +75,9 @@ public:
 
     template <typename A>
     bool isKindOfClass() const
-    { return [ptr isKindOfClass:[NSHTTPURLResponse class]]; }
+    {
+        return [ptr isKindOfClass:[NSHTTPURLResponse class]];
+    }
 
     T* get() { return ptr; }
     const T* get() const { return ptr; }
@@ -89,17 +91,25 @@ private:
 
 template <typename T>
 T* alloc()
-{ return [T alloc]; }
+{
+    return [T alloc];
+}
 
 template <typename T>
 T* createNew()
-{ return [alloc<T>() init]; }
+{
+    return [alloc<T>() init];
+}
 
 template <typename T>
 Ptr<T> attachPtr(T* object)
-{ return {object, DoNotRetainMode()}; }
+{
+    return {object, DoNotRetainMode()};
+}
 
 template <typename T>
 Ptr<T> makePtr()
-{ return attachPtr(createNew<T>()); }
+{
+    return attachPtr(createNew<T>());
+}
 } // namespace eacp::ObjC

@@ -5,10 +5,14 @@
 namespace eacp::Threads
 {
 NSApplication* getApp()
-{ return [NSApplication sharedApplication]; }
+{
+    return [NSApplication sharedApplication];
+}
 
 void EventLoop::run()
-{ [getApp() run]; }
+{
+    [getApp() run];
+}
 
 void EventLoop::quit()
 {
@@ -22,7 +26,9 @@ void EventLoop::call(Callback func)
 {
     auto mainLoop = CFRunLoopGetMain();
 
-    CFRunLoopPerformBlock(mainLoop, kCFRunLoopCommonModes, ^{ func(); });
+    CFRunLoopPerformBlock(mainLoop, kCFRunLoopCommonModes, ^{
+      func();
+    });
     CFRunLoopWakeUp(mainLoop);
 }
 } // namespace eacp::Threads

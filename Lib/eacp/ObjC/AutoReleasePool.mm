@@ -10,9 +10,13 @@ namespace eacp::ObjC
 {
 
 AutoReleasePool::AutoReleasePool()
-{ context = objc_autoreleasePoolPush(); }
+{
+    context = objc_autoreleasePoolPush();
+}
 
 AutoReleasePool::~AutoReleasePool()
-{ objc_autoreleasePoolPop(context); }
+{
+    objc_autoreleasePoolPop(context);
+}
 
 } // namespace eacp::ObjC

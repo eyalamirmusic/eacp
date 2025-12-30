@@ -49,7 +49,9 @@ struct SafeResult
 };
 
 NSURLSession* getSharedSession()
-{ return [NSURLSession sharedSession]; }
+{
+    return [NSURLSession sharedSession];
+}
 
 SafeResult performSyncRequest(NSURLRequest* request)
 {

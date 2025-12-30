@@ -4,10 +4,14 @@
 namespace eacp::Threads
 {
 EventLoop& getEventLoop()
-{ return Singleton::get<EventLoop>(); }
+{
+    return Singleton::get<EventLoop>();
+}
 
 void callAsync(const Callback& func)
-{ getEventLoop().call(func); }
+{
+    getEventLoop().call(func);
+}
 
 void runEventLoop(const Callback& func)
 {
@@ -16,5 +20,7 @@ void runEventLoop(const Callback& func)
 }
 
 void stopEventLoop()
-{ getEventLoop().quit(); }
+{
+    getEventLoop().quit();
+}
 } // namespace eacp::Threads

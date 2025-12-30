@@ -8,4 +8,4 @@ AppBase::AppBase()
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 }
-}
+} // namespace eacp::Apps

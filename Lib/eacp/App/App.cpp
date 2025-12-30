@@ -4,10 +4,14 @@
 namespace eacp::Apps
 {
 AppHandle& getGlobalApp()
-{ return Singleton::get<AppHandle>(); }
+{
+    return Singleton::get<AppHandle>();
+}
 
 void destroyApp()
-{ getGlobalApp().reset(); }
+{
+    getGlobalApp().reset();
+}
 
 void quit()
 {
@@ -16,7 +20,7 @@ void quit()
         destroyApp();
         Threads::stopEventLoop();
     };
-    
+
     Threads::callAsync(quitFunc);
 }
 } // namespace eacp::Apps

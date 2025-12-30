@@ -16,6 +16,7 @@
 - (instancetype)initWithCallback:(eacp::Callback)callback
 {
     self = [super init];
+
     if (self)
     {
         onCloseCallback = callback;
@@ -104,7 +105,9 @@ struct Window::Impl
     }
 
     void setTitle(const std::string& title)
-    { [getWindow() setTitle:@(title.c_str())]; }
+    {
+        [getWindow() setTitle:@(title.c_str())];
+    }
 
     NSWindow* getWindow() { return handle.get(); }
 
@@ -119,9 +122,13 @@ Window::Window(const WindowOptions& options)
 }
 
 void Window::setTitle(const std::string& title)
-{ impl->setTitle(title); }
+{
+    impl->setTitle(title);
+}
 
 void Window::close()
-{ impl.reset(); }
+{
+    impl.reset();
+}
 
 } // namespace eacp::Graphics
