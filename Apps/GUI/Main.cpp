@@ -4,20 +4,21 @@
 #include <eacp/Threads/Timer.h>
 #include <iostream>
 
-using namespace eacp::Graphics;
+using namespace eacp;
+using namespace Graphics;
 
 struct MyView : View
 {
     void paint(Context& ctx) override
     {
         ctx.setFillColor(c);
-        auto r = Rect(10.f, 10.f, 50.f, 50.f);
+        auto r = Rect(10.f, 10.f, 100.f, 100.f);
         ctx.fillRect(r);
     }
 
-    void mouseDown(const MouseEvent&) override
+    void update()
     {
-        c.a += 0.1f;
+        c.a += 0.04f;
 
         if (c.a >= 0.9f)
             c.a = 0.1f;
@@ -26,6 +27,7 @@ struct MyView : View
     }
 
     Color c {0.f, 1.f, 0.f};
+    Threads::Timer timer {[&] { update(); }, 30};
 };
 
 struct MyApp
