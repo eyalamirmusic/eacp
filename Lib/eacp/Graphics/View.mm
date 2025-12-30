@@ -38,10 +38,20 @@ using namespace eacp::Graphics;
 
     auto ctxWrapper = MacOSContext(cgContext);
 
-    if (cppView)
-        cppView->paint(ctxWrapper);
+    cppView->paint(ctxWrapper);
 
     CGContextRestoreGState(cgContext);
+}
+
+- (void)mouseDown:(NSEvent*)event
+{
+    auto p = [self convertPoint:[event locationInWindow] fromView:nil];
+    auto flippedY = self.bounds.size.height - p.y;
+
+    auto e = MouseEvent();
+    e.pos = {(float) p.x, (float) flippedY};
+
+    cppView->mouseDown(e);
 }
 
 @end
@@ -56,6 +66,8 @@ struct View::Impl
         nativeView = [[NativeView alloc] initWithCppView:view frame:rect];
     }
 
+    void repaint() { [nativeView.get() setNeedsDisplay:YES]; }
+
     ObjC::Ptr<NativeView> nativeView;
 };
 
@@ -67,5 +79,10 @@ View::View()
 void* View::getHandle()
 {
     return impl->nativeView.get();
+}
+
+void View::repaint()
+{
+    impl->repaint();
 }
 } // namespace eacp::Graphics

@@ -2,6 +2,19 @@
 
 namespace eacp::Graphics
 {
+struct Point
+{
+    Point() = default;
+    Point(float xToUse, float yToUse)
+        : x(xToUse)
+        , y(yToUse)
+    {
+    }
+
+    float x = 0.f;
+    float y = 0.f;
+};
+
 struct Rect
 {
     Rect() = default;
