@@ -1,6 +1,8 @@
 
 #include <eacp/App/App.h>
 #include <eacp/Graphics/Window.h>
+#include <eacp/Threads/Timer.h>
+#include <iostream>
 
 using namespace eacp::Graphics;
 

@@ -25,14 +25,13 @@ struct MultiLoggers
 {
     using MyLogger = eacp::ObjC::Ptr<Logger>;
 
-    MyLogger a {eacp::ObjC::makePtr<Logger>()};
-    MyLogger b {eacp::ObjC::makePtr<Logger>()};
-    MyLogger c {eacp::ObjC::makePtr<Logger>()};
+    MyLogger a {[[Logger alloc] init]};
+    MyLogger b {[[Logger alloc] init]};
+    MyLogger c {[[Logger alloc] init]};
 };
 
 void runExperiment()
 {
-    auto s = eacp::ObjC::AutoReleasePool();
     auto rawLogger = MultiLoggers();
     auto other = rawLogger;
 }

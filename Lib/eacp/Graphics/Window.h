@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 #include "View.h"
+#include "../App/App.h"
 
 namespace eacp::Graphics
 {
@@ -34,6 +35,8 @@ struct WindowOptions
         flags.emplace_back(WindowFlags::Resizable);
     }
 
+    Callback onQuit {Apps::quit};
+
     int width = 640;
     int height = 400;
     std::string title = "New Window";
@@ -44,15 +47,16 @@ struct WindowOptions
 class Window
 {
 public:
-    Window(const WindowOptions& options = {});
+    Window(const WindowOptions& optionsToUse = {});
+    ~Window();
 
     void setTitle(const std::string& title);
-    void close();
     void* getHandle();
 
     void setContentView(View& view);
 
 private:
+    WindowOptions options;
 
     struct Impl;
     std::shared_ptr<Impl> impl;

@@ -1,46 +1,34 @@
 #include "Window.h"
 #include "../ObjC/ObjC.h"
-#include "../Utils/Common.h"
 #import <Cocoa/Cocoa.h>
 
 @interface WindowDelegateBridge : NSObject <NSWindowDelegate>
 {
-    eacp::Callback onCloseCallback;
+@public
+    eacp::Callback cb;
 }
-
-- (instancetype)initWithCallback:(eacp::Callback)callback;
 @end
 
 @implementation WindowDelegateBridge
-
-- (instancetype)initWithCallback:(eacp::Callback)callback
+- (void)windowWillClose:()notification
 {
-    self = [super init];
-
-    if (self)
-    {
-        onCloseCallback = callback;
-    }
-
-    return self;
+    cb();
 }
 
-// This method is called automatically by macOS when 'X' is clicked
-- (BOOL)windowShouldClose:(NSWindow*)sender
+WindowDelegateBridge* createWindowDelegate(eacp::Callback cbToUse)
 {
-    if (onCloseCallback)
-    {
-        onCloseCallback();
-    }
+    auto bridge = [[WindowDelegateBridge alloc] init];
 
-    return YES;
+    if (bridge)
+        bridge->cb = cbToUse;
+
+    return bridge;
 }
 
 @end
 
 namespace eacp::Graphics
 {
-
 NSWindowStyleMask getFlag(WindowFlags flag)
 {
     switch (flag)
@@ -100,6 +88,7 @@ struct Window::Impl
         [getWindow() setTitle:@(options.title.c_str())];
         [getWindow() center];
         [getWindow() makeKeyAndOrderFront:nil];
+        [getWindow() setDelegate:createWindowDelegate(options.onQuit)];
 
         [NSApp activateIgnoringOtherApps:YES];
     }
@@ -123,8 +112,9 @@ struct Window::Impl
     ObjC::Ptr<NSWindow> handle;
 };
 
-Window::Window(const WindowOptions& options)
-    : impl(std::make_unique<Impl>(options))
+Window::Window(const WindowOptions& optionsToUse)
+    : options(optionsToUse)
+    , impl(std::make_unique<Impl>(options))
 {
 }
 
@@ -136,7 +126,6 @@ void Window::setTitle(const std::string& title)
 void Window::setContentView(View& view)
 {
     impl->setContentView(view.getHandle());
-
 }
 
 void* Window::getHandle()
@@ -144,9 +133,9 @@ void* Window::getHandle()
     return impl->getWindow();
 }
 
-void Window::close()
+Window::~Window()
 {
-    impl.reset();
+    options.onQuit();
 }
 
 } // namespace eacp::Graphics

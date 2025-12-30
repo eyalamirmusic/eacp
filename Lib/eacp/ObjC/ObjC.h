@@ -4,7 +4,7 @@
 
 namespace eacp::ObjC
 {
-struct DoNotRetainMode
+struct RetainMode
 {
 };
 
@@ -13,9 +13,9 @@ class Ptr
 {
 public:
     Ptr() = default;
-    Ptr(T* obj) { reset(obj); }
-
-    Ptr(T* obj, DoNotRetainMode) { set(obj); }
+    Ptr(T* obj) { set(obj); }
+    Ptr(T* obj, RetainMode) { reset(obj); }
+    Ptr(const Ptr& obj) { reset(obj.ptr); }
 
     ~Ptr() { release(); }
 
@@ -51,11 +51,9 @@ public:
         }
     }
 
-    Ptr(const Ptr& other) { reset(other.ptr); }
-
     Ptr& operator=(T* other)
     {
-        reset(other);
+        set(other);
         return *this;
     }
 
@@ -104,7 +102,7 @@ T* createNew()
 template <typename T>
 Ptr<T> attachPtr(T* object)
 {
-    return {object, DoNotRetainMode()};
+    return {object};
 }
 
 template <typename T>
