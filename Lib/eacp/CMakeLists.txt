@@ -10,5 +10,6 @@ if (APPLE)
             Network/Http.mm
             ObjC/AutoReleasePool.mm
             Threads/EventLoop.mm
-            Graphics/Window.mm)
+            Graphics/Window.mm
+            Graphics/View.mm)
 endif ()

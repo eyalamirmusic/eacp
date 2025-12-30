@@ -3,6 +3,7 @@
 #include <string>
 #include <memory>
 #include <vector>
+#include "View.h"
 
 namespace eacp::Graphics
 {
@@ -47,9 +48,12 @@ public:
 
     void setTitle(const std::string& title);
     void close();
+    void* getHandle();
+
+    void setContentView(View& view);
 
 private:
-    // Forward declaration of the internal Obj-C struct
+
     struct Impl;
     std::shared_ptr<Impl> impl;
 };

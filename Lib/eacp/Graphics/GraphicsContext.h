@@ -1,0 +1,47 @@
+#pragma once
+
+namespace eacp::Graphics
+{
+struct Rect
+{
+    Rect() = default;
+    Rect(float xToUse, float yToUse, float wToUse, float hToUse)
+        : x(xToUse)
+        , y(yToUse)
+        , w(wToUse)
+        , h(hToUse)
+    {
+    }
+
+    float x = 0.f;
+    float y = 0.f;
+    float w = 0.f;
+    float h = 0.f;
+};
+
+struct Color
+{
+    Color() = default;
+    Color(float rToUse, float gToUse, float bToUse, float aToUse = 1.f)
+        : r(rToUse)
+        , g(gToUse)
+        , b(bToUse)
+        , a(aToUse)
+    {
+    }
+
+    float r = 0.f;
+    float g = 0.f;
+    float b = 0.f;
+    float a = 1.f;
+};
+
+class Context
+{
+public:
+    virtual ~Context() = default;
+
+    virtual void setFillColor(const Color& color) = 0;
+    virtual void fillRect(const Rect& rect) = 0;
+};
+} // namespace eacp::Graphics

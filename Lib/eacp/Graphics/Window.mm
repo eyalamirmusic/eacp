@@ -109,6 +109,13 @@ struct Window::Impl
         [getWindow() setTitle:@(title.c_str())];
     }
 
+    void setContentView(void* contentView)
+    {
+        auto v = (NSView*) contentView;
+        [getWindow() setContentView:v];
+        [v setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    }
+
     NSWindow* getWindow() { return handle.get(); }
 
     ~Impl() { [handle.get() close]; }
@@ -124,6 +131,17 @@ Window::Window(const WindowOptions& options)
 void Window::setTitle(const std::string& title)
 {
     impl->setTitle(title);
+}
+
+void Window::setContentView(View& view)
+{
+    impl->setContentView(view.getHandle());
+
+}
+
+void* Window::getHandle()
+{
+    return impl->getWindow();
 }
 
 void Window::close()
