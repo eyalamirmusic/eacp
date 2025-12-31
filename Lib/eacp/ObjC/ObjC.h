@@ -102,7 +102,7 @@ T* createNew()
 template <typename T>
 Ptr<T> attachPtr(T* object)
 {
-    return {object};
+    return {object, RetainMode()};
 }
 
 template <typename T>

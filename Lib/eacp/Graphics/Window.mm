@@ -14,21 +14,17 @@
 {
     cb();
 }
-
-WindowDelegateBridge* createWindowDelegate(eacp::Callback cbToUse)
-{
-    auto bridge = [[WindowDelegateBridge alloc] init];
-
-    if (bridge)
-        bridge->cb = cbToUse;
-
-    return bridge;
-}
-
 @end
 
 namespace eacp::Graphics
 {
+WindowDelegateBridge* createWindowDelegate(const Callback& cbToUse)
+{
+    auto bridge = [[WindowDelegateBridge alloc] init];
+    bridge->cb = cbToUse;
+    return bridge;
+}
+
 NSWindowStyleMask getFlag(WindowFlags flag)
 {
     switch (flag)

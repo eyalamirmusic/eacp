@@ -4,43 +4,38 @@
 #include "MacGraphicsContext.h"
 #include "../ObjC/ObjC.h"
 
-using namespace eacp::Graphics;
-
-@interface NativeView : NSView
+namespace eacp::Graphics
 {
-    View* cppView;
-}
-- (instancetype)initWithCppView:(View*)cppView frame:(NSRect)frame;
-@end
-
-@implementation NativeView
-
-- (instancetype)initWithCppView:(View*)viewToUse frame:(NSRect)frame
+void paintNative(View& view, NSRect bounds)
 {
-    self = [super initWithFrame:frame];
-
-    if (self)
-        cppView = viewToUse;
-
-    return self;
-}
-
-- (void)drawRect:(NSRect)dirtyRect
-{
-    [super drawRect:dirtyRect];
-
     auto cgContext = [[NSGraphicsContext currentContext] CGContext];
 
     CGContextSaveGState(cgContext);
 
-    CGContextTranslateCTM(cgContext, 0, self.bounds.size.height);
+    CGContextTranslateCTM(cgContext, 0, bounds.size.height);
     CGContextScaleCTM(cgContext, 1.0, -1.0);
 
-    auto ctxWrapper = MacOSContext(cgContext);
+    auto ctxWrapper = eacp::Graphics::MacOSContext(cgContext);
 
-    cppView->paint(ctxWrapper);
+    view.paint(ctxWrapper);
 
     CGContextRestoreGState(cgContext);
+}
+} // namespace eacp::Graphics
+
+@interface NativeView : NSView
+{
+@public
+    eacp::Graphics::View* cppView;
+}
+@end
+
+@implementation NativeView
+
+- (void)drawRect:(NSRect)dirtyRect
+{
+    [super drawRect:dirtyRect];
+    eacp::Graphics::paintNative(*cppView, self.bounds);
 }
 
 - (void)mouseDown:(NSEvent*)event
@@ -48,7 +43,7 @@ using namespace eacp::Graphics;
     auto p = [self convertPoint:[event locationInWindow] fromView:nil];
     auto flippedY = self.bounds.size.height - p.y;
 
-    auto e = MouseEvent();
+    auto e = eacp::Graphics::MouseEvent();
     e.pos = {(float) p.x, (float) flippedY};
 
     cppView->mouseDown(e);
@@ -58,14 +53,17 @@ using namespace eacp::Graphics;
 
 namespace eacp::Graphics
 {
+NativeView* createNativeView(View* view)
+{
+    auto rect = NSMakeRect(0.f, 0.f, 100.f, 100.f);
+    auto newView = [[NativeView alloc] initWithFrame:rect];
+    newView->cppView = view;
+    return newView;
+}
+
 struct View::Impl
 {
-    Impl(View* view)
-    {
-        auto rect = NSMakeRect(0.f, 0.f, 100.f, 100.f);
-        nativeView = [[NativeView alloc] initWithCppView:view frame:rect];
-    }
-
+    Impl(View* view) { nativeView = createNativeView(view); }
     void repaint() { [nativeView.get() setNeedsDisplay:YES]; }
 
     ObjC::Ptr<NativeView> nativeView;

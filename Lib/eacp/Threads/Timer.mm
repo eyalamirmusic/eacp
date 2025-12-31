@@ -13,51 +13,27 @@ static void AssertMainThread()
     assert(isMainThread() && "You must call this on the main thread");
 }
 
-@interface EACP_TimerProxy : NSObject
-{
-    eacp::Callback cb;
-}
-- (instancetype)initWithCallback:(eacp::Callback)cb;
-- (void)timerFired:(NSTimer*)t;
-@end
-
-@implementation EACP_TimerProxy
-
-- (instancetype)initWithCallback:(eacp::Callback)cbToUse
-{
-    self = [super init];
-    if (self)
-    {
-        cb = cbToUse;
-    }
-    return self;
-}
-
-- (void)timerFired:(NSTimer*)t
-{
-    cb();
-}
-
-@end
-
 namespace eacp::Threads
 {
+static void AssertMainThread()
+{
+    assert([NSThread isMainThread] && "Timer must be accessed from Main Thread");
+}
 
 struct Timer::Impl
 {
-    Impl(const Callback& cb, int intervalHz)
+    Impl(Callback cb, int intervalHz)
     {
         AssertMainThread();
-
         double intervalSec = 1.0 / (double) intervalHz;
 
-        proxy = [[EACP_TimerProxy alloc] initWithCallback:cb];
+        auto timerBlock = ^(NSTimer* _Nonnull) {
+          cb();
+        };
 
-        nsTimer = [NSTimer timerWithTimeInterval:intervalSec
-                                          target:proxy.get()
-                                        selector:@selector(timerFired:)
-                                        userInfo:nil
-                                         repeats:YES];
+        nsTimer.reset([NSTimer timerWithTimeInterval:intervalSec
+                                             repeats:YES
+                                               block:timerBlock]);
 
         [[NSRunLoop mainRunLoop] addTimer:nsTimer.get()
                                   forMode:NSRunLoopCommonModes];
@@ -70,7 +46,6 @@ struct Timer::Impl
     }
 
     ObjC::Ptr<NSTimer> nsTimer;
-    ObjC::Ptr<EACP_TimerProxy> proxy;
 };
 
 Timer::Timer(const Callback& cbToUse, int intervalHz)
