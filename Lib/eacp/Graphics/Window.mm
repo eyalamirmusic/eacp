@@ -68,9 +68,9 @@ NSWindowStyleMask getStyle(const WindowOptions& options)
     return res;
 }
 
-struct Window::Impl
+struct Window::Native
 {
-    Impl(const WindowOptions& options)
+    Native(const WindowOptions& options)
     {
         auto style = getStyle(options);
         auto contentRect = NSMakeRect(0, 0, options.width, options.height);
@@ -103,14 +103,14 @@ struct Window::Impl
 
     NSWindow* getWindow() { return handle.get(); }
 
-    ~Impl() { [handle.get() close]; }
+    ~Native() { [handle.get() close]; }
 
     ObjC::Ptr<NSWindow> handle;
 };
 
 Window::Window(const WindowOptions& optionsToUse)
     : options(optionsToUse)
-    , impl(std::make_unique<Impl>(options))
+    , impl(options)
 {
 }
 

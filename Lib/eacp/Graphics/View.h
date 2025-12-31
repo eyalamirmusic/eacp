@@ -1,6 +1,6 @@
 #pragma once
 
-#include <memory>
+#include "../Utils/Common.h"
 #include "GraphicsContext.h"
 
 namespace eacp::Graphics
@@ -23,7 +23,7 @@ public:
     virtual void mouseDown(const MouseEvent&) {}
 
 private:
-    struct Impl;
-    std::shared_ptr<Impl> impl;
+    struct Native;
+    Pimpl<Native> impl;
 };
 } // namespace eacp::Graphics

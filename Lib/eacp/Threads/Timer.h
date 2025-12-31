@@ -12,8 +12,8 @@ public:
 private:
     Callback callback;
 
-    struct Impl;
-    std::shared_ptr<Impl> impl;
+    struct Native;
+    Pimpl<Native> impl;
 };
 }
 

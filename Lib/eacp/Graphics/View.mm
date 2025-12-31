@@ -61,17 +61,17 @@ NativeView* createNativeView(View* view)
     return newView;
 }
 
-struct View::Impl
+struct View::Native
 {
-    Impl(View* view) { nativeView = createNativeView(view); }
+    Native(View* view) { nativeView = createNativeView(view); }
     void repaint() { [nativeView.get() setNeedsDisplay:YES]; }
 
     ObjC::Ptr<NativeView> nativeView;
 };
 
 View::View()
+    : impl(this)
 {
-    impl = std::make_shared<Impl>(this);
 }
 
 void* View::getHandle()

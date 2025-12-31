@@ -9,9 +9,10 @@ if (APPLE)
             App/App.mm
             Network/Http.mm
             ObjC/AutoReleasePool.mm
-            
+
             Threads/EventLoop.mm
             Threads/Timer.mm
+            Threads/ThreadUtils.mm
 
             Graphics/Window.mm
             Graphics/View.mm)

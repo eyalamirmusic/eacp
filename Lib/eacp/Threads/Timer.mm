@@ -1,30 +1,15 @@
 #include "Timer.h"
-#import <Cocoa/Cocoa.h>
 #include "../ObjC/ObjC.h"
-#include <cassert>
-
-bool isMainThread()
-{
-    return [NSThread isMainThread];
-}
-
-static void AssertMainThread()
-{
-    assert(isMainThread() && "You must call this on the main thread");
-}
+#include "ThreadUtils.h"
 
 namespace eacp::Threads
 {
-static void AssertMainThread()
-{
-    assert([NSThread isMainThread] && "Timer must be accessed from Main Thread");
-}
 
-struct Timer::Impl
+struct Timer::Native
 {
-    Impl(Callback cb, int intervalHz)
+    Native(Callback cb, int intervalHz)
     {
-        AssertMainThread();
+        assertMainThread();
         double intervalSec = 1.0 / (double) intervalHz;
 
         auto timerBlock = ^(NSTimer* _Nonnull) {
@@ -39,9 +24,9 @@ struct Timer::Impl
                                   forMode:NSRunLoopCommonModes];
     }
 
-    ~Impl()
+    ~Native()
     {
-        AssertMainThread();
+        assertMainThread();
         [nsTimer.get() invalidate];
     }
 
@@ -50,8 +35,8 @@ struct Timer::Impl
 
 Timer::Timer(const Callback& cbToUse, int intervalHz)
     : callback(cbToUse)
+    , impl(cbToUse, intervalHz)
 {
-    impl = std::make_shared<Impl>(cbToUse, intervalHz);
 }
 
 } // namespace eacp::Threads
