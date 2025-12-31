@@ -5,7 +5,7 @@ namespace eacp::Apps
 {
 AppBase::AppBase()
 {
-    [NSApplication sharedApplication];
+    auto app = [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 }
 } // namespace eacp::Apps

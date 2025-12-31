@@ -10,7 +10,7 @@
 @end
 
 @implementation WindowDelegateBridge
-- (void)windowWillClose:()notification
+- (void)windowWillClose:(NSNotification *)notification
 {
     cb();
 }
@@ -40,7 +40,7 @@ NSWindowStyleMask getFlag(WindowFlags flag)
         case WindowFlags::Resizable:
             return NSWindowStyleMaskResizable;
         case WindowFlags::UnifiedTitleAndToolbar:
-            return NSWindowToolbarStyleUnified;
+            return NSWindowStyleMaskUnifiedTitleAndToolbar;
         case WindowFlags::FullScreen:
             return NSWindowStyleMaskFullScreen;
         case WindowFlags::FullSizeContentView:
@@ -80,11 +80,14 @@ struct Window::Native
                                                backing:NSBackingStoreBuffered
                                                  defer:NO];
 
+        delegate = createWindowDelegate(options.onQuit);
+
+        [getWindow() setRestorable:NO];
         [getWindow() setReleasedWhenClosed:NO];
         [getWindow() setTitle:@(options.title.c_str())];
         [getWindow() center];
         [getWindow() makeKeyAndOrderFront:nil];
-        [getWindow() setDelegate:createWindowDelegate(options.onQuit)];
+        [getWindow() setDelegate:delegate.get()];
 
         [NSApp activateIgnoringOtherApps:YES];
     }
@@ -106,6 +109,7 @@ struct Window::Native
     ~Native() { [handle.get() close]; }
 
     ObjC::Ptr<NSWindow> handle;
+    ObjC::Ptr<WindowDelegateBridge> delegate;
 };
 
 Window::Window(const WindowOptions& optionsToUse)
