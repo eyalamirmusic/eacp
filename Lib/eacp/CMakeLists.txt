@@ -2,6 +2,7 @@ target_sources(eacp PRIVATE
         Threads/TaskSemaphore.cpp
         Threads/EventLoop.cpp
         App/App.cpp
+        Graphics/Primitives.cpp
 )
 
 if (APPLE)
