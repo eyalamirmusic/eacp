@@ -1,25 +1,19 @@
 
 #include <eacp/App/App.h>
 #include <eacp/Graphics/Window.h>
-#include <eacp/Threads/DisplayLink.h>
+#include <eacp/Threads/Timer.h>
 
 using namespace eacp;
 using namespace Graphics;
 
-struct MyView : View
+struct MyView final : View
 {
-    MyView()
-    {
-        p.addEllipse({0.1f, 0.1f, 0.8f, 0.8f});
-    }
+    MyView() { p.addEllipse({0.1f, 0.1f, 200.f, 200.f}); }
 
     void paint(Context& ctx) override
     {
-        ctx.saveState();
-        ctx.scale(getBounds().w, getBounds().h);
         ctx.setColor(c);
         ctx.fillPath(p);
-        ctx.restoreState();
     }
 
     void update()
@@ -34,7 +28,7 @@ struct MyView : View
 
     Path p;
     Color c {0.f, 1.f, 0.f};
-    Threads::DisplayLink displayLink {[&] { update(); }};
+    Threads::Timer timer {[&] { update(); }, 60};
 };
 
 struct MyApp

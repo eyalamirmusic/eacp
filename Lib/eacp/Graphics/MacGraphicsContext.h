@@ -54,10 +54,8 @@ public:
 
     void fillPath(const Path& p) override
     {
-        CGContextSaveGState(context);
         setCurrentPath(p);
         CGContextFillPath(context);
-        CGContextRestoreGState(context);
     }
 
     void setLineWidth(float width) override
@@ -72,10 +70,8 @@ public:
 
     void strokePath(const Path& p) override
     {
-        CGContextSaveGState(context);
         setCurrentPath(p);
         CGContextStrokePath(context);
-        CGContextRestoreGState(context);
     }
 
     void drawLine(const Point& start, const Point& end) override

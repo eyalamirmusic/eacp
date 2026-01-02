@@ -7,7 +7,8 @@ namespace eacp::Threads
 
 struct Timer::Native
 {
-    Native(Callback cb, int intervalHz)
+    Native(const Callback& cbToUse, int intervalHz)
+        : cb(cbToUse)
     {
         assertMainThread();
         double intervalSec = 1.0 / (double) intervalHz;
@@ -30,6 +31,7 @@ struct Timer::Native
         [nsTimer.get() invalidate];
     }
 
+    Callback cb;
     ObjC::Ptr<NSTimer> nsTimer;
 };
 
