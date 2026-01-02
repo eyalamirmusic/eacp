@@ -11,9 +11,9 @@ struct MyView : View
 {
     void paint(Context& ctx) override
     {
-        ctx.setFillColor(c);
+        ctx.setColor(c);
         auto r = Rect(10.f, 10.f, 100.f, 100.f);
-        ctx.fillRect(r);
+        ctx.strokeRect(r);
     }
 
     void update()

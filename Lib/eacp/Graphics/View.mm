@@ -9,17 +9,11 @@ namespace eacp::Graphics
 void paintNative(View& view, NSRect bounds)
 {
     auto cgContext = [[NSGraphicsContext currentContext] CGContext];
+    auto nativeContext = MacOSContext(cgContext);
+    nativeContext.translate(0.f, (float)bounds.size.height);
+    nativeContext.scale(1.f, -1.f);
 
-    CGContextSaveGState(cgContext);
-
-    CGContextTranslateCTM(cgContext, 0, bounds.size.height);
-    CGContextScaleCTM(cgContext, 1.0, -1.0);
-
-    auto ctxWrapper = eacp::Graphics::MacOSContext(cgContext);
-
-    view.paint(ctxWrapper);
-
-    CGContextRestoreGState(cgContext);
+    view.paint(nativeContext);
 }
 } // namespace eacp::Graphics
 
