@@ -7,7 +7,8 @@ add_library(eacp STATIC)
 target_include_directories(eacp PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(eacp PRIVATE
         "-framework foundation"
-        "-framework cocoa")
+        "-framework cocoa"
+        "-framework corevideo")
 
 set_default_warnings_level(eacp)
 

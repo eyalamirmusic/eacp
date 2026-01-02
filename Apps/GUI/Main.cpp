@@ -1,8 +1,7 @@
 
 #include <eacp/App/App.h>
 #include <eacp/Graphics/Window.h>
-#include <eacp/Threads/Timer.h>
-#include <iostream>
+#include <eacp/Threads/DisplayLink.h>
 
 using namespace eacp;
 using namespace Graphics;
@@ -35,7 +34,7 @@ struct MyView : View
 
     Path p;
     Color c {0.f, 1.f, 0.f};
-    Threads::Timer timer {[&] { update(); }, 60};
+    Threads::DisplayLink displayLink {[&] { update(); }};
 };
 
 struct MyApp

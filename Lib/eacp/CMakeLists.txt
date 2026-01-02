@@ -13,6 +13,7 @@ if (APPLE)
 
             Threads/EventLoop.mm
             Threads/Timer.mm
+            Threads/DisplayLink.mm
             Threads/ThreadUtils.mm
 
             Graphics/Window.mm

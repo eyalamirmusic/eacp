@@ -6,14 +6,6 @@
 
 namespace eacp::Graphics
 {
-void paintNative(View& view, NSRect bounds)
-{
-    auto nativeContext = MacOSContext();
-    nativeContext.translate(0.f, (float) bounds.size.height);
-    nativeContext.scale(1.f, -1.f);
-
-    view.paint(nativeContext);
-}
 } // namespace eacp::Graphics
 
 @interface NativeView : NSView
@@ -27,17 +19,19 @@ void paintNative(View& view, NSRect bounds)
 
 - (void)drawRect:(NSRect)dirtyRect
 {
-    [super drawRect:dirtyRect];
-    eacp::Graphics::paintNative(*cppView, self.bounds);
+    CGContextRef ctx = (CGContextRef)[[NSGraphicsContext currentContext] CGContext];
+    auto nativeContext= eacp::Graphics::MacOSContext(ctx);
+    cppView->paint(nativeContext);
 }
+
+- (BOOL)isFlipped { return YES; }
 
 - (void)mouseDown:(NSEvent*)event
 {
     auto p = [self convertPoint:[event locationInWindow] fromView:nil];
-    auto flippedY = self.bounds.size.height - p.y;
 
     auto e = eacp::Graphics::MouseEvent();
-    e.pos = {(float) p.x, (float) flippedY};
+    e.pos = {(float) p.x, (float) p.y};
 
     cppView->mouseDown(e);
 }
@@ -50,6 +44,9 @@ NativeView* createNativeView(View* view)
 {
     auto rect = NSMakeRect(0.f, 0.f, 100.f, 100.f);
     auto newView = [[NativeView alloc] initWithFrame:rect];
+    newView.wantsLayer = YES;
+    newView.canDrawConcurrently = YES;
+    newView.layerContentsRedrawPolicy = NSViewLayerContentsRedrawOnSetNeedsDisplay;
     newView->cppView = view;
     return newView;
 }
