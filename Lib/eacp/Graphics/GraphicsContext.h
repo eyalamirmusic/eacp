@@ -16,7 +16,7 @@ public:
     virtual void scale(float x, float y) = 0;
     virtual void rotate(float angleRadians) = 0;
 
-    void setColor(const Color& color) { lastColor = color; }
+    virtual void setColor(const Color& color) = 0;
 
     virtual void fillRect(const Rect& rect) = 0;
     virtual void fillRoundedRect(const Rect& rect,
@@ -25,7 +25,5 @@ public:
     virtual void setLineWidth(float width) = 0;
     virtual void strokeRect(const Rect& rect) = 0;
     virtual void drawLine(const Point& start, const Point& end) = 0;
-
-    Color lastColor {};
 };
 } // namespace eacp::Graphics

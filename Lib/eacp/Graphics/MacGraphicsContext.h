@@ -39,25 +39,17 @@ public:
 
     void fillRect(const Rect& r) override
     {
-        updateFillColor();
         CGContextFillRect(context, toCGRect(r));
     }
 
-    void updateFillColor()
+    void setColor(const Color& color) override
     {
-        CGContextSetRGBFillColor(
-            context, lastColor.r, lastColor.g, lastColor.b, lastColor.a);
-    }
-
-    void updateStrokeColor()
-    {
-        CGContextSetRGBStrokeColor(
-            context, lastColor.r, lastColor.g, lastColor.b, lastColor.a);
+        CGContextSetRGBFillColor(context, color.r, color.g, color.b, color.a);
+        CGContextSetRGBStrokeColor(context, color.r, color.g, color.b, color.a);
     }
 
     void fillRoundedRect(const Rect& r, float radius) override
     {
-        updateFillColor();
         CGContextBeginPath(context);
         CGContextAddPath(
             context,
@@ -72,13 +64,11 @@ public:
 
     void strokeRect(const Rect& r) override
     {
-        updateStrokeColor();
         CGContextStrokeRect(context, toCGRect(r));
     }
 
     void drawLine(const Point& start, const Point& end) override
     {
-        updateStrokeColor();
         CGContextBeginPath(context);
         CGContextMoveToPoint(context, start.x, start.y);
         CGContextAddLineToPoint(context, end.x, end.y);
