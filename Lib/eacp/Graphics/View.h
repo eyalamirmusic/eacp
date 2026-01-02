@@ -22,7 +22,10 @@ public:
     virtual void paint(Context&) {};
     virtual void mouseDown(const MouseEvent&) {}
 
+    Rect getBounds() const;
+
 private:
+
     struct Native;
     Pimpl<Native> impl;
 };

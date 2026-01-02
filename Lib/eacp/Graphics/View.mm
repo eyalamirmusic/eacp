@@ -9,7 +9,7 @@ namespace eacp::Graphics
 void paintNative(View& view, NSRect bounds)
 {
     auto nativeContext = MacOSContext();
-    nativeContext.translate(0.f, (float)bounds.size.height);
+    nativeContext.translate(0.f, (float) bounds.size.height);
     nativeContext.scale(1.f, -1.f);
 
     view.paint(nativeContext);
@@ -59,6 +59,8 @@ struct View::Native
     Native(View* view) { nativeView = createNativeView(view); }
     void repaint() { [nativeView.get() setNeedsDisplay:YES]; }
 
+    Rect getBounds() const { return toRect([nativeView.get() bounds]); }
+
     ObjC::Ptr<NativeView> nativeView;
 };
 
@@ -75,5 +77,10 @@ void* View::getHandle()
 void View::repaint()
 {
     impl->repaint();
+}
+
+Rect View::getBounds() const
+{
+    return impl->getBounds();
 }
 } // namespace eacp::Graphics

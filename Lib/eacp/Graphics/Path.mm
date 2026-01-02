@@ -9,7 +9,7 @@ struct Path::Native
     Native() { clear(); }
     ~Native() { release(); }
 
-    void release()
+    void release() const
     {
         if (handle)
             CGPathRelease(handle);

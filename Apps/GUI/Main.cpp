@@ -9,16 +9,23 @@ using namespace Graphics;
 
 struct MyView : View
 {
+    MyView()
+    {
+        p.addEllipse({0.1f, 0.1f, 0.8f, 0.8f});
+    }
+
     void paint(Context& ctx) override
     {
+        ctx.saveState();
+        ctx.scale(getBounds().w, getBounds().h);
         ctx.setColor(c);
-        auto r = Rect(10.f, 10.f, 100.f, 100.f);
-        ctx.strokeRect(r);
+        ctx.fillPath(p);
+        ctx.restoreState();
     }
 
     void update()
     {
-        c.a += 0.04f;
+        c.a += 0.02f;
 
         if (c.a >= 0.9f)
             c.a = 0.1f;
@@ -26,8 +33,9 @@ struct MyView : View
         repaint();
     }
 
+    Path p;
     Color c {0.f, 1.f, 0.f};
-    Threads::Timer timer {[&] { update(); }, 30};
+    Threads::Timer timer {[&] { update(); }, 60};
 };
 
 struct MyApp
