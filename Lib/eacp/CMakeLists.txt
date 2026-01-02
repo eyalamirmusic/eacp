@@ -16,5 +16,8 @@ if (APPLE)
             Threads/ThreadUtils.mm
 
             Graphics/Window.mm
-            Graphics/View.mm)
+            Graphics/View.mm
+
+            Graphics/Path.mm
+            Graphics/MacGraphicUtils.mm)
 endif ()

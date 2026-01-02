@@ -1,26 +1,17 @@
 #pragma once
 
-#include <CoreGraphics/CoreGraphics.h>
+#include "MacGraphicUtils.h"
 #include "GraphicsContext.h"
+#include "Path.h"
 
 namespace eacp::Graphics
 {
-CGRect toCGRect(const Rect& r)
-{
-    return CGRectMake(r.x, r.y, r.w, r.h);
-}
-
-CGPoint toCGPoint(const Point& p)
-{
-    return CGPointMake(p.x, p.y);
-}
-
 class MacOSContext final : public Context
 {
 public:
-    MacOSContext(CGContextRef ctx)
-        : context(ctx)
+    MacOSContext()
     {
+        context = [[NSGraphicsContext currentContext] CGContext];
         saveState();
     }
 
@@ -50,10 +41,19 @@ public:
 
     void fillRoundedRect(const Rect& r, float radius) override
     {
-        CGContextBeginPath(context);
-        CGContextAddPath(
-            context,
-            CGPathCreateWithRoundedRect(toCGRect(r), radius, radius, nullptr));
+        auto p = Path();
+        p.addRoundedRect(r, radius);
+        fillPath(p);
+    }
+
+    void setCurrentPath(const Path& p)
+    {
+        CGContextAddPath(context, (CGPathRef) p.getHandle());
+    }
+
+    void fillPath(const Path& p) override
+    {
+        setCurrentPath(p);
         CGContextFillPath(context);
     }
 
@@ -67,12 +67,18 @@ public:
         CGContextStrokeRect(context, toCGRect(r));
     }
 
+    void strokePath(const Path& p) override
+    {
+        setCurrentPath(p);
+        CGContextStrokePath(context);
+    }
+
     void drawLine(const Point& start, const Point& end) override
     {
-        CGContextBeginPath(context);
-        CGContextMoveToPoint(context, start.x, start.y);
-        CGContextAddLineToPoint(context, end.x, end.y);
-        CGContextStrokePath(context);
+        auto p = Path();
+        p.moveTo(start);
+        p.lineTo(end);
+        strokePath(p);
     }
 
 private:

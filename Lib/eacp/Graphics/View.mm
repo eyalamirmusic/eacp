@@ -8,8 +8,7 @@ namespace eacp::Graphics
 {
 void paintNative(View& view, NSRect bounds)
 {
-    auto cgContext = [[NSGraphicsContext currentContext] CGContext];
-    auto nativeContext = MacOSContext(cgContext);
+    auto nativeContext = MacOSContext();
     nativeContext.translate(0.f, (float)bounds.size.height);
     nativeContext.scale(1.f, -1.f);
 

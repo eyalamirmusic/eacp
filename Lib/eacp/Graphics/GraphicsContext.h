@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Primitives.h"
+#include "Path.h"
 
 namespace eacp::Graphics
 {
@@ -25,5 +25,8 @@ public:
     virtual void setLineWidth(float width) = 0;
     virtual void strokeRect(const Rect& rect) = 0;
     virtual void drawLine(const Point& start, const Point& end) = 0;
+
+    virtual void fillPath(const Path& p) = 0;
+    virtual void strokePath(const Path& p) = 0;
 };
 } // namespace eacp::Graphics
