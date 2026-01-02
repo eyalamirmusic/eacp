@@ -33,11 +33,13 @@ public:
     {
         CGContextTranslateCTM(context, x, y);
     }
+
     void scale(float x, float y) override { CGContextScaleCTM(context, x, y); }
     void rotate(float angle) override { CGContextRotateCTM(context, angle); }
 
     void fillRect(const Rect& r) override
     {
+        updateFillColor();
         CGContextFillRect(context, toCGRect(r));
     }
 
