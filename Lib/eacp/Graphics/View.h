@@ -15,6 +15,7 @@ class View
 {
 public:
     View();
+    virtual ~View() = default;
 
     void repaint();
     void* getHandle();
