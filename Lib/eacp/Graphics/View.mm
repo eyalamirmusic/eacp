@@ -2,7 +2,9 @@
 #import <Cocoa/Cocoa.h>
 #include "View.h"
 #include "MacGraphicsContext.h"
+#include "MacGraphicUtils.h"
 #include "../ObjC/ObjC.h"
+#include "../Utils/Vectors.h"
 
 namespace eacp::Graphics
 {
@@ -16,7 +18,6 @@ namespace eacp::Graphics
 @end
 
 @implementation NativeView
-
 
 - (void)drawRect:(NSRect)dirtyRect
 {
@@ -38,12 +39,27 @@ namespace eacp::Graphics
     return NO;
 }
 
-
-
 - (void)viewDidChangeBackingProperties
 {
     [super viewDidChangeBackingProperties];
     self.layer.contentsScale = self.window.backingScaleFactor;
+}
+
+- (void)setFrame:(NSRect)newFrame
+{
+    NSRect oldFrame = [self frame];
+    [super setFrame:newFrame];
+
+    // If the frame size changed, we need to redraw
+    if (!NSEqualSizes(oldFrame.size, newFrame.size))
+    {
+        [self setNeedsDisplay:YES];
+        // For layer-backed views, also invalidate the layer
+        if (self.wantsLayer && self.layer)
+        {
+            [self.layer setNeedsDisplay];
+        }
+    }
 }
 
 - (void)mouseDown:(NSEvent*)event
@@ -66,23 +82,47 @@ NativeView* createNativeView(View* view)
     newView.wantsLayer = YES;
     newView.layerContentsRedrawPolicy = NSViewLayerContentsRedrawOnSetNeedsDisplay;
     newView.layer.contentsScale = [NSScreen mainScreen].backingScaleFactor;
+    newView.layer.delegate = newView; // Explicitly set delegate
 
     newView->cppView = view;
     return newView;
 }
 struct View::Native
 {
-    Native(View* view) { nativeView = createNativeView(view); }
+    Native(View& view) { nativeView = createNativeView(&view); }
+
     void repaint() { [nativeView.get() setNeedsDisplay:YES]; }
 
     Rect getBounds() const { return toRect([nativeView.get() bounds]); }
+    void setBounds(const Rect& bounds)
+    {
+        auto frame = toCGRect(bounds);
+        [nativeView.get() setFrame:frame];
+    }
+
+    void addSubview(View& view)
+    {
+        auto* childNativeView = (NativeView*) view.getHandle();
+        [nativeView.get() addSubview:childNativeView];
+    }
+
+    void removeSubview(View& view)
+    {
+        auto* childNativeView = (NativeView*) view.getHandle();
+        [childNativeView removeFromSuperview];
+    }
 
     ObjC::Ptr<NativeView> nativeView;
 };
 
 View::View()
-    : impl(this)
+    : impl(*this)
 {
+}
+
+View::~View()
+{
+    removeFromParent();
 }
 
 void* View::getHandle()
@@ -98,5 +138,36 @@ void View::repaint()
 Rect View::getBounds() const
 {
     return impl->getBounds();
+}
+
+void View::setBounds(const Rect& bounds)
+{
+    impl->setBounds(bounds);
+}
+
+void View::addSubview(View& view)
+{
+    view.removeFromParent();
+
+    if (Vectors::contains(subviews, &view))
+        return;
+
+    view.parent = this;
+    subviews.push_back(&view);
+    impl->addSubview(view);
+}
+
+void View::removeSubview(View& view)
+{
+    if (Vectors::eraseMatch(subviews, &view))
+        impl->removeSubview(view);
+}
+
+void View::removeFromParent()
+{
+    if (parent != nullptr)
+        parent->removeSubview(*this);
+
+    parent = nullptr;
 }
 } // namespace eacp::Graphics

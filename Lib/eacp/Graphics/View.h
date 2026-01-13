@@ -15,7 +15,7 @@ class View
 {
 public:
     View();
-    virtual ~View() = default;
+    virtual ~View();
 
     void repaint();
     void* getHandle();
@@ -24,8 +24,15 @@ public:
     virtual void mouseDown(const MouseEvent&) {}
 
     Rect getBounds() const;
+    void setBounds(const Rect& bounds);
+
+    void addSubview(View& view);
+    void removeSubview(View& view);
+    void removeFromParent();
 
 private:
+    std::vector<View*> subviews;
+    View* parent = nullptr;
 
     struct Native;
     Pimpl<Native> impl;

@@ -4,6 +4,7 @@ Makefile
 /build
 /out
 .vs
+.cache
 CMakeSettings.json
 
 *.zip
