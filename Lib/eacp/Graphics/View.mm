@@ -1,6 +1,7 @@
 
 #import <Cocoa/Cocoa.h>
 #include "View.h"
+#include "ShapeLayer.h"
 #include "MacGraphicsContext.h"
 #include "MacGraphicUtils.h"
 #include "../ObjC/ObjC.h"
@@ -112,6 +113,8 @@ struct View::Native
         [childNativeView removeFromSuperview];
     }
 
+    CALayer* getLayer() { return nativeView.get().layer; }
+
     ObjC::Ptr<NativeView> nativeView;
 };
 
@@ -122,6 +125,10 @@ View::View()
 
 View::~View()
 {
+    for (auto* layer : shapeLayers)
+        layer->detachFromLayer();
+
+    shapeLayers.clear();
     removeFromParent();
 }
 
@@ -169,5 +176,20 @@ void View::removeFromParent()
         parent->removeSubview(*this);
 
     parent = nullptr;
+}
+
+void View::addShapeLayer(ShapeLayer& layer)
+{
+    if (Vectors::contains(shapeLayers, &layer))
+        return;
+
+    shapeLayers.push_back(&layer);
+    layer.attachToLayer(impl->getLayer());
+}
+
+void View::removeShapeLayer(ShapeLayer& layer)
+{
+    if (Vectors::eraseMatch(shapeLayers, &layer))
+        layer.detachFromLayer();
 }
 } // namespace eacp::Graphics

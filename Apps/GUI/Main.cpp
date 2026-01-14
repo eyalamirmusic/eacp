@@ -3,6 +3,7 @@
 #include <eacp/Graphics/Window.h>
 #include <eacp/Graphics/Path.h>
 #include <eacp/Graphics/Font.h>
+#include <eacp/Graphics/ShapeLayer.h>
 #include <eacp/Threads/Timer.h>
 
 using namespace eacp;
@@ -14,15 +15,16 @@ struct ColoredView final : View
         : color(colorToUse)
         , label(labelText)
     {
+        backgroundPath.addRoundedRect({0, 0, 150, 100}, 10.f);
+        backgroundLayer.setPath(backgroundPath);
+        backgroundLayer.setFillColor(color);
+        addShapeLayer(backgroundLayer);
     }
 
     void paint(Context& ctx) override
     {
-        ctx.setColor(color);
-        auto bounds = getBounds();
-        ctx.fillRoundedRect({0, 0, bounds.w, bounds.h}, 10.f);
-
         ctx.setColor(textColor);
+        auto bounds = getBounds();
         ctx.drawText(label, Point {10.f, bounds.h / 2.f - 7.f}, labelFont);
     }
 
@@ -30,24 +32,29 @@ struct ColoredView final : View
     Font labelFont {"Helvetica-Bold", 14.f};
     Color color;
     std::string label;
+    Path backgroundPath;
+    ShapeLayer backgroundLayer;
 };
 
 struct AnimatedView final : View
 {
-    AnimatedView() { p.addEllipse({0, 0, 80.f, 80.f}); }
-
-    void paint(Context& ctx) override
+    AnimatedView()
     {
-        ctx.setColor(c);
-        ctx.fillPath(p);
+        ellipsePath.addEllipse({0, 0, 80.f, 80.f});
+        ellipseLayer.setPath(ellipsePath);
+        ellipseLayer.setFillColor({1.f, 0.5f, 0.f});
+        ellipseLayer.setOpacity(0.5f);
+        addShapeLayer(ellipseLayer);
     }
 
     void update()
     {
-        c.a += 0.02f;
+        opacity += 0.02f;
 
-        if (c.a >= 0.9f)
-            c.a = 0.1f;
+        if (opacity >= 0.9f)
+            opacity = 0.1f;
+
+        ellipseLayer.setOpacity(opacity);
 
         auto bounds = getBounds();
         x += dx;
@@ -56,11 +63,11 @@ struct AnimatedView final : View
             dx = -dx;
 
         setBounds({x, bounds.y, bounds.w, bounds.h});
-        repaint();
     }
 
-    Path p;
-    Color c {1.f, 0.5f, 0.f};
+    Path ellipsePath;
+    ShapeLayer ellipseLayer;
+    float opacity = 0.5f;
     float x = 50.f;
     float dx = 2.f;
     Threads::Timer timer {[&] { update(); }, 60};
@@ -92,9 +99,10 @@ struct ParentView final : View
         ctx.strokeRect({0, 0, bounds.w, bounds.h});
 
         ctx.setColor(Color {0.9f, 0.9f, 0.9f});
-        ctx.drawText("Text Rendering Example", {20.f, bounds.h - 40.f}, titleFont);
+        ctx.drawText("ShapeLayer Demo", {20.f, bounds.h - 40.f}, titleFont);
 
-        ctx.drawText("Using CoreText", {20.f, bounds.h - 65.f}, subtitleFont);
+        ctx.drawText(
+            "Using cached CAShapeLayer", {20.f, bounds.h - 65.f}, subtitleFont);
     }
 
     Font titleFont {"Helvetica-Bold", 24.f};

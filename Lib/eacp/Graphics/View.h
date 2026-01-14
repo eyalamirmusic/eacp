@@ -11,6 +11,8 @@ struct MouseEvent
     Point pos;
 };
 
+class ShapeLayer;
+
 class View
 {
 public:
@@ -30,8 +32,12 @@ public:
     void removeSubview(View& view);
     void removeFromParent();
 
+    void addShapeLayer(ShapeLayer& layer);
+    void removeShapeLayer(ShapeLayer& layer);
+
 private:
     std::vector<View*> subviews;
+    std::vector<ShapeLayer*> shapeLayers;
     View* parent = nullptr;
 
     struct Native;
