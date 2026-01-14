@@ -4,15 +4,13 @@
 #include <eacp/Graphics/Path.h>
 #include <eacp/Graphics/Font.h>
 #include <eacp/Threads/Timer.h>
-#include <string>
 
 using namespace eacp;
 using namespace Graphics;
-using namespace std::string_literals;
 
 struct ColoredView final : View
 {
-    ColoredView(Color colorToUse, const std::string& labelText = "")
+    ColoredView(Color colorToUse, const std::string& labelText)
         : color(colorToUse)
         , label(labelText)
     {
