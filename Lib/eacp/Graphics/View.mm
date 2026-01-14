@@ -30,6 +30,12 @@ namespace eacp::Graphics
     cppView->paint(nativeContext);
 }
 
+- (void)layout
+{
+    [super layout];
+    cppView->resized();
+}
+
 - (BOOL)isFlipped
 {
     return YES;
@@ -125,7 +131,7 @@ View::View()
 
 View::~View()
 {
-    for (auto* layer : shapeLayers)
+    for (auto* layer: shapeLayers)
         layer->detachFromLayer();
 
     shapeLayers.clear();
@@ -191,5 +197,22 @@ void View::removeShapeLayer(ShapeLayer& layer)
 {
     if (Vectors::eraseMatch(shapeLayers, &layer))
         layer.detachFromLayer();
+}
+
+void View::resized() {}
+
+Rect View::getLocalBounds() const
+{
+    auto b = getBounds();
+    b.x = 0.f;
+    b.y = 0.f;
+
+    return b;
+}
+
+void View::addChildren(View::ChildViews views)
+{
+    for (auto& view: views)
+        addSubview(view);
 }
 } // namespace eacp::Graphics

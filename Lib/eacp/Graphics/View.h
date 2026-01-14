@@ -15,6 +15,7 @@ class ShapeLayer;
 
 class View
 {
+    using ChildViews = std::initializer_list<std::reference_wrapper<View>>;
 public:
     View();
     virtual ~View();
@@ -24,10 +25,13 @@ public:
 
     virtual void paint(Context&) {};
     virtual void mouseDown(const MouseEvent&) {}
+    virtual void resized();
 
     Rect getBounds() const;
+    Rect getLocalBounds() const;
     void setBounds(const Rect& bounds);
 
+    void addChildren(ChildViews views);
     void addSubview(View& view);
     void removeSubview(View& view);
     void removeFromParent();

@@ -73,30 +73,40 @@ struct AnimatedView final : View
     Threads::Timer timer {[&] { update(); }, 60};
 };
 
-struct ParentView final : View
+struct FilledRect final : View
 {
-    ParentView()
+    FilledRect(const Color& colorToUse)
     {
-        child1.setBounds({50, 50, 150, 100});
-        child2.setBounds({220, 50, 150, 100});
-        child3.setBounds({390, 50, 150, 100});
-        animatedChild.setBounds({50, 200, 100, 100});
-
-        addSubview(child1);
-        addSubview(child2);
-        addSubview(child3);
-        addSubview(animatedChild);
+        layer.setFillColor(colorToUse);
+        addShapeLayer(layer);
     }
 
+    void resized() override
+    {
+        path.addRect(getLocalBounds());
+        layer.setPath(path);
+        layer.setBounds(getLocalBounds());
+    }
+
+    Path path;
+    ShapeLayer layer;
+};
+
+struct StrokeRect final : View
+{
+    void paint(Context& ctx) override
+    {
+        ctx.setColor(Color {0.5f, 0.5f, 0.5f});
+        ctx.setLineWidth(2.f);
+        ctx.strokeRect(getLocalBounds());
+    }
+};
+
+struct TextDisplay final : View
+{
     void paint(Context& ctx) override
     {
         auto bounds = getBounds();
-        ctx.setColor(Color {0.1f, 0.1f, 0.1f});
-        ctx.fillRect({0, 0, bounds.w, bounds.h});
-
-        ctx.setColor(Color {0.5f, 0.5f, 0.5f});
-        ctx.setLineWidth(2.f);
-        ctx.strokeRect({0, 0, bounds.w, bounds.h});
 
         ctx.setColor(Color {0.9f, 0.9f, 0.9f});
         ctx.drawText("ShapeLayer Demo", {20.f, bounds.h - 40.f}, titleFont);
@@ -107,11 +117,33 @@ struct ParentView final : View
 
     Font titleFont {"Helvetica-Bold", 24.f};
     Font subtitleFont {"Helvetica", 14.f};
+};
 
+struct ParentView final : View
+{
+    ParentView()
+    {
+        addChildren({rec, stroke, child1, child2, child3, animatedChild, text});
+    }
+
+    void resized() override
+    {
+        child1.setBounds({50, 50, 150, 100});
+        child2.setBounds({220, 50, 150, 100});
+        child3.setBounds({390, 50, 150, 100});
+        animatedChild.setBounds({50, 200, 100, 100});
+        rec.setBounds(getLocalBounds());
+        stroke.setBounds(getLocalBounds());
+        text.setBounds(getLocalBounds());
+    }
+
+    FilledRect rec {{0.1f, 0.1f, 0.1f}};
+    StrokeRect stroke;
     ColoredView child1 {{0.2f, 0.4f, 0.8f}, "Blue"};
     ColoredView child2 {{0.4f, 0.1f, 0.3f, 0.5f}, "Purple"};
     ColoredView child3 {{1.0, 0.f, 0.1f, 0.7f}, "Red"};
     AnimatedView animatedChild;
+    TextDisplay text;
 };
 
 struct MyApp
