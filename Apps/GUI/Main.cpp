@@ -4,6 +4,7 @@
 #include <eacp/Graphics/Path.h>
 #include <eacp/Graphics/Font.h>
 #include <eacp/Graphics/ShapeLayer.h>
+#include <eacp/Graphics/TextLayer.h>
 #include <eacp/Threads/Timer.h>
 
 using namespace eacp;
@@ -13,27 +14,30 @@ struct ColoredView final : View
 {
     ColoredView(Color colorToUse, const std::string& labelText)
         : color(colorToUse)
-        , label(labelText)
     {
         backgroundPath.addRoundedRect({0, 0, 150, 100}, 10.f);
         backgroundLayer.setPath(backgroundPath);
         backgroundLayer.setFillColor(color);
         addShapeLayer(backgroundLayer);
+
+        textLayer.setText(labelText);
+        textLayer.setFont(labelFont);
+        textLayer.setColor({1.f, 1.f, 1.f});
+        addTextLayer(textLayer);
     }
 
-    void paint(Context& ctx) override
+    void resized() override
     {
-        ctx.setColor(textColor);
-        auto bounds = getBounds();
-        ctx.drawText(label, Point {10.f, bounds.h / 2.f - 7.f}, labelFont);
+        auto bounds = getLocalBounds();
+        textLayer.setBounds({0, 0, bounds.w, bounds.h});
+        textLayer.setPosition({10.f, bounds.h / 2.f - 10.f});
     }
 
-    Color textColor {1.f, 1.f, 1.f};
     Font labelFont {"Helvetica-Bold", 14.f};
     Color color;
-    std::string label;
     Path backgroundPath;
     ShapeLayer backgroundLayer;
+    TextLayer textLayer;
 };
 
 struct AnimatedView final : View
@@ -106,19 +110,33 @@ struct StrokeRect final : View
 
 struct TextDisplay final : View
 {
-    void paint(Context& ctx) override
+    TextDisplay()
     {
-        auto bounds = getBounds();
+        titleLayer.setText("TextLayer Demo");
+        titleLayer.setFont(titleFont);
+        titleLayer.setColor({0.9f, 0.9f, 0.9f});
+        addTextLayer(titleLayer);
 
-        ctx.setColor(Color {0.9f, 0.9f, 0.9f});
-        ctx.drawText("ShapeLayer Demo", {20.f, bounds.h - 40.f}, titleFont);
+        subtitleLayer.setText("Using cached CATextLayer");
+        subtitleLayer.setFont(subtitleFont);
+        subtitleLayer.setColor({0.9f, 0.9f, 0.9f});
+        addTextLayer(subtitleLayer);
+    }
 
-        ctx.drawText(
-            "Using cached CAShapeLayer", {20.f, bounds.h - 65.f}, subtitleFont);
+    void resized() override
+    {
+        auto bounds = getLocalBounds();
+        titleLayer.setBounds({0, 0, 300, 30});
+        titleLayer.setPosition({20.f, bounds.h - 40.f});
+
+        subtitleLayer.setBounds({0, 0, 300, 20});
+        subtitleLayer.setPosition({20.f, bounds.h - 65.f});
     }
 
     Font titleFont {"Helvetica-Bold", 24.f};
     Font subtitleFont {"Helvetica", 14.f};
+    TextLayer titleLayer;
+    TextLayer subtitleLayer;
 };
 
 struct ParentView final : View

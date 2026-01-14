@@ -2,6 +2,7 @@
 #import <Cocoa/Cocoa.h>
 #include "View.h"
 #include "ShapeLayer.h"
+#include "TextLayer.h"
 #include "MacGraphicsContext.h"
 #include "MacGraphicUtils.h"
 #include "../ObjC/ObjC.h"
@@ -132,10 +133,14 @@ View::View()
 
 View::~View()
 {
-    for (auto* layer: shapeLayers)
+    for (auto* layer : shapeLayers)
+        layer->detachFromLayer();
+
+    for (auto* layer : textLayers)
         layer->detachFromLayer();
 
     shapeLayers.clear();
+    textLayers.clear();
     removeFromParent();
 }
 
@@ -213,7 +218,22 @@ Rect View::getLocalBounds() const
 
 void View::addChildren(View::ChildViews views)
 {
-    for (auto& view: views)
+    for (auto& view : views)
         addSubview(view);
+}
+
+void View::addTextLayer(TextLayer& layer)
+{
+    if (Vectors::contains(textLayers, &layer))
+        return;
+
+    textLayers.push_back(&layer);
+    layer.attachToLayer(impl->getLayer());
+}
+
+void View::removeTextLayer(TextLayer& layer)
+{
+    if (Vectors::eraseMatch(textLayers, &layer))
+        layer.detachFromLayer();
 }
 } // namespace eacp::Graphics

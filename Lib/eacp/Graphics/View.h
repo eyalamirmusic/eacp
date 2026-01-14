@@ -12,6 +12,7 @@ struct MouseEvent
 };
 
 class ShapeLayer;
+class TextLayer;
 
 class View
 {
@@ -39,9 +40,13 @@ public:
     void addShapeLayer(ShapeLayer& layer);
     void removeShapeLayer(ShapeLayer& layer);
 
+    void addTextLayer(TextLayer& layer);
+    void removeTextLayer(TextLayer& layer);
+
 private:
     std::vector<View*> subviews;
     std::vector<ShapeLayer*> shapeLayers;
+    std::vector<TextLayer*> textLayers;
     View* parent = nullptr;
 
     struct Native;

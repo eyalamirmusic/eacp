@@ -19,4 +19,11 @@ Rect toRect(const CGRect& r)
             (float) r.size.width,
             (float) r.size.height};
 }
+
+CFRef<CGColorRef> toCGColor(const Color& c)
+{
+    static auto colorSpace = CFRef<CGColorSpaceRef>(CGColorSpaceCreateDeviceRGB());
+    CGFloat components[4] = {c.r, c.g, c.b, c.a};
+    return {CGColorCreate(colorSpace, components)};
+}
 }

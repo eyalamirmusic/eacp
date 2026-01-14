@@ -23,5 +23,6 @@ if (APPLE)
             Graphics/Font.mm
             Graphics/MacGraphicsContext.mm
             Graphics/MacGraphicUtils.mm
-            Graphics/ShapeLayer.mm)
+            Graphics/ShapeLayer.mm
+            Graphics/TextLayer.mm)
 endif ()

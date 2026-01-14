@@ -1,19 +1,9 @@
-
 #import <QuartzCore/QuartzCore.h>
 #include "ShapeLayer.h"
 #include "MacGraphicUtils.h"
-#include "../ObjC/ObjC.h"
-#include "../ObjC/CFRef.h"
 
 namespace eacp::Graphics
 {
-
-static CFRef<CGColorRef> toCGColor(const Color& c)
-{
-    static auto colorSpace = CFRef<CGColorSpaceRef>(CGColorSpaceCreateDeviceRGB());
-    CGFloat components[4] = {c.r, c.g, c.b, c.a};
-    return {CGColorCreate(colorSpace, components)};
-}
 
 struct ShapeLayer::Native
 {
