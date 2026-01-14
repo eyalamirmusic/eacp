@@ -51,10 +51,6 @@ struct AnimatedView final : View
         addShapeLayer(ellipseLayer);
     }
 
-    void resized() override {
-
-    }
-
     void update()
     {
         auto trans = AnimationTransaction();
@@ -127,6 +123,7 @@ struct TextDisplay final : View
 
     void resized() override
     {
+        auto trans = AnimationTransaction();
         auto bounds = getLocalBounds();
         titleLayer.setBounds({0, 0, 300, 30});
         titleLayer.setPosition({20.f, bounds.h - 40.f});
