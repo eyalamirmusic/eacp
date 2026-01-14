@@ -37,61 +37,36 @@ struct ShapeLayer::Native
         layer.get().anchorPoint = CGPointMake(0, 0);
     }
 
-    void setPath(CGPathRef path)
-    {
-        auto action = CATransactionAction();
-        layer.get().path = path;
-    }
+    ~Native() { detach(); }
 
-    void clearPath()
-    {
-        auto action = CATransactionAction();
-        layer.get().path = nil;
-    }
+    void setPath(CGPathRef path) { layer.get().path = path; }
+
+    void clearPath() { layer.get().path = nil; }
 
     void setFillColor(const Color& color)
     {
-        auto action = CATransactionAction();
         auto cgColor = toCGColor(color);
         layer.get().fillColor = cgColor;
     }
 
     void setStrokeColor(const Color& color)
     {
-        auto action = CATransactionAction();
         auto cgColor = toCGColor(color);
         layer.get().strokeColor = cgColor;
     }
 
-    void setStrokeWidth(float width)
-    {
-        auto action = CATransactionAction();
-        layer.get().lineWidth = width;
-    }
+    void setStrokeWidth(float width) { layer.get().lineWidth = width; }
 
-    void setBounds(const Rect& bounds)
-    {
-        auto action = CATransactionAction();
-        layer.get().bounds = toCGRect(bounds);
-    }
+    void setBounds(const Rect& bounds) { layer.get().bounds = toCGRect(bounds); }
 
     void setPosition(const Point& pos)
     {
-        auto action = CATransactionAction();
         layer.get().position = CGPointMake(pos.x, pos.y);
     }
 
-    void setHidden(bool hidden)
-    {
-        auto action = CATransactionAction();
-        layer.get().hidden = hidden;
-    }
+    void setHidden(bool hidden) { layer.get().hidden = hidden; }
 
-    void setOpacity(float opacity)
-    {
-        auto action = CATransactionAction();
-        layer.get().opacity = opacity;
-    }
+    void setOpacity(float opacity) { layer.get().opacity = opacity; }
 
     void attachTo(CALayer* parentLayer)
     {
@@ -120,8 +95,6 @@ ShapeLayer::ShapeLayer()
     : impl()
 {
 }
-
-ShapeLayer::~ShapeLayer() = default;
 
 void ShapeLayer::setPath(const Path& path)
 {

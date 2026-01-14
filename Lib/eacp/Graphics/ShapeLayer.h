@@ -13,10 +13,6 @@ class ShapeLayer
 {
 public:
     ShapeLayer();
-    ~ShapeLayer();
-
-    ShapeLayer(const ShapeLayer&) = delete;
-    ShapeLayer& operator=(const ShapeLayer&) = delete;
 
     void setPath(const Path& path);
     void clearPath();
