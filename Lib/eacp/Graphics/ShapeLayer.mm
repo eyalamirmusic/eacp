@@ -10,21 +10,10 @@ namespace eacp::Graphics
 
 static CFRef<CGColorRef> toCGColor(const Color& c)
 {
+    static auto colorSpace = CFRef<CGColorSpaceRef>(CGColorSpaceCreateDeviceRGB());
     CGFloat components[4] = {c.r, c.g, c.b, c.a};
-    auto colorSpace = CFRef<CGColorSpaceRef>(CGColorSpaceCreateDeviceRGB());
     return {CGColorCreate(colorSpace, components)};
 }
-
-struct CATransactionAction
-{
-    CATransactionAction()
-    {
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-    }
-
-    ~CATransactionAction() { [CATransaction commit]; }
-};
 
 struct ShapeLayer::Native
 {
@@ -151,4 +140,14 @@ void ShapeLayer::detachFromLayer()
     impl->detach();
 }
 
+AnimationTransaction::AnimationTransaction()
+{
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+}
+
+AnimationTransaction::~AnimationTransaction()
+{
+    [CATransaction commit];
+}
 } // namespace eacp::Graphics

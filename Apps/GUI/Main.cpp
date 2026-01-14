@@ -45,10 +45,12 @@ struct AnimatedView final : View
         ellipseLayer.setFillColor({1.f, 0.5f, 0.f});
         ellipseLayer.setOpacity(0.5f);
         addShapeLayer(ellipseLayer);
+        update();
     }
 
     void update()
     {
+        auto trans = AnimationTransaction();
         opacity += 0.02f;
 
         if (opacity >= 0.9f)

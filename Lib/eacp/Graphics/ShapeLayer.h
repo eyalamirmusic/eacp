@@ -9,6 +9,12 @@ namespace eacp::Graphics
 
 class View;
 
+struct AnimationTransaction
+{
+    AnimationTransaction();
+    ~AnimationTransaction();
+};
+
 class ShapeLayer
 {
 public:

@@ -6,6 +6,7 @@
 #include "MacGraphicUtils.h"
 #include "../ObjC/ObjC.h"
 #include "../Utils/Vectors.h"
+#include <iostream>
 
 namespace eacp::Graphics
 {
