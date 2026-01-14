@@ -45,11 +45,14 @@ struct AnimatedView final : View
     AnimatedView()
     {
         ellipsePath.addEllipse({0, 0, 80.f, 80.f});
-        ellipseLayer.setPath(ellipsePath);
         ellipseLayer.setFillColor({1.f, 0.5f, 0.f});
         ellipseLayer.setOpacity(0.5f);
+        ellipseLayer.setPath(ellipsePath);
         addShapeLayer(ellipseLayer);
-        update();
+    }
+
+    void resized() override {
+
     }
 
     void update()
@@ -62,13 +65,12 @@ struct AnimatedView final : View
 
         ellipseLayer.setOpacity(opacity);
 
-        auto bounds = getBounds();
         x += dx;
 
         if (x < 10 || x > 500)
             dx = -dx;
 
-        setBounds({x, bounds.y, bounds.w, bounds.h});
+        ellipseLayer.setPosition({x, 0.f});
     }
 
     Path ellipsePath;
@@ -151,7 +153,7 @@ struct ParentView final : View
         child1.setBounds({50, 50, 150, 100});
         child2.setBounds({220, 50, 150, 100});
         child3.setBounds({390, 50, 150, 100});
-        animatedChild.setBounds({50, 200, 100, 100});
+        animatedChild.setBounds(getLocalBounds());
         rec.setBounds(getLocalBounds());
         stroke.setBounds(getLocalBounds());
         text.setBounds(getLocalBounds());
