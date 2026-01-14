@@ -1,10 +1,9 @@
 #pragma once
 
 #include <string>
-#include <memory>
 #include <vector>
 #include "View.h"
-#include "../App/App.h"
+#include <eacp/Core/App/App.h>
 
 namespace eacp::Graphics
 {

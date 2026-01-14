@@ -1,6 +1,6 @@
 #import <QuartzCore/QuartzCore.h>
 #include "ShapeLayer.h"
-#include "MacGraphicUtils.h"
+#include "../Primitives/MacGraphicUtils.h"
 
 namespace eacp::Graphics
 {

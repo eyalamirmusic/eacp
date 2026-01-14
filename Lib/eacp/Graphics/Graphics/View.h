@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Utils/Common.h"
+#include <eacp/Core/Utils/Common.h>
 #include "GraphicsContext.h"
 
 namespace eacp::Graphics
@@ -17,6 +17,7 @@ class TextLayer;
 class View
 {
     using ChildViews = std::initializer_list<std::reference_wrapper<View>>;
+
 public:
     View();
     virtual ~View();

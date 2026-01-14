@@ -1,8 +1,7 @@
 #pragma once
 
-#include <string>
-#include "Path.h"
-#include "Font.h"
+#include "../Primitives/Path.h"
+#include "../Primitives/Font.h"
 
 namespace eacp::Graphics
 {

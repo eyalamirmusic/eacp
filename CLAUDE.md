@@ -25,8 +25,10 @@ Output executables:
 - `build/Apps/Console/Console` (command-line app)
 
 ## Architecture
+Files are added in a unity-build style, for example new Graphics files are added
+to Graphics.cpp or Graphics.mm and NOT directly to the CMakeLists.txt
 
-### Core Library (`Lib/eacp/`)
+### Core Library (`Lib/eacp/Core`)
 
 **App/** - Application lifecycle management
 - `App<T>`: Template wrapper for user-defined app structs

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "MacGraphicUtils.h"
+#include "../Primitives/MacGraphicUtils.h"
 #include "GraphicsContext.h"
-#include "Path.h"
-#include "Font.h"
+#include "../Primitives/Path.h"
+#include "../Primitives/Font.h"
 
 namespace eacp::Graphics
 {

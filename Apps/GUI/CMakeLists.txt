@@ -1,5 +1,5 @@
 add_executable(GUI Main.cpp)
-target_link_libraries(GUI PRIVATE eacp)
+target_link_libraries(GUI PRIVATE eacp-graphics)
 
 set_target_properties(GUI PROPERTIES
         MACOSX_BUNDLE TRUE

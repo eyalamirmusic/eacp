@@ -4,10 +4,7 @@
 #include "ShapeLayer.h"
 #include "TextLayer.h"
 #include "MacGraphicsContext.h"
-#include "MacGraphicUtils.h"
-#include "../ObjC/ObjC.h"
-#include "../Utils/Vectors.h"
-#include <iostream>
+#include <eacp/Core/Utils/Vectors.h>
 
 namespace eacp::Graphics
 {
@@ -133,10 +130,10 @@ View::View()
 
 View::~View()
 {
-    for (auto* layer : shapeLayers)
+    for (auto* layer: shapeLayers)
         layer->detachFromLayer();
 
-    for (auto* layer : textLayers)
+    for (auto* layer: textLayers)
         layer->detachFromLayer();
 
     shapeLayers.clear();
@@ -218,7 +215,7 @@ Rect View::getLocalBounds() const
 
 void View::addChildren(View::ChildViews views)
 {
-    for (auto& view : views)
+    for (auto& view: views)
         addSubview(view);
 }
 

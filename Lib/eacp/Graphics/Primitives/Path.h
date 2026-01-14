@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Primitives.h"
-#include "../Utils/Common.h"
+#include <eacp/Core/Utils/Common.h>
 
 namespace eacp::Graphics
 {

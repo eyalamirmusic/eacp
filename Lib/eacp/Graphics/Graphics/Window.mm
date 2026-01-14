@@ -1,5 +1,5 @@
 #include "Window.h"
-#include "../ObjC/ObjC.h"
+#include "../Primitives/MacGraphicUtils.h"
 #import <Cocoa/Cocoa.h>
 
 @interface WindowDelegateBridge : NSObject <NSWindowDelegate>

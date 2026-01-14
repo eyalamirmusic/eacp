@@ -1,22 +1,30 @@
 #pragma once
 
-#include "Font.h"
-#include "Primitives.h"
-#include "../Utils/Common.h"
+#include "../Primitives/Path.h"
+#include <eacp/Core/Utils/Common.h>
 
 namespace eacp::Graphics
 {
 
 class View;
 
-class TextLayer
+struct AnimationTransaction
+{
+    AnimationTransaction();
+    ~AnimationTransaction();
+};
+
+class ShapeLayer
 {
 public:
-    TextLayer();
+    ShapeLayer();
 
-    void setText(const std::string& text);
-    void setFont(const Font& font);
-    void setColor(const Color& color);
+    void setPath(const Path& path);
+    void clearPath();
+
+    void setFillColor(const Color& color);
+    void setStrokeColor(const Color& color);
+    void setStrokeWidth(float width);
 
     void setBounds(const Rect& bounds);
     void setPosition(const Point& position);

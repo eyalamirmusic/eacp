@@ -1,11 +1,5 @@
-
-#include <eacp/App/App.h>
-#include <eacp/Graphics/Window.h>
-#include <eacp/Graphics/Path.h>
-#include <eacp/Graphics/Font.h>
-#include <eacp/Graphics/ShapeLayer.h>
-#include <eacp/Graphics/TextLayer.h>
-#include <eacp/Threads/Timer.h>
+#include <eacp/Graphics/Graphics.h>
+#include <eacp/Core/Core.h>
 
 using namespace eacp;
 using namespace Graphics;

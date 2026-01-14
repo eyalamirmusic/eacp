@@ -1,8 +1,10 @@
 #pragma once
 
 #include <CoreGraphics/CoreGraphics.h>
-#include "../ObjC/CFRef.h"
-#include "../ObjC/ObjC.h"
+
+#include <eacp/Core/ObjC/CFRef.h>
+#include <eacp/Core/ObjC/ObjC.h>
+
 #include "Primitives.h"
 
 namespace eacp::Graphics

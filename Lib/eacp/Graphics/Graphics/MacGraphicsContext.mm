@@ -1,6 +1,5 @@
 #include "MacGraphicsContext.h"
 #import <CoreText/CoreText.h>
-#include "../ObjC/CFRef.h"
 
 namespace eacp::Graphics
 {

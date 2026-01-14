@@ -1,7 +1,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <CoreText/CoreText.h>
 #include "TextLayer.h"
-#include "MacGraphicUtils.h"
+#include "../Primitives/MacGraphicUtils.h"
 
 namespace eacp::Graphics
 {
