@@ -20,5 +20,7 @@ if (APPLE)
             Graphics/View.mm
 
             Graphics/Path.mm
+            Graphics/Font.mm
+            Graphics/MacGraphicsContext.mm
             Graphics/MacGraphicUtils.mm)
 endif ()

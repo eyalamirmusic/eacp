@@ -2,15 +2,19 @@
 #include <eacp/App/App.h>
 #include <eacp/Graphics/Window.h>
 #include <eacp/Graphics/Path.h>
+#include <eacp/Graphics/Font.h>
 #include <eacp/Threads/Timer.h>
+#include <string>
 
 using namespace eacp;
 using namespace Graphics;
+using namespace std::string_literals;
 
 struct ColoredView final : View
 {
-    ColoredView(Color colorToUse)
+    ColoredView(Color colorToUse, const std::string& labelText = "")
         : color(colorToUse)
+        , label(labelText)
     {
     }
 
@@ -19,9 +23,17 @@ struct ColoredView final : View
         ctx.setColor(color);
         auto bounds = getBounds();
         ctx.fillRoundedRect({0, 0, bounds.w, bounds.h}, 10.f);
+        
+        if (!label.empty())
+        {
+            ctx.setColor(Color{1.f, 1.f, 1.f});
+            Font labelFont("Helvetica-Bold", 14.f);
+            ctx.drawText(label, Point{10.f, bounds.h / 2.f - 7.f}, labelFont);
+        }
     }
 
     Color color;
+    std::string label;
 };
 
 struct AnimatedView final : View
@@ -82,11 +94,20 @@ struct ParentView final : View
         ctx.setColor(Color {0.5f, 0.5f, 0.5f});
         ctx.setLineWidth(2.f);
         ctx.strokeRect({0, 0, bounds.w, bounds.h});
+        
+        // Draw title text
+        ctx.setColor(Color {0.9f, 0.9f, 0.9f});
+        Font titleFont("Helvetica-Bold", 24.f);
+        ctx.drawText("Text Rendering Example", Point{20.f, bounds.h - 40.f}, titleFont);
+        
+        // Draw subtitle
+        Font subtitleFont("Helvetica", 14.f);
+        ctx.drawText("Using CoreText", Point{20.f, bounds.h - 65.f}, subtitleFont);
     }
 
-    ColoredView child1 {{0.2f, 0.4f, 0.8f}};
-    ColoredView child2 {{0.4f, 0.1f, 0.3f, 0.5f}};
-    ColoredView child3 {{1.0, 0.f, 0.1f, 0.7f}};
+    ColoredView child1 {{0.2f, 0.4f, 0.8f}, "Blue"s};
+    ColoredView child2 {{0.4f, 0.1f, 0.3f, 0.5f}, "Purple"s};
+    ColoredView child3 {{1.0, 0.f, 0.1f, 0.7f}, "Red"s};
     AnimatedView animatedChild;
 };
 

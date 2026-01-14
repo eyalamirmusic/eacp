@@ -3,6 +3,7 @@
 #include "MacGraphicUtils.h"
 #include "GraphicsContext.h"
 #include "Path.h"
+#include "Font.h"
 
 namespace eacp::Graphics
 {
@@ -12,6 +13,7 @@ public:
 
     explicit MacOSContext(CGContextRef contextToUse)
         : context(contextToUse)
+        , currentColor{1.0f, 1.0f, 1.0f, 1.0f}
     {
         saveState();
     }
@@ -36,6 +38,7 @@ public:
 
     void setColor(const Color& color) override
     {
+        currentColor = color;
         CGContextSetRGBFillColor(context, color.r, color.g, color.b, color.a);
         CGContextSetRGBStrokeColor(context, color.r, color.g, color.b, color.a);
     }
@@ -82,7 +85,10 @@ public:
         strokePath(p);
     }
 
+    void drawText(const std::string& text, const Point& position, const Font& font) override;
+
 private:
     CGContextRef context;
+    Color currentColor;
 };
 } // namespace eacp::Graphics
