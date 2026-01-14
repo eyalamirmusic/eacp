@@ -1,11 +1,11 @@
-#import <QuartzCore/QuartzCore.h>
+#include "NativeLayer.h"
 #include "ShapeLayer.h"
 #include "../Primitives/MacGraphicUtils.h"
 
 namespace eacp::Graphics
 {
 
-struct ShapeLayer::Native
+struct ShapeLayer::Native : public MacLayer
 {
     Native()
     {
@@ -16,7 +16,7 @@ struct ShapeLayer::Native
         layer.get().anchorPoint = CGPointMake(0, 0);
     }
 
-    ~Native() { detach(); }
+    CALayer* getLayer() override { return layer.get(); }
 
     void setPath(CGPathRef path) { layer.get().path = path; }
 
@@ -47,27 +47,7 @@ struct ShapeLayer::Native
 
     void setOpacity(float opacity) { layer.get().opacity = opacity; }
 
-    void attachTo(CALayer* parentLayer)
-    {
-        if (parentLayer && !attached)
-        {
-            layer.get().contentsScale = parentLayer.contentsScale;
-            [parentLayer addSublayer:layer.get()];
-            attached = true;
-        }
-    }
-
-    void detach()
-    {
-        if (attached)
-        {
-            [layer.get() removeFromSuperlayer];
-            attached = false;
-        }
-    }
-
     ObjC::Ptr<CAShapeLayer> layer;
-    bool attached = false;
 };
 
 ShapeLayer::ShapeLayer()
@@ -120,14 +100,9 @@ void ShapeLayer::setOpacity(float opacity)
     impl->setOpacity(opacity);
 }
 
-void ShapeLayer::attachToLayer(void* nativeLayer)
+void* ShapeLayer::getNativeLayer()
 {
-    impl->attachTo((__bridge CALayer*) nativeLayer);
-}
-
-void ShapeLayer::detachFromLayer()
-{
-    impl->detach();
+    return impl.get();
 }
 
 AnimationTransaction::AnimationTransaction()

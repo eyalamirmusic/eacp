@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Utils/Common.h>
 #include "GraphicsContext.h"
+#include "Layer.h"
 
 namespace eacp::Graphics
 {
@@ -10,9 +11,6 @@ struct MouseEvent
 {
     Point pos;
 };
-
-class ShapeLayer;
-class TextLayer;
 
 class View
 {
@@ -38,16 +36,12 @@ public:
     void removeSubview(View& view);
     void removeFromParent();
 
-    void addShapeLayer(ShapeLayer& layer);
-    void removeShapeLayer(ShapeLayer& layer);
-
-    void addTextLayer(TextLayer& layer);
-    void removeTextLayer(TextLayer& layer);
+    void addLayer(Layer& layer);
+    void removeLayer(Layer& layer);
 
 private:
     std::vector<View*> subviews;
-    std::vector<ShapeLayer*> shapeLayers;
-    std::vector<TextLayer*> textLayers;
+    std::vector<Layer*> layers;
     View* parent = nullptr;
 
     struct Native;

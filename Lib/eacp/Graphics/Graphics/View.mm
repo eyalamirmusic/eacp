@@ -130,14 +130,9 @@ View::View()
 
 View::~View()
 {
-    for (auto* layer: shapeLayers)
+    for (auto* layer: layers)
         layer->detachFromLayer();
 
-    for (auto* layer: textLayers)
-        layer->detachFromLayer();
-
-    shapeLayers.clear();
-    textLayers.clear();
     removeFromParent();
 }
 
@@ -187,18 +182,18 @@ void View::removeFromParent()
     parent = nullptr;
 }
 
-void View::addShapeLayer(ShapeLayer& layer)
+void View::addLayer(Layer& layer)
 {
-    if (Vectors::contains(shapeLayers, &layer))
+    if (Vectors::contains(layers, &layer))
         return;
 
-    shapeLayers.push_back(&layer);
+    layers.push_back(&layer);
     layer.attachToLayer(impl->getLayer());
 }
 
-void View::removeShapeLayer(ShapeLayer& layer)
+void View::removeLayer(Layer& layer)
 {
-    if (Vectors::eraseMatch(shapeLayers, &layer))
+    if (Vectors::eraseMatch(layers, &layer))
         layer.detachFromLayer();
 }
 
@@ -217,20 +212,5 @@ void View::addChildren(View::ChildViews views)
 {
     for (auto& view: views)
         addSubview(view);
-}
-
-void View::addTextLayer(TextLayer& layer)
-{
-    if (Vectors::contains(textLayers, &layer))
-        return;
-
-    textLayers.push_back(&layer);
-    layer.attachToLayer(impl->getLayer());
-}
-
-void View::removeTextLayer(TextLayer& layer)
-{
-    if (Vectors::eraseMatch(textLayers, &layer))
-        layer.detachFromLayer();
 }
 } // namespace eacp::Graphics

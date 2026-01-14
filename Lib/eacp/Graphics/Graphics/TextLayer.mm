@@ -1,11 +1,12 @@
 #import <QuartzCore/QuartzCore.h>
 #import <CoreText/CoreText.h>
 #include "TextLayer.h"
+#include "NativeLayer.h"
 #include "../Primitives/MacGraphicUtils.h"
 
 namespace eacp::Graphics
 {
-struct TextLayer::Native
+struct TextLayer::Native : MacLayer
 {
     Native()
     {
@@ -16,7 +17,7 @@ struct TextLayer::Native
         layer.get().alignmentMode = kCAAlignmentLeft;
     }
 
-    ~Native() { detach(); }
+    CALayer* getLayer() override { return layer.get(); }
 
     void setText(const std::string& text)
     {
@@ -47,27 +48,7 @@ struct TextLayer::Native
 
     void setOpacity(float opacity) { layer.get().opacity = opacity; }
 
-    void attachTo(CALayer* parentLayer)
-    {
-        if (parentLayer && !attached)
-        {
-            layer.get().contentsScale = parentLayer.contentsScale;
-            [parentLayer addSublayer:layer.get()];
-            attached = true;
-        }
-    }
-
-    void detach()
-    {
-        if (attached)
-        {
-            [layer.get() removeFromSuperlayer];
-            attached = false;
-        }
-    }
-
     ObjC::Ptr<CATextLayer> layer;
-    bool attached = false;
 };
 
 TextLayer::TextLayer()
@@ -110,14 +91,8 @@ void TextLayer::setOpacity(float opacity)
     impl->setOpacity(opacity);
 }
 
-void TextLayer::attachToLayer(void* nativeLayer)
+void* TextLayer::getNativeLayer()
 {
-    impl->attachTo((__bridge CALayer*) nativeLayer);
+    return impl.get();
 }
-
-void TextLayer::detachFromLayer()
-{
-    impl->detach();
-}
-
 } // namespace eacp::Graphics

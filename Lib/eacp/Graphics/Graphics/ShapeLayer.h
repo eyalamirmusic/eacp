@@ -1,20 +1,18 @@
 #pragma once
 
 #include "../Primitives/Path.h"
+#include "Layer.h"
 #include <eacp/Core/Utils/Common.h>
 
 namespace eacp::Graphics
 {
-
-class View;
-
 struct AnimationTransaction
 {
     AnimationTransaction();
     ~AnimationTransaction();
 };
 
-class ShapeLayer
+class ShapeLayer : public Layer
 {
 public:
     ShapeLayer();
@@ -33,9 +31,7 @@ public:
     void setOpacity(float opacity);
 
 private:
-    friend class View;
-    void attachToLayer(void* nativeLayer);
-    void detachFromLayer();
+    void* getNativeLayer() override;
 
     struct Native;
     Pimpl<Native> impl;

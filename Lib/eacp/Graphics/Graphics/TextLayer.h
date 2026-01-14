@@ -1,13 +1,12 @@
 #pragma once
 
 #include "../Primitives/Font.h"
+#include "Layer.h"
 
 namespace eacp::Graphics
 {
 
-class View;
-
-class TextLayer
+class TextLayer: public Layer
 {
 public:
     TextLayer();
@@ -19,14 +18,12 @@ public:
     void setBounds(const Rect& bounds);
     void setPosition(const Point& position);
 
+    void* getNativeLayer() override;
+
     void setHidden(bool hidden);
     void setOpacity(float opacity);
 
 private:
-    friend class View;
-    void attachToLayer(void* nativeLayer);
-    void detachFromLayer();
-
     struct Native;
     Pimpl<Native> impl;
 };

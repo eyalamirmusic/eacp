@@ -3,6 +3,7 @@
 #include "Graphics/TextLayer.mm"
 #include "Graphics/View.mm"
 #include "Graphics/Window.mm"
+#include "Graphics/Layer.mm"
 
 #include "Primitives/MacGraphicUtils.mm"
 #include "Primitives/Font.mm"

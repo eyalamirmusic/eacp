@@ -12,12 +12,12 @@ struct ColoredView final : View
         backgroundPath.addRoundedRect({0, 0, 150, 100}, 10.f);
         backgroundLayer.setPath(backgroundPath);
         backgroundLayer.setFillColor(color);
-        addShapeLayer(backgroundLayer);
+        addLayer(backgroundLayer);
 
         textLayer.setText(labelText);
         textLayer.setFont(labelFont);
         textLayer.setColor({1.f, 1.f, 1.f});
-        addTextLayer(textLayer);
+        addLayer(textLayer);
     }
 
     void resized() override
@@ -42,7 +42,7 @@ struct AnimatedView final : View
         ellipseLayer.setFillColor({1.f, 0.5f, 0.f});
         ellipseLayer.setOpacity(0.5f);
         ellipseLayer.setPath(ellipsePath);
-        addShapeLayer(ellipseLayer);
+        addLayer(ellipseLayer);
     }
 
     void update()
@@ -76,7 +76,7 @@ struct FilledRect final : View
     FilledRect(const Color& colorToUse)
     {
         layer.setFillColor(colorToUse);
-        addShapeLayer(layer);
+        addLayer(layer);
     }
 
     void resized() override
@@ -107,12 +107,12 @@ struct TextDisplay final : View
         titleLayer.setText("TextLayer Demo");
         titleLayer.setFont(titleFont);
         titleLayer.setColor({0.9f, 0.9f, 0.9f});
-        addTextLayer(titleLayer);
+        addLayer(titleLayer);
 
         subtitleLayer.setText("Using cached CATextLayer");
         subtitleLayer.setFont(subtitleFont);
         subtitleLayer.setColor({0.9f, 0.9f, 0.9f});
-        addTextLayer(subtitleLayer);
+        addLayer(subtitleLayer);
     }
 
     void resized() override
