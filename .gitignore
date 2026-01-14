@@ -5,6 +5,7 @@ Makefile
 /out
 .vs
 .cache
+.claude
 CMakeSettings.json
 
 *.zip
