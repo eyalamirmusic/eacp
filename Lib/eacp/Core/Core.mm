@@ -1,6 +1,7 @@
 #include "App/App.mm"
 #include "Network/Http.mm"
 #include "ObjC/AutoReleasePool.mm"
+#include "ObjC/Strings.mm"
 
 #include "Threads/EventLoop.mm"
 #include "Threads/Timer.mm"

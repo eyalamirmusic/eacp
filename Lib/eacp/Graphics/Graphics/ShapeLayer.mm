@@ -37,14 +37,12 @@ struct ShapeLayer::Native : public MacLayer
 
     void setFillColor(const Color& color)
     {
-        auto cgColor = toCGColor(color);
-        layer.get().fillColor = cgColor;
+        layer.get().fillColor = toCGColor(color);
     }
 
     void setStrokeColor(const Color& color)
     {
-        auto cgColor = toCGColor(color);
-        layer.get().strokeColor = cgColor;
+        layer.get().strokeColor = toCGColor(color);
     }
 
     void setStrokeWidth(float width) { layer.get().lineWidth = width; }

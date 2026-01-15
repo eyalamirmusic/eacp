@@ -2,6 +2,7 @@
 #import <CoreText/CoreText.h>
 #include "TextLayer.h"
 #include "NativeLayer.h"
+#include <eacp/Core/ObjC/Strings.h>
 
 @interface ImmediateTextLayer : CATextLayer
 @end
@@ -35,8 +36,7 @@ struct TextLayer::Native : MacLayer
 
     void setText(const std::string& text)
     {
-        NSString* str = [NSString stringWithUTF8String:text.c_str()];
-        layer.get().string = str;
+        layer.get().string = Strings::toNSString(text);
     }
 
     void setFont(CTFontRef font)
@@ -47,8 +47,7 @@ struct TextLayer::Native : MacLayer
 
     void setColor(const Color& color)
     {
-        auto cgColor = toCGColor(color);
-        layer.get().foregroundColor = cgColor;
+        layer.get().foregroundColor = toCGColor(color);
     }
 
     void setBounds(const Rect& bounds) { layer.get().bounds = toCGRect(bounds); }
