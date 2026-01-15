@@ -1,6 +1,5 @@
 #include "NativeLayer.h"
 #include "ShapeLayer.h"
-#include "../Primitives/MacGraphicUtils.h"
 
 namespace eacp::Graphics
 {
@@ -14,9 +13,11 @@ struct ShapeLayer::Native : public MacLayer
         layer.get().strokeColor = nil;
         layer.get().lineWidth = 1.0f;
         layer.get().anchorPoint = CGPointMake(0, 0);
+
+        nativeLayer = layer.get();
     }
 
-    CALayer* getLayer() override { return layer.get(); }
+    ~Native() override { detach(); }
 
     void setPath(CGPathRef path) { layer.get().path = path; }
 

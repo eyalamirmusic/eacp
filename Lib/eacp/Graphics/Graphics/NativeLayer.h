@@ -6,17 +6,14 @@ namespace eacp::Graphics
 {
 struct MacLayer
 {
-    virtual ~MacLayer() { detach(); }
-
-    virtual CALayer* getLayer() = 0;
+    virtual ~MacLayer() = default;
 
     void attachTo(CALayer* parentLayer)
     {
         if (parentLayer && !attached)
         {
-            auto layer = getLayer();
-            layer.contentsScale = parentLayer.contentsScale;
-            [parentLayer addSublayer:layer];
+            nativeLayer.contentsScale = parentLayer.contentsScale;
+            [parentLayer addSublayer:nativeLayer];
             attached = true;
         }
     }
@@ -25,11 +22,12 @@ struct MacLayer
     {
         if (attached)
         {
-            [getLayer() removeFromSuperlayer];
+            [nativeLayer removeFromSuperlayer];
             attached = false;
         }
     }
 
+    CALayer* nativeLayer = nullptr;
     bool attached = false;
 };
 } // namespace eacp::Graphics

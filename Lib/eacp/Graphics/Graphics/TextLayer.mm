@@ -15,9 +15,11 @@ struct TextLayer::Native : MacLayer
         layer.get().wrapped = NO;
         layer.get().truncationMode = kCATruncationEnd;
         layer.get().alignmentMode = kCAAlignmentLeft;
+
+        nativeLayer = layer.get();
     }
 
-    CALayer* getLayer() override { return layer.get(); }
+    ~Native() override { detach(); }
 
     void setText(const std::string& text)
     {
