@@ -11,7 +11,7 @@ class Font
 {
 public:
     Font();
-    Font(const std::string& fontName, float size);
+    Font(const std::string& fontName, float size = 14.f);
 
     ~Font() = default;
 
