@@ -3,13 +3,26 @@
 #include "TextLayer.h"
 #include "NativeLayer.h"
 
+@interface ImmediateTextLayer : CATextLayer
+@end
+
+@implementation ImmediateTextLayer
+
+- (id<CAAction>)actionForKey:(NSString*)event
+{
+    return [NSNull null];
+}
+
+@end
+
 namespace eacp::Graphics
 {
+
 struct TextLayer::Native : MacLayer
 {
     Native()
     {
-        layer = [CATextLayer layer];
+        layer = [ImmediateTextLayer layer];
         layer.get().anchorPoint = CGPointMake(0, 0);
         layer.get().wrapped = NO;
         layer.get().truncationMode = kCATruncationEnd;
@@ -49,7 +62,7 @@ struct TextLayer::Native : MacLayer
 
     void setOpacity(float opacity) { layer.get().opacity = opacity; }
 
-    ObjC::Ptr<CATextLayer> layer;
+    ObjC::Ptr<ImmediateTextLayer> layer;
 };
 
 TextLayer::TextLayer()

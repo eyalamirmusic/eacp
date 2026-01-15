@@ -6,12 +6,6 @@
 
 namespace eacp::Graphics
 {
-struct AnimationTransaction
-{
-    AnimationTransaction();
-    ~AnimationTransaction();
-};
-
 class ShapeLayer : public Layer
 {
 public:

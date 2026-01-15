@@ -47,7 +47,6 @@ struct AnimatedView final : View
 
     void update()
     {
-        auto trans = AnimationTransaction();
         opacity += 0.02f;
 
         if (opacity >= 0.9f)
@@ -117,7 +116,6 @@ struct TextDisplay final : View
 
     void resized() override
     {
-        auto trans = AnimationTransaction();
         auto bounds = getLocalBounds();
         titleLayer.setBounds({0, 0, 300, 30});
         titleLayer.setPosition({20.f, bounds.h - 40.f});

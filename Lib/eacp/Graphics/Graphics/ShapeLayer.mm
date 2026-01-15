@@ -1,6 +1,18 @@
 #include "NativeLayer.h"
 #include "ShapeLayer.h"
 
+@interface ImmediateShapeLayer : CAShapeLayer
+@end
+
+@implementation ImmediateShapeLayer
+
+- (id<CAAction>)actionForKey:(NSString*)event
+{
+    return [NSNull null];
+}
+
+@end
+
 namespace eacp::Graphics
 {
 
@@ -8,7 +20,7 @@ struct ShapeLayer::Native : public MacLayer
 {
     Native()
     {
-        layer = [CAShapeLayer layer];
+        layer = [ImmediateShapeLayer layer];
         layer.get().fillColor = nil;
         layer.get().strokeColor = nil;
         layer.get().lineWidth = 1.0f;
@@ -48,7 +60,7 @@ struct ShapeLayer::Native : public MacLayer
 
     void setOpacity(float opacity) { layer.get().opacity = opacity; }
 
-    ObjC::Ptr<CAShapeLayer> layer;
+    ObjC::Ptr<ImmediateShapeLayer> layer;
 };
 
 ShapeLayer::ShapeLayer()
@@ -106,14 +118,4 @@ void* ShapeLayer::getNativeLayer()
     return impl.get();
 }
 
-AnimationTransaction::AnimationTransaction()
-{
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-}
-
-AnimationTransaction::~AnimationTransaction()
-{
-    [CATransaction commit];
-}
 } // namespace eacp::Graphics
