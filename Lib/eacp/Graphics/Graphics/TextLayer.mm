@@ -2,7 +2,6 @@
 #import <CoreText/CoreText.h>
 #include "TextLayer.h"
 #include "NativeLayer.h"
-#include "../Primitives/MacGraphicUtils.h"
 
 namespace eacp::Graphics
 {
