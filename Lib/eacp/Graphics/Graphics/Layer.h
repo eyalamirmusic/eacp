@@ -11,6 +11,12 @@ struct Layer
     void attachToLayer(void* nativeLayer);
     void detachFromLayer();
 
+    void setBounds(const Rect& bounds);
+    void setPosition(const Point& position);
+
+    void setHidden(bool hidden);
+    void setOpacity(float opacity);
+
     virtual void* getNativeLayer() = 0;
 };
 } // namespace eacp::Graphics

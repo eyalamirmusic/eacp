@@ -18,12 +18,6 @@ public:
     void setStrokeColor(const Color& color);
     void setStrokeWidth(float width);
 
-    void setBounds(const Rect& bounds);
-    void setPosition(const Point& position);
-
-    void setHidden(bool hidden);
-    void setOpacity(float opacity);
-
 private:
     void* getNativeLayer() override;
 

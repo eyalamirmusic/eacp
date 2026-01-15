@@ -1,6 +1,7 @@
 #pragma once
 
 #import <QuartzCore/QuartzCore.h>
+#include "../Primitives/MacGraphicUtils.h"
 
 namespace eacp::Graphics
 {
@@ -26,6 +27,16 @@ struct MacLayer
             attached = false;
         }
     }
+
+    void setBounds(const Rect& bounds) { nativeLayer.bounds = toCGRect(bounds); }
+
+    void setPosition(const Point& pos)
+    {
+        nativeLayer.position = CGPointMake(pos.x, pos.y);
+    }
+
+    void setHidden(bool hidden) { nativeLayer.hidden = hidden; }
+    void setOpacity(float opacity) { nativeLayer.opacity = opacity; }
 
     CALayer* nativeLayer = nullptr;
     bool attached = false;

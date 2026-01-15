@@ -47,17 +47,6 @@ struct ShapeLayer::Native : public MacLayer
 
     void setStrokeWidth(float width) { layer.get().lineWidth = width; }
 
-    void setBounds(const Rect& bounds) { layer.get().bounds = toCGRect(bounds); }
-
-    void setPosition(const Point& pos)
-    {
-        layer.get().position = CGPointMake(pos.x, pos.y);
-    }
-
-    void setHidden(bool hidden) { layer.get().hidden = hidden; }
-
-    void setOpacity(float opacity) { layer.get().opacity = opacity; }
-
     ObjC::Ptr<ImmediateShapeLayer> layer;
 };
 
@@ -89,26 +78,6 @@ void ShapeLayer::setStrokeColor(const Color& color)
 void ShapeLayer::setStrokeWidth(float width)
 {
     impl->setStrokeWidth(width);
-}
-
-void ShapeLayer::setBounds(const Rect& bounds)
-{
-    impl->setBounds(bounds);
-}
-
-void ShapeLayer::setPosition(const Point& position)
-{
-    impl->setPosition(position);
-}
-
-void ShapeLayer::setHidden(bool hidden)
-{
-    impl->setHidden(hidden);
-}
-
-void ShapeLayer::setOpacity(float opacity)
-{
-    impl->setOpacity(opacity);
 }
 
 void* ShapeLayer::getNativeLayer()

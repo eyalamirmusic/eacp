@@ -50,17 +50,6 @@ struct TextLayer::Native : MacLayer
         layer.get().foregroundColor = toCGColor(color);
     }
 
-    void setBounds(const Rect& bounds) { layer.get().bounds = toCGRect(bounds); }
-
-    void setPosition(const Point& pos)
-    {
-        layer.get().position = CGPointMake(pos.x, pos.y);
-    }
-
-    void setHidden(bool hidden) { layer.get().hidden = hidden; }
-
-    void setOpacity(float opacity) { layer.get().opacity = opacity; }
-
     ObjC::Ptr<ImmediateTextLayer> layer;
 };
 
@@ -82,26 +71,6 @@ void TextLayer::setFont(const Font& font)
 void TextLayer::setColor(const Color& color)
 {
     impl->setColor(color);
-}
-
-void TextLayer::setBounds(const Rect& bounds)
-{
-    impl->setBounds(bounds);
-}
-
-void TextLayer::setPosition(const Point& position)
-{
-    impl->setPosition(position);
-}
-
-void TextLayer::setHidden(bool hidden)
-{
-    impl->setHidden(hidden);
-}
-
-void TextLayer::setOpacity(float opacity)
-{
-    impl->setOpacity(opacity);
 }
 
 void* TextLayer::getNativeLayer()
