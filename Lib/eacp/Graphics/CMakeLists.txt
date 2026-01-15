@@ -6,7 +6,7 @@ target_link_libraries(eacp-graphics PUBLIC eacp-core PRIVATE
         "-framework corevideo"
         "-framework quartzcore")
 
-set_default_warnings_level(eacp-graphics)
+set_default_target_setting(eacp-graphics)
 
 target_sources(eacp-graphics PRIVATE Graphics.cpp)
 

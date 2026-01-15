@@ -6,7 +6,7 @@ target_link_libraries(eacp-core PRIVATE
         "-framework corevideo"
         "-framework quartzcore")
 
-set_default_warnings_level(eacp-core)
+set_default_target_setting(eacp-core)
 
 target_sources(eacp-core PRIVATE Core.cpp)
 
