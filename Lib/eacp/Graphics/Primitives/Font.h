@@ -7,20 +7,40 @@
 namespace eacp::Graphics
 {
 
+struct FontOptions
+{
+    FontOptions withName(const std::string& newName) const
+    {
+        auto copy = *this;
+        copy.name = newName;
+        return copy;
+    }
+
+    FontOptions withSize(float newSize)
+    {
+        auto copy = *this;
+        copy.size = newSize;
+        return copy;
+    }
+
+    std::string name = "Helvetica";
+    float size = 12.f;
+};
+
 class Font
 {
 public:
-    Font();
-    Font(const std::string& fontName, float size = 14.f);
-
+    Font(const FontOptions& optionsToUse = {});
     ~Font() = default;
 
-    void setSize(float size);
-    float getSize() const;
-
+    void setFont(const FontOptions& optionsToUse);
     void* getHandle() const;
 
 private:
+    void updateNativeFont();
+
+    FontOptions options;
+
     struct Native;
     Pimpl<Native> impl;
 };

@@ -78,7 +78,7 @@ struct TodoHeaderView final : View
     TodoHeaderView()
     {
         titleLayer->setText("Todo List");
-        titleLayer->setFont({"Helvetica-Bold", 24.f});
+        titleLayer->setFont(FontOptions().withName("Helvetica-Bold").withSize(24.f));
         titleLayer->setColor({0.9f, 0.9f, 0.9f});
 
         addChildren({titleLayer});

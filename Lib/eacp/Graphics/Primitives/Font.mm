@@ -7,14 +7,11 @@ namespace eacp::Graphics
 
 struct Font::Native
 {
-    Native() { reset("Helvetica", 12.0); }
-    Native(const std::string& fontName, float size) { reset(fontName, size); }
-
-    void reset(const std::string& fontName, float size)
+    void reset(const FontOptions& options)
     {
         CFRef<CFStringRef> name(CFStringCreateWithCString(
-            nullptr, fontName.c_str(), kCFStringEncodingUTF8));
-        font.reset(CTFontCreateWithName(name, size, nullptr));
+            nullptr, options.name.c_str(), kCFStringEncodingUTF8));
+        font.reset(CTFontCreateWithName(name, options.size, nullptr));
     }
 
     void setSize(float size)
@@ -34,29 +31,25 @@ struct Font::Native
     CFRef<CTFontRef> font;
 };
 
-Font::Font()
-    : impl()
+Font::Font(const FontOptions& optionsToUse)
 {
-}
-
-Font::Font(const std::string& fontName, float size)
-    : impl(fontName, size)
-{
-}
-
-void Font::setSize(float size)
-{
-    impl->setSize(size);
-}
-
-float Font::getSize() const
-{
-    return impl->getSize();
+    setFont(optionsToUse);
 }
 
 void* Font::getHandle() const
 {
     return (void*) impl->font.get();
+}
+
+void Font::updateNativeFont()
+{
+    impl->reset(options);
+}
+
+void Font::setFont(const FontOptions& optionsToUse)
+{
+    options = optionsToUse;
+    updateNativeFont();
 }
 
 } // namespace eacp::Graphics

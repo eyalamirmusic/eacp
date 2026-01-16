@@ -156,7 +156,7 @@ struct TextDisplay final : View
         auto color = Color(0.9f, 0.9f, 0.9f);
         titleLayer->setColor(color);
 
-        subtitleLayer->setFont({"Helvetica-Bold"});
+        subtitleLayer->setFont(FontOptions().withName("Helvetica-Bold"));
         subtitleLayer->setColor(color);
 
         addChildren({titleLayer, subtitleLayer});
