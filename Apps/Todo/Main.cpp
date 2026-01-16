@@ -7,6 +7,7 @@ struct TodoItemView final : View
 {
     TodoItemView(const std::string& text = "")
         : itemText(text)
+        , textInput(FontOptions().withSize(14.f))
     {
         getProperties().handlesMouseEvents = true;
 
@@ -19,6 +20,9 @@ struct TodoItemView final : View
         textLayer->setText(text);
         textLayer->setColor({0.9f, 0.9f, 0.9f});
 
+        textInput.setText(text);
+        textInput.onSubmit([this](const std::string& newText) { finishEditing(newText); });
+
         addChildren({checkboxLayer, checkmarkLayer, textLayer});
     }
 
@@ -30,7 +34,54 @@ struct TodoItemView final : View
                                       : Color {0.9f, 0.9f, 0.9f});
     }
 
-    void mouseDown(const MouseEvent&) override { setCompleted(!completed); }
+    void startEditing()
+    {
+        if (editing)
+            return;
+
+        editing = true;
+        textInput.setText(itemText);
+        textInput.setCursorPosition(itemText.length());
+
+        removeSubview(textLayer);
+        addSubview(textInput);
+        resized();
+        textInput.focus();
+    }
+
+    void finishEditing(const std::string& newText)
+    {
+        if (!editing)
+            return;
+
+        editing = false;
+        itemText = newText;
+        textLayer->setText(itemText);
+
+        removeSubview(textInput);
+        addSubview(textLayer);
+        resized();
+    }
+
+    void mouseDown(const MouseEvent& event) override
+    {
+        if (event.clickCount == 2)
+        {
+            startEditing();
+        }
+        else if (!editing)
+        {
+            setCompleted(!completed);
+        }
+    }
+
+    void keyDown(const KeyEvent& event) override
+    {
+        if (editing && event.keyCode == KeyCode::Escape)
+        {
+            finishEditing(itemText);
+        }
+    }
 
     void mouseEntered(const MouseEvent&) override
     {
@@ -60,17 +111,30 @@ struct TodoItemView final : View
         checkmarkPath.addEllipse({cx - 6.f, cy - 6.f, 12.f, 12.f});
         checkmarkLayer->setPath(checkmarkPath);
 
-        scaleToFit({checkboxLayer, checkmarkLayer, textLayer});
-        textLayer->setPosition(
-            {padding * 2 + checkboxSize + 10.f, bounds.h / 2.f - 8.f});
+        float textX = padding * 2 + checkboxSize + 10.f;
+
+        if (editing)
+        {
+            textInput.setBounds(
+                {textX, (bounds.h - 24.f) / 2.f, bounds.w - textX - padding, 24.f});
+        }
+        else
+        {
+            scaleToFit({checkboxLayer, checkmarkLayer, textLayer});
+            textLayer->setPosition({textX, bounds.h / 2.f - 8.f});
+        }
+
+        scaleToFit({checkboxLayer, checkmarkLayer});
     }
 
     bool completed = false;
+    bool editing = false;
     std::string itemText;
 
     ShapeLayerView checkboxLayer;
     ShapeLayerView checkmarkLayer;
     TextLayerView textLayer;
+    TextInput textInput;
 };
 
 struct TodoHeaderView final : View

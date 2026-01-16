@@ -147,10 +147,16 @@ KeyEvent keyEventFrom(NSEvent* event, KeyEventType type)
     e.type = type;
     e.button = [self mouseButtonFromEvent:event];
     e.modifiers = eacp::Graphics::modifierKeysFromEvent(event);
-    e.clickCount = (int) event.clickCount;
-    e.pressure = event.pressure;
+
     e.timestamp = event.timestamp;
     e.delta = {(float) event.deltaX, (float) event.deltaY};
+
+    if (type == eacp::Graphics::MouseEventType::Down
+        || type == eacp::Graphics::MouseEventType::Up)
+    {
+        e.pressure = event.pressure;
+        e.clickCount = (int) event.clickCount;
+    }
 
     if (type == eacp::Graphics::MouseEventType::Down)
         root->mouseDownPosition = localPos;
