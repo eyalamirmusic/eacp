@@ -334,7 +334,6 @@ Point View::convertPointToDescendant(const Point& point, View* descendant)
 
     while (current != nullptr && current != this)
     {
-        auto bounds = current->getBounds();
         offset = point + offset;
         current = current->parent;
     }
