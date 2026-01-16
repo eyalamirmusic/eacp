@@ -4,6 +4,7 @@
 #include "Graphics/View.mm"
 #include "Graphics/Window.mm"
 #include "Graphics/Layer.mm"
+#include "Graphics/Keyboard.mm"
 
 #include "Primitives/MacGraphicUtils.mm"
 #include "Primitives/Font.mm"

@@ -3,6 +3,7 @@
 #include <eacp/Core/Utils/Common.h>
 #include "GraphicsContext.h"
 #include "Layer.h"
+#include "Keyboard.h"
 
 namespace eacp::Graphics
 {
@@ -25,13 +26,6 @@ enum class MouseButton
     Other = 3
 };
 
-struct ModifierKeys
-{
-    bool shift = false;
-    bool control = false;
-    bool alt = false;
-    bool command = false;
-};
 
 struct MouseEvent
 {
@@ -43,23 +37,6 @@ struct MouseEvent
     ModifierKeys modifiers;
     int clickCount = 1;
     float pressure = 1.0f;
-    double timestamp = 0.0;
-};
-
-enum class KeyEventType
-{
-    Down,
-    Up
-};
-
-struct KeyEvent
-{
-    std::string characters;
-    std::string charactersIgnoringModifiers;
-    uint16_t keyCode = 0;
-    KeyEventType type = KeyEventType::Down;
-    ModifierKeys modifiers;
-    bool isRepeat = false;
     double timestamp = 0.0;
 };
 

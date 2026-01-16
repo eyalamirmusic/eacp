@@ -1,8 +1,19 @@
 #include <eacp/Core/Core.h>
+#include <eacp/Graphics/Graphics.h>
 
 struct App
 {
-    App() { eacp::Apps::quit(); }
+    App() {}
+
+    void update()
+    {
+        for (auto& key: eacp::Graphics::Keyboard::getPressedKeys())
+        {
+            eacp::LOG(key.character);
+        }
+    }
+
+    eacp::Threads::Timer timer {[&] { update(); }, 60};
 };
 
 int main()
