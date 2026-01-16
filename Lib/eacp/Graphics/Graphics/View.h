@@ -30,6 +30,11 @@ public:
 
     virtual void paint(Context&) {};
     virtual void mouseDown(const MouseEvent&) {}
+    virtual void mouseUp(const MouseEvent&) {}
+    virtual void mouseDragged(const MouseEvent&) {}
+    virtual void mouseMoved(const MouseEvent&) {}
+    virtual void mouseEntered(const MouseEvent&) {}
+    virtual void mouseExited(const MouseEvent&) {}
     virtual void resized();
 
     Rect getBounds() const;

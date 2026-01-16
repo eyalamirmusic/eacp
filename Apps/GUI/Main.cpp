@@ -27,11 +27,15 @@ struct ColoredView final : View
 
     void updatePathColor() { backgroundLayer->setFillColor(getColor()); }
 
-    void mouseDown(const MouseEvent&) override
+    void setMode(bool mode)
     {
-        on = !on;
+        on = mode;
         updatePathColor();
     }
+
+    void mouseEntered(const MouseEvent&) override { setMode(true); }
+
+    void mouseExited(const MouseEvent&) override { setMode(false); }
 
     void resized() override
     {

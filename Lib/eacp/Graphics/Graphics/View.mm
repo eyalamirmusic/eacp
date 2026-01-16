@@ -1,11 +1,8 @@
 
 #import <Cocoa/Cocoa.h>
 #include "View.h"
-#include "ShapeLayer.h"
-#include "TextLayer.h"
 #include "MacGraphicsContext.h"
 #include <eacp/Core/Utils/Vectors.h>
-
 #include <ranges>
 
 namespace eacp::Graphics
@@ -70,17 +67,64 @@ namespace eacp::Graphics
     }
 }
 
-- (void)mouseDown:(NSEvent*)event
+- (eacp::Graphics::MouseEvent)mouseEventFrom:(NSEvent*)event
 {
     auto p = [self convertPoint:[event locationInWindow] fromView:nil];
-    auto e = eacp::Graphics::MouseEvent();
-    e.pos = {(float) p.x, (float) p.y};
+    return eacp::Graphics::MouseEvent {{(float) p.x, (float) p.y}};
+}
 
-    cppView->mouseDown(e);
+- (void)mouseDown:(NSEvent*)event
+{
+    cppView->mouseDown([self mouseEventFrom:event]);
+}
+
+- (void)mouseUp:(NSEvent*)event
+{
+    cppView->mouseUp([self mouseEventFrom:event]);
+}
+
+- (void)mouseDragged:(NSEvent*)event
+{
+    cppView->mouseDragged([self mouseEventFrom:event]);
+}
+
+- (void)mouseMoved:(NSEvent*)event
+{
+    cppView->mouseMoved([self mouseEventFrom:event]);
+}
+
+- (void)mouseEntered:(NSEvent*)event
+{
+    cppView->mouseEntered([self mouseEventFrom:event]);
+}
+
+- (void)mouseExited:(NSEvent*)event
+{
+    cppView->mouseExited([self mouseEventFrom:event]);
+}
+
+- (void)updateTrackingAreas
+{
+    [super updateTrackingAreas];
+
+    for (NSTrackingArea* area in self.trackingAreas)
+        [self removeTrackingArea:area];
+
+    NSTrackingAreaOptions options = NSTrackingMouseEnteredAndExited |
+                                    NSTrackingMouseMoved | NSTrackingActiveInKeyWindow |
+                                    NSTrackingInVisibleRect;
+
+    NSTrackingArea* trackingArea =
+        [[NSTrackingArea alloc] initWithRect:self.bounds
+                                     options:options
+                                       owner:self
+                                    userInfo:nil];
+    [self addTrackingArea:trackingArea];
 }
 
 - (NSView*)hitTest:(NSPoint)point
 {
+    eacp::LOG("HitTest");
     NSPoint localPoint = [self convertPoint:point fromView:self.superview];
     auto cppPoint =
         eacp::Graphics::Point {(float) localPoint.x, (float) localPoint.y};
@@ -109,6 +153,7 @@ NativeView* createNativeView(View* view)
     newView->cppView = view;
     return newView;
 }
+
 struct View::Native
 {
     Native(View& view) { nativeView = createNativeView(&view); }

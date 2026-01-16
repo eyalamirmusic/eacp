@@ -2,6 +2,7 @@
 
 #include <functional>
 #include "Pimpl.h"
+#include "Logging.h"
 
 namespace eacp
 {
