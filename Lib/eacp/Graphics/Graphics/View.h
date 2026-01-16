@@ -29,7 +29,14 @@ public:
 
     Rect getBounds() const;
     Rect getLocalBounds() const;
+
+    Rect getRelativeBounds(const Rect& ratio) const;
+
     void setBounds(const Rect& bounds);
+    void setBoundsRelative(const Rect& ratio);
+
+    void scaleToFit();
+    void scaleToFit(ChildViews views);
 
     void addChildren(ChildViews views);
     void addSubview(View& view);

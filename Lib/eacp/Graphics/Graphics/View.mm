@@ -208,9 +208,33 @@ Rect View::getLocalBounds() const
     return b;
 }
 
-void View::addChildren(View::ChildViews views)
+void View::addChildren(ChildViews views)
 {
     for (auto& view: views)
         addSubview(view);
+}
+
+Rect View::getRelativeBounds(const Rect& ratio) const
+{
+    return getLocalBounds().getRelative(ratio);
+}
+
+void View::setBoundsRelative(const Rect& ratio)
+{
+    if (parent != nullptr)
+    {
+        setBounds(parent->getRelativeBounds(ratio));
+    }
+}
+
+void View::scaleToFit()
+{
+    setBoundsRelative({0.f, 0.f, 1.f, 1.f});
+}
+
+void View::scaleToFit(ChildViews views)
+{
+    for (auto& view: views)
+        view.get().scaleToFit();
 }
 } // namespace eacp::Graphics

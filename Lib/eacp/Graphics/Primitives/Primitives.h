@@ -16,6 +16,8 @@ struct Rect
     Rect() = default;
     Rect(float xToUse, float yToUse, float wToUse, float hToUse);
 
+    Rect getRelative(const Rect& ratio) const;
+
     float x = 0.f;
     float y = 0.f;
     float w = 0.f;
@@ -33,4 +35,4 @@ struct Color
     float a = 1.f;
 };
 
-}
+} // namespace eacp::Graphics

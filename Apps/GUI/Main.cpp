@@ -23,8 +23,7 @@ struct ColoredView final : View
         path.addRoundedRect(bounds, 10.f);
         backgroundLayer->setPath(path);
 
-        backgroundLayer.setBounds(bounds);
-        textLayer->setBounds(bounds);
+        scaleToFit({backgroundLayer, textLayer});
         textLayer->setPosition({10.f, bounds.h / 2.f - 10.f});
     }
 
@@ -36,12 +35,16 @@ struct AnimatedView final : View
 {
     AnimatedView()
     {
-        auto path = Path();
-        path.addEllipse({0, 0, 80.f, 80.f});
         ellipseLayer.setFillColor({1.f, 0.5f, 0.f});
         ellipseLayer.setOpacity(0.5f);
-        ellipseLayer.setPath(path);
         addLayer(ellipseLayer);
+    }
+
+    void resized() override
+    {
+        auto path = Path();
+        path.addEllipse(getLocalBounds().getRelative({0.f, 0.f, 0.1f, 0.1f}));
+        ellipseLayer.setPath(path);
     }
 
     void update()
@@ -55,16 +58,17 @@ struct AnimatedView final : View
 
         x += dx;
 
-        if (x < 10 || x > 500)
+        if (x < 0.1f || x > 0.9f)
             dx = -dx;
 
-        ellipseLayer.setPosition({x, 0.f});
+
+        ellipseLayer.setPosition({x * getBounds().w, 0.f});
     }
 
     ShapeLayer ellipseLayer;
     float opacity = 0.5f;
-    float x = 50.f;
-    float dx = 2.f;
+    float x = 0.3f;
+    float dx = 0.003f;
     Threads::Timer timer {[&] { update(); }, 60};
 };
 
@@ -81,7 +85,7 @@ struct FilledRect final : View
         path.clear();
         path.addRect(getLocalBounds());
         layer->setPath(path);
-        layer->setBounds(getLocalBounds());
+        layer.scaleToFit();
     }
 
     Path path;
@@ -122,11 +126,11 @@ struct TextDisplay final : View
 
     void resized() override
     {
-        auto bounds = getLocalBounds();
-        titleLayer.setBounds(bounds);
-        titleLayer->setPosition({20.f, bounds.h - 40.f});
+        scaleToFit({titleLayer, subtitleLayer});
 
-        subtitleLayer.setBounds(bounds);
+        auto bounds = getLocalBounds();
+
+        titleLayer->setPosition({20.f, bounds.h - 40.f});
         subtitleLayer->setPosition({20.f, bounds.h - 65.f});
     }
 
@@ -143,12 +147,11 @@ struct ParentView final : View
 
     void resized() override
     {
-        child1.setBounds({50, 50, 150, 100});
-        child2.setBounds({220, 50, 150, 100});
-        child3.setBounds({390, 50, 150, 100});
-        animatedChild.setBounds(getLocalBounds());
-        rec.setBounds(getLocalBounds());
-        stroke.setBounds(getLocalBounds());
+        child1.setBoundsRelative({0.1f, 0.1f, 0.2f, 0.2f});
+        child2.setBoundsRelative({0.4f, 0.1f, 0.2f, 0.2f});
+        child3.setBoundsRelative({0.7f, 0.1f, 0.2f, 0.2f});
+
+        scaleToFit({animatedChild, rec, stroke});
         text.setBounds({0, getLocalBounds().h - 30, 300, 30});
     }
 

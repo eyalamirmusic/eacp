@@ -16,6 +16,11 @@ Rect::Rect(float xToUse, float yToUse, float wToUse, float hToUse)
 {
 }
 
+Rect Rect::getRelative(const Rect& ratio) const
+{
+    return {x + (w * ratio.x), y + (h * ratio.y), w * ratio.w, h * ratio.h};
+}
+
 Color::Color(float rToUse, float gToUse, float bToUse, float aToUse)
     : r(rToUse)
     , g(gToUse)

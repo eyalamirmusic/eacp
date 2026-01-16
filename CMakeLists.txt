@@ -9,7 +9,7 @@ function(set_default_warnings_level target)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4)
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        target_compile_options(${target} PRIVATE -Wall -Wextra)
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endfunction()
 
