@@ -6,13 +6,31 @@ using namespace Graphics;
 
 struct ColoredView final : View
 {
-    ColoredView(Color color, const std::string& labelText)
-        : textLayer(labelText)
+    ColoredView(Color colorToUse, const std::string& labelText)
+        : color(colorToUse)
+        , textLayer(labelText)
     {
-        backgroundLayer->setFillColor(color);
+        getProperties().handlesMouseEvents = true;
         addChildren({backgroundLayer, textLayer});
 
         textLayer->setText(labelText);
+        updatePathColor();
+    }
+
+    Color getColor() const
+    {
+        if (on)
+            return {1.f, 1.f, 1.f};
+
+        return color;
+    }
+
+    void updatePathColor() { backgroundLayer->setFillColor(getColor()); }
+
+    void mouseDown(const MouseEvent&) override
+    {
+        on = !on;
+        updatePathColor();
     }
 
     void resized() override
@@ -26,6 +44,9 @@ struct ColoredView final : View
         scaleToFit({backgroundLayer, textLayer});
         textLayer->setPosition({10.f, bounds.h / 2.f - 10.f});
     }
+
+    bool on = false;
+    Color color;
 
     ShapeLayerView backgroundLayer;
     TextLayerView textLayer;
@@ -60,7 +81,6 @@ struct AnimatedView final : View
 
         if (x < 0.1f || x > 0.9f)
             dx = -dx;
-
 
         ellipseLayer.setPosition({x * getBounds().w, 0.f});
     }

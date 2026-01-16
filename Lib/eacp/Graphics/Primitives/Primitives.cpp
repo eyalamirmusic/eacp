@@ -21,6 +21,11 @@ Rect Rect::getRelative(const Rect& ratio) const
     return {x + (w * ratio.x), y + (h * ratio.y), w * ratio.w, h * ratio.h};
 }
 
+bool Rect::contains(const Point& point) const
+{
+    return point.x >= x && point.x < x + w && point.y >= y && point.y < y + h;
+}
+
 Color::Color(float rToUse, float gToUse, float bToUse, float aToUse)
     : r(rToUse)
     , g(gToUse)

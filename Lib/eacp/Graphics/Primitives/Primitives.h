@@ -18,6 +18,8 @@ struct Rect
 
     Rect getRelative(const Rect& ratio) const;
 
+    bool contains(const Point& point) const;
+
     float x = 0.f;
     float y = 0.f;
     float w = 0.f;

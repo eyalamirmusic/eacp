@@ -6,6 +6,8 @@
 #include "MacGraphicsContext.h"
 #include <eacp/Core/Utils/Vectors.h>
 
+#include <ranges>
+
 namespace eacp::Graphics
 {
 } // namespace eacp::Graphics
@@ -77,6 +79,20 @@ namespace eacp::Graphics
     cppView->mouseDown(e);
 }
 
+- (NSView*)hitTest:(NSPoint)point
+{
+    NSPoint localPoint = [self convertPoint:point fromView:self.superview];
+    auto cppPoint =
+        eacp::Graphics::Point {(float) localPoint.x, (float) localPoint.y};
+
+    auto* hitView = cppView->hitTest(cppPoint);
+
+    if (hitView != nullptr)
+        return (NSView*) hitView->getHandle();
+
+    return nil;
+}
+
 @end
 namespace eacp::Graphics
 {
@@ -99,7 +115,7 @@ struct View::Native
 
     void repaint() { [nativeView.get() setNeedsDisplay:YES]; }
 
-    Rect getBounds() const { return toRect([nativeView.get() bounds]); }
+    Rect getBounds() const { return toRect([nativeView.get() frame]); }
     void setBounds(const Rect& bounds)
     {
         auto frame = toCGRect(bounds);
@@ -236,5 +252,25 @@ void View::scaleToFit(ChildViews views)
 {
     for (auto& view: views)
         view.get().scaleToFit();
+}
+
+View* View::hitTest(const Point& point)
+{
+    if (!getLocalBounds().contains(point))
+        return nullptr;
+
+    for (auto child: std::ranges::reverse_view(subviews))
+    {
+        auto childBounds = child->getBounds();
+        auto childPoint = Point{point.x - childBounds.x, point.y - childBounds.y};
+
+        if (auto* hit = child->hitTest(childPoint))
+            return hit;
+    }
+
+    if (properties.handlesMouseEvents)
+        return this;
+
+    return nullptr;
 }
 } // namespace eacp::Graphics

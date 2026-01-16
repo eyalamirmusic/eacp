@@ -12,6 +12,11 @@ struct MouseEvent
     Point pos;
 };
 
+struct ViewProperties
+{
+    bool handlesMouseEvents = false;
+};
+
 class View
 {
     using ChildViews = std::initializer_list<std::reference_wrapper<View>>;
@@ -46,10 +51,16 @@ public:
     void addLayer(Layer& layer);
     void removeLayer(Layer& layer);
 
+    ViewProperties& getProperties() { return properties; }
+
+    View* hitTest(const Point& point);
+
 private:
     std::vector<View*> subviews;
     std::vector<Layer*> layers;
     View* parent = nullptr;
+
+    ViewProperties properties;
 
     struct Native;
     Pimpl<Native> impl;
