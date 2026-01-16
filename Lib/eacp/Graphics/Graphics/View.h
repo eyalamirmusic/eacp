@@ -17,10 +17,33 @@ enum class MouseEventType
     Exited
 };
 
+enum class MouseButton
+{
+    Left = 0,
+    Right = 1,
+    Middle = 2,
+    Other = 3
+};
+
+struct ModifierKeys
+{
+    bool shift = false;
+    bool control = false;
+    bool alt = false;
+    bool command = false;
+};
+
 struct MouseEvent
 {
     Point pos;
+    Point downPos;
+    Point delta;
     MouseEventType type = MouseEventType::Down;
+    MouseButton button = MouseButton::Left;
+    ModifierKeys modifiers;
+    int clickCount = 1;
+    float pressure = 1.0f;
+    double timestamp = 0.0;
 };
 
 struct ViewProperties
@@ -80,6 +103,8 @@ public:
 private:
     void handleMouseEvent(const MouseEvent& event);
     Point convertPointToDescendant(const Point& point, View* descendant);
+    MouseEvent
+        createLocalEvent(const MouseEvent& event, View* target, MouseEventType type);
     std::vector<View*> subviews;
     std::vector<Layer*> layers;
     View* parent = nullptr;

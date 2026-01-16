@@ -13,6 +13,7 @@ namespace eacp::Graphics
 {
 @public
     eacp::Graphics::View* cppView;
+    NSPoint mouseDownPosition;
 }
 @end
 
@@ -82,11 +83,49 @@ namespace eacp::Graphics
     return root;
 }
 
+- (eacp::Graphics::MouseButton)mouseButtonFromEvent:(NSEvent*)event
+{
+    switch (event.buttonNumber)
+    {
+        case 0: return eacp::Graphics::MouseButton::Left;
+        case 1: return eacp::Graphics::MouseButton::Right;
+        case 2: return eacp::Graphics::MouseButton::Middle;
+        default: return eacp::Graphics::MouseButton::Other;
+    }
+}
+
+- (eacp::Graphics::ModifierKeys)modifierKeysFromEvent:(NSEvent*)event
+{
+    NSEventModifierFlags flags = event.modifierFlags;
+    return {
+        .shift = (flags & NSEventModifierFlagShift) != 0,
+        .control = (flags & NSEventModifierFlagControl) != 0,
+        .alt = (flags & NSEventModifierFlagOption) != 0,
+        .command = (flags & NSEventModifierFlagCommand) != 0
+    };
+}
+
 - (void)dispatchMouseEvent:(NSEvent*)event type:(eacp::Graphics::MouseEventType)type
 {
     NativeView* root = [self rootView];
-    auto p = [root convertPoint:[event locationInWindow] fromView:nil];
-    auto e = eacp::Graphics::MouseEvent {{(float) p.x, (float) p.y}, type};
+    NSPoint windowPos = [event locationInWindow];
+    NSPoint localPos = [root convertPoint:windowPos fromView:nil];
+
+    eacp::Graphics::MouseEvent e;
+    e.pos = {(float) localPos.x, (float) localPos.y};
+    e.type = type;
+    e.button = [self mouseButtonFromEvent:event];
+    e.modifiers = [self modifierKeysFromEvent:event];
+    e.clickCount = (int) event.clickCount;
+    e.pressure = event.pressure;
+    e.timestamp = event.timestamp;
+    e.delta = {(float) event.deltaX, (float) event.deltaY};
+
+    if (type == eacp::Graphics::MouseEventType::Down)
+        root->mouseDownPosition = localPos;
+
+    e.downPos = {(float) root->mouseDownPosition.x, (float) root->mouseDownPosition.y};
+
     root->cppView->dispatchMouseEvent(e);
 }
 
@@ -118,6 +157,38 @@ namespace eacp::Graphics
 - (void)mouseExited:(NSEvent*)event
 {
     [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Exited];
+}
+
+// Right mouse button
+- (void)rightMouseDown:(NSEvent*)event
+{
+    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Down];
+}
+
+- (void)rightMouseUp:(NSEvent*)event
+{
+    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Up];
+}
+
+- (void)rightMouseDragged:(NSEvent*)event
+{
+    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Dragged];
+}
+
+// Other mouse buttons (middle, etc.)
+- (void)otherMouseDown:(NSEvent*)event
+{
+    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Down];
+}
+
+- (void)otherMouseUp:(NSEvent*)event
+{
+    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Up];
+}
+
+- (void)otherMouseDragged:(NSEvent*)event
+{
+    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Dragged];
 }
 
 - (void)updateTrackingAreas
@@ -352,6 +423,15 @@ Point View::convertPointToDescendant(const Point& point, View* descendant)
     return point - offset;
 }
 
+MouseEvent View::createLocalEvent(const MouseEvent& event, View* target, MouseEventType type)
+{
+    MouseEvent localEvent = event;
+    localEvent.pos = convertPointToDescendant(event.pos, target);
+    localEvent.downPos = convertPointToDescendant(event.downPos, target);
+    localEvent.type = type;
+    return localEvent;
+}
+
 void View::dispatchMouseEvent(const MouseEvent& event)
 {
     auto* target = hitTest(event.pos);
@@ -362,14 +442,14 @@ void View::dispatchMouseEvent(const MouseEvent& event)
         {
             if (hoveredView != nullptr)
             {
-                auto localPos = convertPointToDescendant(event.pos, hoveredView);
-                hoveredView->handleMouseEvent({localPos, MouseEventType::Exited});
+                hoveredView->handleMouseEvent(
+                    createLocalEvent(event, hoveredView, MouseEventType::Exited));
             }
 
             if (target != nullptr)
             {
-                auto localPos = convertPointToDescendant(event.pos, target);
-                target->handleMouseEvent({localPos, MouseEventType::Entered});
+                target->handleMouseEvent(
+                    createLocalEvent(event, target, MouseEventType::Entered));
             }
 
             hoveredView = target;
@@ -377,23 +457,21 @@ void View::dispatchMouseEvent(const MouseEvent& event)
 
         if (target != nullptr && event.type == MouseEventType::Moved)
         {
-            auto localPos = convertPointToDescendant(event.pos, target);
-            target->handleMouseEvent({localPos, MouseEventType::Moved});
+            target->handleMouseEvent(createLocalEvent(event, target, MouseEventType::Moved));
         }
     }
     else if (event.type == MouseEventType::Exited)
     {
         if (hoveredView != nullptr)
         {
-            auto localPos = convertPointToDescendant(event.pos, hoveredView);
-            hoveredView->handleMouseEvent({localPos, MouseEventType::Exited});
+            hoveredView->handleMouseEvent(
+                createLocalEvent(event, hoveredView, MouseEventType::Exited));
             hoveredView = nullptr;
         }
     }
     else if (target != nullptr)
     {
-        auto localPos = convertPointToDescendant(event.pos, target);
-        target->handleMouseEvent({localPos, event.type});
+        target->handleMouseEvent(createLocalEvent(event, target, event.type));
     }
 }
 

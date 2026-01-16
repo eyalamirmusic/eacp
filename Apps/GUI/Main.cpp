@@ -20,7 +20,7 @@ struct ColoredView final : View
     Color getColor() const
     {
         if (on)
-            return {1.f, 1.f, 1.f};
+            return {0.9f, 0.9f, 0.9f};
 
         return color;
     }
@@ -45,6 +45,7 @@ struct ColoredView final : View
         on = !on;
         updatePathColor();
     }
+
     void resized() override
     {
         auto bounds = getLocalBounds();
