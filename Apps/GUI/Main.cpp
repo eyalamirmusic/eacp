@@ -65,6 +65,8 @@ struct AnimatedView final : View
         addLayer(ellipseLayer);
     }
 
+    void mouseDown(const MouseEvent&) override { LOG("Animated mouseDown!"); }
+
     void resized() override
     {
         auto path = Path();

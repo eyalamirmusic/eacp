@@ -11,6 +11,10 @@ struct Point
     float y = 0.f;
 };
 
+Point operator+(const Point& a, const Point& b);
+
+Point operator-(const Point& a, const Point& b);
+
 struct Rect
 {
     Rect() = default;

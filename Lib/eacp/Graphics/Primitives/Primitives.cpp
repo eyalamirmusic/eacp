@@ -33,4 +33,14 @@ Color::Color(float rToUse, float gToUse, float bToUse, float aToUse)
     , a(aToUse)
 {
 }
+
+Point operator+(const Point& a, const Point& b)
+{
+    return {a.x + b.x, a.y + b.y};
+}
+
+Point operator-(const Point& a, const Point& b)
+{
+    return {a.x - b.x, a.y - b.y};
+}
 }

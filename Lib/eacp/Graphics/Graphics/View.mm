@@ -67,40 +67,58 @@ namespace eacp::Graphics
     }
 }
 
-- (eacp::Graphics::MouseEvent)mouseEventFrom:(NSEvent*)event
+- (NativeView*)rootView
 {
-    auto p = [self convertPoint:[event locationInWindow] fromView:nil];
-    return eacp::Graphics::MouseEvent {{(float) p.x, (float) p.y}};
+    NativeView* root = self;
+    NSView* current = self.superview;
+
+    while (current != nil)
+    {
+        if ([current isKindOfClass:[NativeView class]])
+            root = (NativeView*) current;
+
+        current = current.superview;
+    }
+
+    return root;
+}
+
+- (void)dispatchMouseEvent:(NSEvent*)event type:(eacp::Graphics::MouseEventType)type
+{
+    NativeView* root = [self rootView];
+    auto p = [root convertPoint:[event locationInWindow] fromView:nil];
+    auto e = eacp::Graphics::MouseEvent {{(float) p.x, (float) p.y}, type};
+    root->cppView->dispatchMouseEvent(e);
 }
 
 - (void)mouseDown:(NSEvent*)event
 {
-    cppView->mouseDown([self mouseEventFrom:event]);
+    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Down];
 }
 
 - (void)mouseUp:(NSEvent*)event
 {
-    cppView->mouseUp([self mouseEventFrom:event]);
+    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Up];
 }
 
 - (void)mouseDragged:(NSEvent*)event
 {
-    cppView->mouseDragged([self mouseEventFrom:event]);
+    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Dragged];
 }
 
 - (void)mouseMoved:(NSEvent*)event
 {
-    cppView->mouseMoved([self mouseEventFrom:event]);
+    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Moved];
 }
 
 - (void)mouseEntered:(NSEvent*)event
 {
-    cppView->mouseEntered([self mouseEventFrom:event]);
+    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Entered];
 }
 
 - (void)mouseExited:(NSEvent*)event
 {
-    cppView->mouseExited([self mouseEventFrom:event]);
+    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Exited];
 }
 
 - (void)updateTrackingAreas
@@ -122,20 +140,6 @@ namespace eacp::Graphics
     [self addTrackingArea:trackingArea];
 }
 
-- (NSView*)hitTest:(NSPoint)point
-{
-    eacp::LOG("HitTest");
-    NSPoint localPoint = [self convertPoint:point fromView:self.superview];
-    auto cppPoint =
-        eacp::Graphics::Point {(float) localPoint.x, (float) localPoint.y};
-
-    auto* hitView = cppView->hitTest(cppPoint);
-
-    if (hitView != nullptr)
-        return (NSView*) hitView->getHandle();
-
-    return nil;
-}
 
 @end
 namespace eacp::Graphics
@@ -148,7 +152,7 @@ NativeView* createNativeView(View* view)
     newView.wantsLayer = YES;
     newView.layerContentsRedrawPolicy = NSViewLayerContentsRedrawOnSetNeedsDisplay;
     newView.layer.contentsScale = [NSScreen mainScreen].backingScaleFactor;
-    newView.layer.delegate = newView; // Explicitly set delegate
+    newView.layer.delegate = newView;
 
     newView->cppView = view;
     return newView;
@@ -307,7 +311,7 @@ View* View::hitTest(const Point& point)
     for (auto child: std::ranges::reverse_view(subviews))
     {
         auto childBounds = child->getBounds();
-        auto childPoint = Point{point.x - childBounds.x, point.y - childBounds.y};
+        auto childPoint = Point {point.x - childBounds.x, point.y - childBounds.y};
 
         if (auto* hit = child->hitTest(childPoint))
             return hit;
@@ -317,5 +321,82 @@ View* View::hitTest(const Point& point)
         return this;
 
     return nullptr;
+}
+
+Point View::convertPointToDescendant(const Point& point, View* descendant)
+{
+    if (descendant == nullptr || descendant == this)
+        return point;
+
+    auto offset = Point(0.f, 0.f);
+
+    auto current = descendant;
+
+    while (current != nullptr && current != this)
+    {
+        auto bounds = current->getBounds();
+        offset = point + offset;
+        current = current->parent;
+    }
+
+    return point - offset;
+}
+
+void View::dispatchMouseEvent(const MouseEvent& event)
+{
+    auto* target = hitTest(event.pos);
+
+    if (event.type == MouseEventType::Moved || event.type == MouseEventType::Entered)
+    {
+        if (target != hoveredView)
+        {
+            if (hoveredView != nullptr)
+            {
+                auto localPos = convertPointToDescendant(event.pos, hoveredView);
+                hoveredView->handleMouseEvent({localPos, MouseEventType::Exited});
+            }
+
+            if (target != nullptr)
+            {
+                auto localPos = convertPointToDescendant(event.pos, target);
+                target->handleMouseEvent({localPos, MouseEventType::Entered});
+            }
+
+            hoveredView = target;
+        }
+
+        if (target != nullptr && event.type == MouseEventType::Moved)
+        {
+            auto localPos = convertPointToDescendant(event.pos, target);
+            target->handleMouseEvent({localPos, MouseEventType::Moved});
+        }
+    }
+    else if (event.type == MouseEventType::Exited)
+    {
+        if (hoveredView != nullptr)
+        {
+            auto localPos = convertPointToDescendant(event.pos, hoveredView);
+            hoveredView->handleMouseEvent({localPos, MouseEventType::Exited});
+            hoveredView = nullptr;
+        }
+    }
+    else if (target != nullptr)
+    {
+        auto localPos = convertPointToDescendant(event.pos, target);
+        target->handleMouseEvent({localPos, event.type});
+    }
+}
+
+void View::handleMouseEvent(const MouseEvent& event)
+{
+    switch (event.type)
+    {
+        case MouseEventType::Down: mouseDown(event); break;
+        case MouseEventType::Up: mouseUp(event); break;
+        case MouseEventType::Dragged: mouseDragged(event); break;
+        case MouseEventType::Moved: mouseMoved(event); break;
+        case MouseEventType::Entered: mouseEntered(event); break;
+        case MouseEventType::Exited: mouseExited(event); break;
+    }
 }
 } // namespace eacp::Graphics

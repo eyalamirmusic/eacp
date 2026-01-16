@@ -7,9 +7,20 @@
 namespace eacp::Graphics
 {
 
+enum class MouseEventType
+{
+    Down,
+    Up,
+    Dragged,
+    Moved,
+    Entered,
+    Exited
+};
+
 struct MouseEvent
 {
     Point pos;
+    MouseEventType type = MouseEventType::Down;
 };
 
 struct ViewProperties
@@ -58,12 +69,18 @@ public:
 
     ViewProperties& getProperties() { return properties; }
 
-    View* hitTest(const Point& point);
+    virtual View* hitTest(const Point& point);
+
+    // Dispatches mouse event to the appropriate view after hit testing
+    void dispatchMouseEvent(const MouseEvent& event);
 
 private:
+    void handleMouseEvent(const MouseEvent& event);
+    Point convertPointToDescendant(const Point& point, View* descendant);
     std::vector<View*> subviews;
     std::vector<Layer*> layers;
     View* parent = nullptr;
+    View* hoveredView = nullptr;  // Tracks which view mouse is currently over
 
     ViewProperties properties;
 
