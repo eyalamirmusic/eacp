@@ -55,11 +55,10 @@ namespace eacp::Graphics
     NSRect oldFrame = [self frame];
     [super setFrame:newFrame];
 
-    // If the frame size changed, we need to redraw
     if (!NSEqualSizes(oldFrame.size, newFrame.size))
     {
         [self setNeedsDisplay:YES];
-        // For layer-backed views, also invalidate the layer
+
         if (self.wantsLayer && self.layer)
         {
             [self.layer setNeedsDisplay];
@@ -128,18 +127,16 @@ namespace eacp::Graphics
     for (NSTrackingArea* area in self.trackingAreas)
         [self removeTrackingArea:area];
 
-    NSTrackingAreaOptions options = NSTrackingMouseEnteredAndExited |
-                                    NSTrackingMouseMoved | NSTrackingActiveInKeyWindow |
-                                    NSTrackingInVisibleRect;
+    NSTrackingAreaOptions options =
+        NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved
+        | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect;
 
-    NSTrackingArea* trackingArea =
-        [[NSTrackingArea alloc] initWithRect:self.bounds
-                                     options:options
-                                       owner:self
-                                    userInfo:nil];
+    NSTrackingArea* trackingArea = [[NSTrackingArea alloc] initWithRect:self.bounds
+                                                                options:options
+                                                                  owner:self
+                                                               userInfo:nil];
     [self addTrackingArea:trackingArea];
 }
-
 
 @end
 namespace eacp::Graphics
@@ -185,6 +182,15 @@ struct View::Native
 
     CALayer* getLayer() { return nativeView.get().layer; }
 
+    Point getMousePosition() const
+    {
+        auto view = nativeView.get();
+        auto windowPoint = [view.window mouseLocationOutsideOfEventStream];
+        auto localPoint = [view convertPoint:windowPoint fromView:nil];
+
+        return {(float) localPoint.x, (float) localPoint.y};
+    }
+
     ObjC::Ptr<NativeView> nativeView;
 };
 
@@ -214,6 +220,11 @@ void View::repaint()
 Rect View::getBounds() const
 {
     return impl->getBounds();
+}
+
+Point View::getMousePosition() const
+{
+    return impl->getMousePosition();
 }
 
 void View::setBounds(const Rect& bounds)
@@ -390,12 +401,29 @@ void View::handleMouseEvent(const MouseEvent& event)
 {
     switch (event.type)
     {
-        case MouseEventType::Down: mouseDown(event); break;
-        case MouseEventType::Up: mouseUp(event); break;
-        case MouseEventType::Dragged: mouseDragged(event); break;
-        case MouseEventType::Moved: mouseMoved(event); break;
-        case MouseEventType::Entered: mouseEntered(event); break;
-        case MouseEventType::Exited: mouseExited(event); break;
+        case MouseEventType::Down:
+            mouseDown(event);
+            break;
+        case MouseEventType::Up:
+            mouseUp(event);
+            break;
+        case MouseEventType::Dragged:
+            mouseDragged(event);
+            break;
+        case MouseEventType::Moved:
+            mouseMoved(event);
+            break;
+        case MouseEventType::Entered:
+            mouseEntered(event);
+            break;
+        case MouseEventType::Exited:
+            mouseExited(event);
+            break;
     }
+}
+
+bool View::isHovering() const
+{
+    return getLocalBounds().contains(getMousePosition());
 }
 } // namespace eacp::Graphics

@@ -34,6 +34,13 @@ Color::Color(float rToUse, float gToUse, float bToUse, float aToUse)
 {
 }
 
+Color Color::withAlpha(float alpha) const
+{
+    auto copy = *this;
+    copy.a = alpha;
+    return copy;
+}
+
 Point operator+(const Point& a, const Point& b)
 {
     return {a.x + b.x, a.y + b.y};

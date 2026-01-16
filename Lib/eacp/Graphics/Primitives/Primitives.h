@@ -35,6 +35,8 @@ struct Color
     Color() = default;
     Color(float rToUse, float gToUse, float bToUse, float aToUse = 1.f);
 
+    Color withAlpha(float alpha) const;
+
     float r = 0.f;
     float g = 0.f;
     float b = 0.f;

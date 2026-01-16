@@ -25,18 +25,26 @@ struct ColoredView final : View
         return color;
     }
 
-    void updatePathColor() { backgroundLayer->setFillColor(getColor()); }
-
-    void setMode(bool mode)
+    float getAlpha()
     {
-        on = mode;
-        updatePathColor();
+        if (isHovering())
+            return 1.f;
+
+        return 0.5f;
     }
 
-    void mouseEntered(const MouseEvent&) override { setMode(true); }
+    void updatePathColor()
+    {
+        backgroundLayer->setFillColor(getColor().withAlpha(getAlpha()));
+    }
 
-    void mouseExited(const MouseEvent&) override { setMode(false); }
-
+    void mouseEntered(const MouseEvent&) override { updatePathColor(); }
+    void mouseExited(const MouseEvent&) override { updatePathColor(); }
+    void mouseDown(const MouseEvent&) override
+    {
+        on = !on;
+        updatePathColor();
+    }
     void resized() override
     {
         auto bounds = getLocalBounds();

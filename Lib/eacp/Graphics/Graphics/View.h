@@ -69,10 +69,13 @@ public:
 
     ViewProperties& getProperties() { return properties; }
 
+    Point getMousePosition() const;
+
     virtual View* hitTest(const Point& point);
 
-    // Dispatches mouse event to the appropriate view after hit testing
     void dispatchMouseEvent(const MouseEvent& event);
+
+    bool isHovering() const;
 
 private:
     void handleMouseEvent(const MouseEvent& event);
@@ -80,7 +83,7 @@ private:
     std::vector<View*> subviews;
     std::vector<Layer*> layers;
     View* parent = nullptr;
-    View* hoveredView = nullptr;  // Tracks which view mouse is currently over
+    View* hoveredView = nullptr; // Tracks which view mouse is currently over
 
     ViewProperties properties;
 
