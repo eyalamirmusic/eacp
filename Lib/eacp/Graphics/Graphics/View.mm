@@ -306,6 +306,18 @@ struct View::Native
         return {(float) localPoint.x, (float) localPoint.y};
     }
 
+    void focus()
+    {
+        auto view = nativeView.get();
+        [view.window makeFirstResponder:view];
+    }
+
+    bool hasFocus() const
+    {
+        auto view = nativeView.get();
+        return view.window.firstResponder == view;
+    }
+
     ObjC::Ptr<NativeView> nativeView;
 };
 
@@ -340,6 +352,16 @@ Rect View::getBounds() const
 Point View::getMousePosition() const
 {
     return impl->getMousePosition();
+}
+
+void View::focus()
+{
+    impl->focus();
+}
+
+bool View::hasFocus() const
+{
+    return impl->hasFocus();
 }
 
 void View::setBounds(const Rect& bounds)
@@ -527,6 +549,8 @@ void View::handleMouseEvent(const MouseEvent& event)
     switch (event.type)
     {
         case MouseEventType::Down:
+            if (properties.grabsFocusOnMouseDown)
+                focus();
             mouseDown(event);
             break;
         case MouseEventType::Up:

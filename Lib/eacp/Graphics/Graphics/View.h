@@ -66,6 +66,7 @@ struct KeyEvent
 struct ViewProperties
 {
     bool handlesMouseEvents = false;
+    bool grabsFocusOnMouseDown = false;
 };
 
 class View
@@ -118,6 +119,9 @@ public:
     void dispatchMouseEvent(const MouseEvent& event);
 
     bool isHovering() const;
+
+    void focus();
+    bool hasFocus() const;
 
 private:
     void handleMouseEvent(const MouseEvent& event);

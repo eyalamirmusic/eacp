@@ -11,6 +11,7 @@ struct ColoredView final : View
         , textLayer(labelText)
     {
         getProperties().handlesMouseEvents = true;
+        getProperties().grabsFocusOnMouseDown = true;
         addChildren({backgroundLayer, textLayer});
 
         textLayer->setText(labelText);
