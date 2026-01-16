@@ -46,6 +46,23 @@ struct MouseEvent
     double timestamp = 0.0;
 };
 
+enum class KeyEventType
+{
+    Down,
+    Up
+};
+
+struct KeyEvent
+{
+    std::string characters;
+    std::string charactersIgnoringModifiers;
+    uint16_t keyCode = 0;
+    KeyEventType type = KeyEventType::Down;
+    ModifierKeys modifiers;
+    bool isRepeat = false;
+    double timestamp = 0.0;
+};
+
 struct ViewProperties
 {
     bool handlesMouseEvents = false;
@@ -69,6 +86,8 @@ public:
     virtual void mouseMoved(const MouseEvent&) {}
     virtual void mouseEntered(const MouseEvent&) {}
     virtual void mouseExited(const MouseEvent&) {}
+    virtual void keyDown(const KeyEvent&) {}
+    virtual void keyUp(const KeyEvent&) {}
     virtual void resized();
 
     Rect getBounds() const;

@@ -7,6 +7,38 @@
 
 namespace eacp::Graphics
 {
+ModifierKeys modifierKeysFromEvent(NSEvent* event)
+{
+    auto flags = event.modifierFlags;
+
+    return {.shift = (flags & NSEventModifierFlagShift) != 0,
+            .control = (flags & NSEventModifierFlagControl) != 0,
+            .alt = (flags & NSEventModifierFlagOption) != 0,
+            .command = (flags & NSEventModifierFlagCommand) != 0};
+}
+
+KeyEvent keyEventFrom(NSEvent* event, KeyEventType type)
+{
+    auto e = KeyEvent();
+
+    if (event.characters != nil)
+        e.characters = [event.characters UTF8String];
+
+    if (event.charactersIgnoringModifiers != nil)
+    {
+        e.charactersIgnoringModifiers =
+            [event.charactersIgnoringModifiers UTF8String];
+    }
+
+    e.keyCode = event.keyCode;
+    e.type = type;
+    e.modifiers = modifierKeysFromEvent(event);
+    e.isRepeat = event.isARepeat;
+    e.timestamp = event.timestamp;
+
+    return e;
+}
+
 } // namespace eacp::Graphics
 
 @interface NativeView : NSView <CALayerDelegate>
@@ -43,6 +75,11 @@ namespace eacp::Graphics
 - (BOOL)isOpaque
 {
     return NO;
+}
+
+- (BOOL)acceptsFirstResponder
+{
+    return YES;
 }
 
 - (void)viewDidChangeBackingProperties
@@ -87,35 +124,29 @@ namespace eacp::Graphics
 {
     switch (event.buttonNumber)
     {
-        case 0: return eacp::Graphics::MouseButton::Left;
-        case 1: return eacp::Graphics::MouseButton::Right;
-        case 2: return eacp::Graphics::MouseButton::Middle;
-        default: return eacp::Graphics::MouseButton::Other;
+        case 0:
+            return eacp::Graphics::MouseButton::Left;
+        case 1:
+            return eacp::Graphics::MouseButton::Right;
+        case 2:
+            return eacp::Graphics::MouseButton::Middle;
+        default:
+            return eacp::Graphics::MouseButton::Other;
     }
-}
-
-- (eacp::Graphics::ModifierKeys)modifierKeysFromEvent:(NSEvent*)event
-{
-    NSEventModifierFlags flags = event.modifierFlags;
-    return {
-        .shift = (flags & NSEventModifierFlagShift) != 0,
-        .control = (flags & NSEventModifierFlagControl) != 0,
-        .alt = (flags & NSEventModifierFlagOption) != 0,
-        .command = (flags & NSEventModifierFlagCommand) != 0
-    };
 }
 
 - (void)dispatchMouseEvent:(NSEvent*)event type:(eacp::Graphics::MouseEventType)type
 {
-    NativeView* root = [self rootView];
-    NSPoint windowPos = [event locationInWindow];
-    NSPoint localPos = [root convertPoint:windowPos fromView:nil];
+    auto root = [self rootView];
+    auto windowPos = [event locationInWindow];
+    auto localPos = [root convertPoint:windowPos fromView:nil];
 
-    eacp::Graphics::MouseEvent e;
+    auto e = eacp::Graphics::MouseEvent();
+
     e.pos = {(float) localPos.x, (float) localPos.y};
     e.type = type;
     e.button = [self mouseButtonFromEvent:event];
-    e.modifiers = [self modifierKeysFromEvent:event];
+    e.modifiers = eacp::Graphics::modifierKeysFromEvent(event);
     e.clickCount = (int) event.clickCount;
     e.pressure = event.pressure;
     e.timestamp = event.timestamp;
@@ -124,7 +155,8 @@ namespace eacp::Graphics
     if (type == eacp::Graphics::MouseEventType::Down)
         root->mouseDownPosition = localPos;
 
-    e.downPos = {(float) root->mouseDownPosition.x, (float) root->mouseDownPosition.y};
+    e.downPos = {(float) root->mouseDownPosition.x,
+                 (float) root->mouseDownPosition.y};
 
     root->cppView->dispatchMouseEvent(e);
 }
@@ -189,6 +221,18 @@ namespace eacp::Graphics
 - (void)otherMouseDragged:(NSEvent*)event
 {
     [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Dragged];
+}
+
+- (void)keyDown:(NSEvent*)event
+{
+    auto e = eacp::Graphics::keyEventFrom(event, eacp::Graphics::KeyEventType::Down);
+    cppView->keyDown(e);
+}
+
+- (void)keyUp:(NSEvent*)event
+{
+    auto e = eacp::Graphics::keyEventFrom(event, eacp::Graphics::KeyEventType::Up);
+    cppView->keyUp(e);
 }
 
 - (void)updateTrackingAreas
@@ -423,7 +467,9 @@ Point View::convertPointToDescendant(const Point& point, View* descendant)
     return point - offset;
 }
 
-MouseEvent View::createLocalEvent(const MouseEvent& event, View* target, MouseEventType type)
+MouseEvent View::createLocalEvent(const MouseEvent& event,
+                                  View* target,
+                                  MouseEventType type)
 {
     MouseEvent localEvent = event;
     localEvent.pos = convertPointToDescendant(event.pos, target);
@@ -457,7 +503,8 @@ void View::dispatchMouseEvent(const MouseEvent& event)
 
         if (target != nullptr && event.type == MouseEventType::Moved)
         {
-            target->handleMouseEvent(createLocalEvent(event, target, MouseEventType::Moved));
+            target->handleMouseEvent(
+                createLocalEvent(event, target, MouseEventType::Moved));
         }
     }
     else if (event.type == MouseEventType::Exited)

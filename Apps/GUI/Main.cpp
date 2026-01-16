@@ -46,6 +46,8 @@ struct ColoredView final : View
         updatePathColor();
     }
 
+    void keyDown(const KeyEvent& event) override { LOG(event.characters); }
+
     void resized() override
     {
         auto bounds = getLocalBounds();
