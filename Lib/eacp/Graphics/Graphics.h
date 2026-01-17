@@ -5,3 +5,4 @@
 #include "Graphics/Window.h"
 #include "Graphics/Keyboard.h"
 #include "Graphics/TextInput.h"
+#include "Graphics/WebView.h"

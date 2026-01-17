@@ -5,7 +5,8 @@ target_link_libraries(eacp-graphics PUBLIC eacp-core PRIVATE
         "-framework cocoa"
         "-framework corevideo"
         "-framework quartzcore"
-        "-framework carbon")
+        "-framework carbon"
+        "-framework webkit")
 
 set_default_target_setting(eacp-graphics)
 

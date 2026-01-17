@@ -6,7 +6,15 @@ using namespace Graphics;
 
 struct ParentView final : View
 {
+    ParentView()
+    {
+        webView.loadURL("https://www.eyalamir.org");
+        addChildren({webView});
+    }
 
+    void resized() override { scaleToFit({webView}); }
+
+    WebView webView;
 };
 
 struct MyApp

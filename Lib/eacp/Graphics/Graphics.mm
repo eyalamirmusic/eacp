@@ -6,6 +6,7 @@
 #include "Graphics/Layer.mm"
 #include "Graphics/Keyboard.mm"
 #include "Graphics/TextInput.mm"
+#include "Graphics/WebView.mm"
 
 #include "Primitives/MacGraphicUtils.mm"
 #include "Primitives/Font.mm"
