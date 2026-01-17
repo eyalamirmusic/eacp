@@ -97,6 +97,31 @@ void TextInput::setFont(const FontOptions& newFont)
     updateCursorPosition();
 }
 
+void TextInput::setTextColor(const Color& color)
+{
+    textColor = color;
+    cursorLayer.setFillColor(color);
+    updateTextDisplay();
+}
+
+void TextInput::setBackgroundColor(const Color& color)
+{
+    backgroundLayer.setFillColor(color);
+}
+
+void TextInput::setBorderColor(const Color& color)
+{
+    unfocusedBorderColor = color;
+    focusedBorderColor = color;
+    updateBorderColor();
+}
+
+void TextInput::setPadding(float newPadding)
+{
+    padding = newPadding;
+    resized();
+}
+
 void TextInput::onChange(std::function<void(const std::string&)> callback)
 {
     onChangeCallback = std::move(callback);
@@ -121,10 +146,10 @@ void TextInput::resized()
     borderLayer.setPath(borderPath);
     borderLayer.setBounds(bounds);
 
-    float lineHeight = TextMetrics::getLineHeight(font);
-    float textY = (bounds.h - lineHeight) / 2.f;
+    textLayer.setBounds(bounds);
+    textLayer.setPosition({padding, 0.f});
 
-    textLayer.setBounds({padding, textY, bounds.w - padding * 2.f, lineHeight});
+    cursorLayer.setBounds(bounds);
 
     updateCursorPosition();
     updateBorderColor();
@@ -210,21 +235,21 @@ void TextInput::updateTextDisplay()
     else
     {
         textLayer.setText(text);
-        textLayer.setColor({0.f, 0.f, 0.f});
+        textLayer.setColor(textColor);
     }
 }
 
 void TextInput::updateCursorPosition()
 {
-    Rect bounds = getLocalBounds();
     float xOffset = TextMetrics::getOffsetForIndex(text, cursorIndex, font);
-    float lineHeight = TextMetrics::getLineHeight(font);
-    float textY = (bounds.h - lineHeight) / 2.f;
+    float ascent = TextMetrics::getAscent(font);
+    float descent = TextMetrics::getDescent(font);
+    float textHeight = ascent + descent;
 
     Path cursorPath;
-    cursorPath.addRect({padding + xOffset, textY, 2.f, lineHeight});
+    cursorPath.addRect({0.f, 0.f, 2.f, textHeight});
     cursorLayer.setPath(cursorPath);
-    cursorLayer.setBounds(bounds);
+    cursorLayer.setPosition({padding + xOffset, 0.f});
 }
 
 void TextInput::handleBackspace()
@@ -269,9 +294,9 @@ void TextInput::toggleCursorVisibility()
 void TextInput::updateBorderColor()
 {
     if (hasFocus())
-        borderLayer.setStrokeColor({0.2f, 0.5f, 1.f});
+        borderLayer.setStrokeColor(focusedBorderColor);
     else
-        borderLayer.setStrokeColor({0.6f, 0.6f, 0.6f});
+        borderLayer.setStrokeColor(unfocusedBorderColor);
 }
 
 } // namespace eacp::Graphics

@@ -25,6 +25,10 @@ public:
     void setPlaceholder(const std::string& placeholder);
 
     void setFont(const FontOptions& font);
+    void setTextColor(const Color& color);
+    void setBackgroundColor(const Color& color);
+    void setBorderColor(const Color& color);
+    void setPadding(float padding);
 
     void onChange(std::function<void(const std::string&)> callback);
     void onSubmit(std::function<void(const std::string&)> callback);
@@ -47,6 +51,9 @@ private:
     size_t cursorIndex = 0;
     Font font;
     float padding = 8.f;
+    Color textColor {0.f, 0.f, 0.f};
+    Color unfocusedBorderColor {0.6f, 0.6f, 0.6f};
+    Color focusedBorderColor {0.2f, 0.5f, 1.f};
 
     ShapeLayer backgroundLayer;
     ShapeLayer borderLayer;

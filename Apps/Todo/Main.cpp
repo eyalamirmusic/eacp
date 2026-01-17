@@ -21,6 +21,10 @@ struct TodoItemView final : View
         textLayer->setColor({0.9f, 0.9f, 0.9f});
 
         textInput.setText(text);
+        textInput.setTextColor({0.9f, 0.9f, 0.9f});
+        textInput.setBackgroundColor({0.f, 0.f, 0.f, 0.f});
+        textInput.setBorderColor({0.f, 0.f, 0.f, 0.f});
+        textInput.setPadding(0.f);
         textInput.onSubmit([this](const std::string& newText) { finishEditing(newText); });
 
         addChildren({checkboxLayer, checkmarkLayer, textLayer});
@@ -112,16 +116,16 @@ struct TodoItemView final : View
         checkmarkLayer->setPath(checkmarkPath);
 
         float textX = padding * 2 + checkboxSize + 10.f;
+        float textY = bounds.h / 2.f - 8.f;
 
         if (editing)
         {
-            textInput.setBounds(
-                {textX, (bounds.h - 24.f) / 2.f, bounds.w - textX - padding, 24.f});
+            textInput.setBounds({textX, textY, bounds.w - textX - padding, 20.f});
         }
         else
         {
             scaleToFit({checkboxLayer, checkmarkLayer, textLayer});
-            textLayer->setPosition({textX, bounds.h / 2.f - 8.f});
+            textLayer->setPosition({textX, textY});
         }
 
         scaleToFit({checkboxLayer, checkmarkLayer});

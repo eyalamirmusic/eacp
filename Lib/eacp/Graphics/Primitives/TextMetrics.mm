@@ -104,4 +104,16 @@ float TextMetrics::getLineHeight(const Font& font)
     return (float) (ascent + descent + leading);
 }
 
+float TextMetrics::getAscent(const Font& font)
+{
+    CTFontRef ctFont = (CTFontRef) font.getHandle();
+    return (float) CTFontGetAscent(ctFont);
+}
+
+float TextMetrics::getDescent(const Font& font)
+{
+    CTFontRef ctFont = (CTFontRef) font.getHandle();
+    return (float) CTFontGetDescent(ctFont);
+}
+
 } // namespace eacp::Graphics
