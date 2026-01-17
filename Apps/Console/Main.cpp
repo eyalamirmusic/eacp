@@ -3,17 +3,18 @@
 
 struct App
 {
-    App() {}
-
     void update()
     {
-        for (auto& key: eacp::Graphics::Keyboard::getPressedKeys())
-        {
-            eacp::LOG(key.character);
-        }
+        eacp::LOG(std::to_string(numTimes));
+
+        numTimes++;
+
+        if (numTimes == 5)
+            eacp::Apps::quit();
     }
 
-    eacp::Threads::Timer timer {[&] { update(); }, 60};
+    int numTimes = 0;
+    eacp::Threads::Timer timer {[&] { update(); }, 1};
 };
 
 int main()
