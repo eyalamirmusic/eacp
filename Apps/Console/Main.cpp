@@ -1,5 +1,4 @@
 #include <eacp/Core/Core.h>
-#include <eacp/Graphics/Graphics.h>
 
 struct App
 {
@@ -9,7 +8,7 @@ struct App
 
         numTimes++;
 
-        if (numTimes == 5)
+        if (numTimes == 1)
             eacp::Apps::quit();
     }
 
