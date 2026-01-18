@@ -6,7 +6,6 @@ namespace eacp::Apps
 {
 struct AppBase
 {
-    AppBase();
     virtual ~AppBase() = default;
 };
 

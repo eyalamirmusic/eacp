@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Utils/Common.h"
+#include <eacp/Core/Utils/Common.h>
 
 namespace eacp::Threads
 {

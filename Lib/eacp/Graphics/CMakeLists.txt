@@ -14,4 +14,10 @@ target_sources(eacp-graphics PRIVATE Graphics.cpp)
 
 if (APPLE)
     target_sources(eacp-graphics PRIVATE Graphics.mm)
+
+    if (EACP_IOS)
+        target_sources(eacp-graphics PRIVATE Graphics-iOS.mm)
+    else ()
+        target_sources(eacp-graphics PRIVATE Graphics-MacOS.mm)
+    endif ()
 endif ()
