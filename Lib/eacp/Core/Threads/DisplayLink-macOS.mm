@@ -17,7 +17,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef,
                                     void* displayLinkContext)
 {
     auto cb = (Callback*) displayLinkContext;
-    
+
     dispatch_async(dispatch_get_main_queue(), ^{
       (*cb)();
     });

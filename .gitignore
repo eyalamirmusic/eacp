@@ -2,25 +2,12 @@
 *.cbp
 Makefile
 /build
+/build*
 /out
 .vs
 .cache
 .claude
 CMakeSettings.json
-
-*.zip
-*.pkg
-
-**/VisualStudio2017/.vs
-**/VisualStudio2017/x64
-**/VisualStudio2019/.vs
-**/VisualStudio2019/x64
-**/MacOSX/build/Release
-**/MacOSX/build/Debug
-**/iOS/build/Release
-**/iOS/build/Debug
-**/MacOSX/.idea/
-
 
 cmake-build*
 CMakeFiles
@@ -40,5 +27,3 @@ xcschememanagement.plist
 
 workspace.xml
 xcuserdata
-/Apps/SerumStandAlone/Builds/MacOSX/RecentFilesMenuTemplate.nib
-/SDKs/FRUT
