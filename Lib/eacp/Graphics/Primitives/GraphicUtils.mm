@@ -1,4 +1,4 @@
-#include "MacGraphicUtils.h"
+#include "GraphicUtils.h"
 
 namespace eacp::Graphics
 {

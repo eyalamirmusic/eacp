@@ -1,6 +1,6 @@
 #include "DisplayLink.h"
-#include "../ObjC/ObjC.h"
-#include "ThreadUtils.h"
+#include <eacp/Core/ObjC/ObjC.h>
+#include <eacp/Core/Threads/ThreadUtils.h>
 #import <CoreVideo/CoreVideo.h>
 
 #pragma clang diagnostic push

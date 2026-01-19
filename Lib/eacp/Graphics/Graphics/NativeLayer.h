@@ -1,13 +1,13 @@
 #pragma once
 
 #import <QuartzCore/QuartzCore.h>
-#include "../Primitives/MacGraphicUtils.h"
+#include "../Primitives/GraphicUtils.h"
 
 namespace eacp::Graphics
 {
-struct MacLayer
+struct NativeLayer
 {
-    virtual ~MacLayer() = default;
+    virtual ~NativeLayer() = default;
 
     void attachTo(CALayer* parentLayer)
     {

@@ -16,7 +16,7 @@
 namespace eacp::Graphics
 {
 
-struct ShapeLayer::Native : public MacLayer
+struct ShapeLayer::Native : public NativeLayer
 {
     Native()
     {

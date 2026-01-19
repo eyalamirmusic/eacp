@@ -1,23 +1,28 @@
 add_library(eacp-graphics STATIC)
 
-target_link_libraries(eacp-graphics PUBLIC eacp-core PRIVATE
-        "-framework foundation"
-        "-framework cocoa"
-        "-framework corevideo"
-        "-framework quartzcore"
-        "-framework carbon"
-        "-framework webkit")
-
 set_default_target_setting(eacp-graphics)
 
 target_sources(eacp-graphics PRIVATE Graphics.cpp)
 
 if (APPLE)
     target_sources(eacp-graphics PRIVATE Graphics.mm)
+    target_link_libraries(eacp-graphics PUBLIC eacp-core PRIVATE
+        "-framework Foundation"
+        "-framework QuartzCore"
+        "-framework CoreGraphics"
+        "-framework CoreText"
+        "-framework WebKit")
 
     if (EACP_IOS)
         target_sources(eacp-graphics PRIVATE Graphics-iOS.mm)
+        target_link_libraries(eacp-graphics PRIVATE
+            "-framework UIKit"
+            "-framework CoreVideo")
     else ()
         target_sources(eacp-graphics PRIVATE Graphics-MacOS.mm)
+        target_link_libraries(eacp-graphics PRIVATE
+            "-framework Cocoa"
+            "-framework CoreVideo"
+            "-framework Carbon")
     endif ()
 endif ()

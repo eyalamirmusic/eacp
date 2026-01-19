@@ -1,5 +1,5 @@
 #include "Font.h"
-#include "MacGraphicUtils.h"
+#include "GraphicUtils.h"
 #import <CoreText/CoreText.h>
 
 namespace eacp::Graphics

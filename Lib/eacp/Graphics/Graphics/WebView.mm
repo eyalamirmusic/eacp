@@ -1,7 +1,13 @@
 #import <WebKit/WebKit.h>
-#import <Cocoa/Cocoa.h>
+#import <Foundation/Foundation.h>
+#if TARGET_OS_IPHONE
+#import <UIKit/UIKit.h>
+#else
+#import <AppKit/AppKit.h>
+#endif
 #include "WebView.h"
-#include "../Primitives/MacGraphicUtils.h"
+#include "../Primitives/GraphicUtils.h"
+#include <eacp/Core/Threads/EventLoop.h>
 #include <unordered_map>
 
 namespace
@@ -38,7 +44,7 @@ struct WebView::Native
 
         config = [[WKWebViewConfiguration alloc] init];
 
-        auto rect = NSMakeRect(0, 0, 100, 100);
+        auto rect = CGRectMake(0, 0, 100, 100);
         webView = [[WKWebView alloc] initWithFrame:rect configuration:config.get()];
         webView.get().navigationDelegate = delegate.get();
     }
@@ -60,7 +66,11 @@ struct WebView::Native
 
         if (parentHandle != nullptr)
         {
+#if TARGET_OS_IPHONE
+            auto* parentView = (__bridge UIView*) parentHandle;
+#else
             auto* parentView = (__bridge NSView*) parentHandle;
+#endif
             [parentView addSubview:webView.get()];
         }
     }

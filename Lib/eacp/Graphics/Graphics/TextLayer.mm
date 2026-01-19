@@ -19,7 +19,7 @@
 namespace eacp::Graphics
 {
 
-struct TextLayer::Native : MacLayer
+struct TextLayer::Native : NativeLayer
 {
     Native()
     {

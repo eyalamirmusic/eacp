@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Primitives/MacGraphicUtils.h"
+#include "../Primitives/GraphicUtils.h"
 #include "GraphicsContext.h"
 #include "../Primitives/Path.h"
 #include "../Primitives/Font.h"
