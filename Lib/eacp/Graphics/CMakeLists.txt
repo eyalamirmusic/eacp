@@ -1,6 +1,7 @@
 add_library(eacp-graphics STATIC)
 
 set_default_target_setting(eacp-graphics)
+add_ide_sources(eacp-graphics)
 
 target_sources(eacp-graphics PRIVATE Graphics.cpp)
 

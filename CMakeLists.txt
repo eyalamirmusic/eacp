@@ -28,6 +28,21 @@ function(set_default_target_setting target)
     set_target_properties(${target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 endfunction()
 
+function(add_ide_sources target)
+    file(GLOB_RECURSE ALL_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/*.mm"
+        "${CMAKE_CURRENT_SOURCE_DIR}/*.h"
+    )
+
+    list(FILTER ALL_SOURCES EXCLUDE REGEX "^${CMAKE_CURRENT_SOURCE_DIR}/[^/]+\\.(cpp|mm)$")
+
+    if(ALL_SOURCES)
+        target_sources(${target} PRIVATE ${ALL_SOURCES})
+        set_source_files_properties(${ALL_SOURCES} PROPERTIES HEADER_FILE_ONLY TRUE)
+    endif()
+endfunction()
+
 set(CMAKE_CXX_STANDARD 20)
 
 add_subdirectory(Lib)

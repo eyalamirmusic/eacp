@@ -17,5 +17,6 @@ endif ()
 
 
 set_default_target_setting(eacp-core)
+add_ide_sources(eacp-core)
 
 target_sources(eacp-core PRIVATE Core.cpp)
