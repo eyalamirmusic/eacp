@@ -12,7 +12,8 @@ if (APPLE)
         target_link_libraries(eacp-core PRIVATE
                 "-framework Cocoa")
     endif ()
-
+elseif (WIN32)
+    target_sources(eacp-core PRIVATE Core-Windows.cpp)
 endif ()
 
 
