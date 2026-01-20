@@ -26,4 +26,26 @@ CFRef<CGColorRef> toCGColor(const Color& c)
     CGFloat components[4] = {c.r, c.g, c.b, c.a};
     return {CGColorCreate(colorSpace, components)};
 }
+
+CFRef<CGGradientRef> toCGGradient(const LinearGradient& gradient)
+{
+    static auto colorSpace = CFRef<CGColorSpaceRef>(CGColorSpaceCreateDeviceRGB());
+
+    std::vector<CGFloat> components;
+    std::vector<CGFloat> locations;
+
+    for (const auto& stop : gradient.stops)
+    {
+        components.push_back(stop.color.r);
+        components.push_back(stop.color.g);
+        components.push_back(stop.color.b);
+        components.push_back(stop.color.a);
+        locations.push_back(stop.position);
+    }
+
+    return {CGGradientCreateWithColorComponents(colorSpace,
+                                                components.data(),
+                                                locations.data(),
+                                                gradient.stops.size())};
+}
 }

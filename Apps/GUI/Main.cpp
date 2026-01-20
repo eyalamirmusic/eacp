@@ -130,6 +130,35 @@ struct FilledRect final : View
     ShapeLayerView layer;
 };
 
+struct GradientRect final : View
+{
+    GradientRect()
+    {
+        addChildren({layer});
+    }
+
+    void resized() override
+    {
+        auto bounds = getLocalBounds();
+        path.clear();
+        path.addRoundedRect(bounds, 12.f);
+        layer->setPath(path);
+
+        LinearGradient gradient(
+            {0.f, 0.f},
+            {bounds.w, bounds.h},
+            {{{0.2f, 0.4f, 0.9f}, 0.f},
+             {{0.9f, 0.2f, 0.5f}, 0.5f},
+             {{0.9f, 0.6f, 0.1f}, 1.f}});
+
+        layer->setFillGradient(gradient);
+        layer.scaleToFit();
+    }
+
+    Path path;
+    ShapeLayerView layer;
+};
+
 struct StrokeRect final : View
 {
     StrokeRect()
@@ -180,7 +209,7 @@ struct ParentView final : View
 {
     ParentView()
     {
-        addChildren({rec, stroke, child1, child2, child3, animatedChild, text});
+        addChildren({rec, stroke, child1, child2, child3, gradient, animatedChild, text});
     }
 
     void resized() override
@@ -188,6 +217,7 @@ struct ParentView final : View
         child1.setBoundsRelative({0.1f, 0.1f, 0.2f, 0.2f});
         child2.setBoundsRelative({0.4f, 0.1f, 0.2f, 0.2f});
         child3.setBoundsRelative({0.7f, 0.1f, 0.2f, 0.2f});
+        gradient.setBoundsRelative({0.1f, 0.4f, 0.8f, 0.2f});
 
         scaleToFit({animatedChild, rec, stroke});
         text.setBounds({0, getLocalBounds().h - 30, 300, 30});
@@ -198,6 +228,7 @@ struct ParentView final : View
     ColoredView child1 {{0.2f, 0.4f, 0.8f}, "Blue"};
     ColoredView child2 {{0.4f, 0.1f, 0.3f, 0.5f}, "Purple"};
     ColoredView child3 {{1.0, 0.f, 0.1f, 0.7f}, "Red"};
+    GradientRect gradient;
     AnimatedView animatedChild;
     TextDisplay text;
 };

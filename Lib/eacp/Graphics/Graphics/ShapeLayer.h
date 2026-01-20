@@ -15,6 +15,7 @@ public:
     void clearPath();
 
     void setFillColor(const Color& color);
+    void setFillGradient(const LinearGradient& gradient);
     void setStrokeColor(const Color& color);
     void setStrokeWidth(float width);
 
