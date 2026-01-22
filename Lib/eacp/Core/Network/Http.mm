@@ -62,9 +62,9 @@ SafeResult performSyncRequest(NSURLRequest* request)
     auto cppHandler =
         [&result, &semaphore](NSData* data, NSURLResponse* res, NSError* error)
     {
-        result.data = data;
-        result.response = res;
-        result.error = error;
+        result.data.reset(data);
+        result.response.reset(res);
+        result.error.reset(error);
 
         semaphore.signal();
     };
