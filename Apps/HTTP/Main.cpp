@@ -1,12 +1,77 @@
 #include <eacp/Core/Core.h>
 
+using namespace eacp;
+
+void printResponse(const eacp::HTTP::Response& res)
+{
+    LOG("Status: " + std::to_string(res.statusCode));
+    if (!res.error.empty())
+        LOG("Error: " + res.error);
+    else
+        LOG("Content: " + res.content);
+
+    LOG("");
+}
+
+void performAndPrint(const HTTP::Request& req)
+{
+    auto res = req.perform();
+    printResponse(res);
+}
+
+void getAndPrint(const std::string& url)
+{
+    auto res = HTTP::httpRequest(url);
+    printResponse(res);
+}
+
 int main()
 {
-    auto url = "https://echo.free.beeceptor.com";
-    auto req = eacp::HTTP::Request::post(url, "Hey, I'm a body");
-    req.headers["Secret"] = "MySecret";
-    auto res = req.perform();
+    getAndPrint("https://jsonplaceholder.typicode.com/posts/1");
+    getAndPrint("https://jsonplaceholder.typicode.com/posts?userId=1");
 
-    eacp::LOG(res.content);
+    {
+        auto req = HTTP::Request("https://httpbin.org/get");
+        req.headers["X-Custom-Header"] = "CustomValue";
+        req.headers["Accept"] = "application/json";
+        performAndPrint(req);
+    }
+
+    {
+        auto jsonBody = R"({
+            "title": "My New Post",
+            "body": "This is the content of my post",
+            "userId": 1
+        })";
+        auto req = HTTP::Request::post("https://jsonplaceholder.typicode.com/posts",
+                                       jsonBody);
+        req.headers["Content-Type"] = "application/json";
+        performAndPrint(req);
+    }
+
+    {
+        auto formData = "username=testuser&password=secret123";
+        auto req = HTTP::Request::post("https://httpbin.org/post", formData);
+        req.headers["Content-Type"] = "application/x-www-form-urlencoded";
+        performAndPrint(req);
+    }
+
+    // 6. GET user agent info
+    {
+        auto req = HTTP::Request("https://httpbin.org/user-agent");
+        req.headers["User-Agent"] = "eacp-http-client/1.0";
+        performAndPrint(req);
+    }
+
+    getAndPrint("https://httpbin.org/ip");
+
+    // 8. GET with authentication header (Bearer token simulation)
+    {
+        auto req = HTTP::Request("https://httpbin.org/bearer");
+        req.headers["Authorization"] = "Bearer my-fake-jwt-token-12345";
+        performAndPrint(req);
+    }
+
+    LOG("=== All requests completed ===");
     return 0;
 }
