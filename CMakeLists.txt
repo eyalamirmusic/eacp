@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.31)
-project(eacp LANGUAGES CXX OBJCXX)
+project(eacp LANGUAGES CXX)
+
+if (APPLE)
+    enable_language(OBJCXX)
+endif ()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(CMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "LK9GL8NWU4" CACHE STRING "" FORCE)

@@ -8,7 +8,7 @@ struct App
 
         numTimes++;
 
-        if (numTimes == 1)
+        if (numTimes == 4)
             eacp::Apps::quit();
     }
 
