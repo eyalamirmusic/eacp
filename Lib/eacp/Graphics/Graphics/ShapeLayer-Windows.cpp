@@ -5,6 +5,7 @@
 #include <cassert>
 #include <algorithm>
 
+#define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
 #include <d2d1_1.h>

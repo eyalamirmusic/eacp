@@ -5,17 +5,38 @@
 #include <algorithm>
 #include <bitset>
 
+#define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
-#include <windowsx.h>
 
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.UI.Input.h>
 #include <winrt/Windows.UI.Composition.Desktop.h>
+#include <winrt/Windows.Graphics.Display.h>
 #include <Windows.UI.Composition.Desktop.h>
 #include <windows.ui.composition.interop.h>
 #include <DispatcherQueue.h>
+
+// Virtual key codes - defined manually to reduce Windows.h dependency
+namespace VK
+{
+constexpr int Shift = 0x10;
+constexpr int Control = 0x11;
+constexpr int Menu = 0x12; // Alt key
+constexpr int LWin = 0x5B;
+constexpr int RWin = 0x5C;
+} // namespace VK
+
+// Helpers for extracting mouse coordinates from LPARAM
+inline int getXFromLParam(LPARAM lp)
+{
+    return static_cast<int>(static_cast<short>(LOWORD(lp)));
+}
+inline int getYFromLParam(LPARAM lp)
+{
+    return static_cast<int>(static_cast<short>(HIWORD(lp)));
+}
 
 namespace wuc = winrt::Windows::UI::Composition;
 namespace wucore = winrt::Windows::UI::Core;
@@ -47,7 +68,6 @@ struct Window::Native
 
     ~Native()
     {
-        // Unregister pointer event handlers
         if (inputSource && useWinRTPointerInput)
         {
             inputSource.PointerPressed(pointerPressedToken);
@@ -65,7 +85,7 @@ struct Window::Native
         }
     }
 
-    void registerWindowClass()
+    static void registerWindowClass()
     {
         if (windowClassRegistered)
             return;
@@ -87,7 +107,7 @@ struct Window::Native
     {
         DWORD style = WS_OVERLAPPEDWINDOW;
 
-        if (std::find(options.flags.begin(), options.flags.end(), WindowFlags::Borderless)
+        if (std::ranges::find(options.flags, WindowFlags::Borderless)
             != options.flags.end())
         {
             style = WS_POPUP;
@@ -98,11 +118,18 @@ struct Window::Native
         RECT rect = {0, 0, options.width, options.height};
         AdjustWindowRect(&rect, style, FALSE);
 
-        hwnd = CreateWindowExW(
-            0, WINDOW_CLASS_NAME, wideTitle.c_str(), style,
-            CW_USEDEFAULT, CW_USEDEFAULT,
-            rect.right - rect.left, rect.bottom - rect.top,
-            nullptr, nullptr, GetModuleHandleW(nullptr), this);
+        hwnd = CreateWindowExW(0,
+                               WINDOW_CLASS_NAME,
+                               wideTitle.c_str(),
+                               style,
+                               CW_USEDEFAULT,
+                               CW_USEDEFAULT,
+                               rect.right - rect.left,
+                               rect.bottom - rect.top,
+                               nullptr,
+                               nullptr,
+                               GetModuleHandleW(nullptr),
+                               this);
     }
 
     void initializeComposition()
@@ -116,7 +143,8 @@ struct Window::Native
 
         auto interop = compositor.as<
             ABI::Windows::UI::Composition::Desktop::ICompositorDesktopInterop>();
-        winrt::com_ptr<ABI::Windows::UI::Composition::Desktop::IDesktopWindowTarget> abiTarget;
+        winrt::com_ptr<ABI::Windows::UI::Composition::Desktop::IDesktopWindowTarget>
+            abiTarget;
         auto hr = interop->CreateDesktopWindowTarget(hwnd, 1, abiTarget.put());
         if (FAILED(hr) || !abiTarget)
             return;
@@ -131,37 +159,24 @@ struct Window::Native
         if (!rootVisual)
             return;
 
-        // Create a dispatcher queue for WinRT event processing
-        // This is required for WinRT events to work on a Win32 thread
-        DispatcherQueueOptions dqOptions{};
+        DispatcherQueueOptions dqOptions {};
         dqOptions.dwSize = sizeof(DispatcherQueueOptions);
         dqOptions.threadType = DQTYPE_THREAD_CURRENT;
         dqOptions.apartmentType = DQTAT_COM_NONE;
 
         ABI::Windows::System::IDispatcherQueueController* controller = nullptr;
-        HRESULT hr = CreateDispatcherQueueController(dqOptions, &controller);
+        auto hr = CreateDispatcherQueueController(dqOptions, &controller);
+
         if (FAILED(hr) || !controller)
             return;
 
-        dispatcherController = winrt::Windows::System::DispatcherQueueController{
+        dispatcherController = winrt::Windows::System::DispatcherQueueController {
             controller, winrt::take_ownership_from_abi};
-
-        // Note: CoreIndependentInputSource for composition visuals in desktop apps
-        // requires IVisualInteractionSourceInterop which is not publicly available
-        // in the standard Windows SDK headers. This functionality is primarily
-        // designed for XAML apps using SwapChainPanel.
-        //
-        // For desktop Win32 apps using Windows.UI.Composition:
-        // - Pointer input continues to use Win32 messages (WM_LBUTTONDOWN, etc.)
-        // - Keyboard input uses window-scoped state tracking
-        //
-        // The dispatcher queue created above enables other WinRT async patterns
-        // and could be used if CoreIndependentInputSource becomes available.
 
         useWinRTPointerInput = false;
     }
 
-    void showWindow()
+    void showWindow() const
     {
         if (hwnd)
         {
@@ -170,15 +185,24 @@ struct Window::Native
         }
     }
 
-    float getWindowDpiScale()
+    float getWindowDpiScale() const
     {
-        unsigned int dpi = GetDpiForWindow(hwnd);
-        return dpi / 96.0f;
+        try
+        {
+            auto displayInfo = winrt::Windows::Graphics::Display::
+                DisplayInformation::GetForCurrentView();
+            return displayInfo.LogicalDpi() / 96.f;
+        }
+        catch (...)
+        {
+            auto dpi = GetDpiForWindow(hwnd);
+            return dpi / 96.f;
+        }
     }
 
     void setTitle(const std::string& title)
     {
-        std::wstring wideTitle = toWideString(title);
+        auto wideTitle = toWideString(title);
         SetWindowTextW(hwnd, wideTitle.c_str());
     }
 
@@ -195,25 +219,31 @@ struct Window::Native
             keyState.reset(vk);
     }
 
-    bool isKeyPressed(uint16_t vk) const
-    {
-        return vk < 256 && keyState.test(vk);
-    }
+    bool isKeyPressed(uint16_t vk) const { return vk < 256 && keyState.test(vk); }
 
-    bool isShiftPressed() const { return isKeyPressed(VK_SHIFT); }
-    bool isControlPressed() const { return isKeyPressed(VK_CONTROL); }
-    bool isAltPressed() const { return isKeyPressed(VK_MENU); }
-    bool isCommandPressed() const { return isKeyPressed(VK_LWIN) || isKeyPressed(VK_RWIN); }
+    bool isShiftPressed() const { return isKeyPressed(VK::Shift); }
+    bool isControlPressed() const { return isKeyPressed(VK::Control); }
+    bool isAltPressed() const { return isKeyPressed(VK::Menu); }
+    bool isCommandPressed() const
+    {
+        return isKeyPressed(VK::LWin) || isKeyPressed(VK::RWin);
+    }
 
     ModifierKeys getModifiers() const
     {
-        return {isShiftPressed(), isControlPressed(), isAltPressed(), isCommandPressed()};
+        return {isShiftPressed(),
+                isControlPressed(),
+                isAltPressed(),
+                isCommandPressed()};
     }
 
     void setContentView(View* view);
-    void ensureAllLayersRendered(View* view);
+    void ensureAllLayersRendered(const View* view);
 
-    static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK windowProc(HWND hwnd,
+                                       UINT msg,
+                                       WPARAM wParam,
+                                       LPARAM lParam);
 
     // Pointer event handlers for CoreIndependentInputSource
     void onPointerPressed(wucore::CoreIndependentInputSource const& sender,
@@ -226,54 +256,53 @@ struct Window::Native
     Window* ownerWindow;
     HWND hwnd = nullptr;
     View* contentView = nullptr;
-    Callback quitCallback;
-    wuc::Desktop::DesktopWindowTarget target{nullptr};
-    wuc::ContainerVisual rootVisual{nullptr};
-    wucore::CoreIndependentInputSource inputSource{nullptr};
+    Callback quitCallback = [] {};
+    wuc::Desktop::DesktopWindowTarget target {nullptr};
+    wuc::ContainerVisual rootVisual {nullptr};
+    wucore::CoreIndependentInputSource inputSource {nullptr};
 
     // Dispatcher queue for WinRT input events
-    winrt::Windows::System::DispatcherQueueController dispatcherController{nullptr};
+    winrt::Windows::System::DispatcherQueueController dispatcherController {nullptr};
 
-    // Event tokens for cleanup
     winrt::event_token pointerPressedToken;
     winrt::event_token pointerReleasedToken;
     winrt::event_token pointerMovedToken;
     bool useWinRTPointerInput = false;
 
-    // Keyboard state tracking (256 virtual keys)
     std::bitset<256> keyState;
 };
 
 void Window::Native::setContentView(View* view)
 {
     contentView = view;
+
     if (hwnd && view)
     {
         RECT clientRect;
         GetClientRect(hwnd, &clientRect);
-        float dpiScale = getWindowDpiScale();
-        view->setBounds(Rect(0, 0,
-                             static_cast<float>(clientRect.right) / dpiScale,
-                             static_cast<float>(clientRect.bottom) / dpiScale));
+        auto dpiScale = getWindowDpiScale();
+        view->setBounds({0.f,
+                         0.f,
+                         (float) clientRect.right / dpiScale,
+                         (float) clientRect.bottom / dpiScale});
 
         auto* viewVisual = static_cast<wuc::ContainerVisual*>(view->getHandle());
+
         if (rootVisual && viewVisual)
-        {
             rootVisual.Children().InsertAtTop(*viewVisual);
-        }
 
         showWindow();
         ensureAllLayersRendered(view);
     }
 }
 
-void Window::Native::ensureAllLayersRendered(View* view)
+void Window::Native::ensureAllLayersRendered(const View* view)
 {
     if (!view)
         return;
 
     auto& layers = view->getLayers();
-    for (auto* layer : layers)
+    for (auto* layer: layers)
     {
         auto* native = static_cast<NativeLayerBase*>(layer->getNativeLayer());
         if (native)
@@ -283,14 +312,14 @@ void Window::Native::ensureAllLayersRendered(View* view)
     }
 
     auto& subviews = view->getSubviews();
-    for (auto* subview : subviews)
+    for (auto* subview: subviews)
     {
         ensureAllLayersRendered(subview);
     }
 }
 
 void Window::Native::onPointerPressed(wucore::CoreIndependentInputSource const&,
-                                       wucore::PointerEventArgs const& args)
+                                      wucore::PointerEventArgs const& args)
 {
     if (!contentView)
         return;
@@ -317,7 +346,7 @@ void Window::Native::onPointerPressed(wucore::CoreIndependentInputSource const&,
 }
 
 void Window::Native::onPointerReleased(wucore::CoreIndependentInputSource const&,
-                                        wucore::PointerEventArgs const& args)
+                                       wucore::PointerEventArgs const& args)
 {
     if (!contentView)
         return;
@@ -345,7 +374,7 @@ void Window::Native::onPointerReleased(wucore::CoreIndependentInputSource const&
 }
 
 void Window::Native::onPointerMoved(wucore::CoreIndependentInputSource const&,
-                                     wucore::PointerEventArgs const& args)
+                                    wucore::PointerEventArgs const& args)
 {
     if (!contentView)
         return;
@@ -362,7 +391,10 @@ void Window::Native::onPointerMoved(wucore::CoreIndependentInputSource const&,
     ensureAllLayersRendered(contentView);
 }
 
-LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
+                                            UINT msg,
+                                            WPARAM wParam,
+                                            LPARAM lParam)
 {
     Native* self = nullptr;
 
@@ -386,10 +418,9 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam, 
     switch (msg)
     {
         case WM_CLOSE:
-            if (self->quitCallback)
-            {
-                self->quitCallback();
-            }
+
+            self->quitCallback();
+
             return 0;
 
         case WM_DESTROY:
@@ -403,7 +434,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam, 
                 GetClientRect(hwnd, &clientRect);
                 float dpiScale = self->getWindowDpiScale();
                 self->contentView->setBounds(
-                    Rect(0, 0,
+                    Rect(0,
+                         0,
                          static_cast<float>(clientRect.right) / dpiScale,
                          static_cast<float>(clientRect.bottom) / dpiScale));
                 self->ensureAllLayersRendered(self->contentView);
@@ -414,14 +446,17 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam, 
         case WM_DPICHANGED:
         {
             auto* suggested = reinterpret_cast<RECT*>(lParam);
-            SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
-                         suggested->right - suggested->left, suggested->bottom - suggested->top,
+            SetWindowPos(hwnd,
+                         nullptr,
+                         suggested->left,
+                         suggested->top,
+                         suggested->right - suggested->left,
+                         suggested->bottom - suggested->top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
 
             if (self->contentView)
-            {
                 self->ensureAllLayersRendered(self->contentView);
-            }
+
             return 0;
         }
 
@@ -430,34 +465,25 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam, 
 
         case WM_PAINT:
         {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd, &ps);
-            RECT rc;
-            GetClientRect(hwnd, &rc);
-            HBRUSH brush = CreateSolidBrush(RGB(31, 31, 31));
-            FillRect(hdc, &rc, brush);
-            DeleteObject(brush);
-            EndPaint(hwnd, &ps);
+            ValidateRect(hwnd, nullptr);
 
-            if (self->contentView)
-            {
+            if (self->contentView != nullptr)
                 self->ensureAllLayersRendered(self->contentView);
-            }
+
             return 0;
         }
 
         case WM_LBUTTONDOWN:
         case WM_RBUTTONDOWN:
         case WM_MBUTTONDOWN:
-            // Skip if using WinRT pointer input
             if (self->useWinRTPointerInput)
                 break;
             if (self->contentView)
             {
                 float dpiScale = self->getWindowDpiScale();
                 MouseEvent event;
-                event.pos = {static_cast<float>(GET_X_LPARAM(lParam)) / dpiScale,
-                             static_cast<float>(GET_Y_LPARAM(lParam)) / dpiScale};
+                event.pos = {static_cast<float>(getXFromLParam(lParam)) / dpiScale,
+                             static_cast<float>(getYFromLParam(lParam)) / dpiScale};
                 event.type = MouseEventType::Down;
                 event.button = (msg == WM_LBUTTONDOWN)   ? MouseButton::Left
                                : (msg == WM_RBUTTONDOWN) ? MouseButton::Right
@@ -477,8 +503,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam, 
             {
                 float dpiScale = self->getWindowDpiScale();
                 MouseEvent event;
-                event.pos = {static_cast<float>(GET_X_LPARAM(lParam)) / dpiScale,
-                             static_cast<float>(GET_Y_LPARAM(lParam)) / dpiScale};
+                event.pos = {static_cast<float>(getXFromLParam(lParam)) / dpiScale,
+                             static_cast<float>(getYFromLParam(lParam)) / dpiScale};
                 event.type = MouseEventType::Up;
                 event.button = (msg == WM_LBUTTONUP)   ? MouseButton::Left
                                : (msg == WM_RBUTTONUP) ? MouseButton::Right
@@ -489,15 +515,15 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam, 
             return 0;
 
         case WM_MOUSEMOVE:
-            // Skip if using WinRT pointer input
             if (self->useWinRTPointerInput)
                 break;
+
             if (self->contentView)
             {
                 float dpiScale = self->getWindowDpiScale();
                 MouseEvent event;
-                event.pos = {static_cast<float>(GET_X_LPARAM(lParam)) / dpiScale,
-                             static_cast<float>(GET_Y_LPARAM(lParam)) / dpiScale};
+                event.pos = {static_cast<float>(getXFromLParam(lParam)) / dpiScale,
+                             static_cast<float>(getYFromLParam(lParam)) / dpiScale};
                 event.type = MouseEventType::Moved;
                 self->contentView->dispatchMouseEvent(event);
                 self->ensureAllLayersRendered(self->contentView);
