@@ -3,16 +3,27 @@
 
 #include <winrt/Windows.Foundation.h>
 
+#include <vector>
+
 namespace eacp::Threads
 {
 
 static bool running = false;
+static std::vector<Callback> pendingCallbacks;
 
 void EventLoop::run()
 {
     winrt::init_apartment(winrt::apartment_type::single_threaded);
     initMainThread();
     running = true;
+
+    // Execute any callbacks that were queued before the dispatcher was ready
+    auto queue = getDispatcherQueue();
+    for (auto& cb : pendingCallbacks)
+    {
+        queue.TryEnqueue([cb = std::move(cb)]() { cb(); });
+    }
+    pendingCallbacks.clear();
 
     // DispatcherQueue on desktop still requires a Win32 message pump
     MSG msg;
@@ -47,6 +58,11 @@ void EventLoop::call(Callback func)
     if (queue)
     {
         queue.TryEnqueue([func = std::move(func)]() { func(); });
+    }
+    else
+    {
+        // Queue callbacks to be executed when the dispatcher is ready
+        pendingCallbacks.push_back(std::move(func));
     }
 }
 
