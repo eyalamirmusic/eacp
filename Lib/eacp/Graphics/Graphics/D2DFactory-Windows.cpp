@@ -3,12 +3,14 @@
 
 #define NOMINMAX
 #include <Windows.h>
-#include <d2d1.h>
+#include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
+#include <shellscalingapi.h>
 
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
+#pragma comment(lib, "shcore.lib")
 
 namespace eacp::Graphics
 {
@@ -30,6 +32,9 @@ public:
 private:
     D2DFactory()
     {
+        // Enable per-monitor DPI awareness for crisp rendering on high-DPI displays
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
         // Initialize COM
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 

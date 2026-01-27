@@ -9,10 +9,11 @@
 
 #define NOMINMAX
 #include <Windows.h>
-#include <d2d1.h>
+#include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
 #include <windowsx.h>
+#include <shellscalingapi.h>
 
 namespace eacp::Graphics
 {
@@ -124,6 +125,12 @@ struct Window::Native
         }
     }
 
+    float getWindowDpiScale()
+    {
+        UINT dpi = GetDpiForWindow(hwnd);
+        return dpi / 96.0f;
+    }
+
     void createRenderTarget()
     {
         if (!hwnd)
@@ -138,10 +145,14 @@ struct Window::Native
 
         auto size = D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top);
 
+        // Get the window's DPI for proper high-DPI rendering
+        UINT dpi = GetDpiForWindow(hwnd);
+
         // Try software rendering for ARM compatibility
         auto rtProps = D2D1::RenderTargetProperties(
             D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+            static_cast<float>(dpi), static_cast<float>(dpi));
 
         auto hwndProps = D2D1::HwndRenderTargetProperties(hwnd, size);
 
@@ -150,7 +161,7 @@ struct Window::Native
 
         if (FAILED(hr))
         {
-            // Fallback to default
+            // Fallback to default render target type
             rtProps.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
             factory->CreateHwndRenderTarget(rtProps, hwndProps,
                                             renderTarget.GetAddressOf());
@@ -201,8 +212,10 @@ void Window::Native::setContentView(View* view)
     {
         RECT clientRect;
         GetClientRect(hwnd, &clientRect);
-        view->setBounds(Rect(0, 0, static_cast<float>(clientRect.right),
-                             static_cast<float>(clientRect.bottom)));
+        // Convert from physical pixels to DIPs for the view system
+        float dpiScale = getWindowDpiScale();
+        view->setBounds(Rect(0, 0, static_cast<float>(clientRect.right) / dpiScale,
+                             static_cast<float>(clientRect.bottom) / dpiScale));
 
         // Now that we have a content view, show the window
         showWindow();
@@ -421,12 +434,29 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
             {
                 RECT clientRect;
                 GetClientRect(hwnd, &clientRect);
+                // Convert from physical pixels to DIPs for the view system
+                float dpiScale = self->getWindowDpiScale();
                 self->contentView->setBounds(
-                    Rect(0, 0, static_cast<float>(clientRect.right),
-                         static_cast<float>(clientRect.bottom)));
+                    Rect(0, 0, static_cast<float>(clientRect.right) / dpiScale,
+                         static_cast<float>(clientRect.bottom) / dpiScale));
             }
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
+
+        case WM_DPICHANGED:
+        {
+            // Recreate render target with new DPI
+            self->renderTarget.Reset();
+            self->createRenderTarget();
+
+            // Resize window to suggested size
+            RECT* suggested = reinterpret_cast<RECT*>(lParam);
+            SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+                         suggested->right - suggested->left,
+                         suggested->bottom - suggested->top,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+            return 0;
+        }
 
         case WM_PAINT:
         {
@@ -440,9 +470,10 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
         case WM_MBUTTONDOWN:
             if (self->contentView)
             {
+                float dpiScale = self->getWindowDpiScale();
                 MouseEvent event;
-                event.pos = {static_cast<float>(GET_X_LPARAM(lParam)),
-                             static_cast<float>(GET_Y_LPARAM(lParam))};
+                event.pos = {static_cast<float>(GET_X_LPARAM(lParam)) / dpiScale,
+                             static_cast<float>(GET_Y_LPARAM(lParam)) / dpiScale};
                 event.type = MouseEventType::Down;
                 event.button = (msg == WM_LBUTTONDOWN)   ? MouseButton::Left
                                : (msg == WM_RBUTTONDOWN) ? MouseButton::Right
@@ -457,9 +488,10 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
         case WM_MBUTTONUP:
             if (self->contentView)
             {
+                float dpiScale = self->getWindowDpiScale();
                 MouseEvent event;
-                event.pos = {static_cast<float>(GET_X_LPARAM(lParam)),
-                             static_cast<float>(GET_Y_LPARAM(lParam))};
+                event.pos = {static_cast<float>(GET_X_LPARAM(lParam)) / dpiScale,
+                             static_cast<float>(GET_Y_LPARAM(lParam)) / dpiScale};
                 event.type = MouseEventType::Up;
                 event.button = (msg == WM_LBUTTONUP)   ? MouseButton::Left
                                : (msg == WM_RBUTTONUP) ? MouseButton::Right
@@ -472,9 +504,10 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
         case WM_MOUSEMOVE:
             if (self->contentView)
             {
+                float dpiScale = self->getWindowDpiScale();
                 MouseEvent event;
-                event.pos = {static_cast<float>(GET_X_LPARAM(lParam)),
-                             static_cast<float>(GET_Y_LPARAM(lParam))};
+                event.pos = {static_cast<float>(GET_X_LPARAM(lParam)) / dpiScale,
+                             static_cast<float>(GET_Y_LPARAM(lParam)) / dpiScale};
                 event.type = MouseEventType::Moved;
                 self->contentView->dispatchMouseEvent(event);
                 InvalidateRect(hwnd, nullptr, FALSE);
