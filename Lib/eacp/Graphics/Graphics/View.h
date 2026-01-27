@@ -101,6 +101,7 @@ public:
 
     const std::vector<View*>& getSubviews() const { return subviews; }
     const std::vector<Layer*>& getLayers() const { return layers; }
+    View* getParent() const { return parent; }
 
 private:
     void handleMouseEvent(const MouseEvent& event);

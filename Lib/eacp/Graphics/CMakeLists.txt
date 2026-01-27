@@ -29,6 +29,8 @@ if (APPLE)
 elseif (WIN32)
     target_sources(eacp-graphics PRIVATE Graphics-Windows.cpp)
 
+    find_package(WebView2 REQUIRED)
+
     target_link_libraries(eacp-graphics PUBLIC eacp-core PRIVATE
             d2d1
             dwrite
@@ -38,5 +40,6 @@ elseif (WIN32)
             gdi32
             ole32
             windowsapp
-            runtimeobject)
+            runtimeobject
+            WebView2::WebView2)
 endif ()
