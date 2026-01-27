@@ -1,25 +1,18 @@
-// Windows implementation of Window using Windows.UI.Composition
 #include "Window.h"
-#include "ShapeLayer.h"
-#include "TextLayer.h"
 #include "NativeLayer-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
 
 #include <algorithm>
 #include <bitset>
-#include <cassert>
 
 #define NOMINMAX
 #include <Windows.h>
 #include <windowsx.h>
 
-#include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.UI.Input.h>
-#include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.UI.Composition.Desktop.h>
-#include <winrt/Windows.Devices.Input.h>
 #include <Windows.UI.Composition.Desktop.h>
 #include <windows.ui.composition.interop.h>
 #include <DispatcherQueue.h>
