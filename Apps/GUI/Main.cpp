@@ -123,7 +123,7 @@ struct FilledRect final : View
         path.clear();
         path.addRect(getLocalBounds());
         layer->setPath(path);
-        layer.scaleToFit();
+        scaleToFit({layer});
     }
 
     Path path;
