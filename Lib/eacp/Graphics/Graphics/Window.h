@@ -43,6 +43,8 @@ struct WindowOptions
     std::vector<WindowFlags> flags;
 };
 
+struct ModifierKeys;
+
 class Window
 {
 public:
@@ -53,6 +55,14 @@ public:
     void* getHandle();
 
     void setContentView(View& view);
+
+    // Keyboard state (tracked from window events)
+    bool isKeyPressed(uint16_t virtualKeyCode) const;
+    bool isShiftPressed() const;
+    bool isControlPressed() const;
+    bool isAltPressed() const;
+    bool isCommandPressed() const;
+    ModifierKeys getModifiers() const;
 
 private:
     WindowOptions options;

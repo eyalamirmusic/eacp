@@ -7,6 +7,8 @@
 namespace eacp::Graphics
 {
 
+class Window;
+
 namespace KeyCode
 {
 constexpr uint16_t A = 0x00;
@@ -105,13 +107,22 @@ struct Key
 
 struct Keyboard
 {
-    static bool isKeyPressed(uint16_t keyCode);
+    // Window-scoped keyboard state (tracks keys via window events)
+    // These are the preferred methods as they don't require global polling
+    static bool isKeyPressed(const Window& window, uint16_t keyCode);
+    static bool isShiftPressed(const Window& window);
+    static bool isControlPressed(const Window& window);
+    static bool isAltPressed(const Window& window);
+    static bool isCommandPressed(const Window& window);
+    static ModifierKeys getModifiers(const Window& window);
 
+    // Global keyboard state (uses system polling APIs)
+    // Prefer window-scoped methods above when a window reference is available
+    static bool isKeyPressed(uint16_t keyCode);
     static bool isShiftPressed();
     static bool isControlPressed();
     static bool isAltPressed();
     static bool isCommandPressed();
-
     static ModifierKeys getModifiers();
 
     static std::vector<Key> getPressedKeys();
