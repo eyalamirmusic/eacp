@@ -14,15 +14,11 @@
 #include <wrl/client.h>
 #include <windowsx.h>
 
-// Forward declaration of factory access
 namespace eacp::Graphics
 {
-ID2D1Factory* getD2DFactory();
-IDWriteFactory* getDWriteFactory();
-} // namespace eacp::Graphics
 
-namespace eacp::Graphics
-{
+// getD2DFactory() and getDWriteFactory() are defined in D2DFactory-Windows.cpp
+// which is included earlier in the unity build
 
 using Microsoft::WRL::ComPtr;
 
@@ -30,10 +26,11 @@ using Microsoft::WRL::ComPtr;
 static auto WINDOW_CLASS_NAME = L"EACPWindowClass";
 static auto windowClassRegistered = false;
 
-// Native layer structures matching the actual implementations
+// Mirror structs matching the actual Native implementations
+// These must have identical memory layout to ShapeLayer::Native and TextLayer::Native
 struct ShapeLayerNative : NativeLayerBase
 {
-    ID2D1PathGeometry* pathGeometry = nullptr;
+    ComPtr<ID2D1PathGeometry> pathGeometry;
     Color fillColor;
     LinearGradient gradient;
     bool useGradient = false;
@@ -115,7 +112,11 @@ struct Window::Native
                                CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left,
                                rect.bottom - rect.top, nullptr, nullptr,
                                GetModuleHandle(nullptr), this);
+        // Don't show window here - wait until render target is created
+    }
 
+    void showWindow()
+    {
         if (hwnd)
         {
             ShowWindow(hwnd, SW_SHOW);
@@ -135,11 +136,25 @@ struct Window::Native
         RECT rc;
         GetClientRect(hwnd, &rc);
 
-        D2D1_SIZE_U size = D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top);
+        auto size = D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top);
 
-        factory->CreateHwndRenderTarget(
-            D2D1::RenderTargetProperties(),
-            D2D1::HwndRenderTargetProperties(hwnd, size), renderTarget.GetAddressOf());
+        // Try software rendering for ARM compatibility
+        auto rtProps = D2D1::RenderTargetProperties(
+            D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+
+        auto hwndProps = D2D1::HwndRenderTargetProperties(hwnd, size);
+
+        auto hr = factory->CreateHwndRenderTarget(rtProps, hwndProps,
+                                                  renderTarget.GetAddressOf());
+
+        if (FAILED(hr))
+        {
+            // Fallback to default
+            rtProps.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
+            factory->CreateHwndRenderTarget(rtProps, hwndProps,
+                                            renderTarget.GetAddressOf());
+        }
     }
 
     void resizeRenderTarget()
@@ -188,12 +203,20 @@ void Window::Native::setContentView(View* view)
         GetClientRect(hwnd, &clientRect);
         view->setBounds(Rect(0, 0, static_cast<float>(clientRect.right),
                              static_cast<float>(clientRect.bottom)));
+
+        // Now that we have a content view, show the window
+        showWindow();
+        InvalidateRect(hwnd, nullptr, FALSE);
     }
 }
 
 void Window::Native::render()
 {
     if (!renderTarget || !contentView)
+        return;
+
+    // Check if render target needs to be recreated
+    if (renderTarget->CheckWindowState() == D2D1_WINDOW_STATE_OCCLUDED)
         return;
 
     renderTarget->BeginDraw();
@@ -204,7 +227,13 @@ void Window::Native::render()
     // Render the view hierarchy
     renderView(contentView, {0, 0});
 
-    renderTarget->EndDraw();
+    auto hr = renderTarget->EndDraw();
+
+    if (hr == D2DERR_RECREATE_TARGET)
+    {
+        renderTarget.Reset();
+        createRenderTarget();
+    }
 }
 
 void Window::Native::renderView(View* view, const Point& offset)
@@ -215,8 +244,11 @@ void Window::Native::renderView(View* view, const Point& offset)
     auto bounds = view->getBounds();
     auto viewOffset = Point {offset.x + bounds.x, offset.y + bounds.y};
 
+    auto& layers = view->getLayers();
+    auto& subviews = view->getSubviews();
+
     // Render all layers attached to this view
-    for (auto* layer : view->getLayers())
+    for (auto* layer : layers)
     {
         if (auto* shapeLayer = dynamic_cast<ShapeLayer*>(layer))
         {
@@ -231,7 +263,7 @@ void Window::Native::renderView(View* view, const Point& offset)
     }
 
     // Recursively render child views
-    for (auto* subview : view->getSubviews())
+    for (auto* subview : subviews)
     {
         renderView(subview, viewOffset);
     }
@@ -240,6 +272,9 @@ void Window::Native::renderView(View* view, const Point& offset)
 void Window::Native::renderShapeLayer(ShapeLayerNative* layer, const Point& offset)
 {
     if (!layer || layer->hidden || !layer->pathGeometry)
+        return;
+
+    if (!layer->hasFill && !layer->hasStroke)
         return;
 
     // Create transform for position
@@ -281,7 +316,8 @@ void Window::Native::renderShapeLayer(ShapeLayerNative* layer, const Point& offs
                 if (gradientBrush)
                 {
                     gradientBrush->SetOpacity(layer->opacity);
-                    renderTarget->FillGeometry(layer->pathGeometry, gradientBrush.Get());
+                    renderTarget->FillGeometry(layer->pathGeometry.Get(),
+                                               gradientBrush.Get());
                 }
             }
         }
@@ -296,7 +332,7 @@ void Window::Native::renderShapeLayer(ShapeLayerNative* layer, const Point& offs
 
             if (brush)
             {
-                renderTarget->FillGeometry(layer->pathGeometry, brush.Get());
+                renderTarget->FillGeometry(layer->pathGeometry.Get(), brush.Get());
             }
         }
     }
@@ -312,7 +348,7 @@ void Window::Native::renderShapeLayer(ShapeLayerNative* layer, const Point& offs
 
         if (strokeBrush)
         {
-            renderTarget->DrawGeometry(layer->pathGeometry, strokeBrush.Get(),
+            renderTarget->DrawGeometry(layer->pathGeometry.Get(), strokeBrush.Get(),
                                        layer->strokeWidth);
         }
     }
@@ -394,10 +430,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
 
         case WM_PAINT:
         {
-            PAINTSTRUCT ps;
-            BeginPaint(hwnd, &ps);
             self->render();
-            EndPaint(hwnd, &ps);
+            ValidateRect(hwnd, nullptr);
             return 0;
         }
 

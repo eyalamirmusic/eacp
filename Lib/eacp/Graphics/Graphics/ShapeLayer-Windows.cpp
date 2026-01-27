@@ -16,8 +16,8 @@ using Microsoft::WRL::ComPtr;
 
 struct ShapeLayer::Native : NativeLayerBase
 {
-    // Path geometry (reference, not owned)
-    ID2D1PathGeometry* pathGeometry = nullptr;
+    // Path geometry (owned - AddRef'd to keep alive)
+    ComPtr<ID2D1PathGeometry> pathGeometry;
 
     // Fill settings
     Color fillColor;
@@ -38,12 +38,22 @@ ShapeLayer::ShapeLayer()
 
 void ShapeLayer::setPath(const Path& path)
 {
-    impl->pathGeometry = static_cast<ID2D1PathGeometry*>(path.getHandle());
+    auto* geometry = static_cast<ID2D1PathGeometry*>(path.getHandle());
+    if (geometry)
+    {
+        // AddRef to keep geometry alive even after Path object is destroyed
+        geometry->AddRef();
+        impl->pathGeometry.Attach(geometry);
+    }
+    else
+    {
+        impl->pathGeometry.Reset();
+    }
 }
 
 void ShapeLayer::clearPath()
 {
-    impl->pathGeometry = nullptr;
+    impl->pathGeometry.Reset();
 }
 
 void ShapeLayer::setFillColor(const Color& color)
