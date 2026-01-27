@@ -1,5 +1,5 @@
 #include "WebView.h"
-#include "../../Graphics/Helpers/StringUtils-Windows.h"
+#include <eacp/Graphics/Helpers/StringUtils-Windows.h>
 
 #include <unordered_map>
 #include <queue>
