@@ -30,6 +30,8 @@ public:
     virtual void fillPath(const Path& p) = 0;
     virtual void strokePath(const Path& p) = 0;
 
-    virtual void drawText(const std::string& text, const Point& position, const Font& font) = 0;
+    virtual void drawText(const std::string& text,
+                          const Point& position,
+                          const Font& font) = 0;
 };
 } // namespace eacp::Graphics

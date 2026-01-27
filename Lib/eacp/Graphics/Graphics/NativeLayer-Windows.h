@@ -203,10 +203,10 @@ struct NativeLayerBase
     bool hidden = false;
 
     // Windows.UI.Composition objects
-    wuc::SpriteVisual visual{nullptr};
-    wuc::CompositionDrawingSurface surface{nullptr};
-    wuc::CompositionSurfaceBrush surfaceBrush{nullptr};
-    wuc::ContainerVisual parentVisual{nullptr};
+    wuc::SpriteVisual visual {nullptr};
+    wuc::CompositionDrawingSurface surface {nullptr};
+    wuc::CompositionSurfaceBrush surfaceBrush {nullptr};
+    wuc::ContainerVisual parentVisual {nullptr};
 
     // Dirty tracking
     bool contentDirty = true;

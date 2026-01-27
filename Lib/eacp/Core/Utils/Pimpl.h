@@ -16,7 +16,6 @@ public:
 
     Pimpl(const Pimpl& other) = delete;
 
-
     T* get() { return ptr.get(); }
     const T* get() const { return ptr.get(); }
 
@@ -29,4 +28,4 @@ public:
 private:
     std::shared_ptr<T> ptr;
 };
-} // namespace eace
+} // namespace eacp

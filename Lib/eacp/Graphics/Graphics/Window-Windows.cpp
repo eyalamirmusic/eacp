@@ -81,8 +81,9 @@ struct Window::Native
         DWORD style = WS_OVERLAPPEDWINDOW;
 
         // Map window flags (simplified)
-        if (std::find(options.flags.begin(), options.flags.end(),
-                      WindowFlags::Borderless) != options.flags.end())
+        if (std::find(
+                options.flags.begin(), options.flags.end(), WindowFlags::Borderless)
+            != options.flags.end())
         {
             style = WS_POPUP;
         }
@@ -94,10 +95,18 @@ struct Window::Native
         RECT rect = {0, 0, options.width, options.height};
         AdjustWindowRect(&rect, style, FALSE);
 
-        hwnd = CreateWindowExW(0, WINDOW_CLASS_NAME, wideTitle.c_str(), style,
-                               CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left,
-                               rect.bottom - rect.top, nullptr, nullptr,
-                               GetModuleHandle(nullptr), this);
+        hwnd = CreateWindowExW(0,
+                               WINDOW_CLASS_NAME,
+                               wideTitle.c_str(),
+                               style,
+                               CW_USEDEFAULT,
+                               CW_USEDEFAULT,
+                               rect.right - rect.left,
+                               rect.bottom - rect.top,
+                               nullptr,
+                               nullptr,
+                               GetModuleHandle(nullptr),
+                               this);
         // Don't show window here - wait until composition is initialized
     }
 
@@ -111,9 +120,10 @@ struct Window::Native
             return;
 
         // Create DesktopWindowTarget via interop
-        auto interop =
-            compositor.as<ABI::Windows::UI::Composition::Desktop::ICompositorDesktopInterop>();
-        winrt::com_ptr<ABI::Windows::UI::Composition::Desktop::IDesktopWindowTarget> abiTarget;
+        auto interop = compositor.as<
+            ABI::Windows::UI::Composition::Desktop::ICompositorDesktopInterop>();
+        winrt::com_ptr<ABI::Windows::UI::Composition::Desktop::IDesktopWindowTarget>
+            abiTarget;
         HRESULT hr = interop->CreateDesktopWindowTarget(hwnd, TRUE, abiTarget.put());
         if (FAILED(hr) || !abiTarget)
             return;
@@ -151,15 +161,17 @@ struct Window::Native
     void setContentView(View* view);
     void ensureAllLayersRendered(View* view);
 
-    static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam,
+    static LRESULT CALLBACK windowProc(HWND hwnd,
+                                       UINT msg,
+                                       WPARAM wParam,
                                        LPARAM lParam);
 
     Window* ownerWindow;
     HWND hwnd = nullptr;
     View* contentView;
     Callback quitCallback;
-    wuc::Desktop::DesktopWindowTarget target{nullptr};
-    wuc::ContainerVisual rootVisual{nullptr};
+    wuc::Desktop::DesktopWindowTarget target {nullptr};
+    wuc::ContainerVisual rootVisual {nullptr};
 };
 
 void Window::Native::setContentView(View* view)
@@ -172,7 +184,9 @@ void Window::Native::setContentView(View* view)
         GetClientRect(hwnd, &clientRect);
         // Convert from physical pixels to DIPs for the view system
         float dpiScale = getWindowDpiScale();
-        view->setBounds(Rect(0, 0, static_cast<float>(clientRect.right) / dpiScale,
+        view->setBounds(Rect(0,
+                             0,
+                             static_cast<float>(clientRect.right) / dpiScale,
                              static_cast<float>(clientRect.bottom) / dpiScale));
 
         // Attach content view's visual to root visual
@@ -197,7 +211,7 @@ void Window::Native::ensureAllLayersRendered(View* view)
 
     // Ensure all layers in this view have their content rendered
     auto& layers = view->getLayers();
-    for (auto* layer : layers)
+    for (auto* layer: layers)
     {
         auto* native = static_cast<NativeLayerBase*>(layer->getNativeLayer());
         if (native)
@@ -208,13 +222,15 @@ void Window::Native::ensureAllLayersRendered(View* view)
 
     // Recursively process child views
     auto& subviews = view->getSubviews();
-    for (auto* subview : subviews)
+    for (auto* subview: subviews)
     {
         ensureAllLayersRendered(subview);
     }
 }
 
-LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
+LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
+                                            UINT msg,
+                                            WPARAM wParam,
                                             LPARAM lParam)
 {
     Native* self = nullptr;
@@ -257,7 +273,9 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                 // Convert from physical pixels to DIPs for the view system
                 float dpiScale = self->getWindowDpiScale();
                 self->contentView->setBounds(
-                    Rect(0, 0, static_cast<float>(clientRect.right) / dpiScale,
+                    Rect(0,
+                         0,
+                         static_cast<float>(clientRect.right) / dpiScale,
                          static_cast<float>(clientRect.bottom) / dpiScale));
 
                 // Re-render all layers
@@ -270,7 +288,10 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
         {
             // Resize window to suggested size
             RECT* suggested = reinterpret_cast<RECT*>(lParam);
-            SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+            SetWindowPos(hwnd,
+                         nullptr,
+                         suggested->left,
+                         suggested->top,
                          suggested->right - suggested->left,
                          suggested->bottom - suggested->top,
                          SWP_NOZORDER | SWP_NOACTIVATE);

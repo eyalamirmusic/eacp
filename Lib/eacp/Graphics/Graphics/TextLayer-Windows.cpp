@@ -36,16 +36,20 @@ struct TextLayer::Native : NativeLayerBase
         auto* factory = getDWriteFactory();
         if (factory)
         {
-            factory->CreateTextFormat(L"Arial", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+            factory->CreateTextFormat(L"Arial",
+                                      nullptr,
+                                      DWRITE_FONT_WEIGHT_NORMAL,
                                       DWRITE_FONT_STYLE_NORMAL,
-                                      DWRITE_FONT_STRETCH_NORMAL, 12.0f, L"en-us",
+                                      DWRITE_FONT_STRETCH_NORMAL,
+                                      12.0f,
+                                      L"en-us",
                                       textFormat.GetAddressOf());
         }
     }
 
     std::wstring text;
     ComPtr<IDWriteTextFormat> textFormat;
-    Color color{1.0f, 1.0f, 1.0f, 1.0f};
+    Color color {1.0f, 1.0f, 1.0f, 1.0f};
 
     void renderContent() override
     {
@@ -59,8 +63,8 @@ struct TextLayer::Native : NativeLayerBase
             return;
 
         // Get interop interface for BeginDraw/EndDraw
-        auto interop =
-            surface.as<ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
+        auto interop = surface.as<
+            ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
         if (!interop)
             return;
 
@@ -68,7 +72,8 @@ struct TextLayer::Native : NativeLayerBase
         winrt::com_ptr<ID2D1DeviceContext> dc;
         RECT updateRect = {0, 0, width, height};
 
-        HRESULT hr = interop->BeginDraw(&updateRect, IID_PPV_ARGS(dc.put()), &offset);
+        HRESULT hr =
+            interop->BeginDraw(&updateRect, IID_PPV_ARGS(dc.put()), &offset);
         if (FAILED(hr) || !dc)
             return;
 
@@ -77,18 +82,22 @@ struct TextLayer::Native : NativeLayerBase
 
         // Create brush for text
         ComPtr<ID2D1SolidColorBrush> brush;
-        dc->CreateSolidColorBrush(
-            D2D1::ColorF(color.r, color.g, color.b, color.a), brush.GetAddressOf());
+        dc->CreateSolidColorBrush(D2D1::ColorF(color.r, color.g, color.b, color.a),
+                                  brush.GetAddressOf());
 
         if (brush)
         {
-            D2D1_RECT_F layoutRect = D2D1::RectF(
-                static_cast<float>(offset.x), static_cast<float>(offset.y),
-                static_cast<float>(offset.x) + bounds.w,
-                static_cast<float>(offset.y) + bounds.h);
+            D2D1_RECT_F layoutRect =
+                D2D1::RectF(static_cast<float>(offset.x),
+                            static_cast<float>(offset.y),
+                            static_cast<float>(offset.x) + bounds.w,
+                            static_cast<float>(offset.y) + bounds.h);
 
-            dc->DrawText(text.c_str(), static_cast<UINT32>(text.length()),
-                         textFormat.Get(), layoutRect, brush.Get());
+            dc->DrawText(text.c_str(),
+                         static_cast<UINT32>(text.length()),
+                         textFormat.Get(),
+                         layoutRect,
+                         brush.Get());
         }
 
         interop->EndDraw();

@@ -26,7 +26,6 @@ enum class MouseButton
     Other = 3
 };
 
-
 struct MouseEvent
 {
     Point pos;

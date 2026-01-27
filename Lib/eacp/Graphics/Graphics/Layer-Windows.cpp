@@ -1,4 +1,3 @@
-// Windows implementation of Layer base class using Windows.UI.Composition
 #include "Layer.h"
 #include "NativeLayer-Windows.h"
 
@@ -14,7 +13,8 @@ void Layer::attachToLayer(void* parentVisualPtr)
     auto native = static_cast<NativeLayerBase*>(getNativeLayer());
     if (native && parentVisualPtr)
     {
-        auto* containerVisualPtr = static_cast<wuc::ContainerVisual*>(parentVisualPtr);
+        auto* containerVisualPtr =
+            static_cast<wuc::ContainerVisual*>(parentVisualPtr);
         if (containerVisualPtr && *containerVisualPtr)
         {
             native->attachTo(*containerVisualPtr);

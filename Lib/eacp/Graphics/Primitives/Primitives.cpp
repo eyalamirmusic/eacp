@@ -56,7 +56,8 @@ Point operator-(const Point& a, const Point& b)
     return {a.x - b.x, a.y - b.y};
 }
 
-LinearGradient::LinearGradient(Point startToUse, Point endToUse,
+LinearGradient::LinearGradient(Point startToUse,
+                               Point endToUse,
                                std::initializer_list<GradientStop> stopsToUse)
     : start(startToUse)
     , end(endToUse)

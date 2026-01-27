@@ -1,6 +1,6 @@
 project(eacp_lib LANGUAGES CXX)
 
-if(APPLE)
+if (APPLE)
     enable_language(OBJCXX)
 endif ()
 

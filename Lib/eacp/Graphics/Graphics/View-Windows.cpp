@@ -1,4 +1,3 @@
-// Windows implementation of View with Windows.UI.Composition visual hierarchy
 #include "View.h"
 #include "ShapeLayer.h"
 #include "TextLayer.h"
@@ -74,8 +73,8 @@ struct View::Native
     Rect bounds;
     bool hasFocus = false;
     bool isHovering = false;
-    wuc::ContainerVisual visual{nullptr};
-    wuc::ContainerVisual parent{nullptr};
+    wuc::ContainerVisual visual {nullptr};
+    wuc::ContainerVisual parent {nullptr};
 };
 
 View::View()
@@ -92,7 +91,7 @@ View::~View()
     }
 
     // Clear subviews
-    for (auto* subview : subviews)
+    for (auto* subview: subviews)
     {
         subview->parent = nullptr;
     }
@@ -110,7 +109,7 @@ void* View::getHandle()
 {
     // On Windows, return a pointer to the ContainerVisual
     // This allows Window to attach the content view's visual to the root visual
-    static wuc::ContainerVisual visualCopy{nullptr};
+    static wuc::ContainerVisual visualCopy {nullptr};
     visualCopy = impl->getVisual();
     return &visualCopy;
 }
@@ -157,7 +156,7 @@ void View::setBoundsRelative(const Rect& ratio)
 void View::scaleToFit()
 {
     // Scale all layers to fit local bounds
-    for (auto* layer : layers)
+    for (auto* layer: layers)
     {
         layer->setBounds(getLocalBounds());
     }
@@ -165,7 +164,7 @@ void View::scaleToFit()
 
 void View::scaleToFit(ChildViews views)
 {
-    for (auto& viewRef : views)
+    for (auto& viewRef: views)
     {
         viewRef.get().setBounds(getLocalBounds());
     }
@@ -173,7 +172,7 @@ void View::scaleToFit(ChildViews views)
 
 void View::addChildren(ChildViews views)
 {
-    for (auto& viewRef : views)
+    for (auto& viewRef: views)
     {
         addSubview(viewRef.get());
     }
@@ -311,9 +310,15 @@ void View::handleMouseEvent(const MouseEvent& event)
             }
             mouseDown(event);
             break;
-        case MouseEventType::Up: mouseUp(event); break;
-        case MouseEventType::Dragged: mouseDragged(event); break;
-        case MouseEventType::Moved: mouseMoved(event); break;
+        case MouseEventType::Up:
+            mouseUp(event);
+            break;
+        case MouseEventType::Dragged:
+            mouseDragged(event);
+            break;
+        case MouseEventType::Moved:
+            mouseMoved(event);
+            break;
         case MouseEventType::Entered:
             impl->isHovering = true;
             mouseEntered(event);
@@ -333,7 +338,7 @@ Point View::convertPointToDescendant(const Point& point, View* descendant)
     // Walk down the view hierarchy to find the path to descendant
     while (current != descendant && current != nullptr)
     {
-        for (auto* subview : current->subviews)
+        for (auto* subview: current->subviews)
         {
             // Check if descendant is in this subtree
             // For simplicity, just adjust by bounds
@@ -351,8 +356,9 @@ Point View::convertPointToDescendant(const Point& point, View* descendant)
     return result;
 }
 
-MouseEvent View::createLocalEvent(const MouseEvent& event, View* target,
-                                   MouseEventType type)
+MouseEvent View::createLocalEvent(const MouseEvent& event,
+                                  View* target,
+                                  MouseEventType type)
 {
     MouseEvent localEvent = event;
     localEvent.type = type;

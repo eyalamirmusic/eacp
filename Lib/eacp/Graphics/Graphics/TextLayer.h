@@ -6,7 +6,7 @@
 namespace eacp::Graphics
 {
 
-class TextLayer: public Layer
+class TextLayer : public Layer
 {
 public:
     TextLayer();

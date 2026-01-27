@@ -55,8 +55,8 @@ struct ShapeLayer::Native : NativeLayerBase
             return;
 
         // Get interop interface for BeginDraw/EndDraw
-        auto interop =
-            surface.as<ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
+        auto interop = surface.as<
+            ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
         if (!interop)
             return;
 
@@ -64,7 +64,8 @@ struct ShapeLayer::Native : NativeLayerBase
         winrt::com_ptr<ID2D1DeviceContext> dc;
         RECT updateRect = {0, 0, width, height};
 
-        HRESULT hr = interop->BeginDraw(&updateRect, IID_PPV_ARGS(dc.put()), &offset);
+        HRESULT hr =
+            interop->BeginDraw(&updateRect, IID_PPV_ARGS(dc.put()), &offset);
         if (FAILED(hr) || !dc)
             return;
 
@@ -78,20 +79,20 @@ struct ShapeLayer::Native : NativeLayerBase
             {
                 // Create gradient brush
                 D2D1_GRADIENT_STOP stops[8];
-                UINT32 stopCount =
-                    static_cast<UINT32>((std::min)(gradient.stops.size(), size_t(8)));
+                UINT32 stopCount = static_cast<UINT32>(
+                    (std::min) (gradient.stops.size(), size_t(8)));
 
                 for (UINT32 i = 0; i < stopCount; ++i)
                 {
                     auto& stop = gradient.stops[i];
                     stops[i].position = stop.position;
-                    stops[i].color = D2D1::ColorF(stop.color.r, stop.color.g,
-                                                   stop.color.b, stop.color.a);
+                    stops[i].color = D2D1::ColorF(
+                        stop.color.r, stop.color.g, stop.color.b, stop.color.a);
                 }
 
                 ComPtr<ID2D1GradientStopCollection> stopCollection;
-                dc->CreateGradientStopCollection(stops, stopCount,
-                                                  stopCollection.GetAddressOf());
+                dc->CreateGradientStopCollection(
+                    stops, stopCount, stopCollection.GetAddressOf());
 
                 if (stopCollection)
                 {
@@ -102,13 +103,15 @@ struct ShapeLayer::Native : NativeLayerBase
                                           gradient.start.y + offset.y),
                             D2D1::Point2F(gradient.end.x + offset.x,
                                           gradient.end.y + offset.y)),
-                        stopCollection.Get(), gradientBrush.GetAddressOf());
+                        stopCollection.Get(),
+                        gradientBrush.GetAddressOf());
 
                     if (gradientBrush)
                     {
                         // Apply offset transform for drawing
                         dc->SetTransform(D2D1::Matrix3x2F::Translation(
-                            static_cast<float>(offset.x), static_cast<float>(offset.y)));
+                            static_cast<float>(offset.x),
+                            static_cast<float>(offset.y)));
                         dc->FillGeometry(pathGeometry.Get(), gradientBrush.Get());
                     }
                 }
@@ -135,7 +138,8 @@ struct ShapeLayer::Native : NativeLayerBase
         {
             ComPtr<ID2D1SolidColorBrush> strokeBrush;
             dc->CreateSolidColorBrush(
-                D2D1::ColorF(strokeColor.r, strokeColor.g, strokeColor.b, strokeColor.a),
+                D2D1::ColorF(
+                    strokeColor.r, strokeColor.g, strokeColor.b, strokeColor.a),
                 strokeBrush.GetAddressOf());
 
             if (strokeBrush)
