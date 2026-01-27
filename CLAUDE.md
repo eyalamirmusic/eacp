@@ -75,9 +75,18 @@ Foundation, Cocoa, CoreVideo, CoreGraphics, CoreText (all macOS system framework
 
 ## Code Style
 
+Always use the most modern C++ and RAII practices.
+Use auto for variables and whenever possible.
+Don't use auto for functions and member functions
+
+Don't use comments unless absolutely needed. Use named functions to make code self documenting.
+
+
 Enforced via `.clang-format`:
 - Allman brace style
 - 85 column limit
 - 4-space indentation (no tabs)
 - Pointer alignment: left (`int* ptr`)
 - Break constructor initializers before comma
+
+Always run clang-format for edited code files
