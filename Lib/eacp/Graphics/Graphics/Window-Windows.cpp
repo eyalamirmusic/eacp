@@ -59,6 +59,7 @@ struct Window::Native
         , contentView(nullptr)
         , quitCallback(options.onQuit)
     {
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         keyState.reset();
         registerWindowClass();
         createWindow(options);
@@ -115,8 +116,13 @@ struct Window::Native
 
         std::wstring wideTitle = toWideString(options.title);
 
-        RECT rect = {0, 0, options.width, options.height};
-        AdjustWindowRect(&rect, style, FALSE);
+        auto dpi = GetDpiForSystem();
+        auto dpiScale = static_cast<float>(dpi) / 96.f;
+        auto physicalWidth = static_cast<int>(options.width * dpiScale);
+        auto physicalHeight = static_cast<int>(options.height * dpiScale);
+
+        RECT rect = {0, 0, physicalWidth, physicalHeight};
+        AdjustWindowRectExForDpi(&rect, style, FALSE, 0, dpi);
 
         hwnd = CreateWindowExW(0,
                                WINDOW_CLASS_NAME,
@@ -151,6 +157,10 @@ struct Window::Native
 
         target = abiTarget.as<wuc::Desktop::DesktopWindowTarget>();
         rootVisual = compositor.CreateContainerVisual();
+
+        auto dpiScale = getWindowDpiScale();
+        rootVisual.Scale({dpiScale, dpiScale, 1.0f});
+
         target.Root(rootVisual);
     }
 
@@ -453,6 +463,10 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
                          suggested->right - suggested->left,
                          suggested->bottom - suggested->top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
+
+            auto dpiScale = self->getWindowDpiScale();
+            if (self->rootVisual)
+                self->rootVisual.Scale({dpiScale, dpiScale, 1.0f});
 
             if (self->contentView)
                 self->ensureAllLayersRendered(self->contentView);

@@ -57,11 +57,12 @@ struct TextLayer::Native : NativeLayerBase
         if (!surface || text.empty() || !textFormat)
             return;
 
-        int width = static_cast<int>(bounds.w);
-        int height = static_cast<int>(bounds.h);
-
-        if (width <= 0 || height <= 0)
+        if (bounds.w <= 0 || bounds.h <= 0)
             return;
+
+        auto dpiScale = getDpiScale();
+        auto surfaceWidth = static_cast<int>(bounds.w * dpiScale);
+        auto surfaceHeight = static_cast<int>(bounds.h * dpiScale);
 
         // Get interop interface for BeginDraw/EndDraw
         auto interop = surface.as<
@@ -71,7 +72,7 @@ struct TextLayer::Native : NativeLayerBase
 
         POINT offset;
         winrt::com_ptr<ID2D1DeviceContext> dc;
-        RECT updateRect = {0, 0, width, height};
+        RECT updateRect = {0, 0, surfaceWidth, surfaceHeight};
 
         HRESULT hr =
             interop->BeginDraw(&updateRect, IID_PPV_ARGS(dc.put()), &offset);
@@ -81,6 +82,13 @@ struct TextLayer::Native : NativeLayerBase
         // Clear with transparent background
         dc->Clear(D2D1::ColorF(0, 0, 0, 0));
 
+        // Apply DPI scale transform
+        auto baseTransform = D2D1::Matrix3x2F::Scale(dpiScale, dpiScale)
+                             * D2D1::Matrix3x2F::Translation(
+                                 static_cast<float>(offset.x),
+                                 static_cast<float>(offset.y));
+        dc->SetTransform(baseTransform);
+
         // Create brush for text
         ComPtr<ID2D1SolidColorBrush> brush;
         dc->CreateSolidColorBrush(D2D1::ColorF(color.r, color.g, color.b, color.a),
@@ -88,11 +96,7 @@ struct TextLayer::Native : NativeLayerBase
 
         if (brush)
         {
-            D2D1_RECT_F layoutRect =
-                D2D1::RectF(static_cast<float>(offset.x),
-                            static_cast<float>(offset.y),
-                            static_cast<float>(offset.x) + bounds.w,
-                            static_cast<float>(offset.y) + bounds.h);
+            D2D1_RECT_F layoutRect = D2D1::RectF(0, 0, bounds.w, bounds.h);
 
             dc->DrawText(text.c_str(),
                          static_cast<UINT32>(text.length()),
@@ -101,6 +105,7 @@ struct TextLayer::Native : NativeLayerBase
                          brush.Get());
         }
 
+        dc->SetTransform(D2D1::Matrix3x2F::Identity());
         interop->EndDraw();
     }
 };

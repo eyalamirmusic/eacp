@@ -49,11 +49,12 @@ struct ShapeLayer::Native : NativeLayerBase
         if (!hasFill && !hasStroke)
             return;
 
-        int width = static_cast<int>(bounds.w);
-        int height = static_cast<int>(bounds.h);
-
-        if (width <= 0 || height <= 0)
+        if (bounds.w <= 0 || bounds.h <= 0)
             return;
+
+        auto dpiScale = getDpiScale();
+        auto surfaceWidth = static_cast<int>(bounds.w * dpiScale);
+        auto surfaceHeight = static_cast<int>(bounds.h * dpiScale);
 
         // Get interop interface for BeginDraw/EndDraw
         auto interop = surface.as<
@@ -63,7 +64,7 @@ struct ShapeLayer::Native : NativeLayerBase
 
         POINT offset;
         winrt::com_ptr<ID2D1DeviceContext> dc;
-        RECT updateRect = {0, 0, width, height};
+        RECT updateRect = {0, 0, surfaceWidth, surfaceHeight};
 
         HRESULT hr =
             interop->BeginDraw(&updateRect, IID_PPV_ARGS(dc.put()), &offset);
@@ -73,6 +74,12 @@ struct ShapeLayer::Native : NativeLayerBase
         // Clear with transparent background
         dc->Clear(D2D1::ColorF(0, 0, 0, 0));
 
+        // Base transform: offset + DPI scale
+        auto baseTransform = D2D1::Matrix3x2F::Scale(dpiScale, dpiScale)
+                             * D2D1::Matrix3x2F::Translation(
+                                 static_cast<float>(offset.x),
+                                 static_cast<float>(offset.y));
+
         // Fill
         if (hasFill)
         {
@@ -81,7 +88,7 @@ struct ShapeLayer::Native : NativeLayerBase
                 // Create gradient brush
                 D2D1_GRADIENT_STOP stops[8];
                 UINT32 stopCount = static_cast<UINT32>(
-                    (std::min) (gradient.stops.size(), size_t(8)));
+                    (std::min)(gradient.stops.size(), size_t(8)));
 
                 for (UINT32 i = 0; i < stopCount; ++i)
                 {
@@ -100,19 +107,14 @@ struct ShapeLayer::Native : NativeLayerBase
                     ComPtr<ID2D1LinearGradientBrush> gradientBrush;
                     dc->CreateLinearGradientBrush(
                         D2D1::LinearGradientBrushProperties(
-                            D2D1::Point2F(gradient.start.x + offset.x,
-                                          gradient.start.y + offset.y),
-                            D2D1::Point2F(gradient.end.x + offset.x,
-                                          gradient.end.y + offset.y)),
+                            D2D1::Point2F(gradient.start.x, gradient.start.y),
+                            D2D1::Point2F(gradient.end.x, gradient.end.y)),
                         stopCollection.Get(),
                         gradientBrush.GetAddressOf());
 
                     if (gradientBrush)
                     {
-                        // Apply offset transform for drawing
-                        dc->SetTransform(D2D1::Matrix3x2F::Translation(
-                            static_cast<float>(offset.x),
-                            static_cast<float>(offset.y)));
+                        dc->SetTransform(baseTransform);
                         dc->FillGeometry(pathGeometry.Get(), gradientBrush.Get());
                     }
                 }
@@ -127,8 +129,7 @@ struct ShapeLayer::Native : NativeLayerBase
 
                 if (brush)
                 {
-                    dc->SetTransform(D2D1::Matrix3x2F::Translation(
-                        static_cast<float>(offset.x), static_cast<float>(offset.y)));
+                    dc->SetTransform(baseTransform);
                     dc->FillGeometry(pathGeometry.Get(), brush.Get());
                 }
             }
@@ -145,9 +146,9 @@ struct ShapeLayer::Native : NativeLayerBase
 
             if (strokeBrush)
             {
-                dc->SetTransform(D2D1::Matrix3x2F::Translation(
-                    static_cast<float>(offset.x), static_cast<float>(offset.y)));
-                dc->DrawGeometry(pathGeometry.Get(), strokeBrush.Get(), strokeWidth);
+                dc->SetTransform(baseTransform);
+                dc->DrawGeometry(
+                    pathGeometry.Get(), strokeBrush.Get(), strokeWidth * dpiScale);
             }
         }
 

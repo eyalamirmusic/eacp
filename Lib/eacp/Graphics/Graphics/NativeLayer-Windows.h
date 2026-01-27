@@ -97,6 +97,12 @@ struct NativeLayerBase
         surfaceBrush = nullptr;
     }
 
+    float getDpiScale() const
+    {
+        auto dpi = GetDpiForSystem();
+        return static_cast<float>(dpi) / 96.f;
+    }
+
     // Create/recreate surface at current bounds size
     virtual void createSurface()
     {
@@ -108,11 +114,7 @@ struct NativeLayerBase
         if (!graphicsDevice || !compositor)
             return;
 
-        // Calculate surface size in pixels (apply DPI scaling if needed)
-        int width = static_cast<int>(bounds.w);
-        int height = static_cast<int>(bounds.h);
-
-        if (width <= 0 || height <= 0)
+        if (bounds.w <= 0 || bounds.h <= 0)
         {
             surface = nullptr;
             surfaceBrush = nullptr;
@@ -120,18 +122,22 @@ struct NativeLayerBase
             return;
         }
 
-        // Create drawing surface
+        auto dpiScale = getDpiScale();
+        auto surfaceWidth = static_cast<int>(bounds.w * dpiScale);
+        auto surfaceHeight = static_cast<int>(bounds.h * dpiScale);
+
+        // Create drawing surface at physical pixel size for sharp rendering
         surface = graphicsDevice.CreateDrawingSurface(
-            {static_cast<float>(width), static_cast<float>(height)},
+            {static_cast<float>(surfaceWidth), static_cast<float>(surfaceHeight)},
             wgdx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
             wgdx::DirectXAlphaMode::Premultiplied);
 
         if (surface)
         {
-            // Create surface brush and set on visual
             surfaceBrush = compositor.CreateSurfaceBrush(surface);
             visual.Brush(surfaceBrush);
-            visual.Size({static_cast<float>(width), static_cast<float>(height)});
+            // Visual size stays at logical size; rootVisual.Scale handles the transform
+            visual.Size({bounds.w, bounds.h});
         }
 
         surfaceDirty = false;
