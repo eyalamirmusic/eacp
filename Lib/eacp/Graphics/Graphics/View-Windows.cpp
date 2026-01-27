@@ -1,29 +1,103 @@
-// Windows implementation of View
+// Windows implementation of View with DirectComposition visual hierarchy
 #include "View.h"
 #include "ShapeLayer.h"
 #include "TextLayer.h"
+#include "NativeLayer-Windows.h"
 
 #include <cassert>
 
 #define NOMINMAX
 #include <Windows.h>
-#include <objidl.h>
-#include <gdiplus.h>
+#include <dcomp.h>
+#include <wrl/client.h>
 
 namespace eacp::Graphics
 {
+
+using Microsoft::WRL::ComPtr;
+
+// Forward declarations
+IDCompositionDesktopDevice* getDCompDevice();
 
 struct View::Native
 {
     Native(View* owner)
         : ownerView(owner)
     {
+        // Create visual for this view
+        auto* dcompDevice = getDCompDevice();
+        if (dcompDevice)
+        {
+            ComPtr<IDCompositionVisual2> tempVisual;
+            dcompDevice->CreateVisual(tempVisual.GetAddressOf());
+            if (tempVisual)
+            {
+                tempVisual.As(&visual);
+            }
+        }
+    }
+
+    ~Native()
+    {
+        detachFromParent();
+        visual.Reset();
+    }
+
+    void attachToParent(IDCompositionVisual2* parentVisual)
+    {
+        if (parentVisual && visual)
+        {
+            ComPtr<IDCompositionVisual> baseVisual;
+            visual.As(&baseVisual);
+            if (baseVisual)
+            {
+                parentVisual->AddVisual(baseVisual.Get(), TRUE, nullptr);
+            }
+            parent = parentVisual;
+        }
+    }
+
+    void detachFromParent()
+    {
+        if (parent && visual)
+        {
+            ComPtr<IDCompositionVisual> baseVisual;
+            visual.As(&baseVisual);
+            if (baseVisual)
+            {
+                parent->RemoveVisual(baseVisual.Get());
+            }
+            parent = nullptr;
+        }
+    }
+
+    void updateVisualPosition()
+    {
+        if (visual)
+        {
+            visual->SetOffsetX(bounds.x);
+            visual->SetOffsetY(bounds.y);
+        }
+    }
+
+    // Return as IDCompositionVisual2 for compatibility with AddVisual
+    // We keep a cached visual2 to avoid returning a dangling pointer
+    IDCompositionVisual2* getVisual()
+    {
+        if (visual && !visual2)
+        {
+            visual.As(&visual2);
+        }
+        return visual2.Get();
     }
 
     View* ownerView;
     Rect bounds;
     bool hasFocus = false;
     bool isHovering = false;
+    ComPtr<IDCompositionVisual3> visual;
+    ComPtr<IDCompositionVisual2> visual2; // Cached for getVisual()
+    IDCompositionVisual2* parent = nullptr;
 };
 
 View::View()
@@ -56,7 +130,9 @@ void View::repaint()
 
 void* View::getHandle()
 {
-    return &impl;
+    // On Windows, return the DirectComposition visual pointer
+    // This allows Window to attach the content view's visual to the root visual
+    return impl->getVisual();
 }
 
 void View::resized()
@@ -83,6 +159,7 @@ Rect View::getRelativeBounds(const Rect& ratio) const
 void View::setBounds(const Rect& bounds)
 {
     impl->bounds = bounds;
+    impl->updateVisualPosition();
     resized();
 
     // Update subview bounds if they were set relatively
@@ -126,6 +203,13 @@ void View::addSubview(View& view)
 {
     view.parent = this;
     subviews.push_back(&view);
+
+    // Attach child visual to this view's visual
+    if (impl->visual && view.impl->visual)
+    {
+        view.impl->attachToParent(impl->getVisual());
+        view.impl->updateVisualPosition();
+    }
 }
 
 void View::removeSubview(View& view)
@@ -133,6 +217,8 @@ void View::removeSubview(View& view)
     auto it = std::find(subviews.begin(), subviews.end(), &view);
     if (it != subviews.end())
     {
+        // Detach child visual from this view's visual
+        view.impl->detachFromParent();
         (*it)->parent = nullptr;
         subviews.erase(it);
     }
@@ -149,7 +235,8 @@ void View::removeFromParent()
 void View::addLayer(Layer& layer)
 {
     layers.push_back(&layer);
-    layer.attachToLayer(getHandle());
+    // Pass the view's visual to the layer for attachment
+    layer.attachToLayer(impl->getVisual());
 }
 
 void View::removeLayer(Layer& layer)

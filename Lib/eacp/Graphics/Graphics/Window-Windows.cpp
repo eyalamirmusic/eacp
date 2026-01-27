@@ -1,4 +1,4 @@
-// Windows implementation of Window using Direct2D
+// Windows implementation of Window using DirectComposition
 #include "Window.h"
 #include "ShapeLayer.h"
 #include "TextLayer.h"
@@ -11,6 +11,7 @@
 #include <Windows.h>
 #include <d2d1_1.h>
 #include <dwrite.h>
+#include <dcomp.h>
 #include <wrl/client.h>
 #include <windowsx.h>
 #include <shellscalingapi.h>
@@ -18,7 +19,7 @@
 namespace eacp::Graphics
 {
 
-// getD2DFactory() and getDWriteFactory() are defined in D2DFactory-Windows.cpp
+// getDCompDevice() is defined in D2DFactory-Windows.cpp
 // which is included earlier in the unity build
 
 using Microsoft::WRL::ComPtr;
@@ -26,27 +27,6 @@ using Microsoft::WRL::ComPtr;
 // Window class name
 static auto WINDOW_CLASS_NAME = L"EACPWindowClass";
 static auto windowClassRegistered = false;
-
-// Mirror structs matching the actual Native implementations
-// These must have identical memory layout to ShapeLayer::Native and TextLayer::Native
-struct ShapeLayerNative : NativeLayerBase
-{
-    ComPtr<ID2D1PathGeometry> pathGeometry;
-    Color fillColor;
-    LinearGradient gradient;
-    bool useGradient = false;
-    bool hasFill = false;
-    Color strokeColor;
-    float strokeWidth = 1.0f;
-    bool hasStroke = false;
-};
-
-struct TextLayerNative : NativeLayerBase
-{
-    std::wstring text;
-    ComPtr<IDWriteTextFormat> textFormat;
-    Color color {1.0f, 1.0f, 1.0f, 1.0f};
-};
 
 struct Window::Native
 {
@@ -57,12 +37,13 @@ struct Window::Native
     {
         registerWindowClass();
         createWindow(options);
-        createRenderTarget();
+        initializeDirectComposition();
     }
 
     ~Native()
     {
-        renderTarget.Reset();
+        rootVisual.Reset();
+        dcompTarget.Reset();
         if (hwnd)
         {
             DestroyWindow(hwnd);
@@ -80,7 +61,7 @@ struct Window::Native
         wc.lpfnWndProc = windowProc;
         wc.hInstance = GetModuleHandle(nullptr);
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        wc.hbrBackground = nullptr; // D2D handles background
+        wc.hbrBackground = nullptr; // We'll paint background in WM_PAINT
         wc.lpszClassName = WINDOW_CLASS_NAME;
 
         RegisterClassExW(&wc);
@@ -113,7 +94,36 @@ struct Window::Native
                                CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left,
                                rect.bottom - rect.top, nullptr, nullptr,
                                GetModuleHandle(nullptr), this);
-        // Don't show window here - wait until render target is created
+        // Don't show window here - wait until DirectComposition is initialized
+    }
+
+    void initializeDirectComposition()
+    {
+        if (!hwnd)
+            return;
+
+        auto* dcompDevice = getDCompDevice();
+        if (!dcompDevice)
+            return;
+
+        // Create composition target for this window
+        HRESULT hr =
+            dcompDevice->CreateTargetForHwnd(hwnd, TRUE, dcompTarget.GetAddressOf());
+        if (FAILED(hr))
+            return;
+
+        // Create root visual
+        hr = dcompDevice->CreateVisual(rootVisual.GetAddressOf());
+        if (FAILED(hr))
+            return;
+
+        // Set root visual as the target's root
+        hr = dcompTarget->SetRoot(rootVisual.Get());
+        if (FAILED(hr))
+            return;
+
+        // Commit the initial state
+        dcompDevice->Commit();
     }
 
     void showWindow()
@@ -131,54 +141,6 @@ struct Window::Native
         return dpi / 96.0f;
     }
 
-    void createRenderTarget()
-    {
-        if (!hwnd)
-            return;
-
-        auto* factory = getD2DFactory();
-        if (!factory)
-            return;
-
-        RECT rc;
-        GetClientRect(hwnd, &rc);
-
-        auto size = D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top);
-
-        // Get the window's DPI for proper high-DPI rendering
-        UINT dpi = GetDpiForWindow(hwnd);
-
-        // Try software rendering for ARM compatibility
-        auto rtProps = D2D1::RenderTargetProperties(
-            D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
-            static_cast<float>(dpi), static_cast<float>(dpi));
-
-        auto hwndProps = D2D1::HwndRenderTargetProperties(hwnd, size);
-
-        auto hr = factory->CreateHwndRenderTarget(rtProps, hwndProps,
-                                                  renderTarget.GetAddressOf());
-
-        if (FAILED(hr))
-        {
-            // Fallback to default render target type
-            rtProps.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
-            factory->CreateHwndRenderTarget(rtProps, hwndProps,
-                                            renderTarget.GetAddressOf());
-        }
-    }
-
-    void resizeRenderTarget()
-    {
-        if (renderTarget)
-        {
-            RECT rc;
-            GetClientRect(hwnd, &rc);
-            D2D1_SIZE_U size = D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top);
-            renderTarget->Resize(size);
-        }
-    }
-
     void setTitle(const std::string& title)
     {
         int titleLen =
@@ -189,10 +151,8 @@ struct Window::Native
     }
 
     void setContentView(View* view);
-    void render();
-    void renderView(View* view, const Point& offset);
-    void renderShapeLayer(ShapeLayerNative* layer, const Point& offset);
-    void renderTextLayer(TextLayerNative* layer, const Point& offset);
+    void commit();
+    void ensureAllLayersRendered(View* view);
 
     static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                                        LPARAM lParam);
@@ -201,7 +161,8 @@ struct Window::Native
     HWND hwnd = nullptr;
     View* contentView;
     Callback quitCallback;
-    ComPtr<ID2D1HwndRenderTarget> renderTarget;
+    ComPtr<IDCompositionTarget> dcompTarget;
+    ComPtr<IDCompositionVisual2> rootVisual;
 };
 
 void Window::Native::setContentView(View* view)
@@ -217,180 +178,53 @@ void Window::Native::setContentView(View* view)
         view->setBounds(Rect(0, 0, static_cast<float>(clientRect.right) / dpiScale,
                              static_cast<float>(clientRect.bottom) / dpiScale));
 
+        // Attach content view's visual to root visual
+        auto* viewVisual = static_cast<IDCompositionVisual2*>(view->getHandle());
+        if (rootVisual && viewVisual)
+        {
+            rootVisual->AddVisual(viewVisual, TRUE, nullptr);
+        }
+
         // Now that we have a content view, show the window
         showWindow();
-        InvalidateRect(hwnd, nullptr, FALSE);
+
+        // Ensure all layers are rendered and commit
+        ensureAllLayersRendered(view);
+        commit();
     }
 }
 
-void Window::Native::render()
+void Window::Native::commit()
 {
-    if (!renderTarget || !contentView)
-        return;
-
-    // Check if render target needs to be recreated
-    if (renderTarget->CheckWindowState() == D2D1_WINDOW_STATE_OCCLUDED)
-        return;
-
-    renderTarget->BeginDraw();
-
-    // Clear with dark background
-    renderTarget->Clear(D2D1::ColorF(0.12f, 0.12f, 0.12f));
-
-    // Render the view hierarchy
-    renderView(contentView, {0, 0});
-
-    auto hr = renderTarget->EndDraw();
-
-    if (hr == D2DERR_RECREATE_TARGET)
+    auto* dcompDevice = getDCompDevice();
+    if (dcompDevice)
     {
-        renderTarget.Reset();
-        createRenderTarget();
+        dcompDevice->Commit();
     }
 }
 
-void Window::Native::renderView(View* view, const Point& offset)
+void Window::Native::ensureAllLayersRendered(View* view)
 {
     if (!view)
         return;
 
-    auto bounds = view->getBounds();
-    auto viewOffset = Point {offset.x + bounds.x, offset.y + bounds.y};
-
+    // Ensure all layers in this view have their content rendered
     auto& layers = view->getLayers();
-    auto& subviews = view->getSubviews();
-
-    // Render all layers attached to this view
     for (auto* layer : layers)
     {
-        if (auto* shapeLayer = dynamic_cast<ShapeLayer*>(layer))
+        auto* native = static_cast<NativeLayerBase*>(layer->getNativeLayer());
+        if (native)
         {
-            auto* native = static_cast<ShapeLayerNative*>(shapeLayer->getNativeLayer());
-            renderShapeLayer(native, viewOffset);
-        }
-        else if (auto* textLayer = dynamic_cast<TextLayer*>(layer))
-        {
-            auto* native = static_cast<TextLayerNative*>(textLayer->getNativeLayer());
-            renderTextLayer(native, viewOffset);
+            native->ensureContent();
         }
     }
 
-    // Recursively render child views
+    // Recursively process child views
+    auto& subviews = view->getSubviews();
     for (auto* subview : subviews)
     {
-        renderView(subview, viewOffset);
+        ensureAllLayersRendered(subview);
     }
-}
-
-void Window::Native::renderShapeLayer(ShapeLayerNative* layer, const Point& offset)
-{
-    if (!layer || layer->hidden || !layer->pathGeometry)
-        return;
-
-    if (!layer->hasFill && !layer->hasStroke)
-        return;
-
-    // Create transform for position
-    D2D1_MATRIX_3X2_F transform = D2D1::Matrix3x2F::Translation(
-        offset.x + layer->position.x, offset.y + layer->position.y);
-    renderTarget->SetTransform(transform);
-
-    // Fill
-    if (layer->hasFill)
-    {
-        if (layer->useGradient && !layer->gradient.stops.empty())
-        {
-            // Create gradient brush
-            D2D1_GRADIENT_STOP stops[8];
-            UINT32 stopCount =
-                static_cast<UINT32>((std::min)(layer->gradient.stops.size(), size_t(8)));
-
-            for (UINT32 i = 0; i < stopCount; ++i)
-            {
-                auto& stop = layer->gradient.stops[i];
-                stops[i].position = stop.position;
-                stops[i].color =
-                    D2D1::ColorF(stop.color.r, stop.color.g, stop.color.b, stop.color.a);
-            }
-
-            ComPtr<ID2D1GradientStopCollection> stopCollection;
-            renderTarget->CreateGradientStopCollection(stops, stopCount,
-                                                       stopCollection.GetAddressOf());
-
-            if (stopCollection)
-            {
-                ComPtr<ID2D1LinearGradientBrush> gradientBrush;
-                renderTarget->CreateLinearGradientBrush(
-                    D2D1::LinearGradientBrushProperties(
-                        D2D1::Point2F(layer->gradient.start.x, layer->gradient.start.y),
-                        D2D1::Point2F(layer->gradient.end.x, layer->gradient.end.y)),
-                    stopCollection.Get(), gradientBrush.GetAddressOf());
-
-                if (gradientBrush)
-                {
-                    gradientBrush->SetOpacity(layer->opacity);
-                    renderTarget->FillGeometry(layer->pathGeometry.Get(),
-                                               gradientBrush.Get());
-                }
-            }
-        }
-        else
-        {
-            // Solid color fill
-            ComPtr<ID2D1SolidColorBrush> brush;
-            renderTarget->CreateSolidColorBrush(
-                D2D1::ColorF(layer->fillColor.r, layer->fillColor.g, layer->fillColor.b,
-                             layer->fillColor.a * layer->opacity),
-                brush.GetAddressOf());
-
-            if (brush)
-            {
-                renderTarget->FillGeometry(layer->pathGeometry.Get(), brush.Get());
-            }
-        }
-    }
-
-    // Stroke
-    if (layer->hasStroke && layer->strokeWidth > 0)
-    {
-        ComPtr<ID2D1SolidColorBrush> strokeBrush;
-        renderTarget->CreateSolidColorBrush(
-            D2D1::ColorF(layer->strokeColor.r, layer->strokeColor.g,
-                         layer->strokeColor.b, layer->strokeColor.a * layer->opacity),
-            strokeBrush.GetAddressOf());
-
-        if (strokeBrush)
-        {
-            renderTarget->DrawGeometry(layer->pathGeometry.Get(), strokeBrush.Get(),
-                                       layer->strokeWidth);
-        }
-    }
-
-    renderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
-}
-
-void Window::Native::renderTextLayer(TextLayerNative* layer, const Point& offset)
-{
-    if (!layer || layer->hidden || layer->text.empty() || !layer->textFormat)
-        return;
-
-    ComPtr<ID2D1SolidColorBrush> brush;
-    renderTarget->CreateSolidColorBrush(
-        D2D1::ColorF(layer->color.r, layer->color.g, layer->color.b,
-                     layer->color.a * layer->opacity),
-        brush.GetAddressOf());
-
-    if (!brush)
-        return;
-
-    D2D1_RECT_F layoutRect = D2D1::RectF(
-        offset.x + layer->position.x, offset.y + layer->position.y,
-        offset.x + layer->position.x + layer->bounds.w,
-        offset.y + layer->position.y + layer->bounds.h);
-
-    renderTarget->DrawText(layer->text.c_str(),
-                           static_cast<UINT32>(layer->text.length()),
-                           layer->textFormat.Get(), layoutRect, brush.Get());
 }
 
 LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
@@ -429,7 +263,6 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
             return 0;
 
         case WM_SIZE:
-            self->resizeRenderTarget();
             if (self->contentView)
             {
                 RECT clientRect;
@@ -439,29 +272,55 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                 self->contentView->setBounds(
                     Rect(0, 0, static_cast<float>(clientRect.right) / dpiScale,
                          static_cast<float>(clientRect.bottom) / dpiScale));
+
+                // Re-render all layers and commit
+                self->ensureAllLayersRendered(self->contentView);
+                self->commit();
             }
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
 
         case WM_DPICHANGED:
         {
-            // Recreate render target with new DPI
-            self->renderTarget.Reset();
-            self->createRenderTarget();
-
             // Resize window to suggested size
             RECT* suggested = reinterpret_cast<RECT*>(lParam);
             SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
                          suggested->right - suggested->left,
                          suggested->bottom - suggested->top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
+
+            // Re-render all layers at new DPI
+            if (self->contentView)
+            {
+                self->ensureAllLayersRendered(self->contentView);
+                self->commit();
+            }
             return 0;
         }
 
+        case WM_ERASEBKGND:
+            // Prevent background erase flicker
+            return 1;
+
         case WM_PAINT:
         {
-            self->render();
-            ValidateRect(hwnd, nullptr);
+            // Paint background with GDI (DirectComposition renders on top)
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            // Dark background color (0.12, 0.12, 0.12 in RGB)
+            HBRUSH brush = CreateSolidBrush(RGB(31, 31, 31));
+            FillRect(hdc, &rc, brush);
+            DeleteObject(brush);
+            EndPaint(hwnd, &ps);
+
+            // Ensure all layers are rendered and commit changes
+            if (self->contentView)
+            {
+                self->ensureAllLayersRendered(self->contentView);
+                self->commit();
+            }
             return 0;
         }
 
@@ -479,7 +338,10 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                                : (msg == WM_RBUTTONDOWN) ? MouseButton::Right
                                                          : MouseButton::Middle;
                 self->contentView->dispatchMouseEvent(event);
-                InvalidateRect(hwnd, nullptr, FALSE);
+
+                // Ensure any changed layers are rendered and commit
+                self->ensureAllLayersRendered(self->contentView);
+                self->commit();
             }
             return 0;
 
@@ -497,7 +359,10 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                                : (msg == WM_RBUTTONUP) ? MouseButton::Right
                                                        : MouseButton::Middle;
                 self->contentView->dispatchMouseEvent(event);
-                InvalidateRect(hwnd, nullptr, FALSE);
+
+                // Ensure any changed layers are rendered and commit
+                self->ensureAllLayersRendered(self->contentView);
+                self->commit();
             }
             return 0;
 
@@ -510,7 +375,10 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                              static_cast<float>(GET_Y_LPARAM(lParam)) / dpiScale};
                 event.type = MouseEventType::Moved;
                 self->contentView->dispatchMouseEvent(event);
-                InvalidateRect(hwnd, nullptr, FALSE);
+
+                // Ensure any changed layers are rendered and commit
+                self->ensureAllLayersRendered(self->contentView);
+                self->commit();
             }
             return 0;
 
@@ -523,6 +391,10 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                 event.isRepeat = (lParam & 0x40000000) != 0;
                 event.modifiers = Keyboard::getModifiers();
                 self->contentView->keyDown(event);
+
+                // Ensure any changed layers are rendered and commit
+                self->ensureAllLayersRendered(self->contentView);
+                self->commit();
             }
             return 0;
 
@@ -534,6 +406,10 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                 event.type = KeyEventType::Up;
                 event.modifiers = Keyboard::getModifiers();
                 self->contentView->keyUp(event);
+
+                // Ensure any changed layers are rendered and commit
+                self->ensureAllLayersRendered(self->contentView);
+                self->commit();
             }
             return 0;
     }

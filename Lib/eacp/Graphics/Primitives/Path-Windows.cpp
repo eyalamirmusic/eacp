@@ -5,13 +5,13 @@
 
 #define NOMINMAX
 #include <Windows.h>
-#include <d2d1.h>
+#include <d2d1_1.h>
 #include <wrl/client.h>
 
 // Forward declaration of factory access
 namespace eacp::Graphics
 {
-ID2D1Factory* getD2DFactory();
+ID2D1Factory1* getD2DFactory();
 }
 
 namespace eacp::Graphics

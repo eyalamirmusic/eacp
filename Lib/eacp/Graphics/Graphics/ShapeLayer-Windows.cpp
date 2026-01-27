@@ -1,18 +1,22 @@
-// Windows implementation of ShapeLayer using Direct2D
+// Windows implementation of ShapeLayer using DirectComposition surfaces
 #include "ShapeLayer.h"
 #include "NativeLayer-Windows.h"
 
 #include <cassert>
+#include <algorithm>
 
 #define NOMINMAX
 #include <Windows.h>
-#include <d2d1.h>
+#include <d2d1_1.h>
 #include <wrl/client.h>
 
 namespace eacp::Graphics
 {
 
 using Microsoft::WRL::ComPtr;
+
+// Forward declaration
+ID2D1Factory1* getD2DFactory();
 
 struct ShapeLayer::Native : NativeLayerBase
 {
@@ -29,6 +33,110 @@ struct ShapeLayer::Native : NativeLayerBase
     Color strokeColor;
     float strokeWidth = 1.0f;
     bool hasStroke = false;
+
+    void renderContent() override
+    {
+        if (!surface || !pathGeometry)
+            return;
+
+        if (!hasFill && !hasStroke)
+            return;
+
+        POINT offset;
+        ComPtr<ID2D1DeviceContext> dc;
+        int width = static_cast<int>(bounds.w);
+        int height = static_cast<int>(bounds.h);
+
+        if (width <= 0 || height <= 0)
+            return;
+
+        RECT updateRect = {0, 0, width, height};
+
+        HRESULT hr = surface->BeginDraw(&updateRect, IID_PPV_ARGS(&dc), &offset);
+        if (FAILED(hr) || !dc)
+            return;
+
+        // Clear with transparent background
+        dc->Clear(D2D1::ColorF(0, 0, 0, 0));
+
+        // Fill
+        if (hasFill)
+        {
+            if (useGradient && !gradient.stops.empty())
+            {
+                // Create gradient brush
+                D2D1_GRADIENT_STOP stops[8];
+                UINT32 stopCount =
+                    static_cast<UINT32>((std::min)(gradient.stops.size(), size_t(8)));
+
+                for (UINT32 i = 0; i < stopCount; ++i)
+                {
+                    auto& stop = gradient.stops[i];
+                    stops[i].position = stop.position;
+                    stops[i].color = D2D1::ColorF(stop.color.r, stop.color.g,
+                                                   stop.color.b, stop.color.a);
+                }
+
+                ComPtr<ID2D1GradientStopCollection> stopCollection;
+                dc->CreateGradientStopCollection(stops, stopCount,
+                                                  stopCollection.GetAddressOf());
+
+                if (stopCollection)
+                {
+                    ComPtr<ID2D1LinearGradientBrush> gradientBrush;
+                    dc->CreateLinearGradientBrush(
+                        D2D1::LinearGradientBrushProperties(
+                            D2D1::Point2F(gradient.start.x + offset.x,
+                                          gradient.start.y + offset.y),
+                            D2D1::Point2F(gradient.end.x + offset.x,
+                                          gradient.end.y + offset.y)),
+                        stopCollection.Get(), gradientBrush.GetAddressOf());
+
+                    if (gradientBrush)
+                    {
+                        // Apply offset transform for drawing
+                        dc->SetTransform(D2D1::Matrix3x2F::Translation(
+                            static_cast<float>(offset.x), static_cast<float>(offset.y)));
+                        dc->FillGeometry(pathGeometry.Get(), gradientBrush.Get());
+                    }
+                }
+            }
+            else
+            {
+                // Solid color fill
+                ComPtr<ID2D1SolidColorBrush> brush;
+                dc->CreateSolidColorBrush(
+                    D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, fillColor.a),
+                    brush.GetAddressOf());
+
+                if (brush)
+                {
+                    dc->SetTransform(D2D1::Matrix3x2F::Translation(
+                        static_cast<float>(offset.x), static_cast<float>(offset.y)));
+                    dc->FillGeometry(pathGeometry.Get(), brush.Get());
+                }
+            }
+        }
+
+        // Stroke
+        if (hasStroke && strokeWidth > 0)
+        {
+            ComPtr<ID2D1SolidColorBrush> strokeBrush;
+            dc->CreateSolidColorBrush(
+                D2D1::ColorF(strokeColor.r, strokeColor.g, strokeColor.b, strokeColor.a),
+                strokeBrush.GetAddressOf());
+
+            if (strokeBrush)
+            {
+                dc->SetTransform(D2D1::Matrix3x2F::Translation(
+                    static_cast<float>(offset.x), static_cast<float>(offset.y)));
+                dc->DrawGeometry(pathGeometry.Get(), strokeBrush.Get(), strokeWidth);
+            }
+        }
+
+        dc->SetTransform(D2D1::Matrix3x2F::Identity());
+        surface->EndDraw();
+    }
 };
 
 ShapeLayer::ShapeLayer()
@@ -49,11 +157,13 @@ void ShapeLayer::setPath(const Path& path)
     {
         impl->pathGeometry.Reset();
     }
+    impl->markContentDirty();
 }
 
 void ShapeLayer::clearPath()
 {
     impl->pathGeometry.Reset();
+    impl->markContentDirty();
 }
 
 void ShapeLayer::setFillColor(const Color& color)
@@ -61,6 +171,7 @@ void ShapeLayer::setFillColor(const Color& color)
     impl->fillColor = color;
     impl->useGradient = false;
     impl->hasFill = true;
+    impl->markContentDirty();
 }
 
 void ShapeLayer::setFillGradient(const LinearGradient& gradient)
@@ -68,17 +179,20 @@ void ShapeLayer::setFillGradient(const LinearGradient& gradient)
     impl->gradient = gradient;
     impl->useGradient = true;
     impl->hasFill = true;
+    impl->markContentDirty();
 }
 
 void ShapeLayer::setStrokeColor(const Color& color)
 {
     impl->strokeColor = color;
     impl->hasStroke = true;
+    impl->markContentDirty();
 }
 
 void ShapeLayer::setStrokeWidth(float width)
 {
     impl->strokeWidth = width;
+    impl->markContentDirty();
 }
 
 void* ShapeLayer::getNativeLayer()

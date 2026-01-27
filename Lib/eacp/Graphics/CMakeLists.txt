@@ -31,6 +31,9 @@ elseif (WIN32)
     target_link_libraries(eacp-graphics PUBLIC eacp-core PRIVATE
         d2d1
         dwrite
+        d3d11
+        dxgi
+        dcomp
         user32
         gdi32
         ole32)

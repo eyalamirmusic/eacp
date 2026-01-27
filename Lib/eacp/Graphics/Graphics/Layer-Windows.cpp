@@ -1,20 +1,28 @@
-// Windows implementation of Layer base class
-// On Windows, layers are purely software-emulated since there's no CALayer equivalent
+// Windows implementation of Layer base class using DirectComposition
 #include "Layer.h"
 #include "NativeLayer-Windows.h"
+
+#include <dcomp.h>
 
 namespace eacp::Graphics
 {
 
-void Layer::attachToLayer(void* /*nativeLayer*/)
+void Layer::attachToLayer(void* parentVisual)
 {
-    // On Windows, layers don't attach to native views
-    // Rendering is handled by Window during paint
+    auto native = static_cast<NativeLayerBase*>(getNativeLayer());
+    if (native && parentVisual)
+    {
+        native->attachTo(static_cast<IDCompositionVisual2*>(parentVisual));
+    }
 }
 
 void Layer::detachFromLayer()
 {
-    // On Windows, layers don't detach from native views
+    auto native = static_cast<NativeLayerBase*>(getNativeLayer());
+    if (native)
+    {
+        native->detach();
+    }
 }
 
 void Layer::setBounds(const Rect& bounds)
