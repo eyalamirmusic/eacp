@@ -9,8 +9,6 @@ namespace eacp::HTTP
 
 struct WinHttpHandle
 {
-    HINTERNET handle = nullptr;
-
     WinHttpHandle() = default;
     explicit WinHttpHandle(HINTERNET h)
         : handle(h)
@@ -23,29 +21,18 @@ struct WinHttpHandle
             WinHttpCloseHandle(handle);
     }
 
-    WinHttpHandle(const WinHttpHandle&) = delete;
-    WinHttpHandle& operator=(const WinHttpHandle&) = delete;
-
-    WinHttpHandle(WinHttpHandle&& other) noexcept
-        : handle(other.handle)
-    {
-        other.handle = nullptr;
-    }
-
-    WinHttpHandle& operator=(WinHttpHandle&& other) noexcept
-    {
-        if (this != &other)
-        {
-            if (handle)
-                WinHttpCloseHandle(handle);
-            handle = other.handle;
-            other.handle = nullptr;
-        }
-        return *this;
-    }
-
     operator HINTERNET() const { return handle; }
     explicit operator bool() const { return handle != nullptr; }
+
+    HINTERNET handle = nullptr;
+};
+
+struct ParsedUrl
+{
+    std::wstring host;
+    std::wstring path;
+    INTERNET_PORT port = 0;
+    bool isHttps = false;
 };
 
 std::wstring toWideString(const std::string& str)
@@ -53,35 +40,52 @@ std::wstring toWideString(const std::string& str)
     if (str.empty())
         return {};
 
-    int size = MultiByteToWideChar(CP_UTF8, 0, str.data(), (int) str.size(), nullptr, 0);
+    auto size =
+        MultiByteToWideChar(CP_UTF8, 0, str.data(), (int) str.size(), nullptr, 0);
     if (size <= 0)
         return {};
 
-    std::wstring result(size, 0);
-    MultiByteToWideChar(CP_UTF8, 0, str.data(), (int) str.size(), result.data(), size);
+    auto result = std::wstring(size, 0);
+    MultiByteToWideChar(
+        CP_UTF8, 0, str.data(), (int) str.size(), result.data(), size);
+    return result;
+}
+
+std::string wideToString(LPCWSTR wideStr, int length)
+{
+    auto utf8Size = WideCharToMultiByte(
+        CP_UTF8, 0, wideStr, length, nullptr, 0, nullptr, nullptr);
+    if (utf8Size <= 0)
+        return {};
+
+    auto result = std::string(utf8Size, 0);
+    WideCharToMultiByte(
+        CP_UTF8, 0, wideStr, length, result.data(), utf8Size, nullptr, nullptr);
     return result;
 }
 
 std::string getLastErrorMessage()
 {
-    DWORD error = GetLastError();
+    auto error = GetLastError();
     if (error == 0)
         return "Unknown error";
 
     LPWSTR buffer = nullptr;
-    DWORD size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-                                    FORMAT_MESSAGE_FROM_HMODULE | FORMAT_MESSAGE_IGNORE_INSERTS,
-                                GetModuleHandleW(L"winhttp.dll"),
-                                error,
-                                MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                                (LPWSTR) &buffer,
-                                0,
-                                nullptr);
+    auto size = FormatMessageW(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM
+            | FORMAT_MESSAGE_FROM_HMODULE | FORMAT_MESSAGE_IGNORE_INSERTS,
+        GetModuleHandleW(L"winhttp.dll"),
+        error,
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (LPWSTR) &buffer,
+        0,
+        nullptr);
 
     if (size == 0)
     {
-        size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-                                  FORMAT_MESSAGE_IGNORE_INSERTS,
+        size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER
+                                  | FORMAT_MESSAGE_FROM_SYSTEM
+                                  | FORMAT_MESSAGE_IGNORE_INSERTS,
                               nullptr,
                               error,
                               MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
@@ -90,17 +94,10 @@ std::string getLastErrorMessage()
                               nullptr);
     }
 
-    std::string result;
+    auto result = std::string();
     if (size > 0 && buffer)
     {
-        int utf8Size =
-            WideCharToMultiByte(CP_UTF8, 0, buffer, (int) size, nullptr, 0, nullptr, nullptr);
-        if (utf8Size > 0)
-        {
-            result.resize(utf8Size);
-            WideCharToMultiByte(
-                CP_UTF8, 0, buffer, (int) size, result.data(), utf8Size, nullptr, nullptr);
-        }
+        result = wideToString(buffer, (int) size);
         LocalFree(buffer);
     }
 
@@ -108,6 +105,172 @@ std::string getLastErrorMessage()
         result = "Error code: " + std::to_string(error);
 
     return result;
+}
+
+ParsedUrl parseUrl(const std::wstring& wideUrl)
+{
+    auto components = URL_COMPONENTS {};
+    components.dwStructSize = sizeof(components);
+
+    auto hostBuffer = std::vector<wchar_t>(256);
+    auto pathBuffer = std::vector<wchar_t>(2048);
+
+    components.lpszHostName = hostBuffer.data();
+    components.dwHostNameLength = (DWORD) hostBuffer.size();
+    components.lpszUrlPath = pathBuffer.data();
+    components.dwUrlPathLength = (DWORD) pathBuffer.size();
+
+    if (!WinHttpCrackUrl(wideUrl.c_str(), 0, 0, &components))
+        throw std::runtime_error("Malformed URL format");
+
+    auto parsed = ParsedUrl {};
+    parsed.host = hostBuffer.data();
+    parsed.path = pathBuffer.data();
+    parsed.port = components.nPort;
+    parsed.isHttps = (components.nScheme == INTERNET_SCHEME_HTTPS);
+    return parsed;
+}
+
+INTERNET_PORT getEffectivePort(const ParsedUrl& url)
+{
+    if (url.port != 0)
+        return url.port;
+
+    if (url.isHttps)
+        return INTERNET_DEFAULT_HTTPS_PORT;
+
+    return INTERNET_DEFAULT_HTTP_PORT;
+}
+
+DWORD getSecurityFlags(bool isHttps)
+{
+    if (isHttps)
+        return WINHTTP_FLAG_SECURE;
+
+    return 0;
+}
+
+WinHttpHandle createSession()
+{
+    auto session = WinHttpHandle(WinHttpOpen(L"eacp-http-client/1.0",
+                                             WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                             WINHTTP_NO_PROXY_NAME,
+                                             WINHTTP_NO_PROXY_BYPASS,
+                                             0));
+    if (!session)
+        throw std::runtime_error("Failed to create HTTP session: "
+                                 + getLastErrorMessage());
+
+    return session;
+}
+
+WinHttpHandle createConnection(HINTERNET session, const ParsedUrl& url)
+{
+    auto port = getEffectivePort(url);
+    auto connection =
+        WinHttpHandle(WinHttpConnect(session, url.host.c_str(), port, 0));
+
+    if (!connection)
+        throw std::runtime_error("Failed to connect: " + getLastErrorMessage());
+
+    return connection;
+}
+
+WinHttpHandle createRequest(HINTERNET connection,
+                            const std::wstring& method,
+                            const ParsedUrl& url)
+{
+    auto flags = getSecurityFlags(url.isHttps);
+    auto request = WinHttpHandle(WinHttpOpenRequest(connection,
+                                                    method.c_str(),
+                                                    url.path.c_str(),
+                                                    nullptr,
+                                                    WINHTTP_NO_REFERER,
+                                                    WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                                    flags));
+    if (!request)
+        throw std::runtime_error("Failed to create request: "
+                                 + getLastErrorMessage());
+
+    return request;
+}
+
+void addHeaders(HINTERNET request, const std::map<std::string, std::string>& headers)
+{
+    for (const auto& pair: headers)
+    {
+        auto headerLine = toWideString(pair.first + ": " + pair.second);
+        if (!WinHttpAddRequestHeaders(
+                request, headerLine.c_str(), (DWORD) -1, WINHTTP_ADDREQ_FLAG_ADD))
+        {
+            throw std::runtime_error("Failed to add header: "
+                                     + getLastErrorMessage());
+        }
+    }
+}
+
+void sendRequest(HINTERNET request, const std::string& body)
+{
+    auto bodyData = body.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID) body.data();
+    auto bodyLength = (DWORD) body.size();
+
+    if (!WinHttpSendRequest(request,
+                            WINHTTP_NO_ADDITIONAL_HEADERS,
+                            0,
+                            bodyData,
+                            bodyLength,
+                            bodyLength,
+                            0))
+    {
+        throw std::runtime_error("Failed to send request: " + getLastErrorMessage());
+    }
+
+    if (!WinHttpReceiveResponse(request, nullptr))
+        throw std::runtime_error("Failed to receive response: "
+                                 + getLastErrorMessage());
+}
+
+int getStatusCode(HINTERNET request)
+{
+    auto statusCode = DWORD {0};
+    auto statusCodeSize = DWORD {sizeof(statusCode)};
+
+    if (!WinHttpQueryHeaders(request,
+                             WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                             WINHTTP_HEADER_NAME_BY_INDEX,
+                             &statusCode,
+                             &statusCodeSize,
+                             WINHTTP_NO_HEADER_INDEX))
+    {
+        throw std::runtime_error("Failed to get status code: "
+                                 + getLastErrorMessage());
+    }
+
+    return (int) statusCode;
+}
+
+std::string readResponseContent(HINTERNET request)
+{
+    auto content = std::string();
+    auto bytesAvailable = DWORD {0};
+
+    while (WinHttpQueryDataAvailable(request, &bytesAvailable) && bytesAvailable > 0)
+    {
+        auto buffer = std::vector<char>(bytesAvailable);
+        auto bytesRead = DWORD {0};
+
+        if (WinHttpReadData(request, buffer.data(), bytesAvailable, &bytesRead))
+        {
+            content.append(buffer.data(), bytesRead);
+        }
+        else
+        {
+            throw std::runtime_error("Failed to read response data: "
+                                     + getLastErrorMessage());
+        }
+    }
+
+    return content;
 }
 
 Response httpRequestInternal(const Request& req)
@@ -119,123 +282,25 @@ Response httpRequestInternal(const Request& req)
     if (wideUrl.empty())
         throw std::runtime_error("URL contains invalid UTF-8 characters");
 
-    URL_COMPONENTS urlComponents = {};
-    urlComponents.dwStructSize = sizeof(urlComponents);
-
-    wchar_t hostName[256] = {};
-    wchar_t urlPath[2048] = {};
-
-    urlComponents.lpszHostName = hostName;
-    urlComponents.dwHostNameLength = sizeof(hostName) / sizeof(wchar_t);
-    urlComponents.lpszUrlPath = urlPath;
-    urlComponents.dwUrlPathLength = sizeof(urlPath) / sizeof(wchar_t);
-
-    if (!WinHttpCrackUrl(wideUrl.c_str(), 0, 0, &urlComponents))
-        throw std::runtime_error("Malformed URL format");
-
-    bool useSSL = (urlComponents.nScheme == INTERNET_SCHEME_HTTPS);
-
-    WinHttpHandle session(
-        WinHttpOpen(L"eacp-http-client/1.0",
-                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                    WINHTTP_NO_PROXY_NAME,
-                    WINHTTP_NO_PROXY_BYPASS,
-                    0));
-
-    if (!session)
-        throw std::runtime_error("Failed to create HTTP session: " + getLastErrorMessage());
-
-    INTERNET_PORT port = urlComponents.nPort;
-    if (port == 0)
-        port = useSSL ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT;
-
-    WinHttpHandle connection(WinHttpConnect(session, hostName, port, 0));
-
-    if (!connection)
-        throw std::runtime_error("Failed to connect: " + getLastErrorMessage());
-
+    auto url = parseUrl(wideUrl);
+    auto session = createSession();
+    auto connection = createConnection(session, url);
     auto wideMethod = toWideString(req.type);
-    DWORD flags = useSSL ? WINHTTP_FLAG_SECURE : 0;
+    auto request = createRequest(connection, wideMethod, url);
 
-    WinHttpHandle request(WinHttpOpenRequest(connection,
-                                             wideMethod.c_str(),
-                                             urlPath,
-                                             nullptr,
-                                             WINHTTP_NO_REFERER,
-                                             WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                             flags));
+    addHeaders(request, req.headers);
+    sendRequest(request, req.body);
 
-    if (!request)
-        throw std::runtime_error("Failed to create request: " + getLastErrorMessage());
-
-    for (const auto& pair : req.headers)
-    {
-        auto headerLine = toWideString(pair.first + ": " + pair.second);
-        if (!WinHttpAddRequestHeaders(
-                request, headerLine.c_str(), (DWORD) -1, WINHTTP_ADDREQ_FLAG_ADD))
-        {
-            throw std::runtime_error("Failed to add header: " + getLastErrorMessage());
-        }
-    }
-
-    LPVOID bodyData = WINHTTP_NO_REQUEST_DATA;
-    DWORD bodyLength = 0;
-
-    if (!req.body.empty())
-    {
-        bodyData = (LPVOID) req.body.data();
-        bodyLength = (DWORD) req.body.size();
-    }
-
-    if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, bodyData, bodyLength,
-                            bodyLength, 0))
-    {
-        throw std::runtime_error("Failed to send request: " + getLastErrorMessage());
-    }
-
-    if (!WinHttpReceiveResponse(request, nullptr))
-        throw std::runtime_error("Failed to receive response: " + getLastErrorMessage());
-
-    DWORD statusCode = 0;
-    DWORD statusCodeSize = sizeof(statusCode);
-    if (!WinHttpQueryHeaders(request,
-                             WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                             WINHTTP_HEADER_NAME_BY_INDEX,
-                             &statusCode,
-                             &statusCodeSize,
-                             WINHTTP_NO_HEADER_INDEX))
-    {
-        throw std::runtime_error("Failed to get status code: " + getLastErrorMessage());
-    }
-
-    std::string content;
-    DWORD bytesAvailable = 0;
-
-    while (WinHttpQueryDataAvailable(request, &bytesAvailable) && bytesAvailable > 0)
-    {
-        std::vector<char> buffer(bytesAvailable);
-        DWORD bytesRead = 0;
-
-        if (WinHttpReadData(request, buffer.data(), bytesAvailable, &bytesRead))
-        {
-            content.append(buffer.data(), bytesRead);
-        }
-        else
-        {
-            throw std::runtime_error("Failed to read response data: " + getLastErrorMessage());
-        }
-    }
-
-    Response response;
-    response.statusCode = (int) statusCode;
-    response.content = std::move(content);
+    auto response = Response();
+    response.statusCode = getStatusCode(request);
+    response.content = readResponseContent(request);
 
     return response;
 }
 
 Response httpRequest(const Request& req)
 {
-    Response res;
+    auto res = Response();
 
     try
     {
