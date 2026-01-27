@@ -1,17 +1,13 @@
 #pragma once
 
-#include "ThreadUtils.h"
-#include <cassert>
-
-#define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
-#include <DispatcherQueue.h>
-
 #include <winrt/Windows.System.h>
 
 namespace eacp::Threads
 {
+namespace System = winrt::Windows::System;
+
 void initMainThread();
-winrt::Windows::System::DispatcherQueue getDispatcherQueue();
-winrt::Windows::System::DispatcherQueueController getDispatcherQueueController();
+
+System::DispatcherQueue getDispatcherQueue();
+System::DispatcherQueueController getDispatcherQueueController();
 }

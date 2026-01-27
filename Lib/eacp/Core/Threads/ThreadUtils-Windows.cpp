@@ -1,18 +1,17 @@
 #include "ThreadUtils-Windows.h"
-
+#include <DispatcherQueue.h>
 #include <winrt/Windows.Foundation.h>
 
 namespace eacp::Threads
 {
 
-static winrt::Windows::System::DispatcherQueueController dispatcherController {nullptr};
-static winrt::Windows::System::DispatcherQueue dispatcherQueue {nullptr};
+static System::DispatcherQueueController dispatcherController {nullptr};
+static System::DispatcherQueue dispatcherQueue {nullptr};
 
 void initMainThread()
 {
-    DispatcherQueueOptions options {sizeof(DispatcherQueueOptions),
-                                    DQTYPE_THREAD_CURRENT,
-                                    DQTAT_COM_ASTA};
+    auto options = DispatcherQueueOptions(
+        sizeof(DispatcherQueueOptions), DQTYPE_THREAD_CURRENT, DQTAT_COM_ASTA);
 
     ABI::Windows::System::IDispatcherQueueController* controller = nullptr;
     auto hr = CreateDispatcherQueueController(options, &controller);
@@ -24,12 +23,12 @@ void initMainThread()
     }
 }
 
-winrt::Windows::System::DispatcherQueue getDispatcherQueue()
+System::DispatcherQueue getDispatcherQueue()
 {
     return dispatcherQueue;
 }
 
-winrt::Windows::System::DispatcherQueueController getDispatcherQueueController()
+System::DispatcherQueueController getDispatcherQueueController()
 {
     return dispatcherController;
 }

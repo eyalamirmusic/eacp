@@ -3,6 +3,12 @@
 #include <vector>
 #include <atomic>
 #include <mutex>
+#include <cassert>
+
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+
+
 #include "../Utils/Singleton.h"
 
 namespace eacp::Threads
