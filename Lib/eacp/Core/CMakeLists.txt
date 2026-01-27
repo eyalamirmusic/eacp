@@ -14,6 +14,7 @@ if (APPLE)
     endif ()
 elseif (WIN32)
     target_sources(eacp-core PRIVATE Core-Windows.cpp)
+    target_link_libraries(eacp-core PRIVATE winhttp)
 endif ()
 
 
