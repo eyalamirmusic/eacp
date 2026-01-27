@@ -1,9 +1,9 @@
 #include "Timer.h"
 #include "ThreadUtils.h"
 #include "EventLoop.h"
-
-#include <unordered_map>
 #include "ThreadUtils-Windows.h"
+
+#include <winrt/Windows.Foundation.h>
 
 namespace eacp::Threads
 {
@@ -14,40 +14,37 @@ struct Timer::Native
         : cb(cbToUse)
     {
         assertMainThread();
-        UINT intervalMs = 1000 / intervalHz;
 
-        timerId = SetTimer(nullptr, 0, intervalMs, &timerProc);
-        getTimerMap()[timerId] = this;
+        auto queue = getDispatcherQueue();
+        if (!queue)
+        {
+            return;
+        }
+
+        timer = queue.CreateTimer();
+        auto intervalMs = std::chrono::milliseconds(1000 / intervalHz);
+        timer.Interval(intervalMs);
+
+        tickToken = timer.Tick([this](auto&&, auto&&) { cb(); });
+
+        timer.Start();
     }
 
     ~Native()
     {
         assertMainThread();
-        KillTimer(nullptr, timerId);
-        getTimerMap().erase(timerId);
-    }
 
-    static void CALLBACK timerProc(HWND, UINT, UINT_PTR idEvent, DWORD)
-    {
-        auto& map = getTimerMap();
-        auto it = map.find(idEvent);
-
-        if (it != map.end())
+        if (timer)
         {
-            it->second->cb();
+            timer.Stop();
+            timer.Tick(tickToken);
+            timer = nullptr;
         }
     }
 
-    using NativeMap = std::unordered_map<UINT_PTR, Native*>;
-
-    static NativeMap& getTimerMap()
-    {
-        static auto map = NativeMap();
-        return map;
-    }
-
     Callback cb;
-    UINT_PTR timerId = 0;
+    winrt::Windows::System::DispatcherQueueTimer timer {nullptr};
+    winrt::event_token tickToken;
 };
 
 Timer::Timer(const Callback& cbToUse, int intervalHz)
