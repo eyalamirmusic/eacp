@@ -17,53 +17,39 @@ void EventLoop::run()
     initMainThread();
     running = true;
 
-    // Execute any callbacks that were queued before the dispatcher was ready
     auto queue = getDispatcherQueue();
+
     for (auto& cb : pendingCallbacks)
-    {
-        queue.TryEnqueue([cb = std::move(cb)]() { cb(); });
-    }
+        queue.TryEnqueue(cb);
+
     pendingCallbacks.clear();
 
-    // DispatcherQueue on desktop still requires a Win32 message pump
-    MSG msg;
+    auto msg = MSG();
+
     while (running && GetMessage(&msg, NULL, 0, 0))
     {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
 
-    // Clean shutdown of the dispatcher queue
-    auto controller = getDispatcherQueueController();
-    if (controller)
-    {
+    if (auto controller = getDispatcherQueueController())
         controller.ShutdownQueueAsync().get();
-    }
 }
 
 void EventLoop::quit()
 {
     running = false;
 
-    auto queue = getDispatcherQueue();
-    if (queue)
-    {
-        queue.TryEnqueue([]() { PostQuitMessage(0); });
-    }
+    if (auto queue = getDispatcherQueue())
+        queue.TryEnqueue([] { PostQuitMessage(0); });
 }
 
 void EventLoop::call(Callback func)
 {
-    auto queue = getDispatcherQueue();
-    if (queue)
-    {
+    if (auto queue = getDispatcherQueue())
         queue.TryEnqueue([func = std::move(func)]() { func(); });
-    }
     else
-    {
-        // Queue callbacks to be executed when the dispatcher is ready
         pendingCallbacks.push_back(std::move(func));
-    }
 }
 
 } // namespace eacp::Threads
