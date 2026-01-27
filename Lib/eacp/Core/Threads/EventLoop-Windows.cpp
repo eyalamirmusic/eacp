@@ -1,55 +1,75 @@
 #include "EventLoop.h"
 #include "ThreadUtils-Windows.h"
-
-#include <winrt/Windows.Foundation.h>
-
 #include <vector>
+#include <atomic>
+#include <mutex>
+#include "../Utils/Singleton.h"
 
 namespace eacp::Threads
 {
 
-static bool running = false;
-static std::vector<Callback> pendingCallbacks;
+static std::atomic running {false};
+
+struct PendingCallbacks
+{
+    void run()
+    {
+        auto guard = std::lock_guard(mutex);
+        auto queue = getDispatcherQueue();
+
+        for (auto& cb : pendingCallbacks)
+            queue.TryEnqueue(cb);
+
+        pendingCallbacks.clear();
+    }
+
+    void add(const Callback& cb)
+    {
+        auto guard = std::lock_guard(mutex);
+        pendingCallbacks.push_back(cb);
+    }
+
+    std::recursive_mutex mutex;
+    std::vector<Callback> pendingCallbacks;
+};
+
+PendingCallbacks& getPendingCallbacks() {return Singleton::get<PendingCallbacks>();}
 
 void EventLoop::run()
 {
     winrt::init_apartment(winrt::apartment_type::single_threaded);
     initMainThread();
+    getPendingCallbacks().run();
+
     running = true;
 
-    auto queue = getDispatcherQueue();
-
-    for (auto& cb : pendingCallbacks)
-        queue.TryEnqueue(cb);
-
-    pendingCallbacks.clear();
-
-    auto msg = MSG();
-
-    while (running && GetMessage(&msg, NULL, 0, 0))
+    while (running)
     {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
+        auto msg = MSG();
 
-    if (auto controller = getDispatcherQueueController())
-        controller.ShutdownQueueAsync().get();
+        if (GetMessage(&msg, nullptr, 0, 0))
+        {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+        else
+        {
+            quit();
+        }
+    }
 }
 
 void EventLoop::quit()
 {
     running = false;
-
-    if (auto queue = getDispatcherQueue())
-        queue.TryEnqueue([] { PostQuitMessage(0); });
 }
 
 void EventLoop::call(Callback func)
 {
     if (auto queue = getDispatcherQueue())
-        queue.TryEnqueue([func = std::move(func)]() { func(); });
+        queue.TryEnqueue([func] { func(); });
     else
-        pendingCallbacks.push_back(std::move(func));
+        getPendingCallbacks().add(func);
 }
 
 } // namespace eacp::Threads
