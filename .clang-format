@@ -1,3 +1,4 @@
+Language: Cpp
 AccessModifierOffset: -4
 AlignAfterOpenBracket: Align
 AlignConsecutiveAssignments: false
@@ -31,7 +32,6 @@ IndentCaseLabels: true
 IndentWidth: 4
 IndentWrappedFunctionNames: true
 KeepEmptyLinesAtTheStartOfBlocks: false
-Language: Cpp
 MaxEmptyLinesToKeep: 1
 NamespaceIndentation: None
 PointerAlignment: Left
@@ -54,3 +54,6 @@ BreakInheritanceList: BeforeComma
 SpaceBeforeRangeBasedForLoopColon: false
 BreakConstructorInitializersBeforeComma: true
 
+---
+Language: ObjC
+DisableFormat: true
