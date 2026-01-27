@@ -14,7 +14,6 @@ if (APPLE)
     endif ()
 elseif (WIN32)
     target_sources(eacp-core PRIVATE Core-Windows.cpp)
-    target_compile_options(eacp-core PRIVATE /await:strict)
     target_link_libraries(eacp-core PRIVATE windowsapp)
 endif ()
 
