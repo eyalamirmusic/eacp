@@ -11,7 +11,6 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.Graphics.DirectX.h>
-#include <windows.ui.composition.interop.h>
 
 namespace wuc = winrt::Windows::UI::Composition;
 namespace wgdx = winrt::Windows::Graphics::DirectX;
@@ -21,7 +20,6 @@ namespace eacp::Graphics
 
 using Microsoft::WRL::ComPtr;
 
-// Forward declarations
 wuc::Compositor getWinRTCompositor();
 wuc::CompositionGraphicsDevice getCompositionGraphicsDevice();
 ID2D1Device* getD2DDevice();
@@ -37,28 +35,34 @@ struct NativeLayerBase
             contentDirty = true;
             surfaceDirty = true;
         }
+
         bounds = boundsToUse;
     }
 
     void setPosition(const Point& pos)
     {
         position = pos;
-        positionDirty = true;
+
+        if (visual)
+            visual.Offset({position.x, position.y, 0.0f});
     }
 
     void setHidden(bool hiddenState)
     {
         hidden = hiddenState;
-        visibilityDirty = true;
+
+        if (visual)
+            visual.Opacity(hiddenState ? 0.0f : opacity);
     }
 
     void setOpacity(float op)
     {
         opacity = op;
-        opacityDirty = true;
+
+        if (visual && !hidden)
+            visual.Opacity(opacity);
     }
 
-    // Create the visual and attach to parent
     void attachTo(wuc::ContainerVisual parent)
     {
         if (!parent)
@@ -70,11 +74,8 @@ struct NativeLayerBase
         if (!compositor)
             return;
 
-        // Create SpriteVisual for this layer if not already created
         if (!visual)
-        {
             visual = compositor.CreateSpriteVisual();
-        }
 
         if (visual)
         {
@@ -97,7 +98,7 @@ struct NativeLayerBase
         surfaceBrush = nullptr;
     }
 
-    float getDpiScale() const
+    static float getDpiScale()
     {
         auto dpi = GetDpiForSystem();
         return static_cast<float>(dpi) / 96.f;
@@ -126,7 +127,6 @@ struct NativeLayerBase
         auto surfaceWidth = static_cast<int>(bounds.w * dpiScale);
         auto surfaceHeight = static_cast<int>(bounds.h * dpiScale);
 
-        // Create drawing surface at physical pixel size for sharp rendering
         surface = graphicsDevice.CreateDrawingSurface(
             {static_cast<float>(surfaceWidth), static_cast<float>(surfaceHeight)},
             wgdx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
@@ -136,17 +136,14 @@ struct NativeLayerBase
         {
             surfaceBrush = compositor.CreateSurfaceBrush(surface);
             visual.Brush(surfaceBrush);
-            // Visual size stays at logical size; rootVisual.Scale handles the transform
             visual.Size({bounds.w, bounds.h});
         }
 
         surfaceDirty = false;
     }
 
-    // Render content to surface - implemented by derived classes
     virtual void renderContent() = 0;
 
-    // Update visual position
     void updateVisualPosition()
     {
         if (visual && positionDirty)
@@ -156,7 +153,6 @@ struct NativeLayerBase
         }
     }
 
-    // Update visual opacity
     void updateVisualOpacity()
     {
         if (visual && opacityDirty)
@@ -166,36 +162,29 @@ struct NativeLayerBase
         }
     }
 
-    // Update visual visibility
     void updateVisualVisibility()
     {
         if (visual && visibilityDirty)
         {
-            // Use opacity 0 for hidden
             if (hidden)
-            {
                 visual.Opacity(0.0f);
-            }
             else
-            {
                 visual.Opacity(opacity);
-            }
+
             visibilityDirty = false;
         }
     }
 
-    // Ensure content is rendered if dirty
     void ensureContent()
     {
         if (surfaceDirty)
-        {
             createSurface();
-        }
         if (contentDirty && surface)
         {
             renderContent();
             contentDirty = false;
         }
+
         updateVisualPosition();
         updateVisualOpacity();
         updateVisualVisibility();
@@ -203,19 +192,16 @@ struct NativeLayerBase
 
     void markContentDirty() { contentDirty = true; }
 
-    // Basic properties
     Rect bounds;
     Point position;
     float opacity = 1.0f;
     bool hidden = false;
 
-    // Windows.UI.Composition objects
     wuc::SpriteVisual visual {nullptr};
     wuc::CompositionDrawingSurface surface {nullptr};
     wuc::CompositionSurfaceBrush surfaceBrush {nullptr};
     wuc::ContainerVisual parentVisual {nullptr};
 
-    // Dirty tracking
     bool contentDirty = true;
     bool surfaceDirty = true;
     bool positionDirty = true;

@@ -81,6 +81,8 @@ struct AnimatedView final : View
 
     void resized() override
     {
+        ellipseLayer.setBounds(getLocalBounds());
+
         auto path = Path();
         path.addEllipse(getLocalBounds().getRelative({0.f, 0.f, 0.1f, 0.1f}));
         ellipseLayer.setPath(path);
