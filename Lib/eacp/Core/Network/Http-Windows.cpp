@@ -1,33 +1,32 @@
 #include "Http.h"
 
-#include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Web.Http.h>
 #include <winrt/Windows.Web.Http.Headers.h>
-#include <winrt/Windows.Storage.Streams.h>
 
 namespace eacp::HTTP
 {
 
 namespace winhttp = winrt::Windows::Web::Http;
+using Method = winhttp::HttpMethod;
 
-winhttp::HttpMethod getHttpMethod(const std::string& method)
+Method getHttpMethod(const std::string& method)
 {
     if (method == "GET")
-        return winhttp::HttpMethod::Get();
+        return Method::Get();
     if (method == "POST")
-        return winhttp::HttpMethod::Post();
+        return Method::Post();
     if (method == "PUT")
-        return winhttp::HttpMethod::Put();
+        return Method::Put();
     if (method == "DELETE")
-        return winhttp::HttpMethod::Delete();
+        return Method::Delete();
     if (method == "PATCH")
-        return winhttp::HttpMethod::Patch();
+        return Method::Patch();
     if (method == "HEAD")
-        return winhttp::HttpMethod::Head();
+        return Method::Head();
     if (method == "OPTIONS")
-        return winhttp::HttpMethod::Options();
+        return Method::Options();
 
-    return winhttp::HttpMethod(winrt::to_hstring(method));
+    return Method(winrt::to_hstring(method));
 }
 
 Response httpRequestInternal(const Request& req)
@@ -35,10 +34,13 @@ Response httpRequestInternal(const Request& req)
     if (req.url.empty())
         throw std::invalid_argument("URL cannot be empty");
 
-    winhttp::HttpClient client;
+    auto client = winhttp::HttpClient();
 
-    winrt::Windows::Foundation::Uri uri(winrt::to_hstring(req.url));
-    winhttp::HttpRequestMessage requestMessage(getHttpMethod(req.type), uri);
+    auto urlString = winrt::to_hstring(req.url);
+    auto uri = winrt::Windows::Foundation::Uri(urlString);
+
+    auto method = getHttpMethod(req.type);
+    auto requestMessage = winhttp::HttpRequestMessage(method, uri);
 
     for (const auto& [key, value]: req.headers)
     {
@@ -49,18 +51,17 @@ Response httpRequestInternal(const Request& req)
         {
             if (requestMessage.Content())
             {
-                requestMessage.Content().Headers().TryAppendWithoutValidation(hKey,
-                                                                              hValue);
+                requestMessage.Content().Headers().TryAppendWithoutValidation(
+                    hKey, hValue);
             }
         }
     }
 
     if (!req.body.empty())
     {
-        auto content =
-            winhttp::HttpStringContent(winrt::to_hstring(req.body),
-                                       winrt::Windows::Storage::Streams::
-                                           UnicodeEncoding::Utf8);
+        auto content = winhttp::HttpStringContent(
+            winrt::to_hstring(req.body),
+            winrt::Windows::Storage::Streams::UnicodeEncoding::Utf8);
 
         for (const auto& [key, value]: req.headers)
         {
@@ -76,7 +77,8 @@ Response httpRequestInternal(const Request& req)
 
     auto response = Response();
     response.statusCode = static_cast<int>(responseMessage.StatusCode());
-    response.content = winrt::to_string(responseMessage.Content().ReadAsStringAsync().get());
+    auto rawRes = responseMessage.Content().ReadAsStringAsync().get();
+    response.content = winrt::to_string(rawRes);
 
     return response;
 }
