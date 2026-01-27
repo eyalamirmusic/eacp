@@ -14,18 +14,31 @@ void EventLoop::run()
     initMainThread();
     running = true;
 
+    // DispatcherQueue on desktop still requires a Win32 message pump
     MSG msg;
     while (running && GetMessage(&msg, NULL, 0, 0))
     {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+
+    // Clean shutdown of the dispatcher queue
+    auto controller = getDispatcherQueueController();
+    if (controller)
+    {
+        controller.ShutdownQueueAsync().get();
+    }
 }
 
 void EventLoop::quit()
 {
     running = false;
-    PostThreadMessage(getMainThreadID(), WM_QUIT, 0, 0);
+
+    auto queue = getDispatcherQueue();
+    if (queue)
+    {
+        queue.TryEnqueue([]() { PostQuitMessage(0); });
+    }
 }
 
 void EventLoop::call(Callback func)

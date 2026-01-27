@@ -12,6 +12,6 @@
 namespace eacp::Threads
 {
 void initMainThread();
-DWORD getMainThreadID();
 winrt::Windows::System::DispatcherQueue getDispatcherQueue();
+winrt::Windows::System::DispatcherQueueController getDispatcherQueueController();
 }

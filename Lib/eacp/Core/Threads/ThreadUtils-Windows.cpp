@@ -1,19 +1,15 @@
 #include "ThreadUtils-Windows.h"
-#include <atomic>
 
 #include <winrt/Windows.Foundation.h>
 
 namespace eacp::Threads
 {
 
-static std::atomic<DWORD> mainThreadId {0};
 static winrt::Windows::System::DispatcherQueueController dispatcherController {nullptr};
 static winrt::Windows::System::DispatcherQueue dispatcherQueue {nullptr};
 
 void initMainThread()
 {
-    mainThreadId = GetCurrentThreadId();
-
     DispatcherQueueOptions options {sizeof(DispatcherQueueOptions),
                                     DQTYPE_THREAD_CURRENT,
                                     DQTAT_COM_ASTA};
@@ -28,14 +24,14 @@ void initMainThread()
     }
 }
 
-DWORD getMainThreadID()
-{
-    return mainThreadId;
-}
-
 winrt::Windows::System::DispatcherQueue getDispatcherQueue()
 {
     return dispatcherQueue;
+}
+
+winrt::Windows::System::DispatcherQueueController getDispatcherQueueController()
+{
+    return dispatcherController;
 }
 
 bool isMainThread()
@@ -44,7 +40,7 @@ bool isMainThread()
     {
         return dispatcherQueue.HasThreadAccess();
     }
-    return GetCurrentThreadId() == mainThreadId;
+    return false;
 }
 
 void assertMainThread()
