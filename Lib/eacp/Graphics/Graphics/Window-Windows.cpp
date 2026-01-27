@@ -16,13 +16,17 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Core.h>
+#include <winrt/Windows.UI.Input.h>
 #include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.UI.Composition.Desktop.h>
+#include <winrt/Windows.Devices.Input.h>
 #include <Windows.UI.Composition.Desktop.h>
 #include <windows.ui.composition.interop.h>
+#include <DispatcherQueue.h>
 
 namespace wuc = winrt::Windows::UI::Composition;
 namespace wucore = winrt::Windows::UI::Core;
+namespace wui = winrt::Windows::UI::Input;
 
 namespace eacp::Graphics
 {
@@ -50,7 +54,16 @@ struct Window::Native
 
     ~Native()
     {
+        // Unregister pointer event handlers
+        if (inputSource && useWinRTPointerInput)
+        {
+            inputSource.PointerPressed(pointerPressedToken);
+            inputSource.PointerReleased(pointerReleasedToken);
+            inputSource.PointerMoved(pointerMovedToken);
+        }
+
         inputSource = nullptr;
+        dispatcherController = nullptr;
         rootVisual = nullptr;
         target = nullptr;
         if (hwnd)
@@ -125,27 +138,34 @@ struct Window::Native
         if (!rootVisual)
             return;
 
-        // Try to create CoreIndependentInputSource for pointer input
-        // This requires ICompositorInterop2 (Windows 10 1809+)
-        auto compositor = getWinRTCompositor();
-        if (!compositor)
+        // Create a dispatcher queue for WinRT event processing
+        // This is required for WinRT events to work on a Win32 thread
+        DispatcherQueueOptions dqOptions{};
+        dqOptions.dwSize = sizeof(DispatcherQueueOptions);
+        dqOptions.threadType = DQTYPE_THREAD_CURRENT;
+        dqOptions.apartmentType = DQTAT_COM_NONE;
+
+        ABI::Windows::System::IDispatcherQueueController* controller = nullptr;
+        HRESULT hr = CreateDispatcherQueueController(dqOptions, &controller);
+        if (FAILED(hr) || !controller)
             return;
 
-        try
-        {
-            // Query for ICompositorInterop which has CreateCoreIndependentInputSource
-            auto interop = compositor.try_as<ABI::Windows::UI::Composition::ICompositorInterop>();
-            if (!interop)
-                return;
+        dispatcherController = winrt::Windows::System::DispatcherQueueController{
+            controller, winrt::take_ownership_from_abi};
 
-            // Note: Full CoreIndependentInputSource setup requires additional work
-            // For now, we'll continue using Win32 messages for pointer input
-            // but track keyboard state locally
-        }
-        catch (...)
-        {
-            // Fallback to Win32 pointer handling if interop fails
-        }
+        // Note: CoreIndependentInputSource for composition visuals in desktop apps
+        // requires IVisualInteractionSourceInterop which is not publicly available
+        // in the standard Windows SDK headers. This functionality is primarily
+        // designed for XAML apps using SwapChainPanel.
+        //
+        // For desktop Win32 apps using Windows.UI.Composition:
+        // - Pointer input continues to use Win32 messages (WM_LBUTTONDOWN, etc.)
+        // - Keyboard input uses window-scoped state tracking
+        //
+        // The dispatcher queue created above enables other WinRT async patterns
+        // and could be used if CoreIndependentInputSource becomes available.
+
+        useWinRTPointerInput = false;
     }
 
     void showWindow()
@@ -202,6 +222,14 @@ struct Window::Native
 
     static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+    // Pointer event handlers for CoreIndependentInputSource
+    void onPointerPressed(wucore::CoreIndependentInputSource const& sender,
+                          wucore::PointerEventArgs const& args);
+    void onPointerReleased(wucore::CoreIndependentInputSource const& sender,
+                           wucore::PointerEventArgs const& args);
+    void onPointerMoved(wucore::CoreIndependentInputSource const& sender,
+                        wucore::PointerEventArgs const& args);
+
     Window* ownerWindow;
     HWND hwnd = nullptr;
     View* contentView = nullptr;
@@ -209,6 +237,15 @@ struct Window::Native
     wuc::Desktop::DesktopWindowTarget target{nullptr};
     wuc::ContainerVisual rootVisual{nullptr};
     wucore::CoreIndependentInputSource inputSource{nullptr};
+
+    // Dispatcher queue for WinRT input events
+    winrt::Windows::System::DispatcherQueueController dispatcherController{nullptr};
+
+    // Event tokens for cleanup
+    winrt::event_token pointerPressedToken;
+    winrt::event_token pointerReleasedToken;
+    winrt::event_token pointerMovedToken;
+    bool useWinRTPointerInput = false;
 
     // Keyboard state tracking (256 virtual keys)
     std::bitset<256> keyState;
@@ -257,6 +294,79 @@ void Window::Native::ensureAllLayersRendered(View* view)
     {
         ensureAllLayersRendered(subview);
     }
+}
+
+void Window::Native::onPointerPressed(wucore::CoreIndependentInputSource const&,
+                                       wucore::PointerEventArgs const& args)
+{
+    if (!contentView)
+        return;
+
+    auto point = args.CurrentPoint();
+    auto position = point.Position();
+    float dpiScale = getWindowDpiScale();
+
+    MouseEvent event;
+    event.pos = {position.X / dpiScale, position.Y / dpiScale};
+    event.type = MouseEventType::Down;
+
+    // Determine button from pointer properties
+    auto props = point.Properties();
+    if (props.IsLeftButtonPressed())
+        event.button = MouseButton::Left;
+    else if (props.IsRightButtonPressed())
+        event.button = MouseButton::Right;
+    else if (props.IsMiddleButtonPressed())
+        event.button = MouseButton::Middle;
+
+    contentView->dispatchMouseEvent(event);
+    ensureAllLayersRendered(contentView);
+}
+
+void Window::Native::onPointerReleased(wucore::CoreIndependentInputSource const&,
+                                        wucore::PointerEventArgs const& args)
+{
+    if (!contentView)
+        return;
+
+    auto point = args.CurrentPoint();
+    auto position = point.Position();
+    float dpiScale = getWindowDpiScale();
+
+    MouseEvent event;
+    event.pos = {position.X / dpiScale, position.Y / dpiScale};
+    event.type = MouseEventType::Up;
+
+    // Determine which button was released
+    auto props = point.Properties();
+    auto update = props.PointerUpdateKind();
+    if (update == wui::PointerUpdateKind::LeftButtonReleased)
+        event.button = MouseButton::Left;
+    else if (update == wui::PointerUpdateKind::RightButtonReleased)
+        event.button = MouseButton::Right;
+    else if (update == wui::PointerUpdateKind::MiddleButtonReleased)
+        event.button = MouseButton::Middle;
+
+    contentView->dispatchMouseEvent(event);
+    ensureAllLayersRendered(contentView);
+}
+
+void Window::Native::onPointerMoved(wucore::CoreIndependentInputSource const&,
+                                     wucore::PointerEventArgs const& args)
+{
+    if (!contentView)
+        return;
+
+    auto point = args.CurrentPoint();
+    auto position = point.Position();
+    float dpiScale = getWindowDpiScale();
+
+    MouseEvent event;
+    event.pos = {position.X / dpiScale, position.Y / dpiScale};
+    event.type = MouseEventType::Moved;
+
+    contentView->dispatchMouseEvent(event);
+    ensureAllLayersRendered(contentView);
 }
 
 LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -346,6 +456,9 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam, 
         case WM_LBUTTONDOWN:
         case WM_RBUTTONDOWN:
         case WM_MBUTTONDOWN:
+            // Skip if using WinRT pointer input
+            if (self->useWinRTPointerInput)
+                break;
             if (self->contentView)
             {
                 float dpiScale = self->getWindowDpiScale();
@@ -364,6 +477,9 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam, 
         case WM_LBUTTONUP:
         case WM_RBUTTONUP:
         case WM_MBUTTONUP:
+            // Skip if using WinRT pointer input
+            if (self->useWinRTPointerInput)
+                break;
             if (self->contentView)
             {
                 float dpiScale = self->getWindowDpiScale();
@@ -380,6 +496,9 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam, 
             return 0;
 
         case WM_MOUSEMOVE:
+            // Skip if using WinRT pointer input
+            if (self->useWinRTPointerInput)
+                break;
             if (self->contentView)
             {
                 float dpiScale = self->getWindowDpiScale();
