@@ -1,50 +1,44 @@
 // Windows implementation of Layer base class
 // On Windows, layers are purely software-emulated since there's no CALayer equivalent
 #include "Layer.h"
-
-#include <cassert>
+#include "NativeLayer-Windows.h"
 
 namespace eacp::Graphics
 {
 
-// Layer base class methods - these are stubs that track state
-// The actual rendering happens in View when it paints
-
-static Rect layerBounds;
-static Point layerPosition;
-static bool layerHidden = false;
-static float layerOpacity = 1.0f;
-static void* parentLayer = nullptr;
-
-void Layer::attachToLayer(void* nativeLayer)
+void Layer::attachToLayer(void* /*nativeLayer*/)
 {
-    parentLayer = nativeLayer;
+    // On Windows, layers don't attach to native views
+    // Rendering is handled by Window during paint
 }
 
 void Layer::detachFromLayer()
 {
-    parentLayer = nullptr;
+    // On Windows, layers don't detach from native views
 }
 
 void Layer::setBounds(const Rect& bounds)
 {
-    // Store bounds - actual rendering uses these when View paints
-    // Each layer subclass stores its own bounds in its Native struct
+    auto native = static_cast<NativeLayerBase*>(getNativeLayer());
+    native->setBounds(bounds);
 }
 
 void Layer::setPosition(const Point& position)
 {
-    // Store position - actual rendering uses these when View paints
+    auto native = static_cast<NativeLayerBase*>(getNativeLayer());
+    native->setPosition(position);
 }
 
 void Layer::setHidden(bool hidden)
 {
-    // Store hidden state
+    auto native = static_cast<NativeLayerBase*>(getNativeLayer());
+    native->setHidden(hidden);
 }
 
 void Layer::setOpacity(float opacity)
 {
-    // Store opacity
+    auto native = static_cast<NativeLayerBase*>(getNativeLayer());
+    native->setOpacity(opacity);
 }
 
 } // namespace eacp::Graphics

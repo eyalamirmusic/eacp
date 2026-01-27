@@ -100,6 +100,9 @@ public:
     void focus();
     bool hasFocus() const;
 
+    const std::vector<View*>& getSubviews() const { return subviews; }
+    const std::vector<Layer*>& getLayers() const { return layers; }
+
 private:
     void handleMouseEvent(const MouseEvent& event);
     Point convertPointToDescendant(const Point& point, View* descendant);

@@ -1,5 +1,6 @@
 // Windows implementation of ShapeLayer using Direct2D
 #include "ShapeLayer.h"
+#include "NativeLayer-Windows.h"
 
 #include <cassert>
 
@@ -13,10 +14,8 @@ namespace eacp::Graphics
 
 using Microsoft::WRL::ComPtr;
 
-struct ShapeLayer::Native
+struct ShapeLayer::Native : NativeLayerBase
 {
-    Native() {}
-
     // Path geometry (reference, not owned)
     ID2D1PathGeometry* pathGeometry = nullptr;
 
@@ -30,12 +29,6 @@ struct ShapeLayer::Native
     Color strokeColor;
     float strokeWidth = 1.0f;
     bool hasStroke = false;
-
-    // Layer properties
-    Rect bounds;
-    Point position;
-    float opacity = 1.0f;
-    bool hidden = false;
 };
 
 ShapeLayer::ShapeLayer()
@@ -80,7 +73,7 @@ void ShapeLayer::setStrokeWidth(float width)
 
 void* ShapeLayer::getNativeLayer()
 {
-    return &impl;
+    return impl.get();
 }
 
 } // namespace eacp::Graphics

@@ -1,5 +1,6 @@
 // Windows implementation of TextLayer using DirectWrite
 #include "TextLayer.h"
+#include "NativeLayer-Windows.h"
 
 #include <cassert>
 
@@ -20,7 +21,7 @@ namespace eacp::Graphics
 
 using Microsoft::WRL::ComPtr;
 
-struct TextLayer::Native
+struct TextLayer::Native : NativeLayerBase
 {
     Native()
     {
@@ -38,11 +39,6 @@ struct TextLayer::Native
     std::wstring text;
     ComPtr<IDWriteTextFormat> textFormat;
     Color color {1.0f, 1.0f, 1.0f, 1.0f};
-
-    Rect bounds;
-    Point position;
-    float opacity = 1.0f;
-    bool hidden = false;
 };
 
 TextLayer::TextLayer()
@@ -63,8 +59,9 @@ void TextLayer::setFont(const Font& font)
     auto* textFormat = static_cast<IDWriteTextFormat*>(font.getHandle());
     if (textFormat)
     {
-        // Copy the text format reference
-        impl->textFormat = textFormat;
+        // AddRef to keep the text format alive
+        textFormat->AddRef();
+        impl->textFormat.Attach(textFormat);
     }
 }
 
@@ -75,7 +72,7 @@ void TextLayer::setColor(const Color& color)
 
 void* TextLayer::getNativeLayer()
 {
-    return &impl;
+    return impl.get();
 }
 
 } // namespace eacp::Graphics

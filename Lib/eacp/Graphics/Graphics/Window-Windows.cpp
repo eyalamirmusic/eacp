@@ -2,6 +2,7 @@
 #include "Window.h"
 #include "ShapeLayer.h"
 #include "TextLayer.h"
+#include "NativeLayer-Windows.h"
 
 #include <algorithm>
 #include <cassert>
@@ -25,39 +26,28 @@ namespace eacp::Graphics
 
 using Microsoft::WRL::ComPtr;
 
-// Forward declaration
-class View;
-
 // Window class name
-static const wchar_t* WINDOW_CLASS_NAME = L"EACPWindowClass";
-static bool windowClassRegistered = false;
+static auto WINDOW_CLASS_NAME = L"EACPWindowClass";
+static auto windowClassRegistered = false;
 
-// Forward declare the ShapeLayer and TextLayer Native structs for rendering
-struct ShapeLayerNative
+// Native layer structures matching the actual implementations
+struct ShapeLayerNative : NativeLayerBase
 {
-    ID2D1PathGeometry* pathGeometry;
+    ID2D1PathGeometry* pathGeometry = nullptr;
     Color fillColor;
     LinearGradient gradient;
-    bool useGradient;
-    bool hasFill;
+    bool useGradient = false;
+    bool hasFill = false;
     Color strokeColor;
-    float strokeWidth;
-    bool hasStroke;
-    Rect bounds;
-    Point position;
-    float opacity;
-    bool hidden;
+    float strokeWidth = 1.0f;
+    bool hasStroke = false;
 };
 
-struct TextLayerNative
+struct TextLayerNative : NativeLayerBase
 {
     std::wstring text;
     ComPtr<IDWriteTextFormat> textFormat;
-    Color color;
-    Rect bounds;
-    Point position;
-    float opacity;
-    bool hidden;
+    Color color {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 struct Window::Native
@@ -222,19 +212,29 @@ void Window::Native::renderView(View* view, const Point& offset)
     if (!view)
         return;
 
-    Rect bounds = view->getBounds();
-    Point viewOffset = {offset.x + bounds.x, offset.y + bounds.y};
+    auto bounds = view->getBounds();
+    auto viewOffset = Point {offset.x + bounds.x, offset.y + bounds.y};
 
-    // Get layers from view and render them
-    // Access view's layers through its internal structure
-    // For now, we'll iterate through layers stored in the view
+    // Render all layers attached to this view
+    for (auto* layer : view->getLayers())
+    {
+        if (auto* shapeLayer = dynamic_cast<ShapeLayer*>(layer))
+        {
+            auto* native = static_cast<ShapeLayerNative*>(shapeLayer->getNativeLayer());
+            renderShapeLayer(native, viewOffset);
+        }
+        else if (auto* textLayer = dynamic_cast<TextLayer*>(layer))
+        {
+            auto* native = static_cast<TextLayerNative*>(textLayer->getNativeLayer());
+            renderTextLayer(native, viewOffset);
+        }
+    }
 
-    // Note: This is a simplified implementation. In a full implementation,
-    // we would need to access the view's layer list properly.
-
-    // Render child views
-    // Access subviews through view's getHandle() which gives us the Native struct
-    // For simplicity, we rely on the fact that View stores subviews internally
+    // Recursively render child views
+    for (auto* subview : view->getSubviews())
+    {
+        renderView(subview, viewOffset);
+    }
 }
 
 void Window::Native::renderShapeLayer(ShapeLayerNative* layer, const Point& offset)

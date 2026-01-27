@@ -19,9 +19,9 @@ public:
     void setStrokeColor(const Color& color);
     void setStrokeWidth(float width);
 
-private:
     void* getNativeLayer() override;
 
+private:
     struct Native;
     Pimpl<Native> impl;
 };
