@@ -1,14 +1,10 @@
-// Windows implementation of Font using DirectWrite
 #include "Font.h"
+#include "../Helpers/StringUtils-Windows.h"
 
-#include <cassert>
 
-#define NOMINMAX
-#include <Windows.h>
 #include <dwrite.h>
 #include <wrl/client.h>
 
-// Forward declaration of factory access
 namespace eacp::Graphics
 {
 IDWriteFactory* getDWriteFactory();
@@ -31,18 +27,12 @@ struct Font::Native
         if (!factory)
             return;
 
-        // Convert font name to wide string
-        int len =
-            MultiByteToWideChar(CP_UTF8, 0, options.name.c_str(), -1, nullptr, 0);
-        std::wstring wideName(len, L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, options.name.c_str(), -1, wideName.data(), len);
+        auto wideName = toWideString(options.name);
 
-        // Create text format
         factory->CreateTextFormat(wideName.c_str(), nullptr, DWRITE_FONT_WEIGHT_NORMAL,
                                   DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                                   options.size, L"en-us", textFormat.GetAddressOf());
 
-        // If font not found, try with Arial as fallback
         if (!textFormat)
         {
             factory->CreateTextFormat(L"Arial", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
@@ -52,9 +42,7 @@ struct Font::Native
         }
 
         if (textFormat)
-        {
             textFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        }
     }
 
     ComPtr<IDWriteTextFormat> textFormat;

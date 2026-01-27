@@ -1,8 +1,9 @@
-// Windows implementation of Window using DirectComposition
+// Windows implementation of Window using Windows.UI.Composition
 #include "Window.h"
 #include "ShapeLayer.h"
 #include "TextLayer.h"
 #include "NativeLayer-Windows.h"
+#include "../Helpers/StringUtils-Windows.h"
 
 #include <algorithm>
 #include <cassert>
@@ -11,15 +12,22 @@
 #include <Windows.h>
 #include <d2d1_1.h>
 #include <dwrite.h>
-#include <dcomp.h>
 #include <wrl/client.h>
 #include <windowsx.h>
 #include <shellscalingapi.h>
 
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.UI.Composition.h>
+#include <winrt/Windows.UI.Composition.Desktop.h>
+#include <Windows.UI.Composition.Desktop.h>
+#include <windows.ui.composition.interop.h>
+
+namespace wuc = winrt::Windows::UI::Composition;
+
 namespace eacp::Graphics
 {
 
-// getDCompDevice() is defined in D2DFactory-Windows.cpp
+// getWinRTCompositor() is defined in D2DFactory-Windows.cpp
 // which is included earlier in the unity build
 
 using Microsoft::WRL::ComPtr;
@@ -37,13 +45,13 @@ struct Window::Native
     {
         registerWindowClass();
         createWindow(options);
-        initializeDirectComposition();
+        initializeComposition();
     }
 
     ~Native()
     {
-        rootVisual.Reset();
-        dcompTarget.Reset();
+        rootVisual = nullptr;
+        target = nullptr;
         if (hwnd)
         {
             DestroyWindow(hwnd);
@@ -80,11 +88,7 @@ struct Window::Native
         }
 
         // Convert title to wide string
-        int titleLen = MultiByteToWideChar(CP_UTF8, 0, options.title.c_str(), -1,
-                                           nullptr, 0);
-        std::wstring wideTitle(titleLen, L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, options.title.c_str(), -1, wideTitle.data(),
-                            titleLen);
+        std::wstring wideTitle = toWideString(options.title);
 
         // Calculate window size including borders
         RECT rect = {0, 0, options.width, options.height};
@@ -94,36 +98,33 @@ struct Window::Native
                                CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left,
                                rect.bottom - rect.top, nullptr, nullptr,
                                GetModuleHandle(nullptr), this);
-        // Don't show window here - wait until DirectComposition is initialized
+        // Don't show window here - wait until composition is initialized
     }
 
-    void initializeDirectComposition()
+    void initializeComposition()
     {
         if (!hwnd)
             return;
 
-        auto* dcompDevice = getDCompDevice();
-        if (!dcompDevice)
+        auto compositor = getWinRTCompositor();
+        if (!compositor)
             return;
 
-        // Create composition target for this window
-        HRESULT hr =
-            dcompDevice->CreateTargetForHwnd(hwnd, TRUE, dcompTarget.GetAddressOf());
-        if (FAILED(hr))
+        // Create DesktopWindowTarget via interop
+        auto interop =
+            compositor.as<ABI::Windows::UI::Composition::Desktop::ICompositorDesktopInterop>();
+        winrt::com_ptr<ABI::Windows::UI::Composition::Desktop::IDesktopWindowTarget> abiTarget;
+        HRESULT hr = interop->CreateDesktopWindowTarget(hwnd, TRUE, abiTarget.put());
+        if (FAILED(hr) || !abiTarget)
             return;
 
-        // Create root visual
-        hr = dcompDevice->CreateVisual(rootVisual.GetAddressOf());
-        if (FAILED(hr))
-            return;
+        target = abiTarget.as<wuc::Desktop::DesktopWindowTarget>();
+
+        // Create root container visual
+        rootVisual = compositor.CreateContainerVisual();
 
         // Set root visual as the target's root
-        hr = dcompTarget->SetRoot(rootVisual.Get());
-        if (FAILED(hr))
-            return;
-
-        // Commit the initial state
-        dcompDevice->Commit();
+        target.Root(rootVisual);
     }
 
     void showWindow()
@@ -143,15 +144,11 @@ struct Window::Native
 
     void setTitle(const std::string& title)
     {
-        int titleLen =
-            MultiByteToWideChar(CP_UTF8, 0, title.c_str(), -1, nullptr, 0);
-        std::wstring wideTitle(titleLen, L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, title.c_str(), -1, wideTitle.data(), titleLen);
+        std::wstring wideTitle = toWideString(title);
         SetWindowTextW(hwnd, wideTitle.c_str());
     }
 
     void setContentView(View* view);
-    void commit();
     void ensureAllLayersRendered(View* view);
 
     static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam,
@@ -161,8 +158,8 @@ struct Window::Native
     HWND hwnd = nullptr;
     View* contentView;
     Callback quitCallback;
-    ComPtr<IDCompositionTarget> dcompTarget;
-    ComPtr<IDCompositionVisual2> rootVisual;
+    wuc::Desktop::DesktopWindowTarget target{nullptr};
+    wuc::ContainerVisual rootVisual{nullptr};
 };
 
 void Window::Native::setContentView(View* view)
@@ -179,27 +176,17 @@ void Window::Native::setContentView(View* view)
                              static_cast<float>(clientRect.bottom) / dpiScale));
 
         // Attach content view's visual to root visual
-        auto* viewVisual = static_cast<IDCompositionVisual2*>(view->getHandle());
+        auto* viewVisual = static_cast<wuc::ContainerVisual*>(view->getHandle());
         if (rootVisual && viewVisual)
         {
-            rootVisual->AddVisual(viewVisual, TRUE, nullptr);
+            rootVisual.Children().InsertAtTop(*viewVisual);
         }
 
         // Now that we have a content view, show the window
         showWindow();
 
-        // Ensure all layers are rendered and commit
+        // Ensure all layers are rendered
         ensureAllLayersRendered(view);
-        commit();
-    }
-}
-
-void Window::Native::commit()
-{
-    auto* dcompDevice = getDCompDevice();
-    if (dcompDevice)
-    {
-        dcompDevice->Commit();
     }
 }
 
@@ -273,9 +260,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                     Rect(0, 0, static_cast<float>(clientRect.right) / dpiScale,
                          static_cast<float>(clientRect.bottom) / dpiScale));
 
-                // Re-render all layers and commit
+                // Re-render all layers
                 self->ensureAllLayersRendered(self->contentView);
-                self->commit();
             }
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -293,7 +279,6 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
             if (self->contentView)
             {
                 self->ensureAllLayersRendered(self->contentView);
-                self->commit();
             }
             return 0;
         }
@@ -304,7 +289,7 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
 
         case WM_PAINT:
         {
-            // Paint background with GDI (DirectComposition renders on top)
+            // Paint background with GDI (composition renders on top)
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hwnd, &ps);
             RECT rc;
@@ -315,11 +300,10 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
             DeleteObject(brush);
             EndPaint(hwnd, &ps);
 
-            // Ensure all layers are rendered and commit changes
+            // Ensure all layers are rendered
             if (self->contentView)
             {
                 self->ensureAllLayersRendered(self->contentView);
-                self->commit();
             }
             return 0;
         }
@@ -339,9 +323,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                                                          : MouseButton::Middle;
                 self->contentView->dispatchMouseEvent(event);
 
-                // Ensure any changed layers are rendered and commit
+                // Ensure any changed layers are rendered
                 self->ensureAllLayersRendered(self->contentView);
-                self->commit();
             }
             return 0;
 
@@ -360,9 +343,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                                                        : MouseButton::Middle;
                 self->contentView->dispatchMouseEvent(event);
 
-                // Ensure any changed layers are rendered and commit
+                // Ensure any changed layers are rendered
                 self->ensureAllLayersRendered(self->contentView);
-                self->commit();
             }
             return 0;
 
@@ -376,9 +358,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                 event.type = MouseEventType::Moved;
                 self->contentView->dispatchMouseEvent(event);
 
-                // Ensure any changed layers are rendered and commit
+                // Ensure any changed layers are rendered
                 self->ensureAllLayersRendered(self->contentView);
-                self->commit();
             }
             return 0;
 
@@ -392,9 +373,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                 event.modifiers = Keyboard::getModifiers();
                 self->contentView->keyDown(event);
 
-                // Ensure any changed layers are rendered and commit
+                // Ensure any changed layers are rendered
                 self->ensureAllLayersRendered(self->contentView);
-                self->commit();
             }
             return 0;
 
@@ -407,9 +387,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd, UINT msg, WPARAM wParam,
                 event.modifiers = Keyboard::getModifiers();
                 self->contentView->keyUp(event);
 
-                // Ensure any changed layers are rendered and commit
+                // Ensure any changed layers are rendered
                 self->ensureAllLayersRendered(self->contentView);
-                self->commit();
             }
             return 0;
     }

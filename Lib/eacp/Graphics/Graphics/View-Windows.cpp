@@ -1,4 +1,4 @@
-// Windows implementation of View with DirectComposition visual hierarchy
+// Windows implementation of View with Windows.UI.Composition visual hierarchy
 #include "View.h"
 #include "ShapeLayer.h"
 #include "TextLayer.h"
@@ -8,8 +8,12 @@
 
 #define NOMINMAX
 #include <Windows.h>
-#include <dcomp.h>
 #include <wrl/client.h>
+
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.UI.Composition.h>
+
+namespace wuc = winrt::Windows::UI::Composition;
 
 namespace eacp::Graphics
 {
@@ -17,42 +21,32 @@ namespace eacp::Graphics
 using Microsoft::WRL::ComPtr;
 
 // Forward declarations
-IDCompositionDesktopDevice* getDCompDevice();
+wuc::Compositor getWinRTCompositor();
 
 struct View::Native
 {
     Native(View* owner)
         : ownerView(owner)
     {
-        // Create visual for this view
-        auto* dcompDevice = getDCompDevice();
-        if (dcompDevice)
+        // Create container visual for this view
+        auto compositor = getWinRTCompositor();
+        if (compositor)
         {
-            ComPtr<IDCompositionVisual2> tempVisual;
-            dcompDevice->CreateVisual(tempVisual.GetAddressOf());
-            if (tempVisual)
-            {
-                tempVisual.As(&visual);
-            }
+            visual = compositor.CreateContainerVisual();
         }
     }
 
     ~Native()
     {
         detachFromParent();
-        visual.Reset();
+        visual = nullptr;
     }
 
-    void attachToParent(IDCompositionVisual2* parentVisual)
+    void attachToParent(wuc::ContainerVisual parentVisual)
     {
         if (parentVisual && visual)
         {
-            ComPtr<IDCompositionVisual> baseVisual;
-            visual.As(&baseVisual);
-            if (baseVisual)
-            {
-                parentVisual->AddVisual(baseVisual.Get(), TRUE, nullptr);
-            }
+            parentVisual.Children().InsertAtTop(visual);
             parent = parentVisual;
         }
     }
@@ -61,12 +55,7 @@ struct View::Native
     {
         if (parent && visual)
         {
-            ComPtr<IDCompositionVisual> baseVisual;
-            visual.As(&baseVisual);
-            if (baseVisual)
-            {
-                parent->RemoveVisual(baseVisual.Get());
-            }
+            parent.Children().Remove(visual);
             parent = nullptr;
         }
     }
@@ -75,29 +64,18 @@ struct View::Native
     {
         if (visual)
         {
-            visual->SetOffsetX(bounds.x);
-            visual->SetOffsetY(bounds.y);
+            visual.Offset({bounds.x, bounds.y, 0.0f});
         }
     }
 
-    // Return as IDCompositionVisual2 for compatibility with AddVisual
-    // We keep a cached visual2 to avoid returning a dangling pointer
-    IDCompositionVisual2* getVisual()
-    {
-        if (visual && !visual2)
-        {
-            visual.As(&visual2);
-        }
-        return visual2.Get();
-    }
+    wuc::ContainerVisual getVisual() { return visual; }
 
     View* ownerView;
     Rect bounds;
     bool hasFocus = false;
     bool isHovering = false;
-    ComPtr<IDCompositionVisual3> visual;
-    ComPtr<IDCompositionVisual2> visual2; // Cached for getVisual()
-    IDCompositionVisual2* parent = nullptr;
+    wuc::ContainerVisual visual{nullptr};
+    wuc::ContainerVisual parent{nullptr};
 };
 
 View::View()
@@ -130,9 +108,11 @@ void View::repaint()
 
 void* View::getHandle()
 {
-    // On Windows, return the DirectComposition visual pointer
+    // On Windows, return a pointer to the ContainerVisual
     // This allows Window to attach the content view's visual to the root visual
-    return impl->getVisual();
+    static wuc::ContainerVisual visualCopy{nullptr};
+    visualCopy = impl->getVisual();
+    return &visualCopy;
 }
 
 void View::resized()
@@ -235,8 +215,8 @@ void View::removeFromParent()
 void View::addLayer(Layer& layer)
 {
     layers.push_back(&layer);
-    // Pass the view's visual to the layer for attachment
-    layer.attachToLayer(impl->getVisual());
+    // Pass the view's ContainerVisual to the layer for attachment
+    layer.attachToLayer(&impl->visual);
 }
 
 void View::removeLayer(Layer& layer)
@@ -315,8 +295,7 @@ void View::dispatchMouseEvent(const MouseEvent& event)
 
     if (target)
     {
-        MouseEvent localEvent =
-            createLocalEvent(event, target, event.type);
+        MouseEvent localEvent = createLocalEvent(event, target, event.type);
         target->handleMouseEvent(localEvent);
     }
 }

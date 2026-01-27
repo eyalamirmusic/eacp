@@ -4,9 +4,16 @@
 
 #define NOMINMAX
 #include <Windows.h>
-#include <dcomp.h>
 #include <d2d1_1.h>
 #include <wrl/client.h>
+
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.UI.Composition.h>
+#include <winrt/Windows.Graphics.DirectX.h>
+#include <windows.ui.composition.interop.h>
+
+namespace wuc = winrt::Windows::UI::Composition;
+namespace wgdx = winrt::Windows::Graphics::DirectX;
 
 namespace eacp::Graphics
 {
@@ -14,7 +21,8 @@ namespace eacp::Graphics
 using Microsoft::WRL::ComPtr;
 
 // Forward declarations
-IDCompositionDesktopDevice* getDCompDevice();
+wuc::Compositor getWinRTCompositor();
+wuc::CompositionGraphicsDevice getCompositionGraphicsDevice();
 ID2D1Device* getD2DDevice();
 
 struct NativeLayerBase
@@ -50,38 +58,27 @@ struct NativeLayerBase
     }
 
     // Create the visual and attach to parent
-    void attachTo(IDCompositionVisual2* parent)
+    void attachTo(wuc::ContainerVisual parent)
     {
         if (!parent)
             return;
 
         parentVisual = parent;
 
-        auto* dcompDevice = getDCompDevice();
-        if (!dcompDevice)
+        auto compositor = getWinRTCompositor();
+        if (!compositor)
             return;
 
-        // Create visual for this layer if not already created
+        // Create SpriteVisual for this layer if not already created
         if (!visual)
         {
-            ComPtr<IDCompositionVisual2> visual2;
-            dcompDevice->CreateVisual(visual2.GetAddressOf());
-            if (visual2)
-            {
-                // Query for IDCompositionVisual3 which has SetOpacity
-                visual2.As(&visual);
-            }
+            visual = compositor.CreateSpriteVisual();
         }
 
         if (visual)
         {
-            // Add visual to parent (use the base interface)
-            ComPtr<IDCompositionVisual> baseVisual;
-            visual.As(&baseVisual);
-            if (baseVisual)
-            {
-                parent->AddVisual(baseVisual.Get(), TRUE, nullptr);
-            }
+            // Add visual to parent's children
+            parent.Children().InsertAtTop(visual);
             surfaceDirty = true;
             contentDirty = true;
             positionDirty = true;
@@ -92,15 +89,11 @@ struct NativeLayerBase
     {
         if (parentVisual && visual)
         {
-            ComPtr<IDCompositionVisual> baseVisual;
-            visual.As(&baseVisual);
-            if (baseVisual)
-            {
-                parentVisual->RemoveVisual(baseVisual.Get());
-            }
+            parentVisual.Children().Remove(visual);
         }
         parentVisual = nullptr;
-        surface.Reset();
+        surface = nullptr;
+        surfaceBrush = nullptr;
     }
 
     // Create/recreate surface at current bounds size
@@ -109,8 +102,9 @@ struct NativeLayerBase
         if (!visual)
             return;
 
-        auto* dcompDevice = getDCompDevice();
-        if (!dcompDevice)
+        auto graphicsDevice = getCompositionGraphicsDevice();
+        auto compositor = getWinRTCompositor();
+        if (!graphicsDevice || !compositor)
             return;
 
         // Calculate surface size in pixels (apply DPI scaling if needed)
@@ -119,20 +113,24 @@ struct NativeLayerBase
 
         if (width <= 0 || height <= 0)
         {
-            surface.Reset();
-            visual->SetContent(nullptr);
+            surface = nullptr;
+            surfaceBrush = nullptr;
+            visual.Brush(nullptr);
             return;
         }
 
-        // Create virtual surface
-        surface.Reset();
-        HRESULT hr = dcompDevice->CreateVirtualSurface(
-            width, height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED,
-            surface.GetAddressOf());
+        // Create drawing surface
+        surface = graphicsDevice.CreateDrawingSurface(
+            {static_cast<float>(width), static_cast<float>(height)},
+            wgdx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+            wgdx::DirectXAlphaMode::Premultiplied);
 
-        if (SUCCEEDED(hr) && surface)
+        if (surface)
         {
-            visual->SetContent(surface.Get());
+            // Create surface brush and set on visual
+            surfaceBrush = compositor.CreateSurfaceBrush(surface);
+            visual.Brush(surfaceBrush);
+            visual.Size({static_cast<float>(width), static_cast<float>(height)});
         }
 
         surfaceDirty = false;
@@ -146,8 +144,7 @@ struct NativeLayerBase
     {
         if (visual && positionDirty)
         {
-            visual->SetOffsetX(position.x);
-            visual->SetOffsetY(position.y);
+            visual.Offset({position.x, position.y, 0.0f});
             positionDirty = false;
         }
     }
@@ -157,7 +154,7 @@ struct NativeLayerBase
     {
         if (visual && opacityDirty)
         {
-            visual->SetOpacity(opacity);
+            visual.Opacity(opacity);
             opacityDirty = false;
         }
     }
@@ -167,15 +164,14 @@ struct NativeLayerBase
     {
         if (visual && visibilityDirty)
         {
-            // DirectComposition doesn't have a direct visibility property
-            // We use opacity 0 for hidden, or we could remove/add the visual
+            // Use opacity 0 for hidden
             if (hidden)
             {
-                visual->SetOpacity(0.0f);
+                visual.Opacity(0.0f);
             }
             else
             {
-                visual->SetOpacity(opacity);
+                visual.Opacity(opacity);
             }
             visibilityDirty = false;
         }
@@ -206,10 +202,11 @@ struct NativeLayerBase
     float opacity = 1.0f;
     bool hidden = false;
 
-    // DirectComposition objects - use IDCompositionVisual3 for SetOpacity support
-    ComPtr<IDCompositionVisual3> visual;
-    ComPtr<IDCompositionVirtualSurface> surface;
-    IDCompositionVisual2* parentVisual = nullptr;
+    // Windows.UI.Composition objects
+    wuc::SpriteVisual visual{nullptr};
+    wuc::CompositionDrawingSurface surface{nullptr};
+    wuc::CompositionSurfaceBrush surfaceBrush{nullptr};
+    wuc::ContainerVisual parentVisual{nullptr};
 
     // Dirty tracking
     bool contentDirty = true;

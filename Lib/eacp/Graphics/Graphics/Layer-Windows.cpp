@@ -1,18 +1,24 @@
-// Windows implementation of Layer base class using DirectComposition
+// Windows implementation of Layer base class using Windows.UI.Composition
 #include "Layer.h"
 #include "NativeLayer-Windows.h"
 
-#include <dcomp.h>
+#include <winrt/Windows.UI.Composition.h>
+
+namespace wuc = winrt::Windows::UI::Composition;
 
 namespace eacp::Graphics
 {
 
-void Layer::attachToLayer(void* parentVisual)
+void Layer::attachToLayer(void* parentVisualPtr)
 {
     auto native = static_cast<NativeLayerBase*>(getNativeLayer());
-    if (native && parentVisual)
+    if (native && parentVisualPtr)
     {
-        native->attachTo(static_cast<IDCompositionVisual2*>(parentVisual));
+        auto* containerVisualPtr = static_cast<wuc::ContainerVisual*>(parentVisualPtr);
+        if (containerVisualPtr && *containerVisualPtr)
+        {
+            native->attachTo(*containerVisualPtr);
+        }
     }
 }
 

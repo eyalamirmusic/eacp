@@ -1,34 +1,36 @@
-// Direct2D, DirectWrite, and DirectComposition factory initialization for Windows
-// Provides global access to D2D1Factory, DWriteFactory, and DirectComposition devices
-
 #define NOMINMAX
 #include <Windows.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <d2d1_1.h>
 #include <dwrite.h>
-#include <dcomp.h>
 #include <wrl/client.h>
 #include <shellscalingapi.h>
+
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.UI.Composition.h>
+#include <winrt/Windows.UI.Composition.Desktop.h>
+#include <windows.ui.composition.interop.h>
 
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "shcore.lib")
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
-#pragma comment(lib, "dcomp.lib")
+
+namespace wuc = winrt::Windows::UI::Composition;
 
 namespace eacp::Graphics
 {
 
 using Microsoft::WRL::ComPtr;
 
-class DCompFactory
+class WinRTCompositor
 {
 public:
-    static DCompFactory& instance()
+    static WinRTCompositor& instance()
     {
-        static DCompFactory instance;
+        static WinRTCompositor instance;
         return instance;
     }
 
@@ -37,18 +39,19 @@ public:
     ID3D11Device* getD3DDevice() { return d3dDevice.Get(); }
     IDXGIDevice* getDXGIDevice() { return dxgiDevice.Get(); }
     ID2D1Device* getD2DDevice() { return d2dDevice.Get(); }
-    IDCompositionDesktopDevice* getDCompDevice() { return dcompDevice.Get(); }
+    wuc::Compositor getCompositor() { return compositor; }
+    wuc::CompositionGraphicsDevice getGraphicsDevice() { return graphicsDevice; }
 
     bool isInitialized() const { return initialized; }
 
 private:
-    DCompFactory()
+    WinRTCompositor()
     {
         // Enable per-monitor DPI awareness for crisp rendering on high-DPI displays
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-        // Initialize COM
-        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        // Initialize WinRT apartment
+        winrt::init_apartment(winrt::apartment_type::single_threaded);
 
         // Create DirectWrite factory first (independent of D3D chain)
         DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
@@ -96,24 +99,31 @@ private:
         if (FAILED(hr))
             return;
 
-        // Create DirectComposition device from D2D device
-        hr = DCompositionCreateDevice2(d2dDevice.Get(),
-                                        IID_PPV_ARGS(dcompDevice.GetAddressOf()));
+        // Create WinRT Compositor
+        compositor = wuc::Compositor();
+
+        // Create CompositionGraphicsDevice via interop
+        auto interop = compositor.as<ABI::Windows::UI::Composition::ICompositorInterop>();
+        winrt::com_ptr<ABI::Windows::UI::Composition::ICompositionGraphicsDevice> abiDevice;
+        hr = interop->CreateGraphicsDevice(d2dDevice.Get(), abiDevice.put());
         if (FAILED(hr))
             return;
+
+        graphicsDevice = abiDevice.as<wuc::CompositionGraphicsDevice>();
 
         initialized = true;
     }
 
-    ~DCompFactory()
+    ~WinRTCompositor()
     {
-        dcompDevice.Reset();
+        graphicsDevice = nullptr;
+        compositor = nullptr;
         d2dDevice.Reset();
         d2dFactory.Reset();
         dxgiDevice.Reset();
         d3dDevice.Reset();
         dwriteFactory.Reset();
-        CoUninitialize();
+        winrt::uninit_apartment();
     }
 
     bool initialized = false;
@@ -121,44 +131,50 @@ private:
     ComPtr<IDXGIDevice> dxgiDevice;
     ComPtr<ID2D1Factory1> d2dFactory;
     ComPtr<ID2D1Device> d2dDevice;
-    ComPtr<IDCompositionDesktopDevice> dcompDevice;
     ComPtr<IDWriteFactory> dwriteFactory;
+    wuc::Compositor compositor{nullptr};
+    wuc::CompositionGraphicsDevice graphicsDevice{nullptr};
 };
 
 // Helper functions for easy access
 inline ID2D1Factory1* getD2DFactory()
 {
-    return DCompFactory::instance().getD2DFactory();
+    return WinRTCompositor::instance().getD2DFactory();
 }
 
 inline IDWriteFactory* getDWriteFactory()
 {
-    return DCompFactory::instance().getDWriteFactory();
+    return WinRTCompositor::instance().getDWriteFactory();
 }
 
 inline ID3D11Device* getD3DDevice()
 {
-    return DCompFactory::instance().getD3DDevice();
+    return WinRTCompositor::instance().getD3DDevice();
 }
 
 inline IDXGIDevice* getDXGIDevice()
 {
-    return DCompFactory::instance().getDXGIDevice();
+    return WinRTCompositor::instance().getDXGIDevice();
 }
 
 inline ID2D1Device* getD2DDevice()
 {
-    return DCompFactory::instance().getD2DDevice();
+    return WinRTCompositor::instance().getD2DDevice();
 }
 
-inline IDCompositionDesktopDevice* getDCompDevice()
+inline wuc::Compositor getWinRTCompositor()
 {
-    return DCompFactory::instance().getDCompDevice();
+    return WinRTCompositor::instance().getCompositor();
 }
 
-inline bool isDCompInitialized()
+inline wuc::CompositionGraphicsDevice getCompositionGraphicsDevice()
 {
-    return DCompFactory::instance().isInitialized();
+    return WinRTCompositor::instance().getGraphicsDevice();
+}
+
+inline bool isCompositorInitialized()
+{
+    return WinRTCompositor::instance().isInitialized();
 }
 
 } // namespace eacp::Graphics

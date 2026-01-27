@@ -1,4 +1,4 @@
-// Windows implementation of ShapeLayer using DirectComposition surfaces
+// Windows implementation of ShapeLayer using Windows.UI.Composition surfaces
 #include "ShapeLayer.h"
 #include "NativeLayer-Windows.h"
 
@@ -9,6 +9,12 @@
 #include <Windows.h>
 #include <d2d1_1.h>
 #include <wrl/client.h>
+
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.UI.Composition.h>
+#include <windows.ui.composition.interop.h>
+
+namespace wuc = winrt::Windows::UI::Composition;
 
 namespace eacp::Graphics
 {
@@ -42,17 +48,23 @@ struct ShapeLayer::Native : NativeLayerBase
         if (!hasFill && !hasStroke)
             return;
 
-        POINT offset;
-        ComPtr<ID2D1DeviceContext> dc;
         int width = static_cast<int>(bounds.w);
         int height = static_cast<int>(bounds.h);
 
         if (width <= 0 || height <= 0)
             return;
 
+        // Get interop interface for BeginDraw/EndDraw
+        auto interop =
+            surface.as<ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
+        if (!interop)
+            return;
+
+        POINT offset;
+        winrt::com_ptr<ID2D1DeviceContext> dc;
         RECT updateRect = {0, 0, width, height};
 
-        HRESULT hr = surface->BeginDraw(&updateRect, IID_PPV_ARGS(&dc), &offset);
+        HRESULT hr = interop->BeginDraw(&updateRect, IID_PPV_ARGS(dc.put()), &offset);
         if (FAILED(hr) || !dc)
             return;
 
@@ -135,7 +147,7 @@ struct ShapeLayer::Native : NativeLayerBase
         }
 
         dc->SetTransform(D2D1::Matrix3x2F::Identity());
-        surface->EndDraw();
+        interop->EndDraw();
     }
 };
 

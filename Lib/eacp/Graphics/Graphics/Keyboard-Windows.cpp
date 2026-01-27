@@ -1,5 +1,6 @@
 // Windows implementation of Keyboard
 #include "Keyboard.h"
+#include "../Helpers/StringUtils-Windows.h"
 
 #define NOMINMAX
 #include <Windows.h>
@@ -151,10 +152,8 @@ std::string Keyboard::keyCodeToCharacter(uint16_t keyCode)
 
     if (result > 0)
     {
-        // Convert wide char to UTF-8
-        char utf8[8] = {0};
-        WideCharToMultiByte(CP_UTF8, 0, buffer, result, utf8, 8, nullptr, nullptr);
-        return std::string(utf8);
+        // Convert wide char to UTF-8 using WinRT utilities
+        return fromWideString(std::wstring(buffer, result));
     }
 
     return "";

@@ -1,6 +1,7 @@
-// Windows implementation of TextLayer using DirectComposition surfaces
+// Windows implementation of TextLayer using Windows.UI.Composition surfaces
 #include "TextLayer.h"
 #include "NativeLayer-Windows.h"
+#include "../Helpers/StringUtils-Windows.h"
 
 #include <cassert>
 
@@ -9,6 +10,12 @@
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
+
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.UI.Composition.h>
+#include <windows.ui.composition.interop.h>
+
+namespace wuc = winrt::Windows::UI::Composition;
 
 // Forward declaration of factory access
 namespace eacp::Graphics
@@ -38,24 +45,30 @@ struct TextLayer::Native : NativeLayerBase
 
     std::wstring text;
     ComPtr<IDWriteTextFormat> textFormat;
-    Color color {1.0f, 1.0f, 1.0f, 1.0f};
+    Color color{1.0f, 1.0f, 1.0f, 1.0f};
 
     void renderContent() override
     {
         if (!surface || text.empty() || !textFormat)
             return;
 
-        POINT offset;
-        ComPtr<ID2D1DeviceContext> dc;
         int width = static_cast<int>(bounds.w);
         int height = static_cast<int>(bounds.h);
 
         if (width <= 0 || height <= 0)
             return;
 
+        // Get interop interface for BeginDraw/EndDraw
+        auto interop =
+            surface.as<ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
+        if (!interop)
+            return;
+
+        POINT offset;
+        winrt::com_ptr<ID2D1DeviceContext> dc;
         RECT updateRect = {0, 0, width, height};
 
-        HRESULT hr = surface->BeginDraw(&updateRect, IID_PPV_ARGS(&dc), &offset);
+        HRESULT hr = interop->BeginDraw(&updateRect, IID_PPV_ARGS(dc.put()), &offset);
         if (FAILED(hr) || !dc)
             return;
 
@@ -78,7 +91,7 @@ struct TextLayer::Native : NativeLayerBase
                          textFormat.Get(), layoutRect, brush.Get());
         }
 
-        surface->EndDraw();
+        interop->EndDraw();
     }
 };
 
@@ -89,10 +102,7 @@ TextLayer::TextLayer()
 
 void TextLayer::setText(const std::string& text)
 {
-    // Convert to wide string
-    int len = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
-    impl->text.resize(len - 1); // Don't include null terminator in string
-    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, impl->text.data(), len);
+    impl->text = toWideString(text);
     impl->markContentDirty();
 }
 
