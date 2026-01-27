@@ -1,9 +1,6 @@
 #include "Timer.h"
-#include "ThreadUtils.h"
 #include "EventLoop.h"
 #include "ThreadUtils-Windows.h"
-
-#include <winrt/Windows.Foundation.h>
 
 namespace eacp::Threads
 {
@@ -43,7 +40,7 @@ struct Timer::Native
     }
 
     Callback cb;
-    winrt::Windows::System::DispatcherQueueTimer timer {nullptr};
+    System::DispatcherQueueTimer timer {nullptr};
     winrt::event_token tickToken;
 };
 
