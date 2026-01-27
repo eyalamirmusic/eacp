@@ -6,8 +6,9 @@
 #import <AppKit/AppKit.h>
 #endif
 #include "WebView.h"
-#include "../Primitives/GraphicUtils.h"
-#include <eacp/Core/Threads/EventLoop.h>
+
+#include <eacp/Core/ObjC/Strings.h>
+#include <eacp/Graphics/Primitives/GraphicUtils.h>
 #include <unordered_map>
 
 namespace

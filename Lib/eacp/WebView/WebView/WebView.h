@@ -1,6 +1,6 @@
 #pragma once
 
-#include "View.h"
+#include <eacp/Graphics/Graphics.h>
 #include <functional>
 #include <string>
 

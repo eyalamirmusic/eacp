@@ -1,5 +1,5 @@
 add_executable(SimpleView Main.cpp)
-target_link_libraries(SimpleView PRIVATE eacp-graphics)
+target_link_libraries(SimpleView PRIVATE eacp-webview)
 
 set(BUNDLE_ID "com.eacp.simpleview")
 
