@@ -1,5 +1,4 @@
-#include <eacp/Graphics/Graphics.h>
-#include <eacp/Core/Core.h>
+#include <eacp/WebView/WebView.h>
 
 using namespace eacp;
 using namespace Graphics;
