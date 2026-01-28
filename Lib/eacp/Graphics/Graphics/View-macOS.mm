@@ -3,40 +3,10 @@
 #include "View.h"
 #include "GraphicsContextImpl.h"
 #include <eacp/Core/Utils/Vectors.h>
+#include "Keyboard-MacOS.h"
 
 namespace eacp::Graphics
 {
-ModifierKeys modifierKeysFromEvent(NSEvent* event)
-{
-    auto flags = event.modifierFlags;
-
-    return {.shift = (flags & NSEventModifierFlagShift) != 0,
-            .control = (flags & NSEventModifierFlagControl) != 0,
-            .alt = (flags & NSEventModifierFlagOption) != 0,
-            .command = (flags & NSEventModifierFlagCommand) != 0};
-}
-
-KeyEvent keyEventFrom(NSEvent* event, KeyEventType type)
-{
-    auto e = KeyEvent();
-
-    if (event.characters != nil)
-        e.characters = [event.characters UTF8String];
-
-    if (event.charactersIgnoringModifiers != nil)
-    {
-        e.charactersIgnoringModifiers =
-            [event.charactersIgnoringModifiers UTF8String];
-    }
-
-    e.keyCode = event.keyCode;
-    e.type = type;
-    e.modifiers = modifierKeysFromEvent(event);
-    e.isRepeat = event.isARepeat;
-    e.timestamp = event.timestamp;
-
-    return e;
-}
 
 } // namespace eacp::Graphics
 
@@ -196,7 +166,6 @@ KeyEvent keyEventFrom(NSEvent* event, KeyEventType type)
     [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Exited];
 }
 
-// Right mouse button
 - (void)rightMouseDown:(NSEvent*)event
 {
     [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Down];

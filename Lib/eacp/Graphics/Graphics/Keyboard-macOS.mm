@@ -1,9 +1,42 @@
 #import <Carbon/Carbon.h>
 #import <Cocoa/Cocoa.h>
-#include "Keyboard.h"
+
+#include "Keyboard-MacOS.h"
 
 namespace eacp::Graphics
 {
+
+ModifierKeys modifierKeysFromEvent(NSEvent* event)
+{
+    auto flags = event.modifierFlags;
+
+    return {.shift = (flags & NSEventModifierFlagShift) != 0,
+            .control = (flags & NSEventModifierFlagControl) != 0,
+            .alt = (flags & NSEventModifierFlagOption) != 0,
+            .command = (flags & NSEventModifierFlagCommand) != 0};
+}
+
+KeyEvent keyEventFrom(NSEvent* event, KeyEventType type)
+{
+    auto e = KeyEvent();
+
+    if (event.characters != nil)
+        e.characters = [event.characters UTF8String];
+
+    if (event.charactersIgnoringModifiers != nil)
+    {
+        e.charactersIgnoringModifiers =
+            [event.charactersIgnoringModifiers UTF8String];
+    }
+
+    e.keyCode = event.keyCode;
+    e.type = type;
+    e.modifiers = modifierKeysFromEvent(event);
+    e.isRepeat = event.isARepeat;
+    e.timestamp = event.timestamp;
+
+    return e;
+}
 
 bool Keyboard::isKeyPressed(uint16_t keyCode)
 {
@@ -33,12 +66,10 @@ bool Keyboard::isCommandPressed()
 ModifierKeys Keyboard::getModifiers()
 {
     auto flags = NSEvent.modifierFlags;
-    return {
-        .shift = (flags & NSEventModifierFlagShift) != 0,
-        .control = (flags & NSEventModifierFlagControl) != 0,
-        .alt = (flags & NSEventModifierFlagOption) != 0,
-        .command = (flags & NSEventModifierFlagCommand) != 0
-    };
+    return {.shift = (flags & NSEventModifierFlagShift) != 0,
+            .control = (flags & NSEventModifierFlagControl) != 0,
+            .alt = (flags & NSEventModifierFlagOption) != 0,
+            .command = (flags & NSEventModifierFlagCommand) != 0};
 }
 
 std::string Keyboard::keyCodeToCharacter(uint16_t keyCode)

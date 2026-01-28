@@ -196,14 +196,6 @@ struct TaskCard final : View
 
 struct Column final : View
 {
-    std::string name;
-    Color headerColor;
-    std::vector<std::unique_ptr<TaskCard> > cards;
-    std::function<void(TaskCard*)> onCardSelect;
-    std::function<void(TaskCard*)> onCardDelete;
-    std::function<void(TaskCard*, Point)> onCardDragStart;
-    std::function<void()> onAddCard;
-
     Column(const std::string& columnName, Color color)
         : name(columnName)
           , headerColor(color)
@@ -258,13 +250,14 @@ struct Column final : View
 
     void removeCard(TaskCard* card)
     {
-        auto it = std::find_if(cards.begin(),
-                               cards.end(),
-                               [card](const auto& c) { return c.get() == card; });
+        auto it = std::ranges::find_if(cards,
+                                       [card](const auto& c)
+                                       {
+                                           return c.get() == card;
+                                       });
 
         if (it != cards.end())
         {
-            removeSubview(*card);
             cards.erase(it);
             updateCountText();
             layoutCards();
@@ -286,7 +279,7 @@ struct Column final : View
         countText->setText(std::to_string(cards.size()) + " tasks");
     }
 
-    void layoutCards()
+    void layoutCards() const
     {
         auto bounds = getLocalBounds();
         auto cardY = bounds.h - 60.f;
@@ -328,6 +321,14 @@ struct Column final : View
         layoutCards();
     }
 
+    std::string name;
+    Color headerColor;
+    std::vector<std::unique_ptr<TaskCard> > cards;
+    std::function<void(TaskCard*)> onCardSelect;
+    std::function<void(TaskCard*)> onCardDelete;
+    std::function<void(TaskCard*, Point)> onCardDragStart;
+    std::function<void()> onAddCard;
+
     ShapeLayerView backgroundLayer;
     ShapeLayerView headerBg;
     TextLayerView headerText;
@@ -337,17 +338,13 @@ struct Column final : View
 
 struct DragOverlay final : View
 {
-    DragOverlay()
+    DragOverlay(const TaskData& data)
+        : taskData(data)
     {
+        textLayer->setText(data.title);
         textLayer->setColor(Color::gray(0.9f));
         textLayer->setFont(FontOptions().withName("Helvetica-Bold").withSize(12.f));
         addChildren({backgroundLayer, accentLayer, textLayer});
-    }
-
-    void setTask(const TaskData& data)
-    {
-        taskData = data;
-        textLayer->setText(data.title);
     }
 
     void resized() override
@@ -606,30 +603,36 @@ struct TaskBoardView final : View
 
     void startDrag(TaskCard* card, Point)
     {
-        dragging = true;
         draggedCard = card;
-        dragOverlay.setTask(card->data);
-        addSubview(dragOverlay);
+        dragOverlay = std::make_unique<DragOverlay>(card->data);
+        addSubview(*dragOverlay);
         updateDragPosition();
         selectCard(card);
     }
 
     void updateDragPosition()
     {
-        if (!dragging)
+        if (!isDragging())
             return;
 
         auto mousePos = getMousePosition();
-        dragOverlay.setBounds({mousePos.x - 100.f, mousePos.y - 30.f, 200.f, 60.f});
+
+        if (dragOverlay != nullptr)
+        {
+            dragOverlay->setBounds({mousePos.x - 100.f, mousePos.y - 30.f, 200.f,
+                                    60.f});
+        }
+    }
+
+    bool isDragging() const
+    {
+        return dragOverlay != nullptr;
     }
 
     void endDrag()
     {
-        if (!dragging)
+        if (!isDragging())
             return;
-
-        dragging = false;
-        removeSubview(dragOverlay);
 
         if (!draggedCard)
             return;
@@ -652,6 +655,7 @@ struct TaskBoardView final : View
 
         draggedCard = nullptr;
         updateStatus();
+        dragOverlay.reset();
     }
 
     Column* getColumnAtPoint(const Point& point)
@@ -834,7 +838,6 @@ struct TaskBoardView final : View
 
     int nextTaskId = 1;
     TaskCard* selectedCard = nullptr;
-    bool dragging = false;
     TaskCard* draggedCard = nullptr;
 
     Header header;
@@ -842,7 +845,7 @@ struct TaskBoardView final : View
     Column progressColumn{"In Progress", {1.0f, 0.6f, 0.2f}};
     Column doneColumn{"Done", {0.4f, 0.8f, 0.4f}};
     StatusBar statusBar;
-    DragOverlay dragOverlay;
+    std::unique_ptr<DragOverlay> dragOverlay;
 };
 
 struct TaskBoardApp
