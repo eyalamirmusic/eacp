@@ -3,10 +3,23 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
-#include <random>
 
 using namespace eacp;
 using namespace Graphics;
+
+Random randomGen{};
+
+size_t nextRandom(size_t min, size_t max)
+{
+    return randomGen.getNext(min, max);
+}
+
+template <typename T>
+auto& getRandomElement(T& container)
+{
+    return container[nextRandom(0, container.size() - 1)];
+}
+
 
 struct TaskData
 {
@@ -114,6 +127,7 @@ struct TaskCard final : View
     void mouseDown(const MouseEvent& e) override
     {
         dragStartPos = e.pos;
+
         if (onSelect)
             onSelect(this);
     }
@@ -177,14 +191,14 @@ struct TaskCard final : View
     ShapeLayerView accentLayer;
     TextLayerView titleLayer;
     TextLayerView descLayer;
-    Button deleteButton {"×", {0.5f, 0.2f, 0.2f}};
+    Button deleteButton{"×", {0.5f, 0.2f, 0.2f}};
 };
 
 struct Column final : View
 {
     std::string name;
     Color headerColor;
-    std::vector<std::unique_ptr<TaskCard>> cards;
+    std::vector<std::unique_ptr<TaskCard> > cards;
     std::function<void(TaskCard*)> onCardSelect;
     std::function<void(TaskCard*)> onCardDelete;
     std::function<void(TaskCard*, Point)> onCardDragStart;
@@ -192,7 +206,7 @@ struct Column final : View
 
     Column(const std::string& columnName, Color color)
         : name(columnName)
-        , headerColor(color)
+          , headerColor(color)
     {
         headerText->setText(columnName);
         headerText->setColor(Color::gray(0.9f));
@@ -318,7 +332,7 @@ struct Column final : View
     ShapeLayerView headerBg;
     TextLayerView headerText;
     TextLayerView countText;
-    Button addButton {"+", {0.2f, 0.4f, 0.3f}};
+    Button addButton{"+", {0.2f, 0.4f, 0.3f}};
 };
 
 struct DragOverlay final : View
@@ -385,7 +399,7 @@ struct StatusBar final : View
     }
 
     ShapeLayerView backgroundLayer;
-    TextLayerView statusText {
+    TextLayerView statusText{
         "Ready | Press 'N' to add task, Delete to remove, Arrow keys to navigate"};
 };
 
@@ -433,8 +447,8 @@ struct Header final : View
 
     ShapeLayerView backgroundLayer;
     TextLayerView titleText;
-    Button clearButton {"Clear All", {0.5f, 0.2f, 0.2f}};
-    Button sampleButton {"+ Sample", {0.2f, 0.4f, 0.6f}};
+    Button clearButton{"Clear All", {0.5f, 0.2f, 0.2f}};
+    Button sampleButton{"+ Sample", {0.2f, 0.4f, 0.6f}};
 };
 
 struct TaskBoardView final : View
@@ -456,19 +470,25 @@ struct TaskBoardView final : View
         todoColumn.onCardSelect = [this](TaskCard* c) { selectCard(c); };
         todoColumn.onCardDelete = [this](TaskCard* c) { deleteCard(c); };
         todoColumn.onCardDragStart = [this](TaskCard* c, Point p)
-        { startDrag(c, p); };
+        {
+            startDrag(c, p);
+        };
         todoColumn.onAddCard = [this] { addNewTaskToColumn(&todoColumn); };
 
         progressColumn.onCardSelect = [this](TaskCard* c) { selectCard(c); };
         progressColumn.onCardDelete = [this](TaskCard* c) { deleteCard(c); };
         progressColumn.onCardDragStart = [this](TaskCard* c, Point p)
-        { startDrag(c, p); };
+        {
+            startDrag(c, p);
+        };
         progressColumn.onAddCard = [this] { addNewTaskToColumn(&progressColumn); };
 
         doneColumn.onCardSelect = [this](TaskCard* c) { selectCard(c); };
         doneColumn.onCardDelete = [this](TaskCard* c) { deleteCard(c); };
         doneColumn.onCardDragStart = [this](TaskCard* c, Point p)
-        { startDrag(c, p); };
+        {
+            startDrag(c, p);
+        };
         doneColumn.onAddCard = [this] { addNewTaskToColumn(&doneColumn); };
     }
 
@@ -491,23 +511,20 @@ struct TaskBoardView final : View
             "Deploy to staging"};
 
         static const std::vector<std::string> sampleDescs = {"High priority",
-                                                             "Needs review",
-                                                             "In progress",
-                                                             "Blocked",
-                                                             "Ready for QA"};
-
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_int_distribution<> titleDist(0, sampleTitles.size() - 1);
-        std::uniform_int_distribution<> descDist(0, sampleDescs.size() - 1);
-        std::uniform_int_distribution<> colDist(0, 2);
+            "Needs review",
+            "In progress",
+            "Blocked",
+            "Ready for QA"};
 
         for (int i = 0; i < 3; ++i)
         {
-            auto data = createTaskData(sampleTitles[titleDist(gen)],
-                                       sampleDescs[descDist(gen)]);
+            auto& title = getRandomElement(sampleTitles);
+            auto& desc = getRandomElement(sampleDescs);
 
-            auto col = colDist(gen);
+            auto data = createTaskData(title, desc);
+
+            auto col = nextRandom(0, 2);
+
             if (col == 0)
                 todoColumn.addCard(data);
             else if (col == 1)
@@ -527,11 +544,8 @@ struct TaskBoardView final : View
                                                   {0.9f, 0.4f, 0.6f},
                                                   {0.6f, 0.4f, 0.9f}};
 
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_int_distribution<> colorDist(0, colors.size() - 1);
-
-        return {nextTaskId++, title, desc, colors[colorDist(gen)]};
+        auto& color = getRandomElement(colors);
+        return {nextTaskId++, title, desc, color};
     }
 
     void addNewTaskToColumn(Column* column)
@@ -824,9 +838,9 @@ struct TaskBoardView final : View
     TaskCard* draggedCard = nullptr;
 
     Header header;
-    Column todoColumn {"To Do", {0.4f, 0.6f, 1.0f}};
-    Column progressColumn {"In Progress", {1.0f, 0.6f, 0.2f}};
-    Column doneColumn {"Done", {0.4f, 0.8f, 0.4f}};
+    Column todoColumn{"To Do", {0.4f, 0.6f, 1.0f}};
+    Column progressColumn{"In Progress", {1.0f, 0.6f, 0.2f}};
+    Column doneColumn{"Done", {0.4f, 0.8f, 0.4f}};
     StatusBar statusBar;
     DragOverlay dragOverlay;
 };
