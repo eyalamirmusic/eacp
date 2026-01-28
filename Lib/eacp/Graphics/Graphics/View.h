@@ -88,6 +88,9 @@ public:
 
     ViewProperties& getProperties() { return properties; }
 
+    View& setHandlesMouseEvents(bool value = true);
+    View& setGrabsFocusOnMouseDown(bool value = true);
+
     Point getMousePosition() const;
 
     virtual View* hitTest(const Point& point);

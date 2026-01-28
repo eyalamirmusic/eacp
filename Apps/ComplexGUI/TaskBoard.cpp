@@ -20,12 +20,12 @@ struct Button final : View
 {
     std::function<void()> onClick;
 
-    Button(const std::string& label, Color bgColor = {0.3f, 0.3f, 0.35f})
+    Button(const std::string& label, Color bgColor = Color::gray(0.33f))
         : backgroundColor(bgColor)
     {
-        getProperties().handlesMouseEvents = true;
+        setHandlesMouseEvents();
         textLayer->setText(label);
-        textLayer->setColor({0.9f, 0.9f, 0.9f});
+        textLayer->setColor(Color::gray(0.9f));
         addChildren({backgroundLayer, textLayer});
         updateAppearance();
     }
@@ -87,15 +87,14 @@ struct TaskCard final : View
     TaskCard(const TaskData& taskData)
         : data(taskData)
     {
-        getProperties().handlesMouseEvents = true;
-        getProperties().grabsFocusOnMouseDown = true;
+        setHandlesMouseEvents().setGrabsFocusOnMouseDown();
 
         titleLayer->setText(data.title);
-        titleLayer->setColor({0.95f, 0.95f, 0.95f});
+        titleLayer->setColor(Color::gray(0.95f));
         titleLayer->setFont(FontOptions().withName("Helvetica-Bold").withSize(13.f));
 
         descLayer->setText(data.description);
-        descLayer->setColor({0.7f, 0.7f, 0.7f});
+        descLayer->setColor(Color::gray(0.7f));
         descLayer->setFont(FontOptions().withSize(11.f));
 
         deleteButton.onClick = [this]
@@ -122,9 +121,8 @@ struct TaskCard final : View
     void mouseDragged(const MouseEvent& e) override
     {
         auto delta = e.pos - dragStartPos;
-        auto distance = std::sqrt(delta.x * delta.x + delta.y * delta.y);
 
-        if (distance > 5.f && onDragStart)
+        if (delta.length() > 5.f && onDragStart)
             onDragStart(this, e.pos);
     }
 
@@ -142,12 +140,12 @@ struct TaskCard final : View
         if (selected)
             bgAlpha = 1.0f;
 
-        backgroundLayer->setFillColor(Color(0.22f, 0.22f, 0.25f).withAlpha(bgAlpha));
+        backgroundLayer->setFillColor(Color::gray(0.23f).withAlpha(bgAlpha));
 
         if (selected)
             backgroundLayer->setStrokeColor({0.4f, 0.6f, 1.0f});
         else
-            backgroundLayer->setStrokeColor({0.3f, 0.3f, 0.35f});
+            backgroundLayer->setStrokeColor(Color::gray(0.33f));
     }
 
     void resized() override
@@ -169,7 +167,7 @@ struct TaskCard final : View
         titleLayer->setPosition({12.f, bounds.h - 22.f});
         descLayer->setPosition({12.f, bounds.h - 40.f});
 
-        deleteButton.setBounds({bounds.w - 28.f, 6.f, 22.f, 22.f});
+        deleteButton.setBounds(bounds.fromRight(22.f, 6.f).fromTop(22.f, 6.f));
     }
 
     bool selected = false;
@@ -197,10 +195,10 @@ struct Column final : View
         , headerColor(color)
     {
         headerText->setText(columnName);
-        headerText->setColor({0.9f, 0.9f, 0.9f});
+        headerText->setColor(Color::gray(0.9f));
         headerText->setFont(FontOptions().withName("Helvetica-Bold").withSize(14.f));
 
-        countText->setColor({0.6f, 0.6f, 0.6f});
+        countText->setColor(Color::gray(0.6f));
         countText->setFont(FontOptions().withSize(11.f));
 
         addButton.onClick = [this]
@@ -299,10 +297,10 @@ struct Column final : View
         auto bgPath = Path();
         bgPath.addRoundedRect(bounds, 10.f);
         backgroundLayer->setPath(bgPath);
-        backgroundLayer->setFillColor({0.15f, 0.15f, 0.17f});
+        backgroundLayer->setFillColor(Color::gray(0.16f));
 
         auto headerPath = Path();
-        headerPath.addRoundedRect({0, bounds.h - 44.f, bounds.w, 44.f}, 10.f);
+        headerPath.addRoundedRect(bounds.fromTop(44.f), 10.f);
         headerBg->setPath(headerPath);
         headerBg->setFillColor(headerColor.withAlpha(0.3f));
 
@@ -311,7 +309,7 @@ struct Column final : View
         headerText->setPosition({12.f, bounds.h - 30.f});
         countText->setPosition({12.f, bounds.h - 12.f});
 
-        addButton.setBounds({bounds.w - 34.f, bounds.h - 38.f, 26.f, 26.f});
+        addButton.setBounds(bounds.fromRight(26.f, 8.f).fromTop(26.f, 6.f));
 
         layoutCards();
     }
@@ -327,7 +325,7 @@ struct DragOverlay final : View
 {
     DragOverlay()
     {
-        textLayer->setColor({0.9f, 0.9f, 0.9f});
+        textLayer->setColor(Color::gray(0.9f));
         textLayer->setFont(FontOptions().withName("Helvetica-Bold").withSize(12.f));
         addChildren({backgroundLayer, accentLayer, textLayer});
     }
@@ -345,7 +343,7 @@ struct DragOverlay final : View
         auto bgPath = Path();
         bgPath.addRoundedRect(bounds, 8.f);
         backgroundLayer->setPath(bgPath);
-        backgroundLayer->setFillColor({0.25f, 0.25f, 0.3f, 0.95f});
+        backgroundLayer->setFillColor(Color::gray(0.27f, 0.95f));
 
         auto accentPath = Path();
         accentPath.addRoundedRect({0, 0, 4.f, bounds.h}, 2.f);
@@ -366,7 +364,7 @@ struct StatusBar final : View
 {
     StatusBar()
     {
-        statusText->setColor({0.6f, 0.6f, 0.6f});
+        statusText->setColor(Color::gray(0.6f));
         statusText->setFont(FontOptions().withSize(11.f));
         addChildren({backgroundLayer, statusText});
     }
@@ -380,7 +378,7 @@ struct StatusBar final : View
         auto path = Path();
         path.addRect(bounds);
         backgroundLayer->setPath(path);
-        backgroundLayer->setFillColor({0.1f, 0.1f, 0.12f});
+        backgroundLayer->setFillColor(Color::gray(0.11f));
 
         scaleToFit({backgroundLayer, statusText});
         statusText->setPosition({12.f, bounds.h / 2.f - 6.f});
@@ -399,7 +397,7 @@ struct Header final : View
     Header()
     {
         titleText->setText("Task Board");
-        titleText->setColor({0.95f, 0.95f, 0.95f});
+        titleText->setColor(Color::gray(0.95f));
         titleText->setFont(FontOptions().withName("Helvetica-Bold").withSize(20.f));
 
         clearButton.onClick = [this]
@@ -424,13 +422,13 @@ struct Header final : View
         auto path = Path();
         path.addRect(bounds);
         backgroundLayer->setPath(path);
-        backgroundLayer->setFillColor({0.12f, 0.12f, 0.14f});
+        backgroundLayer->setFillColor(Color::gray(0.13f));
 
         scaleToFit({backgroundLayer, titleText});
-        titleText->setPosition({20.f, bounds.h / 2.f - 12.f});
+        titleText->setPosition({20.f, bounds.center().y - 12.f});
 
-        clearButton.setBounds({bounds.w - 180.f, 12.f, 80.f, 30.f});
-        sampleButton.setBounds({bounds.w - 90.f, 12.f, 80.f, 30.f});
+        clearButton.setBounds(bounds.fromRight(80.f, 100.f).inset(0.f, 12.f));
+        sampleButton.setBounds(bounds.fromRight(80.f, 10.f).inset(0.f, 12.f));
     }
 
     ShapeLayerView backgroundLayer;
@@ -443,8 +441,7 @@ struct TaskBoardView final : View
 {
     TaskBoardView()
     {
-        getProperties().handlesMouseEvents = true;
-        getProperties().grabsFocusOnMouseDown = true;
+        setHandlesMouseEvents().setGrabsFocusOnMouseDown();
 
         setupColumns();
         setupCallbacks();
