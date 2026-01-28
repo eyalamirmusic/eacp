@@ -2,7 +2,6 @@
 #import <Cocoa/Cocoa.h>
 #include "View.h"
 #include "GraphicsContextImpl.h"
-#include <eacp/Core/Utils/Vectors.h>
 #include "Keyboard-MacOS.h"
 
 namespace eacp::Graphics
@@ -345,35 +344,30 @@ void View::setBounds(const Rect& bounds)
 
 void View::addSubview(View& view)
 {
-    view.removeFromParent();
-
-    if (Vectors::contains(subviews, &view))
-        return;
-
-    view.parent = this;
-    subviews.push_back(&view);
-    impl->addSubview(view);
+    if (prepareAddSubview(view))
+        impl->addSubview(view);
 }
 
 void View::removeSubview(View& view)
 {
-    if (Vectors::eraseMatch(subviews, &view))
+    if (prepareRemoveSubview(view))
         impl->removeSubview(view);
+}
+
+void* View::getNativeLayer()
+{
+    return impl->getLayer();
 }
 
 void View::addLayer(Layer& layer)
 {
-    if (Vectors::contains(layers, &layer))
-        return;
-
-    layers.push_back(&layer);
-    layer.attachToLayer(impl->getLayer());
+    if (prepareAddLayer(layer))
+        layer.attachToLayer(impl->getLayer());
 }
 
 void View::removeLayer(Layer& layer)
 {
-    if (Vectors::eraseMatch(layers, &layer))
-        layer.detachFromLayer();
+    prepareRemoveLayer(layer);
 }
 
 } // namespace eacp::Graphics

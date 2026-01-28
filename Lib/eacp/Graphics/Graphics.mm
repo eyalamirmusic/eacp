@@ -8,7 +8,6 @@
 #include "Graphics/ShapeLayer.mm"
 #include "Graphics/TextLayer.mm"
 
-#include "Graphics/View.mm"
 #include "Graphics/Window.mm"
 
 #include "Graphics/TextInput.mm"

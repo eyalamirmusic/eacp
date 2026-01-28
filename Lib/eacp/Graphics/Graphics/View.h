@@ -106,15 +106,24 @@ public:
     const std::vector<Layer*>& getLayers() const { return layers; }
     View* getParent() const { return parent; }
 
+protected:
+    void* getNativeLayer();
+
 private:
     void handleMouseEvent(const MouseEvent& event);
     Point convertPointToDescendant(const Point& point, View* descendant);
     MouseEvent
         createLocalEvent(const MouseEvent& event, View* target, MouseEventType type);
+
+    bool prepareAddSubview(View& view);
+    bool prepareRemoveSubview(View& view);
+    bool prepareAddLayer(Layer& layer);
+    bool prepareRemoveLayer(Layer& layer);
+
     std::vector<View*> subviews;
     std::vector<Layer*> layers;
     View* parent = nullptr;
-    View* hoveredView = nullptr; // Tracks which view mouse is currently over
+    View* hoveredView = nullptr;
 
     ViewProperties properties;
 
