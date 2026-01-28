@@ -637,6 +637,9 @@ struct TaskBoardView final : View
         if (!draggedCard)
             return;
 
+        if (selectedCard == draggedCard)
+            selectedCard = nullptr;
+
         auto mousePos = getMousePosition();
         auto* targetColumn = getColumnAtPoint(mousePos);
 

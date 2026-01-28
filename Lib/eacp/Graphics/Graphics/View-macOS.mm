@@ -352,6 +352,9 @@ void View::removeSubview(View& view)
 {
     if (prepareRemoveSubview(view))
         impl->removeSubview(view);
+
+    if (hoveredView == &view)
+        hoveredView = nullptr;
 }
 
 void* View::getNativeLayer()
