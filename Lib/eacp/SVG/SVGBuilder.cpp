@@ -161,7 +161,8 @@ static void buildText(SVGView& view, const SVGElement& element)
 
     auto drawY = y - fontSize;
 
-    layer->setBounds({drawX, drawY, textWidth, textHeight});
+    layer->setPosition({drawX, drawY});
+    layer->setBounds({0, 0, textWidth, textHeight});
 
     auto opacity = element.attr("opacity");
     if (!opacity.empty())
