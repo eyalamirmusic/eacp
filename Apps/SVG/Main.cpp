@@ -9,13 +9,21 @@ struct MyApp
     {
         auto path = Files::getBundleResourcePath("example.svg");
         auto contents = Files::readFile(path);
-        LOG(contents);
-        Apps::quit();
+        result = SVG::parse(contents);
+        if (result.root)
+        {
+            result.root->setBounds({0, 0, result.width, result.height});
+            window.setContentView(*result.root);
+        }
     }
+
+    SVG::ParseResult result;
+    Graphics::Window window;
 };
 
 int main()
 {
     Apps::run<MyApp>();
+
     return 0;
 }

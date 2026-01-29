@@ -1,1 +1,5 @@
-#include "SVG.h"
+#include "XMLParser.cpp"
+#include "SVGAttributes.cpp"
+#include "SVGPathParser.cpp"
+#include "SVGBuilder.cpp"
+#include "SVGParser.cpp"
