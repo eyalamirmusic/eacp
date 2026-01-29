@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <rect x="10" y="10" width="180" height="180" rx="20" fill="#4A90D9" stroke="#2C5F8A" stroke-width="3"/>
+  <circle cx="100" cy="80" r="30" fill="#F5A623"/>
+  <text x="100" y="160" text-anchor="middle" font-family="Helvetica" font-size="18" fill="white">eacp SVG</text>
+</svg>

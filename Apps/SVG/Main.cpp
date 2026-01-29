@@ -2,26 +2,20 @@
 #include <eacp/Core/Core.h>
 
 using namespace eacp;
-using namespace Graphics;
-
-struct ParentView final : View
-{
-    void resized() override
-    {
-    }
-};
 
 struct MyApp
 {
-    MyApp() { window.setContentView(parentView); }
-
-    ParentView parentView;
-    Window window;
+    MyApp()
+    {
+        auto path = Files::getBundleResourcePath("example.svg");
+        auto contents = Files::readFile(path);
+        LOG(contents);
+        Apps::quit();
+    }
 };
 
 int main()
 {
-    eacp::Apps::run<MyApp>();
-
+    Apps::run<MyApp>();
     return 0;
 }
