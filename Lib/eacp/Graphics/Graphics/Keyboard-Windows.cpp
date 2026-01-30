@@ -1,5 +1,5 @@
 #include "Keyboard.h"
-#include "Window.h"
+#include "../Window/Window.h"
 #include "../Helpers/StringUtils-Windows.h"
 
 #define WIN32_LEAN_AND_MEAN

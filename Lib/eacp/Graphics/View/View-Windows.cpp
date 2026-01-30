@@ -1,5 +1,5 @@
 #include "View.h"
-#include "NativeLayer-Windows.h"
+#include "../Layers/NativeLayer-Windows.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -164,12 +164,4 @@ void View::viewRemoved(View& view)
 {
     impl->removeSubview(view);
 }
-
-void View::layerAdded(Layer& layer)
-{
-    layer.attachToLayer(&impl->visual);
-}
-
-void View::layerRemoved(Layer&) {}
-
 } // namespace eacp::Graphics
