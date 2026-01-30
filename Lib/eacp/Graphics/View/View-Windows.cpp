@@ -155,27 +155,21 @@ void* View::getNativeLayer()
     return &impl->visual;
 }
 
-void View::addSubview(View& view)
+void View::viewAdded(View& view)
 {
-    if (prepareAddSubview(view))
-        impl->addSubview(view);
+    impl->addSubview(view);
 }
 
-void View::removeSubview(View& view)
+void View::viewRemoved(View& view)
 {
-    if (prepareRemoveSubview(view))
-        impl->removeSubview(view);
+    impl->removeSubview(view);
 }
 
-void View::addLayer(Layer& layer)
+void View::layerAdded(Layer& layer)
 {
-    if (prepareAddLayer(layer))
-        layer.attachToLayer(&impl->visual);
+    layer.attachToLayer(&impl->visual);
 }
 
-void View::removeLayer(Layer& layer)
-{
-    prepareRemoveLayer(layer);
-}
+void View::layerRemoved(Layer&) {}
 
 } // namespace eacp::Graphics

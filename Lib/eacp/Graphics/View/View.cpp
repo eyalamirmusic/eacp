@@ -41,6 +41,24 @@ void View::addChildren(ChildViews views)
         addSubview(view);
 }
 
+void View::addSubview(View& view)
+{
+    if (Vectors::contains(subviews, &view))
+        return;
+
+    view.removeFromParent();
+    view.parent = this;
+    subviews.push_back(&view);
+
+    viewAdded(view);
+}
+
+void View::removeSubview(View& view)
+{
+    if (Vectors::eraseMatch(subviews, &view))
+        viewRemoved(view);
+}
+
 Rect View::getRelativeBounds(const Rect& ratio) const
 {
     return getLocalBounds().getRelative(ratio);
@@ -190,39 +208,23 @@ bool View::isHovering() const
     return getLocalBounds().contains(getMousePosition());
 }
 
-bool View::prepareAddSubview(View& view)
-{
-    view.removeFromParent();
 
-    if (Vectors::contains(subviews, &view))
-        return false;
 
-    view.parent = this;
-    subviews.push_back(&view);
-    return true;
-}
-
-bool View::prepareRemoveSubview(View& view)
-{
-    return Vectors::eraseMatch(subviews, &view);
-}
-
-bool View::prepareAddLayer(Layer& layer)
+void View::addLayer(Layer& layer)
 {
     if (Vectors::contains(layers, &layer))
-        return false;
+        return;
 
     layers.push_back(&layer);
-    return true;
+    layerAdded(layer);
 }
 
-bool View::prepareRemoveLayer(Layer& layer)
+void View::removeLayer(Layer& layer)
 {
     if (Vectors::eraseMatch(layers, &layer))
     {
         layer.detachFromLayer();
-        return true;
+        layerRemoved(layer);
     }
-    return false;
 }
 } // namespace eacp::Graphics

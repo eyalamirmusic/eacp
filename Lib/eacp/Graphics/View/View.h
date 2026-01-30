@@ -116,7 +116,12 @@ private:
     MouseEvent
         createLocalEvent(const MouseEvent& event, View* target, MouseEventType type);
 
-    bool prepareAddSubview(View& view);
+
+    void viewAdded(View& view);
+    void viewRemoved(View& view);
+    void layerAdded(Layer& layer);
+    void layerRemoved(Layer& layer);
+
     bool prepareRemoveSubview(View& view);
     bool prepareAddLayer(Layer& layer);
     bool prepareRemoveLayer(Layer& layer);

@@ -342,19 +342,14 @@ void View::setBounds(const Rect& bounds)
     impl->setBounds(bounds);
 }
 
-void View::addSubview(View& view)
+void View::viewAdded(View& view)
 {
-    if (prepareAddSubview(view))
-        impl->addSubview(view);
+    impl->addSubview(view);
 }
 
-void View::removeSubview(View& view)
+void View::viewRemoved(View& view)
 {
-    if (prepareRemoveSubview(view))
-        impl->removeSubview(view);
-
-    if (hoveredView == &view)
-        hoveredView = nullptr;
+    impl->removeSubview(view);
 }
 
 void* View::getNativeLayer()
@@ -362,15 +357,10 @@ void* View::getNativeLayer()
     return impl->getLayer();
 }
 
-void View::addLayer(Layer& layer)
+void View::layerAdded(Layer& layer)
 {
-    if (prepareAddLayer(layer))
-        layer.attachToLayer(impl->getLayer());
+    layer.attachToLayer(impl->getLayer());
 }
 
-void View::removeLayer(Layer& layer)
-{
-    prepareRemoveLayer(layer);
-}
-
+void View::layerRemoved(Layer&) {}
 } // namespace eacp::Graphics
