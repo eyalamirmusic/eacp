@@ -1,8 +1,9 @@
 #pragma once
 
 #include "Helpers/DisplayLink.h"
-#include "Graphics/View.h"
-#include "Graphics/LayerViews.h"
-#include "Graphics/Window.h"
+#include "View/View.h"
+#include "Window/Window.h"
 #include "Graphics/Keyboard.h"
-#include "Graphics/TextInput.h"
+#include "Widgets/TextInput.h"
+
+#include "Layers/LayerViews.h"

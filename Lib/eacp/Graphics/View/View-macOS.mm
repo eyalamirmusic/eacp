@@ -1,8 +1,8 @@
 
 #import <Cocoa/Cocoa.h>
 #include "View.h"
-#include "GraphicsContextImpl.h"
-#include "Keyboard-MacOS.h"
+#include "../Graphics/GraphicsContextImpl.h"
+#include "../Graphics/Keyboard-MacOS.h"
 
 namespace eacp::Graphics
 {

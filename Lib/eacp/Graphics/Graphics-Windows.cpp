@@ -4,11 +4,15 @@
 #include "Primitives/Font-Windows.cpp"
 #include "Primitives/TextMetrics-Windows.cpp"
 
-#include "Graphics/Layer-Windows.cpp"
-#include "Graphics/ShapeLayer-Windows.cpp"
-#include "Graphics/TextLayer-Windows.cpp"
 #include "Graphics/Keyboard-Windows.cpp"
-#include "Graphics/View-Windows.cpp"
-#include "Graphics/Window-Windows.cpp"
+
+#include "View/View-Windows.cpp"
+
+#include "Window/Window-Windows.cpp"
+
+#include "Layers/Layer-Windows.cpp"
+#include "Layers/ShapeLayer-Windows.cpp"
+#include "Layers/TextLayer-Windows.cpp"
 
 #include "Helpers/DisplayLink-Windows.cpp"
+

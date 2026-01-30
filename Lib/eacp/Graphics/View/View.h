@@ -1,9 +1,10 @@
 #pragma once
 
 #include <eacp/Core/Utils/Common.h>
-#include "GraphicsContext.h"
-#include "Layer.h"
-#include "Keyboard.h"
+
+#include "../Graphics/GraphicsContext.h"
+#include "../Layers/Layer.h"
+#include "../Graphics/Keyboard.h"
 
 namespace eacp::Graphics
 {

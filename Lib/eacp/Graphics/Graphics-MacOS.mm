@@ -1,4 +1,4 @@
-#include "Graphics/View-macOS.mm"
-#include "Graphics/Window-macOS.mm"
+#include "View/View-macOS.mm"
+#include "Window/Window-macOS.mm"
 #include "Graphics/Keyboard-macOS.mm"
 #include "Helpers/DisplayLink-macOS.mm"

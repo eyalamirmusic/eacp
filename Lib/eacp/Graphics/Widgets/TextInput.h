@@ -1,11 +1,9 @@
 #pragma once
 
-#include "View.h"
-#include "ShapeLayer.h"
-#include "TextLayer.h"
+#include "../View/View.h"
+#include "../Layers/ShapeLayer.h"
+#include "../Layers/TextLayer.h"
 #include "../Primitives/Font.h"
-#include <functional>
-#include <string>
 
 namespace eacp::Graphics
 {

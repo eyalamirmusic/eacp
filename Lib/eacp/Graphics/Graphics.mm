@@ -4,10 +4,9 @@
 #include "Primitives/TextMetrics.mm"
 
 #include "Graphics/GraphicsContextImpl.mm"
-#include "Graphics/Layer.mm"
-#include "Graphics/ShapeLayer.mm"
-#include "Graphics/TextLayer.mm"
+#include "Window/Window.mm"
+#include "Widgets/TextInput.mm"
 
-#include "Graphics/Window.mm"
-
-#include "Graphics/TextInput.mm"
+#include "Layers/Layer.mm"
+#include "Layers/ShapeLayer.mm"
+#include "Layers/TextLayer.mm"
