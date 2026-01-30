@@ -25,6 +25,8 @@ public:
     void addRoundedRect(const Rect& rect, float radius);
     void addEllipse(const Rect& rect);
 
+    Path scaled(float sx, float sy) const;
+
     void* getHandle() const;
 
 private:

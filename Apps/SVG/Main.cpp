@@ -12,6 +12,7 @@ struct MyApp
         if (result.root)
         {
             result.root->setBounds({0, 0, result.width, result.height});
+            result.root->stretchToFit();
             window.setContentView(*result.root);
         }
     }

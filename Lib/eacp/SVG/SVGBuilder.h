@@ -9,6 +9,15 @@ namespace eacp::SVG
 
 struct SVGView : Graphics::View
 {
+    void stretchToFit();
+    void resized() override;
+    void clearContent();
+
+    SVGElement svgRoot;
+    float svgWidth = 0.f;
+    float svgHeight = 0.f;
+    bool stretching = false;
+
     std::vector<std::unique_ptr<SVGView>> ownedChildren;
     std::vector<std::unique_ptr<Graphics::ShapeLayer>> ownedLayers;
     std::vector<std::unique_ptr<Graphics::TextLayer>> ownedTextLayers;

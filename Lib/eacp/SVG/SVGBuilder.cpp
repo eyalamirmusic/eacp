@@ -41,14 +41,14 @@ static void addShapeLayer(SVGView& view,
     view.ownedLayers.push_back(std::move(layer));
 }
 
-static void buildRect(SVGView& view, const SVGElement& element)
+static void buildRect(SVGView& view, const SVGElement& element, float sx, float sy)
 {
-    auto x = element.numAttr("x");
-    auto y = element.numAttr("y");
-    auto w = element.numAttr("width");
-    auto h = element.numAttr("height");
-    auto rx = element.numAttr("rx");
-    auto ry = element.numAttr("ry");
+    auto x = element.numAttr("x") * sx;
+    auto y = element.numAttr("y") * sy;
+    auto w = element.numAttr("width") * sx;
+    auto h = element.numAttr("height") * sy;
+    auto rx = element.numAttr("rx") * sx;
+    auto ry = element.numAttr("ry") * sy;
 
     if (rx <= 0.f && ry > 0.f)
         rx = ry;
@@ -66,35 +66,37 @@ static void buildRect(SVGView& view, const SVGElement& element)
     addShapeLayer(view, element, std::move(path));
 }
 
-static void buildCircle(SVGView& view, const SVGElement& element)
+static void buildCircle(SVGView& view, const SVGElement& element, float sx, float sy)
 {
-    auto cx = element.numAttr("cx");
-    auto cy = element.numAttr("cy");
-    auto r = element.numAttr("r");
-
-    Graphics::Path path;
-    path.addEllipse({cx - r, cy - r, r * 2.f, r * 2.f});
-    addShapeLayer(view, element, std::move(path));
-}
-
-static void buildEllipse(SVGView& view, const SVGElement& element)
-{
-    auto cx = element.numAttr("cx");
-    auto cy = element.numAttr("cy");
-    auto rx = element.numAttr("rx");
-    auto ry = element.numAttr("ry");
+    auto cx = element.numAttr("cx") * sx;
+    auto cy = element.numAttr("cy") * sy;
+    auto rx = element.numAttr("r") * sx;
+    auto ry = element.numAttr("r") * sy;
 
     Graphics::Path path;
     path.addEllipse({cx - rx, cy - ry, rx * 2.f, ry * 2.f});
     addShapeLayer(view, element, std::move(path));
 }
 
-static void buildLine(SVGView& view, const SVGElement& element)
+static void
+    buildEllipse(SVGView& view, const SVGElement& element, float sx, float sy)
 {
-    auto x1 = element.numAttr("x1");
-    auto y1 = element.numAttr("y1");
-    auto x2 = element.numAttr("x2");
-    auto y2 = element.numAttr("y2");
+    auto cx = element.numAttr("cx") * sx;
+    auto cy = element.numAttr("cy") * sy;
+    auto rx = element.numAttr("rx") * sx;
+    auto ry = element.numAttr("ry") * sy;
+
+    Graphics::Path path;
+    path.addEllipse({cx - rx, cy - ry, rx * 2.f, ry * 2.f});
+    addShapeLayer(view, element, std::move(path));
+}
+
+static void buildLine(SVGView& view, const SVGElement& element, float sx, float sy)
+{
+    auto x1 = element.numAttr("x1") * sx;
+    auto y1 = element.numAttr("y1") * sy;
+    auto x2 = element.numAttr("x2") * sx;
+    auto y2 = element.numAttr("y2") * sy;
 
     Graphics::Path path;
     path.moveTo({x1, y1});
@@ -102,7 +104,8 @@ static void buildLine(SVGView& view, const SVGElement& element)
     addShapeLayer(view, element, std::move(path));
 }
 
-static void buildPolyline(SVGView& view, const SVGElement& element, bool close)
+static void buildPolyline(
+    SVGView& view, const SVGElement& element, bool close, float sx, float sy)
 {
     auto pointsStr = element.attr("points");
     auto points = parsePointList(pointsStr);
@@ -110,32 +113,36 @@ static void buildPolyline(SVGView& view, const SVGElement& element, bool close)
         return;
 
     Graphics::Path path;
-    path.moveTo(points[0]);
+    path.moveTo({points[0].x * sx, points[0].y * sy});
     for (size_t i = 1; i < points.size(); ++i)
-        path.lineTo(points[i]);
+        path.lineTo({points[i].x * sx, points[i].y * sy});
     if (close)
         path.close();
 
     addShapeLayer(view, element, std::move(path));
 }
 
-static void buildPath(SVGView& view, const SVGElement& element)
+static void buildPath(SVGView& view, const SVGElement& element, float sx, float sy)
 {
     auto d = element.attr("d");
     if (d.empty())
         return;
 
-    auto path = parseSVGPath(d);
+    auto path = parseSVGPath(d).scaled(sx, sy);
     addShapeLayer(view, element, std::move(path));
 }
 
-static void buildText(SVGView& view, const SVGElement& element)
+static void buildText(SVGView& view, const SVGElement& element, float sx, float sy)
 {
-    auto x = element.numAttr("x");
-    auto y = element.numAttr("y");
-    auto fontSize = element.numAttr("font-size", 16.f);
+    auto x = element.numAttr("x") * sx;
+    auto y = element.numAttr("y") * sy;
+    auto baseFontSize = element.numAttr("font-size", 16.f);
     auto fontFamily = element.attr("font-family", "Helvetica");
     auto text = element.textContent;
+
+    auto fontSizeX = baseFontSize * sx;
+    auto fontSizeY = baseFontSize * sy;
+    auto fontSize = std::min(fontSizeX, fontSizeY);
 
     auto layer = std::make_unique<Graphics::TextLayer>();
     layer->setText(text);
@@ -172,9 +179,11 @@ static void buildText(SVGView& view, const SVGElement& element)
     view.ownedTextLayers.push_back(std::move(layer));
 }
 
-static void buildElement(SVGView& view, const SVGElement& element);
+static void
+    buildElement(SVGView& view, const SVGElement& element, float sx, float sy);
 
-static void buildGroup(SVGView& parent, const SVGElement& element)
+static void
+    buildGroup(SVGView& parent, const SVGElement& element, float sx, float sy)
 {
     auto child = std::make_unique<SVGView>();
 
@@ -182,41 +191,82 @@ static void buildGroup(SVGView& parent, const SVGElement& element)
     if (!transform.empty())
     {
         auto t = parseTransform(transform);
-        child->setBounds({t.translateX,
-                          t.translateY,
+        child->setBounds({t.translateX * sx,
+                          t.translateY * sy,
                           parent.getBounds().w,
                           parent.getBounds().h});
     }
 
     for (auto& childElement: element.children)
-        buildElement(*child, childElement);
+        buildElement(*child, childElement, sx, sy);
 
     parent.addSubview(*child);
     parent.ownedChildren.push_back(std::move(child));
 }
 
-static void buildElement(SVGView& view, const SVGElement& element)
+static void
+    buildElement(SVGView& view, const SVGElement& element, float sx, float sy)
 {
     auto& tag = element.tag;
 
     if (tag == "rect")
-        buildRect(view, element);
+        buildRect(view, element, sx, sy);
     else if (tag == "circle")
-        buildCircle(view, element);
+        buildCircle(view, element, sx, sy);
     else if (tag == "ellipse")
-        buildEllipse(view, element);
+        buildEllipse(view, element, sx, sy);
     else if (tag == "line")
-        buildLine(view, element);
+        buildLine(view, element, sx, sy);
     else if (tag == "polyline")
-        buildPolyline(view, element, false);
+        buildPolyline(view, element, false, sx, sy);
     else if (tag == "polygon")
-        buildPolyline(view, element, true);
+        buildPolyline(view, element, true, sx, sy);
     else if (tag == "path")
-        buildPath(view, element);
+        buildPath(view, element, sx, sy);
     else if (tag == "text")
-        buildText(view, element);
+        buildText(view, element, sx, sy);
     else if (tag == "g")
-        buildGroup(view, element);
+        buildGroup(view, element, sx, sy);
+}
+
+static void buildContent(SVGView& view, const SVGElement& root, float sx, float sy)
+{
+    for (auto& child: root.children)
+        buildElement(view, child, sx, sy);
+}
+
+void SVGView::clearContent()
+{
+    for (auto& layer: ownedLayers)
+        removeLayer(*layer);
+    for (auto& layer: ownedTextLayers)
+        removeLayer(*layer);
+
+    ownedChildren.clear();
+    ownedLayers.clear();
+    ownedTextLayers.clear();
+}
+
+void SVGView::stretchToFit()
+{
+    stretching = true;
+    resized();
+}
+
+void SVGView::resized()
+{
+    if (!stretching || svgWidth <= 0.f || svgHeight <= 0.f)
+        return;
+
+    auto bounds = getLocalBounds();
+    if (bounds.w <= 0.f || bounds.h <= 0.f)
+        return;
+
+    auto sx = bounds.w / svgWidth;
+    auto sy = bounds.h / svgHeight;
+
+    clearContent();
+    buildContent(*this, svgRoot, sx, sy);
 }
 
 ParseResult buildSVG(const SVGElement& root)
@@ -242,10 +292,12 @@ ParseResult buildSVG(const SVGElement& root)
 
     result.width = width;
     result.height = height;
+    result.root->svgWidth = width;
+    result.root->svgHeight = height;
+    result.root->svgRoot = root;
     result.root->setBounds({0, 0, width, height});
 
-    for (auto& child: root.children)
-        buildElement(*result.root, child);
+    buildContent(*result.root, root, 1.f, 1.f);
 
     return result;
 }

@@ -74,6 +74,20 @@ void Path::addEllipse(const Rect& r)
     CGPathAddEllipseInRect(impl->handle, nullptr, toCGRect(r));
 }
 
+Path Path::scaled(float sx, float sy) const
+{
+    auto transform = CGAffineTransformMakeScale(sx, sy);
+    auto transformed =
+        CGPathCreateCopyByTransformingPath(impl->handle, &transform);
+
+    Path result;
+    CGPathRelease(result.impl->handle);
+    result.impl->handle = CGPathCreateMutableCopy(transformed);
+    CGPathRelease(transformed);
+
+    return result;
+}
+
 void* Path::getHandle() const
 {
     return impl->handle;

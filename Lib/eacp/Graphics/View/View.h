@@ -115,7 +115,6 @@ private:
     MouseEvent
         createLocalEvent(const MouseEvent& event, View* target, MouseEventType type);
 
-
     void viewAdded(View& view);
     void viewRemoved(View& view);
 
