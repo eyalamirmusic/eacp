@@ -1,26 +1,12 @@
 #include "TextInput.h"
 #include "../Primitives/TextMetrics.h"
 #include "../Primitives/Path.h"
-#include <eacp/Core/Threads/Timer.h>
-#include <memory>
 
 namespace eacp::Graphics
 {
 
-struct TextInput::Native
-{
-    Native(TextInput* owner)
-        : cursorTimer([owner]() { owner->toggleCursorVisibility(); }, 2)
-    {
-    }
-
-    Threads::Timer cursorTimer;
-    bool cursorVisible = true;
-};
-
 TextInput::TextInput(const FontOptions& options)
     : font(options)
-    , impl(this)
 {
     initialize();
 }
@@ -28,8 +14,6 @@ TextInput::TextInput(const FontOptions& options)
 TextInput::TextInput(const std::string& initialText)
     : text(initialText)
     , cursorIndex(initialText.length())
-    , font()
-    , impl(this)
 {
     initialize();
 }
@@ -207,7 +191,7 @@ void TextInput::keyDown(const KeyEvent& event)
         }
     }
 
-    impl->cursorVisible = true;
+    cursorVisible = true;
     cursorLayer.setHidden(false);
 }
 
@@ -221,7 +205,7 @@ void TextInput::mouseDown(const MouseEvent& event)
     cursorIndex = TextMetrics::getIndexForOffset(text, xOffset, font);
     updateCursorPosition();
 
-    impl->cursorVisible = true;
+    cursorVisible = true;
     cursorLayer.setHidden(false);
 }
 
@@ -287,8 +271,8 @@ void TextInput::toggleCursorVisibility()
         return;
     }
 
-    impl->cursorVisible = !impl->cursorVisible;
-    cursorLayer.setHidden(!impl->cursorVisible);
+    cursorVisible = !cursorVisible;
+    cursorLayer.setHidden(!cursorVisible);
 }
 
 void TextInput::updateBorderColor()

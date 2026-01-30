@@ -5,3 +5,5 @@
 #include "Layers/ShapeLayer.cpp"
 #include "Layers/TextLayer.cpp"
 #include "Layers/LayerViews.cpp"
+
+#include "Widgets/TextInput.cpp"

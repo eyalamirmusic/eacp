@@ -9,10 +9,8 @@ namespace eacp::SVG
 
 static std::string toLower(std::string s)
 {
-    std::transform(s.begin(),
-                   s.end(),
-                   s.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
+    std::ranges::transform(
+        s, s.begin(), [](auto c) { return (char)std::tolower((int)c); });
     return s;
 }
 

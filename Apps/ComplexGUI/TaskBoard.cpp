@@ -11,7 +11,7 @@ Random randomGen{};
 
 size_t nextRandom(size_t min, size_t max)
 {
-    return randomGen.getNext(min, max);
+    return randomGen.get(min, max);
 }
 
 template <typename T>

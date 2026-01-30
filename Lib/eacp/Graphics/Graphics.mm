@@ -5,7 +5,6 @@
 
 #include "Graphics/GraphicsContextImpl.mm"
 #include "Window/Window.mm"
-#include "Widgets/TextInput.mm"
 
 #include "Layers/Layer.mm"
 #include "Layers/ShapeLayer.mm"

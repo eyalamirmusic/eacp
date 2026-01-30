@@ -1,9 +1,9 @@
 #pragma once
 
+#include <eacp/Core/Core.h>
 #include "../View/View.h"
 #include "../Layers/ShapeLayer.h"
 #include "../Layers/TextLayer.h"
-#include "../Primitives/Font.h"
 
 namespace eacp::Graphics
 {
@@ -61,8 +61,8 @@ private:
     std::function<void(const std::string&)> onChangeCallback;
     std::function<void(const std::string&)> onSubmitCallback;
 
-    struct Native;
-    Pimpl<Native> impl;
+    Threads::Timer cursorTimer {[this] { toggleCursorVisibility(); }, 2};
+    bool cursorVisible = true;
 };
 
 } // namespace eacp::Graphics
