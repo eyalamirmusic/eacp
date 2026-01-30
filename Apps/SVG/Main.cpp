@@ -1,5 +1,4 @@
 #include <eacp/SVG/SVG.h>
-#include <eacp/Core/Core.h>
 
 using namespace eacp;
 

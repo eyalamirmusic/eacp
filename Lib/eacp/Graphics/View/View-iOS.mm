@@ -146,6 +146,7 @@ NativeView* createNativeView(View* view)
     auto rect = CGRectMake(0.f, 0.f, 100.f, 100.f);
     auto newView = [[NativeView alloc] initWithFrame:rect];
 
+    newView.contentScaleFactor = [UIScreen mainScreen].scale;
     newView.layer.contentsScale = [UIScreen mainScreen].scale;
     newView.layer.delegate = newView;
 
