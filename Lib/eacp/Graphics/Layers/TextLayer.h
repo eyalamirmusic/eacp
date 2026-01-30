@@ -10,6 +10,7 @@ class TextLayer : public Layer
 {
 public:
     TextLayer();
+    ~TextLayer() override;
 
     void setText(const std::string& text);
     void setFont(const Font& font);

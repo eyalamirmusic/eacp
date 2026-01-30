@@ -216,15 +216,12 @@ void View::addLayer(Layer& layer)
         return;
 
     layers.push_back(&layer);
-    layerAdded(layer);
+    layer.attachTo(*this);
 }
 
 void View::removeLayer(Layer& layer)
 {
     if (Vectors::eraseMatch(layers, &layer))
-    {
-        layer.detachFromLayer();
-        layerRemoved(layer);
-    }
+        layer.detachFromView();
 }
 } // namespace eacp::Graphics

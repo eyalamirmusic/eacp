@@ -356,11 +356,4 @@ void* View::getNativeLayer()
 {
     return impl->getLayer();
 }
-
-void View::layerAdded(Layer& layer)
-{
-    layer.attachToLayer(impl->getLayer());
-}
-
-void View::layerRemoved(Layer&) {}
 } // namespace eacp::Graphics

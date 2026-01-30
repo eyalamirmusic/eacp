@@ -4,7 +4,8 @@
 namespace eacp::Graphics
 {
 
-void Layer::attachToLayer(void* nativeLayer)
+
+void Layer::attachTo(void* nativeLayer)
 {
     auto native = (NativeLayer*) getNativeLayer();
     native->attachTo((CALayer*) nativeLayer);

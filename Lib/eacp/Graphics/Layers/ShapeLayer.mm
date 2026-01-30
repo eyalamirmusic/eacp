@@ -181,4 +181,6 @@ void* ShapeLayer::getNativeLayer()
     return impl.get();
 }
 
+
+
 } // namespace eacp::Graphics

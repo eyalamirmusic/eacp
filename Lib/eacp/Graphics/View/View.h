@@ -107,7 +107,6 @@ public:
     const std::vector<Layer*>& getLayers() const { return layers; }
     View* getParent() const { return parent; }
 
-protected:
     void* getNativeLayer();
 
 private:
@@ -119,12 +118,6 @@ private:
 
     void viewAdded(View& view);
     void viewRemoved(View& view);
-    void layerAdded(Layer& layer);
-    void layerRemoved(Layer& layer);
-
-    bool prepareRemoveSubview(View& view);
-    bool prepareAddLayer(Layer& layer);
-    bool prepareRemoveLayer(Layer& layer);
 
     std::vector<View*> subviews;
     std::vector<Layer*> layers;

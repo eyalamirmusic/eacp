@@ -8,7 +8,7 @@ namespace wuc = winrt::Windows::UI::Composition;
 namespace eacp::Graphics
 {
 
-void Layer::attachToLayer(void* parentVisualPtr)
+void Layer::attachTo(void* parentVisualPtr)
 {
     auto native = static_cast<NativeLayerBase*>(getNativeLayer());
     if (native && parentVisualPtr)

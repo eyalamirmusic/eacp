@@ -4,12 +4,18 @@
 
 namespace eacp::Graphics
 {
-struct Layer
+class View;
+
+class Layer
 {
+public:
     virtual ~Layer() = default;
 
-    void attachToLayer(void* nativeLayer);
+    void attachTo(void* nativeLayer);
+    void attachTo(View& view);
+
     void detachFromLayer();
+    void detachFromView();
 
     void setBounds(const Rect& bounds);
     void setPosition(const Point& position);
@@ -18,5 +24,9 @@ struct Layer
     void setOpacity(float opacity);
 
     virtual void* getNativeLayer() = 0;
+
+private:
+
+    View* parent = nullptr;
 };
 } // namespace eacp::Graphics

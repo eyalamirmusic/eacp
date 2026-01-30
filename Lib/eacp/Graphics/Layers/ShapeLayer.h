@@ -10,6 +10,7 @@ class ShapeLayer : public Layer
 {
 public:
     ShapeLayer();
+    ~ShapeLayer() override;
 
     void setPath(const Path& path);
     void clearPath();
