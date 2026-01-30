@@ -38,6 +38,6 @@ void EventLoop::run()
 
 void EventLoop::quit()
 {
-    CFRunLoopStop(CFRunLoopGetMain());
+    exit(0);
 }
 } // namespace eacp::Threads
