@@ -69,6 +69,9 @@ struct Window::Native
 
     ~Native()
     {
+        if (rootVisual)
+            rootVisual.Children().RemoveAll();
+
         if (inputSource && useWinRTPointerInput)
         {
             inputSource.PointerPressed(pointerPressedToken);
