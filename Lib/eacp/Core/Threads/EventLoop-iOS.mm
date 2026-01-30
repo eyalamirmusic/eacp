@@ -26,7 +26,8 @@ void EventLoop::run()
         appInitialized = true;
         @autoreleasepool
         {
-            UIApplicationMain(0, nil, nil, NSStringFromClass([EACPAppDelegate class]));
+            char* argv[] = {(char*)"eacp"};
+            UIApplicationMain(1, argv, nil, NSStringFromClass([EACPAppDelegate class]));
         }
     }
     else
