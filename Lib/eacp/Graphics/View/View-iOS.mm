@@ -1,7 +1,7 @@
 
 #import <UIKit/UIKit.h>
 #include "View.h"
-#include "GraphicsContextImpl.h"
+#include "../Graphics/GraphicsContextImpl.h"
 
 @interface NativeView : UIView
 {
@@ -187,15 +187,9 @@ struct View::Native
         return {0.f, 0.f};
     }
 
-    void focus()
-    {
-        [nativeView.get() becomeFirstResponder];
-    }
+    void focus() { [nativeView.get() becomeFirstResponder]; }
 
-    bool hasFocus() const
-    {
-        return [nativeView.get() isFirstResponder];
-    }
+    bool hasFocus() const { return [nativeView.get() isFirstResponder]; }
 
     ObjC::Ptr<NativeView> nativeView;
 };
@@ -248,32 +242,18 @@ void View::setBounds(const Rect& bounds)
     impl->setBounds(bounds);
 }
 
-void View::addSubview(View& view)
+void View::viewAdded(View& view)
 {
-    if (prepareAddSubview(view))
-        impl->addSubview(view);
+    impl->addSubview(view);
 }
 
-void View::removeSubview(View& view)
+void View::viewRemoved(View& view )
 {
-    if (prepareRemoveSubview(view))
-        impl->removeSubview(view);
+    impl->removeSubview(view);
 }
 
 void* View::getNativeLayer()
 {
     return impl->getLayer();
 }
-
-void View::addLayer(Layer& layer)
-{
-    if (prepareAddLayer(layer))
-        layer.attachToLayer(impl->getLayer());
-}
-
-void View::removeLayer(Layer& layer)
-{
-    prepareRemoveLayer(layer);
-}
-
 } // namespace eacp::Graphics
