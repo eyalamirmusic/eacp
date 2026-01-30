@@ -7,6 +7,7 @@ if (APPLE)
             "-framework Foundation")
     if (EACP_IOS)
         target_sources(eacp-core PRIVATE Core-iOS.mm)
+        target_link_libraries(eacp-core PRIVATE "-framework UIKit")
     else ()
         target_sources(eacp-core PRIVATE Core-macOS.mm)
         target_link_libraries(eacp-core PRIVATE
