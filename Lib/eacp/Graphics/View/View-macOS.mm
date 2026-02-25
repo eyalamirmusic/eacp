@@ -105,6 +105,8 @@ namespace eacp::Graphics
 
 - (void)dispatchMouseEvent:(NSEvent*)event type:(eacp::Graphics::MouseEventType)type
 {
+
+
     auto root = [self rootView];
     auto windowPos = [event locationInWindow];
     auto localPos = [root convertPoint:windowPos fromView:nil];

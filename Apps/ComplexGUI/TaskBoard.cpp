@@ -7,7 +7,7 @@
 using namespace eacp;
 using namespace Graphics;
 
-Random randomGen{};
+Random randomGen {};
 
 size_t nextRandom(size_t min, size_t max)
 {
@@ -20,7 +20,6 @@ auto& getRandomElement(T& container)
     return container[nextRandom(0, container.size() - 1)];
 }
 
-
 struct TaskData
 {
     int id = 0;
@@ -31,8 +30,6 @@ struct TaskData
 
 struct Button final : View
 {
-    std::function<void()> onClick;
-
     Button(const std::string& label, Color bgColor = Color::gray(0.33f))
         : backgroundColor(bgColor)
     {
@@ -55,10 +52,8 @@ struct Button final : View
     void mouseUp(const MouseEvent& e) override
     {
         if (pressed && getLocalBounds().contains(e.pos))
-        {
-            if (onClick)
-                onClick();
-        }
+            onClick();
+
         pressed = false;
         updateAppearance();
     }
@@ -88,15 +83,12 @@ struct Button final : View
     Color backgroundColor;
     ShapeLayerView backgroundLayer;
     TextLayerView textLayer;
+
+    Callback onClick = [] {};
 };
 
 struct TaskCard final : View
 {
-    TaskData data;
-    std::function<void(TaskCard*)> onSelect;
-    std::function<void(TaskCard*)> onDelete;
-    std::function<void(TaskCard*, Point)> onDragStart;
-
     TaskCard(const TaskData& taskData)
         : data(taskData)
     {
@@ -110,11 +102,7 @@ struct TaskCard final : View
         descLayer->setColor(Color::gray(0.7f));
         descLayer->setFont(FontOptions().withSize(11.f));
 
-        deleteButton.onClick = [this]
-        {
-            if (onDelete)
-                onDelete(this);
-        };
+        deleteButton.onClick = [this] { onDelete(this); };
 
         addChildren(
             {backgroundLayer, accentLayer, titleLayer, descLayer, deleteButton});
@@ -127,9 +115,7 @@ struct TaskCard final : View
     void mouseDown(const MouseEvent& e) override
     {
         dragStartPos = e.pos;
-
-        if (onSelect)
-            onSelect(this);
+        onSelect(this);
     }
 
     void mouseDragged(const MouseEvent& e) override
@@ -184,6 +170,11 @@ struct TaskCard final : View
         deleteButton.setBounds(bounds.fromRight(22.f, 6.f).fromTop(22.f, 6.f));
     }
 
+    TaskData data;
+    std::function<void(TaskCard*)> onSelect {[](auto*) {}};
+    std::function<void(TaskCard*)> onDelete {[](auto*) {}};
+    std::function<void(TaskCard*, Point)> onDragStart {[](auto*, auto) {}};
+
     bool selected = false;
     Point dragStartPos;
 
@@ -191,14 +182,14 @@ struct TaskCard final : View
     ShapeLayerView accentLayer;
     TextLayerView titleLayer;
     TextLayerView descLayer;
-    Button deleteButton{"×", {0.5f, 0.2f, 0.2f}};
+    Button deleteButton {"×", {0.5f, 0.2f, 0.2f}};
 };
 
 struct Column final : View
 {
     Column(const std::string& columnName, Color color)
         : name(columnName)
-          , headerColor(color)
+        , headerColor(color)
     {
         headerText->setText(columnName);
         headerText->setColor(Color::gray(0.9f));
@@ -207,11 +198,7 @@ struct Column final : View
         countText->setColor(Color::gray(0.6f));
         countText->setFont(FontOptions().withSize(11.f));
 
-        addButton.onClick = [this]
-        {
-            if (onAddCard)
-                onAddCard();
-        };
+        addButton.onClick = [this] { onAddCard(); };
 
         addChildren({backgroundLayer, headerBg, headerText, countText, addButton});
         updateCountText();
@@ -222,23 +209,9 @@ struct Column final : View
         auto card = std::make_unique<TaskCard>(data);
         auto* cardPtr = card.get();
 
-        card->onSelect = [this](TaskCard* c)
-        {
-            if (onCardSelect)
-                onCardSelect(c);
-        };
-
-        card->onDelete = [this](TaskCard* c)
-        {
-            if (onCardDelete)
-                onCardDelete(c);
-        };
-
-        card->onDragStart = [this](TaskCard* c, Point p)
-        {
-            if (onCardDragStart)
-                onCardDragStart(c, p);
-        };
+        card->onSelect = [this](auto* c) { onCardSelect(c); };
+        card->onDelete = [this](auto* c) { onCardDelete(c); };
+        card->onDragStart = [this](auto* c, auto p) { onCardDragStart(c, p); };
 
         addSubview(*card);
         cards.push_back(std::move(card));
@@ -250,11 +223,8 @@ struct Column final : View
 
     void removeCard(TaskCard* card)
     {
-        auto it = std::ranges::find_if(cards,
-                                       [card](const auto& c)
-                                       {
-                                           return c.get() == card;
-                                       });
+        auto it = std::ranges::find_if(
+            cards, [card](const auto& c) { return c.get() == card; });
 
         if (it != cards.end())
         {
@@ -323,17 +293,17 @@ struct Column final : View
 
     std::string name;
     Color headerColor;
-    std::vector<std::unique_ptr<TaskCard> > cards;
-    std::function<void(TaskCard*)> onCardSelect;
-    std::function<void(TaskCard*)> onCardDelete;
-    std::function<void(TaskCard*, Point)> onCardDragStart;
-    std::function<void()> onAddCard;
+    std::vector<std::unique_ptr<TaskCard>> cards;
+    std::function<void(TaskCard*)> onCardSelect {[](auto*) {}};
+    std::function<void(TaskCard*)> onCardDelete {[](auto*) {}};
+    std::function<void(TaskCard*, Point)> onCardDragStart {[](auto*, auto) {}};
+    std::function<void()> onAddCard {[] {}};
 
     ShapeLayerView backgroundLayer;
     ShapeLayerView headerBg;
     TextLayerView headerText;
     TextLayerView countText;
-    Button addButton{"+", {0.2f, 0.4f, 0.3f}};
+    Button addButton {"+", {0.2f, 0.4f, 0.3f}};
 };
 
 struct DragOverlay final : View
@@ -396,14 +366,14 @@ struct StatusBar final : View
     }
 
     ShapeLayerView backgroundLayer;
-    TextLayerView statusText{
+    TextLayerView statusText {
         "Ready | Press 'N' to add task, Delete to remove, Arrow keys to navigate"};
 };
 
 struct Header final : View
 {
-    std::function<void()> onClearAll;
-    std::function<void()> onAddSample;
+    std::function<void()> onClearAll = [] {};
+    std::function<void()> onAddSample = [] {};
 
     Header()
     {
@@ -411,17 +381,8 @@ struct Header final : View
         titleText->setColor(Color::gray(0.95f));
         titleText->setFont(FontOptions().withName("Helvetica-Bold").withSize(20.f));
 
-        clearButton.onClick = [this]
-        {
-            if (onClearAll)
-                onClearAll();
-        };
-
-        sampleButton.onClick = [this]
-        {
-            if (onAddSample)
-                onAddSample();
-        };
+        clearButton.onClick = [this] { onClearAll(); };
+        sampleButton.onClick = [this] { onAddSample(); };
 
         addChildren({backgroundLayer, titleText, clearButton, sampleButton});
     }
@@ -444,8 +405,8 @@ struct Header final : View
 
     ShapeLayerView backgroundLayer;
     TextLayerView titleText;
-    Button clearButton{"Clear All", {0.5f, 0.2f, 0.2f}};
-    Button sampleButton{"+ Sample", {0.2f, 0.4f, 0.6f}};
+    Button clearButton {"Clear All", {0.5f, 0.2f, 0.2f}};
+    Button sampleButton {"+ Sample", {0.2f, 0.4f, 0.6f}};
 };
 
 struct TaskBoardView final : View
@@ -464,28 +425,20 @@ struct TaskBoardView final : View
 
     void setupColumns()
     {
-        todoColumn.onCardSelect = [this](TaskCard* c) { selectCard(c); };
-        todoColumn.onCardDelete = [this](TaskCard* c) { deleteCard(c); };
-        todoColumn.onCardDragStart = [this](TaskCard* c, Point p)
-        {
-            startDrag(c, p);
-        };
+        todoColumn.onCardSelect = [this](auto* c) { selectCard(c); };
+        todoColumn.onCardDelete = [this](auto* c) { deleteCard(c); };
+        todoColumn.onCardDragStart = [this](auto* c, auto p) { startDrag(c, p); };
         todoColumn.onAddCard = [this] { addNewTaskToColumn(&todoColumn); };
 
-        progressColumn.onCardSelect = [this](TaskCard* c) { selectCard(c); };
-        progressColumn.onCardDelete = [this](TaskCard* c) { deleteCard(c); };
-        progressColumn.onCardDragStart = [this](TaskCard* c, Point p)
-        {
-            startDrag(c, p);
-        };
+        progressColumn.onCardSelect = [this](auto* c) { selectCard(c); };
+        progressColumn.onCardDelete = [this](auto* c) { deleteCard(c); };
+        progressColumn.onCardDragStart = [this](auto* c, auto p)
+        { startDrag(c, p); };
         progressColumn.onAddCard = [this] { addNewTaskToColumn(&progressColumn); };
 
-        doneColumn.onCardSelect = [this](TaskCard* c) { selectCard(c); };
-        doneColumn.onCardDelete = [this](TaskCard* c) { deleteCard(c); };
-        doneColumn.onCardDragStart = [this](TaskCard* c, Point p)
-        {
-            startDrag(c, p);
-        };
+        doneColumn.onCardSelect = [this](auto* c) { selectCard(c); };
+        doneColumn.onCardDelete = [this](auto* c) { deleteCard(c); };
+        doneColumn.onCardDragStart = [this](auto* c, auto p) { startDrag(c, p); };
         doneColumn.onAddCard = [this] { addNewTaskToColumn(&doneColumn); };
     }
 
@@ -508,10 +461,10 @@ struct TaskBoardView final : View
             "Deploy to staging"};
 
         static const std::vector<std::string> sampleDescs = {"High priority",
-            "Needs review",
-            "In progress",
-            "Blocked",
-            "Ready for QA"};
+                                                             "Needs review",
+                                                             "In progress",
+                                                             "Blocked",
+                                                             "Ready for QA"};
 
         for (int i = 0; i < 3; ++i)
         {
@@ -570,8 +523,11 @@ struct TaskBoardView final : View
         if (card == selectedCard)
             selectedCard = nullptr;
 
-        findColumnForCard(card)->removeCard(card);
-        updateStatus();
+        if (auto* column = findColumnForCard(card))
+        {
+            column->removeCard(card);
+            updateStatus();
+        }
     }
 
     void clearAllTasks()
@@ -594,10 +550,13 @@ struct TaskBoardView final : View
     {
         if (todoColumn.findCard(card->data.id))
             return &todoColumn;
+
         if (progressColumn.findCard(card->data.id))
             return &progressColumn;
+
         if (doneColumn.findCard(card->data.id))
             return &doneColumn;
+
         return nullptr;
     }
 
@@ -619,15 +578,12 @@ struct TaskBoardView final : View
 
         if (dragOverlay != nullptr)
         {
-            dragOverlay->setBounds({mousePos.x - 100.f, mousePos.y - 30.f, 200.f,
-                                    60.f});
+            dragOverlay->setBounds(
+                {mousePos.x - 100.f, mousePos.y - 30.f, 200.f, 60.f});
         }
     }
 
-    bool isDragging() const
-    {
-        return dragOverlay != nullptr;
-    }
+    bool isDragging() const { return dragOverlay != nullptr; }
 
     void endDrag()
     {
@@ -844,9 +800,9 @@ struct TaskBoardView final : View
     TaskCard* draggedCard = nullptr;
 
     Header header;
-    Column todoColumn{"To Do", {0.4f, 0.6f, 1.0f}};
-    Column progressColumn{"In Progress", {1.0f, 0.6f, 0.2f}};
-    Column doneColumn{"Done", {0.4f, 0.8f, 0.4f}};
+    Column todoColumn {"To Do", {0.4f, 0.6f, 1.0f}};
+    Column progressColumn {"In Progress", {1.0f, 0.6f, 0.2f}};
+    Column doneColumn {"Done", {0.4f, 0.8f, 0.4f}};
     StatusBar statusBar;
     std::unique_ptr<DragOverlay> dragOverlay;
 };
