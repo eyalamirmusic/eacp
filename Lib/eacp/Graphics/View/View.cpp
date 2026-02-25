@@ -114,11 +114,13 @@ Point View::convertPointToDescendant(const Point& point, View* descendant)
 
     while (current != nullptr && current != this)
     {
-        offset = point + offset;
+        auto bounds = current->getBounds();
+        offset.x += bounds.x;
+        offset.y += bounds.y;
         current = current->parent;
     }
 
-    return point - offset;
+    return {point.x - offset.x, point.y - offset.y};
 }
 
 MouseEvent View::createLocalEvent(const MouseEvent& event,
@@ -207,8 +209,6 @@ bool View::isHovering() const
 {
     return getLocalBounds().contains(getMousePosition());
 }
-
-
 
 void View::addLayer(Layer& layer)
 {
