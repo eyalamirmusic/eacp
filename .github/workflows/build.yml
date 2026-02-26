@@ -24,10 +24,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Ninja (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ninja
-
       - name: Install Ninja (Windows)
         if: runner.os == 'Windows'
         run: choco install ninja
