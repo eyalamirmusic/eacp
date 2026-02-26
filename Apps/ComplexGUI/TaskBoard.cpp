@@ -52,7 +52,7 @@ struct Button final : View
     void mouseUp(const MouseEvent& e) override
     {
         if (pressed && getLocalBounds().contains(e.pos))
-            onClick();
+            Threads::callAsync(onClick);
 
         pressed = false;
         updateAppearance();
@@ -185,6 +185,7 @@ struct TaskCard final : View
     Button deleteButton {"×", {0.5f, 0.2f, 0.2f}};
 };
 
+
 struct Column final : View
 {
     Column(const std::string& columnName, Color color)
@@ -206,32 +207,23 @@ struct Column final : View
 
     TaskCard* addCard(const TaskData& data)
     {
-        auto card = std::make_unique<TaskCard>(data);
-        auto* cardPtr = card.get();
+        auto& card = cards.createVisible(data);
 
-        card->onSelect = [this](auto* c) { onCardSelect(c); };
-        card->onDelete = [this](auto* c) { onCardDelete(c); };
-        card->onDragStart = [this](auto* c, auto p) { onCardDragStart(c, p); };
-
-        addSubview(*card);
-        cards.push_back(std::move(card));
+        card.onSelect = [this](auto* c) { onCardSelect(c); };
+        card.onDelete = [this](auto* c) { onCardDelete(c); };
+        card.onDragStart = [this](auto* c, auto p) { onCardDragStart(c, p); };
 
         updateCountText();
         layoutCards();
-        return cardPtr;
+
+        return &card;
     }
 
-    void removeCard(TaskCard* card)
+    void removeCard(TaskCard& card)
     {
-        auto it = std::ranges::find_if(
-            cards, [card](const auto& c) { return c.get() == card; });
-
-        if (it != cards.end())
-        {
-            cards.erase(it);
-            updateCountText();
-            layoutCards();
-        }
+        cards.erase(card);
+        updateCountText();
+        layoutCards();
     }
 
     TaskCard* findCard(int id)
@@ -293,7 +285,7 @@ struct Column final : View
 
     std::string name;
     Color headerColor;
-    std::vector<std::unique_ptr<TaskCard>> cards;
+    ViewList<TaskCard> cards {*this};
     std::function<void(TaskCard*)> onCardSelect {[](auto*) {}};
     std::function<void(TaskCard*)> onCardDelete {[](auto*) {}};
     std::function<void(TaskCard*, Point)> onCardDragStart {[](auto*, auto) {}};
@@ -426,18 +418,18 @@ struct TaskBoardView final : View
     void setupColumns()
     {
         todoColumn.onCardSelect = [this](auto* c) { selectCard(c); };
-        todoColumn.onCardDelete = [this](auto* c) { deleteCard(c); };
+        todoColumn.onCardDelete = [this](auto* c) { deleteCard(*c); };
         todoColumn.onCardDragStart = [this](auto* c, auto p) { startDrag(c, p); };
         todoColumn.onAddCard = [this] { addNewTaskToColumn(&todoColumn); };
 
         progressColumn.onCardSelect = [this](auto* c) { selectCard(c); };
-        progressColumn.onCardDelete = [this](auto* c) { deleteCard(c); };
+        progressColumn.onCardDelete = [this](auto* c) { deleteCard(*c); };
         progressColumn.onCardDragStart = [this](auto* c, auto p)
         { startDrag(c, p); };
         progressColumn.onAddCard = [this] { addNewTaskToColumn(&progressColumn); };
 
         doneColumn.onCardSelect = [this](auto* c) { selectCard(c); };
-        doneColumn.onCardDelete = [this](auto* c) { deleteCard(c); };
+        doneColumn.onCardDelete = [this](auto* c) { deleteCard(*c); };
         doneColumn.onCardDragStart = [this](auto* c, auto p) { startDrag(c, p); };
         doneColumn.onAddCard = [this] { addNewTaskToColumn(&doneColumn); };
     }
@@ -518,9 +510,9 @@ struct TaskBoardView final : View
             selectedCard->setSelected(true);
     }
 
-    void deleteCard(TaskCard* card)
+    void deleteCard(TaskCard& card)
     {
-        if (card == selectedCard)
+        if (&card == selectedCard)
             selectedCard = nullptr;
 
         if (auto* column = findColumnForCard(card))
@@ -535,26 +527,28 @@ struct TaskBoardView final : View
         selectedCard = nullptr;
 
         while (!todoColumn.cards.empty())
-            todoColumn.removeCard(todoColumn.cards.front().get());
+            todoColumn.removeCard(todoColumn.cards.front());
 
         while (!progressColumn.cards.empty())
-            progressColumn.removeCard(progressColumn.cards.front().get());
+            progressColumn.removeCard(progressColumn.cards.front());
 
         while (!doneColumn.cards.empty())
-            doneColumn.removeCard(doneColumn.cards.front().get());
+            doneColumn.removeCard(doneColumn.cards.front());
 
         updateStatus();
     }
 
-    Column* findColumnForCard(TaskCard* card)
+    Column* findColumnForCard(TaskCard& card)
     {
-        if (todoColumn.findCard(card->data.id))
+        auto id = card.data.id;
+
+        if (todoColumn.findCard(id))
             return &todoColumn;
 
-        if (progressColumn.findCard(card->data.id))
+        if (progressColumn.findCard(id))
             return &progressColumn;
 
-        if (doneColumn.findCard(card->data.id))
+        if (doneColumn.findCard(id))
             return &doneColumn;
 
         return nullptr;
@@ -601,12 +595,12 @@ struct TaskBoardView final : View
 
         if (targetColumn)
         {
-            auto* sourceColumn = findColumnForCard(draggedCard);
+            auto* sourceColumn = findColumnForCard(*draggedCard);
 
             if (sourceColumn && sourceColumn != targetColumn)
             {
                 auto data = draggedCard->data;
-                sourceColumn->removeCard(draggedCard);
+                sourceColumn->removeCard(*draggedCard);
                 auto* newCard = targetColumn->addCard(data);
                 selectCard(newCard);
             }
@@ -642,7 +636,7 @@ struct TaskBoardView final : View
         }
         else if (event.keyCode == KeyCode::Delete && selectedCard)
         {
-            deleteCard(selectedCard);
+            deleteCard(*selectedCard);
         }
         else if (event.keyCode == KeyCode::RightArrow && selectedCard)
         {
@@ -664,10 +658,10 @@ struct TaskBoardView final : View
 
     void moveCardRight()
     {
-        if (!selectedCard)
+        if (selectedCard == nullptr)
             return;
 
-        auto* sourceColumn = findColumnForCard(selectedCard);
+        auto* sourceColumn = findColumnForCard(*selectedCard);
         Column* targetColumn = nullptr;
 
         if (sourceColumn == &todoColumn)
@@ -678,7 +672,7 @@ struct TaskBoardView final : View
         if (targetColumn)
         {
             auto data = selectedCard->data;
-            sourceColumn->removeCard(selectedCard);
+            sourceColumn->removeCard(*selectedCard);
             auto* newCard = targetColumn->addCard(data);
             selectCard(newCard);
             updateStatus();
@@ -690,7 +684,7 @@ struct TaskBoardView final : View
         if (!selectedCard)
             return;
 
-        auto* sourceColumn = findColumnForCard(selectedCard);
+        auto* sourceColumn = findColumnForCard(*selectedCard);
         Column* targetColumn = nullptr;
 
         if (sourceColumn == &doneColumn)
@@ -701,7 +695,7 @@ struct TaskBoardView final : View
         if (targetColumn)
         {
             auto data = selectedCard->data;
-            sourceColumn->removeCard(selectedCard);
+            sourceColumn->removeCard(*selectedCard);
             auto* newCard = targetColumn->addCard(data);
             selectCard(newCard);
             updateStatus();
