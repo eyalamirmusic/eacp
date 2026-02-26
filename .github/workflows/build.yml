@@ -24,10 +24,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Ninja (Windows)
-        if: runner.os == 'Windows'
-        run: choco install ninja
-
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
 
