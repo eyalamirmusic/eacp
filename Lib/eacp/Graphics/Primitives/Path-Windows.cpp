@@ -119,8 +119,8 @@ void Path::quadTo(float cx, float cy, float x, float y)
     impl->ensureFigureStarted();
     if (impl->sink)
     {
-        impl->sink->AddQuadraticBezier(
-            D2D1::QuadraticBezierSegment(D2D1::Point2F(cx, cy), D2D1::Point2F(x, y)));
+        impl->sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
+            D2D1::Point2F(cx, cy), D2D1::Point2F(x, y)));
     }
     impl->lastPoint = {x, y};
 }
@@ -130,9 +130,8 @@ void Path::cubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
     impl->ensureFigureStarted();
     if (impl->sink)
     {
-        impl->sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(c1x, c1y),
-                                                   D2D1::Point2F(c2x, c2y),
-                                                   D2D1::Point2F(x, y)));
+        impl->sink->AddBezier(D2D1::BezierSegment(
+            D2D1::Point2F(c1x, c1y), D2D1::Point2F(c2x, c2y), D2D1::Point2F(x, y)));
     }
     impl->lastPoint = {x, y};
 }
@@ -172,9 +171,11 @@ void Path::addRoundedRect(const Rect& rect, float radius)
     // Top-right arc
     if (impl->sink)
     {
-        impl->sink->AddArc(D2D1::ArcSegment(
-            D2D1::Point2F(x + w, y + r), D2D1::SizeF(r, r), 0.0f,
-            D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
+        impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(x + w, y + r),
+                                            D2D1::SizeF(r, r),
+                                            0.0f,
+                                            D2D1_SWEEP_DIRECTION_CLOCKWISE,
+                                            D2D1_ARC_SIZE_SMALL));
     }
     impl->lastPoint = {x + w, y + r};
 
@@ -184,9 +185,11 @@ void Path::addRoundedRect(const Rect& rect, float radius)
     // Bottom-right arc
     if (impl->sink)
     {
-        impl->sink->AddArc(D2D1::ArcSegment(
-            D2D1::Point2F(x + w - r, y + h), D2D1::SizeF(r, r), 0.0f,
-            D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
+        impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(x + w - r, y + h),
+                                            D2D1::SizeF(r, r),
+                                            0.0f,
+                                            D2D1_SWEEP_DIRECTION_CLOCKWISE,
+                                            D2D1_ARC_SIZE_SMALL));
     }
     impl->lastPoint = {x + w - r, y + h};
 
@@ -197,7 +200,8 @@ void Path::addRoundedRect(const Rect& rect, float radius)
     if (impl->sink)
     {
         impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(x, y + h - r),
-                                            D2D1::SizeF(r, r), 0.0f,
+                                            D2D1::SizeF(r, r),
+                                            0.0f,
                                             D2D1_SWEEP_DIRECTION_CLOCKWISE,
                                             D2D1_ARC_SIZE_SMALL));
     }
@@ -209,8 +213,10 @@ void Path::addRoundedRect(const Rect& rect, float radius)
     // Top-left arc
     if (impl->sink)
     {
-        impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(x + r, y), D2D1::SizeF(r, r),
-                                            0.0f, D2D1_SWEEP_DIRECTION_CLOCKWISE,
+        impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(x + r, y),
+                                            D2D1::SizeF(r, r),
+                                            0.0f,
+                                            D2D1_SWEEP_DIRECTION_CLOCKWISE,
                                             D2D1_ARC_SIZE_SMALL));
     }
     impl->lastPoint = {x + r, y};
@@ -233,18 +239,63 @@ void Path::addEllipse(const Rect& rect)
     {
         // Bottom half
         impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(cx - rx, cy),
-                                            D2D1::SizeF(rx, ry), 0.0f,
+                                            D2D1::SizeF(rx, ry),
+                                            0.0f,
                                             D2D1_SWEEP_DIRECTION_CLOCKWISE,
                                             D2D1_ARC_SIZE_SMALL));
         // Top half
         impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(cx + rx, cy),
-                                            D2D1::SizeF(rx, ry), 0.0f,
+                                            D2D1::SizeF(rx, ry),
+                                            0.0f,
                                             D2D1_SWEEP_DIRECTION_CLOCKWISE,
                                             D2D1_ARC_SIZE_SMALL));
     }
     impl->lastPoint = {cx + rx, cy};
 
     close();
+}
+
+Path Path::scaled(float sx, float sy) const
+{
+    auto* sourceGeometry = impl->getGeometry();
+    if (!sourceGeometry)
+        return {};
+
+    auto* factory = getD2DFactory();
+    if (!factory)
+        return {};
+
+    auto transform =
+        D2D1::Matrix3x2F::Scale(D2D1::SizeF(sx, sy), D2D1::Point2F(0, 0));
+
+    ComPtr<ID2D1TransformedGeometry> transformed;
+    factory->CreateTransformedGeometry(
+        sourceGeometry, transform, transformed.GetAddressOf());
+    if (!transformed)
+        return {};
+
+    Path result;
+    result.impl->closeSinkIfNeeded();
+    result.impl->geometry.Reset();
+    result.impl->sink.Reset();
+
+    ComPtr<ID2D1PathGeometry> newGeometry;
+    factory->CreatePathGeometry(newGeometry.GetAddressOf());
+    if (!newGeometry)
+        return {};
+
+    ComPtr<ID2D1GeometrySink> newSink;
+    newGeometry->Open(newSink.GetAddressOf());
+    if (!newSink)
+        return {};
+
+    transformed->Simplify(D2D1_GEOMETRY_SIMPLIFICATION_OPTION_CUBICS_AND_LINES,
+                          nullptr,
+                          newSink.Get());
+    newSink->Close();
+
+    result.impl->geometry = newGeometry;
+    return result;
 }
 
 void* Path::getHandle() const
