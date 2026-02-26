@@ -1,0 +1,42 @@
+name: Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - name: macOS Universal Binary
+            os: macos-latest
+            cmake-flags: '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"'
+          - name: Windows MSVC
+            os: windows-latest
+            cmake-flags: ''
+          - name: Windows Clang
+            os: windows-latest
+            cmake-flags: '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl'
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Install Ninja (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ninja
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      - name: Configure
+        run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug ${{ matrix.cmake-flags }}
+
+      - name: Build
+        run: cmake --build build
