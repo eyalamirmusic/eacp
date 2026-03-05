@@ -87,6 +87,15 @@ int main()
         LOG("");
     }
 
+    // 10. Upload the downloaded file via multipart form-data
+    {
+        auto req = HTTP::Request("https://httpbin.org/post");
+        req.addFormField("description", "Uploaded via eacp")
+            .addFileField(
+                "file", "/tmp/eacp-download-test.json", "application/json");
+        performAndPrint(req);
+    }
+
     LOG("=== All requests completed ===");
     return 0;
 }
