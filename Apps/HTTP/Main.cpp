@@ -72,6 +72,21 @@ int main()
         performAndPrint(req);
     }
 
+    // 9. Download a file to disk
+    {
+        auto req = HTTP::Request("https://jsonplaceholder.typicode.com/posts/1");
+        auto res = req.downloadTo("/tmp/eacp-download-test.json");
+
+        LOG("Download status: " + std::to_string(res.statusCode));
+
+        if (!res.error.empty())
+            LOG("Download error: " + res.error);
+        else
+            LOG("Downloaded to /tmp/eacp-download-test.json");
+
+        LOG("");
+    }
+
     LOG("=== All requests completed ===");
     return 0;
 }

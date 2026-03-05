@@ -18,4 +18,9 @@ Response Request::perform() const
 {
     return httpRequest(*this);
 }
+
+Response Request::downloadTo(const std::string& filePath) const
+{
+    return downloadFile(*this, filePath);
+}
 } // namespace eacp::HTTP

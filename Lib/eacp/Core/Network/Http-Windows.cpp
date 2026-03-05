@@ -114,4 +114,57 @@ Response httpRequest(const Request& req)
     return res;
 }
 
+Response downloadFile(const Request& req, const std::string& filePath)
+{
+    auto res = Response();
+
+    try
+    {
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+    }
+    catch (const winrt::hresult_error&)
+    {
+    }
+
+    try
+    {
+        auto response = httpRequestInternal(req);
+
+        auto wideFilePath = winrt::to_hstring(filePath);
+        auto handle = CreateFileW(wideFilePath.c_str(),
+                                  GENERIC_WRITE,
+                                  0,
+                                  nullptr,
+                                  CREATE_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL,
+                                  nullptr);
+
+        if (handle == INVALID_HANDLE_VALUE)
+            throw std::runtime_error("Failed to create file: " + filePath);
+
+        DWORD written = 0;
+        WriteFile(handle,
+                  response.content.data(),
+                  static_cast<DWORD>(response.content.size()),
+                  &written,
+                  nullptr);
+        CloseHandle(handle);
+
+        response.content.clear();
+        return response;
+    }
+    catch (const winrt::hresult_error& e)
+    {
+        res.error = winrt::to_string(e.message());
+        res.statusCode = 0;
+    }
+    catch (const std::exception& e)
+    {
+        res.error = e.what();
+        res.statusCode = 0;
+    }
+
+    return res;
+}
+
 } // namespace eacp::HTTP

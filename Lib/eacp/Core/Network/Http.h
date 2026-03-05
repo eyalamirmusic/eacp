@@ -21,6 +21,7 @@ struct Request
                         const std::string& bodyToUse = {});
 
     Response perform() const;
+    Response downloadTo(const std::string& filePath) const;
 
     std::string url;
     std::string type = "GET";
@@ -29,4 +30,5 @@ struct Request
 };
 
 Response httpRequest(const Request& req);
+Response downloadFile(const Request& req, const std::string& filePath);
 } // namespace eacp::HTTP

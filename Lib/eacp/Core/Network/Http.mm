@@ -119,5 +119,89 @@ Response httpRequest(const Request& req)
     return res;
 }
 
+Response downloadFileInternal(const Request& req,
+                              const std::string& filePath)
+{
+    auto request = getRequest(req);
+
+    auto result = SafeResult();
+    auto semaphore = Threads::TaskSemaphore();
+    ObjC::Ptr<NSURL> tempLocation;
+
+    auto cppHandler = [&result, &semaphore, &tempLocation](
+                          NSURL* location, NSURLResponse* res,
+                          NSError* error)
+    {
+        if (location)
+            tempLocation.reset([location copy]);
+
+        result.response.reset(res);
+        result.error.reset(error);
+        semaphore.signal();
+    };
+
+    auto task = [getSharedSession()
+        downloadTaskWithRequest:request
+              completionHandler:^(NSURL* location,
+                                  NSURLResponse* res,
+                                  NSError* error) {
+                  cppHandler(location, res, error);
+              }];
+
+    [task resume];
+    semaphore.wait();
+
+    if (result.error)
+        throw std::runtime_error(
+            Strings::toStdString(result.error.get()));
+
+    auto response = Response();
+
+    if (result.response.isKindOfClass<NSHTTPURLResponse>())
+    {
+        auto httpResponse =
+            (NSHTTPURLResponse*) result.response.get();
+        response.statusCode = (int) httpResponse.statusCode;
+    }
+
+    if (tempLocation)
+    {
+        auto destURL = [NSURL
+            fileURLWithPath:Strings::toNSString(filePath)];
+        auto fm = [NSFileManager defaultManager];
+
+        [fm removeItemAtURL:destURL error:nil];
+
+        NSError* moveError = nil;
+        if (![fm moveItemAtURL:tempLocation.get()
+                         toURL:destURL
+                         error:&moveError])
+        {
+            throw std::runtime_error(
+                Strings::toStdString(moveError));
+        }
+    }
+
+    return response;
+}
+
+Response downloadFile(const Request& req,
+                      const std::string& filePath)
+{
+    auto res = Response();
+    auto pool = ObjC::AutoReleasePool();
+
+    try
+    {
+        return downloadFileInternal(req, filePath);
+    }
+    catch (const std::exception& e)
+    {
+        res.error = e.what();
+        res.statusCode = 0;
+    }
+
+    return res;
+}
 
 } // namespace eacp::HTTP
