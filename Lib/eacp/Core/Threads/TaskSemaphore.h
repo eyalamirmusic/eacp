@@ -9,6 +9,7 @@ class BinarySemaphore
 {
 public:
     void release();
+
     void acquire();
 
 private:
@@ -16,7 +17,6 @@ private:
     std::condition_variable cv;
     bool count = false;
 };
-
 
 class TaskSemaphore
 {

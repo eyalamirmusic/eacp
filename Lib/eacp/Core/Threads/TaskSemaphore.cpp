@@ -2,11 +2,6 @@
 
 namespace eacp::Threads
 {
-void TaskSemaphore::wait()
-{
-    semaphore.acquire();
-}
-
 void BinarySemaphore::release()
 {
     auto lock = std::unique_lock(mtx);
@@ -24,5 +19,10 @@ void BinarySemaphore::acquire()
 void TaskSemaphore::signal()
 {
     semaphore.release();
+}
+
+void TaskSemaphore::wait()
+{
+    semaphore.acquire();
 }
 } // namespace eacp::Threads
