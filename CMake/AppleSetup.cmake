@@ -1,7 +1,3 @@
-if (APPLE)
-    enable_language(OBJCXX)
-endif ()
-
 macro(eacp_setup_apple)
     if (IOS)
         set(CMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "LK9GL8NWU4"

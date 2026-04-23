@@ -1,15 +1,36 @@
 #pragma once
 
 #include <eacp/Graphics/Graphics.h>
+#include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
 
 namespace eacp::Graphics
 {
+struct ResourceResponse
+{
+    std::string mimeType;
+    std::vector<std::uint8_t> data;
+    int statusCode = 200;
+};
+
+using ResourceProvider =
+    std::function<std::optional<ResourceResponse>(std::string_view url)>;
+
 class WebView : public View
 {
 public:
+    struct Options
+    {
+        std::unordered_map<std::string, ResourceProvider> schemes;
+    };
+
     WebView();
+    explicit WebView(Options options);
     ~WebView() override;
 
     void loadURL(const std::string& url);

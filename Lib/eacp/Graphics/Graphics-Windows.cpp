@@ -9,6 +9,7 @@
 #include "View/View-Windows.cpp"
 
 #include "Window/Window-Windows.cpp"
+#include "Window/EmbeddedView-Windows.cpp"
 
 #include "Layers/Layer-Windows.cpp"
 #include "Layers/ShapeLayer-Windows.cpp"

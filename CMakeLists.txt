@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.31)
-project(eacp LANGUAGES C CXX OBJCXX)
+project(eacp LANGUAGES C CXX)
+
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 
