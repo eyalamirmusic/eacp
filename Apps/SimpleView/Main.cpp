@@ -7,7 +7,7 @@ struct ParentView final : View
 {
     ParentView()
     {
-        webView.loadURL("https://www.eyalamir.org");
+        webView.loadURL("https://dev.tamber.ai/app/pro/sonic-atlas");
         addChildren({webView});
     }
 

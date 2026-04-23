@@ -11,7 +11,7 @@ if (APPLE)
             "-framework Foundation"
             "-framework WebKit")
 
-    if (EACP_IOS)
+    if (IOS)
         target_link_libraries(eacp-webview PRIVATE
                 "-framework UIKit")
     else ()
