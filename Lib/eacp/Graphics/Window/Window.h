@@ -35,6 +35,7 @@ struct WindowOptions
     }
 
     Callback onQuit {Apps::quit};
+    Callback onClose;
 
     int width = 640;
     int height = 400;

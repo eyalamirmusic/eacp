@@ -28,3 +28,4 @@ xcschememanagement.plist
 
 workspace.xml
 xcuserdata
+compile_commands.json

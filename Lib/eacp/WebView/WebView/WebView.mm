@@ -8,6 +8,7 @@
 #include "WebView.h"
 
 #include <eacp/Core/ObjC/Strings.h>
+#include <eacp/Core/Shell/Shell.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
 #include <unordered_map>
 
@@ -27,7 +28,7 @@ class WebView;
 using MessageHandlerMap =
     std::unordered_map<std::string, std::function<void(const std::string&)>>;
 
-@interface WebViewDelegate : NSObject <WKNavigationDelegate, WKScriptMessageHandler>
+@interface WebViewDelegate : NSObject <WKNavigationDelegate, WKScriptMessageHandler, WKUIDelegate>
 @property(assign) eacp::Graphics::WebView* owner;
 @property(assign) MessageHandlerMap* messageHandlers;
 @end
@@ -48,6 +49,7 @@ struct WebView::Native
         auto rect = CGRectMake(0, 0, 100, 100);
         webView = [[WKWebView alloc] initWithFrame:rect configuration:config.get()];
         webView.get().navigationDelegate = delegate.get();
+        webView.get().UIDelegate = delegate.get();
     }
     ~Native()
     {
@@ -91,6 +93,73 @@ struct WebView::Native
 } // namespace eacp::Graphics
 
 @implementation WebViewDelegate
+
+- (void)webView:(WKWebView*)webView
+    decidePolicyForNavigationAction:(WKNavigationAction*)navigationAction
+                    decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler
+{
+    if (navigationAction.targetFrame == nil)
+    {
+        decisionHandler(WKNavigationActionPolicyAllow);
+        return;
+    }
+
+    auto type = navigationAction.navigationType;
+    bool isUserAction = type == WKNavigationTypeLinkActivated
+                     || type == WKNavigationTypeFormSubmitted
+                     || type == WKNavigationTypeBackForward
+                     || type == WKNavigationTypeReload
+                     || type == WKNavigationTypeFormResubmitted;
+
+    if (! isUserAction || _owner == nullptr || ! _owner->onNavigationDecision)
+    {
+        decisionHandler(WKNavigationActionPolicyAllow);
+        return;
+    }
+
+    auto url = safeString([navigationAction.request.URL.absoluteString UTF8String]);
+
+    eacp::Graphics::NavigationRequest request;
+    request.url = url;
+
+    auto decision = _owner->onNavigationDecision(request);
+
+    switch (decision)
+    {
+        case eacp::Graphics::NavigationDecision::Allow:
+            decisionHandler(WKNavigationActionPolicyAllow);
+            break;
+        case eacp::Graphics::NavigationDecision::Block:
+            decisionHandler(WKNavigationActionPolicyCancel);
+            break;
+        case eacp::Graphics::NavigationDecision::OpenExternally:
+            decisionHandler(WKNavigationActionPolicyCancel);
+            eacp::Shell::openExternalURL(url);
+            break;
+    }
+}
+
+- (WKWebView*)webView:(WKWebView*)webView
+    createWebViewWithConfiguration:(WKWebViewConfiguration*)configuration
+               forNavigationAction:(WKNavigationAction*)navigationAction
+                    windowFeatures:(WKWindowFeatures*)windowFeatures
+{
+    if (_owner == nullptr || !_owner->onNewWindowRequested)
+        return nil;
+
+    auto url = safeString([navigationAction.request.URL.absoluteString UTF8String]);
+
+    eacp::Graphics::NewWindowRequest request;
+    request.url = url;
+
+    auto* newView = _owner->onNewWindowRequested(request);
+
+    if (newView == nullptr)
+        return nil;
+
+    newView->loadURL(url);
+    return nil;
+}
 
 - (void)webView:(WKWebView*)webView
     didStartProvisionalNavigation:(WKNavigation*)navigation

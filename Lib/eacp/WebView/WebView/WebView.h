@@ -6,6 +6,24 @@
 
 namespace eacp::Graphics
 {
+
+struct NavigationRequest
+{
+    std::string url;
+};
+
+enum class NavigationDecision
+{
+    Allow,
+    Block,
+    OpenExternally,
+};
+
+struct NewWindowRequest
+{
+    std::string url;
+};
+
 class WebView : public View
 {
 public:
@@ -37,10 +55,17 @@ public:
         std::function<void(const std::string& message)> handler);
     void removeScriptMessageHandler(const std::string& name);
 
+    using NewWindowHandler =
+        std::function<WebView*(const NewWindowRequest& request)>;
+
     std::function<void(const std::string& url)> onNavigationStarted;
     std::function<void(const std::string& url)> onNavigationFinished;
     std::function<void(const std::string& error)> onNavigationFailed;
     std::function<void(const std::string& title)> onTitleChanged;
+
+    std::function<NavigationDecision(const NavigationRequest& request)>
+        onNavigationDecision;
+    NewWindowHandler onNewWindowRequested;
 
 protected:
     void resized() override;
