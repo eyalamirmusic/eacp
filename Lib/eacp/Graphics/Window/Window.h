@@ -53,6 +53,7 @@ public:
 
     void setTitle(const std::string& title);
     void* getHandle();
+    void* getContentViewHandle();
 
     void setContentView(View& view);
 

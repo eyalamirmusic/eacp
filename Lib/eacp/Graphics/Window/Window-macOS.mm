@@ -133,6 +133,11 @@ void* Window::getHandle()
     return impl->getWindow();
 }
 
+void* Window::getContentViewHandle()
+{
+    return [impl->getWindow() contentView];
+}
+
 Window::~Window()
 {
     options.onQuit();
