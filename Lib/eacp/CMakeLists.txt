@@ -1,5 +1,6 @@
 add_subdirectory(Core)
 add_subdirectory(Network)
+add_subdirectory(Server)
 add_subdirectory(Graphics)
 add_subdirectory(WebView)
 add_subdirectory(SVG)

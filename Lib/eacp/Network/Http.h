@@ -11,6 +11,7 @@ struct Response
 {
     std::string content;
     std::string error;
+    std::map<std::string, std::string> headers;
     int statusCode = 0;
 };
 
