@@ -367,9 +367,15 @@ WebView::WebView(Options options)
 }
 
 WebView::WebView(EmbeddedOptions options)
-    : WebView(makeOptionsFromEmbedded(options))
+    : WebView(options.devServerURL.empty() ? makeOptionsFromEmbedded(options)
+                                           : Options {})
 {
-    if (options.autoLoad)
+    if (! options.autoLoad)
+        return;
+
+    if (! options.devServerURL.empty())
+        loadURL(options.devServerURL);
+    else
         loadURL(options.scheme + "://" + options.host + "/" + options.indexFile);
 }
 

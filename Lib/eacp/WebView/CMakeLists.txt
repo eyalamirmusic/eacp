@@ -1,6 +1,8 @@
 include(FetchContent)
 
 find_package(ResEmbed REQUIRED)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewVite.cmake)
+
 add_library(eacp-webview STATIC)
 
 set_default_target_setting(eacp-webview)

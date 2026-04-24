@@ -4,16 +4,11 @@
 using namespace eacp;
 using namespace Graphics;
 
-WebView::EmbeddedOptions getOptions()
-{
-    return {.provider = fromResEmbed("WebApp")};
-}
-
 struct MyApp
 {
     MyApp() { window.setContentView(webView); }
 
-    WebView webView{getOptions()};
+    WebView webView {embeddedOptions("WebApp")};
     Window window;
 };
 

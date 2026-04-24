@@ -47,6 +47,7 @@ public:
         std::string scheme = "app";
         std::string host = "local";
         std::string indexFile = "index.html";
+        std::string devServerURL;
         bool autoLoad = true;
     };
 
@@ -92,4 +93,14 @@ private:
     struct Native;
     Pimpl<Native> impl;
 };
+
+inline WebView::EmbeddedOptions embeddedOptions(std::string category)
+{
+    auto options = WebView::EmbeddedOptions {};
+    options.provider = fromResEmbed(std::move(category));
+#ifdef EACP_WEBVIEW_DEV_SERVER_URL
+    options.devServerURL = EACP_WEBVIEW_DEV_SERVER_URL;
+#endif
+    return options;
+}
 } // namespace eacp::Graphics
