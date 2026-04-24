@@ -24,6 +24,17 @@ Output executables:
 - `build/Apps/GUI/GUI.app` (macOS bundle)
 - `build/Apps/Console/Console` (command-line app)
 
+### Build Options
+
+- `EACP_UNITY_BUILD` (default `ON`): compiles eacp libraries as CMake unity
+  builds for faster full-project compilation. Claude must always configure with
+  `-DEACP_UNITY_BUILD=OFF` so per-file compile commands land in
+  `compile_commands.json` and LSP tooling returns accurate results.
+
+```bash
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
+```
+
 ## Architecture
 New source files are added directly to the module's CMakeLists.txt under the
 appropriate `target_sources(...)` call. Platform-specific sources go inside the
