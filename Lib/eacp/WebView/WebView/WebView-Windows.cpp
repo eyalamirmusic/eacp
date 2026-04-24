@@ -49,8 +49,9 @@ HWND findParentHWND(View* view);
 
 struct WebView::Native
 {
-    Native(WebView& ownerToUse)
+    Native(WebView& ownerToUse, WebView::Options optionsToUse)
         : owner(ownerToUse)
+        , options(std::move(optionsToUse))
     {
     }
 
@@ -313,6 +314,7 @@ struct WebView::Native
     }
 
     WebView& owner;
+    WebView::Options options;
     HWND childHwnd = nullptr;
     ComPtr<ICoreWebView2Environment> environment;
     ComPtr<ICoreWebView2Controller> controller;
@@ -333,8 +335,8 @@ HWND findParentHWND(View*)
     return FindWindowW(L"EACPWindowClass", nullptr);
 }
 
-WebView::WebView()
-    : impl(*this)
+WebView::WebView(Options options)
+    : impl(*this, std::move(options))
 {
 }
 
