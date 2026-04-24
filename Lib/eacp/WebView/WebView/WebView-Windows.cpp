@@ -178,14 +178,11 @@ struct WebView::Native
                 [this](ICoreWebView2*,
                        ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT
                 {
-                    if (owner.onNavigationStarted)
-                    {
-                        CoTaskMemString uri;
-                        args->get_Uri(&uri);
-                        auto url = uri.toString();
-                        Threads::callAsync([cb = owner.onNavigationStarted, url]()
-                                           { cb(url); });
-                    }
+                    CoTaskMemString uri;
+                    args->get_Uri(&uri);
+                    auto url = uri.toString();
+                    Threads::callAsync([cb = owner.onNavigationStarted, url]()
+                                       { cb(url); });
                     return S_OK;
                 })
                 .Get(),
@@ -199,7 +196,7 @@ struct WebView::Native
                     BOOL success = FALSE;
                     args->get_IsSuccess(&success);
 
-                    if (success && owner.onNavigationFinished)
+                    if (success)
                     {
                         CoTaskMemString uri;
                         webView->get_Source(&uri);
@@ -207,7 +204,7 @@ struct WebView::Native
                         Threads::callAsync([cb = owner.onNavigationFinished, url]()
                                            { cb(url); });
                     }
-                    else if (!success && owner.onNavigationFailed)
+                    else
                     {
                         COREWEBVIEW2_WEB_ERROR_STATUS status;
                         args->get_WebErrorStatus(&status);
@@ -225,14 +222,11 @@ struct WebView::Native
             Microsoft::WRL::Callback<ICoreWebView2DocumentTitleChangedEventHandler>(
                 [this](ICoreWebView2*, IUnknown*) -> HRESULT
                 {
-                    if (owner.onTitleChanged)
-                    {
-                        CoTaskMemString title;
-                        webView->get_DocumentTitle(&title);
-                        auto titleStr = title.toString();
-                        Threads::callAsync([cb = owner.onTitleChanged, titleStr]()
-                                           { cb(titleStr); });
-                    }
+                    CoTaskMemString title;
+                    webView->get_DocumentTitle(&title);
+                    auto titleStr = title.toString();
+                    Threads::callAsync([cb = owner.onTitleChanged, titleStr]()
+                                       { cb(titleStr); });
                     return S_OK;
                 })
                 .Get(),

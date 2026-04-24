@@ -81,19 +81,17 @@ public:
         std::function<void(const std::string& message)> handler);
     void removeScriptMessageHandler(const std::string& name);
 
-    std::function<void(const std::string& url)> onNavigationStarted;
-    std::function<void(const std::string& url)> onNavigationFinished;
-    std::function<void(const std::string& error)> onNavigationFailed;
-    std::function<void(const std::string& title)> onTitleChanged;
+    std::function<void(const std::string& url)> onNavigationStarted = [](auto&&) {};
+    std::function<void(const std::string& url)> onNavigationFinished = [](auto&&) {};
+    std::function<void(const std::string& error)> onNavigationFailed = [](auto&&) {};
+    std::function<void(const std::string& title)> onTitleChanged = [](auto&&) {};
 
-    // Called when the page requests a new window (window.open, target=_blank).
-    // If unset, the URL is loaded in the current WebView so sign-in flows
-    // work out of the box. Return true to indicate the request was handled
-    // and suppress the default behaviour.
-    std::function<bool(const std::string& url)> onNewWindowRequested;
+    // Return true to indicate the request was handled; otherwise the URL is
+    // loaded in the current WebView so sign-in flows work out of the box.
+    std::function<bool(const std::string& url)> onNewWindowRequested = [](auto&&)
+    { return false; };
 
-    // Called when scripting requests the window to close (window.close).
-    std::function<void()> onClose;
+    std::function<void()> onClose = [] {};
 
 protected:
     void resized() override;

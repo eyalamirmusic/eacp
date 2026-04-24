@@ -115,64 +115,36 @@ struct WebView::Native
 - (void)webView:(WKWebView*)webView
     didStartProvisionalNavigation:(WKNavigation*)navigation
 {
-    if (_owner->onNavigationStarted)
-    {
-        auto url = safeString([webView.URL.absoluteString UTF8String]);
-        eacp::Threads::callAsync(
-            [owner = _owner, url]()
-            {
-                if (owner->onNavigationStarted)
-                    owner->onNavigationStarted(url);
-            });
-    }
+    auto url = safeString([webView.URL.absoluteString UTF8String]);
+    eacp::Threads::callAsync(
+        [owner = _owner, url]() { owner->onNavigationStarted(url); });
 }
 
 - (void)webView:(WKWebView*)webView didFinishNavigation:(WKNavigation*)navigation
 {
-    if (_owner->onNavigationFinished)
-    {
-        auto url = safeString([webView.URL.absoluteString UTF8String]);
-        eacp::Threads::callAsync(
-            [owner = _owner, url]()
-            {
-                if (owner->onNavigationFinished)
-                    owner->onNavigationFinished(url);
-            });
-    }
+    auto url = safeString([webView.URL.absoluteString UTF8String]);
+    eacp::Threads::callAsync(
+        [owner = _owner, url]() { owner->onNavigationFinished(url); });
 }
 
 - (void)webView:(WKWebView*)webView
     didFailProvisionalNavigation:(WKNavigation*)navigation
                        withError:(NSError*)error
 {
-    if (_owner->onNavigationFailed)
-    {
-        auto errorStr =
-            safeString([error.localizedDescription UTF8String], "Unknown error");
-        eacp::Threads::callAsync(
-            [owner = _owner, errorStr]()
-            {
-                if (owner->onNavigationFailed)
-                    owner->onNavigationFailed(errorStr);
-            });
-    }
+    auto errorStr =
+        safeString([error.localizedDescription UTF8String], "Unknown error");
+    eacp::Threads::callAsync(
+        [owner = _owner, errorStr]() { owner->onNavigationFailed(errorStr); });
 }
 
 - (void)webView:(WKWebView*)webView
     didFailNavigation:(WKNavigation*)navigation
             withError:(NSError*)error
 {
-    if (_owner && _owner->onNavigationFailed)
-    {
-        auto errorStr =
-            safeString([error.localizedDescription UTF8String], "Unknown error");
-        eacp::Threads::callAsync(
-            [owner = _owner, errorStr]()
-            {
-                if (owner->onNavigationFailed)
-                    owner->onNavigationFailed(errorStr);
-            });
-    }
+    auto errorStr =
+        safeString([error.localizedDescription UTF8String], "Unknown error");
+    eacp::Threads::callAsync(
+        [owner = _owner, errorStr]() { owner->onNavigationFailed(errorStr); });
 }
 
 - (void)observeValueForKeyPath:(NSString*)keyPath
@@ -180,17 +152,13 @@ struct WebView::Native
                         change:(NSDictionary<NSKeyValueChangeKey, id>*)change
                        context:(void*)context
 {
-    if ([keyPath isEqualToString:@"title"] && _owner && _owner->onTitleChanged)
-    {
-        auto* webView = (WKWebView*) object;
-        auto title = safeString([webView.title UTF8String]);
-        eacp::Threads::callAsync(
-            [owner = _owner, title]()
-            {
-                if (owner->onTitleChanged)
-                    owner->onTitleChanged(title);
-            });
-    }
+    if (! [keyPath isEqualToString:@"title"])
+        return;
+
+    auto* webView = (WKWebView*) object;
+    auto title = safeString([webView.title UTF8String]);
+    eacp::Threads::callAsync(
+        [owner = _owner, title]() { owner->onTitleChanged(title); });
 }
 
 - (WKWebView*)webView:(WKWebView*)webView
@@ -198,18 +166,13 @@ struct WebView::Native
                forNavigationAction:(WKNavigationAction*)navigationAction
                     windowFeatures:(WKWindowFeatures*)windowFeatures
 {
-    auto* requestedURL = navigationAction.request.URL.absoluteString;
-    auto url = safeString([requestedURL UTF8String]);
+    auto url = safeString([navigationAction.request.URL.absoluteString UTF8String]);
 
-    if (_owner && _owner->onNewWindowRequested)
-    {
-        auto handled = _owner->onNewWindowRequested(url);
-        if (handled)
-            return nil;
-    }
+    if (_owner->onNewWindowRequested(url))
+        return nil;
 
-    // Default: load the URL in the current WebView so sign-in redirects work
-    // even when the site uses window.open or target="_blank".
+    // Fall back to loading the URL inline so sign-in flows using window.open
+    // or target="_blank" work without any embedder-side wiring.
     if (navigationAction.targetFrame == nil)
         [webView loadRequest:navigationAction.request];
 
@@ -218,15 +181,7 @@ struct WebView::Native
 
 - (void)webViewDidClose:(WKWebView*)webView
 {
-    if (_owner && _owner->onClose)
-    {
-        eacp::Threads::callAsync(
-            [owner = _owner]()
-            {
-                if (owner->onClose)
-                    owner->onClose();
-            });
-    }
+    eacp::Threads::callAsync([owner = _owner]() { owner->onClose(); });
 }
 
 - (void)userContentController:(WKUserContentController*)userContentController
