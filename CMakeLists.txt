@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.31)
 project(eacp LANGUAGES C CXX)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 if(APPLE)
     enable_language(OBJCXX)
 endif()
