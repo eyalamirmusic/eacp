@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ThreadUtils.h"
 #include <winrt/Windows.System.h>
 
 namespace eacp::Threads
