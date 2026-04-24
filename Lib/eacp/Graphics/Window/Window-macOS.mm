@@ -6,6 +6,8 @@
 {
 @public
     eacp::Callback cb;
+    eacp::Graphics::ResizeCallback onResize;
+    eacp::Graphics::WillResizeCallback onWillResize;
 }
 @end
 
@@ -14,14 +16,40 @@
 {
     cb();
 }
+
+- (NSSize)windowWillResize:(NSWindow*)sender toSize:(NSSize)frameSize
+{
+    if (!onWillResize)
+        return frameSize;
+
+    auto proposedFrame = NSMakeRect(0, 0, frameSize.width, frameSize.height);
+    auto proposedContent = [sender contentRectForFrameRect:proposedFrame];
+    auto width = (int) proposedContent.size.width;
+    auto height = (int) proposedContent.size.height;
+    onWillResize(width, height);
+    proposedContent.size = NSMakeSize(width, height);
+    return [sender frameRectForContentRect:proposedContent].size;
+}
+
+- (void)windowDidResize:(NSNotification*)notification
+{
+    if (!onResize)
+        return;
+
+    auto* window = (NSWindow*) notification.object;
+    auto content = [window contentRectForFrameRect:[window frame]];
+    onResize((int) content.size.width, (int) content.size.height);
+}
 @end
 
 namespace eacp::Graphics
 {
-WindowDelegateBridge* createWindowDelegate(const Callback& cbToUse)
+WindowDelegateBridge* createWindowDelegate(const WindowOptions& options)
 {
     auto bridge = [[WindowDelegateBridge alloc] init];
-    bridge->cb = cbToUse;
+    bridge->cb = options.onQuit;
+    bridge->onResize = options.onResize;
+    bridge->onWillResize = options.onWillResize;
     return bridge;
 }
 
@@ -80,7 +108,7 @@ struct Window::Native
                                                backing:NSBackingStoreBuffered
                                                  defer:NO];
 
-        delegate = createWindowDelegate(options.onQuit);
+        delegate = createWindowDelegate(options);
 
         [getWindow() setRestorable:NO];
         [getWindow() setReleasedWhenClosed:NO];

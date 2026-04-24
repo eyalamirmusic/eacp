@@ -24,6 +24,9 @@ enum class WindowFlags
     HUDWindow
 };
 
+using ResizeCallback = std::function<void(int width, int height)>;
+using WillResizeCallback = std::function<void(int& width, int& height)>;
+
 struct WindowOptions
 {
     WindowOptions()
@@ -35,6 +38,15 @@ struct WindowOptions
     }
 
     Callback onQuit {Apps::quit};
+
+    // Called after the window has been resized. Sizes are in points and refer
+    // to the content view, not the outer frame.
+    ResizeCallback onResize {};
+
+    // Called while the user is dragging the resize corner. Receives the
+    // proposed content-view size in points; may be mutated to clamp or
+    // snap to constraints.
+    WillResizeCallback onWillResize {};
 
     int width = 640;
     int height = 400;
