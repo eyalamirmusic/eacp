@@ -5,6 +5,7 @@ target_sources(eacp-graphics PRIVATE
         Layers/LayerViews.cpp
         Layers/ShapeLayer.cpp
         Layers/TextLayer.cpp
+        Menu/Menu.cpp
         Primitives/Primitives.cpp
         View/View.cpp
         Widgets/TextInput.cpp)
@@ -32,6 +33,7 @@ if (APPLE)
         target_sources(eacp-graphics PRIVATE
                 Graphics/Keyboard-iOS.mm
                 Helpers/DisplayLink-iOS.mm
+                Menu/Menu-iOS.mm
                 View/View-iOS.mm
                 Window/Window-iOS.mm)
         target_link_libraries(eacp-graphics PRIVATE
@@ -41,6 +43,7 @@ if (APPLE)
         target_sources(eacp-graphics PRIVATE
                 Graphics/Keyboard-macOS.mm
                 Helpers/DisplayLink-macOS.mm
+                Menu/Menu-macOS.mm
                 View/View-macOS.mm
                 Window/EmbeddedView-macOS.mm
                 Window/Window-macOS.mm)
@@ -56,6 +59,7 @@ elseif (WIN32)
             Layers/Layer-Windows.cpp
             Layers/ShapeLayer-Windows.cpp
             Layers/TextLayer-Windows.cpp
+            Menu/Menu-Windows.cpp
             Primitives/Font-Windows.cpp
             Primitives/Path-Windows.cpp
             Primitives/TextMetrics-Windows.cpp

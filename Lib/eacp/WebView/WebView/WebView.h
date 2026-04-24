@@ -81,6 +81,14 @@ public:
     void evaluateJavaScript(const std::string& script,
                             JSCallback callback = nullptr);
 
+    void zoomIn();
+    void zoomOut();
+    void resetZoom();
+    void setZoom(double level);
+    double getZoom() const;
+
+    static WebView* focused();
+
     void addScriptMessageHandler(
         const std::string& name,
         std::function<void(const std::string& message)> handler);
