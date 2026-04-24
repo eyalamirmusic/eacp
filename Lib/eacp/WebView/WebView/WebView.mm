@@ -42,6 +42,12 @@ using MessageHandlerMap =
 
 namespace eacp::Graphics
 {
+struct WebView::PopupInit
+{
+    WKWebViewConfiguration* configuration = nil;
+    bool inspectable = false;
+};
+
 struct WebView::Native
 {
     Native(WebView& ownerToUse, Options options)
@@ -74,6 +80,27 @@ struct WebView::Native
         webView.get().UIDelegate = delegate.get();
 
         if (options.debugConsole)
+        {
+            if (@available(macOS 13.3, iOS 16.4, *))
+                webView.get().inspectable = YES;
+        }
+    }
+
+    Native(WebView& ownerToUse, WebView::PopupInit init)
+        : owner(ownerToUse)
+    {
+        delegate = [[WebViewDelegate alloc] init];
+        delegate.get().owner = &owner;
+        delegate.get().messageHandlers = &messageHandlers;
+
+        config = ObjC::Ptr {init.configuration, ObjC::RetainMode {}};
+
+        auto rect = CGRectMake(0, 0, 100, 100);
+        webView = [[WKWebView alloc] initWithFrame:rect configuration:config.get()];
+        webView.get().navigationDelegate = delegate.get();
+        webView.get().UIDelegate = delegate.get();
+
+        if (init.inspectable)
         {
             if (@available(macOS 13.3, iOS 16.4, *))
                 webView.get().inspectable = YES;
@@ -118,6 +145,21 @@ struct WebView::Native
     std::vector<ObjC::Ptr<ResourceSchemeHandler>> schemeHandlers;
     MessageHandlerMap messageHandlers;
     WebView& owner;
+};
+
+struct WebViewNativeAccess
+{
+    static std::unique_ptr<WebView>
+        makePopup(WKWebViewConfiguration* configuration, bool inspectable)
+    {
+        auto init = WebView::PopupInit {configuration, inspectable};
+        return std::unique_ptr<WebView> {new WebView {init}};
+    }
+
+    static WKWebView* wkWebViewOf(WebView& popup)
+    {
+        return popup.impl->webView.get();
+    }
 };
 
 } // namespace eacp::Graphics
@@ -180,11 +222,19 @@ struct WebView::Native
 {
     auto url = safeString([navigationAction.request.URL.absoluteString UTF8String]);
 
-    if (_owner->onNewWindowRequested(url))
-        return nil;
+    auto inspectable = NO;
+    if (@available(macOS 13.3, iOS 16.4, *))
+        inspectable = webView.inspectable;
 
-    // Fall back to loading the URL inline so sign-in flows using window.open
-    // or target="_blank" work without any embedder-side wiring.
+    auto popup = eacp::Graphics::WebViewNativeAccess::makePopup(configuration,
+                                                                inspectable);
+    auto* popupWKWebView = eacp::Graphics::WebViewNativeAccess::wkWebViewOf(*popup);
+
+    if (_owner->onNewWindowRequested(std::move(popup), url))
+        return popupWKWebView;
+
+    // Embedder declined. Load the URL inline so target="_blank"-style
+    // navigations still reach the user.
     if (navigationAction.targetFrame == nil)
         [webView loadRequest:navigationAction.request];
 
@@ -277,6 +327,12 @@ namespace eacp::Graphics
 void WebView::initNative(Options options)
 {
     impl = std::make_shared<Native>(*this, std::move(options));
+    impl->attachToParentView();
+}
+
+WebView::WebView(PopupInit init)
+{
+    impl = std::make_shared<Native>(*this, init);
     impl->attachToParentView();
 }
 

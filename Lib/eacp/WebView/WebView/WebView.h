@@ -34,6 +34,8 @@ std::string pathFromURL(std::string_view url,
 
 FileProvider fromResEmbed(std::string category);
 
+struct WebViewNativeAccess;
+
 class WebView : public View
 {
 public:
@@ -89,10 +91,8 @@ public:
     std::function<void(const std::string& error)> onNavigationFailed = [](auto&&) {};
     std::function<void(const std::string& title)> onTitleChanged = [](auto&&) {};
 
-    // Return true to indicate the request was handled; otherwise the URL is
-    // loaded in the current WebView so sign-in flows work out of the box.
-    std::function<bool(const std::string& url)> onNewWindowRequested = [](auto&&)
-    { return false; };
+    std::function<bool(std::unique_ptr<WebView> popup, const std::string& url)>
+        onNewWindowRequested = [](auto&&, auto&&) { return false; };
 
     std::function<void()> onClose = [] {};
 
@@ -100,7 +100,11 @@ protected:
     void resized() override;
 
 private:
+    friend struct WebViewNativeAccess;
+
     struct Native;
+    struct PopupInit;
+    explicit WebView(PopupInit init);
     void initNative(Options options);
     std::shared_ptr<Native> impl;
 };

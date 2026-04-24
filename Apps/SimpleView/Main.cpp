@@ -7,21 +7,22 @@ using namespace Graphics;
 
 struct PopupWindow final
 {
-    PopupWindow(const std::string& url, std::function<void(PopupWindow*)> onClose)
-        : closeHandler(std::move(onClose))
+    PopupWindow(std::unique_ptr<WebView> popup,
+                std::function<void(PopupWindow*)> onClose)
+        : webView(std::move(popup))
+        , closeHandler(std::move(onClose))
     {
-        webView.loadURL(url);
-        webView.onClose = [this]()
+        webView->onClose = [this]()
         {
             if (closeHandler)
                 closeHandler(this);
         };
 
-        window.setContentView(webView);
+        window.setContentView(*webView);
     }
 
+    std::unique_ptr<WebView> webView;
     std::function<void(PopupWindow*)> closeHandler;
-    WebView webView;
     Window window;
 };
 
@@ -30,9 +31,10 @@ struct ParentView final : View
     ParentView()
     {
         webView.loadURL("https://dev.tamber.ai/app/pro/sonic-atlas");
-        webView.onNewWindowRequested = [this](const std::string& url)
+        webView.onNewWindowRequested =
+            [this](std::unique_ptr<WebView> popup, const std::string&)
         {
-            openPopup(url);
+            openPopup(std::move(popup));
             return true;
         };
         addChildren({webView});
@@ -40,10 +42,10 @@ struct ParentView final : View
 
     void resized() override { scaleToFit({webView}); }
 
-    void openPopup(const std::string& url)
+    void openPopup(std::unique_ptr<WebView> popupWebView)
     {
         auto popup = std::make_unique<PopupWindow>(
-            url,
+            std::move(popupWebView),
             [this](PopupWindow* p)
             { Threads::callAsync([this, p]() { closePopup(p); }); });
         popups.push_back(std::move(popup));
