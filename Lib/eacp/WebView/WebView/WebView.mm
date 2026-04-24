@@ -27,7 +27,8 @@ class WebView;
 using MessageHandlerMap =
     std::unordered_map<std::string, std::function<void(const std::string&)>>;
 
-@interface WebViewDelegate : NSObject <WKNavigationDelegate, WKScriptMessageHandler>
+@interface WebViewDelegate
+    : NSObject <WKNavigationDelegate, WKScriptMessageHandler, WKUIDelegate>
 @property(assign) eacp::Graphics::WebView* owner;
 @property(assign) MessageHandlerMap* messageHandlers;
 @end
@@ -64,6 +65,7 @@ struct WebView::Native
         auto rect = CGRectMake(0, 0, 100, 100);
         webView = [[WKWebView alloc] initWithFrame:rect configuration:config.get()];
         webView.get().navigationDelegate = delegate.get();
+        webView.get().UIDelegate = delegate.get();
     }
     ~Native()
     {
@@ -75,6 +77,7 @@ struct WebView::Native
         }
 
         webView.get().navigationDelegate = nil;
+        webView.get().UIDelegate = nil;
     }
 
     void attachToParentView()
@@ -186,6 +189,42 @@ struct WebView::Native
             {
                 if (owner->onTitleChanged)
                     owner->onTitleChanged(title);
+            });
+    }
+}
+
+- (WKWebView*)webView:(WKWebView*)webView
+    createWebViewWithConfiguration:(WKWebViewConfiguration*)configuration
+               forNavigationAction:(WKNavigationAction*)navigationAction
+                    windowFeatures:(WKWindowFeatures*)windowFeatures
+{
+    auto* requestedURL = navigationAction.request.URL.absoluteString;
+    auto url = safeString([requestedURL UTF8String]);
+
+    if (_owner && _owner->onNewWindowRequested)
+    {
+        auto handled = _owner->onNewWindowRequested(url);
+        if (handled)
+            return nil;
+    }
+
+    // Default: load the URL in the current WebView so sign-in redirects work
+    // even when the site uses window.open or target="_blank".
+    if (navigationAction.targetFrame == nil)
+        [webView loadRequest:navigationAction.request];
+
+    return nil;
+}
+
+- (void)webViewDidClose:(WKWebView*)webView
+{
+    if (_owner && _owner->onClose)
+    {
+        eacp::Threads::callAsync(
+            [owner = _owner]()
+            {
+                if (owner->onClose)
+                    owner->onClose();
             });
     }
 }

@@ -23,8 +23,8 @@ struct ResourceResponse
 using ResourceProvider =
     std::function<std::optional<ResourceResponse>(std::string_view url)>;
 
-using FileProvider =
-    std::function<std::optional<std::span<const std::uint8_t>>(std::string_view path)>;
+using FileProvider = std::function<std::optional<std::span<const std::uint8_t>>(
+    std::string_view path)>;
 
 std::string mimeForPath(std::string_view path);
 
@@ -85,6 +85,15 @@ public:
     std::function<void(const std::string& url)> onNavigationFinished;
     std::function<void(const std::string& error)> onNavigationFailed;
     std::function<void(const std::string& title)> onTitleChanged;
+
+    // Called when the page requests a new window (window.open, target=_blank).
+    // If unset, the URL is loaded in the current WebView so sign-in flows
+    // work out of the box. Return true to indicate the request was handled
+    // and suppress the default behaviour.
+    std::function<bool(const std::string& url)> onNewWindowRequested;
+
+    // Called when scripting requests the window to close (window.close).
+    std::function<void()> onClose;
 
 protected:
     void resized() override;
