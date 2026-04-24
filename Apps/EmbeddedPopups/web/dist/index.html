@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Popups test</title>
+    <style>
+        body
+        {
+            font-family: -apple-system, sans-serif;
+            margin: 0;
+            padding: 2rem;
+            background: #1e1e28;
+            color: #e6e6f0;
+        }
+
+        h1 { margin: 0 0 1rem; font-size: 1.3rem; }
+
+        p { color: #b4b4c8; margin: 0 0 1rem; }
+
+        button
+        {
+            padding: 0.55rem 1rem;
+            border-radius: 6px;
+            border: 0;
+            background: #5a6cff;
+            color: white;
+            font-size: 0.95rem;
+            cursor: pointer;
+            margin-right: 0.5rem;
+        }
+
+        button.secondary { background: #3a3a48; }
+
+        #status
+        {
+            margin-top: 1rem;
+            font-family: monospace;
+            color: #9bffb1;
+        }
+
+        #log
+        {
+            margin-top: 0.75rem;
+            font-family: monospace;
+            font-size: 0.82rem;
+            color: #7e7e94;
+            white-space: pre-wrap;
+            max-height: 12rem;
+            overflow-y: auto;
+        }
+
+        body.child { background: #14142a; }
+        body.child h1 { color: #9bffb1; }
+    </style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+    (function ()
+    {
+        const params = new URLSearchParams(location.search);
+        const childId = params.get('child');
+        const root = document.getElementById('app');
+
+        if (childId !== null)
+        {
+            document.body.classList.add('child');
+            root.innerHTML = `
+                <h1>Child window #${childId}</h1>
+                <p>Opened at ${new Date().toLocaleTimeString()}.
+                   window.opener is ${window.opener ? 'connected' : '<b>null</b>'}.</p>
+                <button id="closeMe">Close (window.close)</button>
+                <button id="ping" class="secondary">Ping opener</button>
+            `;
+            document.getElementById('closeMe').addEventListener('click', () =>
+            {
+                window.close();
+            });
+            document.getElementById('ping').addEventListener('click', () =>
+            {
+                if (window.opener)
+                    window.opener.postMessage({ kind: 'ping', from: childId }, '*');
+            });
+            return;
+        }
+
+        let counter = 0;
+        const children = [];
+
+        root.innerHTML = `
+            <h1>Multi-window popup test</h1>
+            <p>Open several child windows, then close them — either with their button
+               (<code>window.close()</code>) or by clicking the macOS title bar X.</p>
+            <button id="open">Open child</button>
+            <button id="closeAll" class="secondary">Close all (window.close)</button>
+            <div id="status">Open children: 0</div>
+            <div id="log"></div>
+        `;
+
+        const status = document.getElementById('status');
+        const log = document.getElementById('log');
+
+        function append(msg)
+        {
+            log.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + log.textContent;
+        }
+
+        function prune()
+        {
+            for (let i = children.length - 1; i >= 0; i--)
+            {
+                if (children[i].ref.closed)
+                {
+                    append(`child #${children[i].id} detected closed`);
+                    children.splice(i, 1);
+                }
+            }
+            status.textContent = `Open children: ${children.length}`;
+        }
+
+        document.getElementById('open').addEventListener('click', () =>
+        {
+            counter++;
+            const id = counter;
+            const w = window.open('./index.html?child=' + id, '_blank');
+            if (w)
+            {
+                children.push({ id, ref: w });
+                append(`opened child #${id}`);
+            }
+            else
+            {
+                append(`window.open() returned null for child #${id} — popup blocked`);
+            }
+            prune();
+        });
+
+        document.getElementById('closeAll').addEventListener('click', () =>
+        {
+            for (const c of children)
+            {
+                try { c.ref.close(); } catch (e) { append(`close #${c.id} threw: ${e}`); }
+            }
+            prune();
+        });
+
+        window.addEventListener('message', (ev) =>
+        {
+            if (ev.data && ev.data.kind === 'ping')
+                append(`ping from child #${ev.data.from}`);
+        });
+
+        setInterval(prune, 500);
+    })();
+</script>
+</body>
+</html>

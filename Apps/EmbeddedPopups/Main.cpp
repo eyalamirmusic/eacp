@@ -1,4 +1,5 @@
 #include <eacp/WebView/WebView.h>
+#include <WebResources.h>
 
 #include <memory>
 
@@ -26,6 +27,9 @@ private:
     WindowOptions makeWindowOptions()
     {
         auto opts = WindowOptions {};
+        opts.title = "Child window";
+        opts.width = 420;
+        opts.height = 320;
         opts.onQuit = [this]() { requestClose(); };
         return opts;
     }
@@ -44,7 +48,6 @@ struct ParentView final : View
 {
     ParentView()
     {
-        webView.loadURL("https://dev.tamber.ai/app/pro/sonic-atlas");
         webView.onNewWindowRequested =
             [this](std::unique_ptr<WebView> popup, const std::string&)
         {
@@ -70,7 +73,7 @@ struct ParentView final : View
         std::erase_if(popups, [popup](const auto& p) { return p.get() == popup; });
     }
 
-    WebView webView;
+    WebView webView {embeddedOptions("EmbeddedPopupsApp")};
     std::vector<std::unique_ptr<PopupWindow>> popups;
 };
 
