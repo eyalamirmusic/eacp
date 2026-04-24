@@ -5,15 +5,12 @@ include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewVite.cmake)
 
 add_library(eacp-webview STATIC)
 
-set_default_target_setting(eacp-webview)
-add_ide_sources(eacp-webview)
-
 target_link_libraries(eacp-webview PUBLIC eacp-graphics ResEmbed)
 
-target_sources(eacp-webview PRIVATE WebView.cpp)
+target_sources(eacp-webview PRIVATE WebView/WebView-Shared.cpp)
 
 if (APPLE)
-    target_sources(eacp-webview PRIVATE WebView.mm)
+    target_sources(eacp-webview PRIVATE WebView/WebView.mm)
     target_link_libraries(eacp-webview PRIVATE
             "-framework Foundation"
             "-framework WebKit")
@@ -26,10 +23,14 @@ if (APPLE)
                 "-framework AppKit")
     endif ()
 elseif (WIN32)
-    target_sources(eacp-webview PRIVATE WebView-Windows.cpp)
+    target_sources(eacp-webview PRIVATE WebView/WebView-Windows.cpp)
 
     find_package(WebView2 REQUIRED)
 
     target_link_libraries(eacp-webview PRIVATE
             WebView2::WebView2)
 endif ()
+
+set_default_target_setting(eacp-webview)
+eacp_enable_unity_build(eacp-webview)
+add_ide_sources(eacp-webview)

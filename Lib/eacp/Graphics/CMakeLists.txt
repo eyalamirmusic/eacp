@@ -1,14 +1,26 @@
 add_library(eacp-graphics STATIC)
 
-set_default_target_setting(eacp-graphics)
-add_ide_sources(eacp-graphics)
-
-target_sources(eacp-graphics PRIVATE Graphics.cpp)
+target_sources(eacp-graphics PRIVATE
+        Layers/Layer.cpp
+        Layers/LayerViews.cpp
+        Layers/ShapeLayer.cpp
+        Layers/TextLayer.cpp
+        Primitives/Primitives.cpp
+        View/View.cpp
+        Widgets/TextInput.cpp)
 
 target_link_libraries(eacp-graphics PUBLIC eacp-core)
 
 if (APPLE)
-    target_sources(eacp-graphics PRIVATE Graphics.mm)
+    target_sources(eacp-graphics PRIVATE
+            Graphics/GraphicsContextImpl.mm
+            Layers/Layer.mm
+            Layers/ShapeLayer.mm
+            Layers/TextLayer.mm
+            Primitives/Font.mm
+            Primitives/GraphicUtils.mm
+            Primitives/Path.mm
+            Primitives/TextMetrics.mm)
     target_link_libraries(eacp-graphics PRIVATE
             "-framework Foundation"
             "-framework QuartzCore"
@@ -17,18 +29,39 @@ if (APPLE)
             "-framework CoreVideo")
 
     if (IOS)
-        target_sources(eacp-graphics PRIVATE Graphics-iOS.mm)
+        target_sources(eacp-graphics PRIVATE
+                Graphics/Keyboard-iOS.mm
+                Helpers/DisplayLink-iOS.mm
+                View/View-iOS.mm
+                Window/Window-iOS.mm)
         target_link_libraries(eacp-graphics PRIVATE
                 "-framework UIKit"
                 )
     else ()
-        target_sources(eacp-graphics PRIVATE Graphics-MacOS.mm)
+        target_sources(eacp-graphics PRIVATE
+                Graphics/Keyboard-macOS.mm
+                Helpers/DisplayLink-macOS.mm
+                View/View-macOS.mm
+                Window/EmbeddedView-macOS.mm
+                Window/Window-macOS.mm)
         target_link_libraries(eacp-graphics PRIVATE
                 "-framework Cocoa"
                 "-framework Carbon")
     endif ()
 elseif (WIN32)
-    target_sources(eacp-graphics PRIVATE Graphics-Windows.cpp)
+    target_sources(eacp-graphics PRIVATE
+            Graphics/D2DFactory-Windows.cpp
+            Graphics/Keyboard-Windows.cpp
+            Helpers/DisplayLink-Windows.cpp
+            Layers/Layer-Windows.cpp
+            Layers/ShapeLayer-Windows.cpp
+            Layers/TextLayer-Windows.cpp
+            Primitives/Font-Windows.cpp
+            Primitives/Path-Windows.cpp
+            Primitives/TextMetrics-Windows.cpp
+            View/View-Windows.cpp
+            Window/EmbeddedView-Windows.cpp
+            Window/Window-Windows.cpp)
 
     target_link_libraries(eacp-graphics PUBLIC eacp-core PRIVATE
             d2d1
@@ -41,3 +74,7 @@ elseif (WIN32)
             windowsapp
             runtimeobject)
 endif ()
+
+set_default_target_setting(eacp-graphics)
+eacp_enable_unity_build(eacp-graphics)
+add_ide_sources(eacp-graphics)

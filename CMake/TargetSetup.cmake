@@ -18,18 +18,20 @@ function(set_default_target_setting target)
     endif ()
 endfunction()
 
+function(eacp_enable_unity_build target)
+    if (EACP_UNITY_BUILD)
+        set_target_properties(${target} PROPERTIES UNITY_BUILD ON)
+    endif ()
+endfunction()
+
 function(add_ide_sources target)
-    file(GLOB_RECURSE ALL_SOURCES
-            "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/*.mm"
+    file(GLOB_RECURSE ALL_HEADERS
             "${CMAKE_CURRENT_SOURCE_DIR}/*.h"
     )
 
-    list(FILTER ALL_SOURCES EXCLUDE REGEX "^${CMAKE_CURRENT_SOURCE_DIR}/[^/]+\\.(cpp|mm)$")
-
-    if (ALL_SOURCES)
-        target_sources(${target} PRIVATE ${ALL_SOURCES})
-        set_source_files_properties(${ALL_SOURCES} PROPERTIES HEADER_FILE_ONLY TRUE)
+    if (ALL_HEADERS)
+        target_sources(${target} PRIVATE ${ALL_HEADERS})
+        set_source_files_properties(${ALL_HEADERS} PROPERTIES HEADER_FILE_ONLY TRUE)
     endif ()
 endfunction()
 

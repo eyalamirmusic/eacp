@@ -25,8 +25,9 @@ Output executables:
 - `build/Apps/Console/Console` (command-line app)
 
 ## Architecture
-Files are added in a unity-build style, for example new Graphics files are added
-to Graphics.cpp or Graphics.mm and NOT directly to the CMakeLists.txt
+New source files are added directly to the module's CMakeLists.txt under the
+appropriate `target_sources(...)` call. Platform-specific sources go inside the
+matching `APPLE`/`IOS`/`WIN32` branch.
 
 ### Core Library (`Lib/eacp/Core`)
 
