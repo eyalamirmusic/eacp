@@ -5,6 +5,8 @@ add_ide_sources(eacp-webview)
 
 target_link_libraries(eacp-webview PUBLIC eacp-graphics)
 
+target_sources(eacp-webview PRIVATE WebView.cpp)
+
 if (APPLE)
     target_sources(eacp-webview PRIVATE WebView.mm)
     target_link_libraries(eacp-webview PRIVATE

@@ -1,64 +1,38 @@
-#include <eacp/Core/Shell/Shell.h>
 #include <eacp/WebView/WebView.h>
 
-#include <memory>
-#include <vector>
 #include "Content.hpp"
 
 using namespace eacp;
 using namespace Graphics;
 
-
-struct WebViewContainer final : View
-{
-    WebViewContainer() { addChildren({webView}); }
-    void resized() override { scaleToFit({webView}); }
-    WebView webView;
-};
-
-struct PopupWindow
-{
-    PopupWindow() : window(popupOptions()) { window.setContentView(view); }
-
-    static WindowOptions popupOptions()
-    {
-        WindowOptions options;
-        options.onClose = []() {};
-        return options;
-    }
-
-    WebViewContainer view;
-    Window window;
-};
-
 struct DemoApp
 {
     DemoApp()
+        : main(windows.emplaceBackWebView())
     {
-        mainWindow.setContentView(mainView);
-        mainView.webView.loadHTML(kHomePage, "https://demo.eacp.local/");
+        main.webView.loadHTML(kHomePage, "https://demo.eacp.local/");
+        main.window.setTitle("Demo App");
 
-        mainView.webView.onNavigationDecision =
-            [](const NavigationRequest& request)
+        main.webView.onNavigationDecision = [](const NavigationRequest& request)
         {
             if (isSameOrigin(request.url))
-            {
                 return NavigationDecision::Allow;
-            }
+
+            // or do some other checks, e.g. if the URL is in a whitelist of
+            // allowed external URLs
+
             return NavigationDecision::OpenExternally;
         };
 
-        mainView.webView.onNewWindowRequested =
-            [this](const NewWindowRequest&) -> WebView*
+        // close children when the parent closes
+        main.window.onWillClose = [this]
         {
-            popups.push_back(std::make_unique<PopupWindow>());
-            return &popups.back()->view.webView;
+            windows.closeChildrenOf(main.window);
         };
     }
 
-    WebViewContainer mainView;
-    Window mainWindow;
-    std::vector<std::unique_ptr<PopupWindow>> popups;
+    WindowPool windows;
+    WindowedWebView main;
 };
 
 int main()

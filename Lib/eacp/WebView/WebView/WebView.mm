@@ -6,6 +6,7 @@
 #import <AppKit/AppKit.h>
 #endif
 #include "WebView.h"
+#include "WindowPool.h"
 
 #include <eacp/Core/ObjC/Strings.h>
 #include <eacp/Core/Shell/Shell.h>
@@ -282,6 +283,12 @@ WebView::WebView()
     : impl(*this)
 {
     impl->attachToParentView();
+    onNewWindowRequested = [](const NewWindowRequest&) -> WebView*
+    {
+        if (auto* pool = WindowPool::active())
+            return &pool->emplaceBackWebView();
+        return nullptr;
+    };
 }
 
 WebView::~WebView()

@@ -1,4 +1,5 @@
 #include "WebView.h"
+#include "WindowPool.h"
 #include <eacp/Graphics/Helpers/StringUtils-Windows.h>
 
 #include <unordered_map>
@@ -336,6 +337,12 @@ HWND findParentHWND(View*)
 WebView::WebView()
     : impl(*this)
 {
+    onNewWindowRequested = [](const NewWindowRequest&) -> WebView*
+    {
+        if (auto* pool = WindowPool::active())
+            return &pool->emplaceBackWebView();
+        return nullptr;
+    };
 }
 
 WebView::~WebView()

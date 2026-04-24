@@ -138,9 +138,6 @@ void* Window::getHandle()
     return impl->getWindow();
 }
 
-Window::~Window()
-{
-    options.onQuit();
-}
+Window::~Window() = default;
 
 } // namespace eacp::Graphics

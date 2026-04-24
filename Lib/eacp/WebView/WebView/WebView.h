@@ -74,4 +74,5 @@ private:
     struct Native;
     Pimpl<Native> impl;
 };
+
 } // namespace eacp::Graphics
