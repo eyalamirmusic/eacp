@@ -4,6 +4,7 @@
 #include <ResEmbed/ResEmbed.h>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -38,22 +39,24 @@ class WebView : public View
 public:
     struct Options
     {
-        std::unordered_map<std::string, ResourceProvider> schemes;
-    };
+        struct Embedded
+        {
+            bool enabled = false;
+            FileProvider provider;
+            std::string scheme = "app";
+            std::string host = "local";
+            std::string indexFile = "index.html";
+            std::string devServerURL;
+            bool autoLoad = true;
+        };
 
-    struct EmbeddedOptions
-    {
-        FileProvider provider;
-        std::string scheme = "app";
-        std::string host = "local";
-        std::string indexFile = "index.html";
-        std::string devServerURL;
-        bool autoLoad = true;
+        std::unordered_map<std::string, ResourceProvider> schemes;
+        Embedded embedded;
+        bool debugConsole = true;
     };
 
     WebView();
     explicit WebView(Options options);
-    explicit WebView(EmbeddedOptions options);
     ~WebView() override;
 
     void loadURL(const std::string& url);
@@ -98,15 +101,17 @@ protected:
 
 private:
     struct Native;
-    Pimpl<Native> impl;
+    void initNative(Options options);
+    std::shared_ptr<Native> impl;
 };
 
-inline WebView::EmbeddedOptions embeddedOptions(std::string category)
+inline WebView::Options embeddedOptions(std::string category)
 {
-    auto options = WebView::EmbeddedOptions {};
-    options.provider = fromResEmbed(std::move(category));
+    auto options = WebView::Options {};
+    options.embedded.enabled = true;
+    options.embedded.provider = fromResEmbed(std::move(category));
 #ifdef EACP_WEBVIEW_DEV_SERVER_URL
-    options.devServerURL = EACP_WEBVIEW_DEV_SERVER_URL;
+    options.embedded.devServerURL = EACP_WEBVIEW_DEV_SERVER_URL;
 #endif
     return options;
 }

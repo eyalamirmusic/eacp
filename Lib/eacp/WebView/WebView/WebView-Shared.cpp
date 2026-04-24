@@ -80,12 +80,13 @@ ResourceProvider makeResourceProviderFromFiles(FileProvider provider,
     };
 }
 
-WebView::Options makeOptionsFromEmbedded(const WebView::EmbeddedOptions& embedded)
+void applyEmbeddedSchemes(WebView::Options& options)
 {
-    WebView::Options options;
-    options.schemes[embedded.scheme] =
-        makeResourceProviderFromFiles(embedded.provider, embedded.indexFile);
-    return options;
+    if (! options.embedded.enabled || ! options.embedded.devServerURL.empty())
+        return;
+
+    options.schemes[options.embedded.scheme] = makeResourceProviderFromFiles(
+        options.embedded.provider, options.embedded.indexFile);
 }
 } // namespace
 
@@ -94,16 +95,18 @@ WebView::WebView()
 {
 }
 
-WebView::WebView(EmbeddedOptions options)
-    : WebView(options.devServerURL.empty() ? makeOptionsFromEmbedded(options)
-                                           : Options {})
+WebView::WebView(Options options)
 {
-    if (! options.autoLoad)
+    applyEmbeddedSchemes(options);
+    auto embedded = options.embedded;
+    initNative(std::move(options));
+
+    if (! embedded.enabled || ! embedded.autoLoad)
         return;
 
-    if (! options.devServerURL.empty())
-        loadURL(options.devServerURL);
+    if (! embedded.devServerURL.empty())
+        loadURL(embedded.devServerURL);
     else
-        loadURL(options.scheme + "://" + options.host + "/" + options.indexFile);
+        loadURL(embedded.scheme + "://" + embedded.host + "/" + embedded.indexFile);
 }
 } // namespace eacp::Graphics

@@ -53,6 +53,12 @@ struct WebView::Native
 
         config = [[WKWebViewConfiguration alloc] init];
 
+        if (options.debugConsole)
+        {
+            [config.get().preferences setValue:@YES
+                                        forKey:@"developerExtrasEnabled"];
+        }
+
         for (auto& [scheme, provider]: options.schemes)
         {
             auto handler = ObjC::Ptr {[[ResourceSchemeHandler alloc] init]};
@@ -66,6 +72,12 @@ struct WebView::Native
         webView = [[WKWebView alloc] initWithFrame:rect configuration:config.get()];
         webView.get().navigationDelegate = delegate.get();
         webView.get().UIDelegate = delegate.get();
+
+        if (options.debugConsole)
+        {
+            if (@available(macOS 13.3, iOS 16.4, *))
+                webView.get().inspectable = YES;
+        }
     }
     ~Native()
     {
@@ -262,9 +274,9 @@ struct WebView::Native
 
 namespace eacp::Graphics
 {
-WebView::WebView(Options options)
-    : impl(*this, std::move(options))
+void WebView::initNative(Options options)
 {
+    impl = std::make_shared<Native>(*this, std::move(options));
     impl->attachToParentView();
 }
 

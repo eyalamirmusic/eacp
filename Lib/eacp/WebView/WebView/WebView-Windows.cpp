@@ -148,6 +148,7 @@ struct WebView::Native
                                 controller = ctrl;
                                 controller->get_CoreWebView2(&webView);
 
+                                applySettings();
                                 setupEventHandlers();
                                 updateBounds();
 
@@ -165,6 +166,20 @@ struct WebView::Native
         if (FAILED(hr))
         {
             initInProgress = false;
+        }
+    }
+
+    void applySettings()
+    {
+        if (!webView)
+            return;
+
+        ComPtr<ICoreWebView2Settings> settings;
+        webView->get_Settings(&settings);
+
+        if (settings)
+        {
+            settings->put_AreDevToolsEnabled(options.debugConsole ? TRUE : FALSE);
         }
     }
 
@@ -329,9 +344,9 @@ HWND findParentHWND(View*)
     return FindWindowW(L"EACPWindowClass", nullptr);
 }
 
-WebView::WebView(Options options)
-    : impl(*this, std::move(options))
+void WebView::initNative(Options options)
 {
+    impl = std::make_shared<Native>(*this, std::move(options));
 }
 
 WebView::~WebView()
