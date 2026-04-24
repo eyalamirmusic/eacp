@@ -3,7 +3,6 @@ target_include_directories(eacp-core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../../)
 
 target_sources(eacp-core PRIVATE
         App/App.cpp
-        Network/Http.cpp
         Threads/EventLoop.cpp
         Threads/TaskSemaphore.cpp
         Utils/Files.cpp
@@ -12,7 +11,6 @@ target_sources(eacp-core PRIVATE
 
 if (APPLE)
     target_sources(eacp-core PRIVATE
-            Network/Http.mm
             ObjC/AutoReleasePool.mm
             ObjC/Strings.mm
             Threads/EventLoop.mm
@@ -31,7 +29,6 @@ if (APPLE)
     endif ()
 elseif (WIN32)
     target_sources(eacp-core PRIVATE
-            Network/Http-Windows.cpp
             Threads/EventLoop-Windows.cpp
             Threads/ThreadUtils-Windows.cpp
             Threads/Timer-Windows.cpp

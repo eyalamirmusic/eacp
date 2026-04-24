@@ -1,5 +1,5 @@
 add_executable(Http Main.cpp)
-target_link_libraries(Http PRIVATE eacp-core)
+target_link_libraries(Http PRIVATE eacp-network)
 
 set(BUNDLE_ID "com.eacp.httprequest")
 

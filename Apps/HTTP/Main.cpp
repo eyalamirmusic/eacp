@@ -1,4 +1,5 @@
-#include <eacp/Core/Core.h>
+#include <eacp/Core/Utils/Logging.h>
+#include <eacp/Network/Http.h>
 
 using namespace eacp;
 

@@ -1,9 +1,9 @@
 #import <Foundation/Foundation.h>
 #include "Http.h"
-#include "../ObjC/ObjC.h"
-#include "../ObjC/AutoReleasePool.h"
-#include "../ObjC/Strings.h"
-#include "../Threads/TaskSemaphore.h"
+#include <eacp/Core/ObjC/ObjC.h>
+#include <eacp/Core/ObjC/AutoReleasePool.h>
+#include <eacp/Core/ObjC/Strings.h>
+#include <eacp/Core/Threads/TaskSemaphore.h>
 #include <stdexcept>
 
 namespace eacp::HTTP

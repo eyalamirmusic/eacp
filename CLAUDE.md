@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-eacp is a macOS-focused GUI/graphics framework written in modern C++20 with Objective-C++ interop. It provides abstractions for application lifecycle, graphics rendering (Core Graphics), threading (CFRunLoop), and networking. The framework is self-contained with no third-party dependencies beyond macOS system frameworks.
+eacp is a macOS + Windows-focused GUI/graphics framework written in modern C++20 with Objective-C++ interop. It provides abstractions for application lifecycle, graphics rendering (Core Graphics), threading (CFRunLoop), and networking. The framework is self-contained with no third-party dependencies beyond macOS system frameworks.
 
 ## Build Commands
 
 ```bash
 # Configure
-cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
 
 # Build all targets
 cmake --build build
