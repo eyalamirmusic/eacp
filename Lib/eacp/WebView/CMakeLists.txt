@@ -7,7 +7,9 @@ add_library(eacp-webview STATIC)
 
 target_link_libraries(eacp-webview PUBLIC eacp-graphics ResEmbed)
 
-target_sources(eacp-webview PRIVATE WebView/WebView-Shared.cpp)
+target_sources(eacp-webview PRIVATE
+        WebView/WebView-Shared.cpp
+        WebView/MenuHelpers.cpp)
 
 if (APPLE)
     target_sources(eacp-webview PRIVATE WebView/WebView.mm)
