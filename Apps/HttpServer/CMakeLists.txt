@@ -1,5 +1,5 @@
 add_executable(HttpServer Main.cpp)
-target_link_libraries(HttpServer PRIVATE eacp-server)
+target_link_libraries(HttpServer PRIVATE eacp-network)
 
 set(BUNDLE_ID "com.eacp.httpserver")
 

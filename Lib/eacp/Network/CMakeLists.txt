@@ -1,18 +1,20 @@
 add_library(eacp-network STATIC)
 
 target_sources(eacp-network PRIVATE
-        Http.cpp)
+        HTTP/Http.cpp)
 
 target_link_libraries(eacp-network PUBLIC eacp-core)
 
 if (APPLE)
     target_sources(eacp-network PRIVATE
-            Http.mm)
+            HTTP/Http.mm
+            HTTPServer/HttpServer.mm)
     target_link_libraries(eacp-network PRIVATE
-            "-framework Foundation")
+            "-framework Foundation"
+            "-framework CoreFoundation")
 elseif (WIN32)
     target_sources(eacp-network PRIVATE
-            Http-Windows.cpp)
+            HTTP/Http-Windows.cpp)
     target_link_libraries(eacp-network PRIVATE windowsapp)
 endif ()
 
