@@ -1,9 +1,11 @@
 #pragma once
 
 #include <eacp/Graphics/Graphics.h>
+#include <ResEmbed/ResEmbed.h>
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -21,6 +23,16 @@ struct ResourceResponse
 using ResourceProvider =
     std::function<std::optional<ResourceResponse>(std::string_view url)>;
 
+using FileProvider =
+    std::function<std::optional<std::span<const std::uint8_t>>(std::string_view path)>;
+
+std::string mimeForPath(std::string_view path);
+
+std::string pathFromURL(std::string_view url,
+                        std::string_view indexFile = "index.html");
+
+FileProvider fromResEmbed(std::string category);
+
 class WebView : public View
 {
 public:
@@ -29,8 +41,18 @@ public:
         std::unordered_map<std::string, ResourceProvider> schemes;
     };
 
+    struct EmbeddedOptions
+    {
+        FileProvider provider;
+        std::string scheme = "app";
+        std::string host = "local";
+        std::string indexFile = "index.html";
+        bool autoLoad = true;
+    };
+
     WebView();
     explicit WebView(Options options);
+    explicit WebView(EmbeddedOptions options);
     ~WebView() override;
 
     void loadURL(const std::string& url);

@@ -1,13 +1,5 @@
-include(FetchContent)
-
-FetchContent_Declare(ResEmbed
-        GIT_REPOSITORY https://github.com/eyalamirmusic/ResEmbed.git
-        GIT_TAG main)
-
-FetchContent_MakeAvailable(ResEmbed)
-
 add_executable(WebViewEmbed Main.cpp)
-target_link_libraries(WebViewEmbed PRIVATE eacp-webview ResEmbed)
+target_link_libraries(WebViewEmbed PRIVATE eacp-webview)
 
 res_embed_add(WebViewEmbed
         DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/web

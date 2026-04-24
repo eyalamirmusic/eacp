@@ -1,9 +1,12 @@
+include(FetchContent)
+
+find_package(ResEmbed REQUIRED)
 add_library(eacp-webview STATIC)
 
 set_default_target_setting(eacp-webview)
 add_ide_sources(eacp-webview)
 
-target_link_libraries(eacp-webview PUBLIC eacp-graphics)
+target_link_libraries(eacp-webview PUBLIC eacp-graphics ResEmbed)
 
 if (APPLE)
     target_sources(eacp-webview PRIVATE WebView.mm)
