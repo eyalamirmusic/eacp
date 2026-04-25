@@ -34,11 +34,18 @@ using MessageHandlerMap =
 @property(assign) MessageHandlerMap* messageHandlers;
 @end
 
+@interface ResourceSchemeHandler : NSObject <WKURLSchemeHandler>
+{
+@public
+    eacp::Graphics::ResourceProvider provider;
+}
+@end
+
 namespace eacp::Graphics
 {
 struct WebView::Native
 {
-    Native(WebView& ownerToUse)
+    Native(WebView& ownerToUse, Options options)
         : owner(ownerToUse)
     {
         delegate = [[WebViewDelegate alloc] init];
@@ -46,6 +53,15 @@ struct WebView::Native
         delegate.get().messageHandlers = &messageHandlers;
 
         config = [[WKWebViewConfiguration alloc] init];
+
+        for (auto& [scheme, provider]: options.schemes)
+        {
+            auto handler = ObjC::Ptr {[[ResourceSchemeHandler alloc] init]};
+            handler.get()->provider = std::move(provider);
+            [config.get() setURLSchemeHandler:handler.get()
+                                 forURLScheme:Strings::toNSString(scheme)];
+            schemeHandlers.push_back(std::move(handler));
+        }
 
         auto rect = CGRectMake(0, 0, 100, 100);
         webView = [[WKWebView alloc] initWithFrame:rect configuration:config.get()];
@@ -87,6 +103,7 @@ struct WebView::Native
     ObjC::Ptr<WKWebView> webView;
     ObjC::Ptr<WebViewDelegate> delegate;
     ObjC::Ptr<WKWebViewConfiguration> config;
+    std::vector<ObjC::Ptr<ResourceSchemeHandler>> schemeHandlers;
     MessageHandlerMap messageHandlers;
     WebView& owner;
 };
@@ -277,10 +294,57 @@ struct WebView::Native
 
 @end
 
+@implementation ResourceSchemeHandler
+
+- (void)webView:(WKWebView*)webView
+    startURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
+{
+    auto* url = urlSchemeTask.request.URL.absoluteString;
+    auto urlStr = std::string([url UTF8String]);
+
+    auto response = provider ? provider(urlStr) : std::nullopt;
+
+    if (!response)
+    {
+        auto* error =
+            [NSError errorWithDomain:NSURLErrorDomain
+                                code:NSURLErrorResourceUnavailable
+                            userInfo:nil];
+        [urlSchemeTask didFailWithError:error];
+        return;
+    }
+
+    auto* mime = eacp::Strings::toNSString(response->mimeType);
+    auto* httpResponse =
+        [[NSHTTPURLResponse alloc] initWithURL:urlSchemeTask.request.URL
+                                    statusCode:response->statusCode
+                                   HTTPVersion:@"HTTP/1.1"
+                                  headerFields:@{@"Content-Type": mime}];
+
+    [urlSchemeTask didReceiveResponse:httpResponse];
+
+    auto* data = [NSData dataWithBytes:response->data.data()
+                                length:response->data.size()];
+    [urlSchemeTask didReceiveData:data];
+    [urlSchemeTask didFinish];
+}
+
+- (void)webView:(WKWebView*)webView
+    stopURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
+{
+}
+
+@end
+
 namespace eacp::Graphics
 {
 WebView::WebView()
-    : impl(*this)
+    : WebView(Options {})
+{
+}
+
+WebView::WebView(Options options)
+    : impl(*this, std::move(options))
 {
     impl->attachToParentView();
     onNewWindowRequested = [](const NewWindowRequest&) -> WebView*

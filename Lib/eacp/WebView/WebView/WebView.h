@@ -1,33 +1,36 @@
 #pragma once
 
 #include <eacp/Graphics/Graphics.h>
+#include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
 
 namespace eacp::Graphics
 {
-
-struct NavigationRequest
+struct ResourceResponse
 {
-    std::string url;
+    std::string mimeType;
+    std::vector<std::uint8_t> data;
+    int statusCode = 200;
 };
 
-enum class NavigationDecision
-{
-    Allow,
-    Block,
-    OpenExternally,
-};
-
-struct NewWindowRequest
-{
-    std::string url;
-};
+using ResourceProvider =
+    std::function<std::optional<ResourceResponse>(std::string_view url)>;
 
 class WebView : public View
 {
 public:
+    struct Options
+    {
+        std::unordered_map<std::string, ResourceProvider> schemes;
+    };
+
     WebView();
+    explicit WebView(Options options);
     ~WebView() override;
 
     void loadURL(const std::string& url);
@@ -55,17 +58,10 @@ public:
         std::function<void(const std::string& message)> handler);
     void removeScriptMessageHandler(const std::string& name);
 
-    using NewWindowHandler =
-        std::function<WebView*(const NewWindowRequest& request)>;
-
     std::function<void(const std::string& url)> onNavigationStarted;
     std::function<void(const std::string& url)> onNavigationFinished;
     std::function<void(const std::string& error)> onNavigationFailed;
     std::function<void(const std::string& title)> onTitleChanged;
-
-    std::function<NavigationDecision(const NavigationRequest& request)>
-        onNavigationDecision;
-    NewWindowHandler onNewWindowRequested;
 
 protected:
     void resized() override;
@@ -74,5 +70,4 @@ private:
     struct Native;
     Pimpl<Native> impl;
 };
-
 } // namespace eacp::Graphics

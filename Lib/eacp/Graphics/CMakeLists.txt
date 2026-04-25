@@ -16,7 +16,7 @@ if (APPLE)
             "-framework CoreText"
             "-framework CoreVideo")
 
-    if (EACP_IOS)
+    if (IOS)
         target_sources(eacp-graphics PRIVATE Graphics-iOS.mm)
         target_link_libraries(eacp-graphics PRIVATE
                 "-framework UIKit"

@@ -5,28 +5,23 @@
 @interface WindowDelegateBridge : NSObject <NSWindowDelegate>
 {
 @public
-    eacp::Callback onClose;
-    eacp::Callback onQuit;
+    eacp::Callback cb;
 }
 @end
 
 @implementation WindowDelegateBridge
 - (void)windowWillClose:(NSNotification *)notification
 {
-    if (onClose)
-        onClose();
-    else if (onQuit)
-        onQuit();
+    cb();
 }
 @end
 
 namespace eacp::Graphics
 {
-WindowDelegateBridge* createWindowDelegate(const WindowOptions& options)
+WindowDelegateBridge* createWindowDelegate(const Callback& cbToUse)
 {
     auto bridge = [[WindowDelegateBridge alloc] init];
-    bridge->onClose = options.onClose;
-    bridge->onQuit = options.onQuit;
+    bridge->cb = cbToUse;
     return bridge;
 }
 
@@ -85,7 +80,7 @@ struct Window::Native
                                                backing:NSBackingStoreBuffered
                                                  defer:NO];
 
-        delegate = createWindowDelegate(options);
+        delegate = createWindowDelegate(options.onQuit);
 
         [getWindow() setRestorable:NO];
         [getWindow() setReleasedWhenClosed:NO];
@@ -138,6 +133,14 @@ void* Window::getHandle()
     return impl->getWindow();
 }
 
-Window::~Window() = default;
+void* Window::getContentViewHandle()
+{
+    return [impl->getWindow() contentView];
+}
+
+Window::~Window()
+{
+    options.onQuit();
+}
 
 } // namespace eacp::Graphics

@@ -1,42 +1,32 @@
 #include <eacp/WebView/WebView.h>
 
-#include "Content.hpp"
-
 using namespace eacp;
 using namespace Graphics;
 
-struct DemoApp
+struct ParentView final : View
 {
-    DemoApp()
-        : main(windows.emplaceBackWebView())
+    ParentView()
     {
-        main.webView.loadHTML(kHomePage, "https://demo.eacp.local/");
-        main.window.setTitle("Demo App");
-
-        main.webView.onNavigationDecision = [](const NavigationRequest& request)
-        {
-            if (isSameOrigin(request.url))
-                return NavigationDecision::Allow;
-
-            // or do some other checks, e.g. if the URL is in a whitelist of
-            // allowed external URLs
-
-            return NavigationDecision::OpenExternally;
-        };
-
-        // close children when the parent closes
-        main.window.onWillClose = [this]
-        {
-            windows.closeChildrenOf(main.window);
-        };
+        webView.loadURL("https://dev.tamber.ai/app/pro/sonic-atlas");
+        addChildren({webView});
     }
 
-    WindowPool windows;
-    WindowedWebView main;
+    void resized() override { scaleToFit({webView}); }
+
+    WebView webView;
+};
+
+struct MyApp
+{
+    MyApp() { window.setContentView(parentView); }
+
+    ParentView parentView;
+    Window window;
 };
 
 int main()
 {
-    eacp::Apps::run<DemoApp>();
+    eacp::Apps::run<MyApp>();
+
     return 0;
 }

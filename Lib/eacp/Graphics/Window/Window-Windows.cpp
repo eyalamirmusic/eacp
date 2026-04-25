@@ -604,6 +604,11 @@ void* Window::getHandle()
     return impl->hwnd;
 }
 
+void* Window::getContentViewHandle()
+{
+    return impl->hwnd;
+}
+
 void Window::setContentView(View& view)
 {
     impl->setContentView(&view);
