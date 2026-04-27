@@ -68,13 +68,13 @@ public:
     bool operator==(T* other) const { return ptr == other; }
     bool operator!=(T* other) const { return !operator==(other); }
 
-    bool operator==(const Ptr& other) const { return ptr != other.ptr; }
-    bool operator!=(const Ptr& other) const = default;
+    bool operator==(const Ptr& other) const { return ptr == other.ptr; }
+    bool operator!=(const Ptr& other) const { return !operator==(other); }
 
     template <typename A>
     bool isKindOfClass() const
     {
-        return [ptr isKindOfClass:[NSHTTPURLResponse class]];
+        return [ptr isKindOfClass:[A class]];
     }
 
     T* get() { return ptr; }
@@ -108,6 +108,6 @@ Ptr<T> attachPtr(T* object)
 template <typename T>
 Ptr<T> makePtr()
 {
-    return attachPtr(createNew<T>());
+    return Ptr<T> {createNew<T>()};
 }
 } // namespace eacp::ObjC
