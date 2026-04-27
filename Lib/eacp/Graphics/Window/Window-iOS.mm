@@ -1,4 +1,5 @@
 #include "Window.h"
+#include "../Graphics/Keyboard.h"
 #include "../Primitives/GraphicUtils.h"
 #import <UIKit/UIKit.h>
 
@@ -97,9 +98,36 @@ void* Window::getHandle()
     return impl->getWindow();
 }
 
-Window::~Window()
+Window::~Window() = default;
+
+bool Window::isKeyPressed(uint16_t virtualKeyCode) const
 {
-    options.onQuit();
+    return Keyboard::isKeyPressed(virtualKeyCode);
+}
+
+bool Window::isShiftPressed() const
+{
+    return Keyboard::isShiftPressed();
+}
+
+bool Window::isControlPressed() const
+{
+    return Keyboard::isControlPressed();
+}
+
+bool Window::isAltPressed() const
+{
+    return Keyboard::isAltPressed();
+}
+
+bool Window::isCommandPressed() const
+{
+    return Keyboard::isCommandPressed();
+}
+
+ModifierKeys Window::getModifiers() const
+{
+    return Keyboard::getModifiers();
 }
 
 } // namespace eacp::Graphics

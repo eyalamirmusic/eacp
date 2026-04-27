@@ -104,13 +104,14 @@ public:
 
     std::function<void()> onClose = [] {};
 
+    struct Native;
+
 protected:
     void resized() override;
 
 private:
     friend struct WebViewNativeAccess;
 
-    struct Native;
     struct PopupInit;
     explicit WebView(PopupInit init);
     void initNative(Options options);

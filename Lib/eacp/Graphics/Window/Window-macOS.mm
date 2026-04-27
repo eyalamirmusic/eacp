@@ -1,4 +1,5 @@
 #include "Window.h"
+#include "../Graphics/Keyboard.h"
 #include "../Primitives/GraphicUtils.h"
 #import <Cocoa/Cocoa.h>
 
@@ -47,7 +48,7 @@ namespace eacp::Graphics
 WindowDelegateBridge* createWindowDelegate(const WindowOptions& options)
 {
     auto bridge = [[WindowDelegateBridge alloc] init];
-    bridge->cb = options.onQuit;
+    bridge->cb = options.effectiveOnQuit();
     bridge->onResize = options.onResize;
     bridge->onWillResize = options.onWillResize;
     return bridge;
@@ -166,9 +167,36 @@ void* Window::getContentViewHandle()
     return [impl->getWindow() contentView];
 }
 
-Window::~Window()
+Window::~Window() = default;
+
+bool Window::isKeyPressed(uint16_t virtualKeyCode) const
 {
-    options.onQuit();
+    return Keyboard::isKeyPressed(virtualKeyCode);
+}
+
+bool Window::isShiftPressed() const
+{
+    return Keyboard::isShiftPressed();
+}
+
+bool Window::isControlPressed() const
+{
+    return Keyboard::isControlPressed();
+}
+
+bool Window::isAltPressed() const
+{
+    return Keyboard::isAltPressed();
+}
+
+bool Window::isCommandPressed() const
+{
+    return Keyboard::isCommandPressed();
+}
+
+ModifierKeys Window::getModifiers() const
+{
+    return Keyboard::getModifiers();
 }
 
 } // namespace eacp::Graphics

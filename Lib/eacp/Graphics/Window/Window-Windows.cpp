@@ -55,7 +55,7 @@ struct Window::Native
     Native(Window* owner, const WindowOptions& options)
         : ownerWindow(owner)
         , contentView(nullptr)
-        , quitCallback(options.onQuit)
+        , quitCallback(options.effectiveOnQuit())
     {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         keyState.reset();

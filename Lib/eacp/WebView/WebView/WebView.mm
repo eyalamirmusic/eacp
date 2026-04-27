@@ -30,7 +30,10 @@ using MessageHandlerMap =
 
 @interface WebViewDelegate
     : NSObject <WKNavigationDelegate, WKScriptMessageHandler, WKUIDelegate>
-@property(assign) eacp::Graphics::WebView* owner;
+{
+@public
+    std::weak_ptr<eacp::Graphics::WebView::Native> nativeWeak;
+}
 @property(assign) MessageHandlerMap* messageHandlers;
 @end
 
@@ -55,7 +58,6 @@ struct WebView::Native
         : owner(ownerToUse)
     {
         delegate = [[WebViewDelegate alloc] init];
-        delegate.get().owner = &owner;
         delegate.get().messageHandlers = &messageHandlers;
 
         config = [[WKWebViewConfiguration alloc] init];
@@ -97,7 +99,6 @@ struct WebView::Native
         : owner(ownerToUse)
     {
         delegate = [[WebViewDelegate alloc] init];
-        delegate.get().owner = &owner;
         delegate.get().messageHandlers = &messageHandlers;
 
         config = ObjC::Ptr {init.configuration, ObjC::RetainMode {}};
@@ -188,15 +189,19 @@ struct WebViewNativeAccess
     didStartProvisionalNavigation:(WKNavigation*)navigation
 {
     auto url = safeString([webView.URL.absoluteString UTF8String]);
-    eacp::Threads::callAsync(
-        [owner = _owner, url]() { owner->onNavigationStarted(url); });
+    eacp::Threads::callAsync([weak = nativeWeak, url]() {
+        if (auto native = weak.lock())
+            native->owner.onNavigationStarted(url);
+    });
 }
 
 - (void)webView:(WKWebView*)webView didFinishNavigation:(WKNavigation*)navigation
 {
     auto url = safeString([webView.URL.absoluteString UTF8String]);
-    eacp::Threads::callAsync(
-        [owner = _owner, url]() { owner->onNavigationFinished(url); });
+    eacp::Threads::callAsync([weak = nativeWeak, url]() {
+        if (auto native = weak.lock())
+            native->owner.onNavigationFinished(url);
+    });
 }
 
 - (void)webView:(WKWebView*)webView
@@ -205,8 +210,10 @@ struct WebViewNativeAccess
 {
     auto errorStr =
         safeString([error.localizedDescription UTF8String], "Unknown error");
-    eacp::Threads::callAsync(
-        [owner = _owner, errorStr]() { owner->onNavigationFailed(errorStr); });
+    eacp::Threads::callAsync([weak = nativeWeak, errorStr]() {
+        if (auto native = weak.lock())
+            native->owner.onNavigationFailed(errorStr);
+    });
 }
 
 - (void)webView:(WKWebView*)webView
@@ -215,8 +222,10 @@ struct WebViewNativeAccess
 {
     auto errorStr =
         safeString([error.localizedDescription UTF8String], "Unknown error");
-    eacp::Threads::callAsync(
-        [owner = _owner, errorStr]() { owner->onNavigationFailed(errorStr); });
+    eacp::Threads::callAsync([weak = nativeWeak, errorStr]() {
+        if (auto native = weak.lock())
+            native->owner.onNavigationFailed(errorStr);
+    });
 }
 
 - (void)observeValueForKeyPath:(NSString*)keyPath
@@ -229,8 +238,10 @@ struct WebViewNativeAccess
 
     auto* webView = (WKWebView*) object;
     auto title = safeString([webView.title UTF8String]);
-    eacp::Threads::callAsync(
-        [owner = _owner, title]() { owner->onTitleChanged(title); });
+    eacp::Threads::callAsync([weak = nativeWeak, title]() {
+        if (auto native = weak.lock())
+            native->owner.onTitleChanged(title);
+    });
 }
 
 - (WKWebView*)webView:(WKWebView*)webView
@@ -244,11 +255,15 @@ struct WebViewNativeAccess
     if (@available(macOS 13.3, iOS 16.4, *))
         inspectable = webView.inspectable;
 
+    auto native = nativeWeak.lock();
+    if (! native)
+        return nil;
+
     auto popup = eacp::Graphics::WebViewNativeAccess::makePopup(configuration,
                                                                 inspectable);
     auto* popupWKWebView = eacp::Graphics::WebViewNativeAccess::wkWebViewOf(*popup);
 
-    if (_owner->onNewWindowRequested(std::move(popup), url))
+    if (native->owner.onNewWindowRequested(std::move(popup), url))
         return popupWKWebView;
 
     // Embedder declined. Load the URL inline so target="_blank"-style
@@ -261,7 +276,10 @@ struct WebViewNativeAccess
 
 - (void)webViewDidClose:(WKWebView*)webView
 {
-    eacp::Threads::callAsync([owner = _owner]() { owner->onClose(); });
+    eacp::Threads::callAsync([weak = nativeWeak]() {
+        if (auto native = weak.lock())
+            native->owner.onClose();
+    });
 }
 
 - (void)userContentController:(WKUserContentController*)userContentController
@@ -365,6 +383,7 @@ void unregisterWebView(WebView* view)
 void WebView::initNative(Options options)
 {
     impl = std::make_shared<Native>(*this, std::move(options));
+    impl->delegate.get()->nativeWeak = impl;
     impl->attachToParentView();
     registerWebView(this);
 }
@@ -372,6 +391,7 @@ void WebView::initNative(Options options)
 WebView::WebView(PopupInit init)
 {
     impl = std::make_shared<Native>(*this, init);
+    impl->delegate.get()->nativeWeak = impl;
     impl->attachToParentView();
     registerWebView(this);
 }
