@@ -127,42 +127,42 @@ private:
     wuc::CompositionGraphicsDevice graphicsDevice {nullptr};
 };
 
-inline ID2D1Factory1* getD2DFactory()
+ID2D1Factory1* getD2DFactory()
 {
     return WinRTCompositor::instance().getD2DFactory();
 }
 
-inline IDWriteFactory* getDWriteFactory()
+IDWriteFactory* getDWriteFactory()
 {
     return WinRTCompositor::instance().getDWriteFactory();
 }
 
-inline ID3D11Device* getD3DDevice()
+ID3D11Device* getD3DDevice()
 {
     return WinRTCompositor::instance().getD3DDevice();
 }
 
-inline IDXGIDevice* getDXGIDevice()
+IDXGIDevice* getDXGIDevice()
 {
     return WinRTCompositor::instance().getDXGIDevice();
 }
 
-inline ID2D1Device* getD2DDevice()
+ID2D1Device* getD2DDevice()
 {
     return WinRTCompositor::instance().getD2DDevice();
 }
 
-inline wuc::Compositor getWinRTCompositor()
+wuc::Compositor getWinRTCompositor()
 {
     return WinRTCompositor::instance().getCompositor();
 }
 
-inline wuc::CompositionGraphicsDevice getCompositionGraphicsDevice()
+wuc::CompositionGraphicsDevice getCompositionGraphicsDevice()
 {
     return WinRTCompositor::instance().getGraphicsDevice();
 }
 
-inline bool isCompositorInitialized()
+bool isCompositorInitialized()
 {
     return WinRTCompositor::instance().isInitialized();
 }

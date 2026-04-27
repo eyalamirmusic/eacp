@@ -2,6 +2,8 @@
 #include "EventLoop.h"
 #include "ThreadUtils-Windows.h"
 
+#include <winrt/Windows.Foundation.h>
+
 namespace eacp::Threads
 {
 
