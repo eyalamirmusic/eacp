@@ -1,11 +1,9 @@
 #include "EmbeddedView.h"
 #include "../Layers/NativeLayer-Windows.h"
 
-#include <bitset>
+#include <eacp/Core/Utils/Windows.h>
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <Windows.h>
+#include <bitset>
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Composition.h>

@@ -2,9 +2,7 @@
 #include "../Window/Window.h"
 #include "../Helpers/StringUtils-Windows.h"
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <Windows.h>
+#include <eacp/Core/Utils/Windows.h>
 
 namespace eacp::Graphics
 {
