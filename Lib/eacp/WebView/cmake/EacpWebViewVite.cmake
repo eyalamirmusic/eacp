@@ -25,6 +25,8 @@ function(eacp_webview_add_vite TARGET)
                 EACP_WEBVIEW_DEV_SERVER_URL="http://localhost:${EACP_WEBVIEW_VITE_DEV_PORT}")
         set(DEV_STUB_DIR "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}-vite-dist")
         file(MAKE_DIRECTORY "${DEV_STUB_DIR}")
+        file(WRITE "${DEV_STUB_DIR}/placeholder.txt"
+                "Vite dev mode: resources are served from the dev server.\n")
         res_embed_add(${TARGET}
                 DIRECTORY "${DEV_STUB_DIR}"
                 NAMESPACE ${ARG_NAMESPACE}
