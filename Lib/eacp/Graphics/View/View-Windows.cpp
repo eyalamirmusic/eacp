@@ -1,9 +1,7 @@
 #include "View.h"
 #include "../Layers/NativeLayer-Windows.h"
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <Windows.h>
+#include <eacp/Core/Utils/Windows.h>
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Composition.h>

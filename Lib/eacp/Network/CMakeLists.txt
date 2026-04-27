@@ -14,8 +14,9 @@ if (APPLE)
             "-framework CoreFoundation")
 elseif (WIN32)
     target_sources(eacp-network PRIVATE
-            HTTP/Http-Windows.cpp)
-    target_link_libraries(eacp-network PRIVATE windowsapp)
+            HTTP/Http-Windows.cpp
+            HTTPServer/HttpServer-Windows.cpp)
+    target_link_libraries(eacp-network PRIVATE windowsapp ws2_32)
 endif ()
 
 set_default_target_setting(eacp-network)

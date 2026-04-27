@@ -2,12 +2,10 @@
 #include "../Layers/NativeLayer-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
 
+#include <eacp/Core/Utils/Windows.h>
+
 #include <algorithm>
 #include <bitset>
-
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <Windows.h>
 
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Core.h>

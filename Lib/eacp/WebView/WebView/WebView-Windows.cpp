@@ -1,13 +1,14 @@
 #include "WebView.h"
 #include <eacp/Graphics/Helpers/StringUtils-Windows.h>
 
+#include <eacp/Core/Utils/Windows.h>
+
+#include <algorithm>
 #include <unordered_map>
 #include <queue>
 #include <functional>
+#include <vector>
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <Windows.h>
 #include <objbase.h>
 
 #include <wrl.h>
@@ -46,6 +47,27 @@ struct CoTaskMemString
 };
 
 HWND findParentHWND(View* view);
+
+namespace
+{
+constexpr double minZoomLevel = 0.25;
+constexpr double maxZoomLevel = 5.0;
+constexpr double zoomStep = 1.1;
+
+std::vector<WebView*>& registeredWebViews()
+{
+    static auto views = std::vector<WebView*>();
+    return views;
+}
+
+void registerWebView(WebView* view) { registeredWebViews().push_back(view); }
+
+void unregisterWebView(WebView* view)
+{
+    auto& list = registeredWebViews();
+    list.erase(std::remove(list.begin(), list.end(), view), list.end());
+}
+} // namespace
 
 struct WebView::Native
 {
@@ -347,10 +369,12 @@ HWND findParentHWND(View*)
 void WebView::initNative(Options options)
 {
     impl = std::make_shared<Native>(*this, std::move(options));
+    registerWebView(this);
 }
 
 WebView::~WebView()
 {
+    unregisterWebView(this);
     if (impl->controller)
     {
         impl->controller->Close();
@@ -549,6 +573,48 @@ void WebView::resized()
     View::resized();
     impl->ensureInitialized();
     impl->updateBounds();
+}
+
+void WebView::zoomIn() { setZoom(getZoom() * zoomStep); }
+
+void WebView::zoomOut() { setZoom(getZoom() / zoomStep); }
+
+void WebView::resetZoom() { setZoom(1.0); }
+
+void WebView::setZoom(double level)
+{
+    auto clamped = std::clamp(level, minZoomLevel, maxZoomLevel);
+    if (impl->controller)
+        impl->controller->put_ZoomFactor(clamped);
+}
+
+double WebView::getZoom() const
+{
+    if (!impl->controller)
+        return 1.0;
+
+    double factor = 1.0;
+    impl->controller->get_ZoomFactor(&factor);
+    return factor;
+}
+
+WebView* WebView::focused()
+{
+    auto foreground = GetForegroundWindow();
+    if (!foreground)
+        return nullptr;
+
+    for (auto* view: registeredWebViews())
+    {
+        if (!view->impl || !view->impl->childHwnd)
+            continue;
+
+        auto top = GetAncestor(view->impl->childHwnd, GA_ROOT);
+        if (top == foreground)
+            return view;
+    }
+
+    return nullptr;
 }
 
 } // namespace eacp::Graphics

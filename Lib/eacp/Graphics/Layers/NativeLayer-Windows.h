@@ -2,9 +2,8 @@
 
 #include "../Primitives/Primitives.h"
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <Windows.h>
+#include <eacp/Core/Utils/Windows.h>
+
 #include <d2d1_1.h>
 #include <wrl/client.h>
 
