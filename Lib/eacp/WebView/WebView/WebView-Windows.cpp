@@ -21,6 +21,8 @@ namespace eacp::Graphics
 
 using Microsoft::WRL::ComPtr;
 
+HWND findHostHwndForView(View* view);
+
 using MessageHandlerMap =
     std::unordered_map<std::string, std::function<void(const std::string&)>>;
 
@@ -46,8 +48,6 @@ struct CoTaskMemString
     }
 };
 
-HWND findParentHWND(View* view);
-
 namespace
 {
 constexpr double minZoomLevel = 0.25;
@@ -60,7 +60,10 @@ std::vector<WebView*>& registeredWebViews()
     return views;
 }
 
-void registerWebView(WebView* view) { registeredWebViews().push_back(view); }
+void registerWebView(WebView* view)
+{
+    registeredWebViews().push_back(view);
+}
 
 void unregisterWebView(WebView* view)
 {
@@ -94,7 +97,7 @@ struct WebView::Native
         if (initialized || initInProgress)
             return;
 
-        auto parentHwnd = findParentHWND(&owner);
+        auto parentHwnd = findHostHwndForView(&owner);
         if (!parentHwnd)
             return;
 
@@ -268,6 +271,65 @@ struct WebView::Native
                 })
                 .Get(),
             &titleChangedToken);
+
+        webView->add_WebMessageReceived(
+            Microsoft::WRL::Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                [this](ICoreWebView2*,
+                       ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT
+                {
+                    CoTaskMemString messageRaw;
+                    args->get_WebMessageAsJson(&messageRaw);
+                    if (!messageRaw)
+                        return S_OK;
+
+                    auto json = messageRaw.toString();
+                    auto name = extractJsonStringField(json, "name");
+                    auto body = extractJsonStringField(json, "body");
+
+                    auto it = messageHandlers.find(name);
+                    if (it == messageHandlers.end())
+                        return S_OK;
+
+                    auto handler = it->second;
+                    Threads::callAsync([handler, body] { handler(body); });
+                    return S_OK;
+                })
+                .Get(),
+            &webMessageToken);
+    }
+
+    static std::string extractJsonStringField(const std::string& json,
+                                              const std::string& key)
+    {
+        auto needle = "\"" + key + "\"";
+        auto pos = json.find(needle);
+        if (pos == std::string::npos)
+            return {};
+
+        pos = json.find(':', pos + needle.size());
+        if (pos == std::string::npos)
+            return {};
+
+        auto start = json.find('"', pos);
+        if (start == std::string::npos)
+            return {};
+        ++start;
+
+        auto out = std::string();
+        for (auto i = start; i < json.size(); ++i)
+        {
+            auto c = json[i];
+            if (c == '\\' && i + 1 < json.size())
+            {
+                out.push_back(json[i + 1]);
+                ++i;
+                continue;
+            }
+            if (c == '"')
+                return out;
+            out.push_back(c);
+        }
+        return {};
     }
 
     void updateBounds()
@@ -359,12 +421,8 @@ struct WebView::Native
     EventRegistrationToken navigationStartingToken {};
     EventRegistrationToken navigationCompletedToken {};
     EventRegistrationToken titleChangedToken {};
+    EventRegistrationToken webMessageToken {};
 };
-
-HWND findParentHWND(View*)
-{
-    return FindWindowW(L"EACPWindowClass", nullptr);
-}
 
 void WebView::initNative(Options options)
 {
@@ -538,28 +596,6 @@ void WebView::addScriptMessageHandler(
                                      "window.chrome.webview.postMessage({name: '"
                                    + name + "', body: msg}); } };");
         impl->webView->AddScriptToExecuteOnDocumentCreated(script.c_str(), nullptr);
-
-        impl->webView->add_WebMessageReceived(
-            Microsoft::WRL::Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-                [this](ICoreWebView2*,
-                       ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT
-                {
-                    CoTaskMemString messageRaw;
-                    args->get_WebMessageAsJson(&messageRaw);
-
-                    if (messageRaw)
-                    {
-                        auto message = messageRaw.toString();
-                        for (auto& [handlerName, handlerFunc]: impl->messageHandlers)
-                        {
-                            Threads::callAsync([handlerFunc, message]()
-                                               { handlerFunc(message); });
-                        }
-                    }
-                    return S_OK;
-                })
-                .Get(),
-            nullptr);
     }
 }
 
@@ -575,11 +611,20 @@ void WebView::resized()
     impl->updateBounds();
 }
 
-void WebView::zoomIn() { setZoom(getZoom() * zoomStep); }
+void WebView::zoomIn()
+{
+    setZoom(getZoom() * zoomStep);
+}
 
-void WebView::zoomOut() { setZoom(getZoom() / zoomStep); }
+void WebView::zoomOut()
+{
+    setZoom(getZoom() / zoomStep);
+}
 
-void WebView::resetZoom() { setZoom(1.0); }
+void WebView::resetZoom()
+{
+    setZoom(1.0);
+}
 
 void WebView::setZoom(double level)
 {

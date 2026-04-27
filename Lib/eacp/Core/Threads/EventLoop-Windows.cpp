@@ -12,6 +12,7 @@ namespace eacp::Threads
 {
 
 static std::atomic running {false};
+static std::atomic<DWORD> mainThreadId {0};
 
 struct PendingCallbacks
 {
@@ -20,7 +21,7 @@ struct PendingCallbacks
         auto guard = std::lock_guard(mutex);
         auto queue = getDispatcherQueue();
 
-        for (auto& cb : pendingCallbacks)
+        for (auto& cb: pendingCallbacks)
             queue.TryEnqueue(cb);
 
         pendingCallbacks.clear();
@@ -36,12 +37,18 @@ struct PendingCallbacks
     std::vector<Callback> pendingCallbacks;
 };
 
-PendingCallbacks& getPendingCallbacks() {return Singleton::get<PendingCallbacks>();}
+PendingCallbacks& getPendingCallbacks()
+{
+    return Singleton::get<PendingCallbacks>();
+}
 
 void EventLoop::run()
 {
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
     winrt::init_apartment(winrt::apartment_type::single_threaded);
     initMainThread();
+    mainThreadId = GetCurrentThreadId();
     getPendingCallbacks().run();
 
     running = true;
@@ -50,21 +57,27 @@ void EventLoop::run()
     {
         auto msg = MSG();
 
-        if (GetMessage(&msg, nullptr, 0, 0))
-        {
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }
-        else
+        auto result = GetMessage(&msg, nullptr, 0, 0);
+        if (result == 0 || result == -1)
         {
             quit();
+            break;
         }
+
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
     }
+
+    mainThreadId = 0;
 }
 
 void EventLoop::quit()
 {
     running = false;
+
+    auto id = mainThreadId.load();
+    if (id != 0)
+        PostThreadMessageW(id, WM_NULL, 0, 0);
 }
 
 void EventLoop::call(Callback func)

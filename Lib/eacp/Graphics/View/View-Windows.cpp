@@ -113,9 +113,7 @@ View::~View()
 
 void* View::getHandle()
 {
-    static wuc::ContainerVisual visualCopy {nullptr};
-    visualCopy = impl->getVisual();
-    return &visualCopy;
+    return &impl->visual;
 }
 
 void View::repaint()

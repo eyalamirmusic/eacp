@@ -2,6 +2,9 @@
 #include "EventLoop.h"
 #include "ThreadUtils-Windows.h"
 
+#include <cassert>
+#include <chrono>
+
 #include <winrt/Windows.Foundation.h>
 
 namespace eacp::Threads
@@ -13,16 +16,17 @@ struct Timer::Native
         : cb(cbToUse)
     {
         assertMainThread();
+        assert(intervalHz > 0 && "Timer interval must be positive");
 
         auto queue = getDispatcherQueue();
         if (!queue)
-        {
             return;
-        }
 
         timer = queue.CreateTimer();
-        auto intervalMs = std::chrono::milliseconds(1000 / intervalHz);
-        timer.Interval(intervalMs);
+        auto periodSeconds = std::chrono::duration<double>(1.0 / intervalHz);
+        timer.Interval(
+            std::chrono::duration_cast<winrt::Windows::Foundation::TimeSpan>(
+                periodSeconds));
 
         tickToken = timer.Tick([this](auto&&, auto&&) { cb(); });
 

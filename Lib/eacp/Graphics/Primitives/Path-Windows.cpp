@@ -225,31 +225,30 @@ void Path::addRoundedRect(const Rect& rect, float radius)
 
 void Path::addEllipse(const Rect& rect)
 {
-    float cx = rect.x + rect.w / 2.0f;
-    float cy = rect.y + rect.h / 2.0f;
-    float rx = rect.w / 2.0f;
-    float ry = rect.h / 2.0f;
+    auto cx = rect.x + rect.w / 2.0f;
+    auto cy = rect.y + rect.h / 2.0f;
+    auto rx = rect.w / 2.0f;
+    auto ry = rect.h / 2.0f;
 
-    // Start at the right side of the ellipse
     moveTo({cx + rx, cy});
 
-    // Draw ellipse using two arcs
-    if (impl->sink)
+    auto sweepQuadrant = [&](float endX, float endY)
     {
-        // Bottom half
-        impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(cx - rx, cy),
-                                            D2D1::SizeF(rx, ry),
-                                            0.0f,
-                                            D2D1_SWEEP_DIRECTION_CLOCKWISE,
-                                            D2D1_ARC_SIZE_SMALL));
-        // Top half
-        impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(cx + rx, cy),
-                                            D2D1::SizeF(rx, ry),
-                                            0.0f,
-                                            D2D1_SWEEP_DIRECTION_CLOCKWISE,
-                                            D2D1_ARC_SIZE_SMALL));
-    }
-    impl->lastPoint = {cx + rx, cy};
+        if (impl->sink)
+        {
+            impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(endX, endY),
+                                                D2D1::SizeF(rx, ry),
+                                                0.0f,
+                                                D2D1_SWEEP_DIRECTION_CLOCKWISE,
+                                                D2D1_ARC_SIZE_SMALL));
+        }
+        impl->lastPoint = {endX, endY};
+    };
+
+    sweepQuadrant(cx, cy + ry);
+    sweepQuadrant(cx - rx, cy);
+    sweepQuadrant(cx, cy - ry);
+    sweepQuadrant(cx + rx, cy);
 
     close();
 }
