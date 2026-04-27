@@ -80,6 +80,12 @@ struct WebView::Native
         webView.get().navigationDelegate = delegate.get();
         webView.get().UIDelegate = delegate.get();
 
+        [webView.get() addObserver:delegate.get()
+                        forKeyPath:@"title"
+                           options:NSKeyValueObservingOptionNew
+                           context:nullptr];
+        observingTitle = true;
+
         if (options.debugConsole)
         {
             if (@available(macOS 13.3, iOS 16.4, *))
@@ -101,6 +107,12 @@ struct WebView::Native
         webView.get().navigationDelegate = delegate.get();
         webView.get().UIDelegate = delegate.get();
 
+        [webView.get() addObserver:delegate.get()
+                        forKeyPath:@"title"
+                           options:NSKeyValueObservingOptionNew
+                           context:nullptr];
+        observingTitle = true;
+
         if (init.inspectable)
         {
             if (@available(macOS 13.3, iOS 16.4, *))
@@ -115,6 +127,9 @@ struct WebView::Native
         {
             [controller removeScriptMessageHandlerForName:Strings::toNSString(name)];
         }
+
+        if (observingTitle)
+            [webView.get() removeObserver:delegate.get() forKeyPath:@"title"];
 
         webView.get().navigationDelegate = nil;
         webView.get().UIDelegate = nil;
@@ -147,6 +162,7 @@ struct WebView::Native
     MessageHandlerMap messageHandlers;
     WebView& owner;
     double zoomLevel = 1.0;
+    bool observingTitle = false;
 };
 
 struct WebViewNativeAccess
