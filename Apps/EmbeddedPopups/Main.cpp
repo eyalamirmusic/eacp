@@ -30,6 +30,7 @@ private:
         opts.title = "Child window";
         opts.width = 420;
         opts.height = 320;
+        opts.isPrimary = false;
         opts.onQuit = [this]() { requestClose(); };
         return opts;
     }

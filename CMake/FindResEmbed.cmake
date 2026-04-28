@@ -1,5 +1,4 @@
-FetchContent_Declare(ResEmbed
-        GIT_REPOSITORY https://github.com/eyalamirmusic/ResEmbed.git
+CPMAddPackage(
+        NAME ResEmbed
+        GITHUB_REPOSITORY eyalamirmusic/ResEmbed
         GIT_TAG main)
-
-FetchContent_MakeAvailable(ResEmbed)

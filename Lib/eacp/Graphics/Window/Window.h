@@ -37,7 +37,13 @@ struct WindowOptions
         flags.emplace_back(WindowFlags::Resizable);
     }
 
-    Callback onQuit {Apps::quit};
+    // When the user closes the window. If left empty, falls back to
+    // Apps::quit when isPrimary is true, or a no-op otherwise.
+    Callback onQuit {};
+
+    // Set to false for secondary/popup windows so closing them doesn't
+    // terminate the app when onQuit is unset.
+    bool isPrimary = true;
 
     // Called after the window has been resized. Sizes are in points and refer
     // to the content view, not the outer frame.
@@ -53,6 +59,13 @@ struct WindowOptions
     std::string title = "New Window";
 
     std::vector<WindowFlags> flags;
+
+    Callback effectiveOnQuit() const
+    {
+        if (onQuit)
+            return onQuit;
+        return isPrimary ? Callback {Apps::quit} : Callback {[] {}};
+    }
 };
 
 struct ModifierKeys;

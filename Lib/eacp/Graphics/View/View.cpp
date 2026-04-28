@@ -56,7 +56,15 @@ void View::addSubview(View& view)
 void View::removeSubview(View& view)
 {
     if (Vectors::eraseMatch(subviews, &view))
+    {
+        if (hoveredView == &view)
+            hoveredView = nullptr;
+
+        if (mouseDownTarget == &view)
+            mouseDownTarget = nullptr;
+
         viewRemoved(view);
+    }
 }
 
 Rect View::getRelativeBounds(const Rect& ratio) const
@@ -136,6 +144,20 @@ MouseEvent View::createLocalEvent(const MouseEvent& event,
 
 void View::dispatchMouseEvent(const MouseEvent& event)
 {
+    if (event.type == MouseEventType::Dragged || event.type == MouseEventType::Up)
+    {
+        if (mouseDownTarget != nullptr)
+        {
+            mouseDownTarget->handleMouseEvent(
+                createLocalEvent(event, mouseDownTarget, event.type));
+        }
+
+        if (event.type == MouseEventType::Up)
+            mouseDownTarget = nullptr;
+
+        return;
+    }
+
     auto* target = hitTest(event.pos);
 
     if (event.type == MouseEventType::Moved || event.type == MouseEventType::Entered)
@@ -171,6 +193,13 @@ void View::dispatchMouseEvent(const MouseEvent& event)
                 createLocalEvent(event, hoveredView, MouseEventType::Exited));
             hoveredView = nullptr;
         }
+    }
+    else if (event.type == MouseEventType::Down)
+    {
+        mouseDownTarget = target;
+
+        if (target != nullptr)
+            target->handleMouseEvent(createLocalEvent(event, target, event.type));
     }
     else if (target != nullptr)
     {

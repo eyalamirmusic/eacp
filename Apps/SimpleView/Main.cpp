@@ -26,6 +26,7 @@ private:
     WindowOptions makeWindowOptions()
     {
         auto opts = WindowOptions {};
+        opts.isPrimary = false;
         opts.onQuit = [this]() { requestClose(); };
         return opts;
     }

@@ -122,6 +122,7 @@ private:
     std::vector<Layer*> layers;
     View* parent = nullptr;
     View* hoveredView = nullptr;
+    View* mouseDownTarget = nullptr;
 
     ViewProperties properties;
 

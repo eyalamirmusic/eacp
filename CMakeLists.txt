@@ -12,6 +12,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 option(EACP_UNITY_BUILD "Compile eacp libraries as CMake unity builds" ON)
 
 include(TargetSetup)
+include(CPM)
 
 if (PROJECT_IS_TOP_LEVEL)
     eacp_default_setup()
