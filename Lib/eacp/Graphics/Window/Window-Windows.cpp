@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <bitset>
+#include <unordered_map>
 
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Core.h>
@@ -50,6 +51,39 @@ namespace eacp::Graphics
 static const wchar_t* WINDOW_CLASS_NAME = L"EACPWindowClass";
 static bool windowClassRegistered = false;
 
+namespace
+{
+std::unordered_map<View*, HWND>& contentViewToHwnd()
+{
+    static auto map = std::unordered_map<View*, HWND>();
+    return map;
+}
+} // namespace
+
+void registerContentViewHwnd(View* root, HWND hwnd)
+{
+    contentViewToHwnd()[root] = hwnd;
+}
+
+void unregisterContentViewHwnd(View* root)
+{
+    contentViewToHwnd().erase(root);
+}
+
+HWND findHostHwndForView(View* view)
+{
+    auto* root = view;
+    while (root && root->getParent())
+        root = root->getParent();
+
+    if (!root)
+        return nullptr;
+
+    auto& map = contentViewToHwnd();
+    auto it = map.find(root);
+    return it == map.end() ? nullptr : it->second;
+}
+
 struct Window::Native
 {
     Native(Window* owner, const WindowOptions& options)
@@ -81,6 +115,10 @@ struct Window::Native
         dispatcherController = nullptr;
         rootVisual = nullptr;
         target = nullptr;
+
+        if (contentView)
+            unregisterContentViewHwnd(contentView);
+
         if (hwnd)
         {
             DestroyWindow(hwnd);
@@ -285,10 +323,15 @@ struct Window::Native
 
 void Window::Native::setContentView(View* view)
 {
+    if (contentView && contentView != view)
+        unregisterContentViewHwnd(contentView);
+
     contentView = view;
 
     if (hwnd && view)
     {
+        registerContentViewHwnd(view, hwnd);
+
         RECT clientRect;
         GetClientRect(hwnd, &clientRect);
         auto dpiScale = getWindowDpiScale();
