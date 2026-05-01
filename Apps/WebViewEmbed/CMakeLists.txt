@@ -1,5 +1,5 @@
 add_executable(WebViewEmbed Main.cpp)
-target_link_libraries(WebViewEmbed PRIVATE eacp-webview eacp-network)
+target_link_libraries(WebViewEmbed PRIVATE eacp-webview)
 
 eacp_webview_add_vite(WebViewEmbed
         SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/web

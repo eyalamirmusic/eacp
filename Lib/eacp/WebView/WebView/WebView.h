@@ -94,6 +94,8 @@ public:
         std::function<void(const std::string& message)> handler);
     void removeScriptMessageHandler(const std::string& name);
 
+    void addUserScript(const std::string& source, bool atDocumentStart = true);
+
     std::function<void(const std::string& url)> onNavigationStarted = [](auto&&) {};
     std::function<void(const std::string& url)> onNavigationFinished = [](auto&&) {};
     std::function<void(const std::string& error)> onNavigationFailed = [](auto&&) {};

@@ -1,24 +1,36 @@
 import './style.css';
 
-const apiBase = 'http://localhost:8080';
-
-const root = document.querySelector<HTMLDivElement>('#app')!;
-
-root.innerHTML = `
-    <h1>Hello from Vite + eacp</h1>
-    <p>This page is served by Vite in dev and embedded via ResEmbed in release.</p>
-    <button id="ping">Ping API</button>
-    <div id="out"></div>
-`;
-
-const out = root.querySelector<HTMLDivElement>('#out')!;
-const button = root.querySelector<HTMLButtonElement>('#ping')!;
-
 interface PingResponse
 {
     pong: boolean;
     serverTimeMs: number;
 }
+
+interface EacpBridge
+{
+    invoke<Res = unknown, Req = unknown>(command: string, payload?: Req): Promise<Res>;
+    on<T = unknown>(event: string, handler: (payload: T) => void): () => void;
+}
+
+declare global
+{
+    interface Window
+    {
+        eacp: EacpBridge;
+    }
+}
+
+const root = document.querySelector<HTMLDivElement>('#app')!;
+
+root.innerHTML = `
+    <h1>Hello from Vite + eacp</h1>
+    <p>This page talks to native code through the eacp WebView bridge.</p>
+    <button id="ping">Ping native</button>
+    <div id="out"></div>
+`;
+
+const out = root.querySelector<HTMLDivElement>('#out')!;
+const button = root.querySelector<HTMLButtonElement>('#ping')!;
 
 button.addEventListener('click', async () =>
 {
@@ -26,12 +38,9 @@ button.addEventListener('click', async () =>
     button.disabled = true;
     try
     {
-        const response = await fetch(`${apiBase}/api/ping`);
-        if (!response.ok)
-            throw new Error(`HTTP ${response.status}`);
-        const data = (await response.json()) as PingResponse;
+        const data = await window.eacp.invoke<PingResponse>('ping');
         const serverTime = new Date(data.serverTimeMs).toLocaleTimeString();
-        out.textContent = `pong from server (server time: ${serverTime})`;
+        out.textContent = `pong from native (server time: ${serverTime})`;
     }
     catch (err)
     {

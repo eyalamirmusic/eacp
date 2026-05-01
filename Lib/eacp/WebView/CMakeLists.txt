@@ -1,14 +1,16 @@
 include(FetchContent)
 
 find_package(ResEmbed REQUIRED)
+find_package(Miro REQUIRED)
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewVite.cmake)
 
 add_library(eacp-webview STATIC)
 
-target_link_libraries(eacp-webview PUBLIC eacp-graphics ResEmbed)
+target_link_libraries(eacp-webview PUBLIC eacp-graphics ResEmbed Miro)
 
 target_sources(eacp-webview PRIVATE
         WebView/WebView-Shared.cpp
+        WebView/Bridge.cpp
         WebView/MenuHelpers.cpp)
 
 if (APPLE)

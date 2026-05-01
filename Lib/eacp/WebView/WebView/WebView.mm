@@ -616,6 +616,20 @@ void WebView::removeScriptMessageHandler(const std::string& name)
     [controller removeScriptMessageHandlerForName:nsName];
 }
 
+void WebView::addUserScript(const std::string& source, bool atDocumentStart)
+{
+    auto* controller = impl->config.get().userContentController;
+    auto injectionTime = atDocumentStart ? WKUserScriptInjectionTimeAtDocumentStart
+                                         : WKUserScriptInjectionTimeAtDocumentEnd;
+
+    auto* userScript = [[WKUserScript alloc]
+          initWithSource:Strings::toNSString(source)
+           injectionTime:injectionTime
+        forMainFrameOnly:YES];
+
+    [controller addUserScript:userScript];
+}
+
 void WebView::resized()
 {
     View::resized();

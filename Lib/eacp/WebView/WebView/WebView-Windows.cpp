@@ -604,6 +604,28 @@ void WebView::removeScriptMessageHandler(const std::string& name)
     impl->messageHandlers.erase(name);
 }
 
+void WebView::addUserScript(const std::string& source, bool atDocumentStart)
+{
+    impl->ensureInitialized();
+    impl->queueOperation(
+        [this, source, atDocumentStart]()
+        {
+            if (!impl->webView)
+                return;
+
+            if (atDocumentStart)
+            {
+                auto wide = toWideString(source);
+                impl->webView->AddScriptToExecuteOnDocumentCreated(wide.c_str(),
+                                                                   nullptr);
+            }
+            else
+            {
+                evaluateJavaScript(source);
+            }
+        });
+}
+
 void WebView::resized()
 {
     View::resized();
