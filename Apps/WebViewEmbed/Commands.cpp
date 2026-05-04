@@ -1,19 +1,19 @@
-#include "Commands.h"
-
+#include "Types.h"
 #include <chrono>
 
 namespace
 {
 long long currentEpochMillis()
 {
-    auto now = std::chrono::system_clock::now().time_since_epoch();
-    return std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+    using namespace std::chrono;
+    auto now = system_clock::now().time_since_epoch();
+    return duration_cast<milliseconds>(now).count();
 }
 } // namespace
 
-PingResponse ping(const Miro::EmptyValue&)
+PingResponse ping()
 {
-    return PingResponse {.pong = true, .serverTimeMs = currentEpochMillis()};
+    return {.pong = true, .serverTimeMs = currentEpochMillis()};
 }
 
 MIRO_EXPORT_COMMAND(ping)
