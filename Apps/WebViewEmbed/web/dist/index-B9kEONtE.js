@@ -1,0 +1,6 @@
+(function(){const r=document.createElement("link").relList;if(r&&r.supports&&r.supports("modulepreload"))return;for(const e of document.querySelectorAll('link[rel="modulepreload"]'))c(e);new MutationObserver(e=>{for(const t of e)if(t.type==="childList")for(const n of t.addedNodes)n.tagName==="LINK"&&n.rel==="modulepreload"&&c(n)}).observe(document,{childList:!0,subtree:!0});function a(e){const t={};return e.integrity&&(t.integrity=e.integrity),e.referrerPolicy&&(t.referrerPolicy=e.referrerPolicy),e.crossOrigin==="use-credentials"?t.credentials="include":e.crossOrigin==="anonymous"?t.credentials="omit":t.credentials="same-origin",t}function c(e){if(e.ep)return;e.ep=!0;const t=a(e);fetch(e.href,t)}})();function d(o){return{ping:()=>o("ping",{})}}const l=d((o,r)=>window.eacp.invoke(o,r)),i=document.querySelector("#app");i.innerHTML=`
+    <h1>Hello from Vite + eacp</h1>
+    <p>This page talks to native code through the eacp WebView bridge.</p>
+    <button id="ping">Ping native</button>
+    <div id="out"></div>
+`;const s=i.querySelector("#out"),u=i.querySelector("#ping");u.addEventListener("click",async()=>{s.textContent="pinging...",u.disabled=!0;const o=await l.ping(),r=new Date(o.serverTimeMs).toLocaleTimeString();s.textContent=`pong from native (server time: ${r})`});
