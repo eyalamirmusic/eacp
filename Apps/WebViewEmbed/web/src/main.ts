@@ -1,5 +1,5 @@
 import './style.css';
-import { backend } from './generated/backend';
+import {backend} from './generated/backend';
 
 const root = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -13,22 +13,12 @@ root.innerHTML = `
 const out = root.querySelector<HTMLDivElement>('#out')!;
 const button = root.querySelector<HTMLButtonElement>('#ping')!;
 
-button.addEventListener('click', async () =>
-{
+button.addEventListener('click', async () => {
     out.textContent = 'pinging...';
     button.disabled = true;
-    try
-    {
-        const data = await backend.ping();
-        const serverTime = new Date(data.serverTimeMs).toLocaleTimeString();
-        out.textContent = `pong from native (server time: ${serverTime})`;
-    }
-    catch (err)
-    {
-        out.textContent = `error: ${err instanceof Error ? err.message : err}`;
-    }
-    finally
-    {
-        button.disabled = false;
-    }
+
+    const data = await backend.ping();
+    const serverTime = new Date(data.serverTimeMs).toLocaleTimeString();
+    out.textContent = `pong from native (server time: ${serverTime})`;
+
 });

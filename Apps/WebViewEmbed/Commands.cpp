@@ -11,9 +11,9 @@ long long currentEpochMillis()
 }
 } // namespace
 
-PingResponse handlePing(const Miro::EmptyValue&)
+PingResponse ping(const Miro::EmptyValue&)
 {
     return PingResponse {.pong = true, .serverTimeMs = currentEpochMillis()};
 }
 
-MIRO_EXPORT_COMMAND(ping, handlePing)
+MIRO_EXPORT_COMMAND(ping)

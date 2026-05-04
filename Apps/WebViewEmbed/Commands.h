@@ -2,4 +2,4 @@
 
 #include "Types.h"
 
-PingResponse handlePing(const Miro::EmptyValue&);
+PingResponse ping(const Miro::EmptyValue&);
