@@ -1,10 +1,5 @@
 import './style.css';
-
-interface PingResponse
-{
-    pong: boolean;
-    serverTimeMs: number;
-}
+import type { PingResponse } from './generated/WebViewEmbedTypes';
 
 interface EacpBridge
 {
