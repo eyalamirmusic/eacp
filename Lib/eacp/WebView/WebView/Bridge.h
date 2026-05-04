@@ -35,6 +35,11 @@ public:
         dispatchEvent(event, Miro::toJSON(payload));
     }
 
+    void useStaticRegistry()
+    {
+        Miro::CommandExport::registerStaticCommandsInto(commands);
+    }
+
 private:
     void onMessage(const std::string& body);
     void deliver(double id,

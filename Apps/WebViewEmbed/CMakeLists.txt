@@ -1,13 +1,18 @@
-add_executable(WebViewEmbed Main.cpp)
+add_executable(WebViewEmbed Main.cpp Commands.cpp)
 target_link_libraries(WebViewEmbed PRIVATE eacp-webview)
 
 miro_add_type_export(
-        NAME WebViewEmbedTypes
-        SOURCES Registrations.cpp
+        NAME WebViewEmbedSchema
+        SOURCES Commands.cpp
         OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/web/src/generated
-        FORMATS ts)
+        OUTPUT_NAME schema
+        FORMATS ts backend)
 
-add_dependencies(WebViewEmbed WebViewEmbedTypes)
+eacp_webview_generate_backend(
+        OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/web/src/generated
+        BASENAME schema)
+
+add_dependencies(WebViewEmbed WebViewEmbedSchema)
 
 eacp_webview_add_vite(WebViewEmbed
         SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/web

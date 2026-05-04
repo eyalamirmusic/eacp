@@ -1,19 +1,5 @@
 import './style.css';
-import type { PingResponse } from './generated/WebViewEmbedTypes';
-
-interface EacpBridge
-{
-    invoke<Res = unknown, Req = unknown>(command: string, payload?: Req): Promise<Res>;
-    on<T = unknown>(event: string, handler: (payload: T) => void): () => void;
-}
-
-declare global
-{
-    interface Window
-    {
-        eacp: EacpBridge;
-    }
-}
+import { backend } from './generated/backend';
 
 const root = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -33,7 +19,7 @@ button.addEventListener('click', async () =>
     button.disabled = true;
     try
     {
-        const data = await window.eacp.invoke<PingResponse>('ping');
+        const data = await backend.ping();
         const serverTime = new Date(data.serverTimeMs).toLocaleTimeString();
         out.textContent = `pong from native (server time: ${serverTime})`;
     }

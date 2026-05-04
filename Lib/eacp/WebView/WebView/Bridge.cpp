@@ -78,11 +78,21 @@ std::string jsStringLiteral(const std::string& value)
     {
         switch (c)
         {
-            case '\\': out += "\\\\"; break;
-            case '"':  out += "\\\""; break;
-            case '\n': out += "\\n";  break;
-            case '\r': out += "\\r";  break;
-            case '\t': out += "\\t";  break;
+            case '\\':
+                out += "\\\\";
+                break;
+            case '"':
+                out += "\\\"";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
             default:
                 if (static_cast<unsigned char>(c) < 0x20)
                 {
@@ -107,9 +117,8 @@ WebViewBridge::WebViewBridge(WebView& webViewToUse)
     : webView(webViewToUse)
 {
     webView.addUserScript(bridgeShim, true);
-    webView.addScriptMessageHandler(bridgeChannel,
-                                    [this](const std::string& body)
-                                    { onMessage(body); });
+    webView.addScriptMessageHandler(
+        bridgeChannel, [this](const std::string& body) { onMessage(body); });
 }
 
 WebViewBridge::~WebViewBridge()
@@ -130,7 +139,7 @@ void WebViewBridge::onMessage(const std::string& body)
         return;
     }
 
-    if (! envelope.isObject())
+    if (!envelope.isObject())
         return;
 
     auto& obj = envelope.asObject();
@@ -139,7 +148,7 @@ void WebViewBridge::onMessage(const std::string& body)
     auto cmdIt = obj.find("command");
     auto payloadIt = obj.find("payload");
 
-    if (idIt == obj.end() || cmdIt == obj.end() || ! cmdIt->second.isString())
+    if (idIt == obj.end() || cmdIt == obj.end() || !cmdIt->second.isString())
         return;
 
     auto id = idIt->second.isNumber() ? idIt->second.asNumber() : 0.0;
@@ -170,8 +179,8 @@ void WebViewBridge::deliver(double id,
     auto errorJson = error ? jsStringLiteral(*error) : std::string {"null"};
 
     auto script = std::string {"window.__eacp&&window.__eacp.deliver("}
-                + std::to_string(static_cast<long long>(id)) + ","
-                + resultJson + "," + errorJson + ");";
+                  + std::to_string(static_cast<long long>(id)) + "," + resultJson
+                  + "," + errorJson + ");";
 
     webView.evaluateJavaScript(script);
 }
@@ -185,7 +194,7 @@ void WebViewBridge::dispatchEvent(const std::string& event,
         payloadJson = "null";
 
     auto script = std::string {"window.__eacp&&window.__eacp.dispatch("}
-                + jsStringLiteral(event) + "," + payloadJson + ");";
+                  + jsStringLiteral(event) + "," + payloadJson + ");";
 
     webView.evaluateJavaScript(script);
 }
