@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <fcntl.h>
 #include <mutex>
 #include <poll.h>
@@ -71,6 +72,20 @@ static LoopState& getLoop()
     return Singleton::get<LoopState>();
 }
 
+namespace
+{
+void drainPending(LoopState& loop)
+{
+    auto pending = std::vector<Callback>();
+    {
+        auto lock = std::lock_guard(loop.mutex);
+        pending.swap(loop.queue);
+    }
+    for (auto& cb: pending)
+        cb();
+}
+} // namespace
+
 void EventLoop::run()
 {
     initMainThread();
@@ -91,16 +106,54 @@ void EventLoop::run()
         }
 
         loop.waker.drain();
+        drainPending(loop);
+    }
+}
 
-        auto pending = std::vector<Callback>();
+bool EventLoop::runFor(std::chrono::milliseconds timeout)
+{
+    initMainThread();
+
+    auto& loop = getLoop();
+    loop.running = true;
+
+    auto deadline = std::chrono::steady_clock::now() + timeout;
+    auto timedOut = false;
+
+    while (loop.running)
+    {
+        auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
         {
-            auto lock = std::lock_guard(loop.mutex);
-            pending.swap(loop.queue);
+            timedOut = true;
+            break;
         }
 
-        for (auto& cb: pending)
-            cb();
+        auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - now)
+                .count();
+
+        auto pfd = pollfd {loop.waker.readFd, POLLIN, 0};
+        auto r = ::poll(&pfd, 1, (int) remaining);
+
+        if (r < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        if (r == 0)
+        {
+            timedOut = true;
+            break;
+        }
+
+        loop.waker.drain();
+        drainPending(loop);
     }
+
+    return !timedOut;
 }
 
 void EventLoop::quit()

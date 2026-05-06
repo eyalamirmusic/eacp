@@ -19,6 +19,12 @@ void runEventLoop(const Callback& func)
     getEventLoop().run();
 }
 
+bool runEventLoopFor(std::chrono::milliseconds timeout, const Callback& func)
+{
+    callAsync(func);
+    return getEventLoop().runFor(timeout);
+}
+
 void stopEventLoop()
 {
     getEventLoop().quit();

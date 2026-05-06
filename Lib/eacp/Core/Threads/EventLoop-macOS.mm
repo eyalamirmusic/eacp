@@ -19,6 +19,30 @@ void EventLoop::run()
     [getApp() run];
 }
 
+bool EventLoop::runFor(std::chrono::milliseconds timeout)
+{
+    __block auto timedOut = false;
+    auto* self = this;
+    auto seconds = (CFTimeInterval) timeout.count() / 1000.0;
+    auto fireDate = CFAbsoluteTimeGetCurrent() + seconds;
+
+    auto timer = CFRunLoopTimerCreateWithHandler(
+        kCFAllocatorDefault, fireDate, 0, 0, 0,
+        ^(CFRunLoopTimerRef) {
+            timedOut = true;
+            self->quit();
+        });
+
+    CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
+
+    [getApp() run];
+
+    CFRunLoopRemoveTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
+    CFRelease(timer);
+
+    return !timedOut;
+}
+
 void EventLoop::quit()
 {
     [getApp() stop:nil];

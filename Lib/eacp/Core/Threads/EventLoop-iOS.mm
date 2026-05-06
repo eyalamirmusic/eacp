@@ -36,6 +36,13 @@ void EventLoop::run()
     }
 }
 
+bool EventLoop::runFor(std::chrono::milliseconds timeout)
+{
+    auto seconds = (CFTimeInterval) timeout.count() / 1000.0;
+    auto result = CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, false);
+    return result == kCFRunLoopRunStopped;
+}
+
 void EventLoop::quit()
 {
     exit(0);

@@ -5,6 +5,7 @@
 
 #include <vector>
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <cassert>
 
@@ -42,7 +43,9 @@ PendingCallbacks& getPendingCallbacks()
     return Singleton::get<PendingCallbacks>();
 }
 
-void EventLoop::run()
+namespace
+{
+void initLoopThread()
 {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
@@ -50,6 +53,12 @@ void EventLoop::run()
     initMainThread();
     mainThreadId = GetCurrentThreadId();
     getPendingCallbacks().run();
+}
+} // namespace
+
+void EventLoop::run()
+{
+    initLoopThread();
 
     running = true;
 
@@ -69,6 +78,56 @@ void EventLoop::run()
     }
 
     mainThreadId = 0;
+}
+
+bool EventLoop::runFor(std::chrono::milliseconds timeout)
+{
+    initLoopThread();
+
+    running = true;
+
+    auto deadline = std::chrono::steady_clock::now() + timeout;
+    auto timedOut = false;
+
+    while (running)
+    {
+        auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+        {
+            timedOut = true;
+            break;
+        }
+
+        auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - now)
+                .count();
+
+        auto wait = MsgWaitForMultipleObjectsEx(
+            0, nullptr, (DWORD) remaining, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+
+        if (wait == WAIT_TIMEOUT)
+        {
+            timedOut = true;
+            break;
+        }
+
+        auto msg = MSG();
+        while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+        {
+            if (msg.message == WM_QUIT)
+            {
+                running = false;
+                break;
+            }
+
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+    }
+
+    mainThreadId = 0;
+    return !timedOut;
 }
 
 void EventLoop::quit()
