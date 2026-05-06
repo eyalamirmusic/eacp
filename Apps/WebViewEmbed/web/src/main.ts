@@ -15,8 +15,6 @@ const button = root.querySelector<HTMLButtonElement>('#ping')!;
 
 button.addEventListener('click', async () => {
     out.textContent = 'pinging...';
-    button.disabled = true;
-
     const data = await backend.ping();
     const serverTime = new Date(data.serverTimeMs).toLocaleTimeString();
     out.textContent = `pong from native (server time: ${serverTime})`;

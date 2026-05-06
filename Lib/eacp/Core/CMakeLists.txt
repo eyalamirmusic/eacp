@@ -34,6 +34,14 @@ elseif (WIN32)
             Threads/Timer-Windows.cpp
             Utils/Files-Windows.cpp)
     target_link_libraries(eacp-core PRIVATE windowsapp)
+elseif (UNIX AND NOT APPLE)
+    target_sources(eacp-core PRIVATE
+            Threads/EventLoop-Linux.cpp
+            Threads/ThreadUtils-Linux.cpp
+            Threads/Timer-Linux.cpp
+            Utils/Files-Linux.cpp)
+    find_package(Threads REQUIRED)
+    target_link_libraries(eacp-core PRIVATE Threads::Threads)
 endif ()
 
 set_default_target_setting(eacp-core)
