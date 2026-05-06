@@ -8,11 +8,18 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: macOS Universal Binary
             os: macos-latest
             cmake-flags: '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"'
+          - name: Linux GCC
+            os: ubuntu-latest
+            cmake-flags: '-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++'
+          - name: Linux Clang
+            os: ubuntu-latest
+            cmake-flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++'
           - name: Windows MSVC
             os: windows-latest
             cmake-flags: ''
@@ -26,6 +33,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libcurl4-openssl-dev clang
+
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
 
@@ -34,6 +47,9 @@ jobs:
 
       - name: Build
         run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
 
   build-ios:
     name: iOS Simulator
