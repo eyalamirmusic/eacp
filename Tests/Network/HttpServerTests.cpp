@@ -3,15 +3,21 @@
 #include <eacp/Network/HTTPServer/HttpServer.h>
 #include <NanoTest/NanoTest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 using namespace nano;
 using eacp::HTTP::Request;
 using eacp::HTTP::Response;
 using eacp::HTTP::Server;
+using eacp::HTTP::ServerOptions;
+using eacp::HTTP::ServerThreadingMode;
 using eacp::Threads::callAsync;
 using eacp::Threads::stopEventLoop;
 
@@ -37,8 +43,7 @@ struct Exchange
     bool completed = false;
 };
 
-void performExchange(Server& server, const Request& clientRequest,
-                     Exchange& out)
+void performExchange(Server& server, const Request& clientRequest, Exchange& out)
 {
     auto worker = std::thread();
 
@@ -46,15 +51,59 @@ void performExchange(Server& server, const Request& clientRequest,
         std::chrono::seconds(5),
         [&]
         {
-            worker = std::thread([&]
-            {
-                out.clientResponse =
-                    eacp::HTTP::httpRequest(clientRequest);
-                callAsync([] { stopEventLoop(); });
-            });
+            worker = std::thread(
+                [&]
+                {
+                    out.clientResponse = eacp::HTTP::httpRequest(clientRequest);
+                    callAsync([] { stopEventLoop(); });
+                });
         });
 
     worker.join();
+    out.completed = stopped;
+    server.stop();
+}
+
+struct ParallelExchange
+{
+    std::vector<Response> responses;
+    bool completed = false;
+};
+
+void performParallelExchange(Server& server,
+                             const std::vector<Request>& requests,
+                             ParallelExchange& out,
+                             std::chrono::milliseconds timeout
+                             = std::chrono::seconds(10))
+{
+    auto n = requests.size();
+    out.responses.assign(n, Response());
+
+    auto remaining = std::make_shared<std::atomic<int>>((int) n);
+    auto workers = std::vector<std::thread>();
+    workers.reserve(n);
+
+    auto stopped = eacp::Threads::runEventLoopFor(
+        timeout,
+        [&]
+        {
+            for (auto i = size_t {0}; i < n; ++i)
+            {
+                workers.emplace_back(
+                    [&, i]
+                    {
+                        out.responses[i] =
+                            eacp::HTTP::httpRequest(requests[i]);
+                        if (remaining->fetch_sub(1) == 1)
+                            callAsync([] { stopEventLoop(); });
+                    });
+            }
+        });
+
+    for (auto& w: workers)
+        if (w.joinable())
+            w.join();
+
     out.completed = stopped;
     server.stop();
 }
@@ -91,15 +140,16 @@ auto tHandlerReceivesGet = test("HttpServer/handlerReceivesGetRequest") = []
     auto port = reservePort();
     auto ex = Exchange();
 
-    auto ok = server.listen(port, [&](const Request& req)
-    {
-        ex.received = req;
-        ex.handlerCalled = true;
-        auto res = Response();
-        res.statusCode = 200;
-        res.content = "hello";
-        return res;
-    });
+    auto ok = server.listen(port,
+                            [&](const Request& req)
+                            {
+                                ex.received = req;
+                                ex.handlerCalled = true;
+                                auto res = Response();
+                                res.statusCode = 200;
+                                res.content = "hello";
+                                return res;
+                            });
     check(ok);
 
     performExchange(server, Request(baseUrl(port) + "/ping"), ex);
@@ -112,26 +162,26 @@ auto tHandlerReceivesGet = test("HttpServer/handlerReceivesGetRequest") = []
     check(ex.clientResponse.content == "hello");
 };
 
-auto tHandlerReceivesPostBody =
-    test("HttpServer/handlerReceivesPostBody") = []
+auto tHandlerReceivesPostBody = test("HttpServer/handlerReceivesPostBody") = []
 {
     auto server = Server();
     auto port = reservePort();
     auto ex = Exchange();
 
-    auto ok = server.listen(port, [&](const Request& req)
-    {
-        ex.received = req;
-        ex.handlerCalled = true;
-        auto res = Response();
-        res.statusCode = 201;
-        res.content = "created";
-        return res;
-    });
+    auto ok = server.listen(port,
+                            [&](const Request& req)
+                            {
+                                ex.received = req;
+                                ex.handlerCalled = true;
+                                auto res = Response();
+                                res.statusCode = 201;
+                                res.content = "created";
+                                return res;
+                            });
     check(ok);
 
-    auto clientReq = Request::post(baseUrl(port) + "/items",
-                                   "{\"name\":\"widget\"}");
+    auto clientReq =
+        Request::post(baseUrl(port) + "/items", "{\"name\":\"widget\"}");
     clientReq.headers["Content-Type"] = "application/json";
 
     performExchange(server, clientReq, ex);
@@ -144,21 +194,21 @@ auto tHandlerReceivesPostBody =
     check(ex.clientResponse.content == "created");
 };
 
-auto tHandlerReceivesHeaders =
-    test("HttpServer/handlerReceivesCustomHeaders") = []
+auto tHandlerReceivesHeaders = test("HttpServer/handlerReceivesCustomHeaders") = []
 {
     auto server = Server();
     auto port = reservePort();
     auto ex = Exchange();
 
-    auto ok = server.listen(port, [&](const Request& req)
-    {
-        ex.received = req;
-        ex.handlerCalled = true;
-        auto res = Response();
-        res.statusCode = 200;
-        return res;
-    });
+    auto ok = server.listen(port,
+                            [&](const Request& req)
+                            {
+                                ex.received = req;
+                                ex.handlerCalled = true;
+                                auto res = Response();
+                                res.statusCode = 200;
+                                return res;
+                            });
     check(ok);
 
     auto clientReq = Request(baseUrl(port) + "/h");
@@ -177,15 +227,16 @@ auto tResponseHeadersForwarded =
     auto port = reservePort();
     auto ex = Exchange();
 
-    auto ok = server.listen(port, [&](const Request&)
-    {
-        auto res = Response();
-        res.statusCode = 200;
-        res.content = "{}";
-        res.headers["Content-Type"] = "application/json";
-        res.headers["X-Server-Tag"] = "eacp-test";
-        return res;
-    });
+    auto ok = server.listen(port,
+                            [&](const Request&)
+                            {
+                                auto res = Response();
+                                res.statusCode = 200;
+                                res.content = "{}";
+                                res.headers["Content-Type"] = "application/json";
+                                res.headers["X-Server-Tag"] = "eacp-test";
+                                return res;
+                            });
     check(ok);
 
     performExchange(server, Request(baseUrl(port) + "/json"), ex);
@@ -195,19 +246,19 @@ auto tResponseHeadersForwarded =
     check(ex.clientResponse.content == "{}");
 };
 
-auto tDefaultStatusIs200 =
-    test("HttpServer/responseWithoutStatusDefaultsTo200") = []
+auto tDefaultStatusIs200 = test("HttpServer/responseWithoutStatusDefaultsTo200") = []
 {
     auto server = Server();
     auto port = reservePort();
     auto ex = Exchange();
 
-    auto ok = server.listen(port, [&](const Request&)
-    {
-        auto res = Response();
-        res.content = "ok";
-        return res;
-    });
+    auto ok = server.listen(port,
+                            [&](const Request&)
+                            {
+                                auto res = Response();
+                                res.content = "ok";
+                                return res;
+                            });
     check(ok);
 
     performExchange(server, Request(baseUrl(port) + "/"), ex);
@@ -223,13 +274,14 @@ auto tNotFoundStatus = test("HttpServer/handlerCanReturnNotFound") = []
     auto port = reservePort();
     auto ex = Exchange();
 
-    auto ok = server.listen(port, [&](const Request&)
-    {
-        auto res = Response();
-        res.statusCode = 404;
-        res.content = "missing";
-        return res;
-    });
+    auto ok = server.listen(port,
+                            [&](const Request&)
+                            {
+                                auto res = Response();
+                                res.statusCode = 404;
+                                res.content = "missing";
+                                return res;
+                            });
     check(ok);
 
     performExchange(server, Request(baseUrl(port) + "/x"), ex);
@@ -237,4 +289,224 @@ auto tNotFoundStatus = test("HttpServer/handlerCanReturnNotFound") = []
     check(ex.completed);
     check(ex.clientResponse.statusCode == 404);
     check(ex.clientResponse.content == "missing");
+};
+
+auto tHandlerReceivesQueryParams =
+    test("HttpServer/handlerReceivesParsedQueryParams") = []
+{
+    auto server = Server();
+    auto port = reservePort();
+    auto ex = Exchange();
+
+    auto ok = server.listen(port,
+                            [&](const Request& req)
+                            {
+                                ex.received = req;
+                                ex.handlerCalled = true;
+                                return Response();
+                            });
+    check(ok);
+
+    performExchange(
+        server, Request(baseUrl(port) + "/search?q=hello%20world&limit=10"), ex);
+
+    check(ex.completed);
+    check(ex.handlerCalled);
+    check(ex.received.params.size() == 2);
+    check(ex.received.params["q"] == "hello world");
+    check(ex.received.params["limit"] == "10");
+};
+
+auto tHandlerReceivesEmptyParamsForNoQuery =
+    test("HttpServer/handlerHasEmptyParamsWhenNoQuery") = []
+{
+    auto server = Server();
+    auto port = reservePort();
+    auto ex = Exchange();
+
+    auto ok = server.listen(port,
+                            [&](const Request& req)
+                            {
+                                ex.received = req;
+                                ex.handlerCalled = true;
+                                return Response();
+                            });
+    check(ok);
+
+    performExchange(server, Request(baseUrl(port) + "/plain"), ex);
+
+    check(ex.completed);
+    check(ex.handlerCalled);
+    check(ex.received.params.empty());
+};
+
+auto tHandlerReceivesRemoteAddr =
+    test("HttpServer/handlerReceivesRemoteAddrAndPort") = []
+{
+    auto server = Server();
+    auto port = reservePort();
+    auto ex = Exchange();
+
+    auto ok = server.listen(port,
+                            [&](const Request& req)
+                            {
+                                ex.received = req;
+                                ex.handlerCalled = true;
+                                return Response();
+                            });
+    check(ok);
+
+    performExchange(server, Request(baseUrl(port) + "/who"), ex);
+
+    check(ex.completed);
+    check(ex.handlerCalled);
+    check(ex.received.remoteAddr == "127.0.0.1");
+    check(ex.received.remotePort > 0);
+    check(ex.received.remotePort != port);
+};
+
+auto tEventLoopModeSerializesHandlers =
+    test("HttpServer/eventLoopModeSerializesHandlerInvocations") = []
+{
+    auto opts = ServerOptions {};
+    opts.threading = ServerThreadingMode::EventLoop;
+    auto server = Server(opts);
+    auto port = reservePort();
+
+    auto inFlight = std::atomic<int> {0};
+    auto maxInFlight = std::atomic<int> {0};
+
+    auto ok = server.listen(
+        port,
+        [&](const Request&)
+        {
+            auto cur = inFlight.fetch_add(1) + 1;
+            auto m = maxInFlight.load();
+            while (cur > m && !maxInFlight.compare_exchange_weak(m, cur))
+            {
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            inFlight.fetch_sub(1);
+
+            auto res = Response();
+            res.statusCode = 200;
+            res.content = "ok";
+            return res;
+        });
+    check(ok);
+
+    auto requests = std::vector<Request>();
+    for (auto i = 0; i < 4; ++i)
+        requests.emplace_back(baseUrl(port) + "/p");
+
+    auto out = ParallelExchange();
+    performParallelExchange(server, requests, out);
+
+    check(out.completed);
+    check(maxInFlight.load() == 1);
+    check(out.responses.size() == 4);
+    for (auto& r: out.responses)
+    {
+        check(r.statusCode == 200);
+        check(r.content == "ok");
+    }
+};
+
+auto tThreadPoolModeRunsHandlersInParallel =
+    test("HttpServer/threadPoolModeRunsHandlersInParallel") = []
+{
+    auto opts = ServerOptions {};
+    opts.threading = ServerThreadingMode::ThreadPool;
+    opts.threadPoolSize = 4;
+    auto server = Server(opts);
+    auto port = reservePort();
+
+    auto barrierCount = std::atomic<int> {0};
+    auto allArrived = std::atomic<bool> {false};
+
+    auto ok = server.listen(
+        port,
+        [&](const Request&)
+        {
+            barrierCount.fetch_add(1);
+
+            auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (barrierCount.load() < 4
+                   && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+            if (barrierCount.load() >= 4)
+                allArrived.store(true);
+
+            auto res = Response();
+            res.statusCode = 200;
+            res.content = "ok";
+            return res;
+        });
+    check(ok);
+
+    auto requests = std::vector<Request>();
+    for (auto i = 0; i < 4; ++i)
+        requests.emplace_back(baseUrl(port) + "/q");
+
+    auto out = ParallelExchange();
+    performParallelExchange(server, requests, out);
+
+    check(out.completed);
+    check(allArrived.load());
+    check(out.responses.size() == 4);
+    for (auto& r: out.responses)
+    {
+        check(r.statusCode == 200);
+        check(r.content == "ok");
+    }
+};
+
+auto tThreadPoolModeAssignsDistinctRemotePorts =
+    test("HttpServer/threadPoolModeAssignsDistinctRemotePortsPerClient") = []
+{
+    auto opts = ServerOptions {};
+    opts.threading = ServerThreadingMode::ThreadPool;
+    opts.threadPoolSize = 4;
+    auto server = Server(opts);
+    auto port = reservePort();
+
+    auto remotePortsMutex = std::mutex();
+    auto remotePorts = std::vector<int>();
+
+    auto ok = server.listen(
+        port,
+        [&](const Request& req)
+        {
+            {
+                auto lock = std::lock_guard(remotePortsMutex);
+                remotePorts.push_back(req.remotePort);
+            }
+            auto res = Response();
+            res.statusCode = 200;
+            res.content = "ok";
+            return res;
+        });
+    check(ok);
+
+    auto requests = std::vector<Request>();
+    for (auto i = 0; i < 6; ++i)
+        requests.emplace_back(baseUrl(port) + "/multi");
+
+    auto out = ParallelExchange();
+    performParallelExchange(server, requests, out);
+
+    check(out.completed);
+    check(out.responses.size() == 6);
+    for (auto& r: out.responses)
+        check(r.statusCode == 200);
+
+    auto lock = std::lock_guard(remotePortsMutex);
+    check(remotePorts.size() == 6);
+    for (auto p: remotePorts)
+        check(p > 0 && p != port);
+    auto sorted = remotePorts;
+    std::sort(sorted.begin(), sorted.end());
+    check(std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end());
 };

@@ -1,7 +1,11 @@
 #include "HttpServer.h"
+#include "HttpServerDispatcher.h"
+
+#include <eacp/Core/Threads/EventLoop.h>
 
 #include <CoreFoundation/CoreFoundation.h>
 
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -61,10 +65,46 @@ struct Connection
     Request request;
 };
 
+void writeResponseToFd(int fd, const Response& res)
+{
+    auto code = res.statusCode != 0 ? res.statusCode : 200;
+    auto ss = std::stringstream();
+    ss << "HTTP/1.1 " << code << " " << reasonPhrase(code) << "\r\n";
+
+    auto hasContentLength = false;
+    for (auto& [k, v]: res.headers)
+    {
+        if (toLower(k) == "content-length")
+            hasContentLength = true;
+        ss << k << ": " << v << "\r\n";
+    }
+    if (!hasContentLength)
+        ss << "Content-Length: " << res.content.size() << "\r\n";
+    ss << "Connection: close\r\n\r\n";
+    ss << res.content;
+
+    auto out = ss.str();
+    auto sent = size_t {0};
+    while (sent < out.size())
+    {
+        auto n = ::send(fd, out.data() + sent, out.size() - sent, 0);
+        if (n <= 0)
+            break;
+        sent += (size_t) n;
+    }
+}
+
 } // namespace
 
 struct Server::Impl
 {
+    explicit Impl(ServerOptions opts)
+        : options(opts), dispatcher(makeDispatcher(opts))
+    {
+    }
+
+    ServerOptions options;
+    std::unique_ptr<Dispatcher> dispatcher;
     CFSocketRef listenSocket = nullptr;
     CFRunLoopSourceRef listenSource = nullptr;
     RequestHandler handler;
@@ -78,7 +118,6 @@ struct Server::Impl
     void onAccept(CFSocketNativeHandle clientFd);
     void onClientReadable(CFSocketRef cf);
     void closeConnection(CFSocketRef cf);
-    void writeResponse(int fd, const Response& res);
 
     static void acceptCallback(CFSocketRef, CFSocketCallBackType, CFDataRef,
                                const void* data, void* info)
@@ -94,8 +133,8 @@ struct Server::Impl
     }
 };
 
-Server::Server()
-    : impl(std::make_unique<Impl>())
+Server::Server(ServerOptions options)
+    : impl(std::make_unique<Impl>(options))
 {
 }
 
@@ -163,6 +202,9 @@ bool Server::Impl::start(int port, RequestHandler h)
 
 void Server::Impl::stop()
 {
+    if (dispatcher)
+        dispatcher->shutdown();
+
     for (auto& [cf, conn]: connections)
     {
         if (conn->source)
@@ -197,6 +239,16 @@ void Server::Impl::stop()
 void Server::Impl::onAccept(CFSocketNativeHandle clientFd)
 {
     auto conn = std::make_unique<Connection>();
+
+    auto peer = sockaddr_in {};
+    auto peerLen = (socklen_t) sizeof(peer);
+    if (getpeername(clientFd, (sockaddr*) &peer, &peerLen) == 0)
+    {
+        char ip[INET_ADDRSTRLEN] = {0};
+        inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
+        conn->request.remoteAddr = ip;
+        conn->request.remotePort = (int) ntohs(peer.sin_port);
+    }
 
     auto context = CFSocketContext{0, this, nullptr, nullptr, nullptr};
     conn->socket = CFSocketCreateWithNative(kCFAllocatorDefault, clientFd,
@@ -265,6 +317,11 @@ void Server::Impl::onClientReadable(CFSocketRef cf)
         conn.request.type = line.substr(0, sp1);
         conn.request.url = line.substr(sp1 + 1, sp2 - sp1 - 1);
 
+        auto query = conn.request.url.find('?');
+        if (query != std::string::npos)
+            conn.request.params =
+                parseQueryString(conn.request.url.substr(query + 1));
+
         while (std::getline(stream, line))
         {
             if (!line.empty() && line.back() == '\r')
@@ -303,9 +360,34 @@ void Server::Impl::onClientReadable(CFSocketRef cf)
         conn.request.body = conn.buffer.substr(conn.bodyStart,
                                                conn.bodyExpected);
 
-        auto response = handler ? handler(conn.request) : Response();
-        writeResponse(fd, response);
-        closeConnection(cf);
+        auto request = std::move(conn.request);
+
+        if (conn.source)
+        {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), conn.source,
+                                  kCFRunLoopCommonModes);
+            CFRelease(conn.source);
+            conn.source = nullptr;
+        }
+        if (conn.socket)
+        {
+            auto flags = CFSocketGetSocketFlags(conn.socket);
+            CFSocketSetSocketFlags(conn.socket,
+                                   flags & ~kCFSocketCloseOnInvalidate);
+            CFSocketInvalidate(conn.socket);
+            CFRelease(conn.socket);
+            conn.socket = nullptr;
+        }
+        connections.erase(it);
+
+        auto sendResponse = [fd](const Response& res)
+        {
+            writeResponseToFd(fd, res);
+            ::close(fd);
+        };
+
+        dispatcher->dispatch(
+            DispatchTask {std::move(request), handler, std::move(sendResponse)});
     }
 }
 
@@ -328,35 +410,6 @@ void Server::Impl::closeConnection(CFSocketRef cf)
         CFRelease(conn.socket);
     }
     connections.erase(it);
-}
-
-void Server::Impl::writeResponse(int fd, const Response& res)
-{
-    auto code = res.statusCode != 0 ? res.statusCode : 200;
-    auto ss = std::stringstream();
-    ss << "HTTP/1.1 " << code << " " << reasonPhrase(code) << "\r\n";
-
-    auto hasContentLength = false;
-    for (auto& [k, v]: res.headers)
-    {
-        if (toLower(k) == "content-length")
-            hasContentLength = true;
-        ss << k << ": " << v << "\r\n";
-    }
-    if (!hasContentLength)
-        ss << "Content-Length: " << res.content.size() << "\r\n";
-    ss << "Connection: close\r\n\r\n";
-    ss << res.content;
-
-    auto out = ss.str();
-    auto sent = size_t{0};
-    while (sent < out.size())
-    {
-        auto n = ::send(fd, out.data() + sent, out.size() - sent, 0);
-        if (n <= 0)
-            break;
-        sent += (size_t) n;
-    }
 }
 
 } // namespace eacp::HTTP

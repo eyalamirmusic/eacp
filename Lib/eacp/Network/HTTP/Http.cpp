@@ -105,4 +105,80 @@ Response Request::downloadTo(const std::string& filePath) const
 {
     return downloadFile(*this, filePath);
 }
+
+namespace
+{
+int hexValue(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+} // namespace
+
+std::string urlDecode(const std::string& encoded)
+{
+    auto result = std::string();
+    result.reserve(encoded.size());
+
+    for (auto i = size_t {0}; i < encoded.size(); ++i)
+    {
+        auto c = encoded[i];
+        if (c == '+')
+        {
+            result.push_back(' ');
+        }
+        else if (c == '%' && i + 2 < encoded.size())
+        {
+            auto hi = hexValue(encoded[i + 1]);
+            auto lo = hexValue(encoded[i + 2]);
+            if (hi < 0 || lo < 0)
+            {
+                result.push_back(c);
+                continue;
+            }
+            result.push_back((char) ((hi << 4) | lo));
+            i += 2;
+        }
+        else
+        {
+            result.push_back(c);
+        }
+    }
+
+    return result;
+}
+
+std::map<std::string, std::string> parseQueryString(const std::string& query)
+{
+    auto result = std::map<std::string, std::string>();
+
+    auto pos = size_t {0};
+    while (pos < query.size())
+    {
+        auto amp = query.find('&', pos);
+        auto end = amp == std::string::npos ? query.size() : amp;
+        auto pair = query.substr(pos, end - pos);
+
+        if (!pair.empty())
+        {
+            auto eq = pair.find('=');
+            if (eq == std::string::npos)
+                result[urlDecode(pair)] = "";
+            else
+                result[urlDecode(pair.substr(0, eq))] =
+                    urlDecode(pair.substr(eq + 1));
+        }
+
+        if (amp == std::string::npos)
+            break;
+        pos = amp + 1;
+    }
+
+    return result;
+}
 } // namespace eacp::HTTP

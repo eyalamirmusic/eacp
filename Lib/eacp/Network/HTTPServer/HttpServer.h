@@ -10,9 +10,21 @@ namespace eacp::HTTP
 
 using RequestHandler = std::function<Response(const Request&)>;
 
+enum class ServerThreadingMode
+{
+    EventLoop,
+    ThreadPool,
+};
+
+struct ServerOptions
+{
+    ServerThreadingMode threading = ServerThreadingMode::EventLoop;
+    int threadPoolSize = 4;
+};
+
 struct Server
 {
-    Server();
+    explicit Server(ServerOptions options = {});
     ~Server();
 
     bool listen(int port, RequestHandler handler);

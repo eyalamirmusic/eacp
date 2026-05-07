@@ -1,4 +1,5 @@
 #include "HttpServer.h"
+#include "HttpServerDispatcher.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -38,18 +39,30 @@ const char* reasonPhrase(int code)
 {
     switch (code)
     {
-        case 200: return "OK";
-        case 201: return "Created";
-        case 204: return "No Content";
-        case 301: return "Moved Permanently";
-        case 302: return "Found";
-        case 304: return "Not Modified";
-        case 400: return "Bad Request";
-        case 401: return "Unauthorized";
-        case 403: return "Forbidden";
-        case 404: return "Not Found";
-        case 500: return "Internal Server Error";
-        default: return "OK";
+        case 200:
+            return "OK";
+        case 201:
+            return "Created";
+        case 204:
+            return "No Content";
+        case 301:
+            return "Moved Permanently";
+        case 302:
+            return "Found";
+        case 304:
+            return "Not Modified";
+        case 400:
+            return "Bad Request";
+        case 401:
+            return "Unauthorized";
+        case 403:
+            return "Forbidden";
+        case 404:
+            return "Not Found";
+        case 500:
+            return "Internal Server Error";
+        default:
+            return "OK";
     }
 }
 
@@ -69,10 +82,46 @@ void ensureWinsockInitialized()
     (void) init;
 }
 
+void writeResponseToFd(SOCKET fd, const Response& res)
+{
+    auto code = res.statusCode != 0 ? res.statusCode : 200;
+    auto ss = std::stringstream();
+    ss << "HTTP/1.1 " << code << " " << reasonPhrase(code) << "\r\n";
+
+    auto hasContentLength = false;
+    for (auto& [k, v]: res.headers)
+    {
+        if (toLower(k) == "content-length")
+            hasContentLength = true;
+        ss << k << ": " << v << "\r\n";
+    }
+    if (!hasContentLength)
+        ss << "Content-Length: " << res.content.size() << "\r\n";
+    ss << "Connection: close\r\n\r\n";
+    ss << res.content;
+
+    auto out = ss.str();
+    auto sent = size_t {0};
+    while (sent < out.size())
+    {
+        auto n = ::send(fd, out.data() + sent, (int) (out.size() - sent), 0);
+        if (n <= 0)
+            break;
+        sent += (size_t) n;
+    }
+}
+
 } // namespace
 
 struct Server::Impl
 {
+    explicit Impl(ServerOptions opts)
+        : options(opts), dispatcher(makeDispatcher(opts))
+    {
+    }
+
+    ServerOptions options;
+    std::unique_ptr<Dispatcher> dispatcher;
     SOCKET listenSocket = INVALID_SOCKET;
     RequestHandler handler;
     std::thread acceptThread;
@@ -87,12 +136,13 @@ struct Server::Impl
     void stop();
 
     void acceptLoop();
-    void handleConnection(SOCKET clientSocket);
-    void writeResponse(SOCKET fd, const Response& res);
+    void handleConnection(SOCKET clientSocket,
+                          const std::string& remoteAddr,
+                          int remotePort);
 };
 
-Server::Server()
-    : impl(std::make_unique<Impl>())
+Server::Server(ServerOptions options)
+    : impl(std::make_unique<Impl>(options))
 {
 }
 
@@ -126,11 +176,8 @@ bool Server::Impl::start(int port, RequestHandler h)
         return false;
 
     auto yes = 1;
-    setsockopt(listenSocket,
-               SOL_SOCKET,
-               SO_REUSEADDR,
-               (const char*) &yes,
-               sizeof(yes));
+    setsockopt(
+        listenSocket, SOL_SOCKET, SO_REUSEADDR, (const char*) &yes, sizeof(yes));
 
     auto addr = sockaddr_in();
     addr.sin_family = AF_INET;
@@ -177,29 +224,44 @@ void Server::Impl::stop()
     for (auto& t: threadsToJoin)
         if (t.joinable())
             t.join();
+
+    if (dispatcher)
+        dispatcher->shutdown();
 }
 
 void Server::Impl::acceptLoop()
 {
     while (running)
     {
-        auto clientSocket = ::accept(listenSocket, nullptr, nullptr);
+        auto addr = sockaddr_in();
+        auto addrLen = (int) sizeof(addr);
+        auto clientSocket = ::accept(listenSocket, (sockaddr*) &addr, &addrLen);
         if (clientSocket == INVALID_SOCKET)
             break;
 
+        char ip[INET_ADDRSTRLEN] = {0};
+        ::inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
+        auto remoteAddr = std::string(ip);
+        auto remotePort = (int) ntohs(addr.sin_port);
+
         auto lock = std::lock_guard(clientMutex);
-        clientThreads.emplace_back([this, clientSocket]
-                                   { handleConnection(clientSocket); });
+        clientThreads.emplace_back(
+            [this, clientSocket, remoteAddr, remotePort]
+            { handleConnection(clientSocket, remoteAddr, remotePort); });
     }
 }
 
-void Server::Impl::handleConnection(SOCKET fd)
+void Server::Impl::handleConnection(SOCKET fd,
+                                    const std::string& remoteAddr,
+                                    int remotePort)
 {
     auto buffer = std::string();
     auto headersParsed = false;
     auto bodyStart = size_t {0};
     auto bodyExpected = size_t {0};
     auto request = Request();
+    request.remoteAddr = remoteAddr;
+    request.remotePort = remotePort;
 
     char buf[4096];
     while (true)
@@ -241,6 +303,10 @@ void Server::Impl::handleConnection(SOCKET fd)
             request.type = line.substr(0, sp1);
             request.url = line.substr(sp1 + 1, sp2 - sp1 - 1);
 
+            auto query = request.url.find('?');
+            if (query != std::string::npos)
+                request.params = parseQueryString(request.url.substr(query + 1));
+
             while (std::getline(stream, line))
             {
                 if (!line.empty() && line.back() == '\r')
@@ -250,8 +316,8 @@ void Server::Impl::handleConnection(SOCKET fd)
                 auto colon = line.find(':');
                 if (colon == std::string::npos)
                     continue;
-                request.headers[trim(line.substr(0, colon))]
-                    = trim(line.substr(colon + 1));
+                request.headers[trim(line.substr(0, colon))] =
+                    trim(line.substr(colon + 1));
             }
 
             bodyStart = end + 4;
@@ -277,43 +343,16 @@ void Server::Impl::handleConnection(SOCKET fd)
         {
             request.body = buffer.substr(bodyStart, bodyExpected);
 
-            auto response = handler ? handler(request) : Response();
-            writeResponse(fd, response);
-            closesocket(fd);
+            auto sendResponse = [fd](const Response& res)
+            {
+                writeResponseToFd(fd, res);
+                closesocket(fd);
+            };
+
+            dispatcher->dispatch(DispatchTask {
+                std::move(request), handler, std::move(sendResponse)});
             return;
         }
-    }
-}
-
-void Server::Impl::writeResponse(SOCKET fd, const Response& res)
-{
-    auto code = res.statusCode != 0 ? res.statusCode : 200;
-    auto ss = std::stringstream();
-    ss << "HTTP/1.1 " << code << " " << reasonPhrase(code) << "\r\n";
-
-    auto hasContentLength = false;
-    for (auto& [k, v]: res.headers)
-    {
-        if (toLower(k) == "content-length")
-            hasContentLength = true;
-        ss << k << ": " << v << "\r\n";
-    }
-    if (!hasContentLength)
-        ss << "Content-Length: " << res.content.size() << "\r\n";
-    ss << "Connection: close\r\n\r\n";
-    ss << res.content;
-
-    auto out = ss.str();
-    auto sent = size_t {0};
-    while (sent < out.size())
-    {
-        auto n = ::send(fd,
-                        out.data() + sent,
-                        (int) (out.size() - sent),
-                        0);
-        if (n <= 0)
-            break;
-        sent += (size_t) n;
     }
 }
 

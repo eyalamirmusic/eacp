@@ -92,8 +92,7 @@ auto tAddFileFieldExtractsName =
     check(req.fileFields[0].fileName == "report.pdf");
 };
 
-auto tAddFileFieldNoSeparator =
-    test("HttpRequest/addFileFieldKeepsBareName") = []
+auto tAddFileFieldNoSeparator = test("HttpRequest/addFileFieldKeepsBareName") = []
 {
     auto req = Request("https://example.com");
     req.addFileField("a", "report.pdf");
@@ -119,8 +118,7 @@ auto tAddFileFieldSwitchesToPost =
 auto tAddFileFieldChains = test("HttpRequest/addFileFieldReturnsSelf") = []
 {
     auto req = Request("https://example.com");
-    auto& ret = req.addFileField("a", "/tmp/a.bin")
-                    .addFileField("b", "/tmp/b.bin");
+    auto& ret = req.addFileField("a", "/tmp/a.bin").addFileField("b", "/tmp/b.bin");
     check(&ret == &req);
     check(req.fileFields.size() == 2);
 };
@@ -141,4 +139,97 @@ auto tDefaultResponse = test("HttpResponse/defaultsAreZeroed") = []
     check(res.content.empty());
     check(res.error.empty());
     check(res.headers.empty());
+};
+
+auto tDefaultParamsEmpty = test("HttpRequest/paramsDefaultEmpty") = []
+{
+    auto req = Request();
+    check(req.params.empty());
+    check(req.remoteAddr.empty());
+    check(req.remotePort == -1);
+};
+
+auto tUrlDecodePlain = test("HttpUrlDecode/passesThroughPlainText") = []
+{
+    check(eacp::HTTP::urlDecode("hello") == "hello");
+    check(eacp::HTTP::urlDecode("") == "");
+};
+
+auto tUrlDecodePercent = test("HttpUrlDecode/decodesPercentEscapes") = []
+{
+    check(eacp::HTTP::urlDecode("hello%20world") == "hello world");
+    check(eacp::HTTP::urlDecode("a%2Bb") == "a+b");
+    check(eacp::HTTP::urlDecode("%2F") == "/");
+};
+
+auto tUrlDecodeMixedCase = test("HttpUrlDecode/acceptsMixedHexCase") = []
+{
+    check(eacp::HTTP::urlDecode("%2f") == "/");
+    check(eacp::HTTP::urlDecode("%2F") == "/");
+    check(eacp::HTTP::urlDecode("%aB") == "\xab");
+};
+
+auto tUrlDecodePlus = test("HttpUrlDecode/decodesPlusAsSpace") = []
+{ check(eacp::HTTP::urlDecode("hello+world") == "hello world"); };
+
+auto tUrlDecodeBadEscape = test("HttpUrlDecode/leavesInvalidEscapeIntact") = []
+{
+    check(eacp::HTTP::urlDecode("100%") == "100%");
+    check(eacp::HTTP::urlDecode("%ZZ") == "%ZZ");
+};
+
+auto tParseQueryEmpty = test("HttpParseQueryString/emptyYieldsEmpty") = []
+{ check(eacp::HTTP::parseQueryString("").empty()); };
+
+auto tParseQuerySingle = test("HttpParseQueryString/singlePair") = []
+{
+    auto p = eacp::HTTP::parseQueryString("foo=bar");
+    check(p.size() == 1);
+    check(p["foo"] == "bar");
+};
+
+auto tParseQueryMultiple = test("HttpParseQueryString/multiplePairs") = []
+{
+    auto p = eacp::HTTP::parseQueryString("a=1&b=2&c=3");
+    check(p.size() == 3);
+    check(p["a"] == "1");
+    check(p["b"] == "2");
+    check(p["c"] == "3");
+};
+
+auto tParseQueryDecoded = test("HttpParseQueryString/decodesValues") = []
+{
+    auto p = eacp::HTTP::parseQueryString("msg=hello%20world&path=%2Ftmp");
+    check(p["msg"] == "hello world");
+    check(p["path"] == "/tmp");
+};
+
+auto tParseQueryDecodedKeys = test("HttpParseQueryString/decodesKeys") = []
+{
+    auto p = eacp::HTTP::parseQueryString("a%20b=c");
+    check(p["a b"] == "c");
+};
+
+auto tParseQueryFlagOnly = test("HttpParseQueryString/keyWithoutValueIsEmpty") = []
+{
+    auto p = eacp::HTTP::parseQueryString("flag&other=1");
+    check(p.size() == 2);
+    check(p["flag"] == "");
+    check(p["other"] == "1");
+};
+
+auto tParseQueryEmptyValue = test("HttpParseQueryString/explicitEmptyValue") = []
+{
+    auto p = eacp::HTTP::parseQueryString("k=");
+    check(p.size() == 1);
+    check(p["k"] == "");
+};
+
+auto tParseQuerySkipsBlankSegments =
+    test("HttpParseQueryString/ignoresBlankSegments") = []
+{
+    auto p = eacp::HTTP::parseQueryString("&a=1&&b=2&");
+    check(p.size() == 2);
+    check(p["a"] == "1");
+    check(p["b"] == "2");
 };

@@ -51,8 +51,15 @@ struct Request
     std::map<std::string, std::string> headers;
     std::vector<FormField> formFields;
     std::vector<FileField> fileFields;
+
+    std::map<std::string, std::string> params;
+    std::string remoteAddr;
+    int remotePort = -1;
 };
 
 Response httpRequest(const Request& req);
 Response downloadFile(const Request& req, const std::string& filePath);
+
+std::string urlDecode(const std::string& encoded);
+std::map<std::string, std::string> parseQueryString(const std::string& query);
 } // namespace eacp::HTTP
