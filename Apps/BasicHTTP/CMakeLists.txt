@@ -1,5 +1,5 @@
 add_executable(BasicHttp Main.cpp)
-target_link_libraries(BasicHttp PRIVATE eacp-network)
+target_link_libraries(BasicHttp PRIVATE eacp-network Miro)
 
 set(BUNDLE_ID "com.eacp.basichttprequest")
 
