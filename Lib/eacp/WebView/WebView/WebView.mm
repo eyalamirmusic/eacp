@@ -9,6 +9,7 @@
 
 #include <eacp/Core/ObjC/Strings.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
+#include <ea_data_structures/Structures/Vector.h>
 #include <algorithm>
 #include <unordered_map>
 
@@ -159,7 +160,7 @@ struct WebView::Native
     ObjC::Ptr<WKWebView> webView;
     ObjC::Ptr<WebViewDelegate> delegate;
     ObjC::Ptr<WKWebViewConfiguration> config;
-    std::vector<ObjC::Ptr<ResourceSchemeHandler>> schemeHandlers;
+    EA::Vector<ObjC::Ptr<ResourceSchemeHandler>> schemeHandlers;
     MessageHandlerMap messageHandlers;
     WebView& owner;
     double zoomLevel = 1.0;
@@ -168,11 +169,11 @@ struct WebView::Native
 
 struct WebViewNativeAccess
 {
-    static std::unique_ptr<WebView>
+    static EA::OwningPointer<WebView>
         makePopup(WKWebViewConfiguration* configuration, bool inspectable)
     {
         auto init = WebView::PopupInit {configuration, inspectable};
-        return std::unique_ptr<WebView> {new WebView {init}};
+        return EA::OwningPointer<WebView> {new WebView {init}};
     }
 
     static WKWebView* wkWebViewOf(WebView& popup)
@@ -362,21 +363,20 @@ namespace eacp::Graphics
 {
 namespace
 {
-std::vector<WebView*>& registeredWebViews()
+EA::Vector<WebView*>& registeredWebViews()
 {
-    static std::vector<WebView*> instances;
+    static EA::Vector<WebView*> instances;
     return instances;
 }
 
 void registerWebView(WebView* view)
 {
-    registeredWebViews().push_back(view);
+    registeredWebViews().add(view);
 }
 
 void unregisterWebView(WebView* view)
 {
-    auto& list = registeredWebViews();
-    list.erase(std::remove(list.begin(), list.end(), view), list.end());
+    registeredWebViews().removeAllMatches(view);
 }
 } // namespace
 

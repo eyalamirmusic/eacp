@@ -5,12 +5,12 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <ea_data_structures/Structures/Vector.h>
 #include <fcntl.h>
 #include <mutex>
 #include <poll.h>
 #include <unistd.h>
 #include <utility>
-#include <vector>
 
 namespace eacp::Threads
 {
@@ -63,7 +63,7 @@ struct LoopState
 {
     PipeWaker waker;
     std::mutex mutex;
-    std::vector<Callback> queue;
+    EA::Vector<Callback> queue;
     std::atomic<bool> running {false};
 };
 
@@ -76,10 +76,10 @@ namespace
 {
 void drainPending(LoopState& loop)
 {
-    auto pending = std::vector<Callback>();
+    auto pending = EA::Vector<Callback>();
     {
         auto lock = std::lock_guard(loop.mutex);
-        pending.swap(loop.queue);
+        pending = std::move(loop.queue);
     }
     for (auto& cb: pending)
         cb();
@@ -168,7 +168,7 @@ void EventLoop::call(Callback func)
     auto& loop = getLoop();
     {
         auto lock = std::lock_guard(loop.mutex);
-        loop.queue.push_back(std::move(func));
+        loop.queue.add(std::move(func));
     }
     loop.waker.wake();
 }

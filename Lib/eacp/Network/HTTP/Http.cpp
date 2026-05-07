@@ -113,7 +113,7 @@ Request Request::post(const std::string& urlToUse, const std::string& bodyToUse)
 
 Request& Request::addFormField(const std::string& name, const std::string& value)
 {
-    formFields.push_back({name, value});
+    formFields.add({name, value});
     type = "POST";
     return *this;
 }
@@ -123,7 +123,7 @@ Request& Request::addFileField(const std::string& fieldName,
                                const std::string& contentType)
 {
     auto fileName = filenameFromPath(filePath);
-    fileFields.push_back({fieldName, filePath, contentType, fileName});
+    fileFields.add({fieldName, filePath, contentType, fileName});
     type = "POST";
     return *this;
 }

@@ -168,7 +168,7 @@ struct XMLReader
                 }
                 auto child = parseElement();
                 if (child)
-                    element.children.push_back(std::move(*child));
+                    element.children.add(std::move(*child));
             }
             else
             {

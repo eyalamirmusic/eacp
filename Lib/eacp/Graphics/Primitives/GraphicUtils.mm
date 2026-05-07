@@ -1,5 +1,7 @@
 #include "GraphicUtils.h"
 
+#include <ea_data_structures/Structures/Vector.h>
+
 namespace eacp::Graphics
 {
 CGRect toCGRect(const Rect& r)
@@ -31,21 +33,21 @@ CFRef<CGGradientRef> toCGGradient(const LinearGradient& gradient)
 {
     static auto colorSpace = CFRef<CGColorSpaceRef>(CGColorSpaceCreateDeviceRGB());
 
-    std::vector<CGFloat> components;
-    std::vector<CGFloat> locations;
+    auto components = EA::Vector<CGFloat>();
+    auto locations = EA::Vector<CGFloat>();
 
     for (const auto& stop : gradient.stops)
     {
-        components.push_back(stop.color.r);
-        components.push_back(stop.color.g);
-        components.push_back(stop.color.b);
-        components.push_back(stop.color.a);
-        locations.push_back(stop.position);
+        components.add(stop.color.r);
+        components.add(stop.color.g);
+        components.add(stop.color.b);
+        components.add(stop.color.a);
+        locations.add(stop.position);
     }
 
     return {CGGradientCreateWithColorComponents(colorSpace,
                                                 components.data(),
                                                 locations.data(),
-                                                gradient.stops.size())};
+                                                (size_t) gradient.stops.size())};
 }
 }

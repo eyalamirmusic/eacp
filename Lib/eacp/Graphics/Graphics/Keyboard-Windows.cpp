@@ -113,9 +113,9 @@ ModifierKeys Keyboard::getModifiers()
     return {isShiftPressed(), isControlPressed(), isAltPressed(), isCommandPressed()};
 }
 
-std::vector<Key> Keyboard::getPressedKeys()
+EA::Vector<Key> Keyboard::getPressedKeys()
 {
-    std::vector<Key> keys;
+    EA::Vector<Key> keys;
 
     for (int vk = 0; vk < 256; ++vk)
     {
@@ -124,7 +124,7 @@ std::vector<Key> Keyboard::getPressedKeys()
             Key key;
             key.keyCode = static_cast<uint16_t>(vk);
             key.character = keyCodeToCharacter(key.keyCode);
-            keys.push_back(key);
+            keys.add(key);
         }
     }
 

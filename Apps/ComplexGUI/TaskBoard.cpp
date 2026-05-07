@@ -1,8 +1,9 @@
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/Core/Core.h>
+#include <ea_data_structures/Pointers/OwningPointer.h>
+#include <ea_data_structures/Structures/Vector.h>
 #include <algorithm>
 #include <functional>
-#include <memory>
 
 using namespace eacp;
 using namespace Graphics;
@@ -442,7 +443,7 @@ struct TaskBoardView final : View
 
     void addSampleTasks()
     {
-        static const std::vector<std::string> sampleTitles = {
+        static const auto sampleTitles = EA::Vector<std::string> {
             "Design system architecture",
             "Implement user auth",
             "Write unit tests",
@@ -452,11 +453,11 @@ struct TaskBoardView final : View
             "Optimize database",
             "Deploy to staging"};
 
-        static const std::vector<std::string> sampleDescs = {"High priority",
-                                                             "Needs review",
-                                                             "In progress",
-                                                             "Blocked",
-                                                             "Ready for QA"};
+        static const auto sampleDescs = EA::Vector<std::string> {"High priority",
+                                                                 "Needs review",
+                                                                 "In progress",
+                                                                 "Blocked",
+                                                                 "Ready for QA"};
 
         for (int i = 0; i < 3; ++i)
         {
@@ -480,11 +481,11 @@ struct TaskBoardView final : View
 
     TaskData createTaskData(const std::string& title, const std::string& desc)
     {
-        static const std::vector<Color> colors = {{0.4f, 0.6f, 1.0f},
-                                                  {1.0f, 0.5f, 0.3f},
-                                                  {0.5f, 0.8f, 0.4f},
-                                                  {0.9f, 0.4f, 0.6f},
-                                                  {0.6f, 0.4f, 0.9f}};
+        static const auto colors = EA::Vector<Color> {{0.4f, 0.6f, 1.0f},
+                                                      {1.0f, 0.5f, 0.3f},
+                                                      {0.5f, 0.8f, 0.4f},
+                                                      {0.9f, 0.4f, 0.6f},
+                                                      {0.6f, 0.4f, 0.9f}};
 
         auto& color = getRandomElement(colors);
         return {nextTaskId++, title, desc, color};
@@ -557,7 +558,7 @@ struct TaskBoardView final : View
     void startDrag(TaskCard* card, Point)
     {
         draggedCard = card;
-        dragOverlay = std::make_unique<DragOverlay>(card->data);
+        dragOverlay.create(card->data);
         addSubview(*dragOverlay);
         updateDragPosition();
         selectCard(card);
@@ -702,15 +703,15 @@ struct TaskBoardView final : View
         }
     }
 
-    std::vector<TaskCard*> getAllCards()
+    EA::Vector<TaskCard*> getAllCards()
     {
-        std::vector<TaskCard*> all;
+        EA::Vector<TaskCard*> all;
         for (auto& c: todoColumn.cards)
-            all.push_back(c.get());
+            all.add(c.get());
         for (auto& c: progressColumn.cards)
-            all.push_back(c.get());
+            all.add(c.get());
         for (auto& c: doneColumn.cards)
-            all.push_back(c.get());
+            all.add(c.get());
         return all;
     }
 
@@ -798,7 +799,7 @@ struct TaskBoardView final : View
     Column progressColumn {"In Progress", {1.0f, 0.6f, 0.2f}};
     Column doneColumn {"Done", {0.4f, 0.8f, 0.4f}};
     StatusBar statusBar;
-    std::unique_ptr<DragOverlay> dragOverlay;
+    EA::OwningPointer<DragOverlay> dragOverlay;
 };
 
 struct TaskBoardApp

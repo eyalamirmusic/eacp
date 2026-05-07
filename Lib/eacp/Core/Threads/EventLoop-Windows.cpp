@@ -3,7 +3,7 @@
 #include "../Utils/Singleton.h"
 #include "../Utils/Windows.h"
 
-#include <vector>
+#include <ea_data_structures/Structures/Vector.h>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -31,11 +31,11 @@ struct PendingCallbacks
     void add(const Callback& cb)
     {
         auto guard = std::lock_guard(mutex);
-        pendingCallbacks.push_back(cb);
+        pendingCallbacks.add(cb);
     }
 
     std::recursive_mutex mutex;
-    std::vector<Callback> pendingCallbacks;
+    EA::Vector<Callback> pendingCallbacks;
 };
 
 PendingCallbacks& getPendingCallbacks()

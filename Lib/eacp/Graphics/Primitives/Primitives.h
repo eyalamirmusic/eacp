@@ -1,7 +1,7 @@
 #pragma once
 
+#include <ea_data_structures/Structures/Vector.h>
 #include <initializer_list>
-#include <vector>
 
 namespace eacp::Graphics
 {
@@ -96,7 +96,7 @@ struct LinearGradient
 
     Point start;
     Point end;
-    std::vector<GradientStop> stops;
+    EA::Vector<GradientStop> stops;
 };
 
 } // namespace eacp::Graphics

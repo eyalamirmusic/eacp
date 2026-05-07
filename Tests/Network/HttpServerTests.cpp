@@ -111,35 +111,36 @@ void performParallelExchange(
 auto tListenSucceeds = test("HttpServer/listenReturnsTrueOnFreshPort") = []
 {
     auto server = Server();
-    auto port = reservePort();
-    auto ok = server.listen(port, [](const Request&) { return Response(); });
+    auto port = 0;
+    auto ok = server.listen(0, [](const Request&) { return Response(); });
     check(ok);
+    port = server.boundPort();
 };
 
 auto tListenTwiceFails = test("HttpServer/listenTwiceOnSameInstanceFails") = []
 {
     auto server = Server();
-    auto port = reservePort();
-    check(server.listen(port, [](const Request&) { return Response(); }));
-    check(!server.listen(port, [](const Request&) { return Response(); }));
+    auto port = 0;
+    check(server.listen(0, [](const Request&) { return Response(); }));
+    check(!server.listen(0, [](const Request&) { return Response(); }));
 };
 
 auto tStopAllowsRelisten = test("HttpServer/stopAllowsRelisten") = []
 {
     auto server = Server();
-    auto port = reservePort();
-    check(server.listen(port, [](const Request&) { return Response(); }));
+    auto port = 0;
+    check(server.listen(0, [](const Request&) { return Response(); }));
     server.stop();
-    check(server.listen(port, [](const Request&) { return Response(); }));
+    check(server.listen(0, [](const Request&) { return Response(); }));
 };
 
 auto tHandlerReceivesGet = test("HttpServer/handlerReceivesGetRequest") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
-    auto ok = server.listen(port,
+    auto ok = server.listen(0,
                             [&](const Request& req)
                             {
                                 ex.received = req;
@@ -150,6 +151,7 @@ auto tHandlerReceivesGet = test("HttpServer/handlerReceivesGetRequest") = []
                                 return res;
                             });
     check(ok);
+    port = server.boundPort();
 
     performExchange(server, Request(baseUrl(port) + "/ping"), ex);
 
@@ -164,10 +166,10 @@ auto tHandlerReceivesGet = test("HttpServer/handlerReceivesGetRequest") = []
 auto tHandlerReceivesPostBody = test("HttpServer/handlerReceivesPostBody") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
-    auto ok = server.listen(port,
+    auto ok = server.listen(0,
                             [&](const Request& req)
                             {
                                 ex.received = req;
@@ -178,6 +180,7 @@ auto tHandlerReceivesPostBody = test("HttpServer/handlerReceivesPostBody") = []
                                 return res;
                             });
     check(ok);
+    port = server.boundPort();
 
     auto clientReq =
         Request::post(baseUrl(port) + "/items", "{\"name\":\"widget\"}");
@@ -196,10 +199,10 @@ auto tHandlerReceivesPostBody = test("HttpServer/handlerReceivesPostBody") = []
 auto tHandlerReceivesHeaders = test("HttpServer/handlerReceivesCustomHeaders") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
-    auto ok = server.listen(port,
+    auto ok = server.listen(0,
                             [&](const Request& req)
                             {
                                 ex.received = req;
@@ -209,6 +212,7 @@ auto tHandlerReceivesHeaders = test("HttpServer/handlerReceivesCustomHeaders") =
                                 return res;
                             });
     check(ok);
+    port = server.boundPort();
 
     auto clientReq = Request(baseUrl(port) + "/h");
     clientReq.headers["X-Custom-Header"] = "abc123";
@@ -223,10 +227,10 @@ auto tResponseHeadersForwarded =
     test("HttpServer/responseHeadersAreForwardedToClient") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
-    auto ok = server.listen(port,
+    auto ok = server.listen(0,
                             [&](const Request&)
                             {
                                 auto res = Response();
@@ -237,6 +241,7 @@ auto tResponseHeadersForwarded =
                                 return res;
                             });
     check(ok);
+    port = server.boundPort();
 
     performExchange(server, Request(baseUrl(port) + "/json"), ex);
 
@@ -251,10 +256,10 @@ auto tMultipleResponseHeadersRoundTrip =
     test("HttpServer/multipleResponseHeadersRoundTripToClient") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
-    auto ok = server.listen(port,
+    auto ok = server.listen(0,
                             [&](const Request&)
                             {
                                 auto res = Response();
@@ -265,6 +270,7 @@ auto tMultipleResponseHeadersRoundTrip =
                                 return res;
                             });
     check(ok);
+    port = server.boundPort();
 
     performExchange(server, Request(baseUrl(port) + "/multi"), ex);
 
@@ -278,10 +284,10 @@ auto tMultipleResponseHeadersRoundTrip =
 auto tDefaultStatusIs200 = test("HttpServer/responseWithoutStatusDefaultsTo200") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
-    auto ok = server.listen(port,
+    auto ok = server.listen(0,
                             [&](const Request&)
                             {
                                 auto res = Response();
@@ -289,6 +295,7 @@ auto tDefaultStatusIs200 = test("HttpServer/responseWithoutStatusDefaultsTo200")
                                 return res;
                             });
     check(ok);
+    port = server.boundPort();
 
     performExchange(server, Request(baseUrl(port) + "/"), ex);
 
@@ -300,10 +307,10 @@ auto tDefaultStatusIs200 = test("HttpServer/responseWithoutStatusDefaultsTo200")
 auto tNotFoundStatus = test("HttpServer/handlerCanReturnNotFound") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
-    auto ok = server.listen(port,
+    auto ok = server.listen(0,
                             [&](const Request&)
                             {
                                 auto res = Response();
@@ -312,6 +319,7 @@ auto tNotFoundStatus = test("HttpServer/handlerCanReturnNotFound") = []
                                 return res;
                             });
     check(ok);
+    port = server.boundPort();
 
     performExchange(server, Request(baseUrl(port) + "/x"), ex);
 
@@ -324,10 +332,10 @@ auto tHandlerReceivesQueryParams =
     test("HttpServer/handlerReceivesParsedQueryParams") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
-    auto ok = server.listen(port,
+    auto ok = server.listen(0,
                             [&](const Request& req)
                             {
                                 ex.received = req;
@@ -335,6 +343,7 @@ auto tHandlerReceivesQueryParams =
                                 return Response();
                             });
     check(ok);
+    port = server.boundPort();
 
     performExchange(
         server, Request(baseUrl(port) + "/search?q=hello%20world&limit=10"), ex);
@@ -350,10 +359,10 @@ auto tHandlerReceivesEmptyParamsForNoQuery =
     test("HttpServer/handlerHasEmptyParamsWhenNoQuery") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
-    auto ok = server.listen(port,
+    auto ok = server.listen(0,
                             [&](const Request& req)
                             {
                                 ex.received = req;
@@ -361,6 +370,7 @@ auto tHandlerReceivesEmptyParamsForNoQuery =
                                 return Response();
                             });
     check(ok);
+    port = server.boundPort();
 
     performExchange(server, Request(baseUrl(port) + "/plain"), ex);
 
@@ -373,10 +383,10 @@ auto tHandlerReceivesRemoteAddr =
     test("HttpServer/handlerReceivesRemoteAddrAndPort") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
-    auto ok = server.listen(port,
+    auto ok = server.listen(0,
                             [&](const Request& req)
                             {
                                 ex.received = req;
@@ -384,6 +394,7 @@ auto tHandlerReceivesRemoteAddr =
                                 return Response();
                             });
     check(ok);
+    port = server.boundPort();
 
     performExchange(server, Request(baseUrl(port) + "/who"), ex);
 
@@ -400,7 +411,7 @@ auto tEventLoopModeSerializesHandlers =
     auto opts = ServerOptions {};
     opts.threading = ServerThreadingMode::EventLoop;
     auto server = Server(opts);
-    auto port = reservePort();
+    auto port = 0;
 
     auto inFlight = std::atomic<int> {0};
     auto maxInFlight = std::atomic<int> {0};
@@ -423,6 +434,7 @@ auto tEventLoopModeSerializesHandlers =
             return res;
         });
     check(ok);
+    port = server.boundPort();
 
     auto requests = std::vector<Request>();
     for (auto i = 0; i < 4; ++i)
@@ -448,7 +460,7 @@ auto tThreadPoolModeRunsHandlersInParallel =
     opts.threading = ServerThreadingMode::ThreadPool;
     opts.threadPoolSize = 4;
     auto server = Server(opts);
-    auto port = reservePort();
+    auto port = 0;
 
     auto barrierCount = std::atomic<int> {0};
     auto allArrived = std::atomic<bool> {false};
@@ -474,6 +486,7 @@ auto tThreadPoolModeRunsHandlersInParallel =
             return res;
         });
     check(ok);
+    port = server.boundPort();
 
     auto requests = std::vector<Request>();
     for (auto i = 0; i < 4; ++i)
@@ -499,12 +512,12 @@ auto tThreadPoolModeAssignsDistinctRemotePorts =
     opts.threading = ServerThreadingMode::ThreadPool;
     opts.threadPoolSize = 4;
     auto server = Server(opts);
-    auto port = reservePort();
+    auto port = 0;
 
     auto remotePortsMutex = std::mutex();
     auto remotePorts = std::vector<int>();
 
-    auto ok = server.listen(port,
+    auto ok = server.listen(0,
                             [&](const Request& req)
                             {
                                 {
@@ -517,6 +530,7 @@ auto tThreadPoolModeAssignsDistinctRemotePorts =
                                 return res;
                             });
     check(ok);
+    port = server.boundPort();
 
     auto requests = std::vector<Request>();
     for (auto i = 0; i < 6; ++i)
@@ -602,7 +616,7 @@ auto tThrowErrorDefaultStatusIs400 = test("HttpError/throwErrorDefaultsTo400") =
 auto tRouterDispatchesGet = test("HttpServer/routerDispatchesGetRoute") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
     server.get("/ping",
@@ -616,7 +630,8 @@ auto tRouterDispatchesGet = test("HttpServer/routerDispatchesGetRoute") = []
                    return res;
                });
 
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
     performExchange(server, Request(baseUrl(port) + "/ping"), ex);
 
     check(ex.completed);
@@ -629,7 +644,7 @@ auto tRouterDispatchesGet = test("HttpServer/routerDispatchesGetRoute") = []
 auto tRouterDispatchesPost = test("HttpServer/routerDispatchesPostRoute") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
     server.post("/items",
@@ -643,7 +658,8 @@ auto tRouterDispatchesPost = test("HttpServer/routerDispatchesPostRoute") = []
                     return res;
                 });
 
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
     performExchange(server, Request::post(baseUrl(port) + "/items", "body"), ex);
 
     check(ex.completed);
@@ -657,7 +673,7 @@ auto tRouterMethodAndPathAreBothMatched =
     test("HttpServer/routerSeparatesByMethodAndPath") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
 
     auto getCalls = std::atomic<int> {0};
     auto postCalls = std::atomic<int> {0};
@@ -681,7 +697,8 @@ auto tRouterMethodAndPathAreBothMatched =
                     return res;
                 });
 
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
 
     auto requests = std::vector<Request>();
     requests.emplace_back(baseUrl(port) + "/x");
@@ -705,7 +722,7 @@ auto tRouterMethodAndPathAreBothMatched =
 auto tRouterUnknownReturns404 = test("HttpServer/routerReturns404WhenNoMatch") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
     server.get("/exists",
@@ -716,7 +733,8 @@ auto tRouterUnknownReturns404 = test("HttpServer/routerReturns404WhenNoMatch") =
                    return r;
                });
 
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
     performExchange(server, Request(baseUrl(port) + "/missing"), ex);
 
     check(ex.completed);
@@ -728,7 +746,7 @@ auto tRouterStripsQueryString =
     test("HttpServer/routerMatchesPathIgnoringQueryString") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
     server.get("/search",
@@ -742,7 +760,8 @@ auto tRouterStripsQueryString =
                    return res;
                });
 
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
     performExchange(server, Request(baseUrl(port) + "/search?q=cat&limit=5"), ex);
 
     check(ex.completed);
@@ -755,13 +774,14 @@ auto tRouterStripsQueryString =
 auto tRouterCatchesError = test("HttpServer/routerConvertsErrorToItsResponse") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
     server.get("/fail",
                [](const Request&) -> Response { throwError("not allowed", 403); });
 
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
     performExchange(server, Request(baseUrl(port) + "/fail"), ex);
 
     check(ex.completed);
@@ -773,7 +793,7 @@ auto tRouterCatchesErrorWithCustomResponse =
     test("HttpServer/routerForwardsErrorPrebuiltResponse") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
     server.get("/fail",
@@ -786,7 +806,8 @@ auto tRouterCatchesErrorWithCustomResponse =
                    throw Error(std::move(res));
                });
 
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
     performExchange(server, Request(baseUrl(port) + "/fail"), ex);
 
     check(ex.completed);
@@ -798,14 +819,15 @@ auto tRouterCatchesUnknownExceptionAs500 =
     test("HttpServer/routerConvertsUnknownExceptionTo500") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
     server.get("/boom",
                [](const Request&) -> Response
                { throw std::runtime_error("kaboom"); });
 
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
     performExchange(server, Request(baseUrl(port) + "/boom"), ex);
 
     check(ex.completed);
@@ -817,8 +839,9 @@ auto tListenWithoutHandlerStartsServer =
     test("HttpServer/listenWithoutHandlerStartsServer") = []
 {
     auto server = Server();
-    auto port = reservePort();
-    check(server.listen(port));
+    auto port = 0;
+    check(server.listen(0));
+    port = server.boundPort();
     server.stop();
 };
 
@@ -826,7 +849,7 @@ auto tAddRouteRegistersCustomMethod =
     test("HttpServer/addRouteRegistersArbitraryMethod") = []
 {
     auto server = Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
     server.addRoute("PATCH",
@@ -841,7 +864,8 @@ auto tAddRouteRegistersCustomMethod =
                         return res;
                     });
 
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
 
     auto clientReq = Request(baseUrl(port) + "/r");
     clientReq.type = "PATCH";

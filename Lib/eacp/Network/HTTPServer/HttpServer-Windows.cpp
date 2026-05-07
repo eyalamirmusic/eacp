@@ -6,12 +6,13 @@
 
 #include <atomic>
 #include <cctype>
+#include <ea_data_structures/Pointers/OwningPointer.h>
+#include <ea_data_structures/Structures/Vector.h>
 #include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
-#include <vector>
 
 namespace eacp::HTTP
 {
@@ -116,19 +117,21 @@ void writeResponseToFd(SOCKET fd, const Response& res)
 struct Server::Impl
 {
     explicit Impl(ServerOptions opts)
-        : options(opts), dispatcher(makeDispatcher(opts))
+        : options(opts)
+        , dispatcher(makeDispatcher(opts))
     {
     }
 
     ServerOptions options;
-    std::unique_ptr<Dispatcher> dispatcher;
+    EA::OwningPointer<Dispatcher> dispatcher;
     SOCKET listenSocket = INVALID_SOCKET;
+    int boundPort = -1;
     RequestHandler handler;
     std::thread acceptThread;
     std::atomic<bool> running {false};
 
     std::mutex clientMutex;
-    std::vector<std::thread> clientThreads;
+    EA::Vector<std::thread> clientThreads;
 
     ~Impl();
 
@@ -156,6 +159,11 @@ bool Server::listen(int port, RequestHandler handler)
 void Server::stop()
 {
     impl->stop();
+}
+
+int Server::boundPort() const
+{
+    return impl->boundPort;
 }
 
 Server::Impl::~Impl()
@@ -198,6 +206,11 @@ bool Server::Impl::start(int port, RequestHandler h)
         return false;
     }
 
+    auto bound = sockaddr_in();
+    auto boundLen = (int) sizeof(bound);
+    if (getsockname(listenSocket, (sockaddr*) &bound, &boundLen) == 0)
+        boundPort = ntohs(bound.sin_port);
+
     running = true;
     acceptThread = std::thread([this] { acceptLoop(); });
     return true;
@@ -212,11 +225,12 @@ void Server::Impl::stop()
         closesocket(listenSocket);
         listenSocket = INVALID_SOCKET;
     }
+    boundPort = -1;
 
     if (acceptThread.joinable())
         acceptThread.join();
 
-    auto threadsToJoin = std::vector<std::thread>();
+    auto threadsToJoin = EA::Vector<std::thread>();
     {
         auto lock = std::lock_guard(clientMutex);
         threadsToJoin = std::move(clientThreads);
@@ -349,8 +363,8 @@ void Server::Impl::handleConnection(SOCKET fd,
                 closesocket(fd);
             };
 
-            dispatcher->dispatch(DispatchTask {
-                std::move(request), handler, std::move(sendResponse)});
+            dispatcher->dispatch(
+                DispatchTask {std::move(request), handler, std::move(sendResponse)});
             return;
         }
     }

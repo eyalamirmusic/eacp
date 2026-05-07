@@ -1,5 +1,4 @@
 #include "View.h"
-#include <eacp/Core/Utils/Vectors.h>
 #include <ranges>
 
 namespace eacp::Graphics
@@ -43,19 +42,19 @@ void View::addChildren(ChildViews views)
 
 void View::addSubview(View& view)
 {
-    if (Vectors::contains(subviews, &view))
+    if (subviews.contains(&view))
         return;
 
     view.removeFromParent();
     view.parent = this;
-    subviews.push_back(&view);
+    subviews.add(&view);
 
     viewAdded(view);
 }
 
 void View::removeSubview(View& view)
 {
-    if (Vectors::eraseMatch(subviews, &view))
+    if (subviews.removeAllMatches(&view) > 0)
     {
         if (hoveredView == &view)
             hoveredView = nullptr;
@@ -241,16 +240,16 @@ bool View::isHovering() const
 
 void View::addLayer(Layer& layer)
 {
-    if (Vectors::contains(layers, &layer))
+    if (layers.contains(&layer))
         return;
 
-    layers.push_back(&layer);
+    layers.add(&layer);
     layer.attachTo(*this);
 }
 
 void View::removeLayer(Layer& layer)
 {
-    if (Vectors::eraseMatch(layers, &layer))
+    if (layers.removeAllMatches(&layer) > 0)
         layer.detachFromView();
 }
 } // namespace eacp::Graphics

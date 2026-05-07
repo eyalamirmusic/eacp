@@ -199,11 +199,12 @@ auto tJsonMakeHandlerForwardsHandlerError =
 auto tJsonServerTypedPostHappyPath = test("HttpJson/serverTypedPostHappyPath") = []
 {
     auto server = Json::Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
     server.post("/greet", greet);
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
 
     performExchange(
         server, Request::post(baseUrl(port) + "/greet", "{\"name\":\"Eyal\"}"), ex);
@@ -218,11 +219,12 @@ auto tJsonServerTypedPostInvalidJsonReturns400 =
     test("HttpJson/serverTypedPostInvalidJsonReturns400Envelope") = []
 {
     auto server = Json::Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
     server.post("/greet", greet);
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
 
     performExchange(
         server, Request::post(baseUrl(port) + "/greet", "this-is-not-json"), ex);
@@ -238,11 +240,12 @@ auto tJsonServerTypedPostHandlerThrownError =
     test("HttpJson/serverTypedPostForwardsHandlerThrowError") = []
 {
     auto server = Json::Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
     server.post("/greet", greet);
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
 
     performExchange(
         server, Request::post(baseUrl(port) + "/greet", "{\"name\":\"\"}"), ex);
@@ -257,11 +260,12 @@ auto tJsonServerEmptyRequestHandler =
     test("HttpJson/serverTypedPostEmptyRequestAcceptsEmptyBody") = []
 {
     auto server = Json::Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
     server.post("/count", count);
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
 
     performExchange(server, Request::post(baseUrl(port) + "/count", "{}"), ex);
 
@@ -275,7 +279,7 @@ auto tJsonServerInheritsRawPostOverload =
     test("HttpJson/serverStillAcceptsUntypedPost") = []
 {
     auto server = Json::Server();
-    auto port = reservePort();
+    auto port = 0;
     auto ex = Exchange();
 
     server.post("/raw",
@@ -287,7 +291,8 @@ auto tJsonServerInheritsRawPostOverload =
                         res.setContent("plain", "text/plain");
                         return res;
                     }));
-    check(server.listen(port));
+    check(server.listen(0));
+    port = server.boundPort();
 
     performExchange(server, Request::post(baseUrl(port) + "/raw", ""), ex);
 

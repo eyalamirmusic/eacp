@@ -1,8 +1,8 @@
 #pragma once
 
+#include <ea_data_structures/Structures/Vector.h>
 #include <map>
 #include <string>
-#include <vector>
 
 namespace eacp::HTTP
 {
@@ -61,8 +61,8 @@ struct Request
     std::string type = "GET";
     std::string body;
     std::map<std::string, std::string> headers;
-    std::vector<FormField> formFields;
-    std::vector<FileField> fileFields;
+    EA::Vector<FormField> formFields;
+    EA::Vector<FileField> fileFields;
 
     std::map<std::string, std::string> params;
     std::string remoteAddr;

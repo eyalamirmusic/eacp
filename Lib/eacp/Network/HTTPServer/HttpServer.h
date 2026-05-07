@@ -2,9 +2,9 @@
 
 #include <eacp/Network/HTTP/Http.h>
 
+#include <ea_data_structures/Pointers/OwningPointer.h>
 #include <functional>
 #include <map>
-#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -53,6 +53,8 @@ struct Server
     bool listen(int port);
     bool listen(int port, RequestHandler handler);
 
+    int boundPort() const;
+
     void stop();
 
 private:
@@ -61,7 +63,7 @@ private:
     std::map<std::string, RequestHandler> routes;
 
     struct Impl;
-    std::unique_ptr<Impl> impl;
+    EA::OwningPointer<Impl> impl;
 };
 
 } // namespace eacp::HTTP

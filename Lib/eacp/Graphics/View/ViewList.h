@@ -1,6 +1,7 @@
 #pragma once
 
 #include "View.h"
+#include <ea_data_structures/Structures/OwnedVector.h>
 
 namespace eacp::Graphics
 {
@@ -12,7 +13,7 @@ struct ViewList
     {
     }
 
-    using Container = std::vector<std::unique_ptr<T>>;
+    using Container = EA::OwnedVector<T>;
 
     auto begin() const { return views.begin(); }
     auto end() const { return views.end(); }
@@ -22,24 +23,22 @@ struct ViewList
     template <typename A = T, typename... Args>
     A& createVisible(Args&&... args)
     {
-        auto newChild = new A(std::forward<Args>(args)...);
-        parent.addSubview(*newChild);
-        views.emplace_back(newChild);
-        return *newChild;
+        auto& created = views.template createDerived<A>(std::forward<Args>(args)...);
+        parent.addSubview(created);
+        return created;
     }
 
-    int size() const { return (int) views.size(); }
+    int size() const { return views.size(); }
 
     bool empty() const { return views.empty(); }
 
     bool erase(T& element)
     {
-        auto it = std::ranges::find_if(
-            views, [&](const auto& c) { return c.get() == &element; });
+        auto idx = views.getIndexOfItem(&element);
 
-        if (it != end())
+        if (idx >= 0)
         {
-            views.erase(it);
+            views.removeAt(idx);
             return true;
         }
 

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <string>
-#include <vector>
+#include <ea_data_structures/Structures/Vector.h>
 #include "../View/View.h"
 #include <eacp/Core/App/App.h>
 
@@ -58,7 +58,7 @@ struct WindowOptions
     int height = 400;
     std::string title = "New Window";
 
-    std::vector<WindowFlags> flags;
+    EA::Vector<WindowFlags> flags;
 
     Callback effectiveOnQuit() const
     {

@@ -39,7 +39,7 @@ std::string Keyboard::keyCodeToCharacter(uint16_t)
     return "";
 }
 
-std::vector<Key> Keyboard::getPressedKeys()
+EA::Vector<Key> Keyboard::getPressedKeys()
 {
     return {};
 }

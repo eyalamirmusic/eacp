@@ -69,19 +69,19 @@ Menu::Menu(std::string titleToUse)
 Menu& Menu::add(MenuItem item)
 {
     item.action = safeAction(std::move(item.action));
-    items.push_back(std::move(item));
+    items.add(std::move(item));
     return *this;
 }
 
 Menu& Menu::addSeparator()
 {
-    items.push_back(MenuItem::separator());
+    items.add(MenuItem::separator());
     return *this;
 }
 
 MenuBar& MenuBar::add(Menu menu)
 {
-    menus.push_back(std::move(menu));
+    menus.add(std::move(menu));
     return *this;
 }
 

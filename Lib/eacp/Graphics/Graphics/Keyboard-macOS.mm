@@ -115,14 +115,14 @@ std::string Keyboard::keyCodeToCharacter(uint16_t keyCode)
     return [str UTF8String];
 }
 
-std::vector<Key> Keyboard::getPressedKeys()
+EA::Vector<Key> Keyboard::getPressedKeys()
 {
-    auto pressed = std::vector<Key>();
+    auto pressed = EA::Vector<Key>();
 
     for (uint16_t keyCode = 0; keyCode <= 0x7F; ++keyCode)
     {
         if (CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, keyCode))
-            pressed.push_back({keyCode, keyCodeToCharacter(keyCode)});
+            pressed.add({keyCode, keyCodeToCharacter(keyCode)});
     }
 
     return pressed;

@@ -3,7 +3,7 @@
 #include <eacp/Core/App/App.h>
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/ObjC/Strings.h>
-#include <vector>
+#include <ea_data_structures/Structures/Vector.h>
 
 @interface EacpMenuTarget : NSObject
 {
@@ -28,7 +28,7 @@ namespace
 struct InstalledMenuBar
 {
     ObjC::Ptr<NSMenu> mainMenu;
-    std::vector<ObjC::Ptr<EacpMenuTarget>> targets;
+    EA::Vector<ObjC::Ptr<EacpMenuTarget>> targets;
 };
 
 InstalledMenuBar& installedBar()
@@ -85,7 +85,7 @@ NSMenuItem* buildNSMenuItem(const MenuItem& item, InstalledMenuBar& store)
     if (item.shortcut)
         nsItem.keyEquivalentModifierMask = toModifierFlags(item.shortcut->modifiers);
 
-    store.targets.push_back(std::move(target));
+    store.targets.add(std::move(target));
     return nsItem;
 }
 

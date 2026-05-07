@@ -2,8 +2,8 @@
 
 #include <eacp/Network/HTTPServer/HttpServer.h>
 
+#include <ea_data_structures/Pointers/OwningPointer.h>
 #include <functional>
-#include <memory>
 
 namespace eacp::HTTP
 {
@@ -24,6 +24,6 @@ struct Dispatcher
     virtual void shutdown() = 0;
 };
 
-std::unique_ptr<Dispatcher> makeDispatcher(const ServerOptions& options);
+EA::OwningPointer<Dispatcher> makeDispatcher(const ServerOptions& options);
 
 } // namespace eacp::HTTP

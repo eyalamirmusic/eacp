@@ -2,6 +2,8 @@
 
 #include <eacp/Graphics/Graphics.h>
 #include <ResEmbed/ResEmbed.h>
+#include <ea_data_structures/Pointers/OwningPointer.h>
+#include <ea_data_structures/Structures/Vector.h>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -10,14 +12,13 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <vector>
 
 namespace eacp::Graphics
 {
 struct ResourceResponse
 {
     std::string mimeType;
-    std::vector<std::uint8_t> data;
+    EA::Vector<std::uint8_t> data;
     int statusCode = 200;
 };
 
@@ -101,7 +102,7 @@ public:
     std::function<void(const std::string& error)> onNavigationFailed = [](auto&&) {};
     std::function<void(const std::string& title)> onTitleChanged = [](auto&&) {};
 
-    std::function<bool(std::unique_ptr<WebView> popup, const std::string& url)>
+    std::function<bool(EA::OwningPointer<WebView> popup, const std::string& url)>
         onNewWindowRequested = [](auto&&, auto&&) { return false; };
 
     std::function<void()> onClose = [] {};

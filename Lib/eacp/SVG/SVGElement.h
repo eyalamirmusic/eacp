@@ -1,8 +1,8 @@
 #pragma once
 
+#include <ea_data_structures/Structures/Vector.h>
 #include <string>
 #include <unordered_map>
-#include <vector>
 
 namespace eacp::SVG
 {
@@ -11,7 +11,7 @@ struct SVGElement
 {
     std::string tag;
     std::unordered_map<std::string, std::string> attributes;
-    std::vector<SVGElement> children;
+    EA::Vector<SVGElement> children;
     std::string textContent;
 
     std::string attr(const std::string& name, const std::string& fallback = "") const

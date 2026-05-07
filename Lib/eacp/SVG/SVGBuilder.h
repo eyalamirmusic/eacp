@@ -2,7 +2,8 @@
 
 #include <eacp/Graphics/Graphics.h>
 #include "SVGElement.h"
-#include <memory>
+#include <ea_data_structures/Pointers/OwningPointer.h>
+#include <ea_data_structures/Structures/OwnedVector.h>
 
 namespace eacp::SVG
 {
@@ -18,14 +19,14 @@ struct SVGView : Graphics::View
     float svgHeight = 0.f;
     bool stretching = false;
 
-    std::vector<std::unique_ptr<SVGView>> ownedChildren;
-    std::vector<std::unique_ptr<Graphics::ShapeLayer>> ownedLayers;
-    std::vector<std::unique_ptr<Graphics::TextLayer>> ownedTextLayers;
+    EA::OwnedVector<SVGView> ownedChildren;
+    EA::OwnedVector<Graphics::ShapeLayer> ownedLayers;
+    EA::OwnedVector<Graphics::TextLayer> ownedTextLayers;
 };
 
 struct ParseResult
 {
-    std::unique_ptr<SVGView> root;
+    EA::OwningPointer<SVGView> root;
     float width = 0.f;
     float height = 0.f;
 };

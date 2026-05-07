@@ -1,11 +1,11 @@
 #pragma once
 
 #include "../Graphics/Keyboard.h"
+#include <ea_data_structures/Structures/Vector.h>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
-#include <vector>
 
 namespace eacp::Graphics
 {
@@ -49,7 +49,7 @@ public:
     Menu& addSeparator();
 
     std::string title;
-    std::vector<MenuItem> items;
+    EA::Vector<MenuItem> items;
 };
 
 class MenuBar
@@ -57,7 +57,7 @@ class MenuBar
 public:
     MenuBar& add(Menu menu);
 
-    std::vector<Menu> menus;
+    EA::Vector<Menu> menus;
 };
 
 void setApplicationMenuBar(MenuBar bar);

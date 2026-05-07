@@ -1,14 +1,15 @@
 #include <eacp/WebView/WebView.h>
 #include <WebResources.h>
 
-#include <memory>
+#include <ea_data_structures/Pointers/OwningPointer.h>
+#include <ea_data_structures/Structures/OwnedVector.h>
 
 using namespace eacp;
 using namespace Graphics;
 
 struct PopupWindow final
 {
-    PopupWindow(std::unique_ptr<WebView> popup,
+    PopupWindow(EA::OwningPointer<WebView> popup,
                 std::function<void(PopupWindow*)> onClose)
         : closeHandler(std::move(onClose))
         , webView(std::move(popup))
@@ -19,7 +20,7 @@ struct PopupWindow final
     }
 
     std::function<void(PopupWindow*)> closeHandler;
-    std::unique_ptr<WebView> webView;
+    EA::OwningPointer<WebView> webView;
     bool closing = false;
     Window window;
 
@@ -50,7 +51,7 @@ struct ParentView final : View
     ParentView()
     {
         webView.onNewWindowRequested =
-            [this](std::unique_ptr<WebView> popup, const std::string&)
+            [this](EA::OwningPointer<WebView> popup, const std::string&)
         {
             openPopup(std::move(popup));
             return true;
@@ -60,22 +61,21 @@ struct ParentView final : View
 
     void resized() override { scaleToFit({webView}); }
 
-    void openPopup(std::unique_ptr<WebView> popupWebView)
+    void openPopup(EA::OwningPointer<WebView> popupWebView)
     {
-        auto popup = std::make_unique<PopupWindow>(
+        popups.createNew(
             std::move(popupWebView),
             [this](PopupWindow* p)
             { Threads::callAsync([this, p]() { closePopup(p); }); });
-        popups.push_back(std::move(popup));
     }
 
     void closePopup(PopupWindow* popup)
     {
-        std::erase_if(popups, [popup](const auto& p) { return p.get() == popup; });
+        popups.removeItem(*popup);
     }
 
     WebView webView {embeddedOptions("EmbeddedPopupsApp")};
-    std::vector<std::unique_ptr<PopupWindow>> popups;
+    EA::OwnedVector<PopupWindow> popups;
 };
 
 struct MyApp

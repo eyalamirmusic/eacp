@@ -5,9 +5,9 @@
 #include <algorithm>
 #include <condition_variable>
 #include <deque>
+#include <ea_data_structures/Structures/Vector.h>
 #include <mutex>
 #include <thread>
-#include <vector>
 
 namespace eacp::HTTP
 {
@@ -37,7 +37,7 @@ struct ThreadPoolDispatcher : Dispatcher
     explicit ThreadPoolDispatcher(int poolSize)
     {
         auto count = std::max(1, poolSize);
-        workers.reserve((size_t) count);
+        workers.reserve(count);
         for (auto i = 0; i < count; ++i)
             workers.emplace_back([this] { workerLoop(); });
     }
@@ -94,17 +94,22 @@ private:
     std::mutex mutex;
     std::condition_variable cv;
     std::deque<DispatchTask> queue;
-    std::vector<std::thread> workers;
+    EA::Vector<std::thread> workers;
     bool stopping = false;
 };
 
 } // namespace
 
-std::unique_ptr<Dispatcher> makeDispatcher(const ServerOptions& options)
+EA::OwningPointer<Dispatcher> makeDispatcher(const ServerOptions& options)
 {
+    auto result = EA::OwningPointer<Dispatcher>();
+
     if (options.threading == ServerThreadingMode::ThreadPool)
-        return std::make_unique<ThreadPoolDispatcher>(options.threadPoolSize);
-    return std::make_unique<EventLoopDispatcher>();
+        result.create<ThreadPoolDispatcher>(options.threadPoolSize);
+    else
+        result.create<EventLoopDispatcher>();
+
+    return result;
 }
 
 } // namespace eacp::HTTP

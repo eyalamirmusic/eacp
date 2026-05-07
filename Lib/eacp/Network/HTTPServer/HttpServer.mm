@@ -2,6 +2,7 @@
 #include "HttpServerDispatcher.h"
 
 #include <eacp/Core/Threads/EventLoop.h>
+#include <ea_data_structures/Pointers/OwningPointer.h>
 
 #include <CoreFoundation/CoreFoundation.h>
 
@@ -104,11 +105,12 @@ struct Server::Impl
     }
 
     ServerOptions options;
-    std::unique_ptr<Dispatcher> dispatcher;
+    EA::OwningPointer<Dispatcher> dispatcher;
     CFSocketRef listenSocket = nullptr;
     CFRunLoopSourceRef listenSource = nullptr;
     RequestHandler handler;
-    std::map<CFSocketRef, std::unique_ptr<Connection>> connections;
+    int boundPort = -1;
+    std::map<CFSocketRef, EA::OwningPointer<Connection>> connections;
 
     ~Impl();
 
@@ -148,6 +150,11 @@ bool Server::listen(int port, RequestHandler handler)
 void Server::stop()
 {
     impl->stop();
+}
+
+int Server::boundPort() const
+{
+    return impl->boundPort;
 }
 
 Server::Impl::~Impl()
@@ -192,6 +199,14 @@ bool Server::Impl::start(int port, RequestHandler h)
         return false;
     }
 
+    auto boundData = CFSocketCopyAddress(listenSocket);
+    if (boundData)
+    {
+        auto* boundAddr = (const sockaddr_in*) CFDataGetBytePtr(boundData);
+        boundPort = ntohs(boundAddr->sin_port);
+        CFRelease(boundData);
+    }
+
     listenSource = CFSocketCreateRunLoopSource(kCFAllocatorDefault,
                                                listenSocket, 0);
     CFRunLoopAddSource(CFRunLoopGetMain(), listenSource,
@@ -234,11 +249,12 @@ void Server::Impl::stop()
         CFRelease(listenSocket);
         listenSocket = nullptr;
     }
+    boundPort = -1;
 }
 
 void Server::Impl::onAccept(CFSocketNativeHandle clientFd)
 {
-    auto conn = std::make_unique<Connection>();
+    auto conn = EA::makeOwned<Connection>();
 
     auto peer = sockaddr_in {};
     auto peerLen = (socklen_t) sizeof(peer);

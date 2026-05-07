@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Threads/EventLoop.h"
+#include <ea_data_structures/Pointers/OwningPointer.h>
 
 namespace eacp::Apps
 {
@@ -15,7 +16,7 @@ struct App : AppBase
     T app;
 };
 
-using AppHandle = std::unique_ptr<AppBase>;
+using AppHandle = EA::OwningPointer<AppBase>;
 
 AppHandle& getGlobalApp();
 
@@ -24,7 +25,7 @@ void quit();
 template <typename T>
 void run()
 {
-    auto createFunc = [] { getGlobalApp() = std::make_unique<App<T>>(); };
+    auto createFunc = [] { getGlobalApp().template create<App<T>>(); };
     Threads::runEventLoop(createFunc);
 }
 

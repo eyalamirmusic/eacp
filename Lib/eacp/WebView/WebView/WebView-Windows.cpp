@@ -4,10 +4,10 @@
 #include <eacp/Core/Utils/Windows.h>
 
 #include <algorithm>
+#include <ea_data_structures/Structures/Vector.h>
 #include <unordered_map>
 #include <queue>
 #include <functional>
-#include <vector>
 
 #include <objbase.h>
 
@@ -54,21 +54,20 @@ constexpr double minZoomLevel = 0.25;
 constexpr double maxZoomLevel = 5.0;
 constexpr double zoomStep = 1.1;
 
-std::vector<WebView*>& registeredWebViews()
+EA::Vector<WebView*>& registeredWebViews()
 {
-    static auto views = std::vector<WebView*>();
+    static auto views = EA::Vector<WebView*>();
     return views;
 }
 
 void registerWebView(WebView* view)
 {
-    registeredWebViews().push_back(view);
+    registeredWebViews().add(view);
 }
 
 void unregisterWebView(WebView* view)
 {
-    auto& list = registeredWebViews();
-    list.erase(std::remove(list.begin(), list.end(), view), list.end());
+    registeredWebViews().removeAllMatches(view);
 }
 } // namespace
 

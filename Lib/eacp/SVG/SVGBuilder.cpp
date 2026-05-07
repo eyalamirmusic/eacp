@@ -34,11 +34,10 @@ static void addShapeLayer(SVGView& view,
                           const SVGElement& element,
                           const Graphics::Path& path)
 {
-    auto layer = std::make_unique<Graphics::ShapeLayer>();
-    layer->setPath(path);
-    applyFillAndStroke(*layer, element);
-    view.addLayer(*layer);
-    view.ownedLayers.push_back(std::move(layer));
+    auto& layer = view.ownedLayers.createNew();
+    layer.setPath(path);
+    applyFillAndStroke(layer, element);
+    view.addLayer(layer);
 }
 
 static void buildRect(SVGView& view, const SVGElement& element, float sx, float sy)
@@ -114,7 +113,7 @@ static void buildPolyline(
 
     Graphics::Path path;
     path.moveTo({points[0].x * sx, points[0].y * sy});
-    for (size_t i = 1; i < points.size(); ++i)
+    for (auto i = 1; i < points.size(); ++i)
         path.lineTo({points[i].x * sx, points[i].y * sy});
     if (close)
         path.close();
@@ -144,17 +143,17 @@ static void buildText(SVGView& view, const SVGElement& element, float sx, float 
     auto fontSizeY = baseFontSize * sy;
     auto fontSize = std::min(fontSizeX, fontSizeY);
 
-    auto layer = std::make_unique<Graphics::TextLayer>();
-    layer->setText(text);
+    auto& layer = view.ownedTextLayers.createNew();
+    layer.setText(text);
 
     auto fontOptions =
         Graphics::FontOptions().withName(fontFamily).withSize(fontSize);
-    layer->setFont(Graphics::Font(fontOptions));
+    layer.setFont(Graphics::Font(fontOptions));
 
     auto fillStr = element.attr("fill", "black");
     auto fillResult = parseColor(fillStr);
     if (!fillResult.isNone)
-        layer->setColor(fillResult.color);
+        layer.setColor(fillResult.color);
 
     auto textWidth = fontSize * static_cast<float>(text.size()) * 0.6f;
     auto textHeight = fontSize * 1.2f;
@@ -168,15 +167,14 @@ static void buildText(SVGView& view, const SVGElement& element, float sx, float 
 
     auto drawY = y - fontSize;
 
-    layer->setPosition({drawX, drawY});
-    layer->setBounds({0, 0, textWidth, textHeight});
+    layer.setPosition({drawX, drawY});
+    layer.setBounds({0, 0, textWidth, textHeight});
 
     auto opacity = element.attr("opacity");
     if (!opacity.empty())
-        layer->setOpacity(std::stof(opacity));
+        layer.setOpacity(std::stof(opacity));
 
-    view.addLayer(*layer);
-    view.ownedTextLayers.push_back(std::move(layer));
+    view.addLayer(layer);
 }
 
 static void
@@ -185,23 +183,22 @@ static void
 static void
     buildGroup(SVGView& parent, const SVGElement& element, float sx, float sy)
 {
-    auto child = std::make_unique<SVGView>();
+    auto& child = parent.ownedChildren.createNew();
 
     auto transform = element.attr("transform");
     if (!transform.empty())
     {
         auto t = parseTransform(transform);
-        child->setBounds({t.translateX * sx,
-                          t.translateY * sy,
-                          parent.getBounds().w,
-                          parent.getBounds().h});
+        child.setBounds({t.translateX * sx,
+                         t.translateY * sy,
+                         parent.getBounds().w,
+                         parent.getBounds().h});
     }
 
     for (auto& childElement: element.children)
-        buildElement(*child, childElement, sx, sy);
+        buildElement(child, childElement, sx, sy);
 
-    parent.addSubview(*child);
-    parent.ownedChildren.push_back(std::move(child));
+    parent.addSubview(child);
 }
 
 static void
@@ -246,6 +243,7 @@ void SVGView::clearContent()
     ownedLayers.clear();
     ownedTextLayers.clear();
 }
+
 
 void SVGView::stretchToFit()
 {

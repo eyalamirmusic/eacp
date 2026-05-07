@@ -189,9 +189,9 @@ Transform parseTransform(const std::string& value)
     return result;
 }
 
-std::vector<float> parseNumberList(const std::string& value)
+EA::Vector<float> parseNumberList(const std::string& value)
 {
-    std::vector<float> result;
+    EA::Vector<float> result;
     size_t pos = 0;
     while (pos < value.size())
     {
@@ -207,19 +207,19 @@ std::vector<float> parseNumberList(const std::string& value)
         auto start = pos;
         auto num = parseFloat(value, pos);
         if (pos > start)
-            result.push_back(num);
+            result.add(num);
         else
             break;
     }
     return result;
 }
 
-std::vector<Graphics::Point> parsePointList(const std::string& value)
+EA::Vector<Graphics::Point> parsePointList(const std::string& value)
 {
     auto numbers = parseNumberList(value);
-    std::vector<Graphics::Point> points;
-    for (size_t i = 0; i + 1 < numbers.size(); i += 2)
-        points.push_back({numbers[i], numbers[i + 1]});
+    EA::Vector<Graphics::Point> points;
+    for (auto i = 0; i + 1 < numbers.size(); i += 2)
+        points.add({numbers[i], numbers[i + 1]});
     return points;
 }
 

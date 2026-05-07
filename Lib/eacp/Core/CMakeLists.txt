@@ -1,6 +1,9 @@
 add_library(eacp-core STATIC)
 target_include_directories(eacp-core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../../)
 
+find_package(EADataStructures REQUIRED)
+target_link_libraries(eacp-core PUBLIC ea_data_structures)
+
 target_sources(eacp-core PRIVATE
         App/App.cpp
         Threads/EventLoop.cpp
