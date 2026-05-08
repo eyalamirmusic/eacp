@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useEventRate, useNativeEvent } from './bridge';
+import { useNativeTick } from './bridge';
 import ShaderCanvas from './ShaderCanvas';
 
 const petals = [0, 60, 120, 180, 240, 300];
@@ -17,8 +17,7 @@ const visualOptions = [
 
 export default function App()
 {
-    const { angle } = useNativeEvent('tick', { angle: 0 });
-    const hz = useEventRate('tick');
+    const { angle, hz } = useNativeTick();
     const [view, setView] = useState('pinwheel');
 
     return (

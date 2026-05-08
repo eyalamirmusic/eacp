@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { createShaderRenderer } from './shader';
 
 const FRAGMENT = `
@@ -126,7 +126,7 @@ export default function ShaderCanvas({ angle, width = 560, height = 320 })
         rendererRef.current = createShaderRenderer(canvas, FRAGMENT);
     }, [width, height]);
 
-    useEffect(() => { rendererRef.current?.draw(angle); }, [angle]);
+    rendererRef.current?.draw(angle);
 
     return (
         <canvas ref={setCanvas} className="shader" style={{ width, height }} />

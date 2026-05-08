@@ -1,27 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
 
-export function useNativeEvent(event, initial)
-{
-    const [value, setValue] = useState(initial);
-    useEffect(() => window.eacp.on(event, setValue), [event]);
-    return value;
-}
+const windowMs = 1000;
 
-export function useEventRate(event)
+export function useNativeTick()
 {
-    const [hz, setHz] = useState(0);
-    const count = useRef(0);
+    const [tick, setTick] = useState({ angle: 0, hz: 0 });
+    const counter = useRef({ count: 0, since: performance.now() });
 
-    useEffect(() =>
+    useEffect(() => window.eacp.on('tick', (next) =>
     {
-        const unsub = window.eacp.on(event, () => { count.current++; });
-        const interval = setInterval(() =>
-        {
-            setHz(count.current);
-            count.current = 0;
-        }, 1000);
-        return () => { unsub(); clearInterval(interval); };
-    }, [event]);
+        counter.current.count++;
+        const elapsed = performance.now() - counter.current.since;
 
-    return hz;
+        setTick((prev) =>
+        {
+            if (elapsed < windowMs)
+                return { angle: next.angle, hz: prev.hz };
+
+            const hz = Math.round(counter.current.count * 1000 / elapsed);
+            counter.current = { count: 0, since: performance.now() };
+            return { angle: next.angle, hz };
+        });
+    }), []);
+
+    return tick;
 }
