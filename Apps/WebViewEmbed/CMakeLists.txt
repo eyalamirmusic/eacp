@@ -6,7 +6,7 @@ miro_add_type_export(
         SOURCES Commands.cpp
         OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/web/src/generated
         OUTPUT_NAME schema
-        FORMATS ts backend)
+        FORMATS ts backend ts-server)
 
 set(WEBVIEWEMBED_CPP_GENERATED_DIR
         ${CMAKE_CURRENT_BINARY_DIR}/cpp-generated)

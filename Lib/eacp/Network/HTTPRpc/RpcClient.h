@@ -38,15 +38,15 @@ public:
     template <typename Res>
     Res invoke(const std::string& command)
     {
-        auto result = invokeRaw(command, Miro::JSON {Miro::Json::Object {}});
+        auto result = invokeRaw(command, Miro::Json::Object ());
         auto out = Res {};
         Miro::fromJSON(out, result);
         return out;
     }
 
-    Miro::JSON invokeRaw(const std::string& command, const Miro::JSON& payload);
+    Miro::JSON invokeRaw(const std::string& command, const Miro::JSON& payload) const;
 
-    Invoke asInvoker();
+    Invoke asInvoker() const;
 
 private:
     std::string baseUrl;

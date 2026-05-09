@@ -1,0 +1,17 @@
+{
+    "name": "httprpcdemo-node",
+    "private": true,
+    "version": "0.0.0",
+    "type": "module",
+    "scripts": {
+        "server": "node --experimental-strip-types server.ts",
+        "client": "node --experimental-strip-types client.ts"
+    },
+    "dependencies": {
+        "express": "^4.21.1"
+    },
+    "devDependencies": {
+        "@types/express": "^4.17.21",
+        "@types/node": "^22.9.0"
+    }
+}

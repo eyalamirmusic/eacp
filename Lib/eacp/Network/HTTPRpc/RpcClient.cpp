@@ -29,7 +29,7 @@ Client::Client(std::string baseUrlToUse)
 {
 }
 
-Miro::JSON Client::invokeRaw(const std::string& command, const Miro::JSON& payload)
+Miro::JSON Client::invokeRaw(const std::string& command, const Miro::JSON& payload) const
 {
     auto envelope = Miro::JSON {Miro::Json::Object {}};
     envelope.asObject()["command"] = Miro::JSON {command};
@@ -74,7 +74,7 @@ Miro::JSON Client::invokeRaw(const std::string& command, const Miro::JSON& paylo
     return it->second;
 }
 
-Invoke Client::asInvoker()
+Invoke Client::asInvoker() const
 {
     return [this](const std::string& command, const Miro::JSON& payload)
     { return invokeRaw(command, payload); };
