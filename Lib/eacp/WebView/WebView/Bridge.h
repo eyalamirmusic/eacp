@@ -24,11 +24,10 @@ using EmptyMessage = Miro::EmptyValue;
 class WebViewBridge
 {
 public:
-    WebViewBridge(WebView& webView, Miro::Bridge& bridge);
+    WebViewBridge(WebView& webView);
     ~WebViewBridge();
 
-    WebViewBridge(const WebViewBridge&) = delete;
-    WebViewBridge& operator=(const WebViewBridge&) = delete;
+    Miro::Bridge& getBridge() { return bridge; }
 
 private:
     void onMessage(const std::string& body);
@@ -38,7 +37,7 @@ private:
     void broadcast(std::string_view event, const Miro::Json::Value& payload);
 
     WebView& webView;
-    Miro::Bridge& bridge;
+    Miro::Bridge bridge;
     Miro::Bridge::Subscription subscription;
 };
 

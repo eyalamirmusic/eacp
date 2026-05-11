@@ -113,13 +113,13 @@ std::string jsStringLiteral(std::string_view value)
 }
 } // namespace
 
-WebViewBridge::WebViewBridge(WebView& webViewToUse, Miro::Bridge& bridgeToUse)
+WebViewBridge::WebViewBridge(WebView& webViewToUse)
     : webView(webViewToUse)
-    , bridge(bridgeToUse)
     , subscription(bridge.addBroadcaster(
           [this](std::string_view event, const Miro::Json::Value& payload)
           { broadcast(event, payload); }))
 {
+    bridge.useStaticRegistry();
     webView.addUserScript(bridgeShim, true);
     webView.addScriptMessageHandler(
         bridgeChannel, [this](const std::string& body) { onMessage(body); });
