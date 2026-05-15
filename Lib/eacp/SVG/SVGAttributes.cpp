@@ -1,4 +1,5 @@
 #include "SVGAttributes.h"
+#include "NumberReader.h"
 
 #include <eacp/Core/Utils/Strings.h>
 
@@ -9,39 +10,34 @@
 namespace eacp::SVG
 {
 
-static uint8_t hexDigit(char c)
+static int hexNibble(char c)
 {
-    if (c >= '0' && c <= '9')
-        return static_cast<uint8_t>(c - '0');
-    if (c >= 'a' && c <= 'f')
-        return static_cast<uint8_t>(c - 'a' + 10);
-    if (c >= 'A' && c <= 'F')
-        return static_cast<uint8_t>(c - 'A' + 10);
-    return 0;
+    auto value = Strings::hexCharToInt(c);
+    return value < 0 ? 0 : value;
 }
 
 static Graphics::Color parseHexColor(const std::string& hex)
 {
     if (hex.size() == 3)
     {
-        auto r = hexDigit(hex[0]);
-        auto g = hexDigit(hex[1]);
-        auto b = hexDigit(hex[2]);
+        auto r = hexNibble(hex[0]);
+        auto g = hexNibble(hex[1]);
+        auto b = hexNibble(hex[2]);
         return {(r * 17) / 255.f, (g * 17) / 255.f, (b * 17) / 255.f};
     }
     if (hex.size() == 6)
     {
-        auto r = hexDigit(hex[0]) * 16 + hexDigit(hex[1]);
-        auto g = hexDigit(hex[2]) * 16 + hexDigit(hex[3]);
-        auto b = hexDigit(hex[4]) * 16 + hexDigit(hex[5]);
+        auto r = hexNibble(hex[0]) * 16 + hexNibble(hex[1]);
+        auto g = hexNibble(hex[2]) * 16 + hexNibble(hex[3]);
+        auto b = hexNibble(hex[4]) * 16 + hexNibble(hex[5]);
         return {r / 255.f, g / 255.f, b / 255.f};
     }
     if (hex.size() == 8)
     {
-        auto r = hexDigit(hex[0]) * 16 + hexDigit(hex[1]);
-        auto g = hexDigit(hex[2]) * 16 + hexDigit(hex[3]);
-        auto b = hexDigit(hex[4]) * 16 + hexDigit(hex[5]);
-        auto a = hexDigit(hex[6]) * 16 + hexDigit(hex[7]);
+        auto r = hexNibble(hex[0]) * 16 + hexNibble(hex[1]);
+        auto g = hexNibble(hex[2]) * 16 + hexNibble(hex[3]);
+        auto b = hexNibble(hex[4]) * 16 + hexNibble(hex[5]);
+        auto a = hexNibble(hex[6]) * 16 + hexNibble(hex[7]);
         return {r / 255.f, g / 255.f, b / 255.f, a / 255.f};
     }
     return Graphics::Color::black();
@@ -102,110 +98,120 @@ ColorResult parseColor(const std::string& value)
     return {Graphics::Color::black(), false};
 }
 
-static float parseFloat(const std::string& s, size_t& pos)
+namespace
 {
-    while (pos < s.size()
-           && (std::isspace(static_cast<unsigned char>(s[pos])) || s[pos] == ','))
-    {
-        ++pos;
-    }
-
-    auto start = pos;
-    if (pos < s.size() && (s[pos] == '-' || s[pos] == '+'))
-        ++pos;
-    while (pos < s.size()
-           && (std::isdigit(static_cast<unsigned char>(s[pos])) || s[pos] == '.'))
-    {
-        ++pos;
-    }
-
-    if (pos == start)
-        return 0.f;
-
-    return std::stof(s.substr(start, pos - start));
+void parseTranslate(NumberReader& reader, Transform& result)
+{
+    result.translateX = reader.readFloat();
+    result.translateY = reader.readFloat();
 }
+
+void parseScale(NumberReader& reader, Transform& result)
+{
+    result.scaleX = reader.readFloat();
+    auto saved = reader.pos;
+    result.scaleY = reader.readFloat();
+    if (reader.pos == saved)
+        result.scaleY = result.scaleX;
+}
+
+void parseRotate(NumberReader& reader, Transform& result)
+{
+    result.rotateDeg = reader.readFloat();
+}
+
+void skipWhitespace(const std::string& value, size_t& pos)
+{
+    while (pos < value.size()
+           && std::isspace(static_cast<unsigned char>(value[pos])))
+    {
+        ++pos;
+    }
+}
+
+bool advanceToArgumentList(const std::string& value, size_t& pos)
+{
+    auto open = value.find('(', pos);
+    if (open == std::string::npos)
+        return false;
+    pos = open + 1;
+    return true;
+}
+
+void advancePastClosingParen(const std::string& value, size_t& pos)
+{
+    pos = value.find(')', pos);
+    if (pos != std::string::npos)
+        ++pos;
+}
+
+using TransformFunctionParser = void (*)(NumberReader&, Transform&);
+
+struct TransformFunction
+{
+    std::string_view name;
+    TransformFunctionParser parse;
+};
+
+constexpr TransformFunction transformFunctions[] = {
+    {"translate", &parseTranslate},
+    {"scale", &parseScale},
+    {"rotate", &parseRotate},
+};
+
+TransformFunctionParser matchTransformFunction(const std::string& value, size_t pos)
+{
+    for (const auto& fn: transformFunctions)
+        if (value.compare(pos, fn.name.size(), fn.name) == 0)
+            return fn.parse;
+    return nullptr;
+}
+} // namespace
 
 Transform parseTransform(const std::string& value)
 {
-    Transform result;
-    size_t pos = 0;
+    auto result = Transform();
+    auto pos = size_t {0};
 
     while (pos < value.size())
     {
-        while (pos < value.size()
-               && std::isspace(static_cast<unsigned char>(value[pos])))
+        skipWhitespace(value, pos);
+        if (pos >= value.size())
+            break;
+
+        auto parse = matchTransformFunction(value, pos);
+        if (parse == nullptr)
         {
             ++pos;
+            continue;
         }
 
-        if (value.substr(pos, 9) == "translate")
-        {
-            pos = value.find('(', pos);
-            if (pos == std::string::npos)
-                break;
-            ++pos;
-            result.translateX = parseFloat(value, pos);
-            result.translateY = parseFloat(value, pos);
-            pos = value.find(')', pos);
-            if (pos != std::string::npos)
-                ++pos;
-        }
-        else if (value.substr(pos, 5) == "scale")
-        {
-            pos = value.find('(', pos);
-            if (pos == std::string::npos)
-                break;
-            ++pos;
-            result.scaleX = parseFloat(value, pos);
-            auto saved = pos;
-            result.scaleY = parseFloat(value, pos);
-            if (pos == saved)
-                result.scaleY = result.scaleX;
-            pos = value.find(')', pos);
-            if (pos != std::string::npos)
-                ++pos;
-        }
-        else if (value.substr(pos, 6) == "rotate")
-        {
-            pos = value.find('(', pos);
-            if (pos == std::string::npos)
-                break;
-            ++pos;
-            result.rotateDeg = parseFloat(value, pos);
-            pos = value.find(')', pos);
-            if (pos != std::string::npos)
-                ++pos;
-        }
-        else
-        {
-            ++pos;
-        }
+        if (!advanceToArgumentList(value, pos))
+            break;
+
+        auto reader = NumberReader {value, pos};
+        parse(reader, result);
+        pos = reader.pos;
+        advancePastClosingParen(value, pos);
     }
+
     return result;
 }
 
 EA::Vector<float> parseNumberList(const std::string& value)
 {
-    EA::Vector<float> result;
-    size_t pos = 0;
-    while (pos < value.size())
-    {
-        while (pos < value.size()
-               && (std::isspace(static_cast<unsigned char>(value[pos]))
-                   || value[pos] == ','))
-        {
-            ++pos;
-        }
-        if (pos >= value.size())
-            break;
+    auto result = EA::Vector<float>();
+    auto reader = NumberReader {value, 0};
 
-        auto start = pos;
-        auto num = parseFloat(value, pos);
-        if (pos > start)
-            result.add(num);
-        else
+    while (reader.hasNumber())
+    {
+        auto start = reader.pos;
+        auto num = reader.readFloat();
+        if (reader.pos == start)
             break;
+        result.add(num);
     }
+
     return result;
 }
 

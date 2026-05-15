@@ -1,6 +1,7 @@
 add_library(eacp-svg STATIC)
 
 target_sources(eacp-svg PRIVATE
+        NumberReader.cpp
         SVGAttributes.cpp
         SVGBuilder.cpp
         SVGParser.cpp

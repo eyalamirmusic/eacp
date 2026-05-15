@@ -2,6 +2,8 @@
 
 #include "DevServerProbeInternal.h"
 
+#include <eacp/Core/Utils/Strings.h>
+
 #include <optional>
 
 namespace eacp::Graphics
@@ -14,6 +16,11 @@ struct HostPort
     int port = 0;
 };
 
+int defaultPortForScheme(const std::string& url)
+{
+    return url.starts_with("https://") ? 443 : 80;
+}
+
 std::optional<HostPort> parseHostPort(const std::string& url)
 {
     auto schemeEnd = url.find("://");
@@ -25,31 +32,23 @@ std::optional<HostPort> parseHostPort(const std::string& url)
     auto pathStart = url.find('/', hostStart);
     auto hostPart = url.substr(
         hostStart,
-        pathStart == std::string::npos ? std::string::npos
-                                       : pathStart - hostStart);
+        pathStart == std::string::npos ? std::string::npos : pathStart - hostStart);
 
     auto colon = hostPart.find(':');
     auto result = HostPort {};
 
-    if (colon != std::string::npos)
-    {
-        result.host = hostPart.substr(0, colon);
-
-        try
-        {
-            result.port = std::stoi(hostPart.substr(colon + 1));
-        }
-        catch (...)
-        {
-            return std::nullopt;
-        }
-    }
-    else
+    if (colon == std::string::npos)
     {
         result.host = hostPart;
-        result.port = url.starts_with("https://") ? 443 : 80;
+        result.port = defaultPortForScheme(url);
+        return result;
     }
 
+    result.host = hostPart.substr(0, colon);
+    auto parsedPort = Strings::tryParseInt(hostPart.substr(colon + 1));
+    if (!parsedPort)
+        return std::nullopt;
+    result.port = *parsedPort;
     return result;
 }
 } // namespace
@@ -58,7 +57,7 @@ bool probeDevServer(const std::string& url, int timeoutMs)
 {
     auto hp = parseHostPort(url);
 
-    if (! hp)
+    if (!hp)
         return false;
 
     return probeTCP(hp->host, hp->port, timeoutMs);

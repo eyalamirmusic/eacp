@@ -1,5 +1,7 @@
 #pragma once
 
+#include <eacp/Core/Utils/Strings.h>
+
 #include <ea_data_structures/Structures/Vector.h>
 #include <string>
 #include <unordered_map>
@@ -25,18 +27,9 @@ struct SVGElement
     float numAttr(const std::string& name, float fallback = 0.f) const
     {
         auto it = attributes.find(name);
-        if (it != attributes.end())
-        {
-            try
-            {
-                return std::stof(it->second);
-            }
-            catch (...)
-            {
-                return fallback;
-            }
-        }
-        return fallback;
+        if (it == attributes.end())
+            return fallback;
+        return Strings::parseFloatOr(it->second, fallback);
     }
 };
 

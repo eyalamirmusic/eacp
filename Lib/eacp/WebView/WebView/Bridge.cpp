@@ -1,5 +1,7 @@
 #include "Bridge.h"
 
+#include <optional>
+
 namespace eacp::Graphics
 {
 namespace
@@ -130,44 +132,64 @@ WebViewBridge::~WebViewBridge()
     webView.removeScriptMessageHandler(bridgeChannel);
 }
 
-void WebViewBridge::onMessage(const std::string& body)
+namespace
 {
-    auto envelope = Miro::Json::Value {};
+struct Envelope
+{
+    double id;
+    std::string command;
+    Miro::Json::Value payload;
+};
+
+std::optional<Envelope> parseEnvelope(const std::string& body)
+{
+    auto value = Miro::Json::Value {};
 
     try
     {
-        envelope = Miro::Json::parse(body);
+        value = Miro::Json::parse(body);
     }
     catch (const std::exception&)
     {
-        return;
+        return std::nullopt;
     }
 
-    if (!envelope.isObject())
-        return;
+    if (!value.isObject())
+        return std::nullopt;
 
-    auto& obj = envelope.asObject();
+    auto& obj = value.asObject();
 
     auto idIt = obj.find("id");
     auto cmdIt = obj.find("command");
     auto payloadIt = obj.find("payload");
 
     if (idIt == obj.end() || cmdIt == obj.end() || !cmdIt->second.isString())
-        return;
+        return std::nullopt;
 
-    auto id = idIt->second.isNumber() ? idIt->second.asNumber() : 0.0;
-    auto command = cmdIt->second.asString();
-    auto payload = payloadIt != obj.end() ? payloadIt->second : Miro::Json::Value {};
+    auto envelope = Envelope {};
+    envelope.id = idIt->second.isNumber() ? idIt->second.asNumber() : 0.0;
+    envelope.command = cmdIt->second.asString();
+    envelope.payload =
+        payloadIt != obj.end() ? payloadIt->second : Miro::Json::Value {};
+    return envelope;
+}
+} // namespace
+
+void WebViewBridge::onMessage(const std::string& body)
+{
+    auto envelope = parseEnvelope(body);
+    if (!envelope)
+        return;
 
     try
     {
-        auto result = bridge.dispatch(command, payload);
-        deliver(id, result, nullptr);
+        auto result = bridge.dispatch(envelope->command, envelope->payload);
+        deliver(envelope->id, result, nullptr);
     }
     catch (const std::exception& e)
     {
         auto error = std::string {e.what()};
-        deliver(id, Miro::Json::Value {}, &error);
+        deliver(envelope->id, Miro::Json::Value {}, &error);
     }
 }
 

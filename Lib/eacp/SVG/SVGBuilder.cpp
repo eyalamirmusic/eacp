@@ -2,6 +2,8 @@
 #include "SVGAttributes.h"
 #include "SVGPathParser.h"
 
+#include <eacp/Core/Utils/Strings.h>
+
 namespace eacp::SVG
 {
 
@@ -23,11 +25,11 @@ static void applyFillAndStroke(Graphics::ShapeLayer& layer,
 
     auto strokeWidth = element.attr("stroke-width");
     if (!strokeWidth.empty())
-        layer.setStrokeWidth(std::stof(strokeWidth));
+        layer.setStrokeWidth(Strings::parseFloatOr(strokeWidth));
 
     auto opacity = element.attr("opacity");
     if (!opacity.empty())
-        layer.setOpacity(std::stof(opacity));
+        layer.setOpacity(Strings::parseFloatOr(opacity));
 }
 
 static void addShapeLayer(SVGView& view,
@@ -172,7 +174,7 @@ static void buildText(SVGView& view, const SVGElement& element, float sx, float 
 
     auto opacity = element.attr("opacity");
     if (!opacity.empty())
-        layer.setOpacity(std::stof(opacity));
+        layer.setOpacity(Strings::parseFloatOr(opacity));
 
     view.addLayer(layer);
 }
@@ -243,7 +245,6 @@ void SVGView::clearContent()
     ownedLayers.clear();
     ownedTextLayers.clear();
 }
-
 
 void SVGView::stretchToFit()
 {

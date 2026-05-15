@@ -141,19 +141,72 @@ MouseEvent View::createLocalEvent(const MouseEvent& event,
     return localEvent;
 }
 
+void View::forwardDragOrUpToCapturedTarget(const MouseEvent& event)
+{
+    if (mouseDownTarget != nullptr)
+    {
+        mouseDownTarget->handleMouseEvent(
+            createLocalEvent(event, mouseDownTarget, event.type));
+    }
+
+    if (event.type == MouseEventType::Up)
+        mouseDownTarget = nullptr;
+}
+
+void View::updateHoverTracking(View* target, const MouseEvent& event)
+{
+    if (target == hoveredView)
+        return;
+
+    if (hoveredView != nullptr)
+    {
+        hoveredView->handleMouseEvent(
+            createLocalEvent(event, hoveredView, MouseEventType::Exited));
+    }
+
+    if (target != nullptr)
+    {
+        target->handleMouseEvent(
+            createLocalEvent(event, target, MouseEventType::Entered));
+    }
+
+    hoveredView = target;
+}
+
+void View::dispatchHoverEvent(View* target, const MouseEvent& event)
+{
+    updateHoverTracking(target, event);
+
+    if (target != nullptr && event.type == MouseEventType::Moved)
+    {
+        target->handleMouseEvent(
+            createLocalEvent(event, target, MouseEventType::Moved));
+    }
+}
+
+void View::dispatchExitEvent(const MouseEvent& event)
+{
+    if (hoveredView == nullptr)
+        return;
+
+    hoveredView->handleMouseEvent(
+        createLocalEvent(event, hoveredView, MouseEventType::Exited));
+    hoveredView = nullptr;
+}
+
+void View::dispatchMouseDown(View* target, const MouseEvent& event)
+{
+    mouseDownTarget = target;
+
+    if (target != nullptr)
+        target->handleMouseEvent(createLocalEvent(event, target, event.type));
+}
+
 void View::dispatchMouseEvent(const MouseEvent& event)
 {
     if (event.type == MouseEventType::Dragged || event.type == MouseEventType::Up)
     {
-        if (mouseDownTarget != nullptr)
-        {
-            mouseDownTarget->handleMouseEvent(
-                createLocalEvent(event, mouseDownTarget, event.type));
-        }
-
-        if (event.type == MouseEventType::Up)
-            mouseDownTarget = nullptr;
-
+        forwardDragOrUpToCapturedTarget(event);
         return;
     }
 
@@ -161,49 +214,24 @@ void View::dispatchMouseEvent(const MouseEvent& event)
 
     if (event.type == MouseEventType::Moved || event.type == MouseEventType::Entered)
     {
-        if (target != hoveredView)
-        {
-            if (hoveredView != nullptr)
-            {
-                hoveredView->handleMouseEvent(
-                    createLocalEvent(event, hoveredView, MouseEventType::Exited));
-            }
-
-            if (target != nullptr)
-            {
-                target->handleMouseEvent(
-                    createLocalEvent(event, target, MouseEventType::Entered));
-            }
-
-            hoveredView = target;
-        }
-
-        if (target != nullptr && event.type == MouseEventType::Moved)
-        {
-            target->handleMouseEvent(
-                createLocalEvent(event, target, MouseEventType::Moved));
-        }
+        dispatchHoverEvent(target, event);
+        return;
     }
-    else if (event.type == MouseEventType::Exited)
-    {
-        if (hoveredView != nullptr)
-        {
-            hoveredView->handleMouseEvent(
-                createLocalEvent(event, hoveredView, MouseEventType::Exited));
-            hoveredView = nullptr;
-        }
-    }
-    else if (event.type == MouseEventType::Down)
-    {
-        mouseDownTarget = target;
 
-        if (target != nullptr)
-            target->handleMouseEvent(createLocalEvent(event, target, event.type));
-    }
-    else if (target != nullptr)
+    if (event.type == MouseEventType::Exited)
     {
+        dispatchExitEvent(event);
+        return;
+    }
+
+    if (event.type == MouseEventType::Down)
+    {
+        dispatchMouseDown(target, event);
+        return;
+    }
+
+    if (target != nullptr)
         target->handleMouseEvent(createLocalEvent(event, target, event.type));
-    }
 }
 
 void View::handleMouseEvent(const MouseEvent& event)

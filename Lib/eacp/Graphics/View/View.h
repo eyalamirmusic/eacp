@@ -116,6 +116,12 @@ private:
     MouseEvent
         createLocalEvent(const MouseEvent& event, View* target, MouseEventType type);
 
+    void forwardDragOrUpToCapturedTarget(const MouseEvent& event);
+    void updateHoverTracking(View* target, const MouseEvent& event);
+    void dispatchHoverEvent(View* target, const MouseEvent& event);
+    void dispatchExitEvent(const MouseEvent& event);
+    void dispatchMouseDown(View* target, const MouseEvent& event);
+
     void viewAdded(View& view);
     void viewRemoved(View& view);
 

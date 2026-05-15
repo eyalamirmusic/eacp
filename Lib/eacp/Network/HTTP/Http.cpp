@@ -487,23 +487,12 @@ Response Request::downloadTo(const std::string& filePath) const
 
 namespace
 {
-int hexValue(char c)
-{
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    if (c >= 'a' && c <= 'f')
-        return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F')
-        return c - 'A' + 10;
-    return -1;
-}
-
 void appendDecodedPercentEscape(std::string& out,
                                 const std::string& src,
                                 std::size_t& i)
 {
-    auto hi = hexValue(src[i + 1]);
-    auto lo = hexValue(src[i + 2]);
+    auto hi = Strings::hexCharToInt(src[i + 1]);
+    auto lo = Strings::hexCharToInt(src[i + 2]);
 
     if (hi < 0 || lo < 0)
     {
