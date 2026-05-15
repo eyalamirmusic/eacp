@@ -74,6 +74,18 @@ struct CurlEasy
     CURL* handle = nullptr;
 };
 
+int progressCallback(void* userp,
+                     curl_off_t dltotal,
+                     curl_off_t dlnow,
+                     curl_off_t,
+                     curl_off_t)
+{
+    auto* progress = static_cast<DownloadProgress*>(userp);
+    progress->bytesReceived.store(dlnow);
+    progress->totalBytes.store(dltotal == 0 ? -1 : dltotal);
+    return progress->cancel.load() ? 1 : 0;
+}
+
 void applyCommonOptions(CURL* curl, const Request& req, CurlSlist& headers)
 {
     if (req.url.empty())
@@ -150,6 +162,13 @@ Response downloadFileInternal(const Request& req, const std::string& filePath)
     curl_easy_setopt(curl.handle, CURLOPT_HEADERFUNCTION, headerCallback);
     curl_easy_setopt(curl.handle, CURLOPT_HEADERDATA, &response.headers);
 
+    if (req.progress)
+    {
+        curl_easy_setopt(curl.handle, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl.handle, CURLOPT_XFERINFOFUNCTION, progressCallback);
+        curl_easy_setopt(curl.handle, CURLOPT_XFERINFODATA, req.progress);
+    }
+
     auto rc = curl_easy_perform(curl.handle);
     std::fclose(file);
 
@@ -184,13 +203,17 @@ Response downloadFile(const Request& req, const std::string& filePath)
     auto res = Response();
     try
     {
-        return downloadFileInternal(req, filePath);
+        res = downloadFileInternal(req, filePath);
     }
     catch (const std::exception& e)
     {
         res.error = e.what();
         res.statusCode = 0;
     }
+
+    if (req.progress)
+        req.progress->done.store(true);
+
     return res;
 }
 

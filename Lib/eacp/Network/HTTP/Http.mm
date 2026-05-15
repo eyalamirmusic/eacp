@@ -8,6 +8,72 @@
 
 namespace eacp::HTTP
 {
+struct DownloadContext
+{
+    DownloadProgress* progress = nullptr;
+    Threads::TaskSemaphore* semaphore = nullptr;
+    std::string filePath;
+    std::string moveError;
+    ObjC::Ptr<NSURLResponse> response;
+    ObjC::Ptr<NSError> error;
+};
+} // namespace eacp::HTTP
+
+@interface EacpDownloadDelegate : NSObject<NSURLSessionDownloadDelegate>
+@property(nonatomic, assign) eacp::HTTP::DownloadContext* ctx;
+@end
+
+@implementation EacpDownloadDelegate
+
+- (void)URLSession:(NSURLSession*)session
+                 downloadTask:(NSURLSessionDownloadTask*)task
+                 didWriteData:(int64_t)bytesWritten
+            totalBytesWritten:(int64_t)totalBytesWritten
+    totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite
+{
+    if (auto* p = self.ctx->progress)
+    {
+        p->bytesReceived.store(totalBytesWritten);
+        p->totalBytes.store(totalBytesExpectedToWrite);
+
+        if (p->cancel.load())
+            [task cancel];
+    }
+}
+
+- (void)URLSession:(NSURLSession*)session
+                 downloadTask:(NSURLSessionDownloadTask*)task
+    didFinishDownloadingToURL:(NSURL*)location
+{
+    self.ctx->response.reset(task.response);
+
+    auto destURL =
+        [NSURL fileURLWithPath:eacp::Strings::toNSString(self.ctx->filePath)];
+    auto fm = [NSFileManager defaultManager];
+    [fm removeItemAtURL:destURL error:nil];
+
+    NSError* moveError = nil;
+    if (![fm moveItemAtURL:location toURL:destURL error:&moveError])
+        self.ctx->moveError = eacp::Strings::toStdString(moveError);
+}
+
+- (void)URLSession:(NSURLSession*)session
+                    task:(NSURLSessionTask*)task
+    didCompleteWithError:(NSError*)error
+{
+    if (error)
+        self.ctx->error.reset(error);
+
+    if (!self.ctx->response)
+        self.ctx->response.reset(task.response);
+
+    self.ctx->semaphore->signal();
+}
+
+@end
+
+namespace eacp::HTTP
+{
 NSMutableURLRequest* getRequest(const Request& req)
 {
     if (req.url.empty())
@@ -140,63 +206,40 @@ Response downloadFileInternal(const Request& req,
 {
     auto request = getRequest(req);
 
-    auto result = SafeResult();
     auto semaphore = Threads::TaskSemaphore();
-    ObjC::Ptr<NSURL> tempLocation;
 
-    auto cppHandler = [&result, &semaphore, &tempLocation](
-                          NSURL* location, NSURLResponse* res,
-                          NSError* error)
-    {
-        if (location)
-            tempLocation.reset([location copy]);
+    auto ctx = DownloadContext();
+    ctx.progress = req.progress;
+    ctx.semaphore = &semaphore;
+    ctx.filePath = filePath;
 
-        result.response.reset(res);
-        result.error.reset(error);
-        semaphore.signal();
-    };
+    auto delegate = ObjC::makePtr<EacpDownloadDelegate>();
+    delegate.get().ctx = &ctx;
 
-    auto task = [getSharedSession()
-        downloadTaskWithRequest:request
-              completionHandler:^(NSURL* location,
-                                  NSURLResponse* res,
-                                  NSError* error) {
-                  cppHandler(location, res, error);
-              }];
+    auto config = [NSURLSessionConfiguration defaultSessionConfiguration];
+    auto session = ObjC::attachPtr(
+        [NSURLSession sessionWithConfiguration:config
+                                      delegate:delegate.get()
+                                 delegateQueue:nil]);
 
+    auto task = [session.get() downloadTaskWithRequest:request];
     [task resume];
     semaphore.wait();
+    [session.get() finishTasksAndInvalidate];
 
-    if (result.error)
-        throw std::runtime_error(
-            Strings::toStdString(result.error.get()));
+    if (ctx.error)
+        throw std::runtime_error(Strings::toStdString(ctx.error.get()));
+
+    if (!ctx.moveError.empty())
+        throw std::runtime_error(ctx.moveError);
 
     auto response = Response();
 
-    if (result.response.isKindOfClass<NSHTTPURLResponse>())
+    if (ctx.response.isKindOfClass<NSHTTPURLResponse>())
     {
-        auto httpResponse =
-            (NSHTTPURLResponse*) result.response.get();
+        auto httpResponse = (NSHTTPURLResponse*) ctx.response.get();
         response.statusCode = (int) httpResponse.statusCode;
         copyResponseHeaders(httpResponse, response);
-    }
-
-    if (tempLocation)
-    {
-        auto destURL = [NSURL
-            fileURLWithPath:Strings::toNSString(filePath)];
-        auto fm = [NSFileManager defaultManager];
-
-        [fm removeItemAtURL:destURL error:nil];
-
-        NSError* moveError = nil;
-        if (![fm moveItemAtURL:tempLocation.get()
-                         toURL:destURL
-                         error:&moveError])
-        {
-            throw std::runtime_error(
-                Strings::toStdString(moveError));
-        }
     }
 
     return response;
@@ -210,13 +253,16 @@ Response downloadFile(const Request& req,
 
     try
     {
-        return downloadFileInternal(req, filePath);
+        res = downloadFileInternal(req, filePath);
     }
     catch (const std::exception& e)
     {
         res.error = e.what();
         res.statusCode = 0;
     }
+
+    if (req.progress)
+        req.progress->done.store(true);
 
     return res;
 }

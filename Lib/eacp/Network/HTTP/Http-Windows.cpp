@@ -4,8 +4,12 @@
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.Web.Http.h>
 #include <winrt/Windows.Web.Http.Headers.h>
+
+#include <cstdint>
+#include <vector>
 
 namespace eacp::HTTP
 {
@@ -128,6 +132,137 @@ Response httpRequest(const Request& req)
     return res;
 }
 
+Response downloadFileInternal(const Request& req, const std::string& filePath)
+{
+    namespace streams = winrt::Windows::Storage::Streams;
+
+    if (req.url.empty())
+        throw std::invalid_argument("URL cannot be empty");
+
+    auto client = winhttp::HttpClient();
+    auto uri = winrt::Windows::Foundation::Uri(winrt::to_hstring(req.url));
+    auto method = getHttpMethod(req.type);
+    auto requestMessage = winhttp::HttpRequestMessage(method, uri);
+
+    for (const auto& [key, value]: req.headers)
+    {
+        auto hKey = winrt::to_hstring(key);
+        auto hValue = winrt::to_hstring(value);
+
+        if (!requestMessage.Headers().TryAppendWithoutValidation(hKey, hValue))
+        {
+            if (requestMessage.Content())
+            {
+                requestMessage.Content().Headers().TryAppendWithoutValidation(
+                    hKey, hValue);
+            }
+        }
+    }
+
+    if (!req.body.empty())
+    {
+        auto content = winhttp::HttpStringContent(
+            winrt::to_hstring(req.body), streams::UnicodeEncoding::Utf8);
+
+        for (const auto& [key, value]: req.headers)
+        {
+            auto hKey = winrt::to_hstring(key);
+            auto hValue = winrt::to_hstring(value);
+            content.Headers().TryAppendWithoutValidation(hKey, hValue);
+        }
+
+        requestMessage.Content(content);
+    }
+
+    auto responseMessage =
+        client.SendRequestAsync(requestMessage,
+                                winhttp::HttpCompletionOption::ResponseHeadersRead)
+            .get();
+
+    auto response = Response();
+    response.statusCode = static_cast<int>(responseMessage.StatusCode());
+
+    for (auto&& [name, value]: responseMessage.Headers())
+        response.headers[winrt::to_string(name)] = winrt::to_string(value);
+
+    if (responseMessage.Content())
+    {
+        for (auto&& [name, value]: responseMessage.Content().Headers())
+            response.headers[winrt::to_string(name)] = winrt::to_string(value);
+    }
+
+    auto totalBytes = std::int64_t(-1);
+    auto contentLength = responseMessage.Content().Headers().ContentLength();
+    if (contentLength)
+        totalBytes = static_cast<std::int64_t>(contentLength.GetUInt64());
+
+    if (req.progress)
+        req.progress->totalBytes.store(totalBytes);
+
+    auto wideFilePath = winrt::to_hstring(filePath);
+    auto handle = CreateFileW(wideFilePath.c_str(),
+                              GENERIC_WRITE,
+                              0,
+                              nullptr,
+                              CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL,
+                              nullptr);
+
+    if (handle == INVALID_HANDLE_VALUE)
+        throw std::runtime_error("Failed to create file: " + filePath);
+
+    try
+    {
+        auto inputStream =
+            responseMessage.Content().ReadAsInputStreamAsync().get();
+
+        auto buffer = streams::Buffer(64 * 1024);
+        auto received = std::int64_t(0);
+
+        while (true)
+        {
+            if (req.progress && req.progress->cancel.load())
+                throw std::runtime_error("Download cancelled");
+
+            auto chunk =
+                inputStream
+                    .ReadAsync(buffer,
+                               buffer.Capacity(),
+                               streams::InputStreamOptions::Partial)
+                    .get();
+
+            auto len = chunk.Length();
+            if (len == 0)
+                break;
+
+            auto reader = streams::DataReader::FromBuffer(chunk);
+            auto bytes = std::vector<uint8_t>(len);
+            reader.ReadBytes(bytes);
+
+            DWORD written = 0;
+            if (!WriteFile(handle,
+                           bytes.data(),
+                           static_cast<DWORD>(len),
+                           &written,
+                           nullptr))
+                throw std::runtime_error("Failed to write file: " + filePath);
+
+            received += static_cast<std::int64_t>(len);
+
+            if (req.progress)
+                req.progress->bytesReceived.store(received);
+        }
+    }
+    catch (...)
+    {
+        CloseHandle(handle);
+        throw;
+    }
+
+    CloseHandle(handle);
+    return response;
+}
+
 Response downloadFile(const Request& req, const std::string& filePath)
 {
     auto res = Response();
@@ -142,30 +277,7 @@ Response downloadFile(const Request& req, const std::string& filePath)
 
     try
     {
-        auto response = httpRequestInternal(req);
-
-        auto wideFilePath = winrt::to_hstring(filePath);
-        auto handle = CreateFileW(wideFilePath.c_str(),
-                                  GENERIC_WRITE,
-                                  0,
-                                  nullptr,
-                                  CREATE_ALWAYS,
-                                  FILE_ATTRIBUTE_NORMAL,
-                                  nullptr);
-
-        if (handle == INVALID_HANDLE_VALUE)
-            throw std::runtime_error("Failed to create file: " + filePath);
-
-        DWORD written = 0;
-        WriteFile(handle,
-                  response.content.data(),
-                  static_cast<DWORD>(response.content.size()),
-                  &written,
-                  nullptr);
-        CloseHandle(handle);
-
-        response.content.clear();
-        return response;
+        res = downloadFileInternal(req, filePath);
     }
     catch (const winrt::hresult_error& e)
     {
@@ -177,6 +289,9 @@ Response downloadFile(const Request& req, const std::string& filePath)
         res.error = e.what();
         res.statusCode = 0;
     }
+
+    if (req.progress)
+        req.progress->done.store(true);
 
     return res;
 }

@@ -8,6 +8,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 
 #include <arpa/inet.h>
+#include <csignal>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -30,6 +31,16 @@ struct Connection
     size_t bodyExpected = 0;
     Request request;
 };
+
+void ignoreSigPipe()
+{
+    static auto once = []
+    {
+        ::signal(SIGPIPE, SIG_IGN);
+        return 0;
+    }();
+    (void) once;
+}
 
 void writeResponseToFd(int fd, const Response& res)
 {
@@ -131,6 +142,8 @@ bool Server::Impl::start(int port, RequestHandler h)
 {
     if (listenSocket)
         return false;
+
+    ignoreSigPipe();
 
     handler = std::move(h);
 

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <ea_data_structures/Structures/Vector.h>
+#include <atomic>
+#include <cstdint>
 #include <map>
 #include <string>
 
@@ -17,6 +19,14 @@ struct Response
     std::string error;
     std::map<std::string, std::string> headers;
     int statusCode = 0;
+};
+
+struct DownloadProgress
+{
+    std::atomic<std::int64_t> bytesReceived {0};
+    std::atomic<std::int64_t> totalBytes {-1};
+    std::atomic<bool> cancel {false};
+    std::atomic<bool> done {false};
 };
 
 struct FormField
@@ -67,6 +77,8 @@ struct Request
     std::map<std::string, std::string> params;
     std::string remoteAddr;
     int remotePort = -1;
+
+    DownloadProgress* progress = nullptr;
 };
 
 Response httpRequest(const Request& req);
