@@ -16,3 +16,5 @@ Tick getCurrentTick()
 }
 
 MIRO_EXPORT_COMMAND(getCurrentTick)
+
+MIRO_EXPORT_EVENT(tick, Tick)

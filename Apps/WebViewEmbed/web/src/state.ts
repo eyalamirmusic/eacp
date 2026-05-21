@@ -2,7 +2,7 @@ import { backend } from './generated/backend';
 import { makeBridgeStore } from './generated/react';
 import type { Parameters } from './generated/schema';
 
-export const useParameters = makeBridgeStore<Parameters>({
+export const useParameters = makeBridgeStore({
     backend,
     event: 'parameters',
     fetch: backend.getParameters,

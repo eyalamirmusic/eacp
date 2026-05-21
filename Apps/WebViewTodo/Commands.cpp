@@ -100,3 +100,5 @@ MIRO_EXPORT_COMMANDS(getTodos,
                      editTodo,
                      removeTodo,
                      clearCompleted)
+
+MIRO_EXPORT_EVENT(todos, TodoState)

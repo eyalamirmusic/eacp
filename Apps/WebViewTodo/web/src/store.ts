@@ -21,7 +21,7 @@ class TodoStore
     constructor()
     {
         void backend.getTodos().then((initial) => this.apply(initial));
-        backend.on?.('todos', (payload) => this.apply(payload as TodoState));
+        backend.on?.('todos', (payload) => this.apply(payload));
     }
 
     subscribe = (listener: () => void): (() => void) =>

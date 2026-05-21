@@ -62,7 +62,7 @@ function(eacp_add_webview_app TARGET)
         set(ARG_SCHEMA_NAME "schema")
     endif ()
     if (NOT ARG_SCHEMA_FORMATS)
-        set(ARG_SCHEMA_FORMATS ts backend ts-server bridge)
+        set(ARG_SCHEMA_FORMATS ts backend ts-server bridge events)
     endif ()
 
     set(TS_GENERATED_DIR "${ARG_WEB_DIR}/src/generated")
@@ -105,7 +105,9 @@ function(eacp_add_webview_app TARGET)
     endif ()
 
     if (ARG_REACT)
-        eacp_webview_generate_react_hooks(OUTPUT_DIR ${TS_GENERATED_DIR})
+        eacp_webview_generate_react_hooks(
+                OUTPUT_DIR ${TS_GENERATED_DIR}
+                BASENAME ${ARG_SCHEMA_NAME})
     endif ()
 
     eacp_webview_add_vite(${TARGET}

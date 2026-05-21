@@ -14,9 +14,8 @@ export function useNativeTick(): NativeTick
     const [tick, setTick] = useState<NativeTick>({ angle: 0, hz: 0 });
     const counter = useRef({ count: 0, since: performance.now() });
 
-    useEffect(() => backend.on?.('tick', (payload) =>
+    useEffect(() => backend.on?.('tick', (next) =>
     {
-        const next = payload as Tick;
         counter.current.count++;
         const elapsed = performance.now() - counter.current.since;
 

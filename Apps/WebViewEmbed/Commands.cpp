@@ -47,3 +47,5 @@ void advanceTick()
 }
 
 MIRO_EXPORT_COMMANDS(getParameters, setParameters)
+
+MIRO_EXPORT_EVENT(parameters, Parameters)
