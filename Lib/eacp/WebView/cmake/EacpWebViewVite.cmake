@@ -91,10 +91,15 @@ function(eacp_webview_add_vite TARGET)
         set_source_files_properties("${VITE_STAMP}" PROPERTIES
                 GENERATED TRUE HEADER_FILE_ONLY TRUE)
 
+        # BASE_DIRECTORY preserves the relative path of each file under the
+        # vite dist (e.g. "assets/foo.js" rather than just "foo.js"), so the
+        # WebView scheme handler can resolve URLs like `app://local/assets/foo.js`.
+        # Without this, ResEmbed flattens to basenames and nested assets 404.
         res_embed_add(${TARGET}
-                DIRECTORY "${BUILD_DIST_DIR}"
-                NAMESPACE ${ARG_NAMESPACE}
-                CATEGORY ${ARG_CATEGORY})
+                DIRECTORY      "${BUILD_DIST_DIR}"
+                BASE_DIRECTORY "${BUILD_DIST_DIR}"
+                NAMESPACE      ${ARG_NAMESPACE}
+                CATEGORY       ${ARG_CATEGORY})
         return()
     endif ()
 
@@ -107,7 +112,8 @@ function(eacp_webview_add_vite TARGET)
     endif ()
 
     res_embed_add(${TARGET}
-            DIRECTORY "${ARG_DIST_DIR}"
-            NAMESPACE ${ARG_NAMESPACE}
-            CATEGORY ${ARG_CATEGORY})
+            DIRECTORY      "${ARG_DIST_DIR}"
+            BASE_DIRECTORY "${ARG_DIST_DIR}"
+            NAMESPACE      ${ARG_NAMESPACE}
+            CATEGORY       ${ARG_CATEGORY})
 endfunction()
