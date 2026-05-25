@@ -40,6 +40,19 @@ NSData* pngDataFromImage(EACP_SNAPSHOT_IMAGE* image)
 }
 } // namespace
 
+#if EACP_WEBVIEW_PRIVATE_MEDIA_CAPTURE_SPI
+// Private WebKit SPI forward declaration. WKUIDelegate didn't expose a public
+// camera/microphone permission selector until macOS 12 — on macOS 11 WebKit
+// only calls this underscored variant. Mirrors the enum WebKit ships in its
+// _WKWebsiteDataStore / WKUIDelegatePrivate headers; bit values are part of
+// the ABI and must not change.
+typedef NS_OPTIONS(NSUInteger, _WKCaptureDevices) {
+    _WKCaptureDeviceMicrophone = 1 << 0,
+    _WKCaptureDeviceCamera = 1 << 1,
+    _WKCaptureDeviceDisplay = 1 << 2,
+};
+#endif
+
 namespace eacp::Graphics
 {
 class WebView;
@@ -308,20 +321,37 @@ struct WebViewNativeAccess
     });
 }
 
-// Grant getUserMedia capture requests when the embedder has opted in via
-// Options::mediaCaptureEnabled. Without this delegate method WKWebView
-// denies all capture requests by default, even when mediaDevicesEnabled
-// is set on WKPreferences.
 - (void)webView:(WKWebView*)webView
     requestMediaCapturePermissionForOrigin:(WKSecurityOrigin*)origin
                           initiatedByFrame:(WKFrameInfo*)frame
                                       type:(WKMediaCaptureType)type
                            decisionHandler:
-                               (void (^)(WKPermissionDecision))decisionHandler
+                               (void (^)(WKPermissionDecision decision))handler
     API_AVAILABLE(macos(12.0), ios(15.0))
 {
-    decisionHandler(WKPermissionDecisionGrant);
+    handler(WKPermissionDecisionGrant);
 }
+
+#if EACP_WEBVIEW_PRIVATE_MEDIA_CAPTURE_SPI
+// macOS 11 fallback. WebKit on macOS 12+ prefers the public selector above;
+// macOS 11 has no public selector and calls this one instead. The availability
+// guard makes the preference explicit: if some future WebKit ever dispatched
+// both, the public path still wins and we'd no-op here. handler() is always
+// invoked so the request never hangs.
+- (void)_webView:(WKWebView*)webView
+    requestUserMediaAuthorizationForDevices:(_WKCaptureDevices)devices
+                                        url:(NSURL*)url
+                               mainFrameURL:(NSURL*)mainFrameURL
+                            decisionHandler:(void (^)(BOOL authorized))handler
+{
+    if (@available(macOS 12.0, *))
+    {
+        handler(NO);
+        return;
+    }
+    handler(YES);
+}
+#endif
 
 - (void)userContentController:(WKUserContentController*)userContentController
       didReceiveScriptMessage:(WKScriptMessage*)message

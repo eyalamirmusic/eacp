@@ -11,6 +11,16 @@ add_library(eacp-webview STATIC)
 
 target_link_libraries(eacp-webview PUBLIC eacp-graphics ResEmbed Miro)
 
+# WKUIDelegate's public camera/mic permission selector is macOS 12+. When the
+# macOS deployment target is older, opt into WebKit's private _WK SPI so
+# getUserMedia still works on macOS 11. iOS uses a different SPI we don't
+# implement here, so this is macOS-only.
+if (APPLE AND NOT IOS AND CMAKE_OSX_DEPLOYMENT_TARGET
+        AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "12.0")
+    target_compile_definitions(eacp-webview PRIVATE
+            EACP_WEBVIEW_PRIVATE_MEDIA_CAPTURE_SPI=1)
+endif ()
+
 target_sources(eacp-webview PRIVATE
         WebView/WebView-Shared.cpp
         WebView/DevServerProbe.cpp

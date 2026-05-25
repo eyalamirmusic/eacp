@@ -77,21 +77,20 @@ public:
         todos.publish(std::move(seed));
     }
 
-    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
     void reflect(Miro::ApiReflector& r)
     {
-        r.command(&TodosApi::getTodos, "getTodos");
-        r.command(&TodosApi::addTodo, "addTodo");
-        r.command(&TodosApi::toggleTodo, "toggleTodo");
-        r.command(&TodosApi::editTodo, "editTodo");
-        r.command(&TodosApi::removeTodo, "removeTodo");
-        r.command(&TodosApi::clearCompleted, "clearCompleted");
-
+        using T = TodosApi;
+        r.commands<&T::getTodos,
+                   &T::addTodo,
+                   &T::toggleTodo,
+                   &T::editTodo,
+                   &T::removeTodo,
+                   &T::clearCompleted>();
         // keyedEvent matches the old EACP_KEYED_STATE: tells the hooks
         // codegen that this state's payload is a collection (items)
         // indexed by id, so useTodos / useTodoIds / useTodoItem get
         // emitted with per-id selector semantics.
-        r.keyedEvent(&TodosApi::todos, "todos", "items", "id");
+        r.keyedEvent(&T::todos, "todos", "items", "id");
     }
 
     TodoState getTodos() const { return todos.snapshot(); }
@@ -114,7 +113,7 @@ public:
         {
             if (item.id == req.id)
             {
-                item.completed = ! item.completed;
+                item.completed = !item.completed;
                 todos.publish(std::move(next));
                 return;
             }
@@ -138,8 +137,8 @@ public:
     void removeTodo(const TodoIdRequest& req)
     {
         auto next = todos.snapshot();
-        auto erased = next.items.eraseIf(
-            [&](const TodoItem& item) { return item.id == req.id; });
+        auto erased = next.items.eraseIf([&](const TodoItem& item)
+                                         { return item.id == req.id; });
         if (erased)
             todos.publish(std::move(next));
     }
@@ -147,8 +146,8 @@ public:
     void clearCompleted()
     {
         auto next = todos.snapshot();
-        auto erased = next.items.eraseIf(
-            [](const TodoItem& item) { return item.completed; });
+        auto erased =
+            next.items.eraseIf([](const TodoItem& item) { return item.completed; });
         if (erased)
             todos.publish(std::move(next));
     }

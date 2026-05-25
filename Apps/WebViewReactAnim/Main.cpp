@@ -27,8 +27,7 @@ struct MyApp
     WebView webView {embeddedOptions("ReactAnimApp")};
     WebViewBridge transport {webView};
     Window window;
-    Threads::Timer timer {
-        [this] { clock.tick.publish(clock.getCurrentTick()); }, 120};
+    Threads::Timer timer {[&] { clock.update(); }, 120};
 };
 
 int main()

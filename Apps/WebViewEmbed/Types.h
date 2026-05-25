@@ -35,9 +35,10 @@ public:
     // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
     void reflect(Miro::ApiReflector& r)
     {
-        r.command(&ParametersApi::getParameters, "getParameters");
-        r.command(&ParametersApi::setParameters, "setParameters");
-        r.event(&ParametersApi::parameters, "parameters");
+        using T = ParametersApi;
+
+        r.commands<&T::getParameters, &T::setParameters>();
+        r.events<&T::parameters>();
     }
 
     Parameters getParameters() const { return parameters.snapshot(); }
