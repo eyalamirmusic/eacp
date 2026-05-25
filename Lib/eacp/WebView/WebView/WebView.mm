@@ -69,6 +69,12 @@ struct WebView::Native
                                         forKey:@"developerExtrasEnabled"];
         }
 
+        if (options.mediaCaptureEnabled)
+        {
+            [config.get().preferences setValue:@YES
+                                        forKey:@"mediaDevicesEnabled"];
+        }
+
         for (auto& [scheme, provider]: options.schemes)
         {
             auto handler = ObjC::Ptr {[[ResourceSchemeHandler alloc] init]};
@@ -281,6 +287,21 @@ struct WebViewNativeAccess
         if (auto native = weak.lock())
             native->owner.onClose();
     });
+}
+
+// Grant getUserMedia capture requests when the embedder has opted in via
+// Options::mediaCaptureEnabled. Without this delegate method WKWebView
+// denies all capture requests by default, even when mediaDevicesEnabled
+// is set on WKPreferences.
+- (void)webView:(WKWebView*)webView
+    requestMediaCapturePermissionForOrigin:(WKSecurityOrigin*)origin
+                          initiatedByFrame:(WKFrameInfo*)frame
+                                      type:(WKMediaCaptureType)type
+                           decisionHandler:
+                               (void (^)(WKPermissionDecision))decisionHandler
+    API_AVAILABLE(macos(12.0), ios(15.0))
+{
+    decisionHandler(WKPermissionDecisionGrant);
 }
 
 - (void)userContentController:(WKUserContentController*)userContentController

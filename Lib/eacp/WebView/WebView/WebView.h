@@ -58,6 +58,12 @@ public:
         std::unordered_map<std::string, ResourceProvider> schemes;
         Embedded embedded;
         bool debugConsole = true;
+
+        // When true, exposes navigator.mediaDevices and grants
+        // getUserMedia capture requests (camera/microphone) without a
+        // system prompt. Apps must still provide NSCameraUsageDescription
+        // and NSMicrophoneUsageDescription in Info.plist on macOS/iOS.
+        bool mediaCaptureEnabled = false;
     };
 
     WebView();
