@@ -8,11 +8,12 @@ export interface LaunchOptions extends AppDriverOptions
 {
     /**
      * Path to the test-host executable, e.g.
-     *   build/Apps/WebViewTodo/WebViewTodoTestHost.app/Contents/MacOS/WebViewTodoTestHost
+     *   build/Apps/WebView/WebViewTodo/WebViewTodoTestHost.app/Contents/MacOS/WebViewTodoTestHost
      * The launcher does not look inside .app bundles; pass the inner
-     * Mach-O directly.
+     * Mach-O directly. If omitted, falls back to the
+     * EACP_TEST_HOST_BINARY env var (set by the CMake test entry).
      */
-    bundle: string;
+    bundle?: string;
 
     /** Extra args to pass to the child process. --rpc-port=0 is always added. */
     args?: readonly string[];
@@ -51,11 +52,21 @@ export interface LaunchedApp
 
 const portLineRegex = /EACP_RPC_PORT=(\d+)/;
 
-export async function launchApp(options: LaunchOptions): Promise<LaunchedApp>
+export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedApp>
 {
+    const bundle = options.bundle ?? process.env['EACP_TEST_HOST_BINARY'];
+    if (!bundle)
+    {
+        throw new Error(
+            'launchApp(): no bundle path. Pass `bundle:` or set '
+            + 'EACP_TEST_HOST_BINARY. Run via `ctest -R <YourApp>Tests` after '
+            + '`cmake --build build --target <YourApp>TestHost` to set it '
+            + 'automatically.');
+    }
+
     const args = [`--rpc-port=${options.rpcPort ?? 0}`, ...(options.args ?? [])];
 
-    const child = spawn(options.bundle, args, {
+    const child = spawn(bundle, args, {
         cwd: options.cwd,
         env: options.env !== undefined ? { ...process.env, ...options.env } : process.env,
         stdio: ['ignore', 'pipe', 'pipe'],

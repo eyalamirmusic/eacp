@@ -1,14 +1,4 @@
-import { resolve } from 'node:path';
-
-import { test, expect, launchApp, type LaunchedApp }
-    from '../../../tools/eacp-test-node/src/index.ts';
-
-// The CMake `WebViewTodoTests` target sets EACP_TEST_HOST_BINARY to
-// $<TARGET_FILE:WebViewTodoTestHost>. The fallback path lets you run
-// the spec directly via `npx playwright test` after a manual build.
-const bundle = process.env['EACP_TEST_HOST_BINARY'] ?? resolve(
-    import.meta.dirname,
-    '../../../build/Apps/WebViewTodo/WebViewTodoTestHost.app/Contents/MacOS/WebViewTodoTestHost');
+import { test, expect, launchApp, type LaunchedApp } from './eacp-test-node.ts';
 
 const SELECTORS = {
     input: '[data-testid="todo-input"]',
@@ -31,7 +21,7 @@ let app: LaunchedApp;
 
 test.beforeEach(async () =>
 {
-    app = await launchApp({ bundle });
+    app = await launchApp();
     await app.driver.waitFor(SELECTORS.input);
 });
 

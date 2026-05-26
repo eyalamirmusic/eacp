@@ -1,64 +1,59 @@
-# eacp_add_webview_node_tests — wire a Node/Playwright test suite to a
-# WebView test-host executable as a single CMake target.
+# Internal helper — invoked by eacp_add_webview_app when its TESTS_DIR
+# arg is set. Not meant to be called directly from app CMakeLists.
 #
-# Usage:
-#   eacp_add_webview_node_tests(<TARGET>
-#       TEST_HOST  <test-host-executable-target>   # e.g. WebViewTodoTestHost
-#       TEST_DIR   <abs path to *.spec.ts dir>     # app-owned tests
-#       [PACKAGE_MANAGER  npm|pnpm|yarn|bun]       # default: ${EACP_WEBVIEW_PACKAGE_MANAGER}
-#       [FRAMEWORK_DIR    <path>]                  # default: ${EACP_WEBVIEW_NODE_TEST_FRAMEWORK_DIR}
-#   )
+# Produces a CTest test named ${TEST_NAME} that launches the supplied
+# TEST_HOST binary via Playwright. The test host is *not* built as a
+# side effect of running ctest — users run:
 #
-# Produces a single custom target ${TARGET}. Building it (e.g.
-# `cmake --build build --target WebViewTodoTests`) rebuilds the
-# test-host transitively, then runs Playwright against TEST_DIR.
+#   cmake --build build --target <TestHost>   # (or just `cmake --build build`)
+#   ctest --test-dir build -R <TestName>
 #
-# Communication with the test code happens via two env vars set by the
-# generated command line:
-#   EACP_TEST_HOST_BINARY  — absolute path to the test-host Mach-O.
-#                            Spec files should read this off process.env
-#                            and pass it as `bundle:` to launchApp().
-#   EACP_PW_TEST_DIR       — absolute path to the spec directory.
-#                            playwright.config.ts in the framework
-#                            picks it up to override its default
-#                            testDir, so a single shared config can
-#                            serve every app's tests.
+# At configure time the helper materializes the spec dir into a
+# self-contained npm project:
+#   <tests-dir>/package.json        — declares a file: dep on eacp-test-node
+#   <tests-dir>/playwright.config.ts — re-uses the framework's shared config
+#   <tests-dir>/node_modules/       — populated lazily by `npm install`
+#
+# The spec file imports everything from `eacp-test-node` as a bare
+# specifier, so apps don't hard-code any paths relative to the
+# framework checkout.
 
 set(EACP_WEBVIEW_NODE_TEST_FRAMEWORK_DIR
-        "${CMAKE_SOURCE_DIR}/tools/eacp-test-node"
+        "${CMAKE_CURRENT_LIST_DIR}/../../../../tools/eacp-test-node"
         CACHE PATH
         "Location of the shared eacp-test-node framework (package.json + src/index.ts).")
 
-function(eacp_add_webview_node_tests TARGET)
-    cmake_parse_arguments(PARSE_ARGV 1 ARG ""
-            "TEST_HOST;TEST_DIR;PACKAGE_MANAGER;FRAMEWORK_DIR" "")
+function(_eacp_register_webview_node_tests)
+    cmake_parse_arguments(PARSE_ARGV 0 ARG ""
+            "TEST_NAME;TEST_HOST;TESTS_DIR;PACKAGE_MANAGER;FRAMEWORK_DIR" "")
 
-    if (NOT ARG_TEST_HOST)
-        message(FATAL_ERROR "eacp_add_webview_node_tests(${TARGET}): TEST_HOST is required")
-    endif ()
+    foreach (required IN ITEMS TEST_NAME TEST_HOST TESTS_DIR)
+        if (NOT ARG_${required})
+            message(FATAL_ERROR
+                    "_eacp_register_webview_node_tests: ${required} is required")
+        endif ()
+    endforeach ()
+
     if (NOT TARGET ${ARG_TEST_HOST})
         message(FATAL_ERROR
-                "eacp_add_webview_node_tests(${TARGET}): TEST_HOST '${ARG_TEST_HOST}' "
-                "is not a target. Declare the test host (e.g. via "
-                "TEST_HOST_SOURCES on eacp_add_webview_app) before this call.")
+                "_eacp_register_webview_node_tests(${ARG_TEST_NAME}): "
+                "TEST_HOST '${ARG_TEST_HOST}' is not a target.")
     endif ()
-    if (NOT ARG_TEST_DIR)
-        message(FATAL_ERROR "eacp_add_webview_node_tests(${TARGET}): TEST_DIR is required")
-    endif ()
-    if (NOT IS_DIRECTORY "${ARG_TEST_DIR}")
+    if (NOT IS_DIRECTORY "${ARG_TESTS_DIR}")
         message(FATAL_ERROR
-                "eacp_add_webview_node_tests(${TARGET}): TEST_DIR '${ARG_TEST_DIR}' "
-                "does not exist or is not a directory")
+                "_eacp_register_webview_node_tests(${ARG_TEST_NAME}): "
+                "TESTS_DIR '${ARG_TESTS_DIR}' does not exist.")
     endif ()
 
     if (NOT ARG_FRAMEWORK_DIR)
         set(ARG_FRAMEWORK_DIR "${EACP_WEBVIEW_NODE_TEST_FRAMEWORK_DIR}")
     endif ()
+    cmake_path(ABSOLUTE_PATH ARG_FRAMEWORK_DIR NORMALIZE)
     if (NOT EXISTS "${ARG_FRAMEWORK_DIR}/package.json")
         message(FATAL_ERROR
-                "eacp_add_webview_node_tests(${TARGET}): no package.json found at "
-                "FRAMEWORK_DIR='${ARG_FRAMEWORK_DIR}'. Set "
-                "EACP_WEBVIEW_NODE_TEST_FRAMEWORK_DIR or pass FRAMEWORK_DIR.")
+                "_eacp_register_webview_node_tests(${ARG_TEST_NAME}): no "
+                "package.json found at FRAMEWORK_DIR='${ARG_FRAMEWORK_DIR}'. "
+                "Set EACP_WEBVIEW_NODE_TEST_FRAMEWORK_DIR.")
     endif ()
 
     if (NOT ARG_PACKAGE_MANAGER)
@@ -68,43 +63,92 @@ function(eacp_add_webview_node_tests TARGET)
             set(ARG_PACKAGE_MANAGER "npm")
         endif ()
     endif ()
-
     find_program(EACP_NODE_TESTS_PM_${ARG_PACKAGE_MANAGER}
             NAMES ${ARG_PACKAGE_MANAGER}.cmd ${ARG_PACKAGE_MANAGER}
             REQUIRED)
     set(PM_EXECUTABLE "${EACP_NODE_TESTS_PM_${ARG_PACKAGE_MANAGER}}")
 
-    # Lazy install at configure time. Mirrors the eacp_webview_add_vite
-    # convention so first-build doesn't need a manual `npm install`.
-    # Re-running configure after dependency churn re-installs because
-    # node_modules will have been wiped.
-    if (NOT EXISTS "${ARG_FRAMEWORK_DIR}/node_modules")
+    # Pull pinned versions from the framework's package.json so the
+    # generated tests-node project stays in lockstep with the
+    # framework, single source of truth.
+    file(READ "${ARG_FRAMEWORK_DIR}/package.json" _eacp_fw_pkg)
+    string(JSON _eacp_pw_version GET "${_eacp_fw_pkg}"
+            dependencies "@playwright/test")
+    string(JSON _eacp_node_types_version GET "${_eacp_fw_pkg}"
+            devDependencies "@types/node")
+
+    # Materialize the spec dir as a self-contained npm project. The
+    # generated files are owned by the helper and overwritten on every
+    # configure — callers shouldn't edit them by hand.
+    #
+    # No file: dep on the framework itself: Node 22+ refuses to
+    # strip TypeScript types under node_modules, which kills the
+    # symlinked-source workflow. Instead, the shim
+    # `eacp-test-node.ts` re-exports from the framework's real path
+    # so Playwright's TS transformer sees it as ordinary spec-side
+    # code and source edits land immediately.
+    file(WRITE "${ARG_TESTS_DIR}/package.json"
+"{
+  \"_comment\": \"Auto-generated by eacp_add_webview_app — do not edit.\",
+  \"name\": \"${ARG_TEST_NAME}\",
+  \"private\": true,
+  \"type\": \"module\",
+  \"scripts\": { \"test\": \"playwright test\" },
+  \"devDependencies\": {
+    \"@playwright/test\": \"${_eacp_pw_version}\",
+    \"@types/node\": \"${_eacp_node_types_version}\"
+  }
+}
+")
+
+    # Local shim — re-exports both the framework runtime (driver,
+    # launcher, RPC client) and the Playwright runner surface so
+    # specs only need one import. Lives in the consumer dir (NOT
+    # under node_modules) so Playwright's TS transformer handles it
+    # and `@playwright/test` resolves from the local node_modules.
+    file(WRITE "${ARG_TESTS_DIR}/eacp-test-node.ts"
+"// Auto-generated by eacp_add_webview_app — do not edit.
+export * from '${ARG_FRAMEWORK_DIR}/src/index.ts';
+export { test, expect } from '@playwright/test';
+")
+
+    file(WRITE "${ARG_TESTS_DIR}/playwright.config.ts"
+"// Auto-generated by eacp_add_webview_app — do not edit.
+import { defineConfig } from '@playwright/test';
+export default defineConfig({
+    testDir: '.',
+    timeout: 30_000,
+    fullyParallel: true,
+    forbidOnly: !!process.env['CI'],
+    retries: process.env['CI'] ? 1 : 0,
+    reporter: process.env['CI'] ? 'github' : 'list',
+});
+")
+
+    # Lazy install. Re-runs whenever node_modules is missing (e.g.
+    # after a clean checkout or after `rm -rf node_modules`). The
+    # file: dep symlinks the framework, so source edits in
+    # eacp-test-node show up immediately without a reinstall.
+    if (NOT EXISTS "${ARG_TESTS_DIR}/node_modules")
         message(STATUS
-                "eacp_add_webview_node_tests(${TARGET}): running "
-                "${ARG_PACKAGE_MANAGER} install in ${ARG_FRAMEWORK_DIR}")
+                "_eacp_register_webview_node_tests(${ARG_TEST_NAME}): running "
+                "${ARG_PACKAGE_MANAGER} install in ${ARG_TESTS_DIR}")
         execute_process(
                 COMMAND ${PM_EXECUTABLE} install
-                WORKING_DIRECTORY "${ARG_FRAMEWORK_DIR}"
+                WORKING_DIRECTORY "${ARG_TESTS_DIR}"
                 RESULT_VARIABLE PM_RESULT)
         if (NOT PM_RESULT EQUAL 0)
             message(FATAL_ERROR
-                    "${ARG_PACKAGE_MANAGER} install failed for ${ARG_FRAMEWORK_DIR}")
+                    "${ARG_PACKAGE_MANAGER} install failed for ${ARG_TESTS_DIR}")
         endif ()
     endif ()
 
-    # USES_TERMINAL keeps the Playwright "list" reporter rendering
-    # incrementally (Ninja otherwise buffers the output until the
-    # target finishes). It also serializes against concurrent
-    # ninja jobs — handy because a parallel Playwright run is already
-    # fully parallel internally.
-    add_custom_target(${TARGET}
-            COMMENT "Running Node tests for ${ARG_TEST_HOST}"
-            COMMAND ${CMAKE_COMMAND} -E env
-                    EACP_TEST_HOST_BINARY=$<TARGET_FILE:${ARG_TEST_HOST}>
-                    EACP_PW_TEST_DIR=${ARG_TEST_DIR}
-                    ${PM_EXECUTABLE} test
-            WORKING_DIRECTORY "${ARG_FRAMEWORK_DIR}"
-            DEPENDS ${ARG_TEST_HOST}
-            USES_TERMINAL
-            VERBATIM)
+    # CTest entry — `ctest -R ${ARG_TEST_NAME}` runs Playwright. The
+    # generator expression for EACP_TEST_HOST_BINARY resolves at test
+    # time to the configuration-correct path to the test host.
+    add_test(NAME ${ARG_TEST_NAME}
+            COMMAND ${PM_EXECUTABLE} test
+            WORKING_DIRECTORY "${ARG_TESTS_DIR}")
+    set_tests_properties(${ARG_TEST_NAME} PROPERTIES
+            ENVIRONMENT "EACP_TEST_HOST_BINARY=$<TARGET_FILE:${ARG_TEST_HOST}>")
 endfunction()

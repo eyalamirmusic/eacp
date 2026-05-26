@@ -18,6 +18,9 @@ CMakeScripts
 
 .idea
 
+node_modules
+test-results
+
 IDEWorkspaceChecks.plist
 UserInterfaceState.xcuserstate
 xcschememanagement.plist

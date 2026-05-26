@@ -28,6 +28,13 @@
 #                                         # web bundle, linking eacp-webview-
 #                                         # test so an external runner can
 #                                         # drive the WebView over /rpc.
+#       [TESTS_DIR <abs path>]            # if set (requires TEST_HOST_SOURCES),
+#                                         # registers a CTest test named
+#                                         # ${TARGET}Tests that drives the
+#                                         # test host via Playwright. The
+#                                         # spec dir is materialized as a
+#                                         # self-contained npm project (see
+#                                         # EacpWebViewNodeTests.cmake).
 #   )
 #
 # Schema layout:
@@ -42,9 +49,15 @@
 #     so any consumer that links the schema picks them up automatically.
 function(eacp_add_webview_app TARGET)
     set(options REACT)
-    set(oneValueArgs WEB_DIR BUNDLE_ID BUNDLE_NAME NAMESPACE CATEGORY SCHEMA_NAME PACKAGE_MANAGER)
+    set(oneValueArgs WEB_DIR BUNDLE_ID BUNDLE_NAME NAMESPACE CATEGORY SCHEMA_NAME PACKAGE_MANAGER TESTS_DIR)
     set(multiValueArgs SOURCES COMMAND_SOURCES SCHEMA_FORMATS API API_HEADER TEST_HOST_SOURCES)
     cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    if (ARG_TESTS_DIR AND NOT ARG_TEST_HOST_SOURCES)
+        message(FATAL_ERROR
+                "eacp_add_webview_app(${TARGET}): TESTS_DIR requires "
+                "TEST_HOST_SOURCES (the test runner drives the test host).")
+    endif ()
 
     if (NOT ARG_SOURCES)
         message(FATAL_ERROR "eacp_add_webview_app(${TARGET}): SOURCES is required")
@@ -206,5 +219,13 @@ function(eacp_add_webview_app TARGET)
                 XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${ARG_BUNDLE_ID}.testhost)
 
         set_default_target_setting(${TARGET}TestHost)
+    endif ()
+
+    if (ARG_TESTS_DIR)
+        _eacp_register_webview_node_tests(
+                TEST_NAME ${TARGET}Tests
+                TEST_HOST ${TARGET}TestHost
+                TESTS_DIR ${ARG_TESTS_DIR}
+                PACKAGE_MANAGER ${ARG_PACKAGE_MANAGER})
     endif ()
 endfunction()

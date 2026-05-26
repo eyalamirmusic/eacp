@@ -27,10 +27,14 @@ if (PROJECT_IS_TOP_LEVEL)
 endif ()
 
 set(CMAKE_CXX_STANDARD 20)
+
+if (PROJECT_IS_TOP_LEVEL)
+    enable_testing()
+endif ()
+
 add_subdirectory(Lib)
 
 if (PROJECT_IS_TOP_LEVEL)
     add_subdirectory(Apps)
-    enable_testing()
     add_subdirectory(Tests)
 endif ()
