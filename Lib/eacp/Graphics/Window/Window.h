@@ -61,6 +61,11 @@ struct WindowOptions
     // When false, the title bar still shows but the title text is hidden.
     bool showTitle = true;
 
+    // macOS only: makes the title bar background transparent so the
+    // content view's color shows through. Pair with FullSizeContentView
+    // for an edge-to-edge look. No-op on Windows.
+    bool transparentTitlebar = false;
+
     EA::Vector<WindowFlags> flags;
 
     Callback effectiveOnQuit() const

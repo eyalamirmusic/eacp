@@ -13,11 +13,30 @@
 #include <algorithm>
 #include <unordered_map>
 
+#if TARGET_OS_IPHONE
+#define EACP_SNAPSHOT_IMAGE UIImage
+#else
+#define EACP_SNAPSHOT_IMAGE NSImage
+#endif
+
 namespace
 {
 std::string safeString(const char* str, const char* fallback = "")
 {
     return str != nullptr ? str : fallback;
+}
+
+NSData* pngDataFromImage(EACP_SNAPSHOT_IMAGE* image)
+{
+#if TARGET_OS_IPHONE
+    return UIImagePNGRepresentation(image);
+#else
+    CGImageRef cg = [image CGImageForProposedRect:NULL context:nil hints:nil];
+    if (cg == nullptr)
+        return nil;
+    auto* rep = [[NSBitmapImageRep alloc] initWithCGImage:cg];
+    return [rep representationUsingType:NSBitmapImageFileTypePNG properties:@ {}];
+#endif
 }
 } // namespace
 
@@ -80,6 +99,12 @@ struct WebView::Native
         {
             [config.get().preferences setValue:@YES
                                         forKey:@"developerExtrasEnabled"];
+        }
+
+        if (options.mediaCaptureEnabled)
+        {
+            [config.get().preferences setValue:@YES
+                                        forKey:@"mediaDevicesEnabled"];
         }
 
         for (auto& [scheme, provider]: options.schemes)
@@ -640,6 +665,44 @@ void WebView::evaluateJavaScript(const std::string& script, JSCallback callback)
            eacp::Threads::callAsync([callback, resultStr, errorStr]()
                                     { callback(resultStr, errorStr); });
          }];
+}
+
+void WebView::captureSnapshot(SnapshotCallback callback)
+{
+    if (callback == nullptr)
+        return;
+
+    auto* config = [[WKSnapshotConfiguration alloc] init];
+
+    [impl->webView.get()
+        takeSnapshotWithConfiguration:config
+                    completionHandler:^(EACP_SNAPSHOT_IMAGE* image, NSError* error) {
+                      EA::Vector<std::uint8_t> bytes;
+                      std::string errorStr;
+
+                      if (error != nil)
+                      {
+                          errorStr =
+                              safeString([error.localizedDescription UTF8String],
+                                         "Snapshot failed");
+                      }
+                      else if (image != nil)
+                      {
+                          NSData* png = pngDataFromImage(image);
+                          if (png != nil)
+                              bytes.assign((const std::uint8_t*) png.bytes,
+                                           (const std::uint8_t*) png.bytes + png.length);
+                          else
+                              errorStr = "Failed to encode snapshot as PNG";
+                      }
+                      else
+                      {
+                          errorStr = "Snapshot returned no image";
+                      }
+
+                      eacp::Threads::callAsync([callback, bytes, errorStr]()
+                                               { callback(bytes, errorStr); });
+                    }];
 }
 
 void WebView::addScriptMessageHandler(

@@ -62,6 +62,27 @@ set_default_target_setting(eacp-webview)
 eacp_enable_unity_build(eacp-webview)
 add_ide_sources(eacp-webview)
 
+# --- Agentic-QA debug control (opt-in) ----------------------------------
+# Bakes the window.eacpQA helper JS into a header so DebugControl can inject
+# it with no runtime file dependency. Re-run cmake after editing eacp-qa.js.
+set(_qa_js ${CMAKE_CURRENT_LIST_DIR}/Debug/eacp-qa.js)
+set(_qa_header ${CMAKE_CURRENT_BINARY_DIR}/EacpQAScript.generated.h)
+file(READ ${_qa_js} _qa_js_contents)
+file(WRITE ${_qa_header}
+        "#pragma once\n"
+        "namespace eacp::Graphics\n{\n"
+        "inline constexpr const char* kEacpQAScript = R\"EACPQA(\n"
+        "${_qa_js_contents}"
+        ")EACPQA\";\n"
+        "} // namespace eacp::Graphics\n")
+
+add_library(eacp-webview-debug STATIC Debug/DebugControl.cpp)
+target_include_directories(eacp-webview-debug PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(eacp-webview-debug PUBLIC eacp-webview eacp-network)
+set_default_target_setting(eacp-webview-debug)
+eacp_enable_unity_build(eacp-webview-debug)
+add_ide_sources(eacp-webview-debug)
+
 # Codegen-only object library — bundles the eacp events / hooks
 # formatters and their static-init registration with Miro's format
 # registry. Spliced into each app's ${TARGET}Schema_Codegen executable

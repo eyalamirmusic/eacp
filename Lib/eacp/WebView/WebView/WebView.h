@@ -58,6 +58,12 @@ public:
         std::unordered_map<std::string, ResourceProvider> schemes;
         Embedded embedded;
         bool debugConsole = true;
+
+        // When true, exposes navigator.mediaDevices and grants
+        // getUserMedia capture requests (camera/microphone) without a
+        // system prompt. Apps must still provide NSCameraUsageDescription
+        // and NSMicrophoneUsageDescription in Info.plist on macOS/iOS.
+        bool mediaCaptureEnabled = false;
     };
 
     WebView();
@@ -83,6 +89,11 @@ public:
         std::function<void(const std::string& result, const std::string& error)>;
     void evaluateJavaScript(const std::string& script,
                             JSCallback callback = nullptr);
+
+    using SnapshotCallback =
+        std::function<void(const EA::Vector<std::uint8_t>& pngBytes,
+                           const std::string& error)>;
+    void captureSnapshot(SnapshotCallback callback);
 
     void zoomIn();
     void zoomOut();
