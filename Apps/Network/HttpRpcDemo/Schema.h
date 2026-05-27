@@ -25,10 +25,8 @@ namespace Api
 class PingApi
 {
 public:
-    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
     void reflect(Miro::ApiReflector& r) { r.command(&PingApi::ping, "ping"); }
 
-    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
     PingResponse ping() const
     {
         using namespace std::chrono;

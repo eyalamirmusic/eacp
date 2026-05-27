@@ -41,14 +41,12 @@ struct Tick
 class Clock
 {
 public:
-    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
     void reflect(ApiReflector& r)
     {
         r.command(&Clock::getCurrentTick, "getCurrentTick");
         r.event(&Clock::tick, "tick");
     }
 
-    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
     Tick getCurrentTick() const { return Tick {}; }
 
     Event<Tick> tick;

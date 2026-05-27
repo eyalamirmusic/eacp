@@ -32,7 +32,6 @@ namespace Api
 class ParametersApi
 {
 public:
-    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
     void reflect(Miro::ApiReflector& r)
     {
         using T = ParametersApi;

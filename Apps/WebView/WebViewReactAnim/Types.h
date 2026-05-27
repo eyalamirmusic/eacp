@@ -26,7 +26,6 @@ using namespace std::chrono;
 class Clock
 {
 public:
-    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
     void reflect(Miro::ApiReflector& r)
     {
         using T = Clock;
