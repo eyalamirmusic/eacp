@@ -31,17 +31,13 @@ set_default_target_setting(eacp-webview-test)
 eacp_enable_unity_build(eacp-webview-test)
 add_ide_sources(eacp-webview-test)
 
-# Prebuilt main() for test binaries — analogous to NanoTestMain but
-# pre-initializes NSApplication on macOS so the first WKWebView
-# creation doesn't race with NSApp bring-up. NanoTest itself is
-# pulled in lazily because the rest of eacp doesn't need it.
+# Prebuilt main() for test binaries — runs nano::run() from inside
+# Apps::run<TestRunner>, so the framework's standard runloop setup
+# is in place before any test constructs a Window/WebView. NanoTest
+# itself is pulled in lazily because the rest of eacp doesn't need
+# it.
 find_package(NanoTest REQUIRED)
 
-add_library(eacp-webview-test-main STATIC)
-if (APPLE)
-    target_sources(eacp-webview-test-main PRIVATE TestMain.mm)
-elseif (WIN32)
-    target_sources(eacp-webview-test-main PRIVATE TestMain-Windows.cpp)
-endif ()
-target_link_libraries(eacp-webview-test-main PUBLIC NanoTest)
+add_library(eacp-webview-test-main STATIC TestMain.cpp)
+target_link_libraries(eacp-webview-test-main PUBLIC NanoTest eacp-core)
 set_default_target_setting(eacp-webview-test-main)
