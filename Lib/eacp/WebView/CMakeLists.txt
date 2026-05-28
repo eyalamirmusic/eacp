@@ -108,3 +108,7 @@ if (NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(eacp-webview-codegen PUBLIC Miro)
     set_default_target_setting(eacp-webview-codegen)
 endif ()
+
+# Client-side test driver — sibling of TestServer.cpp. Self-gates to
+# Apple-not-iOS + Windows; iOS / Linux are no-ops.
+add_subdirectory(Test)
