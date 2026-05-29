@@ -19,6 +19,23 @@ bool File::isRegularFile() const
     return std::filesystem::is_regular_file(filePath, ec);
 }
 
+bool File::isUnder(const std::filesystem::path& root) const
+{
+    // Canonicalise both sides so the check is symlink-consistent (e.g. macOS
+    // /var -> /private/var) regardless of whether the caller pre-normalised.
+    auto ec = std::error_code {};
+    auto canonicalRoot = std::filesystem::weakly_canonical(root, ec);
+    auto canonicalFile = std::filesystem::weakly_canonical(filePath, ec);
+    auto rel = std::filesystem::relative(canonicalFile, canonicalRoot, ec);
+
+    if (ec || rel.empty())
+        return false;
+
+    // A path that escapes the root resolves to a relative path starting with
+    // "..". Anything else (including ".") is contained.
+    return rel.native().rfind("..", 0) != 0;
+}
+
 std::uint64_t File::size() const
 {
     auto ec = std::error_code {};

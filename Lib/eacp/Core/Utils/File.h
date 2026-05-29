@@ -24,6 +24,11 @@ public:
     bool exists() const;
     bool isRegularFile() const;
 
+    // True if this file's path resolves to a location inside `root` (not an
+    // escape via "..", symlinks, etc.). The guard for serving files off disk
+    // to untrusted callers: reject anything outside an allowed root.
+    bool isUnder(const std::filesystem::path& root) const;
+
     // Size in bytes, or 0 if the file is missing or not a regular file.
     std::uint64_t size() const;
 

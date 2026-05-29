@@ -1,5 +1,4 @@
 #include <eacp/WebView/WebView.h>
-#include <eacp/Core/Utils/File.h>
 #include <ResEmbed/ResEmbed.h>
 #include <WebResources.h>
 
@@ -9,10 +8,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <memory>
-#include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
 
 using namespace eacp;
@@ -78,166 +74,16 @@ std::filesystem::path bundledAssetDir()
     return std::filesystem::temp_directory_path() / "eacp-dragout";
 }
 
-std::string mimeForFile(const std::filesystem::path& path)
-{
-    auto ext = lowerExtension(path);
-
-    if (ext == ".mp3")
-        return "audio/mpeg";
-    if (ext == ".wav")
-        return "audio/wav";
-    if (ext == ".aif" || ext == ".aiff")
-        return "audio/aiff";
-    if (ext == ".flac")
-        return "audio/flac";
-    if (ext == ".m4a" || ext == ".mp4")
-        return "audio/mp4";
-    if (ext == ".aac")
-        return "audio/aac";
-    if (ext == ".ogg" || ext == ".opus")
-        return "audio/ogg";
-    if (ext == ".png")
-        return "image/png";
-    if (ext == ".jpg" || ext == ".jpeg")
-        return "image/jpeg";
-    if (ext == ".gif")
-        return "image/gif";
-    if (ext == ".webp")
-        return "image/webp";
-    if (ext == ".svg")
-        return "image/svg+xml";
-    return "application/octet-stream";
-}
-
-int hexDigit(char c)
-{
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    if (c >= 'a' && c <= 'f')
-        return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F')
-        return c - 'A' + 10;
-    return -1;
-}
-
-std::string percentDecode(std::string_view encoded)
-{
-    auto out = std::string {};
-    out.reserve(encoded.size());
-
-    for (auto i = std::size_t {0}; i < encoded.size(); ++i)
-    {
-        if (encoded[i] == '%' && i + 2 < encoded.size())
-        {
-            auto hi = hexDigit(encoded[i + 1]);
-            auto lo = hexDigit(encoded[i + 2]);
-
-            if (hi >= 0 && lo >= 0)
-            {
-                out.push_back(static_cast<char>((hi << 4) | lo));
-                i += 2;
-                continue;
-            }
-        }
-
-        out.push_back(encoded[i]);
-    }
-
-    return out;
-}
-
-// `audiofile:///abs/path?query#frag` -> `/abs/path`, percent-decoded. The
-// host segment (between `://` and the next `/`) is ignored, so an empty host
-// (`audiofile:///`) yields a leading-slash absolute path as-is.
-std::string pathFromFileURL(std::string_view url)
-{
-    auto schemeEnd = url.find("://");
-
-    if (schemeEnd == std::string_view::npos)
-        return {};
-
-    auto rest = url.substr(schemeEnd + 3);
-    auto cut = rest.find_first_of("?#");
-
-    if (cut != std::string_view::npos)
-        rest = rest.substr(0, cut);
-
-    auto slash = rest.find('/');
-
-    if (slash == std::string_view::npos)
-        return {};
-
-    return percentDecode(rest.substr(slash));
-}
-
-bool isUnderRoot(const std::filesystem::path& file,
-                 const std::filesystem::path& root)
-{
-    auto ec = std::error_code {};
-    auto canonicalRoot = std::filesystem::weakly_canonical(root, ec);
-    auto rel = std::filesystem::relative(file, canonicalRoot, ec);
-
-    if (ec || rel.empty())
-        return false;
-
-    // A path that escapes the root resolves to a relative path starting
-    // with "..". Anything else (including ".") is contained.
-    return rel.native().rfind("..", 0) != 0;
-}
-
-// Streams file bytes off disk for the `audiofile` scheme, so the page can
-// play/preview them in inline <audio>/<img> elements without ever loading a
-// whole file into memory. The roots bound which directories are readable --
-// anything outside 404s. The handler pulls the body through File::read in
-// bounded chunks and honours the browser's byte-range requests (206) so media
-// can seek.
-StreamingProvider diskFileProvider(std::vector<std::string> allowedRoots)
-{
-    return [roots = std::move(allowedRoots)](
-               std::string_view url) -> std::optional<StreamingResource>
-    {
-        auto pathStr = pathFromFileURL(url);
-
-        if (pathStr.empty())
-            return std::nullopt;
-
-        auto ec = std::error_code {};
-        auto path = std::filesystem::weakly_canonical(pathStr, ec);
-
-        if (ec)
-            path = std::filesystem::path {pathStr};
-
-        auto allowed = roots.empty()
-                       || std::any_of(roots.begin(),
-                                      roots.end(),
-                                      [&](const auto& root)
-                                      { return isUnderRoot(path, root); });
-
-        // Kept open behind a shared_ptr so the reader can pull chunks across
-        // many scheme-task callbacks, then closes when the last reader drops.
-        auto file = std::make_shared<eacp::File>(path);
-
-        if (!allowed || !file->isRegularFile() || !file->openForRead())
-            return std::nullopt;
-
-        auto response = StreamingResource {};
-        response.mimeType = mimeForFile(path);
-        response.size = file->size();
-        response.read = [file](RangeSize offset, ByteSpan out)
-        { return file->read(offset, out); };
-        return response;
-    };
-}
-
 // Embedded app resources + the `audiofile` scheme that streams the listed
-// files off disk into the page's inline players. The app owns and registers
-// the scheme itself. The roots bound which directories the page may read:
-// only ~/Downloads and the extracted bundled assets, nothing else on disk.
+// files off disk into the page's inline players, in bounded chunks with Range
+// support (fileStreamProvider does the disk reading, MIME, and sandboxing).
+// The roots bound which directories the page may read: only ~/Downloads and
+// the extracted bundled assets, nothing else on disk.
 WebView::Options dragOutOptions()
 {
     auto options = embeddedOptions(category);
     options.streamingSchemes[audioScheme] =
-        diskFileProvider({downloadsDir().string(), bundledAssetDir().string()});
+        fileStreamProvider({downloadsDir().string(), bundledAssetDir().string()});
     return options;
 }
 

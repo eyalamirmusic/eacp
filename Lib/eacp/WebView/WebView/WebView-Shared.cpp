@@ -5,9 +5,14 @@
 
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Threads/EventLoop.h>
+#include <eacp/Core/Utils/File.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <filesystem>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -16,22 +21,58 @@ namespace eacp::Graphics
 {
 std::string mimeForPath(std::string_view path)
 {
-    if (path.ends_with(".html"))
+    // Match on a lowercased copy so MyClip.WAV maps the same as .wav.
+    auto lower = std::string {path};
+    std::transform(lower.begin(),
+                   lower.end(),
+                   lower.begin(),
+                   [](unsigned char c)
+                   { return static_cast<char>(std::tolower(c)); });
+
+    auto endsWith = [&](std::string_view ext) { return lower.ends_with(ext); };
+
+    // Text / web
+    if (endsWith(".html"))
         return "text/html; charset=utf-8";
-    if (path.ends_with(".js"))
+    if (endsWith(".js"))
         return "application/javascript; charset=utf-8";
-    if (path.ends_with(".css"))
+    if (endsWith(".css"))
         return "text/css; charset=utf-8";
-    if (path.ends_with(".json"))
+    if (endsWith(".json"))
         return "application/json; charset=utf-8";
-    if (path.ends_with(".svg"))
+
+    // Images
+    if (endsWith(".svg"))
         return "image/svg+xml";
-    if (path.ends_with(".png"))
+    if (endsWith(".png"))
         return "image/png";
-    if (path.ends_with(".jpg") || path.ends_with(".jpeg"))
+    if (endsWith(".jpg") || endsWith(".jpeg"))
         return "image/jpeg";
-    if (path.ends_with(".woff2"))
+    if (endsWith(".gif"))
+        return "image/gif";
+    if (endsWith(".webp"))
+        return "image/webp";
+
+    // Fonts
+    if (endsWith(".woff2"))
         return "font/woff2";
+
+    // Audio
+    if (endsWith(".mp3"))
+        return "audio/mpeg";
+    if (endsWith(".wav"))
+        return "audio/wav";
+    if (endsWith(".aif") || endsWith(".aiff"))
+        return "audio/aiff";
+    if (endsWith(".flac"))
+        return "audio/flac";
+    if (endsWith(".m4a") || endsWith(".mp4"))
+        return "audio/mp4";
+    if (endsWith(".aac"))
+        return "audio/aac";
+    if (endsWith(".ogg") || endsWith(".opus"))
+        return "audio/ogg";
+
     return "application/octet-stream";
 }
 
@@ -74,6 +115,43 @@ std::optional<RangeSize> parseRangeSize(std::string_view text)
     }
 
     return value;
+}
+
+int hexDigit(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+std::string percentDecode(std::string_view encoded)
+{
+    auto out = std::string {};
+    out.reserve(encoded.size());
+
+    for (auto i = std::size_t {0}; i < encoded.size(); ++i)
+    {
+        if (encoded[i] == '%' && i + 2 < encoded.size())
+        {
+            auto hi = hexDigit(encoded[i + 1]);
+            auto lo = hexDigit(encoded[i + 2]);
+
+            if (hi >= 0 && lo >= 0)
+            {
+                out.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+
+        out.push_back(encoded[i]);
+    }
+
+    return out;
 }
 } // namespace
 
@@ -149,6 +227,27 @@ std::string contentRangeValue(const ByteRange& served, RangeSize size)
            + std::to_string(served.end() - 1) + "/" + std::to_string(size);
 }
 
+std::string fileURLToPath(std::string_view url)
+{
+    auto schemeEnd = url.find("://");
+
+    if (schemeEnd == std::string_view::npos)
+        return {};
+
+    auto rest = url.substr(schemeEnd + 3);
+    auto cut = rest.find_first_of("?#");
+
+    if (cut != std::string_view::npos)
+        rest = rest.substr(0, cut);
+
+    auto slash = rest.find('/');
+
+    if (slash == std::string_view::npos)
+        return {};
+
+    return percentDecode(rest.substr(slash));
+}
+
 FileProvider fromResEmbed(std::string category)
 {
     return [category = std::move(category)](
@@ -160,6 +259,42 @@ FileProvider fromResEmbed(std::string category)
             return std::nullopt;
 
         return std::span<const std::uint8_t> {view.data(), view.size()};
+    };
+}
+
+StreamingProvider
+    fileStreamProvider(EA::Vector<std::string> roots,
+                       std::function<std::string(std::string_view path)> mimeForFile)
+{
+    return [roots = std::move(roots), mimeForFile = std::move(mimeForFile)](
+               std::string_view url) -> std::optional<StreamingResource>
+    {
+        auto pathStr = fileURLToPath(url);
+
+        if (pathStr.empty())
+            return std::nullopt;
+
+        // Kept open behind a shared_ptr so the reader can pull chunks across
+        // many scheme-task callbacks, then closes when the last reader drops.
+        // File::isUnder canonicalises, so a raw path is fine here.
+        auto file = std::make_shared<eacp::File>(std::filesystem::path {pathStr});
+
+        auto allowed =
+            roots.empty()
+            || std::any_of(roots.begin(),
+                           roots.end(),
+                           [&](const auto& root) { return file->isUnder(root); });
+
+        if (!allowed || !file->isRegularFile() || !file->openForRead())
+            return std::nullopt;
+
+        auto response = StreamingResource {};
+        response.mimeType =
+            mimeForFile ? mimeForFile(pathStr) : mimeForPath(pathStr);
+        response.size = file->size();
+        response.read = [file](RangeSize offset, ByteSpan out)
+        { return file->read(offset, out); };
+        return response;
     };
 }
 

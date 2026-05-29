@@ -68,7 +68,22 @@ std::string mimeForPath(std::string_view path);
 std::string pathFromURL(std::string_view url,
                         std::string_view indexFile = "index.html");
 
+// `scheme://host/abs/path?query#frag` -> `/abs/path`, percent-decoded. Unlike
+// pathFromURL (which yields a host-relative resource key for embedded schemes),
+// this keeps the leading slash so the result is an absolute filesystem path.
+// Empty if the URL has no path.
+std::string fileURLToPath(std::string_view url);
+
 FileProvider fromResEmbed(std::string category);
+
+// A StreamingProvider that serves files straight off disk for a custom scheme,
+// in bounded chunks with Range support. `roots` bounds which directories are
+// readable: a request resolving outside every root is rejected (404), and an
+// empty `roots` allows any readable file. MIME defaults to mimeForPath; pass
+// `mimeForFile` to override. Pair with Options::streamingSchemes.
+StreamingProvider fileStreamProvider(
+    EA::Vector<std::string> roots,
+    std::function<std::string(std::string_view path)> mimeForFile = {});
 
 struct WebViewNativeAccess;
 

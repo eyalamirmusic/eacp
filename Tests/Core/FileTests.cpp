@@ -91,3 +91,27 @@ auto tReadPastEnd = test("File/readPastEnd") = []
 
     std::filesystem::remove(path);
 };
+
+auto tIsUnderRoot = test("File/isUnder") = []
+{
+    auto dir = std::filesystem::temp_directory_path() / "eacp-isunder";
+    std::filesystem::create_directories(dir);
+    auto inside = dir / "a.bin";
+    {
+        auto out = std::ofstream {inside, std::ios::binary};
+        out << "x";
+    }
+
+    check(File {inside}.isUnder(dir));
+    check(File {inside}.isUnder(std::filesystem::temp_directory_path()));
+
+    // A sibling/child directory is not a containing root.
+    check(!File {inside}.isUnder(dir / "sub"));
+
+    // Escapes (a path outside the root) are rejected.
+    check(
+        !File {std::filesystem::temp_directory_path() / "eacp-outside.bin"}.isUnder(
+            dir));
+
+    std::filesystem::remove(inside);
+};
