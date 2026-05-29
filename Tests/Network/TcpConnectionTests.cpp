@@ -6,6 +6,8 @@
 #include <chrono>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 using namespace nano;
 using namespace std::chrono_literals;
@@ -25,6 +27,20 @@ eacp::TCP::Timeouts testTimeouts()
 Connection dial(const Listener& listener)
 {
     return Connection::connect({"127.0.0.1", listener.port()}, testTimeouts());
+}
+
+// Reads everything the peer sends until it closes - the clean way to prove a
+// graceful close surfaces as an empty receive().
+std::string drain(Connection& connection)
+{
+    auto all = std::string {};
+    while (true)
+    {
+        auto chunk = connection.receive();
+        if (chunk.empty())
+            return all;
+        all += chunk;
+    }
 }
 } // namespace
 
@@ -199,4 +215,242 @@ auto tCloseEndsConnection = test("Tcp/closeMakesAConnectionNotOpen") = []
     check(! client.isOpen());
 
     server.join();
+};
+
+auto tRawReceive = test("Tcp/receiveReturnsRawBytesThenEmptyOnClose") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            peer.send("no-delimiter-here");
+        });
+
+    auto client = dial(listener);
+    auto got = drain(client);
+
+    server.join();
+    check(got == "no-delimiter-here");
+};
+
+auto tReceiveDrainsBuffer =
+    test("Tcp/receiveDrainsBufferedOvershootBeforeTheWire") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            peer.send("head;tail-bytes");
+        });
+
+    auto client = dial(listener);
+    auto head = client.receiveUntil(';');
+    auto tail = drain(client); // the overshoot "tail-bytes" plus EOF
+
+    server.join();
+    check(head == "head");
+    check(tail == "tail-bytes");
+};
+
+auto tCarriageReturnTrim = test("Tcp/receiveLineStripsTrailingCarriageReturn") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            peer.send("crlf-terminated\r\n");
+        });
+
+    auto client = dial(listener);
+    auto line = client.receiveLine();
+
+    server.join();
+    check(line == "crlf-terminated");
+};
+
+auto tEmptyLines = test("Tcp/receiveLineHandlesEmptyLines") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            peer.send("a\n\nb\n");
+        });
+
+    auto client = dial(listener);
+    auto first = client.receiveLine();
+    auto second = client.receiveLine();
+    auto third = client.receiveLine();
+
+    server.join();
+    check(first == "a");
+    check(second.empty());
+    check(third == "b");
+};
+
+auto tManyConnections = test("Tcp/listenerServesManyConnections") = []
+{
+    constexpr auto clients = 4;
+    auto listener = Listener::bind(0, testTimeouts());
+
+    auto server = std::thread(
+        [&]
+        {
+            for (auto i = 0; i < clients; ++i)
+            {
+                auto peer = listener.accept();
+                peer.send(peer.receiveLine() + "-ack\n");
+            }
+        });
+
+    auto connections = std::vector<Connection> {};
+    for (auto i = 0; i < clients; ++i)
+    {
+        connections.push_back(dial(listener));
+        connections.back().send("c" + std::to_string(i) + "\n");
+    }
+
+    auto ok = true;
+    for (auto i = 0; i < clients; ++i)
+        ok = ok && connections[i].receiveLine() == "c" + std::to_string(i) + "-ack";
+
+    server.join();
+    check(ok);
+};
+
+auto tMoveConnection = test("Tcp/movingAConnectionTransfersTheSocket") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            peer.send(peer.receiveLine() + "\n");
+        });
+
+    auto client = dial(listener);
+    auto moved = std::move(client);
+
+    check(! client.isOpen()); // NOLINT - intentionally inspecting moved-from
+    check(moved.isOpen());
+
+    moved.send("through-the-moved-handle\n");
+    auto reply = moved.receiveLine();
+
+    server.join();
+    check(reply == "through-the-moved-handle");
+};
+
+auto tMoveListener = test("Tcp/movingAListenerKeepsItServing") = []
+{
+    auto original = Listener::bind(0, testTimeouts());
+    auto port = original.port();
+    auto listener = std::move(original);
+
+    check(! original.isListening()); // NOLINT - moved-from
+    check(listener.isListening());
+    check(listener.port() == port);
+
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            peer.send("served\n");
+        });
+
+    auto client = dial(listener);
+    auto line = client.receiveLine();
+
+    server.join();
+    check(line == "served");
+};
+
+auto tAcceptTimeout = test("Tcp/acceptTimesOutWhenNoClientConnects") = []
+{
+    auto listener = Listener::bind(0, {200ms, 2000ms});
+
+    auto threw = false;
+    try
+    {
+        listener.accept();
+    }
+    catch (const Error&)
+    {
+        threw = true;
+    }
+
+    check(threw);
+};
+
+auto tAcceptAfterClose = test("Tcp/acceptThrowsAfterTheListenerIsClosed") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+    check(listener.isListening());
+
+    listener.close();
+    check(! listener.isListening());
+
+    auto threw = false;
+    try
+    {
+        listener.accept();
+    }
+    catch (const Error&)
+    {
+        threw = true;
+    }
+
+    check(threw);
+};
+
+auto tSendAfterClose = test("Tcp/sendThrowsOnAClosedConnection") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+    auto server = std::thread([&] { auto peer = listener.accept(); });
+
+    auto client = dial(listener);
+    client.close();
+
+    auto threw = false;
+    try
+    {
+        client.send("anyone there?\n");
+    }
+    catch (const Error&)
+    {
+        threw = true;
+    }
+
+    server.join();
+    check(threw);
+};
+
+auto tServerSideLargeUpload = test("Tcp/serverReassemblesALargeUpload") = []
+{
+    auto big = std::string(200000, 'y');
+    auto listener = Listener::bind(0, testTimeouts());
+
+    auto received = std::string {};
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            received = peer.receiveLine();
+        });
+
+    auto client = dial(listener);
+    client.send(big + "\n");
+
+    server.join();
+    check(received.size() == big.size());
+    check(received == big);
 };
