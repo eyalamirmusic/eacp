@@ -1,5 +1,7 @@
 #pragma once
 
+#include "DomNode.h"
+
 #include <eacp/Core/Threads/Async.h>
 #include <eacp/Graphics/Image/Image.h>
 #include <Miro/Miro.h>
@@ -141,6 +143,18 @@ public:
 
     std::string dom(std::string_view selector = {}, CallOptions opts = {});
 
+    // Structured DOM capture. query()/queryAll() serialise the matched
+    // element(s) and their element subtree into DomNode values that can
+    // be inspected in C++ without further round-trips — tag(), attr(),
+    // hasClass(), children, find()/findAll(), etc. query() throws when
+    // nothing matches; tryQuery() returns nullopt; queryAll() returns
+    // every match (empty when there are none).
+    DomNode query(const std::string& selector, CallOptions opts = {});
+    std::optional<DomNode> tryQuery(const std::string& selector,
+                                    CallOptions opts = {});
+    std::vector<DomNode> queryAll(const std::string& selector,
+                                  CallOptions opts = {});
+
     // Async siblings of the above. Each returns an Async that resolves
     // on the main thread; use with co_await inside a coroutine test
     // body. Rejection surfaces as an AsyncError (same message the
@@ -170,6 +184,12 @@ public:
                                              CallOptions opts = {});
     Threads::Async<std::string> domAsync(std::string_view selector = {},
                                          CallOptions opts = {});
+    Threads::Async<DomNode> queryAsync(const std::string& selector,
+                                       CallOptions opts = {});
+    Threads::Async<std::optional<DomNode>> tryQueryAsync(
+        const std::string& selector, CallOptions opts = {});
+    Threads::Async<std::vector<DomNode>> queryAllAsync(const std::string& selector,
+                                                       CallOptions opts = {});
 
     ScreenshotResult screenshot(const ScreenshotOptions& options = {});
     SnapshotResult snapshot(const std::string& name,

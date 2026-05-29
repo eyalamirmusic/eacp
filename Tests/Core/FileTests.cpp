@@ -50,15 +50,19 @@ auto tMissingFile = test("File/missing") = []
 auto tSequentialRead = test("File/sequentialRead") = []
 {
     auto path = writeTempFile("eacp-file-test-seq.bin", "abcdefgh");
-    auto file = File {path};
 
-    auto buffer = std::array<std::uint8_t, 3> {};
+    // Scope the File so its handle closes before remove: Windows refuses to
+    // delete a file that still has an open handle, unlike POSIX.
+    {
+        auto file = File {path};
+        auto buffer = std::array<std::uint8_t, 3> {};
 
-    check(file.read(0, buffer) == 3);
-    check(buffer[0] == 'a' && buffer[1] == 'b' && buffer[2] == 'c');
+        check(file.read(0, buffer) == 3);
+        check(buffer[0] == 'a' && buffer[1] == 'b' && buffer[2] == 'c');
 
-    check(file.read(3, buffer) == 3);
-    check(buffer[0] == 'd' && buffer[1] == 'e' && buffer[2] == 'f');
+        check(file.read(3, buffer) == 3);
+        check(buffer[0] == 'd' && buffer[1] == 'e' && buffer[2] == 'f');
+    }
 
     std::filesystem::remove(path);
 };
@@ -66,15 +70,17 @@ auto tSequentialRead = test("File/sequentialRead") = []
 auto tSeekBackAndForth = test("File/seekBackAndForth") = []
 {
     auto path = writeTempFile("eacp-file-test-seek.bin", "0123456789");
-    auto file = File {path};
 
-    auto buffer = std::array<std::uint8_t, 4> {};
+    {
+        auto file = File {path};
+        auto buffer = std::array<std::uint8_t, 4> {};
 
-    check(file.read(6, buffer) == 4);
-    check(buffer[0] == '6' && buffer[3] == '9');
+        check(file.read(6, buffer) == 4);
+        check(buffer[0] == '6' && buffer[3] == '9');
 
-    check(file.read(0, std::span<std::uint8_t> {buffer.data(), 2}) == 2);
-    check(buffer[0] == '0' && buffer[1] == '1');
+        check(file.read(0, std::span<std::uint8_t> {buffer.data(), 2}) == 2);
+        check(buffer[0] == '0' && buffer[1] == '1');
+    }
 
     std::filesystem::remove(path);
 };
@@ -82,12 +88,14 @@ auto tSeekBackAndForth = test("File/seekBackAndForth") = []
 auto tReadPastEnd = test("File/readPastEnd") = []
 {
     auto path = writeTempFile("eacp-file-test-eof.bin", "xyz");
-    auto file = File {path};
 
-    auto buffer = std::array<std::uint8_t, 8> {};
+    {
+        auto file = File {path};
+        auto buffer = std::array<std::uint8_t, 8> {};
 
-    check(file.read(0, buffer) == 3);
-    check(file.read(3, buffer) == 0);
+        check(file.read(0, buffer) == 3);
+        check(file.read(3, buffer) == 0);
+    }
 
     std::filesystem::remove(path);
 };

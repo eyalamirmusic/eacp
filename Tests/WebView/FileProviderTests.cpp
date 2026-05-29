@@ -27,8 +27,13 @@ std::filesystem::path writeTempFile(const std::filesystem::path& dir,
 
 std::string fileURL(const std::filesystem::path& path)
 {
-    // Absolute path already starts with '/', so this yields audiofile:///...
-    return "audiofile://" + path.string();
+    // Use forward slashes so the URL is well-formed on every platform. POSIX
+    // abs paths already start with '/' (audiofile:///abs/...); Windows drive
+    // paths (C:/...) get a leading slash too (audiofile:///C:/...).
+    auto generic = path.generic_string();
+    if (!generic.starts_with('/'))
+        generic.insert(generic.begin(), '/');
+    return "audiofile://" + generic;
 }
 } // namespace
 
@@ -64,6 +69,9 @@ auto tServesWithinRoot = test("FileProvider/servesFileWithinRoot") = []
     check(resource->read(2, buffer) == 4);
     check(buffer[0] == '2' && buffer[3] == '5');
 
+    // Drop the resource (and the open file handle it holds) before remove:
+    // Windows refuses to delete a file that still has an open handle.
+    resource.reset();
     std::filesystem::remove(path);
 };
 

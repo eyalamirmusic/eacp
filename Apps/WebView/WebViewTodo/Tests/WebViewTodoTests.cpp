@@ -19,6 +19,7 @@ constexpr auto textSelector = R"([data-testid="todo-text"])";
 constexpr auto toggleSelector = R"([data-testid="todo-toggle"])";
 constexpr auto removeSelector = R"([data-testid="todo-remove"])";
 constexpr auto remainingSelector = R"([data-testid="todo-remaining"])";
+constexpr auto listSelector = R"([data-testid="todo-list"])";
 
 std::string lastItemDescendant(const std::string& child)
 {
@@ -108,6 +109,93 @@ auto tDomainRpcsReachable =
 
     check(after.items.size() == before.items.size() + 1);
     check(after.items[after.items.size() - 1].text == "Direct add via bridge");
+};
+
+// The tests below inspect the DOM the "traditional" way: capture an
+// element subtree as a DomNode and walk it in C++ (tag/attr/class/
+// children/find) instead of issuing one round-trip per assertion.
+
+auto tInspectsItemStructure = test("WebViewTodo/inspectsItemStructureAsDomNode") = []
+{
+    auto item = driver().query(itemSelector);
+
+    check(item.tag() == "li");
+    check(item.hasClass("item"));
+    check(item.attr("data-testid") == "todo-item");
+    check(item.attr("data-todo-id") == "1");
+
+    check(item.find(textSelector).text() == "Try editing me (double-click)");
+    check(item.find(toggleSelector).tag() == "input");
+};
+
+auto tQueryAllReturnsEveryItem =
+    test("WebViewTodo/queryAllReturnsEveryItemInOrder") = []
+{
+    auto items = driver().queryAll(itemSelector);
+    check(items.size() == 3);
+
+    auto texts = std::vector<std::string> {};
+    for (auto& item: items)
+        texts.push_back(item.find(textSelector).text());
+
+    check(texts[0] == "Try editing me (double-click)");
+    check(texts[1] == "Toggle a checkbox");
+    check(texts[2] == "Add a new todo above");
+};
+
+auto tCompletedStateReflectedInDom =
+    test("WebViewTodo/completedStateReflectedInClassAndCheckbox") = []
+{
+    auto items = driver().queryAll(itemSelector);
+
+    check(!items[0].hasClass("done"));
+    check(!items[0].find(toggleSelector).checked);
+
+    // The third seed todo starts completed.
+    check(items[2].hasClass("done"));
+    check(items[2].find(toggleSelector).checked);
+};
+
+auto tTogglingUpdatesReQueriedNode =
+    test("WebViewTodo/togglingUpdatesReQueriedNode") = []
+{
+    auto before = driver().query(itemSelector);
+    check(!before.hasClass("done"));
+    check(!before.find(toggleSelector).checked);
+
+    driver().click(firstItemDescendant(toggleSelector));
+
+    // DomNode is a snapshot, so re-query to see the toggled state.
+    auto after = driver().query(itemSelector);
+    check(after.hasClass("done"));
+    check(after.find(toggleSelector).checked);
+};
+
+auto tListSubtreeExposesChildren =
+    test("WebViewTodo/listSubtreeExposesChildrenAndAttributes") = []
+{
+    auto list = driver().query(listSelector);
+
+    check(list.tag() == "ul");
+    check(list.hasClass("list"));
+    check(list.children.size() == 3);
+
+    check(list.findAll(toggleSelector).size() == 3);
+
+    auto removeButtons = list.findAll(removeSelector);
+    check(removeButtons.size() == 3);
+    check(removeButtons[0].attr("aria-label") == "Remove");
+};
+
+auto tInputAttributesReadable =
+    test("WebViewTodo/inputAttributesReadableFromDomNode") = []
+{
+    auto input = driver().query(inputSelector);
+
+    check(input.tag() == "input");
+    check(input.attr("type") == "text");
+    check(input.attr("placeholder") == "What needs to be done?");
+    check(input.hasAttr("data-testid"));
 };
 
 auto tCallJsResolvesWithResult = test("WebViewTodo/callJsResolvesWithResult") = []

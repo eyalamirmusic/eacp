@@ -31,10 +31,9 @@ bool File::isUnder(const std::filesystem::path& root) const
     if (ec || rel.empty())
         return false;
 
-    // A path that escapes the root resolves to a relative path whose first
-    // component is "..". Anything else (including ".") is contained.
-    auto first = rel.begin();
-    return first == rel.end() || *first != std::filesystem::path {".."};
+    // A path that escapes the root resolves to a relative path starting with
+    // "..". Anything else (including ".") is contained.
+    return rel.generic_string().rfind("..", 0) != 0;
 }
 
 std::uint64_t File::size() const
