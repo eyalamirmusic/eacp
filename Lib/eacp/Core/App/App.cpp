@@ -35,13 +35,15 @@ void destroyApp()
 
 void quit()
 {
-    auto quitFunc = []
-    {
-        destroyApp();
-        Threads::stopEventLoop();
-    };
-
-    Threads::callAsync(quitFunc);
+    // Destroy synchronously then stop the loop. Going via
+    // callAsync would race with the loop's shutdown on Windows
+    // (the WM_QUIT outruns any dispatcher-queued work the outer
+    // pump never gets to process). When called from inside the
+    // app's own constructor the OwningPointer isn't populated
+    // yet, so destroyApp() is a no-op there — Apps::run<T> calls
+    // it again once the loop has exited to finish the job.
+    destroyApp();
+    Threads::getEventLoop().quit();
 }
 
 void restart()

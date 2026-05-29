@@ -485,7 +485,13 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             return 0;
 
         case WM_DESTROY:
-            PostQuitMessage(0);
+            // Intentionally no PostQuitMessage here. The application's
+            // shutdown is driven by Apps::quit() (which is what
+            // quitCallback() triggers on the user-initiated WM_CLOSE).
+            // Destroying a Window programmatically — e.g. during test
+            // teardown — must NOT terminate the event loop, because
+            // pending cleanup callbacks (destroyApp + stopEventLoop)
+            // would never get a chance to run.
             return 0;
 
         case WM_SIZE:

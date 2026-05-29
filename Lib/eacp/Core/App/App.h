@@ -27,6 +27,7 @@ using AppFactory = Callback;
 AppHandle& getGlobalApp();
 AppFactory& getAppFactory();
 
+void destroyApp();
 void quit();
 
 // Destroys the current app instance and recreates it via the factory
@@ -65,6 +66,11 @@ void run()
     auto createFunc = [] { getGlobalApp().template create<App<T>>(); };
     getAppFactory() = createFunc;
     Threads::runEventLoop(createFunc);
+    // Tear the app down here, after the event loop has fully exited,
+    // so we never destroy from inside a still-pumping callback (and
+    // never depend on the dispatcher delivering a post-quit lambda on
+    // Windows).
+    destroyApp();
 }
 
 // argc/argv-aware overload — captures the command line into

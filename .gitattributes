@@ -1,0 +1,40 @@
+# Default: auto-detect text files and normalize to LF in the index and
+# on checkout. Overrides any local core.autocrlf setting, so Windows
+# contributors see the same line endings as macOS contributors. Most
+# importantly: codegen tools writing through Windows text-mode streams
+# emit CRLF, but with eol=lf git treats those files as LF for diff and
+# normalizes them on commit, so generated .ts files no longer show up
+# as dirty.
+* text=auto eol=lf
+
+# Explicit binary overrides — never touch line endings.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.icns binary
+*.mp3  binary
+*.wav  binary
+*.ogg  binary
+*.mp4  binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.tgz  binary
+*.woff  binary
+*.woff2 binary
+*.ttf  binary
+*.eot  binary
+*.otf  binary
+*.dll  binary
+*.exe  binary
+*.lib  binary
+*.dylib binary
+*.so   binary
+
+# Windows-only files keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

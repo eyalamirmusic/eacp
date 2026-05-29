@@ -200,13 +200,33 @@ AppDriver::AppDriver(Graphics::WebView& webViewToUse,
         firstNavigationFired = true;
         firstNavigationPromise.resolve();
     };
+
+    // Latch on failure too, so a broken scheme / 404 / etc. unblocks
+    // the wait immediately with the actual WebView error instead of
+    // hanging until the timeout. The reject() carries the error string
+    // straight through to the AsyncError that waitForFirstNavigation /
+    // any co_await on the promise will surface.
+    previousFailedHandler = webView.onNavigationFailed;
+    webView.onNavigationFailed =
+        [this, previous = previousFailedHandler](const std::string& error)
+    {
+        if (previous)
+            previous(error);
+
+        if (firstNavigationFired)
+            return;
+
+        firstNavigationFired = true;
+        firstNavigationPromise.reject(error);
+    };
 }
 
 AppDriver::~AppDriver()
 {
-    // Restore the user's handler so a longer-lived WebView doesn't
+    // Restore the user's handlers so a longer-lived WebView doesn't
     // keep firing into this dead driver.
     webView.onNavigationFinished = std::move(previousFinishedHandler);
+    webView.onNavigationFailed = std::move(previousFailedHandler);
 }
 
 int AppDriver::effectiveTimeoutMs(const CallOptions& opts) const
@@ -230,8 +250,16 @@ void AppDriver::waitForFirstNavigation(const CallOptions& opts)
     {
         firstNavigation.waitFor(timeout);
     }
-    catch (const Threads::AsyncError&)
+    catch (const Threads::AsyncError& e)
     {
+        // If the latch has fired by the time waitFor throws, the
+        // promise was reject()'d (by onNavigationFailed) — surface the
+        // actual WebView2 error. Otherwise we hit Async::waitFor's own
+        // "timed out" path; report it as a load timeout.
+        if (firstNavigationFired)
+            throw std::runtime_error("AppDriver: navigation failed: "
+                                     + std::string {e.what()});
+
         throw std::runtime_error("AppDriver: page did not finish loading "
                                  "within "
                                  + std::to_string(timeout.count()) + "ms");

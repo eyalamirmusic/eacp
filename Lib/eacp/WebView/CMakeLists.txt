@@ -59,7 +59,8 @@ elseif (WIN32)
 
     target_link_libraries(eacp-webview PRIVATE
             WebView2::WebView2
-            ws2_32)
+            ws2_32
+            shlwapi)
 else ()
     target_sources(eacp-webview PRIVATE WebView/DevServerProbe-Posix.cpp)
 endif ()

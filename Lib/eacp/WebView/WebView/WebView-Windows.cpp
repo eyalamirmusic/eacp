@@ -5,16 +5,22 @@
 
 #include <algorithm>
 #include <ea_data_structures/Structures/Vector.h>
+#include <cassert>
 #include <unordered_map>
 #include <queue>
 #include <functional>
+#include <string>
+#include <vector>
 
 #include <objbase.h>
+#include <shlwapi.h>
 
 #include <wrl.h>
 #include <WebView2.h>
+#include <WebView2EnvironmentOptions.h>
 
 #include <eacp/Core/Threads/EventLoop.h>
+#include <eacp/Core/Utils/Logging.h>
 
 namespace eacp::Graphics
 {
@@ -69,6 +75,77 @@ void unregisterWebView(WebView* view)
 {
     registeredWebViews().removeAllMatches(view);
 }
+
+// Strip the outer JSON-string layer that WebView2's ExecuteScript adds.
+// macOS's evaluateJavaScript returns the unwrapped string directly, so
+// without this every string result on Windows would arrive double-encoded
+// (`"abc"` instead of `abc`).
+std::string unwrapJsonString(const std::string& raw)
+{
+    if (raw.size() < 2 || raw.front() != '"' || raw.back() != '"')
+        return raw;
+
+    auto out = std::string {};
+    out.reserve(raw.size() - 2);
+
+    for (auto i = std::size_t {1}; i + 1 < raw.size(); ++i)
+    {
+        auto c = raw[i];
+        if (c != '\\')
+        {
+            out.push_back(c);
+            continue;
+        }
+
+        if (i + 2 >= raw.size())
+            return raw;
+
+        auto esc = raw[++i];
+        switch (esc)
+        {
+            case '"': out.push_back('"'); break;
+            case '\\': out.push_back('\\'); break;
+            case '/': out.push_back('/'); break;
+            case 'b': out.push_back('\b'); break;
+            case 'f': out.push_back('\f'); break;
+            case 'n': out.push_back('\n'); break;
+            case 'r': out.push_back('\r'); break;
+            case 't': out.push_back('\t'); break;
+            case 'u':
+            {
+                if (i + 4 >= raw.size())
+                    return raw;
+
+                auto hex = raw.substr(i + 1, 4);
+                auto code = static_cast<unsigned>(std::stoul(hex, nullptr, 16));
+                i += 4;
+
+                // Naive UTF-8 encode of the BMP code point. Enough for ASCII
+                // selectors / DOM text; full surrogate-pair handling lives in
+                // Miro::Json::parse when callers go that route.
+                if (code < 0x80)
+                {
+                    out.push_back(static_cast<char>(code));
+                }
+                else if (code < 0x800)
+                {
+                    out.push_back(static_cast<char>(0xC0 | (code >> 6)));
+                    out.push_back(static_cast<char>(0x80 | (code & 0x3F)));
+                }
+                else
+                {
+                    out.push_back(static_cast<char>(0xE0 | (code >> 12)));
+                    out.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3F)));
+                    out.push_back(static_cast<char>(0x80 | (code & 0x3F)));
+                }
+                break;
+            }
+            default: return raw;
+        }
+    }
+
+    return out;
+}
 } // namespace
 
 struct WebView::Native
@@ -81,14 +158,35 @@ struct WebView::Native
 
     ~Native()
     {
+        // Unhook our event handlers before tearing the controller down
+        // so any late callback from the browser process can't fire
+        // back into a half-destroyed Native.
+        if (webView)
+        {
+            if (navigationStartingToken.value)
+                webView->remove_NavigationStarting(navigationStartingToken);
+            if (navigationCompletedToken.value)
+                webView->remove_NavigationCompleted(navigationCompletedToken);
+            if (titleChangedToken.value)
+                webView->remove_DocumentTitleChanged(titleChangedToken);
+            if (webMessageToken.value)
+                webView->remove_WebMessageReceived(webMessageToken);
+            if (webResourceToken.value)
+                webView->remove_WebResourceRequested(webResourceToken);
+        }
+
         if (controller)
-        {
             controller->Close();
-        }
+
+        // Drop our COM references before DestroyWindow so the WebView2
+        // browser-process IPC threads release their connection while
+        // the heap is still valid.
+        webView.Reset();
+        controller.Reset();
+        environment.Reset();
+
         if (childHwnd)
-        {
             DestroyWindow(childHwnd);
-        }
     }
 
     void ensureInitialized()
@@ -141,16 +239,20 @@ struct WebView::Native
         if (!childHwnd)
             return;
 
+        auto envOptions = buildEnvironmentOptions();
+
         auto hr = CreateCoreWebView2EnvironmentWithOptions(
             nullptr,
             nullptr,
-            nullptr,
+            envOptions.Get(),
             Microsoft::WRL::Callback<
                 ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
                 [this](HRESULT result, ICoreWebView2Environment* env) -> HRESULT
                 {
                     if (FAILED(result) || !env)
                     {
+                        LOG("WebView2: env create failed hr=0x"
+                            + hresultHex(result));
                         initInProgress = false;
                         return result;
                     }
@@ -165,6 +267,8 @@ struct WebView::Native
                             {
                                 if (FAILED(result) || !ctrl)
                                 {
+                                    LOG("WebView2: controller create failed hr=0x"
+                                        + hresultHex(result));
                                     initInProgress = false;
                                     return result;
                                 }
@@ -174,6 +278,7 @@ struct WebView::Native
 
                                 applySettings();
                                 setupEventHandlers();
+                                registerSchemeHandlers();
                                 updateBounds();
 
                                 initialized = true;
@@ -189,8 +294,181 @@ struct WebView::Native
 
         if (FAILED(hr))
         {
+            LOG("WebView2: CreateCoreWebView2EnvironmentWithOptions failed hr=0x"
+                + hresultHex(hr));
             initInProgress = false;
         }
+    }
+
+    static std::string hresultHex(HRESULT hr)
+    {
+        char buf[16];
+        std::snprintf(buf, sizeof buf, "%08lx", static_cast<unsigned long>(hr));
+        return buf;
+    }
+
+    Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions>
+        buildEnvironmentOptions()
+    {
+        // Custom URL schemes (anything other than http/https/file) won't
+        // navigate at all unless registered here. macOS handles this via
+        // WKWebView's setURLSchemeHandler; WebView2 requires both an env-
+        // level registration (so the scheme is "real") AND a per-CoreWebView2
+        // WebResourceRequested filter (where we actually serve the bytes).
+        // Treat the scheme as secure + with an authority component so URLs
+        // like app://local/index.html parse the way React / fetch expect.
+        auto envOptions = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
+
+        auto registrations =
+            std::vector<Microsoft::WRL::ComPtr<ICoreWebView2CustomSchemeRegistration>> {};
+        registrations.reserve(options.schemes.size());
+
+        for (auto& [scheme, _]: options.schemes)
+        {
+            auto wide = toWideString(scheme);
+            auto registration =
+                Microsoft::WRL::Make<CoreWebView2CustomSchemeRegistration>(
+                    wide.c_str());
+
+            registration->put_TreatAsSecure(TRUE);
+            registration->put_HasAuthorityComponent(TRUE);
+
+            registrations.push_back(registration);
+        }
+
+        if (!registrations.empty())
+        {
+            auto raw =
+                std::vector<ICoreWebView2CustomSchemeRegistration*>(
+                    registrations.size());
+            for (auto i = std::size_t {}; i < registrations.size(); ++i)
+                raw[i] = registrations[i].Get();
+
+            Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions4> opts4;
+            if (SUCCEEDED(envOptions.As(&opts4)) && opts4)
+            {
+                opts4->SetCustomSchemeRegistrations(
+                    static_cast<UINT32>(raw.size()), raw.data());
+            }
+            else
+            {
+                LOG("WebView2: ICoreWebView2EnvironmentOptions4 unavailable; "
+                    "custom schemes will not navigate");
+            }
+        }
+
+        Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions> base;
+        envOptions.As(&base);
+        return base;
+    }
+
+    void registerSchemeHandlers()
+    {
+        if (!webView || options.schemes.empty())
+            return;
+
+        // Stable owner for the per-scheme provider table. The
+        // WebResourceRequested callback captures `this`, looks the
+        // request URL's scheme up here, and dispatches to the matching
+        // ResourceProvider.
+        for (auto& [scheme, provider]: options.schemes)
+            schemeProviders.emplace(scheme, provider);
+
+        webView->add_WebResourceRequested(
+            Microsoft::WRL::Callback<
+                ICoreWebView2WebResourceRequestedEventHandler>(
+                [this](ICoreWebView2*,
+                       ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT
+                { return handleWebResourceRequested(args); })
+                .Get(),
+            &webResourceToken);
+
+        // AddWebResourceRequestedFilter only intercepts URLs that match
+        // the filter pattern. Use "scheme://*" so every path under the
+        // scheme reaches our handler.
+        for (auto& [scheme, _]: options.schemes)
+        {
+            auto pattern = toWideString(scheme + "://*");
+            auto hr = webView->AddWebResourceRequestedFilter(
+                pattern.c_str(), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+
+            if (FAILED(hr))
+            {
+                LOG("WebView2: AddWebResourceRequestedFilter('"
+                    + scheme + "://*') failed hr=0x" + hresultHex(hr));
+            }
+        }
+    }
+
+    HRESULT
+        handleWebResourceRequested(ICoreWebView2WebResourceRequestedEventArgs* args)
+    {
+        if (!args || !environment)
+            return S_OK;
+
+        Microsoft::WRL::ComPtr<ICoreWebView2WebResourceRequest> request;
+        if (FAILED(args->get_Request(&request)) || !request)
+            return S_OK;
+
+        CoTaskMemString uriRaw;
+        if (FAILED(request->get_Uri(&uriRaw)) || !uriRaw)
+            return S_OK;
+
+        auto url = uriRaw.toString();
+        auto schemeEnd = url.find("://");
+        if (schemeEnd == std::string::npos)
+            return S_OK;
+
+        auto scheme = url.substr(0, schemeEnd);
+        auto it = schemeProviders.find(scheme);
+        if (it == schemeProviders.end() || !it->second)
+            return S_OK;
+
+        auto response = it->second(url);
+        Microsoft::WRL::ComPtr<ICoreWebView2WebResourceResponse> webResponse;
+
+        if (!response)
+        {
+            environment->CreateWebResourceResponse(
+                nullptr, 404, L"Not Found",
+                L"Content-Type: text/plain; charset=utf-8",
+                &webResponse);
+            args->put_Response(webResponse.Get());
+            return S_OK;
+        }
+
+        Microsoft::WRL::ComPtr<IStream> stream;
+        stream.Attach(SHCreateMemStream(response->data.data(),
+                                        static_cast<UINT>(response->data.size())));
+        if (!stream)
+        {
+            environment->CreateWebResourceResponse(
+                nullptr, 500, L"Internal Server Error",
+                L"Content-Type: text/plain; charset=utf-8",
+                &webResponse);
+            args->put_Response(webResponse.Get());
+            return S_OK;
+        }
+
+        // CORS bypass: WebView2 enforces cross-origin restrictions even
+        // for our own scheme handler, so React's fetch() to a sibling
+        // URL fails without an explicit allow-origin header.
+        auto headers = std::wstring {L"Content-Type: "}
+                       + toWideString(response->mimeType)
+                       + L"\r\nAccess-Control-Allow-Origin: *";
+
+        auto reason = (response->statusCode >= 200 && response->statusCode < 300)
+                          ? L"OK"
+                          : L"Error";
+
+        if (SUCCEEDED(environment->CreateWebResourceResponse(
+                stream.Get(), response->statusCode, reason, headers.c_str(),
+                &webResponse)))
+        {
+            args->put_Response(webResponse.Get());
+        }
+
+        return S_OK;
     }
 
     void applySettings()
@@ -239,18 +517,19 @@ struct WebView::Native
                     {
                         CoTaskMemString uri;
                         webView->get_Source(&uri);
-                        auto url = uri.toString();
-                        Threads::callAsync([cb = owner.onNavigationFinished, url]()
-                                           { cb(url); });
+                        owner.onNavigationFinished(uri.toString());
                     }
                     else
                     {
                         COREWEBVIEW2_WEB_ERROR_STATUS status;
                         args->get_WebErrorStatus(&status);
-                        auto errorStr = "Navigation failed with error: "
-                                        + std::to_string(status);
-                        Threads::callAsync([cb = owner.onNavigationFailed,
-                                            errorStr]() { cb(errorStr); });
+                        CoTaskMemString uri;
+                        webView->get_Source(&uri);
+                        auto errorStr = "Navigation failed (status="
+                                        + std::to_string(status) + ") for url="
+                                        + uri.toString();
+                        LOG("WebView2: " + errorStr);
+                        owner.onNavigationFailed(errorStr);
                     }
                     return S_OK;
                 })
@@ -289,8 +568,15 @@ struct WebView::Native
                     if (it == messageHandlers.end())
                         return S_OK;
 
-                    auto handler = it->second;
-                    Threads::callAsync([handler, body] { handler(body); });
+                    // Invoke directly on the UI thread (where this
+                    // callback already runs). Going through callAsync
+                    // would post onto the dispatcher queue, which on
+                    // Windows doesn't get drained while a nested
+                    // runEventLoopFor is pumping — so bridge messages
+                    // would never reach the handler and tests that
+                    // depend on bridge round-trips would silently see
+                    // no data.
+                    it->second(body);
                     return S_OK;
                 })
                 .Get(),
@@ -395,8 +681,34 @@ struct WebView::Native
         }
     }
 
+    // Document-start scripts have to be registered with WebView2 *before*
+    // Navigate(), otherwise they won't fire for the first document load.
+    // Keep them in their own bucket so processPendingOperations() can
+    // drain them ahead of the queued Navigate() — fixes the case where
+    // the WebView constructor's auto-load enqueues a Navigate before
+    // anyone has a chance to attach a user script.
+    void queueDocStartScript(std::wstring script)
+    {
+        if (initialized && webView)
+        {
+            webView->AddScriptToExecuteOnDocumentCreated(script.c_str(), nullptr);
+        }
+        else
+        {
+            pendingDocStartScripts.push_back(std::move(script));
+        }
+    }
+
     void processPendingOperations()
     {
+        for (auto& script: pendingDocStartScripts)
+        {
+            if (webView)
+                webView->AddScriptToExecuteOnDocumentCreated(script.c_str(),
+                                                             nullptr);
+        }
+        pendingDocStartScripts.clear();
+
         while (!pendingOperations.empty())
         {
             auto op = std::move(pendingOperations.front());
@@ -412,15 +724,18 @@ struct WebView::Native
     ComPtr<ICoreWebView2Controller> controller;
     ComPtr<ICoreWebView2> webView;
     MessageHandlerMap messageHandlers;
+    std::unordered_map<std::string, ResourceProvider> schemeProviders;
 
     bool initialized = false;
     bool initInProgress = false;
     std::queue<std::function<void()>> pendingOperations;
+    std::vector<std::wstring> pendingDocStartScripts;
 
     EventRegistrationToken navigationStartingToken {};
     EventRegistrationToken navigationCompletedToken {};
     EventRegistrationToken titleChangedToken {};
     EventRegistrationToken webMessageToken {};
+    EventRegistrationToken webResourceToken {};
 };
 
 void WebView::initNative(Options options)
@@ -431,11 +746,11 @@ void WebView::initNative(Options options)
 
 WebView::~WebView()
 {
+    // Close + childHwnd teardown happens in ~Native (driven by impl
+    // going out of scope). Calling controller->Close() here too would
+    // double-close, which the WebView2 docs say is a no-op but in
+    // practice has been observed to trip late callbacks on Native.
     unregisterWebView(this);
-    if (impl->controller)
-    {
-        impl->controller->Close();
-    }
 }
 
 void WebView::loadURL(const std::string& url)
@@ -572,11 +887,15 @@ void WebView::evaluateJavaScript(const std::string& script, JSCallback callback)
                     }
                     else if (resultJson)
                     {
-                        result = fromWideString(resultJson);
+                        // WebView2 always returns JSON-encoded values, so a JS
+                        // string like "abc" arrives as "\"abc\"". macOS hands
+                        // back the raw string. Strip one JSON layer when the
+                        // value is a string so both backends look the same to
+                        // callers; numbers / bools / objects pass through.
+                        result = unwrapJsonString(fromWideString(resultJson));
                     }
 
-                    Threads::callAsync([callback, result, error]()
-                                       { callback(result, error); });
+                    callback(result, error);
                 }
                 return S_OK;
             })
@@ -659,14 +978,13 @@ void WebView::addScriptMessageHandler(
 {
     impl->messageHandlers[name] = std::move(handler);
 
-    if (impl->webView)
-    {
-        auto script = toWideString("window." + name
-                                   + " = { postMessage: function(msg) { "
-                                     "window.chrome.webview.postMessage({name: '"
-                                   + name + "', body: msg}); } };");
-        impl->webView->AddScriptToExecuteOnDocumentCreated(script.c_str(), nullptr);
-    }
+    auto script = toWideString("window." + name
+                               + " = { postMessage: function(msg) { "
+                                 "window.chrome.webview.postMessage({name: '"
+                               + name + "', body: msg}); } };");
+
+    impl->ensureInitialized();
+    impl->queueDocStartScript(std::move(script));
 }
 
 void WebView::removeScriptMessageHandler(const std::string& name)
@@ -677,23 +995,14 @@ void WebView::removeScriptMessageHandler(const std::string& name)
 void WebView::addUserScript(const std::string& source, bool atDocumentStart)
 {
     impl->ensureInitialized();
-    impl->queueOperation(
-        [this, source, atDocumentStart]()
-        {
-            if (!impl->webView)
-                return;
 
-            if (atDocumentStart)
-            {
-                auto wide = toWideString(source);
-                impl->webView->AddScriptToExecuteOnDocumentCreated(wide.c_str(),
-                                                                   nullptr);
-            }
-            else
-            {
-                evaluateJavaScript(source);
-            }
-        });
+    if (atDocumentStart)
+    {
+        impl->queueDocStartScript(toWideString(source));
+        return;
+    }
+
+    impl->queueOperation([this, source]() { evaluateJavaScript(source); });
 }
 
 void WebView::resized()
@@ -701,6 +1010,14 @@ void WebView::resized()
     View::resized();
     impl->ensureInitialized();
     impl->updateBounds();
+}
+
+void WebView::armFileDrag(const std::vector<std::string>&)
+{
+    // Native file drag-out is implemented on macOS only (WKWebView subclass +
+    // NSDraggingSession started from a real mouseDragged: event). Not wired on
+    // Windows yet; the assert marks it unimplemented and fails loudly if hit.
+    assert(false && "armFileDrag is macOS-only");
 }
 
 void WebView::zoomIn()
