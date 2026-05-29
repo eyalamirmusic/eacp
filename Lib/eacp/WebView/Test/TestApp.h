@@ -6,10 +6,12 @@
 
 #include <NanoTest/NanoTest.h>
 
+#include <chrono>
 #include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -123,10 +125,17 @@ TestApp<T>& createTestApp(std::string_view readySelector = {})
     return instance;
 }
 
+inline constexpr auto defaultTestTimeout = std::chrono::seconds {10};
+
 // Drop-in nano::test replacement that fires all registered fixture
-// restarts before the body runs. Use via
-// `using namespace eacp::WebView::Test;` in test files — that brings
-// this test() into scope alongside TestApp / AppDriver / createTestApp.
+// restarts before the body runs, and transparently handles both
+// sync bodies and Async<>-returning coroutine bodies — the latter
+// are waited on internally so the test author writes them as a
+// single-scope coroutine.
+//
+// Use via `using namespace eacp::WebView::Test;` in test files —
+// that brings test() into scope alongside TestApp / AppDriver /
+// createTestApp.
 struct TestProxy
 {
     template <typename Fn>
@@ -135,7 +144,11 @@ struct TestProxy
         inner = [body = std::move(body)]
         {
             Detail::runAllRestarts();
-            body();
+
+            if constexpr (std::is_void_v<std::invoke_result_t<Fn>>)
+                body();
+            else
+                body().waitFor(defaultTestTimeout);
         };
         return *this;
     }
