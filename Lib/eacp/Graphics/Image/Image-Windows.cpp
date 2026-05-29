@@ -1,3 +1,5 @@
+#include <eacp/Core/Utils/WinInclude.h>
+
 #include "ImageCodec.h"
 
 #include <objbase.h>
