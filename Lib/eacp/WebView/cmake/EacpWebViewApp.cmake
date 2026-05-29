@@ -32,13 +32,26 @@
 #       [SCHEMA_FORMATS <formats>]        # default: ts backend ts-server bridge
 #       [API            <type>]           # reflectable API class to bind
 #       [API_HEADER     <header>]         # header for API (required with API)
+#       [LINK_LIBRARIES <libs>]           # extra link deps for the app AND the
+#                                         # schema codegen tool (see note below)
 #       [REACT]                           # emit React hook bindings
 #   )
+#
+# LINK_LIBRARIES is for native libraries the app's API/command headers
+# reference (e.g. a TamberLib carrying CLAP types). They are linked onto the
+# app target (PUBLIC on the static lib in library mode so the exe + tests
+# inherit them, PRIVATE on the exe in legacy mode) AND onto the schema codegen
+# tool. The codegen tool default-constructs each API to walk reflect(), so it
+# must both see those headers and link whatever symbols default construction /
+# destruction ODR-uses — passing the library here covers include dirs and link
+# in one shot, so callers don't have to reach into the generated
+# ${TARGET}Schema_Codegen target by hand.
 function(eacp_add_webview_app TARGET)
     set(options REACT)
     set(oneValueArgs WEB_DIR BUNDLE_ID BUNDLE_NAME NAMESPACE CATEGORY SCHEMA_NAME
             PACKAGE_MANAGER APP_HEADER)
-    set(multiValueArgs SOURCES COMMAND_SOURCES SCHEMA_FORMATS API API_HEADER)
+    set(multiValueArgs SOURCES COMMAND_SOURCES SCHEMA_FORMATS API API_HEADER
+            LINK_LIBRARIES)
     cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if (NOT ARG_SOURCES)
@@ -110,6 +123,18 @@ function(eacp_add_webview_app TARGET)
         target_link_libraries(${TARGET} PRIVATE eacp-webview eacp-network-rpc)
     endif ()
 
+    # Caller-supplied native link deps. PUBLIC on the static lib in library
+    # mode (so the exe + test target inherit them, mirroring eacp-webview
+    # above), PRIVATE on the exe in legacy mode. Also linked onto the codegen
+    # tool further down.
+    if (ARG_LINK_LIBRARIES)
+        if (ARG_APP_HEADER)
+            target_link_libraries(${APP_LIB_TARGET} PUBLIC ${ARG_LINK_LIBRARIES})
+        else ()
+            target_link_libraries(${APP_LIB_TARGET} PRIVATE ${ARG_LINK_LIBRARIES})
+        endif ()
+    endif ()
+
     if (ARG_COMMAND_SOURCES OR ARG_API)
         # Two schema modes, picked by which arg the caller supplied.
         # SOURCES paths in miro_export are resolved against
@@ -168,6 +193,13 @@ function(eacp_add_webview_app TARGET)
             if (TARGET eacp-webview-codegen)
                 target_link_libraries(${TARGET}Schema_Codegen PRIVATE
                         eacp-webview-codegen)
+            endif ()
+            # The codegen stub #includes the API header and default-constructs
+            # each API; give it the caller's native libs so those headers
+            # resolve and the reflect() walk links.
+            if (ARG_LINK_LIBRARIES)
+                target_link_libraries(${TARGET}Schema_Codegen PRIVATE
+                        ${ARG_LINK_LIBRARIES})
             endif ()
         endif ()
     endif ()
