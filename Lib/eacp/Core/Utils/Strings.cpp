@@ -41,6 +41,32 @@ int hexCharToInt(char c)
     return -1;
 }
 
+std::string percentDecode(std::string_view encoded)
+{
+    auto out = std::string {};
+    out.reserve(encoded.size());
+
+    for (auto i = std::size_t {0}; i < encoded.size(); ++i)
+    {
+        if (encoded[i] == '%' && i + 2 < encoded.size())
+        {
+            auto hi = hexCharToInt(encoded[i + 1]);
+            auto lo = hexCharToInt(encoded[i + 2]);
+
+            if (hi >= 0 && lo >= 0)
+            {
+                out.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+
+        out.push_back(encoded[i]);
+    }
+
+    return out;
+}
+
 std::optional<float> tryParseFloat(const std::string& s)
 {
     try

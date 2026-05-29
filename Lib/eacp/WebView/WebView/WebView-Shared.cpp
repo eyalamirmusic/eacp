@@ -6,6 +6,7 @@
 #include <eacp/Core/Threads/EventLoop.h>
 
 #include <cstdio>
+#include <cstdint>
 #include <string_view>
 
 namespace eacp::Graphics
@@ -28,6 +29,20 @@ std::string mimeForPath(std::string_view path)
         return "image/jpeg";
     if (path.ends_with(".woff2"))
         return "font/woff2";
+    if (path.ends_with(".mp3"))
+        return "audio/mpeg";
+    if (path.ends_with(".wav"))
+        return "audio/wav";
+    if (path.ends_with(".aif") || path.ends_with(".aiff"))
+        return "audio/aiff";
+    if (path.ends_with(".flac"))
+        return "audio/flac";
+    if (path.ends_with(".m4a") || path.ends_with(".mp4"))
+        return "audio/mp4";
+    if (path.ends_with(".aac"))
+        return "audio/aac";
+    if (path.ends_with(".ogg") || path.ends_with(".opus"))
+        return "audio/ogg";
     return "application/octet-stream";
 }
 

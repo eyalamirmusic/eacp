@@ -8,6 +8,9 @@
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
 #include <ea_data_structures/Structures/Vector.h>
 #include <algorithm>
+#include <limits>
+#include <optional>
+#include <string_view>
 #include <unordered_map>
 
 namespace
@@ -15,6 +18,84 @@ namespace
 std::string safeString(const char* str, const char* fallback = "")
 {
     return str != nullptr ? str : fallback;
+}
+
+std::optional<std::size_t> parseSize(std::string_view value)
+{
+    if (value.empty())
+        return std::nullopt;
+
+    auto out = std::size_t {};
+
+    for (auto c: value)
+    {
+        if (c < '0' || c > '9')
+            return std::nullopt;
+
+        auto digit = static_cast<std::size_t>(c - '0');
+
+        if (out > (std::numeric_limits<std::size_t>::max() - digit) / 10)
+            return std::nullopt;
+
+        out = out * 10 + digit;
+    }
+
+    return out;
+}
+
+// Parses an HTTP `Range` header against a known total size, writing the
+// resolved inclusive [start, end] byte offsets. Handles `bytes=a-b`,
+// `bytes=a-` and suffix `bytes=-n`. Returns false (serve the whole body)
+// for anything malformed, unsatisfiable, or multi-range.
+bool parseByteRange(const std::string& header,
+                    std::size_t total,
+                    std::size_t& start,
+                    std::size_t& end)
+{
+    constexpr std::string_view prefix = "bytes=";
+
+    if (total == 0 || header.rfind(prefix, 0) != 0
+        || header.find(',') != std::string::npos)
+        return false;
+
+    auto spec = header.substr(prefix.size());
+    auto dash = spec.find('-');
+
+    if (dash == std::string::npos)
+        return false;
+
+    auto firstStr = spec.substr(0, dash);
+    auto lastStr = spec.substr(dash + 1);
+
+    if (firstStr.empty())
+    {
+        auto suffix = parseSize(lastStr);
+
+        if (!suffix || *suffix == 0)
+            return false;
+
+        auto clampedSuffix = std::min(*suffix, total);
+        start = total - clampedSuffix;
+        end = total - 1;
+    }
+    else
+    {
+        auto first = parseSize(firstStr);
+        auto last = lastStr.empty() ? std::optional<std::size_t> {total - 1}
+                                    : parseSize(lastStr);
+
+        if (!first || !last)
+            return false;
+
+        start = *first;
+        end = *last;
+    }
+
+    if (start > end || start >= total)
+        return false;
+
+    end = std::min(end, total - 1);
+    return true;
 }
 } // namespace
 
@@ -55,6 +136,21 @@ using MessageHandlerMap =
 }
 @end
 
+// Streams on-disk files into the WebView. Each task resolves a URL to a path,
+// then reads ONLY the requested byte range on a background queue and delivers
+// it back on the main thread -- so a large media file neither blocks the UI
+// nor gets re-read whole on every range request the media engine issues.
+@interface FileSchemeHandler : NSObject <WKURLSchemeHandler>
+{
+@public
+    eacp::Graphics::FilePathResolver resolver;
+}
+// Tasks still in flight, touched only on the main thread. A task is dropped
+// on stop / completion; delivery is skipped if its task is no longer here,
+// which is how we avoid messaging a stopped task (WKWebView throws if we do).
+@property(strong) NSMutableSet* liveTasks;
+@end
+
 
 namespace eacp::Graphics
 {
@@ -87,6 +183,15 @@ struct WebView::Native
             [config.get() setURLSchemeHandler:handler.get()
                                  forURLScheme:Strings::toNSString(scheme)];
             schemeHandlers.push_back(std::move(handler));
+        }
+
+        for (auto& [scheme, resolver]: options.fileSchemes)
+        {
+            auto handler = ObjC::Ptr {[[FileSchemeHandler alloc] init]};
+            handler.get()->resolver = std::move(resolver);
+            [config.get() setURLSchemeHandler:handler.get()
+                                 forURLScheme:Strings::toNSString(scheme)];
+            fileSchemeHandlers.push_back(std::move(handler));
         }
 
         webView = detail::createWebView(config.get());
@@ -164,6 +269,7 @@ struct WebView::Native
     ObjC::Ptr<WebViewDelegate> delegate;
     ObjC::Ptr<WKWebViewConfiguration> config;
     EA::Vector<ObjC::Ptr<ResourceSchemeHandler>> schemeHandlers;
+    EA::Vector<ObjC::Ptr<FileSchemeHandler>> fileSchemeHandlers;
     MessageHandlerMap messageHandlers;
     WebView& owner;
     double zoomLevel = 1.0;
@@ -357,8 +463,8 @@ struct WebViewNativeAccess
 - (void)webView:(WKWebView*)webView
     startURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
 {
-    auto* url = urlSchemeTask.request.URL.absoluteString;
-    auto urlStr = std::string([url UTF8String]);
+    auto* request = urlSchemeTask.request;
+    auto urlStr = std::string([request.URL.absoluteString UTF8String]);
 
     auto response = provider ? provider(urlStr) : std::nullopt;
 
@@ -372,17 +478,44 @@ struct WebViewNativeAccess
         return;
     }
 
-    auto* mime = eacp::Strings::toNSString(response->mimeType);
+    auto total = static_cast<std::size_t>(response->data.size());
+    auto start = std::size_t {0};
+    auto end = total > 0 ? total - 1 : std::size_t {0};
+
+    // Honour a byte-range request so media elements can seek -- WKWebView's
+    // media engine probes a custom scheme with `Range:` and expects a 206.
+    auto* rangeHeader = [request valueForHTTPHeaderField:@"Range"];
+    auto isRange = rangeHeader != nil
+                && parseByteRange([rangeHeader UTF8String], total, start, end);
+    auto length = isRange ? end - start + 1 : total;
+
+    auto* headers = [NSMutableDictionary dictionary];
+    headers[@"Content-Type"] = eacp::Strings::toNSString(response->mimeType);
+    headers[@"Accept-Ranges"] = @"bytes";
+    headers[@"Content-Length"] =
+        [NSString stringWithFormat:@"%llu", (unsigned long long) length];
+
+    auto status = response->statusCode;
+
+    if (isRange)
+    {
+        status = 206;
+        headers[@"Content-Range"] = [NSString
+            stringWithFormat:@"bytes %llu-%llu/%llu", (unsigned long long) start,
+                             (unsigned long long) end, (unsigned long long) total];
+    }
+
     auto* httpResponse =
-        [[NSHTTPURLResponse alloc] initWithURL:urlSchemeTask.request.URL
-                                    statusCode:response->statusCode
-                                   HTTPVersion:@"HTTP/1.1"
-                                  headerFields:@{@"Content-Type": mime}];
+        [[[NSHTTPURLResponse alloc] initWithURL:request.URL
+                                     statusCode:status
+                                    HTTPVersion:@"HTTP/1.1"
+                                   headerFields:headers] autorelease];
 
     [urlSchemeTask didReceiveResponse:httpResponse];
 
-    auto* data = [NSData dataWithBytes:response->data.data()
-                                length:response->data.size()];
+    auto* data = [NSData dataWithBytes:length > 0 ? response->data.data() + start
+                                               : nullptr
+                                length:length];
     [urlSchemeTask didReceiveData:data];
     [urlSchemeTask didFinish];
 }
@@ -390,6 +523,140 @@ struct WebViewNativeAccess
 - (void)webView:(WKWebView*)webView
     stopURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
 {
+}
+
+@end
+
+@implementation FileSchemeHandler
+
+- (instancetype)init
+{
+    self = [super init];
+
+    if (self != nil)
+    {
+        // Owned (alloc/init): the WebView runs under manual reference counting,
+        // so an autoreleased set could be gone before the first task arrives.
+        _liveTasks = [[NSMutableSet alloc] init];
+    }
+
+    return self;
+}
+
+- (void)dealloc
+{
+    [_liveTasks release];
+    [super dealloc];
+}
+
+- (void)webView:(WKWebView*)webView
+    startURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
+{
+    auto* request = urlSchemeTask.request;
+    auto* requestURL = request.URL;
+    auto urlStr = std::string([requestURL.absoluteString UTF8String]);
+
+    auto* rangeNS = [request valueForHTTPHeaderField:@"Range"];
+    auto rangeStr =
+        rangeNS != nil ? std::string([rangeNS UTF8String]) : std::string {};
+
+    auto resolveFn = self->resolver;
+
+    // Tracked on the main thread so a stop (below) before delivery cancels it.
+    [self.liveTasks addObject:urlSchemeTask];
+
+    // The disk I/O happens off the main thread; only the requested byte range
+    // is read, never the whole file.
+    auto* ioQueue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+    dispatch_async(ioQueue, ^{
+      auto resolved = resolveFn ? resolveFn(urlStr) : std::nullopt;
+
+      NSHTTPURLResponse* httpResponse = nil;
+      NSData* data = nil;
+
+      if (resolved)
+      {
+          auto* path = [NSString stringWithUTF8String:resolved->c_str()];
+          auto* attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path
+                                                                         error:nil];
+          auto* handle = [NSFileHandle fileHandleForReadingAtPath:path];
+
+          if (attrs != nil && handle != nil)
+          {
+              auto total = static_cast<std::size_t>([attrs fileSize]);
+              auto start = std::size_t {0};
+              auto end = total > 0 ? total - 1 : std::size_t {0};
+              auto isRange = !rangeStr.empty()
+                          && parseByteRange(rangeStr, total, start, end);
+              auto length = isRange ? end - start + 1 : total;
+
+              auto ok = start == 0 || [handle seekToOffset:start error:nil];
+
+              if (ok)
+                  data = length > 0 ? [handle readDataUpToLength:length error:nil]
+                                    : [NSData data];
+
+              [handle closeAndReturnError:nil];
+
+              if (data != nil && [data length] == length)
+              {
+                  auto* headers = [NSMutableDictionary dictionary];
+                  headers[@"Content-Type"] = eacp::Strings::toNSString(
+                      eacp::Graphics::mimeForPath(resolved.value()));
+                  headers[@"Accept-Ranges"] = @"bytes";
+                  headers[@"Content-Length"] =
+                      [NSString stringWithFormat:@"%llu", (unsigned long long) length];
+
+                  auto status = 200;
+
+                  if (isRange)
+                  {
+                      status = 206;
+                      headers[@"Content-Range"] =
+                          [NSString stringWithFormat:@"bytes %llu-%llu/%llu",
+                                                     (unsigned long long) start,
+                                                     (unsigned long long) end,
+                                                     (unsigned long long) total];
+                  }
+
+                  // Autoreleased: the main-queue block below retains it while
+                  // this block's pool still holds it, so it survives the hop.
+                  httpResponse =
+                      [[[NSHTTPURLResponse alloc] initWithURL:requestURL
+                                                   statusCode:status
+                                                  HTTPVersion:@"HTTP/1.1"
+                                                 headerFields:headers] autorelease];
+              }
+          }
+      }
+
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (![self.liveTasks containsObject:urlSchemeTask])
+            return;
+
+        if (httpResponse != nil && data != nil)
+        {
+            [urlSchemeTask didReceiveResponse:httpResponse];
+            [urlSchemeTask didReceiveData:data];
+            [urlSchemeTask didFinish];
+        }
+        else
+        {
+            auto* error = [NSError errorWithDomain:NSURLErrorDomain
+                                              code:NSURLErrorResourceUnavailable
+                                          userInfo:nil];
+            [urlSchemeTask didFailWithError:error];
+        }
+
+        [self.liveTasks removeObject:urlSchemeTask];
+      });
+    });
+}
+
+- (void)webView:(WKWebView*)webView
+    stopURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
+{
+    [self.liveTasks removeObject:urlSchemeTask];
 }
 
 @end
