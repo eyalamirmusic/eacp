@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <vector>
+#include <limits>
 
 namespace eacp::Graphics::detail
 {
@@ -22,18 +22,20 @@ CFRef<CGColorSpaceRef> deviceRGB()
 // CGBitmapContext only produces premultiplied alpha. Straighten it so
 // the stored RGBA matches what PNG/WIC consider canonical. Opaque and
 // fully transparent pixels are left untouched.
-void unpremultiply(std::vector<std::uint8_t>& rgba)
+void unpremultiply(ImageData& rgba)
 {
-    for (auto i = std::size_t {0}; i + 3 < rgba.size(); i += 4)
+    auto count = rgba.size();
+    auto* p = rgba.data();
+    for (auto i = 0; i + 3 < count; i += 4)
     {
-        auto a = rgba[i + 3];
+        auto a = p[i + 3];
         if (a == 0 || a == 255)
             continue;
 
-        for (auto c = std::size_t {0}; c < 3; ++c)
+        for (auto c = 0; c < 3; ++c)
         {
-            auto straight = (static_cast<int>(rgba[i + c]) * 255 + a / 2) / a;
-            rgba[i + c] = static_cast<std::uint8_t>(std::min(straight, 255));
+            auto straight = (static_cast<int>(p[i + c]) * 255 + a / 2) / a;
+            p[i + c] = static_cast<std::uint8_t>(std::min(straight, 255));
         }
     }
 }
@@ -44,10 +46,7 @@ void unpremultiply(std::vector<std::uint8_t>& rgba)
 // context (which quantizes non-opaque pixels). Row padding is stripped.
 // Returns false when the layout needs conversion, leaving the slow path
 // to handle it.
-bool extractStraightRGBA(CGImageRef image,
-                         int width,
-                         int height,
-                         std::vector<std::uint8_t>& out)
+bool extractStraightRGBA(CGImageRef image, int width, int height, ImageData& out)
 {
     if (CGImageGetBitsPerComponent(image) != 8
         || CGImageGetBitsPerPixel(image) != 32)
@@ -70,35 +69,40 @@ bool extractStraightRGBA(CGImageRef image,
     if (!pixelData)
         return false;
 
+    // Stride and length come from Core Graphics as size_t / CFIndex.
     auto sourceStride = CGImageGetBytesPerRow(image);
-    auto rowBytes = static_cast<std::size_t>(width) * 4;
-    auto available = static_cast<std::size_t>(CFDataGetLength(pixelData));
-    if (sourceStride < rowBytes
-        || available < sourceStride * static_cast<std::size_t>(height))
+    auto available = CFDataGetLength(pixelData);
+    auto rowBytes = width * 4;
+    if (sourceStride < static_cast<std::size_t>(rowBytes)
+        || available < static_cast<CFIndex>(sourceStride) * height)
         return false;
 
     auto* bytes = CFDataGetBytePtr(pixelData);
-    out.resize(rowBytes * static_cast<std::size_t>(height));
-    for (auto y = std::size_t {0}; y < static_cast<std::size_t>(height); ++y)
-        std::memcpy(out.data() + y * rowBytes, bytes + y * sourceStride, rowBytes);
+    out.resize(rowBytes * height);
+    auto* dst = out.data();
+    for (auto y = 0; y < height; ++y)
+        std::memcpy(dst + y * rowBytes,
+                    bytes + static_cast<std::size_t>(y) * sourceStride,
+                    rowBytes);
 
     // RGBX: the skipped channel is undefined, so force fully opaque.
     if (alpha == kCGImageAlphaNoneSkipLast)
-        for (auto i = std::size_t {3}; i < out.size(); i += 4)
-            out[i] = 255;
+    {
+        auto count = out.size();
+        for (auto i = 3; i < count; i += 4)
+            dst[i] = 255;
+    }
 
     return true;
 }
 } // namespace
 
-std::optional<DecodedImage> decodeImageBytes(const std::uint8_t* data,
-                                             std::size_t size,
-                                             std::string& error)
+Image decodeImageBytes(const std::uint8_t* data, int size, std::string& error)
 {
-    if (data == nullptr || size == 0)
+    if (data == nullptr || size <= 0)
     {
         error = "empty image data";
-        return std::nullopt;
+        return {};
     }
 
     auto cfData = CFRef<CFDataRef>(
@@ -106,7 +110,7 @@ std::optional<DecodedImage> decodeImageBytes(const std::uint8_t* data,
     if (!cfData)
     {
         error = "could not wrap image bytes";
-        return std::nullopt;
+        return {};
     }
 
     auto source = CFRef<CGImageSourceRef>(
@@ -114,7 +118,7 @@ std::optional<DecodedImage> decodeImageBytes(const std::uint8_t* data,
     if (!source)
     {
         error = "unrecognized image format";
-        return std::nullopt;
+        return {};
     }
 
     auto image = CFRef<CGImageRef>(
@@ -122,7 +126,7 @@ std::optional<DecodedImage> decodeImageBytes(const std::uint8_t* data,
     if (!image)
     {
         error = "could not decode image";
-        return std::nullopt;
+        return {};
     }
 
     auto width = static_cast<int>(CGImageGetWidth(image));
@@ -130,29 +134,32 @@ std::optional<DecodedImage> decodeImageBytes(const std::uint8_t* data,
     if (width <= 0 || height <= 0)
     {
         error = "decoded image has zero dimensions";
-        return std::nullopt;
+        return {};
     }
 
-    auto decoded = DecodedImage {};
-    decoded.width = width;
-    decoded.height = height;
+    constexpr auto maxPixels = std::numeric_limits<int>::max() / 4;
+    if (height > maxPixels / width)
+    {
+        error = "decoded image is too large";
+        return {};
+    }
 
-    if (extractStraightRGBA(image, width, height, decoded.rgba))
-        return decoded;
+    auto rgba = ImageData {};
+    if (extractStraightRGBA(image, width, height, rgba))
+        return Image(width, height, std::move(rgba));
 
     // Slow path: redraw through a premultiplied RGBA context and undo
     // the premultiplication. Handles any source layout (CMYK, grayscale,
     // 16-bit, premultiplied) at the cost of 8-bit precision on alpha.
-    decoded.rgba.assign(static_cast<std::size_t>(width)
-                            * static_cast<std::size_t>(height) * 4,
-                        0);
+    rgba.resize(width * height * 4);
 
     auto colorSpace = deviceRGB();
     auto bitmapInfo = static_cast<std::uint32_t>(kCGImageAlphaPremultipliedLast)
                       | static_cast<std::uint32_t>(kCGBitmapByteOrder32Big);
 
+    // Core Graphics bitmap dimensions/stride are size_t by API contract.
     auto context = CFRef<CGContextRef>(
-        CGBitmapContextCreate(decoded.rgba.data(),
+        CGBitmapContextCreate(rgba.data(),
                               static_cast<std::size_t>(width),
                               static_cast<std::size_t>(height),
                               8,
@@ -162,22 +169,22 @@ std::optional<DecodedImage> decodeImageBytes(const std::uint8_t* data,
     if (!context)
     {
         error = "could not create RGBA bitmap context";
-        return std::nullopt;
+        return {};
     }
 
     CGContextSetBlendMode(context, kCGBlendModeCopy);
     CGContextDrawImage(context, CGRectMake(0, 0, width, height), image);
 
-    unpremultiply(decoded.rgba);
-    return decoded;
+    unpremultiply(rgba);
+    return Image(width, height, std::move(rgba));
 }
 
-std::vector<std::uint8_t> encodeImageBytes(const std::uint8_t* rgba,
-                                           int width,
-                                           int height,
-                                           ImageFormat format,
-                                           float quality,
-                                           std::string& error)
+ImageData encodeImageBytes(const std::uint8_t* rgba,
+                           int width,
+                           int height,
+                           ImageFormat format,
+                           float quality,
+                           std::string& error)
 {
     auto byteCount = static_cast<std::size_t>(width)
                      * static_cast<std::size_t>(height) * 4;
@@ -254,9 +261,11 @@ std::vector<std::uint8_t> encodeImageBytes(const std::uint8_t* rgba,
         return {};
     }
 
-    auto bytes = CFDataGetBytePtr(destData);
+    auto* bytes = CFDataGetBytePtr(destData);
     auto length = static_cast<std::size_t>(CFDataGetLength(destData));
-    return std::vector<std::uint8_t>(bytes, bytes + length);
+    auto result = ImageData {};
+    result.assign(bytes, bytes + length);
+    return result;
 }
 
 } // namespace eacp::Graphics::detail

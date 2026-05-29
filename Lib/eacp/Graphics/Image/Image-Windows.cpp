@@ -6,7 +6,7 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <vector>
+#include <limits>
 
 namespace eacp::Graphics::detail
 {
@@ -64,27 +64,26 @@ WICPixelFormatGUID framePixelFormat(ImageFormat format)
 }
 } // namespace
 
-std::optional<DecodedImage>
-    decodeImageBytes(const std::uint8_t* data, std::size_t size, std::string& error)
+Image decodeImageBytes(const std::uint8_t* data, int size, std::string& error)
 {
-    if (data == nullptr || size == 0)
+    if (data == nullptr || size <= 0)
     {
         error = "empty image data";
-        return std::nullopt;
+        return {};
     }
 
     auto com = ComScope {};
     if (!com.usable())
     {
         error = "COM initialization failed";
-        return std::nullopt;
+        return {};
     }
 
     auto factory = createFactory();
     if (!factory)
     {
         error = "could not create WIC factory";
-        return std::nullopt;
+        return {};
     }
 
     auto stream = ComPtr<IWICStream> {};
@@ -93,7 +92,7 @@ std::optional<DecodedImage>
                                                static_cast<DWORD>(size))))
     {
         error = "could not wrap image bytes";
-        return std::nullopt;
+        return {};
     }
 
     auto decoder = ComPtr<IWICBitmapDecoder> {};
@@ -101,14 +100,14 @@ std::optional<DecodedImage>
             stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder)))
     {
         error = "unrecognized image format";
-        return std::nullopt;
+        return {};
     }
 
     auto frame = ComPtr<IWICBitmapFrameDecode> {};
     if (FAILED(decoder->GetFrame(0, &frame)))
     {
         error = "could not read image frame";
-        return std::nullopt;
+        return {};
     }
 
     auto converter = ComPtr<IWICFormatConverter> {};
@@ -121,7 +120,7 @@ std::optional<DecodedImage>
                                         WICBitmapPaletteTypeCustom)))
     {
         error = "could not convert image to RGBA";
-        return std::nullopt;
+        return {};
     }
 
     auto width = UINT {0};
@@ -129,34 +128,39 @@ std::optional<DecodedImage>
     if (FAILED(converter->GetSize(&width, &height)) || width == 0 || height == 0)
     {
         error = "decoded image has zero dimensions";
-        return std::nullopt;
+        return {};
     }
 
-    auto decoded = DecodedImage {};
-    decoded.width = static_cast<int>(width);
-    decoded.height = static_cast<int>(height);
-    decoded.rgba.assign(
-        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4, 0);
+    constexpr auto intMax = static_cast<UINT>(std::numeric_limits<int>::max());
+    constexpr auto maxPixels = std::numeric_limits<int>::max() / 4;
+    if (width > intMax || height > intMax
+        || static_cast<int>(height) > maxPixels / static_cast<int>(width))
+    {
+        error = "decoded image is too large";
+        return {};
+    }
 
+    auto w = static_cast<int>(width);
+    auto h = static_cast<int>(height);
+
+    auto rgba = ImageData(w * h * 4);
     auto stride = width * 4;
-    if (FAILED(converter->CopyPixels(nullptr,
-                                     stride,
-                                     static_cast<UINT>(decoded.rgba.size()),
-                                     decoded.rgba.data())))
+    if (FAILED(converter->CopyPixels(
+            nullptr, stride, static_cast<UINT>(rgba.size()), rgba.data())))
     {
         error = "could not read decoded pixels";
-        return std::nullopt;
+        return {};
     }
 
-    return decoded;
+    return Image(w, h, std::move(rgba));
 }
 
-std::vector<std::uint8_t> encodeImageBytes(const std::uint8_t* rgba,
-                                           int width,
-                                           int height,
-                                           ImageFormat format,
-                                           float quality,
-                                           std::string& error)
+ImageData encodeImageBytes(const std::uint8_t* rgba,
+                           int width,
+                           int height,
+                           ImageFormat format,
+                           float quality,
+                           std::string& error)
 {
     auto com = ComScope {};
     if (!com.usable())
@@ -172,8 +176,7 @@ std::vector<std::uint8_t> encodeImageBytes(const std::uint8_t* rgba,
         return {};
     }
 
-    auto byteCount = static_cast<UINT>(static_cast<std::size_t>(width)
-                                       * static_cast<std::size_t>(height) * 4);
+    auto byteCount = static_cast<UINT>(width) * static_cast<UINT>(height) * 4;
     auto source = ComPtr<IWICBitmap> {};
     if (FAILED(factory->CreateBitmapFromMemory(static_cast<UINT>(width),
                                                static_cast<UINT>(height),
@@ -247,14 +250,21 @@ std::vector<std::uint8_t> encodeImageBytes(const std::uint8_t* rgba,
         return {};
     }
 
-    auto length = static_cast<std::size_t>(info.cbSize.QuadPart);
-    auto bytes = std::vector<std::uint8_t>(length);
+    auto fileSize = info.cbSize.QuadPart;
+    if (fileSize > static_cast<ULONGLONG>(std::numeric_limits<int>::max()))
+    {
+        error = "encoded image is too large";
+        return {};
+    }
+
+    auto length = static_cast<int>(fileSize);
+    auto bytes = ImageData(length);
 
     auto origin = LARGE_INTEGER {};
     auto read = ULONG {0};
     if (FAILED(stream->Seek(origin, STREAM_SEEK_SET, nullptr))
         || FAILED(stream->Read(bytes.data(), static_cast<ULONG>(length), &read))
-        || read != length)
+        || static_cast<int>(read) != length)
     {
         error = "could not read encoded bytes";
         return {};

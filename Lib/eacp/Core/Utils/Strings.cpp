@@ -13,11 +13,13 @@ std::string trim(const std::string& s)
     return s.substr(begin, end - begin + 1);
 }
 
-std::string toLower(std::string s)
+std::string toLower(const std::string& s)
 {
-    for (auto& c: s)
-        c = (char) std::tolower((unsigned char) c);
-    return s;
+    auto result = std::string {};
+    result.reserve(s.size());
+    for (auto c: s)
+        result.push_back((char) std::tolower((unsigned char) c));
+    return result;
 }
 
 bool equalsCaseInsensitive(const std::string& a, const std::string& b)

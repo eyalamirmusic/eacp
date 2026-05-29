@@ -6,10 +6,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
-#include <vector>
 
 using namespace nano;
 using eacp::Graphics::Image;
+using eacp::Graphics::ImageData;
 using eacp::Graphics::ImageFormat;
 
 namespace
@@ -18,16 +18,16 @@ namespace
 // round-trip byte-exact (no premultiplied-alpha precision loss).
 Image makeOpaquePattern(int width, int height)
 {
-    auto rgba = std::vector<std::uint8_t> {};
-    rgba.reserve(static_cast<std::size_t>(width) * height * 4);
+    auto rgba = ImageData {};
+    rgba.reserve(width * height * 4);
     for (auto y = 0; y < height; ++y)
     {
         for (auto x = 0; x < width; ++x)
         {
-            rgba.push_back(static_cast<std::uint8_t>(x * 7 + 1));
-            rgba.push_back(static_cast<std::uint8_t>(y * 11 + 2));
-            rgba.push_back(static_cast<std::uint8_t>((x + y) * 5 + 3));
-            rgba.push_back(255);
+            rgba.add(static_cast<std::uint8_t>(x * 7 + 1));
+            rgba.add(static_cast<std::uint8_t>(y * 11 + 2));
+            rgba.add(static_cast<std::uint8_t>((x + y) * 5 + 3));
+            rgba.add(static_cast<std::uint8_t>(255));
         }
     }
     return Image(width, height, std::move(rgba));
@@ -38,16 +38,16 @@ Image makeOpaquePattern(int width, int height)
 // premultiplied bitmap context.
 Image makeTranslucentPattern(int width, int height)
 {
-    auto rgba = std::vector<std::uint8_t> {};
-    rgba.reserve(static_cast<std::size_t>(width) * height * 4);
+    auto rgba = ImageData {};
+    rgba.reserve(width * height * 4);
     for (auto y = 0; y < height; ++y)
     {
         for (auto x = 0; x < width; ++x)
         {
-            rgba.push_back(static_cast<std::uint8_t>(200 - x * 9));
-            rgba.push_back(static_cast<std::uint8_t>(40 + y * 13));
-            rgba.push_back(static_cast<std::uint8_t>(50 + (x + y) * 6));
-            rgba.push_back(static_cast<std::uint8_t>(16 + x * 17 + y * 3));
+            rgba.add(static_cast<std::uint8_t>(200 - x * 9));
+            rgba.add(static_cast<std::uint8_t>(40 + y * 13));
+            rgba.add(static_cast<std::uint8_t>(50 + (x + y) * 6));
+            rgba.add(static_cast<std::uint8_t>(16 + x * 17 + y * 3));
         }
     }
     return Image(width, height, std::move(rgba));
@@ -64,6 +64,7 @@ auto tConstructsZeroFilled = test("Image/constructsZeroFilledAndTransparent") = 
     auto image = Image(4, 3);
 
     check(image.isValid());
+    check(static_cast<bool>(image));
     check(image.width() == 4);
     check(image.height() == 3);
     check(image.pixels().size() == 4 * 3 * 4);
@@ -71,12 +72,13 @@ auto tConstructsZeroFilled = test("Image/constructsZeroFilledAndTransparent") = 
     check(image.at(3, 2).r == 0.f);
 };
 
-auto tDefaultImageIsEmpty = test("Image/defaultConstructedIsEmptyAndInvalid") = []
+auto tDefaultImageIsInvalid = test("Image/defaultConstructedIsEmptyAndInvalid") = []
 {
     auto image = Image {};
 
     check(image.isEmpty());
     check(!image.isValid());
+    check(!image);
     check(image.width() == 0);
     check(image.height() == 0);
 };
@@ -112,7 +114,7 @@ auto tInvalidPixelBufferThrows = test("Image/explicitBufferSizeMismatchThrows") 
     auto threw = false;
     try
     {
-        auto bad = Image(2, 2, std::vector<std::uint8_t>(3, 0));
+        auto bad = Image(2, 2, ImageData(3));
         (void) bad;
     }
     catch (const std::invalid_argument&)
@@ -131,9 +133,9 @@ auto tPngRoundTripLossless = test("Image/pngRoundTripIsLossless") = []
 
     auto error = std::string {};
     auto decoded = Image::decode(png, &error);
-    check(decoded.has_value());
+    check(static_cast<bool>(decoded));
     check(error.empty());
-    check(*decoded == original);
+    check(decoded == original);
 };
 
 auto tPngRoundTripPreservesAlpha = test("Image/pngRoundTripPreservesAlpha") = []
@@ -141,11 +143,11 @@ auto tPngRoundTripPreservesAlpha = test("Image/pngRoundTripPreservesAlpha") = []
     auto original = makeTranslucentPattern(9, 7);
 
     auto decoded = Image::decode(original.toPng());
-    check(decoded.has_value());
+    check(static_cast<bool>(decoded));
     // PNG is lossless and decode must keep straight (non-premultiplied)
     // alpha, so the bytes survive exactly even for partially transparent
     // pixels.
-    check(*decoded == original);
+    check(decoded == original);
 };
 
 auto tNegativeDimensionsThrow = test("Image/negativeDimensionsThrow") = []
@@ -165,7 +167,7 @@ auto tNegativeDimensionsThrow = test("Image/negativeDimensionsThrow") = []
     auto bufferThrew = false;
     try
     {
-        auto bad = Image(-1, 4, std::vector<std::uint8_t> {});
+        auto bad = Image(-1, 4, ImageData {});
         (void) bad;
     }
     catch (const std::invalid_argument&)
@@ -185,10 +187,10 @@ auto tEncodeFormatDetected = test("Image/decodeAutoDetectsPngAndJpeg") = []
     auto fromPng = Image::decode(png);
     auto fromJpeg = Image::decode(jpeg);
 
-    check(fromPng.has_value());
-    check(fromJpeg.has_value());
-    check(fromPng->width() == 6 && fromPng->height() == 6);
-    check(fromJpeg->width() == 6 && fromJpeg->height() == 6);
+    check(static_cast<bool>(fromPng));
+    check(static_cast<bool>(fromJpeg));
+    check(fromPng.width() == 6 && fromPng.height() == 6);
+    check(fromJpeg.width() == 6 && fromJpeg.height() == 6);
 };
 
 auto tJpegPreservesDimensions = test("Image/jpegRoundTripPreservesDimensions") = []
@@ -196,10 +198,10 @@ auto tJpegPreservesDimensions = test("Image/jpegRoundTripPreservesDimensions") =
     auto original = makeOpaquePattern(16, 9);
 
     auto decoded = Image::decode(original.toJpeg(0.9f));
-    check(decoded.has_value());
-    check(decoded->isValid());
-    check(decoded->width() == 16);
-    check(decoded->height() == 9);
+    check(static_cast<bool>(decoded));
+    check(decoded.isValid());
+    check(decoded.width() == 16);
+    check(decoded.height() == 9);
 };
 
 auto tEqualitySemantics = test("Image/equalitySemantics") = []
@@ -225,8 +227,8 @@ auto tSaveLoadPngRoundTrips = test("Image/saveAndLoadPngRoundTrips") = []
     check(std::filesystem::exists(path));
 
     auto loaded = Image::load(path);
-    check(loaded.has_value());
-    check(*loaded == original);
+    check(static_cast<bool>(loaded));
+    check(loaded == original);
 
     std::filesystem::remove(path);
 };
@@ -240,8 +242,8 @@ auto tSaveInfersJpegFromExtension = test("Image/saveInfersJpegFromExtension") = 
     check(std::filesystem::exists(path));
 
     auto loaded = Image::load(path);
-    check(loaded.has_value());
-    check(loaded->width() == 12 && loaded->height() == 8);
+    check(static_cast<bool>(loaded));
+    check(loaded.width() == 12 && loaded.height() == 8);
 
     std::filesystem::remove(path);
 };
@@ -261,28 +263,29 @@ auto tSaveUnknownExtensionThrows = test("Image/saveUnknownExtensionThrows") = []
     check(threw);
 };
 
-auto tDecodeGarbageReturnsNullopt = test("Image/decodeGarbageReturnsNullopt") = []
+auto tDecodeGarbageReturnsInvalid = test("Image/decodeGarbageReturnsInvalid") = []
 {
     const char garbage[] = "this is definitely not an image file";
-    auto bytes = std::vector<std::uint8_t>(std::begin(garbage), std::end(garbage));
 
     auto error = std::string {};
-    auto decoded = Image::decode(bytes, &error);
-    check(!decoded.has_value());
+    auto decoded = Image::decode(reinterpret_cast<const std::uint8_t*>(garbage),
+                                 static_cast<int>(sizeof(garbage) - 1),
+                                 &error);
+    check(!decoded);
     check(!error.empty());
 };
 
-auto tDecodeEmptyReturnsNullopt = test("Image/decodeEmptyReturnsNullopt") = []
+auto tDecodeEmptyReturnsInvalid = test("Image/decodeEmptyReturnsInvalid") = []
 {
-    auto decoded = Image::decode(std::vector<std::uint8_t> {});
-    check(!decoded.has_value());
+    auto decoded = Image::decode(ImageData {});
+    check(!decoded);
 };
 
-auto tLoadMissingFileReturnsNullopt =
-    test("Image/loadMissingFileReturnsNullopt") = []
+auto tLoadMissingFileReturnsInvalid =
+    test("Image/loadMissingFileReturnsInvalid") = []
 {
     auto error = std::string {};
     auto loaded = Image::load(tempPath("eacp-image-does-not-exist.png"), &error);
-    check(!loaded.has_value());
+    check(!loaded);
     check(!error.empty());
 };

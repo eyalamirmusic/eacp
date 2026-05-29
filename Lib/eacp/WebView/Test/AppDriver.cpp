@@ -543,12 +543,13 @@ ScreenshotResult AppDriver::screenshot(const ScreenshotOptions& options)
     auto bytes = runSnapshotBytes(callOpts);
 
     auto error = std::string {};
-    auto image = Graphics::Image::decode(bytes, &error);
+    auto image = Graphics::Image::decode(
+        bytes.data(), static_cast<int>(bytes.size()), &error);
     if (!image)
         throw std::runtime_error("AppDriver: failed to decode snapshot: " + error);
 
     auto result = ScreenshotResult {};
-    result.image = std::move(*image);
+    result.image = std::move(image);
 
     if (!options.path.empty())
     {

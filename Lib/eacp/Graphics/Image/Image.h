@@ -2,14 +2,17 @@
 
 #include <eacp/Graphics/Primitives/Primitives.h>
 
+#include <ea_data_structures/Structures/Vector.h>
+
 #include <cstdint>
 #include <filesystem>
-#include <optional>
 #include <string>
-#include <vector>
 
 namespace eacp::Graphics
 {
+
+// Tightly packed 8-bit RGBA pixel storage (R,G,B,A per pixel).
+using ImageData = EA::Vector<std::uint8_t>;
 
 enum class ImageFormat
 {
@@ -22,12 +25,12 @@ enum class ImageFormat
 // (non-premultiplied) alpha. Decode from / encode to PNG or JPEG via
 // the platform image codecs (ImageIO on Apple, WIC on Windows).
 //
-// Pixel access never throws and decoding untrusted bytes returns
-// std::nullopt on malformed input. The size/dimension constructors throw
-// std::invalid_argument on a negative dimension or a pixel buffer whose
-// length does not match width * height * 4. Encoding a valid image and
-// writing to disk throw std::runtime_error on failure, since a valid
-// image is always encodable.
+// Pixel access never throws. decode()/load() report failure by returning
+// an invalid image (operator bool / isValid() is false), setting *error
+// when provided. The size/dimension constructors throw std::invalid_argument
+// on a negative dimension or a pixel buffer whose length does not match
+// width * height * 4. Encoding a valid image and writing to disk throw
+// std::runtime_error on failure, since a valid image is always encodable.
 class Image
 {
 public:
@@ -38,27 +41,29 @@ public:
 
     // Adopts an existing RGBA buffer. Throws std::invalid_argument if
     // pixels.size() != width * height * 4.
-    Image(int widthToUse, int heightToUse, std::vector<std::uint8_t> pixelsToUse);
+    Image(int widthToUse, int heightToUse, ImageData pixelsToUse);
 
-    // Decode PNG or JPEG; the format is detected from the byte
-    // signature by the platform codec. Returns std::nullopt on
-    // malformed or unsupported input, setting *error when provided.
-    static std::optional<Image> decode(const std::uint8_t* data,
-                                       std::size_t size,
-                                       std::string* error = nullptr);
-    static std::optional<Image> decode(const std::vector<std::uint8_t>& bytes,
-                                       std::string* error = nullptr);
+    // Decode PNG or JPEG; the format is detected from the byte signature
+    // by the platform codec. On malformed or unsupported input returns an
+    // invalid image (see operator bool), setting *error when provided.
+    static Image
+        decode(const std::uint8_t* data, int size, std::string* error = nullptr);
+    static Image decode(const ImageData& bytes, std::string* error = nullptr);
 
-    // Read a file and decode it. Returns std::nullopt if the file
+    // Read a file and decode it. Returns an invalid image if the file
     // cannot be read or its contents do not decode.
-    static std::optional<Image> load(const std::filesystem::path& path,
-                                     std::string* error = nullptr);
+    static Image load(const std::filesystem::path& path,
+                      std::string* error = nullptr);
 
     bool isValid() const;
     bool isEmpty() const;
+
+    // True when the image holds valid pixels; mirrors isValid().
+    explicit operator bool() const;
+
     int width() const;
     int height() const;
-    const std::vector<std::uint8_t>& pixels() const;
+    const ImageData& pixels() const;
 
     // (x, y) from the top-left. Out-of-range reads return transparent
     // black; out-of-range writes are ignored.
@@ -68,9 +73,9 @@ public:
     // Encode into an in-memory buffer. quality (0..1) applies to JPEG
     // only and is ignored for PNG. Throws std::runtime_error on an
     // empty/invalid image or codec failure.
-    std::vector<std::uint8_t> encode(ImageFormat format, float quality = 0.9f) const;
-    std::vector<std::uint8_t> toPng() const;
-    std::vector<std::uint8_t> toJpeg(float quality = 0.9f) const;
+    ImageData encode(ImageFormat format, float quality = 0.9f) const;
+    ImageData toPng() const;
+    ImageData toJpeg(float quality = 0.9f) const;
 
     // Encode and write to disk. The single-argument form infers the
     // format from the path extension (.png / .jpg / .jpeg). Creates
@@ -88,7 +93,7 @@ public:
 private:
     int w = 0;
     int h = 0;
-    std::vector<std::uint8_t> rgba;
+    ImageData rgba;
 };
 
 } // namespace eacp::Graphics

@@ -1,12 +1,14 @@
 #include "Image.h"
 
 #include "ImageCodec.h"
+#include <eacp/Core/Utils/Strings.h>
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <ios>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -21,32 +23,33 @@ std::uint8_t toByte(float value)
     return static_cast<std::uint8_t>(scaled);
 }
 
-std::size_t pixelCount(int width, int height)
-{
-    return static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4;
-}
-
-std::size_t validatedPixelCount(int width, int height)
+// Byte count for the given dimensions, or -1 when they are negative or
+// the result would overflow an int (ImageData is int-sized).
+int byteCountFor(int width, int height)
 {
     if (width < 0 || height < 0)
-        throw std::invalid_argument("Image: width and height must be non-negative");
-    return pixelCount(width, height);
+        return -1;
+
+    constexpr auto maxPixels = std::numeric_limits<int>::max() / 4;
+    if (width != 0 && height > maxPixels / width)
+        return -1;
+
+    return width * height * 4;
 }
 
-std::string lowerExtension(const std::filesystem::path& path)
+int validatedByteCount(int width, int height)
 {
-    auto ext = path.extension().string();
-    std::transform(ext.begin(),
-                   ext.end(),
-                   ext.begin(),
-                   [](unsigned char c)
-                   { return static_cast<char>(std::tolower(c)); });
-    return ext;
+    auto bytes = byteCountFor(width, height);
+    if (bytes < 0)
+        throw std::invalid_argument(
+            "Image: dimensions are negative or exceed the maximum buffer size");
+
+    return bytes;
 }
 
 ImageFormat formatFromExtension(const std::filesystem::path& path)
 {
-    auto ext = lowerExtension(path);
+    auto ext = Strings::toLower(path.extension().string());
     if (ext == ".png")
         return ImageFormat::png;
     if (ext == ".jpg" || ext == ".jpeg")
@@ -56,8 +59,7 @@ ImageFormat formatFromExtension(const std::filesystem::path& path)
                              + ext + "' (supported: .png, .jpg, .jpeg)");
 }
 
-std::vector<std::uint8_t> readFileBytes(const std::filesystem::path& path,
-                                        std::string& error)
+ImageData readFileBytes(const std::filesystem::path& path, std::string& error)
 {
     auto file = std::ifstream {path, std::ios::binary | std::ios::ate};
     if (!file)
@@ -73,11 +75,17 @@ std::vector<std::uint8_t> readFileBytes(const std::filesystem::path& path,
         return {};
     }
 
-    auto bytes = std::vector<std::uint8_t>(static_cast<std::size_t>(size));
+    auto offset = static_cast<std::streamoff>(size);
+    if (offset > static_cast<std::streamoff>(std::numeric_limits<int>::max()))
+    {
+        error = "'" + path.string() + "' is too large to load";
+        return {};
+    }
+
+    auto bytes = ImageData(static_cast<int>(offset));
     file.seekg(0);
-    file.read(reinterpret_cast<char*>(bytes.data()),
-              static_cast<std::streamsize>(bytes.size()));
-    if (file.bad() || file.gcount() != static_cast<std::streamsize>(bytes.size()))
+    file.read(reinterpret_cast<char*>(bytes.data()), bytes.size());
+    if (file.bad() || file.gcount() != bytes.size())
     {
         error = "failed to read '" + path.string() + "'";
         return {};
@@ -90,43 +98,36 @@ std::vector<std::uint8_t> readFileBytes(const std::filesystem::path& path,
 Image::Image(int widthToUse, int heightToUse)
     : w(widthToUse)
     , h(heightToUse)
-    , rgba(validatedPixelCount(widthToUse, heightToUse), 0)
+    , rgba(validatedByteCount(widthToUse, heightToUse))
 {
 }
 
-Image::Image(int widthToUse, int heightToUse, std::vector<std::uint8_t> pixelsToUse)
+Image::Image(int widthToUse, int heightToUse, ImageData pixelsToUse)
     : w(widthToUse)
     , h(heightToUse)
     , rgba(std::move(pixelsToUse))
 {
-    if (rgba.size() != validatedPixelCount(w, h))
+    if (rgba.size() != validatedByteCount(w, h))
         throw std::invalid_argument("Image: pixel buffer size does not match "
                                     "width * height * 4");
 }
 
-std::optional<Image>
-    Image::decode(const std::uint8_t* data, std::size_t size, std::string* error)
+Image Image::decode(const std::uint8_t* data, int size, std::string* error)
 {
     auto err = std::string {};
-    auto decoded = detail::decodeImageBytes(data, size, err);
-    if (!decoded)
-    {
-        if (error != nullptr)
-            *error = err;
-        return std::nullopt;
-    }
+    auto image = detail::decodeImageBytes(data, size, err);
+    if (!image && error != nullptr)
+        *error = err;
 
-    return Image(decoded->width, decoded->height, std::move(decoded->rgba));
+    return image;
 }
 
-std::optional<Image> Image::decode(const std::vector<std::uint8_t>& bytes,
-                                   std::string* error)
+Image Image::decode(const ImageData& bytes, std::string* error)
 {
     return decode(bytes.data(), bytes.size(), error);
 }
 
-std::optional<Image> Image::load(const std::filesystem::path& path,
-                                 std::string* error)
+Image Image::load(const std::filesystem::path& path, std::string* error)
 {
     auto err = std::string {};
     auto bytes = readFileBytes(path, err);
@@ -134,7 +135,7 @@ std::optional<Image> Image::load(const std::filesystem::path& path,
     {
         if (error != nullptr)
             *error = err;
-        return std::nullopt;
+        return {};
     }
 
     return decode(bytes, error);
@@ -142,12 +143,18 @@ std::optional<Image> Image::load(const std::filesystem::path& path,
 
 bool Image::isValid() const
 {
-    return w > 0 && h > 0 && rgba.size() == pixelCount(w, h);
+    auto bytes = byteCountFor(w, h);
+    return bytes > 0 && rgba.size() == bytes;
 }
 
 bool Image::isEmpty() const
 {
     return rgba.empty();
+}
+
+Image::operator bool() const
+{
+    return isValid();
 }
 
 int Image::width() const
@@ -160,7 +167,7 @@ int Image::height() const
     return h;
 }
 
-const std::vector<std::uint8_t>& Image::pixels() const
+const ImageData& Image::pixels() const
 {
     return rgba;
 }
@@ -170,13 +177,12 @@ Color Image::at(int x, int y) const
     if (x < 0 || y < 0 || x >= w || y >= h)
         return {0.f, 0.f, 0.f, 0.f};
 
-    auto i = (static_cast<std::size_t>(y) * static_cast<std::size_t>(w)
-              + static_cast<std::size_t>(x))
-             * 4;
-    return {static_cast<float>(rgba[i]) / 255.f,
-            static_cast<float>(rgba[i + 1]) / 255.f,
-            static_cast<float>(rgba[i + 2]) / 255.f,
-            static_cast<float>(rgba[i + 3]) / 255.f};
+    auto i = (y * w + x) * 4;
+    const auto* p = rgba.data();
+    return {static_cast<float>(p[i]) / 255.f,
+            static_cast<float>(p[i + 1]) / 255.f,
+            static_cast<float>(p[i + 2]) / 255.f,
+            static_cast<float>(p[i + 3]) / 255.f};
 }
 
 void Image::set(int x, int y, const Color& color)
@@ -184,16 +190,15 @@ void Image::set(int x, int y, const Color& color)
     if (x < 0 || y < 0 || x >= w || y >= h)
         return;
 
-    auto i = (static_cast<std::size_t>(y) * static_cast<std::size_t>(w)
-              + static_cast<std::size_t>(x))
-             * 4;
-    rgba[i] = toByte(color.r);
-    rgba[i + 1] = toByte(color.g);
-    rgba[i + 2] = toByte(color.b);
-    rgba[i + 3] = toByte(color.a);
+    auto i = (y * w + x) * 4;
+    auto* p = rgba.data();
+    p[i] = toByte(color.r);
+    p[i + 1] = toByte(color.g);
+    p[i + 2] = toByte(color.b);
+    p[i + 3] = toByte(color.a);
 }
 
-std::vector<std::uint8_t> Image::encode(ImageFormat format, float quality) const
+ImageData Image::encode(ImageFormat format, float quality) const
 {
     if (!isValid())
         throw std::runtime_error("Image::encode: image is empty or invalid");
@@ -207,12 +212,12 @@ std::vector<std::uint8_t> Image::encode(ImageFormat format, float quality) const
     return bytes;
 }
 
-std::vector<std::uint8_t> Image::toPng() const
+ImageData Image::toPng() const
 {
     return encode(ImageFormat::png);
 }
 
-std::vector<std::uint8_t> Image::toJpeg(float quality) const
+ImageData Image::toJpeg(float quality) const
 {
     return encode(ImageFormat::jpeg, quality);
 }
@@ -236,8 +241,7 @@ void Image::save(const std::filesystem::path& path,
         throw std::runtime_error("Image::save: failed to open '" + path.string()
                                  + "' for writing");
 
-    file.write(reinterpret_cast<const char*>(bytes.data()),
-               static_cast<std::streamsize>(bytes.size()));
+    file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
     if (!file)
         throw std::runtime_error("Image::save: short write to '" + path.string()
                                  + "'");
