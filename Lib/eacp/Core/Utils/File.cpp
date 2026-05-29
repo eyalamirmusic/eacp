@@ -33,7 +33,7 @@ bool File::isUnder(const std::filesystem::path& root) const
 
     // A path that escapes the root resolves to a relative path starting with
     // "..". Anything else (including ".") is contained.
-    return rel.native().rfind("..", 0) != 0;
+    return rel.generic_string().rfind("..", 0) != 0;
 }
 
 std::uint64_t File::size() const

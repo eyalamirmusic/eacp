@@ -245,7 +245,16 @@ std::string fileURLToPath(std::string_view url)
     if (slash == std::string_view::npos)
         return {};
 
-    return percentDecode(rest.substr(slash));
+    auto decoded = percentDecode(rest.substr(slash));
+
+    // A Windows drive path arrives as "/C:/dir/file"; drop the leading slash
+    // so it parses as the native "C:/dir/file". POSIX paths ("/var/...") have
+    // no drive letter and are left untouched.
+    if (decoded.size() >= 3 && decoded[0] == '/'
+        && std::isalpha(static_cast<unsigned char>(decoded[1])) && decoded[2] == ':')
+        decoded.erase(0, 1);
+
+    return decoded;
 }
 
 FileProvider fromResEmbed(std::string category)

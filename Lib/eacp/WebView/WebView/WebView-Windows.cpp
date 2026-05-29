@@ -1,6 +1,7 @@
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "WebView.h"
+#include "StreamingRange.h"
 #include <eacp/Graphics/Helpers/StringUtils-Windows.h>
 
 #include <algorithm>
@@ -146,6 +147,129 @@ std::string unwrapJsonString(const std::string& raw)
 
     return out;
 }
+
+// A read-only IStream over a bounded byte range of a StreamingResource.
+// WebView2 pulls the response body from this stream, so bytes are fetched
+// lazily through ResourceReader::read instead of buffering the whole resource
+// up front. The stream owns the resource, so its reader (e.g. an open file)
+// stays alive exactly as long as WebView2 keeps reading.
+class ReaderStream
+    : public Microsoft::WRL::RuntimeClass<
+          Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
+          IStream>
+{
+public:
+    ReaderStream(StreamingResource resourceToUse,
+                 RangeSize startToUse,
+                 RangeSize lengthToUse)
+        : resource(std::move(resourceToUse))
+        , base(startToUse)
+        , length(lengthToUse)
+    {
+    }
+
+    HRESULT STDMETHODCALLTYPE Read(void* out, ULONG count, ULONG* readOut) override
+    {
+        auto want = std::min(static_cast<RangeSize>(count), length - position);
+        auto got = ULONG {0};
+
+        if (want > 0 && resource.read)
+            got = static_cast<ULONG>(
+                resource.read(base + position,
+                              ByteSpan {static_cast<std::uint8_t*>(out),
+                                        static_cast<std::size_t>(want)}));
+
+        position += got;
+
+        if (readOut)
+            *readOut = got;
+
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE Write(const void*, ULONG, ULONG*) override
+    {
+        return STG_E_ACCESSDENIED;
+    }
+
+    HRESULT STDMETHODCALLTYPE Seek(LARGE_INTEGER move,
+                                   DWORD origin,
+                                   ULARGE_INTEGER* newPosition) override
+    {
+        auto target = RangeSize {0};
+
+        switch (origin)
+        {
+            case STREAM_SEEK_SET:
+                target = static_cast<RangeSize>(move.QuadPart);
+                break;
+            case STREAM_SEEK_CUR:
+                target = position + static_cast<RangeSize>(move.QuadPart);
+                break;
+            case STREAM_SEEK_END:
+                target = length + static_cast<RangeSize>(move.QuadPart);
+                break;
+            default:
+                return STG_E_INVALIDFUNCTION;
+        }
+
+        position = std::min(target, length);
+
+        if (newPosition)
+            newPosition->QuadPart = position;
+
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE Stat(STATSTG* stat, DWORD) override
+    {
+        if (!stat)
+            return STG_E_INVALIDPOINTER;
+
+        *stat = STATSTG {};
+        stat->type = STGTY_STREAM;
+        stat->cbSize.QuadPart = length;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE SetSize(ULARGE_INTEGER) override
+    {
+        return STG_E_INVALIDFUNCTION;
+    }
+
+    HRESULT STDMETHODCALLTYPE CopyTo(IStream*,
+                                     ULARGE_INTEGER,
+                                     ULARGE_INTEGER*,
+                                     ULARGE_INTEGER*) override
+    {
+        return E_NOTIMPL;
+    }
+
+    HRESULT STDMETHODCALLTYPE Commit(DWORD) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE Revert() override { return S_OK; }
+
+    HRESULT STDMETHODCALLTYPE LockRegion(ULARGE_INTEGER,
+                                         ULARGE_INTEGER,
+                                         DWORD) override
+    {
+        return STG_E_INVALIDFUNCTION;
+    }
+
+    HRESULT STDMETHODCALLTYPE UnlockRegion(ULARGE_INTEGER,
+                                           ULARGE_INTEGER,
+                                           DWORD) override
+    {
+        return STG_E_INVALIDFUNCTION;
+    }
+
+    HRESULT STDMETHODCALLTYPE Clone(IStream**) override { return E_NOTIMPL; }
+
+private:
+    StreamingResource resource;
+    RangeSize base = 0;
+    RangeSize length = 0;
+    RangeSize position = 0;
+};
 } // namespace
 
 struct WebView::Native
@@ -321,9 +445,10 @@ struct WebView::Native
 
         auto registrations =
             std::vector<Microsoft::WRL::ComPtr<ICoreWebView2CustomSchemeRegistration>> {};
-        registrations.reserve(options.schemes.size());
+        registrations.reserve(options.schemes.size()
+                              + options.streamingSchemes.size());
 
-        for (auto& [scheme, _]: options.schemes)
+        auto addRegistration = [&](const std::string& scheme)
         {
             auto wide = toWideString(scheme);
             auto registration =
@@ -334,7 +459,12 @@ struct WebView::Native
             registration->put_HasAuthorityComponent(TRUE);
 
             registrations.push_back(registration);
-        }
+        };
+
+        for (auto& [scheme, _]: options.schemes)
+            addRegistration(scheme);
+        for (auto& [scheme, _]: options.streamingSchemes)
+            addRegistration(scheme);
 
         if (!registrations.empty())
         {
@@ -364,24 +494,18 @@ struct WebView::Native
 
     void registerSchemeHandlers()
     {
-        if (!webView || options.schemes.empty())
+        if (!webView
+            || (options.schemes.empty() && options.streamingSchemes.empty()))
             return;
 
-        // Stable owner for the per-scheme provider table. The
-        // WebResourceRequested callback captures `this`, looks the
-        // request URL's scheme up here, and dispatches to the matching
-        // ResourceProvider.
+        // Stable owners for the per-scheme provider tables. The
+        // WebResourceRequested callback captures `this`, looks the request
+        // URL's scheme up here, and dispatches to the matching provider --
+        // a one-shot ResourceProvider or a chunked StreamingProvider.
         for (auto& [scheme, provider]: options.schemes)
             schemeProviders.emplace(scheme, provider);
-
-        // TODO(streaming): wire up options.streamingSchemes here. macOS/iOS
-        // serve these by pulling the body through StreamingResource::read in
-        // bounded chunks and answering Range requests with 206. The Windows
-        // equivalent is a lazy file-backed IStream handed to
-        // CreateWebResourceResponse (instead of SHCreateMemStream over a full
-        // buffer), plus parsing the request's Range header (request->
-        // get_Headers()) to emit 206 + Content-Range. Until then, streaming
-        // schemes are unavailable on Windows.
+        for (auto& [scheme, provider]: options.streamingSchemes)
+            streamingProviders.emplace(scheme, provider);
 
         webView->add_WebResourceRequested(
             Microsoft::WRL::Callback<
@@ -395,18 +519,21 @@ struct WebView::Native
         // AddWebResourceRequestedFilter only intercepts URLs that match
         // the filter pattern. Use "scheme://*" so every path under the
         // scheme reaches our handler.
-        for (auto& [scheme, _]: options.schemes)
+        auto addFilter = [&](const std::string& scheme)
         {
             auto pattern = toWideString(scheme + "://*");
             auto hr = webView->AddWebResourceRequestedFilter(
                 pattern.c_str(), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
 
             if (FAILED(hr))
-            {
-                LOG("WebView2: AddWebResourceRequestedFilter('"
-                    + scheme + "://*') failed hr=0x" + hresultHex(hr));
-            }
-        }
+                LOG("WebView2: AddWebResourceRequestedFilter('" + scheme
+                    + "://*') failed hr=0x" + hresultHex(hr));
+        };
+
+        for (auto& [scheme, _]: options.schemes)
+            addFilter(scheme);
+        for (auto& [scheme, _]: options.streamingSchemes)
+            addFilter(scheme);
     }
 
     HRESULT
@@ -429,6 +556,12 @@ struct WebView::Native
             return S_OK;
 
         auto scheme = url.substr(0, schemeEnd);
+
+        if (auto streamIt = streamingProviders.find(scheme);
+            streamIt != streamingProviders.end() && streamIt->second)
+            return handleStreamingRequest(args, request.Get(), url,
+                                          streamIt->second);
+
         auto it = schemeProviders.find(scheme);
         if (it == schemeProviders.end() || !it->second)
             return S_OK;
@@ -478,6 +611,113 @@ struct WebView::Native
         }
 
         return S_OK;
+    }
+
+    // Serves a custom-scheme request from a StreamingProvider: resolves the
+    // request's Range header against the resource size and answers 200 / 206 /
+    // 416 with the matching Accept-Ranges / Content-Range / Content-Length
+    // headers, streaming the body lazily through a ReaderStream. Mirrors the
+    // macOS WKURLSchemeTask streaming path.
+    HRESULT handleStreamingRequest(ICoreWebView2WebResourceRequestedEventArgs* args,
+                                   ICoreWebView2WebResourceRequest* request,
+                                   const std::string& url,
+                                   const StreamingProvider& provider)
+    {
+        auto resource = provider(url);
+        ComPtr<ICoreWebView2WebResourceResponse> webResponse;
+
+        if (!resource)
+        {
+            environment->CreateWebResourceResponse(
+                nullptr,
+                404,
+                L"Not Found",
+                L"Content-Type: text/plain; charset=utf-8",
+                &webResponse);
+            args->put_Response(webResponse.Get());
+            return S_OK;
+        }
+
+        auto resolved =
+            resolveRangeHeader(readRequestHeader(request, L"Range"), resource->size);
+        auto served = resolved.served;
+
+        // CORS bypass mirrors the one-shot handler: WebView2 enforces
+        // cross-origin rules on our own scheme, so fetch() needs an explicit
+        // allow-origin header.
+        auto headers =
+            std::wstring {L"Content-Type: "} + toWideString(resource->mimeType)
+            + L"\r\nAccess-Control-Allow-Origin: *" + L"\r\nAccept-Ranges: bytes";
+
+        auto statusCode = resource->statusCode;
+
+        if (resolved.kind == RangeRequest::Unsatisfiable)
+        {
+            statusCode = 416;
+            headers +=
+                L"\r\nContent-Range: bytes */" + std::to_wstring(resource->size);
+        }
+        else
+        {
+            if (resolved.kind == RangeRequest::Partial)
+            {
+                statusCode = 206;
+                headers += L"\r\nContent-Range: "
+                           + toWideString(contentRangeValue(served, resource->size));
+            }
+
+            headers += L"\r\nContent-Length: " + std::to_wstring(served.length);
+        }
+
+        ComPtr<IStream> body;
+        if (statusCode != 416 && !served.empty())
+            body = Microsoft::WRL::Make<ReaderStream>(
+                std::move(*resource), served.start, served.length);
+
+        if (SUCCEEDED(
+                environment->CreateWebResourceResponse(body.Get(),
+                                                       statusCode,
+                                                       statusReason(statusCode),
+                                                       headers.c_str(),
+                                                       &webResponse)))
+        {
+            args->put_Response(webResponse.Get());
+        }
+
+        return S_OK;
+    }
+
+    static std::string readRequestHeader(ICoreWebView2WebResourceRequest* request,
+                                         LPCWSTR name)
+    {
+        ComPtr<ICoreWebView2HttpRequestHeaders> headers;
+        if (FAILED(request->get_Headers(&headers)) || !headers)
+            return {};
+
+        BOOL has = FALSE;
+        if (FAILED(headers->Contains(name, &has)) || !has)
+            return {};
+
+        CoTaskMemString value;
+        if (FAILED(headers->GetHeader(name, &value)) || !value)
+            return {};
+
+        return value.toString();
+    }
+
+    static LPCWSTR statusReason(int statusCode)
+    {
+        switch (statusCode)
+        {
+            case 200:
+                return L"OK";
+            case 206:
+                return L"Partial Content";
+            case 416:
+                return L"Range Not Satisfiable";
+            default:
+                return L"OK";
+        }
     }
 
     void applySettings()
@@ -734,6 +974,7 @@ struct WebView::Native
     ComPtr<ICoreWebView2> webView;
     MessageHandlerMap messageHandlers;
     std::unordered_map<std::string, ResourceProvider> schemeProviders;
+    std::unordered_map<std::string, StreamingProvider> streamingProviders;
 
     bool initialized = false;
     bool initInProgress = false;
@@ -987,10 +1228,22 @@ void WebView::addScriptMessageHandler(
 {
     impl->messageHandlers[name] = std::move(handler);
 
-    auto script = toWideString("window." + name
-                               + " = { postMessage: function(msg) { "
-                                 "window.chrome.webview.postMessage({name: '"
-                               + name + "', body: msg}); } };");
+    // Expose the handler under both the plain `window.<name>` form and the
+    // WebKit `window.webkit.messageHandlers.<name>` form. macOS only offers the
+    // latter, so mirroring it here lets the same page code post messages on
+    // both platforms without branching.
+    auto script = toWideString(
+        "(function(){var send=function(msg){window.chrome.webview.postMessage("
+        "{name:'"
+        + name
+        + "',body:msg});};"
+          "window."
+        + name
+        + "={postMessage:send};"
+          "window.webkit=window.webkit||{};"
+          "window.webkit.messageHandlers=window.webkit.messageHandlers||{};"
+          "window.webkit.messageHandlers."
+        + name + "={postMessage:send};})();");
 
     impl->ensureInitialized();
     impl->queueDocStartScript(std::move(script));
