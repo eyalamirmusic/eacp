@@ -1,0 +1,172 @@
+#include "ConnectionInternal.h"
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#include <string>
+
+namespace eacp::TCP::detail
+{
+namespace
+{
+// Winsock must stay initialised for the whole life of any socket, so unlike
+// the per-call guards elsewhere this is a process-lifetime singleton.
+void ensureWinsockInitialized()
+{
+    static auto started = []
+    {
+        auto data = WSADATA {};
+        return WSAStartup(MAKEWORD(2, 2), &data) == 0;
+    }();
+    (void) started;
+}
+
+[[noreturn]] void throwLastError(const std::string& context)
+{
+    throw Error(context + ": Winsock error " + std::to_string(WSAGetLastError()));
+}
+
+void setNonBlocking(SOCKET socket, bool enabled)
+{
+    auto mode = (u_long) (enabled ? 1 : 0);
+    ::ioctlsocket(socket, FIONBIO, &mode);
+}
+
+bool waitWritable(SOCKET socket, std::chrono::milliseconds timeout)
+{
+    auto writable = fd_set {};
+    FD_ZERO(&writable);
+    FD_SET(socket, &writable);
+
+    auto tv = timeval {};
+    tv.tv_sec = (long) (timeout.count() / 1000);
+    tv.tv_usec = (long) ((timeout.count() % 1000) * 1000);
+
+    return ::select(0, nullptr, &writable, nullptr, &tv) > 0;
+}
+
+int pendingSocketError(SOCKET socket)
+{
+    auto error = 0;
+    auto length = (int) sizeof(error);
+    if (::getsockopt(socket, SOL_SOCKET, SO_ERROR, (char*) &error, &length) < 0)
+        return WSAGetLastError();
+    return error;
+}
+
+void armTimeouts(SOCKET socket, std::chrono::milliseconds ioTimeout)
+{
+    auto millis = (DWORD) ioTimeout.count();
+    ::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*) &millis,
+                 sizeof(millis));
+    ::setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, (const char*) &millis,
+                 sizeof(millis));
+}
+
+// Connects a single resolved address. Returns a ready socket, or
+// INVALID_SOCKET with why filled in so the caller can report the last
+// failure across candidates.
+SOCKET tryConnect(const addrinfo& candidate,
+                  std::chrono::milliseconds connectTimeout,
+                  std::chrono::milliseconds ioTimeout,
+                  std::string& why)
+{
+    auto socket =
+        ::socket(candidate.ai_family, candidate.ai_socktype, candidate.ai_protocol);
+    if (socket == INVALID_SOCKET)
+    {
+        why = "socket() failed";
+        return INVALID_SOCKET;
+    }
+
+    setNonBlocking(socket, true);
+    auto result =
+        ::connect(socket, candidate.ai_addr, (int) candidate.ai_addrlen);
+
+    if (result != 0)
+    {
+        if (WSAGetLastError() != WSAEWOULDBLOCK)
+        {
+            why = "connect failed";
+            ::closesocket(socket);
+            return INVALID_SOCKET;
+        }
+
+        if (! waitWritable(socket, connectTimeout))
+        {
+            why = "connect timed out";
+            ::closesocket(socket);
+            return INVALID_SOCKET;
+        }
+
+        if (pendingSocketError(socket) != 0)
+        {
+            why = "connect failed";
+            ::closesocket(socket);
+            return INVALID_SOCKET;
+        }
+    }
+
+    setNonBlocking(socket, false);
+    armTimeouts(socket, ioTimeout);
+    return socket;
+}
+
+bool timedOut() { return WSAGetLastError() == WSAETIMEDOUT; }
+} // namespace
+
+NativeSocket socketConnect(const Address& address,
+                           std::chrono::milliseconds connectTimeout,
+                           std::chrono::milliseconds ioTimeout)
+{
+    ensureWinsockInitialized();
+
+    auto hints = addrinfo {};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    auto port = std::to_string(address.port);
+    addrinfo* resolved = nullptr;
+    if (::getaddrinfo(address.host.c_str(), port.c_str(), &hints, &resolved) != 0)
+        throw Error("Couldn't resolve " + address.host + ": Winsock error "
+                    + std::to_string(WSAGetLastError()));
+
+    auto why = std::string {"no addresses resolved"};
+    for (auto candidate = resolved; candidate != nullptr;
+         candidate = candidate->ai_next)
+    {
+        auto socket = tryConnect(*candidate, connectTimeout, ioTimeout, why);
+        if (socket != INVALID_SOCKET)
+        {
+            ::freeaddrinfo(resolved);
+            return (NativeSocket) socket;
+        }
+    }
+
+    ::freeaddrinfo(resolved);
+    throw Error("Couldn't connect to " + address.host + ":" + port + ": " + why);
+}
+
+void socketClose(NativeSocket socket) noexcept
+{
+    if (socket != invalidSocket)
+        ::closesocket((SOCKET) socket);
+}
+
+std::size_t socketSend(NativeSocket socket, const char* data, std::size_t length)
+{
+    auto sent = ::send((SOCKET) socket, data, (int) length, 0);
+    if (sent == SOCKET_ERROR)
+        throwLastError(timedOut() ? "send timed out" : "send");
+    return (std::size_t) sent;
+}
+
+std::size_t socketReceive(NativeSocket socket, char* buffer, std::size_t length)
+{
+    auto received = ::recv((SOCKET) socket, buffer, (int) length, 0);
+    if (received == SOCKET_ERROR)
+        throwLastError(timedOut() ? "receive timed out" : "receive");
+    return (std::size_t) received;
+}
+
+} // namespace eacp::TCP::detail
