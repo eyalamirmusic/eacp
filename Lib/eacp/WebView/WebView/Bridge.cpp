@@ -139,7 +139,7 @@ void WebViewBridge::registerBuiltins()
     // and we arm the WebView so the next mouseDragged: starts the OS drag.
     using eacp::WebView::DraggableFileList;
 
-    auto arm = std::function<EmptyMessage(const DraggableFileList&)> {
+    auto arm = std::function<void(const DraggableFileList&)> {
         [this](const DraggableFileList& list)
         {
             auto paths = std::vector<std::string> {};
@@ -149,10 +149,9 @@ void WebViewBridge::registerBuiltins()
                 paths.push_back(file.path);
 
             webView.armFileDrag(paths);
-            return EmptyMessage {};
         }};
 
-    bridge.on<DraggableFileList, EmptyMessage>("armFileDrag", arm);
+    bridge.on<DraggableFileList>("armFileDrag", arm);
 }
 
 WebViewBridge::~WebViewBridge()
