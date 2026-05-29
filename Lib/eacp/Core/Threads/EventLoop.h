@@ -40,11 +40,11 @@ bool runEventLoopUntil(
     while (true)
     {
         auto now = std::chrono::steady_clock::now();
-        auto remaining =
-            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
-
-        if (remaining <= std::chrono::milliseconds(0))
+        if (now >= deadline)
             return ready();
+
+        auto remaining =
+            std::chrono::ceil<std::chrono::milliseconds>(deadline - now);
 
         runEventLoopFor(std::min(slice, remaining));
 
