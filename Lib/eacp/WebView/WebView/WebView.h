@@ -118,12 +118,6 @@ public:
         };
 
         std::unordered_map<std::string, ResourceProvider> schemes;
-
-        // Schemes streamed as byte ranges. The lib owns the protocol -- Range
-        // parsing, 200/206 with Accept-Ranges/Content-Length/Content-Range,
-        // reading each requested range off the main thread, and task lifecycle
-        // -- and asks the resolver only "what bytes back this URL?". It neither
-        // knows nor cares whether they come from disk, memory, or elsewhere.
         std::unordered_map<std::string, ByteSourceResolver> streamSchemes;
 
         Embedded embedded;
