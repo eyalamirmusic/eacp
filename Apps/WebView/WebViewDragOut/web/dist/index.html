@@ -146,7 +146,7 @@
                     const ids = selected.has(file.id) && selected.size > 0
                         ? [...selected]
                         : [file.id];
-                    window.eacp.armFileDrag(ids.join(','));
+                    window.eacpArmFileDrag(ids.join(','));
                     status.textContent = 'Armed ' + ids.length + ' file(s) — drag out…';
                 });
 

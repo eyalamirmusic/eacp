@@ -58,18 +58,23 @@ using MessageHandlerMap =
 namespace
 {
 // Script-message channel + injected JS for native file drag-out. Kept private
-// to the macOS TU; the page reaches it via `window.eacp.armFileDrag(...)`.
+// to the macOS TU; the page reaches it via `window.eacpArmFileDrag(...)`.
 //
-// Contract: the page calls armFileDrag from a `mousedown` handler to arm the
-// drag for the current gesture. The native side starts the actual drag from
-// the real mouseDragged: event once the pointer crosses the drag threshold.
-// The element must NOT be draggable="true" and must NOT use `dragstart` -- a
-// competing WebKit HTML5 drag would conflict with the native one.
+// The helper lives on its own global -- NOT under `window.eacp`, which is the
+// framework RPC bridge's namespace. The bridge bails out of its init if
+// `window.eacp` already exists (Bridge.cpp), so a document-start script that
+// pre-creates `window.eacp` would silently kill the bridge.
+//
+// Contract: the page calls eacpArmFileDrag from a `mousedown` handler to arm
+// the drag for the current gesture. The native side starts the actual drag
+// from the real mouseDragged: event once the pointer crosses the drag
+// threshold. The element must NOT be draggable="true" and must NOT use
+// `dragstart` -- a competing WebKit HTML5 drag would conflict with the native
+// one.
 NSString* const fileDragMessageName = @"__eacpFileDrag";
 
 NSString* const fileDragUserScript =
-    @"window.eacp = window.eacp || {};"
-    @"window.eacp.armFileDrag = function (payload) {"
+    @"window.eacpArmFileDrag = function (payload) {"
     @"  try {"
     @"    window.webkit.messageHandlers.__eacpFileDrag.postMessage("
     @"      payload == null ? '' : String(payload));"
