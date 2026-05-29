@@ -80,6 +80,11 @@ public:
 private:
     Connection();
 
+    // Wraps an already-connected native socket (an int fd or a SOCKET, passed
+    // as intptr_t) in a Connection that owns it. Used by Listener::accept().
+    static Connection adopt(std::intptr_t nativeSocket, Address peer);
+    friend class Listener;
+
     struct Impl;
     EA::OwningPointer<Impl> impl;
 };

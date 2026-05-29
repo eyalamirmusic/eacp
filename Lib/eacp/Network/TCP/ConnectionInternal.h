@@ -36,4 +36,16 @@ std::size_t socketSend(NativeSocket socket, const char* data, std::size_t length
 // the stream cleanly. Throws TCP::Error on timeout or failure.
 std::size_t socketReceive(NativeSocket socket, char* buffer, std::size_t length);
 
+// Opens a listening socket on port (0 picks an ephemeral one), writing the
+// actually-bound port back to boundPort. Throws TCP::Error on failure.
+NativeSocket socketListen(std::uint16_t port, std::uint16_t& boundPort);
+
+// Waits up to acceptTimeout for an inbound connection, accepts it, arms it
+// with ioTimeout and writes the peer's address to peer. Throws TCP::Error on
+// timeout or failure.
+NativeSocket socketAccept(NativeSocket listenSocket,
+                          std::chrono::milliseconds acceptTimeout,
+                          std::chrono::milliseconds ioTimeout,
+                          Address& peer);
+
 } // namespace eacp::TCP::detail

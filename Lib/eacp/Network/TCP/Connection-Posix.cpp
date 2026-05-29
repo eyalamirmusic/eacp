@@ -1,9 +1,11 @@
 #include "ConnectionInternal.h"
 
+#include <arpa/inet.h>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <string>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -175,6 +177,77 @@ std::size_t socketReceive(NativeSocket socket, char* buffer, std::size_t length)
     if (received < 0)
         throwErrno(timedOut() ? "receive timed out" : "receive");
     return (std::size_t) received;
+}
+
+NativeSocket socketListen(std::uint16_t port, std::uint16_t& boundPort)
+{
+    auto fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+        throwErrno("socket");
+
+    auto yes = 1;
+    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+
+    auto addr = sockaddr_in {};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(port);
+
+    if (::bind(fd, (sockaddr*) &addr, sizeof(addr)) < 0)
+    {
+        auto saved = errno;
+        ::close(fd);
+        errno = saved;
+        throwErrno("bind");
+    }
+
+    if (::listen(fd, SOMAXCONN) < 0)
+    {
+        auto saved = errno;
+        ::close(fd);
+        errno = saved;
+        throwErrno("listen");
+    }
+
+    auto bound = sockaddr_in {};
+    auto length = (socklen_t) sizeof(bound);
+    if (::getsockname(fd, (sockaddr*) &bound, &length) == 0)
+        boundPort = ntohs(bound.sin_port);
+
+    return (NativeSocket) fd;
+}
+
+NativeSocket socketAccept(NativeSocket listenSocket,
+                          std::chrono::milliseconds acceptTimeout,
+                          std::chrono::milliseconds ioTimeout,
+                          Address& peer)
+{
+    auto lfd = (int) listenSocket;
+
+    auto readable = fd_set {};
+    FD_ZERO(&readable);
+    FD_SET(lfd, &readable);
+
+    auto tv = toTimeval(acceptTimeout);
+    auto ready = ::select(lfd + 1, &readable, nullptr, nullptr, &tv);
+    if (ready == 0)
+        throw Error("accept timed out");
+    if (ready < 0)
+        throwErrno("accept");
+
+    auto addr = sockaddr_in {};
+    auto length = (socklen_t) sizeof(addr);
+    auto fd = ::accept(lfd, (sockaddr*) &addr, &length);
+    if (fd < 0)
+        throwErrno("accept");
+
+    char host[INET_ADDRSTRLEN] = {};
+    if (::inet_ntop(AF_INET, &addr.sin_addr, host, sizeof(host)) != nullptr)
+        peer.host = host;
+    peer.port = ntohs(addr.sin_port);
+
+    armTimeouts(fd, ioTimeout);
+    return (NativeSocket) fd;
 }
 
 } // namespace eacp::TCP::detail

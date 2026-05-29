@@ -6,7 +6,8 @@ target_sources(eacp-network PRIVATE
         HTTPServer/HttpServer.cpp
         HTTPServer/HttpServerDispatcher.cpp
         HTTPServer/ResponseBuilders.cpp
-        TCP/Connection.cpp)
+        TCP/Connection.cpp
+        TCP/Listener.cpp)
 
 target_link_libraries(eacp-network PUBLIC eacp-core)
 

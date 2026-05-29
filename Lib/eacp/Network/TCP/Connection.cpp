@@ -41,6 +41,15 @@ Connection Connection::connect(Address address, Timeouts timeouts)
     return connection;
 }
 
+Connection Connection::adopt(std::intptr_t nativeSocket, Address peer)
+{
+    auto connection = Connection {};
+    connection.impl = std::make_unique<Impl>();
+    connection.impl->address = std::move(peer);
+    connection.impl->socket = (detail::NativeSocket) nativeSocket;
+    return connection;
+}
+
 bool Connection::isOpen() const
 {
     return impl && impl->socket != detail::invalidSocket;

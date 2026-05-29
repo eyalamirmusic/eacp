@@ -169,4 +169,76 @@ std::size_t socketReceive(NativeSocket socket, char* buffer, std::size_t length)
     return (std::size_t) received;
 }
 
+NativeSocket socketListen(std::uint16_t port, std::uint16_t& boundPort)
+{
+    ensureWinsockInitialized();
+
+    auto sock = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == INVALID_SOCKET)
+        throwLastError("socket");
+
+    auto yes = 1;
+    ::setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*) &yes, sizeof(yes));
+
+    auto addr = sockaddr_in {};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(port);
+
+    if (::bind(sock, (sockaddr*) &addr, sizeof(addr)) == SOCKET_ERROR)
+    {
+        ::closesocket(sock);
+        throwLastError("bind");
+    }
+
+    if (::listen(sock, SOMAXCONN) == SOCKET_ERROR)
+    {
+        ::closesocket(sock);
+        throwLastError("listen");
+    }
+
+    auto bound = sockaddr_in {};
+    auto length = (int) sizeof(bound);
+    if (::getsockname(sock, (sockaddr*) &bound, &length) == 0)
+        boundPort = ntohs(bound.sin_port);
+
+    return (NativeSocket) sock;
+}
+
+NativeSocket socketAccept(NativeSocket listenSocket,
+                          std::chrono::milliseconds acceptTimeout,
+                          std::chrono::milliseconds ioTimeout,
+                          Address& peer)
+{
+    auto lsock = (SOCKET) listenSocket;
+
+    auto readable = fd_set {};
+    FD_ZERO(&readable);
+    FD_SET(lsock, &readable);
+
+    auto tv = timeval {};
+    tv.tv_sec = (long) (acceptTimeout.count() / 1000);
+    tv.tv_usec = (long) ((acceptTimeout.count() % 1000) * 1000);
+
+    auto ready = ::select(0, &readable, nullptr, nullptr, &tv);
+    if (ready == 0)
+        throw Error("accept timed out");
+    if (ready == SOCKET_ERROR)
+        throwLastError("accept");
+
+    auto addr = sockaddr_in {};
+    auto length = (int) sizeof(addr);
+    auto sock = ::accept(lsock, (sockaddr*) &addr, &length);
+    if (sock == INVALID_SOCKET)
+        throwLastError("accept");
+
+    char host[INET_ADDRSTRLEN] = {};
+    if (::inet_ntop(AF_INET, &addr.sin_addr, host, sizeof(host)) != nullptr)
+        peer.host = host;
+    peer.port = ntohs(addr.sin_port);
+
+    armTimeouts(sock, ioTimeout);
+    return (NativeSocket) sock;
+}
+
 } // namespace eacp::TCP::detail
