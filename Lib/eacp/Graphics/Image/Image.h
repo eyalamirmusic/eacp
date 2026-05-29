@@ -1,12 +1,7 @@
 #pragma once
 
 #include <eacp/Graphics/Primitives/Primitives.h>
-
-#include <ea_data_structures/Structures/Vector.h>
-
-#include <cstdint>
 #include <filesystem>
-#include <string>
 
 namespace eacp::Graphics
 {
