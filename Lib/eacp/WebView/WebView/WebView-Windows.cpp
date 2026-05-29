@@ -5,9 +5,12 @@
 
 #include <algorithm>
 #include <ea_data_structures/Structures/Vector.h>
+#include <cassert>
 #include <unordered_map>
 #include <queue>
 #include <functional>
+#include <string>
+#include <vector>
 
 #include <objbase.h>
 
@@ -701,6 +704,14 @@ void WebView::resized()
     View::resized();
     impl->ensureInitialized();
     impl->updateBounds();
+}
+
+void WebView::armFileDrag(const std::vector<std::string>&)
+{
+    // Native file drag-out is implemented on macOS only (WKWebView subclass +
+    // NSDraggingSession started from a real mouseDragged: event). Not wired on
+    // Windows yet; the assert marks it unimplemented and fails loudly if hit.
+    assert(false && "armFileDrag is macOS-only");
 }
 
 void WebView::zoomIn()

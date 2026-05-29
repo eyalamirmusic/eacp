@@ -5,7 +5,9 @@
 
 #include <eacp/Core/ObjC/Strings.h>
 
+#include <cassert>
 #include <string>
+#include <vector>
 
 namespace eacp::Graphics::detail
 {
@@ -33,5 +35,17 @@ WebView* findFocusedWebView()
 {
     auto& registered = registeredWebViews();
     return registered.empty() ? nullptr : registered.back();
+}
+
+WKWebView* createWebView(WKWebViewConfiguration* config)
+{
+    auto rect = CGRectMake(0, 0, 100, 100);
+    return [[WKWebView alloc] initWithFrame:rect configuration:config];
+}
+
+void armFileDrag(WKWebView*, const std::vector<std::string>&)
+{
+    // Native file drag-out is a macOS desktop affordance, not implemented here.
+    assert(false && "armFileDrag is macOS-only");
 }
 } // namespace eacp::Graphics::detail

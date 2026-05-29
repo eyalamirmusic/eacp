@@ -124,9 +124,33 @@ WebViewBridge::WebViewBridge(WebView& webViewToUse)
                    EA::Listener::Modes::TriggerOnEvent)
 {
     stateListeners = attachStaticStateBinders(bridge);
+    registerBuiltins();
     webView.addUserScript(bridgeShim, true);
     webView.addScriptMessageHandler(
         bridgeChannel, [this](const std::string& body) { onMessage(body); });
+}
+
+void WebViewBridge::registerBuiltins()
+{
+    // Native file drag-out as a first-class bridge command. The page invokes
+    // `armFileDrag` with a DraggableFileList from a mousedown handler; Miro
+    // deserializes the payload into the typed struct (no hand-rolled JSON),
+    // and we arm the WebView so the next mouseDragged: starts the OS drag.
+    using DraggableFileList = WebView::DraggableFileList;
+
+    auto arm = std::function<void(const DraggableFileList&)> {
+        [this](const DraggableFileList& list)
+        {
+            auto paths = std::vector<std::string> {};
+            paths.reserve(list.files.size());
+
+            for (const auto& file: list.files)
+                paths.push_back(file.path);
+
+            webView.armFileDrag(paths);
+        }};
+
+    bridge.on<DraggableFileList>("armFileDrag", arm);
 }
 
 WebViewBridge::~WebViewBridge()
