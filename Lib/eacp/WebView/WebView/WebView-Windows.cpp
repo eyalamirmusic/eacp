@@ -374,6 +374,15 @@ struct WebView::Native
         for (auto& [scheme, provider]: options.schemes)
             schemeProviders.emplace(scheme, provider);
 
+        // TODO(streaming): wire up options.streamingSchemes here. macOS/iOS
+        // serve these by pulling the body through StreamingResource::read in
+        // bounded chunks and answering Range requests with 206. The Windows
+        // equivalent is a lazy file-backed IStream handed to
+        // CreateWebResourceResponse (instead of SHCreateMemStream over a full
+        // buffer), plus parsing the request's Range header (request->
+        // get_Headers()) to emit 206 + Content-Range. Until then, streaming
+        // schemes are unavailable on Windows.
+
         webView->add_WebResourceRequested(
             Microsoft::WRL::Callback<
                 ICoreWebView2WebResourceRequestedEventHandler>(

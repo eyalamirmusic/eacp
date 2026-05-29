@@ -18,10 +18,15 @@ namespace
 {
 constexpr auto category = "DragOutApp";
 
+// The custom URL scheme this app serves its on-disk files over. The page
+// references files as `audiofile:///abs/path.wav`; the app registers and owns
+// the provider for it below (see diskFileProvider / dragOutOptions).
+constexpr auto audioScheme = "audiofile";
+
 constexpr std::array audioExtensions = {
     ".wav", ".mp3", ".aif", ".aiff", ".flac", ".m4a", ".aac", ".ogg"};
 
-bool isAudioFile(const std::filesystem::path& path)
+std::string lowerExtension(const std::filesystem::path& path)
 {
     auto ext = path.extension().string();
     std::transform(ext.begin(),
@@ -29,6 +34,12 @@ bool isAudioFile(const std::filesystem::path& path)
                    ext.begin(),
                    [](unsigned char c)
                    { return static_cast<char>(std::tolower(c)); });
+    return ext;
+}
+
+bool isAudioFile(const std::filesystem::path& path)
+{
+    auto ext = lowerExtension(path);
     return std::find(audioExtensions.begin(), audioExtensions.end(), ext)
            != audioExtensions.end();
 }
@@ -58,6 +69,24 @@ std::filesystem::path downloadsDir()
     return homeDirectory() / "Downloads";
 }
 
+std::filesystem::path bundledAssetDir()
+{
+    return std::filesystem::temp_directory_path() / "eacp-dragout";
+}
+
+// Embedded app resources + the `audiofile` scheme that streams the listed
+// files off disk into the page's inline players, in bounded chunks with Range
+// support (fileStreamProvider does the disk reading, MIME, and sandboxing).
+// The roots bound which directories the page may read: only ~/Downloads and
+// the extracted bundled assets, nothing else on disk.
+WebView::Options dragOutOptions()
+{
+    auto options = embeddedOptions(category);
+    options.streamingSchemes[audioScheme] =
+        fileStreamProvider({downloadsDir().string(), bundledAssetDir().string()});
+    return options;
+}
+
 // Materialise an embedded resource to a temp file so it has a real path the OS
 // can copy when dragged out. Returns the absolute path, or empty if missing.
 std::string extractBundledAsset(const std::string& name)
@@ -68,7 +97,7 @@ std::string extractBundledAsset(const std::string& name)
         return {};
 
     auto ec = std::error_code {};
-    auto dir = std::filesystem::temp_directory_path() / "eacp-dragout";
+    auto dir = bundledAssetDir();
     std::filesystem::create_directories(dir, ec);
 
     auto path = dir / name;
@@ -140,7 +169,7 @@ struct MyApp
     // api declared first -> destructed last (after the bridge tears down its
     // handlers/listeners, which hold &api).
     DragOutApi api;
-    WebView webView {embeddedOptions(category)};
+    WebView webView {dragOutOptions()};
     WebViewBridge transport {webView, api};
     Window window;
 };
