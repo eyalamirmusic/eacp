@@ -14,6 +14,7 @@ add_library(eacp-webview-test STATIC)
 
 target_sources(eacp-webview-test PRIVATE
         AppDriver.cpp
+        DomNode.cpp
         TestAgent.cpp)
 
 # eacp-webview gives us WebView + WebViewBridge + Miro::Bridge.
