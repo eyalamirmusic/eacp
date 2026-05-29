@@ -135,13 +135,10 @@ auto tCallJsRejectsOnError = test("WebViewTodo/callJsRejectsOnJsException") = []
     check(threw);
 };
 
-auto tCallJsChainsViaCoroutine = test("WebViewTodo/callJsChainsViaCoroutine") = []
+auto tCallJsChainsViaCoroutine =
+    test("WebViewTodo/callJsChainsViaCoroutine") = []() -> Async<>
 {
-    []() -> Async<>
-    {
-        auto sum = co_await callJS("1 + 2");
-        auto wrapped = co_await callJS("'val:' + (" + sum + ")");
-        check(wrapped == "val:3");
-    }()
-                .waitFor(10s);
+    auto sum = co_await callJS("1 + 2");
+    auto wrapped = co_await callJS("'val:' + (" + sum + ")");
+    check(wrapped == "val:3");
 };
