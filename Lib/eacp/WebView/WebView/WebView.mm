@@ -3,11 +3,16 @@
 #include "Snapshot-Apple.h"
 #include "WebView.h"
 #include "WebViewPlatform-Apple.h"
+#include "StreamingRange.h"
 
 #include <eacp/Core/ObjC/Strings.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
 #include <ea_data_structures/Structures/Vector.h>
 #include <algorithm>
+#include <atomic>
+#include <cstddef>
+#include <memory>
+#include <string>
 #include <unordered_map>
 
 namespace
@@ -48,10 +53,33 @@ using MessageHandlerMap =
 @property(assign) MessageHandlerMap* messageHandlers;
 @end
 
+namespace
+{
+// Per-request streaming state: the resource being pulled, how far we've read,
+// how much is left to deliver, and a reusable chunk buffer. The buffer is
+// filled on a background queue and consumed on the main thread, but never
+// concurrently -- the two hand off across a single chunk.
+struct StreamContext
+{
+    eacp::Graphics::StreamingResource resource;
+    eacp::Graphics::RangeSize offset = 0;    // next byte to read
+    eacp::Graphics::RangeSize remaining = 0; // bytes still to deliver
+    eacp::Graphics::Bytes buffer;
+};
+
+constexpr int streamChunkSize = 256 * 1024;
+} // namespace
+
 @interface ResourceSchemeHandler : NSObject <WKURLSchemeHandler>
 {
 @public
     eacp::Graphics::ResourceProvider provider;
+    eacp::Graphics::StreamingProvider streamingProvider;
+    // Live flags for in-flight streaming tasks, keyed by the task pointer.
+    // Touched only on the main thread (start / stop / chunk delivery), so it
+    // needs no locking; flipping a flag to false stops further delivery.
+    std::unordered_map<const void*, std::shared_ptr<std::atomic<bool>>>
+        streamingTasks;
 }
 @end
 
@@ -84,6 +112,15 @@ struct WebView::Native
         {
             auto handler = ObjC::Ptr {[[ResourceSchemeHandler alloc] init]};
             handler.get()->provider = std::move(provider);
+            [config.get() setURLSchemeHandler:handler.get()
+                                 forURLScheme:Strings::toNSString(scheme)];
+            schemeHandlers.push_back(std::move(handler));
+        }
+
+        for (auto& [scheme, streamingProvider]: options.streamingSchemes)
+        {
+            auto handler = ObjC::Ptr {[[ResourceSchemeHandler alloc] init]};
+            handler.get()->streamingProvider = std::move(streamingProvider);
             [config.get() setURLSchemeHandler:handler.get()
                                  forURLScheme:Strings::toNSString(scheme)];
             schemeHandlers.push_back(std::move(handler));
@@ -352,6 +389,13 @@ struct WebViewNativeAccess
 
 @end
 
+@interface ResourceSchemeHandler ()
+- (void)beginStreamingTask:(id<WKURLSchemeTask>)task forURL:(const std::string&)url;
+- (void)pumpTask:(id<WKURLSchemeTask>)task
+         context:(std::shared_ptr<StreamContext>)context
+            live:(std::shared_ptr<std::atomic<bool>>)live;
+@end
+
 @implementation ResourceSchemeHandler
 
 - (void)webView:(WKWebView*)webView
@@ -359,6 +403,12 @@ struct WebViewNativeAccess
 {
     auto* url = urlSchemeTask.request.URL.absoluteString;
     auto urlStr = std::string([url UTF8String]);
+
+    if (streamingProvider)
+    {
+        [self beginStreamingTask:urlSchemeTask forURL:urlStr];
+        return;
+    }
 
     auto response = provider ? provider(urlStr) : std::nullopt;
 
@@ -373,11 +423,11 @@ struct WebViewNativeAccess
     }
 
     auto* mime = eacp::Strings::toNSString(response->mimeType);
-    auto* httpResponse =
-        [[NSHTTPURLResponse alloc] initWithURL:urlSchemeTask.request.URL
-                                    statusCode:response->statusCode
-                                   HTTPVersion:@"HTTP/1.1"
-                                  headerFields:@{@"Content-Type": mime}];
+    auto* httpResponse = [[[NSHTTPURLResponse alloc]
+        initWithURL:urlSchemeTask.request.URL
+         statusCode:response->statusCode
+        HTTPVersion:@"HTTP/1.1"
+       headerFields:@{@"Content-Type": mime}] autorelease];
 
     [urlSchemeTask didReceiveResponse:httpResponse];
 
@@ -387,9 +437,140 @@ struct WebViewNativeAccess
     [urlSchemeTask didFinish];
 }
 
+// Resolves the request's Range header against the resource size, sends the
+// matching 200 / 206 / 416 headers, then kicks off the chunked body pump.
+- (void)beginStreamingTask:(id<WKURLSchemeTask>)task forURL:(const std::string&)url
+{
+    auto resource = streamingProvider(url);
+
+    if (!resource)
+    {
+        auto* error = [NSError errorWithDomain:NSURLErrorDomain
+                                          code:NSURLErrorResourceUnavailable
+                                      userInfo:nil];
+        [task didFailWithError:error];
+        return;
+    }
+
+    auto rangeHeader = std::string {};
+
+    if (auto* value = [task.request valueForHTTPHeaderField:@"Range"])
+        rangeHeader = [value UTF8String];
+
+    auto resolved =
+        eacp::Graphics::resolveRangeHeader(rangeHeader, resource->size);
+    auto served = resolved.served;
+
+    auto* headers = [NSMutableDictionary dictionary];
+    headers[@"Content-Type"] = eacp::Strings::toNSString(resource->mimeType);
+    headers[@"Accept-Ranges"] = @"bytes";
+
+    auto statusCode = resource->statusCode;
+
+    if (resolved.kind == eacp::Graphics::RangeRequest::Unsatisfiable)
+    {
+        statusCode = 416;
+        headers[@"Content-Range"] =
+            eacp::Strings::toNSString("bytes */" + std::to_string(resource->size));
+    }
+    else
+    {
+        if (resolved.kind == eacp::Graphics::RangeRequest::Partial)
+        {
+            statusCode = 206;
+            headers[@"Content-Range"] = eacp::Strings::toNSString(
+                eacp::Graphics::contentRangeValue(served, resource->size));
+        }
+
+        headers[@"Content-Length"] =
+            [NSString stringWithFormat:@"%llu",
+                                       static_cast<unsigned long long>(served.length)];
+    }
+
+    auto* response = [[[NSHTTPURLResponse alloc] initWithURL:task.request.URL
+                                                  statusCode:statusCode
+                                                 HTTPVersion:@"HTTP/1.1"
+                                                headerFields:headers] autorelease];
+    [task didReceiveResponse:response];
+
+    if (statusCode == 416 || served.empty())
+    {
+        [task didFinish];
+        return;
+    }
+
+    auto context = std::make_shared<StreamContext>();
+    context->resource = std::move(*resource);
+    context->offset = served.start;
+    context->remaining = served.length;
+    context->buffer.resize(streamChunkSize);
+
+    auto live = std::make_shared<std::atomic<bool>>(true);
+    streamingTasks[(__bridge const void*) task] = live;
+
+    [self pumpTask:task context:context live:live];
+}
+
+// Reads one chunk off a background queue, then hops to the main thread to feed
+// it to the task and schedule the next chunk. WKURLSchemeTask methods must run
+// on the thread that started the task and must not run after it's stopped, so
+// every task call sits behind the main thread plus the `live` guard.
+- (void)pumpTask:(id<WKURLSchemeTask>)task
+         context:(std::shared_ptr<StreamContext>)context
+            live:(std::shared_ptr<std::atomic<bool>>)live
+{
+    auto* key = (__bridge const void*) task;
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      auto want = std::min<eacp::Graphics::RangeSize>(
+          static_cast<eacp::Graphics::RangeSize>(context->buffer.size()),
+          context->remaining);
+
+      auto got = context->resource.read(
+          context->offset,
+          eacp::Graphics::ByteSpan {context->buffer.data(),
+                                    static_cast<std::size_t>(want)});
+
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (! live->load())
+            return;
+
+        if (got == 0)
+        {
+            [task didFinish];
+            self->streamingTasks.erase(key);
+            return;
+        }
+
+        auto* data = [NSData dataWithBytes:context->buffer.data()
+                                    length:static_cast<NSUInteger>(got)];
+        [task didReceiveData:data];
+
+        context->offset += got;
+        context->remaining -= got;
+
+        if (context->remaining == 0)
+        {
+            [task didFinish];
+            self->streamingTasks.erase(key);
+            return;
+        }
+
+        [self pumpTask:task context:context live:live];
+      });
+    });
+}
+
 - (void)webView:(WKWebView*)webView
     stopURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
 {
+    auto it = streamingTasks.find((__bridge const void*) urlSchemeTask);
+
+    if (it != streamingTasks.end())
+    {
+        it->second->store(false);
+        streamingTasks.erase(it);
+    }
 }
 
 @end
