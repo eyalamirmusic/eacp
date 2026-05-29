@@ -5,6 +5,12 @@
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Threads/EventLoop.h>
 
+#include <algorithm>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+
 namespace eacp::Graphics
 {
 std::string mimeForPath(std::string_view path)
@@ -25,6 +31,20 @@ std::string mimeForPath(std::string_view path)
         return "image/jpeg";
     if (path.ends_with(".woff2"))
         return "font/woff2";
+    if (path.ends_with(".mp3"))
+        return "audio/mpeg";
+    if (path.ends_with(".wav"))
+        return "audio/wav";
+    if (path.ends_with(".aif") || path.ends_with(".aiff"))
+        return "audio/aiff";
+    if (path.ends_with(".flac"))
+        return "audio/flac";
+    if (path.ends_with(".m4a") || path.ends_with(".mp4"))
+        return "audio/mp4";
+    if (path.ends_with(".aac"))
+        return "audio/aac";
+    if (path.ends_with(".ogg") || path.ends_with(".opus"))
+        return "audio/ogg";
     return "application/octet-stream";
 }
 
@@ -60,6 +80,125 @@ FileProvider fromResEmbed(std::string category)
             return std::nullopt;
 
         return std::span<const std::uint8_t> {view.data(), view.size()};
+    };
+}
+
+namespace
+{
+int hexDigit(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+std::string percentDecode(std::string_view encoded)
+{
+    auto out = std::string {};
+    out.reserve(encoded.size());
+
+    for (auto i = std::size_t {0}; i < encoded.size(); ++i)
+    {
+        if (encoded[i] == '%' && i + 2 < encoded.size())
+        {
+            auto hi = hexDigit(encoded[i + 1]);
+            auto lo = hexDigit(encoded[i + 2]);
+
+            if (hi >= 0 && lo >= 0)
+            {
+                out.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+
+        out.push_back(encoded[i]);
+    }
+
+    return out;
+}
+
+// `scheme:///abs/path?query#frag` -> `/abs/path`, percent-decoded. The host
+// segment (between `://` and the next `/`) is ignored, so an empty host
+// (`scheme:///`) yields a leading-slash absolute path as-is.
+std::string pathFromFileURL(std::string_view url)
+{
+    auto schemeEnd = url.find("://");
+
+    if (schemeEnd == std::string_view::npos)
+        return {};
+
+    auto rest = url.substr(schemeEnd + 3);
+    auto cut = rest.find_first_of("?#");
+
+    if (cut != std::string_view::npos)
+        rest = rest.substr(0, cut);
+
+    auto slash = rest.find('/');
+
+    if (slash == std::string_view::npos)
+        return {};
+
+    return percentDecode(rest.substr(slash));
+}
+
+bool isUnderRoot(const std::filesystem::path& file,
+                 const std::filesystem::path& root)
+{
+    auto ec = std::error_code {};
+    auto canonicalRoot = std::filesystem::weakly_canonical(root, ec);
+    auto rel = std::filesystem::relative(file, canonicalRoot, ec);
+
+    if (ec || rel.empty())
+        return false;
+
+    // A path that escapes the root resolves to a relative path starting
+    // with "..". Anything else (including ".") is contained.
+    return rel.native().rfind("..", 0) != 0;
+}
+} // namespace
+
+ResourceProvider fromDisk(std::vector<std::string> allowedRoots)
+{
+    return [roots = std::move(allowedRoots)](
+               std::string_view url) -> std::optional<ResourceResponse>
+    {
+        auto pathStr = pathFromFileURL(url);
+
+        if (pathStr.empty())
+            return std::nullopt;
+
+        auto ec = std::error_code {};
+        auto path = std::filesystem::weakly_canonical(pathStr, ec);
+
+        if (ec)
+            path = std::filesystem::path {pathStr};
+
+        auto allowed = roots.empty()
+                    || std::any_of(roots.begin(), roots.end(),
+                                   [&](const auto& root)
+                                   { return isUnderRoot(path, root); });
+
+        if (!allowed || !std::filesystem::is_regular_file(path, ec))
+            return std::nullopt;
+
+        auto in = std::ifstream {path, std::ios::binary};
+
+        if (!in)
+            return std::nullopt;
+
+        auto bytes = std::vector<std::uint8_t> {
+            std::istreambuf_iterator<char> {in},
+            std::istreambuf_iterator<char> {}};
+
+        auto response = ResourceResponse {};
+        response.mimeType = mimeForPath(path.string());
+        response.data.assign(bytes.begin(), bytes.end());
+        return response;
     };
 }
 

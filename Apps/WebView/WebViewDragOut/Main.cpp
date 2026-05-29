@@ -36,6 +36,23 @@ std::filesystem::path downloadsDir()
     return std::filesystem::path {home != nullptr ? home : ""} / "Downloads";
 }
 
+std::filesystem::path bundledAssetDir()
+{
+    return std::filesystem::temp_directory_path() / "eacp-dragout";
+}
+
+// Embedded app resources + the disk-file scheme that streams the listed
+// audio files into the page's <audio> element. The roots bound which
+// directories the page may read: only ~/Downloads and the extracted
+// bundled assets, nothing else on disk.
+WebView::Options dragOutOptions()
+{
+    auto options = embeddedOptions(category);
+    enableDiskFiles(options,
+                    {downloadsDir().string(), bundledAssetDir().string()});
+    return options;
+}
+
 // Materialise an embedded resource to a temp file so it has a real path the OS
 // can copy when dragged out. Returns the absolute path, or empty if missing.
 std::string extractBundledAsset(const std::string& name)
@@ -46,7 +63,7 @@ std::string extractBundledAsset(const std::string& name)
         return {};
 
     auto ec = std::error_code {};
-    auto dir = std::filesystem::temp_directory_path() / "eacp-dragout";
+    auto dir = bundledAssetDir();
     std::filesystem::create_directories(dir, ec);
 
     auto path = dir / name;
@@ -117,7 +134,7 @@ struct MyApp
     // api declared first -> destructed last (after the bridge tears down its
     // handlers/listeners, which hold &api).
     DragOutApi api;
-    WebView webView {embeddedOptions(category)};
+    WebView webView {dragOutOptions()};
     WebViewBridge transport {webView, api};
     Window window;
 };

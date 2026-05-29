@@ -38,6 +38,15 @@ std::string pathFromURL(std::string_view url,
 
 FileProvider fromResEmbed(std::string category);
 
+// A ResourceProvider that streams file bytes straight off disk. The URL maps
+// to an absolute filesystem path: `scheme:///abs/path.wav` -> /abs/path.wav,
+// percent-decoded so spaces and unicode survive. If `allowedRoots` is
+// non-empty, only files under one of those directories are served (anything
+// else 404s) -- recommended, since this hands disk reads to web content. An
+// empty list serves any absolute path the page asks for. Pair with the byte
+// -range support in the scheme handler so <audio>/<video> can seek.
+ResourceProvider fromDisk(std::vector<std::string> allowedRoots = {});
+
 struct WebViewNativeAccess;
 
 class WebView : public View
@@ -172,5 +181,20 @@ inline WebView::Options embeddedOptions(std::string category)
     options.embedded.enabled = true;
     options.embedded.provider = fromResEmbed(std::move(category));
     return options;
+}
+
+// Default scheme for the built-in disk-file provider. The page references
+// files as `audiofile:///abs/path.wav`.
+inline constexpr auto diskFileScheme = "audiofile";
+
+// Registers the built-in disk-file provider on `options` under `scheme`,
+// so the page can load on-disk files (e.g. play them in an <audio> element)
+// via `audiofile:///abs/path`. `allowedRoots` bounds which directories are
+// readable -- see fromDisk.
+inline void enableDiskFiles(WebView::Options& options,
+                            std::vector<std::string> allowedRoots = {},
+                            std::string scheme = diskFileScheme)
+{
+    options.schemes[std::move(scheme)] = fromDisk(std::move(allowedRoots));
 }
 } // namespace eacp::Graphics

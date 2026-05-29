@@ -16,6 +16,63 @@ std::string safeString(const char* str, const char* fallback = "")
 {
     return str != nullptr ? str : fallback;
 }
+
+// Parses an HTTP `Range` header against a known total size, writing the
+// resolved inclusive [start, end] byte offsets. Handles `bytes=a-b`,
+// `bytes=a-` and suffix `bytes=-n`. Returns false (serve the whole body)
+// for anything malformed, unsatisfiable, or multi-range.
+bool parseByteRange(const std::string& header,
+                    std::size_t total,
+                    std::size_t& start,
+                    std::size_t& end)
+{
+    constexpr std::string_view prefix = "bytes=";
+
+    if (total == 0 || header.rfind(prefix, 0) != 0
+        || header.find(',') != std::string::npos)
+        return false;
+
+    auto spec = header.substr(prefix.size());
+    auto dash = spec.find('-');
+
+    if (dash == std::string::npos)
+        return false;
+
+    auto firstStr = spec.substr(0, dash);
+    auto lastStr = spec.substr(dash + 1);
+
+    try
+    {
+        if (firstStr.empty())
+        {
+            if (lastStr.empty())
+                return false;
+
+            auto suffix = std::min<std::size_t>(std::stoull(lastStr), total);
+
+            if (suffix == 0)
+                return false;
+
+            start = total - suffix;
+            end = total - 1;
+        }
+        else
+        {
+            start = std::stoull(firstStr);
+            end = lastStr.empty() ? total - 1 : std::stoull(lastStr);
+        }
+    }
+    catch (...)
+    {
+        return false;
+    }
+
+    if (start > end || start >= total)
+        return false;
+
+    end = std::min(end, total - 1);
+    return true;
+}
 } // namespace
 
 #if EACP_WEBVIEW_PRIVATE_MEDIA_CAPTURE_SPI
@@ -357,8 +414,8 @@ struct WebViewNativeAccess
 - (void)webView:(WKWebView*)webView
     startURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
 {
-    auto* url = urlSchemeTask.request.URL.absoluteString;
-    auto urlStr = std::string([url UTF8String]);
+    auto* request = urlSchemeTask.request;
+    auto urlStr = std::string([request.URL.absoluteString UTF8String]);
 
     auto response = provider ? provider(urlStr) : std::nullopt;
 
@@ -372,17 +429,43 @@ struct WebViewNativeAccess
         return;
     }
 
-    auto* mime = eacp::Strings::toNSString(response->mimeType);
+    auto total = static_cast<std::size_t>(response->data.size());
+    auto start = std::size_t {0};
+    auto end = total > 0 ? total - 1 : std::size_t {0};
+
+    // Honour a byte-range request so media elements can seek -- WKWebView's
+    // media engine probes a custom scheme with `Range:` and expects a 206.
+    auto* rangeHeader = [request valueForHTTPHeaderField:@"Range"];
+    auto isRange = rangeHeader != nil
+                && parseByteRange([rangeHeader UTF8String], total, start, end);
+    auto length = isRange ? end - start + 1 : total;
+
+    auto* headers = [NSMutableDictionary dictionary];
+    headers[@"Content-Type"] = eacp::Strings::toNSString(response->mimeType);
+    headers[@"Accept-Ranges"] = @"bytes";
+    headers[@"Content-Length"] =
+        [NSString stringWithFormat:@"%llu", (unsigned long long) length];
+
+    auto status = response->statusCode;
+
+    if (isRange)
+    {
+        status = 206;
+        headers[@"Content-Range"] = [NSString
+            stringWithFormat:@"bytes %llu-%llu/%llu", (unsigned long long) start,
+                             (unsigned long long) end, (unsigned long long) total];
+    }
+
     auto* httpResponse =
-        [[NSHTTPURLResponse alloc] initWithURL:urlSchemeTask.request.URL
-                                    statusCode:response->statusCode
+        [[NSHTTPURLResponse alloc] initWithURL:request.URL
+                                    statusCode:status
                                    HTTPVersion:@"HTTP/1.1"
-                                  headerFields:@{@"Content-Type": mime}];
+                                  headerFields:headers];
 
     [urlSchemeTask didReceiveResponse:httpResponse];
 
-    auto* data = [NSData dataWithBytes:response->data.data()
-                                length:response->data.size()];
+    auto* data = [NSData dataWithBytes:response->data.data() + start
+                                length:length];
     [urlSchemeTask didReceiveData:data];
     [urlSchemeTask didFinish];
 }
