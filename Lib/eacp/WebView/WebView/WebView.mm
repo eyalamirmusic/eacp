@@ -55,32 +55,6 @@ using MessageHandlerMap =
 }
 @end
 
-namespace
-{
-// Script-message channel + injected JS for native file drag-out. Kept private
-// to the macOS TU; the page reaches it via `window.eacpArmFileDrag(...)`.
-//
-// The helper lives on its own global -- NOT under `window.eacp`, which is the
-// framework RPC bridge's namespace. The bridge bails out of its init if
-// `window.eacp` already exists (Bridge.cpp), so a document-start script that
-// pre-creates `window.eacp` would silently kill the bridge.
-//
-// Contract: the page calls eacpArmFileDrag from a `mousedown` handler to arm
-// the drag for the current gesture. The native side starts the actual drag
-// from the real mouseDragged: event once the pointer crosses the drag
-// threshold. The element must NOT be draggable="true" and must NOT use
-// `dragstart` -- a competing WebKit HTML5 drag would conflict with the native
-// one.
-NSString* const fileDragMessageName = @"__eacpFileDrag";
-
-NSString* const fileDragUserScript =
-    @"window.eacpArmFileDrag = function (payload) {"
-    @"  try {"
-    @"    window.webkit.messageHandlers.__eacpFileDrag.postMessage("
-    @"      payload == null ? '' : String(payload));"
-    @"  } catch (e) {}"
-    @"};";
-} // namespace
 
 namespace eacp::Graphics
 {
@@ -130,8 +104,6 @@ struct WebView::Native
             if (@available(macOS 13.3, iOS 16.4, *))
                 webView.get().inspectable = YES;
         }
-
-        installFileDragBridge();
     }
 
     Native(WebView& ownerToUse, WebView::PopupInit init)
@@ -168,8 +140,6 @@ struct WebView::Native
             [controller removeScriptMessageHandlerForName:Strings::toNSString(name)];
         }
 
-        [controller removeScriptMessageHandlerForName:fileDragMessageName];
-
         if (observingTitle)
             [webView.get() removeObserver:delegate.get() forKeyPath:@"title"];
 
@@ -188,28 +158,6 @@ struct WebView::Native
     {
         auto bounds = owner.getLocalBounds();
         webView.get().frame = toCGRect(bounds);
-    }
-
-    void installFileDragBridge()
-    {
-        auto* controller = config.get().userContentController;
-        [controller addScriptMessageHandler:delegate.get()
-                                       name:fileDragMessageName];
-
-        auto* script = [[WKUserScript alloc]
-              initWithSource:fileDragUserScript
-               injectionTime:WKUserScriptInjectionTimeAtDocumentStart
-            forMainFrameOnly:NO];
-        [controller addUserScript:script];
-    }
-
-    // Resolve the drag payload to file paths now (cheap -- just strings; the
-    // real copy is deferred to the file promise) and arm the next gesture. The
-    // platform view starts the session from the real mouseDragged: event.
-    void armFileDrag(const std::string& payload)
-    {
-        auto paths = owner.onFileDragRequested(payload);
-        detail::armFileDrag(webView.get(), paths);
     }
 
     ObjC::Ptr<WKWebView> webView;
@@ -373,24 +321,6 @@ struct WebViewNativeAccess
 - (void)userContentController:(WKUserContentController*)userContentController
       didReceiveScriptMessage:(WKScriptMessage*)message
 {
-    if ([message.name isEqualToString:fileDragMessageName])
-    {
-        // Arms the drag for the current gesture. The native WKWebView subclass
-        // starts the actual session from the real mouseDragged: event, so this
-        // message just needs to arrive before the pointer crosses the drag
-        // threshold -- the press-to-move gap easily covers the round trip.
-        auto native = nativeWeak.lock();
-        if (native)
-        {
-            std::string payload;
-            if ([message.body isKindOfClass:[NSString class]])
-                payload = [message.body UTF8String];
-
-            native->armFileDrag(payload);
-        }
-        return;
-    }
-
     if (_messageHandlers)
     {
         auto name = std::string([message.name UTF8String]);
@@ -717,6 +647,11 @@ void WebView::addUserScript(const std::string& source, bool atDocumentStart)
         forMainFrameOnly:YES];
 
     [controller addUserScript:userScript];
+}
+
+void WebView::armFileDrag(const std::vector<std::string>& paths)
+{
+    detail::armFileDrag(impl->webView.get(), paths);
 }
 
 void WebView::resized()

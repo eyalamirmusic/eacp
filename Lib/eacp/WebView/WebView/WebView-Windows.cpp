@@ -10,6 +10,7 @@
 #include <queue>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include <objbase.h>
 
@@ -91,15 +92,6 @@ struct WebView::Native
         {
             DestroyWindow(childHwnd);
         }
-    }
-
-    // Native file drag-out is implemented on macOS only (WKWebView subclass +
-    // NSDraggingSession). The Windows drag bridge is not wired yet, so this is
-    // never reached; the assert marks it as unimplemented and fails loudly if
-    // a future bridge starts routing arm messages here.
-    void armFileDrag(const std::string&)
-    {
-        assert(false && "armFileDrag is macOS-only");
     }
 
     void ensureInitialized()
@@ -712,6 +704,14 @@ void WebView::resized()
     View::resized();
     impl->ensureInitialized();
     impl->updateBounds();
+}
+
+void WebView::armFileDrag(const std::vector<std::string>&)
+{
+    // Native file drag-out is implemented on macOS only (WKWebView subclass +
+    // NSDraggingSession started from a real mouseDragged: event). Not wired on
+    // Windows yet; the assert marks it unimplemented and fails loudly if hit.
+    assert(false && "armFileDrag is macOS-only");
 }
 
 void WebView::zoomIn()

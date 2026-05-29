@@ -111,14 +111,14 @@ public:
 
     void addUserScript(const std::string& source, bool atDocumentStart = true);
 
-    // Native file drag-out. The page injects `window.eacp.startFileDrag(payload)`
-    // (available from document start) and calls it from a `dragstart` handler
-    // after `event.preventDefault()`. This callback fires synchronously on the
-    // main thread while the originating mouse event is still live -- return the
-    // absolute paths of the files to drag out (empty -> no drag). The OS copies
-    // those files when the user drops on the desktop / Finder / another app.
-    std::function<std::vector<std::string>(const std::string& payload)>
-        onFileDragRequested = [](auto&&) { return std::vector<std::string> {}; };
+    // Arms a native file drag-out of the given on-disk files for the next mouse
+    // gesture. The drag is started from the real mouseDragged: event once the
+    // pointer crosses the drag threshold, so it escapes the app into Finder /
+    // a DAW (a session started from an async callback cannot). Prefer the
+    // built-in `armFileDrag` bridge command, which deserializes an
+    // eacp::WebView::DraggableFileList and routes here. macOS-only; a no-op on
+    // other platforms.
+    void armFileDrag(const std::vector<std::string>& paths);
 
     std::function<void(const std::string& url)> onNavigationStarted = [](auto&&) {};
     std::function<void(const std::string& url)> onNavigationFinished = [](auto&&) {};

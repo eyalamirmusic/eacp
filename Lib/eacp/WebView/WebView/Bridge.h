@@ -47,6 +47,7 @@ public:
     Miro::Bridge& getBridge() { return bridge; }
 
 private:
+    void registerBuiltins();
     void onMessage(const std::string& body);
     void deliver(double id,
                  const Miro::Json::Value& result,

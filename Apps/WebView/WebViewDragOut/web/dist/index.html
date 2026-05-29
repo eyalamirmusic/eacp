@@ -94,35 +94,39 @@
 </head>
 <body>
 <h1>Drag audio into your DAW</h1>
-<p>Files from <code>~/Downloads</code>. Click to select (⌘/⇧-click to multi-select), then drag the
-   selection onto a DAW track, Finder, or the desktop.</p>
+<p>Files from <code>~/Downloads</code> plus bundled resources, served over the eacp bridge. Click to
+   select (⌘/⇧-click to multi-select), then drag the selection onto a DAW track, Finder, or the desktop.</p>
 
-<div id="list"></div>
+<div id="list"><div class="empty">Loading…</div></div>
 <div id="status"></div>
 
 <script>
     (function ()
     {
-        const files = window.__eacpFiles || [];
         const list = document.getElementById('list');
         const status = document.getElementById('status');
         const selected = new Set();
+        let files = [];
 
-        if (files.length === 0)
+        if (!window.eacp || typeof window.eacp.invoke !== 'function')
         {
-            list.innerHTML =
-                '<div class="empty">No audio files found in ~/Downloads.</div>';
+            list.innerHTML = '<div class="empty">Not running in the eacp host.</div>';
             return;
+        }
+
+        function isBundled(file)
+        {
+            return file.path.indexOf('/eacp-dragout/') !== -1;
         }
 
         function render()
         {
             list.innerHTML = '';
 
-            for (const file of files)
+            files.forEach((file, index) =>
             {
                 const row = document.createElement('div');
-                row.className = 'row' + (selected.has(file.id) ? ' selected' : '');
+                row.className = 'row' + (selected.has(index) ? ' selected' : '');
 
                 const ico = document.createElement('span');
                 ico.className = 'ico';
@@ -133,8 +137,9 @@
                 name.textContent = file.name;
 
                 const tag = document.createElement('span');
-                tag.className = 'tag' + (file.source === 'bundled' ? ' bundled' : '');
-                tag.textContent = file.source;
+                const bundled = isBundled(file);
+                tag.className = 'tag' + (bundled ? ' bundled' : '');
+                tag.textContent = bundled ? 'bundled' : '~/Downloads';
 
                 row.append(ico, name, tag);
 
@@ -143,11 +148,12 @@
                 // The native side starts the real drag from mouseDragged:.
                 row.addEventListener('mousedown', () =>
                 {
-                    const ids = selected.has(file.id) && selected.size > 0
+                    const indices = selected.has(index) && selected.size > 0
                         ? [...selected]
-                        : [file.id];
-                    window.eacpArmFileDrag(ids.join(','));
-                    status.textContent = 'Armed ' + ids.length + ' file(s) — drag out…';
+                        : [index];
+                    const dragFiles = indices.map((i) => files[i]);
+                    window.eacp.invoke('armFileDrag', { files: dragFiles });
+                    status.textContent = 'Armed ' + dragFiles.length + ' file(s) — drag out…';
                 });
 
                 // Click toggles selection (plain click = single select).
@@ -155,24 +161,38 @@
                 {
                     if (event.metaKey || event.shiftKey)
                     {
-                        selected.has(file.id)
-                            ? selected.delete(file.id)
-                            : selected.add(file.id);
+                        selected.has(index)
+                            ? selected.delete(index)
+                            : selected.add(index);
                     }
                     else
                     {
                         selected.clear();
-                        selected.add(file.id);
+                        selected.add(index);
                     }
                     render();
                 });
 
                 list.appendChild(row);
-            }
+            });
         }
 
-        render();
-        status.textContent = files.length + ' audio file(s) in ~/Downloads.';
+        window.eacp.invoke('listFiles')
+            .then((result) =>
+            {
+                files = (result && result.files) || [];
+
+                if (files.length === 0)
+                {
+                    list.innerHTML =
+                        '<div class="empty">No audio files found in ~/Downloads.</div>';
+                    return;
+                }
+
+                render();
+                status.textContent = files.length + ' file(s) over the bridge.';
+            })
+            .catch((err) => { status.textContent = 'listFiles failed: ' + err; });
     })();
 </script>
 </body>
