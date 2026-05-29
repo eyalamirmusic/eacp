@@ -97,7 +97,7 @@ public:
     // side. Multiple files start a single multi-file drag session.
     struct DraggableFileList
     {
-        std::vector<DraggableFile> files;
+        EA::Vector<DraggableFile> files;
 
         MIRO_REFLECT(files)
     };

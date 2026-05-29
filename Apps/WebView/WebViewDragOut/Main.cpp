@@ -1,3 +1,4 @@
+#include "Miro/Reflection/ReflectMacro.h"
 #include <eacp/WebView/WebView.h>
 #include <WebResources.h>
 
@@ -66,10 +67,10 @@ auto mediaOptions()
 // Native drag-out (`armFileDrag`) is built into every WebViewBridge for free.
 struct MediaApi
 {
-    void reflect(Miro::ApiReflector& r) { r.commands<&MediaApi::listFiles>(); }
     WebView::DraggableFileList listFiles() const { return files; }
-
     WebView::DraggableFileList files = mediaInDownloads();
+
+    MIRO_REFLECT_API(listFiles)
 };
 
 struct MyApp
