@@ -141,8 +141,7 @@ bool EventLoop::runFor(std::chrono::milliseconds timeout)
         }
 
         auto remaining =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                deadline - now)
+            std::chrono::ceil<std::chrono::milliseconds>(deadline - now)
                 .count();
 
         auto wait = MsgWaitForMultipleObjectsEx(
