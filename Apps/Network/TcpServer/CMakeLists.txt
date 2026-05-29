@@ -1,4 +1,4 @@
-jadd_executable(TcpServer Main.cpp)
+add_executable(TcpServer Main.cpp)
 target_link_libraries(TcpServer PRIVATE eacp-network)
 
 set(BUNDLE_ID "com.eacp.tcpserver")
