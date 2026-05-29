@@ -51,13 +51,6 @@ using MessageHandlerMap =
 @property(assign) MessageHandlerMap* messageHandlers;
 @end
 
-@interface ResourceSchemeHandler : NSObject <WKURLSchemeHandler>
-{
-@public
-    eacp::Graphics::ResourceProvider provider;
-}
-@end
-
 // Streams a ByteSource into the WebView. Each task resolves a URL to a source,
 // then reads ONLY the requested byte range on a background queue and delivers
 // it back on the main thread -- so a large resource neither blocks the UI nor
@@ -97,15 +90,6 @@ struct WebView::Native
         {
             [config.get().preferences setValue:@YES
                                         forKey:@"developerExtrasEnabled"];
-        }
-
-        for (auto& [scheme, provider]: options.schemes)
-        {
-            auto handler = ObjC::Ptr {[[ResourceSchemeHandler alloc] init]};
-            handler.get()->provider = std::move(provider);
-            [config.get() setURLSchemeHandler:handler.get()
-                                 forURLScheme:Strings::toNSString(scheme)];
-            schemeHandlers.push_back(std::move(handler));
         }
 
         for (auto& [scheme, resolver]: options.streamSchemes)
@@ -191,7 +175,6 @@ struct WebView::Native
     ObjC::Ptr<WKWebView> webView;
     ObjC::Ptr<WebViewDelegate> delegate;
     ObjC::Ptr<WKWebViewConfiguration> config;
-    EA::Vector<ObjC::Ptr<ResourceSchemeHandler>> schemeHandlers;
     EA::Vector<ObjC::Ptr<StreamSchemeHandler>> streamSchemeHandlers;
     MessageHandlerMap messageHandlers;
     WebView& owner;
@@ -377,84 +360,6 @@ struct WebViewNativeAccess
             eacp::Threads::callAsync([handler, body]() { handler(body); });
         }
     }
-}
-
-@end
-
-@implementation ResourceSchemeHandler
-
-- (void)webView:(WKWebView*)webView
-    startURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
-{
-    auto* request = urlSchemeTask.request;
-    auto urlStr = std::string([request.URL.absoluteString UTF8String]);
-
-    auto response = provider ? provider(urlStr) : std::nullopt;
-
-    if (!response)
-    {
-        auto* error =
-            [NSError errorWithDomain:NSURLErrorDomain
-                                code:NSURLErrorResourceUnavailable
-                            userInfo:nil];
-        [urlSchemeTask didFailWithError:error];
-        return;
-    }
-
-    auto total = static_cast<std::uint64_t>(response->data.size());
-    auto start = std::uint64_t {0};
-    auto end = total > 0 ? total - 1 : std::uint64_t {0};
-
-    // Honour a byte-range request so media elements can seek -- WKWebView's
-    // media engine probes a custom scheme with `Range:` and expects a 206.
-    auto* rangeHeader = [request valueForHTTPHeaderField:@"Range"];
-    auto parsed = rangeHeader != nil
-                      ? eacp::Http::parseByteRange([rangeHeader UTF8String], total)
-                      : std::nullopt;
-    auto isRange = parsed.has_value();
-
-    if (isRange)
-    {
-        start = parsed->start;
-        end = parsed->end;
-    }
-
-    auto length = isRange ? end - start + 1 : total;
-
-    auto* headers = [NSMutableDictionary dictionary];
-    headers[@"Content-Type"] = eacp::Strings::toNSString(response->mimeType);
-    headers[@"Accept-Ranges"] = @"bytes";
-    headers[@"Content-Length"] =
-        [NSString stringWithFormat:@"%llu", (unsigned long long) length];
-
-    auto status = response->statusCode;
-
-    if (isRange)
-    {
-        status = 206;
-        headers[@"Content-Range"] = [NSString
-            stringWithFormat:@"bytes %llu-%llu/%llu", (unsigned long long) start,
-                             (unsigned long long) end, (unsigned long long) total];
-    }
-
-    auto* httpResponse =
-        [[[NSHTTPURLResponse alloc] initWithURL:request.URL
-                                     statusCode:status
-                                    HTTPVersion:@"HTTP/1.1"
-                                   headerFields:headers] autorelease];
-
-    [urlSchemeTask didReceiveResponse:httpResponse];
-
-    auto* data = [NSData dataWithBytes:length > 0 ? response->data.data() + start
-                                               : nullptr
-                                length:length];
-    [urlSchemeTask didReceiveData:data];
-    [urlSchemeTask didFinish];
-}
-
-- (void)webView:(WKWebView*)webView
-    stopURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
-{
 }
 
 @end

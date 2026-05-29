@@ -119,8 +119,9 @@ ByteSourceResolver byteSourceFrom(ResourceProvider provider)
             return std::nullopt;
 
         return memoryByteSource(
-            std::span<const std::uint8_t> {response->data.data(),
-                                           response->data.size()},
+            std::span<const std::uint8_t> {
+                response->data.data(),
+                static_cast<std::size_t>(response->data.size())},
             std::move(response->mimeType));
     };
 }
@@ -171,6 +172,12 @@ WebView::WebView(Options options)
 
     if (options.embedded.enabled && !useDevServer)
         registerEmbeddedScheme(options);
+
+    // Fold the in-memory `schemes` providers into the byte-range stream path
+    // so one native handler serves every scheme. The providers are copied,
+    // not moved, because the Windows backend still reads `schemes` directly.
+    for (auto& [scheme, provider]: options.schemes)
+        options.streamSchemes.try_emplace(scheme, byteSourceFrom(provider));
 
     auto embedded = options.embedded;
     initNative(std::move(options));

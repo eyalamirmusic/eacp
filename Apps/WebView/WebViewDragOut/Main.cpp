@@ -18,16 +18,21 @@ namespace
 {
 constexpr auto category = "DragOutApp";
 
-constexpr std::array audioExtensions =
-    {".wav", ".mp3", ".aif", ".aiff", ".flac", ".m4a", ".aac", ".ogg"};
+// Audio, video, and image extensions -- the page renders each kind in its own
+// preview (transport bar / video stage / image stage), all streamed off disk
+// through the same `audiofile://` ByteSource scheme.
+constexpr std::array mediaExtensions = {
+    ".wav",  ".mp3", ".aif", ".aiff", ".flac", ".m4a", ".aac", ".ogg", ".opus",
+    ".mp4",  ".m4v", ".mov", ".webm", ".ogv",  ".png", ".jpg", ".jpeg",
+    ".gif",  ".webp", ".svg"};
 
-bool isAudioFile(const std::filesystem::path& path)
+bool isMediaFile(const std::filesystem::path& path)
 {
     auto ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c)
                    { return static_cast<char>(std::tolower(c)); });
-    return std::find(audioExtensions.begin(), audioExtensions.end(), ext)
-        != audioExtensions.end();
+    return std::find(mediaExtensions.begin(), mediaExtensions.end(), ext)
+        != mediaExtensions.end();
 }
 
 std::filesystem::path downloadsDir()
@@ -85,13 +90,13 @@ WebView::DraggableFileList buildFileList()
             list.files.push_back({path, name});
     }
 
-    // Then real audio files from ~/Downloads.
+    // Then real media files from ~/Downloads.
     auto ec = std::error_code {};
     auto downloads = std::vector<std::string> {};
 
     for (const auto& entry: std::filesystem::directory_iterator(downloadsDir(), ec))
     {
-        if (entry.is_regular_file(ec) && isAudioFile(entry.path()))
+        if (entry.is_regular_file(ec) && isMediaFile(entry.path()))
             downloads.push_back(entry.path().string());
     }
 
