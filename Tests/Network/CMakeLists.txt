@@ -1,3 +1,7 @@
+nano_add_executable(TcpConnectionTests
+        SOURCES TcpConnectionTests.cpp
+        TARGETS eacp-network)
+
 nano_add_executable(HttpRequestTests
         SOURCES HttpRequestTests.cpp
         TARGETS eacp-network)

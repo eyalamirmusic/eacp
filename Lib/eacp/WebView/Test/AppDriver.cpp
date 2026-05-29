@@ -537,6 +537,62 @@ std::string AppDriver::dom(std::string_view selector, CallOptions opts)
         .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
 }
 
+Threads::Async<std::optional<DomNode>> AppDriver::tryQueryAsync(
+    const std::string& selector, CallOptions opts)
+{
+    auto result = co_await runJsAsync(
+        "window.__test.queryNode(" + jsStringLiteral(selector) + ")", opts);
+    if (result.isNull())
+        co_return std::nullopt;
+
+    auto node = DomNode {};
+    Miro::fromJSON(node, result);
+    co_return node;
+}
+
+std::optional<DomNode> AppDriver::tryQuery(const std::string& selector,
+                                           CallOptions opts)
+{
+    return tryQueryAsync(selector, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
+
+Threads::Async<DomNode> AppDriver::queryAsync(const std::string& selector,
+                                              CallOptions opts)
+{
+    auto node = co_await tryQueryAsync(selector, opts);
+    if (!node)
+        throw std::runtime_error("AppDriver: query found no element for "
+                                 "selector: "
+                                 + selector);
+
+    co_return std::move(*node);
+}
+
+DomNode AppDriver::query(const std::string& selector, CallOptions opts)
+{
+    return queryAsync(selector, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
+
+Threads::Async<std::vector<DomNode>> AppDriver::queryAllAsync(
+    const std::string& selector, CallOptions opts)
+{
+    auto result = co_await runJsAsync(
+        "window.__test.queryNodes(" + jsStringLiteral(selector) + ")", opts);
+
+    auto nodes = std::vector<DomNode> {};
+    Miro::fromJSON(nodes, result);
+    co_return nodes;
+}
+
+std::vector<DomNode> AppDriver::queryAll(const std::string& selector,
+                                         CallOptions opts)
+{
+    return queryAllAsync(selector, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
+
 ScreenshotResult AppDriver::screenshot(const ScreenshotOptions& options)
 {
     auto callOpts = CallOptions {.timeoutMs = options.timeoutMs};

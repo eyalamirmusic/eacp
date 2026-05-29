@@ -22,6 +22,28 @@
     }));
   }
 
+  function serializeEl(el) {
+    // Element subtree -> the JSON shape AppDriver deserialises into a
+    // DomNode (see DomNode.h). Only element children are walked; text
+    // nodes are folded into textContent so the tree stays element-only.
+    var attrs = {};
+    for (var i = 0; i < el.attributes.length; i++) {
+      attrs[el.attributes[i].name] = el.attributes[i].value;
+    }
+    var kids = [];
+    for (var j = 0; j < el.children.length; j++) {
+      kids.push(serializeEl(el.children[j]));
+    }
+    return {
+      tagName: (el.tagName || '').toLowerCase(),
+      attributes: attrs,
+      textContent: (el.textContent || '').trim(),
+      value: (el.value != null ? String(el.value) : ''),
+      checked: !!el.checked,
+      children: kids,
+    };
+  }
+
   function setNativeValue(el, value) {
     // React tracks input values via an internal cached getter/setter;
     // assigning .value directly bypasses React's onChange. The trick
@@ -84,6 +106,16 @@
       // serialises the full tree including the root tag.
       if (sel == null || sel === '') return document.documentElement.outerHTML;
       return $(sel).outerHTML;
+    },
+    queryNode: function(sel) {
+      // null (not a throw) when nothing matches — AppDriver maps that to
+      // an empty std::optional<DomNode> so callers can gate on it.
+      var el = document.querySelector(sel);
+      return el ? serializeEl(el) : null;
+    },
+    queryNodes: function(sel) {
+      return Array.prototype.map.call(
+        document.querySelectorAll(sel), serializeEl);
     }
   };
 })();
