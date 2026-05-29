@@ -33,8 +33,8 @@
         .row
         {
             display: flex;
-            align-items: center;
-            gap: 0.75rem;
+            flex-direction: column;
+            gap: 0.5rem;
             padding: 0.55rem 0.85rem;
             border-bottom: 1px solid #23232f;
             cursor: grab;
@@ -44,6 +44,13 @@
         .row:hover { background: #1c1c28; }
         .row.selected { background: #2d3a8c; }
         .row:active { cursor: grabbing; }
+
+        .row-head
+        {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
 
         .row .ico
         {
@@ -80,6 +87,21 @@
 
         .row .tag.bundled { color: #14141c; background: #9bffb1; }
 
+        /* The inline player / preview lives in its own row; clicks on it must
+           not arm a drag or toggle selection (handled in JS). */
+        .row audio
+        {
+            width: 100%;
+            height: 32px;
+        }
+
+        .row img
+        {
+            max-width: 100%;
+            border-radius: 8px;
+            border: 1px solid #2c2c3c;
+        }
+
         .empty { padding: 1.25rem; color: #7e7e94; font-size: 0.85rem; }
 
         #status
@@ -94,10 +116,13 @@
 </head>
 <body>
 <h1>Drag audio into your DAW</h1>
-<p>Files from <code>~/Downloads</code> plus bundled resources, served over the eacp bridge. Click to
-   select (⌘/⇧-click to multi-select), then drag the selection onto a DAW track, Finder, or the desktop.</p>
+<p>Files from <code>~/Downloads</code> plus bundled resources, served over the eacp bridge. Each row has
+   its own inline player (streamed off disk via the built-in <code>audiofile://</code> scheme — use the
+   native controls to play and scrub), click to select (⌘/⇧-click to multi-select), then drag the
+   selection onto a DAW track.</p>
 
 <div id="list"><div class="empty">Loading…</div></div>
+
 <div id="status"></div>
 
 <script>
@@ -119,6 +144,52 @@
             return file.path.indexOf('/eacp-dragout/') !== -1;
         }
 
+        function isImage(name)
+        {
+            return /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
+        }
+
+        // Files are served off disk by the built-in `audiofile` scheme. The
+        // path is absolute, so `audiofile://` + encoded path -> audiofile:///...
+        function fileURL(path)
+        {
+            return 'audiofile://' + encodeURI(path);
+        }
+
+        // The inline player / preview for a row. Interacting with it must not
+        // arm a drag or toggle selection, so swallow those gestures here.
+        function buildPreview(file)
+        {
+            const el = isImage(file.name)
+                ? document.createElement('img')
+                : document.createElement('audio');
+
+            if (isImage(file.name))
+            {
+                el.alt = file.name;
+            }
+            else
+            {
+                el.controls = true;
+                // Stream lazily: nothing hits the scheme handler until play,
+                // so listing the files doesn't fetch every audio up front.
+                el.preload = 'none';
+            }
+
+            el.src = fileURL(file.path);
+            el.addEventListener('mousedown', (event) => event.stopPropagation());
+            el.addEventListener('click', (event) => event.stopPropagation());
+            return el;
+        }
+
+        // Reflect the current selection without rebuilding the rows -- a full
+        // re-render would recreate the <audio> elements and stop playback.
+        function paintSelection()
+        {
+            list.querySelectorAll('.row').forEach((row, i) =>
+                row.classList.toggle('selected', selected.has(i)));
+        }
+
         function render()
         {
             list.innerHTML = '';
@@ -128,9 +199,12 @@
                 const row = document.createElement('div');
                 row.className = 'row' + (selected.has(index) ? ' selected' : '');
 
+                const head = document.createElement('div');
+                head.className = 'row-head';
+
                 const ico = document.createElement('span');
                 ico.className = 'ico';
-                ico.textContent = '♪';
+                ico.textContent = isImage(file.name) ? '▦' : '♪';
 
                 const name = document.createElement('span');
                 name.className = 'name';
@@ -141,7 +215,8 @@
                 tag.className = 'tag' + (bundled ? ' bundled' : '');
                 tag.textContent = bundled ? 'bundled' : '~/Downloads';
 
-                row.append(ico, name, tag);
+                head.append(ico, name, tag);
+                row.append(head, buildPreview(file));
 
                 // Arm on mousedown. If the pressed row is part of the current
                 // selection, drag the whole selection; otherwise drag just it.
@@ -170,7 +245,7 @@
                         selected.clear();
                         selected.add(index);
                     }
-                    render();
+                    paintSelection();
                 });
 
                 list.appendChild(row);

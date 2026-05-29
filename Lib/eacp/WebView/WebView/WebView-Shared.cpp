@@ -1,11 +1,15 @@
 #include "WebView.h"
 
 #include "DevServerProbe.h"
+#include "StreamingRange.h"
 
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Threads/EventLoop.h>
 
+#include <algorithm>
 #include <cstdio>
+#include <optional>
+#include <string>
 #include <string_view>
 
 namespace eacp::Graphics
@@ -50,6 +54,99 @@ std::string pathFromURL(std::string_view url, std::string_view indexFile)
         path = path.substr(0, query);
 
     return path.empty() ? std::string(indexFile) : std::string(path);
+}
+
+namespace
+{
+std::optional<RangeSize> parseRangeSize(std::string_view text)
+{
+    if (text.empty())
+        return std::nullopt;
+
+    auto value = RangeSize {0};
+
+    for (auto c: text)
+    {
+        if (c < '0' || c > '9')
+            return std::nullopt;
+
+        value = value * 10 + static_cast<RangeSize>(c - '0');
+    }
+
+    return value;
+}
+} // namespace
+
+ResolvedRange resolveRangeHeader(std::string_view headerValue, RangeSize size)
+{
+    auto full = ResolvedRange {RangeRequest::Full, ByteRange {0, size}};
+    auto unsatisfiable = ResolvedRange {RangeRequest::Unsatisfiable, ByteRange {}};
+
+    constexpr auto prefix = std::string_view {"bytes="};
+
+    if (!headerValue.starts_with(prefix))
+        return full;
+
+    auto spec = headerValue.substr(prefix.size());
+
+    // We serve a single range only; a comma marks a multi-range request.
+    auto dash = spec.find('-');
+
+    if (spec.find(',') != std::string_view::npos || dash == std::string_view::npos)
+        return full;
+
+    // Any byte range over an empty resource is unsatisfiable.
+    if (size == 0)
+        return unsatisfiable;
+
+    auto firstText = spec.substr(0, dash);
+    auto lastText = spec.substr(dash + 1);
+
+    // Suffix form `bytes=-N`: the last N bytes.
+    if (firstText.empty())
+    {
+        auto suffix = parseRangeSize(lastText);
+
+        if (!suffix)
+            return full;
+
+        if (*suffix == 0)
+            return unsatisfiable;
+
+        auto length = std::min(*suffix, size);
+        return {RangeRequest::Partial, ByteRange {size - length, length}};
+    }
+
+    auto first = parseRangeSize(firstText);
+
+    if (!first)
+        return full;
+
+    if (*first >= size)
+        return unsatisfiable;
+
+    auto lastIndex = size - 1;
+
+    if (!lastText.empty())
+    {
+        auto last = parseRangeSize(lastText);
+
+        if (!last)
+            return full;
+
+        lastIndex = std::min(*last, size - 1);
+
+        if (lastIndex < *first)
+            return unsatisfiable;
+    }
+
+    return {RangeRequest::Partial, ByteRange {*first, lastIndex - *first + 1}};
+}
+
+std::string contentRangeValue(const ByteRange& served, RangeSize size)
+{
+    return "bytes " + std::to_string(served.start) + "-"
+           + std::to_string(served.end() - 1) + "/" + std::to_string(size);
 }
 
 FileProvider fromResEmbed(std::string category)

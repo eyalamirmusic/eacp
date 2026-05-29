@@ -1,11 +1,13 @@
 #pragma once
 
 #include <eacp/Core/Threads/Async.h>
+#include <eacp/Core/Utils/Range.h>
 #include <eacp/Graphics/Graphics.h>
 #include <Miro/Miro.h>
 #include <ResEmbed/ResEmbed.h>
 #include <ea_data_structures/Pointers/OwningPointer.h>
 #include <ea_data_structures/Structures/Vector.h>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -18,18 +20,48 @@
 
 namespace eacp::Graphics
 {
+// Owning byte buffer and non-owning views used across the resource API.
+using Bytes = EA::Vector<std::uint8_t>;
+using ByteSpan = std::span<std::uint8_t>;
+using ByteView = std::span<const std::uint8_t>;
+
+// Byte offsets / lengths into a resource, and a half-open byte range.
+using RangeSize = std::uint64_t;
+using ByteRange = Range<RangeSize>;
+
 struct ResourceResponse
 {
     std::string mimeType;
-    EA::Vector<std::uint8_t> data;
+    Bytes data;
     int statusCode = 200;
 };
 
 using ResourceProvider =
     std::function<std::optional<ResourceResponse>(std::string_view url)>;
 
-using FileProvider = std::function<std::optional<std::span<const std::uint8_t>>(
-    std::string_view path)>;
+using FileProvider = std::function<std::optional<ByteView>(std::string_view path)>;
+
+// Sequential pull reader for a streamed resource: fill `out` starting at byte
+// `offset`, returning the number of bytes written (0 == end of resource). The
+// handler calls it repeatedly with monotonically advancing offsets, and may
+// call it off the main thread -- so it must be safe to run on a background
+// queue.
+using ResourceReader = std::function<std::size_t(RangeSize offset, ByteSpan out)>;
+
+// A resource served in chunks rather than as one in-memory blob. The provider
+// reports the MIME type and the full `size`; the handler owns Range parsing,
+// emits 200 / 206 / 416 with the right Content-Range / Content-Length /
+// Accept-Ranges headers, and pulls the body through `read` as it goes.
+struct StreamingResource
+{
+    std::string mimeType;
+    RangeSize size = 0;
+    ResourceReader read;
+    int statusCode = 200;
+};
+
+using StreamingProvider =
+    std::function<std::optional<StreamingResource>(std::string_view url)>;
 
 std::string mimeForPath(std::string_view path);
 
@@ -80,6 +112,7 @@ public:
         };
 
         std::unordered_map<std::string, ResourceProvider> schemes;
+        std::unordered_map<std::string, StreamingProvider> streamingSchemes;
         Embedded embedded;
         bool debugConsole = true;
     };

@@ -21,3 +21,9 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND EACP_BUILD_WEBVIEW)
     add_subdirectory(Codegen)
 endif ()
 
+# Pure-logic WebView tests (Range header resolution). Same platform gate as
+# Codegen -- they link eacp-webview but never construct a WebView.
+if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND EACP_BUILD_WEBVIEW)
+    add_subdirectory(WebView)
+endif ()
+
