@@ -1,5 +1,6 @@
 #include "App.h"
 
+#include <eacp/Core/Testing/AsyncTest.h>
 #include <eacp/Core/Threads/Async.h>
 #include <eacp/WebView/Test/TestApp.h>
 
@@ -11,6 +12,7 @@
 #include <string>
 
 using namespace std::chrono_literals;
+using eacp::Testing::asyncTest;
 using eacp::Threads::Async;
 using eacp::Threads::AsyncError;
 
@@ -135,24 +137,19 @@ auto tCallJsRejectsOnError = test("WebViewTodo/callJsRejectsOnJsException") = []
         // for WKWebView JS exceptions is a generic phrase rather than the
         // thrown message itself. We just verify that a non-empty error
         // text reached us.
-        check(std::string {e.what()}.size() > 0);
+        check(!std::string {e.what()}.empty());
     }
     check(threw);
 };
 
-auto tCallJsChainsViaCoroutine = test("WebViewTodo/callJsChainsViaCoroutine") = []
+auto tCallJsChainsViaCoroutine =
+    asyncTest("WebViewTodo/callJsChainsViaCoroutine") = []() -> Async<>
 {
     auto app = TestApp<MyApp> {};
-    app.driver().waitFor(inputSelector);
+    co_await app.driver().waitForAsync(inputSelector);
 
     auto& webView = app.app().webView;
-    auto coro = [&]() -> Async<std::string>
-    {
-        auto sum = co_await webView.callJS("1 + 2");
-        auto wrapped = co_await webView.callJS("'val:' + (" + sum + ")");
-        co_return wrapped;
-    };
-
-    auto result = coro().waitFor(2s);
-    check(result == "val:3");
+    auto sum = co_await webView.callJS("1 + 2");
+    auto wrapped = co_await webView.callJS("'val:' + (" + sum + ")");
+    check(wrapped == "val:3");
 };

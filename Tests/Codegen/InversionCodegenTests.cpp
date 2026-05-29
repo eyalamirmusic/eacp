@@ -173,3 +173,210 @@ auto icAllFormatsTogether =
     check(findFile(files, ".events.ts") != nullptr);
     check(findFile(files, ".hooks.ts") != nullptr);
 };
+
+// ---------- Sub-APIs: r.use(key, sub) prefixes wire names with "key." ----------
+//
+// When an outer reflect() defers to a member via r.use("clock", clock),
+// every command / event the sub declares lands on the wire as
+// "clock.<name>". Hooks codegen has to project those dotted wire names
+// onto:
+//   - a valid TS identifier for the exported const (`useClockTick`,
+//     not `useClock.tick` — a parser error)
+//   - the matching backend access path (`backend.clock.getCurrentTick`,
+//     not `backend.getClock.currentTick` — different command + invalid
+//     property chain)
+// These tests pin both projections. They fail today because HooksFormat
+// concatenates `event.name` directly into both identifier slots.
+
+struct SubTick
+{
+    double angle = 0.0;
+
+    MIRO_REFLECT(angle)
+};
+
+class ClockSub
+{
+public:
+    void reflect(ApiReflector& r)
+    {
+        r.command(&ClockSub::getTick, "getTick");
+        r.event(&ClockSub::tick, "tick");
+    }
+
+    SubTick getTick() const { return SubTick {}; }
+
+    Event<SubTick> tick;
+};
+
+class PingSub
+{
+public:
+    void reflect(ApiReflector& r) { r.event(&PingSub::ping, "ping"); }
+
+    Event<SubTick> ping;
+};
+
+class HostApi
+{
+public:
+    void reflect(ApiReflector& r)
+    {
+        r.use("clock", clock);
+        r.use("ping", ping);
+    }
+
+    ClockSub clock;
+    PingSub ping;
+};
+
+auto icHooksSubApiBridgeStoreIdentifier = test(
+    "Inversion: sub-API event + matching get<Name> emits a valid TS hook "
+    "identifier") = []
+{
+    auto files = buildCodegen<HostApi>("schema", EA::Vector<std::string> {"hooks"});
+    auto* hooks = findFile(files, ".hooks.ts");
+
+    check(hooks != nullptr);
+    // Wire name is "clock.tick"; the exported const must be a single
+    // identifier, not "useClock.tick" (a property access in TS, which is
+    // a syntax error in an `export const ... =` position).
+    check(contains(hooks->contents, "export const useClockTick"));
+    check(!contains(hooks->contents, "export const useClock.tick"));
+};
+
+auto icHooksSubApiBridgeStoreBackendPath = test(
+    "Inversion: sub-API hooks reference backend via the nested namespace path") = []
+{
+    auto files = buildCodegen<HostApi>("schema", EA::Vector<std::string> {"hooks"});
+    auto* hooks = findFile(files, ".hooks.ts");
+
+    check(hooks != nullptr);
+    // The wire event 'clock.tick' is paired with the wire command
+    // 'clock.getTick' — same sub-API, conventional get<Name>. Hooks
+    // must fetch via backend.clock.getTick (matching the nested object
+    // the backend formatter builds from '.'-separated names), not via
+    // backend.getClock.tick (a non-existent command derived by naive
+    // "get" + capitalize on the dotted wire name).
+    check(contains(hooks->contents, "fetch: backend.clock.getTick"));
+    check(!contains(hooks->contents, "fetch: backend.getClock"));
+};
+
+auto icHooksSubApiBridgeStoreEventName = test(
+    "Inversion: sub-API hooks preserve the dotted wire name in event:") = []
+{
+    auto files = buildCodegen<HostApi>("schema", EA::Vector<std::string> {"hooks"});
+    auto* hooks = findFile(files, ".hooks.ts");
+
+    check(hooks != nullptr);
+    // The hook identifier collapses, but the runtime `event:` channel
+    // name must still match what the bridge emits — i.e., the original
+    // dotted wire name.
+    check(contains(hooks->contents, "event: 'clock.tick'"));
+};
+
+auto icHooksSubApiPushOnlyIdentifier = test(
+    "Inversion: sub-API push-only event emits a valid TS hook identifier") = []
+{
+    auto files = buildCodegen<HostApi>("schema", EA::Vector<std::string> {"hooks"});
+    auto* hooks = findFile(files, ".hooks.ts");
+
+    check(hooks != nullptr);
+    // ping has no matching get command; this exercises the
+    // makeNativeEvent fallback. The exported const must still be a
+    // single identifier.
+    check(contains(hooks->contents, "export const usePingPing = makeNativeEvent"));
+    check(!contains(hooks->contents, "export const usePing.ping"));
+    check(contains(hooks->contents, "event: 'ping.ping'"));
+};
+
+// ---------- Sub-API + keyed event: store var, identifiers, and item hook ----------
+
+struct SubItem
+{
+    std::string id;
+    std::string text;
+
+    MIRO_REFLECT(id, text)
+};
+
+struct SubItemState
+{
+    std::vector<SubItem> items;
+
+    MIRO_REFLECT(items)
+};
+
+class TodosSub
+{
+public:
+    void reflect(ApiReflector& r)
+    {
+        r.command(&TodosSub::getChanged, "getChanged");
+        r.keyedEvent(&TodosSub::changed, "changed", "items", "id");
+    }
+
+    SubItemState getChanged() const { return SubItemState {}; }
+
+    Event<SubItemState> changed;
+};
+
+class KeyedHostApi
+{
+public:
+    void reflect(ApiReflector& r) { r.use("todos", todos); }
+
+    TodosSub todos;
+};
+
+auto icHooksSubApiKeyedIdentifiers = test(
+    "Inversion: sub-API keyed event emits valid TS identifiers for the store "
+    "+ all-hook") = []
+{
+    auto files =
+        buildCodegen<KeyedHostApi>("schema", EA::Vector<std::string> {"hooks"});
+    auto* hooks = findFile(files, ".hooks.ts");
+
+    check(hooks != nullptr);
+    // Store variable identifier — must not contain a dot.
+    check(!contains(hooks->contents, "todos.changedStore"));
+    check(contains(hooks->contents, "todosChangedStore = makeKeyedStore"));
+
+    // All-hook identifier — same rule.
+    check(contains(hooks->contents, "export const useTodosChanged"));
+    check(!contains(hooks->contents, "export const useTodos.changed"));
+};
+
+// ---------- Sub-APIs in the backend module: dotted names nest ----------
+
+auto icBackendSubApiNests = test(
+    "Inversion: sub-API commands nest into the backend object tree") = []
+{
+    auto files = buildCodegen<HostApi>("schema", EA::Vector<std::string> {"backend"});
+    auto* backend = findFile(files, ".backend.ts");
+
+    check(backend != nullptr);
+    // r.use("clock", clock); r.command(&ClockSub::getTick, "getTick") ->
+    // wire name "clock.getTick" -> CommandExport tree:
+    //   { clock: { getTick: (...) => invoke('clock.getTick', ...) } }
+    check(contains(backend->contents, "clock: {"));
+    check(contains(backend->contents, "getTick: (): Promise<T.SubTick>"));
+    check(contains(backend->contents, "invoke('clock.getTick', {})"));
+    // The pre-fix output emitted the wire name as a single dotted key
+    // ("clock.getTick: ..."), which is invalid in an object literal.
+    check(!contains(backend->contents, "clock.getTick: (): Promise"));
+};
+
+auto icHooksSubApiKeyedBackendPath = test(
+    "Inversion: sub-API keyed event routes fetch via the nested backend path") = []
+{
+    auto files =
+        buildCodegen<KeyedHostApi>("schema", EA::Vector<std::string> {"hooks"});
+    auto* hooks = findFile(files, ".hooks.ts");
+
+    check(hooks != nullptr);
+    // Wire command is 'todos.getChanged' — accessed via the nested
+    // namespace object the backend formatter emits.
+    check(contains(hooks->contents, "fetch: backend.todos.getChanged"));
+    check(!contains(hooks->contents, "fetch: backend.getTodos"));
+};

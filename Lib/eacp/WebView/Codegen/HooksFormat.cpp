@@ -3,8 +3,10 @@
 #include <Miro/CommandExport/ResolvedTypes.h>
 
 #include <cctype>
+#include <cstddef>
 #include <optional>
 #include <sstream>
+#include <vector>
 
 namespace eacp::Graphics::Codegen
 {
@@ -42,6 +44,86 @@ std::string capitalizeFirst(std::string_view s)
     auto r = std::string {s};
     r[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(r[0])));
     return r;
+}
+
+std::string lowerFirst(std::string_view s)
+{
+    if (s.empty())
+        return {};
+
+    auto r = std::string {s};
+    r[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(r[0])));
+    return r;
+}
+
+// Wire-name segmentation. ApiReflector::joinedName joins sub-API
+// prefixes with '.' (matching CommandExport's nesting separator), so a
+// reflect() that does r.use("clock", clock); r.event<&Clock::tick>();
+// produces wire name "clock.tick". Hook codegen splits on the same '.'
+// to project that onto valid TS identifiers (which can't contain '.')
+// and onto the matching backend access path.
+std::vector<std::string_view> splitOnDot(std::string_view name)
+{
+    auto out = std::vector<std::string_view> {};
+    auto start = std::size_t {0};
+
+    for (auto i = std::size_t {0}; i < name.size(); ++i)
+    {
+        if (name[i] == '.')
+        {
+            out.push_back(name.substr(start, i - start));
+            start = i + 1;
+        }
+    }
+    out.push_back(name.substr(start));
+
+    return out;
+}
+
+// "clock.tick" → "ClockTick"; "tick" → "Tick". Used to build the
+// useXxx identifier slot from a dotted wire event name.
+std::string toPascalConcat(std::string_view name)
+{
+    auto out = std::string {};
+    for (auto seg: splitOnDot(name))
+        out += capitalizeFirst(seg);
+    return out;
+}
+
+// "clock.tick" → "clockTick"; "tick" → "tick". Used for the internal
+// store variable name in the keyed-event path (needs to be a valid JS
+// identifier but conventionally lower-camel).
+std::string toCamelConcat(std::string_view name)
+{
+    auto segments = splitOnDot(name);
+    if (segments.empty())
+        return {};
+
+    auto out = std::string {lowerFirst(segments.front())};
+    for (auto i = std::size_t {1}; i < segments.size(); ++i)
+        out += capitalizeFirst(segments[i]);
+    return out;
+}
+
+// For an event named "prefix.local" the matching get<Name> command on
+// the wire is "prefix.getLocal" — capitalize only the last segment and
+// glue "get" in front of it. Single-segment names ("tick") still
+// produce "getTick", preserving the original behaviour.
+std::string getCommandNameFor(std::string_view eventName)
+{
+    auto segments = splitOnDot(eventName);
+    if (segments.empty())
+        return {};
+
+    auto out = std::string {};
+    for (auto i = std::size_t {0}; i + 1 < segments.size(); ++i)
+    {
+        out += segments[i];
+        out += '.';
+    }
+    out += "get";
+    out += capitalizeFirst(segments.back());
+    return out;
 }
 
 std::string stripTrailing(std::string s, std::string_view suffix)
@@ -145,9 +227,19 @@ std::string formatHooksModule(std::span<TypeNode> typeRoots,
         if (payloadNode == nullptr)
             continue;
 
-        auto getCmdName = "get" + capitalizeFirst(event.name);
+        // Wire name (event.name) may contain dots from sub-API
+        // recursion. Project it onto:
+        //  - getCmdName: the wire command we look for, "prefix.getLocal"
+        //  - fetchAccess: the JS access path into backend, where the
+        //    nested object the CommandExport tree builds shows up at
+        //    backend.prefix.getLocal (dotted name appends directly
+        //    after "backend.")
+        //  - stateHookName: the exported TS identifier, which can't
+        //    contain dots — concatenate Pascal-cased segments.
+        auto getCmdName = getCommandNameFor(event.name);
         auto hasGetCmd = commandExists(commands, getCmdName);
-        auto stateHookName = "use" + capitalizeFirst(event.name);
+        auto fetchAccess = std::string {"backend."} + getCmdName;
+        auto stateHookName = "use" + toPascalConcat(event.name);
         auto initialJson = initialJsonFor(event);
 
         if (event.isKeyed && hasGetCmd)
@@ -160,13 +252,13 @@ std::string formatHooksModule(std::span<TypeNode> typeRoots,
                 resolved.nameFor(keyed->itemType->qualifiedName,
                                  keyed->itemType->typeName);
             auto idsBase = stripTrailing(itemTypeName, "Item");
-            auto storeVar = event.name + "Store";
+            auto storeVar = toCamelConcat(event.name) + "Store";
 
             body << "\n"
                  << "const " << storeVar << " = makeKeyedStore({\n"
                  << "    backend,\n"
                  << "    event: '" << event.name << "',\n"
-                 << "    fetch: backend." << getCmdName << ",\n"
+                 << "    fetch: " << fetchAccess << ",\n"
                  << "    shouldFetch: isBackendAvailable,\n"
                  << "    initial: " << initialJson << ",\n"
                  << "    getItems: (s) => s." << event.collectionField << ",\n"
@@ -189,7 +281,7 @@ std::string formatHooksModule(std::span<TypeNode> typeRoots,
                  << "export const " << stateHookName << " = makeBridgeStore({\n"
                  << "    backend,\n"
                  << "    event: '" << event.name << "',\n"
-                 << "    fetch: backend." << getCmdName << ",\n"
+                 << "    fetch: " << fetchAccess << ",\n"
                  << "    shouldFetch: isBackendAvailable,\n"
                  << "    initial: " << initialJson << ",\n"
                  << "});\n";

@@ -1,5 +1,6 @@
 #include "AppDriver.h"
 
+#include <eacp/Core/Threads/Async.h>
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/WebView/WebView.h>
 
@@ -8,7 +9,6 @@
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
-#include <thread>
 #include <utility>
 
 namespace eacp::WebView::Test
@@ -150,11 +150,14 @@ AppDriver::AppDriver(Graphics::WebView& webViewToUse,
     , bridge(bridgeToUse)
     , defaultTimeoutMs(options.defaultTimeoutMs)
     , snapshotDir(resolveSnapshotDir(std::move(options.snapshotDir)))
+    , firstNavigation(firstNavigationPromise.get())
 {
     // evaluateJavaScript before the first navigation finishes
     // sometimes fails — the JS context isn't fully set up yet. Latch
     // on the first didFinishNavigation callback so command methods
-    // can pump the loop until the page is ready.
+    // can wait for the page to be ready (either by awaiting the
+    // promise from a coroutine, or by pumping it via waitFor in the
+    // sync path).
     //
     // Chain through whatever was already installed so users aren't
     // surprised by their own handler getting clobbered.
@@ -165,14 +168,18 @@ AppDriver::AppDriver(Graphics::WebView& webViewToUse,
         if (previous)
             previous(url);
 
-        navigationFinished = true;
-        // Wake any pending waitForFirstNavigation pump.
-        Threads::stopEventLoop();
+        if (firstNavigationFired)
+            return;
+
+        firstNavigationFired = true;
+        firstNavigationPromise.resolve();
     };
 
     // Latch on failure too, so a broken scheme / 404 / etc. unblocks
-    // the wait immediately with a useful message instead of timing
-    // out after the full timeout.
+    // the wait immediately with the actual WebView error instead of
+    // hanging until the timeout. The reject() carries the error string
+    // straight through to the AsyncError that waitForFirstNavigation /
+    // any co_await on the promise will surface.
     previousFailedHandler = webView.onNavigationFailed;
     webView.onNavigationFailed =
         [this, previous = previousFailedHandler](const std::string& error)
@@ -180,9 +187,11 @@ AppDriver::AppDriver(Graphics::WebView& webViewToUse,
         if (previous)
             previous(error);
 
-        navigationError = error;
-        navigationFinished = true;
-        Threads::stopEventLoop();
+        if (firstNavigationFired)
+            return;
+
+        firstNavigationFired = true;
+        firstNavigationPromise.reject(error);
     };
 }
 
@@ -203,48 +212,37 @@ int AppDriver::effectiveTimeoutMs(const CallOptions& opts) const
     return defaultTimeoutMs ? *defaultTimeoutMs : Test::defaultTimeoutMs;
 }
 
+Threads::Async<void>
+AppDriver::waitForFirstNavigationAsync(const CallOptions&)
+{
+    return firstNavigation;
+}
+
 void AppDriver::waitForFirstNavigation(const CallOptions& opts)
 {
-    if (navigationFinished)
-        return;
-
     auto timeout = std::chrono::milliseconds {effectiveTimeoutMs(opts)};
-    auto deadline = std::chrono::steady_clock::now() + timeout;
-
-    while (!navigationFinished)
+    try
     {
-        auto remaining =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                deadline - std::chrono::steady_clock::now());
-        if (remaining.count() <= 0)
-            break;
-
-        // runEventLoopFor returns true if stopEventLoop was called
-        // before timeout. Our onNavigationFinished hook above calls
-        // stopEventLoop, so a true return means the navigation
-        // probably fired.
-        Threads::runEventLoopFor(remaining);
+        firstNavigation.waitFor(timeout);
     }
+    catch (const Threads::AsyncError& e)
+    {
+        // If the latch has fired by the time waitFor throws, the
+        // promise was reject()'d (by onNavigationFailed) — surface the
+        // actual WebView2 error. Otherwise we hit Async::waitFor's own
+        // "timed out" path; report it as a load timeout.
+        if (firstNavigationFired)
+            throw std::runtime_error("AppDriver: navigation failed: "
+                                     + std::string {e.what()});
 
-    if (!navigationFinished)
         throw std::runtime_error("AppDriver: page did not finish loading "
-                                 "within " + std::to_string(timeout.count())
-                                 + "ms");
-
-    if (!navigationError.empty())
-        throw std::runtime_error("AppDriver: navigation failed: "
-                                 + navigationError);
+                                 "within "
+                                 + std::to_string(timeout.count()) + "ms");
+    }
 }
 
 namespace
 {
-
-struct JsResult
-{
-    std::string result;
-    std::string error;
-    bool done = false;
-};
 
 struct SnapshotState
 {
@@ -253,50 +251,21 @@ struct SnapshotState
     bool done = false;
 };
 
-} // namespace
-
-Miro::JSON AppDriver::runJs(const std::string& expression,
-                            const CallOptions& opts)
+Miro::JSON unwrapJsResult(const std::string& raw)
 {
-    waitForFirstNavigation(opts);
-
-    auto timeout = std::chrono::milliseconds {effectiveTimeoutMs(opts)};
-    auto state = JsResult {};
-
-    webView.evaluateJavaScript(
-        wrapExpr(expression),
-        [&state](const std::string& result, const std::string& error)
-        {
-            state.result = result;
-            state.error = error;
-            state.done = true;
-            Threads::stopEventLoop();
-        });
-
-    if (!state.done)
-    {
-        if (!Threads::runEventLoopFor(timeout) && !state.done)
-            throw std::runtime_error("AppDriver: JS evaluation timed out "
-                                     "after " + std::to_string(timeout.count())
-                                     + "ms");
-    }
-
-    if (!state.error.empty())
-        throw std::runtime_error("AppDriver JS error: " + state.error);
-
-    if (state.result.empty())
+    if (raw.empty())
         return Miro::JSON {};
 
     auto parsed = Miro::JSON {};
     try
     {
-        parsed = Miro::Json::parse(state.result);
+        parsed = Miro::Json::parse(raw);
     }
     catch (const std::exception& e)
     {
         throw std::runtime_error(std::string {"AppDriver: failed to parse JS "
-                                              "result: "} + e.what() + " (raw: "
-                                 + state.result + ")");
+                                              "result: "}
+                                 + e.what() + " (raw: " + raw + ")");
     }
 
     if (!parsed.isObject())
@@ -305,6 +274,46 @@ Miro::JSON AppDriver::runJs(const std::string& expression,
     auto& obj = parsed.asObject();
     auto it = obj.find("value");
     return it != obj.end() ? it->second : Miro::JSON {};
+}
+
+// Outer waitFor on a sync wrapper needs to outlive the per-call
+// timeout so the coroutine's own deadline check throws the
+// task-specific message ("waitFor timed out for selector …",
+// "JS evaluation timed out …") before the generic
+// "Async::waitFor timed out" from the wrapper.
+constexpr auto syncTimeoutBufferMs = 1000;
+
+std::chrono::milliseconds syncOuterTimeout(int innerTimeoutMs)
+{
+    return std::chrono::milliseconds {innerTimeoutMs + syncTimeoutBufferMs};
+}
+
+} // namespace
+
+Threads::Async<Miro::JSON>
+AppDriver::runJsAsync(const std::string& expression, const CallOptions& opts)
+{
+    co_await waitForFirstNavigationAsync(opts);
+
+    auto raw = std::string {};
+    try
+    {
+        raw = co_await webView.callJS(wrapExpr(expression));
+    }
+    catch (const Threads::AsyncError& e)
+    {
+        throw std::runtime_error(std::string {"AppDriver JS error: "}
+                                 + e.what());
+    }
+
+    co_return unwrapJsResult(raw);
+}
+
+Miro::JSON AppDriver::runJs(const std::string& expression,
+                            const CallOptions& opts)
+{
+    auto timeoutMs = effectiveTimeoutMs(opts);
+    return runJsAsync(expression, opts).waitFor(syncOuterTimeout(timeoutMs));
 }
 
 std::vector<std::uint8_t>
@@ -343,97 +352,185 @@ Miro::JSON AppDriver::invoke(const std::string& command,
     return bridge.dispatch(command, payload);
 }
 
+Threads::Async<bool>
+AppDriver::clickAsync(const std::string& selector, CallOptions opts)
+{
+    auto result = co_await runJsAsync(
+        "window.__test.click(" + jsStringLiteral(selector) + ")", opts);
+    co_return asBool(result);
+}
+
 bool AppDriver::click(const std::string& selector, CallOptions opts)
 {
-    return asBool(runJs("window.__test.click(" + jsStringLiteral(selector) + ")",
-                        opts));
+    return clickAsync(selector, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
+
+Threads::Async<bool> AppDriver::fillAsync(const std::string& selector,
+                                          const std::string& value,
+                                          CallOptions opts)
+{
+    auto result = co_await runJsAsync(
+        "window.__test.fill(" + jsStringLiteral(selector) + ","
+            + jsStringLiteral(value) + ")",
+        opts);
+    co_return asBool(result);
 }
 
 bool AppDriver::fill(const std::string& selector, const std::string& value,
                      CallOptions opts)
 {
-    return asBool(runJs("window.__test.fill(" + jsStringLiteral(selector) + ","
-                        + jsStringLiteral(value) + ")",
-                        opts));
+    return fillAsync(selector, value, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
+
+Threads::Async<bool> AppDriver::pressAsync(const std::string& selector,
+                                           const std::string& key,
+                                           CallOptions opts)
+{
+    auto result = co_await runJsAsync(
+        "window.__test.press(" + jsStringLiteral(selector) + ","
+            + jsStringLiteral(key) + ")",
+        opts);
+    co_return asBool(result);
 }
 
 bool AppDriver::press(const std::string& selector, const std::string& key,
                       CallOptions opts)
 {
-    return asBool(runJs("window.__test.press(" + jsStringLiteral(selector) + ","
-                        + jsStringLiteral(key) + ")",
-                        opts));
+    return pressAsync(selector, key, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
+
+Threads::Async<bool>
+AppDriver::submitAsync(const std::string& selector, CallOptions opts)
+{
+    auto result = co_await runJsAsync(
+        "window.__test.submit(" + jsStringLiteral(selector) + ")", opts);
+    co_return asBool(result);
 }
 
 bool AppDriver::submit(const std::string& selector, CallOptions opts)
 {
-    return asBool(runJs("window.__test.submit(" + jsStringLiteral(selector) + ")",
-                        opts));
+    return submitAsync(selector, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
+
+Threads::Async<std::string>
+AppDriver::textAsync(const std::string& selector, CallOptions opts)
+{
+    auto result = co_await runJsAsync(
+        "window.__test.text(" + jsStringLiteral(selector) + ")", opts);
+    co_return asString(result);
 }
 
 std::string AppDriver::text(const std::string& selector, CallOptions opts)
 {
-    return asString(runJs("window.__test.text(" + jsStringLiteral(selector)
-                          + ")",
-                          opts));
+    return textAsync(selector, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
+
+Threads::Async<std::optional<std::string>>
+AppDriver::attrAsync(const std::string& selector, const std::string& name,
+                     CallOptions opts)
+{
+    auto result = co_await runJsAsync(
+        "window.__test.attr(" + jsStringLiteral(selector) + ","
+            + jsStringLiteral(name) + ")",
+        opts);
+    if (result.isNull())
+        co_return std::nullopt;
+    co_return asString(result);
 }
 
 std::optional<std::string> AppDriver::attr(const std::string& selector,
                                            const std::string& name,
                                            CallOptions opts)
 {
-    auto result = runJs("window.__test.attr(" + jsStringLiteral(selector) + ","
-                        + jsStringLiteral(name) + ")",
-                        opts);
-    if (result.isNull())
-        return std::nullopt;
-    return asString(result);
+    return attrAsync(selector, name, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
+
+Threads::Async<bool>
+AppDriver::existsAsync(const std::string& selector, CallOptions opts)
+{
+    auto result = co_await runJsAsync(
+        "window.__test.exists(" + jsStringLiteral(selector) + ")", opts);
+    co_return asBool(result);
 }
 
 bool AppDriver::exists(const std::string& selector, CallOptions opts)
 {
-    return asBool(runJs("window.__test.exists(" + jsStringLiteral(selector)
-                        + ")",
-                        opts));
+    return existsAsync(selector, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
+
+Threads::Async<int>
+AppDriver::countAsync(const std::string& selector, CallOptions opts)
+{
+    auto result = co_await runJsAsync(
+        "window.__test.count(" + jsStringLiteral(selector) + ")", opts);
+    co_return asInt(result);
 }
 
 int AppDriver::count(const std::string& selector, CallOptions opts)
 {
-    return asInt(runJs("window.__test.count(" + jsStringLiteral(selector) + ")",
-                       opts));
+    return countAsync(selector, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
+
+Threads::Async<bool>
+AppDriver::waitForAsync(const std::string& selector, CallOptions opts)
+{
+    auto deadline = std::chrono::steady_clock::now()
+                  + std::chrono::milliseconds {effectiveTimeoutMs(opts)};
+
+    while (true)
+    {
+        auto result = co_await runJsAsync(
+            "window.__test.exists(" + jsStringLiteral(selector) + ")", {});
+        if (asBool(result))
+            co_return true;
+        if (std::chrono::steady_clock::now() >= deadline)
+            throw std::runtime_error("AppDriver: waitFor timed out for "
+                                     "selector: "
+                                     + selector);
+        co_await Threads::delay(std::chrono::milliseconds {waitForPollMs});
+    }
 }
 
 bool AppDriver::waitFor(const std::string& selector, CallOptions opts)
 {
-    auto timeout = std::chrono::milliseconds {effectiveTimeoutMs(opts)};
-    auto deadline = std::chrono::steady_clock::now() + timeout;
-    auto pollScript =
-        "window.__test.exists(" + jsStringLiteral(selector) + ")";
+    return waitForAsync(selector, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
 
-    while (true)
-    {
-        auto result = runJs(pollScript, {});
-        if (result.isBool() && result.asBool())
-            return true;
-        if (std::chrono::steady_clock::now() >= deadline)
-            throw std::runtime_error("AppDriver: waitFor timed out for "
-                                     "selector: " + selector);
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds {waitForPollMs});
-    }
+Threads::Async<Miro::JSON>
+AppDriver::evaluateAsync(const std::string& expression, CallOptions opts)
+{
+    return runJsAsync(
+        "window.__test.evaluate(" + jsStringLiteral(expression) + ")", opts);
 }
 
 Miro::JSON AppDriver::evaluate(const std::string& expression, CallOptions opts)
 {
-    return runJs("window.__test.evaluate(" + jsStringLiteral(expression) + ")",
-                 opts);
+    return evaluateAsync(expression, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
+
+Threads::Async<std::string>
+AppDriver::domAsync(std::string_view selector, CallOptions opts)
+{
+    auto arg = selector.empty() ? std::string {"null"}
+                                : jsStringLiteral(selector);
+    auto result = co_await runJsAsync("window.__test.dom(" + arg + ")", opts);
+    co_return asString(result);
 }
 
 std::string AppDriver::dom(std::string_view selector, CallOptions opts)
 {
-    auto arg = selector.empty() ? std::string {"null"}
-                                : jsStringLiteral(selector);
-    return asString(runJs("window.__test.dom(" + arg + ")", opts));
+    return domAsync(selector, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
 }
 
 ScreenshotResult AppDriver::screenshot(const ScreenshotOptions& options)

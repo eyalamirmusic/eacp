@@ -1,5 +1,7 @@
 #pragma once
 
+#include <eacp/Core/Threads/Async.h>
+
 #include <Miro/Miro.h>
 
 #include <cstdint>
@@ -143,6 +145,36 @@ public:
 
     std::string dom(std::string_view selector = {}, CallOptions opts = {});
 
+    // Async siblings of the above. Each returns an Async that resolves
+    // on the main thread; use with co_await inside an asyncTest body.
+    // Rejection surfaces as an AsyncError (same message the sync
+    // variant would throw as std::runtime_error).
+    Threads::Async<bool> clickAsync(const std::string& selector,
+                                    CallOptions opts = {});
+    Threads::Async<bool> fillAsync(const std::string& selector,
+                                   const std::string& value,
+                                   CallOptions opts = {});
+    Threads::Async<bool> pressAsync(const std::string& selector,
+                                    const std::string& key,
+                                    CallOptions opts = {});
+    Threads::Async<bool> submitAsync(const std::string& selector,
+                                     CallOptions opts = {});
+    Threads::Async<std::string> textAsync(const std::string& selector,
+                                          CallOptions opts = {});
+    Threads::Async<std::optional<std::string>> attrAsync(
+        const std::string& selector, const std::string& name,
+        CallOptions opts = {});
+    Threads::Async<bool> existsAsync(const std::string& selector,
+                                     CallOptions opts = {});
+    Threads::Async<int> countAsync(const std::string& selector,
+                                   CallOptions opts = {});
+    Threads::Async<bool> waitForAsync(const std::string& selector,
+                                      CallOptions opts = {});
+    Threads::Async<Miro::JSON> evaluateAsync(const std::string& expression,
+                                             CallOptions opts = {});
+    Threads::Async<std::string> domAsync(std::string_view selector = {},
+                                         CallOptions opts = {});
+
     ScreenshotResult screenshot(const ScreenshotOptions& options = {});
     SnapshotResult snapshot(const std::string& name,
                             const SnapshotOptions& options = {});
@@ -175,8 +207,11 @@ public:
     }
 
 private:
+    Threads::Async<Miro::JSON> runJsAsync(const std::string& expression,
+                                          const CallOptions& opts);
     Miro::JSON runJs(const std::string& expression, const CallOptions& opts);
     std::vector<std::uint8_t> runSnapshotBytes(const CallOptions& opts);
+    Threads::Async<void> waitForFirstNavigationAsync(const CallOptions& opts);
     void waitForFirstNavigation(const CallOptions& opts);
     int effectiveTimeoutMs(const CallOptions& opts) const;
 
@@ -185,8 +220,9 @@ private:
     std::optional<int> defaultTimeoutMs;
     std::string snapshotDir;
 
-    bool navigationFinished = false;
-    std::string navigationError;
+    Threads::AsyncPromise<void> firstNavigationPromise;
+    Threads::Async<void> firstNavigation;
+    bool firstNavigationFired = false;
     std::function<void(const std::string&)> previousFinishedHandler;
     std::function<void(const std::string&)> previousFailedHandler;
 };

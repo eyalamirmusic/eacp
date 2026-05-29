@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <vector>
 
 namespace eacp::Threads
 {
@@ -18,6 +19,15 @@ namespace eacp::Threads
 // tearing down the program.
 constexpr UINT WM_EACP_STOP_LOOP = WM_APP + 0x42E0;
 
+// Wake-up posted by EventLoop::call to make the pump drain its
+// pending-callback queue. We don't use the WinRT DispatcherQueue
+// for this — under nested pumping its messages aren't reliably
+// processed by our PeekMessage loop (the items sit in the queue and
+// only fire after the outer pump exits), which breaks any coroutine
+// that co_awaits a callAsync continuation while running inside a
+// nested runEventLoopFor.
+constexpr UINT WM_EACP_RUN_PENDING = WM_APP + 0x42E1;
+
 static std::atomic<DWORD> mainThreadId {0};
 static thread_local int runForDepth = 0;
 
@@ -25,18 +35,23 @@ struct PendingCallbacks
 {
     void run()
     {
-        auto guard = std::lock_guard(mutex);
-        auto queue = getDispatcherQueue();
-
-        for (auto& cb: pendingCallbacks)
-            queue.TryEnqueue(cb);
-
-        pendingCallbacks.clear();
+        // Snap the queue under the lock, then run callbacks outside it
+        // so user code can re-enter (e.g. callAsync from inside a
+        // callback won't deadlock on the recursive_mutex but also
+        // won't be processed in this pass).
+        auto fired = std::vector<Callback> {};
+        {
+            auto guard = std::lock_guard {mutex};
+            fired.assign(pendingCallbacks.begin(), pendingCallbacks.end());
+            pendingCallbacks.clear();
+        }
+        for (auto& cb: fired)
+            cb();
     }
 
     void add(const Callback& cb)
     {
-        auto guard = std::lock_guard(mutex);
+        auto guard = std::lock_guard {mutex};
         pendingCallbacks.add(cb);
     }
 
@@ -58,7 +73,11 @@ void initLoopThread()
     winrt::init_apartment(winrt::apartment_type::single_threaded);
     initMainThread();
     mainThreadId = GetCurrentThreadId();
-    getPendingCallbacks().run();
+
+    // Any callbacks queued before the main thread was identified will
+    // have been buffered in PendingCallbacks; nudge the pump to drain
+    // them on the next iteration.
+    PostThreadMessageW(mainThreadId.load(), WM_EACP_RUN_PENDING, 0, 0);
 }
 } // namespace
 
@@ -76,6 +95,12 @@ void EventLoop::run()
 
         if (result == 0 || result == -1)
             break;
+
+        if (msg.message == WM_EACP_RUN_PENDING)
+        {
+            getPendingCallbacks().run();
+            continue;
+        }
 
         if (msg.message == WM_EACP_STOP_LOOP)
             continue;
@@ -142,6 +167,12 @@ bool EventLoop::runFor(std::chrono::milliseconds timeout)
                 break;
             }
 
+            if (msg.message == WM_EACP_RUN_PENDING)
+            {
+                getPendingCallbacks().run();
+                continue;
+            }
+
             if (msg.message == WM_EACP_STOP_LOOP)
             {
                 running = false;
@@ -169,10 +200,15 @@ void EventLoop::quit()
 
 void EventLoop::call(Callback func)
 {
-    if (auto queue = getDispatcherQueue())
-        queue.TryEnqueue([func] { func(); });
-    else
-        getPendingCallbacks().add(func);
+    getPendingCallbacks().add(func);
+
+    // Poke the pump so it drains the callback list on the next tick.
+    // If the main thread hasn't entered the loop yet (mainThreadId
+    // still 0) the callback stays buffered and gets drained by
+    // initLoopThread()'s same WM_EACP_RUN_PENDING post.
+    auto id = mainThreadId.load();
+    if (id != 0)
+        PostThreadMessageW(id, WM_EACP_RUN_PENDING, 0, 0);
 }
 
 // Consumed by async callbacks that want to unblock the blocking caller

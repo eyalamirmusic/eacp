@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Threads/Async.h>
 #include <eacp/Graphics/Graphics.h>
+#include <Miro/Miro.h>
 #include <ResEmbed/ResEmbed.h>
 #include <ea_data_structures/Pointers/OwningPointer.h>
 #include <ea_data_structures/Structures/Vector.h>
@@ -42,6 +43,27 @@ struct WebViewNativeAccess;
 class WebView : public View
 {
 public:
+    // A single file the page can hand to the native drag-out. `path` is the
+    // absolute on-disk path the OS copies on drop; `name` is the display label.
+    struct DraggableFile
+    {
+        std::string path;
+        std::string name;
+
+        MIRO_REFLECT(path, name)
+    };
+
+    // Payload of the built-in `armFileDrag` bridge command. Serializable via
+    // Miro, so the page sends `{ files: [{ path, name }, ...] }` and the bridge
+    // deserializes it straight into this type -- no hand-rolled JSON on either
+    // side. Multiple files start a single multi-file drag session.
+    struct DraggableFileList
+    {
+        std::vector<DraggableFile> files;
+
+        MIRO_REFLECT(files)
+    };
+
     struct Options
     {
         struct Embedded
@@ -110,6 +132,15 @@ public:
     void removeScriptMessageHandler(const std::string& name);
 
     void addUserScript(const std::string& source, bool atDocumentStart = true);
+
+    // Arms a native file drag-out of the given on-disk files for the next mouse
+    // gesture. The drag is started from the real mouseDragged: event once the
+    // pointer crosses the drag threshold, so it escapes the app into Finder /
+    // a DAW (a session started from an async callback cannot). Prefer the
+    // built-in `armFileDrag` bridge command, which deserializes an
+    // eacp::WebView::DraggableFileList and routes here. macOS-only; a no-op on
+    // other platforms.
+    void armFileDrag(const std::vector<std::string>& paths);
 
     std::function<void(const std::string& url)> onNavigationStarted = [](auto&&) {};
     std::function<void(const std::string& url)> onNavigationFinished = [](auto&&) {};

@@ -58,3 +58,5 @@ endif ()
 set_default_target_setting(eacp-core)
 eacp_enable_unity_build(eacp-core)
 add_ide_sources(eacp-core)
+
+add_subdirectory(Testing)

@@ -3,6 +3,7 @@
 #include "WebView.h"
 
 @class WKWebView;
+@class WKWebViewConfiguration;
 
 namespace eacp::Graphics::detail
 {
@@ -18,4 +19,13 @@ void attachWKWebViewToParent(WKWebView* webView, void* parentHandle);
 void applyNativeZoom(WKWebView* webView, double clamped, double& storedZoom);
 double readNativeZoom(WKWebView* webView, double storedZoom);
 WebView* findFocusedWebView();
+
+// Creates the platform WKWebView. On macOS this is a subclass that owns native
+// file drag-out (intercepts mouseDragged: to start the session from a live
+// event); on iOS it is a plain WKWebView.
+WKWebView* createWebView(WKWebViewConfiguration* config);
+
+// Arms a native file drag-out for the next mouse gesture with the given on-disk
+// paths. macOS-only behaviour; the iOS translation unit provides a no-op.
+void armFileDrag(WKWebView* webView, const std::vector<std::string>& paths);
 } // namespace eacp::Graphics::detail

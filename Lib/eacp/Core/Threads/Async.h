@@ -11,6 +11,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -261,7 +262,25 @@ private:
             return;
 
         state->continuations.push_back([] { stopEventLoop(); });
-        runEventLoopFor(timeout);
+
+        // Other code (e.g. a Window's onQuit-via-callAsync) may call
+        // stopEventLoop from a queued callback that has nothing to do
+        // with this Async. If that happens, runEventLoopFor returns
+        // before our state has settled — re-enter and keep pumping
+        // until either the state actually settles or the deadline
+        // expires.
+        auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (state->status == detail::AsyncState<T>::Status::Pending)
+        {
+            auto now = std::chrono::steady_clock::now();
+            if (now >= deadline)
+                break;
+
+            auto remaining =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - now);
+            runEventLoopFor(remaining);
+        }
 
         if (state->status == detail::AsyncState<T>::Status::Pending)
             throw AsyncError {"Async::waitFor timed out"};
@@ -275,5 +294,18 @@ private:
 
     std::shared_ptr<detail::AsyncState<T>> state;
 };
+
+inline Async<void> delay(std::chrono::milliseconds duration)
+{
+    auto promise = AsyncPromise<void>();
+    std::thread(
+        [promise, duration]
+        {
+            std::this_thread::sleep_for(duration);
+            callAsync([promise] { promise.resolve(); });
+        })
+        .detach();
+    return promise.get();
+}
 
 } // namespace eacp::Threads

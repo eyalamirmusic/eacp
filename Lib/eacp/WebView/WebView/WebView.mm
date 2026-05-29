@@ -55,6 +55,7 @@ using MessageHandlerMap =
 }
 @end
 
+
 namespace eacp::Graphics
 {
 struct WebView::PopupInit
@@ -88,8 +89,7 @@ struct WebView::Native
             schemeHandlers.push_back(std::move(handler));
         }
 
-        auto rect = CGRectMake(0, 0, 100, 100);
-        webView = [[WKWebView alloc] initWithFrame:rect configuration:config.get()];
+        webView = detail::createWebView(config.get());
         webView.get().navigationDelegate = delegate.get();
         webView.get().UIDelegate = delegate.get();
 
@@ -647,6 +647,11 @@ void WebView::addUserScript(const std::string& source, bool atDocumentStart)
         forMainFrameOnly:YES];
 
     [controller addUserScript:userScript];
+}
+
+void WebView::armFileDrag(const std::vector<std::string>& paths)
+{
+    detail::armFileDrag(impl->webView.get(), paths);
 }
 
 void WebView::resized()

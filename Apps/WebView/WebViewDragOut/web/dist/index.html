@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Native file drag-out</title>
+    <style>
+        :root { color-scheme: dark; }
+
+        body
+        {
+            font-family: -apple-system, sans-serif;
+            margin: 0;
+            padding: 2rem;
+            background: #14141c;
+            color: #e6e6f0;
+            user-select: none;
+            cursor: default;
+        }
+
+        h1 { margin: 0 0 0.25rem; font-size: 1.25rem; }
+
+        p { color: #9a9ab2; margin: 0 0 1.5rem; font-size: 0.85rem; }
+
+        #list
+        {
+            border: 1px solid #2c2c3c;
+            border-radius: 10px;
+            overflow: hidden;
+            max-width: 560px;
+        }
+
+        .row
+        {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.55rem 0.85rem;
+            border-bottom: 1px solid #23232f;
+            cursor: grab;
+        }
+
+        .row:last-child { border-bottom: 0; }
+        .row:hover { background: #1c1c28; }
+        .row.selected { background: #2d3a8c; }
+        .row:active { cursor: grabbing; }
+
+        .row .ico
+        {
+            width: 28px;
+            height: 28px;
+            flex: 0 0 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            font-size: 1rem;
+            background: linear-gradient(135deg, #5a6cff, #b14cff);
+        }
+
+        .row .name
+        {
+            flex: 1 1 auto;
+            font-size: 0.85rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .row .tag
+        {
+            flex: 0 0 auto;
+            font-size: 0.65rem;
+            font-family: monospace;
+            padding: 0.1rem 0.4rem;
+            border-radius: 999px;
+            color: #b9b9d0;
+            background: #33333f;
+        }
+
+        .row .tag.bundled { color: #14141c; background: #9bffb1; }
+
+        .empty { padding: 1.25rem; color: #7e7e94; font-size: 0.85rem; }
+
+        #status
+        {
+            margin-top: 1.25rem;
+            font-family: monospace;
+            font-size: 0.78rem;
+            color: #9bffb1;
+            min-height: 1rem;
+        }
+    </style>
+</head>
+<body>
+<h1>Drag audio into your DAW</h1>
+<p>Files from <code>~/Downloads</code> plus bundled resources, served over the eacp bridge. Click to
+   select (⌘/⇧-click to multi-select), then drag the selection onto a DAW track, Finder, or the desktop.</p>
+
+<div id="list"><div class="empty">Loading…</div></div>
+<div id="status"></div>
+
+<script>
+    (function ()
+    {
+        const list = document.getElementById('list');
+        const status = document.getElementById('status');
+        const selected = new Set();
+        let files = [];
+
+        if (!window.eacp || typeof window.eacp.invoke !== 'function')
+        {
+            list.innerHTML = '<div class="empty">Not running in the eacp host.</div>';
+            return;
+        }
+
+        function isBundled(file)
+        {
+            return file.path.indexOf('/eacp-dragout/') !== -1;
+        }
+
+        function render()
+        {
+            list.innerHTML = '';
+
+            files.forEach((file, index) =>
+            {
+                const row = document.createElement('div');
+                row.className = 'row' + (selected.has(index) ? ' selected' : '');
+
+                const ico = document.createElement('span');
+                ico.className = 'ico';
+                ico.textContent = '♪';
+
+                const name = document.createElement('span');
+                name.className = 'name';
+                name.textContent = file.name;
+
+                const tag = document.createElement('span');
+                const bundled = isBundled(file);
+                tag.className = 'tag' + (bundled ? ' bundled' : '');
+                tag.textContent = bundled ? 'bundled' : '~/Downloads';
+
+                row.append(ico, name, tag);
+
+                // Arm on mousedown. If the pressed row is part of the current
+                // selection, drag the whole selection; otherwise drag just it.
+                // The native side starts the real drag from mouseDragged:.
+                row.addEventListener('mousedown', () =>
+                {
+                    const indices = selected.has(index) && selected.size > 0
+                        ? [...selected]
+                        : [index];
+                    const dragFiles = indices.map((i) => files[i]);
+                    window.eacp.invoke('armFileDrag', { files: dragFiles });
+                    status.textContent = 'Armed ' + dragFiles.length + ' file(s) — drag out…';
+                });
+
+                // Click toggles selection (plain click = single select).
+                row.addEventListener('click', (event) =>
+                {
+                    if (event.metaKey || event.shiftKey)
+                    {
+                        selected.has(index)
+                            ? selected.delete(index)
+                            : selected.add(index);
+                    }
+                    else
+                    {
+                        selected.clear();
+                        selected.add(index);
+                    }
+                    render();
+                });
+
+                list.appendChild(row);
+            });
+        }
+
+        window.eacp.invoke('listFiles')
+            .then((result) =>
+            {
+                files = (result && result.files) || [];
+
+                if (files.length === 0)
+                {
+                    list.innerHTML =
+                        '<div class="empty">No audio files found in ~/Downloads.</div>';
+                    return;
+                }
+
+                render();
+                status.textContent = files.length + ' file(s) over the bridge.';
+            })
+            .catch((err) => { status.textContent = 'listFiles failed: ' + err; });
+    })();
+</script>
+</body>
+</html>

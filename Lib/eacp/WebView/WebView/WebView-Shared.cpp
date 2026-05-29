@@ -2,6 +2,9 @@
 
 #include "DevServerProbe.h"
 
+#include <eacp/Core/App/AppEnvironment.h>
+#include <eacp/Core/Threads/EventLoop.h>
+
 #include <cstdio>
 #include <string_view>
 
@@ -118,10 +121,31 @@ WebView::WebView(Options options)
     if (!embedded.enabled || !embedded.autoLoad)
         return;
 
-    if (useDevServer)
-        loadURL(embedded.devServerURL);
+    auto url = useDevServer
+                   ? embedded.devServerURL
+                   : embedded.scheme + "://" + embedded.host + "/"
+                         + embedded.indexFile;
+
+    // Headless test harnesses install user scripts and navigation
+    // callbacks AFTER construction (TestApp wires the agent script
+    // and AppDriver hook once the WebView already exists). Loading
+    // inline would race those — the first navigation could fire
+    // before the agent is registered. Defer to the next runloop
+    // tick so the harness finishes wiring before the load starts.
+    if (Apps::getAppEnvironment().headless)
+    {
+        auto weak = std::weak_ptr<Native> {impl};
+        Threads::callAsync(
+            [this, weak, url]
+            {
+                if (weak.lock())
+                    loadURL(url);
+            });
+    }
     else
-        loadURL(embedded.scheme + "://" + embedded.host + "/" + embedded.indexFile);
+    {
+        loadURL(url);
+    }
 }
 
 namespace

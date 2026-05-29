@@ -2,9 +2,18 @@
 #import <Foundation/Foundation.h>
 #import <Cocoa/Cocoa.h>
 
+#include <cassert>
+#include <chrono>
+
 namespace eacp::Threads
 {
-static NSApplicationActivationPolicy activationPolicyFromBundle()
+namespace
+{
+bool s_inRootRunLoop = false;
+int s_nestedDepth = 0;
+bool s_quitRequested = false;
+
+NSApplicationActivationPolicy activationPolicyFromBundle()
 {
     auto* info = [[NSBundle mainBundle] infoDictionary];
 
@@ -17,7 +26,7 @@ static NSApplicationActivationPolicy activationPolicyFromBundle()
     return NSApplicationActivationPolicyRegular;
 }
 
-static NSApplication* getApp()
+NSApplication* getApp()
 {
     static NSApplication* app = [] {
         auto* application = [NSApplication sharedApplication];
@@ -27,48 +36,84 @@ static NSApplication* getApp()
     return app;
 }
 
+// Single wrapper around [NSApp run]. Apple says NSApplication's run
+// is not safe to call recursively, so the guard here keeps the
+// invariant in one place: callers that need a bounded inner loop
+// use EventLoop::runFor (polled) instead.
+void enterRootRunLoop()
+{
+    assert(! s_inRootRunLoop
+           && "EventLoop::run must not be called recursively. "
+              "Use EventLoop::runFor for nested loops.");
+
+    s_inRootRunLoop = true;
+    s_quitRequested = false;
+    [getApp() run];
+    s_inRootRunLoop = false;
+}
+
+NSEvent* makeWakeEvent()
+{
+    return [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                              location:NSMakePoint(0, 0)
+                         modifierFlags:0
+                             timestamp:0
+                          windowNumber:0
+                               context:nil
+                               subtype:0
+                                 data1:0
+                                 data2:0];
+}
+} // namespace
+
 void EventLoop::run()
 {
-    [getApp() run];
+    enterRootRunLoop();
 }
 
 bool EventLoop::runFor(std::chrono::milliseconds timeout)
 {
-    __block auto timedOut = false;
-    auto* self = this;
-    auto seconds = (CFTimeInterval) timeout.count() / 1000.0;
-    auto fireDate = CFAbsoluteTimeGetCurrent() + seconds;
+    s_nestedDepth++;
+    s_quitRequested = false;
 
-    auto timer = CFRunLoopTimerCreateWithHandler(
-        kCFAllocatorDefault, fireDate, 0, 0, 0,
-        ^(CFRunLoopTimerRef) {
-            timedOut = true;
-            self->quit();
-        });
+    auto deadline = std::chrono::steady_clock::now() + timeout;
 
-    CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
+    while (! s_quitRequested)
+    {
+        auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+        {
+            s_nestedDepth--;
+            return false;
+        }
 
-    [getApp() run];
+        auto remainingSecs =
+            std::chrono::duration<double>(deadline - now).count();
+        auto* date = [NSDate dateWithTimeIntervalSinceNow:remainingSecs];
 
-    CFRunLoopRemoveTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
-    CFRelease(timer);
+        auto* event = [getApp() nextEventMatchingMask:NSEventMaskAny
+                                            untilDate:date
+                                               inMode:NSDefaultRunLoopMode
+                                              dequeue:YES];
+        if (event)
+            [getApp() sendEvent:event];
+    }
 
-    return !timedOut;
+    s_quitRequested = false;
+    s_nestedDepth--;
+    return true;
 }
 
 void EventLoop::quit()
 {
-    [getApp() stop:nil];
+    s_quitRequested = true;
 
-    auto event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
-                                    location:NSMakePoint(0, 0)
-                               modifierFlags:0
-                                   timestamp:0
-                                windowNumber:0
-                                     context:nil
-                                     subtype:0
-                                       data1:0
-                                       data2:0];
-    [getApp() postEvent:event atStart:YES];
+    // [NSApp stop:] applies to the active [NSApp run]. If a nested
+    // runFor is on top, its polling loop reads s_quitRequested
+    // directly — we only need to wake it via the dummy event.
+    if (s_nestedDepth == 0 && s_inRootRunLoop)
+        [getApp() stop:nil];
+
+    [getApp() postEvent:makeWakeEvent() atStart:YES];
 }
 } // namespace eacp::Threads
