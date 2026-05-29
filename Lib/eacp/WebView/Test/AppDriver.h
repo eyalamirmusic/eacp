@@ -1,6 +1,7 @@
 #pragma once
 
 #include <eacp/Core/Threads/Async.h>
+#include <eacp/Graphics/Image/Image.h>
 #include <Miro/Miro.h>
 
 namespace eacp::Graphics
@@ -33,13 +34,15 @@ struct ScreenshotOptions
 {
     std::optional<int> timeoutMs;
 
-    // Decode + write the PNG to this path. Empty -> do not write.
+    // Write the screenshot to this path; the image format is inferred
+    // from the extension (.png / .jpg / .jpeg). Empty -> do not write.
     std::string path;
 };
 
 struct ScreenshotResult
 {
-    std::vector<std::uint8_t> png;
+    // Decoded snapshot pixels. Re-encode via image.toPng()/toJpeg().
+    Graphics::Image image;
     // Set only when ScreenshotOptions::path was non-empty.
     std::string path;
 };
@@ -59,7 +62,7 @@ struct SnapshotResult
 {
     std::string name;
     std::string dom;
-    std::vector<std::uint8_t> png;
+    Graphics::Image image;
     std::string domPath;
     std::string screenshotPath;
 };

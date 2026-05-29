@@ -1,6 +1,7 @@
 add_library(eacp-graphics STATIC)
 
 target_sources(eacp-graphics PRIVATE
+        Image/Image.cpp
         Layers/Layer.cpp
         Layers/LayerViews.cpp
         Layers/ShapeLayer.cpp
@@ -15,6 +16,7 @@ target_link_libraries(eacp-graphics PUBLIC eacp-core)
 if (APPLE)
     target_sources(eacp-graphics PRIVATE
             Graphics/GraphicsContextImpl.mm
+            Image/Image-Apple.mm
             Layers/Layer.mm
             Layers/ShapeLayer.mm
             Layers/TextLayer.mm
@@ -27,7 +29,8 @@ if (APPLE)
             "-framework QuartzCore"
             "-framework CoreGraphics"
             "-framework CoreText"
-            "-framework CoreVideo")
+            "-framework CoreVideo"
+            "-framework ImageIO")
 
     if (IOS)
         target_sources(eacp-graphics PRIVATE
@@ -56,6 +59,7 @@ elseif (WIN32)
             Graphics/D2DFactory-Windows.cpp
             Graphics/Keyboard-Windows.cpp
             Helpers/DisplayLink-Windows.cpp
+            Image/Image-Windows.cpp
             Layers/Layer-Windows.cpp
             Layers/ShapeLayer-Windows.cpp
             Layers/TextLayer-Windows.cpp
@@ -75,6 +79,7 @@ elseif (WIN32)
             user32
             gdi32
             ole32
+            windowscodecs
             windowsapp
             runtimeobject)
 endif ()

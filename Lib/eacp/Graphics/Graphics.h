@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Image/Image.h"
 #include "Helpers/DisplayLink.h"
 #include "Menu/Menu.h"
 #include "View/ViewList.h"

@@ -107,23 +107,6 @@ std::string sanitizeSnapshotName(const std::string& name)
     return out;
 }
 
-void writeBinary(const std::filesystem::path& path,
-                 const std::vector<std::uint8_t>& bytes)
-{
-    if (path.has_parent_path())
-        std::filesystem::create_directories(path.parent_path());
-
-    auto file = std::ofstream {path, std::ios::binary | std::ios::trunc};
-    if (!file)
-        throw std::runtime_error("AppDriver: failed to open '" + path.string()
-                                 + "' for writing");
-    file.write(reinterpret_cast<const char*>(bytes.data()),
-               static_cast<std::streamsize>(bytes.size()));
-    if (!file)
-        throw std::runtime_error("AppDriver: short write to '" + path.string()
-                                 + "'");
-}
-
 void writeText(const std::filesystem::path& path, const std::string& text)
 {
     if (path.has_parent_path())
@@ -559,12 +542,17 @@ ScreenshotResult AppDriver::screenshot(const ScreenshotOptions& options)
     auto callOpts = CallOptions {.timeoutMs = options.timeoutMs};
     auto bytes = runSnapshotBytes(callOpts);
 
+    auto error = std::string {};
+    auto image = Graphics::Image::decode(bytes, &error);
+    if (!image)
+        throw std::runtime_error("AppDriver: failed to decode snapshot: " + error);
+
     auto result = ScreenshotResult {};
-    result.png = std::move(bytes);
+    result.image = std::move(*image);
 
     if (!options.path.empty())
     {
-        writeBinary(options.path, result.png);
+        result.image.save(options.path);
         result.path = options.path;
     }
 
@@ -590,7 +578,7 @@ SnapshotResult AppDriver::snapshot(const std::string& name,
 
     return SnapshotResult {.name = name,
                            .dom = std::move(html),
-                           .png = std::move(shot.png),
+                           .image = std::move(shot.image),
                            .domPath = htmlPath.string(),
                            .screenshotPath = pngPath.string()};
 }
