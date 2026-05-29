@@ -35,6 +35,14 @@ struct Error : std::runtime_error
     using std::runtime_error::runtime_error;
 };
 
+// A send or receive that ran past its timeout without the peer doing
+// anything. Distinct from Error so "the other side went quiet" can be told
+// apart from "the connection broke" - handy for idle-driven reads.
+struct TimeoutError : Error
+{
+    using Error::Error;
+};
+
 // A live, connected TCP stream.
 //
 // Move-only by design: if you are holding a Connection, the socket is open.

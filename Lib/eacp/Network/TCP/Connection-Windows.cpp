@@ -157,7 +157,11 @@ std::size_t socketSend(NativeSocket socket, const char* data, std::size_t length
 {
     auto sent = ::send((SOCKET) socket, data, (int) length, 0);
     if (sent == SOCKET_ERROR)
-        throwLastError(timedOut() ? "send timed out" : "send");
+    {
+        if (timedOut())
+            throw TimeoutError("send timed out");
+        throwLastError("send");
+    }
     return (std::size_t) sent;
 }
 
@@ -165,7 +169,11 @@ std::size_t socketReceive(NativeSocket socket, char* buffer, std::size_t length)
 {
     auto received = ::recv((SOCKET) socket, buffer, (int) length, 0);
     if (received == SOCKET_ERROR)
-        throwLastError(timedOut() ? "receive timed out" : "receive");
+    {
+        if (timedOut())
+            throw TimeoutError("receive timed out");
+        throwLastError("receive");
+    }
     return (std::size_t) received;
 }
 
@@ -222,7 +230,7 @@ NativeSocket socketAccept(NativeSocket listenSocket,
 
     auto ready = ::select(0, &readable, nullptr, nullptr, &tv);
     if (ready == 0)
-        throw Error("accept timed out");
+        throw TimeoutError("accept timed out");
     if (ready == SOCKET_ERROR)
         throwLastError("accept");
 
