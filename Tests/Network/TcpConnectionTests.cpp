@@ -14,6 +14,7 @@ using namespace std::chrono_literals;
 using eacp::TCP::Connection;
 using eacp::TCP::Error;
 using eacp::TCP::Listener;
+using eacp::TCP::TimeoutError;
 
 namespace
 {
@@ -437,6 +438,215 @@ auto tSendAfterClose = test("Tcp/sendThrowsOnAClosedConnection") = []
 auto tServerSideLargeUpload = test("Tcp/serverReassemblesALargeUpload") = []
 {
     auto big = std::string(200000, 'y');
+    auto listener = Listener::bind(0, testTimeouts());
+
+    auto received = std::string {};
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            received = peer.receiveLine();
+        });
+
+    auto client = dial(listener);
+    client.send(big + "\n");
+
+    server.join();
+    check(received.size() == big.size());
+    check(received == big);
+};
+
+// ---- hostile / adversarial cases ----------------------------------------
+
+auto tSendToHungUpPeer = test("Tcp/sendToAHungUpPeerThrowsRatherThanCrashing") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+
+    // Server accepts and drops the connection straight away.
+    auto server = std::thread([&] { auto peer = listener.accept(); });
+
+    auto client = dial(listener);
+    server.join();
+    std::this_thread::sleep_for(50ms); // let the reset reach us
+
+    // Writing to a peer that has gone away must surface as an Error, not a
+    // SIGPIPE that takes the whole process down. Keep pushing until the OS
+    // notices the broken pipe.
+    auto threw = false;
+    try
+    {
+        for (auto i = 0; i < 5000 && ! threw; ++i)
+            client.send(std::string(4096, 'x'));
+    }
+    catch (const Error&)
+    {
+        threw = true;
+    }
+
+    check(threw);
+};
+
+auto tFragmentedReply = test("Tcp/reassemblesAReplyArrivingInTinyFragments") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            auto message = std::string {"drip-fed-message"};
+            for (auto c: message)
+            {
+                peer.send(std::string(1, c));
+                std::this_thread::sleep_for(2ms);
+            }
+            peer.send("\n");
+        });
+
+    auto client = dial(listener);
+    auto line = client.receiveLine();
+
+    server.join();
+    check(line == "drip-fed-message");
+};
+
+auto tSplitDelimiter = test("Tcp/receiveUntilHandlesADelimiterSplitAcrossReads") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            peer.send("alpha-");
+            std::this_thread::sleep_for(20ms);
+            peer.send("beta\nsecond-line\n");
+        });
+
+    auto client = dial(listener);
+    auto first = client.receiveLine();  // delimiter arrives in the 2nd read
+    auto second = client.receiveLine(); // came in as overshoot on the 1st
+
+    server.join();
+    check(first == "alpha-beta");
+    check(second == "second-line");
+};
+
+auto tIdleReceiveTimesOut =
+    test("Tcp/receiveTimesOutWithTimeoutErrorWhenPeerIsIdle") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+
+    // Server holds the connection open but sends nothing.
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            std::this_thread::sleep_for(500ms);
+        });
+
+    // Short io timeout so the idle read trips quickly.
+    auto client = Connection::connect({"127.0.0.1", listener.port()}, {2000ms, 200ms});
+
+    auto timedOut = false;
+    try
+    {
+        client.receive();
+    }
+    catch (const TimeoutError&)
+    {
+        timedOut = true;
+    }
+
+    server.join();
+    check(timedOut);
+};
+
+auto tBinaryPayload = test("Tcp/binaryPayloadWithNulsAndHighBytesRoundTrips") = []
+{
+    // Every byte except the framing ones - NULs, 0xFF, the lot.
+    auto payload = std::string {};
+    for (auto b = 0; b < 256; ++b)
+        if (b != '\n' && b != '\r')
+            payload.push_back((char) b);
+
+    auto listener = Listener::bind(0, testTimeouts());
+
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            peer.send(payload + "\n");
+        });
+
+    auto client = dial(listener);
+    auto line = client.receiveLine();
+
+    server.join();
+    check(line.size() == payload.size());
+    check(line == payload);
+};
+
+auto tPartialThenClose = test("Tcp/partialDataThenCloseStillThrows") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+
+    auto server = std::thread(
+        [&]
+        {
+            auto peer = listener.accept();
+            peer.send("incomplete-no-delimiter"); // never a newline, then close
+        });
+
+    auto client = dial(listener);
+
+    auto threw = false;
+    try
+    {
+        client.receiveLine();
+    }
+    catch (const Error&)
+    {
+        threw = true;
+    }
+
+    server.join();
+    check(threw);
+};
+
+auto tDoubleClose = test("Tcp/doubleCloseIsHarmless") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+    auto server = std::thread([&] { auto peer = listener.accept(); });
+
+    auto client = dial(listener);
+    client.close();
+    client.close(); // must be a safe no-op
+
+    check(! client.isOpen());
+    server.join();
+};
+
+auto tUnreachableHost = test("Tcp/connectToAnUnreachableHostFails") = []
+{
+    // 192.0.2.0/24 is reserved (RFC 5737) and routes nowhere, so this either
+    // times out or is rejected - both surface as Error within the budget.
+    auto threw = false;
+    try
+    {
+        auto client = Connection::connect({"192.0.2.1", 80}, {800ms, 800ms});
+    }
+    catch (const Error&)
+    {
+        threw = true;
+    }
+
+    check(threw);
+};
+
+auto tMultiMegabyte = test("Tcp/streamsAMultiMegabytePayload") = []
+{
+    auto big = std::string(2 * 1024 * 1024, 'z'); // 2 MB through the send loop
     auto listener = Listener::bind(0, testTimeouts());
 
     auto received = std::string {};
