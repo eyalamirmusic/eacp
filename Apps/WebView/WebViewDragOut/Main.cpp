@@ -1,4 +1,3 @@
-#include <eacp/WebView/WebView/FileDrag.h>
 #include <eacp/WebView/WebView.h>
 #include <ResEmbed/ResEmbed.h>
 #include <WebResources.h>
@@ -12,10 +11,8 @@
 #include <string>
 #include <vector>
 
-// Deliberately NOT `using namespace eacp;` -- that pulls in the canonical
-// `eacp::WebView` namespace (home of DraggableFileList), which would clash
-// with the `eacp::Graphics::WebView` class under `using namespace Graphics`.
-using namespace eacp::Graphics;
+using namespace eacp;
+using namespace Graphics;
 
 namespace
 {
@@ -59,9 +56,9 @@ std::string extractBundledAsset(const std::string& name)
     return path.string();
 }
 
-eacp::WebView::DraggableFileList buildFileList()
+WebView::DraggableFileList buildFileList()
 {
-    auto list = eacp::WebView::DraggableFileList {};
+    auto list = WebView::DraggableFileList {};
 
     // Bundled ResEmbed assets first, to show embedded resources drag out too.
     for (const auto* name: {"sample.png", "sample.mp3"})
@@ -103,10 +100,10 @@ public:
 
     void reflect(Miro::ApiReflector& r) { r.commands<&DragOutApi::listFiles>(); }
 
-    eacp::WebView::DraggableFileList listFiles() const { return fileList; }
+    WebView::DraggableFileList listFiles() const { return fileList; }
 
 private:
-    eacp::WebView::DraggableFileList fileList;
+    WebView::DraggableFileList fileList;
 };
 
 struct MyApp

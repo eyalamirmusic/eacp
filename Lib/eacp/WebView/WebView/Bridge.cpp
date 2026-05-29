@@ -1,6 +1,5 @@
 #include "Bridge.h"
 
-#include "FileDrag.h"
 #include "StateBridge.h"
 
 #include <optional>
@@ -137,7 +136,7 @@ void WebViewBridge::registerBuiltins()
     // `armFileDrag` with a DraggableFileList from a mousedown handler; Miro
     // deserializes the payload into the typed struct (no hand-rolled JSON),
     // and we arm the WebView so the next mouseDragged: starts the OS drag.
-    using eacp::WebView::DraggableFileList;
+    using DraggableFileList = WebView::DraggableFileList;
 
     auto arm = std::function<void(const DraggableFileList&)> {
         [this](const DraggableFileList& list)
