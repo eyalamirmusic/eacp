@@ -44,7 +44,8 @@ bool waitWritable(int fd, std::chrono::milliseconds timeout)
     FD_SET(fd, &writable);
 
     auto tv = toTimeval(timeout);
-    return ::select(fd + 1, nullptr, &writable, nullptr, &tv) > 0;
+    auto* deadline = timeout.count() > 0 ? &tv : nullptr; // null = block forever
+    return ::select(fd + 1, nullptr, &writable, nullptr, deadline) > 0;
 }
 
 int pendingSocketError(int fd)
@@ -58,9 +59,12 @@ int pendingSocketError(int fd)
 
 void armTimeouts(int fd, std::chrono::milliseconds ioTimeout)
 {
-    auto tv = toTimeval(ioTimeout);
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    if (ioTimeout.count() > 0) // otherwise leave the socket blocking forever
+    {
+        auto tv = toTimeval(ioTimeout);
+        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    }
 
 #ifdef SO_NOSIGPIPE
     auto on = 1;
@@ -237,7 +241,8 @@ NativeSocket socketAccept(NativeSocket listenSocket,
     FD_SET(lfd, &readable);
 
     auto tv = toTimeval(acceptTimeout);
-    auto ready = ::select(lfd + 1, &readable, nullptr, nullptr, &tv);
+    auto* deadline = acceptTimeout.count() > 0 ? &tv : nullptr; // null = forever
+    auto ready = ::select(lfd + 1, &readable, nullptr, nullptr, deadline);
     if (ready == 0)
         throw TimeoutError("accept timed out");
     if (ready < 0)

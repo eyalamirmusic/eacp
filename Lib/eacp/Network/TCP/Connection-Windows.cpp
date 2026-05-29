@@ -42,7 +42,8 @@ bool waitWritable(SOCKET socket, std::chrono::milliseconds timeout)
     tv.tv_sec = (long) (timeout.count() / 1000);
     tv.tv_usec = (long) ((timeout.count() % 1000) * 1000);
 
-    return ::select(0, nullptr, &writable, nullptr, &tv) > 0;
+    auto* deadline = timeout.count() > 0 ? &tv : nullptr; // null = block forever
+    return ::select(0, nullptr, &writable, nullptr, deadline) > 0;
 }
 
 int pendingSocketError(SOCKET socket)
@@ -56,6 +57,9 @@ int pendingSocketError(SOCKET socket)
 
 void armTimeouts(SOCKET socket, std::chrono::milliseconds ioTimeout)
 {
+    if (ioTimeout.count() <= 0) // otherwise leave the socket blocking forever
+        return;
+
     auto millis = (DWORD) ioTimeout.count();
     ::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*) &millis,
                  sizeof(millis));
@@ -228,7 +232,8 @@ NativeSocket socketAccept(NativeSocket listenSocket,
     tv.tv_sec = (long) (acceptTimeout.count() / 1000);
     tv.tv_usec = (long) ((acceptTimeout.count() % 1000) * 1000);
 
-    auto ready = ::select(0, &readable, nullptr, nullptr, &tv);
+    auto* deadline = acceptTimeout.count() > 0 ? &tv : nullptr; // null = forever
+    auto ready = ::select(0, &readable, nullptr, nullptr, deadline);
     if (ready == 0)
         throw TimeoutError("accept timed out");
     if (ready == SOCKET_ERROR)
