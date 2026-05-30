@@ -19,8 +19,10 @@ struct Address
     std::uint16_t port = 0;
 };
 
-// How long each phase may block before a TCP::Error is thrown. io applies
-// to a single send or receive, not to a whole transaction.
+// How long each phase may block before a TimeoutError is thrown. io applies
+// to a single send or receive, not to a whole transaction. A zero (or
+// negative) duration means "no timeout" - block until it completes, which is
+// what a long-lived server wants for accept() and for reads.
 struct Timeouts
 {
     std::chrono::milliseconds connect {15000};
@@ -33,6 +35,14 @@ struct Timeouts
 struct Error : std::runtime_error
 {
     using std::runtime_error::runtime_error;
+};
+
+// A send or receive that ran past its timeout without the peer doing
+// anything. Distinct from Error so "the other side went quiet" can be told
+// apart from "the connection broke" - handy for idle-driven reads.
+struct TimeoutError : Error
+{
+    using Error::Error;
 };
 
 // A live, connected TCP stream.

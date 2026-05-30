@@ -42,7 +42,8 @@ bool waitWritable(SOCKET socket, std::chrono::milliseconds timeout)
     tv.tv_sec = (long) (timeout.count() / 1000);
     tv.tv_usec = (long) ((timeout.count() % 1000) * 1000);
 
-    return ::select(0, nullptr, &writable, nullptr, &tv) > 0;
+    auto* deadline = timeout.count() > 0 ? &tv : nullptr; // null = block forever
+    return ::select(0, nullptr, &writable, nullptr, deadline) > 0;
 }
 
 int pendingSocketError(SOCKET socket)
@@ -56,6 +57,9 @@ int pendingSocketError(SOCKET socket)
 
 void armTimeouts(SOCKET socket, std::chrono::milliseconds ioTimeout)
 {
+    if (ioTimeout.count() <= 0) // otherwise leave the socket blocking forever
+        return;
+
     auto millis = (DWORD) ioTimeout.count();
     ::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*) &millis,
                  sizeof(millis));
@@ -157,7 +161,11 @@ std::size_t socketSend(NativeSocket socket, const char* data, std::size_t length
 {
     auto sent = ::send((SOCKET) socket, data, (int) length, 0);
     if (sent == SOCKET_ERROR)
-        throwLastError(timedOut() ? "send timed out" : "send");
+    {
+        if (timedOut())
+            throw TimeoutError("send timed out");
+        throwLastError("send");
+    }
     return (std::size_t) sent;
 }
 
@@ -165,7 +173,11 @@ std::size_t socketReceive(NativeSocket socket, char* buffer, std::size_t length)
 {
     auto received = ::recv((SOCKET) socket, buffer, (int) length, 0);
     if (received == SOCKET_ERROR)
-        throwLastError(timedOut() ? "receive timed out" : "receive");
+    {
+        if (timedOut())
+            throw TimeoutError("receive timed out");
+        throwLastError("receive");
+    }
     return (std::size_t) received;
 }
 
@@ -220,9 +232,10 @@ NativeSocket socketAccept(NativeSocket listenSocket,
     tv.tv_sec = (long) (acceptTimeout.count() / 1000);
     tv.tv_usec = (long) ((acceptTimeout.count() % 1000) * 1000);
 
-    auto ready = ::select(0, &readable, nullptr, nullptr, &tv);
+    auto* deadline = acceptTimeout.count() > 0 ? &tv : nullptr; // null = forever
+    auto ready = ::select(0, &readable, nullptr, nullptr, deadline);
     if (ready == 0)
-        throw Error("accept timed out");
+        throw TimeoutError("accept timed out");
     if (ready == SOCKET_ERROR)
         throwLastError("accept");
 
