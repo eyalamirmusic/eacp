@@ -180,7 +180,12 @@ void WebViewBridge::onMessage(const std::string& body)
                       Miro::Resolve resolve)
     { bridge.dispatchAsync(command, payload, resolve); };
 
-    auto work = runCommand(commandExecution, std::move(invoke));
+    auto mode = commandExecution;
+
+    if (auto it = commandModes.find(envelope->command); it != commandModes.end())
+        mode = it->second;
+
+    auto work = runCommand(mode, std::move(invoke));
 
     resolveWith(std::move(work),
                 [this, id](const Miro::Json::Value& result, const std::string* error)
