@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AsyncBridge.h"
 #include "WebView.h"
 
 #include <Miro/Miro.h>
@@ -46,6 +47,14 @@ public:
 
     Miro::Bridge& getBridge() { return bridge; }
 
+    // Controls how incoming commands are executed. Every command is async
+    // on the TypeScript side regardless; this chooses where the bridge
+    // runs the synchronous C++ handler. Defaults to MainThreadDeferred —
+    // switch to WorkerThread only for handlers that are safe to run off
+    // the main thread. See CommandExecution.
+    void setCommandExecution(CommandExecution mode) { commandExecution = mode; }
+    CommandExecution getCommandExecution() const { return commandExecution; }
+
 private:
     void registerBuiltins();
     void onMessage(const std::string& body);
@@ -58,6 +67,7 @@ private:
     Miro::Bridge bridge;
     EA::Listener emitListener;
     EA::Vector<EA::OwningPointer<EA::Listener>> stateListeners;
+    CommandExecution commandExecution = CommandExecution::MainThreadDeferred;
 };
 
 } // namespace eacp::Graphics
