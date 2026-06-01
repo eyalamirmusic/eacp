@@ -6,6 +6,13 @@ interface EacpBridge
 {
     invoke<Res = unknown, Req = unknown>(command: string, payload?: Req): Promise<Res>;
     on<T = unknown>(event: string, handler: (payload: T) => void): () => void;
+    // Registers a function the native (C++) side can call via
+    // WebViewBridge::call(name, ...) — the reverse of a command. May be
+    // sync or async; its resolved value is sent back to C++.
+    expose<Req = unknown, Res = unknown>(
+        name: string,
+        fn: (payload: Req) => Res | Promise<Res>,
+    ): void;
 }
 
 declare global
@@ -27,6 +34,21 @@ declare global
 export function isBackendAvailable(): boolean
 {
     return typeof window !== 'undefined' && window.eacp != null;
+}
+
+// Registers a function the native (C++) side can call via
+// WebViewBridge::call(name, ...). The reverse of a command: instead of
+// the page invoking C++, C++ invokes the page, awaiting the result.
+// No-op when the bridge isn't present (e.g. `npm run dev` in a browser),
+// so app code can call it unconditionally at startup.
+export function expose<Req = unknown, Res = unknown>(
+    name: string,
+    fn: (payload: Req) => Res | Promise<Res>,
+): void
+{
+    if (! isBackendAvailable())
+        return;
+    window.eacp!.expose(name, fn);
 }
 
 const webViewTransport: Transport<Events> = {

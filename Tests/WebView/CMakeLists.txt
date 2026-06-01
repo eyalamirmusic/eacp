@@ -20,4 +20,12 @@ if (TARGET eacp-webview-test-main)
             eacp-webview
             eacp-webview-test-main)
     nano_discover_tests(StreamingPumpTests)
+
+    # Drives the C++ -> page call path on a real WebView, so it needs the
+    # same NSApplication / runloop bootstrap as StreamingPumpTests.
+    add_executable(WebViewCallTests WebViewCallTests.cpp)
+    target_link_libraries(WebViewCallTests PRIVATE
+            eacp-webview
+            eacp-webview-test-main)
+    nano_discover_tests(WebViewCallTests)
 endif ()

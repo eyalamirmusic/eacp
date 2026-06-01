@@ -17,6 +17,7 @@ constexpr const char* bridgeShim = R"JS(
     var pending = new Map();
     var counter = 0;
     var listeners = new Map();
+    var exposed = new Map();
 
     function post(envelope) {
         var raw = JSON.stringify(envelope);
@@ -51,7 +52,12 @@ constexpr const char* bridgeShim = R"JS(
                 listeners.set(event,
                     current.filter(function(h) { return h !== handler; }));
             };
-        }
+        },
+        // Registers a function the native side can call via
+        // WebViewBridge::call(name, ...). The function may be sync or
+        // async (return a value or a Promise); either way its resolved
+        // result is sent back to C++.
+        expose: function(name, fn) { exposed.set(name, fn); return fn; }
     };
 
     window.__eacp = {
@@ -68,6 +74,23 @@ constexpr const char* bridgeShim = R"JS(
                 try { arr[i](payload); }
                 catch (e) { console.error('eacp event handler error', e); }
             }
+        },
+        // Native -> page call. Looks up an exposed function, awaits its
+        // result (Promise or plain value), and posts a reply envelope
+        // keyed by `id` back to C++ — mirroring how invoke() replies are
+        // delivered the other way.
+        callFunction: function(id, name, payload) {
+            Promise.resolve().then(function() {
+                var fn = exposed.get(name);
+                if (typeof fn !== 'function')
+                    throw new Error("eacp: no exposed function '" + name + "'");
+                return fn(payload);
+            }).then(function(result) {
+                post({ reply: id, result: result === undefined ? null : result });
+            }, function(err) {
+                post({ reply: id,
+                       error: String(err && err.message ? err.message : err) });
+            });
         }
     };
 })();
@@ -168,19 +191,8 @@ struct Envelope
     Miro::Json::Value payload;
 };
 
-std::optional<Envelope> parseEnvelope(const std::string& body)
+std::optional<Envelope> parseEnvelope(const Miro::Json::Value& value)
 {
-    auto value = Miro::Json::Value {};
-
-    try
-    {
-        value = Miro::Json::parse(body);
-    }
-    catch (const std::exception&)
-    {
-        return std::nullopt;
-    }
-
     if (!value.isObject())
         return std::nullopt;
 
@@ -204,7 +216,23 @@ std::optional<Envelope> parseEnvelope(const std::string& body)
 
 void WebViewBridge::onMessage(const std::string& body)
 {
-    auto envelope = parseEnvelope(body);
+    auto value = Miro::Json::Value {};
+
+    try
+    {
+        value = Miro::Json::parse(body);
+    }
+    catch (const std::exception&)
+    {
+        return;
+    }
+
+    // A reply to a C++ -> page call (window.__eacp.callFunction) carries a
+    // "reply" id; everything else is a command invocation from the page.
+    if (handleCallReply(value))
+        return;
+
+    auto envelope = parseEnvelope(value);
     if (!envelope)
         return;
 
@@ -227,6 +255,59 @@ void WebViewBridge::onMessage(const std::string& body)
     resolveWith(std::move(work),
                 [this, id](const Miro::Json::Value& result, const std::string* error)
                 { deliver(id, result, error); });
+}
+
+Threads::Async<Miro::Json::Value>
+    WebViewBridge::call(const std::string& functionName,
+                        const Miro::Json::Value& payload)
+{
+    auto id = ++callCounter;
+    auto promise = Threads::AsyncPromise<Miro::Json::Value> {};
+    pendingCalls.emplace(id, promise);
+
+    auto payloadJson = Miro::Json::print(payload);
+    if (payloadJson.empty())
+        payloadJson = "null";
+
+    auto script = std::string {"window.__eacp&&window.__eacp.callFunction("}
+                  + std::to_string(static_cast<long long>(id)) + ","
+                  + jsStringLiteral(functionName) + "," + payloadJson + ");";
+
+    webView.evaluateJavaScript(script);
+
+    return promise.get();
+}
+
+bool WebViewBridge::handleCallReply(const Miro::Json::Value& message)
+{
+    if (!message.isObject())
+        return false;
+
+    auto& obj = message.asObject();
+
+    auto replyIt = obj.find("reply");
+    if (replyIt == obj.end() || !replyIt->second.isNumber())
+        return false;
+
+    auto id = replyIt->second.asNumber();
+
+    auto it = pendingCalls.find(id);
+    if (it == pendingCalls.end())
+        return true;
+
+    auto promise = it->second;
+    pendingCalls.erase(it);
+
+    auto errorIt = obj.find("error");
+    if (errorIt != obj.end() && errorIt->second.isString())
+    {
+        promise.reject(errorIt->second.asString());
+        return true;
+    }
+
+    auto resultIt = obj.find("result");
+    promise.resolve(resultIt != obj.end() ? resultIt->second : Miro::Json::Value {});
+    return true;
 }
 
 void WebViewBridge::deliver(double id,

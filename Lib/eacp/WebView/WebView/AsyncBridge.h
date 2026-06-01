@@ -84,4 +84,30 @@ inline void resolveWith(Threads::Async<Miro::Json::Value> work,
               { completion(Miro::Json::Value {}, &error); });
 }
 
+// Maps an Async<Json> to a typed Async<Res> by deserializing the JSON
+// through Miro when it resolves. A deserialization failure becomes a
+// rejection rather than a thrown exception escaping the continuation.
+// Used by WebViewBridge::call's typed overloads.
+template <typename Res>
+Threads::Async<Res> mapJson(Threads::Async<Miro::Json::Value> work)
+{
+    auto promise = Threads::AsyncPromise<Res> {};
+
+    work.then(
+        [promise](const Miro::Json::Value& value)
+        {
+            try
+            {
+                promise.resolve(Miro::createFromJSON<Res>(value));
+            }
+            catch (const std::exception& e)
+            {
+                promise.reject(e.what());
+            }
+        },
+        [promise](const std::string& error) { promise.reject(error); });
+
+    return promise.get();
+}
+
 } // namespace eacp::Graphics

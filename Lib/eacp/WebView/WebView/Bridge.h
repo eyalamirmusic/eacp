@@ -10,6 +10,7 @@
 #include <ea_data_structures/Structures/Vector.h>
 
 #include <string>
+#include <unordered_map>
 
 namespace eacp::Graphics
 {
@@ -55,12 +56,44 @@ public:
     void setCommandExecution(CommandExecution mode) { commandExecution = mode; }
     CommandExecution getCommandExecution() const { return commandExecution; }
 
+    // Calls a JavaScript function the page registered with
+    // `window.eacp.expose(name, fn)` — the reverse of a command. The JS
+    // function may be synchronous or `async`; either way its resolved
+    // value comes back here as an Async that settles when the page
+    // replies (or rejects if the function throws / is missing). Must be
+    // called on the main thread.
+    //
+    // The typed overloads serialize the request and deserialize the
+    // response through Miro, so the call site is just:
+    //     bridge.call<Summary>("summarize", request)
+    //         .then([](Summary s) { ... });
+    Threads::Async<Miro::Json::Value> call(const std::string& functionName,
+                                           const Miro::Json::Value& payload);
+
+    Threads::Async<Miro::Json::Value> call(const std::string& functionName)
+    {
+        return call(functionName, Miro::Json::Value {});
+    }
+
+    template <typename Res, typename Req>
+    Threads::Async<Res> call(const std::string& functionName, const Req& request)
+    {
+        return mapJson<Res>(call(functionName, Miro::toJSON(request)));
+    }
+
+    template <typename Res>
+    Threads::Async<Res> call(const std::string& functionName)
+    {
+        return mapJson<Res>(call(functionName, Miro::Json::Value {}));
+    }
+
 private:
     void registerBuiltins();
     void onMessage(const std::string& body);
     void deliver(double id,
                  const Miro::Json::Value& result,
                  const std::string* error);
+    bool handleCallReply(const Miro::Json::Value& message);
     void broadcast();
 
     WebView& webView;
@@ -68,6 +101,12 @@ private:
     EA::Listener emitListener;
     EA::Vector<EA::OwningPointer<EA::Listener>> stateListeners;
     CommandExecution commandExecution = CommandExecution::MainThreadDeferred;
+
+    // Outstanding C++ -> page calls, keyed by the id sent to
+    // window.__eacp.callFunction and echoed back in the reply envelope.
+    double callCounter = 0;
+    std::unordered_map<double, Threads::AsyncPromise<Miro::Json::Value>>
+        pendingCalls;
 };
 
 } // namespace eacp::Graphics

@@ -4,6 +4,9 @@
 
 #include <NanoTest/NanoTest.h>
 
+#include <string>
+#include <vector>
+
 using namespace std::chrono_literals;
 using namespace eacp::WebView::Test;
 
@@ -229,4 +232,54 @@ auto tCallJsChainsViaCoroutine =
     auto sum = co_await callJS("1 + 2");
     auto wrapped = co_await callJS("'val:' + (" + sum + ")");
     check(wrapped == "val:3");
+};
+
+// The reverse direction: the page registered `getRenderedTodos` via
+// window.eacp.expose(...) (see web/src/main.tsx), and C++ calls it
+// through the shared WebViewBridge. Unlike callJS — which evaluates a
+// snippet and can't await — bridge.call awaits the page function's
+// Promise and deserializes the resolved value into a typed struct.
+namespace
+{
+struct RenderedTodos
+{
+    int count = 0;
+    std::vector<std::string> texts;
+
+    MIRO_REFLECT(count, texts)
+};
+
+Graphics::WebViewBridge& transport()
+{
+    return app().transport;
+}
+} // namespace
+
+auto tCallsExposedAsyncPageFunction =
+    test("WebViewTodo/callsExposedAsyncPageFunctionFromCpp") = []
+{
+    auto rendered = transport().call<RenderedTodos>("getRenderedTodos").waitFor(5s);
+
+    check(rendered.count == 3);
+    check(rendered.texts.size() == 3);
+    check(rendered.texts[0] == "Try editing me (double-click)");
+};
+
+auto tExposedPageFunctionReflectsUiUpdates =
+    test("WebViewTodo/exposedPageFunctionReflectsUiUpdatesFromCpp") = []
+{
+    driver().fill(inputSelector, "Call me from C++");
+    driver().click(addSelector);
+
+    auto rendered = transport().call<RenderedTodos>("getRenderedTodos").waitFor(5s);
+
+    check(rendered.count == 4);
+    check(rendered.texts.back() == "Call me from C++");
+};
+
+auto tCallsExposedPageFunctionViaCoroutine =
+    test("WebViewTodo/callsExposedPageFunctionViaCoroutine") = []() -> Async<>
+{
+    auto rendered = co_await transport().call<RenderedTodos>("getRenderedTodos");
+    check(rendered.count == 3);
 };
