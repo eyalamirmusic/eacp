@@ -29,6 +29,14 @@ target_sources(eacp-webview PRIVATE
         WebView/StateBridge.cpp
         WebView/MenuHelpers.cpp)
 
+# The page-side JSON-RPC bridge shim, authored as a real .js file and
+# embedded so WebViewBridge can pull it out at runtime via
+# ResEmbed::get("bridge-shim.js", "EacpWebView").
+res_embed_add(eacp-webview
+        FILES     WebView/Resources/bridge-shim.js
+        NAMESPACE EacpWebView
+        CATEGORY  EacpWebView)
+
 if (APPLE)
     target_sources(eacp-webview PRIVATE
             WebView/WebView.mm
