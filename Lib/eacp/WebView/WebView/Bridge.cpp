@@ -207,15 +207,27 @@ void WebViewBridge::onMessage(const std::string& body)
     if (!envelope)
         return;
 
+    // One reply path for sync and async commands alike: the continuation
+    // fires inline for a synchronous handler and on a later event-loop
+    // turn for an awaitable one (an Async<T> resolved via callAsync, so
+    // always back on the main thread — safe to evaluateJavaScript from).
+    // The try/catch covers the synchronous failures dispatch still
+    // surfaces by throwing: an unknown command, or a sync handler that
+    // throws before replying.
+    auto id = envelope->id;
+
     try
     {
-        auto result = bridge.dispatch(envelope->command, envelope->payload);
-        deliver(envelope->id, result, nullptr);
+        bridge.dispatch(envelope->command,
+                        envelope->payload,
+                        [this, id](const Miro::Json::Value& result,
+                                   const std::string* error)
+                        { deliver(id, result, error); });
     }
     catch (const std::exception& e)
     {
         auto error = std::string {e.what()};
-        deliver(envelope->id, Miro::Json::Value {}, &error);
+        deliver(id, Miro::Json::Value {}, &error);
     }
 }
 

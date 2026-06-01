@@ -1,4 +1,4 @@
 CPMAddPackage(
         NAME Miro
-        GITHUB_REPOSITORY eyalamirmusic/Miro
-        GIT_TAG main)
+        GITHUB_REPOSITORY jamierpond/Miro
+        GIT_TAG jp/async-miro)
