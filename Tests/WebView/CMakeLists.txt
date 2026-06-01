@@ -6,6 +6,10 @@ nano_add_executable(FileProviderTests
         SOURCES FileProviderTests.cpp
         TARGETS eacp-webview)
 
+nano_add_executable(AsyncBridgeTests
+        SOURCES AsyncBridgeTests.cpp
+        TARGETS eacp-webview)
+
 # Drives the live streaming pump on a real WebView, so it needs the
 # NSApplication / runloop bootstrap from eacp-webview-test-main rather than
 # nano_add_executable's bare main(). That target only exists on the platforms

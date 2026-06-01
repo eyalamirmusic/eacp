@@ -119,9 +119,10 @@ std::string jsStringLiteral(std::string_view value)
 
 WebViewBridge::WebViewBridge(WebView& webViewToUse)
     : webView(webViewToUse)
-    , emitListener(bridge.onEmit,
-                   [this] { broadcast(); },
-                   EA::Listener::Modes::TriggerOnEvent)
+    , emitListener(
+          bridge.onEmit,
+          [this] { broadcast(); },
+          EA::Listener::Modes::TriggerOnEvent)
 {
     stateListeners = attachStaticStateBinders(bridge);
     registerBuiltins();
@@ -207,16 +208,25 @@ void WebViewBridge::onMessage(const std::string& body)
     if (!envelope)
         return;
 
-    try
-    {
-        auto result = bridge.dispatch(envelope->command, envelope->payload);
-        deliver(envelope->id, result, nullptr);
-    }
-    catch (const std::exception& e)
-    {
-        auto error = std::string {e.what()};
-        deliver(envelope->id, Miro::Json::Value {}, &error);
-    }
+    auto id = envelope->id;
+
+    // The C++ handlers are plain synchronous functions; the bridge is what
+    // makes the call async. runCommand executes the Miro dispatch under the
+    // configured execution mode (deferred on the main loop by default, or
+    // on a worker thread) and yields an Async that settles on the main
+    // thread; resolveWith then delivers the result back to the JS Promise
+    // the shim is awaiting, keyed by the envelope id. Miro reports the
+    // outcome (result or error) purely through the Resolve std::function —
+    // it never touches the event loop.
+    auto invoke = [this, command = envelope->command, payload = envelope->payload](
+                      Miro::Resolve resolve)
+    { bridge.dispatchAsync(command, payload, resolve); };
+
+    auto work = runCommand(commandExecution, std::move(invoke));
+
+    resolveWith(std::move(work),
+                [this, id](const Miro::Json::Value& result, const std::string* error)
+                { deliver(id, result, error); });
 }
 
 void WebViewBridge::deliver(double id,
@@ -245,7 +255,8 @@ void WebViewBridge::broadcast()
         payloadJson = "null";
 
     auto script = std::string {"window.__eacp&&window.__eacp.dispatch("}
-                  + jsStringLiteral(bridge.currentEvent()) + "," + payloadJson + ");";
+                  + jsStringLiteral(bridge.currentEvent()) + "," + payloadJson
+                  + ");";
 
     webView.evaluateJavaScript(script);
 }
