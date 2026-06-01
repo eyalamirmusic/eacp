@@ -16,6 +16,7 @@
 #include <chrono>
 #include <optional>
 #include <string>
+#include <thread>
 
 using namespace nano;
 using namespace std::chrono_literals;
@@ -50,15 +51,45 @@ public:
     EchoResponse echo(const EchoRequest& req) const { return {req.text + "!"}; }
 };
 
-// Invokes Miro's completion-based dispatch for "echo" with the given text.
-// This is exactly what WebViewBridge::onMessage hands to runCommand.
-auto echoInvoke(Miro::Bridge& bridge, std::string text)
+// A genuinely async API: the handler returns immediately and settles the
+// Completer later, from a worker thread it owns. The bridge composes its
+// Async on top of that deferred completion without any special casing —
+// dispatchAsync simply hands the handler the Resolve.
+class AsyncEchoApi
 {
-    return [&bridge, text = std::move(text)](Miro::Resolve resolve)
+public:
+    void reflect(Miro::ApiReflector& r)
+    {
+        r.command(&AsyncEchoApi::echoAsync, "echoAsync");
+        r.command(&AsyncEchoApi::boomAsync, "boomAsync");
+    }
+
+    void echoAsync(const EchoRequest& req, Miro::Completer<EchoResponse> done)
+    {
+        std::thread([req, done] { done.resolve({req.text + "!"}); }).detach();
+    }
+
+    void boomAsync(const EchoRequest&, Miro::Completer<EchoResponse> done)
+    {
+        std::thread([done] { done.reject("kaboom"); }).detach();
+    }
+};
+
+// Invokes Miro's completion-based dispatch for `command` with the given
+// text. This is exactly what WebViewBridge::onMessage hands to runCommand.
+auto dispatchInvoke(Miro::Bridge& bridge, std::string command, std::string text)
+{
+    return [&bridge, command = std::move(command), text = std::move(text)](
+               Miro::Resolve resolve)
     {
         auto payload = Miro::toJSON(EchoRequest {text});
-        bridge.dispatchAsync("echo", payload, resolve);
+        bridge.dispatchAsync(command, payload, resolve);
     };
+}
+
+auto echoInvoke(Miro::Bridge& bridge, std::string text)
+{
+    return dispatchInvoke(bridge, "echo", std::move(text));
 }
 } // namespace
 
@@ -126,6 +157,49 @@ auto tDeferredDoesNotRunInline =
     check(delivered.has_value());
     check(*delivered == "later!");
     check(!failed.has_value());
+};
+
+auto tAsyncHandlerResolvesLater =
+    test("AsyncBridge/asyncHandler/resolvesFromWorkerThread") = []
+{
+    auto api = AsyncEchoApi {};
+    auto bridge = Miro::Bridge {};
+    bridge.use(api);
+
+    // MainThreadDeferred: the handler is *invoked* on the main loop, then
+    // settles later from its own worker thread — the bridge's Async still
+    // resolves on the main thread.
+    auto work = runCommand(CommandExecution::MainThreadDeferred,
+                           dispatchInvoke(bridge, "echoAsync", "later"));
+
+    auto result = work.waitFor(1s);
+
+    check(result.isObject());
+    check(result["echoed"].asString() == "later!");
+};
+
+auto tAsyncHandlerRejects =
+    test("AsyncBridge/asyncHandler/rejectSurfacesAsError") = []
+{
+    auto api = AsyncEchoApi {};
+    auto bridge = Miro::Bridge {};
+    bridge.use(api);
+
+    auto work = runCommand(CommandExecution::MainThreadDeferred,
+                           dispatchInvoke(bridge, "boomAsync", "x"));
+
+    auto threw = false;
+    try
+    {
+        work.waitFor(1s);
+    }
+    catch (const eacp::Threads::AsyncError& e)
+    {
+        threw = true;
+        check(std::string {e.what()} == "kaboom");
+    }
+
+    check(threw);
 };
 
 auto tUnknownCommandRejects = test("AsyncBridge/unknownCommand/surfacesAsError") = []

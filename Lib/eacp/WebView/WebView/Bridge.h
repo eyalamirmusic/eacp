@@ -56,6 +56,23 @@ public:
     void setCommandExecution(CommandExecution mode) { commandExecution = mode; }
     CommandExecution getCommandExecution() const { return commandExecution; }
 
+    // Per-command override of the execution mode, keyed by command name.
+    // Takes precedence over the global default above, so a single slow
+    // command can be pushed onto a worker thread (or pinned to the main
+    // thread) without affecting the rest. Note that this only governs
+    // synchronous handlers — an async handler (void(Req, Completer<Res>))
+    // owns its own threading and is unaffected by the mode. Configure
+    // before commands start flowing; consulted on the main thread.
+    void setCommandExecution(const std::string& command, CommandExecution mode)
+    {
+        commandModes[command] = mode;
+    }
+
+    void clearCommandExecution(const std::string& command)
+    {
+        commandModes.erase(command);
+    }
+
     // Calls a JavaScript function the page registered with
     // `window.eacp.expose(name, fn)` — the reverse of a command. The JS
     // function may be synchronous or `async`; either way its resolved
@@ -101,6 +118,7 @@ private:
     EA::Listener emitListener;
     EA::Vector<EA::OwningPointer<EA::Listener>> stateListeners;
     CommandExecution commandExecution = CommandExecution::MainThreadDeferred;
+    std::unordered_map<std::string, CommandExecution> commandModes;
 
     // Outstanding C++ -> page calls, keyed by the id sent to
     // window.__eacp.callFunction and echoed back in the reply envelope.

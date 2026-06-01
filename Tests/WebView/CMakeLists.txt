@@ -28,4 +28,12 @@ if (TARGET eacp-webview-test-main)
             eacp-webview
             eacp-webview-test-main)
     nano_discover_tests(WebViewCallTests)
+
+    # Drives page -> C++ command dispatch on a real WebView: per-command
+    # execution mode (main vs worker thread) and async Completer handlers.
+    add_executable(CommandDispatchTests CommandDispatchTests.cpp)
+    target_link_libraries(CommandDispatchTests PRIVATE
+            eacp-webview
+            eacp-webview-test-main)
+    nano_discover_tests(CommandDispatchTests)
 endif ()
