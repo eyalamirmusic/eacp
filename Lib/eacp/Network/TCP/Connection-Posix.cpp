@@ -44,7 +44,8 @@ bool waitWritable(int fd, std::chrono::milliseconds timeout)
     FD_SET(fd, &writable);
 
     auto tv = toTimeval(timeout);
-    return ::select(fd + 1, nullptr, &writable, nullptr, &tv) > 0;
+    auto* deadline = timeout.count() > 0 ? &tv : nullptr; // null = block forever
+    return ::select(fd + 1, nullptr, &writable, nullptr, deadline) > 0;
 }
 
 int pendingSocketError(int fd)
@@ -58,9 +59,12 @@ int pendingSocketError(int fd)
 
 void armTimeouts(int fd, std::chrono::milliseconds ioTimeout)
 {
-    auto tv = toTimeval(ioTimeout);
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    if (ioTimeout.count() > 0) // otherwise leave the socket blocking forever
+    {
+        auto tv = toTimeval(ioTimeout);
+        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    }
 
 #ifdef SO_NOSIGPIPE
     auto on = 1;
@@ -167,7 +171,11 @@ std::size_t socketSend(NativeSocket socket, const char* data, std::size_t length
 {
     auto sent = ::send((int) socket, data, length, sendFlags());
     if (sent < 0)
-        throwErrno(timedOut() ? "send timed out" : "send");
+    {
+        if (timedOut())
+            throw TimeoutError("send timed out");
+        throwErrno("send");
+    }
     return (std::size_t) sent;
 }
 
@@ -175,7 +183,11 @@ std::size_t socketReceive(NativeSocket socket, char* buffer, std::size_t length)
 {
     auto received = ::recv((int) socket, buffer, length, 0);
     if (received < 0)
-        throwErrno(timedOut() ? "receive timed out" : "receive");
+    {
+        if (timedOut())
+            throw TimeoutError("receive timed out");
+        throwErrno("receive");
+    }
     return (std::size_t) received;
 }
 
@@ -229,9 +241,10 @@ NativeSocket socketAccept(NativeSocket listenSocket,
     FD_SET(lfd, &readable);
 
     auto tv = toTimeval(acceptTimeout);
-    auto ready = ::select(lfd + 1, &readable, nullptr, nullptr, &tv);
+    auto* deadline = acceptTimeout.count() > 0 ? &tv : nullptr; // null = forever
+    auto ready = ::select(lfd + 1, &readable, nullptr, nullptr, deadline);
     if (ready == 0)
-        throw Error("accept timed out");
+        throw TimeoutError("accept timed out");
     if (ready < 0)
         throwErrno("accept");
 
