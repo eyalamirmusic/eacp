@@ -4,12 +4,49 @@
 #include <eacp/Core/App/AppEnvironment.h>
 #import <Cocoa/Cocoa.h>
 
+namespace
+{
+// Reposition the standard window controls to sit `inset` points from the
+// window's top-left, preserving the system spacing between them. Mirrors how
+// Electron implements trafficLightPosition — there is no NSWindow API for it,
+// so we move the buttons directly. Skipped in fullscreen, where macOS owns
+// their placement.
+void repositionTrafficLights(NSWindow* window, NSPoint inset)
+{
+    if (window.styleMask & NSWindowStyleMaskFullScreen)
+        return;
+
+    NSButton* close = [window standardWindowButton:NSWindowCloseButton];
+    NSButton* miniaturize =
+        [window standardWindowButton:NSWindowMiniaturizeButton];
+    NSButton* zoom = [window standardWindowButton:NSWindowZoomButton];
+
+    if (close == nil || miniaturize == nil || zoom == nil)
+        return;
+
+    NSView* container = close.superview;
+    CGFloat containerHeight = NSHeight(container.frame);
+    CGFloat spacing = NSMinX(miniaturize.frame) - NSMinX(close.frame);
+
+    NSButton* buttons[] = {close, miniaturize, zoom};
+    for (int i = 0; i < 3; ++i)
+    {
+        NSRect frame = buttons[i].frame;
+        frame.origin.x = inset.x + i * spacing;
+        frame.origin.y = containerHeight - inset.y - NSHeight(frame);
+        buttons[i].frame = frame;
+    }
+}
+} // namespace
+
 @interface WindowDelegateBridge : NSObject <NSWindowDelegate>
 {
 @public
     eacp::Callback cb;
     eacp::Graphics::ResizeCallback onResize;
     eacp::Graphics::WillResizeCallback onWillResize;
+    BOOL keepTrafficLightsPositioned;
+    NSPoint trafficLightInset;
 }
 @end
 
@@ -35,10 +72,14 @@
 
 - (void)windowDidResize:(NSNotification*)notification
 {
+    auto* window = (NSWindow*) notification.object;
+
+    if (keepTrafficLightsPositioned)
+        repositionTrafficLights(window, trafficLightInset);
+
     if (!onResize)
         return;
 
-    auto* window = (NSWindow*) notification.object;
     auto content = [window contentRectForFrameRect:[window frame]];
     onResize((int) content.size.width, (int) content.size.height);
 }
@@ -52,6 +93,12 @@ WindowDelegateBridge* createWindowDelegate(const WindowOptions& options)
     bridge->cb = options.effectiveOnQuit();
     bridge->onResize = options.onResize;
     bridge->onWillResize = options.onWillResize;
+    bridge->keepTrafficLightsPositioned = options.trafficLightPosition.has_value();
+
+    if (options.trafficLightPosition)
+        bridge->trafficLightInset = NSMakePoint(options.trafficLightPosition->x,
+                                                options.trafficLightPosition->y);
+
     return bridge;
 }
 
@@ -117,6 +164,30 @@ struct Window::Native
         [getWindow() setTitle:@(options.title.c_str())];
         [getWindow() setTitleVisibility:options.showTitle ? NSWindowTitleVisible
                                                           : NSWindowTitleHidden];
+        [getWindow()
+            setTitlebarAppearsTransparent:options.titlebarTransparent];
+
+        if (@available(macOS 11.0, *))
+        {
+            [getWindow() setTitlebarSeparatorStyle:
+                             options.showTitlebarSeparator
+                                 ? NSTitlebarSeparatorStyleAutomatic
+                                 : NSTitlebarSeparatorStyleNone];
+        }
+
+        if (options.backgroundColor)
+        {
+            const auto& c = *options.backgroundColor;
+            [getWindow() setBackgroundColor:[NSColor colorWithSRGBRed:c.r
+                                                                green:c.g
+                                                                 blue:c.b
+                                                                alpha:c.a]];
+        }
+
+        if (options.minWidth > 0 || options.minHeight > 0)
+            [getWindow() setContentMinSize:NSMakeSize(options.minWidth,
+                                                      options.minHeight)];
+
         [getWindow() center];
         [getWindow() setDelegate:delegate.get()];
 
@@ -130,6 +201,12 @@ struct Window::Native
             [getWindow() makeKeyAndOrderFront:nil];
             [NSApp activateIgnoringOtherApps:YES];
         }
+
+        if (options.trafficLightPosition)
+            repositionTrafficLights(
+                getWindow(),
+                NSMakePoint(options.trafficLightPosition->x,
+                            options.trafficLightPosition->y));
     }
 
     void setTitle(const std::string& title)
