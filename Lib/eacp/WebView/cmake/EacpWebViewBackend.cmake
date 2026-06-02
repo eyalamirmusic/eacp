@@ -29,9 +29,16 @@ function(eacp_webview_generate_backend)
         set(ARG_OUTPUT_NAME "backend")
     endif ()
 
+    # Render into the per-build-dir binary tree, then atomically publish into
+    # OUTPUT_DIR (which lives in the shared source tree). See
+    # eacp_webview_publish_generated for why a plain configure_file into the
+    # source tree races when multiple build dirs configure at once.
     set(BASENAME "${ARG_BASENAME}")
+    set(staged "${CMAKE_CURRENT_BINARY_DIR}/eacp-webview-gen/${ARG_OUTPUT_NAME}.ts")
     configure_file(
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../WebView/Resources/EacpBackend.ts.template"
-            "${ARG_OUTPUT_DIR}/${ARG_OUTPUT_NAME}.ts"
+            "${staged}"
             @ONLY)
+    eacp_webview_publish_generated(
+            "${staged}" "${ARG_OUTPUT_DIR}/${ARG_OUTPUT_NAME}.ts")
 endfunction()

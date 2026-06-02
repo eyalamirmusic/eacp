@@ -25,18 +25,26 @@ function(eacp_webview_generate_react_hooks)
         set(ARG_BASENAME "schema")
     endif ()
 
+    # Render into the per-build-dir binary tree, then atomically publish into
+    # OUTPUT_DIR (shared source tree) — see eacp_webview_publish_generated for
+    # the concurrent-configure race a plain configure_file would hit here.
     set(BASENAME "${ARG_BASENAME}")
+    set(stagedReact "${CMAKE_CURRENT_BINARY_DIR}/eacp-webview-gen/${ARG_OUTPUT_NAME}.ts")
     configure_file(
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../WebView/Resources/EacpReact.ts.template"
-            "${ARG_OUTPUT_DIR}/${ARG_OUTPUT_NAME}.ts"
+            "${stagedReact}"
             @ONLY)
+    eacp_webview_publish_generated(
+            "${stagedReact}" "${ARG_OUTPUT_DIR}/${ARG_OUTPUT_NAME}.ts")
 
     # Also emit a stable-named hooks.ts re-export so user code can
     # `import { useTodos } from './generated/hooks'` regardless of the
     # schema basename. The underlying `<basename>.hooks.ts` is the
     # Miro-emitted hooks module; this shim just renames the import path.
+    set(stagedHooks "${CMAKE_CURRENT_BINARY_DIR}/eacp-webview-gen/hooks.ts")
     configure_file(
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../WebView/Resources/EacpHooks.ts.template"
-            "${ARG_OUTPUT_DIR}/hooks.ts"
+            "${stagedHooks}"
             @ONLY)
+    eacp_webview_publish_generated("${stagedHooks}" "${ARG_OUTPUT_DIR}/hooks.ts")
 endfunction()
