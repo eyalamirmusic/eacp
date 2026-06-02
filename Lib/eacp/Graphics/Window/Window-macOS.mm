@@ -117,6 +117,7 @@ struct Window::Native
         [getWindow() setTitle:@(options.title.c_str())];
         [getWindow() setTitleVisibility:options.showTitle ? NSWindowTitleVisible
                                                           : NSWindowTitleHidden];
+        [getWindow() setTitlebarAppearsTransparent:options.transparentTitlebar];
         [getWindow() center];
         [getWindow() setDelegate:delegate.get()];
 
