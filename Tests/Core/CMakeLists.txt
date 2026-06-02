@@ -21,3 +21,11 @@ nano_add_executable(AsyncTests
 nano_add_executable(AsyncCoroutineTests
         SOURCES AsyncCoroutineTests.cpp
         TARGETS eacp-core)
+
+# ProcessTests drive real POSIX commands (/bin/echo, /bin/cat, ...), so they
+# only run on macOS and Linux.
+if (NOT WIN32)
+    nano_add_executable(ProcessTests
+            SOURCES ProcessTests.cpp
+            TARGETS eacp-core)
+endif ()

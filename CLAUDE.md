@@ -82,6 +82,14 @@ matching `APPLE`/`IOS`/`WIN32` branch.
 **Network/** - HTTP abstraction
 - `Request`/`Response` structs with `httpRequest()` function (NSURLSession backed)
 
+**Process/** - Child process launch and control (`eacp::Processes`)
+- `Process`: launch an executable with args/env/working dir; captures stdout and
+  stderr, feeds stdin, and exposes `wait()`/`isRunning()`/`terminate()`/`kill()`
+- `run()`: blocking convenience returning a `ProcessResult`; `runAsync()` returns
+  a `Threads::Async<ProcessResult>` resolved on the main thread
+- POSIX impl (`Process-Posix.cpp`, fork/exec) shared by macOS+Linux; Windows uses
+  `CreateProcessW` (`Process-Windows.cpp`)
+
 **ObjC/** - Memory management bridge
 - `Ptr<T>`: RAII smart pointer for Objective-C objects (handles retain/release)
 - `CFRef<T>`: RAII wrapper for Core Foundation types

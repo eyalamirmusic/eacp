@@ -6,6 +6,7 @@ target_link_libraries(eacp-core PUBLIC ea_data_structures)
 
 target_sources(eacp-core PRIVATE
         App/App.cpp
+        Process/Process.cpp
         Threads/EventLoop.cpp
         Threads/TaskSemaphore.cpp
         Utils/File.cpp
@@ -18,6 +19,7 @@ if (APPLE)
     target_sources(eacp-core PRIVATE
             ObjC/AutoReleasePool.mm
             ObjC/Strings.mm
+            Process/Process-Posix.cpp
             Threads/EventLoop.mm
             Threads/Timer.mm
             Threads/ThreadUtils.mm
@@ -40,6 +42,7 @@ if (APPLE)
 elseif (WIN32)
     target_sources(eacp-core PRIVATE
             App/App-Windows.cpp
+            Process/Process-Windows.cpp
             Threads/EventLoop-Windows.cpp
             Threads/ThreadUtils-Windows.cpp
             Threads/Timer-Windows.cpp
@@ -48,6 +51,7 @@ elseif (WIN32)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-core PRIVATE
             App/App-Linux.cpp
+            Process/Process-Posix.cpp
             Threads/EventLoop-Linux.cpp
             Threads/ThreadUtils-Linux.cpp
             Threads/Timer-Linux.cpp
