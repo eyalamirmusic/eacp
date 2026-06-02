@@ -1,6 +1,7 @@
 set(CMAKE_FOLDER Examples/WebView)
 
 add_subdirectory(SimpleView)
+add_subdirectory(FancyWindow)
 add_subdirectory(WebViewEmbed)
 add_subdirectory(WebViewReactAnim)
 add_subdirectory(WebViewTodo)

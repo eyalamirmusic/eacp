@@ -1,7 +1,9 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <ea_data_structures/Structures/Vector.h>
+#include "../Primitives/Primitives.h"
 #include "../View/View.h"
 #include <eacp/Core/App/App.h>
 
@@ -60,6 +62,34 @@ struct WindowOptions
 
     // When false, the title bar still shows but the title text is hidden.
     bool showTitle = true;
+
+    // When true, the title bar draws no background of its own, so a
+    // FullSizeContentView's content shows through beneath the traffic
+    // lights. Without this, macOS (notably Sequoia) paints the titlebar's
+    // translucent material over the content as a grey band.
+    bool titlebarTransparent = false;
+
+    // The hairline separator drawn under the title bar (macOS Big Sur+).
+    // Set false (NSTitlebarSeparatorStyleNone) to drop it so a custom header
+    // blends seamlessly into the content with no chrome line.
+    bool showTitlebarSeparator = true;
+
+    // macOS: inset of the window controls (close / minimise / zoom) from the
+    // window's top-left, in points — mirrors Electron's trafficLightPosition.
+    // Only meaningful with a hidden/transparent title bar (FullSizeContentView).
+    // Unset leaves the buttons at their default macOS position. Re-applied on
+    // resize so the buttons don't drift back after fullscreen transitions.
+    std::optional<Point> trafficLightPosition;
+
+    // macOS: background colour shown behind the content view — before the web
+    // view first paints and during live resize. Unset uses the system window
+    // background; set to black to avoid a white flash on launch/resize.
+    std::optional<Color> backgroundColor;
+
+    // Minimum content size in points (0 = no minimum). Content-relative, to
+    // match width/height and the resize callbacks above.
+    int minWidth = 0;
+    int minHeight = 0;
 
     EA::Vector<WindowFlags> flags;
 
