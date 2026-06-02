@@ -1,6 +1,16 @@
 cmake_minimum_required(VERSION 3.31)
 project(eacp LANGUAGES C CXX)
 
+if (CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(FATAL_ERROR
+            "eacp requires a 64-bit toolchain (x64 or ARM64), but the "
+            "selected compiler targets 32-bit "
+            "(CMAKE_SIZEOF_VOID_P=${CMAKE_SIZEOF_VOID_P}, "
+            "arch='${CMAKE_SYSTEM_PROCESSOR}'). On Windows, configure from an "
+            "x64 or ARM64 Developer prompt, or pass an explicit 64-bit "
+            "target, e.g. -DCMAKE_CXX_FLAGS=--target=x86_64-pc-windows-msvc.")
+endif ()
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(APPLE)
