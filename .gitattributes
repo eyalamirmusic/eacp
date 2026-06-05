@@ -1,10 +1,12 @@
 # Default: auto-detect text files and normalize to LF in the index and
 # on checkout. Overrides any local core.autocrlf setting, so Windows
-# contributors see the same line endings as macOS contributors. Most
-# importantly: codegen tools writing through Windows text-mode streams
-# emit CRLF, but with eol=lf git treats those files as LF for diff and
-# normalizes them on commit, so generated .ts files no longer show up
-# as dirty.
+# contributors see the same line endings as macOS contributors.
+#
+# Note: eol=lf does NOT make a CRLF working-tree file "clean" — `git diff`
+# normalizes it away, but `git status` still flags it as pending
+# renormalization. Codegen must emit LF directly. In particular CMake's
+# configure_file defaults to CRLF on Windows; the WebView generators pass
+# NEWLINE_STYLE LF so the generated .ts files don't show up perpetually dirty.
 * text=auto eol=lf
 
 # Explicit binary overrides — never touch line endings.
