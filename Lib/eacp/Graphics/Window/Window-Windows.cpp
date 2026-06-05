@@ -154,8 +154,8 @@ struct Window::Native
             style = WS_POPUP;
         }
 
-        std::wstring wideTitle = options.showTitle ? toWideString(options.title)
-                                                   : std::wstring {};
+        std::wstring wideTitle =
+            options.showTitle ? toWideString(options.title) : std::wstring {};
 
         auto dpi = GetDpiForSystem();
         auto dpiScale = static_cast<float>(dpi) / 96.f;
@@ -234,6 +234,15 @@ struct Window::Native
             ShowWindow(hwnd, SW_SHOW);
             UpdateWindow(hwnd);
         }
+    }
+
+    void toFront() const
+    {
+        if (!hwnd || eacp::Apps::getAppEnvironment().headless)
+            return;
+
+        ShowWindow(hwnd, SW_SHOW);
+        SetForegroundWindow(hwnd);
     }
 
     float getWindowDpiScale() const
@@ -666,6 +675,11 @@ void* Window::getContentViewHandle()
 void Window::setContentView(View& view)
 {
     impl->setContentView(&view);
+}
+
+void Window::toFront()
+{
+    impl->toFront();
 }
 
 bool Window::isKeyPressed(uint16_t virtualKeyCode) const

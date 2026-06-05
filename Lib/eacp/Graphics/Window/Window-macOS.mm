@@ -191,22 +191,22 @@ struct Window::Native
         [getWindow() center];
         [getWindow() setDelegate:delegate.get()];
 
-        // Skip the foreground activation calls under headless mode
-        // (CI machines without an active windowing session) — the
-        // NSWindow + its content view still exist, so attached
-        // WKWebViews load and JS runs; the only thing missing is the
-        // visible surface, which tests don't care about.
-        if (!eacp::Apps::getAppEnvironment().headless)
-        {
-            [getWindow() makeKeyAndOrderFront:nil];
-            [NSApp activateIgnoringOtherApps:YES];
-        }
+        toFront();
 
         if (options.trafficLightPosition)
             repositionTrafficLights(
                 getWindow(),
                 NSMakePoint(options.trafficLightPosition->x,
                             options.trafficLightPosition->y));
+    }
+
+    void toFront()
+    {
+        if (eacp::Apps::getAppEnvironment().headless)
+            return;
+
+        [getWindow() makeKeyAndOrderFront:nil];
+        [NSApp activateIgnoringOtherApps:YES];
     }
 
     void setTitle(const std::string& title)
@@ -243,6 +243,11 @@ void Window::setTitle(const std::string& title)
 void Window::setContentView(View& view)
 {
     impl->setContentView(view.getHandle());
+}
+
+void Window::toFront()
+{
+    impl->toFront();
 }
 
 void* Window::getHandle()

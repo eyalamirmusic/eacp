@@ -115,6 +115,11 @@ public:
 
     void setContentView(View& view);
 
+    // Brings the window to the front and activates the app so it rises above
+    // other applications (macOS makeKeyAndOrderFront + activateIgnoringOtherApps,
+    // Windows ShowWindow + SetForegroundWindow). No-op under headless and on iOS.
+    void toFront();
+
     // Keyboard state (tracked from window events)
     bool isKeyPressed(uint16_t virtualKeyCode) const;
     bool isShiftPressed() const;
