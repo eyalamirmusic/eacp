@@ -28,4 +28,10 @@ WKWebView* createWebView(WKWebViewConfiguration* config);
 // Arms a native file drag-out for the next mouse gesture with the given on-disk
 // paths. macOS-only behaviour; the iOS translation unit provides a no-op.
 void armFileDrag(WKWebView* webView, const std::vector<std::string>& paths);
+
+// Arms a native window drag for the next mouse gesture: the following
+// mouseDragged: hands off to the OS window-move loop. Driven by the injected
+// window-drag.js when the pointer goes down on a `--eacp-app-region: drag`
+// region. macOS-only; the iOS translation unit provides a no-op.
+void armWindowDrag(WKWebView* webView);
 } // namespace eacp::Graphics::detail

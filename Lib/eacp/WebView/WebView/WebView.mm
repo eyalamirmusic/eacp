@@ -7,11 +7,13 @@
 
 #include <eacp/Core/ObjC/Strings.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
+#include <ResEmbed/ResEmbed.h>
 #include <ea_data_structures/Structures/Vector.h>
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 
@@ -604,12 +606,37 @@ void unregisterWebView(WebView* view)
 }
 } // namespace
 
+#if TARGET_OS_OSX
+namespace
+{
+std::string loadWindowDragShim()
+{
+    auto view = ResEmbed::get("window-drag.js", "EacpWebView");
+    if (!view)
+        throw std::runtime_error(
+            "eacp-webview: embedded window-drag.js resource not found");
+    return view.toString();
+}
+} // namespace
+#endif
+
 void WebView::initNative(Options options)
 {
     impl = std::make_shared<Native>(*this, std::move(options));
     impl->delegate.get()->nativeWeak = impl;
     impl->attachToParentView();
     registerWebView(this);
+
+#if TARGET_OS_OSX
+    // Re-implement Electron-style `-webkit-app-region` window dragging, which
+    // WKWebView ignores. The injected script flags left-mousedowns over a
+    // `--eacp-app-region: drag` region; we arm the drag so the next
+    // mouseDragged: hands off to AppKit's window-move loop.
+    addUserScript(loadWindowDragShim(), true);
+    addScriptMessageHandler(
+        "__eacpWindowDrag",
+        [this](const std::string&) { detail::armWindowDrag(impl->webView.get()); });
+#endif
 }
 
 WebView::WebView(PopupInit init)

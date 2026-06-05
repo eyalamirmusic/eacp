@@ -48,4 +48,10 @@ void armFileDrag(WKWebView*, const std::vector<std::string>&)
     // Native file drag-out is a macOS desktop affordance, not implemented here.
     assert(false && "armFileDrag is macOS-only");
 }
+
+void armWindowDrag(WKWebView*)
+{
+    // Window dragging is a desktop affordance; iOS windows aren't movable.
+    assert(false && "armWindowDrag is macOS-only");
+}
 } // namespace eacp::Graphics::detail
