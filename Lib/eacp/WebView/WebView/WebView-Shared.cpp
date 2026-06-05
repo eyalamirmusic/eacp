@@ -92,6 +92,16 @@ std::string pathFromURL(std::string_view url, std::string_view indexFile)
         return std::string(indexFile);
 
     auto path = url.substr(afterHost + 1);
+
+    // WebKit hands custom-scheme handlers the full URL including any fragment
+    // (it only strips fragments for standard schemes like http). A hash-routed
+    // SPA loads e.g. app://local/index.html#/route — strip the fragment so the
+    // resource key stays "index.html". Strip the query string the same way.
+    auto fragment = path.find('#');
+
+    if (fragment != std::string_view::npos)
+        path = path.substr(0, fragment);
+
     auto query = path.find('?');
 
     if (query != std::string_view::npos)
@@ -365,10 +375,9 @@ WebView::WebView(Options options)
     if (!embedded.enabled || !embedded.autoLoad)
         return;
 
-    auto url = useDevServer
-                   ? embedded.devServerURL
-                   : embedded.scheme + "://" + embedded.host + "/"
-                         + embedded.indexFile;
+    auto url = useDevServer ? embedded.devServerURL
+                            : embedded.scheme + "://" + embedded.host + "/"
+                                  + embedded.indexFile;
 
     // Headless test harnesses install user scripts and navigation
     // callbacks AFTER construction (TestApp wires the agent script
@@ -418,19 +427,33 @@ std::string jsStringLiteral(std::string_view value)
     {
         switch (c)
         {
-            case '\\': out += "\\\\"; break;
-            case '"': out += "\\\""; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            case '\b': out += "\\b"; break;
-            case '\f': out += "\\f"; break;
+            case '\\':
+                out += "\\\\";
+                break;
+            case '"':
+                out += "\\\"";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
+            case '\b':
+                out += "\\b";
+                break;
+            case '\f':
+                out += "\\f";
+                break;
             default:
                 if (static_cast<unsigned char>(c) < 0x20)
                 {
                     char buf[8];
-                    std::snprintf(buf, sizeof buf, "\\u%04x",
-                                  static_cast<unsigned char>(c));
+                    std::snprintf(
+                        buf, sizeof buf, "\\u%04x", static_cast<unsigned char>(c));
                     out += buf;
                 }
                 else
@@ -463,22 +486,22 @@ Threads::Async<std::string> WebView::callJS(const std::string& script)
                      " catch (e) { return 'ER' + String("
                      "e && e.message ? e.message : e); } })()";
 
-    evaluateJavaScript(
-        wrapped,
-        [promise](const std::string& result, const std::string& error)
-        {
-            if (!error.empty())
-            {
-                promise.reject(error);
-                return;
-            }
-            if (result.size() >= 2 && result.substr(0, 2) == "OK")
-                promise.resolve(result.substr(2));
-            else if (result.size() >= 2 && result.substr(0, 2) == "ER")
-                promise.reject(result.substr(2));
-            else
-                promise.resolve(result);
-        });
+    evaluateJavaScript(wrapped,
+                       [promise](const std::string& result, const std::string& error)
+                       {
+                           if (!error.empty())
+                           {
+                               promise.reject(error);
+                               return;
+                           }
+                           if (result.size() >= 2 && result.substr(0, 2) == "OK")
+                               promise.resolve(result.substr(2));
+                           else if (result.size() >= 2
+                                    && result.substr(0, 2) == "ER")
+                               promise.reject(result.substr(2));
+                           else
+                               promise.resolve(result);
+                       });
 #else
     evaluateJavaScript(script,
                        [promise](const std::string& result, const std::string& error)

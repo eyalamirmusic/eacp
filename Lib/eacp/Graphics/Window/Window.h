@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <ea_data_structures/Structures/Vector.h>
@@ -28,6 +29,17 @@ enum class WindowFlags
 
 using ResizeCallback = std::function<void(int width, int height)>;
 using WillResizeCallback = std::function<void(int& width, int& height)>;
+
+// Observable window events. Assign a handler to react; exposed as the public
+// `events` member on Window. All handlers fire on the main thread.
+struct WindowEvents
+{
+    // Called when the window gains (true) or loses (false) key focus. Lets the
+    // app track main-window foreground state — e.g. to reveal a companion
+    // overlay when the user switches to another app. macOS only; other platforms
+    // never invoke it (yet).
+    std::function<void(bool isKey)> onActivationChanged;
+};
 
 struct WindowOptions
 {
@@ -127,6 +139,9 @@ public:
     bool isAltPressed() const;
     bool isCommandPressed() const;
     ModifierKeys getModifiers() const;
+
+    // Observable window events (e.g. key-focus changes). Attach EA::Listeners.
+    WindowEvents events;
 
 private:
     WindowOptions options;

@@ -45,6 +45,7 @@ void repositionTrafficLights(NSWindow* window, NSPoint inset)
     eacp::Callback cb;
     eacp::Graphics::ResizeCallback onResize;
     eacp::Graphics::WillResizeCallback onWillResize;
+    eacp::Graphics::WindowEvents* events;
     BOOL keepTrafficLightsPositioned;
     NSPoint trafficLightInset;
 }
@@ -82,6 +83,18 @@ void repositionTrafficLights(NSWindow* window, NSPoint inset)
 
     auto content = [window contentRectForFrameRect:[window frame]];
     onResize((int) content.size.width, (int) content.size.height);
+}
+
+- (void)windowDidBecomeKey:(NSNotification*)notification
+{
+    if (events != nullptr && events->onActivationChanged)
+        events->onActivationChanged(true);
+}
+
+- (void)windowDidResignKey:(NSNotification*)notification
+{
+    if (events != nullptr && events->onActivationChanged)
+        events->onActivationChanged(false);
 }
 @end
 
@@ -147,7 +160,7 @@ NSWindowStyleMask getStyle(const WindowOptions& options)
 
 struct Window::Native
 {
-    Native(const WindowOptions& options)
+    Native(const WindowOptions& options, WindowEvents& eventsToUse)
     {
         auto style = getStyle(options);
         auto contentRect = NSMakeRect(0, 0, options.width, options.height);
@@ -158,6 +171,7 @@ struct Window::Native
                                                  defer:NO];
 
         delegate = createWindowDelegate(options);
+        delegate.get()->events = &eventsToUse;
 
         [getWindow() setRestorable:NO];
         [getWindow() setReleasedWhenClosed:NO];
@@ -231,7 +245,7 @@ struct Window::Native
 
 Window::Window(const WindowOptions& optionsToUse)
     : options(optionsToUse)
-    , impl(options)
+    , impl(options, events)
 {
 }
 

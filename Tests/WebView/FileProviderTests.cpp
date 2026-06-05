@@ -45,6 +45,25 @@ auto tFileURLToPath = test("FileProvider/fileURLToPath") = []
     check(fileURLToPath("not-a-url").empty());
 };
 
+auto tPathFromURL = test("FileProvider/pathFromURL") = []
+{
+    // scheme://host/<path> -> resource key, ignoring any query + fragment.
+    check(pathFromURL("app://local/index.html", "index.html") == "index.html");
+    check(pathFromURL("app://local/assets/x.js", "index.html") == "assets/x.js");
+
+    // Hash-routed SPA: WebKit hands the fragment to the custom-scheme handler,
+    // so the key must drop it — without this the document 404s (NSURLError
+    // -1008) and the page never loads.
+    check(pathFromURL("app://local/index.html#/overlays/tamby-avatar", "index.html")
+          == "index.html");
+    check(pathFromURL("app://local/index.html?v=1#/route", "index.html")
+          == "index.html");
+
+    // Bare host / trailing slash fall back to the index file.
+    check(pathFromURL("app://local/", "index.html") == "index.html");
+    check(pathFromURL("app://local", "index.html") == "index.html");
+};
+
 auto tMimeCaseInsensitive = test("FileProvider/mimeForPathCaseInsensitive") = []
 {
     check(mimeForPath("song.MP3") == "audio/mpeg");
