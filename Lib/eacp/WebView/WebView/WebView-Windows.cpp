@@ -992,6 +992,13 @@ void WebView::initNative(Options options)
 {
     impl = std::make_shared<Native>(*this, std::move(options));
     registerWebView(this);
+
+    // Inject the window-drag script + __eacpWindowDrag handler. The arming path
+    // is fully wired on Windows -- a drag-region mousedown will call
+    // armWindowDrag() below, which currently asserts. That assert IS the
+    // starting breakpoint for implementing the WebView2 drag (ReleaseCapture +
+    // WM_NCLBUTTONDOWN / HTCAPTION); everything up to it already works.
+    installWindowDragSupport();
 }
 
 WebView::~WebView()
@@ -1280,6 +1287,24 @@ void WebView::armFileDrag(const std::vector<std::string>&)
     // NSDraggingSession started from a real mouseDragged: event). Not wired on
     // Windows yet; the assert marks it unimplemented and fails loudly if hit.
     assert(false && "armFileDrag is macOS-only");
+}
+
+void WebView::armWindowDrag()
+{
+    // TODO(windows): implement window dragging for the WebView2 backend.
+    // The page side is already wired: installWindowDragSupport() injects
+    // window-drag.js, which posts to __eacpWindowDrag on a drag-region
+    // mousedown, landing us here. To finish it, start a native move loop from
+    // the top-level window -- the Win32 equivalent of macOS's
+    // performWindowDragWithEvent: -- e.g.:
+    //
+    //     auto top = GetAncestor(impl->childHwnd, GA_ROOT);
+    //     ReleaseCapture();
+    //     SendMessage(top, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+    //
+    // (likely marshalled onto the UI thread). Until then this asserts so the
+    // first drag stops right here instead of silently doing nothing.
+    assert(false && "armWindowDrag: window drag is not implemented on Windows yet");
 }
 
 void WebView::zoomIn()
