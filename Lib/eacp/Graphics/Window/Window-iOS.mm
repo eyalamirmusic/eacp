@@ -93,6 +93,11 @@ void Window::setContentView(View& view)
     impl->setContentView(view.getHandle());
 }
 
+void Window::toFront()
+{
+    // iOS apps are single-window; there's nothing to bring to the front.
+}
+
 void* Window::getHandle()
 {
     return impl->getWindow();
