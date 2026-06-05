@@ -33,6 +33,7 @@
 // (NSDraggingContextWithinApplication) and never reaches Finder.
 @interface EacpDragWebView : WKWebView
 - (void)armFileDragWithPaths:(const std::vector<std::string>&)paths;
+- (void)armWindowDrag;
 @end
 
 namespace eacp::Graphics::detail
@@ -113,6 +114,14 @@ void armFileDrag(WKWebView* webView, const std::vector<std::string>& paths)
     [(EacpDragWebView*) webView armFileDragWithPaths:paths];
 }
 
+void armWindowDrag(WKWebView* webView)
+{
+    if (![webView isKindOfClass:[EacpDragWebView class]])
+        return;
+
+    [(EacpDragWebView*) webView armWindowDrag];
+}
+
 void attachWKWebViewToParent(WKWebView* webView, void* parentHandle)
 {
     auto* parentView = (__bridge NSView*) parentHandle;
@@ -154,6 +163,7 @@ WebView* findFocusedWebView()
     NSPoint mouseDownLocation;
     BOOL dragArmed;
     BOOL dragStarted;
+    BOOL windowDragArmed;
 }
 
 - (void)armFileDragWithPaths:(const std::vector<std::string>&)paths
@@ -165,11 +175,17 @@ WebView* findFocusedWebView()
     dragArmed = ! paths.empty();
 }
 
+- (void)armWindowDrag
+{
+    windowDragArmed = YES;
+}
+
 - (void)mouseDown:(NSEvent*)event
 {
     mouseDownLocation = event.locationInWindow;
     dragArmed = NO;
     dragStarted = NO;
+    windowDragArmed = NO;
     armedPaths.clear();
     [super mouseDown:event]; // let the page see the mousedown (and arm)
 }
@@ -195,6 +211,15 @@ WebView* findFocusedWebView()
         }
     }
 
+    // No threshold: AppKit's move loop owns the gesture from the first drag.
+    if (windowDragArmed && ! dragStarted)
+    {
+        dragStarted = YES;
+        windowDragArmed = NO;
+        [self.window performWindowDragWithEvent:event];
+        return; // consume: the OS now owns the gesture
+    }
+
     [super mouseDragged:event];
 }
 
@@ -202,6 +227,7 @@ WebView* findFocusedWebView()
 {
     dragArmed = NO;
     dragStarted = NO;
+    windowDragArmed = NO;
     armedPaths.clear();
     [super mouseUp:event];
 }

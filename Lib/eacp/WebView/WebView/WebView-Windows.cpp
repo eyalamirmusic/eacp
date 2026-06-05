@@ -992,6 +992,7 @@ void WebView::initNative(Options options)
 {
     impl = std::make_shared<Native>(*this, std::move(options));
     registerWebView(this);
+    installWindowDragSupport();
 }
 
 WebView::~WebView()
@@ -1280,6 +1281,15 @@ void WebView::armFileDrag(const std::vector<std::string>&)
     // NSDraggingSession started from a real mouseDragged: event). Not wired on
     // Windows yet; the assert marks it unimplemented and fails loudly if hit.
     assert(false && "armFileDrag is macOS-only");
+}
+
+void WebView::armWindowDrag()
+{
+    // TODO(windows): the page side is wired (installWindowDragSupport lands us
+    // here on a drag-region mousedown); start a native move loop to finish it,
+    // e.g. ReleaseCapture() + SendMessage(GetAncestor(impl->childHwnd, GA_ROOT),
+    // WM_NCLBUTTONDOWN, HTCAPTION, 0).
+    assert(false && "armWindowDrag: window drag is not implemented on Windows yet");
 }
 
 void WebView::zoomIn()

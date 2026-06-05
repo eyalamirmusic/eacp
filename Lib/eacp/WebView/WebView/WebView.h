@@ -190,6 +190,11 @@ public:
     // other platforms.
     void armFileDrag(const std::vector<std::string>& paths);
 
+    // Arms a native window drag for the next mouse gesture. Driven by the
+    // injected window-drag script, not called directly. Implemented on macOS;
+    // asserts on backends without window-drag support.
+    void armWindowDrag();
+
     std::function<void(const std::string& url)> onNavigationStarted = [](auto&&) {};
     std::function<void(const std::string& url)> onNavigationFinished = [](auto&&) {};
     std::function<void(const std::string& error)> onNavigationFailed = [](auto&&) {};
@@ -211,6 +216,7 @@ private:
     struct PopupInit;
     explicit WebView(PopupInit init);
     void initNative(Options options);
+    void installWindowDragSupport(); // defined in WebView-Shared.cpp
     std::shared_ptr<Native> impl;
 };
 

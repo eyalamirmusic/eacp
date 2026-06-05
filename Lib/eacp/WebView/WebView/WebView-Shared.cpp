@@ -7,6 +7,8 @@
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/File.h>
 
+#include <ResEmbed/ResEmbed.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -14,6 +16,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -387,6 +390,20 @@ WebView::WebView(Options options)
     {
         loadURL(url);
     }
+}
+
+// Injects window-drag.js + its message handler. Shared by both desktop
+// backends, so it lives here once rather than in each initNative.
+void WebView::installWindowDragSupport()
+{
+    auto shim = ResEmbed::get("window-drag.js", "EacpWebView");
+    if (!shim)
+        throw std::runtime_error(
+            "eacp-webview: embedded window-drag.js resource not found");
+
+    addUserScript(shim.toString(), true);
+    addScriptMessageHandler("__eacpWindowDrag",
+                            [this](const std::string&) { armWindowDrag(); });
 }
 
 namespace

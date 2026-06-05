@@ -369,7 +369,9 @@ struct WebViewNativeAccess
             {
                 body = [message.body UTF8String];
             }
-            else
+            // Guard: dataWithJSONObject: throws (uncaught -> app crash) on a
+            // non-array/dict top level, e.g. a bare number posted from JS.
+            else if ([NSJSONSerialization isValidJSONObject:message.body])
             {
                 NSError* error = nil;
                 NSData* data = [NSJSONSerialization dataWithJSONObject:message.body
@@ -610,6 +612,10 @@ void WebView::initNative(Options options)
     impl->delegate.get()->nativeWeak = impl;
     impl->attachToParentView();
     registerWebView(this);
+
+#if TARGET_OS_OSX // desktop-only; iOS has no movable windows
+    installWindowDragSupport();
+#endif
 }
 
 WebView::WebView(PopupInit init)
@@ -833,6 +839,11 @@ void WebView::addUserScript(const std::string& source, bool atDocumentStart)
 void WebView::armFileDrag(const std::vector<std::string>& paths)
 {
     detail::armFileDrag(impl->webView.get(), paths);
+}
+
+void WebView::armWindowDrag()
+{
+    detail::armWindowDrag(impl->webView.get());
 }
 
 void WebView::resized()
