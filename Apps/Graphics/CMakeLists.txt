@@ -6,4 +6,5 @@ add_subdirectory(Todo)
 
 if (NOT IOS)
     add_subdirectory(EmbeddedViewDemo)
+    add_subdirectory(TrayApp)
 endif ()

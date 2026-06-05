@@ -37,6 +37,7 @@ if (APPLE)
                 Graphics/Keyboard-iOS.mm
                 Helpers/DisplayLink-iOS.mm
                 Menu/Menu-iOS.mm
+                Tray/TrayIcon-iOS.mm
                 View/View-iOS.mm
                 Window/Window-iOS.mm)
         target_link_libraries(eacp-graphics PRIVATE
@@ -46,7 +47,9 @@ if (APPLE)
         target_sources(eacp-graphics PRIVATE
                 Graphics/Keyboard-macOS.mm
                 Helpers/DisplayLink-macOS.mm
+                Menu/AppKitMenu.mm
                 Menu/Menu-macOS.mm
+                Tray/TrayIcon-macOS.mm
                 View/View-macOS.mm
                 Window/EmbeddedView-macOS.mm
                 Window/Window-macOS.mm)
@@ -67,6 +70,7 @@ elseif (WIN32)
             Primitives/Font-Windows.cpp
             Primitives/Path-Windows.cpp
             Primitives/TextMetrics-Windows.cpp
+            Tray/TrayIcon-Windows.cpp
             View/View-Windows.cpp
             Window/EmbeddedView-Windows.cpp
             Window/Window-Windows.cpp)
@@ -79,6 +83,7 @@ elseif (WIN32)
             user32
             gdi32
             ole32
+            shell32
             windowscodecs
             windowsapp
             runtimeobject)

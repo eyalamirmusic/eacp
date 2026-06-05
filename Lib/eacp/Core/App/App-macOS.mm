@@ -6,6 +6,12 @@
 
 namespace eacp::Apps
 {
+void setDockIconVisible(bool visible)
+{
+    [NSApp setActivationPolicy:visible ? NSApplicationActivationPolicyRegular
+                                       : NSApplicationActivationPolicyAccessory];
+}
+
 void openExternalURL(const std::string& url)
 {
     auto* nsString = [NSString stringWithUTF8String:url.c_str()];

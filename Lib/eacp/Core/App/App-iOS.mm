@@ -5,6 +5,9 @@
 
 namespace eacp::Apps
 {
+// iOS has no Dock / activation policy.
+void setDockIconVisible(bool) {}
+
 void openExternalURL(const std::string& url)
 {
     auto* nsString = [NSString stringWithUTF8String:url.c_str()];

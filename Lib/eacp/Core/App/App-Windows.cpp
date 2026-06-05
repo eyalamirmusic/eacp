@@ -7,6 +7,10 @@
 
 namespace eacp::Apps
 {
+// No Dock concept on Windows; an app with no Window already has no taskbar
+// button, so there is nothing to toggle.
+void setDockIconVisible(bool) {}
+
 void openExternalURL(const std::string& url)
 {
     if (url.empty())

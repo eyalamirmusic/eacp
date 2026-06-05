@@ -43,6 +43,18 @@ void restart();
 // assert if called.
 void openExternalURL(const std::string& url);
 
+// Controls whether the app presents a Dock icon and appears in the
+// app switcher (macOS NSApplicationActivationPolicyRegular vs
+// Accessory). Pass false to run as a menu-bar / tray-only app — pair it
+// with a Graphics::TrayIcon so the app stays reachable. Call it early,
+// e.g. from the app struct's constructor.
+//
+// For a flicker-free launch as an accessory app, also set LSUIElement in
+// the bundle's Info.plist; this call then just confirms that policy at
+// runtime. On Windows an app with no Window already has no taskbar
+// button, so this is a no-op there (as it is on Linux and iOS).
+void setDockIconVisible(bool visible);
+
 struct FilePickerOptions
 {
     std::vector<std::string> allowedExtensions;

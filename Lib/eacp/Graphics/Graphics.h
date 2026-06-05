@@ -3,6 +3,7 @@
 #include "Image/Image.h"
 #include "Helpers/DisplayLink.h"
 #include "Menu/Menu.h"
+#include "Tray/TrayIcon.h"
 #include "View/ViewList.h"
 #include "Window/Window.h"
 #include "Graphics/Keyboard.h"
