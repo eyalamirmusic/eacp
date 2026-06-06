@@ -6,7 +6,7 @@
 namespace eacp::Processes
 {
 Process::Process(const std::string& executable,
-                 const std::vector<std::string>& arguments)
+                 const EA::Vector<std::string>& arguments)
     : Process(ProcessOptions {executable, arguments, {}, {}})
 {
 }
@@ -29,7 +29,7 @@ ProcessResult run(ProcessOptions options)
 }
 
 ProcessResult run(const std::string& executable,
-                  const std::vector<std::string>& arguments)
+                  const EA::Vector<std::string>& arguments)
 {
     return run(ProcessOptions {executable, arguments, {}, {}});
 }

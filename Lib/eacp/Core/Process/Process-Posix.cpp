@@ -7,8 +7,11 @@
 #include <thread>
 #include <vector>
 
+#include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+extern char** environ;
 
 namespace eacp::Processes
 {
@@ -20,25 +23,48 @@ void ignoreSigPipeOnce()
     std::call_once(flag, [] { std::signal(SIGPIPE, SIG_IGN); });
 }
 
-[[noreturn]] void runChild(int inRead,
-                           int outWrite,
-                           int errWrite,
-                           const ProcessOptions& options,
-                           std::vector<char*>& argv)
+// Copies the parent environment and applies overrides (replaced by name, else
+// appended). Built in the parent: posix_spawn execs without running arbitrary
+// code in the child, so there is no fork/setenv-in-child deadlock hazard.
+EA::Vector<std::string>
+    buildEnvironment(const EA::Vector<EnvironmentVariable>& overrides)
 {
-    dup2(inRead, STDIN_FILENO);
-    dup2(outWrite, STDOUT_FILENO);
-    dup2(errWrite, STDERR_FILENO);
+    auto entries = EA::Vector<std::string> {};
 
-    if (!options.workingDirectory.empty())
-        if (chdir(options.workingDirectory.c_str()) != 0)
-            _exit(127);
+    for (auto entry = environ; *entry != nullptr; ++entry)
+        entries.push_back(*entry);
 
-    for (const auto& var: options.environment)
-        setenv(var.name.c_str(), var.value.c_str(), 1);
+    for (const auto& var: overrides)
+    {
+        auto prefix = var.name + "=";
+        auto replaced = false;
 
-    execvp(argv[0], argv.data());
-    _exit(127);
+        for (auto& entry: entries)
+            if (entry.rfind(prefix, 0) == 0)
+            {
+                entry = prefix + var.value;
+                replaced = true;
+                break;
+            }
+
+        if (!replaced)
+            entries.push_back(prefix + var.value);
+    }
+
+    return entries;
+}
+
+// Null-terminated char* view over `strings` for the argv/envp the spawn syscall
+// requires. The backing strings must outlive the returned pointers.
+EA::Vector<char*> toCArray(EA::Vector<std::string>& strings)
+{
+    auto pointers = EA::Vector<char*> {};
+
+    for (auto& s: strings)
+        pointers.push_back(s.data());
+
+    pointers.push_back(nullptr);
+    return pointers;
 }
 } // namespace
 
@@ -60,7 +86,7 @@ struct Process::Native
         reap(true);
     }
 
-    bool launched() const { return pid > 0; }
+    bool launched() const { return pid > 0 || execFailed; }
     long id() const { return (long) pid; }
 
     bool isRunning() const
@@ -138,69 +164,123 @@ struct Process::Native
     }
 
 private:
+    // Spawns the child with posix_spawn: the env/argv are built in the parent
+    // and stdio is wired through file actions, so no arbitrary code (and no
+    // allocation) runs in the child — avoiding the fork-in-a-threaded-process
+    // deadlock. posix_spawnp keeps PATH lookup for bare executables.
     void launch(const ProcessOptions& options)
     {
-        int inPipe[2];
-        int outPipe[2];
-        int errPipe[2];
-
-        if (pipe(inPipe) != 0)
-            return;
-
-        if (pipe(outPipe) != 0)
-        {
-            ::close(inPipe[0]);
-            ::close(inPipe[1]);
-            return;
-        }
-
-        if (pipe(errPipe) != 0)
-        {
-            ::close(inPipe[0]);
-            ::close(inPipe[1]);
-            ::close(outPipe[0]);
-            ::close(outPipe[1]);
-            return;
-        }
-
-        auto argStrings = std::vector<std::string> {options.executable};
+        auto argStrings = EA::Vector<std::string> {options.executable};
         for (const auto& arg: options.arguments)
             argStrings.push_back(arg);
 
-        auto argv = std::vector<char*> {};
-        for (auto& s: argStrings)
-            argv.push_back(s.data());
-        argv.push_back(nullptr);
+        auto envStrings = buildEnvironment(options.environment);
 
-        pid = fork();
+        auto argv = toCArray(argStrings);
+        auto envp = toCArray(envStrings);
 
-        if (pid < 0)
+        int inPipe[2] = {-1, -1};
+        int outPipe[2] = {-1, -1};
+        int errPipe[2] = {-1, -1};
+
+        if (options.captureOutput && !createPipes(inPipe, outPipe, errPipe))
+            return;
+
+        auto actions = posix_spawn_file_actions_t {};
+        posix_spawn_file_actions_init(&actions);
+
+        if (options.captureOutput)
         {
+            posix_spawn_file_actions_adddup2(&actions, inPipe[0], STDIN_FILENO);
+            posix_spawn_file_actions_adddup2(&actions, outPipe[1], STDOUT_FILENO);
+            posix_spawn_file_actions_adddup2(&actions, errPipe[1], STDERR_FILENO);
+
+            for (auto fd: {inPipe[0],
+                           inPipe[1],
+                           outPipe[0],
+                           outPipe[1],
+                           errPipe[0],
+                           errPipe[1]})
+                posix_spawn_file_actions_addclose(&actions, fd);
+        }
+
+        if (!options.workingDirectory.empty())
+        {
+            // _np is the only variant available at our deployment target; the
+            // non-suffixed addchdir is macOS 26+ only.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            posix_spawn_file_actions_addchdir_np(&actions,
+                                                 options.workingDirectory.c_str());
+#pragma clang diagnostic pop
+        }
+
+        auto result = posix_spawnp(&pid,
+                                   options.executable.c_str(),
+                                   &actions,
+                                   nullptr,
+                                   argv.data(),
+                                   envp.data());
+
+        posix_spawn_file_actions_destroy(&actions);
+
+        if (result != 0)
+        {
+            // posix_spawn reports a missing/non-executable file as a launch error
+            // (no child), where fork+execvp produced a child that exited 127.
+            // Preserve that 127 "command not found" contract for callers.
             pid = -1;
-            ::close(inPipe[0]);
-            ::close(inPipe[1]);
-            ::close(outPipe[0]);
-            ::close(outPipe[1]);
-            ::close(errPipe[0]);
-            ::close(errPipe[1]);
+            execFailed = true;
+            closeAllPipes(inPipe, outPipe, errPipe);
             return;
         }
 
-        if (pid == 0)
+        if (options.captureOutput)
+            adoptPipes(inPipe, outPipe, errPipe);
+    }
+
+    static bool createPipes(int (&in)[2], int (&out)[2], int (&err)[2])
+    {
+        if (pipe(in) != 0)
+            return false;
+
+        if (pipe(out) != 0)
         {
-            ::close(inPipe[1]);
-            ::close(outPipe[0]);
-            ::close(errPipe[0]);
-            runChild(inPipe[0], outPipe[1], errPipe[1], options, argv);
+            ::close(in[0]);
+            ::close(in[1]);
+            return false;
         }
 
-        ::close(inPipe[0]);
-        ::close(outPipe[1]);
-        ::close(errPipe[1]);
-        inputFd = inPipe[1];
+        if (pipe(err) != 0)
+        {
+            ::close(in[0]);
+            ::close(in[1]);
+            ::close(out[0]);
+            ::close(out[1]);
+            return false;
+        }
 
-        outReader = std::thread([this, fd = outPipe[0]] { drain(fd, outBuffer); });
-        errReader = std::thread([this, fd = errPipe[0]] { drain(fd, errBuffer); });
+        return true;
+    }
+
+    static void closeAllPipes(int (&in)[2], int (&out)[2], int (&err)[2])
+    {
+        for (auto fd: {in[0], in[1], out[0], out[1], err[0], err[1]})
+            if (fd >= 0)
+                ::close(fd);
+    }
+
+    // Keep the parent ends and stream the child's output; the child's ends were
+    // dup'd onto its stdio by the file actions.
+    void adoptPipes(int (&in)[2], int (&out)[2], int (&err)[2])
+    {
+        ::close(in[0]);
+        ::close(out[1]);
+        ::close(err[1]);
+        inputFd = in[1];
+
+        outReader = std::thread([this, fd = out[0]] { drain(fd, outBuffer); });
+        errReader = std::thread([this, fd = err[0]] { drain(fd, errBuffer); });
     }
 
     void drain(int fd, std::string& dest)
@@ -263,6 +343,9 @@ private:
 
     int exitCode() const
     {
+        if (execFailed)
+            return 127;
+
         auto lock = std::lock_guard {reapMutex};
 
         if (!reaped)
@@ -278,6 +361,7 @@ private:
     }
 
     pid_t pid = -1;
+    bool execFailed = false; // posix_spawn couldn't exec → report 127
     int inputFd = -1;
 
     std::thread outReader;

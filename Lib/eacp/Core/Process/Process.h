@@ -3,8 +3,9 @@
 #include "../Threads/Async.h"
 #include "../Utils/Common.h"
 
+#include <ea_data_structures/Structures/Vector.h>
+
 #include <string>
-#include <vector>
 
 namespace eacp::Processes
 {
@@ -17,9 +18,14 @@ struct EnvironmentVariable
 struct ProcessOptions
 {
     std::string executable;
-    std::vector<std::string> arguments;
+    EA::Vector<std::string> arguments;
     std::string workingDirectory;
-    std::vector<EnvironmentVariable> environment;
+    EA::Vector<EnvironmentVariable> environment;
+
+    // When false the child inherits the launcher's stdio rather than having it
+    // captured into output()/errorOutput(). Suits long-running children whose
+    // output would otherwise buffer unbounded. POSIX only for now.
+    bool captureOutput = true;
 };
 
 struct ProcessResult
@@ -42,7 +48,7 @@ public:
     explicit Process(ProcessOptions options);
 
     Process(const std::string& executable,
-            const std::vector<std::string>& arguments = {});
+            const EA::Vector<std::string>& arguments = {});
 
     ~Process();
 
@@ -73,7 +79,7 @@ private:
 // produced. Runs on the calling thread.
 ProcessResult run(ProcessOptions options);
 ProcessResult run(const std::string& executable,
-                  const std::vector<std::string>& arguments = {});
+                  const EA::Vector<std::string>& arguments = {});
 
 // Same as run(), but on a background thread; the returned Async resolves on the
 // main thread once the child exits.
