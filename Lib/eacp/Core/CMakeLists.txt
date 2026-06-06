@@ -19,7 +19,6 @@ if (APPLE)
     target_sources(eacp-core PRIVATE
             ObjC/AutoReleasePool.mm
             ObjC/Strings.mm
-            Process/Process-Posix.cpp
             Threads/EventLoop.mm
             Threads/Timer.mm
             Threads/ThreadUtils.mm
@@ -29,11 +28,13 @@ if (APPLE)
     if (IOS)
         target_sources(eacp-core PRIVATE
                 App/App-iOS.mm
+                Process/Process-iOS.cpp
                 Threads/EventLoop-iOS.mm)
         target_link_libraries(eacp-core PRIVATE "-framework UIKit")
     else ()
         target_sources(eacp-core PRIVATE
                 App/App-macOS.mm
+                Process/Process-Posix.cpp
                 Threads/EventLoop-macOS.mm)
         target_link_libraries(eacp-core PRIVATE
                 "-framework Cocoa"
