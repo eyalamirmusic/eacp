@@ -1,7 +1,7 @@
 #pragma once
 
 #include <eacp/Core/Utils/Common.h>
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 
 #include "../Graphics/GraphicsContext.h"
 #include "../Layers/Layer.h"
@@ -104,8 +104,8 @@ public:
     void focus();
     bool hasFocus() const;
 
-    const EA::Vector<View*>& getSubviews() const { return subviews; }
-    const EA::Vector<Layer*>& getLayers() const { return layers; }
+    const Vector<View*>& getSubviews() const { return subviews; }
+    const Vector<Layer*>& getLayers() const { return layers; }
     View* getParent() const { return parent; }
 
     void* getNativeLayer();
@@ -125,8 +125,8 @@ private:
     void viewAdded(View& view);
     void viewRemoved(View& view);
 
-    EA::Vector<View*> subviews;
-    EA::Vector<Layer*> layers;
+    Vector<View*> subviews;
+    Vector<Layer*> layers;
     View* parent = nullptr;
     View* hoveredView = nullptr;
     View* mouseDownTarget = nullptr;

@@ -5,8 +5,6 @@
 
 #include <eacp/Core/ObjC/Strings.h>
 
-#include <vector>
-
 // NSDraggingSource for native file drag-out. We drag real on-disk files as
 // public.file-url pasteboard items (NSURL is an NSPasteboardWriting), which is
 // the representation Finder, DAWs, and virtually every drop target understand
@@ -32,7 +30,7 @@
 // started from the async script-message callback is confined to the app
 // (NSDraggingContextWithinApplication) and never reaches Finder.
 @interface EacpDragWebView : WKWebView
-- (void)armFileDragWithPaths:(const std::vector<std::string>&)paths;
+- (void)armFileDragWithPaths:(const eacp::Vector<std::string>&)paths;
 - (void)armWindowDrag;
 @end
 
@@ -51,7 +49,7 @@ EacpDragSource* sharedDragSource()
 
 void beginFileDrag(WKWebView* webView,
                    NSEvent* event,
-                   const std::vector<std::string>& paths)
+                   const Vector<std::string>& paths)
 {
     if (webView == nil || event == nil || paths.empty())
         return;
@@ -106,7 +104,7 @@ WKWebView* createWebView(WKWebViewConfiguration* config)
     return [[EacpDragWebView alloc] initWithFrame:rect configuration:config];
 }
 
-void armFileDrag(WKWebView* webView, const std::vector<std::string>& paths)
+void armFileDrag(WKWebView* webView, const Vector<std::string>& paths)
 {
     if (![webView isKindOfClass:[EacpDragWebView class]])
         return;
@@ -159,14 +157,14 @@ WebView* findFocusedWebView()
 
 @implementation EacpDragWebView
 {
-    std::vector<std::string> armedPaths;
+    eacp::Vector<std::string> armedPaths;
     NSPoint mouseDownLocation;
     BOOL dragArmed;
     BOOL dragStarted;
     BOOL windowDragArmed;
 }
 
-- (void)armFileDragWithPaths:(const std::vector<std::string>&)paths
+- (void)armFileDragWithPaths:(const eacp::Vector<std::string>&)paths
 {
     // Always lands after this gesture's mouseDown: (the page's JS mousedown is
     // dispatched only once our mouseDown: forwards to super), so there is
@@ -203,7 +201,7 @@ WebView* findFocusedWebView()
             dragStarted = YES;
             dragArmed = NO;
             NSLog(@"[eacp drag] mouseDragged threshold crossed, firing drag "
-                  @"(%zu paths)",
+                  @"(%d paths)",
                   armedPaths.size());
             eacp::Graphics::detail::beginFileDrag(self, event, armedPaths);
             armedPaths.clear();

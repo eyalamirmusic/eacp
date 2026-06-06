@@ -3,8 +3,7 @@
 
 #include <eacp/Network/HTTP/HttpProtocol.h>
 
-#include <ea_data_structures/Pointers/OwningPointer.h>
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -73,7 +72,7 @@ struct Server::Impl
     }
 
     ServerOptions options;
-    EA::OwningPointer<Dispatcher> dispatcher;
+    OwningPointer<Dispatcher> dispatcher;
     int listenSocket = -1;
     int boundPort = -1;
     RequestHandler handler;
@@ -81,7 +80,7 @@ struct Server::Impl
     std::atomic<bool> running {false};
 
     std::mutex clientMutex;
-    EA::Vector<std::thread> clientThreads;
+    Vector<std::thread> clientThreads;
 
     ~Impl();
 
@@ -94,7 +93,7 @@ struct Server::Impl
 };
 
 Server::Server(ServerOptions options)
-    : impl(std::make_unique<Impl>(options))
+    : impl(makeOwned<Impl>(options))
 {
 }
 
@@ -183,7 +182,7 @@ void Server::Impl::stop()
     if (acceptThread.joinable())
         acceptThread.join();
 
-    auto threadsToJoin = EA::Vector<std::thread>();
+    auto threadsToJoin = Vector<std::thread>();
     {
         auto lock = std::lock_guard(clientMutex);
         threadsToJoin = std::move(clientThreads);

@@ -2,7 +2,7 @@
 
 #include "Connection.h"
 
-#include <ea_data_structures/Pointers/OwningPointer.h>
+#include <eacp/Core/Utils/Containers.h>
 
 #include <cstdint>
 
@@ -45,7 +45,7 @@ private:
     Listener();
 
     struct Impl;
-    EA::OwningPointer<Impl> impl;
+    OwningPointer<Impl> impl;
 };
 
 } // namespace eacp::TCP

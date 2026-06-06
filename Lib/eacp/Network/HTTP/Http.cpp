@@ -4,8 +4,7 @@
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Strings.h>
 
-#include <ea_data_structures/Structures/OwnedVector.h>
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 
 #include <algorithm>
 #include <atomic>
@@ -92,7 +91,7 @@ std::string generateBoundary()
 
 void appendFormFields(std::stringstream& body,
                       const std::string& boundary,
-                      const EA::Vector<FormField>& fields)
+                      const Vector<FormField>& fields)
 {
     for (const auto& field: fields)
     {
@@ -105,7 +104,7 @@ void appendFormFields(std::stringstream& body,
 
 void appendFileFields(std::stringstream& body,
                       const std::string& boundary,
-                      const EA::Vector<FileField>& files)
+                      const Vector<FileField>& files)
 {
     for (const auto& file: files)
     {
@@ -234,10 +233,10 @@ RangeProbe probeRangeSupport(const Request& req)
     return probe;
 }
 
-EA::Vector<ChunkRange> computeChunkRanges(std::int64_t total, int chunkCount)
+Vector<ChunkRange> computeChunkRanges(std::int64_t total, int chunkCount)
 {
     auto chunkSize = total / chunkCount;
-    auto ranges = EA::Vector<ChunkRange>(chunkCount);
+    auto ranges = Vector<ChunkRange>(chunkCount);
 
     for (auto i = 0; i < chunkCount; ++i)
     {
@@ -248,9 +247,9 @@ EA::Vector<ChunkRange> computeChunkRanges(std::int64_t total, int chunkCount)
     return ranges;
 }
 
-EA::Vector<std::string> makeChunkPaths(const std::string& filePath, int chunkCount)
+Vector<std::string> makeChunkPaths(const std::string& filePath, int chunkCount)
 {
-    auto paths = EA::Vector<std::string>(chunkCount);
+    auto paths = Vector<std::string>(chunkCount);
 
     for (auto i = 0; i < chunkCount; ++i)
         paths[i] = filePath + ".part" + std::to_string(i);
@@ -258,7 +257,7 @@ EA::Vector<std::string> makeChunkPaths(const std::string& filePath, int chunkCou
     return paths;
 }
 
-void removeChunkFiles(const EA::Vector<std::string>& chunkPaths)
+void removeChunkFiles(const Vector<std::string>& chunkPaths)
 {
     for (const auto& path: chunkPaths)
     {
@@ -311,7 +310,7 @@ private:
     std::string firstError;
 };
 
-std::int64_t sumReceivedBytes(const EA::OwnedVector<DownloadProgress>& chunkProgress)
+std::int64_t sumReceivedBytes(const OwnedVector<DownloadProgress>& chunkProgress)
 {
     auto sum = std::int64_t(0);
     for (auto i = 0; i < chunkProgress.size(); ++i)
@@ -319,16 +318,15 @@ std::int64_t sumReceivedBytes(const EA::OwnedVector<DownloadProgress>& chunkProg
     return sum;
 }
 
-void propagateCancelToChunks(EA::OwnedVector<DownloadProgress>& chunkProgress)
+void propagateCancelToChunks(OwnedVector<DownloadProgress>& chunkProgress)
 {
     for (auto i = 0; i < chunkProgress.size(); ++i)
         chunkProgress[i]->cancel.store(true);
 }
 
-std::thread
-    launchProgressAggregator(DownloadProgress* aggregate,
-                             EA::OwnedVector<DownloadProgress>& chunkProgress,
-                             std::atomic<bool>& shouldStop)
+std::thread launchProgressAggregator(DownloadProgress* aggregate,
+                                     OwnedVector<DownloadProgress>& chunkProgress,
+                                     std::atomic<bool>& shouldStop)
 {
     return std::thread(
         [aggregate, &chunkProgress, &shouldStop]
@@ -347,14 +345,13 @@ std::thread
         });
 }
 
-EA::Vector<std::thread>
-    launchChunkWorkers(const Request& sourceReq,
-                       const EA::Vector<ChunkRange>& ranges,
-                       EA::OwnedVector<DownloadProgress>& progress,
-                       const EA::Vector<std::string>& chunkPaths,
-                       ErrorRecorder& errors)
+Vector<std::thread> launchChunkWorkers(const Request& sourceReq,
+                                       const Vector<ChunkRange>& ranges,
+                                       OwnedVector<DownloadProgress>& progress,
+                                       const Vector<std::string>& chunkPaths,
+                                       ErrorRecorder& errors)
 {
-    auto threads = EA::Vector<std::thread>();
+    auto threads = Vector<std::thread>();
     threads.reserve(ranges.size());
 
     for (auto i = 0; i < ranges.size(); ++i)
@@ -374,7 +371,7 @@ EA::Vector<std::thread>
 }
 
 std::string concatenateChunkFiles(const std::string& filePath,
-                                  const EA::Vector<std::string>& chunkPaths)
+                                  const Vector<std::string>& chunkPaths)
 {
     auto out = std::ofstream(filePath, std::ios::binary | std::ios::trunc);
 
@@ -407,7 +404,7 @@ bool shouldUseSingleStreamDownload(const RangeProbe& probe, int requestedChunks)
 }
 
 Response makeParallelFailureResponse(const std::string& error,
-                                     const EA::Vector<std::string>& chunkPaths)
+                                     const Vector<std::string>& chunkPaths)
 {
     removeChunkFiles(chunkPaths);
     auto response = Response();
@@ -430,7 +427,7 @@ Response downloadFileParallel(const Request& req, const std::string& filePath)
     if (req.progress)
         req.progress->totalBytes.store(probe.totalBytes);
 
-    auto chunkProgress = EA::OwnedVector<DownloadProgress>();
+    auto chunkProgress = OwnedVector<DownloadProgress>();
     for (auto i = 0; i < chunkCount; ++i)
         chunkProgress.createNew();
     auto errors = ErrorRecorder();

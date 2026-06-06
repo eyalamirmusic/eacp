@@ -271,7 +271,7 @@ void SVGView::resized()
 ParseResult buildSVG(const SVGElement& root)
 {
     ParseResult result;
-    result.root = std::make_unique<SVGView>();
+    result.root.create();
 
     auto width = root.numAttr("width", 300.f);
     auto height = root.numAttr("height", 150.f);

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <string>
 
 namespace eacp::Graphics
@@ -125,7 +125,7 @@ struct Keyboard
     static bool isCommandPressed();
     static ModifierKeys getModifiers();
 
-    static EA::Vector<Key> getPressedKeys();
+    static Vector<Key> getPressedKeys();
 
     static std::string keyCodeToCharacter(uint16_t keyCode);
 };

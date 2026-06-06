@@ -4,7 +4,7 @@
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Network/HTTP/HttpProtocol.h>
 
-#include <ea_data_structures/Pointers/OwningPointer.h>
+#include <eacp/Core/Utils/Containers.h>
 
 #include <CoreFoundation/CoreFoundation.h>
 
@@ -84,12 +84,12 @@ struct Server::Impl
     }
 
     ServerOptions options;
-    EA::OwningPointer<Dispatcher> dispatcher;
+    OwningPointer<Dispatcher> dispatcher;
     CFSocketRef listenSocket = nullptr;
     CFRunLoopSourceRef listenSource = nullptr;
     RequestHandler handler;
     int boundPort = -1;
-    std::map<CFSocketRef, EA::OwningPointer<Connection>> connections;
+    std::map<CFSocketRef, OwningPointer<Connection>> connections;
 
     ~Impl();
 
@@ -119,7 +119,7 @@ struct Server::Impl
 };
 
 Server::Server(ServerOptions options)
-    : impl(std::make_unique<Impl>(options))
+    : impl(makeOwned<Impl>(options))
 {
 }
 
@@ -227,7 +227,7 @@ void Server::Impl::stop()
 
 void Server::Impl::onAccept(CFSocketNativeHandle clientFd)
 {
-    auto conn = EA::makeOwned<Connection>();
+    auto conn = makeOwned<Connection>();
     readPeerEndpoint(clientFd, conn->remoteAddr, conn->remotePort);
 
     auto context = CFSocketContext{0, this, nullptr, nullptr, nullptr};

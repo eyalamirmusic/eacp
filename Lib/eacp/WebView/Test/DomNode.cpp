@@ -1,6 +1,5 @@
 #include "DomNode.h"
 
-#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -21,9 +20,9 @@ struct AttrCondition
 struct Compound
 {
     std::string tag; // empty or "*" -> any tag
-    std::string id;  // empty -> no id constraint
-    std::vector<std::string> classes;
-    std::vector<AttrCondition> attrs;
+    std::string id; // empty -> no id constraint
+    Vector<std::string> classes;
+    Vector<AttrCondition> attrs;
 };
 
 bool isNameBoundary(char c)
@@ -85,7 +84,7 @@ Compound parseCompound(std::string_view token)
         if (c == '.')
         {
             ++i;
-            compound.classes.push_back(readName());
+            compound.classes.add(readName());
         }
         else if (c == '#')
         {
@@ -96,7 +95,7 @@ Compound parseCompound(std::string_view token)
         {
             auto close = token.find(']', i);
             auto end = close == std::string_view::npos ? token.size() : close;
-            compound.attrs.push_back(parseAttr(token.substr(i + 1, end - i - 1)));
+            compound.attrs.add(parseAttr(token.substr(i + 1, end - i - 1)));
             i = close == std::string_view::npos ? end : close + 1;
         }
         else
@@ -108,9 +107,9 @@ Compound parseCompound(std::string_view token)
     return compound;
 }
 
-std::vector<Compound> parseSteps(std::string_view selector)
+Vector<Compound> parseSteps(std::string_view selector)
 {
-    auto steps = std::vector<Compound> {};
+    auto steps = Vector<Compound> {};
     auto token = std::string {};
     auto bracketDepth = 0;
 
@@ -118,7 +117,7 @@ std::vector<Compound> parseSteps(std::string_view selector)
     {
         if (!token.empty())
         {
-            steps.push_back(parseCompound(token));
+            steps.add(parseCompound(token));
             token.clear();
         }
     };
@@ -173,32 +172,30 @@ bool matchesCompound(const DomNode& node, const Compound& compound)
 
 void collectMatching(const DomNode& node,
                      const Compound& compound,
-                     std::vector<const DomNode*>& out)
+                     Vector<const DomNode*>& out)
 {
     for (const auto& child: node.children)
     {
         if (matchesCompound(child, compound))
-            out.push_back(&child);
+            out.add(&child);
 
         collectMatching(child, compound, out);
     }
 }
 
-std::vector<const DomNode*> findChain(const DomNode& root,
-                                      const std::vector<Compound>& steps,
-                                      std::size_t stepIndex)
+Vector<const DomNode*>
+    findChain(const DomNode& root, const Vector<Compound>& steps, int stepIndex)
 {
-    auto matches = std::vector<const DomNode*> {};
+    auto matches = Vector<const DomNode*> {};
     collectMatching(root, steps[stepIndex], matches);
 
     if (stepIndex + 1 == steps.size())
         return matches;
 
-    auto out = std::vector<const DomNode*> {};
+    auto out = Vector<const DomNode*> {};
     for (const auto* match: matches)
         for (const auto* node: findChain(*match, steps, stepIndex + 1))
-            if (std::find(out.begin(), out.end(), node) == out.end())
-                out.push_back(node);
+            out.addIfNotThere(node);
 
     return out;
 }
@@ -229,9 +226,9 @@ bool DomNode::hasAttr(std::string_view name) const
     return attributes.find(std::string {name}) != attributes.end();
 }
 
-std::vector<std::string> DomNode::classes() const
+Vector<std::string> DomNode::classes() const
 {
-    auto result = std::vector<std::string> {};
+    auto result = Vector<std::string> {};
 
     auto it = attributes.find("class");
     if (it == attributes.end())
@@ -244,7 +241,7 @@ std::vector<std::string> DomNode::classes() const
         {
             if (!current.empty())
             {
-                result.push_back(current);
+                result.add(current);
                 current.clear();
             }
         }
@@ -254,18 +251,14 @@ std::vector<std::string> DomNode::classes() const
         }
     }
     if (!current.empty())
-        result.push_back(current);
+        result.add(current);
 
     return result;
 }
 
 bool DomNode::hasClass(std::string_view className) const
 {
-    for (const auto& name: classes())
-        if (name == className)
-            return true;
-
-    return false;
+    return classes().contains(std::string {className});
 }
 
 std::optional<DomNode> DomNode::tryFind(std::string_view selector) const
@@ -288,15 +281,15 @@ DomNode DomNode::find(std::string_view selector) const
     return std::move(*found);
 }
 
-std::vector<DomNode> DomNode::findAll(std::string_view selector) const
+Vector<DomNode> DomNode::findAll(std::string_view selector) const
 {
     auto steps = parseSteps(selector);
     auto matches = findChain(*this, steps, 0);
 
-    auto result = std::vector<DomNode> {};
-    result.reserve(matches.size());
+    auto result = Vector<DomNode> {};
+    result.reserveAtLeast(matches.size());
     for (const auto* node: matches)
-        result.push_back(*node);
+        result.add(*node);
 
     return result;
 }

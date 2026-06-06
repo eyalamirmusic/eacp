@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <condition_variable>
 #include <deque>
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <mutex>
 #include <thread>
 
@@ -94,15 +94,15 @@ private:
     std::mutex mutex;
     std::condition_variable cv;
     std::deque<DispatchTask> queue;
-    EA::Vector<std::thread> workers;
+    Vector<std::thread> workers;
     bool stopping = false;
 };
 
 } // namespace
 
-EA::OwningPointer<Dispatcher> makeDispatcher(const ServerOptions& options)
+OwningPointer<Dispatcher> makeDispatcher(const ServerOptions& options)
 {
-    auto result = EA::OwningPointer<Dispatcher>();
+    auto result = OwningPointer<Dispatcher>();
 
     if (options.threading == ServerThreadingMode::ThreadPool)
         result.create<ThreadPoolDispatcher>(options.threadPoolSize);

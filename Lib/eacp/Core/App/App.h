@@ -3,10 +3,9 @@
 #include "../Threads/EventLoop.h"
 #include "../Utils/Common.h"
 #include "AppEnvironment.h"
-#include <ea_data_structures/Pointers/OwningPointer.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <optional>
 #include <string>
-#include <vector>
 
 namespace eacp::Apps
 {
@@ -21,7 +20,7 @@ struct App : AppBase
     T app;
 };
 
-using AppHandle = EA::OwningPointer<AppBase>;
+using AppHandle = OwningPointer<AppBase>;
 using AppFactory = Callback;
 
 AppHandle& getGlobalApp();
@@ -57,7 +56,7 @@ void setDockIconVisible(bool visible);
 
 struct FilePickerOptions
 {
-    std::vector<std::string> allowedExtensions;
+    Vector<std::string> allowedExtensions;
 };
 
 // Shows the OS's native file chooser, blocking until the user picks a file

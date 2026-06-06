@@ -7,7 +7,7 @@
 
 #include <eacp/Core/ObjC/Strings.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -200,7 +200,7 @@ struct WebView::Native
     ObjC::Ptr<WKWebView> webView;
     ObjC::Ptr<WebViewDelegate> delegate;
     ObjC::Ptr<WKWebViewConfiguration> config;
-    EA::Vector<ObjC::Ptr<ResourceSchemeHandler>> schemeHandlers;
+    Vector<ObjC::Ptr<ResourceSchemeHandler>> schemeHandlers;
     MessageHandlerMap messageHandlers;
     WebView& owner;
     double zoomLevel = 1.0;
@@ -209,11 +209,11 @@ struct WebView::Native
 
 struct WebViewNativeAccess
 {
-    static EA::OwningPointer<WebView>
+    static OwningPointer<WebView>
         makePopup(WKWebViewConfiguration* configuration, bool inspectable)
     {
         auto init = WebView::PopupInit {configuration, inspectable};
-        return EA::OwningPointer<WebView> {new WebView {init}};
+        return OwningPointer<WebView> {new WebView {init}};
     }
 
     static WKWebView* wkWebViewOf(WebView& popup)
@@ -581,9 +581,9 @@ namespace eacp::Graphics
 {
 namespace detail
 {
-EA::Vector<WebView*>& registeredWebViews()
+Vector<WebView*>& registeredWebViews()
 {
-    static EA::Vector<WebView*> instances;
+    static Vector<WebView*> instances;
     return instances;
 }
 
@@ -836,7 +836,7 @@ void WebView::addUserScript(const std::string& source, bool atDocumentStart)
     [controller addUserScript:userScript];
 }
 
-void WebView::armFileDrag(const std::vector<std::string>& paths)
+void WebView::armFileDrag(const Vector<std::string>& paths)
 {
     detail::armFileDrag(impl->webView.get(), paths);
 }

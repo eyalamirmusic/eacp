@@ -1,7 +1,7 @@
 #pragma once
 
 #include "View.h"
-#include <ea_data_structures/Structures/OwnedVector.h>
+#include <eacp/Core/Utils/Containers.h>
 
 namespace eacp::Graphics
 {
@@ -13,7 +13,7 @@ struct ViewList
     {
     }
 
-    using Container = EA::OwnedVector<T>;
+    using Container = OwnedVector<T>;
 
     auto begin() const { return views.begin(); }
     auto end() const { return views.end(); }

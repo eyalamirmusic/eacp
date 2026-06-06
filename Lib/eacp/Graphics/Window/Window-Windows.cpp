@@ -5,7 +5,6 @@
 #include "../Helpers/StringUtils-Windows.h"
 #include <eacp/Core/App/AppEnvironment.h>
 
-#include <algorithm>
 #include <bitset>
 #include <unordered_map>
 
@@ -148,8 +147,7 @@ struct Window::Native
     {
         DWORD style = WS_OVERLAPPEDWINDOW;
 
-        if (std::ranges::find(options.flags, WindowFlags::Borderless)
-            != options.flags.end())
+        if (options.flags.contains(WindowFlags::Borderless))
         {
             style = WS_POPUP;
         }

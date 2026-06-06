@@ -3,7 +3,7 @@
 #include <functional>
 #include <optional>
 #include <string>
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 #include "../Primitives/Primitives.h"
 #include "../View/View.h"
 #include <eacp/Core/App/App.h>
@@ -45,10 +45,10 @@ struct WindowOptions
 {
     WindowOptions()
     {
-        flags.emplace_back(WindowFlags::Titled);
-        flags.emplace_back(WindowFlags::Closable);
-        flags.emplace_back(WindowFlags::Miniaturizable);
-        flags.emplace_back(WindowFlags::Resizable);
+        flags.add({WindowFlags::Titled,
+                   WindowFlags::Closable,
+                   WindowFlags::Miniaturizable,
+                   WindowFlags::Resizable});
     }
 
     // When the user closes the window. If left empty, falls back to
@@ -103,7 +103,7 @@ struct WindowOptions
     int minWidth = 0;
     int minHeight = 0;
 
-    EA::Vector<WindowFlags> flags;
+    Vector<WindowFlags> flags;
 
     Callback effectiveOnQuit() const
     {

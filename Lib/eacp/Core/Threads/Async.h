@@ -3,6 +3,8 @@
 #include "EventLoop.h"
 #include "ThreadUtils.h"
 
+#include <eacp/Core/Utils/Containers.h>
+
 #include <chrono>
 #include <coroutine>
 #include <exception>
@@ -14,7 +16,6 @@
 #include <thread>
 #include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace eacp::Threads
 {
@@ -61,7 +62,7 @@ struct AsyncState : AsyncValue<T>
 
     Status status = Status::Pending;
     std::string error;
-    std::vector<Callback> continuations;
+    Vector<Callback> continuations;
 
     void settle()
     {
@@ -276,9 +277,8 @@ private:
             if (now >= deadline)
                 break;
 
-            auto remaining =
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    deadline - now);
+            auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - now);
             runEventLoopFor(remaining);
         }
 

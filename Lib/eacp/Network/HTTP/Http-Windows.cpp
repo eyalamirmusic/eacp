@@ -9,7 +9,7 @@
 #include <winrt/Windows.Web.Http.Headers.h>
 
 #include <cstdint>
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 
 namespace eacp::HTTP
 {
@@ -167,7 +167,7 @@ void writeChunkToFile(HANDLE handle,
 {
     auto len = chunk.Length();
     auto reader = streams::DataReader::FromBuffer(chunk);
-    auto bytes = EA::Vector<uint8_t>((int) len);
+    auto bytes = Vector<uint8_t>((int) len);
     reader.ReadBytes(bytes.getVector());
 
     DWORD written = 0;

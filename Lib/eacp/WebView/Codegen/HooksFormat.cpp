@@ -2,11 +2,12 @@
 
 #include <Miro/CommandExport/ResolvedTypes.h>
 
+#include <eacp/Core/Utils/Containers.h>
+
 #include <cctype>
 #include <cstddef>
 #include <optional>
 #include <sstream>
-#include <vector>
 
 namespace eacp::Graphics::Codegen
 {
@@ -62,20 +63,20 @@ std::string lowerFirst(std::string_view s)
 // produces wire name "clock.tick". Hook codegen splits on the same '.'
 // to project that onto valid TS identifiers (which can't contain '.')
 // and onto the matching backend access path.
-std::vector<std::string_view> splitOnDot(std::string_view name)
+Vector<std::string_view> splitOnDot(std::string_view name)
 {
-    auto out = std::vector<std::string_view> {};
+    auto out = Vector<std::string_view> {};
     auto start = std::size_t {0};
 
     for (auto i = std::size_t {0}; i < name.size(); ++i)
     {
         if (name[i] == '.')
         {
-            out.push_back(name.substr(start, i - start));
+            out.add(name.substr(start, i - start));
             start = i + 1;
         }
     }
-    out.push_back(name.substr(start));
+    out.add(name.substr(start));
 
     return out;
 }
@@ -100,7 +101,7 @@ std::string toCamelConcat(std::string_view name)
         return {};
 
     auto out = std::string {lowerFirst(segments.front())};
-    for (auto i = std::size_t {1}; i < segments.size(); ++i)
+    for (auto i = 1; i < segments.size(); ++i)
         out += capitalizeFirst(segments[i]);
     return out;
 }
@@ -116,7 +117,7 @@ std::string getCommandNameFor(std::string_view eventName)
         return {};
 
     auto out = std::string {};
-    for (auto i = std::size_t {0}; i + 1 < segments.size(); ++i)
+    for (auto i = 0; i + 1 < segments.size(); ++i)
     {
         out += segments[i];
         out += '.';
@@ -189,8 +190,7 @@ std::optional<KeyedInfo> resolveKeyedInfo(const TypeNode& payload,
     return KeyedInfo {&itemNode, tsPrimitiveLocal(keyNode.primitive)};
 }
 
-bool commandExists(std::span<const CommandEntry> commands,
-                   std::string_view name)
+bool commandExists(std::span<const CommandEntry> commands, std::string_view name)
 {
     for (auto& c: commands)
         if (c.name == name)
@@ -223,7 +223,8 @@ std::string formatHooksModule(std::span<TypeNode> typeRoots,
 
     for (auto& event: events)
     {
-        auto* payloadNode = findRootByQualified(typeRoots, event.payloadQualifiedName);
+        auto* payloadNode =
+            findRootByQualified(typeRoots, event.payloadQualifiedName);
         if (payloadNode == nullptr)
             continue;
 
@@ -248,9 +249,8 @@ std::string formatHooksModule(std::span<TypeNode> typeRoots,
             if (!keyed)
                 continue;
 
-            auto itemTypeName =
-                resolved.nameFor(keyed->itemType->qualifiedName,
-                                 keyed->itemType->typeName);
+            auto itemTypeName = resolved.nameFor(keyed->itemType->qualifiedName,
+                                                 keyed->itemType->typeName);
             auto idsBase = stripTrailing(itemTypeName, "Item");
             auto storeVar = toCamelConcat(event.name) + "Store";
 
@@ -319,7 +319,7 @@ std::string formatHooksModule(std::span<TypeNode> typeRoots,
         out << ", isBackendAvailable";
     out << " } from './backend';\n";
 
-    auto helpers = EA::Vector<std::string> {};
+    auto helpers = Vector<std::string> {};
     if (usedBridge)
         helpers.add("makeBridgeStore");
     if (usedKeyed)

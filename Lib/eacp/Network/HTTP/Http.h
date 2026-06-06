@@ -1,6 +1,6 @@
 #pragma once
 
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <atomic>
 #include <cstdint>
 #include <map>
@@ -71,8 +71,8 @@ struct Request
     std::string type = "GET";
     std::string body;
     std::map<std::string, std::string> headers;
-    EA::Vector<FormField> formFields;
-    EA::Vector<FileField> fileFields;
+    Vector<FormField> formFields;
+    Vector<FileField> fileFields;
 
     std::map<std::string, std::string> params;
     std::string remoteAddr;

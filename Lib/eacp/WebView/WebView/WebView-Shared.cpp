@@ -285,7 +285,7 @@ FileProvider fromResEmbed(std::string category)
 }
 
 StreamingProvider
-    fileStreamProvider(EA::Vector<std::string> roots,
+    fileStreamProvider(Vector<std::string> roots,
                        std::function<std::string(std::string_view path)> mimeForFile)
 {
     return [roots = std::move(roots), mimeForFile = std::move(mimeForFile)](

@@ -6,8 +6,7 @@
 #include <Miro/Miro.h>
 
 #include <ea_data_structures/Pointers/Broadcaster.h>
-#include <ea_data_structures/Pointers/OwningPointer.h>
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 
 #include <string>
 #include <unordered_map>
@@ -116,7 +115,7 @@ private:
     WebView& webView;
     Miro::Bridge bridge;
     EA::Listener emitListener;
-    EA::Vector<EA::OwningPointer<EA::Listener>> stateListeners;
+    Vector<OwningPointer<EA::Listener>> stateListeners;
     CommandExecution commandExecution = CommandExecution::MainThreadDeferred;
     std::unordered_map<std::string, CommandExecution> commandModes;
 

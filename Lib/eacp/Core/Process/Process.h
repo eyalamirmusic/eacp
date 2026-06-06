@@ -3,7 +3,7 @@
 #include "../Threads/Async.h"
 #include "../Utils/Common.h"
 
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 
 #include <string>
 
@@ -18,9 +18,9 @@ struct EnvironmentVariable
 struct ProcessOptions
 {
     std::string executable;
-    EA::Vector<std::string> arguments;
+    Vector<std::string> arguments;
     std::string workingDirectory;
-    EA::Vector<EnvironmentVariable> environment;
+    Vector<EnvironmentVariable> environment;
 
     // When false the child inherits the launcher's stdio rather than having it
     // captured into output()/errorOutput(). Suits long-running children whose
@@ -48,7 +48,7 @@ public:
     explicit Process(ProcessOptions options);
 
     Process(const std::string& executable,
-            const EA::Vector<std::string>& arguments = {});
+            const Vector<std::string>& arguments = {});
 
     ~Process();
 
@@ -79,7 +79,7 @@ private:
 // produced. Runs on the calling thread.
 ProcessResult run(ProcessOptions options);
 ProcessResult run(const std::string& executable,
-                  const EA::Vector<std::string>& arguments = {});
+                  const Vector<std::string>& arguments = {});
 
 // Same as run(), but on a background thread; the returned Async resolves on the
 // main thread once the child exits.

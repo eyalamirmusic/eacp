@@ -13,7 +13,6 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace eacp::WebView::Test
 {
@@ -75,7 +74,7 @@ private:
         driverImpl.emplace(instance->webView, instance->transport.getBridge());
     }
 
-    EA::OwningPointer<T> instance;
+    OwningPointer<T> instance;
     std::optional<AppDriver> driverImpl;
     ReadyCheck readyCheck;
 };
@@ -86,9 +85,9 @@ namespace Detail
 // std::function<void()> per fixture type; the test() wrapper fires
 // all of them before each body. Lives as a process singleton so the
 // list survives static-init ordering quirks.
-inline std::vector<std::function<void()>>& restartRegistry()
+inline Vector<std::function<void()>>& restartRegistry()
 {
-    return Singleton::get<std::vector<std::function<void()>>>();
+    return Singleton::get<Vector<std::function<void()>>>();
 }
 
 inline void runAllRestarts()
@@ -117,8 +116,8 @@ TestApp<T>& createTestApp(std::string_view readySelector = {})
                          { driver.waitFor(sel); });
         }
 
-        Detail::restartRegistry().push_back(
-            [] { Singleton::get<TestApp<T>>().restart(); });
+        Detail::restartRegistry().add([]
+                                      { Singleton::get<TestApp<T>>().restart(); });
 
         return self;
     }();

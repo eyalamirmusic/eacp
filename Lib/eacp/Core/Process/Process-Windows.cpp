@@ -69,7 +69,7 @@ std::wstring quoteArgument(const std::wstring& arg)
 }
 
 std::wstring buildCommandLine(const std::string& executable,
-                              const EA::Vector<std::string>& arguments)
+                              const Vector<std::string>& arguments)
 {
     auto line = quoteArgument(toWide(executable));
 
@@ -97,12 +97,12 @@ std::wstring upper(std::wstring text)
 
 // Windows needs the full environment block, so merge any overrides on top of
 // the current process environment. Returns empty to mean "inherit unchanged".
-std::wstring buildEnvironmentBlock(const EA::Vector<EnvironmentVariable>& overrides)
+std::wstring buildEnvironmentBlock(const Vector<EnvironmentVariable>& overrides)
 {
     if (overrides.empty())
         return {};
 
-    auto entries = EA::Vector<std::wstring> {};
+    auto entries = Vector<std::wstring> {};
 
     if (auto existing = GetEnvironmentStringsW())
     {

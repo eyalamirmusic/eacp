@@ -3,7 +3,7 @@
 #import <AppKit/AppKit.h>
 #include "Menu.h"
 #include <eacp/Core/ObjC/ObjC.h>
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 
 // Objective-C target that forwards an NSMenuItem (or NSButton) action to a
 // C++ MenuAction. Shared by the application menu bar and the tray icon.
@@ -20,7 +20,7 @@ namespace eacp::Graphics
 // An NSMenuItem's target is held weakly (assign), so the forwarding targets
 // must outlive the menu. Build a menu into one of these and keep it alive for
 // as long as the menu is in use.
-using MenuTargets = EA::Vector<ObjC::Ptr<EacpMenuTarget>>;
+using MenuTargets = Vector<ObjC::Ptr<EacpMenuTarget>>;
 
 // Builds an NSMenu mirroring `menu`, appending every action-forwarding target
 // it creates to `targets`.

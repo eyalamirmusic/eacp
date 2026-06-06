@@ -34,7 +34,7 @@ Connection Connection::connect(Address address, Timeouts timeouts)
     auto socket = detail::socketConnect(address, timeouts.connect, timeouts.io);
 
     auto connection = Connection {};
-    connection.impl = std::make_unique<Impl>();
+    connection.impl.create();
     connection.impl->address = std::move(address);
     connection.impl->timeouts = timeouts;
     connection.impl->socket = socket;
@@ -44,7 +44,7 @@ Connection Connection::connect(Address address, Timeouts timeouts)
 Connection Connection::adopt(std::intptr_t nativeSocket, Address peer)
 {
     auto connection = Connection {};
-    connection.impl = std::make_unique<Impl>();
+    connection.impl.create();
     connection.impl->address = std::move(peer);
     connection.impl->socket = (detail::NativeSocket) nativeSocket;
     return connection;
@@ -57,7 +57,7 @@ bool Connection::isOpen() const
 
 void Connection::close()
 {
-    if (! isOpen())
+    if (!isOpen())
         return;
 
     detail::socketClose(impl->socket);
@@ -71,18 +71,18 @@ const Address& Connection::address() const
 
 void Connection::send(std::string_view bytes)
 {
-    if (! isOpen())
+    if (!isOpen())
         throw Error("send() on a closed TCP connection");
 
     auto sent = std::size_t {0};
     while (sent < bytes.size())
-        sent += detail::socketSend(impl->socket, bytes.data() + sent,
-                                   bytes.size() - sent);
+        sent += detail::socketSend(
+            impl->socket, bytes.data() + sent, bytes.size() - sent);
 }
 
 std::string Connection::receiveUntil(char delimiter)
 {
-    if (! isOpen())
+    if (!isOpen())
         throw Error("receiveUntil() on a closed TCP connection");
 
     while (true)
@@ -106,17 +106,17 @@ std::string Connection::receiveUntil(char delimiter)
 std::string Connection::receiveLine()
 {
     auto line = receiveUntil('\n');
-    if (! line.empty() && line.back() == '\r')
+    if (!line.empty() && line.back() == '\r')
         line.pop_back();
     return line;
 }
 
 std::string Connection::receive(std::size_t maxBytes)
 {
-    if (! isOpen())
+    if (!isOpen())
         throw Error("receive() on a closed TCP connection");
 
-    if (! impl->buffered.empty())
+    if (!impl->buffered.empty())
     {
         auto take = std::min(maxBytes, impl->buffered.size());
         auto out = impl->buffered.substr(0, take);

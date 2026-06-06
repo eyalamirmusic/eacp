@@ -2,7 +2,7 @@
 
 #include <eacp/Core/Utils/Strings.h>
 
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <string>
 #include <unordered_map>
 
@@ -13,7 +13,7 @@ struct SVGElement
 {
     std::string tag;
     std::unordered_map<std::string, std::string> attributes;
-    EA::Vector<SVGElement> children;
+    Vector<SVGElement> children;
     std::string textContent;
 
     std::string attr(const std::string& name, const std::string& fallback = "") const

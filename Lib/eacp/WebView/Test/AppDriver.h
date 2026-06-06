@@ -152,8 +152,7 @@ public:
     DomNode query(const std::string& selector, CallOptions opts = {});
     std::optional<DomNode> tryQuery(const std::string& selector,
                                     CallOptions opts = {});
-    std::vector<DomNode> queryAll(const std::string& selector,
-                                  CallOptions opts = {});
+    Vector<DomNode> queryAll(const std::string& selector, CallOptions opts = {});
 
     // Async siblings of the above. Each returns an Async that resolves
     // on the main thread; use with co_await inside a coroutine test
@@ -186,10 +185,10 @@ public:
                                          CallOptions opts = {});
     Threads::Async<DomNode> queryAsync(const std::string& selector,
                                        CallOptions opts = {});
-    Threads::Async<std::optional<DomNode>> tryQueryAsync(
-        const std::string& selector, CallOptions opts = {});
-    Threads::Async<std::vector<DomNode>> queryAllAsync(const std::string& selector,
-                                                       CallOptions opts = {});
+    Threads::Async<std::optional<DomNode>> tryQueryAsync(const std::string& selector,
+                                                         CallOptions opts = {});
+    Threads::Async<Vector<DomNode>> queryAllAsync(const std::string& selector,
+                                                  CallOptions opts = {});
 
     ScreenshotResult screenshot(const ScreenshotOptions& options = {});
     SnapshotResult snapshot(const std::string& name,
@@ -227,7 +226,7 @@ private:
     Threads::Async<Miro::JSON> runJsAsync(const std::string& expression,
                                           const CallOptions& opts);
     Miro::JSON runJs(const std::string& expression, const CallOptions& opts);
-    std::vector<std::uint8_t> runSnapshotBytes(const CallOptions& opts);
+    Vector<std::uint8_t> runSnapshotBytes(const CallOptions& opts);
     Threads::Async<> waitForFirstNavigationAsync(const CallOptions& opts);
     void waitForFirstNavigation(const CallOptions& opts);
     int effectiveTimeoutMs(const CallOptions& opts) const;

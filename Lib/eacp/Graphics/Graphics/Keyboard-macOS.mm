@@ -115,9 +115,9 @@ std::string Keyboard::keyCodeToCharacter(uint16_t keyCode)
     return [str UTF8String];
 }
 
-EA::Vector<Key> Keyboard::getPressedKeys()
+Vector<Key> Keyboard::getPressedKeys()
 {
-    auto pressed = EA::Vector<Key>();
+    auto pressed = Vector<Key>();
 
     for (uint16_t keyCode = 0; keyCode <= 0x7F; ++keyCode)
     {

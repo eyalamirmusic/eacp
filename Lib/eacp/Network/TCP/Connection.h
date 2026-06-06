@@ -1,6 +1,6 @@
 #pragma once
 
-#include <ea_data_structures/Pointers/OwningPointer.h>
+#include <eacp/Core/Utils/Containers.h>
 
 #include <chrono>
 #include <cstddef>
@@ -96,7 +96,7 @@ private:
     friend class Listener;
 
     struct Impl;
-    EA::OwningPointer<Impl> impl;
+    OwningPointer<Impl> impl;
 };
 
 } // namespace eacp::TCP

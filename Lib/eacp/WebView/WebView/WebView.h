@@ -5,8 +5,7 @@
 #include <eacp/Graphics/Graphics.h>
 #include <Miro/Miro.h>
 #include <ResEmbed/ResEmbed.h>
-#include <ea_data_structures/Pointers/OwningPointer.h>
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -16,12 +15,10 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <vector>
-
 namespace eacp::Graphics
 {
 // Owning byte buffer and non-owning views used across the resource API.
-using Bytes = EA::Vector<std::uint8_t>;
+using Bytes = Vector<std::uint8_t>;
 using ByteSpan = std::span<std::uint8_t>;
 using ByteView = std::span<const std::uint8_t>;
 
@@ -82,7 +79,7 @@ FileProvider fromResEmbed(std::string category);
 // empty `roots` allows any readable file. MIME defaults to mimeForPath; pass
 // `mimeForFile` to override. Pair with Options::streamingSchemes.
 StreamingProvider fileStreamProvider(
-    EA::Vector<std::string> roots,
+    Vector<std::string> roots,
     std::function<std::string(std::string_view path)> mimeForFile = {});
 
 struct WebViewNativeAccess;
@@ -106,7 +103,7 @@ public:
     // side. Multiple files start a single multi-file drag session.
     struct DraggableFileList
     {
-        std::vector<DraggableFile> files;
+        Vector<DraggableFile> files;
 
         MIRO_REFLECT(files)
     };
@@ -162,8 +159,8 @@ public:
     // on the main thread.
     Threads::Async<std::string> callJS(const std::string& script);
 
-    using SnapshotCallback = std::function<void(std::vector<std::uint8_t> pngBytes,
-                                                const std::string& error)>;
+    using SnapshotCallback =
+        std::function<void(Bytes pngBytes, const std::string& error)>;
     void takeSnapshot(SnapshotCallback callback);
 
     void zoomIn();
@@ -188,7 +185,7 @@ public:
     // built-in `armFileDrag` bridge command, which deserializes an
     // eacp::WebView::DraggableFileList and routes here. macOS-only; a no-op on
     // other platforms.
-    void armFileDrag(const std::vector<std::string>& paths);
+    void armFileDrag(const Vector<std::string>& paths);
 
     // Arms a native window drag for the next mouse gesture. Driven by the
     // injected window-drag script, not called directly. Implemented on macOS;
@@ -200,7 +197,7 @@ public:
     std::function<void(const std::string& error)> onNavigationFailed = [](auto&&) {};
     std::function<void(const std::string& title)> onTitleChanged = [](auto&&) {};
 
-    std::function<bool(EA::OwningPointer<WebView> popup, const std::string& url)>
+    std::function<bool(OwningPointer<WebView> popup, const std::string& url)>
         onNewWindowRequested = [](auto&&, auto&&) { return false; };
 
     std::function<void()> onClose = [] {};

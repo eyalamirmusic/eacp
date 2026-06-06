@@ -4,11 +4,10 @@
 #include "ThreadUtils-Windows.h"
 #include "../Utils/Singleton.h"
 
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <atomic>
 #include <chrono>
 #include <mutex>
-#include <vector>
 
 namespace eacp::Threads
 {
@@ -39,7 +38,7 @@ struct PendingCallbacks
         // so user code can re-enter (e.g. callAsync from inside a
         // callback won't deadlock on the recursive_mutex but also
         // won't be processed in this pass).
-        auto fired = std::vector<Callback> {};
+        auto fired = Vector<Callback> {};
         {
             auto guard = std::lock_guard {mutex};
             fired.assign(pendingCallbacks.begin(), pendingCallbacks.end());
@@ -56,7 +55,7 @@ struct PendingCallbacks
     }
 
     std::recursive_mutex mutex;
-    EA::Vector<Callback> pendingCallbacks;
+    Vector<Callback> pendingCallbacks;
 };
 
 PendingCallbacks& getPendingCallbacks()
@@ -124,8 +123,7 @@ bool EventLoop::runFor(std::chrono::milliseconds timeout)
     initLoopThread();
 
     runForDepth++;
-    auto popDepth = std::shared_ptr<void> {nullptr,
-                                            [](void*) { runForDepth--; }};
+    auto popDepth = std::shared_ptr<void> {nullptr, [](void*) { runForDepth--; }};
 
     auto deadline = std::chrono::steady_clock::now() + timeout;
     auto timedOut = false;
@@ -141,8 +139,7 @@ bool EventLoop::runFor(std::chrono::milliseconds timeout)
         }
 
         auto remaining =
-            std::chrono::ceil<std::chrono::milliseconds>(deadline - now)
-                .count();
+            std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
 
         auto wait = MsgWaitForMultipleObjectsEx(
             0, nullptr, (DWORD) remaining, QS_ALLINPUT, MWMO_INPUTAVAILABLE);

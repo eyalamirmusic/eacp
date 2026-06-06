@@ -198,9 +198,9 @@ Transform parseTransform(const std::string& value)
     return result;
 }
 
-EA::Vector<float> parseNumberList(const std::string& value)
+Vector<float> parseNumberList(const std::string& value)
 {
-    auto result = EA::Vector<float>();
+    auto result = Vector<float>();
     auto reader = NumberReader {value, 0};
 
     while (reader.hasNumber())
@@ -215,10 +215,10 @@ EA::Vector<float> parseNumberList(const std::string& value)
     return result;
 }
 
-EA::Vector<Graphics::Point> parsePointList(const std::string& value)
+Vector<Graphics::Point> parsePointList(const std::string& value)
 {
     auto numbers = parseNumberList(value);
-    EA::Vector<Graphics::Point> points;
+    Vector<Graphics::Point> points;
     for (auto i = 0; i + 1 < numbers.size(); i += 2)
         points.add({numbers[i], numbers[i + 1]});
     return points;

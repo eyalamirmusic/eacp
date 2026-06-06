@@ -95,11 +95,11 @@ void WebViewBridge::registerBuiltins()
     auto arm = std::function<void(const DraggableFileList&)> {
         [this](const DraggableFileList& list)
         {
-            auto paths = std::vector<std::string> {};
-            paths.reserve(list.files.size());
+            auto paths = Vector<std::string> {};
+            paths.reserveAtLeast(list.files.size());
 
             for (const auto& file: list.files)
-                paths.push_back(file.path);
+                paths.add(file.path);
 
             webView.armFileDrag(paths);
         }};

@@ -2,7 +2,7 @@
 
 #include <Miro/Miro.h>
 
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 
 #include <functional>
 #include <string>
@@ -35,9 +35,9 @@ using EventEntry = Miro::TypeExport::EventInfo;
 namespace Detail
 {
 
-inline EA::Vector<EventEntry>& eventRegistry()
+inline Vector<EventEntry>& eventRegistry()
 {
-    static auto registry = EA::Vector<EventEntry> {};
+    static auto registry = Vector<EventEntry> {};
     return registry;
 }
 
@@ -52,14 +52,13 @@ inline void registerEvent(const char* nameToUse)
     eventRegistry().add(std::move(entry));
 }
 
-inline void
-    markEventKeyed(const char* collectionField, const char* keyField)
+inline void markEventKeyed(const char* collectionField, const char* keyField)
 {
     auto& registry = eventRegistry();
-    if (registry.size() == 0)
+    if (registry.empty())
         return;
 
-    auto& entry = registry[registry.size() - 1];
+    auto& entry = registry.back();
     entry.isKeyed = true;
     entry.collectionField = collectionField;
     entry.keyField = keyField;

@@ -5,7 +5,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <fcntl.h>
 #include <mutex>
 #include <poll.h>
@@ -63,7 +63,7 @@ struct LoopState
 {
     PipeWaker waker;
     std::mutex mutex;
-    EA::Vector<Callback> queue;
+    Vector<Callback> queue;
     std::atomic<bool> running {false};
 };
 
@@ -76,7 +76,7 @@ namespace
 {
 void drainPending(LoopState& loop)
 {
-    auto pending = EA::Vector<Callback>();
+    auto pending = Vector<Callback>();
     {
         auto lock = std::lock_guard(loop.mutex);
         pending = std::move(loop.queue);
@@ -130,8 +130,7 @@ bool EventLoop::runFor(std::chrono::milliseconds timeout)
         }
 
         auto remaining =
-            std::chrono::ceil<std::chrono::milliseconds>(deadline - now)
-                .count();
+            std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
 
         auto pfd = pollfd {loop.waker.readFd, POLLIN, 0};
         auto r = ::poll(&pfd, 1, (int) remaining);

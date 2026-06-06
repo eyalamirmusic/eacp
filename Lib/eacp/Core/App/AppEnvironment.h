@@ -1,6 +1,6 @@
 #pragma once
 
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <string>
 
 namespace eacp::Apps
@@ -29,7 +29,7 @@ struct AppEnvironment
     // setCommandLineArgs(); accessible from anywhere via
     // getAppEnvironment().commandLineArgs. Index 0 is the
     // executable path, matching the argv convention.
-    EA::Vector<std::string> commandLineArgs;
+    Vector<std::string> commandLineArgs;
 };
 
 AppEnvironment& getAppEnvironment();

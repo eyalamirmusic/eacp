@@ -7,7 +7,7 @@ namespace eacp::Graphics
 {
 
 // Tightly packed 8-bit RGBA pixel storage (R,G,B,A per pixel).
-using ImageData = EA::Vector<std::uint8_t>;
+using ImageData = Vector<std::uint8_t>;
 
 enum class ImageFormat
 {

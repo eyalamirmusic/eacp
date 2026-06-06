@@ -7,7 +7,6 @@
 
 #include <cassert>
 #include <string>
-#include <vector>
 
 namespace eacp::Graphics::detail
 {
@@ -43,7 +42,7 @@ WKWebView* createWebView(WKWebViewConfiguration* config)
     return [[WKWebView alloc] initWithFrame:rect configuration:config];
 }
 
-void armFileDrag(WKWebView*, const std::vector<std::string>&)
+void armFileDrag(WKWebView*, const Vector<std::string>&)
 {
     // Native file drag-out is a macOS desktop affordance, not implemented here.
     assert(false && "armFileDrag is macOS-only");

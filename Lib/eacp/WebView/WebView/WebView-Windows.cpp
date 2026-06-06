@@ -5,13 +5,12 @@
 #include <eacp/Graphics/Helpers/StringUtils-Windows.h>
 
 #include <algorithm>
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <cassert>
 #include <unordered_map>
 #include <queue>
 #include <functional>
 #include <string>
-#include <vector>
 
 #include <objbase.h>
 #include <shlwapi.h>
@@ -61,9 +60,9 @@ constexpr double minZoomLevel = 0.25;
 constexpr double maxZoomLevel = 5.0;
 constexpr double zoomStep = 1.1;
 
-EA::Vector<WebView*>& registeredWebViews()
+Vector<WebView*>& registeredWebViews()
 {
-    static auto views = EA::Vector<WebView*>();
+    static auto views = Vector<WebView*>();
     return views;
 }
 
@@ -104,14 +103,30 @@ std::string unwrapJsonString(const std::string& raw)
         auto esc = raw[++i];
         switch (esc)
         {
-            case '"': out.push_back('"'); break;
-            case '\\': out.push_back('\\'); break;
-            case '/': out.push_back('/'); break;
-            case 'b': out.push_back('\b'); break;
-            case 'f': out.push_back('\f'); break;
-            case 'n': out.push_back('\n'); break;
-            case 'r': out.push_back('\r'); break;
-            case 't': out.push_back('\t'); break;
+            case '"':
+                out.push_back('"');
+                break;
+            case '\\':
+                out.push_back('\\');
+                break;
+            case '/':
+                out.push_back('/');
+                break;
+            case 'b':
+                out.push_back('\b');
+                break;
+            case 'f':
+                out.push_back('\f');
+                break;
+            case 'n':
+                out.push_back('\n');
+                break;
+            case 'r':
+                out.push_back('\r');
+                break;
+            case 't':
+                out.push_back('\t');
+                break;
             case 'u':
             {
                 if (i + 4 >= raw.size())
@@ -141,7 +156,8 @@ std::string unwrapJsonString(const std::string& raw)
                 }
                 break;
             }
-            default: return raw;
+            default:
+                return raw;
         }
     }
 
@@ -431,8 +447,7 @@ struct WebView::Native
         return buf;
     }
 
-    Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions>
-        buildEnvironmentOptions()
+    Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions> buildEnvironmentOptions()
     {
         // Custom URL schemes (anything other than http/https/file) won't
         // navigate at all unless registered here. macOS handles this via
@@ -444,9 +459,9 @@ struct WebView::Native
         auto envOptions = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
 
         auto registrations =
-            std::vector<Microsoft::WRL::ComPtr<ICoreWebView2CustomSchemeRegistration>> {};
-        registrations.reserve(options.schemes.size()
-                              + options.streamingSchemes.size());
+            Vector<Microsoft::WRL::ComPtr<ICoreWebView2CustomSchemeRegistration>> {};
+        registrations.reserveAtLeast(
+            (int) (options.schemes.size() + options.streamingSchemes.size()));
 
         auto addRegistration = [&](const std::string& scheme)
         {
@@ -458,7 +473,7 @@ struct WebView::Native
             registration->put_TreatAsSecure(TRUE);
             registration->put_HasAuthorityComponent(TRUE);
 
-            registrations.push_back(registration);
+            registrations.add(registration);
         };
 
         for (auto& [scheme, _]: options.schemes)
@@ -469,16 +484,15 @@ struct WebView::Native
         if (!registrations.empty())
         {
             auto raw =
-                std::vector<ICoreWebView2CustomSchemeRegistration*>(
-                    registrations.size());
-            for (auto i = std::size_t {}; i < registrations.size(); ++i)
+                Vector<ICoreWebView2CustomSchemeRegistration*>(registrations.size());
+            for (auto i = 0; i < registrations.size(); ++i)
                 raw[i] = registrations[i].Get();
 
             Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions4> opts4;
             if (SUCCEEDED(envOptions.As(&opts4)) && opts4)
             {
-                opts4->SetCustomSchemeRegistrations(
-                    static_cast<UINT32>(raw.size()), raw.data());
+                opts4->SetCustomSchemeRegistrations(static_cast<UINT32>(raw.size()),
+                                                    raw.data());
             }
             else
             {
@@ -508,8 +522,7 @@ struct WebView::Native
             streamingProviders.emplace(scheme, provider);
 
         webView->add_WebResourceRequested(
-            Microsoft::WRL::Callback<
-                ICoreWebView2WebResourceRequestedEventHandler>(
+            Microsoft::WRL::Callback<ICoreWebView2WebResourceRequestedEventHandler>(
                 [this](ICoreWebView2*,
                        ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT
                 { return handleWebResourceRequested(args); })
@@ -537,7 +550,7 @@ struct WebView::Native
     }
 
     HRESULT
-        handleWebResourceRequested(ICoreWebView2WebResourceRequestedEventArgs* args)
+    handleWebResourceRequested(ICoreWebView2WebResourceRequestedEventArgs* args)
     {
         if (!args || !environment)
             return S_OK;
@@ -559,8 +572,8 @@ struct WebView::Native
 
         if (auto streamIt = streamingProviders.find(scheme);
             streamIt != streamingProviders.end() && streamIt->second)
-            return handleStreamingRequest(args, request.Get(), url,
-                                          streamIt->second);
+            return handleStreamingRequest(
+                args, request.Get(), url, streamIt->second);
 
         auto it = schemeProviders.find(scheme);
         if (it == schemeProviders.end() || !it->second)
@@ -572,7 +585,9 @@ struct WebView::Native
         if (!response)
         {
             environment->CreateWebResourceResponse(
-                nullptr, 404, L"Not Found",
+                nullptr,
+                404,
+                L"Not Found",
                 L"Content-Type: text/plain; charset=utf-8",
                 &webResponse);
             args->put_Response(webResponse.Get());
@@ -585,7 +600,9 @@ struct WebView::Native
         if (!stream)
         {
             environment->CreateWebResourceResponse(
-                nullptr, 500, L"Internal Server Error",
+                nullptr,
+                500,
+                L"Internal Server Error",
                 L"Content-Type: text/plain; charset=utf-8",
                 &webResponse);
             args->put_Response(webResponse.Get());
@@ -603,9 +620,11 @@ struct WebView::Native
                           ? L"OK"
                           : L"Error";
 
-        if (SUCCEEDED(environment->CreateWebResourceResponse(
-                stream.Get(), response->statusCode, reason, headers.c_str(),
-                &webResponse)))
+        if (SUCCEEDED(environment->CreateWebResourceResponse(stream.Get(),
+                                                             response->statusCode,
+                                                             reason,
+                                                             headers.c_str(),
+                                                             &webResponse)))
         {
             args->put_Response(webResponse.Get());
         }
@@ -774,9 +793,9 @@ struct WebView::Native
                         args->get_WebErrorStatus(&status);
                         CoTaskMemString uri;
                         webView->get_Source(&uri);
-                        auto errorStr = "Navigation failed (status="
-                                        + std::to_string(status) + ") for url="
-                                        + uri.toString();
+                        auto errorStr =
+                            "Navigation failed (status=" + std::to_string(status)
+                            + ") for url=" + uri.toString();
                         LOG("WebView2: " + errorStr);
                         owner.onNavigationFailed(errorStr);
                     }
@@ -944,7 +963,7 @@ struct WebView::Native
         }
         else
         {
-            pendingDocStartScripts.push_back(std::move(script));
+            pendingDocStartScripts.add(std::move(script));
         }
     }
 
@@ -979,7 +998,7 @@ struct WebView::Native
     bool initialized = false;
     bool initInProgress = false;
     std::queue<std::function<void()>> pendingOperations;
-    std::vector<std::wstring> pendingDocStartScripts;
+    Vector<std::wstring> pendingDocStartScripts;
 
     EventRegistrationToken navigationStartingToken {};
     EventRegistrationToken navigationCompletedToken {};
@@ -1185,7 +1204,7 @@ void WebView::takeSnapshot(SnapshotCallback callback)
                     ICoreWebView2CapturePreviewCompletedHandler>(
                     [callback, stream](HRESULT errorCode) -> HRESULT
                     {
-                        std::vector<std::uint8_t> bytes;
+                        Bytes bytes;
                         std::string error;
 
                         if (FAILED(errorCode))
@@ -1202,12 +1221,12 @@ void WebView::takeSnapshot(SnapshotCallback callback)
                             STATSTG stat = {};
                             if (SUCCEEDED(stream->Stat(&stat, STATFLAG_NONAME)))
                             {
-                                bytes.resize(stat.cbSize.LowPart);
+                                bytes.resize((int) stat.cbSize.LowPart);
                                 ULONG read = 0;
                                 stream->Read(bytes.data(),
                                              static_cast<ULONG>(bytes.size()),
                                              &read);
-                                bytes.resize(read);
+                                bytes.resize((int) read);
                             }
                             else
                             {
@@ -1275,7 +1294,7 @@ void WebView::resized()
     impl->updateBounds();
 }
 
-void WebView::armFileDrag(const std::vector<std::string>&)
+void WebView::armFileDrag(const Vector<std::string>&)
 {
     // Native file drag-out is implemented on macOS only (WKWebView subclass +
     // NSDraggingSession started from a real mouseDragged: event). Not wired on

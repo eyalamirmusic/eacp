@@ -1,6 +1,6 @@
 #include "GraphicUtils.h"
 
-#include <ea_data_structures/Structures/Vector.h>
+#include <eacp/Core/Utils/Containers.h>
 
 namespace eacp::Graphics
 {
@@ -33,8 +33,8 @@ CFRef<CGGradientRef> toCGGradient(const LinearGradient& gradient)
 {
     static auto colorSpace = CFRef<CGColorSpaceRef>(CGColorSpaceCreateDeviceRGB());
 
-    auto components = EA::Vector<CGFloat>();
-    auto locations = EA::Vector<CGFloat>();
+    auto components = Vector<CGFloat>();
+    auto locations = Vector<CGFloat>();
 
     for (const auto& stop : gradient.stops)
     {

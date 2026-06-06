@@ -26,10 +26,9 @@ void ignoreSigPipeOnce()
 // Copies the parent environment and applies overrides (replaced by name, else
 // appended). Built in the parent: posix_spawn execs without running arbitrary
 // code in the child, so there is no fork/setenv-in-child deadlock hazard.
-EA::Vector<std::string>
-    buildEnvironment(const EA::Vector<EnvironmentVariable>& overrides)
+Vector<std::string> buildEnvironment(const Vector<EnvironmentVariable>& overrides)
 {
-    auto entries = EA::Vector<std::string> {};
+    auto entries = Vector<std::string> {};
 
     for (auto entry = environ; *entry != nullptr; ++entry)
         entries.push_back(*entry);
@@ -56,9 +55,9 @@ EA::Vector<std::string>
 
 // Null-terminated char* view over `strings` for the argv/envp the spawn syscall
 // requires. The backing strings must outlive the returned pointers.
-EA::Vector<char*> toCArray(EA::Vector<std::string>& strings)
+Vector<char*> toCArray(Vector<std::string>& strings)
 {
-    auto pointers = EA::Vector<char*> {};
+    auto pointers = Vector<char*> {};
 
     for (auto& s: strings)
         pointers.push_back(s.data());
@@ -170,7 +169,7 @@ private:
     // deadlock. posix_spawnp keeps PATH lookup for bare executables.
     void launch(const ProcessOptions& options)
     {
-        auto argStrings = EA::Vector<std::string> {options.executable};
+        auto argStrings = Vector<std::string> {options.executable};
         for (const auto& arg: options.arguments)
             argStrings.push_back(arg);
 

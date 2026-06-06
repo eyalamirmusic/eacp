@@ -2,11 +2,12 @@
 
 #include <Miro/Miro.h>
 
+#include <eacp/Core/Utils/Containers.h>
+
 #include <map>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace eacp::WebView::Test
 {
@@ -37,7 +38,7 @@ struct DomNode
     bool checked = false;
 
     // Element children only — text nodes are folded into textContent.
-    std::vector<DomNode> children;
+    Vector<DomNode> children;
 
     MIRO_REFLECT(tagName, attributes, textContent, value, checked, children)
 
@@ -50,7 +51,7 @@ struct DomNode
     bool hasAttr(std::string_view name) const;
 
     // Class helpers, parsed from the class attribute.
-    std::vector<std::string> classes() const;
+    Vector<std::string> classes() const;
     bool hasClass(std::string_view className) const;
 
     // Descendant search over the captured subtree — self is never
@@ -61,7 +62,7 @@ struct DomNode
     // order for a single compound selector).
     DomNode find(std::string_view selector) const;
     std::optional<DomNode> tryFind(std::string_view selector) const;
-    std::vector<DomNode> findAll(std::string_view selector) const;
+    Vector<DomNode> findAll(std::string_view selector) const;
 };
 
 } // namespace eacp::WebView::Test

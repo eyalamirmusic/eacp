@@ -2,7 +2,7 @@
 
 #include <eacp/Network/HTTP/Http.h>
 
-#include <ea_data_structures/Pointers/OwningPointer.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <functional>
 #include <map>
 #include <stdexcept>
@@ -63,7 +63,7 @@ private:
     std::map<std::string, RequestHandler> routes;
 
     struct Impl;
-    EA::OwningPointer<Impl> impl;
+    OwningPointer<Impl> impl;
 };
 
 } // namespace eacp::HTTP

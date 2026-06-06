@@ -89,6 +89,9 @@ if (NOT CMAKE_CROSSCOMPILING)
             Codegen/HooksFormat.cpp
             Codegen/Register.cpp)
     target_link_libraries(eacp-webview-codegen PUBLIC Miro)
+    # Needs the <eacp/...> include path for shared headers (e.g. Containers.h);
+    # the eacp-core link deps (system frameworks) aren't wanted in this host tool.
+    target_include_directories(eacp-webview-codegen PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../)
     set_default_target_setting(eacp-webview-codegen)
 endif ()
 

@@ -8,13 +8,12 @@
 #include <cstdint>
 #include <string>
 #include <utility>
-#include <vector>
 
 namespace eacp::Graphics::detail
 {
 namespace
 {
-std::vector<std::uint8_t> encodeAsPng(UIImage* image, std::string& error)
+Bytes encodeAsPng(UIImage* image, std::string& error)
 {
     auto* png = UIImagePNGRepresentation(image);
     if (png == nil || png.length == 0)
@@ -24,7 +23,9 @@ std::vector<std::uint8_t> encodeAsPng(UIImage* image, std::string& error)
     }
 
     auto* bytes = static_cast<const std::uint8_t*>(png.bytes);
-    return std::vector<std::uint8_t>(bytes, bytes + png.length);
+    auto result = Bytes();
+    result.assign(bytes, bytes + png.length);
+    return result;
 }
 } // namespace
 
@@ -34,7 +35,7 @@ void takeAppleSnapshot(WKWebView* webView, WebView::SnapshotCallback callback)
 
     [webView takeSnapshotWithConfiguration:config
                          completionHandler:^(UIImage* image, NSError* error) {
-                           std::vector<std::uint8_t> bytes;
+                           Bytes bytes;
                            std::string errorStr;
 
                            if (error != nil)

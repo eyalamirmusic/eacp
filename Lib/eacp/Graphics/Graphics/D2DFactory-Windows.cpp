@@ -1,4 +1,5 @@
 #include <eacp/Core/Utils/WinInclude.h>
+#include <eacp/Core/Utils/Containers.h>
 
 #include <d3d11.h>
 #include <dxgi1_2.h>
@@ -7,8 +8,6 @@
 
 #include <winrt/Windows.UI.Composition.h>
 #include <windows.ui.composition.interop.h>
-
-#include <array>
 
 namespace wuc = winrt::Windows::UI::Composition;
 
@@ -46,10 +45,10 @@ private:
                                 reinterpret_cast<IUnknown**>(dwriteFactory.put())));
 
         // Create D3D11 device with BGRA support for D2D interop
-        std::array featureLevels = {D3D_FEATURE_LEVEL_11_1,
-                                    D3D_FEATURE_LEVEL_11_0,
-                                    D3D_FEATURE_LEVEL_10_1,
-                                    D3D_FEATURE_LEVEL_10_0};
+        Array<D3D_FEATURE_LEVEL, 4> featureLevels = {D3D_FEATURE_LEVEL_11_1,
+                                                     D3D_FEATURE_LEVEL_11_0,
+                                                     D3D_FEATURE_LEVEL_10_1,
+                                                     D3D_FEATURE_LEVEL_10_0};
         D3D_FEATURE_LEVEL featureLevel;
 
         auto hr = D3D11CreateDevice(nullptr,
