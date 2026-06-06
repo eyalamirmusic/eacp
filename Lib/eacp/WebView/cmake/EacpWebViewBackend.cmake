@@ -35,10 +35,14 @@ function(eacp_webview_generate_backend)
     # source tree races when multiple build dirs configure at once.
     set(BASENAME "${ARG_BASENAME}")
     set(staged "${CMAKE_CURRENT_BINARY_DIR}/eacp-webview-gen/${ARG_OUTPUT_NAME}.ts")
+    # NEWLINE_STYLE LF: configure_file defaults to the platform-native newline
+    # (CRLF on Windows), which would make the generated .ts drift from the
+    # repo's eol=lf policy and show up perpetually dirty on Windows checkouts.
     configure_file(
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../WebView/Resources/EacpBackend.ts.template"
             "${staged}"
-            @ONLY)
+            @ONLY
+            NEWLINE_STYLE LF)
     eacp_webview_publish_generated(
             "${staged}" "${ARG_OUTPUT_DIR}/${ARG_OUTPUT_NAME}.ts")
 endfunction()

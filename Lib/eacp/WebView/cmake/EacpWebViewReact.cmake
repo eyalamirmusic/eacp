@@ -30,10 +30,14 @@ function(eacp_webview_generate_react_hooks)
     # the concurrent-configure race a plain configure_file would hit here.
     set(BASENAME "${ARG_BASENAME}")
     set(stagedReact "${CMAKE_CURRENT_BINARY_DIR}/eacp-webview-gen/${ARG_OUTPUT_NAME}.ts")
+    # NEWLINE_STYLE LF: configure_file defaults to the platform-native newline
+    # (CRLF on Windows), which would make the generated .ts drift from the
+    # repo's eol=lf policy and show up perpetually dirty on Windows checkouts.
     configure_file(
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../WebView/Resources/EacpReact.ts.template"
             "${stagedReact}"
-            @ONLY)
+            @ONLY
+            NEWLINE_STYLE LF)
     eacp_webview_publish_generated(
             "${stagedReact}" "${ARG_OUTPUT_DIR}/${ARG_OUTPUT_NAME}.ts")
 
@@ -45,6 +49,7 @@ function(eacp_webview_generate_react_hooks)
     configure_file(
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../WebView/Resources/EacpHooks.ts.template"
             "${stagedHooks}"
-            @ONLY)
+            @ONLY
+            NEWLINE_STYLE LF)
     eacp_webview_publish_generated("${stagedHooks}" "${ARG_OUTPUT_DIR}/hooks.ts")
 endfunction()
