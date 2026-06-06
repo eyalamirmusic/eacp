@@ -31,7 +31,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -39,8 +39,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build libcurl4-openssl-dev clang
 
-      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Set up MSVC environment
         if: runner.os == 'Windows'
+        uses: egor-tensin/vs-shell@54e4148eac794e4580591c2e0b7750f14b7891fc # v2
+        with:
+          arch: x64
 
       - name: Configure
         run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug ${{ matrix.cmake-flags }}
@@ -56,7 +59,7 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Configure
         run: >
