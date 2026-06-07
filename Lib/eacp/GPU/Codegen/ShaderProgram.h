@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../Device/Device.h"
 #include "GeneratedShader.h"
 #include "ShaderBuilder.h"
 #include "ShaderTypes.h"
@@ -8,36 +9,42 @@
 #include <eacp/Core/Utils/Containers.h>
 
 #include <array>
+#include <cassert>
+#include <concepts>
 #include <cstddef>
 #include <cstring>
+#include <optional>
 
-// A shader authored as a struct of named, typed members. Each vertex input and
-// uniform is a real C++ member you set by name; the same member doubles as the
-// graph value used while writing the shader body. A single member list drives two
-// walks - one that builds the IR + layouts, one that packs the uniform block - so
-// the CPU value and its GPU slot cannot drift, and nothing is positional.
+// A shader authored as a struct. Uniforms are named, typed members you set by
+// name; vertex inputs are pulled straight out of the CPU vertex struct inside
+// define(), so that struct is the single source of the vertex layout. The program
+// also owns its realized GPU resources (vertex buffer, library, pipeline), so a
+// view feeds data and draws without juggling loose handles.
+//
+//   struct Vertex { float position[2]; float color[3]; };
 //
 //   struct MyShader final : ShaderProgram
 //   {
-//       VertexInput<Float2> position;
-//       VertexInput<Float3> color;
-//       Uniform<Float>      angle;
-//
-//       EACP_SHADER(position, color, angle)
+//       Uniform<Float> angle;
+//       EACP_SHADER(angle)
 //
 //       MyShader() { compile(); }
 //
 //       void define() override
 //       {
-//           auto vColor = varying(color);
+//           auto position = vertexInput(&Vertex::position);   // -> Float2
+//           auto color    = vertexInput(&Vertex::color);      // -> Float3
 //           setPosition(float4(position, 0.0f, 1.0f));
-//           setFragment(float4(vColor, 1.0f));
+//           setFragment(float4(varying(color), 1.0f));
 //       }
 //   };
 //
-//   MyShader shader;          // builds the graph, derives the layouts
-//   shader.angle = 0.5f;      // typed write into the member's storage
-//   pass.setVertexUniforms(shader);
+//   MyShader shader;
+//   shader.setVertices(triangleVertices);   // typed; owns the buffer
+//   shader.prepare(view.sampleCount());     // builds library + pipeline
+//   ...
+//   shader.angle = 0.5f;
+//   pass.draw(shader);                       // pipeline + vertices + uniforms
 
 namespace eacp::GPU
 {
@@ -70,6 +77,63 @@ struct CpuValueOf<Float4>
     using type = std::array<float, 4>;
 };
 
+// The shader value a CPU type maps to. Built in for float / float[N] / array; a
+// user type opts in either intrusively (a `using ShaderValue = Float3;` member,
+// like MIRO_REFLECT) or non-intrusively via EACP_SHADER_VALUE (like
+// MIRO_REFLECT_EXTERNAL). This is what lets a `Color` struct stand in for a
+// float3 vertex field or uniform.
+template <typename T>
+struct ShaderValueOf
+{
+    using type = typename T::ShaderValue;
+};
+
+template <>
+struct ShaderValueOf<float>
+{
+    using type = Float;
+};
+
+template <>
+struct ShaderValueOf<float[2]>
+{
+    using type = Float2;
+};
+
+template <>
+struct ShaderValueOf<float[3]>
+{
+    using type = Float3;
+};
+
+template <>
+struct ShaderValueOf<float[4]>
+{
+    using type = Float4;
+};
+
+template <>
+struct ShaderValueOf<std::array<float, 2>>
+{
+    using type = Float2;
+};
+
+template <>
+struct ShaderValueOf<std::array<float, 3>>
+{
+    using type = Float3;
+};
+
+template <>
+struct ShaderValueOf<std::array<float, 4>>
+{
+    using type = Float4;
+};
+
+// True when V is a CPU type registered as the shader value type T.
+template <typename V, typename T>
+concept ShaderValueIs = std::same_as<typename ShaderValueOf<V>::type, T>;
+
 // Byte offset of a data member within its struct, computed from a real object so
 // it stays within defined behaviour (unlike the classic null-pointer offsetof).
 template <typename C, typename M>
@@ -80,34 +144,10 @@ int memberOffset(M C::* member)
                   - reinterpret_cast<const std::byte*>(&object));
 }
 
-// A per-vertex attribute, declared as a member. During define() it behaves as its
-// underlying value handle (position.x(), etc.); its data arrives from the bound
-// vertex buffer, so it carries no CPU storage of its own.
-//
-// Bind it to the CPU vertex struct's field with a pointer-to-member so the layout
-// reads real offsets, not assumed packing, and a wrong field/type is a compile
-// error:  VertexInput<Float2> position { &Vertex::position };
-template <typename T>
-struct VertexInput : T
-{
-    VertexInput() = default;
-
-    template <typename C, typename M>
-    VertexInput(M C::* member)
-    {
-        static_assert(sizeof(M) == sizeof(typename CpuValueOf<T>::type),
-                      "vertex field size does not match the shader input type");
-        offset = memberOffset(member);
-        stride = (int) sizeof(C);
-    }
-
-    int offset = 0;
-    int stride = 0; // 0 = unbound; the program then falls back to tight packing
-};
-
 // A per-frame constant, declared as a member. It is both the graph value used in
-// define() and a typed CPU slot: `shader.angle = 0.5f` writes the value that the
-// upload walk packs into the uniform block.
+// define() and a typed CPU slot: `shader.angle = 0.5f` writes the value the upload
+// walk packs into the uniform block. It also accepts any registered sub-type of
+// the matching shape, e.g. `shader.tint = Color {1, 0, 0}` for a Uniform<Float3>.
 template <typename T>
 struct Uniform : T
 {
@@ -116,6 +156,16 @@ struct Uniform : T
     Uniform& operator=(const Cpu& newValue)
     {
         value = newValue;
+        return *this;
+    }
+
+    template <typename V>
+        requires ShaderValueIs<V, T>
+    Uniform& operator=(const V& subValue)
+    {
+        static_assert(sizeof(V) == sizeof(Cpu),
+                      "uniform sub-type size does not match its shader value type");
+        std::memcpy(&value, &subValue, sizeof(Cpu));
         return *this;
     }
 
@@ -168,21 +218,13 @@ inline VertexFormat toVertexFormat(ValueType type)
     return VertexFormat::Float;
 }
 
-// The fixed, non-templated surface a member walk bottoms out in. The templated
-// operator() adapts any Uniform<T>/VertexInput<T> onto these two calls, the same
-// way Miro's Property adapts arbitrary fields onto its Reflector - but shaped for
-// the GPU job (assign a slot / pack bytes) instead of serialization.
+// The non-templated surface the uniform member walk bottoms out in. The templated
+// operator() adapts any Uniform<T> onto it, the same way Miro's Property adapts
+// arbitrary fields onto its Reflector - but shaped for the GPU job.
 class ShaderVisitor
 {
 public:
     virtual ~ShaderVisitor() = default;
-
-    template <typename T>
-    void operator()(const char* name, VertexInput<T>& member)
-    {
-        onVertexInput(
-            name, ValueTypeOf<T>::value, member, member.offset, member.stride);
-    }
 
     template <typename T>
     void operator()(const char* name, Uniform<T>& member)
@@ -191,41 +233,20 @@ public:
     }
 
 protected:
-    virtual void onVertexInput(const char* name,
-                               ValueType type,
-                               detail::ValueHandle& handle,
-                               int offset,
-                               int stride) = 0;
     virtual void onUniform(const char* name,
                            ValueType type,
                            detail::ValueHandle& handle,
                            const void* data) = 0;
 };
 
-// Build walk: each member adopts a freshly added graph slot, so define() can then
-// use the members as live values.
+// Build walk: each uniform member adopts a freshly added graph slot, so define()
+// can use it as a live value.
 class ShaderBuildVisitor final : public ShaderVisitor
 {
 public:
     explicit ShaderBuildVisitor(ShaderBuilder& builderToUse)
         : builder(builderToUse)
     {
-    }
-
-    void onVertexInput(const char*,
-                       ValueType type,
-                       detail::ValueHandle& handle,
-                       int offset,
-                       int stride) override
-    {
-        handle = builder.addVertexInput(type);
-
-        layout.attribute(toVertexFormat(type), offset);
-
-        if (stride > 0)
-            layout.stride = stride;
-        else
-            allBound = false;
     }
 
     void onUniform(const char*,
@@ -236,29 +257,17 @@ public:
         handle = builder.addUniform(type);
     }
 
-    // The vertex layout assembled from each input's bound field. Valid only when
-    // allBound is true; otherwise the program keeps the tight-packed layout the
-    // ShaderBuilder derives.
-    VertexLayout layout;
-    bool allBound = true;
-
 private:
     ShaderBuilder& builder;
 };
 
 // Upload walk: copy each uniform's current value into the block at its aligned
-// offset. Vertex inputs are skipped - their data comes from the vertex buffer.
+// offset.
 class ShaderUploadVisitor final : public ShaderVisitor
 {
 public:
     explicit ShaderUploadVisitor(Vector<std::byte>& bytesToFill)
         : bytes(bytesToFill)
-    {
-    }
-
-protected:
-    void onVertexInput(
-        const char*, ValueType, detail::ValueHandle&, int, int) override
     {
     }
 
@@ -282,23 +291,55 @@ private:
     int cursor = 0;
 };
 
-// Base for struct-authored shaders. Derive, declare typed members, list them with
-// EACP_SHADER, write define(), and call compile() from the constructor.
+// Base for struct-authored shaders. Derive, declare uniform members, list them
+// with EACP_SHADER, write define() (pulling vertex inputs from the CPU vertex
+// struct), and call compile() from the constructor.
 class ShaderProgram
 {
 public:
     ShaderProgram() = default;
     virtual ~ShaderProgram() = default;
 
-    // Member handles point into the owned builder's graph, so a program is pinned
-    // in place once built.
+    // Uniform members and pulled vertex handles point into the owned builder's
+    // graph, and the owned GPU resources are non-copyable, so a program is pinned
+    // in place.
     ShaderProgram(const ShaderProgram&) = delete;
     ShaderProgram& operator=(const ShaderProgram&) = delete;
 
     const ShaderSource& source() const { return generated.source; }
     const VertexLayout& vertexLayout() const { return generated.vertexLayout; }
 
-    // Re-packs the current member values and returns the uniform block, ready for
+    // Uploads the typed vertex data and owns the resulting buffer. The element
+    // type's size must match the layout pulled from it in define().
+    template <typename V, std::size_t N>
+    void setVertices(const V (&data)[N])
+    {
+        assert(sizeof(V) == (std::size_t) vertexLayout().stride
+               && "vertex element size does not match the shader's vertex layout");
+
+        vertexBufferData.emplace(Device::shared(), data, sizeof(data));
+        vertexCountValue = (int) N;
+    }
+
+    // Builds the shader library and render pipeline. sampleCount must match the
+    // render target (GPUView::sampleCount()).
+    void prepare(int sampleCount)
+    {
+        shaderLibrary.emplace(Device::shared(), generated.source);
+
+        auto descriptor = RenderPipelineDescriptor {};
+        descriptor.library = &*shaderLibrary;
+        descriptor.sampleCount = sampleCount;
+        descriptor.vertexLayout = generated.vertexLayout;
+
+        pipelineState.emplace(Device::shared(), descriptor);
+    }
+
+    const RenderPipeline& pipeline() const { return *pipelineState; }
+    const Buffer& vertices() const { return *vertexBufferData; }
+    int vertexCount() const { return vertexCountValue; }
+
+    // Re-packs the current uniform values and returns the block, ready for
     // RenderPass::setVertexBytes. Cheap - the block is a handful of floats.
     const void* packedUniforms()
     {
@@ -310,9 +351,8 @@ public:
     bool hasUniforms() const { return !uniformBytes.empty(); }
 
 protected:
-    // Runs the build walk, the user's define(), then emits source + layouts.
-    // Called from the most-derived constructor, where the member list and define()
-    // overrides are already in place.
+    // Runs the uniform build walk, the user's define() (which pulls vertex inputs),
+    // then emits source + layouts. Called from the most-derived constructor.
     void compile()
     {
         auto buildVisitor = ShaderBuildVisitor {builder};
@@ -320,12 +360,34 @@ protected:
         define();
         generated = builder.build();
 
-        // Prefer the layout assembled from the inputs' bound fields (real offsets);
-        // fall back to the builder's tight-packed layout if any input is unbound.
-        if (buildVisitor.allBound)
-            generated.vertexLayout = buildVisitor.layout;
+        // define() assembled the vertex layout from the pulled fields' real
+        // offsets; use it when any input was pulled.
+        if (vertexLayoutData.attributes.size() > 0)
+            generated.vertexLayout = vertexLayoutData;
 
         packUniforms();
+    }
+
+    // Pulls a vertex attribute out of the CPU vertex struct. The field's type maps
+    // to a shader value via ShaderValueOf, the attribute takes the field's real
+    // offset, and the returned handle is what you write the shader with.
+    template <typename C, typename M>
+    typename ShaderValueOf<M>::type vertexInput(M C::* member)
+    {
+        using Handle = typename ShaderValueOf<M>::type;
+        static_assert(sizeof(M) == sizeof(typename CpuValueOf<Handle>::type),
+                      "vertex field size does not match its shader value type");
+
+        constexpr auto type = ValueTypeOf<Handle>::value;
+        vertexLayoutData.attribute(toVertexFormat(type), memberOffset(member));
+        vertexLayoutData.stride = (int) sizeof(C);
+
+        auto added = builder.addVertexInput(type);
+
+        auto handle = Handle {};
+        handle.graph = added.graph;
+        handle.node = added.node;
+        return handle;
     }
 
     Float varying(const Float& vertexValue) { return builder.varying(vertexValue); }
@@ -345,10 +407,10 @@ protected:
     void setPosition(const Float4& clipPosition) { builder.position(clipPosition); }
     void setFragment(const Float4& color) { builder.fragment(color); }
 
-    // Generated by EACP_SHADER: visits each declared member in order.
+    // Generated by EACP_SHADER: visits each declared uniform member in order.
     virtual void reflectMembers(ShaderVisitor& visitor) = 0;
 
-    // Written by the user: the shader body, in terms of the declared members.
+    // Written by the user: the shader body, pulling vertex inputs as needed.
     virtual void define() = 0;
 
 private:
@@ -361,12 +423,18 @@ private:
 
     ShaderBuilder builder;
     GeneratedShader generated;
+    VertexLayout vertexLayoutData;
     Vector<std::byte> uniformBytes;
+
+    std::optional<Buffer> vertexBufferData;
+    std::optional<ShaderLibrary> shaderLibrary;
+    std::optional<RenderPipeline> pipelineState;
+    int vertexCountValue = 0;
 };
 } // namespace eacp::GPU
 
-// Member-list reflection in the Miro idiom: list the declared members once and a
-// reflect body is generated that hands each to the visitor by name. Mirrors
+// Member-list reflection in the Miro idiom: list the declared uniform members once
+// and a reflect body is generated that hands each to the visitor by name. Mirrors
 // Miro's MIRO_FOR_EACH macro engine, kept GPU-local so the module needs no
 // serialization dependency.
 #define EACP_GPU_PARENS ()
@@ -392,3 +460,13 @@ private:
     {                                                                               \
         EACP_GPU_FIELDS(visitor, __VA_ARGS__)                                       \
     }
+
+// Teach the shader layer that a CPU type maps to a shader value (e.g. a 3-float
+// Color is a Float3). Non-intrusive sibling of a `using ShaderValue = ...` member;
+// place at namespace scope after the type is defined.
+#define EACP_SHADER_VALUE(Type, Handle)                                             \
+    template <>                                                                     \
+    struct eacp::GPU::ShaderValueOf<Type>                                           \
+    {                                                                               \
+        using type = eacp::GPU::Handle;                                             \
+    };

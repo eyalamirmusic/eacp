@@ -5,30 +5,52 @@
 using namespace eacp;
 using namespace GPU;
 
-namespace
+// Reusable value sub-types instead of raw float arrays. EACP_SHADER_VALUE teaches
+// the shader layer their shape once, so they stand in for float2 / float3 wherever
+// a vertex field or uniform is expected.
+struct Vec2
 {
-struct Vertex
-{
-    float position[2];
-    float color[3];
+    float x, y;
 };
 
+struct Color
+{
+    float r, g, b;
+};
+
+struct Vertex
+{
+    Vec2 position;
+    Color color;
+};
+
+EACP_SHADER_VALUE(Vec2, Float2)
+EACP_SHADER_VALUE(Color, Float3)
+
+namespace
+{
 const Vertex triangleVertices[] = {
     {{0.0f, 0.8f}, {1.0f, 0.2f, 0.2f}},
     {{-0.8f, -0.8f}, {0.2f, 1.0f, 0.2f}},
     {{0.8f, -0.8f}, {0.2f, 0.2f, 1.0f}},
 };
 
-// The shader is an object: its vertex inputs and the per-frame angle are named,
-// typed members. EACP_SHADER lists them so the framework can walk the members to
-// build the IR + vertex layout and to pack the uniform block - the angle the CPU
-// sets each frame flows in through the named member, not a positional slot.
+// The shader is an object. The angle is a named uniform you set; the vertex inputs
+// are pulled straight out of the Vertex struct in define(), so that struct is the
+// single source of the vertex layout - no separate input declarations to keep in
+// sync, and the layout reads the fields' real offsets.
 struct RotatingShader final : ShaderProgram
 {
+    Uniform<Float> angle;
+
+    EACP_SHADER(angle)
+
     RotatingShader() { compile(); }
 
     void define() override
     {
+        auto position = vertexInput(&Vertex::position);
+        auto color = vertexInput(&Vertex::color);
         auto varyingColor = varying(color);
 
         auto c = cos(angle);
@@ -40,33 +62,15 @@ struct RotatingShader final : ShaderProgram
         setPosition(float4(rotated, 0.0f, 1.0f));
         setFragment(float4(varyingColor, 1.0f));
     }
-
-    VertexInput<Float2> position {&Vertex::position};
-    VertexInput<Float3> color {&Vertex::color};
-    Uniform<Float> angle;
-
-    EACP_SHADER(position, color, angle)
 };
 } // namespace
 
 struct RotatingTriangleView final : GPUView
 {
     RotatingTriangleView()
-        : vertexBuffer(Device::shared().makeBuffer(triangleVertices))
-        , library(Device::shared().makeShaderLibrary(shader.source()))
-        , pipeline(makePipeline())
-        , timer([this] { advance(); }, 60)
     {
-    }
-
-    RenderPipeline makePipeline()
-    {
-        auto descriptor = RenderPipelineDescriptor {};
-        descriptor.library = &library;
-        descriptor.sampleCount = sampleCount();
-        descriptor.vertexLayout = shader.vertexLayout();
-
-        return Device::shared().makeRenderPipeline(descriptor);
+        shader.setVertices(triangleVertices);
+        shader.prepare(sampleCount());
     }
 
     void advance()
@@ -80,18 +84,12 @@ struct RotatingTriangleView final : GPUView
         shader.angle = angle;
 
         auto pass = frame.beginPass();
-        pass.setPipeline(pipeline);
-        pass.setVertexBuffer(vertexBuffer);
-        pass.setVertexUniforms(shader);
-        pass.draw(3);
+        pass.draw(shader);
     }
 
     RotatingShader shader;
-    Buffer vertexBuffer;
-    ShaderLibrary library;
-    RenderPipeline pipeline;
     float angle = 0.0f;
-    Threads::Timer timer;
+    Threads::Timer timer {[this] { advance(); }, 60};
 };
 
 struct MyApp

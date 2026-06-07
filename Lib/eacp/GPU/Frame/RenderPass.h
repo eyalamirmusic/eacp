@@ -48,6 +48,21 @@ public:
 
     void draw(int vertexCount, int firstVertex = 0);
 
+    // Binds and draws a prepared ShaderProgram in one call: its pipeline, vertex
+    // buffer, uniform block, then its vertex count. Templated so this header stays
+    // independent of the codegen layer.
+    template <typename Program>
+    void draw(Program& program)
+    {
+        setPipeline(program.pipeline());
+        setVertexBuffer(program.vertices());
+
+        if (program.hasUniforms())
+            setVertexUniforms(program);
+
+        draw(program.vertexCount());
+    }
+
     void end();
 
 private:
