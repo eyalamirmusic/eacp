@@ -97,10 +97,9 @@ public:
         MIRO_REFLECT(path, name)
     };
 
-    // Payload of the built-in `armFileDrag` bridge command. Serializable via
-    // Miro, so the page sends `{ files: [{ path, name }, ...] }` and the bridge
-    // deserializes it straight into this type -- no hand-rolled JSON on either
-    // side. Multiple files start a single multi-file drag session.
+    // Payload of the built-in `armFileDrag` bridge command. The page sends
+    // `{ files: [{ path, name }, ...] }` and Miro deserializes it into this
+    // type. Multiple files start a single multi-file drag session.
     struct DraggableFileList
     {
         Vector<DraggableFile> files;
@@ -179,17 +178,13 @@ public:
     void addUserScript(const std::string& source, bool atDocumentStart = true);
 
     // Arms a native file drag-out of the given on-disk files for the next mouse
-    // gesture. The drag is started from the real mouseDragged: event once the
-    // pointer crosses the drag threshold, so it escapes the app into Finder /
-    // a DAW (a session started from an async callback cannot). Prefer the
-    // built-in `armFileDrag` bridge command, which deserializes an
-    // eacp::WebView::DraggableFileList and routes here. macOS-only; a no-op on
-    // other platforms.
+    // gesture, so the drag can escape the app into Finder / a DAW. Prefer the
+    // built-in `armFileDrag` bridge command, which routes a DraggableFileList
+    // here. macOS-only; a no-op on other platforms.
     void armFileDrag(const Vector<std::string>& paths);
 
-    // Arms a native window drag for the next mouse gesture. Driven by the
-    // injected window-drag script, not called directly. Implemented on macOS;
-    // asserts on backends without window-drag support.
+    // Arms a native window drag for the next mouse gesture. macOS only; asserts
+    // on backends without window-drag support.
     void armWindowDrag();
 
     std::function<void(const std::string& url)> onNavigationStarted = [](auto&&) {};
@@ -213,7 +208,7 @@ private:
     struct PopupInit;
     explicit WebView(PopupInit init);
     void initNative(Options options);
-    void installWindowDragSupport(); // defined in WebView-Shared.cpp
+    void installWindowDragSupport();
     std::shared_ptr<Native> impl;
 };
 

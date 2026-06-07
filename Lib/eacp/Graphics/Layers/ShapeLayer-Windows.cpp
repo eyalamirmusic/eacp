@@ -21,7 +21,6 @@ namespace eacp::Graphics
 
 using Microsoft::WRL::ComPtr;
 
-// Forward declaration
 ID2D1Factory1* getD2DFactory();
 
 struct ShapeLayer::Native : NativeLayerBase
@@ -55,7 +54,6 @@ struct ShapeLayer::Native : NativeLayerBase
         auto surfaceWidth = static_cast<int>(bounds.w * dpiScale);
         auto surfaceHeight = static_cast<int>(bounds.h * dpiScale);
 
-        // Get interop interface for BeginDraw/EndDraw
         auto interop = surface.as<
             ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
         if (!interop)
@@ -70,21 +68,17 @@ struct ShapeLayer::Native : NativeLayerBase
         if (FAILED(hr) || !dc)
             return;
 
-        // Clear with transparent background
         dc->Clear(D2D1::ColorF(0, 0, 0, 0));
 
-        // Base transform: offset + DPI scale
         auto baseTransform =
             D2D1::Matrix3x2F::Scale(dpiScale, dpiScale)
             * D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x),
                                             static_cast<float>(offset.y));
 
-        // Fill
         if (hasFill)
         {
             if (useGradient && !gradient.stops.empty())
             {
-                // Create gradient brush
                 D2D1_GRADIENT_STOP stops[8];
                 auto stopCount = (std::min) (gradient.stops.size(), 8);
 
@@ -120,7 +114,6 @@ struct ShapeLayer::Native : NativeLayerBase
             }
             else
             {
-                // Solid color fill
                 ComPtr<ID2D1SolidColorBrush> brush;
                 dc->CreateSolidColorBrush(
                     D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, fillColor.a),
@@ -134,7 +127,6 @@ struct ShapeLayer::Native : NativeLayerBase
             }
         }
 
-        // Stroke
         if (hasStroke && strokeWidth > 0)
         {
             ComPtr<ID2D1SolidColorBrush> strokeBrush;

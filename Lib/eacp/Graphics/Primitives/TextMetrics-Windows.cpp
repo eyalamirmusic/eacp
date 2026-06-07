@@ -104,7 +104,6 @@ float TextMetrics::getAscent(const Font& font)
     if (!textFormat || !factory)
         return 0.0f;
 
-    // Create a text layout to get metrics
     auto textLayout = ComPtr<IDWriteTextLayout>();
     factory->CreateTextLayout(L"X", 1, textFormat, 10000.0f, 10000.0f,
                               textLayout.GetAddressOf());

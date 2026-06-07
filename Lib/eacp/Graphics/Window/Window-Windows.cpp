@@ -47,7 +47,6 @@ namespace eacp::Graphics
 // getWinRTCompositor() is defined in D2DFactory-Windows.cpp
 // which is included earlier in the unity build
 
-// Window class name
 static const wchar_t* WINDOW_CLASS_NAME = L"EACPWindowClass";
 static bool windowClassRegistered = false;
 
@@ -400,7 +399,6 @@ void Window::Native::onPointerPressed(wucore::CoreIndependentInputSource const&,
     event.pos = {position.X / dpiScale, position.Y / dpiScale};
     event.type = MouseEventType::Down;
 
-    // Determine button from pointer properties
     auto props = point.Properties();
     if (props.IsLeftButtonPressed())
         event.button = MouseButton::Left;
@@ -427,7 +425,6 @@ void Window::Native::onPointerReleased(wucore::CoreIndependentInputSource const&
     event.pos = {position.X / dpiScale, position.Y / dpiScale};
     event.type = MouseEventType::Up;
 
-    // Determine which button was released
     auto props = point.Properties();
     auto update = props.PointerUpdateKind();
     if (update == wui::PointerUpdateKind::LeftButtonReleased)

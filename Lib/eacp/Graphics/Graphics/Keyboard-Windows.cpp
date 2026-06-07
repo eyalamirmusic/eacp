@@ -196,11 +196,9 @@ std::string Keyboard::keyCodeToCharacter(uint16_t keyCode)
     if (vk == 0)
         return "";
 
-    // Get keyboard state
     unsigned char keyState[256] = {0};
     GetKeyboardState(keyState);
 
-    // Convert to character
     wchar_t buffer[4] = {0};
     int result = ToUnicode(vk, 0, keyState, buffer, 4, 0);
 

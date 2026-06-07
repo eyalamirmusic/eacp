@@ -30,14 +30,12 @@ enum class WindowFlags
 using ResizeCallback = std::function<void(int width, int height)>;
 using WillResizeCallback = std::function<void(int& width, int& height)>;
 
-// Observable window events. Assign a handler to react; exposed as the public
-// `events` member on Window. All handlers fire on the main thread.
+// Observable window events. Assign a handler to react; all fire on the main
+// thread.
 struct WindowEvents
 {
-    // Called when the window gains (true) or loses (false) key focus. Lets the
-    // app track main-window foreground state — e.g. to reveal a companion
-    // overlay when the user switches to another app. macOS only; other platforms
-    // never invoke it (yet).
+    // Fires when the window gains (true) or loses (false) key focus. macOS
+    // only; other platforms never invoke it (yet).
     std::function<void(bool isKey)> onActivationChanged;
 };
 
@@ -75,22 +73,19 @@ struct WindowOptions
     // When false, the title bar still shows but the title text is hidden.
     bool showTitle = true;
 
-    // When true, the title bar draws no background of its own, so a
-    // FullSizeContentView's content shows through beneath the traffic
-    // lights. Without this, macOS (notably Sequoia) paints the titlebar's
-    // translucent material over the content as a grey band.
+    // When true, the title bar draws no background, so a FullSizeContentView's
+    // content shows through beneath the traffic lights (otherwise macOS paints
+    // a translucent grey band over it).
     bool titlebarTransparent = false;
 
-    // The hairline separator drawn under the title bar (macOS Big Sur+).
-    // Set false (NSTitlebarSeparatorStyleNone) to drop it so a custom header
-    // blends seamlessly into the content with no chrome line.
+    // The hairline separator drawn under the title bar. Set false to drop it
+    // so a custom header blends into the content with no chrome line.
     bool showTitlebarSeparator = true;
 
     // macOS: inset of the window controls (close / minimise / zoom) from the
-    // window's top-left, in points — mirrors Electron's trafficLightPosition.
-    // Only meaningful with a hidden/transparent title bar (FullSizeContentView).
-    // Unset leaves the buttons at their default macOS position. Re-applied on
-    // resize so the buttons don't drift back after fullscreen transitions.
+    // top-left, in points; mirrors Electron's trafficLightPosition. Only
+    // meaningful with a hidden/transparent title bar (FullSizeContentView);
+    // unset leaves them at the default macOS position.
     std::optional<Point> trafficLightPosition;
 
     // macOS: background colour shown behind the content view — before the web
@@ -128,11 +123,10 @@ public:
     void setContentView(View& view);
 
     // Brings the window to the front and activates the app so it rises above
-    // other applications (macOS makeKeyAndOrderFront + activateIgnoringOtherApps,
-    // Windows ShowWindow + SetForegroundWindow). No-op under headless and on iOS.
+    // other applications. No-op under headless and on iOS.
     void toFront();
 
-    // Keyboard state (tracked from window events)
+    // Keyboard state.
     bool isKeyPressed(uint16_t virtualKeyCode) const;
     bool isShiftPressed() const;
     bool isControlPressed() const;
@@ -140,7 +134,7 @@ public:
     bool isCommandPressed() const;
     ModifierKeys getModifiers() const;
 
-    // Observable window events (e.g. key-focus changes). Attach EA::Listeners.
+    // Observable window events (e.g. key-focus changes); see WindowEvents.
     WindowEvents events;
 
 private:

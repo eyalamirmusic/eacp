@@ -19,27 +19,24 @@ struct Address
     std::uint16_t port = 0;
 };
 
-// How long each phase may block before a TimeoutError is thrown. io applies
-// to a single send or receive, not to a whole transaction. A zero (or
-// negative) duration means "no timeout" - block until it completes, which is
-// what a long-lived server wants for accept() and for reads.
+// How long each phase may block before a TimeoutError. io applies to a single
+// send or receive, not a whole transaction. Zero or negative means no timeout
+// — what a long-lived server wants for accept() and reads.
 struct Timeouts
 {
     std::chrono::milliseconds connect {15000};
     std::chrono::milliseconds io {20000};
 };
 
-// Every failure - name resolution, a refused connect, a timeout, a peer
-// that hangs up mid-read - surfaces as this one exception type, carrying a
-// message that is ready to log or show.
+// Every failure - name resolution, refused connect, timeout, peer hangup -
+// surfaces as this one exception type, with a message ready to log or show.
 struct Error : std::runtime_error
 {
     using std::runtime_error::runtime_error;
 };
 
-// A send or receive that ran past its timeout without the peer doing
-// anything. Distinct from Error so "the other side went quiet" can be told
-// apart from "the connection broke" - handy for idle-driven reads.
+// A send or receive that ran past its timeout. Distinct from Error so "the
+// peer went quiet" can be told apart from "the connection broke".
 struct TimeoutError : Error
 {
     using Error::Error;
@@ -47,10 +44,9 @@ struct TimeoutError : Error
 
 // A live, connected TCP stream.
 //
-// Move-only by design: if you are holding a Connection, the socket is open.
-// There is no half-built state to guard against - dialing happens in
-// connect() and either yields an open stream or throws, and the destructor
-// closes. Reconnecting means asking connect() for a fresh one.
+// Move-only: holding a Connection means the socket is open. connect() either
+// yields an open stream or throws (no half-built state); the destructor
+// closes. Reconnect via a fresh connect().
 class Connection
 {
 public:

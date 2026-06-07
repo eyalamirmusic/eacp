@@ -38,13 +38,12 @@ private:
     {
         winrt::init_apartment(winrt::apartment_type::single_threaded);
 
-        // Create DirectWrite factory
         winrt::check_hresult(
             DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,
                                 __uuidof(IDWriteFactory),
                                 reinterpret_cast<IUnknown**>(dwriteFactory.put())));
 
-        // Create D3D11 device with BGRA support for D2D interop
+        // BGRA support is required for D2D interop.
         Array featureLevels = {D3D_FEATURE_LEVEL_11_1,
                                D3D_FEATURE_LEVEL_11_0,
                                D3D_FEATURE_LEVEL_10_1,
@@ -80,21 +79,16 @@ private:
                                   nullptr));
         }
 
-        // Get DXGI device from D3D device
         dxgiDevice = d3dDevice.as<IDXGIDevice>();
 
-        // Create D2D factory
         winrt::check_hresult(
             D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, d2dFactory.put()));
 
-        // Create D2D device from DXGI device
         winrt::check_hresult(
             d2dFactory->CreateDevice(dxgiDevice.get(), d2dDevice.put()));
 
-        // Create WinRT Compositor
         compositor = wuc::Compositor();
 
-        // Create CompositionGraphicsDevice via interop
         namespace Interop = ABI::Windows::UI::Composition;
         auto interop = compositor.as<Interop::ICompositorInterop>();
         winrt::com_ptr<Interop::ICompositionGraphicsDevice> abiDevice;

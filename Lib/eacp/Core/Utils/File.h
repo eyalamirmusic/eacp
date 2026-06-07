@@ -8,12 +8,11 @@
 
 namespace eacp
 {
-// RAII handle for reading a file off disk in bounded chunks, without ever
-// loading the whole thing into memory. Wraps std::filesystem queries and a
-// lazily-opened std::ifstream behind a small, range-friendly API.
+// RAII handle for reading a file off disk in bounded chunks, without
+// loading the whole thing into memory.
 //
-// Non-copyable (it owns a stream); move it or keep it behind a shared_ptr
-// when a reader closure needs to outlive the call that created it.
+// Non-copyable (it owns an open stream); move it or hold it behind a
+// shared_ptr when a reader closure must outlive the call that made it.
 class File
 {
 public:
@@ -24,9 +23,8 @@ public:
     bool exists() const;
     bool isRegularFile() const;
 
-    // True if this file's path resolves to a location inside `root` (not an
-    // escape via "..", symlinks, etc.). The guard for serving files off disk
-    // to untrusted callers: reject anything outside an allowed root.
+    // True if this file's path resolves inside `root` (no escape via "..",
+    // symlinks, etc.). Use it to sandbox files served to untrusted callers.
     bool isUnder(const std::filesystem::path& root) const;
 
     // Size in bytes, or 0 if the file is missing or not a regular file.
