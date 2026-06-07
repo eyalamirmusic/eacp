@@ -1,0 +1,49 @@
+#include <eacp/GPU/GPU.h>
+
+#include <NanoTest/NanoTest.h>
+
+using namespace nano;
+using namespace eacp;
+using namespace eacp::GPU;
+
+namespace
+{
+// Minimal shader whose vertex input matches the single Float4 attribute below,
+// so pipeline creation exercises the full vertex-descriptor path.
+const char* smokeShader = R"(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn { float4 position [[attribute(0)]]; };
+
+vertex float4 vertexMain(VertexIn in [[stage_in]]) { return in.position; }
+fragment float4 fragmentMain() { return float4(1.0, 1.0, 1.0, 1.0); }
+)";
+} // namespace
+
+// Builds every resource type without a window or drawable. On a host with no
+// Metal device (e.g. some headless CI VMs) it self-skips rather than fail.
+auto tDeviceBuildsResources = test("GPU/deviceBuildsResources") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    const float vertices[] = {0.f, 0.f, 0.f, 1.f, 1.f, 1.f, 1.f, 1.f};
+
+    auto buffer = device.makeBuffer(vertices);
+    check(buffer.isValid());
+    check(buffer.size() == sizeof(vertices));
+
+    auto library = device.makeShaderLibrary(ShaderSource::msl(smokeShader));
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout.attribute(VertexFormat::Float4, 0);
+    descriptor.vertexLayout.stride = sizeof(float) * 4;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
+};
