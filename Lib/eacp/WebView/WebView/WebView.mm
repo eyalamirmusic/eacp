@@ -6,6 +6,7 @@
 #include "StreamingRange.h"
 
 #include <eacp/Core/ObjC/Strings.h>
+#include <eacp/Core/Platform/Platform.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
 #include <eacp/Core/Utils/Containers.h>
 #include <algorithm>
@@ -613,9 +614,8 @@ void WebView::initNative(Options options)
     impl->attachToParentView();
     registerWebView(this);
 
-#if TARGET_OS_OSX // desktop-only; iOS has no movable windows
-    installWindowDragSupport();
-#endif
+    if (Platform::isMac()) // desktop-only; iOS has no movable windows
+        installWindowDragSupport();
 }
 
 WebView::WebView(PopupInit init)

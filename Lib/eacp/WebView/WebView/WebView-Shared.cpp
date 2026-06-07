@@ -1,13 +1,11 @@
 #include "WebView.h"
 
 #include "DevServerProbe.h"
+#include "JsStringLiteral.h"
 #include "StreamingRange.h"
 
-#if defined(_WIN32)
-#include "JsStringLiteral.h"
-#endif
-
 #include <eacp/Core/App/AppEnvironment.h>
+#include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/File.h>
 
@@ -423,45 +421,49 @@ Threads::Async<std::string> WebView::callJS(const std::string& script)
 {
     auto promise = Threads::AsyncPromise<std::string>();
 
-#if defined(_WIN32)
-    // WebView2's ExecuteScript reports JS exceptions as a "null" result
-    // with HRESULT S_OK — there's no native error path, unlike WKWebView's
-    // NSError-on-throw. Wrap the user script in a try/catch IIFE that
-    // prefixes its return value with "OK"/"ER" so we can route failures
-    // into promise.reject() the way macOS callers already expect.
-    auto wrapped = std::string {"(function() { try { var __r = eval("}
-                   + jsStringLiteral(script)
-                   + "); return 'OK' + (typeof __r === 'string' ? __r :"
-                     " __r === undefined ? '' : JSON.stringify(__r)); }"
-                     " catch (e) { return 'ER' + String("
-                     "e && e.message ? e.message : e); } })()";
+    if (Platform::isWindows())
+    {
+        // WebView2's ExecuteScript reports JS exceptions as a "null" result
+        // with HRESULT S_OK — there's no native error path, unlike WKWebView's
+        // NSError-on-throw. Wrap the user script in a try/catch IIFE that
+        // prefixes its return value with "OK"/"ER" so we can route failures
+        // into promise.reject() the way macOS callers already expect.
+        auto wrapped = std::string {"(function() { try { var __r = eval("}
+                       + jsStringLiteral(script)
+                       + "); return 'OK' + (typeof __r === 'string' ? __r :"
+                         " __r === undefined ? '' : JSON.stringify(__r)); }"
+                         " catch (e) { return 'ER' + String("
+                         "e && e.message ? e.message : e); } })()";
 
-    evaluateJavaScript(wrapped,
-                       [promise](const std::string& result, const std::string& error)
-                       {
-                           if (!error.empty())
-                           {
-                               promise.reject(error);
-                               return;
-                           }
-                           if (result.size() >= 2 && result.substr(0, 2) == "OK")
-                               promise.resolve(result.substr(2));
-                           else if (result.size() >= 2
-                                    && result.substr(0, 2) == "ER")
-                               promise.reject(result.substr(2));
-                           else
-                               promise.resolve(result);
-                       });
-#else
-    evaluateJavaScript(script,
-                       [promise](const std::string& result, const std::string& error)
-                       {
-                           if (error.empty())
-                               promise.resolve(result);
-                           else
-                               promise.reject(error);
-                       });
-#endif
+        evaluateJavaScript(
+            wrapped,
+            [promise](const std::string& result, const std::string& error)
+            {
+                if (!error.empty())
+                {
+                    promise.reject(error);
+                    return;
+                }
+                if (result.size() >= 2 && result.substr(0, 2) == "OK")
+                    promise.resolve(result.substr(2));
+                else if (result.size() >= 2 && result.substr(0, 2) == "ER")
+                    promise.reject(result.substr(2));
+                else
+                    promise.resolve(result);
+            });
+    }
+    else
+    {
+        evaluateJavaScript(
+            script,
+            [promise](const std::string& result, const std::string& error)
+            {
+                if (error.empty())
+                    promise.resolve(result);
+                else
+                    promise.reject(error);
+            });
+    }
 
     return promise.get();
 }

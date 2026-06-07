@@ -6,9 +6,11 @@ target_link_libraries(eacp-core PUBLIC ea_data_structures)
 
 target_sources(eacp-core PRIVATE
         App/App.cpp
+        Platform/Platform.cpp
         Process/Process.cpp
         Threads/EventLoop.cpp
         Threads/TaskSemaphore.cpp
+        Utils/Environment.cpp
         Utils/File.cpp
         Utils/Files.cpp
         Utils/Logging.cpp
@@ -20,9 +22,12 @@ if (APPLE)
             ObjC/AutoReleasePool.mm
             ObjC/Strings.mm
             Threads/EventLoop.mm
+            Threads/EventLoop-Default.cpp
             Threads/Timer.mm
             Threads/ThreadUtils.mm
-            Utils/Files.mm)
+            Utils/Environment-Posix.cpp
+            Utils/Files.mm
+            Utils/Logging-Posix.cpp)
     target_link_libraries(eacp-core PRIVATE
             "-framework Foundation")
     if (IOS)
@@ -47,16 +52,21 @@ elseif (WIN32)
             Threads/EventLoop-Windows.cpp
             Threads/ThreadUtils-Windows.cpp
             Threads/Timer-Windows.cpp
-            Utils/Files-Windows.cpp)
+            Utils/Environment-Windows.cpp
+            Utils/Files-Windows.cpp
+            Utils/Logging-Windows.cpp)
     target_link_libraries(eacp-core PRIVATE windowsapp)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-core PRIVATE
             App/App-Linux.cpp
             Process/Process-Posix.cpp
             Threads/EventLoop-Linux.cpp
+            Threads/EventLoop-Default.cpp
             Threads/ThreadUtils-Linux.cpp
             Threads/Timer-Linux.cpp
-            Utils/Files-Linux.cpp)
+            Utils/Environment-Posix.cpp
+            Utils/Files-Linux.cpp
+            Utils/Logging-Posix.cpp)
     find_package(Threads REQUIRED)
     target_link_libraries(eacp-core PRIVATE Threads::Threads)
 endif ()

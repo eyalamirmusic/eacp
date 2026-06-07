@@ -1,4 +1,5 @@
 #include <eacp/WebView/WebView.h>
+#include <eacp/Core/Utils/Environment.h>
 #include <ResEmbed/ResEmbed.h>
 #include <WebResources.h>
 
@@ -42,26 +43,6 @@ bool isAudioFile(const std::filesystem::path& path)
     auto ext = lowerExtension(path);
     return std::find(audioExtensions.begin(), audioExtensions.end(), ext)
            != audioExtensions.end();
-}
-
-// The user's home directory. Windows exposes it as USERPROFILE (HOME is
-// usually unset there) and steers CRT callers off the deprecated getenv
-// toward _dupenv_s; macOS and Linux use HOME.
-std::filesystem::path homeDirectory()
-{
-#ifdef _WIN32
-    char* value = nullptr;
-    auto size = std::size_t {0};
-    if (_dupenv_s(&value, &size, "USERPROFILE") != 0 || value == nullptr)
-        return {};
-
-    auto home = std::filesystem::path {value};
-    std::free(value);
-    return home;
-#else
-    const auto* home = std::getenv("HOME");
-    return std::filesystem::path {home != nullptr ? home : ""};
-#endif
 }
 
 std::filesystem::path downloadsDir()

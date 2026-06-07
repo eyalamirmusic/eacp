@@ -1,5 +1,7 @@
 #include <eacp/GPU/GPU.h>
 
+#include <eacp/Core/Platform/Platform.h>
+
 #include <NanoTest/NanoTest.h>
 
 using namespace nano;
@@ -11,8 +13,7 @@ namespace
 // Minimal shader whose vertex input matches the single Float4 attribute below,
 // so pipeline creation exercises the full vertex-descriptor path. Provided in
 // the backend the platform compiles (MSL on Metal, HLSL on D3D11).
-#if defined(_WIN32)
-const char* smokeShader = R"(
+const char* hlslSmokeShader = R"(
 struct VertexIn { float4 position : TEXCOORD0; };
 struct VertexOut { float4 position : SV_Position; };
 
@@ -20,12 +21,7 @@ VertexOut vertexMain(VertexIn input) { VertexOut o; o.position = input.position;
 float4 fragmentMain(VertexOut input) : SV_Target { return float4(1.0, 1.0, 1.0, 1.0); }
 )";
 
-ShaderSource smokeShaderSource()
-{
-    return ShaderSource::hlsl(smokeShader);
-}
-#else
-const char* smokeShader = R"(
+const char* mslSmokeShader = R"(
 #include <metal_stdlib>
 using namespace metal;
 
@@ -35,11 +31,13 @@ vertex float4 vertexMain(VertexIn in [[stage_in]]) { return in.position; }
 fragment float4 fragmentMain() { return float4(1.0, 1.0, 1.0, 1.0); }
 )";
 
+// Both branches name both strings, so neither is an unused-variable warning on
+// the platform whose backend isn't selected.
 ShaderSource smokeShaderSource()
 {
-    return ShaderSource::msl(smokeShader);
+    return Platform::isWindows() ? ShaderSource::hlsl(hlslSmokeShader)
+                                 : ShaderSource::msl(mslSmokeShader);
 }
-#endif
 } // namespace
 
 // Builds every resource type without a window or drawable. On a host with no

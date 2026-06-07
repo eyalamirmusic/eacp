@@ -1,6 +1,8 @@
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/GPU/GPU.h>
 
+#include <eacp/Core/Platform/Platform.h>
+
 #include <ResEmbed/ResEmbed.h>
 
 #include <stdexcept>
@@ -25,11 +27,7 @@ const Vertex triangleVertices[] = {
 
 ShaderSource loadTriangleShader()
 {
-#if defined(_WIN32)
-    auto fileName = "Triangle.hlsl";
-#else
-    auto fileName = "Triangle.metal";
-#endif
+    auto fileName = Platform::isWindows() ? "Triangle.hlsl" : "Triangle.metal";
 
     auto shader = ResEmbed::get(fileName, "TriangleShaders");
 
@@ -37,11 +35,8 @@ ShaderSource loadTriangleShader()
         throw std::runtime_error(std::string("Triangle: embedded ") + fileName
                                  + " not found");
 
-#if defined(_WIN32)
-    auto source = ShaderSource::hlsl(shader.toString());
-#else
-    auto source = ShaderSource::msl(shader.toString());
-#endif
+    auto source = Platform::isWindows() ? ShaderSource::hlsl(shader.toString())
+                                        : ShaderSource::msl(shader.toString());
 
     return source.withVertex("vertexMain").withFragment("fragmentMain");
 }
