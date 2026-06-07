@@ -19,12 +19,13 @@ namespace eacp::Threads
 constexpr UINT WM_EACP_STOP_LOOP = WM_APP + 0x42E0;
 
 // Wake-up posted by EventLoop::call to make the pump drain its
-// pending-callback queue. We don't use the WinRT DispatcherQueue
-// for this — under nested pumping its messages aren't reliably
-// processed by our PeekMessage loop (the items sit in the queue and
-// only fire after the outer pump exits), which breaks any coroutine
-// that co_awaits a callAsync continuation while running inside a
-// nested runEventLoopFor.
+// pending-callback queue. Posted to a dedicated message-only window
+// (see messageWindow) rather than the thread or the WinRT
+// DispatcherQueue: a window message is caught by our PeekMessage loop
+// (so nested runFor pumps and co_awaited callAsync continuations still
+// work) AND is dispatched by foreign modal loops — the move/size loop,
+// menus, modal dialogs — so deferred work doesn't starve while one of
+// those is on screen.
 constexpr UINT WM_EACP_RUN_PENDING = WM_APP + 0x42E1;
 
 static std::atomic<DWORD> mainThreadId {0};
@@ -63,6 +64,65 @@ PendingCallbacks& getPendingCallbacks()
     return Singleton::get<PendingCallbacks>();
 }
 
+// Message-only window that EventLoop::call posts WM_EACP_RUN_PENDING to.
+// Owned by the loop thread (created in initLoopThread, destroyed in run()'s
+// teardown). Read from worker threads in EventLoop::call — PostMessage is
+// thread-safe, so an atomic handle is enough.
+static std::atomic<HWND> messageWindow {nullptr};
+
+static LRESULT CALLBACK messageWindowProc(HWND hwnd,
+                                          UINT msg,
+                                          WPARAM wParam,
+                                          LPARAM lParam)
+{
+    if (msg == WM_EACP_RUN_PENDING)
+    {
+        getPendingCallbacks().run();
+        return 0;
+    }
+
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+static void ensureMessageWindow()
+{
+    if (messageWindow.load())
+        return;
+
+    static const wchar_t* className = L"EACPEventLoopMessageWindow";
+    static auto classRegistered = false;
+
+    if (!classRegistered)
+    {
+        auto wc = WNDCLASSEXW {};
+        wc.cbSize = sizeof(WNDCLASSEXW);
+        wc.lpfnWndProc = messageWindowProc;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpszClassName = className;
+        RegisterClassExW(&wc);
+        classRegistered = true;
+    }
+
+    messageWindow = CreateWindowExW(0,
+                                    className,
+                                    L"",
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    HWND_MESSAGE,
+                                    nullptr,
+                                    GetModuleHandleW(nullptr),
+                                    nullptr);
+}
+
+static void destroyMessageWindow()
+{
+    if (auto hwnd = messageWindow.exchange(nullptr))
+        DestroyWindow(hwnd);
+}
+
 namespace
 {
 void initLoopThread()
@@ -72,11 +132,12 @@ void initLoopThread()
     winrt::init_apartment(winrt::apartment_type::single_threaded);
     initMainThread();
     mainThreadId = GetCurrentThreadId();
+    ensureMessageWindow();
 
-    // Any callbacks queued before the main thread was identified will
-    // have been buffered in PendingCallbacks; nudge the pump to drain
-    // them on the next iteration.
-    PostThreadMessageW(mainThreadId.load(), WM_EACP_RUN_PENDING, 0, 0);
+    // Any callbacks queued before the loop existed will have been buffered
+    // in PendingCallbacks; nudge the pump to drain them on the next
+    // iteration.
+    PostMessageW(messageWindow.load(), WM_EACP_RUN_PENDING, 0, 0);
 }
 } // namespace
 
@@ -109,6 +170,7 @@ void EventLoop::run()
     }
 
     mainThreadId = 0;
+    destroyMessageWindow();
 
     // Tear down the dispatcher queue while COM is still healthy. If
     // we leave its WinRT smart pointers alive until static destruction
@@ -198,12 +260,14 @@ void EventLoop::call(Callback func)
 {
     getPendingCallbacks().add(func);
 
-    // Poke the pump so it drains the callback list on the next tick.
-    // If the main thread hasn't entered the loop yet (mainThreadId
-    // still 0) the callback stays buffered and gets drained by
-    // initLoopThread()'s same WM_EACP_RUN_PENDING post.
-    auto id = mainThreadId.load();
-    if (id != 0)
+    // Wake the pump so it drains the callback list on the next tick.
+    // Posting to our message-only window means the wake survives foreign
+    // modal loops. Before the window exists we fall back to a thread
+    // message; if neither is up yet the callback stays buffered and
+    // initLoopThread() drains it once the loop starts.
+    if (auto hwnd = messageWindow.load())
+        PostMessageW(hwnd, WM_EACP_RUN_PENDING, 0, 0);
+    else if (auto id = mainThreadId.load())
         PostThreadMessageW(id, WM_EACP_RUN_PENDING, 0, 0);
 }
 

@@ -47,6 +47,10 @@ namespace eacp::Graphics
 // getWinRTCompositor() is defined in D2DFactory-Windows.cpp
 // which is included earlier in the unity build
 
+// Defined in View-Windows.cpp: paints the views that requested a repaint and
+// whose host is `hwnd`. Driven from WM_PAINT.
+void paintDirtyViewsForHost(HWND hwnd);
+
 static const wchar_t* WINDOW_CLASS_NAME = L"EACPWindowClass";
 static bool windowClassRegistered = false;
 
@@ -541,6 +545,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
         case WM_PAINT:
         {
             ValidateRect(hwnd, nullptr);
+
+            paintDirtyViewsForHost(hwnd);
 
             if (self->contentView != nullptr)
                 self->ensureAllLayersRendered(self->contentView);
