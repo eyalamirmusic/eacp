@@ -17,7 +17,6 @@
 
 namespace wuc = winrt::Windows::UI::Composition;
 
-// Forward declaration of factory access
 namespace eacp::Graphics
 {
 IDWriteFactory* getDWriteFactory();
@@ -32,7 +31,6 @@ struct TextLayer::Native : NativeLayerBase
 {
     Native()
     {
-        // Create default text format
         auto* factory = getDWriteFactory();
         if (factory)
         {
@@ -63,7 +61,6 @@ struct TextLayer::Native : NativeLayerBase
         auto surfaceWidth = static_cast<int>(bounds.w * dpiScale);
         auto surfaceHeight = static_cast<int>(bounds.h * dpiScale);
 
-        // Get interop interface for BeginDraw/EndDraw
         auto interop = surface.as<
             ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
         if (!interop)
@@ -78,17 +75,14 @@ struct TextLayer::Native : NativeLayerBase
         if (FAILED(hr) || !dc)
             return;
 
-        // Clear with transparent background
         dc->Clear(D2D1::ColorF(0, 0, 0, 0));
 
-        // Apply DPI scale transform
         auto baseTransform = D2D1::Matrix3x2F::Scale(dpiScale, dpiScale)
                              * D2D1::Matrix3x2F::Translation(
                                  static_cast<float>(offset.x),
                                  static_cast<float>(offset.y));
         dc->SetTransform(baseTransform);
 
-        // Create brush for text
         ComPtr<ID2D1SolidColorBrush> brush;
         dc->CreateSolidColorBrush(D2D1::ColorF(color.r, color.g, color.b, color.a),
                                   brush.GetAddressOf());

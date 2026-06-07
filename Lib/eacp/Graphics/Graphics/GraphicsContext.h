@@ -20,8 +20,7 @@ public:
     virtual void setColor(const Color& color) = 0;
 
     virtual void fillRect(const Rect& rect) = 0;
-    virtual void fillRoundedRect(const Rect& rect,
-                                 float radius) = 0; // Very easy in CG
+    virtual void fillRoundedRect(const Rect& rect, float radius) = 0;
 
     virtual void setLineWidth(float width) = 0;
     virtual void strokeRect(const Rect& rect) = 0;

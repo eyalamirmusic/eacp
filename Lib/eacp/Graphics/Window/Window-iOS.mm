@@ -27,7 +27,6 @@ struct Window::Native
 {
     Native(const WindowOptions&)
     {
-        // Get the key window scene
         UIWindowScene* windowScene = nil;
         for (UIScene* scene in [UIApplication sharedApplication].connectedScenes)
         {

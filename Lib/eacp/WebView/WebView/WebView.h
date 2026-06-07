@@ -213,7 +213,7 @@ private:
     struct PopupInit;
     explicit WebView(PopupInit init);
     void initNative(Options options);
-    void installWindowDragSupport(); // defined in WebView-Shared.cpp
+    void installWindowDragSupport();
     std::shared_ptr<Native> impl;
 };
 

@@ -132,7 +132,7 @@ public:
     // Windows ShowWindow + SetForegroundWindow). No-op under headless and on iOS.
     void toFront();
 
-    // Keyboard state (tracked from window events)
+    // Keyboard state.
     bool isKeyPressed(uint16_t virtualKeyCode) const;
     bool isShiftPressed() const;
     bool isControlPressed() const;
@@ -140,7 +140,7 @@ public:
     bool isCommandPressed() const;
     ModifierKeys getModifiers() const;
 
-    // Observable window events (e.g. key-focus changes). Attach EA::Listeners.
+    // Observable window events (e.g. key-focus changes); see WindowEvents.
     WindowEvents events;
 
 private:

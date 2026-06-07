@@ -78,7 +78,6 @@ struct NativeLayerBase
 
         if (visual)
         {
-            // Add visual to parent's children
             parent.Children().InsertAtTop(visual);
             surfaceDirty = true;
             contentDirty = true;
@@ -103,7 +102,6 @@ struct NativeLayerBase
         return static_cast<float>(dpi) / 96.f;
     }
 
-    // Create/recreate surface at current bounds size
     virtual void createSurface()
     {
         if (!visual)
