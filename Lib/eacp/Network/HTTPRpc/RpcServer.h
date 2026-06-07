@@ -9,20 +9,16 @@
 namespace eacp::HTTP::Rpc
 {
 
-// Mounts a Miro::Bridge onto an HTTP::Server as a single POST endpoint
-// at `basePath` (default "/rpc"). Wire protocol mirrors the WebView
-// bridge: request body is { "command": "...", "payload": {...} },
-// success response is { "result": <JSON> }, error response is the
-// throwing handler's status code (or 404 for unknown commands) with
-// body { "error": "..." }.
+// Mounts a Miro::Bridge onto an HTTP::Server as a single POST endpoint at
+// `basePath` (default "/rpc"). Wire protocol mirrors the WebView bridge:
+// request { "command", "payload" }, success { "result": <JSON> }, error the
+// handler's status code (404 for unknown commands) with { "error": "..." }.
 //
-// Bridge ownership lies with the caller; the same Bridge can be wired
-// to a WebView transport at the same time so a single set of typed
-// handlers (including those declared via MIRO_EXPORT_COMMAND) is
-// served over both wires.
+// The caller owns the Bridge and can wire it to a WebView transport at the
+// same time, serving one set of typed handlers over both wires.
 //
-// Lifetime: the Server must outlive the HTTP::Server it was attached
-// to — the registered route handler captures `this`.
+// The Server must outlive the HTTP::Server it attached to — the route handler
+// captures `this`.
 class Server
 {
 public:

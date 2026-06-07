@@ -29,29 +29,24 @@ AppFactory& getAppFactory();
 void destroyApp();
 void quit();
 
-// Destroys the current app instance and recreates it via the factory
-// captured by run<T>(). Marshaled onto the message thread so it's
-// safe to call from any thread. Returns immediately — the destroy +
+// Destroys the current app instance and recreates it via run<T>()'s
+// factory. Safe to call from any thread; returns immediately and the
 // recreate happens on the next runloop tick.
 void restart();
 
-// Hands `url` off to the OS for its registered handler (e.g. the user's
-// default browser for http/https). Useful for OAuth flows where the
-// in-app WebView can't host the provider's login page and we need to
-// escape to the system browser. Linux has no backend yet and will
-// assert if called.
+// Hands `url` to the OS for its registered handler (e.g. the default
+// browser for http/https) — e.g. to run an OAuth login outside the
+// in-app WebView. Linux has no backend yet and asserts if called.
 void openExternalURL(const std::string& url);
 
-// Controls whether the app presents a Dock icon and appears in the
-// app switcher (macOS NSApplicationActivationPolicyRegular vs
-// Accessory). Pass false to run as a menu-bar / tray-only app — pair it
-// with a Graphics::TrayIcon so the app stays reachable. Call it early,
-// e.g. from the app struct's constructor.
+// Controls whether the app shows a Dock icon and appears in the app
+// switcher. Pass false to run as a menu-bar / tray-only app — pair with
+// a Graphics::TrayIcon so it stays reachable. Call early (e.g. from the
+// app struct's constructor).
 //
-// For a flicker-free launch as an accessory app, also set LSUIElement in
-// the bundle's Info.plist; this call then just confirms that policy at
-// runtime. On Windows an app with no Window already has no taskbar
-// button, so this is a no-op there (as it is on Linux and iOS).
+// For a flicker-free accessory launch, also set LSUIElement in the
+// bundle's Info.plist; this call then just confirms the policy at
+// runtime. No-op on Windows, Linux and iOS.
 void setDockIconVisible(bool visible);
 
 struct FilePickerOptions
@@ -77,16 +72,14 @@ void run()
     auto createFunc = [] { getGlobalApp().template create<App<T>>(); };
     getAppFactory() = createFunc;
     Threads::runEventLoop(createFunc);
-    // Tear the app down here, after the event loop has fully exited,
-    // so we never destroy from inside a still-pumping callback (and
-    // never depend on the dispatcher delivering a post-quit lambda on
-    // Windows).
+    // Tear down after the loop has fully exited, never from inside a
+    // still-pumping callback.
     destroyApp();
 }
 
-// argc/argv-aware overload — captures the command line into
-// AppEnvironment::commandLineArgs before bringing the loop up, so
-// main() becomes a one-liner: `Apps::run<MyApp>(argc, argv);`.
+// argc/argv overload — captures the command line (see commandLineArgs)
+// before starting the loop, so main() is a one-liner:
+// `Apps::run<MyApp>(argc, argv);`.
 template <typename T>
 void run(int argc, char* argv[])
 {

@@ -13,29 +13,24 @@
 namespace eacp::Graphics
 {
 
-// ---------- Auto-bind registry ----------
+// Auto-bind registry.
 //
-// EACP_STATE(...) registers a binder into a process-wide list during
-// static init. Each transport (currently WebViewBridge) calls
-// attachStaticStateBinders() in its constructor to subscribe every
-// registered state at once. The transport owns the resulting Listener
-// pack — when it dies, the listeners unsubscribe.
+// EACP_STATE(...) registers a binder into a process-wide list at static init;
+// each transport subscribes to all registered states at once and unsubscribes
+// when it dies.
 //
-// A "store" is any user-defined class that the macro can attach a
-// Listener to (i.e. it derives from EA::Broadcaster or exposes
-// `getBroadcaster()`) and exposes a `get()` returning the payload by
-// const-ref. The store owns its state, its mutators, and the choice of
-// when to call trigger() — the macro only wires it to the bridge.
+// A "store" is any user-defined class the macro can attach a Listener to (it
+// derives from EA::Broadcaster or exposes `getBroadcaster()`) and that exposes
+// a `get()` returning the payload by const-ref. The store owns its state, its
+// mutators, and when to call trigger() — the macro only wires it to the bridge.
 
 using StateBinder = std::function<OwningPointer<EA::Listener>(Miro::Bridge&)>;
 
 namespace Detail
 {
 
-// Inline so static initializers in any TU using EACP_STATE can call it
-// without needing to link the eacp-webview library — important for the
-// Miro codegen executable, which links the user's command sources but
-// not the runtime transport library.
+// Inline so static initializers in any TU using EACP_STATE can call it without
+// linking the eacp-webview library (the Miro codegen executable doesn't).
 inline Vector<StateBinder>& stateBinderRegistry()
 {
     static auto registry = Vector<StateBinder> {};

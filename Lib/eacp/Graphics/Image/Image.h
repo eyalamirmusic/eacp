@@ -17,15 +17,14 @@ enum class ImageFormat
 
 // A decoded raster image held as tightly packed 8-bit RGBA: exactly
 // width * height * 4 bytes, no row padding, top-left origin, straight
-// (non-premultiplied) alpha. Decode from / encode to PNG or JPEG via
-// the platform image codecs (ImageIO on Apple, WIC on Windows).
+// (non-premultiplied) alpha. Decodes from / encodes to PNG or JPEG.
 //
 // Pixel access never throws. decode()/load() report failure by returning
 // an invalid image (operator bool / isValid() is false), setting *error
 // when provided. The size/dimension constructors throw std::invalid_argument
 // on a negative dimension or a pixel buffer whose length does not match
-// width * height * 4. Encoding a valid image and writing to disk throw
-// std::runtime_error on failure, since a valid image is always encodable.
+// width * height * 4. Encoding a valid image or writing it to disk throws
+// std::runtime_error on failure.
 class Image
 {
 public:

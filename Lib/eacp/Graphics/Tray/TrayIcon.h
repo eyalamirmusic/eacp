@@ -28,11 +28,10 @@ public:
     TrayIcon(const TrayIcon&) = delete;
     TrayIcon& operator=(const TrayIcon&) = delete;
 
-    // The icon shown in the menu bar / tray. Supply a square RGBA image;
-    // a 32x32 (or larger, for crisp Retina rendering) source works well.
-    // On macOS the image is drawn as a template by default — the system
-    // tints it to match the light/dark menu bar, using only its alpha
-    // channel — unless setTemplateRendering(false) is called first.
+    // The icon shown in the menu bar / tray. Supply a square RGBA image
+    // (32x32 or larger for crisp Retina). On macOS it's drawn as a template
+    // by default — tinted to match the menu bar via its alpha channel —
+    // unless setTemplateRendering(false) is called first.
     void setIcon(const Image& icon);
 
     // The hover tooltip.

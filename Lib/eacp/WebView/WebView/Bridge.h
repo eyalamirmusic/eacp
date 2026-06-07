@@ -17,20 +17,16 @@ namespace eacp::Graphics
 using EmptyMessage = Miro::EmptyValue;
 
 // Transport adapter that routes WebView <-> C++ messages through a
-// Miro::Bridge. The Bridge owns the CommandTable and the event
-// registry; this class is responsible only for the WebView wire
-// format (script message handler + injected JS shim + an event
-// broadcaster registered on construction and removed on destruction).
+// Miro::Bridge, which owns the command table and event registry; this class
+// handles only the WebView wire format.
 //
-// On construction the bridge picks up every state hub declared via
-// EACP_STATE in the linked TUs (see StateBridge.h) and broadcasts
-// their changes on the wire automatically. The auto-bind listeners
-// live on `stateListeners` so they unsubscribe when this bridge dies.
+// On construction it picks up every state declared via EACP_STATE in the
+// linked TUs (see StateBridge.h) and broadcasts their changes on the wire
+// automatically, unsubscribing when the bridge is destroyed.
 //
-// The Bridge can be shared with other transports (e.g. an
-// HTTP::Rpc::Server) so a single set of typed handlers — including
-// those declared via MIRO_EXPORT_COMMAND — is served over multiple
-// wires concurrently.
+// The Bridge can be shared with other transports (e.g. HTTP::Rpc::Server) so a
+// single set of typed handlers — including those from MIRO_EXPORT_COMMAND — is
+// served over multiple wires at once.
 class WebViewBridge
 {
 public:
@@ -55,13 +51,11 @@ public:
     void setCommandExecution(CommandExecution mode) { commandExecution = mode; }
     CommandExecution getCommandExecution() const { return commandExecution; }
 
-    // Per-command override of the execution mode, keyed by command name.
-    // Takes precedence over the global default above, so a single slow
-    // command can be pushed onto a worker thread (or pinned to the main
-    // thread) without affecting the rest. Note that this only governs
-    // synchronous handlers — an async handler (void(Req, Completer<Res>))
-    // owns its own threading and is unaffected by the mode. Configure
-    // before commands start flowing; consulted on the main thread.
+    // Per-command override of the execution mode, keyed by command name; takes
+    // precedence over the global default, so one slow command can go to a
+    // worker thread without affecting the rest. Governs synchronous handlers
+    // only — an async handler owns its own threading. Configure before commands
+    // start flowing; consulted on the main thread.
     void setCommandExecution(const std::string& command, CommandExecution mode)
     {
         commandModes[command] = mode;
