@@ -9,7 +9,22 @@ using namespace eacp::GPU;
 namespace
 {
 // Minimal shader whose vertex input matches the single Float4 attribute below,
-// so pipeline creation exercises the full vertex-descriptor path.
+// so pipeline creation exercises the full vertex-descriptor path. Provided in
+// the backend the platform compiles (MSL on Metal, HLSL on D3D11).
+#if defined(_WIN32)
+const char* smokeShader = R"(
+struct VertexIn { float4 position : TEXCOORD0; };
+struct VertexOut { float4 position : SV_Position; };
+
+VertexOut vertexMain(VertexIn input) { VertexOut o; o.position = input.position; return o; }
+float4 fragmentMain(VertexOut input) : SV_Target { return float4(1.0, 1.0, 1.0, 1.0); }
+)";
+
+ShaderSource smokeShaderSource()
+{
+    return ShaderSource::hlsl(smokeShader);
+}
+#else
 const char* smokeShader = R"(
 #include <metal_stdlib>
 using namespace metal;
@@ -19,6 +34,12 @@ struct VertexIn { float4 position [[attribute(0)]]; };
 vertex float4 vertexMain(VertexIn in [[stage_in]]) { return in.position; }
 fragment float4 fragmentMain() { return float4(1.0, 1.0, 1.0, 1.0); }
 )";
+
+ShaderSource smokeShaderSource()
+{
+    return ShaderSource::msl(smokeShader);
+}
+#endif
 } // namespace
 
 // Builds every resource type without a window or drawable. On a host with no
@@ -36,7 +57,7 @@ auto tDeviceBuildsResources = test("GPU/deviceBuildsResources") = []
     check(buffer.isValid());
     check(buffer.size() == sizeof(vertices));
 
-    auto library = device.makeShaderLibrary(ShaderSource::msl(smokeShader));
+    auto library = device.makeShaderLibrary(smokeShaderSource());
     check(library.isValid());
 
     auto descriptor = RenderPipelineDescriptor {};

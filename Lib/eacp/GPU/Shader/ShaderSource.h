@@ -49,6 +49,14 @@ struct ShaderSource
         return result;
     }
 
+    static ShaderSource hlsl(std::string sourceToUse)
+    {
+        auto result = ShaderSource {};
+        result.backend = ShaderBackend::DirectX;
+        result.source = std::move(sourceToUse);
+        return result;
+    }
+
     ShaderSource& withVertex(std::string entry)
     {
         vertexEntry = std::move(entry);

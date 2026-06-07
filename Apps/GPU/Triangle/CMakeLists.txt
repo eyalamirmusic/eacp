@@ -3,7 +3,7 @@ target_link_libraries(Triangle PRIVATE eacp-gpu)
 
 find_package(ResEmbed REQUIRED)
 res_embed_add(Triangle
-        FILES Triangle.metal
+        FILES Triangle.metal Triangle.hlsl
         NAMESPACE TriangleShaders
         CATEGORY TriangleShaders)
 

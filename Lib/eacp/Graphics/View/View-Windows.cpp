@@ -1,7 +1,12 @@
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "View.h"
+#include "../Graphics/GraphicsContext.h"
 #include "../Layers/NativeLayer-Windows.h"
+
+#include <eacp/Core/Threads/EventLoop.h>
+
+#include <memory>
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Composition.h>
@@ -12,6 +17,33 @@ namespace eacp::Graphics
 {
 
 wuc::Compositor getWinRTCompositor();
+
+namespace
+{
+// The composition backend has no immediate-mode drawing surface for a plain
+// View, so the cross-platform paint(Context&) hook is driven with a context
+// whose operations are no-ops. Views that draw 2D content use Layers; GPUView
+// renders through its own swapchain and ignores the context entirely (just as it
+// ignores the CoreGraphics context on macOS).
+class NullContext final : public Context
+{
+public:
+    void saveState() override {}
+    void restoreState() override {}
+    void translate(float, float) override {}
+    void scale(float, float) override {}
+    void rotate(float) override {}
+    void setColor(const Color&) override {}
+    void fillRect(const Rect&) override {}
+    void fillRoundedRect(const Rect&, float) override {}
+    void setLineWidth(float) override {}
+    void strokeRect(const Rect&) override {}
+    void drawLine(const Point&, const Point&) override {}
+    void fillPath(const Path&) override {}
+    void strokePath(const Path&) override {}
+    void drawText(const std::string&, const Point&, const Font&) override {}
+};
+} // namespace
 
 struct View::Native
 {
@@ -27,11 +59,34 @@ struct View::Native
 
     ~Native()
     {
+        *alive = false;
         detachFromParent();
         visual = nullptr;
     }
 
-    void repaint() {}
+    // Mirrors macOS setNeedsDisplay: marks the view dirty and dispatches a
+    // single coalesced paint on the next event-loop tick (multiple repaint()
+    // calls in one tick collapse into one paint). The alive token guards
+    // against the view being destroyed before the queued paint runs.
+    void repaint()
+    {
+        if (repaintScheduled)
+            return;
+
+        repaintScheduled = true;
+        auto token = alive;
+
+        Threads::callAsync(
+            [this, token]
+            {
+                if (!*token)
+                    return;
+
+                repaintScheduled = false;
+                auto context = NullContext {};
+                ownerView->paint(context);
+            });
+    }
 
     Rect getBounds() const { return bounds; }
 
@@ -94,6 +149,8 @@ struct View::Native
     View* ownerView;
     Rect bounds;
     bool hasFocusFlag = false;
+    bool repaintScheduled = false;
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
     wuc::ContainerVisual visual {nullptr};
     wuc::ContainerVisual parent {nullptr};
 };

@@ -25,14 +25,25 @@ const Vertex triangleVertices[] = {
 
 ShaderSource loadTriangleShader()
 {
-    auto shader = ResEmbed::get("Triangle.metal", "TriangleShaders");
+#if defined(_WIN32)
+    auto fileName = "Triangle.hlsl";
+#else
+    auto fileName = "Triangle.metal";
+#endif
+
+    auto shader = ResEmbed::get(fileName, "TriangleShaders");
 
     if (!shader)
-        throw std::runtime_error("Triangle: embedded Triangle.metal not found");
+        throw std::runtime_error(std::string("Triangle: embedded ") + fileName
+                                 + " not found");
 
-    return ShaderSource::msl(shader.toString())
-        .withVertex("vertexMain")
-        .withFragment("fragmentMain");
+#if defined(_WIN32)
+    auto source = ShaderSource::hlsl(shader.toString());
+#else
+    auto source = ShaderSource::msl(shader.toString());
+#endif
+
+    return source.withVertex("vertexMain").withFragment("fragmentMain");
 }
 } // namespace
 

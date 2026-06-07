@@ -24,6 +24,12 @@ elseif (WIN32)
             Pipeline/RenderPipeline-Windows.cpp
             Shader/ShaderLibrary-Windows.cpp
             View/GPUView-Windows.cpp)
+    target_link_libraries(eacp-gpu PRIVATE
+            d3d11
+            dxgi
+            d3dcompiler
+            windowsapp
+            runtimeobject)
 endif ()
 
 set_default_target_setting(eacp-gpu)
