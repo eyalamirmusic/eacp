@@ -12,9 +12,11 @@ enum class ExprKind
 {
     Input, // vertex attribute; index = attribute slot
     Varying, // fragment-stage read of a varying; index = varying slot
+    Uniform, // per-frame constant; index = field slot in the uniform block
     Constant, // scalar float literal; value
     Construct, // floatN(args...); args = child nodes
     Swizzle, // child.<components>; args[0] = child
+    Call, // builtin call text(args[0]); e.g. sin/cos
     Binary // (lhs op rhs); args = {lhs, rhs}
 };
 
@@ -24,10 +26,10 @@ struct Expr
 {
     ExprKind kind = ExprKind::Constant;
     ValueType type = ValueType::Float;
-    int index = 0; // Input / Varying slot
+    int index = 0; // Input / Varying / Uniform slot
     float value = 0.0f; // Constant
     char op = '+'; // Binary
-    std::string swizzle; // Swizzle components, e.g. "xy"
+    std::string text; // Swizzle components ("xy") or Call name ("sin")
     Vector<int> args; // child node ids
 };
 
@@ -47,9 +49,11 @@ public:
 
     int addInput(ValueType type);
     int addVarying(ValueType type, int sourceNode);
+    int addUniform(ValueType type);
     int addConstant(float value);
     int addConstruct(ValueType type, Vector<int> args);
     int addSwizzle(ValueType type, int child, std::string components);
+    int addCall(ValueType type, std::string name, int argument);
     int addBinary(ValueType type, char op, int lhs, int rhs);
 
     void setPosition(int node) { positionNode = node; }
@@ -58,6 +62,7 @@ public:
     const Expr& expr(int node) const { return nodes[node]; }
     const Vector<ValueType>& inputs() const { return inputTypes; }
     const Vector<VaryingSlot>& varyings() const { return varyingSlots; }
+    const Vector<ValueType>& uniforms() const { return uniformTypes; }
     int position() const { return positionNode; }
     int fragment() const { return fragmentNode; }
 
@@ -67,6 +72,7 @@ private:
     Vector<Expr> nodes;
     Vector<ValueType> inputTypes;
     Vector<VaryingSlot> varyingSlots;
+    Vector<ValueType> uniformTypes;
     int positionNode = -1;
     int fragmentNode = -1;
 };

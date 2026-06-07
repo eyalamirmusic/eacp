@@ -90,6 +90,9 @@ template <typename T>
 concept IsShaderVector =
     std::same_as<T, Float2> || std::same_as<T, Float3> || std::same_as<T, Float4>;
 
+template <typename T>
+concept IsShaderValue = std::same_as<T, Float> || IsShaderVector<T>;
+
 namespace detail
 {
 template <typename T>
@@ -120,27 +123,46 @@ T construct(ShaderGraph& graph, ValueType type, std::initializer_list<int> nodes
     result.node = graph.addConstruct(type, Vector<int>(nodes));
     return result;
 }
+
+template <typename T>
+T call(const ValueHandle& argument, ValueType type, const char* name)
+{
+    auto result = T {};
+    result.graph = argument.graph;
+    result.node = argument.graph->addCall(type, name, argument.node);
+    return result;
+}
 } // namespace detail
 
-template <IsShaderVector T>
+inline Float sin(const Float& value)
+{
+    return detail::call<Float>(value, ValueType::Float, "sin");
+}
+
+inline Float cos(const Float& value)
+{
+    return detail::call<Float>(value, ValueType::Float, "cos");
+}
+
+template <IsShaderValue T>
 T operator+(const T& lhs, const T& rhs)
 {
     return detail::binaryOp<T>('+', lhs, rhs);
 }
 
-template <IsShaderVector T>
+template <IsShaderValue T>
 T operator-(const T& lhs, const T& rhs)
 {
     return detail::binaryOp<T>('-', lhs, rhs);
 }
 
-template <IsShaderVector T>
+template <IsShaderValue T>
 T operator*(const T& lhs, const T& rhs)
 {
     return detail::binaryOp<T>('*', lhs, rhs);
 }
 
-template <IsShaderVector T>
+template <IsShaderValue T>
 T operator/(const T& lhs, const T& rhs)
 {
     return detail::binaryOp<T>('/', lhs, rhs);

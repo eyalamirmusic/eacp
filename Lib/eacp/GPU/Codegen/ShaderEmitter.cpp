@@ -70,6 +70,9 @@ std::string printExpr(const ShaderGraph& graph, int node)
         case ExprKind::Varying:
             return "input.v" + std::to_string(expr.index);
 
+        case ExprKind::Uniform:
+            return "uniforms.u" + std::to_string(expr.index);
+
         case ExprKind::Constant:
             return floatLiteral(expr.value);
 
@@ -89,7 +92,10 @@ std::string printExpr(const ShaderGraph& graph, int node)
         }
 
         case ExprKind::Swizzle:
-            return "(" + printExpr(graph, expr.args[0]) + ")." + expr.swizzle;
+            return "(" + printExpr(graph, expr.args[0]) + ")." + expr.text;
+
+        case ExprKind::Call:
+            return expr.text + "(" + printExpr(graph, expr.args[0]) + ")";
 
         case ExprKind::Binary:
             return "(" + printExpr(graph, expr.args[0]) + " "
@@ -122,10 +128,40 @@ std::string emit(const ShaderGraph& graph, Backend backend)
 
     source += "};\n\n";
 
+    auto hasUniforms = !graph.uniforms().empty();
+
+    // One uniform block aggregates every uniform<>() call. Both backends expose
+    // it as "uniforms.uN" (HLSL wraps the struct in a cbuffer) so the expression
+    // printer stays backend-agnostic.
+    if (hasUniforms)
+    {
+        source += "struct Uniforms\n{\n";
+
+        for (auto i = 0; i < graph.uniforms().size(); ++i)
+            source += "    " + std::string(typeName(graph.uniforms()[i])) + " u"
+                      + std::to_string(i) + ";\n";
+
+        source += "};\n\n";
+
+        if (backend == Backend::DirectX)
+            source += "cbuffer UniformsCB : register(b0)\n{\n"
+                      "    Uniforms uniforms;\n};\n\n";
+    }
+
     if (backend == Backend::Metal)
-        source += "vertex VertexOut vertexMain(VertexIn input [[stage_in]])\n{\n";
+    {
+        source += "vertex VertexOut vertexMain(VertexIn input [[stage_in]]";
+
+        // Vertex data owns buffer 0, so the uniform block lives at buffer 1.
+        if (hasUniforms)
+            source += ", constant Uniforms& uniforms [[buffer(1)]]";
+
+        source += ")\n{\n";
+    }
     else
+    {
         source += "VertexOut vertexMain(VertexIn input)\n{\n";
+    }
 
     source += "    VertexOut output;\n";
     source += "    output.position = " + printExpr(graph, graph.position()) + ";\n";

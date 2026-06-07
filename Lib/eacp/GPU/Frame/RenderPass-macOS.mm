@@ -51,6 +51,15 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
                                atIndex:(NSUInteger) index];
 }
 
+void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
+{
+    // Vertex data is bound at buffer index 0, so uniform slot 0 maps to buffer 1.
+    if (auto activeEncoder = impl->encoder.get())
+        [activeEncoder setVertexBytes:data
+                               length:bytes
+                              atIndex:(NSUInteger) (1 + slot)];
+}
+
 void RenderPass::draw(int vertexCount, int firstVertex)
 {
     if (auto activeEncoder = impl->encoder.get())

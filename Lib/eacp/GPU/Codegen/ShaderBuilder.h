@@ -70,6 +70,15 @@ public:
         return value;
     }
 
+    template <typename T>
+    T uniform()
+    {
+        auto value = T {};
+        value.graph = &graphData;
+        value.node = graphData.addUniform(ValueTypeOf<T>::value);
+        return value;
+    }
+
     void position(const Float4& clipPosition)
     {
         graphData.setPosition(clipPosition.node);

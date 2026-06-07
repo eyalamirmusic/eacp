@@ -30,6 +30,16 @@ int ShaderGraph::addVarying(ValueType type, int sourceNode)
     return add(std::move(node));
 }
 
+int ShaderGraph::addUniform(ValueType type)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Uniform;
+    node.type = type;
+    node.index = uniformTypes.size();
+    uniformTypes.add(type);
+    return add(std::move(node));
+}
+
 int ShaderGraph::addConstant(float value)
 {
     auto node = Expr {};
@@ -54,7 +64,17 @@ int ShaderGraph::addSwizzle(ValueType type, int child, std::string components)
     node.kind = ExprKind::Swizzle;
     node.type = type;
     node.args.add(child);
-    node.swizzle = std::move(components);
+    node.text = std::move(components);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addCall(ValueType type, std::string name, int argument)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Call;
+    node.type = type;
+    node.args.add(argument);
+    node.text = std::move(name);
     return add(std::move(node));
 }
 
