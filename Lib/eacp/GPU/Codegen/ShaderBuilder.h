@@ -49,6 +49,20 @@ public:
         return value;
     }
 
+    // Non-templated siblings of vertexInput()/uniform() keyed on a runtime
+    // ValueType. The reflection-driven ShaderProgram visitor walks erased member
+    // handles, so it needs to add a slot from a ValueType it carries rather than a
+    // compile-time T. The returned handle is adopted by the declaring member.
+    detail::ValueHandle addVertexInput(ValueType type)
+    {
+        return {&graphData, graphData.addInput(type)};
+    }
+
+    detail::ValueHandle addUniform(ValueType type)
+    {
+        return {&graphData, graphData.addUniform(type)};
+    }
+
     void position(const Float4& clipPosition);
     void fragment(const Float4& color);
 

@@ -36,6 +36,16 @@ public:
         setVertexBytes(&value, sizeof(T), slot);
     }
 
+    // Uploads a ShaderProgram's uniform block in one call: packs the program's
+    // current member values and binds them. Templated so this header stays
+    // independent of the codegen layer; any type exposing packedUniforms() and
+    // uniformByteSize() works.
+    template <typename Program>
+    void setVertexUniforms(Program& program, int slot = 0)
+    {
+        setVertexBytes(program.packedUniforms(), program.uniformByteSize(), slot);
+    }
+
     void draw(int vertexCount, int firstVertex = 0);
 
     void end();

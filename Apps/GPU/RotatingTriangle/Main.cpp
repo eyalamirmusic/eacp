@@ -19,37 +19,41 @@ const Vertex triangleVertices[] = {
     {{0.8f, -0.8f}, {0.2f, 0.2f, 1.0f}},
 };
 
-// Same vertex-coloured triangle, but the vertex position is rotated by an angle
-// the CPU feeds in each frame as a uniform. The rotation maths is generated into
-// the shader (sin/cos); only the angle changes per frame.
-GeneratedShader makeRotatingShader()
+// The shader is an object: its vertex inputs and the per-frame angle are named,
+// typed members. EACP_SHADER lists them so the framework can walk the members to
+// build the IR + vertex layout and to pack the uniform block - the angle the CPU
+// sets each frame flows in through the named member, not a positional slot.
+struct RotatingShader final : ShaderProgram
 {
-    auto builder = ShaderBuilder {};
+    RotatingShader() { compile(); }
 
-    auto position = builder.vertexInput<Float2>();
-    auto color = builder.vertexInput<Float3>();
-    auto angle = builder.uniform<Float>();
-    auto varyingColor = builder.varying(color);
+    void define() override
+    {
+        auto varyingColor = varying(color);
 
-    auto c = cos(angle);
-    auto s = sin(angle);
-    auto px = position.x();
-    auto py = position.y();
-    auto rotated = float2(px * c - py * s, px * s + py * c);
+        auto c = cos(angle);
+        auto s = sin(angle);
+        auto px = position.x();
+        auto py = position.y();
+        auto rotated = float2(px * c - py * s, px * s + py * c);
 
-    builder.position(float4(rotated, 0.0f, 1.0f));
-    builder.fragment(float4(varyingColor, 1.0f));
+        setPosition(float4(rotated, 0.0f, 1.0f));
+        setFragment(float4(varyingColor, 1.0f));
+    }
 
-    return builder.build();
-}
+    VertexInput<Float2> position {&Vertex::position};
+    VertexInput<Float3> color {&Vertex::color};
+    Uniform<Float> angle;
+
+    EACP_SHADER(position, color, angle)
+};
 } // namespace
 
 struct RotatingTriangleView final : GPUView
 {
     RotatingTriangleView()
-        : shader(makeRotatingShader())
-        , vertexBuffer(Device::shared().makeBuffer(triangleVertices))
-        , library(Device::shared().makeShaderLibrary(shader.source))
+        : vertexBuffer(Device::shared().makeBuffer(triangleVertices))
+        , library(Device::shared().makeShaderLibrary(shader.source()))
         , pipeline(makePipeline())
         , timer([this] { advance(); }, 60)
     {
@@ -60,7 +64,7 @@ struct RotatingTriangleView final : GPUView
         auto descriptor = RenderPipelineDescriptor {};
         descriptor.library = &library;
         descriptor.sampleCount = sampleCount();
-        descriptor.vertexLayout = shader.vertexLayout;
+        descriptor.vertexLayout = shader.vertexLayout();
 
         return Device::shared().makeRenderPipeline(descriptor);
     }
@@ -73,14 +77,16 @@ struct RotatingTriangleView final : GPUView
 
     void render(Frame& frame) override
     {
-        auto pass = frame.beginPass({Graphics::Color {0.10f, 0.10f, 0.12f}});
+        shader.angle = angle;
+
+        auto pass = frame.beginPass();
         pass.setPipeline(pipeline);
         pass.setVertexBuffer(vertexBuffer);
-        pass.setVertexUniform(angle);
+        pass.setVertexUniforms(shader);
         pass.draw(3);
     }
 
-    GeneratedShader shader;
+    RotatingShader shader;
     Buffer vertexBuffer;
     ShaderLibrary library;
     RenderPipeline pipeline;
