@@ -2,6 +2,12 @@ add_library(eacp-gpu STATIC)
 
 target_link_libraries(eacp-gpu PUBLIC eacp-graphics)
 
+# The shader codegen layer is pure portable C++ (string generation only), so it
+# builds on every platform and is not gated behind the APPLE/WIN32 branches.
+target_sources(eacp-gpu PRIVATE
+        Codegen/ShaderGraph.cpp
+        Codegen/ShaderEmitter.cpp)
+
 if (APPLE)
     target_sources(eacp-gpu PRIVATE
             Buffer/Buffer-macOS.mm
