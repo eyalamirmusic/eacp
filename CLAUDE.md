@@ -35,6 +35,16 @@ Output executables:
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
 ```
 
+- `EACP_CI_BUILD` (default `OFF`): the single switch CI passes to reproduce the
+  exact CI configuration locally. It force-enables the unity-build flag of every
+  project that exposes one — `EACP_UNITY_BUILD` and `MIRO_UNITY_BUILD`. Because
+  it turns unity on, it is for reproducing CI, not for LSP-backed development —
+  Claude should keep using `-DEACP_UNITY_BUILD=OFF` for normal work.
+
+```bash
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON
+```
+
 ### Local Miro source
 
 Miro is fetched via CPM from `eyalamirmusic/Miro` by default. To work against a

@@ -56,7 +56,7 @@ jobs:
           arch: ${{ matrix.msvc-arch }}
 
       - name: Configure
-        run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug ${{ matrix.cmake-flags }}
+        run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON ${{ matrix.cmake-flags }}
 
       - name: Build
         run: cmake --build build
@@ -78,6 +78,7 @@ jobs:
           -DCMAKE_OSX_SYSROOT=iphonesimulator
           -DCMAKE_OSX_ARCHITECTURES=arm64
           -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
+          -DEACP_CI_BUILD=ON
 
       - name: Build
         run: cmake --build build --config Debug -- -sdk iphonesimulator
