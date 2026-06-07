@@ -9,7 +9,13 @@ class Frame;
 // A View that renders with the GPU. Backed by a CAMetalLayer (on Metal) added
 // as a sublayer of the standard View backing layer, so it lives inside the
 // normal eacp::Graphics::View hierarchy and reuses its window, events and
-// sizing. Override render() to draw; it is driven by a display link.
+// sizing. Override render() to draw.
+//
+// Rendering is on-demand and uses the normal View invalidation path: call the
+// inherited repaint() (e.g. after changing state) and render() runs on the next
+// draw cycle. While nothing is dirty no GPU work is submitted at all. Enable
+// continuous mode for animation, where render() runs every display refresh
+// (vsync) via an internal display link.
 class GPUView : public Graphics::View
 {
 public:
@@ -26,8 +32,14 @@ public:
     int sampleCount() const;
     void setSampleCount(int count);
 
+    void setContinuous(bool continuous);
+    bool isContinuous() const;
+
 private:
-    void renderTick();
+    // Internal: drives the GPU render from the View draw cycle. Subclasses
+    // override render(), not this.
+    void paint(Graphics::Context&) final;
+    void renderNow();
 
     struct Native;
     Pimpl<Native> impl;

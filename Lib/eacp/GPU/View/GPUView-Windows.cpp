@@ -23,10 +23,19 @@ int GPUView::sampleCount() const
 
 void GPUView::setSampleCount(int) {}
 
+void GPUView::setContinuous(bool) {}
+
+bool GPUView::isContinuous() const
+{
+    return false;
+}
+
 void GPUView::resized()
 {
     Graphics::View::resized();
 }
 
-void GPUView::renderTick() {}
+void GPUView::paint(Graphics::Context&) {}
+
+void GPUView::renderNow() {}
 } // namespace eacp::GPU

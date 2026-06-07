@@ -88,15 +88,18 @@ struct GPUView::Native
         msaaTexture = [metalDevice newTextureWithDescriptor:textureDescriptor];
     }
 
-    void ensureRenderLoop()
+    void startContinuous()
     {
         if (displayLink == nullptr)
             displayLink =
-                makeOwned<Threads::DisplayLink>([this] { view.renderTick(); });
+                makeOwned<Threads::DisplayLink>([this] { view.renderNow(); });
     }
+
+    void stopContinuous() { displayLink = nullptr; }
 
     GPUView& view;
     int sampleCount = 4;
+    bool continuous = false;
     ObjC::Ptr<CAMetalLayer> metalLayer;
     ObjC::Ptr<NSObject<MTLTexture>> msaaTexture;
     OwningPointer<Threads::DisplayLink> displayLink;
@@ -119,14 +122,34 @@ void GPUView::setSampleCount(int count)
     impl->sampleCount = count;
 }
 
+void GPUView::setContinuous(bool continuous)
+{
+    impl->continuous = continuous;
+
+    if (continuous)
+        impl->startContinuous();
+    else
+        impl->stopContinuous();
+}
+
+bool GPUView::isContinuous() const
+{
+    return impl->continuous;
+}
+
 void GPUView::resized()
 {
     Graphics::View::resized();
     impl->updateSize();
-    impl->ensureRenderLoop();
+    repaint();
 }
 
-void GPUView::renderTick()
+void GPUView::paint(Graphics::Context&)
+{
+    renderNow();
+}
+
+void GPUView::renderNow()
 {
     auto* layer = impl->metalLayer.get();
 
