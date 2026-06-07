@@ -4,9 +4,7 @@
 #include "../Graphics/GraphicsContext.h"
 #include "../Layers/NativeLayer-Windows.h"
 
-#include <eacp/Core/Threads/EventLoop.h>
-
-#include <memory>
+#include <unordered_set>
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Composition.h>
@@ -17,6 +15,9 @@ namespace eacp::Graphics
 {
 
 wuc::Compositor getWinRTCompositor();
+
+// Defined in Window-Windows.cpp: the HWND hosting `view`'s root.
+HWND findHostHwndForView(View* view);
 
 namespace
 {
@@ -43,7 +44,38 @@ public:
     void strokePath(const Path&) override {}
     void drawText(const std::string&, const Point&, const Font&) override {}
 };
+
+// Views that called repaint() since their last paint. Windows merges the
+// per-view InvalidateRect calls into a single WM_PAINT for the host window;
+// the handler then paints exactly the views that asked. Main-thread only,
+// so no locking is needed.
+std::unordered_set<View*>& dirtyViews()
+{
+    static auto views = std::unordered_set<View*> {};
+    return views;
+}
 } // namespace
+
+// Paints every dirty view hosted by `host`, then clears them. Driven from
+// that window's WM_PAINT, mirroring how macOS setNeedsDisplay drives
+// drawRect:. A plain View paints into a NullContext (no-op on the retained
+// composition backend); GPUView renders its swapchain.
+void paintDirtyViewsForHost(HWND host)
+{
+    auto toPaint = Vector<View*> {};
+
+    for (auto* view: dirtyViews())
+        if (findHostHwndForView(view) == host)
+            toPaint.add(view);
+
+    for (auto* view: toPaint)
+        dirtyViews().erase(view);
+
+    auto context = NullContext {};
+
+    for (auto* view: toPaint)
+        view->paint(context);
+}
 
 struct View::Native
 {
@@ -59,33 +91,22 @@ struct View::Native
 
     ~Native()
     {
-        *alive = false;
+        dirtyViews().erase(ownerView);
         detachFromParent();
         visual = nullptr;
     }
 
-    // Mirrors macOS setNeedsDisplay: marks the view dirty and dispatches a
-    // single coalesced paint on the next event-loop tick (multiple repaint()
-    // calls in one tick collapse into one paint). The alive token guards
-    // against the view being destroyed before the queued paint runs.
+    // Mirrors macOS setNeedsDisplay: mark the view dirty and let Windows
+    // coalesce a single WM_PAINT for the host window. The paint itself runs
+    // from that WM_PAINT (paintDirtyViewsForHost) — unlike a queued
+    // callAsync it rides the OS dirty-region machinery, which is delivered
+    // even inside the modal resize/move loop, so animation never wedges.
     void repaint()
     {
-        if (repaintScheduled)
-            return;
+        dirtyViews().insert(ownerView);
 
-        repaintScheduled = true;
-        auto token = alive;
-
-        Threads::callAsync(
-            [this, token]
-            {
-                if (!*token)
-                    return;
-
-                repaintScheduled = false;
-                auto context = NullContext {};
-                ownerView->paint(context);
-            });
+        if (auto host = findHostHwndForView(ownerView))
+            InvalidateRect(host, nullptr, FALSE);
     }
 
     Rect getBounds() const { return bounds; }
@@ -149,8 +170,6 @@ struct View::Native
     View* ownerView;
     Rect bounds;
     bool hasFocusFlag = false;
-    bool repaintScheduled = false;
-    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
     wuc::ContainerVisual visual {nullptr};
     wuc::ContainerVisual parent {nullptr};
 };
