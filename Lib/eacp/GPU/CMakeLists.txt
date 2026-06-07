@@ -3,14 +3,17 @@ add_library(eacp-gpu STATIC)
 target_link_libraries(eacp-gpu PUBLIC eacp-graphics)
 
 # The shader codegen layer is pure portable C++ (string generation only), so it
-# builds on every platform and is not gated behind the APPLE/WIN32 branches.
+# builds on every platform and is not gated behind the APPLE/WIN32 branches. Only
+# the native backend selection (ShaderBuilder-*) lives in the platform branches.
 target_sources(eacp-gpu PRIVATE
         Codegen/ShaderGraph.cpp
-        Codegen/ShaderEmitter.cpp)
+        Codegen/ShaderEmitter.cpp
+        Codegen/ShaderBuilder.cpp)
 
 if (APPLE)
     target_sources(eacp-gpu PRIVATE
             Buffer/Buffer-macOS.mm
+            Codegen/ShaderBuilder-macOS.cpp
             Device/Device-macOS.mm
             Frame/Frame-macOS.mm
             Frame/RenderPass-macOS.mm
@@ -24,6 +27,7 @@ if (APPLE)
 elseif (WIN32)
     target_sources(eacp-gpu PRIVATE
             Buffer/Buffer-Windows.cpp
+            Codegen/ShaderBuilder-Windows.cpp
             Device/Device-Windows.cpp
             Frame/Frame-Windows.cpp
             Frame/RenderPass-Windows.cpp
