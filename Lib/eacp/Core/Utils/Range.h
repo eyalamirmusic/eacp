@@ -2,16 +2,15 @@
 
 namespace eacp
 {
-// A half-open interval [start, start + length). It stores `start` and
-// `length` -- never an `end` member -- so a default-constructed Range is
-// empty and a zero length means empty regardless of where it starts. `end()`
-// is derived on demand.
+// A half-open interval [start, start + length). Stored as start + length (no
+// `end` member), so a default-constructed or zero-length Range is empty
+// regardless of start.
 template <typename T>
 struct Range
 {
     constexpr bool empty() const { return length == T {}; }
 
-    // One-past-the-last element. Derived, never stored.
+    // One-past-the-last element.
     constexpr T end() const { return start + length; }
 
     constexpr bool contains(T value) const

@@ -1,14 +1,10 @@
 #pragma once
 
-// Single shared header that pulls in the EA container types eacp depends on
-// and surfaces the most-used ones inside the eacp namespace as
-// eacp::Vector / eacp::Array / eacp::OwningPointer / eacp::OwnedVector
-// (plus the makeOwned factory). Code inside any eacp::* namespace can then
-// use the unqualified names instead of EA::Vector, etc.
-//
-// Mirrors the existing Broadcaster.h pattern. Include this (directly or
-// transitively) wherever an EA container is needed rather than the
-// individual ea_data_structures headers.
+// Pulls in the EA container types eacp depends on and re-exports the most-used
+// ones into the eacp namespace (Vector / Array / OwningPointer / OwnedVector,
+// plus makeOwned), so eacp::* code can use the unqualified names instead of
+// EA::Vector, etc. Include this rather than the individual ea_data_structures
+// headers.
 
 #include <ea_data_structures/Pointers/OwningPointer.h>
 #include <ea_data_structures/Structures/Array.h>
