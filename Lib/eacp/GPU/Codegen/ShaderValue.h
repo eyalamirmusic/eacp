@@ -239,6 +239,25 @@ inline Float4 operator*(const Float4x4& matrix, const Float4& vector)
     return result;
 }
 
+// Matrix * matrix, e.g. composing model/view/projection in the shader.
+inline Float4x4 operator*(const Float4x4& a, const Float4x4& b)
+{
+    auto result = Float4x4 {};
+    result.graph = a.graph;
+    result.node = a.graph->addMul(ValueType::Float4x4, a.node, b.node);
+    return result;
+}
+
+// Builds a matrix from its four columns. Column-major, matching Metal's
+// float4x4(c0, c1, c2, c3); the HLSL path would need transposed construction.
+inline Float4x4
+    float4x4(const Float4& c0, const Float4& c1, const Float4& c2, const Float4& c3)
+{
+    auto& graph = *c0.graph;
+    return detail::construct<Float4x4>(
+        graph, ValueType::Float4x4, {c0.node, c1.node, c2.node, c3.node});
+}
+
 inline Float2 float2(const Float& x, const Float& y)
 {
     auto& graph = *x.graph;

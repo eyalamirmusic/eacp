@@ -1,7 +1,6 @@
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/GPU/GPU.h>
 
-#include "Mat4.h"
 #include "TeapotData.h"
 
 #include <algorithm>
@@ -153,17 +152,18 @@ std::vector<Vertex> buildTeapot()
     return vertices;
 }
 
-// Per-vertex (Gouraud) shaded teapot. All lighting is computed in the vertex
-// stage from the MVP and normal matrices, then handed to the fragment as a
-// varying - the shape, the transform, the lighting are all one C++ struct.
+// Per-vertex (Gouraud) shaded teapot. The whole transform pipeline - model spin,
+// view, perspective - is built in the shader from two scalar uniforms (angle and
+// aspect); the CPU uploads no matrices at all. Lighting is computed in the vertex
+// stage and handed to the fragment as a varying.
 struct TeapotShader final : ShaderProgram
 {
-    Uniform<Float4x4> mvp;
-    Uniform<Float4x4> normalMatrix;
+    Uniform<Float> angle;
+    Uniform<Float> aspect;
     Uniform<Float3> lightDir;
     Uniform<Float3> baseColor;
 
-    EACP_SHADER(mvp, normalMatrix, lightDir, baseColor)
+    EACP_SHADER(angle, aspect, lightDir, baseColor)
 
     TeapotShader() { compile(); }
 
@@ -172,9 +172,14 @@ struct TeapotShader final : ShaderProgram
         auto position = vertexInput(&Vertex::position);
         auto normal = vertexInput(&Vertex::normal);
 
-        setPosition(mvp * float4(position, 1.0f));
+        auto model = rotateZ(angle);
+        auto view = translate(0.0f, -0.15f, -3.2f) * rotateX(radians(-72.0f));
+        auto projection = perspective(aspect, radians(45.0f), 0.1f, 100.0f);
+        auto modelView = view * model;
 
-        auto worldNormal = normalize((normalMatrix * float4(normal, 0.0f)).xyz());
+        setPosition(projection * modelView * float4(position, 1.0f));
+
+        auto worldNormal = normalize((modelView * float4(normal, 0.0f)).xyz());
         auto toLight = normalize(lightDir);
 
         // Two-sided diffuse term: |N . L|, so inward-facing patches still light.
@@ -200,21 +205,13 @@ struct TeapotView final : GPUView
 
     void render(Frame& frame) override
     {
-        angle += 0.01f;
+        spin += 0.01f;
 
         auto bounds = getLocalBounds();
-        auto aspect = bounds.h > 0.0f ? bounds.w / bounds.h : 1.0f;
 
-        auto model = teapot::Mat4::rotationZ(angle);
-        auto view = teapot::Mat4::translation(0.0f, -0.15f, -3.2f)
-                    * teapot::Mat4::rotationX(radians(-72.0f));
-        auto projection =
-            teapot::Mat4::perspective(radians(45.0f), aspect, 0.1f, 100.0f);
-
-        auto modelView = view * model;
-
-        shader.mvp = (projection * modelView).data;
-        shader.normalMatrix = modelView.data;
+        // The CPU uploads only scalars now; the shader builds every matrix.
+        shader.angle = spin;
+        shader.aspect = bounds.h > 0.0f ? bounds.w / bounds.h : 1.0f;
         shader.lightDir = std::array<float, 3> {0.4f, 0.5f, 0.8f};
         shader.baseColor = std::array<float, 3> {0.85f, 0.5f, 0.32f};
 
@@ -224,7 +221,7 @@ struct TeapotView final : GPUView
 
     std::vector<Vertex> mesh;
     TeapotShader shader;
-    float angle = 0.0f;
+    float spin = 0.0f;
 };
 
 struct MyApp

@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cassert>
+#include <cmath>
 #include <concepts>
 #include <cstddef>
 #include <cstring>
@@ -429,6 +430,55 @@ protected:
     }
 
     Float constant(float value) { return builder.constant(value); }
+
+    // In-shader transform builders, matching column-major / right-handed [0,1]
+    // depth conventions. Build the model/view/projection inside define() from
+    // scalar uniforms instead of uploading prebuilt matrices.
+    Float4x4 translate(float x, float y, float z)
+    {
+        auto o = constant(1.0f);
+        auto z0 = constant(0.0f);
+        return float4x4(float4(o, z0, z0, z0),
+                        float4(z0, o, z0, z0),
+                        float4(z0, z0, o, z0),
+                        float4(constant(x), constant(y), constant(z), o));
+    }
+
+    Float4x4 rotateZ(const Float& angle)
+    {
+        auto c = cos(angle);
+        auto s = sin(angle);
+        auto z0 = constant(0.0f);
+        auto o = constant(1.0f);
+        return float4x4(float4(c, s, z0, z0),
+                        float4(z0 - s, c, z0, z0),
+                        float4(z0, z0, o, z0),
+                        float4(z0, z0, z0, o));
+    }
+
+    Float4x4 rotateX(float radians)
+    {
+        auto c = constant(std::cos(radians));
+        auto s = constant(std::sin(radians));
+        auto z0 = constant(0.0f);
+        auto o = constant(1.0f);
+        return float4x4(float4(o, z0, z0, z0),
+                        float4(z0, c, s, z0),
+                        float4(z0, z0 - s, c, z0),
+                        float4(z0, z0, z0, o));
+    }
+
+    // aspect is a live uniform; the field of view, near and far are baked in.
+    Float4x4 perspective(const Float& aspect, float fovY, float nearZ, float farZ)
+    {
+        auto f = constant(1.0f / std::tan(fovY * 0.5f));
+        auto z0 = constant(0.0f);
+        return float4x4(
+            float4(f / aspect, z0, z0, z0),
+            float4(z0, f, z0, z0),
+            float4(z0, z0, constant(farZ / (nearZ - farZ)), constant(-1.0f)),
+            float4(z0, z0, constant((farZ * nearZ) / (nearZ - farZ)), z0));
+    }
 
     void setPosition(const Float4& clipPosition) { builder.position(clipPosition); }
     void setFragment(const Float4& color) { builder.fragment(color); }
