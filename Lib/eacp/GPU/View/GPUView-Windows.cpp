@@ -16,6 +16,13 @@ GPUView::GPUView()
 
 GPUView::~GPUView() = default;
 
+int GPUView::sampleCount() const
+{
+    return 1;
+}
+
+void GPUView::setSampleCount(int) {}
+
 void GPUView::resized()
 {
     Graphics::View::resized();

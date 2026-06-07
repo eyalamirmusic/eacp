@@ -11,21 +11,25 @@ namespace eacp::GPU
 {
 struct Frame::Native
 {
-    Native(Device& device, void* drawableHandle)
+    Native(Device& device, void* drawableHandle, void* msaaTextureHandle)
     {
         if (drawableHandle != nullptr)
             drawable.reset((__bridge NSObject<CAMetalDrawable>*) drawableHandle);
+
+        if (msaaTextureHandle != nullptr)
+            msaaTexture.reset((__bridge NSObject<MTLTexture>*) msaaTextureHandle);
 
         if (auto queue = (__bridge id<MTLCommandQueue>) device.nativeQueue())
             commandBuffer.reset((NSObject<MTLCommandBuffer>*) [queue commandBuffer]);
     }
 
     ObjC::Ptr<NSObject<CAMetalDrawable>> drawable;
+    ObjC::Ptr<NSObject<MTLTexture>> msaaTexture;
     ObjC::Ptr<NSObject<MTLCommandBuffer>> commandBuffer;
 };
 
-Frame::Frame(Device& device, void* drawable)
-    : impl(device, drawable)
+Frame::Frame(Device& device, void* drawable, void* msaaTexture)
+    : impl(device, drawable, msaaTexture)
 {
 }
 
@@ -54,10 +58,20 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     auto passDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
     auto colorAttachment = passDescriptor.colorAttachments[0];
 
-    colorAttachment.texture = ((id<CAMetalDrawable>) target).texture;
+    if (auto msaa = impl->msaaTexture.get())
+    {
+        colorAttachment.texture = (id<MTLTexture>) msaa;
+        colorAttachment.resolveTexture = ((id<CAMetalDrawable>) target).texture;
+        colorAttachment.storeAction = MTLStoreActionMultisampleResolve;
+    }
+    else
+    {
+        colorAttachment.texture = ((id<CAMetalDrawable>) target).texture;
+        colorAttachment.storeAction = MTLStoreActionStore;
+    }
+
     colorAttachment.loadAction =
         descriptor.clear ? MTLLoadActionClear : MTLLoadActionLoad;
-    colorAttachment.storeAction = MTLStoreActionStore;
 
     const auto& color = descriptor.clearColor;
     colorAttachment.clearColor =

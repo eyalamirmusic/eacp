@@ -10,7 +10,7 @@ struct Frame::Native
 {
 };
 
-Frame::Frame(Device&, void*)
+Frame::Frame(Device&, void*, void*)
     : impl()
 {
 }
