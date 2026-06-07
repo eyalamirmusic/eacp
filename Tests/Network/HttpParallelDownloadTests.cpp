@@ -32,8 +32,7 @@ std::string baseUrl(int port)
 
 std::string tempPath(const std::string& name)
 {
-    auto path = std::filesystem::temp_directory_path()
-              / ("eacp-parallel-" + name);
+    auto path = std::filesystem::temp_directory_path() / ("eacp-parallel-" + name);
     std::error_code ec;
     std::filesystem::remove(path, ec);
     return path.string();
@@ -105,11 +104,10 @@ Response handleRangeRequest(const Request& req,
     stats.rangeCount.fetch_add(1);
     auto res = Response();
     res.statusCode = 206;
-    res.content = body.substr((std::size_t) start,
-                              (std::size_t) (end - start + 1));
+    res.content = body.substr((std::size_t) start, (std::size_t) (end - start + 1));
     res.headers["Content-Range"] = "bytes " + std::to_string(start) + "-"
-                                 + std::to_string(end) + "/"
-                                 + std::to_string(body.size());
+                                   + std::to_string(end) + "/"
+                                   + std::to_string(body.size());
     return res;
 }
 
@@ -249,8 +247,7 @@ auto tParallelReportsIntermediateProgress =
     auto stats = RangeStats();
     auto chunkBytes = (std::int64_t) (body.size() / 4);
 
-    auto staggeredHandler =
-        [&](const Request& req)
+    auto staggeredHandler = [&](const Request& req)
     {
         auto res = handleRangeRequest(req, body, stats, true);
         if (req.type != "HEAD" && res.statusCode == 206)
@@ -259,8 +256,14 @@ auto tParallelReportsIntermediateProgress =
             auto rest = rangeHeader.substr(std::string("bytes=").size());
             auto start = std::stoll(rest.substr(0, rest.find('-')));
             auto chunkIndex = start / chunkBytes;
+            // Stagger each chunk's completion so the aggregate progress
+            // climbs in visible steps. The plateau between steps must
+            // comfortably outlast the progress aggregator's publish
+            // interval (25ms, see launchProgressAggregator) or a loaded
+            // CI runner can collapse several steps into one sample and
+            // starve the >=3 distinct-values check below.
             std::this_thread::sleep_for(
-                std::chrono::milliseconds(40 * (long long) chunkIndex));
+                std::chrono::milliseconds(100 * (long long) chunkIndex));
         }
         return res;
     };

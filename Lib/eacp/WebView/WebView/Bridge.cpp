@@ -1,5 +1,6 @@
 #include "Bridge.h"
 
+#include "JsStringLiteral.h"
 #include "StateBridge.h"
 
 #include <ResEmbed/ResEmbed.h>
@@ -24,49 +25,6 @@ std::string loadBridgeShim()
         throw std::runtime_error(
             "eacp-webview: embedded bridge-shim.js resource not found");
     return view.toString();
-}
-
-std::string jsStringLiteral(std::string_view value)
-{
-    auto out = std::string {"\""};
-    out.reserve(value.size() + 2);
-
-    for (auto c: value)
-    {
-        switch (c)
-        {
-            case '\\':
-                out += "\\\\";
-                break;
-            case '"':
-                out += "\\\"";
-                break;
-            case '\n':
-                out += "\\n";
-                break;
-            case '\r':
-                out += "\\r";
-                break;
-            case '\t':
-                out += "\\t";
-                break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20)
-                {
-                    char buf[8];
-                    std::snprintf(buf, sizeof buf, "\\u%04x", c);
-                    out += buf;
-                }
-                else
-                {
-                    out += c;
-                }
-                break;
-        }
-    }
-
-    out += '"';
-    return out;
 }
 } // namespace
 

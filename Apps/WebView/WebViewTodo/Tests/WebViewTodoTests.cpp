@@ -36,7 +36,13 @@ std::string firstItemDescendant(const std::string& child)
 
 TestApp<MyApp>& testApp()
 {
-    return createTestApp<MyApp>(inputSelector);
+    // Gate readiness on a seeded todo-item rather than the input. The
+    // input is static markup that paints on first render, but the three
+    // seed todos only appear once the C++ TodoState has round-tripped
+    // over the bridge. Waiting on the input would let a test's one-shot
+    // query() race that round-trip; waiting on todo-item guarantees the
+    // seeded list has rendered (the input always renders before it).
+    return createTestApp<MyApp>(itemSelector);
 }
 
 MyApp& app()
