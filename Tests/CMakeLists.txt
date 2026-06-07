@@ -14,6 +14,10 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(Graphics)
 endif ()
 
+if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND NOT IOS)
+    add_subdirectory(GPU)
+endif ()
+
 # Codegen tests exercise eacp's WebView events/hooks format registrations,
 # so they only run on the platforms where the WebView library (and its
 # eacp-webview-codegen object lib) are built.
