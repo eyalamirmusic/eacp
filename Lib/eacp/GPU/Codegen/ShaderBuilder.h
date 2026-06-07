@@ -63,6 +63,15 @@ public:
         return {&graphData, graphData.addUniform(type)};
     }
 
+    // A scalar literal usable in expressions (e.g. an ambient term).
+    Float constant(float value)
+    {
+        auto result = Float {};
+        result.graph = &graphData;
+        result.node = graphData.addConstant(value);
+        return result;
+    }
+
     void position(const Float4& clipPosition);
     void fragment(const Float4& color);
 

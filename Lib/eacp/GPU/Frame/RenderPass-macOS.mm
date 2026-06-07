@@ -38,6 +38,10 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
 
     if (activeEncoder != nil && state != nil)
         [activeEncoder setRenderPipelineState:state];
+
+    if (auto depthState =
+            (__bridge id<MTLDepthStencilState>) pipeline.nativeDepthState())
+        [activeEncoder setDepthStencilState:depthState];
 }
 
 void RenderPass::setVertexBuffer(const Buffer& buffer, int index)

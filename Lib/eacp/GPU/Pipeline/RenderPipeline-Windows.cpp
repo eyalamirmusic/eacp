@@ -152,4 +152,10 @@ void* RenderPipeline::nativeState() const
 {
     return const_cast<D3DPipeline*>(&impl->pipeline);
 }
+
+void* RenderPipeline::nativeDepthState() const
+{
+    // Depth buffering is implemented on the Metal backend only for now.
+    return nullptr;
+}
 } // namespace eacp::GPU

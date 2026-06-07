@@ -16,11 +16,16 @@ namespace eacp::GPU
 {
 struct Frame::Native
 {
-    Native(Device& device, void* drawableHandle, void* msaaTextureHandle)
+    Native(Device& device,
+           void* drawableHandle,
+           void* msaaTextureHandle,
+           void* /*depthTextureHandle*/)
         : context(static_cast<ID3D11DeviceContext*>(device.nativeQueue()))
         , drawable(static_cast<D3DDrawable*>(drawableHandle))
         , msaa(static_cast<D3DMsaaTarget*>(msaaTextureHandle))
     {
+        // Depth buffering is currently implemented on the Metal backend only; the
+        // D3D11 path ignores the depth texture for now.
     }
 
     ID3D11RenderTargetView* targetView() const
@@ -36,8 +41,8 @@ struct Frame::Native
     D3DMsaaTarget* msaa = nullptr;
 };
 
-Frame::Frame(Device& device, void* drawable, void* msaaTexture)
-    : impl(device, drawable, msaaTexture)
+Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture)
+    : impl(device, drawable, msaaTexture, depthTexture)
 {
 }
 

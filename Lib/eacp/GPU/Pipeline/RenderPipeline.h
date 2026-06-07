@@ -23,6 +23,10 @@ struct RenderPipelineDescriptor
     // count (GPUView::sampleCount()). 1 = no MSAA.
     int sampleCount = 1;
     bool blending = false;
+
+    // Depth testing (less-equal, depth writes on). Requires the view to provide a
+    // depth buffer (GPUView::setDepth(true)). Needed for correct 3D occlusion.
+    bool depth = false;
 };
 
 // A compiled render pipeline state (MTLRenderPipelineState on Metal). Create via
@@ -34,8 +38,10 @@ public:
 
     bool isValid() const;
 
-    // Opaque native handle for cross-translation-unit use by the render pass.
+    // Opaque native handles for cross-translation-unit use by the render pass.
+    // nativeDepthState() is null when the pipeline has no depth testing.
     void* nativeState() const;
+    void* nativeDepthState() const;
 
 private:
     struct Native;

@@ -78,6 +78,16 @@ int ShaderGraph::addCall(ValueType type, std::string name, int argument)
     return add(std::move(node));
 }
 
+int ShaderGraph::addCall(ValueType type, std::string name, Vector<int> args)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Call;
+    node.type = type;
+    node.args = std::move(args);
+    node.text = std::move(name);
+    return add(std::move(node));
+}
+
 int ShaderGraph::addBinary(ValueType type, char op, int lhs, int rhs)
 {
     auto node = Expr {};
@@ -86,6 +96,16 @@ int ShaderGraph::addBinary(ValueType type, char op, int lhs, int rhs)
     node.op = op;
     node.args.add(lhs);
     node.args.add(rhs);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addMul(ValueType type, int matrix, int vector)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Mul;
+    node.type = type;
+    node.args.add(matrix);
+    node.args.add(vector);
     return add(std::move(node));
 }
 } // namespace eacp::GPU

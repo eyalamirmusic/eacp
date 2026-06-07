@@ -217,7 +217,8 @@ struct GPUView::Native
             msaa.view = msaaView.get();
         }
 
-        auto frame = Frame(Device::shared(), &drawable, useMsaa ? &msaa : nullptr);
+        auto frame =
+            Frame(Device::shared(), &drawable, useMsaa ? &msaa : nullptr, nullptr);
         view.render(frame);
     }
 
@@ -233,6 +234,7 @@ struct GPUView::Native
     GPUView& view;
     int sampleCount = 4;
     bool continuous = false;
+    bool depthEnabled = false;
     UINT width = 0;
     UINT height = 0;
 
@@ -265,6 +267,17 @@ void GPUView::setSampleCount(int count)
 {
     impl->sampleCount = count;
     impl->updateMultisampleTexture();
+}
+
+void GPUView::setDepth(bool enabled)
+{
+    // Depth buffering is implemented on the Metal backend only for now.
+    impl->depthEnabled = enabled;
+}
+
+bool GPUView::hasDepth() const
+{
+    return impl->depthEnabled;
 }
 
 void GPUView::setContinuous(bool continuous)

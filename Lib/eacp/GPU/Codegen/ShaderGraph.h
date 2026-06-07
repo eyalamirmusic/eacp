@@ -17,7 +17,9 @@ enum class ExprKind
     Construct, // floatN(args...); args = child nodes
     Swizzle, // child.<components>; args[0] = child
     Call, // builtin call text(args[0]); e.g. sin/cos
-    Binary // (lhs op rhs); args = {lhs, rhs}
+    Binary, // (lhs op rhs); args = {lhs, rhs}
+    Mul // matrix * vector; args = {matrix, vector}. Emits per-backend (MSL uses
+    // the * operator, HLSL uses mul()), so it is not a plain Binary.
 };
 
 // One node in the shader expression tree. Plain data referenced by integer id so
@@ -54,7 +56,9 @@ public:
     int addConstruct(ValueType type, Vector<int> args);
     int addSwizzle(ValueType type, int child, std::string components);
     int addCall(ValueType type, std::string name, int argument);
+    int addCall(ValueType type, std::string name, Vector<int> args);
     int addBinary(ValueType type, char op, int lhs, int rhs);
+    int addMul(ValueType type, int matrix, int vector);
 
     void setPosition(int node) { positionNode = node; }
     void setFragment(int node) { fragmentNode = node; }

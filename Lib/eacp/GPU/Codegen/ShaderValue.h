@@ -59,6 +59,12 @@ struct Float4 : detail::ValueHandle
     Float3 xyz() const { return swizzle<Float3>(ValueType::Float3, "xyz"); }
 };
 
+// A 4x4 matrix value. No swizzles; its one operation is matrix * vector, which
+// records a Mul node so the emitter can spell it per-backend.
+struct Float4x4 : detail::ValueHandle
+{
+};
+
 template <typename T>
 struct ValueTypeOf;
 
@@ -84,6 +90,12 @@ template <>
 struct ValueTypeOf<Float4>
 {
     static constexpr ValueType value = ValueType::Float4;
+};
+
+template <>
+struct ValueTypeOf<Float4x4>
+{
+    static constexpr ValueType value = ValueType::Float4x4;
 };
 
 template <typename T>
@@ -132,6 +144,18 @@ T call(const ValueHandle& argument, ValueType type, const char* name)
     result.node = argument.graph->addCall(type, name, argument.node);
     return result;
 }
+
+template <typename T>
+T call2(const ValueHandle& a, const ValueHandle& b, ValueType type, const char* name)
+{
+    auto result = T {};
+    result.graph = a.graph;
+    auto args = Vector<int> {};
+    args.add(a.node);
+    args.add(b.node);
+    result.node = a.graph->addCall(type, name, args);
+    return result;
+}
 } // namespace detail
 
 inline Float sin(const Float& value)
@@ -142,6 +166,32 @@ inline Float sin(const Float& value)
 inline Float cos(const Float& value)
 {
     return detail::call<Float>(value, ValueType::Float, "cos");
+}
+
+inline Float3 normalize(const Float3& value)
+{
+    return detail::call<Float3>(value, ValueType::Float3, "normalize");
+}
+
+inline Float dot(const Float3& a, const Float3& b)
+{
+    return detail::call2<Float>(a, b, ValueType::Float, "dot");
+}
+
+inline Float max(const Float& a, const Float& b)
+{
+    return detail::call2<Float>(a, b, ValueType::Float, "max");
+}
+
+// vector * scalar (broadcast), e.g. a colour scaled by a lighting term.
+inline Float3 operator*(const Float3& vector, const Float& scalar)
+{
+    return detail::binaryOp<Float3>('*', vector, scalar);
+}
+
+inline Float3 operator*(const Float& scalar, const Float3& vector)
+{
+    return detail::binaryOp<Float3>('*', vector, scalar);
 }
 
 template <IsShaderValue T>
@@ -178,6 +228,15 @@ template <IsShaderVector T>
 T operator*(float lhs, const T& rhs)
 {
     return detail::scalarOp<T>('*', rhs, lhs);
+}
+
+// Matrix * vector, e.g. an MVP transform applied to a clip-space position.
+inline Float4 operator*(const Float4x4& matrix, const Float4& vector)
+{
+    auto result = Float4 {};
+    result.graph = matrix.graph;
+    result.node = matrix.graph->addMul(ValueType::Float4, matrix.node, vector.node);
+    return result;
 }
 
 inline Float2 float2(const Float& x, const Float& y)

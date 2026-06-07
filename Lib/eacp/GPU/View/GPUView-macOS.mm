@@ -63,6 +63,7 @@ struct GPUView::Native
         metalLayer.get().drawableSize = CGSizeMake(pixelWidth, pixelHeight);
 
         updateMultisampleTexture(pixelWidth, pixelHeight);
+        updateDepthTexture(pixelWidth, pixelHeight);
     }
 
     void updateMultisampleTexture(NSUInteger width, NSUInteger height)
@@ -88,6 +89,35 @@ struct GPUView::Native
         msaaTexture = [metalDevice newTextureWithDescriptor:textureDescriptor];
     }
 
+    void updateDepthTexture(NSUInteger width, NSUInteger height)
+    {
+        if (! depthEnabled || width == 0 || height == 0)
+        {
+            depthTexture.release();
+            return;
+        }
+
+        auto metalDevice = (__bridge id<MTLDevice>) Device::shared().nativeDevice();
+
+        auto textureDescriptor = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                         width:width
+                                        height:height
+                                     mipmapped:NO];
+
+        // The depth attachment must match the colour attachment's sample count.
+        if (sampleCount > 1)
+        {
+            textureDescriptor.textureType = MTLTextureType2DMultisample;
+            textureDescriptor.sampleCount = (NSUInteger) sampleCount;
+        }
+
+        textureDescriptor.usage = MTLTextureUsageRenderTarget;
+        textureDescriptor.storageMode = MTLStorageModePrivate;
+
+        depthTexture = [metalDevice newTextureWithDescriptor:textureDescriptor];
+    }
+
     void startContinuous()
     {
         if (displayLink == nullptr)
@@ -100,8 +130,10 @@ struct GPUView::Native
     GPUView& view;
     int sampleCount = 4;
     bool continuous = false;
+    bool depthEnabled = false;
     ObjC::Ptr<CAMetalLayer> metalLayer;
     ObjC::Ptr<NSObject<MTLTexture>> msaaTexture;
+    ObjC::Ptr<NSObject<MTLTexture>> depthTexture;
     OwningPointer<Threads::DisplayLink> displayLink;
 };
 
@@ -120,6 +152,17 @@ int GPUView::sampleCount() const
 void GPUView::setSampleCount(int count)
 {
     impl->sampleCount = count;
+}
+
+void GPUView::setDepth(bool enabled)
+{
+    impl->depthEnabled = enabled;
+    impl->updateSize();
+}
+
+bool GPUView::hasDepth() const
+{
+    return impl->depthEnabled;
 }
 
 void GPUView::setContinuous(bool continuous)
@@ -165,7 +208,8 @@ void GPUView::renderNow()
 
         auto frame = Frame(Device::shared(),
                            (__bridge void*) drawable,
-                           (__bridge void*) impl->msaaTexture.get());
+                           (__bridge void*) impl->msaaTexture.get(),
+                           (__bridge void*) impl->depthTexture.get());
         render(frame);
     }
 }

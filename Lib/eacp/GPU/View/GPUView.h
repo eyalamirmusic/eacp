@@ -32,6 +32,11 @@ public:
     int sampleCount() const;
     void setSampleCount(int count);
 
+    // Enables a depth buffer for this view so 3D content occludes correctly. Pair
+    // with RenderPipelineDescriptor::depth on the pipeline. Off by default.
+    void setDepth(bool enabled);
+    bool hasDepth() const;
+
     void setContinuous(bool continuous);
     bool isContinuous() const;
 

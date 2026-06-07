@@ -10,7 +10,8 @@ enum class ValueType
     Float,
     Float2,
     Float3,
-    Float4
+    Float4,
+    Float4x4
 };
 
 inline int componentCount(ValueType type)
@@ -25,6 +26,8 @@ inline int componentCount(ValueType type)
             return 3;
         case ValueType::Float4:
             return 4;
+        case ValueType::Float4x4:
+            return 16;
     }
 
     return 1;
@@ -47,6 +50,8 @@ inline const char* typeName(ValueType type)
             return "float3";
         case ValueType::Float4:
             return "float4";
+        case ValueType::Float4x4:
+            return "float4x4";
     }
 
     return "float";

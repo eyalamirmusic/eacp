@@ -58,7 +58,7 @@ std::string positionSemantic(Backend backend)
     return " : SV_Position";
 }
 
-std::string printExpr(const ShaderGraph& graph, int node)
+std::string printExpr(const ShaderGraph& graph, int node, Backend backend)
 {
     const auto& expr = graph.expr(node);
 
@@ -85,22 +85,47 @@ std::string printExpr(const ShaderGraph& graph, int node)
                 if (i > 0)
                     text += ", ";
 
-                text += printExpr(graph, expr.args[i]);
+                text += printExpr(graph, expr.args[i], backend);
             }
 
             return text + ")";
         }
 
         case ExprKind::Swizzle:
-            return "(" + printExpr(graph, expr.args[0]) + ")." + expr.text;
+            return "(" + printExpr(graph, expr.args[0], backend) + ")." + expr.text;
 
         case ExprKind::Call:
-            return expr.text + "(" + printExpr(graph, expr.args[0]) + ")";
+        {
+            auto text = expr.text + "(";
+
+            for (auto i = 0; i < expr.args.size(); ++i)
+            {
+                if (i > 0)
+                    text += ", ";
+
+                text += printExpr(graph, expr.args[i], backend);
+            }
+
+            return text + ")";
+        }
 
         case ExprKind::Binary:
-            return "(" + printExpr(graph, expr.args[0]) + " "
-                   + std::string(1, expr.op) + " " + printExpr(graph, expr.args[1])
-                   + ")";
+            return "(" + printExpr(graph, expr.args[0], backend) + " "
+                   + std::string(1, expr.op) + " "
+                   + printExpr(graph, expr.args[1], backend) + ")";
+
+        case ExprKind::Mul:
+        {
+            // Matrix * vector. MSL spells it with the * operator (column-major);
+            // HLSL multiplies a matrix and vector with mul().
+            auto matrix = printExpr(graph, expr.args[0], backend);
+            auto vector = printExpr(graph, expr.args[1], backend);
+
+            if (backend == Backend::Metal)
+                return "(" + matrix + " * " + vector + ")";
+
+            return "mul(" + matrix + ", " + vector + ")";
+        }
     }
 
     return {};
@@ -164,11 +189,13 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     }
 
     source += "    VertexOut output;\n";
-    source += "    output.position = " + printExpr(graph, graph.position()) + ";\n";
+    source += "    output.position = " + printExpr(graph, graph.position(), backend)
+              + ";\n";
 
     for (auto i = 0; i < graph.varyings().size(); ++i)
         source += "    output.v" + std::to_string(i) + " = "
-                  + printExpr(graph, graph.varyings()[i].sourceNode) + ";\n";
+                  + printExpr(graph, graph.varyings()[i].sourceNode, backend)
+                  + ";\n";
 
     source += "    return output;\n}\n\n";
 
@@ -177,7 +204,7 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     else
         source += "float4 fragmentMain(VertexOut input) : SV_Target\n{\n";
 
-    source += "    return " + printExpr(graph, graph.fragment()) + ";\n}\n";
+    source += "    return " + printExpr(graph, graph.fragment(), backend) + ";\n}\n";
 
     return source;
 }

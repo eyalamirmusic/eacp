@@ -77,6 +77,12 @@ struct CpuValueOf<Float4>
     using type = std::array<float, 4>;
 };
 
+template <>
+struct CpuValueOf<Float4x4>
+{
+    using type = std::array<float, 16>;
+};
+
 // The shader value a CPU type maps to. Built in for float / float[N] / array; a
 // user type opts in either intrusively (a `using ShaderValue = Float3;` member,
 // like MIRO_REFLECT) or non-intrusively via EACP_SHADER_VALUE (like
@@ -128,6 +134,12 @@ template <>
 struct ShaderValueOf<std::array<float, 4>>
 {
     using type = Float4;
+};
+
+template <>
+struct ShaderValueOf<std::array<float, 16>>
+{
+    using type = Float4x4;
 };
 
 // True when V is a CPU type registered as the shader value type T.
@@ -185,6 +197,7 @@ inline int uniformAlignment(ValueType type)
             return 8;
         case ValueType::Float3:
         case ValueType::Float4:
+        case ValueType::Float4x4:
             return 16;
     }
 
@@ -213,6 +226,8 @@ inline VertexFormat toVertexFormat(ValueType type)
             return VertexFormat::Float3;
         case ValueType::Float4:
             return VertexFormat::Float4;
+        case ValueType::Float4x4:
+            return VertexFormat::Float4; // matrices are never vertex attributes
     }
 
     return VertexFormat::Float;
@@ -314,16 +329,24 @@ public:
     template <typename V, std::size_t N>
     void setVertices(const V (&data)[N])
     {
+        setVertices(data, (int) N);
+    }
+
+    template <typename V>
+    void setVertices(const V* data, int count)
+    {
         assert(sizeof(V) == (std::size_t) vertexLayout().stride
                && "vertex element size does not match the shader's vertex layout");
 
-        vertexBufferData.emplace(Device::shared(), data, sizeof(data));
-        vertexCountValue = (int) N;
+        vertexBufferData.emplace(
+            Device::shared(), data, sizeof(V) * (std::size_t) count);
+        vertexCountValue = count;
     }
 
     // Builds the shader library and render pipeline. sampleCount must match the
-    // render target (GPUView::sampleCount()).
-    void prepare(int sampleCount)
+    // render target (GPUView::sampleCount()); set depth when the view has a depth
+    // buffer (GPUView::setDepth(true)).
+    void prepare(int sampleCount, bool depth = false)
     {
         shaderLibrary.emplace(Device::shared(), generated.source);
 
@@ -331,6 +354,7 @@ public:
         descriptor.library = &*shaderLibrary;
         descriptor.sampleCount = sampleCount;
         descriptor.vertexLayout = generated.vertexLayout;
+        descriptor.depth = depth;
 
         pipelineState.emplace(Device::shared(), descriptor);
     }
@@ -403,6 +427,8 @@ protected:
     {
         return builder.varying(vertexValue);
     }
+
+    Float constant(float value) { return builder.constant(value); }
 
     void setPosition(const Float4& clipPosition) { builder.position(clipPosition); }
     void setFragment(const Float4& color) { builder.fragment(color); }

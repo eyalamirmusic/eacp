@@ -85,6 +85,19 @@ struct RenderPipeline::Native
 
         pipelineDescriptor.rasterSampleCount = (NSUInteger) descriptor.sampleCount;
 
+        if (descriptor.depth)
+        {
+            pipelineDescriptor.depthAttachmentPixelFormat =
+                MTLPixelFormatDepth32Float;
+
+            auto depthDescriptor = [[MTLDepthStencilDescriptor alloc] init];
+            depthDescriptor.depthCompareFunction = MTLCompareFunctionLessEqual;
+            depthDescriptor.depthWriteEnabled = YES;
+            depthState =
+                [metalDevice newDepthStencilStateWithDescriptor:depthDescriptor];
+            [depthDescriptor release];
+        }
+
         auto colorAttachment = pipelineDescriptor.colorAttachments[0];
         colorAttachment.pixelFormat = toMetalPixelFormat(descriptor.colorFormat);
 
@@ -112,6 +125,7 @@ struct RenderPipeline::Native
     }
 
     ObjC::Ptr<NSObject<MTLRenderPipelineState>> state;
+    ObjC::Ptr<NSObject<MTLDepthStencilState>> depthState;
 };
 
 RenderPipeline::RenderPipeline(Device& device,
@@ -128,5 +142,10 @@ bool RenderPipeline::isValid() const
 void* RenderPipeline::nativeState() const
 {
     return (__bridge void*) impl->state.get();
+}
+
+void* RenderPipeline::nativeDepthState() const
+{
+    return (__bridge void*) impl->depthState.get();
 }
 } // namespace eacp::GPU

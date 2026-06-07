@@ -22,7 +22,7 @@ struct RenderPassDescriptor
 class Frame
 {
 public:
-    Frame(Device& device, void* drawable, void* msaaTexture);
+    Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture);
     ~Frame();
 
     Frame(const Frame&) = delete;

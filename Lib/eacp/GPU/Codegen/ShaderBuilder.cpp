@@ -20,6 +20,8 @@ VertexFormat toVertexFormat(ValueType type)
             return VertexFormat::Float3;
         case ValueType::Float4:
             return VertexFormat::Float4;
+        case ValueType::Float4x4:
+            return VertexFormat::Float4; // matrices are never vertex attributes
     }
 
     return VertexFormat::Float;
