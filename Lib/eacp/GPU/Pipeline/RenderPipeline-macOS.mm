@@ -83,6 +83,8 @@ struct RenderPipeline::Native
         if (auto vertexDescriptor = makeVertexDescriptor(descriptor.vertexLayout))
             pipelineDescriptor.vertexDescriptor = vertexDescriptor;
 
+        pipelineDescriptor.rasterSampleCount = (NSUInteger) descriptor.sampleCount;
+
         auto colorAttachment = pipelineDescriptor.colorAttachments[0];
         colorAttachment.pixelFormat = toMetalPixelFormat(descriptor.colorFormat);
 

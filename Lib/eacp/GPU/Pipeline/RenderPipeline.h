@@ -19,6 +19,9 @@ struct RenderPipelineDescriptor
     const ShaderLibrary* library = nullptr;
     VertexLayout vertexLayout;
     PixelFormat colorFormat = PixelFormat::BGRA8Unorm;
+    // Multisample count for anti-aliasing. Must match the render pass's sample
+    // count (GPUView::sampleCount()). 1 = no MSAA.
+    int sampleCount = 1;
     bool blending = false;
 };
 

@@ -49,6 +49,7 @@ struct TriangleView final : GPUView
     {
         auto descriptor = RenderPipelineDescriptor {};
         descriptor.library = &library;
+        descriptor.sampleCount = sampleCount();
         descriptor.vertexLayout.attribute(VertexFormat::Float2, 0)
             .attribute(VertexFormat::Float3, sizeof(float) * 2);
         descriptor.vertexLayout.stride = sizeof(Vertex);

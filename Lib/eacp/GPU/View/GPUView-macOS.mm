@@ -55,11 +55,37 @@ struct GPUView::Native
                          : NSScreen.mainScreen.backingScaleFactor;
 
         auto bounds = Graphics::toCGRect(view.getLocalBounds());
+        auto pixelWidth = (NSUInteger) (bounds.size.width * scale);
+        auto pixelHeight = (NSUInteger) (bounds.size.height * scale);
 
         metalLayer.get().frame = bounds;
         metalLayer.get().contentsScale = scale;
-        metalLayer.get().drawableSize =
-            CGSizeMake(bounds.size.width * scale, bounds.size.height * scale);
+        metalLayer.get().drawableSize = CGSizeMake(pixelWidth, pixelHeight);
+
+        updateMultisampleTexture(pixelWidth, pixelHeight);
+    }
+
+    void updateMultisampleTexture(NSUInteger width, NSUInteger height)
+    {
+        if (sampleCount <= 1 || width == 0 || height == 0)
+        {
+            msaaTexture.release();
+            return;
+        }
+
+        auto metalDevice = (__bridge id<MTLDevice>) Device::shared().nativeDevice();
+
+        auto textureDescriptor = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                         width:width
+                                        height:height
+                                     mipmapped:NO];
+        textureDescriptor.textureType = MTLTextureType2DMultisample;
+        textureDescriptor.sampleCount = (NSUInteger) sampleCount;
+        textureDescriptor.usage = MTLTextureUsageRenderTarget;
+        textureDescriptor.storageMode = MTLStorageModePrivate;
+
+        msaaTexture = [metalDevice newTextureWithDescriptor:textureDescriptor];
     }
 
     void ensureRenderLoop()
@@ -70,7 +96,9 @@ struct GPUView::Native
     }
 
     GPUView& view;
+    int sampleCount = 4;
     ObjC::Ptr<CAMetalLayer> metalLayer;
+    ObjC::Ptr<NSObject<MTLTexture>> msaaTexture;
     OwningPointer<Threads::DisplayLink> displayLink;
 };
 
@@ -80,6 +108,16 @@ GPUView::GPUView()
 }
 
 GPUView::~GPUView() = default;
+
+int GPUView::sampleCount() const
+{
+    return impl->sampleCount;
+}
+
+void GPUView::setSampleCount(int count)
+{
+    impl->sampleCount = count;
+}
 
 void GPUView::resized()
 {
@@ -102,7 +140,9 @@ void GPUView::renderTick()
         if (drawable == nil)
             return;
 
-        auto frame = Frame(Device::shared(), (__bridge void*) drawable);
+        auto frame = Frame(Device::shared(),
+                           (__bridge void*) drawable,
+                           (__bridge void*) impl->msaaTexture.get());
         render(frame);
     }
 }

@@ -17,11 +17,12 @@ struct RenderPassDescriptor
 
 // One renderable frame: owns the drawable being rendered to plus its command
 // buffer. Presents the drawable and commits the command buffer on destruction.
-// Created by GPUView each tick and handed to GPUView::render.
+// Created by GPUView each tick and handed to GPUView::render. When msaaTexture
+// is non-null the pass renders into it and resolves into the drawable.
 class Frame
 {
 public:
-    Frame(Device& device, void* drawable);
+    Frame(Device& device, void* drawable, void* msaaTexture);
     ~Frame();
 
     Frame(const Frame&) = delete;

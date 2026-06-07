@@ -20,6 +20,12 @@ public:
 
     void resized() override;
 
+    // Multisample (MSAA) count used for rendering; defaults to 4 for smooth
+    // edges. Feed this into your RenderPipelineDescriptor::sampleCount so the
+    // pipeline matches the render target. Set before building the pipeline.
+    int sampleCount() const;
+    void setSampleCount(int count);
+
 private:
     void renderTick();
 
