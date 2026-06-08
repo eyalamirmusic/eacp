@@ -251,6 +251,8 @@ struct View::Native
 
     void repaint() { [nativeView.get() setNeedsDisplay:YES]; }
 
+    void setOpacity(float opacity) { nativeView.get().alphaValue = opacity; }
+
     Rect getBounds() const { return toRect([nativeView.get() frame]); }
     void setBounds(const Rect& bounds)
     {
@@ -317,6 +319,11 @@ void* View::getHandle()
 void View::repaint()
 {
     impl->repaint();
+}
+
+void View::setOpacity(float opacity)
+{
+    impl->setOpacity(opacity);
 }
 
 Rect View::getBounds() const

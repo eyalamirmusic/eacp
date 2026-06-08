@@ -71,6 +71,7 @@ struct RotatingTriangleView final : GPUView
     {
         shader.setVertices(triangleVertices);
         shader.prepare(sampleCount());
+        eacp::LOG (shader.source().source);
     }
 
     void advance()

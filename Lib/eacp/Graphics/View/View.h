@@ -56,6 +56,12 @@ public:
     virtual ~View();
 
     void repaint();
+
+    // Group opacity for the whole view subtree (chrome, child views and any
+    // native GPU/web content), composited over whatever sits behind it. Sibling
+    // of Layer::setOpacity, but for an entire View rather than a single layer.
+    void setOpacity(float opacity);
+
     void* getHandle();
 
     virtual void paint(Context&) {};
