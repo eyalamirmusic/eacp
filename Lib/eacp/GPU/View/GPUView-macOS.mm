@@ -41,6 +41,11 @@ struct GPUView::Native
         metalLayer.get().pixelFormat = MTLPixelFormatBGRA8Unorm;
         metalLayer.get().framebufferOnly = YES;
 
+        // Present the drawable inside the current CATransaction so new content
+        // lands atomically with the layer's new size during live resize, rather
+        // than the old drawable being stretched until the next async present.
+        metalLayer.get().presentsWithTransaction = YES;
+
         auto base = (__bridge CALayer*) view.getNativeLayer();
         [base addSublayer:metalLayer.get()];
     }
@@ -184,7 +189,10 @@ void GPUView::resized()
 {
     Graphics::View::resized();
     impl->updateSize();
-    repaint();
+
+    // Draw at the new size now, synchronously within the layout/resize pass,
+    // instead of waiting for the async display link a frame or more later.
+    renderNow();
 }
 
 void GPUView::paint(Graphics::Context&)

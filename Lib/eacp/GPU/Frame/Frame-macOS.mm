@@ -48,10 +48,15 @@ Frame::~Frame()
     if (buffer == nil)
         return;
 
-    if (target != nil)
-        [buffer presentDrawable:(id<CAMetalDrawable>) target];
-
+    // The layer presents with transaction, so commit, wait for the buffer to be
+    // scheduled, then present the drawable as part of the current CATransaction.
     [buffer commit];
+
+    if (target != nil)
+    {
+        [buffer waitUntilScheduled];
+        [(id<CAMetalDrawable>) target present];
+    }
 }
 
 RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
