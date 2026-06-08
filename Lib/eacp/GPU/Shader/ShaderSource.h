@@ -15,7 +15,8 @@ enum class ShaderBackend
 enum class ShaderStage
 {
     Vertex,
-    Fragment
+    Fragment,
+    Compute
 };
 
 enum class ResourceKind
@@ -69,6 +70,17 @@ struct ShaderSource
         return *this;
     }
 
+    // Names the kernel entry point and marks this as a compute source: a library
+    // built from it compiles only the compute stage, and ComputePipeline pulls
+    // this function. Leave unset for a vertex/fragment source.
+    ShaderSource& withCompute(std::string entry)
+    {
+        computeEntry = std::move(entry);
+        return *this;
+    }
+
+    bool isCompute() const { return !computeEntry.empty(); }
+
     ShaderSource& withBinding(ResourceBinding binding)
     {
         bindings.add(std::move(binding));
@@ -79,6 +91,7 @@ struct ShaderSource
     std::string source;
     std::string vertexEntry = "vertexMain";
     std::string fragmentEntry = "fragmentMain";
+    std::string computeEntry; // empty unless this is a compute source
     Vector<ResourceBinding> bindings;
 };
 } // namespace eacp::GPU

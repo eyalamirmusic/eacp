@@ -8,9 +8,7 @@
 
 #include <d3d11.h>
 
-#include <cstring>
 #include <memory>
-#include <vector>
 
 // Windows/D3D11 backend. Records draw commands onto the immediate context the
 // frame's beginPass handed over via the D3DEncoder. The encoder is owned here so
@@ -91,27 +89,12 @@ void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
     if (!device)
         return;
 
-    // Constant buffers must be sized to a multiple of 16 bytes; pad the upload.
-    auto paddedSize =
-        static_cast<UINT>((bytes + 15) & ~static_cast<std::size_t>(15));
-    auto padded = std::vector<unsigned char>(paddedSize, 0);
-    std::memcpy(padded.data(), data, bytes);
-
-    D3D11_BUFFER_DESC descriptor = {};
-    descriptor.ByteWidth = paddedSize;
-    descriptor.Usage = D3D11_USAGE_DEFAULT;
-    descriptor.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-
-    D3D11_SUBRESOURCE_DATA initialData = {};
-    initialData.pSysMem = padded.data();
-
     // A fresh constant buffer per call keeps this self-contained; the context
     // AddRefs it on bind, so the local com_ptr can release. A Device-cached
     // dynamic buffer is a future optimisation.
-    winrt::com_ptr<ID3D11Buffer> constantBuffer;
+    auto constantBuffer = makeConstantBuffer(device.get(), data, bytes);
 
-    if (FAILED(
-            device->CreateBuffer(&descriptor, &initialData, constantBuffer.put())))
+    if (!constantBuffer)
         return;
 
     auto* rawBuffer = constantBuffer.get();

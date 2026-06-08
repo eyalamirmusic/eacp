@@ -61,6 +61,14 @@ struct ShaderLibrary::Native
         if (d3dDevice == nullptr)
             return;
 
+        if (source.isCompute())
+            compileCompute(d3dDevice, source);
+        else
+            compileRender(d3dDevice, source);
+    }
+
+    void compileRender(ID3D11Device* d3dDevice, const ShaderSource& source)
+    {
         auto vertexBlob = compileStage(source.source, source.vertexEntry, "vs_5_0");
         auto fragmentBlob =
             compileStage(source.source, source.fragmentEntry, "ps_5_0");
@@ -81,18 +89,36 @@ struct ShaderLibrary::Native
         program.vertexBytecode = vertexBlob;
     }
 
+    void compileCompute(ID3D11Device* d3dDevice, const ShaderSource& source)
+    {
+        auto computeBlob =
+            compileStage(source.source, source.computeEntry, "cs_5_0");
+
+        if (!computeBlob)
+            return;
+
+        d3dDevice->CreateComputeShader(computeBlob->GetBufferPointer(),
+                                       computeBlob->GetBufferSize(),
+                                       nullptr,
+                                       program.computeShader.put());
+    }
+
     D3DShaderProgram program;
 };
 
 ShaderLibrary::ShaderLibrary(Device& device, const ShaderSource& source)
     : vertexEntryName(source.vertexEntry)
     , fragmentEntryName(source.fragmentEntry)
+    , computeEntryName(source.computeEntry)
     , impl(device, source)
 {
 }
 
 bool ShaderLibrary::isValid() const
 {
+    if (impl->program.computeShader != nullptr)
+        return true;
+
     return impl->program.vertexShader != nullptr
            && impl->program.pixelShader != nullptr;
 }

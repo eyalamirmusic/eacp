@@ -18,6 +18,7 @@ public:
 
     const std::string& vertexEntry() const { return vertexEntryName; }
     const std::string& fragmentEntry() const { return fragmentEntryName; }
+    const std::string& computeEntry() const { return computeEntryName; }
 
     bool isValid() const;
 
@@ -27,6 +28,7 @@ public:
 private:
     std::string vertexEntryName;
     std::string fragmentEntryName;
+    std::string computeEntryName;
 
     struct Native;
     Pimpl<Native> impl;

@@ -14,9 +14,12 @@ if (APPLE)
     target_sources(eacp-gpu PRIVATE
             Buffer/Buffer-macOS.mm
             Codegen/ShaderBuilder-macOS.cpp
+            CommandBuffer/CommandBuffer-macOS.mm
             Device/Device-macOS.mm
+            Frame/ComputePass-macOS.mm
             Frame/Frame-macOS.mm
             Frame/RenderPass-macOS.mm
+            Pipeline/ComputePipeline-macOS.mm
             Pipeline/RenderPipeline-macOS.mm
             Shader/ShaderLibrary-macOS.mm
             View/GPUView-macOS.mm)
@@ -28,9 +31,12 @@ elseif (WIN32)
     target_sources(eacp-gpu PRIVATE
             Buffer/Buffer-Windows.cpp
             Codegen/ShaderBuilder-Windows.cpp
+            CommandBuffer/CommandBuffer-Windows.cpp
             Device/Device-Windows.cpp
+            Frame/ComputePass-Windows.cpp
             Frame/Frame-Windows.cpp
             Frame/RenderPass-Windows.cpp
+            Pipeline/ComputePipeline-Windows.cpp
             Pipeline/RenderPipeline-Windows.cpp
             Shader/ShaderLibrary-Windows.cpp
             View/GPUView-Windows.cpp)

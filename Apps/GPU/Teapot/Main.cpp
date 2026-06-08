@@ -81,7 +81,7 @@ Vec3 controlPoint(int patch, int i, int j)
 
 // Tessellates the 32 Bezier patches into a flat, centred, unit-scaled triangle
 // list with per-vertex normals (from the surface partial derivatives).
-std::vector<Vertex> buildTeapot()
+Vector<Vertex> buildTeapot()
 {
     auto low = Vec3 {1e9f, 1e9f, 1e9f};
     auto high = Vec3 {-1e9f, -1e9f, -1e9f};
@@ -102,7 +102,7 @@ std::vector<Vertex> buildTeapot()
     auto scale = 2.0f / extent;
 
     constexpr auto steps = 12;
-    auto vertices = std::vector<Vertex> {};
+    auto vertices = Vector<Vertex> {};
 
     for (auto p = 0; p < teapot::patchCount; ++p)
     {
@@ -145,7 +145,7 @@ std::vector<Vertex> buildTeapot()
                 auto c = grid[iu + 1][iv + 1];
                 auto d = grid[iu][iv + 1];
 
-                vertices.insert(vertices.end(), {a, b, c, a, c, d});
+                vertices.getVector().insert(vertices.end(), {a, b, c, a, c, d});
             }
     }
 
@@ -212,14 +212,14 @@ struct TeapotView final : GPUView
         // The CPU uploads only scalars now; the shader builds every matrix.
         shader.angle = spin;
         shader.aspect = bounds.h > 0.0f ? bounds.w / bounds.h : 1.0f;
-        shader.lightDir = std::array<float, 3> {0.4f, 0.5f, 0.8f};
-        shader.baseColor = std::array<float, 3> {0.85f, 0.5f, 0.32f};
+        shader.lightDir = std::array {0.4f, 0.5f, 0.8f};
+        shader.baseColor = std::array {0.85f, 0.5f, 0.32f};
 
         auto pass = frame.beginPass({Graphics::Color {0.09f, 0.10f, 0.13f}});
         pass.draw(shader);
     }
 
-    std::vector<Vertex> mesh;
+    Vector<Vertex> mesh;
     TeapotShader shader;
     float spin = 0.0f;
 };

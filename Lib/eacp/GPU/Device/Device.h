@@ -3,6 +3,8 @@
 #include <eacp/Core/Utils/Common.h>
 
 #include "../Buffer/Buffer.h"
+#include "../CommandBuffer/CommandBuffer.h"
+#include "../Pipeline/ComputePipeline.h"
 #include "../Pipeline/RenderPipeline.h"
 #include "../Shader/ShaderLibrary.h"
 #include "../Shader/ShaderSource.h"
@@ -20,15 +22,23 @@ public:
 
     static Device& shared();
 
-    Buffer makeBuffer(const void* data, std::size_t bytes)
+    Buffer makeBuffer(const void* data,
+                      std::size_t bytes,
+                      BufferUsage usage = BufferUsage::Vertex)
     {
-        return {*this, data, bytes};
+        return {*this, data, bytes, usage};
     }
 
     template <typename T, std::size_t N>
-    Buffer makeBuffer(const T (&array)[N])
+    Buffer makeBuffer(const T (&array)[N], BufferUsage usage = BufferUsage::Vertex)
     {
-        return makeBuffer(array, sizeof(array));
+        return makeBuffer(array, sizeof(array), usage);
+    }
+
+    // An uninitialised buffer of the given size, e.g. a compute output target.
+    Buffer makeBuffer(std::size_t bytes, BufferUsage usage = BufferUsage::Storage)
+    {
+        return {*this, nullptr, bytes, usage};
     }
 
     ShaderLibrary makeShaderLibrary(const ShaderSource& source)
@@ -40,6 +50,13 @@ public:
     {
         return {*this, descriptor};
     }
+
+    ComputePipeline makeComputePipeline(const ShaderLibrary& library)
+    {
+        return {*this, library};
+    }
+
+    CommandBuffer makeCommandBuffer() { return CommandBuffer {*this}; }
 
     bool isValid() const;
 
