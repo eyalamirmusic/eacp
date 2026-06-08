@@ -147,6 +147,120 @@ auto tTessellateEmpty = test("GPUWidgets/tessellateEmpty") = []
     check(tessellateFill(path).empty());
 };
 
+// A closed square strokes into a non-empty triangle list whose vertices all stay
+// within the square inflated by half the stroke width. (Overlapping join triangles
+// make a summed-area check unreliable, so this checks containment instead.)
+auto tStroke = test("GPUWidgets/strokeClosedSquare") = []
+{
+    auto path = Path {};
+    path.addRect({0.0f, 0.0f, 100.0f, 100.0f});
+
+    auto width = 10.0f;
+    auto half = width * 0.5f;
+    auto mesh = tessellateStroke(path, width);
+
+    check(!mesh.empty());
+    check(mesh.size() % 3 == 0);
+
+    for (const auto& point: mesh)
+    {
+        check(point.x >= -half - 1e-3f && point.x <= 100.0f + half + 1e-3f);
+        check(point.y >= -half - 1e-3f && point.y <= 100.0f + half + 1e-3f);
+    }
+};
+
+// A non-positive width strokes to nothing.
+auto tStrokeZero = test("GPUWidgets/strokeZeroWidth") = []
+{
+    auto path = Path {};
+    path.addRect({0.0f, 0.0f, 100.0f, 100.0f});
+
+    check(tessellateStroke(path, 0.0f).empty());
+};
+
+// A linear gradient samples its endpoint colours, the midpoint between two stops,
+// clamps outside the axis, and ignores the off-axis component.
+auto tGradient = test("GPUWidgets/linearGradient") = []
+{
+    auto gradient =
+        Graphics::LinearGradient {{0.0f, 0.0f},
+                                  {100.0f, 0.0f},
+                                  {{Graphics::Color {1.0f, 0.0f, 0.0f}, 0.0f},
+                                   {Graphics::Color {0.0f, 0.0f, 1.0f}, 1.0f}}};
+
+    auto start = colorAt(gradient, {0.0f, 0.0f});
+    check(std::abs(start.r - 1.0f) < 1e-4f && std::abs(start.b - 0.0f) < 1e-4f);
+
+    auto end = colorAt(gradient, {100.0f, 0.0f});
+    check(std::abs(end.r - 0.0f) < 1e-4f && std::abs(end.b - 1.0f) < 1e-4f);
+
+    auto mid = colorAt(gradient, {50.0f, 0.0f});
+    check(std::abs(mid.r - 0.5f) < 1e-3f && std::abs(mid.b - 0.5f) < 1e-3f);
+
+    auto before = colorAt(gradient, {-50.0f, 0.0f});
+    check(std::abs(before.r - 1.0f) < 1e-4f);
+
+    auto after = colorAt(gradient, {200.0f, 0.0f});
+    check(std::abs(after.b - 1.0f) < 1e-4f);
+
+    // Off-axis points project onto the axis: y is ignored for a horizontal axis.
+    auto offAxis = colorAt(gradient, {50.0f, 999.0f});
+    check(std::abs(offAxis.r - 0.5f) < 1e-3f);
+};
+
+// The middle stop of a three-stop gradient shows at the right place.
+auto tGradientThreeStops = test("GPUWidgets/linearGradientThreeStops") = []
+{
+    auto gradient =
+        Graphics::LinearGradient {{0.0f, 0.0f},
+                                  {100.0f, 0.0f},
+                                  {{Graphics::Color {1.0f, 0.0f, 0.0f}, 0.0f},
+                                   {Graphics::Color {0.0f, 1.0f, 0.0f}, 0.5f},
+                                   {Graphics::Color {0.0f, 0.0f, 1.0f}, 1.0f}}};
+
+    auto middle = colorAt(gradient, {50.0f, 0.0f});
+    check(std::abs(middle.g - 1.0f) < 1e-3f);
+    check(std::abs(middle.r - 0.0f) < 1e-3f);
+    check(std::abs(middle.b - 0.0f) < 1e-3f);
+};
+
+// The vertex-colour shader's layout is position (float2) + colour (float4), derived
+// from the GradientVertex struct so it cannot drift from the upload type.
+auto tVertexColorLayout = test("GPUWidgets/vertexColorShaderLayout") = []
+{
+    auto shader = VertexColorShader {};
+    const auto& layout = shader.vertexLayout();
+
+    check(layout.attributes.size() == 2);
+    check(layout.attributes[0].format == GPU::VertexFormat::Float2);
+    check(layout.attributes[0].offset == 0);
+    check(layout.attributes[1].format == GPU::VertexFormat::Float4);
+    check(layout.attributes[1].offset == (int) sizeof(Graphics::Point));
+    check(layout.stride == (int) sizeof(GradientVertex));
+};
+
+// The vertex-colour shader's generated source compiles through the platform shader
+// compiler. Self-skips without a GPU device.
+auto tVertexColorCompiles = test("GPUWidgets/vertexColorShaderCompiles") = []
+{
+    auto& device = GPU::Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto shader = VertexColorShader {};
+
+    auto library = device.makeShaderLibrary(shader.source());
+    check(library.isValid());
+
+    auto descriptor = GPU::RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout();
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
+};
+
 // The fill shader's vertex layout is a single float2 position derived from the
 // FillVertex struct, so it cannot drift from the upload type. Device-free.
 auto tFillLayout = test("GPUWidgets/fillShaderLayout") = []

@@ -10,6 +10,11 @@ namespace
 using Graphics::Point;
 
 constexpr float epsilon = 1e-6f;
+constexpr float pi = 3.14159265358979323846f;
+
+// Round joins / caps are discs of this many triangles. Modest is plenty at
+// stroke-width scale.
+constexpr int joinSegments = 12;
 
 // Twice the signed area of triangle abc. Positive when abc winds
 // counter-clockwise (in a y-up sense), negative when clockwise.
@@ -146,6 +151,73 @@ void earClip(const Vector<Point>& source, Vector<Point>& out)
         out.add(polygon[remaining[2]]);
     }
 }
+
+// One segment as a quad offset perpendicular by half the stroke width on each
+// side, emitted as two triangles.
+void addSegment(Vector<Point>& out, const Point& a, const Point& b, float half)
+{
+    auto dx = b.x - a.x;
+    auto dy = b.y - a.y;
+    auto length = std::sqrt(dx * dx + dy * dy);
+
+    if (length < epsilon)
+        return;
+
+    auto normalX = -dy / length * half;
+    auto normalY = dx / length * half;
+
+    auto a0 = Point {a.x + normalX, a.y + normalY};
+    auto a1 = Point {a.x - normalX, a.y - normalY};
+    auto b0 = Point {b.x + normalX, b.y + normalY};
+    auto b1 = Point {b.x - normalX, b.y - normalY};
+
+    out.add(a0);
+    out.add(a1);
+    out.add(b1);
+    out.add(a0);
+    out.add(b1);
+    out.add(b0);
+}
+
+// A filled disc as a triangle fan, used for round joins and round caps. Its
+// outer half fills the wedge gap on the outside of a turn; on straight runs it
+// sits inside the segment quad and shows nothing.
+void addDisc(Vector<Point>& out, const Point& center, float radius)
+{
+    for (auto i = 0; i < joinSegments; ++i)
+    {
+        auto angle0 = (float) i / (float) joinSegments * 2.0f * pi;
+        auto angle1 = (float) (i + 1) / (float) joinSegments * 2.0f * pi;
+
+        out.add(center);
+        out.add({center.x + std::cos(angle0) * radius,
+                 center.y + std::sin(angle0) * radius});
+        out.add({center.x + std::cos(angle1) * radius,
+                 center.y + std::sin(angle1) * radius});
+    }
+}
+
+void strokeSubPath(const Vector<Point>& source,
+                   bool closed,
+                   float half,
+                   Vector<Point>& out)
+{
+    auto points = cleanPolygon(source);
+    auto count = points.size();
+
+    if (count < 2)
+        return;
+
+    auto segments = closed ? count : count - 1;
+
+    for (auto i = 0; i < segments; ++i)
+        addSegment(out, points[i], points[(i + 1) % count], half);
+
+    // A disc at every vertex: a round join at interior vertices, a round cap at
+    // the ends of an open sub-path.
+    for (auto i = 0; i < count; ++i)
+        addDisc(out, points[i], half);
+}
 } // namespace
 
 Vector<Graphics::Point> tessellateFill(const Path& path)
@@ -154,6 +226,21 @@ Vector<Graphics::Point> tessellateFill(const Path& path)
 
     for (const auto& sub: path.getSubPaths())
         earClip(sub.points, triangles);
+
+    return triangles;
+}
+
+Vector<Graphics::Point> tessellateStroke(const Path& path, float width)
+{
+    auto triangles = Vector<Graphics::Point> {};
+
+    if (width <= 0.0f)
+        return triangles;
+
+    auto half = width * 0.5f;
+
+    for (const auto& sub: path.getSubPaths())
+        strokeSubPath(sub.points, sub.closed, half, triangles);
 
     return triangles;
 }

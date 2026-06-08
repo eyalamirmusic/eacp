@@ -88,9 +88,20 @@ struct PathsApp
 {
     PathsApp()
     {
+        // A vertical gradient across the whole design space, so shapes higher in
+        // the window read warm and lower ones cool.
+        auto gradient = Graphics::LinearGradient {
+            {0.0f, 0.0f},
+            {0.0f, designHeight},
+            {{Graphics::Color {0.98f, 0.62f, 0.20f}, 0.0f},
+             {Graphics::Color {0.92f, 0.24f, 0.48f}, 0.5f},
+             {Graphics::Color {0.36f, 0.24f, 0.72f}, 1.0f}}};
+
         view.setCoordinateSpace(designWidth, designHeight);
         view.setBackgroundColor({0.07f, 0.08f, 0.11f, 1.0f});
-        view.setFillColor({0.96f, 0.55f, 0.20f, 1.0f});
+        view.setFillGradient(gradient);
+        view.setStrokeColor({0.96f, 0.97f, 1.0f, 1.0f});
+        view.setStrokeWidth(6.0f);
         view.setPath(buildScene());
 
         window.setContentView(view);
