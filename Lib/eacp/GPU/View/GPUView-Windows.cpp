@@ -83,6 +83,7 @@ struct GPUView::Native
             spriteVisual.Size({bounds.w, bounds.h});
 
         updateMultisampleTexture();
+        updateDepthTexture();
     }
 
     void createSwapChain()
@@ -196,6 +197,42 @@ struct GPUView::Native
                 msaaTexture.get(), nullptr, msaaView.put());
     }
 
+    // Depth buffer sized to the target. Its sample count must match the colour
+    // target actually in use (the resolved MSAA texture, or the back buffer), so
+    // it keys off the same condition render() uses to pick the colour target.
+    void updateDepthTexture()
+    {
+        depthView = nullptr;
+        depthTexture = nullptr;
+
+        if (!depthEnabled || width == 0 || height == 0 || device == nullptr)
+            return;
+
+        auto useMsaa = sampleCount > 1 && msaaView;
+
+        D3D11_TEXTURE2D_DESC descriptor = {};
+        descriptor.Width = width;
+        descriptor.Height = height;
+        descriptor.MipLevels = 1;
+        descriptor.ArraySize = 1;
+        descriptor.Format = DXGI_FORMAT_D32_FLOAT;
+        descriptor.SampleDesc.Count = useMsaa ? static_cast<UINT>(sampleCount) : 1;
+        descriptor.Usage = D3D11_USAGE_DEFAULT;
+        descriptor.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+
+        device->CreateTexture2D(&descriptor, nullptr, depthTexture.put());
+
+        if (!depthTexture)
+            return;
+
+        D3D11_DEPTH_STENCIL_VIEW_DESC viewDescriptor = {};
+        viewDescriptor.Format = DXGI_FORMAT_D32_FLOAT;
+        viewDescriptor.ViewDimension = useMsaa ? D3D11_DSV_DIMENSION_TEXTURE2DMS
+                                               : D3D11_DSV_DIMENSION_TEXTURE2D;
+        device->CreateDepthStencilView(
+            depthTexture.get(), &viewDescriptor, depthView.put());
+    }
+
     void render()
     {
         if (!swapChain || !backBufferView || width == 0 || height == 0)
@@ -217,8 +254,19 @@ struct GPUView::Native
             msaa.view = msaaView.get();
         }
 
-        auto frame =
-            Frame(Device::shared(), &drawable, useMsaa ? &msaa : nullptr, nullptr);
+        auto useDepth = depthEnabled && depthView;
+
+        D3DDepthTarget depth = {};
+        if (useDepth)
+        {
+            depth.texture = depthTexture.get();
+            depth.view = depthView.get();
+        }
+
+        auto frame = Frame(Device::shared(),
+                           &drawable,
+                           useMsaa ? &msaa : nullptr,
+                           useDepth ? &depth : nullptr);
         view.render(frame);
     }
 
@@ -247,6 +295,8 @@ struct GPUView::Native
     winrt::com_ptr<ID3D11RenderTargetView> backBufferView;
     winrt::com_ptr<ID3D11Texture2D> msaaTexture;
     winrt::com_ptr<ID3D11RenderTargetView> msaaView;
+    winrt::com_ptr<ID3D11Texture2D> depthTexture;
+    winrt::com_ptr<ID3D11DepthStencilView> depthView;
 
     OwningPointer<Threads::DisplayLink> displayLink;
 };
@@ -267,12 +317,13 @@ void GPUView::setSampleCount(int count)
 {
     impl->sampleCount = count;
     impl->updateMultisampleTexture();
+    impl->updateDepthTexture();
 }
 
 void GPUView::setDepth(bool enabled)
 {
-    // Depth buffering is implemented on the Metal backend only for now.
     impl->depthEnabled = enabled;
+    impl->updateDepthTexture();
 }
 
 bool GPUView::hasDepth() const

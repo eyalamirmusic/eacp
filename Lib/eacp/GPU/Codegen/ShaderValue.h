@@ -249,7 +249,8 @@ inline Float4x4 operator*(const Float4x4& a, const Float4x4& b)
 }
 
 // Builds a matrix from its four columns. Column-major, matching Metal's
-// float4x4(c0, c1, c2, c3); the HLSL path would need transposed construction.
+// float4x4(c0, c1, c2, c3); the HLSL emitter transposes this construction, since
+// HLSL fills a matrix from rows rather than columns.
 inline Float4x4
     float4x4(const Float4& c0, const Float4& c1, const Float4& c2, const Float4& c3)
 {

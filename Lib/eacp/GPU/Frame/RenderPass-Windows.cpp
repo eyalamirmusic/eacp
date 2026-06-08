@@ -54,6 +54,10 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
     context->PSSetShader(state->pixelShader.get(), nullptr, 0);
     context->RSSetState(state->rasterizerState.get());
 
+    // Null state restores D3D's default; with no depth view bound (the non-depth
+    // path) that default has no buffer to test against, so it is a no-op there.
+    context->OMSetDepthStencilState(state->depthStencilState.get(), 0);
+
     const float blendFactor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     context->OMSetBlendState(state->blendState.get(), blendFactor, 0xffffffff);
 

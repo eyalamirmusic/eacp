@@ -88,7 +88,16 @@ std::string printExpr(const ShaderGraph& graph, int node, Backend backend)
                 text += printExpr(graph, expr.args[i], backend);
             }
 
-            return text + ")";
+            text += ")";
+
+            // float4x4(c0..c3) passes the four columns. MSL fills a matrix from
+            // columns, but HLSL fills it from rows, so the same call yields the
+            // transpose there; transpose() restores the column-major value, so the
+            // mul() paths stay identical across both backends.
+            if (backend == Backend::DirectX && expr.type == ValueType::Float4x4)
+                return "transpose(" + text + ")";
+
+            return text;
         }
 
         case ExprKind::Swizzle:

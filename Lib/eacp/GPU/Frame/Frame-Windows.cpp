@@ -19,13 +19,12 @@ struct Frame::Native
     Native(Device& device,
            void* drawableHandle,
            void* msaaTextureHandle,
-           void* /*depthTextureHandle*/)
+           void* depthTextureHandle)
         : context(static_cast<ID3D11DeviceContext*>(device.nativeQueue()))
         , drawable(static_cast<D3DDrawable*>(drawableHandle))
         , msaa(static_cast<D3DMsaaTarget*>(msaaTextureHandle))
+        , depth(static_cast<D3DDepthTarget*>(depthTextureHandle))
     {
-        // Depth buffering is currently implemented on the Metal backend only; the
-        // D3D11 path ignores the depth texture for now.
     }
 
     ID3D11RenderTargetView* targetView() const
@@ -36,9 +35,15 @@ struct Frame::Native
         return drawable != nullptr ? drawable->backBufferView : nullptr;
     }
 
+    ID3D11DepthStencilView* depthView() const
+    {
+        return depth != nullptr ? depth->view : nullptr;
+    }
+
     ID3D11DeviceContext* context = nullptr;
     D3DDrawable* drawable = nullptr;
     D3DMsaaTarget* msaa = nullptr;
+    D3DDepthTarget* depth = nullptr;
 };
 
 Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture)
@@ -72,7 +77,8 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     if (impl->context == nullptr || target == nullptr)
         return RenderPass(nullptr);
 
-    impl->context->OMSetRenderTargets(1, &target, nullptr);
+    auto* depthView = impl->depthView();
+    impl->context->OMSetRenderTargets(1, &target, depthView);
 
     D3D11_VIEWPORT viewport = {};
     viewport.Width = static_cast<float>(impl->drawable->width);
@@ -86,6 +92,11 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
         const float clearColor[4] = {color.r, color.g, color.b, color.a};
         impl->context->ClearRenderTargetView(target, clearColor);
     }
+
+    // Depth is cleared to the far plane (1.0) whenever a depth buffer is bound,
+    // matching the Metal pass's unconditional depth clear.
+    if (depthView != nullptr)
+        impl->context->ClearDepthStencilView(depthView, D3D11_CLEAR_DEPTH, 1.0f, 0);
 
     return RenderPass(new D3DEncoder {impl->context, 0});
 }

@@ -87,6 +87,20 @@ winrt::com_ptr<ID3D11RasterizerState> makeRasterizerState(ID3D11Device* device,
     return state;
 }
 
+// Less-equal depth test with depth writes on, matching the Metal backend. The
+// [0,1] depth range is shared by both APIs, so no convention flip is needed.
+winrt::com_ptr<ID3D11DepthStencilState> makeDepthStencilState(ID3D11Device* device)
+{
+    D3D11_DEPTH_STENCIL_DESC descriptor = {};
+    descriptor.DepthEnable = TRUE;
+    descriptor.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+    descriptor.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+
+    winrt::com_ptr<ID3D11DepthStencilState> state;
+    device->CreateDepthStencilState(&descriptor, state.put());
+    return state;
+}
+
 winrt::com_ptr<ID3D11BlendState> makeBlendState(ID3D11Device* device)
 {
     D3D11_BLEND_DESC descriptor = {};
@@ -131,6 +145,9 @@ struct RenderPipeline::Native
 
         if (descriptor.blending)
             pipeline.blendState = makeBlendState(d3dDevice);
+
+        if (descriptor.depth)
+            pipeline.depthStencilState = makeDepthStencilState(d3dDevice);
     }
 
     D3DPipeline pipeline;
@@ -155,7 +172,6 @@ void* RenderPipeline::nativeState() const
 
 void* RenderPipeline::nativeDepthState() const
 {
-    // Depth buffering is implemented on the Metal backend only for now.
-    return nullptr;
+    return impl->pipeline.depthStencilState.get();
 }
 } // namespace eacp::GPU

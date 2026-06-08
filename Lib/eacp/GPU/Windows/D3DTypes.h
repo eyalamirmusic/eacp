@@ -41,6 +41,7 @@ struct D3DPipeline
     winrt::com_ptr<ID3D11InputLayout> inputLayout;
     winrt::com_ptr<ID3D11RasterizerState> rasterizerState;
     winrt::com_ptr<ID3D11BlendState> blendState; // null = opaque, no blending
+    winrt::com_ptr<ID3D11DepthStencilState> depthStencilState; // null = no depth
     UINT stride = 0;
 };
 
@@ -63,6 +64,15 @@ struct D3DMsaaTarget
     ID3D11Texture2D* texture = nullptr;
     ID3D11RenderTargetView* view = nullptr;
     DXGI_FORMAT format = DXGI_FORMAT_B8G8R8A8_UNORM;
+};
+
+// Optional depth buffer. When present the pass binds it alongside the colour
+// target for depth testing and clears it at the start of the frame. Owned by
+// GPUView. Pointed to by the depthTexture handle passed to Frame.
+struct D3DDepthTarget
+{
+    ID3D11Texture2D* texture = nullptr;
+    ID3D11DepthStencilView* view = nullptr;
 };
 
 // Carries the immediate context (and the active pipeline stride) from a Frame's
