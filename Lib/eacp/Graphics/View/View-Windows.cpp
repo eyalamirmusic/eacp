@@ -129,6 +129,12 @@ struct View::Native
 
     void removeSubview(View& view) { view.impl->detachFromParent(); }
 
+    void setOpacity(float opacity)
+    {
+        if (visual)
+            visual.Opacity(opacity);
+    }
+
     void attachToParent(wuc::ContainerVisual parentVisual)
     {
         if (parentVisual && visual)
@@ -195,6 +201,11 @@ void* View::getHandle()
 void View::repaint()
 {
     impl->repaint();
+}
+
+void View::setOpacity(float opacity)
+{
+    impl->setOpacity(opacity);
 }
 
 Rect View::getBounds() const
