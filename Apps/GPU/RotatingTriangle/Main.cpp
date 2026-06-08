@@ -83,7 +83,7 @@ struct RotatingTriangleView final : GPUView
     {
         shader.angle = angle;
 
-        auto pass = frame.beginPass(});
+        auto pass = frame.beginPass({});
         pass.draw(shader);
     }
 
