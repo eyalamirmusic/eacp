@@ -2,6 +2,11 @@ add_library(eacp-gpu STATIC)
 
 target_link_libraries(eacp-gpu PUBLIC eacp-graphics)
 
+# The EACP_SHADER reflection macro engine uses __VA_OPT__, which MSVC only
+# supports under its conforming preprocessor. The macro lives in a public header,
+# so the flag is PUBLIC to reach consumers. Mirrors Miro's MIRO_REFLECT setup.
+target_compile_options(eacp-gpu PUBLIC $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>)
+
 # The shader codegen layer is pure portable C++ (string generation only), so it
 # builds on every platform and is not gated behind the APPLE/WIN32 branches. Only
 # the native backend selection (ShaderBuilder-*) lives in the platform branches.
