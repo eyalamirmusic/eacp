@@ -1108,6 +1108,8 @@ struct WebView::Native
 
     void handleMouseDown(const MouseEvent& event)
     {
+        resetDragArming();
+
         if (controller)
             controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
 
@@ -1198,6 +1200,43 @@ struct WebView::Native
             OleUninitialize();
     }
 
+    // --- Native window drag -------------------------------------------------
+    // window-drag.js posts __eacpWindowDrag on a drag-region mousedown, which
+    // arms this; the next mouseDragged hands the gesture to the OS. Mirrors the
+    // macOS performWindowDragWithEvent: path.
+    bool startArmedWindowDragIfNeeded()
+    {
+        if (!windowDragArmed)
+            return false;
+
+        windowDragArmed = false;
+        performWindowDrag();
+        return true;
+    }
+
+    void performWindowDrag()
+    {
+        if (!hostHwnd)
+            return;
+
+        // The canonical borderless-window drag: drop the capture the host has
+        // from the button press, then tell the window the user grabbed its
+        // caption. DefWindowProc then runs a modal move loop that follows the
+        // still-down mouse until release.
+        ReleaseCapture();
+        SendMessageW(hostHwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+    }
+
+    // Clear any arming left from a previous gesture, before the page sees this
+    // mousedown and (asynchronously) re-arms for the new one. Without this a
+    // click that armed but never dragged would leak its arm into a later drag.
+    void resetDragArming()
+    {
+        dragArmed = false;
+        armedDragPaths = {};
+        windowDragArmed = false;
+    }
+
     void handleMouseLeave()
     {
         sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE, {0.0f, 0.0f});
@@ -1279,6 +1318,10 @@ struct WebView::Native
     // mouseDragged, which starts the OS drag for these paths.
     bool dragArmed = false;
     Vector<std::string> armedDragPaths;
+
+    // Set by armWindowDrag (the __eacpWindowDrag bridge command); consumed by
+    // the next mouseDragged, which hands the gesture to the OS move loop.
+    bool windowDragArmed = false;
 
     std::queue<std::function<void()>> pendingOperations;
     Vector<std::wstring> pendingDocStartScripts;
@@ -1606,9 +1649,13 @@ void WebView::mouseUp(const MouseEvent& event)
 
 void WebView::mouseDragged(const MouseEvent& event)
 {
-    // A drag armed by the page (armFileDrag) takes over the gesture: starting
-    // here, from the genuine drag, is what lets the files escape to Explorer.
+    // A drag armed by the page takes over the gesture: starting it here, from
+    // the genuine drag, is what lets a file drag escape to Explorer / a window
+    // drag enter the OS move loop.
     if (impl->startArmedFileDragIfNeeded())
+        return;
+
+    if (impl->startArmedWindowDragIfNeeded())
         return;
 
     impl->handleMouseMove(event);
@@ -1635,11 +1682,10 @@ void WebView::armFileDrag(const Vector<std::string>& paths)
 
 void WebView::armWindowDrag()
 {
-    // TODO(windows): the page side is wired (installWindowDragSupport lands us
-    // here on a drag-region mousedown); start a native move loop to finish it,
-    // e.g. ReleaseCapture() + SendMessage(impl->hostHwnd, WM_NCLBUTTONDOWN,
-    // HTCAPTION, 0).
-    assert(false && "armWindowDrag: window drag is not implemented on Windows yet");
+    // Defer to the next mouseDragged (see startArmedWindowDragIfNeeded): a move
+    // loop started straight from this async bridge callback wouldn't be tied to
+    // the live mouse gesture, and a mere click would start dragging the window.
+    impl->windowDragArmed = true;
 }
 
 void WebView::zoomIn()
