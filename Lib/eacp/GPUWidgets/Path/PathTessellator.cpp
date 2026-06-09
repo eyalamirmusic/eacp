@@ -3,14 +3,14 @@
 #include <algorithm>
 #include <cmath>
 
+#include "../Common.h"
+
 namespace eacp::GPUWidgets
 {
 namespace
 {
 using Graphics::Point;
 
-constexpr float epsilon = 1e-6f;
-constexpr float pi = 3.14159265358979323846f;
 
 // Round joins / caps are discs of this many triangles. Modest is plenty at
 // stroke-width scale.
