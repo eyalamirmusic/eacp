@@ -1,16 +1,17 @@
 #pragma once
 
 #include "WebView.h"
+#include "WebViewDetail.h"
 
 @class WKWebView;
 @class WKWebViewConfiguration;
 
 namespace eacp::Graphics::detail
 {
-// Shared accessors implemented in WebView.mm so the platform translation
-// units can reach the registry and the WKWebView held inside Native
-// without pulling Native's full definition into a header.
-Vector<WebView*>& registeredWebViews();
+// wkWebViewOf is implemented in WebView.mm so the platform translation units can
+// reach the WKWebView held inside Native without pulling Native's full
+// definition into a header. The shared WebView registry lives in
+// WebViewDetail.h / WebView-Shared.cpp.
 WKWebView* wkWebViewOf(WebView* view);
 
 // Platform-specific implementations live in WebViewPlatform-iOS.mm and

@@ -2,7 +2,6 @@
 
 #include "../View/View.h"
 #include <eacp/Core/Utils/Common.h>
-#include <functional>
 
 namespace eacp::Graphics
 {
@@ -23,8 +22,6 @@ public:
     void setContentView(View& view);
     void setSize(int width, int height);
     void* getHandle();
-
-    std::function<void(int width, int height)> onResizeRequest;
 
 private:
     EmbeddedViewOptions options;

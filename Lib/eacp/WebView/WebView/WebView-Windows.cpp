@@ -2,6 +2,7 @@
 
 #include "WebView.h"
 #include "StreamingRange.h"
+#include "WebViewDetail.h"
 #include <eacp/Graphics/Helpers/StringUtils-Windows.h>
 
 #include <algorithm>
@@ -68,114 +69,6 @@ struct CoTaskMemString
 
 namespace
 {
-constexpr double minZoomLevel = 0.25;
-constexpr double maxZoomLevel = 5.0;
-constexpr double zoomStep = 1.1;
-
-Vector<WebView*>& registeredWebViews()
-{
-    static auto views = Vector<WebView*>();
-    return views;
-}
-
-void registerWebView(WebView* view)
-{
-    registeredWebViews().add(view);
-}
-
-void unregisterWebView(WebView* view)
-{
-    registeredWebViews().removeAllMatches(view);
-}
-
-// Strip the outer JSON-string layer that WebView2's ExecuteScript adds.
-// macOS's evaluateJavaScript returns the unwrapped string directly, so
-// without this every string result on Windows would arrive double-encoded
-// (`"abc"` instead of `abc`).
-std::string unwrapJsonString(const std::string& raw)
-{
-    if (raw.size() < 2 || raw.front() != '"' || raw.back() != '"')
-        return raw;
-
-    auto out = std::string {};
-    out.reserve(raw.size() - 2);
-
-    for (auto i = std::size_t {1}; i + 1 < raw.size(); ++i)
-    {
-        auto c = raw[i];
-        if (c != '\\')
-        {
-            out.push_back(c);
-            continue;
-        }
-
-        if (i + 2 >= raw.size())
-            return raw;
-
-        auto esc = raw[++i];
-        switch (esc)
-        {
-            case '"':
-                out.push_back('"');
-                break;
-            case '\\':
-                out.push_back('\\');
-                break;
-            case '/':
-                out.push_back('/');
-                break;
-            case 'b':
-                out.push_back('\b');
-                break;
-            case 'f':
-                out.push_back('\f');
-                break;
-            case 'n':
-                out.push_back('\n');
-                break;
-            case 'r':
-                out.push_back('\r');
-                break;
-            case 't':
-                out.push_back('\t');
-                break;
-            case 'u':
-            {
-                if (i + 4 >= raw.size())
-                    return raw;
-
-                auto hex = raw.substr(i + 1, 4);
-                auto code = static_cast<unsigned>(std::stoul(hex, nullptr, 16));
-                i += 4;
-
-                // Naive UTF-8 encode of the BMP code point. Enough for ASCII
-                // selectors / DOM text; full surrogate-pair handling lives in
-                // Miro::Json::parse when callers go that route.
-                if (code < 0x80)
-                {
-                    out.push_back(static_cast<char>(code));
-                }
-                else if (code < 0x800)
-                {
-                    out.push_back(static_cast<char>(0xC0 | (code >> 6)));
-                    out.push_back(static_cast<char>(0x80 | (code & 0x3F)));
-                }
-                else
-                {
-                    out.push_back(static_cast<char>(0xE0 | (code >> 12)));
-                    out.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3F)));
-                    out.push_back(static_cast<char>(0x80 | (code & 0x3F)));
-                }
-                break;
-            }
-            default:
-                return raw;
-        }
-    }
-
-    return out;
-}
-
 // A read-only IStream over a bounded byte range of a StreamingResource.
 // WebView2 pulls the response body from this stream, so bytes are fetched
 // lazily through ResourceReader::read instead of buffering the whole resource
@@ -807,46 +700,26 @@ struct WebView::Native
             return S_OK;
         }
 
-        auto resolved =
-            resolveRangeHeader(readRequestHeader(request, L"Range"), resource->size);
-        auto served = resolved.served;
+        auto plan =
+            planStreamingResponse(readRequestHeader(request, L"Range"), *resource);
 
-        // CORS bypass mirrors the one-shot handler: WebView2 enforces
-        // cross-origin rules on our own scheme, so fetch() needs an explicit
-        // allow-origin header.
-        auto headers =
-            std::wstring {L"Content-Type: "} + toWideString(resource->mimeType)
-            + L"\r\nAccess-Control-Allow-Origin: *" + L"\r\nAccept-Ranges: bytes";
-
-        auto statusCode = resource->statusCode;
-
-        if (resolved.kind == RangeRequest::Unsatisfiable)
+        auto headers = std::wstring {};
+        for (const auto& [name, value]: plan.headers)
         {
-            statusCode = 416;
-            headers +=
-                L"\r\nContent-Range: bytes */" + std::to_wstring(resource->size);
-        }
-        else
-        {
-            if (resolved.kind == RangeRequest::Partial)
-            {
-                statusCode = 206;
-                headers += L"\r\nContent-Range: "
-                           + toWideString(contentRangeValue(served, resource->size));
-            }
-
-            headers += L"\r\nContent-Length: " + std::to_wstring(served.length);
+            if (!headers.empty())
+                headers += L"\r\n";
+            headers += toWideString(name) + L": " + toWideString(value);
         }
 
         ComPtr<IStream> body;
-        if (statusCode != 416 && !served.empty())
+        if (plan.hasBody)
             body = Microsoft::WRL::Make<ReaderStream>(
-                std::move(*resource), served.start, served.length);
+                std::move(*resource), plan.served.start, plan.served.length);
 
         if (SUCCEEDED(
                 environment->CreateWebResourceResponse(body.Get(),
-                                                       statusCode,
-                                                       statusReason(statusCode),
+                                                       plan.statusCode,
+                                                       statusReason(plan.statusCode),
                                                        headers.c_str(),
                                                        &webResponse)))
         {
@@ -980,9 +853,28 @@ struct WebView::Native
                     if (!messageRaw)
                         return S_OK;
 
-                    auto json = messageRaw.toString();
-                    auto name = extractJsonStringField(json, "name");
-                    auto body = extractJsonStringField(json, "body");
+                    // The envelope is {"name": "...", "body": "..."} where body
+                    // is itself a JSON-encoded string handed through unchanged.
+                    auto name = std::string {};
+                    auto body = std::string {};
+                    try
+                    {
+                        auto envelope = Miro::Json::parse(messageRaw.toString());
+                        if (envelope.isObject())
+                        {
+                            const auto& obj = envelope.asObject();
+                            if (auto* field = Miro::Json::find(obj, "name");
+                                field && field->isString())
+                                name = field->asString();
+                            if (auto* field = Miro::Json::find(obj, "body");
+                                field && field->isString())
+                                body = field->asString();
+                        }
+                    }
+                    catch (const Miro::Json::ParseError&)
+                    {
+                        return S_OK;
+                    }
 
                     auto it = messageHandlers.find(name);
                     if (it == messageHandlers.end())
@@ -1090,40 +982,6 @@ struct WebView::Native
         }
 
         return S_OK;
-    }
-
-    static std::string extractJsonStringField(const std::string& json,
-                                              const std::string& key)
-    {
-        auto needle = "\"" + key + "\"";
-        auto pos = json.find(needle);
-        if (pos == std::string::npos)
-            return {};
-
-        pos = json.find(':', pos + needle.size());
-        if (pos == std::string::npos)
-            return {};
-
-        auto start = json.find('"', pos);
-        if (start == std::string::npos)
-            return {};
-        ++start;
-
-        auto out = std::string();
-        for (auto i = start; i < json.size(); ++i)
-        {
-            auto c = json[i];
-            if (c == '\\' && i + 1 < json.size())
-            {
-                out.push_back(json[i + 1]);
-                ++i;
-                continue;
-            }
-            if (c == '"')
-                return out;
-            out.push_back(c);
-        }
-        return {};
     }
 
     void updateBounds()
@@ -1490,7 +1348,7 @@ struct WebView::Native
 void WebView::initNative(Options options)
 {
     impl = std::make_shared<Native>(*this, std::move(options));
-    registerWebView(this);
+    detail::registerWebView(this);
     installWindowDragSupport();
 }
 
@@ -1504,7 +1362,7 @@ WebView::WebView(PopupInit init)
     impl = std::make_shared<Native>(*this, std::move(init.options));
     impl->sharedEnvironment = std::move(init.environment);
     impl->onCoreWebViewReady = std::move(init.onReady);
-    registerWebView(this);
+    detail::registerWebView(this);
     installWindowDragSupport();
 }
 
@@ -1514,7 +1372,7 @@ WebView::~WebView()
     // going out of scope). Calling controller->Close() here too would
     // double-close, which the WebView2 docs say is a no-op but in
     // practice has been observed to trip late callbacks on Native.
-    unregisterWebView(this);
+    detail::unregisterWebView(this);
 }
 
 void WebView::loadURL(const std::string& url)
@@ -1665,10 +1523,19 @@ void WebView::evaluateJavaScript(const std::string& script, JSCallback callback)
                     {
                         // WebView2 always returns JSON-encoded values, so a JS
                         // string like "abc" arrives as "\"abc\"". macOS hands
-                        // back the raw string. Strip one JSON layer when the
+                        // back the raw string. Decode one JSON layer when the
                         // value is a string so both backends look the same to
                         // callers; numbers / bools / objects pass through.
-                        result = unwrapJsonString(fromWideString(resultJson));
+                        auto rawJson = fromWideString(resultJson);
+                        try
+                        {
+                            auto value = Miro::Json::parse(rawJson);
+                            result = value.isString() ? value.asString() : rawJson;
+                        }
+                        catch (const Miro::Json::ParseError&)
+                        {
+                            result = rawJson;
+                        }
                     }
 
                     callback(result, error);
@@ -1860,24 +1727,9 @@ void WebView::armWindowDrag()
     impl->windowDragArmed = true;
 }
 
-void WebView::zoomIn()
-{
-    setZoom(getZoom() * zoomStep);
-}
-
-void WebView::zoomOut()
-{
-    setZoom(getZoom() / zoomStep);
-}
-
-void WebView::resetZoom()
-{
-    setZoom(1.0);
-}
-
 void WebView::setZoom(double level)
 {
-    auto clamped = std::clamp(level, minZoomLevel, maxZoomLevel);
+    auto clamped = detail::clampZoom(level);
     if (impl->controller)
         impl->controller->put_ZoomFactor(clamped);
 }
@@ -1898,7 +1750,7 @@ WebView* WebView::focused()
     if (!foreground)
         return nullptr;
 
-    for (auto* view: registeredWebViews())
+    for (auto* view: detail::registeredWebViews())
     {
         if (!view->impl || !view->impl->hostHwnd)
             continue;

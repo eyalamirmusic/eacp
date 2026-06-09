@@ -460,43 +460,20 @@ struct WebViewNativeAccess
     if (auto* value = [task.request valueForHTTPHeaderField:@"Range"])
         rangeHeader = [value UTF8String];
 
-    auto resolved =
-        eacp::Graphics::resolveRangeHeader(rangeHeader, resource->size);
-    auto served = resolved.served;
+    auto plan = eacp::Graphics::planStreamingResponse(rangeHeader, *resource);
+    auto served = plan.served;
 
     auto* headers = [NSMutableDictionary dictionary];
-    headers[@"Content-Type"] = eacp::Strings::toNSString(resource->mimeType);
-    headers[@"Accept-Ranges"] = @"bytes";
-
-    auto statusCode = resource->statusCode;
-
-    if (resolved.kind == eacp::Graphics::RangeRequest::Unsatisfiable)
-    {
-        statusCode = 416;
-        headers[@"Content-Range"] =
-            eacp::Strings::toNSString("bytes */" + std::to_string(resource->size));
-    }
-    else
-    {
-        if (resolved.kind == eacp::Graphics::RangeRequest::Partial)
-        {
-            statusCode = 206;
-            headers[@"Content-Range"] = eacp::Strings::toNSString(
-                eacp::Graphics::contentRangeValue(served, resource->size));
-        }
-
-        headers[@"Content-Length"] =
-            [NSString stringWithFormat:@"%llu",
-                                       static_cast<unsigned long long>(served.length)];
-    }
+    for (const auto& [name, value]: plan.headers)
+        headers[eacp::Strings::toNSString(name)] = eacp::Strings::toNSString(value);
 
     auto* response = [[[NSHTTPURLResponse alloc] initWithURL:task.request.URL
-                                                  statusCode:statusCode
+                                                  statusCode:plan.statusCode
                                                  HTTPVersion:@"HTTP/1.1"
                                                 headerFields:headers] autorelease];
     [task didReceiveResponse:response];
 
-    if (statusCode == 416 || served.empty())
+    if (!plan.hasBody)
     {
         [task didFinish];
         return;
@@ -582,37 +559,18 @@ namespace eacp::Graphics
 {
 namespace detail
 {
-Vector<WebView*>& registeredWebViews()
-{
-    static Vector<WebView*> instances;
-    return instances;
-}
-
 WKWebView* wkWebViewOf(WebView* view)
 {
     return view != nullptr ? WebViewNativeAccess::wkWebViewOf(*view) : nil;
 }
 } // namespace detail
 
-namespace
-{
-void registerWebView(WebView* view)
-{
-    detail::registeredWebViews().add(view);
-}
-
-void unregisterWebView(WebView* view)
-{
-    detail::registeredWebViews().removeAllMatches(view);
-}
-} // namespace
-
 void WebView::initNative(Options options)
 {
     impl = std::make_shared<Native>(*this, std::move(options));
     impl->delegate.get()->nativeWeak = impl;
     impl->attachToParentView();
-    registerWebView(this);
+    detail::registerWebView(this);
 
     if (Platform::isMac()) // desktop-only; iOS has no movable windows
         installWindowDragSupport();
@@ -623,12 +581,12 @@ WebView::WebView(PopupInit init)
     impl = std::make_shared<Native>(*this, init);
     impl->delegate.get()->nativeWeak = impl;
     impl->attachToParentView();
-    registerWebView(this);
+    detail::registerWebView(this);
 }
 
 WebView::~WebView()
 {
-    unregisterWebView(this);
+    detail::unregisterWebView(this);
     [impl->webView.get() removeFromSuperview];
 }
 
@@ -706,31 +664,9 @@ std::string WebView::getTitle() const
     return safeString([title UTF8String]);
 }
 
-namespace
-{
-constexpr double minZoomLevel = 0.25;
-constexpr double maxZoomLevel = 5.0;
-constexpr double zoomStep = 1.1;
-} // namespace
-
-void WebView::zoomIn()
-{
-    setZoom(getZoom() * zoomStep);
-}
-
-void WebView::zoomOut()
-{
-    setZoom(getZoom() / zoomStep);
-}
-
-void WebView::resetZoom()
-{
-    setZoom(1.0);
-}
-
 void WebView::setZoom(double level)
 {
-    auto clamped = std::clamp(level, minZoomLevel, maxZoomLevel);
+    auto clamped = detail::clampZoom(level);
     detail::applyNativeZoom(impl->webView.get(), clamped, impl->zoomLevel);
 }
 

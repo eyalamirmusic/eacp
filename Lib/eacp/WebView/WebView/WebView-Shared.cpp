@@ -3,6 +3,7 @@
 #include "DevServerProbe.h"
 #include "JsStringLiteral.h"
 #include "StreamingRange.h"
+#include "WebViewDetail.h"
 
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Platform/Platform.h>
@@ -242,6 +243,44 @@ std::string contentRangeValue(const ByteRange& served, RangeSize size)
            + std::to_string(served.end() - 1) + "/" + std::to_string(size);
 }
 
+StreamingResponsePlan planStreamingResponse(std::string_view rangeHeader,
+                                            const StreamingResource& resource)
+{
+    auto resolved = resolveRangeHeader(rangeHeader, resource.size);
+
+    auto plan = StreamingResponsePlan {};
+    plan.served = resolved.served;
+    plan.statusCode = resource.statusCode;
+
+    plan.headers.add({"Content-Type", resource.mimeType});
+    // WebView2 enforces cross-origin rules on our own custom scheme, so fetch()
+    // needs an explicit allow-origin header; kept here so both backends agree.
+    plan.headers.add({"Access-Control-Allow-Origin", "*"});
+    plan.headers.add({"Accept-Ranges", "bytes"});
+
+    if (resolved.kind == RangeRequest::Unsatisfiable)
+    {
+        plan.statusCode = 416;
+        plan.headers.add(
+            {"Content-Range", "bytes */" + std::to_string(resource.size)});
+        plan.hasBody = false;
+    }
+    else
+    {
+        if (resolved.kind == RangeRequest::Partial)
+        {
+            plan.statusCode = 206;
+            plan.headers.add(
+                {"Content-Range", contentRangeValue(plan.served, resource.size)});
+        }
+
+        plan.headers.add({"Content-Length", std::to_string(plan.served.length)});
+        plan.hasBody = !plan.served.empty();
+    }
+
+    return plan;
+}
+
 std::string fileURLToPath(std::string_view url)
 {
     auto schemeEnd = url.find("://");
@@ -415,6 +454,52 @@ void WebView::installWindowDragSupport()
     addUserScript(shim.toString(), true);
     addScriptMessageHandler("__eacpWindowDrag",
                             [this](const std::string&) { armWindowDrag(); });
+}
+
+namespace detail
+{
+Vector<WebView*>& registeredWebViews()
+{
+    static auto instances = Vector<WebView*>();
+    return instances;
+}
+
+void registerWebView(WebView* view)
+{
+    registeredWebViews().add(view);
+}
+
+void unregisterWebView(WebView* view)
+{
+    registeredWebViews().removeAllMatches(view);
+}
+} // namespace detail
+
+namespace
+{
+constexpr double minZoomLevel = 0.25;
+constexpr double maxZoomLevel = 5.0;
+constexpr double zoomStep = 1.1;
+} // namespace
+
+double detail::clampZoom(double level)
+{
+    return std::clamp(level, minZoomLevel, maxZoomLevel);
+}
+
+void WebView::zoomIn()
+{
+    setZoom(getZoom() * zoomStep);
+}
+
+void WebView::zoomOut()
+{
+    setZoom(getZoom() / zoomStep);
+}
+
+void WebView::resetZoom()
+{
+    setZoom(1.0);
 }
 
 Threads::Async<std::string> WebView::callJS(const std::string& script)

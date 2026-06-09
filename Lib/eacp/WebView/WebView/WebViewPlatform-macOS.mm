@@ -200,9 +200,6 @@ WebView* findFocusedWebView()
         {
             dragStarted = YES;
             dragArmed = NO;
-            NSLog(@"[eacp drag] mouseDragged threshold crossed, firing drag "
-                  @"(%d paths)",
-                  armedPaths.size());
             eacp::Graphics::detail::beginFileDrag(self, event, armedPaths);
             armedPaths.clear();
             return; // consume: no WebKit selection/drag underneath

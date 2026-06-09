@@ -1,132 +1,56 @@
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "Window.h"
-#include "../Layers/NativeLayer-Windows.h"
+#include "CompositionHostWindow-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
 #include <eacp/Core/App/AppEnvironment.h>
 
-#include <bitset>
-#include <unordered_map>
-
-#include <winrt/Windows.System.h>
-#include <winrt/Windows.UI.Core.h>
-#include <winrt/Windows.UI.Input.h>
-#include <winrt/Windows.UI.Composition.Desktop.h>
-#include <winrt/Windows.Graphics.Display.h>
-#include <Windows.UI.Composition.Desktop.h>
-#include <windows.ui.composition.interop.h>
-#include <DispatcherQueue.h>
-
-// Virtual key codes - defined manually to reduce Windows.h dependency
-namespace VK
-{
-constexpr int Shift = 0x10;
-constexpr int Control = 0x11;
-constexpr int Menu = 0x12; // Alt key
-constexpr int LWin = 0x5B;
-constexpr int RWin = 0x5C;
-} // namespace VK
-
-// Helpers for extracting mouse coordinates from LPARAM
-inline int getXFromLParam(LPARAM lp)
-{
-    return static_cast<int>(static_cast<short>(LOWORD(lp)));
-}
-inline int getYFromLParam(LPARAM lp)
-{
-    return static_cast<int>(static_cast<short>(HIWORD(lp)));
-}
-
-namespace wuc = winrt::Windows::UI::Composition;
-namespace wucore = winrt::Windows::UI::Core;
-namespace wui = winrt::Windows::UI::Input;
-
 namespace eacp::Graphics
 {
-
-// getWinRTCompositor() is defined in D2DFactory-Windows.cpp
-// which is included earlier in the unity build
-
-// Defined in View-Windows.cpp: paints the views that requested a repaint and
-// whose host is `hwnd`. Driven from WM_PAINT.
-void paintDirtyViewsForHost(HWND hwnd);
 
 static const wchar_t* WINDOW_CLASS_NAME = L"EACPWindowClass";
 static bool windowClassRegistered = false;
 
 namespace
 {
-std::unordered_map<View*, HWND>& contentViewToHwnd()
+struct NonClientInsets
 {
-    static auto map = std::unordered_map<View*, HWND>();
-    return map;
+    int width;
+    int height;
+};
+
+// The border + title-bar thickness in physical pixels for this window's style,
+// used to convert between window-frame and content sizes for the resize and
+// minimum-size parity handlers.
+NonClientInsets nonClientInsets(HWND hwnd)
+{
+    auto dpi = GetDpiForWindow(hwnd);
+    auto style = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_STYLE));
+    auto exStyle = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_EXSTYLE));
+
+    RECT rect = {0, 0, 0, 0};
+    AdjustWindowRectExForDpi(&rect, style, FALSE, exStyle, dpi);
+    return {rect.right - rect.left, rect.bottom - rect.top};
 }
 } // namespace
 
-void registerContentViewHwnd(View* root, HWND hwnd)
-{
-    contentViewToHwnd()[root] = hwnd;
-}
-
-void unregisterContentViewHwnd(View* root)
-{
-    contentViewToHwnd().erase(root);
-}
-
-HWND findHostHwndForView(View* view)
-{
-    auto* root = view;
-    while (root && root->getParent())
-        root = root->getParent();
-
-    if (!root)
-        return nullptr;
-
-    auto& map = contentViewToHwnd();
-    auto it = map.find(root);
-    return it == map.end() ? nullptr : it->second;
-}
-
 struct Window::Native
 {
-    Native(Window* owner, const WindowOptions& options)
-        : ownerWindow(owner)
-        , contentView(nullptr)
-        , quitCallback(options.effectiveOnQuit())
+    Native(const WindowOptions& options)
+        : quitCallback(options.effectiveOnQuit())
+        , onResize(options.onResize)
+        , onWillResize(options.onWillResize)
+        , minWidth(options.minWidth)
+        , minHeight(options.minHeight)
     {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-        keyState.reset();
         registerWindowClass();
         createWindow(options);
-        initializeComposition();
-        initializePointerInput();
+        host.initializeComposition(true);
+        host.onContentResized = onResize;
     }
 
-    ~Native()
-    {
-        if (rootVisual)
-            rootVisual.Children().RemoveAll();
-
-        if (inputSource && useWinRTPointerInput)
-        {
-            inputSource.PointerPressed(pointerPressedToken);
-            inputSource.PointerReleased(pointerReleasedToken);
-            inputSource.PointerMoved(pointerMovedToken);
-        }
-
-        inputSource = nullptr;
-        dispatcherController = nullptr;
-        rootVisual = nullptr;
-        target = nullptr;
-
-        if (contentView)
-            unregisterContentViewHwnd(contentView);
-
-        if (hwnd)
-        {
-            DestroyWindow(hwnd);
-        }
-    }
+    ~Native() { host.teardown(); }
 
     static void registerWindowClass()
     {
@@ -151,9 +75,7 @@ struct Window::Native
         DWORD style = WS_OVERLAPPEDWINDOW;
 
         if (options.flags.contains(WindowFlags::Borderless))
-        {
             style = WS_POPUP;
-        }
 
         std::wstring wideTitle =
             options.showTitle ? toWideString(options.title) : std::wstring {};
@@ -166,299 +88,119 @@ struct Window::Native
         RECT rect = {0, 0, physicalWidth, physicalHeight};
         AdjustWindowRectExForDpi(&rect, style, FALSE, 0, dpi);
 
-        hwnd = CreateWindowExW(0,
-                               WINDOW_CLASS_NAME,
-                               wideTitle.c_str(),
-                               style,
-                               CW_USEDEFAULT,
-                               CW_USEDEFAULT,
-                               rect.right - rect.left,
-                               rect.bottom - rect.top,
-                               nullptr,
-                               nullptr,
-                               GetModuleHandleW(nullptr),
-                               this);
-    }
-
-    void initializeComposition()
-    {
-        if (!hwnd)
-            return;
-
-        auto compositor = getWinRTCompositor();
-        if (!compositor)
-            return;
-
-        auto interop = compositor.as<
-            ABI::Windows::UI::Composition::Desktop::ICompositorDesktopInterop>();
-        winrt::com_ptr<ABI::Windows::UI::Composition::Desktop::IDesktopWindowTarget>
-            abiTarget;
-        auto hr = interop->CreateDesktopWindowTarget(hwnd, 1, abiTarget.put());
-        if (FAILED(hr) || !abiTarget)
-            return;
-
-        target = abiTarget.as<wuc::Desktop::DesktopWindowTarget>();
-        rootVisual = compositor.CreateContainerVisual();
-
-        auto dpiScale = getWindowDpiScale();
-        rootVisual.Scale({dpiScale, dpiScale, 1.0f});
-
-        target.Root(rootVisual);
-    }
-
-    void initializePointerInput()
-    {
-        if (!rootVisual)
-            return;
-
-        DispatcherQueueOptions dqOptions {};
-        dqOptions.dwSize = sizeof(DispatcherQueueOptions);
-        dqOptions.threadType = DQTYPE_THREAD_CURRENT;
-        dqOptions.apartmentType = DQTAT_COM_NONE;
-
-        ABI::Windows::System::IDispatcherQueueController* controller = nullptr;
-        auto hr = CreateDispatcherQueueController(dqOptions, &controller);
-
-        if (FAILED(hr) || !controller)
-            return;
-
-        dispatcherController = winrt::Windows::System::DispatcherQueueController {
-            controller, winrt::take_ownership_from_abi};
-
-        useWinRTPointerInput = false;
+        host.hwnd = CreateWindowExW(0,
+                                    WINDOW_CLASS_NAME,
+                                    wideTitle.c_str(),
+                                    style,
+                                    CW_USEDEFAULT,
+                                    CW_USEDEFAULT,
+                                    rect.right - rect.left,
+                                    rect.bottom - rect.top,
+                                    nullptr,
+                                    nullptr,
+                                    GetModuleHandleW(nullptr),
+                                    this);
     }
 
     void showWindow() const
     {
-        if (hwnd)
+        if (host.hwnd)
         {
-            ShowWindow(hwnd, SW_SHOW);
-            UpdateWindow(hwnd);
+            ShowWindow(host.hwnd, SW_SHOW);
+            UpdateWindow(host.hwnd);
         }
     }
 
     void toFront() const
     {
-        if (!hwnd || eacp::Apps::getAppEnvironment().headless)
+        if (!host.hwnd || eacp::Apps::getAppEnvironment().headless)
             return;
 
-        ShowWindow(hwnd, SW_SHOW);
-        SetForegroundWindow(hwnd);
+        ShowWindow(host.hwnd, SW_SHOW);
+        SetForegroundWindow(host.hwnd);
     }
 
-    float getWindowDpiScale() const
-    {
-        try
-        {
-            auto displayInfo = winrt::Windows::Graphics::Display::
-                DisplayInformation::GetForCurrentView();
-            return displayInfo.LogicalDpi() / 96.f;
-        }
-        catch (...)
-        {
-            auto dpi = GetDpiForWindow(hwnd);
-            return dpi / 96.f;
-        }
-    }
-
-    void setTitle(const std::string& title)
+    void setTitle(const std::string& title) const
     {
         auto wideTitle = toWideString(title);
-        SetWindowTextW(hwnd, wideTitle.c_str());
+        SetWindowTextW(host.hwnd, wideTitle.c_str());
     }
 
-    // Keyboard state tracking
-    void onKeyDown(uint16_t vk)
+    void setContentView(View* view)
     {
-        if (vk < 256)
-            keyState.set(vk);
+        host.attachContentView(view);
+
+        // Skip ShowWindow under headless mode (CI without an active session).
+        // The HWND + child visual tree are still set up, so WebView2 can
+        // initialize and load its page; only the visible surface is suppressed.
+        if (host.hwnd && view && !eacp::Apps::getAppEnvironment().headless)
+            showWindow();
     }
 
-    void onKeyUp(uint16_t vk)
+    // Honour WindowOptions::onWillResize by clamping the dragged window rect
+    // (WM_SIZING gives a frame rect; convert to content points, let the callback
+    // mutate, convert back, then re-anchor the edge the user is not dragging).
+    void dispatchWillResize(RECT* windowRect, WPARAM edge) const
     {
-        if (vk < 256)
-            keyState.reset(vk);
+        auto insets = nonClientInsets(host.hwnd);
+        auto scale = host.getDpiScale();
+
+        auto clientWidth = (windowRect->right - windowRect->left) - insets.width;
+        auto clientHeight = (windowRect->bottom - windowRect->top) - insets.height;
+
+        auto widthInPoints = static_cast<int>(clientWidth / scale);
+        auto heightInPoints = static_cast<int>(clientHeight / scale);
+        onWillResize(widthInPoints, heightInPoints);
+
+        auto newWindowWidth = static_cast<int>(widthInPoints * scale) + insets.width;
+        auto newWindowHeight =
+            static_cast<int>(heightInPoints * scale) + insets.height;
+
+        if (edge == WMSZ_LEFT || edge == WMSZ_TOPLEFT || edge == WMSZ_BOTTOMLEFT)
+            windowRect->left = windowRect->right - newWindowWidth;
+        else
+            windowRect->right = windowRect->left + newWindowWidth;
+
+        if (edge == WMSZ_TOP || edge == WMSZ_TOPLEFT || edge == WMSZ_TOPRIGHT)
+            windowRect->top = windowRect->bottom - newWindowHeight;
+        else
+            windowRect->bottom = windowRect->top + newWindowHeight;
     }
 
-    bool isKeyPressed(uint16_t vk) const { return vk < 256 && keyState.test(vk); }
-
-    bool isShiftPressed() const { return isKeyPressed(VK::Shift); }
-    bool isControlPressed() const { return isKeyPressed(VK::Control); }
-    bool isAltPressed() const { return isKeyPressed(VK::Menu); }
-    bool isCommandPressed() const
+    // Honour WindowOptions::minWidth/minHeight (content points) by setting the
+    // window's minimum track size in physical pixels for WM_GETMINMAXINFO.
+    void applyMinTrackSize(MINMAXINFO* info) const
     {
-        return isKeyPressed(VK::LWin) || isKeyPressed(VK::RWin);
+        auto insets = nonClientInsets(host.hwnd);
+        auto scale = host.getDpiScale();
+
+        if (minWidth > 0)
+            info->ptMinTrackSize.x =
+                static_cast<LONG>(minWidth * scale) + insets.width;
+        if (minHeight > 0)
+            info->ptMinTrackSize.y =
+                static_cast<LONG>(minHeight * scale) + insets.height;
     }
 
-    ModifierKeys getModifiers() const
-    {
-        return {isShiftPressed(),
-                isControlPressed(),
-                isAltPressed(),
-                isCommandPressed()};
-    }
-
-    void setContentView(View* view);
-    void ensureAllLayersRendered(const View* view);
+    bool isKeyPressed(uint16_t vk) const { return host.isKeyPressed(vk); }
+    bool isShiftPressed() const { return host.isShiftPressed(); }
+    bool isControlPressed() const { return host.isControlPressed(); }
+    bool isAltPressed() const { return host.isAltPressed(); }
+    bool isCommandPressed() const { return host.isCommandPressed(); }
+    ModifierKeys getModifiers() const { return host.getModifiers(); }
 
     static LRESULT CALLBACK windowProc(HWND hwnd,
                                        UINT msg,
                                        WPARAM wParam,
                                        LPARAM lParam);
 
-    // Pointer event handlers for CoreIndependentInputSource
-    void onPointerPressed(wucore::CoreIndependentInputSource const& sender,
-                          wucore::PointerEventArgs const& args);
-    void onPointerReleased(wucore::CoreIndependentInputSource const& sender,
-                           wucore::PointerEventArgs const& args);
-    void onPointerMoved(wucore::CoreIndependentInputSource const& sender,
-                        wucore::PointerEventArgs const& args);
-
-    Window* ownerWindow;
-    HWND hwnd = nullptr;
-    View* contentView = nullptr;
+    CompositionHostWindow host;
     Callback quitCallback = [] {};
-    wuc::Desktop::DesktopWindowTarget target {nullptr};
-    wuc::ContainerVisual rootVisual {nullptr};
-    wucore::CoreIndependentInputSource inputSource {nullptr};
-
-    // Dispatcher queue for WinRT input events
-    winrt::Windows::System::DispatcherQueueController dispatcherController {nullptr};
-
-    winrt::event_token pointerPressedToken;
-    winrt::event_token pointerReleasedToken;
-    winrt::event_token pointerMovedToken;
-    bool useWinRTPointerInput = false;
-
-    std::bitset<256> keyState;
+    ResizeCallback onResize;
+    WillResizeCallback onWillResize;
+    int minWidth = 0;
+    int minHeight = 0;
 };
-
-void Window::Native::setContentView(View* view)
-{
-    if (contentView && contentView != view)
-        unregisterContentViewHwnd(contentView);
-
-    contentView = view;
-
-    if (hwnd && view)
-    {
-        registerContentViewHwnd(view, hwnd);
-
-        RECT clientRect;
-        GetClientRect(hwnd, &clientRect);
-        auto dpiScale = getWindowDpiScale();
-        view->setBounds({0.f,
-                         0.f,
-                         (float) clientRect.right / dpiScale,
-                         (float) clientRect.bottom / dpiScale});
-
-        auto* viewVisual = static_cast<wuc::ContainerVisual*>(view->getHandle());
-
-        if (rootVisual && viewVisual)
-            rootVisual.Children().InsertAtTop(*viewVisual);
-
-        // Skip ShowWindow under headless mode (CI without an active
-        // session). The HWND + child visual tree are still set up,
-        // so WebView2 can initialize and load its page; only the
-        // visible surface is suppressed.
-        if (!eacp::Apps::getAppEnvironment().headless)
-            showWindow();
-        ensureAllLayersRendered(view);
-    }
-}
-
-void Window::Native::ensureAllLayersRendered(const View* view)
-{
-    if (!view)
-        return;
-
-    auto& layers = view->getLayers();
-    for (auto* layer: layers)
-    {
-        auto* native = static_cast<NativeLayerBase*>(layer->getNativeLayer());
-        if (native)
-        {
-            native->ensureContent();
-        }
-    }
-
-    auto& subviews = view->getSubviews();
-    for (auto* subview: subviews)
-    {
-        ensureAllLayersRendered(subview);
-    }
-}
-
-void Window::Native::onPointerPressed(wucore::CoreIndependentInputSource const&,
-                                      wucore::PointerEventArgs const& args)
-{
-    if (!contentView)
-        return;
-
-    auto point = args.CurrentPoint();
-    auto position = point.Position();
-    float dpiScale = getWindowDpiScale();
-
-    MouseEvent event;
-    event.pos = {position.X / dpiScale, position.Y / dpiScale};
-    event.type = MouseEventType::Down;
-
-    auto props = point.Properties();
-    if (props.IsLeftButtonPressed())
-        event.button = MouseButton::Left;
-    else if (props.IsRightButtonPressed())
-        event.button = MouseButton::Right;
-    else if (props.IsMiddleButtonPressed())
-        event.button = MouseButton::Middle;
-
-    contentView->dispatchMouseEvent(event);
-    ensureAllLayersRendered(contentView);
-}
-
-void Window::Native::onPointerReleased(wucore::CoreIndependentInputSource const&,
-                                       wucore::PointerEventArgs const& args)
-{
-    if (!contentView)
-        return;
-
-    auto point = args.CurrentPoint();
-    auto position = point.Position();
-    float dpiScale = getWindowDpiScale();
-
-    MouseEvent event;
-    event.pos = {position.X / dpiScale, position.Y / dpiScale};
-    event.type = MouseEventType::Up;
-
-    auto props = point.Properties();
-    auto update = props.PointerUpdateKind();
-    if (update == wui::PointerUpdateKind::LeftButtonReleased)
-        event.button = MouseButton::Left;
-    else if (update == wui::PointerUpdateKind::RightButtonReleased)
-        event.button = MouseButton::Right;
-    else if (update == wui::PointerUpdateKind::MiddleButtonReleased)
-        event.button = MouseButton::Middle;
-
-    contentView->dispatchMouseEvent(event);
-    ensureAllLayersRendered(contentView);
-}
-
-void Window::Native::onPointerMoved(wucore::CoreIndependentInputSource const&,
-                                    wucore::PointerEventArgs const& args)
-{
-    if (!contentView)
-        return;
-
-    auto point = args.CurrentPoint();
-    auto position = point.Position();
-    float dpiScale = getWindowDpiScale();
-
-    MouseEvent event;
-    event.pos = {position.X / dpiScale, position.Y / dpiScale};
-    event.type = MouseEventType::Moved;
-
-    contentView->dispatchMouseEvent(event);
-    ensureAllLayersRendered(contentView);
-}
 
 LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
                                             UINT msg,
@@ -472,7 +214,7 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
         auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
         self = static_cast<Native*>(cs->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-        self->hwnd = hwnd;
+        self->host.hwnd = hwnd;
     }
     else
     {
@@ -480,43 +222,38 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
     }
 
     if (!self)
-    {
         return DefWindowProcW(hwnd, msg, wParam, lParam);
-    }
 
     switch (msg)
     {
         case WM_CLOSE:
-
             self->quitCallback();
-
             return 0;
 
         case WM_DESTROY:
-            // Intentionally no PostQuitMessage here. The application's
-            // shutdown is driven by Apps::quit() (which is what
-            // quitCallback() triggers on the user-initiated WM_CLOSE).
-            // Destroying a Window programmatically — e.g. during test
-            // teardown — must NOT terminate the event loop, because
-            // pending cleanup callbacks (destroyApp + stopEventLoop)
-            // would never get a chance to run.
+            // Intentionally no PostQuitMessage here. The application's shutdown
+            // is driven by Apps::quit() (which is what quitCallback() triggers
+            // on the user-initiated WM_CLOSE). Destroying a Window
+            // programmatically — e.g. during test teardown — must NOT terminate
+            // the event loop, because pending cleanup callbacks (destroyApp +
+            // stopEventLoop) would never get a chance to run.
             return 0;
 
-        case WM_SIZE:
-            if (self->contentView)
+        case WM_GETMINMAXINFO:
+            if (self->minWidth > 0 || self->minHeight > 0)
             {
-                RECT clientRect;
-                GetClientRect(hwnd, &clientRect);
-                float dpiScale = self->getWindowDpiScale();
-                self->contentView->setBounds(
-                    Rect(0,
-                         0,
-                         static_cast<float>(clientRect.right) / dpiScale,
-                         static_cast<float>(clientRect.bottom) / dpiScale));
-                self->ensureAllLayersRendered(self->contentView);
+                self->applyMinTrackSize(reinterpret_cast<MINMAXINFO*>(lParam));
+                return 0;
             }
-            InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
+            break;
+
+        case WM_SIZING:
+            if (self->onWillResize)
+            {
+                self->dispatchWillResize(reinterpret_cast<RECT*>(lParam), wParam);
+                return TRUE;
+            }
+            break;
 
         case WM_DPICHANGED:
         {
@@ -529,185 +266,21 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
                          suggested->bottom - suggested->top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
 
-            auto dpiScale = self->getWindowDpiScale();
-            if (self->rootVisual)
-                self->rootVisual.Scale({dpiScale, dpiScale, 1.0f});
-
-            if (self->contentView)
-                self->ensureAllLayersRendered(self->contentView);
-
-            return 0;
-        }
-
-        case WM_ERASEBKGND:
-            return 1;
-
-        case WM_PAINT:
-        {
-            ValidateRect(hwnd, nullptr);
-
-            paintDirtyViewsForHost(hwnd);
-
-            if (self->contentView != nullptr)
-                self->ensureAllLayersRendered(self->contentView);
-
-            return 0;
-        }
-
-        case WM_LBUTTONDOWN:
-        case WM_RBUTTONDOWN:
-        case WM_MBUTTONDOWN:
-            if (self->useWinRTPointerInput)
-                break;
-            if (self->contentView)
-            {
-                // Capture the mouse so a drag keeps delivering moves even when
-                // the cursor leaves the client area (matching NSView tracking).
-                SetCapture(hwnd);
-
-                float dpiScale = self->getWindowDpiScale();
-                MouseEvent event;
-                event.pos = {static_cast<float>(getXFromLParam(lParam)) / dpiScale,
-                             static_cast<float>(getYFromLParam(lParam)) / dpiScale};
-                event.type = MouseEventType::Down;
-                event.button = (msg == WM_LBUTTONDOWN)   ? MouseButton::Left
-                               : (msg == WM_RBUTTONDOWN) ? MouseButton::Right
-                                                         : MouseButton::Middle;
-                self->contentView->dispatchMouseEvent(event);
-                self->ensureAllLayersRendered(self->contentView);
-            }
-            return 0;
-
-        case WM_LBUTTONUP:
-        case WM_RBUTTONUP:
-        case WM_MBUTTONUP:
-            // Skip if using WinRT pointer input
-            if (self->useWinRTPointerInput)
-                break;
-            if (self->contentView)
-            {
-                float dpiScale = self->getWindowDpiScale();
-                MouseEvent event;
-                event.pos = {static_cast<float>(getXFromLParam(lParam)) / dpiScale,
-                             static_cast<float>(getYFromLParam(lParam)) / dpiScale};
-                event.type = MouseEventType::Up;
-                event.button = (msg == WM_LBUTTONUP)   ? MouseButton::Left
-                               : (msg == WM_RBUTTONUP) ? MouseButton::Right
-                                                       : MouseButton::Middle;
-                self->contentView->dispatchMouseEvent(event);
-                self->ensureAllLayersRendered(self->contentView);
-            }
-
-            // Release the capture once no buttons remain held.
-            if ((wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON)) == 0)
-                ReleaseCapture();
-            return 0;
-
-        case WM_MOUSEMOVE:
-            if (self->useWinRTPointerInput)
-                break;
-
-            if (self->contentView)
-            {
-                float dpiScale = self->getWindowDpiScale();
-                MouseEvent event;
-                event.pos = {static_cast<float>(getXFromLParam(lParam)) / dpiScale,
-                             static_cast<float>(getYFromLParam(lParam)) / dpiScale};
-
-                // A move with a button held is a drag. dispatchMouseEvent only
-                // forwards Dragged/Up to the captured mouseDownTarget; a plain
-                // Moved is re-hit-tested, so without this the title-bar grab is
-                // lost the instant the cursor moves and panels never drag.
-                auto buttons = wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON);
-
-                if (buttons != 0)
-                {
-                    event.type = MouseEventType::Dragged;
-                    event.button = (wParam & MK_LBUTTON)   ? MouseButton::Left
-                                   : (wParam & MK_RBUTTON) ? MouseButton::Right
-                                                           : MouseButton::Middle;
-                }
-                else
-                {
-                    event.type = MouseEventType::Moved;
-                }
-
-                self->contentView->dispatchMouseEvent(event);
-                self->ensureAllLayersRendered(self->contentView);
-            }
-            return 0;
-
-        case WM_MOUSEWHEEL:
-        case WM_MOUSEHWHEEL:
-            if (self->useWinRTPointerInput)
-                break;
-
-            if (self->contentView)
-            {
-                // Wheel messages carry screen coordinates (unlike the button
-                // and move messages), so map them into the client area before
-                // hit-testing the view under the cursor.
-                POINT pt = {getXFromLParam(lParam), getYFromLParam(lParam)};
-                ScreenToClient(hwnd, &pt);
-
-                float dpiScale = self->getWindowDpiScale();
-                MouseEvent event;
-                event.pos = {static_cast<float>(pt.x) / dpiScale,
-                             static_cast<float>(pt.y) / dpiScale};
-                event.type = MouseEventType::Wheel;
-
-                auto wheelDelta =
-                    static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam));
-                event.delta = (msg == WM_MOUSEWHEEL) ? Point {0.f, wheelDelta}
-                                                     : Point {wheelDelta, 0.f};
-
-                self->contentView->dispatchMouseEvent(event);
-                self->ensureAllLayersRendered(self->contentView);
-            }
-            return 0;
-
-        case WM_KEYDOWN:
-        {
-            auto vk = static_cast<uint16_t>(wParam);
-            self->onKeyDown(vk);
-
-            if (self->contentView)
-            {
-                KeyEvent event;
-                event.keyCode = vk;
-                event.type = KeyEventType::Down;
-                event.isRepeat = (lParam & 0x40000000) != 0;
-                event.modifiers = self->getModifiers();
-                self->contentView->keyDown(event);
-                self->ensureAllLayersRendered(self->contentView);
-            }
-            return 0;
-        }
-
-        case WM_KEYUP:
-        {
-            auto vk = static_cast<uint16_t>(wParam);
-            self->onKeyUp(vk);
-
-            if (self->contentView)
-            {
-                KeyEvent event;
-                event.keyCode = vk;
-                event.type = KeyEventType::Up;
-                event.modifiers = self->getModifiers();
-                self->contentView->keyUp(event);
-                self->ensureAllLayersRendered(self->contentView);
-            }
+            self->host.rescaleRootVisualToDpi();
+            self->host.ensureAllLayersRendered(self->host.contentView);
             return 0;
         }
     }
+
+    if (auto result = self->host.handleCommonMessage(msg, wParam, lParam))
+        return *result;
 
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 Window::Window(const WindowOptions& optionsToUse)
     : options(optionsToUse)
-    , impl(this, optionsToUse)
+    , impl(optionsToUse)
 {
 }
 
@@ -720,12 +293,12 @@ void Window::setTitle(const std::string& title)
 
 void* Window::getHandle()
 {
-    return impl->hwnd;
+    return impl->host.hwnd;
 }
 
 void* Window::getContentViewHandle()
 {
-    return impl->hwnd;
+    return impl->host.hwnd;
 }
 
 void Window::setContentView(View& view)
