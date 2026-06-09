@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include "../Common.h"
 
 namespace eacp::GPUWidgets
 {
@@ -12,8 +13,6 @@ namespace
 // plenty for the shapes this version draws; flatness-adaptive subdivision is a
 // future refinement.
 constexpr int curveSegments = 24;
-
-constexpr float pi = 3.14159265358979323846f;
 
 Graphics::Point lerp(const Graphics::Point& a, const Graphics::Point& b, float t)
 {
