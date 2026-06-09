@@ -14,6 +14,8 @@
 
 #include <objbase.h>
 #include <shlwapi.h>
+#include <shlobj.h>
+#include <ole2.h>
 
 #include <wrl.h>
 #include <WebView2.h>
@@ -1122,6 +1124,80 @@ struct WebView::Native
         sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND_MOVE, event.pos);
     }
 
+    // --- Native file drag-out -----------------------------------------------
+    // The page arms a drag on mousedown (via the armFileDrag bridge command);
+    // by the time the pointer starts dragging the armed paths have arrived over
+    // the message channel, so the first mouseDragged after arming kicks off the
+    // OS drag. Mirrors the macOS EacpDragWebView gesture.
+    bool startArmedFileDragIfNeeded()
+    {
+        if (!dragArmed)
+            return false;
+
+        dragArmed = false;
+        auto paths = std::move(armedDragPaths);
+        armedDragPaths = {};
+        performFileDrag(paths);
+        return true;
+    }
+
+    void performFileDrag(const Vector<std::string>& paths)
+    {
+        if (paths.empty() || !hostHwnd)
+            return;
+
+        // DoDragDrop needs the thread OLE-initialized. The app inits COM as an
+        // STA for WinRT, but OLE drag/drop wants OleInitialize specifically;
+        // balance it with OleUninitialize once the modal drag returns.
+        auto oleHr = OleInitialize(nullptr);
+
+        auto pidls = Vector<PIDLIST_ABSOLUTE> {};
+
+        for (auto& path: paths)
+        {
+            auto widePath = toWideString(path);
+            PIDLIST_ABSOLUTE pidl = nullptr;
+            if (SUCCEEDED(
+                    SHParseDisplayName(widePath.c_str(), nullptr, &pidl, 0, nullptr))
+                && pidl)
+                pidls.add(pidl);
+        }
+
+        if (!pidls.empty())
+        {
+            ComPtr<IShellItemArray> items;
+            if (SUCCEEDED(SHCreateShellItemArrayFromIDLists(
+                    static_cast<UINT>(pidls.size()),
+                    const_cast<LPCITEMIDLIST*>(pidls.data()),
+                    &items))
+                && items)
+            {
+                ComPtr<IDataObject> dataObject;
+                if (SUCCEEDED(items->BindToHandler(
+                        nullptr, BHID_DataObject, IID_PPV_ARGS(&dataObject)))
+                    && dataObject)
+                {
+                    // A null drop source lets the shell supply the default drag
+                    // image and cursor; it also runs the modal drag loop and
+                    // tracks the real (physically-down) mouse button, so the
+                    // drag can escape to Explorer.
+                    DWORD effect = DROPEFFECT_NONE;
+                    SHDoDragDrop(hostHwnd,
+                                 dataObject.Get(),
+                                 nullptr,
+                                 DROPEFFECT_COPY,
+                                 &effect);
+                }
+            }
+        }
+
+        for (auto* pidl: pidls)
+            CoTaskMemFree(pidl);
+
+        if (SUCCEEDED(oleHr))
+            OleUninitialize();
+    }
+
     void handleMouseLeave()
     {
         sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE, {0.0f, 0.0f});
@@ -1198,6 +1274,12 @@ struct WebView::Native
 
     bool initialized = false;
     bool initInProgress = false;
+
+    // Set by armFileDrag (the bridge command); consumed by the next
+    // mouseDragged, which starts the OS drag for these paths.
+    bool dragArmed = false;
+    Vector<std::string> armedDragPaths;
+
     std::queue<std::function<void()>> pendingOperations;
     Vector<std::wstring> pendingDocStartScripts;
 
@@ -1524,6 +1606,11 @@ void WebView::mouseUp(const MouseEvent& event)
 
 void WebView::mouseDragged(const MouseEvent& event)
 {
+    // A drag armed by the page (armFileDrag) takes over the gesture: starting
+    // here, from the genuine drag, is what lets the files escape to Explorer.
+    if (impl->startArmedFileDragIfNeeded())
+        return;
+
     impl->handleMouseMove(event);
 }
 
@@ -1537,12 +1624,13 @@ void WebView::mouseExited(const MouseEvent&)
     impl->handleMouseLeave();
 }
 
-void WebView::armFileDrag(const Vector<std::string>&)
+void WebView::armFileDrag(const Vector<std::string>& paths)
 {
-    // Native file drag-out is implemented on macOS only (WKWebView subclass +
-    // NSDraggingSession started from a real mouseDragged: event). Not wired on
-    // Windows yet; the assert marks it unimplemented and fails loudly if hit.
-    assert(false && "armFileDrag is macOS-only");
+    // Defer the actual OS drag to the next mouseDragged (see
+    // startArmedFileDragIfNeeded): a drag started straight from this async
+    // bridge callback wouldn't be tied to the live mouse gesture.
+    impl->armedDragPaths = paths;
+    impl->dragArmed = true;
 }
 
 void WebView::armWindowDrag()
