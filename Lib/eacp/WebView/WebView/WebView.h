@@ -178,13 +178,13 @@ public:
     void addUserScript(const std::string& source, bool atDocumentStart = true);
 
     // Arms a native file drag-out of the given on-disk files for the next mouse
-    // gesture, so the drag can escape the app into Finder / a DAW. Prefer the
-    // built-in `armFileDrag` bridge command, which routes a DraggableFileList
-    // here. macOS-only; a no-op on other platforms.
+    // gesture, so the drag can escape the app into Finder / Explorer / a DAW.
+    // Prefer the built-in `armFileDrag` bridge command, which routes a
+    // DraggableFileList here. Desktop only (macOS + Windows); asserts on iOS.
     void armFileDrag(const Vector<std::string>& paths);
 
-    // Arms a native window drag for the next mouse gesture. macOS only; asserts
-    // on backends without window-drag support.
+    // Arms a native window drag for the next mouse gesture. Desktop only
+    // (macOS + Windows); asserts on iOS.
     void armWindowDrag();
 
     std::function<void(const std::string& url)> onNavigationStarted = [](auto&&) {};

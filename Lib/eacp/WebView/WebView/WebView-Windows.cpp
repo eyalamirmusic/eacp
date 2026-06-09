@@ -300,6 +300,17 @@ private:
 };
 } // namespace
 
+// Carries what a window.open popup needs to splice into WebView2's
+// NewWindowRequested flow: the opener's environment (the adopted CoreWebView2
+// must share it), the opener's options (so the popup serves the same schemes),
+// and the callback that hands our CoreWebView2 back once it is live.
+struct WebView::PopupInit
+{
+    ComPtr<ICoreWebView2Environment> environment;
+    WebView::Options options;
+    std::function<void(ICoreWebView2*)> onReady;
+};
+
 struct WebView::Native
 {
     Native(WebView& ownerToUse, WebView::Options optionsToUse)
@@ -327,17 +338,23 @@ struct WebView::Native
                 webView->remove_WebResourceRequested(webResourceToken);
             if (permissionRequestedToken.value)
                 webView->remove_PermissionRequested(permissionRequestedToken);
+            if (newWindowRequestedToken.value)
+                webView->remove_NewWindowRequested(newWindowRequestedToken);
+            if (windowCloseRequestedToken.value)
+                webView->remove_WindowCloseRequested(windowCloseRequestedToken);
         }
 
         if (controller)
             controller->Close();
 
         // Drop our COM references so the WebView2 browser-process IPC threads
-        // release their connection while the heap is still valid.
+        // release their connection while the heap is still valid. The shared
+        // environment (popup mode) is owned by the opener; just drop our ref.
         webView.Reset();
         compositionController.Reset();
         controller.Reset();
         environment.Reset();
+        sharedEnvironment.Reset();
 
         // Remove the render visual from the View's composition tree.
         if (webViewVisual)
@@ -392,6 +409,16 @@ struct WebView::Native
         if (!hostHwnd || !webViewVisual)
             return;
 
+        // Popup mode reuses the opener's environment (put_NewWindow requires the
+        // adopted CoreWebView2 to share the opener's environment), so skip
+        // environment creation and go straight to the controller.
+        if (sharedEnvironment)
+        {
+            environment = sharedEnvironment;
+            createCompositionController();
+            return;
+        }
+
         auto envOptions = buildEnvironmentOptions();
 
         auto hr = CreateCoreWebView2EnvironmentWithOptions(
@@ -411,72 +438,7 @@ struct WebView::Native
                     }
 
                     environment = env;
-
-                    // Visual hosting needs the composition-controller factory on
-                    // ICoreWebView2Environment3.
-                    ComPtr<ICoreWebView2Environment3> env3;
-                    if (FAILED(env->QueryInterface(IID_PPV_ARGS(&env3))) || !env3)
-                    {
-                        LOG("WebView2: ICoreWebView2Environment3 unavailable; "
-                            "visual hosting requires a newer WebView2 runtime");
-                        initInProgress = false;
-                        return E_NOINTERFACE;
-                    }
-
-                    return env3->CreateCoreWebView2CompositionController(
-                        hostHwnd,
-                        Microsoft::WRL::Callback<
-                            ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
-                            [this](
-                                HRESULT result,
-                                ICoreWebView2CompositionController* ctrl) -> HRESULT
-                            {
-                                if (FAILED(result) || !ctrl)
-                                {
-                                    LOG("WebView2: composition controller create "
-                                        "failed hr=0x"
-                                        + hresultHex(result));
-                                    initInProgress = false;
-                                    return result;
-                                }
-
-                                compositionController = ctrl;
-
-                                // The composition controller also implements the
-                                // base controller interface (bounds, settings,
-                                // visibility, the CoreWebView2 itself).
-                                if (FAILED(ctrl->QueryInterface(
-                                        IID_PPV_ARGS(&controller)))
-                                    || !controller)
-                                {
-                                    LOG("WebView2: ICoreWebView2Controller QI "
-                                        "failed");
-                                    initInProgress = false;
-                                    return E_NOINTERFACE;
-                                }
-
-                                controller->get_CoreWebView2(&webView);
-
-                                // Render into our composition visual.
-                                compositionController->put_RootVisualTarget(
-                                    reinterpret_cast<IUnknown*>(
-                                        winrt::get_abi(webViewVisual)));
-
-                                applySettings();
-                                setupEventHandlers();
-                                registerSchemeHandlers();
-                                updateBounds();
-
-                                controller->put_IsVisible(TRUE);
-
-                                initialized = true;
-                                initInProgress = false;
-
-                                processPendingOperations();
-
-                                return S_OK;
-                            })
-                            .Get());
+                    return createCompositionController();
                 })
                 .Get());
 
@@ -486,6 +448,84 @@ struct WebView::Native
                 + hresultHex(hr));
             initInProgress = false;
         }
+    }
+
+    // Creates the visual-hosting composition controller from `environment` (set
+    // by either the normal env-creation path or popup mode) and wires the
+    // CoreWebView2 up. Shared by both so popups don't duplicate the setup.
+    HRESULT createCompositionController()
+    {
+        // Visual hosting needs the composition-controller factory on
+        // ICoreWebView2Environment3.
+        ComPtr<ICoreWebView2Environment3> env3;
+        if (FAILED(environment->QueryInterface(IID_PPV_ARGS(&env3))) || !env3)
+        {
+            LOG("WebView2: ICoreWebView2Environment3 unavailable; "
+                "visual hosting requires a newer WebView2 runtime");
+            initInProgress = false;
+            return E_NOINTERFACE;
+        }
+
+        return env3->CreateCoreWebView2CompositionController(
+            hostHwnd,
+            Microsoft::WRL::Callback<
+                ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
+                [this](HRESULT result,
+                       ICoreWebView2CompositionController* ctrl) -> HRESULT
+                {
+                    if (FAILED(result) || !ctrl)
+                    {
+                        LOG("WebView2: composition controller create failed hr=0x"
+                            + hresultHex(result));
+                        initInProgress = false;
+                        return result;
+                    }
+
+                    compositionController = ctrl;
+
+                    // The composition controller also implements the base
+                    // controller interface (bounds, settings, visibility, the
+                    // CoreWebView2 itself).
+                    if (FAILED(ctrl->QueryInterface(IID_PPV_ARGS(&controller)))
+                        || !controller)
+                    {
+                        LOG("WebView2: ICoreWebView2Controller QI failed");
+                        initInProgress = false;
+                        return E_NOINTERFACE;
+                    }
+
+                    controller->get_CoreWebView2(&webView);
+
+                    // Render into our composition visual.
+                    compositionController->put_RootVisualTarget(
+                        reinterpret_cast<IUnknown*>(winrt::get_abi(webViewVisual)));
+
+                    applySettings();
+                    setupEventHandlers();
+                    registerSchemeHandlers();
+                    updateBounds();
+
+                    controller->put_IsVisible(TRUE);
+
+                    initialized = true;
+                    initInProgress = false;
+
+                    processPendingOperations();
+
+                    // Popup mode: hand our freshly-created (un-navigated)
+                    // CoreWebView2 back to the opener so it can adopt it via
+                    // put_NewWindow before WebView2 navigates window.open's
+                    // target into it.
+                    if (onCoreWebViewReady)
+                    {
+                        auto ready = std::move(onCoreWebViewReady);
+                        onCoreWebViewReady = nullptr;
+                        ready(webView.Get());
+                    }
+
+                    return S_OK;
+                })
+                .Get());
     }
 
     static std::string hresultHex(HRESULT hr)
@@ -873,6 +913,7 @@ struct WebView::Native
                 [this](ICoreWebView2*,
                        ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT
                 {
+                    loading = true;
                     CoTaskMemString uri;
                     args->get_Uri(&uri);
                     auto url = uri.toString();
@@ -888,6 +929,7 @@ struct WebView::Native
                 [this](ICoreWebView2*,
                        ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT
                 {
+                    loading = false;
                     BOOL success = FALSE;
                     args->get_IsSuccess(&success);
 
@@ -981,6 +1023,73 @@ struct WebView::Native
                 })
                 .Get(),
             &permissionRequestedToken);
+
+        // window.open / target="_blank" -> hand the embedder a new app-owned
+        // WebView, mirroring the macOS createWebViewWithConfiguration delegate.
+        webView->add_NewWindowRequested(
+            Microsoft::WRL::Callback<ICoreWebView2NewWindowRequestedEventHandler>(
+                [this](ICoreWebView2*,
+                       ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT
+                { return handleNewWindowRequested(args); })
+                .Get(),
+            &newWindowRequestedToken);
+
+        // JS window.close() -> notify the embedder (e.g. so it tears the popup
+        // window down). Matches the macOS webViewDidClose delegate.
+        webView->add_WindowCloseRequested(
+            Microsoft::WRL::Callback<ICoreWebView2WindowCloseRequestedEventHandler>(
+                [this](ICoreWebView2*, IUnknown*) -> HRESULT
+                {
+                    Threads::callAsync([cb = owner.onClose]() { cb(); });
+                    return S_OK;
+                })
+                .Get(),
+            &windowCloseRequestedToken);
+    }
+
+    // Adopts WebView2's window.open into an app-owned WebView so window.opener /
+    // postMessage between the two keep working. WebView2's contract: hand it an
+    // un-navigated CoreWebView2 created from this same environment via
+    // put_NewWindow, completing the event's deferral once that popup exists.
+    // Our WebView builds its CoreWebView2 lazily (once the embedder parents it
+    // into a window), so we defer and complete from the popup's ready callback.
+    HRESULT
+    handleNewWindowRequested(ICoreWebView2NewWindowRequestedEventArgs* args)
+    {
+        CoTaskMemString uri;
+        args->get_Uri(&uri);
+        auto url = uri.toString();
+
+        ComPtr<ICoreWebView2Deferral> deferral;
+        if (FAILED(args->GetDeferral(&deferral)) || !deferral)
+            return S_OK;
+
+        ComPtr<ICoreWebView2NewWindowRequestedEventArgs> argsHold {args};
+
+        auto init = WebView::PopupInit {};
+        init.environment = environment;
+        init.options = options;
+        // WebView2 navigates the popup to the requested URL itself, so the popup
+        // must not auto-load its embedded index over it.
+        init.options.embedded.autoLoad = false;
+        init.onReady = [argsHold, deferral](ICoreWebView2* popupWebView)
+        {
+            argsHold->put_NewWindow(popupWebView);
+            argsHold->put_Handled(TRUE);
+            deferral->Complete();
+        };
+
+        auto popup = OwningPointer<WebView> {new WebView {std::move(init)}};
+
+        if (!owner.onNewWindowRequested(std::move(popup), url))
+        {
+            // Embedder declined and let the popup be destroyed, so onReady will
+            // never fire. Hand the request back to WebView2's default handling.
+            args->put_Handled(FALSE);
+            deferral->Complete();
+        }
+
+        return S_OK;
     }
 
     static std::string extractJsonStringField(const std::string& json,
@@ -1314,6 +1423,16 @@ struct WebView::Native
     bool initialized = false;
     bool initInProgress = false;
 
+    // Tracks navigation in flight (NavigationStarting -> Completed), so
+    // isLoading() can answer like the macOS backend's webView.isLoading.
+    bool loading = false;
+
+    // Popup mode (set via PopupInit when adopting a window.open): reuse the
+    // opener's environment and, once our CoreWebView2 is live, hand it back to
+    // the opener through onCoreWebViewReady so it can call put_NewWindow.
+    ComPtr<ICoreWebView2Environment> sharedEnvironment;
+    std::function<void(ICoreWebView2*)> onCoreWebViewReady;
+
     // Set by armFileDrag (the bridge command); consumed by the next
     // mouseDragged, which starts the OS drag for these paths.
     bool dragArmed = false;
@@ -1332,11 +1451,27 @@ struct WebView::Native
     EventRegistrationToken webMessageToken {};
     EventRegistrationToken webResourceToken {};
     EventRegistrationToken permissionRequestedToken {};
+    EventRegistrationToken newWindowRequestedToken {};
+    EventRegistrationToken windowCloseRequestedToken {};
 };
 
 void WebView::initNative(Options options)
 {
     impl = std::make_shared<Native>(*this, std::move(options));
+    registerWebView(this);
+    installWindowDragSupport();
+}
+
+// Popup constructor (window.open). Builds the Native in popup mode: it adopts
+// the opener's environment and fires init.onReady once its CoreWebView2 is live,
+// so the opener can hand it to WebView2 via put_NewWindow. Created by the
+// opener's NewWindowRequested handler; the embedder receives it through
+// onNewWindowRequested and parents it into a window, which drives the lazy init.
+WebView::WebView(PopupInit init)
+{
+    impl = std::make_shared<Native>(*this, std::move(init.options));
+    impl->sharedEnvironment = std::move(init.environment);
+    impl->onCoreWebViewReady = std::move(init.onReady);
     registerWebView(this);
     installWindowDragSupport();
 }
@@ -1444,7 +1579,7 @@ bool WebView::canGoForward() const
 
 bool WebView::isLoading() const
 {
-    return false;
+    return impl->loading;
 }
 
 std::string WebView::getURL() const
