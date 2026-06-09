@@ -128,6 +128,12 @@ public:
     int count(const std::string& selector, CallOptions opts = {});
     bool waitFor(const std::string& selector, CallOptions opts = {});
 
+    // Polls until exactly `count` elements match the selector (or the
+    // timeout elapses). A readiness gate for lists that stream their
+    // items in over several renders: waitFor(selector) returns on the
+    // first match, which can race a count() of the still-growing list.
+    bool waitForCount(const std::string& selector, int count, CallOptions opts = {});
+
     // Evaluates an arbitrary JS expression. Wrapped so the result is
     // round-trip JSON-shaped; the unwrapped value is returned.
     Miro::JSON evaluate(const std::string& expression, CallOptions opts = {});
@@ -179,6 +185,9 @@ public:
                                    CallOptions opts = {});
     Threads::Async<bool> waitForAsync(const std::string& selector,
                                       CallOptions opts = {});
+    Threads::Async<bool> waitForCountAsync(const std::string& selector,
+                                           int count,
+                                           CallOptions opts = {});
     Threads::Async<Miro::JSON> evaluateAsync(const std::string& expression,
                                              CallOptions opts = {});
     Threads::Async<std::string> domAsync(std::string_view selector = {},

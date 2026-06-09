@@ -11,6 +11,7 @@ Makefile
 CMakeSettings.json
 
 cmake-build*
+.clangd
 CMakeFiles
 CMakeCache.txt
 cmake_install.cmake

@@ -510,6 +510,36 @@ bool AppDriver::waitFor(const std::string& selector, CallOptions opts)
         .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
 }
 
+Threads::Async<bool> AppDriver::waitForCountAsync(const std::string& selector,
+                                                  int count,
+                                                  CallOptions opts)
+{
+    auto deadline = std::chrono::steady_clock::now()
+                    + std::chrono::milliseconds {effectiveTimeoutMs(opts)};
+
+    while (true)
+    {
+        auto result = co_await runJsAsync(
+            "window.__test.count(" + jsStringLiteral(selector) + ")", {});
+        if (asInt(result) == count)
+            co_return true;
+        if (std::chrono::steady_clock::now() >= deadline)
+            throw std::runtime_error("AppDriver: waitForCount timed out for "
+                                     "selector: "
+                                     + selector + " (expected "
+                                     + std::to_string(count) + ")");
+        co_await Threads::delay(std::chrono::milliseconds {waitForPollMs});
+    }
+}
+
+bool AppDriver::waitForCount(const std::string& selector,
+                             int count,
+                             CallOptions opts)
+{
+    return waitForCountAsync(selector, count, opts)
+        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+}
+
 Threads::Async<Miro::JSON> AppDriver::evaluateAsync(const std::string& expression,
                                                     CallOptions opts)
 {
