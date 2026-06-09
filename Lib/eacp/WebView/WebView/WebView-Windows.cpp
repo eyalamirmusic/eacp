@@ -323,6 +323,8 @@ struct WebView::Native
                 webView->remove_WebMessageReceived(webMessageToken);
             if (webResourceToken.value)
                 webView->remove_WebResourceRequested(webResourceToken);
+            if (permissionRequestedToken.value)
+                webView->remove_PermissionRequested(permissionRequestedToken);
         }
 
         if (controller)
@@ -423,9 +425,9 @@ struct WebView::Native
                         hostHwnd,
                         Microsoft::WRL::Callback<
                             ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
-                            [this](HRESULT result,
-                                   ICoreWebView2CompositionController* ctrl)
-                                -> HRESULT
+                            [this](
+                                HRESULT result,
+                                ICoreWebView2CompositionController* ctrl) -> HRESULT
                             {
                                 if (FAILED(result) || !ctrl)
                                 {
@@ -565,13 +567,7 @@ struct WebView::Native
         for (auto& [scheme, provider]: options.streamingSchemes)
             streamingProviders.emplace(scheme, provider);
 
-        webView->add_WebResourceRequested(
-            Microsoft::WRL::Callback<ICoreWebView2WebResourceRequestedEventHandler>(
-                [this](ICoreWebView2*,
-                       ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT
-                { return handleWebResourceRequested(args); })
-                .Get(),
-            &webResourceToken);
+        ensureWebResourceHandler();
 
         // AddWebResourceRequestedFilter only intercepts URLs that match
         // the filter pattern. Use "scheme://*" so every path under the
@@ -593,6 +589,47 @@ struct WebView::Native
             addFilter(scheme);
     }
 
+    // Attach the WebResourceRequested handler once. Both custom-scheme serving
+    // and loadHTML's base-URL interception route through it, so it must exist
+    // even when no custom schemes were registered.
+    void ensureWebResourceHandler()
+    {
+        if (webResourceToken.value || !webView)
+            return;
+
+        webView->add_WebResourceRequested(
+            Microsoft::WRL::Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+                [this](ICoreWebView2*,
+                       ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT
+                { return handleWebResourceRequested(args); })
+                .Get(),
+            &webResourceToken);
+    }
+
+    // Serves an in-memory HTML document for a real (http/https) base URL so the
+    // page gets that URL's origin -- and, for https, a secure context. macOS's
+    // loadHTMLString:baseURL: gives the document a trustworthy origin directly;
+    // WebView2's NavigateToString can't, leaving the page at about:blank where
+    // secure-context-only APIs (e.g. navigator.mediaDevices) are unavailable.
+    void serveInlineHtml(const std::string& baseURL, std::string html)
+    {
+        if (!webView)
+            return;
+
+        inlineDocuments[baseURL] = std::move(html);
+
+        ensureWebResourceHandler();
+
+        auto pattern = toWideString(baseURL);
+        auto hr = webView->AddWebResourceRequestedFilter(
+            pattern.c_str(), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+        if (FAILED(hr))
+            LOG("WebView2: AddWebResourceRequestedFilter('" + baseURL
+                + "') failed hr=0x" + hresultHex(hr));
+
+        webView->Navigate(pattern.c_str());
+    }
+
     HRESULT
     handleWebResourceRequested(ICoreWebView2WebResourceRequestedEventArgs* args)
     {
@@ -608,6 +645,11 @@ struct WebView::Native
             return S_OK;
 
         auto url = uriRaw.toString();
+
+        if (auto inlineIt = inlineDocuments.find(url);
+            inlineIt != inlineDocuments.end())
+            return serveInlineDocument(args, inlineIt->second);
+
         auto schemeEnd = url.find("://");
         if (schemeEnd == std::string::npos)
             return S_OK;
@@ -669,6 +711,28 @@ struct WebView::Native
                                                              reason,
                                                              headers.c_str(),
                                                              &webResponse)))
+        {
+            args->put_Response(webResponse.Get());
+        }
+
+        return S_OK;
+    }
+
+    HRESULT serveInlineDocument(ICoreWebView2WebResourceRequestedEventArgs* args,
+                                const std::string& html)
+    {
+        ComPtr<IStream> stream;
+        stream.Attach(SHCreateMemStream(reinterpret_cast<const BYTE*>(html.data()),
+                                        static_cast<UINT>(html.size())));
+
+        ComPtr<ICoreWebView2WebResourceResponse> webResponse;
+        if (stream
+            && SUCCEEDED(environment->CreateWebResourceResponse(
+                stream.Get(),
+                200,
+                L"OK",
+                L"Content-Type: text/html; charset=utf-8",
+                &webResponse)))
         {
             args->put_Response(webResponse.Get());
         }
@@ -893,6 +957,28 @@ struct WebView::Native
                 })
                 .Get(),
             &webMessageToken);
+
+        // Auto-grant camera / microphone the way the macOS backend does via its
+        // requestMediaCapturePermissionForOrigin UIDelegate. Without a handler
+        // WebView2 leaves the request in its default state, so getUserMedia from
+        // a page loaded here would never be allowed. Other permission kinds fall
+        // through to WebView2's default (prompt) behaviour.
+        webView->add_PermissionRequested(
+            Microsoft::WRL::Callback<ICoreWebView2PermissionRequestedEventHandler>(
+                [](ICoreWebView2*,
+                   ICoreWebView2PermissionRequestedEventArgs* args) -> HRESULT
+                {
+                    auto kind = COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION;
+                    args->get_PermissionKind(&kind);
+
+                    if (kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA
+                        || kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE)
+                        args->put_State(COREWEBVIEW2_PERMISSION_STATE_ALLOW);
+
+                    return S_OK;
+                })
+                .Get(),
+            &permissionRequestedToken);
     }
 
     static std::string extractJsonStringField(const std::string& json,
@@ -1106,6 +1192,10 @@ struct WebView::Native
     std::unordered_map<std::string, ResourceProvider> schemeProviders;
     std::unordered_map<std::string, StreamingProvider> streamingProviders;
 
+    // base URL -> HTML body, for loadHTML() calls that carry a base URL (see
+    // serveInlineHtml). Keyed by the exact URL the navigation requests.
+    std::unordered_map<std::string, std::string> inlineDocuments;
+
     bool initialized = false;
     bool initInProgress = false;
     std::queue<std::function<void()>> pendingOperations;
@@ -1116,6 +1206,7 @@ struct WebView::Native
     EventRegistrationToken titleChangedToken {};
     EventRegistrationToken webMessageToken {};
     EventRegistrationToken webResourceToken {};
+    EventRegistrationToken permissionRequestedToken {};
 };
 
 void WebView::initNative(Options options)
@@ -1154,11 +1245,23 @@ void WebView::loadHTML(const std::string& html, const std::string& baseURL)
     impl->queueOperation(
         [this, html, baseURL]()
         {
-            if (impl->webView)
+            if (!impl->webView)
+                return;
+
+            // A base URL gives the document a real origin (and, for https, a
+            // secure context). NavigateToString can't carry one -- it lands the
+            // page at about:blank -- so serve the HTML for the base URL through
+            // an intercepted navigation instead. This matches macOS's
+            // loadHTMLString:baseURL: and is what lets secure-context APIs such
+            // as navigator.mediaDevices.getUserMedia work.
+            if (!baseURL.empty())
             {
-                auto wideHtml = toWideString(html);
-                impl->webView->NavigateToString(wideHtml.c_str());
+                impl->serveInlineHtml(baseURL, html);
+                return;
             }
+
+            auto wideHtml = toWideString(html);
+            impl->webView->NavigateToString(wideHtml.c_str());
         });
 }
 
