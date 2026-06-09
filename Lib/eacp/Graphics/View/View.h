@@ -17,7 +17,8 @@ enum class MouseEventType
     Dragged,
     Moved,
     Entered,
-    Exited
+    Exited,
+    Wheel
 };
 
 enum class MouseButton
@@ -71,6 +72,10 @@ public:
     virtual void mouseMoved(const MouseEvent&) {}
     virtual void mouseEntered(const MouseEvent&) {}
     virtual void mouseExited(const MouseEvent&) {}
+
+    // Scroll wheel. event.delta carries the wheel movement (y vertical,
+    // x horizontal) in WHEEL_DELTA units.
+    virtual void mouseWheel(const MouseEvent&) {}
     virtual void keyDown(const KeyEvent&) {}
     virtual void keyUp(const KeyEvent&) {}
     virtual void resized();

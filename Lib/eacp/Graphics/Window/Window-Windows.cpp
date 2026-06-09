@@ -637,6 +637,35 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             }
             return 0;
 
+        case WM_MOUSEWHEEL:
+        case WM_MOUSEHWHEEL:
+            if (self->useWinRTPointerInput)
+                break;
+
+            if (self->contentView)
+            {
+                // Wheel messages carry screen coordinates (unlike the button
+                // and move messages), so map them into the client area before
+                // hit-testing the view under the cursor.
+                POINT pt = {getXFromLParam(lParam), getYFromLParam(lParam)};
+                ScreenToClient(hwnd, &pt);
+
+                float dpiScale = self->getWindowDpiScale();
+                MouseEvent event;
+                event.pos = {static_cast<float>(pt.x) / dpiScale,
+                             static_cast<float>(pt.y) / dpiScale};
+                event.type = MouseEventType::Wheel;
+
+                auto wheelDelta =
+                    static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam));
+                event.delta = (msg == WM_MOUSEWHEEL) ? Point {0.f, wheelDelta}
+                                                     : Point {wheelDelta, 0.f};
+
+                self->contentView->dispatchMouseEvent(event);
+                self->ensureAllLayersRendered(self->contentView);
+            }
+            return 0;
+
         case WM_KEYDOWN:
         {
             auto vk = static_cast<uint16_t>(wParam);
