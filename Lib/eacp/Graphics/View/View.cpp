@@ -258,6 +258,9 @@ void View::handleMouseEvent(const MouseEvent& event)
         case MouseEventType::Exited:
             mouseExited(event);
             break;
+        case MouseEventType::Wheel:
+            mouseWheel(event);
+            break;
     }
 }
 

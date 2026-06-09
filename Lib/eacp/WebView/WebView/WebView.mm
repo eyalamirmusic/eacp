@@ -860,4 +860,5 @@ void WebView::mouseUp(const MouseEvent&) {}
 void WebView::mouseDragged(const MouseEvent&) {}
 void WebView::mouseMoved(const MouseEvent&) {}
 void WebView::mouseExited(const MouseEvent&) {}
+void WebView::mouseWheel(const MouseEvent&) {}
 } // namespace eacp::Graphics

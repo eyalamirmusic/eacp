@@ -1181,7 +1181,9 @@ struct WebView::Native
     // mouse events it routed to this View (see the WebView::mouse* overrides).
     void sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND kind,
                    const Point& localPos,
-                   uint32_t mouseData = 0)
+                   uint32_t mouseData = 0,
+                   COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS virtualKeys =
+                       COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_NONE)
     {
         if (!compositionController)
             return;
@@ -1193,8 +1195,22 @@ struct WebView::Native
         POINT pt = {static_cast<LONG>(std::lround(localPos.x * scale)),
                     static_cast<LONG>(std::lround(localPos.y * scale))};
 
-        compositionController->SendMouseInput(
-            kind, COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_NONE, mouseData, pt);
+        compositionController->SendMouseInput(kind, virtualKeys, mouseData, pt);
+    }
+
+    // The button held during a drag. WebView2 treats a MOVE whose virtualKeys
+    // report no button as a plain hover, so without this a scrollbar-thumb (or
+    // any in-page) drag is dropped the moment the pointer moves.
+    static COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS
+        heldButtonFor(const MouseEvent& event)
+    {
+        if (event.type != MouseEventType::Dragged)
+            return COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_NONE;
+        if (event.button == MouseButton::Right)
+            return COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_RIGHT_BUTTON;
+        if (event.button == MouseButton::Middle)
+            return COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_MIDDLE_BUTTON;
+        return COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_LEFT_BUTTON;
     }
 
     static COREWEBVIEW2_MOUSE_EVENT_KIND downKindFor(MouseButton button)
@@ -1232,7 +1248,23 @@ struct WebView::Native
 
     void handleMouseMove(const MouseEvent& event)
     {
-        sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND_MOVE, event.pos);
+        sendMouse(
+            COREWEBVIEW2_MOUSE_EVENT_KIND_MOVE, event.pos, 0, heldButtonFor(event));
+    }
+
+    void handleMouseWheel(const MouseEvent& event)
+    {
+        // event.delta is in WHEEL_DELTA units; WebView2 expects the same value
+        // packed into mouseData. y drives the vertical wheel, x the horizontal.
+        if (event.delta.y != 0.f)
+            sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND_WHEEL,
+                      event.pos,
+                      static_cast<uint32_t>(static_cast<int32_t>(event.delta.y)));
+
+        if (event.delta.x != 0.f)
+            sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND_HORIZONTAL_WHEEL,
+                      event.pos,
+                      static_cast<uint32_t>(static_cast<int32_t>(event.delta.x)));
     }
 
     // --- Native file drag-out -----------------------------------------------
@@ -1804,6 +1836,11 @@ void WebView::mouseMoved(const MouseEvent& event)
 void WebView::mouseExited(const MouseEvent&)
 {
     impl->handleMouseLeave();
+}
+
+void WebView::mouseWheel(const MouseEvent& event)
+{
+    impl->handleMouseWheel(event);
 }
 
 void WebView::armFileDrag(const Vector<std::string>& paths)

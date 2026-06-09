@@ -211,6 +211,7 @@ protected:
     void mouseDragged(const MouseEvent&) override;
     void mouseMoved(const MouseEvent&) override;
     void mouseExited(const MouseEvent&) override;
+    void mouseWheel(const MouseEvent&) override;
 
 private:
     friend struct WebViewNativeAccess;
