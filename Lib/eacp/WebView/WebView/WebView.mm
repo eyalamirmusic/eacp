@@ -851,4 +851,13 @@ void WebView::resized()
     View::resized();
     impl->updateFrame();
 }
+
+// The native WKWebView is a real subview that receives input directly, so the
+// framework never routes these to us; they exist only to satisfy the shared
+// declaration the Windows composition-hosted backend needs.
+void WebView::mouseDown(const MouseEvent&) {}
+void WebView::mouseUp(const MouseEvent&) {}
+void WebView::mouseDragged(const MouseEvent&) {}
+void WebView::mouseMoved(const MouseEvent&) {}
+void WebView::mouseExited(const MouseEvent&) {}
 } // namespace eacp::Graphics

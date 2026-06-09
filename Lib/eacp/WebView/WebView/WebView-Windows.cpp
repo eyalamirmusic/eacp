@@ -19,8 +19,15 @@
 #include <WebView2.h>
 #include <WebView2EnvironmentOptions.h>
 
+#include <cmath>
+
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.UI.Composition.h>
+
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Logging.h>
+
+namespace wuc = winrt::Windows::UI::Composition;
 
 namespace eacp::Graphics
 {
@@ -28,6 +35,9 @@ namespace eacp::Graphics
 using Microsoft::WRL::ComPtr;
 
 HWND findHostHwndForView(View* view);
+
+// Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
+wuc::Compositor getWinRTCompositor();
 
 using MessageHandlerMap =
     std::unordered_map<std::string, std::function<void(const std::string&)>>;
@@ -318,15 +328,23 @@ struct WebView::Native
         if (controller)
             controller->Close();
 
-        // Drop our COM references before DestroyWindow so the WebView2
-        // browser-process IPC threads release their connection while
-        // the heap is still valid.
+        // Drop our COM references so the WebView2 browser-process IPC threads
+        // release their connection while the heap is still valid.
         webView.Reset();
+        compositionController.Reset();
         controller.Reset();
         environment.Reset();
 
-        if (childHwnd)
-            DestroyWindow(childHwnd);
+        // Remove the render visual from the View's composition tree.
+        if (webViewVisual)
+        {
+            if (auto* container =
+                    static_cast<wuc::ContainerVisual*>(owner.getNativeLayer()))
+                if (*container)
+                    (*container).Children().Remove(webViewVisual);
+
+            webViewVisual = nullptr;
+        }
     }
 
     void ensureInitialized()
@@ -334,49 +352,40 @@ struct WebView::Native
         if (initialized || initInProgress)
             return;
 
-        auto parentHwnd = findHostHwndForView(&owner);
-        if (!parentHwnd)
+        hostHwnd = findHostHwndForView(&owner);
+        if (!hostHwnd)
             return;
 
+        // In visual hosting mode WebView2 is not an HWND, so it receives no
+        // native input. Route the framework's mouse events to it instead.
+        owner.setHandlesMouseEvents(true);
+
+        createRenderVisual();
+
         initInProgress = true;
-        createChildWindow(parentHwnd);
         createWebView2();
     }
 
-    void createChildWindow(HWND parentHwnd)
+    void createRenderVisual()
     {
-        static bool classRegistered = false;
-        static const wchar_t* CLASS_NAME = L"EACPWebViewHost";
+        if (webViewVisual)
+            return;
 
-        if (!classRegistered)
-        {
-            WNDCLASSEXW wc = {};
-            wc.cbSize = sizeof(WNDCLASSEXW);
-            wc.lpfnWndProc = DefWindowProcW;
-            wc.hInstance = GetModuleHandleW(nullptr);
-            wc.lpszClassName = CLASS_NAME;
-            RegisterClassExW(&wc);
-            classRegistered = true;
-        }
+        auto compositor = getWinRTCompositor();
+        if (!compositor)
+            return;
 
-        auto bounds = owner.getLocalBounds();
-        childHwnd = CreateWindowExW(0,
-                                    CLASS_NAME,
-                                    L"",
-                                    WS_CHILD | WS_VISIBLE,
-                                    static_cast<int>(bounds.x),
-                                    static_cast<int>(bounds.y),
-                                    static_cast<int>(bounds.w),
-                                    static_cast<int>(bounds.h),
-                                    parentHwnd,
-                                    nullptr,
-                                    GetModuleHandleW(nullptr),
-                                    nullptr);
+        webViewVisual = compositor.CreateContainerVisual();
+
+        if (auto* container =
+                static_cast<wuc::ContainerVisual*>(owner.getNativeLayer()))
+            if (*container)
+                (*container).Children().InsertAtTop(webViewVisual);
     }
 
     void createWebView2()
     {
-        if (!childHwnd)
+        if (!hostHwnd || !webViewVisual)
             return;
 
         auto envOptions = buildEnvironmentOptions();
@@ -398,28 +407,63 @@ struct WebView::Native
                     }
 
                     environment = env;
-                    return env->CreateCoreWebView2Controller(
-                        childHwnd,
+
+                    // Visual hosting needs the composition-controller factory on
+                    // ICoreWebView2Environment3.
+                    ComPtr<ICoreWebView2Environment3> env3;
+                    if (FAILED(env->QueryInterface(IID_PPV_ARGS(&env3))) || !env3)
+                    {
+                        LOG("WebView2: ICoreWebView2Environment3 unavailable; "
+                            "visual hosting requires a newer WebView2 runtime");
+                        initInProgress = false;
+                        return E_NOINTERFACE;
+                    }
+
+                    return env3->CreateCoreWebView2CompositionController(
+                        hostHwnd,
                         Microsoft::WRL::Callback<
-                            ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+                            ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
                             [this](HRESULT result,
-                                   ICoreWebView2Controller* ctrl) -> HRESULT
+                                   ICoreWebView2CompositionController* ctrl)
+                                -> HRESULT
                             {
                                 if (FAILED(result) || !ctrl)
                                 {
-                                    LOG("WebView2: controller create failed hr=0x"
+                                    LOG("WebView2: composition controller create "
+                                        "failed hr=0x"
                                         + hresultHex(result));
                                     initInProgress = false;
                                     return result;
                                 }
 
-                                controller = ctrl;
+                                compositionController = ctrl;
+
+                                // The composition controller also implements the
+                                // base controller interface (bounds, settings,
+                                // visibility, the CoreWebView2 itself).
+                                if (FAILED(ctrl->QueryInterface(
+                                        IID_PPV_ARGS(&controller)))
+                                    || !controller)
+                                {
+                                    LOG("WebView2: ICoreWebView2Controller QI "
+                                        "failed");
+                                    initInProgress = false;
+                                    return E_NOINTERFACE;
+                                }
+
                                 controller->get_CoreWebView2(&webView);
+
+                                // Render into our composition visual.
+                                compositionController->put_RootVisualTarget(
+                                    reinterpret_cast<IUnknown*>(
+                                        winrt::get_abi(webViewVisual)));
 
                                 applySettings();
                                 setupEventHandlers();
                                 registerSchemeHandlers();
                                 updateBounds();
+
+                                controller->put_IsVisible(TRUE);
 
                                 initialized = true;
                                 initInProgress = false;
@@ -887,54 +931,114 @@ struct WebView::Native
 
     void updateBounds()
     {
-        if (!childHwnd)
+        if (!webViewVisual)
             return;
 
-        auto globalBounds = calculateGlobalBounds();
+        auto bounds = owner.getLocalBounds();
         auto dpiScale = getDpiScale();
 
-        auto x = static_cast<int>(globalBounds.x * dpiScale);
-        auto y = static_cast<int>(globalBounds.y * dpiScale);
-        auto w = static_cast<int>(globalBounds.w * dpiScale);
-        auto h = static_cast<int>(globalBounds.h * dpiScale);
+        auto widthPx = bounds.w * dpiScale;
+        auto heightPx = bounds.h * dpiScale;
 
-        SetWindowPos(childHwnd, nullptr, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+        // The render visual lives inside the WebView's own View container, which
+        // the View tree already positions and (via the Panel) applies opacity
+        // to. So it only needs to sit at the container origin and be sized.
+        //
+        // WebView2 treats the RootVisualTarget's coordinate space as physical
+        // pixels, but our composition root is already DPI-scaled. Counter-scale
+        // the visual by 1/dpi and size it in pixels, so the browser's
+        // pixel-space content maps back to the correct logical size on screen
+        // (without this it renders dpi-times too large on high-DPI displays).
+        webViewVisual.Offset({0.0f, 0.0f, 0.0f});
+        webViewVisual.Scale({1.0f / dpiScale, 1.0f / dpiScale, 1.0f});
+        webViewVisual.Size({widthPx, heightPx});
 
-        if (controller)
-        {
-            RECT bounds = {0, 0, w, h};
-            controller->put_Bounds(bounds);
-        }
-    }
+        if (!controller)
+            return;
 
-    Rect calculateGlobalBounds()
-    {
-        Rect globalBounds = owner.getLocalBounds();
-        View* current = owner.getParent();
-        float offsetX = 0;
-        float offsetY = 0;
+        // Bounds are in raw pixels (the default bounds mode); RasterizationScale
+        // tells WebView2 the DPI so the page lays out at the right CSS size and
+        // renders crisply. Needs ICoreWebView2Controller3; without it the
+        // WebView still works (just softer).
+        ComPtr<ICoreWebView2Controller3> controller3;
+        if (SUCCEEDED(controller->QueryInterface(IID_PPV_ARGS(&controller3)))
+            && controller3)
+            controller3->put_RasterizationScale(dpiScale);
 
-        while (current)
-        {
-            offsetX += current->getBounds().x;
-            offsetY += current->getBounds().y;
-            current = current->getParent();
-        }
-
-        globalBounds.x = offsetX;
-        globalBounds.y = offsetY;
-
-        return globalBounds;
+        RECT rect = {0,
+                     0,
+                     static_cast<LONG>(std::lround(widthPx)),
+                     static_cast<LONG>(std::lround(heightPx))};
+        controller->put_Bounds(rect);
     }
 
     float getDpiScale()
     {
-        if (childHwnd)
-        {
-            auto dpi = GetDpiForWindow(childHwnd);
-            return static_cast<float>(dpi) / 96.f;
-        }
+        if (hostHwnd)
+            return static_cast<float>(GetDpiForWindow(hostHwnd)) / 96.f;
         return 1.f;
+    }
+
+    // --- Input forwarding ---------------------------------------------------
+    // A visual-hosted WebView2 has no input HWND, so the framework forwards the
+    // mouse events it routed to this View (see the WebView::mouse* overrides).
+    void sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND kind,
+                   const Point& localPos,
+                   uint32_t mouseData = 0)
+    {
+        if (!compositionController)
+            return;
+
+        // Bounds are in physical pixels (see updateBounds), so input points must
+        // be too. The framework hands us positions local to this View in logical
+        // units, so scale them up by the DPI factor.
+        auto scale = getDpiScale();
+        POINT pt = {static_cast<LONG>(std::lround(localPos.x * scale)),
+                    static_cast<LONG>(std::lround(localPos.y * scale))};
+
+        compositionController->SendMouseInput(
+            kind, COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_NONE, mouseData, pt);
+    }
+
+    static COREWEBVIEW2_MOUSE_EVENT_KIND downKindFor(MouseButton button)
+    {
+        if (button == MouseButton::Right)
+            return COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOWN;
+        if (button == MouseButton::Middle)
+            return COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOWN;
+        return COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOWN;
+    }
+
+    static COREWEBVIEW2_MOUSE_EVENT_KIND upKindFor(MouseButton button)
+    {
+        if (button == MouseButton::Right)
+            return COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_UP;
+        if (button == MouseButton::Middle)
+            return COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_UP;
+        return COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_UP;
+    }
+
+    void handleMouseDown(const MouseEvent& event)
+    {
+        if (controller)
+            controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+
+        sendMouse(downKindFor(event.button), event.pos);
+    }
+
+    void handleMouseUp(const MouseEvent& event)
+    {
+        sendMouse(upKindFor(event.button), event.pos);
+    }
+
+    void handleMouseMove(const MouseEvent& event)
+    {
+        sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND_MOVE, event.pos);
+    }
+
+    void handleMouseLeave()
+    {
+        sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE, {0.0f, 0.0f});
     }
 
     void queueOperation(std::function<void()> op)
@@ -987,10 +1091,17 @@ struct WebView::Native
 
     WebView& owner;
     WebView::Options options;
-    HWND childHwnd = nullptr;
+    HWND hostHwnd = nullptr;
     ComPtr<ICoreWebView2Environment> environment;
     ComPtr<ICoreWebView2Controller> controller;
+    ComPtr<ICoreWebView2CompositionController> compositionController;
     ComPtr<ICoreWebView2> webView;
+
+    // The composition visual the browser renders into. It is a child of the
+    // WebView's own View ContainerVisual, so it inherits the View tree's
+    // position, opacity and z-order — letting the WebView layer, blend and
+    // overlap with GPU and primitive content (impossible with a child HWND).
+    wuc::ContainerVisual webViewVisual {nullptr};
     MessageHandlerMap messageHandlers;
     std::unordered_map<std::string, ResourceProvider> schemeProviders;
     std::unordered_map<std::string, StreamingProvider> streamingProviders;
@@ -1016,7 +1127,7 @@ void WebView::initNative(Options options)
 
 WebView::~WebView()
 {
-    // Close + childHwnd teardown happens in ~Native (driven by impl
+    // Controller Close + visual teardown happens in ~Native (driven by impl
     // going out of scope). Calling controller->Close() here too would
     // double-close, which the WebView2 docs say is a no-op but in
     // practice has been observed to trip late callbacks on Native.
@@ -1294,6 +1405,35 @@ void WebView::resized()
     impl->updateBounds();
 }
 
+// In visual hosting mode the WebView is a composition visual with no input
+// HWND, so the framework's routed mouse events are forwarded to the WebView2
+// composition controller. (On macOS the native WKWebView receives input
+// directly, so the equivalents there are no-ops.)
+void WebView::mouseDown(const MouseEvent& event)
+{
+    impl->handleMouseDown(event);
+}
+
+void WebView::mouseUp(const MouseEvent& event)
+{
+    impl->handleMouseUp(event);
+}
+
+void WebView::mouseDragged(const MouseEvent& event)
+{
+    impl->handleMouseMove(event);
+}
+
+void WebView::mouseMoved(const MouseEvent& event)
+{
+    impl->handleMouseMove(event);
+}
+
+void WebView::mouseExited(const MouseEvent&)
+{
+    impl->handleMouseLeave();
+}
+
 void WebView::armFileDrag(const Vector<std::string>&)
 {
     // Native file drag-out is implemented on macOS only (WKWebView subclass +
@@ -1306,8 +1446,8 @@ void WebView::armWindowDrag()
 {
     // TODO(windows): the page side is wired (installWindowDragSupport lands us
     // here on a drag-region mousedown); start a native move loop to finish it,
-    // e.g. ReleaseCapture() + SendMessage(GetAncestor(impl->childHwnd, GA_ROOT),
-    // WM_NCLBUTTONDOWN, HTCAPTION, 0).
+    // e.g. ReleaseCapture() + SendMessage(impl->hostHwnd, WM_NCLBUTTONDOWN,
+    // HTCAPTION, 0).
     assert(false && "armWindowDrag: window drag is not implemented on Windows yet");
 }
 
@@ -1351,11 +1491,12 @@ WebView* WebView::focused()
 
     for (auto* view: registeredWebViews())
     {
-        if (!view->impl || !view->impl->childHwnd)
+        if (!view->impl || !view->impl->hostHwnd)
             continue;
 
-        auto top = GetAncestor(view->impl->childHwnd, GA_ROOT);
-        if (top == foreground)
+        // The host HWND is the top-level window the visual-hosted WebView lives
+        // in; the focused WebView is the one whose window is in the foreground.
+        if (view->impl->hostHwnd == foreground)
             return view;
     }
 

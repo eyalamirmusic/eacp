@@ -561,6 +561,10 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
                 break;
             if (self->contentView)
             {
+                // Capture the mouse so a drag keeps delivering moves even when
+                // the cursor leaves the client area (matching NSView tracking).
+                SetCapture(hwnd);
+
                 float dpiScale = self->getWindowDpiScale();
                 MouseEvent event;
                 event.pos = {static_cast<float>(getXFromLParam(lParam)) / dpiScale,
@@ -593,6 +597,10 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
                 self->contentView->dispatchMouseEvent(event);
                 self->ensureAllLayersRendered(self->contentView);
             }
+
+            // Release the capture once no buttons remain held.
+            if ((wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON)) == 0)
+                ReleaseCapture();
             return 0;
 
         case WM_MOUSEMOVE:
@@ -605,7 +613,25 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
                 MouseEvent event;
                 event.pos = {static_cast<float>(getXFromLParam(lParam)) / dpiScale,
                              static_cast<float>(getYFromLParam(lParam)) / dpiScale};
-                event.type = MouseEventType::Moved;
+
+                // A move with a button held is a drag. dispatchMouseEvent only
+                // forwards Dragged/Up to the captured mouseDownTarget; a plain
+                // Moved is re-hit-tested, so without this the title-bar grab is
+                // lost the instant the cursor moves and panels never drag.
+                auto buttons = wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON);
+
+                if (buttons != 0)
+                {
+                    event.type = MouseEventType::Dragged;
+                    event.button = (wParam & MK_LBUTTON)   ? MouseButton::Left
+                                   : (wParam & MK_RBUTTON) ? MouseButton::Right
+                                                           : MouseButton::Middle;
+                }
+                else
+                {
+                    event.type = MouseEventType::Moved;
+                }
+
                 self->contentView->dispatchMouseEvent(event);
                 self->ensureAllLayersRendered(self->contentView);
             }

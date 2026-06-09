@@ -202,6 +202,16 @@ public:
 protected:
     void resized() override;
 
+    // Windows hosts the WebView as a composition visual (no input HWND), so the
+    // framework's routed mouse events are forwarded to the browser here. On
+    // macOS/iOS the native web view receives input directly and these are
+    // no-ops.
+    void mouseDown(const MouseEvent&) override;
+    void mouseUp(const MouseEvent&) override;
+    void mouseDragged(const MouseEvent&) override;
+    void mouseMoved(const MouseEvent&) override;
+    void mouseExited(const MouseEvent&) override;
+
 private:
     friend struct WebViewNativeAccess;
 
