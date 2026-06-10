@@ -435,6 +435,9 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
 
         case WM_KILLFOCUS:
             disengageMouseLock();
+            // The matching key-ups go to whoever took focus (e.g. Alt+Tab), so
+            // tracked state would otherwise report keys stuck down forever.
+            keyState.reset();
             return std::nullopt;
 
         case WM_ERASEBKGND:
@@ -573,12 +576,6 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
         case WM_SYSKEYUP:
             dispatchKeyEvent(msg, wParam, lParam);
             return std::nullopt;
-
-        case WM_KILLFOCUS:
-            // The matching key-ups go to whoever took focus (e.g. Alt+Tab), so
-            // tracked state would otherwise report keys stuck down forever.
-            keyState.reset();
-            return 0;
     }
 
     return std::nullopt;

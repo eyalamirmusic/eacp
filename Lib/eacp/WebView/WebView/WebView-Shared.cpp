@@ -456,6 +456,26 @@ void WebView::installWindowDragSupport()
                             [this](const std::string&) { armWindowDrag(); });
 }
 
+// Injects window-controls.js + its message handler: any element marked
+// `--eacp-window-button: minimize | maximize | close` becomes a working
+// caption button, and pages key their chrome CSS off the data-eacp-platform /
+// data-eacp-maximized attributes the shim keeps on <html>. Shared by both
+// desktop backends, like installWindowDragSupport above.
+void WebView::installWindowControlSupport()
+{
+    auto shim = ResEmbed::get("window-controls.js", "EacpWebView");
+    if (!shim)
+        throw std::runtime_error(
+            "eacp-webview: embedded window-controls.js resource not found");
+
+    auto platform = std::string {Platform::isWindows() ? "windows" : "mac"};
+    addUserScript("window.__eacpPlatform = '" + platform + "';\n" + shim.toString(),
+                  true);
+    addScriptMessageHandler("__eacpWindowControl",
+                            [this](const std::string& action)
+                            { performWindowControl(action); });
+}
+
 namespace detail
 {
 Vector<WebView*>& registeredWebViews()

@@ -115,7 +115,7 @@ struct WebView::Native
             handler.get()->provider = std::move(provider);
             [config.get() setURLSchemeHandler:handler.get()
                                  forURLScheme:Strings::toNSString(scheme)];
-            schemeHandlers.push_back(std::move(handler));
+            schemeHandlers.push_back(handler);
         }
 
         for (auto& [scheme, streamingProvider]: options.streamingSchemes)
@@ -124,10 +124,16 @@ struct WebView::Native
             handler.get()->streamingProvider = std::move(streamingProvider);
             [config.get() setURLSchemeHandler:handler.get()
                                  forURLScheme:Strings::toNSString(scheme)];
-            schemeHandlers.push_back(std::move(handler));
+            schemeHandlers.push_back(handler);
         }
 
-        webView = detail::createWebView(config.get());
+        webView = detail::createWebView(
+            config.get(),
+            detail::WebKitOptions {
+              .acceptFirstMouse = options.acceptFirstMouse
+            }
+        );
+
         webView.get().navigationDelegate = delegate.get();
         webView.get().UIDelegate = delegate.get();
 
@@ -572,8 +578,11 @@ void WebView::initNative(Options options)
     impl->attachToParentView();
     detail::registerWebView(this);
 
-    if (Platform::isMac()) // desktop-only; iOS has no movable windows
+    if (Platform::isMac()) // desktop-only; iOS windows have no chrome to drive
+    {
         installWindowDragSupport();
+        installWindowControlSupport();
+    }
 }
 
 WebView::WebView(PopupInit init)
@@ -680,7 +689,7 @@ WebView* WebView::focused()
     return detail::findFocusedWebView();
 }
 
-void WebView::evaluateJavaScript(const std::string& script, JSCallback callback)
+void WebView::evaluateJavaScript(const std::string& script, const JSCallback& callback)
 {
     auto* nsScript = [NSString stringWithUTF8String:script.c_str()];
 
@@ -689,6 +698,12 @@ void WebView::evaluateJavaScript(const std::string& script, JSCallback callback)
         [impl->webView.get() evaluateJavaScript:nsScript completionHandler:nil];
         return;
     }
+
+    // The block must capture its own copy of the callback: a block captures
+    // a C++ reference AS a reference, and `callback` may bind to a caller
+    // temporary (callJS passes one) that is gone by the time the async
+    // completion handler fires.
+    auto ownedCallback = callback;
 
     [impl->webView.get()
         evaluateJavaScript:nsScript
@@ -726,8 +741,8 @@ void WebView::evaluateJavaScript(const std::string& script, JSCallback callback)
                }
            }
 
-           eacp::Threads::callAsync([callback, resultStr, errorStr]()
-                                    { callback(resultStr, errorStr); });
+           eacp::Threads::callAsync([ownedCallback, resultStr, errorStr]()
+                                    { ownedCallback(resultStr, errorStr); });
          }];
 }
 
@@ -780,6 +795,11 @@ void WebView::armFileDrag(const Vector<std::string>& paths)
 void WebView::armWindowDrag()
 {
     detail::armWindowDrag(impl->webView.get());
+}
+
+void WebView::performWindowControl(const std::string& action)
+{
+    detail::performWindowControl(impl->webView.get(), action);
 }
 
 void WebView::resized()

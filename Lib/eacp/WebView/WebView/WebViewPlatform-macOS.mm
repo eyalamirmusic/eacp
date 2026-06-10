@@ -30,6 +30,7 @@
 // started from the async script-message callback is confined to the app
 // (NSDraggingContextWithinApplication) and never reaches Finder.
 @interface EacpDragWebView : WKWebView
+@property(nonatomic) BOOL eacpAcceptFirstMouse;
 - (void)armFileDragWithPaths:(const eacp::Vector<std::string>&)paths;
 - (void)armWindowDrag;
 @end
@@ -98,10 +99,14 @@ void beginFileDrag(WKWebView* webView,
     [webView beginDraggingSessionWithItems:items event:event source:source];
 }
 
-WKWebView* createWebView(WKWebViewConfiguration* config)
+WKWebView* createWebView(WKWebViewConfiguration* config,
+                         const WebKitOptions& options)
 {
     auto rect = CGRectMake(0, 0, 100, 100);
-    return [[EacpDragWebView alloc] initWithFrame:rect configuration:config];
+    auto* webView = [[EacpDragWebView alloc] initWithFrame:rect
+                                             configuration:config];
+    webView.eacpAcceptFirstMouse = options.acceptFirstMouse;
+    return webView;
 }
 
 void armFileDrag(WKWebView* webView, const Vector<std::string>& paths)
@@ -118,6 +123,44 @@ void armWindowDrag(WKWebView* webView)
         return;
 
     [(EacpDragWebView*) webView armWindowDrag];
+}
+
+void performWindowControl(WKWebView* webView, const std::string& action)
+{
+    NSWindow* window = webView.window;
+    if (window == nil)
+        return;
+
+    if (action == "minimize")
+    {
+        [window miniaturize:nil];
+        return;
+    }
+
+    if (action == "maximize")
+    {
+        // zoom: is itself a toggle — it restores the saved frame when the
+        // window is already zoomed. Report the resulting state back so the
+        // page's data-eacp-maximized attribute tracks reality.
+        [window zoom:nil];
+        auto* script = window.zoomed ? @"window.__eacpSetMaximized(true)"
+                                     : @"window.__eacpSetMaximized(false)";
+        [webView evaluateJavaScript:script completionHandler:nil];
+        return;
+    }
+
+    if (action == "close")
+    {
+        // performClose: respects windowShouldClose:, but beeps and refuses
+        // on windows without a close button — exactly the frameless windows
+        // that need web-rendered controls — so those close directly.
+        // windowWillClose still fires either way, so the window's quit
+        // policy runs.
+        if ((window.styleMask & NSWindowStyleMaskClosable) != 0)
+            [window performClose:nil];
+        else
+            [window close];
+    }
 }
 
 void attachWKWebViewToParent(WKWebView* webView, void* parentHandle)
@@ -176,6 +219,16 @@ WebView* findFocusedWebView()
 - (void)armWindowDrag
 {
     windowDragArmed = YES;
+}
+
+// With eacpAcceptFirstMouse set, the click that activates an unfocused
+// window also reaches the page — so a drag region starts moving the window
+// on the FIRST click-drag instead of needing one click to focus first.
+- (BOOL)acceptsFirstMouse:(NSEvent*)event
+{
+    if (self.eacpAcceptFirstMouse)
+        return YES;
+    return [super acceptsFirstMouse:event];
 }
 
 - (void)mouseDown:(NSEvent*)event

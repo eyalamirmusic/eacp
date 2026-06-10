@@ -126,6 +126,14 @@ public:
         std::unordered_map<std::string, StreamingProvider> streamingSchemes;
         Embedded embedded;
         bool debugConsole = true;
+
+        // macOS: deliver the first click on an unfocused window to the page
+        // instead of swallowing it as activation (NSView acceptsFirstMouse).
+        // Without it, app-region drag handles need one click to focus and a
+        // second to drag. Mirrors Electron's acceptFirstMouse. Opt-in — on a
+        // normal window it makes accidental first-click page interaction
+        // possible. No-op on Windows, where clicks already reach the page.
+        bool acceptFirstMouse = false;
     };
 
     WebView();
@@ -149,8 +157,9 @@ public:
 
     using JSCallback =
         std::function<void(const std::string& result, const std::string& error)>;
+
     void evaluateJavaScript(const std::string& script,
-                            JSCallback callback = nullptr);
+                            const JSCallback& callback = nullptr);
 
     // Awaitable wrapper around evaluateJavaScript. The returned Async
     // resolves with the script result string, or rejects with the
@@ -220,6 +229,8 @@ private:
     explicit WebView(PopupInit init);
     void initNative(Options options);
     void installWindowDragSupport();
+    void installWindowControlSupport();
+    void performWindowControl(const std::string& action);
     std::shared_ptr<Native> impl;
 };
 

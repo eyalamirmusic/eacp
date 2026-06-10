@@ -34,6 +34,7 @@ target_sources(eacp-webview PRIVATE
 res_embed_add(eacp-webview
         FILES     WebView/Resources/bridge-shim.js
                   WebView/Resources/window-drag.js
+                  WebView/Resources/window-controls.js
         NAMESPACE EacpWebView
         CATEGORY  EacpWebView)
 
