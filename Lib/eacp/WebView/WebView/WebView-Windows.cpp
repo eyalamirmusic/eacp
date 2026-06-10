@@ -27,6 +27,7 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Composition.h>
 
+#include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Logging.h>
 
@@ -370,6 +371,25 @@ struct WebView::Native
         }
     }
 
+    // Headless CI machines intermittently abort composition controller
+    // creation (E_ABORT) even though an immediate retry succeeds. Real
+    // sessions fail for real reasons (e.g. a missing runtime) and should
+    // surface the error right away.
+    bool shouldRetryCompositionControllerCreate() const
+    {
+        return Apps::getAppEnvironment().headless
+               && compositionCreateRetries < maxCompositionCreateRetries;
+    }
+
+    HRESULT retryCompositionControllerCreate()
+    {
+        ++compositionCreateRetries;
+        LOG("WebView2: retrying composition controller create ("
+            + std::to_string(compositionCreateRetries) + "/"
+            + std::to_string(maxCompositionCreateRetries) + ")");
+        return createCompositionController();
+    }
+
     // Creates the visual-hosting composition controller from `environment` (set
     // by either the normal env-creation path or popup mode) and wires the
     // CoreWebView2 up. Shared by both so popups don't duplicate the setup.
@@ -397,6 +417,10 @@ struct WebView::Native
                     {
                         LOG("WebView2: composition controller create failed hr=0x"
                             + hresultHex(result));
+
+                        if (shouldRetryCompositionControllerCreate())
+                            return retryCompositionControllerCreate();
+
                         initInProgress = false;
                         return result;
                     }
@@ -1393,6 +1417,9 @@ struct WebView::Native
 
     bool initialized = false;
     bool initInProgress = false;
+
+    static constexpr int maxCompositionCreateRetries = 3;
+    int compositionCreateRetries = 0;
 
     // Tracks navigation in flight (NavigationStarting -> Completed), so
     // isLoading() can answer like the macOS backend's webView.isLoading.
