@@ -1,6 +1,8 @@
 #include <eacp/Core/Utils/WinInclude.h>
 #include <eacp/Core/Utils/Containers.h>
 
+#include <functional>
+
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <d2d1_1.h>
@@ -20,6 +22,37 @@ namespace eacp::Graphics
 // the rendering device is replaced, which keeps the composition surfaces alive
 // but discards their contents.
 void redrawAllCompositionHosts();
+
+namespace
+{
+Vector<std::function<void()>>& renderingDeviceReplacedListeners()
+{
+    static auto listeners = Vector<std::function<void()>> {};
+    return listeners;
+}
+
+// Everything that has to happen once a replacement rendering device is live:
+// re-render the 2D composition content, then let other modules (the GPU
+// device and its swapchains) re-acquire. May run twice for one loss — once
+// directly from recovery, once from RenderingDeviceReplaced — so listeners
+// must tolerate being called with an unchanged device.
+void handleRenderingDeviceReplaced()
+{
+    redrawAllCompositionHosts();
+
+    for (auto& listener: renderingDeviceReplacedListeners())
+        listener();
+}
+} // namespace
+
+// Registers a callback for after the shared D3D/D2D device was replaced
+// following device loss. Used by eacp-gpu to re-acquire the device and rebuild
+// swapchains. Listeners are never unregistered, so only register from
+// process-lifetime objects. Main-thread only.
+void addRenderingDeviceReplacedListener(std::function<void()> listener)
+{
+    renderingDeviceReplacedListeners().add(std::move(listener));
+}
 
 class WinRTCompositor
 {
@@ -50,10 +83,14 @@ public:
     bool isInitialized() const { return initialized; }
 
 private:
+    // The COM apartment (STA) and the thread's DispatcherQueue are owned by
+    // initLoopThread() in EventLoop-Windows.cpp, which runs before any app —
+    // and therefore any graphics — code. Owning neither here means this
+    // singleton's static destructor releases plain COM references at exit and
+    // never tears the apartment down under other statics (WebView2, WinRT
+    // factory caches) that still have to release.
     WinRTCompositor()
     {
-        winrt::init_apartment(winrt::apartment_type::single_threaded);
-
         winrt::check_hresult(
             DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,
                                 __uuidof(IDWriteFactory),
@@ -78,7 +115,7 @@ private:
         // replaces the device on its own (driver update, GPU reset). Surfaces
         // survive the swap but lose their pixels, so everything re-renders.
         graphicsDevice.RenderingDeviceReplaced([](auto&&, auto&&)
-                                               { redrawAllCompositionHosts(); });
+                                               { handleRenderingDeviceReplaced(); });
 
         initialized = true;
     }
@@ -98,11 +135,12 @@ private:
                                D3D_FEATURE_LEVEL_10_0};
         D3D_FEATURE_LEVEL featureLevel;
 
+        // No SINGLETHREADED: the device is shared with the composition engine
+        // (CompositionGraphicsDevice), which may touch it off-thread.
         auto hr = D3D11CreateDevice(nullptr,
                                     D3D_DRIVER_TYPE_HARDWARE,
                                     nullptr,
-                                    D3D11_CREATE_DEVICE_BGRA_SUPPORT
-                                        | D3D11_CREATE_DEVICE_SINGLETHREADED,
+                                    D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                                     featureLevels.data(),
                                     static_cast<UINT>(featureLevels.size()),
                                     D3D11_SDK_VERSION,
@@ -117,8 +155,7 @@ private:
                 D3D11CreateDevice(nullptr,
                                   D3D_DRIVER_TYPE_WARP,
                                   nullptr,
-                                  D3D11_CREATE_DEVICE_BGRA_SUPPORT
-                                      | D3D11_CREATE_DEVICE_SINGLETHREADED,
+                                  D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                                   featureLevels.data(),
                                   static_cast<UINT>(featureLevels.size()),
                                   D3D11_SDK_VERSION,
@@ -144,10 +181,10 @@ private:
                 graphicsDevice.as<Interop::ICompositionGraphicsDeviceInterop>();
             winrt::check_hresult(interop->SetRenderingDevice(d2dDevice.get()));
 
-            // RenderingDeviceReplaced redraws too, but it can arrive
-            // asynchronously; redraw directly so recovery doesn't depend on
+            // RenderingDeviceReplaced notifies too, but it can arrive
+            // asynchronously; notify directly so recovery doesn't depend on
             // event delivery.
-            redrawAllCompositionHosts();
+            handleRenderingDeviceReplaced();
             return true;
         }
         catch (const winrt::hresult_error&)
@@ -167,7 +204,6 @@ private:
         dxgiDevice = nullptr;
         d3dDevice = nullptr;
         dwriteFactory = nullptr;
-        winrt::uninit_apartment();
     }
 
     bool initialized = false;

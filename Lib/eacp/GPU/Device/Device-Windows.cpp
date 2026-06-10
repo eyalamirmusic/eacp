@@ -4,6 +4,7 @@
 
 #include <d3d11.h>
 
+#include <functional>
 #include <winrt/base.h>
 
 // Windows/D3D11 backend. The GPU device reuses the process-wide D3D11 device the
@@ -16,14 +17,36 @@ namespace eacp::Graphics
 {
 // Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
 ID3D11Device* getD3DDevice();
+void addRenderingDeviceReplacedListener(std::function<void()> listener);
 } // namespace eacp::Graphics
 
 namespace eacp::GPU
 {
+// Defined in View/GPUView-Windows.cpp: rebuilds every live GPUView's swapchain
+// against the (re-acquired) shared device.
+void refreshAllGPUViewsForNewDevice();
+
 struct Device::Native
 {
     Native()
     {
+        acquireSharedDevice();
+
+        // Device::shared() lives for the whole process, so capturing `this`
+        // outlives every notification.
+        Graphics::addRenderingDeviceReplacedListener(
+            [this]
+            {
+                acquireSharedDevice();
+                refreshAllGPUViewsForNewDevice();
+            });
+    }
+
+    void acquireSharedDevice()
+    {
+        device = nullptr;
+        context = nullptr;
+
         // The shared device construction initialises the WinRT compositor and a
         // D3D11 device; on a headless host without a compositor it can throw.
         // Swallow it and leave the device invalid so callers self-skip.

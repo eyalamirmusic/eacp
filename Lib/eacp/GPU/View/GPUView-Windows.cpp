@@ -12,6 +12,8 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 
+#include <unordered_set>
+
 #include <winrt/Windows.UI.Composition.h>
 #include <windows.ui.composition.interop.h>
 
@@ -25,15 +27,42 @@ wuc::Compositor getWinRTCompositor();
 
 namespace eacp::GPU
 {
+namespace
+{
+// Lets the device-loss refresh reach every live GPUView without naming the
+// private GPUView::Native type (same pattern as View-Windows' PaintTarget).
+struct DeviceResourceHolder
+{
+    virtual ~DeviceResourceHolder() = default;
+    virtual void recreateDeviceResources() = 0;
+};
+
+// Main-thread only, so no locking is needed.
+std::unordered_set<DeviceResourceHolder*>& liveGPUViews()
+{
+    static auto views = std::unordered_set<DeviceResourceHolder*> {};
+    return views;
+}
+} // namespace
+
+// Called by Device::Native after it re-acquired the replaced shared device:
+// every swapchain was created on the dead device, so each view rebuilds.
+void refreshAllGPUViewsForNewDevice()
+{
+    for (auto* view: liveGPUViews())
+        view->recreateDeviceResources();
+}
 // Backs the GPUView with a SpriteVisual whose brush samples a composition
 // swapchain, added under the standard View ContainerVisual so it lives in the
 // normal Windows.UI.Composition visual tree. Renders into the swapchain back
 // buffer (resolving an MSAA target into it when enabled) and presents.
-struct GPUView::Native
+struct GPUView::Native : DeviceResourceHolder
 {
     explicit Native(GPUView& viewToUse)
         : view(viewToUse)
     {
+        liveGPUViews().insert(this);
+
         compositor = Graphics::getWinRTCompositor();
         device = static_cast<ID3D11Device*>(Device::shared().nativeDevice());
 
@@ -48,8 +77,9 @@ struct GPUView::Native
                 container->Children().InsertAtTop(spriteVisual);
     }
 
-    ~Native()
+    ~Native() override
     {
+        liveGPUViews().erase(this);
         stopContinuous();
 
         if (spriteVisual)
@@ -57,6 +87,31 @@ struct GPUView::Native
                     static_cast<wuc::ContainerVisual*>(view.getNativeLayer()))
                 if (*container)
                     container->Children().Remove(spriteVisual);
+    }
+
+    // Drops every resource created on the lost device, re-acquires the
+    // replacement and rebuilds the swapchain at the current size. App-owned
+    // resources rebuild through the view's onDeviceRestored hook.
+    void recreateDeviceResources() override
+    {
+        backBufferView = nullptr;
+        backBuffer = nullptr;
+        msaaView = nullptr;
+        msaaTexture = nullptr;
+        depthView = nullptr;
+        depthTexture = nullptr;
+        swapChain = nullptr;
+
+        if (spriteVisual)
+            spriteVisual.Brush(nullptr);
+
+        device = static_cast<ID3D11Device*>(Device::shared().nativeDevice());
+
+        if (device != nullptr)
+            updateSize();
+
+        view.onDeviceRestored();
+        view.repaint();
     }
 
     static float dpiScale() { return static_cast<float>(GetDpiForSystem()) / 96.f; }

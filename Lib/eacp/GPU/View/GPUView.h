@@ -2,6 +2,8 @@
 
 #include <eacp/Graphics/View/View.h>
 
+#include <functional>
+
 namespace eacp::GPU
 {
 class Frame;
@@ -39,6 +41,12 @@ public:
 
     void setContinuous(bool continuous);
     bool isContinuous() const;
+
+    // Fired after the GPU device was lost and replaced (driver update, GPU
+    // reset — Windows only). The view's swapchain and MSAA/depth targets are
+    // already rebuilt; recreate app-owned Buffers and pipelines here, since
+    // resources created on the lost device no longer render.
+    std::function<void()> onDeviceRestored = [] {};
 
 private:
     // Internal: drives the GPU render from the View draw cycle. Subclasses

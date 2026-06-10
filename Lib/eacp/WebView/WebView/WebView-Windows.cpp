@@ -803,6 +803,60 @@ struct WebView::Native
         }
     }
 
+    void evaluateScript(const std::string& script,
+                        const WebView::JSCallback& callback)
+    {
+        if (!webView)
+        {
+            if (callback)
+                callback("", "WebView not initialized");
+            return;
+        }
+
+        auto wideScript = toWideString(script);
+
+        webView->ExecuteScript(
+            wideScript.c_str(),
+            Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+                [callback](HRESULT errorCode, LPCWSTR resultJson) -> HRESULT
+                {
+                    if (callback)
+                    {
+                        std::string result;
+                        std::string error;
+
+                        if (FAILED(errorCode))
+                        {
+                            error = "Script execution failed";
+                        }
+                        else if (resultJson)
+                        {
+                            // WebView2 always returns JSON-encoded values, so a
+                            // JS string like "abc" arrives as "\"abc\"". macOS
+                            // hands back the raw string. Decode one JSON layer
+                            // when the value is a string so both backends look
+                            // the same to callers; numbers / bools / objects
+                            // pass through.
+                            auto rawJson = fromWideString(resultJson);
+                            try
+                            {
+                                auto value = Miro::Json::parse(rawJson);
+                                result =
+                                    value.isString() ? value.asString() : rawJson;
+                            }
+                            catch (const Miro::Json::ParseError&)
+                            {
+                                result = rawJson;
+                            }
+                        }
+
+                        callback(result, error);
+                    }
+                    return S_OK;
+                })
+                .Get());
+    }
+
     void setupEventHandlers()
     {
         if (!webView)
@@ -1442,36 +1496,51 @@ void WebView::loadHTML(const std::string& html, const std::string& baseURL)
         });
 }
 
+// Like loadURL/loadHTML, the navigation commands queue until the lazily
+// created CoreWebView2 exists, so e.g. loadURL() + reload() issued back to
+// back both take effect instead of the latter being dropped.
 void WebView::goBack()
 {
-    if (impl->webView)
-    {
-        impl->webView->GoBack();
-    }
+    impl->ensureInitialized();
+    impl->queueOperation(
+        [this]
+        {
+            if (impl->webView)
+                impl->webView->GoBack();
+        });
 }
 
 void WebView::goForward()
 {
-    if (impl->webView)
-    {
-        impl->webView->GoForward();
-    }
+    impl->ensureInitialized();
+    impl->queueOperation(
+        [this]
+        {
+            if (impl->webView)
+                impl->webView->GoForward();
+        });
 }
 
 void WebView::reload()
 {
-    if (impl->webView)
-    {
-        impl->webView->Reload();
-    }
+    impl->ensureInitialized();
+    impl->queueOperation(
+        [this]
+        {
+            if (impl->webView)
+                impl->webView->Reload();
+        });
 }
 
 void WebView::stopLoading()
 {
-    if (impl->webView)
-    {
-        impl->webView->Stop();
-    }
+    impl->ensureInitialized();
+    impl->queueOperation(
+        [this]
+        {
+            if (impl->webView)
+                impl->webView->Stop();
+        });
 }
 
 bool WebView::canGoBack() const
@@ -1519,57 +1588,14 @@ std::string WebView::getTitle() const
     return title.toString();
 }
 
+// Queues like loadURL/loadHTML, so a script evaluated right after loadURL() on
+// a not-yet-initialized WebView runs once the CoreWebView2 exists instead of
+// being silently dropped.
 void WebView::evaluateJavaScript(const std::string& script, JSCallback callback)
 {
-    if (!impl->webView)
-    {
-        if (callback)
-        {
-            callback("", "WebView not initialized");
-        }
-        return;
-    }
-
-    auto wideScript = toWideString(script);
-
-    impl->webView->ExecuteScript(
-        wideScript.c_str(),
-        Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
-            [callback](HRESULT errorCode, LPCWSTR resultJson) -> HRESULT
-            {
-                if (callback)
-                {
-                    std::string result;
-                    std::string error;
-
-                    if (FAILED(errorCode))
-                    {
-                        error = "Script execution failed";
-                    }
-                    else if (resultJson)
-                    {
-                        // WebView2 always returns JSON-encoded values, so a JS
-                        // string like "abc" arrives as "\"abc\"". macOS hands
-                        // back the raw string. Decode one JSON layer when the
-                        // value is a string so both backends look the same to
-                        // callers; numbers / bools / objects pass through.
-                        auto rawJson = fromWideString(resultJson);
-                        try
-                        {
-                            auto value = Miro::Json::parse(rawJson);
-                            result = value.isString() ? value.asString() : rawJson;
-                        }
-                        catch (const Miro::Json::ParseError&)
-                        {
-                            result = rawJson;
-                        }
-                    }
-
-                    callback(result, error);
-                }
-                return S_OK;
-            })
-            .Get());
+    impl->ensureInitialized();
+    impl->queueOperation([this, script, callback = std::move(callback)]()
+                         { impl->evaluateScript(script, callback); });
 }
 
 void WebView::takeSnapshot(SnapshotCallback callback)
@@ -1757,8 +1783,13 @@ void WebView::armWindowDrag()
 void WebView::setZoom(double level)
 {
     auto clamped = detail::clampZoom(level);
-    if (impl->controller)
-        impl->controller->put_ZoomFactor(clamped);
+    impl->ensureInitialized();
+    impl->queueOperation(
+        [this, clamped]
+        {
+            if (impl->controller)
+                impl->controller->put_ZoomFactor(clamped);
+        });
 }
 
 double WebView::getZoom() const
