@@ -53,6 +53,33 @@ public:
     // handle sample() reads; bind the matching GPU::Texture at the same slot.
     Texture2D texture() { return {&graphData, graphData.addTexture()}; }
 
+    // Compute kernel authoring. Declaring buffers assigns slots in call order
+    // (inputs and outputs share one slot space, matching Metal's flat buffer
+    // indices); threadId() is the 1D work-item index; write() records a kernel
+    // output, which is what marks the built shader as compute.
+    UInt threadId()
+    {
+        auto value = UInt {};
+        value.graph = &graphData;
+        value.node = graphData.addThreadId();
+        return value;
+    }
+
+    InputBuffer inputBuffer()
+    {
+        return {&graphData, graphData.addStorageBuffer(BufferAccess::Read)};
+    }
+
+    OutputBuffer outputBuffer()
+    {
+        return {&graphData, graphData.addStorageBuffer(BufferAccess::Write)};
+    }
+
+    void write(const OutputBuffer& buffer, const UInt& index, const Float& value)
+    {
+        graphData.addStore(buffer.slot, index.node, value.node);
+    }
+
     // Non-templated siblings of vertexInput()/uniform() keyed on a runtime
     // ValueType. The reflection-driven ShaderProgram visitor walks erased member
     // handles, so it needs to add a slot from a ValueType it carries rather than a

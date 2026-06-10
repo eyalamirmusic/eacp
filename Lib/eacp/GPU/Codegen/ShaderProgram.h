@@ -204,6 +204,34 @@ struct Uniform<Texture2D> : Texture2D
     const Texture* value = nullptr;
 };
 
+// Storage-buffer members of a compute program, following the texture pattern:
+// the slot-indexed handle define() reads or writes, and the slot the assigned
+// GPU::Buffer is bound at when dispatched. The program stores a pointer, so
+// the buffer must outlive the dispatch.
+template <>
+struct Uniform<InputBuffer> : InputBuffer
+{
+    Uniform& operator=(const Buffer& newBuffer)
+    {
+        value = &newBuffer;
+        return *this;
+    }
+
+    const Buffer* value = nullptr;
+};
+
+template <>
+struct Uniform<OutputBuffer> : OutputBuffer
+{
+    Uniform& operator=(const Buffer& newBuffer)
+    {
+        value = &newBuffer;
+        return *this;
+    }
+
+    const Buffer* value = nullptr;
+};
+
 inline VertexFormat toVertexFormat(ValueType type)
 {
     switch (type)
@@ -215,9 +243,9 @@ inline VertexFormat toVertexFormat(ValueType type)
         case ValueType::Float3:
             return VertexFormat::Float3;
         case ValueType::Float4:
-            return VertexFormat::Float4;
         case ValueType::Float4x4:
-            return VertexFormat::Float4; // matrices are never vertex attributes
+        case ValueType::UInt:
+            return VertexFormat::Float4; // matrix/uint are never vertex attributes
     }
 
     return VertexFormat::Float;
@@ -242,15 +270,27 @@ public:
         onTexture(name, member, member.value);
     }
 
+    void operator()(const char* name, Uniform<InputBuffer>& member)
+    {
+        onInputBuffer(name, member, member.value);
+    }
+
+    void operator()(const char* name, Uniform<OutputBuffer>& member)
+    {
+        onOutputBuffer(name, member, member.value);
+    }
+
 protected:
     virtual void onUniform(const char* name,
                            ValueType type,
                            detail::ValueHandle& handle,
                            const void* data) = 0;
 
-    // Texture members are not packed into the uniform block, so only the walks
-    // that care (build, texture bind) override this.
+    // Texture and storage-buffer members are not packed into the uniform block,
+    // so only the walks that care (build, resource bind) override these.
     virtual void onTexture(const char*, Texture2D&, const Texture*) {}
+    virtual void onInputBuffer(const char*, InputBuffer&, const Buffer*) {}
+    virtual void onOutputBuffer(const char*, OutputBuffer&, const Buffer*) {}
 };
 
 // Build walk: each uniform member adopts a freshly added graph slot, so define()
@@ -274,6 +314,16 @@ public:
     void onTexture(const char*, Texture2D& handle, const Texture*) override
     {
         handle = builder.texture();
+    }
+
+    void onInputBuffer(const char*, InputBuffer& handle, const Buffer*) override
+    {
+        handle = builder.inputBuffer();
+    }
+
+    void onOutputBuffer(const char*, OutputBuffer& handle, const Buffer*) override
+    {
+        handle = builder.outputBuffer();
     }
 
 private:

@@ -1,5 +1,6 @@
 #include "ShaderEmitter.h"
 
+#include "../Frame/ComputePass.h"
 #include "ShaderGraph.h"
 #include "UniformLayout.h"
 
@@ -190,6 +191,14 @@ struct ExprPrinter
 
                 return name + method + sampler + ", " + ref(expr.args[0]) + ")";
             }
+
+            case ExprKind::ThreadId:
+                // Both kernel scaffoldings declare the 1D work-item id as gid.
+                return "gid";
+
+            case ExprKind::BufferRead:
+                return "buffer" + std::to_string(expr.index) + "["
+                       + ref(expr.args[0]) + "]";
         }
 
         return {};
@@ -208,6 +217,7 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Binary:
         case ExprKind::Mul:
         case ExprKind::Sample:
+        case ExprKind::BufferRead:
             return true;
 
         case ExprKind::Input:
@@ -215,6 +225,7 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Uniform:
         case ExprKind::Constant:
         case ExprKind::Swizzle:
+        case ExprKind::ThreadId:
             return false;
     }
 
@@ -342,8 +353,145 @@ bool vertexUsesUniforms(const ShaderGraph& graph)
     return false;
 }
 
+// The Uniforms struct shared by both stages (and the HLSL cbuffer wrapping it).
+// The CPU block is packed with MSL struct alignment (UniformLayout.h); HLSL
+// cbuffer packing only forbids straddling a 16-byte register, so a vector after
+// a scalar would land lower than the CPU wrote it - explicit pad scalars are
+// emitted wherever the two rule sets disagree.
+std::string uniformBlock(Backend backend,
+                         const Vector<ValueType>& types,
+                         const Vector<std::string>& names)
+{
+    auto source = std::string {"struct Uniforms\n{\n"};
+
+    auto offsets = uniformOffsets(types);
+    auto hlslCursor = 0;
+    auto padCount = 0;
+
+    for (auto i = 0; i < types.size(); ++i)
+    {
+        auto type = types[i];
+
+        if (backend == Backend::DirectX)
+        {
+            while (hlslPackedOffset(hlslCursor, type) < offsets[i])
+            {
+                source += "    float pad" + std::to_string(padCount++) + ";\n";
+                hlslCursor += 4;
+            }
+
+            hlslCursor = offsets[i] + byteSize(type);
+        }
+
+        source += "    " + std::string(typeName(type)) + " " + names[i] + ";\n";
+    }
+
+    source += "};\n\n";
+
+    if (backend == Backend::DirectX)
+        source += "cbuffer UniformsCB : register(b0)\n{\n"
+                  "    Uniforms uniforms;\n};\n\n";
+
+    return source;
+}
+
+// Compute kernel emission. The expression printer is the render one; only the
+// scaffolding differs: storage buffers and the uniform block are MSL kernel
+// parameters but HLSL globals, and the 1D work-item id arrives as a uint on
+// Metal and as SV_DispatchThreadID.x on D3D. The block always ends with an
+// implicit uint element count, and the kernel opens with the bounds guard the
+// rounded-up dispatch needs; ComputeProgram appends the matching CPU value.
+std::string emitCompute(const ShaderGraph& graph, Backend backend)
+{
+    auto source = std::string {};
+
+    if (backend == Backend::Metal)
+        source += "#include <metal_stdlib>\nusing namespace metal;\n\n";
+
+    auto uniformTypes = graph.uniforms();
+    auto uniformNames = Vector<std::string> {};
+
+    for (auto i = 0; i < uniformTypes.size(); ++i)
+        uniformNames.add("u" + std::to_string(i));
+
+    uniformTypes.add(ValueType::UInt);
+    uniformNames.add("count");
+
+    source += uniformBlock(backend, uniformTypes, uniformNames);
+
+    const auto& buffers = graph.storageBuffers();
+
+    if (backend == Backend::Metal)
+    {
+        source += "kernel void computeMain(";
+
+        for (auto i = 0; i < buffers.size(); ++i)
+        {
+            auto writable = buffers[i] == BufferAccess::Write;
+            source += std::string(writable ? "device float* buffer"
+                                           : "device const float* buffer")
+                      + std::to_string(i) + " [[buffer(" + std::to_string(i)
+                      + ")]],\n    ";
+        }
+
+        source += "constant Uniforms& uniforms [[buffer("
+                  + std::to_string(ComputePass::uniformBase) + ")]],\n    ";
+        source += "uint gid [[thread_position_in_grid]])\n{\n";
+    }
+    else
+    {
+        // SRV t<slot> / UAV u<slot> with one shared slot counter, matching the
+        // flat Metal indices ComputePass binds both backends with.
+        for (auto i = 0; i < buffers.size(); ++i)
+        {
+            auto slot = std::to_string(i);
+            auto writable = buffers[i] == BufferAccess::Write;
+
+            source += writable ? "RWStructuredBuffer<float> buffer"
+                               : "StructuredBuffer<float> buffer";
+            source += slot;
+            source += writable ? " : register(u" : " : register(t";
+            source += slot + ");\n";
+        }
+
+        if (buffers.size() > 0)
+            source += "\n";
+
+        source += "[numthreads(" + std::to_string(ComputePass::threadGroupWidth)
+                  + ", 1, 1)]\n";
+        source += "void computeMain(uint3 threadId : SV_DispatchThreadID)\n{\n";
+        source += "    uint gid = threadId.x;\n";
+    }
+
+    source += "    if (gid >= uniforms.count)\n        return;\n";
+
+    auto roots = std::vector<int> {};
+
+    for (const auto& store: graph.stores())
+    {
+        roots.push_back(store.index);
+        roots.push_back(store.value);
+    }
+
+    auto plan = planStage(graph, roots);
+    auto printer = ExprPrinter {graph, backend, plan.locals};
+
+    source += emitLocals(printer, plan);
+
+    for (const auto& store: graph.stores())
+        source += "    buffer" + std::to_string(store.slot) + "["
+                  + printer.ref(store.index) + "] = " + printer.ref(store.value)
+                  + ";\n";
+
+    source += "}\n";
+    return source;
+}
+
 std::string emit(const ShaderGraph& graph, Backend backend)
 {
+    if (graph.isCompute())
+        return emitCompute(graph, backend);
+
     auto source = std::string {};
 
     if (backend == Backend::Metal)
@@ -371,40 +519,12 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     // printer stays backend-agnostic.
     if (hasUniforms)
     {
-        source += "struct Uniforms\n{\n";
-
-        // The CPU block is packed with MSL struct alignment (UniformLayout.h).
-        // HLSL cbuffer packing only forbids straddling a 16-byte register, so a
-        // vector after a scalar would land lower than the CPU wrote it; emit
-        // explicit pad scalars wherever the two rule sets disagree.
-        auto offsets = uniformOffsets(graph.uniforms());
-        auto hlslCursor = 0;
-        auto padCount = 0;
+        auto names = Vector<std::string> {};
 
         for (auto i = 0; i < graph.uniforms().size(); ++i)
-        {
-            auto type = graph.uniforms()[i];
+            names.add("u" + std::to_string(i));
 
-            if (backend == Backend::DirectX)
-            {
-                while (hlslPackedOffset(hlslCursor, type) < offsets[i])
-                {
-                    source += "    float pad" + std::to_string(padCount++) + ";\n";
-                    hlslCursor += 4;
-                }
-
-                hlslCursor = offsets[i] + byteSize(type);
-            }
-
-            source += "    " + std::string(typeName(type)) + " u" + std::to_string(i)
-                      + ";\n";
-        }
-
-        source += "};\n\n";
-
-        if (backend == Backend::DirectX)
-            source += "cbuffer UniformsCB : register(b0)\n{\n"
-                      "    Uniforms uniforms;\n};\n\n";
+        source += uniformBlock(backend, graph.uniforms(), names);
     }
 
     // HLSL textures and samplers are globals; on Metal they are fragment

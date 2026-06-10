@@ -36,6 +36,13 @@ struct Float : detail::ValueHandle
 {
 };
 
+// The compute thread id and anything derived from it. Deliberately outside the
+// float operator vocabulary: its uses are indexing a storage buffer and
+// toFloat() into arithmetic.
+struct UInt : detail::ValueHandle
+{
+};
+
 struct Float2 : detail::ValueHandle
 {
     Float x() const { return swizzle<Float>(ValueType::Float, "x"); }
@@ -85,6 +92,31 @@ inline Float4 sample(const Texture2D& texture, const Float2& coordinates)
     return result;
 }
 
+// Storage buffers of float elements, declared by a compute kernel. Like
+// Texture2D they are slot-identified rather than expression nodes: an input's
+// one operation is the indexed read, an output's is the store recorded via
+// ShaderBuilder::write. Bind the matching GPU::Buffer at the same slot
+// (ComputePass::setInputBuffer / setOutputBuffer).
+struct InputBuffer
+{
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+
+    Float operator[](const UInt& index) const
+    {
+        auto result = Float {};
+        result.graph = graph;
+        result.node = graph->addBufferRead(slot, index.node);
+        return result;
+    }
+};
+
+struct OutputBuffer
+{
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
 template <typename T>
 struct ValueTypeOf;
 
@@ -116,6 +148,12 @@ template <>
 struct ValueTypeOf<Float4x4>
 {
     static constexpr ValueType value = ValueType::Float4x4;
+};
+
+template <>
+struct ValueTypeOf<UInt>
+{
+    static constexpr ValueType value = ValueType::UInt;
 };
 
 namespace detail
@@ -272,6 +310,13 @@ ShaderBase<T> componentCall2(const T& a, float b, const char* name)
         a, constantOn(a, b), ValueTypeOf<ShaderBase<T>>::value, name);
 }
 } // namespace detail
+
+// The thread id as a float, e.g. a value computed from the element index. The
+// constructor-style cast spells identically in MSL and HLSL.
+inline Float toFloat(const UInt& value)
+{
+    return detail::call<Float>(value, ValueType::Float, "float");
+}
 
 // Componentwise builtins. Call nodes carry the MSL spelling; the emitter
 // translates the few HLSL spells differently (fract -> frac, mix -> lerp).

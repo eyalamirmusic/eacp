@@ -15,6 +15,7 @@ inline int uniformAlignment(ValueType type)
     switch (type)
     {
         case ValueType::Float:
+        case ValueType::UInt:
             return 4;
         case ValueType::Float2:
             return 8;
