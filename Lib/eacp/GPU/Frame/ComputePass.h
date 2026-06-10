@@ -61,8 +61,11 @@ public:
     {
         setPipeline(program.pipeline());
         program.bindBuffers(*this);
-        setBytes(program.packedUniforms(count),
-                 (std::size_t) program.uniformByteSize());
+
+        // Sequenced separately: packing must happen before the size is read,
+        // and argument evaluation order would not guarantee that.
+        const auto* uniforms = program.packedUniforms(count);
+        setBytes(uniforms, (std::size_t) program.uniformByteSize());
         dispatch(count);
     }
 
