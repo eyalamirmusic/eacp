@@ -2,12 +2,13 @@
 
 #include <eacp/Core/Utils/Common.h>
 
+#include "../Buffer/Buffer.h"
+
 #include <cstddef>
 
 namespace eacp::GPU
 {
 class RenderPipeline;
-class Buffer;
 class Texture;
 
 // Records draw commands for a single render pass (MTLRenderCommandEncoder on
@@ -70,11 +71,19 @@ public:
 
     void draw(int vertexCount, int firstVertex = 0);
 
+    // Draws indexCount indices from an Index-usage buffer, assembling with the
+    // pipeline's topology. firstIndex is an offset into the index buffer.
+    void drawIndexed(const Buffer& indices,
+                     int indexCount,
+                     IndexFormat format = IndexFormat::UInt32,
+                     int firstIndex = 0);
+
     // Binds and draws a prepared ShaderProgram in one call: its pipeline, vertex
-    // buffer, uniform block and textures, then its vertex count. The block is
-    // bound to both stages so a uniform works wherever define() reads it; a
-    // stage whose generated function never declares the block ignores the bind.
-    // Templated so this header stays independent of the codegen layer.
+    // buffer, uniform block and textures, then an indexed draw when the program
+    // owns indices and a plain one otherwise. The uniform block is bound to both
+    // stages so a uniform works wherever define() reads it; a stage whose
+    // generated function never declares the block ignores the bind. Templated so
+    // this header stays independent of the codegen layer.
     template <typename Program>
     void draw(Program& program)
     {
@@ -88,7 +97,12 @@ public:
         }
 
         program.bindTextures(*this);
-        draw(program.vertexCount());
+
+        if (program.hasIndices())
+            drawIndexed(
+                program.indices(), program.indexCount(), program.indexFormat());
+        else
+            draw(program.vertexCount());
     }
 
     void end();

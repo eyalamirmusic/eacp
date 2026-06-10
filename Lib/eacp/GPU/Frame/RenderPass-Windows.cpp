@@ -50,7 +50,7 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
     auto* context = impl->encoder->context;
 
     context->IASetInputLayout(state->inputLayout.get());
-    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context->IASetPrimitiveTopology(state->topology);
     context->VSSetShader(state->vertexShader.get(), nullptr, 0);
     context->PSSetShader(state->pixelShader.get(), nullptr, 0);
     context->RSSetState(state->rasterizerState.get());
@@ -151,6 +151,28 @@ void RenderPass::draw(int vertexCount, int firstVertex)
 
     impl->encoder->context->Draw(static_cast<UINT>(vertexCount),
                                  static_cast<UINT>(firstVertex));
+}
+
+void RenderPass::drawIndexed(const Buffer& indices,
+                             int indexCount,
+                             IndexFormat format,
+                             int firstIndex)
+{
+    if (!impl->encoder)
+        return;
+
+    auto* indexBuffer = static_cast<ID3D11Buffer*>(indices.nativeBuffer());
+
+    if (indexBuffer == nullptr)
+        return;
+
+    auto* context = impl->encoder->context;
+    context->IASetIndexBuffer(indexBuffer,
+                              format == IndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT
+                                                            : DXGI_FORMAT_R32_UINT,
+                              0);
+    context->DrawIndexed(
+        static_cast<UINT>(indexCount), static_cast<UINT>(firstIndex), 0);
 }
 
 void RenderPass::end()
