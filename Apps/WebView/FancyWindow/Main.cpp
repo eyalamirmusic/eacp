@@ -60,6 +60,7 @@ static const char* kDemoHtml = R"HTML(
     color: #b9b9c4; padding: 0; cursor: default;
     font-family: "Segoe MDL2 Assets"; font-size: 10px;
   }
+
   .winctl:hover { background: #2a2a34; color: #fff; }
   .winctl.close:hover { background: #e81123; color: #fff; }
 
@@ -70,6 +71,7 @@ static const char* kDemoHtml = R"HTML(
   .winctl.min::before   { content: '\E921'; }
   .winctl.max::before   { content: '\E922'; }
   .winctl.close::before { content: '\E8BB'; }
+
   /* Restore glyph while maximized — state mirrored by the library. */
   [data-eacp-maximized] .winctl.max::before { content: '\E923'; }
 
