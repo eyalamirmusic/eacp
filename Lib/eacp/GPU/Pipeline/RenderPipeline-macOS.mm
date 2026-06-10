@@ -59,6 +59,7 @@ static MTLVertexDescriptor* makeVertexDescriptor(const VertexLayout& layout)
 struct RenderPipeline::Native
 {
     Native(Device& device, const RenderPipelineDescriptor& descriptor)
+        : topology(descriptor.topology)
     {
         auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
 
@@ -124,6 +125,7 @@ struct RenderPipeline::Native
         [pipelineDescriptor release];
     }
 
+    PrimitiveTopology topology = PrimitiveTopology::Triangles;
     ObjC::Ptr<NSObject<MTLRenderPipelineState>> state;
     ObjC::Ptr<NSObject<MTLDepthStencilState>> depthState;
 };
@@ -137,6 +139,11 @@ RenderPipeline::RenderPipeline(Device& device,
 bool RenderPipeline::isValid() const
 {
     return impl->state.get() != nil;
+}
+
+PrimitiveTopology RenderPipeline::topology() const
+{
+    return impl->topology;
 }
 
 void* RenderPipeline::nativeState() const

@@ -22,6 +22,21 @@ namespace
 // Storage elements are 4-byte floats in this first cut (see the compute plan);
 // typed elements arrive with the shader EDSL.
 constexpr UINT storageStride = 4;
+
+UINT toBindFlags(BufferUsage usage)
+{
+    switch (usage)
+    {
+        case BufferUsage::Vertex:
+            return D3D11_BIND_VERTEX_BUFFER;
+        case BufferUsage::Index:
+            return D3D11_BIND_INDEX_BUFFER;
+        case BufferUsage::Storage:
+            return D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+    }
+
+    return D3D11_BIND_VERTEX_BUFFER;
+}
 } // namespace
 
 struct Buffer::Native
@@ -39,9 +54,7 @@ struct Buffer::Native
         D3D11_BUFFER_DESC descriptor = {};
         descriptor.ByteWidth = static_cast<UINT>(bytes);
         descriptor.Usage = D3D11_USAGE_DEFAULT;
-        descriptor.BindFlags =
-            storage ? D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE
-                    : D3D11_BIND_VERTEX_BUFFER;
+        descriptor.BindFlags = toBindFlags(usage);
 
         if (storage)
         {

@@ -42,6 +42,7 @@ struct D3DPipeline
     winrt::com_ptr<ID3D11RasterizerState> rasterizerState;
     winrt::com_ptr<ID3D11BlendState> blendState; // null = opaque, no blending
     winrt::com_ptr<ID3D11DepthStencilState> depthStencilState; // null = no depth
+    D3D11_PRIMITIVE_TOPOLOGY topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
     UINT stride = 0;
 };
 
