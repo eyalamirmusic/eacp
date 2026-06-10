@@ -126,6 +126,17 @@ public:
         std::unordered_map<std::string, StreamingProvider> streamingSchemes;
         Embedded embedded;
         bool debugConsole = true;
+
+        // Apple: when false, opts the page out of WebKit's hidden-page power
+        // saving — process suppression (App Nap) and the ~1s DOM timer clamp
+        // that kick in when WebKit decides the page isn't visible. Occlusion
+        // tracking is unreliable for borderless/floating windows shown via
+        // orderFront without key status, so a perfectly visible page can sit
+        // suppressed (queued evaluateJavaScript, dead timers) until it gains
+        // focus. Mirrors Electron's backgroundThrottling. Uses private
+        // WKPreferences setters, guarded — a WebKit that drops them just
+        // keeps the default behaviour. No-op on Windows.
+        bool backgroundThrottling = true;
     };
 
     WebView();
