@@ -4,6 +4,7 @@
 
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/RenderPipeline.h"
+#include "../Texture/Texture.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
 
@@ -53,6 +54,19 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
         [activeEncoder setVertexBuffer:metalBuffer
                                 offset:0
                                atIndex:(NSUInteger) index];
+}
+
+void RenderPass::setFragmentTexture(const Texture& texture, int slot)
+{
+    auto activeEncoder = impl->encoder.get();
+    auto metalTexture = (__bridge id<MTLTexture>) texture.nativeTexture();
+    auto metalSampler = (__bridge id<MTLSamplerState>) texture.nativeSampler();
+
+    if (activeEncoder == nil || metalTexture == nil || metalSampler == nil)
+        return;
+
+    [activeEncoder setFragmentTexture:metalTexture atIndex:(NSUInteger) slot];
+    [activeEncoder setFragmentSamplerState:metalSampler atIndex:(NSUInteger) slot];
 }
 
 void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)

@@ -8,6 +8,7 @@
 #include "../Pipeline/RenderPipeline.h"
 #include "../Shader/ShaderLibrary.h"
 #include "../Shader/ShaderSource.h"
+#include "../Texture/Texture.h"
 
 #include <cstddef>
 
@@ -39,6 +40,14 @@ public:
     Buffer makeBuffer(std::size_t bytes, BufferUsage usage = BufferUsage::Storage)
     {
         return {*this, nullptr, bytes, usage};
+    }
+
+    // A 2D texture from tightly packed 4-byte pixels (row 0 at the top), or an
+    // uninitialised texture when pixels is null.
+    Texture makeTexture(const TextureDescriptor& descriptor,
+                        const void* pixels = nullptr)
+    {
+        return {*this, descriptor, pixels};
     }
 
     ShaderLibrary makeShaderLibrary(const ShaderSource& source)

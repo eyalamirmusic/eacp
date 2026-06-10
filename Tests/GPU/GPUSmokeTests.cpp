@@ -113,6 +113,34 @@ auto tDeviceBuildsResources = test("GPU/deviceBuildsResources") = []
     check(pipeline.isValid());
 };
 
+// A texture builds from raw pixels and reports its size; both filter modes and
+// a null-pixel (uninitialised) texture build too. Self-skips without a device.
+auto tDeviceBuildsTexture = test("GPU/deviceBuildsTexture") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    const std::uint32_t pixels[] = {0xff0000ff, 0xff00ff00, 0xffff0000, 0xffffffff};
+
+    auto descriptor = TextureDescriptor {};
+    descriptor.width = 2;
+    descriptor.height = 2;
+    descriptor.filter = TextureFilter::Nearest;
+
+    auto texture = device.makeTexture(descriptor, pixels);
+    check(texture.isValid());
+    check(texture.width() == 2);
+    check(texture.height() == 2);
+
+    auto empty = device.makeTexture(descriptor);
+    check(empty.isValid());
+
+    auto invalid = device.makeTexture(TextureDescriptor {});
+    check(!invalid.isValid());
+};
+
 // Runs a compute kernel end to end - storage buffers in and out, a uniform, a
 // dispatch and a readback - without a window or drawable. Self-skips on a host
 // with no GPU device, like the test above.
