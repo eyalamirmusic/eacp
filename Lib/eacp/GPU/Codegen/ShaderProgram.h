@@ -578,6 +578,28 @@ protected:
                         float4(constant(x), constant(y), constant(z), o));
     }
 
+    Float4x4 translate(const Float& x, const Float& y, const Float& z)
+    {
+        auto o = constant(1.0f);
+        auto z0 = constant(0.0f);
+        return float4x4(float4(o, z0, z0, z0),
+                        float4(z0, o, z0, z0),
+                        float4(z0, z0, o, z0),
+                        float4(x, y, z, o));
+    }
+
+    Float4x4 rotateY(const Float& angle)
+    {
+        auto c = cos(angle);
+        auto s = sin(angle);
+        auto z0 = constant(0.0f);
+        auto o = constant(1.0f);
+        return float4x4(float4(c, z0, -s, z0),
+                        float4(z0, o, z0, z0),
+                        float4(s, z0, c, z0),
+                        float4(z0, z0, z0, o));
+    }
+
     Float4x4 rotateZ(const Float& angle)
     {
         auto c = cos(angle);

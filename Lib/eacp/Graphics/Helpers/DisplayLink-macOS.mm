@@ -3,48 +3,66 @@
 #include <eacp/Core/Threads/ThreadUtils.h>
 #import <CoreVideo/CoreVideo.h>
 
+#include <memory>
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 namespace eacp::Threads
 {
 
-static CVReturn displayLinkCallback(CVDisplayLinkRef,
-                                    const CVTimeStamp*,
-                                    const CVTimeStamp*,
-                                    CVOptionFlags,
-                                    CVOptionFlags*,
-                                    void* displayLinkContext)
-{
-    auto cb = (Callback*) displayLinkContext;
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-      (*cb)();
-    });
-
-    return kCVReturnSuccess;
-}
-
 struct DisplayLink::Native
 {
+    // Ticks dispatched to the main queue can still be pending when the link is
+    // destroyed; they share ownership of this state and check `alive` (touched
+    // on the main thread only) before invoking, instead of pointing back into
+    // the destroyed Native.
+    struct State
+    {
+        explicit State(const Callback& cb)
+            : callback(cb)
+        {
+        }
+
+        Callback callback;
+        bool alive = true;
+    };
+
     Native(const Callback& cb)
-        : callback(cb)
+        : state(std::make_shared<State>(cb))
     {
         assertMainThread();
 
         CVDisplayLinkCreateWithActiveCGDisplays(&displayLink);
-        CVDisplayLinkSetOutputCallback(displayLink, displayLinkCallback, &callback);
+
+        auto pending = state;
+        CVDisplayLinkSetOutputHandler(
+            displayLink,
+            ^CVReturn(CVDisplayLinkRef,
+                      const CVTimeStamp*,
+                      const CVTimeStamp*,
+                      CVOptionFlags,
+                      CVOptionFlags*) {
+              dispatch_async(dispatch_get_main_queue(), ^{
+                if (pending->alive)
+                    pending->callback();
+              });
+
+              return kCVReturnSuccess;
+            });
+
         CVDisplayLinkStart(displayLink);
     }
 
     ~Native()
     {
         assertMainThread();
+        state->alive = false;
         CVDisplayLinkStop(displayLink);
         CVDisplayLinkRelease(displayLink);
     }
 
-    Callback callback;
+    std::shared_ptr<State> state;
     CVDisplayLinkRef displayLink {};
 };
 

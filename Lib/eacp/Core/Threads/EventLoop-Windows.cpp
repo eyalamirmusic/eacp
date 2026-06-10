@@ -275,8 +275,8 @@ void EventLoop::call(Callback func)
 // of runEventLoopFor (e.g. an evaluateJavaScript completion handler
 // signalling that the result is ready). When called from inside a
 // nested runFor we only unwind that inner pump, leaving the outer
-// run() alive so Apps::quit's queued teardown still has a chance to
-// run; when called from outside any runFor we PostQuitMessage so the
+// run() alive so Apps::quit's queued stop still has a chance to run;
+// when called from outside any runFor we PostQuitMessage so the
 // outer run exits.
 void stopEventLoop()
 {

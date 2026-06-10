@@ -72,8 +72,10 @@ void run()
     auto createFunc = [] { getGlobalApp().template create<App<T>>(); };
     getAppFactory() = createFunc;
     Threads::runEventLoop(createFunc);
-    // Tear down after the loop has fully exited, never from inside a
-    // still-pumping callback.
+    // The single teardown point: the app is constructed on the first loop
+    // tick and destroyed here on the main thread once the loop has fully
+    // exited, so no native event delivery or nested pump can still be
+    // referencing the views. Apps::quit() only stops the loop.
     destroyApp();
 }
 
