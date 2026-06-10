@@ -153,6 +153,41 @@ std::string printExpr(const ShaderGraph& graph, int node, Backend backend)
     return {};
 }
 
+// Whether the expression tree under node reads a uniform. A Varying read is the
+// fragment-stage boundary: its vertex-stage source tree is walked separately as
+// part of the vertex stage, so the walk stops there.
+bool referencesUniform(const ShaderGraph& graph, int node)
+{
+    if (node < 0)
+        return false;
+
+    const auto& expr = graph.expr(node);
+
+    if (expr.kind == ExprKind::Uniform)
+        return true;
+
+    if (expr.kind == ExprKind::Varying)
+        return false;
+
+    for (auto argument: expr.args)
+        if (referencesUniform(graph, argument))
+            return true;
+
+    return false;
+}
+
+bool vertexUsesUniforms(const ShaderGraph& graph)
+{
+    if (referencesUniform(graph, graph.position()))
+        return true;
+
+    for (const auto& varying: graph.varyings())
+        if (referencesUniform(graph, varying.sourceNode))
+            return true;
+
+    return false;
+}
+
 std::string emit(const ShaderGraph& graph, Backend backend)
 {
     auto source = std::string {};
@@ -233,12 +268,16 @@ std::string emit(const ShaderGraph& graph, Backend backend)
             source += "\n";
     }
 
+    // On Metal each stage declares the uniform block as a function parameter,
+    // and only when that stage's expressions read one; the HLSL cbuffer is a
+    // global both functions already see. Slot 0 maps to buffer(1) in both
+    // stages (vertex data owns buffer 0 on the vertex side; the fragment side
+    // keeps the same index so one slot rule covers both).
     if (backend == Backend::Metal)
     {
         source += "vertex VertexOut vertexMain(VertexIn input [[stage_in]]";
 
-        // Vertex data owns buffer 0, so the uniform block lives at buffer 1.
-        if (hasUniforms)
+        if (hasUniforms && vertexUsesUniforms(graph))
             source += ", constant Uniforms& uniforms [[buffer(1)]]";
 
         source += ")\n{\n";
@@ -262,6 +301,9 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     if (backend == Backend::Metal)
     {
         source += "fragment float4 fragmentMain(VertexOut input [[stage_in]]";
+
+        if (hasUniforms && referencesUniform(graph, graph.fragment()))
+            source += ",\n    constant Uniforms& uniforms [[buffer(1)]]";
 
         for (auto i = 0; i < graph.textureCount(); ++i)
             source += ",\n    texture2d<float> texture" + std::to_string(i)

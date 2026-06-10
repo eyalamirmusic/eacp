@@ -78,6 +78,16 @@ void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
                               atIndex:(NSUInteger) (1 + slot)];
 }
 
+void RenderPass::setFragmentBytes(const void* data, std::size_t bytes, int slot)
+{
+    // Same 1 + slot mapping as the vertex stage, so one slot rule covers both;
+    // the generated fragment functions declare the block at buffer(1).
+    if (auto activeEncoder = impl->encoder.get())
+        [activeEncoder setFragmentBytes:data
+                                 length:bytes
+                                atIndex:(NSUInteger) (1 + slot)];
+}
+
 void RenderPass::draw(int vertexCount, int firstVertex)
 {
     if (auto activeEncoder = impl->encoder.get())

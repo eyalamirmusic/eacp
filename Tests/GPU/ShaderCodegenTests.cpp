@@ -236,6 +236,87 @@ auto tCodegenCbufferPaddingFloat2 = test("GPU/codegenHlslCbufferPaddingFloat2") 
     check(!contains(emitHlsl(vectors.graph()), "pad"));
 };
 
+// A uniform read only by the fragment expression binds the block to the
+// fragment stage: the MSL fragment function gains the uniforms parameter and
+// the vertex function drops it. The HLSL cbuffer is a global both stages
+// already see. Pure string generation.
+auto tCodegenFragmentUniformEmits = test("GPU/codegenFragmentUniformEmits") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto color = builder.uniform<Float4>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(color);
+
+    auto metal = emitMetal(builder.graph());
+    check(
+        contains(metal, "vertex VertexOut vertexMain(VertexIn input [[stage_in]])"));
+    check(contains(metal,
+                   "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n"
+                   "    constant Uniforms& uniforms [[buffer(1)]])"));
+    check(contains(metal, "return uniforms.u0;"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "cbuffer UniformsCB : register(b0)"));
+    check(contains(hlsl, "return uniforms.u0;"));
+};
+
+// A uniform read by both stages puts the parameter on both Metal functions:
+// one block, bound twice, one slot rule.
+auto tCodegenSharedUniformEmits = test("GPU/codegenSharedUniformEmits") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto scale = builder.uniform<Float>();
+
+    auto scaled = float2(position.x() * scale, position.y() * scale);
+    builder.position(float4(scaled, 0.0f, 1.0f));
+    builder.fragment(float4(scale, scale, scale, builder.constant(1.0f)));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal,
+                   "vertex VertexOut vertexMain(VertexIn input [[stage_in]], "
+                   "constant Uniforms& uniforms [[buffer(1)]])"));
+    check(contains(metal,
+                   "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n"
+                   "    constant Uniforms& uniforms [[buffer(1)]])"));
+};
+
+// Compiles a fragment-uniform shader through the real platform shader compiler
+// and builds a pipeline, exercising the uniform-bearing fragment signature.
+// Self-skips without a GPU device.
+auto tCodegenFragmentUniformCompiles =
+    test("GPU/codegenFragmentUniformCompiles") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto color = builder.uniform<Float4>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(color);
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
+};
+
 // A texture() declaration reaches both backends with paired texture / sampler
 // bindings at the same index: fragment function parameters on Metal, globals
 // with t/s registers on D3D. Pure string generation.

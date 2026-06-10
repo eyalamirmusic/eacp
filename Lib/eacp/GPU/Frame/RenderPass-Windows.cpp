@@ -122,6 +122,28 @@ void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
     context->VSSetConstantBuffers(static_cast<UINT>(slot), 1, &rawBuffer);
 }
 
+void RenderPass::setFragmentBytes(const void* data, std::size_t bytes, int slot)
+{
+    if (!impl->encoder)
+        return;
+
+    auto* context = impl->encoder->context;
+
+    winrt::com_ptr<ID3D11Device> device;
+    context->GetDevice(device.put());
+
+    if (!device)
+        return;
+
+    auto constantBuffer = makeConstantBuffer(device.get(), data, bytes);
+
+    if (!constantBuffer)
+        return;
+
+    auto* rawBuffer = constantBuffer.get();
+    context->PSSetConstantBuffers(static_cast<UINT>(slot), 1, &rawBuffer);
+}
+
 void RenderPass::draw(int vertexCount, int firstVertex)
 {
     if (!impl->encoder)

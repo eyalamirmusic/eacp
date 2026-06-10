@@ -275,9 +275,10 @@ auto tFillLayout = test("GPUWidgets/fillShaderLayout") = []
     check(layout.stride == (int) (sizeof(float) * 2));
 };
 
-// The generated source carries the viewport + colour uniform block and routes the
-// colour through a varying (uniforms bind to the vertex stage only). Backend-
-// agnostic substring checks. Pure string generation.
+// The generated source carries the viewport + colour uniform block, and the
+// colour is read directly by the fragment stage - no varying needed now that
+// the uniform block binds to both stages. Backend-agnostic substring checks.
+// Pure string generation.
 auto tFillCodegen = test("GPUWidgets/fillShaderCodegen") = []
 {
     auto shader = PathFillShader {};
@@ -286,7 +287,8 @@ auto tFillCodegen = test("GPUWidgets/fillShaderCodegen") = []
     check(contains(source, "struct Uniforms"));
     check(contains(source, "float2 u0")); // viewport
     check(contains(source, "float4 u1")); // colour
-    check(contains(source, "v0")); // colour routed through a varying
+    check(contains(source, "return uniforms.u1;")); // read per-fragment
+    check(!contains(source, "v0")); // no varying in between
 
     check(shader.source().vertexEntry == "vertexMain");
     check(shader.source().fragmentEntry == "fragmentMain");
