@@ -72,6 +72,7 @@ elseif (WIN32)
             Primitives/TextMetrics-Windows.cpp
             Tray/TrayIcon-Windows.cpp
             View/View-Windows.cpp
+            Window/CompositionHostWindow-Windows.cpp
             Window/EmbeddedView-Windows.cpp
             Window/Window-Windows.cpp)
 

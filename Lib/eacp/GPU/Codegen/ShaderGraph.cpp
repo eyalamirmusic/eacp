@@ -108,4 +108,19 @@ int ShaderGraph::addMul(ValueType type, int matrix, int vector)
     node.args.add(vector);
     return add(std::move(node));
 }
+
+int ShaderGraph::addTexture()
+{
+    return textureSlots++;
+}
+
+int ShaderGraph::addSample(int textureSlot, int uv)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Sample;
+    node.type = ValueType::Float4;
+    node.index = textureSlot;
+    node.args.add(uv);
+    return add(std::move(node));
+}
 } // namespace eacp::GPU

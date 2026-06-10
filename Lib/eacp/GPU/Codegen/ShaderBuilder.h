@@ -49,6 +49,10 @@ public:
         return value;
     }
 
+    // A 2D texture sampled by the fragment expression. Returns the slot-indexed
+    // handle sample() reads; bind the matching GPU::Texture at the same slot.
+    Texture2D texture() { return {&graphData, graphData.addTexture()}; }
+
     // Non-templated siblings of vertexInput()/uniform() keyed on a runtime
     // ValueType. The reflection-driven ShaderProgram visitor walks erased member
     // handles, so it needs to add a slot from a ValueType it carries rather than a

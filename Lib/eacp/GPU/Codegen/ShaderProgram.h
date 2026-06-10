@@ -1,10 +1,12 @@
 #pragma once
 
 #include "../Device/Device.h"
+#include "../Frame/RenderPass.h"
 #include "GeneratedShader.h"
 #include "ShaderBuilder.h"
 #include "ShaderTypes.h"
 #include "ShaderValue.h"
+#include "UniformLayout.h"
 
 #include <eacp/Core/Utils/Containers.h>
 
@@ -185,35 +187,22 @@ struct Uniform : T
     Cpu value {};
 };
 
-// Uniform-block layout follows the native shader struct rules (MSL/HLSL): a vec2
-// aligns to 8, a vec3/vec4 to 16. The walk pads to these so the packed bytes land
-// on the same offsets the generated source reads.
-inline int uniformAlignment(ValueType type)
+// A texture member: the Texture2D handle used by define()'s sample() calls and
+// the slot the bound GPU::Texture is set on. Assign the texture to draw with
+// (`shader.image = checkerboard`); the program binds it (with its baked
+// sampler) when drawn. The program stores a pointer, so the texture must
+// outlive the draw.
+template <>
+struct Uniform<Texture2D> : Texture2D
 {
-    switch (type)
+    Uniform& operator=(const Texture& newTexture)
     {
-        case ValueType::Float:
-            return 4;
-        case ValueType::Float2:
-            return 8;
-        case ValueType::Float3:
-        case ValueType::Float4:
-        case ValueType::Float4x4:
-            return 16;
+        value = &newTexture;
+        return *this;
     }
 
-    return 4;
-}
-
-inline int uniformSlotStride(ValueType type)
-{
-    return type == ValueType::Float3 ? 16 : byteSize(type);
-}
-
-inline int alignUp(int value, int alignment)
-{
-    return (value + alignment - 1) / alignment * alignment;
-}
+    const Texture* value = nullptr;
+};
 
 inline VertexFormat toVertexFormat(ValueType type)
 {
@@ -248,11 +237,20 @@ public:
         onUniform(name, ValueTypeOf<T>::value, member, &member.value);
     }
 
+    void operator()(const char* name, Uniform<Texture2D>& member)
+    {
+        onTexture(name, member, member.value);
+    }
+
 protected:
     virtual void onUniform(const char* name,
                            ValueType type,
                            detail::ValueHandle& handle,
                            const void* data) = 0;
+
+    // Texture members are not packed into the uniform block, so only the walks
+    // that care (build, texture bind) override this.
+    virtual void onTexture(const char*, Texture2D&, const Texture*) {}
 };
 
 // Build walk: each uniform member adopts a freshly added graph slot, so define()
@@ -273,8 +271,38 @@ public:
         handle = builder.addUniform(type);
     }
 
+    void onTexture(const char*, Texture2D& handle, const Texture*) override
+    {
+        handle = builder.texture();
+    }
+
 private:
     ShaderBuilder& builder;
+};
+
+// Texture bind walk: hand each assigned texture member to the render pass at
+// the slot its handle was declared with.
+class ShaderTextureBindVisitor final : public ShaderVisitor
+{
+public:
+    explicit ShaderTextureBindVisitor(RenderPass& passToUse)
+        : pass(passToUse)
+    {
+    }
+
+    void
+        onUniform(const char*, ValueType, detail::ValueHandle&, const void*) override
+    {
+    }
+
+    void onTexture(const char*, Texture2D& handle, const Texture* texture) override
+    {
+        if (texture != nullptr)
+            pass.setFragmentTexture(*texture, handle.slot);
+    }
+
+private:
+    RenderPass& pass;
 };
 
 // Upload walk: copy each uniform's current value into the block at its aligned
@@ -374,6 +402,14 @@ public:
 
     int uniformByteSize() const { return uniformBytes.size(); }
     bool hasUniforms() const { return !uniformBytes.empty(); }
+
+    // Binds every assigned texture member to the pass; a no-op for programs
+    // without textures. RenderPass::draw(program) calls this.
+    void bindTextures(RenderPass& pass)
+    {
+        auto bindVisitor = ShaderTextureBindVisitor {pass};
+        reflectMembers(bindVisitor);
+    }
 
 protected:
     // Runs the uniform build walk, the user's define() (which pulls vertex inputs),

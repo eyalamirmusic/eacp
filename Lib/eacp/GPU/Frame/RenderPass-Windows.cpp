@@ -4,6 +4,7 @@
 
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/RenderPipeline.h"
+#include "../Texture/Texture.h"
 #include "../Windows/D3DTypes.h"
 
 #include <d3d11.h>
@@ -78,6 +79,22 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
     UINT offset = 0;
     impl->encoder->context->IASetVertexBuffers(
         static_cast<UINT>(index), 1, &vertexBuffer, &stride, &offset);
+}
+
+void RenderPass::setFragmentTexture(const Texture& texture, int slot)
+{
+    if (!impl->encoder)
+        return;
+
+    auto* view = static_cast<ID3D11ShaderResourceView*>(texture.nativeReadView());
+    auto* sampler = static_cast<ID3D11SamplerState*>(texture.nativeSampler());
+
+    if (view == nullptr || sampler == nullptr)
+        return;
+
+    auto* context = impl->encoder->context;
+    context->PSSetShaderResources(static_cast<UINT>(slot), 1, &view);
+    context->PSSetSamplers(static_cast<UINT>(slot), 1, &sampler);
 }
 
 void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)

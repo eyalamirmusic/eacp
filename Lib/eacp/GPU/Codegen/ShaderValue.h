@@ -65,6 +65,25 @@ struct Float4x4 : detail::ValueHandle
 {
 };
 
+// A 2D texture declared by the shader, identified by its slot rather than an
+// expression node: it is not a value, its one operation is sample(). Sampling
+// is a fragment-stage operation, so it must only feed the fragment expression,
+// never the position. Bind the matching GPU::Texture with
+// RenderPass::setFragmentTexture at the same slot.
+struct Texture2D
+{
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
+inline Float4 sample(const Texture2D& texture, const Float2& coordinates)
+{
+    auto result = Float4 {};
+    result.graph = texture.graph;
+    result.node = texture.graph->addSample(texture.slot, coordinates.node);
+    return result;
+}
+
 template <typename T>
 struct ValueTypeOf;
 

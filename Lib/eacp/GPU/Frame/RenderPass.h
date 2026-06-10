@@ -8,6 +8,7 @@ namespace eacp::GPU
 {
 class RenderPipeline;
 class Buffer;
+class Texture;
 
 // Records draw commands for a single render pass (MTLRenderCommandEncoder on
 // Metal). Ends the encoder automatically on destruction. Obtained from
@@ -23,6 +24,11 @@ public:
 
     void setPipeline(const RenderPipeline& pipeline);
     void setVertexBuffer(const Buffer& buffer, int index = 0);
+
+    // Binds a texture and its baked sampler to the fragment stage. slot maps to
+    // Metal texture(slot)/sampler(slot) and to D3D t<slot>/s<slot>; the
+    // generated shaders declare texture and sampler at the same index.
+    void setFragmentTexture(const Texture& texture, int slot = 0);
 
     // Uploads small per-draw constant data to the vertex stage without a buffer
     // object (Metal setVertexBytes; a constant buffer on D3D11). slot is the
@@ -49,8 +55,8 @@ public:
     void draw(int vertexCount, int firstVertex = 0);
 
     // Binds and draws a prepared ShaderProgram in one call: its pipeline, vertex
-    // buffer, uniform block, then its vertex count. Templated so this header stays
-    // independent of the codegen layer.
+    // buffer, uniform block and textures, then its vertex count. Templated so this
+    // header stays independent of the codegen layer.
     template <typename Program>
     void draw(Program& program)
     {
@@ -60,6 +66,7 @@ public:
         if (program.hasUniforms())
             setVertexUniforms(program);
 
+        program.bindTextures(*this);
         draw(program.vertexCount());
     }
 

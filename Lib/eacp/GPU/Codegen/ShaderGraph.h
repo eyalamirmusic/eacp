@@ -18,8 +18,10 @@ enum class ExprKind
     Swizzle, // child.<components>; args[0] = child
     Call, // builtin call text(args[0]); e.g. sin/cos
     Binary, // (lhs op rhs); args = {lhs, rhs}
-    Mul // matrix * vector; args = {matrix, vector}. Emits per-backend (MSL uses
+    Mul, // matrix * vector; args = {matrix, vector}. Emits per-backend (MSL uses
     // the * operator, HLSL uses mul()), so it is not a plain Binary.
+    Sample // texture sample; index = texture slot, args = {uv}. Emits
+    // per-backend (MSL t.sample(s, uv), HLSL t.Sample(s, uv)).
 };
 
 // One node in the shader expression tree. Plain data referenced by integer id so
@@ -60,6 +62,11 @@ public:
     int addBinary(ValueType type, char op, int lhs, int rhs);
     int addMul(ValueType type, int matrix, int vector);
 
+    // Registers a 2D texture slot (always a float-returning texture2d, so only
+    // the slot index is stored), and a sample of it at a float2 coordinate.
+    int addTexture();
+    int addSample(int textureSlot, int uv);
+
     void setPosition(int node) { positionNode = node; }
     void setFragment(int node) { fragmentNode = node; }
 
@@ -67,6 +74,7 @@ public:
     const Vector<ValueType>& inputs() const { return inputTypes; }
     const Vector<VaryingSlot>& varyings() const { return varyingSlots; }
     const Vector<ValueType>& uniforms() const { return uniformTypes; }
+    int textureCount() const { return textureSlots; }
     int position() const { return positionNode; }
     int fragment() const { return fragmentNode; }
 
@@ -77,6 +85,7 @@ private:
     Vector<ValueType> inputTypes;
     Vector<VaryingSlot> varyingSlots;
     Vector<ValueType> uniformTypes;
+    int textureSlots = 0;
     int positionNode = -1;
     int fragmentNode = -1;
 };
