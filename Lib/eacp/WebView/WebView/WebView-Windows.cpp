@@ -1458,6 +1458,7 @@ void WebView::initNative(Options options)
     impl = std::make_shared<Native>(*this, std::move(options));
     detail::registerWebView(this);
     installWindowDragSupport();
+    installWindowControlSupport();
 }
 
 // Popup constructor (window.open). Builds the Native in popup mode: it adopts
@@ -1472,6 +1473,7 @@ WebView::WebView(PopupInit init)
     impl->onCoreWebViewReady = std::move(init.onReady);
     detail::registerWebView(this);
     installWindowDragSupport();
+    installWindowControlSupport();
 }
 
 WebView::~WebView()
@@ -1618,10 +1620,11 @@ std::string WebView::getTitle() const
 // Queues like loadURL/loadHTML, so a script evaluated right after loadURL() on
 // a not-yet-initialized WebView runs once the CoreWebView2 exists instead of
 // being silently dropped.
-void WebView::evaluateJavaScript(const std::string& script, JSCallback callback)
+void WebView::evaluateJavaScript(const std::string& script,
+                                 const JSCallback& callback)
 {
     impl->ensureInitialized();
-    impl->queueOperation([this, script, callback = std::move(callback)]()
+    impl->queueOperation([this, script, callback]()
                          { impl->evaluateScript(script, callback); });
 }
 
@@ -1805,6 +1808,33 @@ void WebView::armWindowDrag()
     // loop started straight from this async bridge callback wouldn't be tied to
     // the live mouse gesture, and a mere click would start dragging the window.
     impl->windowDragArmed = true;
+}
+
+void WebView::performWindowControl(const std::string& action)
+{
+    auto root = impl->hostHwnd ? GetAncestor(impl->hostHwnd, GA_ROOT) : nullptr;
+    if (!root)
+        return;
+
+    if (action == "minimize")
+    {
+        ShowWindow(root, SW_MINIMIZE);
+        return;
+    }
+
+    if (action == "maximize")
+    {
+        ShowWindow(root, IsZoomed(root) ? SW_RESTORE : SW_MAXIMIZE);
+
+        // Report the resulting state back so the page's data-eacp-maximized
+        // attribute tracks reality instead of guessing.
+        evaluateJavaScript(IsZoomed(root) ? "window.__eacpSetMaximized(true)"
+                                          : "window.__eacpSetMaximized(false)");
+        return;
+    }
+
+    if (action == "close")
+        PostMessageW(root, WM_CLOSE, 0, 0);
 }
 
 void WebView::setZoom(double level)

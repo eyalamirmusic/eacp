@@ -37,12 +37,21 @@ if (TARGET eacp-webview-test-main)
             eacp-webview-test-main)
     nano_discover_tests(CommandDispatchTests)
 
-    # macOS-only: window-drag.js is injected by initNative under TARGET_OS_OSX.
-    if (APPLE AND NOT IOS)
-        add_executable(WindowDragTests WindowDragTests.cpp)
-        target_link_libraries(WindowDragTests PRIVATE
-                eacp-webview
-                eacp-webview-test-main)
-        nano_discover_tests(WindowDragTests)
-    endif ()
+    # window-drag.js is injected by both desktop backends (see
+    # installWindowDragSupport in WebView-Shared.cpp), so the classification
+    # tests run wherever the test harness exists. WebKit-specific assertions
+    # guard themselves per-platform inside the file.
+    add_executable(WindowDragTests WindowDragTests.cpp)
+    target_link_libraries(WindowDragTests PRIVATE
+            eacp-webview
+            eacp-webview-test-main)
+    nano_discover_tests(WindowDragTests)
+
+    # Same deal for window-controls.js (see installWindowControlSupport):
+    # caption-button classification and the <html> attributes the shim keeps.
+    add_executable(WindowControlTests WindowControlTests.cpp)
+    target_link_libraries(WindowControlTests PRIVATE
+            eacp-webview
+            eacp-webview-test-main)
+    nano_discover_tests(WindowControlTests)
 endif ()

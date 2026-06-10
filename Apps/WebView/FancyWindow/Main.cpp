@@ -1,13 +1,22 @@
 #include <eacp/WebView/WebView.h>
+#include <eacp/Core/Platform/Platform.h>
 
 using namespace eacp;
 using namespace Graphics;
 
-// Self-contained page demonstrating window dragging. The title bar is marked
-// `--eacp-app-region: drag` (the marker eacp's injected window-drag.js reads;
-// `-webkit-app-region` is kept alongside for Electron parity), so pressing and
-// dragging it moves this frameless window. The button is `no-drag`, proving
-// controls stay clickable and don't move the window.
+// Self-contained page demonstrating frameless-window chrome, all declared in
+// CSS — no message handlers, no platform sniffing, no window-state JS:
+//
+//   --eacp-app-region: drag       the title bar moves the window
+//   --eacp-window-button: ...     min / max / close caption buttons
+//   [data-eacp-platform="..."]    which chrome to render (set by the library)
+//   [data-eacp-maximized]         maximize vs restore glyph (kept in sync
+//                                 by the library, so it can't drift)
+//
+// The WebView opts into acceptFirstMouse, so the drag works even when the
+// window is in the background: the click that activates the window also
+// reaches the page, instead of needing one click to focus and a second to
+// drag. Switch to another app and drag this window's title bar to see it.
 static const char* kDemoHtml = R"HTML(
 <!doctype html>
 <html>
@@ -28,13 +37,43 @@ static const char* kDemoHtml = R"HTML(
     align-items: center;
     gap: 12px;
     padding-left: 88px;   /* clear the traffic lights */
-    padding-right: 16px;
     background: linear-gradient(90deg, #1b1b22, #101014);
     border-bottom: 1px solid #26262e;
     user-select: none;
   }
   .titlebar .title { font-weight: 600; font-size: 13px; opacity: .9; }
   .spacer { flex: 1; }
+  /* No traffic lights on Windows: the title sits flush left, and the
+     caption cluster renders flush right. */
+  [data-eacp-platform="windows"] .titlebar { padding-left: 16px; }
+  [data-eacp-platform="mac"] .titlebar { padding-right: 16px; }
+
+  /* The Windows caption cluster (min / max / close). Each button is just an
+     element marked --eacp-window-button — the library wires the clicks to
+     the real window. Hidden on macOS, where the traffic lights rule. */
+  .controls { display: none; height: 52px; margin-left: 4px; }
+  [data-eacp-platform="windows"] .controls { display: flex; }
+
+  .winctl {
+    width: 46px; height: 52px;
+    border: none; border-radius: 0; background: transparent;
+    color: #b9b9c4; padding: 0; cursor: default;
+    font-family: "Segoe MDL2 Assets"; font-size: 10px;
+  }
+
+  .winctl:hover { background: #2a2a34; color: #fff; }
+  .winctl.close:hover { background: #e81123; color: #fff; }
+
+  .winctl.min   { --eacp-window-button: minimize; }
+  .winctl.max   { --eacp-window-button: maximize; }
+  .winctl.close { --eacp-window-button: close; }
+
+  .winctl.min::before   { content: '\E921'; }
+  .winctl.max::before   { content: '\E922'; }
+  .winctl.close::before { content: '\E8BB'; }
+
+  /* Restore glyph while maximized — state mirrored by the library. */
+  [data-eacp-maximized] .winctl.max::before { content: '\E923'; }
 
   button {
     -webkit-app-region: no-drag;
@@ -58,6 +97,11 @@ static const char* kDemoHtml = R"HTML(
     <span class="title">&#x283F; Drag this bar to move the window</span>
     <span class="spacer"></span>
     <button id="ping">Click me (no-drag)</button>
+    <div class="controls">
+      <button class="winctl min" title="Minimize"></button>
+      <button class="winctl max" title="Maximize"></button>
+      <button class="winctl close" title="Close"></button>
+    </div>
   </div>
   <div class="content">
     <div>
@@ -66,6 +110,12 @@ static const char* kDemoHtml = R"HTML(
          drag it to move this frameless window.</p>
       <p>The button is <code>no-drag</code>, so it stays clickable and never
          moves the window.</p>
+      <p>On Windows, the caption buttons are plain elements marked
+         <code>--eacp-window-button</code> &mdash; the library drives the
+         window, no app code involved.</p>
+      <p>Thanks to <code>acceptFirstMouse</code>, this works even from the
+         background &mdash; focus another app, then drag the bar in one
+         gesture.</p>
       <div class="badge" id="status">ready</div>
     </div>
   </div>
@@ -87,7 +137,16 @@ struct RootView final : View
 
     void resized() override { scaleToFit({webView}); }
 
-    WebView webView;
+    // acceptFirstMouse lets the title-bar drag start from an unfocused
+    // window in a single gesture (see the page comment above).
+    static WebView::Options getWebViewOptions()
+    {
+        auto options = WebView::Options();
+        options.acceptFirstMouse = true;
+        return options;
+    }
+
+    WebView webView {getWebViewOptions()};
 };
 
 struct MyApp
@@ -103,21 +162,35 @@ struct MyApp
     // app. A FullSizeContentView with a transparent, separator-less titlebar
     // lets the web app's own header render under the traffic lights as one
     // seamless black bar.
+    //
+    // Windows has no chrome to integrate with, so there the demo is a
+    // frameless rounded window whose web title bar IS the chrome: drag
+    // region, demo button, and the caption buttons. Resizable keeps the
+    // invisible frame's edge band live, so the window still resizes.
     static WindowOptions getOptions()
     {
         auto options = WindowOptions();
 
-        options.width = 1200;
-        options.height = 800;
-        options.minWidth = 1200;
-        options.minHeight = 800;
+        options.width = 800;
+        options.height = 540;
+        options.minWidth = 640;
+        options.minHeight = 420;
+
+        if (Platform::isWindows())
+        {
+            options.flags = {WindowFlags::Borderless, WindowFlags::Resizable};
+            options.cornerRadius = 12.f;
+            return options;
+        }
 
         options.flags.emplace_back(WindowFlags::FullSizeContentView);
         options.showTitle = false;
 
         options.titlebarTransparent = true;
         options.showTitlebarSeparator = false;
-        options.trafficLightPosition = Point {10.f, 11.f};
+        // Centers the ~54x16pt button cluster in the 88px-wide, 52px-tall
+        // corner the web title bar reserves for it (padding-left: 88).
+        options.trafficLightPosition = Point {17.f, 18.f};
         options.backgroundColor = Color::black();
 
         return options;

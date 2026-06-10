@@ -3,5 +3,8 @@ nano_add_executable(ImageTests
         TARGETS eacp-graphics)
 
 nano_add_executable(WindowTests
-        SOURCES WindowTests.cpp
+        NO_MAIN
+        SOURCES
+            WindowTests.cpp
+            TestMain.cpp
         TARGETS eacp-graphics)

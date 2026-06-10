@@ -98,7 +98,34 @@ struct WindowOptions
     int minWidth = 0;
     int minHeight = 0;
 
-    Vector<WindowFlags> flags;
+    // Keeps the window above normal windows (macOS NSFloatingWindowLevel,
+    // Windows WS_EX_TOPMOST). Mirrors Electron's alwaysOnTop.
+    bool alwaysOnTop = false;
+
+    // macOS: pins the window to every Space so it follows the user between
+    // desktops and fullscreen apps. Mirrors Electron's
+    // setVisibleOnAllWorkspaces(true). No-op on other platforms.
+    bool visibleOnAllWorkspaces = false;
+
+    // Shows the window without making it key / stealing focus from the
+    // frontmost app (macOS orderFront vs makeKeyAndOrderFront). The window
+    // can still become key when clicked. Mirrors Electron's showInactive().
+    bool showInactive = false;
+
+    // Initial position of the window's top-left corner in screen points,
+    // measured from the primary display's top-left (Electron convention).
+    // Unset centers the window (macOS) / uses the system default (Windows).
+    std::optional<Point> initialPosition;
+
+    // Rounds the window's corners (points). Borderless windows are square
+    // by default; set this to get the standard macOS rounded shape. On
+    // macOS this makes the window non-opaque with a clear background
+    // (overriding backgroundColor) so the clipped content view defines the
+    // visible shape. Windows 11 rounds via DWM at the system radius — the
+    // value is ignored there; earlier Windows stays square.
+    std::optional<float> cornerRadius;
+
+    EA::Vector<WindowFlags> flags;
 
     Callback effectiveOnQuit() const
     {
@@ -125,6 +152,29 @@ public:
     // Brings the window to the front and activates the app so it rises above
     // other applications. No-op under headless and on iOS.
     void toFront();
+
+    // Shows or hides the window WITHOUT destroying it (macOS orderOut /
+    // orderFront, Windows ShowWindow) — the content view and any WebView
+    // state stay alive, unlike closing and recreating, and the window keeps
+    // its frame, so it reappears where the user left it. Showing respects
+    // showInactive (no focus steal) and re-asserts alwaysOnTop. No-op under
+    // headless and on iOS.
+    void setVisible(bool visible);
+
+    // Whether the window is currently shown on screen — the query side of
+    // setVisible, so toggles need no shadow bool in app code. False while
+    // hidden, minimized to nothing, or under headless; always true on iOS.
+    bool isVisible();
+
+    // Minimizes to the Dock / taskbar (macOS miniaturize, Windows
+    // SW_MINIMIZE). Lets borderless windows with web-rendered window
+    // controls offer the standard button. No-op under headless and on iOS.
+    void minimize();
+
+    // Maximizes (macOS zoom, Windows SW_MAXIMIZE), or restores the previous
+    // frame when already maximized — the standard caption-button toggle.
+    // No-op under headless and on iOS.
+    void toggleMaximize();
 
     // Mouse lock for relative-motion input (FPS-style mouse look). While
     // locked the cursor is hidden and pinned in place, and mouse movement

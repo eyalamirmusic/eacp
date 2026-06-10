@@ -3,6 +3,7 @@
 // real WKWebView -- which also pins down that the `--eacp-app-region` custom
 // property is readable via getComputedStyle (the native one is not).
 
+#include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/WebView/WebView.h>
 
@@ -59,8 +60,8 @@ struct Fixture
 
     std::string regionOf(const std::string& selector)
     {
-        auto script =
-            "window.__eacpResolveAppRegion(document.querySelector('" + selector + "'))";
+        auto script = "window.__eacpResolveAppRegion(document.querySelector('"
+                      + selector + "'))";
         return webView.callJS(script).waitFor(10s);
     }
 };
@@ -111,10 +112,9 @@ struct NumberMessageProbe
                                             called = true;
                                             body = received;
                                         });
-        webView.loadHTML(
-            "<!doctype html><html><body><script>"
-            "window.webkit.messageHandlers.numberProbe.postMessage(1);"
-            "</script></body></html>");
+        webView.loadHTML("<!doctype html><html><body><script>"
+                         "window.webkit.messageHandlers.numberProbe.postMessage(1);"
+                         "</script></body></html>");
         check(Threads::runEventLoopUntil([this] { return called; }, 10s));
     }
 };
@@ -122,15 +122,17 @@ struct NumberMessageProbe
 auto tNumberBodyDoesNotCrash = test("WindowDrag/numberMessageBodyDoesNotCrash") = []
 {
     auto probe = NumberMessageProbe {};
-    check(probe.called);     // handler fired -- the app did not abort
+    check(probe.called); // handler fired -- the app did not abort
     check(probe.body.empty()); // invalid JSON top level -> empty body, no throw
 };
 
 // Why the marker is a custom property and not the standard -webkit-app-region:
 // WKWebView drops the unknown native prop, so getComputedStyle can't read it,
-// while the custom property IS exposed. Both are set on one element; only the
-// --eacp one reads back. If a future WebKit exposes -webkit-app-region, the
-// first check fails -- prompting a simplification.
+// while the custom property IS exposed. Chromium (WebView2) supports
+// app-region natively, so there the standard prop reads back too -- the custom
+// property is the one readable on BOTH engines, which is why window-drag.js
+// keys on it. If a future WebKit exposes -webkit-app-region, the Apple branch
+// fails -- prompting a simplification.
 struct MarkerProbe
 {
     WebView webView {};
@@ -140,8 +142,8 @@ struct MarkerProbe
     MarkerProbe()
     {
         window.setContentView(webView);
-        webView.addScriptMessageHandler("ready",
-                                        [this](const std::string&) { ready = true; });
+        webView.addScriptMessageHandler(
+            "ready", [this](const std::string&) { ready = true; });
         webView.loadHTML(
             "<!doctype html><html><head><style>"
             "#m { -webkit-app-region: drag; --eacp-app-region: drag; }"
@@ -165,6 +167,11 @@ auto tCustomPropReadableUnlikeWebkit =
     test("WindowDrag/customPropReadableUnlikeWebkitAppRegion") = []
 {
     auto p = MarkerProbe {};
-    check(p.computed("-webkit-app-region").empty()); // standard prop: invisible
+
+    if (Platform::isWindows())
+        check(p.computed("-webkit-app-region") == "drag"); // Chromium: native
+    else
+        check(p.computed("-webkit-app-region").empty()); // WebKit: invisible
+
     check(p.computed("--eacp-app-region") == "drag"); // custom prop: readable
 };

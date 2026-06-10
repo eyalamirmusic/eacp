@@ -39,6 +39,19 @@ void repositionTrafficLights(NSWindow* window, NSPoint inset)
 }
 } // namespace
 
+// Borderless NSWindows refuse key status by default, which would make a
+// frameless overlay's text inputs untypeable. Same override Electron ships
+// for frame:false windows.
+@interface EacpKeyableBorderlessWindow : NSWindow
+@end
+
+@implementation EacpKeyableBorderlessWindow
+- (BOOL)canBecomeKeyWindow
+{
+    return YES;
+}
+@end
+
 @interface WindowDelegateBridge : NSObject <NSWindowDelegate>
 {
 @public
@@ -170,14 +183,21 @@ NSWindowStyleMask getStyle(const WindowOptions& options)
 struct Window::Native
 {
     Native(const WindowOptions& options, WindowEvents& eventsToUse)
+        : opts(options)
     {
         auto style = getStyle(options);
         auto contentRect = NSMakeRect(0, 0, options.width, options.height);
 
-        handle = [[NSWindow alloc] initWithContentRect:contentRect
-                                             styleMask:style
-                                               backing:NSBackingStoreBuffered
-                                                 defer:NO];
+        // NSWindowStyleMaskBorderless is 0 — "borderless" is the absence of
+        // the Titled bit, so that's what selects the keyable subclass.
+        auto windowClass = (style & NSWindowStyleMaskTitled) != 0
+                               ? [NSWindow class]
+                               : [EacpKeyableBorderlessWindow class];
+
+        handle = [[windowClass alloc] initWithContentRect:contentRect
+                                                styleMask:style
+                                                  backing:NSBackingStoreBuffered
+                                                    defer:NO];
 
         delegate = createWindowDelegate(options);
         delegate.get()->events = &eventsToUse;
@@ -209,14 +229,59 @@ struct Window::Native
                                                                 alpha:c.a]];
         }
 
+        if (options.cornerRadius)
+        {
+            // An opaque window paints its background square into the
+            // corners. Make the window itself clear and let the rounded,
+            // clipped content view (see setContentView) define the visible
+            // shape — the shadow follows it automatically. This wins over
+            // backgroundColor by design; see WindowOptions.
+            [getWindow() setOpaque:NO];
+            [getWindow() setBackgroundColor:[NSColor clearColor]];
+        }
+
         if (options.minWidth > 0 || options.minHeight > 0)
             [getWindow() setContentMinSize:NSMakeSize(options.minWidth,
                                                       options.minHeight)];
 
-        [getWindow() center];
+        if (options.alwaysOnTop)
+            [getWindow() setLevel:NSFloatingWindowLevel];
+
+        if (options.visibleOnAllWorkspaces)
+            [getWindow()
+                setCollectionBehavior:
+                    NSWindowCollectionBehaviorCanJoinAllSpaces
+                    | NSWindowCollectionBehaviorFullScreenAuxiliary];
+
+        if (options.initialPosition)
+        {
+            // initialPosition is top-left from the primary display's top-left
+            // (Electron convention); AppKit's origin is the bottom-left of
+            // the primary screen, so flip y against its height.
+            NSScreen* primary = NSScreen.screens.firstObject;
+            auto screenTop = primary != nil ? NSMaxY(primary.frame) : 0.0;
+            [getWindow()
+                setFrameTopLeftPoint:NSMakePoint(options.initialPosition->x,
+                                                 screenTop
+                                                     - options.initialPosition
+                                                           ->y)];
+        }
+        else
+        {
+            [getWindow() center];
+        }
+
         [getWindow() setDelegate:delegate.get()];
 
-        toFront();
+        if (options.showInactive)
+        {
+            if (!eacp::Apps::getAppEnvironment().headless)
+                [getWindow() orderFront:nil];
+        }
+        else
+        {
+            toFront();
+        }
 
         if (options.trafficLightPosition)
             repositionTrafficLights(
@@ -244,6 +309,72 @@ struct Window::Native
         auto v = (NSView*) contentView;
         [getWindow() setContentView:v];
         [v setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+
+        if (opts.cornerRadius)
+        {
+            // Pairs with the clear window background set in the ctor: the
+            // rounded, clipped content view is what defines the window's
+            // visible shape.
+            v.wantsLayer = YES;
+            v.layer.cornerRadius = *opts.cornerRadius;
+            v.layer.masksToBounds = YES;
+        }
+    }
+
+    void setVisible(bool visible)
+    {
+        if (eacp::Apps::getAppEnvironment().headless)
+            return;
+
+        // The contentView.hidden toggle is for WKWebView's benefit: WebKit
+        // gates a page's timers, rAF and painting on view visibility, and
+        // for ordered-out windows it relies on occlusion notifications that
+        // don't always re-fire on a plain orderFront of a non-key window.
+        // Explicitly hiding/unhiding the content view makes the transition
+        // unambiguous, so a re-shown page reliably wakes back up.
+        if (!visible)
+        {
+            [getWindow() orderOut:nil];
+            getWindow().contentView.hidden = YES;
+            return;
+        }
+
+        getWindow().contentView.hidden = NO;
+
+        // Re-assert the float level + Spaces behaviour on every show —
+        // cheap, and guards against anything having knocked them off while
+        // the window was ordered out.
+        if (opts.alwaysOnTop)
+            [getWindow() setLevel:NSFloatingWindowLevel];
+
+        if (opts.visibleOnAllWorkspaces)
+            [getWindow()
+                setCollectionBehavior:
+                    NSWindowCollectionBehaviorCanJoinAllSpaces
+                    | NSWindowCollectionBehaviorFullScreenAuxiliary];
+
+        if (opts.showInactive)
+            [getWindow() orderFront:nil];
+        else
+            [getWindow() makeKeyAndOrderFront:nil];
+    }
+
+    void minimize()
+    {
+        if (eacp::Apps::getAppEnvironment().headless)
+            return;
+
+        [getWindow() miniaturize:nil];
+    }
+
+    void toggleMaximize()
+    {
+        if (eacp::Apps::getAppEnvironment().headless)
+            return;
+
+        // zoom: is itself a toggle — it restores the saved frame when the
+        // window is already zoomed, matching the Windows caption button.
+        [getWindow() zoom:nil];
     }
 
     NSWindow* getWindow() { return handle.get(); }
@@ -315,6 +446,7 @@ struct Window::Native
         [handle.get() close];
     }
 
+    WindowOptions opts;
     ObjC::Ptr<NSWindow> handle;
     ObjC::Ptr<WindowDelegateBridge> delegate;
     bool mouseLockIntent = false;
@@ -340,6 +472,26 @@ void Window::setContentView(View& view)
 void Window::toFront()
 {
     impl->toFront();
+}
+
+void Window::setVisible(bool visible)
+{
+    impl->setVisible(visible);
+}
+
+bool Window::isVisible()
+{
+    return [impl->getWindow() isVisible];
+}
+
+void Window::minimize()
+{
+    impl->minimize();
+}
+
+void Window::toggleMaximize()
+{
+    impl->toggleMaximize();
 }
 
 void* Window::getHandle()

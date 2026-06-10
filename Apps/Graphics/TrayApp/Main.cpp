@@ -33,14 +33,36 @@ static Image makeTrayIcon()
     return image;
 }
 
-static Menu createTrayMenu()
+// The content of the floating panel below. The window's cornerRadius clips
+// this view, so it just fills its bounds — the rounding comes for free.
+struct PanelView final : View
 {
-    auto menu = Menu();
-    menu.add(MenuItem::withAction("Say Hello", [] { LOG("Hello from the tray!"); }));
-    menu.addSeparator();
-    menu.add(MenuItem::withAction("Quit", [] { Apps::quit(); }));
-    return menu;
-}
+    PanelView()
+    {
+        background->setFillColor({0.11f, 0.11f, 0.13f});
+        title->setColor({0.95f, 0.95f, 0.95f});
+        subtitle->setColor({0.62f, 0.62f, 0.68f});
+
+        addChildren({background, title, subtitle});
+    }
+
+    void resized() override
+    {
+        auto bounds = getLocalBounds();
+
+        auto path = Path();
+        path.addRect(bounds);
+        background->setPath(path);
+
+        scaleToFit({background, title, subtitle});
+        title->setPosition({20.f, bounds.h - 44.f});
+        subtitle->setPosition({20.f, bounds.h - 70.f});
+    }
+
+    ShapeLayerView background;
+    TextLayerView title {"Quick Panel"};
+    TextLayerView subtitle {"Toggled from the tray, never recreated"};
+};
 
 struct TrayApp
 {
@@ -48,12 +70,61 @@ struct TrayApp
     {
         Apps::setDockIconVisible(false);
 
+        // The window shows itself on construction; hide it immediately so
+        // the app starts as a bare tray icon. setVisible keeps the window
+        // (and its content) alive across toggles, so it reappears exactly
+        // where the user left it.
+        window.setContentView(panelView);
+        window.setVisible(false);
+
         tray.setIcon(makeTrayIcon());
         tray.setTooltip("eacp Tray App");
 
         tray.setMenu(createTrayMenu());
+
+        // Windows: a left-click on the tray icon toggles the panel (the
+        // menu stays on right-click). On macOS the menu owns the click, so
+        // this never fires there — use the menu item instead.
+        tray.setOnClick([this] { togglePanel(); });
     }
 
+    // A small tray companion: borderless and rounded (cornerRadius defines
+    // the shape of a frameless window), floating above normal windows,
+    // following the user across Spaces, and shown without stealing focus
+    // from whatever they're working in.
+    static WindowOptions getPanelOptions()
+    {
+        auto options = WindowOptions();
+
+        options.width = 320;
+        options.height = 180;
+        options.isPrimary = false;
+
+        options.flags = {WindowFlags::Borderless};
+        options.cornerRadius = 14.f;
+
+        options.alwaysOnTop = true;
+        options.visibleOnAllWorkspaces = true;
+        options.showInactive = true;
+
+        return options;
+    }
+
+    Menu createTrayMenu()
+    {
+        auto menu = Menu();
+        menu.add(MenuItem::withAction("Toggle Panel", [this] { togglePanel(); }));
+        menu.add(
+            MenuItem::withAction("Say Hello", [] { LOG("Hello from the tray!"); }));
+        menu.addSeparator();
+        menu.add(MenuItem::withAction("Quit", [] { Apps::quit(); }));
+        return menu;
+    }
+
+    void togglePanel() { window.setVisible(!window.isVisible()); }
+
+    PanelView panelView;
+    Window window {getPanelOptions()};
     TrayIcon tray;
 };
 
