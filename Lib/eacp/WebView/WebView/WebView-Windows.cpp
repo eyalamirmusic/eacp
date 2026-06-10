@@ -69,6 +69,32 @@ struct CoTaskMemString
 
 namespace
 {
+// WebView2's default user data folder sits next to the executable, which is
+// read-only for installed apps (e.g. Program Files) and makes environment
+// creation fail outright. Use %LOCALAPPDATA%\<exe name>\WebView2 instead;
+// WebView2 creates the directories on demand.
+std::wstring defaultUserDataFolder()
+{
+    PWSTR localAppData = nullptr;
+    if (FAILED(
+            SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localAppData)))
+        return {};
+
+    auto folder = std::wstring {localAppData};
+    CoTaskMemFree(localAppData);
+
+    wchar_t modulePath[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+
+    auto exeName = std::wstring {PathFindFileNameW(modulePath)};
+    if (auto dot = exeName.rfind(L'.'); dot != std::wstring::npos)
+        exeName.resize(dot);
+    if (exeName.empty())
+        exeName = L"eacp";
+
+    return folder + L"\\" + exeName + L"\\WebView2";
+}
+
 // A read-only IStream over a bounded byte range of a StreamingResource.
 // WebView2 pulls the response body from this stream, so bytes are fetched
 // lazily through ResourceReader::read instead of buffering the whole resource
@@ -313,10 +339,11 @@ struct WebView::Native
         }
 
         auto envOptions = buildEnvironmentOptions();
+        auto userDataFolder = defaultUserDataFolder();
 
         auto hr = CreateCoreWebView2EnvironmentWithOptions(
             nullptr,
-            nullptr,
+            userDataFolder.empty() ? nullptr : userDataFolder.c_str(),
             envOptions.Get(),
             Microsoft::WRL::Callback<
                 ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(

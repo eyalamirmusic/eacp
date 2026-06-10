@@ -1,6 +1,7 @@
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "CompositionHostWindow-Windows.h"
+#include "../Helpers/StringUtils-Windows.h"
 #include "../Layers/NativeLayer-Windows.h"
 
 #include <unordered_map>
@@ -15,6 +16,11 @@ namespace eacp::Graphics
 // is declared by NativeLayer-Windows.h. Both are linked earlier in the unity
 // build.
 void paintDirtyViewsForHost(HWND host);
+
+// Defined in Keyboard-Windows.cpp: Windows virtual key -> framework KeyCode
+// (KeyCode::Unknown when unmapped), so KeyEvent::keyCode means the same thing
+// on every platform.
+uint16_t keyCodeFromVirtualKey(int vk);
 
 namespace
 {
@@ -96,6 +102,46 @@ HWND findHostHwndForView(View* view)
     return it == map.end() ? nullptr : it->second;
 }
 
+void repaintViewTree(View* view)
+{
+    if (!view)
+        return;
+
+    view->repaint();
+
+    for (auto* subview: view->getSubviews())
+        repaintViewTree(subview);
+}
+
+namespace
+{
+void markViewTreeLayersDirty(const View* view)
+{
+    if (!view)
+        return;
+
+    for (auto* layer: view->getLayers())
+        if (auto* native = static_cast<NativeLayerBase*>(layer->getNativeLayer()))
+            native->markContentDirty();
+
+    for (auto* subview: view->getSubviews())
+        markViewTreeLayersDirty(subview);
+}
+} // namespace
+
+// Called by the rendering-device recovery in D2DFactory-Windows.cpp: the
+// replaced device keeps all composition surfaces alive but discards their
+// pixels, so every layer re-renders and every painting view repaints.
+void redrawAllCompositionHosts()
+{
+    for (auto& [root, hostHwnd]: contentViewToHwnd())
+    {
+        markViewTreeLayersDirty(root);
+        repaintViewTree(root);
+        InvalidateRect(hostHwnd, nullptr, FALSE);
+    }
+}
+
 void CompositionHostWindow::initializeComposition(bool topMost)
 {
     if (!hwnd)
@@ -166,6 +212,12 @@ void CompositionHostWindow::attachContentView(View* view)
 
 void CompositionHostWindow::ensureAllLayersRendered(const View* view) const
 {
+    ensureAllLayersRendered(view, getDpiScale());
+}
+
+void CompositionHostWindow::ensureAllLayersRendered(const View* view,
+                                                    float dpiScale) const
+{
     if (!view)
         return;
 
@@ -173,11 +225,14 @@ void CompositionHostWindow::ensureAllLayersRendered(const View* view) const
     {
         auto* native = static_cast<NativeLayerBase*>(layer->getNativeLayer());
         if (native)
+        {
+            native->setDpiScale(dpiScale);
             native->ensureContent();
+        }
     }
 
     for (auto* subview: view->getSubviews())
-        ensureAllLayersRendered(subview);
+        ensureAllLayersRendered(subview, dpiScale);
 }
 
 bool CompositionHostWindow::isKeyPressed(uint16_t vk) const
@@ -297,6 +352,8 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
                 auto event = makeMouseEvent(
                     lParam, getDpiScale(), MouseEventType::Down, getModifiers());
                 event.button = buttonForDown(msg);
+                mouseButtonHeld = true;
+                heldMouseButton = event.button;
                 dispatchMouseToContentView(event);
             }
             return 0;
@@ -304,6 +361,10 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
         case WM_LBUTTONUP:
         case WM_RBUTTONUP:
         case WM_MBUTTONUP:
+            // Clear before ReleaseCapture: it sends WM_CAPTURECHANGED, which
+            // must not synthesize a second Up for this gesture.
+            mouseButtonHeld = false;
+
             if (contentView)
             {
                 auto event = makeMouseEvent(
@@ -315,6 +376,13 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
             // Release the capture once no buttons remain held.
             if ((wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON)) == 0)
                 ReleaseCapture();
+            return 0;
+
+        case WM_CAPTURECHANGED:
+            // Capture stolen mid-drag (OS move loop, drag-drop, a popup): the
+            // matching WM_*BUTTONUP will never arrive here, so synthesize the
+            // Up to unwind the captured view's drag state.
+            synthesizeMouseUpOnCaptureLoss();
             return 0;
 
         case WM_MOUSEMOVE:
@@ -381,44 +449,95 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
             return 0;
 
         case WM_KEYDOWN:
-        {
-            auto vk = static_cast<uint16_t>(wParam);
-            if (vk < 256)
-                keyState.set(vk);
-
-            if (contentView)
-            {
-                KeyEvent event;
-                event.keyCode = vk;
-                event.type = KeyEventType::Down;
-                event.isRepeat = (lParam & 0x40000000) != 0;
-                event.modifiers = getModifiers();
-                contentView->keyDown(event);
-                ensureAllLayersRendered(contentView);
-            }
-            return 0;
-        }
-
         case WM_KEYUP:
-        {
-            auto vk = static_cast<uint16_t>(wParam);
-            if (vk < 256)
-                keyState.reset(vk);
-
-            if (contentView)
-            {
-                KeyEvent event;
-                event.keyCode = vk;
-                event.type = KeyEventType::Up;
-                event.modifiers = getModifiers();
-                contentView->keyUp(event);
-                ensureAllLayersRendered(contentView);
-            }
+            dispatchKeyEvent(msg, wParam, lParam);
             return 0;
-        }
+
+        // Alt and Alt+key arrive as sys-key messages. Track and dispatch them
+        // like plain keys, but fall through to DefWindowProc so the system
+        // chords (Alt+F4, Alt+Space, ...) keep working.
+        case WM_SYSKEYDOWN:
+        case WM_SYSKEYUP:
+            dispatchKeyEvent(msg, wParam, lParam);
+            return std::nullopt;
+
+        case WM_KILLFOCUS:
+            // The matching key-ups go to whoever took focus (e.g. Alt+Tab), so
+            // tracked state would otherwise report keys stuck down forever.
+            keyState.reset();
+            return 0;
     }
 
     return std::nullopt;
+}
+
+void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    auto down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+    auto vk = static_cast<uint16_t>(wParam);
+
+    if (vk < 256)
+        keyState.set(vk, down);
+
+    if (!contentView)
+        return;
+
+    KeyEvent event;
+    event.keyCode = keyCodeFromVirtualKey(vk);
+    event.type = down ? KeyEventType::Down : KeyEventType::Up;
+    event.modifiers = getModifiers();
+
+    if (down)
+    {
+        event.characters = takePendingCharacters();
+        event.isRepeat = (lParam & 0x40000000) != 0;
+        contentView->keyDown(event);
+    }
+    else
+    {
+        contentView->keyUp(event);
+    }
+
+    ensureAllLayersRendered(contentView);
+}
+
+// The pump's TranslateMessage has already posted any WM_CHAR / WM_SYSCHAR for
+// the key being dispatched; pull them off the queue so the KeyEvent carries the
+// layout-aware text — the equivalent of NSEvent.characters on macOS, and what
+// makes text entry work on non-US layouts (including dead keys).
+std::string CompositionHostWindow::takePendingCharacters() const
+{
+    auto wide = std::wstring {};
+    auto charMsg = MSG {};
+
+    while (PeekMessageW(&charMsg, hwnd, WM_CHAR, WM_CHAR, PM_REMOVE)
+           || PeekMessageW(&charMsg, hwnd, WM_SYSCHAR, WM_SYSCHAR, PM_REMOVE))
+        wide.push_back(static_cast<wchar_t>(charMsg.wParam));
+
+    return fromWideString(wide);
+}
+
+void CompositionHostWindow::synthesizeMouseUpOnCaptureLoss()
+{
+    if (!mouseButtonHeld)
+        return;
+
+    mouseButtonHeld = false;
+
+    if (!contentView)
+        return;
+
+    auto pt = POINT {};
+    GetCursorPos(&pt);
+    ScreenToClient(hwnd, &pt);
+
+    auto scale = getDpiScale();
+    MouseEvent event;
+    event.pos = {static_cast<float>(pt.x) / scale, static_cast<float>(pt.y) / scale};
+    event.type = MouseEventType::Up;
+    event.button = heldMouseButton;
+    event.modifiers = getModifiers();
+    dispatchMouseToContentView(event);
 }
 
 } // namespace eacp::Graphics

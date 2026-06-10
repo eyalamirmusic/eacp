@@ -43,7 +43,8 @@ struct Window::Native
         , minWidth(options.minWidth)
         , minHeight(options.minHeight)
     {
-        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        // Process-wide DPI awareness (per-monitor v2) is established by
+        // initLoopThread() before any app code runs.
         registerWindowClass();
         createWindow(options);
         host.initializeComposition(true);
@@ -266,8 +267,12 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
                          suggested->bottom - suggested->top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
 
+            // The new scale recreates every layer surface (setDpiScale marks
+            // them dirty); painting views re-render from the repaint pass,
+            // which recreates their surfaces at the new pixel size.
             self->host.rescaleRootVisualToDpi();
             self->host.ensureAllLayersRendered(self->host.contentView);
+            repaintViewTree(self->host.contentView);
             return 0;
         }
     }
