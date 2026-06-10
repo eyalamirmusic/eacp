@@ -171,10 +171,10 @@ struct MyApp
     {
         auto options = WindowOptions();
 
-        options.width = 1200;
-        options.height = 800;
-        options.minWidth = 1200;
-        options.minHeight = 800;
+        options.width = 800;
+        options.height = 540;
+        options.minWidth = 640;
+        options.minHeight = 420;
 
         if (Platform::isWindows())
         {
