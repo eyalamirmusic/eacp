@@ -126,8 +126,12 @@ struct GPUView::Native
     void startContinuous()
     {
         if (displayLink == nullptr)
-            displayLink =
-                makeOwned<Threads::DisplayLink>([this] { view.renderNow(); });
+            displayLink = makeOwned<Threads::DisplayLink>(
+                [this](Threads::FrameTime time)
+                {
+                    view.update(time);
+                    view.renderNow();
+                });
     }
 
     void stopContinuous() { displayLink = nullptr; }

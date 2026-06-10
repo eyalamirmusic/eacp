@@ -1,5 +1,4 @@
-#include <eacp/Core/Threads/Timer.h>
-#include <eacp/Graphics/Graphics.h>
+﻿#include <eacp/Graphics/Graphics.h>
 #include <eacp/GPU/GPU.h>
 
 using namespace eacp;
@@ -65,19 +64,21 @@ struct RotatingShader final : ShaderProgram
 };
 } // namespace
 
+// Continuous mode renders every display refresh, synchronized with vsync.
+// update() advances the animation by the frame's delta time, so the rotation
+// speed is the same on any refresh rate and unaffected by skipped frames.
 struct RotatingTriangleView final : GPUView
 {
     RotatingTriangleView()
     {
         shader.setVertices(triangleVertices);
         shader.prepare(sampleCount());
-        eacp::LOG (shader.source().source);
+        setContinuous(true);
     }
 
-    void advance()
+    void update(Threads::FrameTime time) override
     {
-        angle += 0.02f;
-        repaint();
+        angle += radiansPerSecond * static_cast<float>(time.delta);
     }
 
     void render(Frame& frame) override
@@ -88,9 +89,10 @@ struct RotatingTriangleView final : GPUView
         pass.draw(shader);
     }
 
+    static constexpr float radiansPerSecond = 1.2f;
+
     RotatingShader shader;
     float angle = 0.0f;
-    Threads::Timer timer {[this] { advance(); }, 60};
 };
 
 struct MyApp

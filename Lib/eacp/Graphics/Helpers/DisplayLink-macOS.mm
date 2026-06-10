@@ -48,8 +48,8 @@ struct DisplayLink::Native
     CVDisplayLinkRef displayLink {};
 };
 
-DisplayLink::DisplayLink(const Callback& cbToUse)
-    : callback(cbToUse)
+DisplayLink::DisplayLink(const FrameCallback& cb)
+    : callback(timedTick(cb))
     , impl(callback)
 {
 }

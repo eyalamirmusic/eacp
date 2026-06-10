@@ -1,5 +1,6 @@
 #pragma once
 
+#include <eacp/Graphics/Helpers/DisplayLink.h>
 #include <eacp/Graphics/View/View.h>
 
 #include <functional>
@@ -25,6 +26,11 @@ public:
     ~GPUView() override;
 
     virtual void render(Frame&) {}
+
+    // Called once per display refresh while continuous mode is on; the view
+    // then redraws via render(). Advance animation state here, scaled by the
+    // frame's delta time, so motion stays smooth and rate-independent.
+    virtual void update(Threads::FrameTime) {}
 
     void resized() override;
 

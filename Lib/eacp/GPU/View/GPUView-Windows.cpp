@@ -325,11 +325,22 @@ struct GPUView::Native : DeviceResourceHolder
         view.render(frame);
     }
 
+    // The tick only advances animation state and invalidates; the render
+    // itself runs from the WM_PAINT this schedules. WM_PAINT is delivered
+    // only when the message queue is otherwise empty, so the heavy work
+    // (rendering, and a Present that can block on the compositor) can never
+    // starve input or other queued work, no matter how slow frames get —
+    // modal size/move loops included, where paints keep flowing between
+    // mouse moves and the animation keeps running during a live resize.
     void startContinuous()
     {
         if (displayLink == nullptr)
-            displayLink =
-                makeOwned<Threads::DisplayLink>([this] { view.renderNow(); });
+            displayLink = makeOwned<Threads::DisplayLink>(
+                [this](Threads::FrameTime time)
+                {
+                    view.update(time);
+                    view.repaint();
+                });
     }
 
     void stopContinuous() { displayLink = nullptr; }

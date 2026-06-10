@@ -1,6 +1,7 @@
 add_library(eacp-graphics STATIC)
 
 target_sources(eacp-graphics PRIVATE
+        Helpers/DisplayLink.cpp
         Image/Image.cpp
         Layers/Layer.cpp
         Layers/LayerViews.cpp
@@ -81,6 +82,7 @@ elseif (WIN32)
             dwrite
             d3d11
             dxgi
+            dcomp
             user32
             gdi32
             ole32
