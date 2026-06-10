@@ -11,7 +11,8 @@ using namespace GPU;
 // A Wolfenstein3D-style first-person walk through a grid maze. The map below
 // extrudes into textured wall quads once at startup; the camera is two scalar
 // uniforms (position and yaw) the shader builds the view matrix from each
-// frame. Move with W/A/S/D, turn with the arrow keys.
+// frame. Move with W/A/S/D, turn with the arrow keys — or click to lock the
+// mouse for mouse look; Escape releases it.
 namespace
 {
 // One character per cell: '.' is walkable, anything else is a wall whose
@@ -332,6 +333,7 @@ struct MazeView final : GPUView
         , atlas(makeAtlas(Device::shared()))
     {
         setDepth(true);
+        setHandlesMouseEvents(true);
         shader.setVertices(mesh.vertices.data(), mesh.vertices.size());
         shader.setIndices(mesh.indices.data(), mesh.indices.size());
         shader.prepare(sampleCount(), true);
@@ -339,11 +341,36 @@ struct MazeView final : GPUView
         setContinuous(true);
     }
 
+    void mouseDown(const Graphics::MouseEvent&) override
+    {
+        if (window != nullptr)
+            window->setMouseLocked(true);
+    }
+
+    void mouseMoved(const Graphics::MouseEvent& event) override
+    {
+        turnWithMouse(event);
+    }
+
+    void mouseDragged(const Graphics::MouseEvent& event) override
+    {
+        turnWithMouse(event);
+    }
+
+    void turnWithMouse(const Graphics::MouseEvent& event)
+    {
+        if (window != nullptr && window->isMouseLocked())
+            yaw -= event.delta.x * mouseSensitivity;
+    }
+
     void update(Threads::FrameTime time) override
     {
         using namespace Graphics;
 
         auto delta = (float) time.delta;
+
+        if (window != nullptr && Keyboard::isKeyPressed(KeyCode::Escape))
+            window->setMouseLocked(false);
 
         auto turn = 0.0f;
         if (Keyboard::isKeyPressed(KeyCode::LeftArrow))
@@ -413,7 +440,9 @@ struct MazeView final : GPUView
 
     static constexpr float moveSpeed = 3.0f;
     static constexpr float turnSpeed = 2.4f;
+    static constexpr float mouseSensitivity = 0.0035f;
 
+    Graphics::Window* window = nullptr;
     MazeMesh mesh;
     Texture atlas;
     MazeShader shader;
@@ -425,7 +454,12 @@ struct MazeView final : GPUView
 
 struct MyApp
 {
-    MyApp() { window.setContentView(maze); }
+    MyApp()
+    {
+        window.setContentView(maze);
+        maze.window = &window;
+        maze.focus();
+    }
 
     MazeView maze;
     Graphics::Window window;

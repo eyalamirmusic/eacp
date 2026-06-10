@@ -56,6 +56,14 @@ struct CompositionHostWindow
     bool isCommandPressed() const;
     ModifierKeys getModifiers() const;
 
+    // Mouse lock (relative-motion mode): hides the cursor, clips it to the
+    // client area and recenters it after every move, streaming the motion as
+    // Moved events whose MouseEvent::delta carries the movement in points.
+    // The lock expresses intent: it engages while the HWND has focus and
+    // WM_SETFOCUS / WM_KILLFOCUS re-engage / suspend it.
+    void setMouseLocked(bool locked);
+    bool isMouseLocked() const { return mouseLockIntent; }
+
     // Tears down the visual tree, registry entry, and HWND. Call from the
     // owning surface's destructor.
     void teardown();
@@ -85,6 +93,15 @@ struct CompositionHostWindow
     std::function<void(int widthInPoints, int heightInPoints)> onContentResized;
 
 private:
+    void engageMouseLock();
+    void disengageMouseLock();
+    void clipCursorToClient() const;
+    POINT clientCenter() const;
+    void handleLockedMouseMove(LPARAM lParam);
+
+    bool mouseLockIntent = false;
+    bool mouseLockEngaged = false;
+
     void resizeContentViewToClient();
     void ensureMouseLeaveTracking();
     void dispatchMouseToContentView(const MouseEvent& event) const;

@@ -126,6 +126,15 @@ public:
     // other applications. No-op under headless and on iOS.
     void toFront();
 
+    // Mouse lock for relative-motion input (FPS-style mouse look). While
+    // locked the cursor is hidden and pinned in place, and mouse movement
+    // keeps streaming to the content view as mouseMoved events whose
+    // MouseEvent::delta carries the motion. The lock expresses intent: it
+    // engages while the window has key focus, suspends when focus is lost so
+    // the cursor works in other apps, and re-engages when focus returns.
+    void setMouseLocked(bool locked);
+    bool isMouseLocked() const;
+
     // Keyboard state.
     bool isKeyPressed(uint16_t virtualKeyCode) const;
     bool isShiftPressed() const;

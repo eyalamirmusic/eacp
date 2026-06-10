@@ -266,8 +266,96 @@ ModifierKeys CompositionHostWindow::getModifiers() const
         isShiftPressed(), isControlPressed(), isAltPressed(), isCommandPressed()};
 }
 
+void CompositionHostWindow::setMouseLocked(bool locked)
+{
+    if (mouseLockIntent == locked)
+        return;
+
+    mouseLockIntent = locked;
+
+    if (locked && GetFocus() == hwnd)
+        engageMouseLock();
+    else if (!locked)
+        disengageMouseLock();
+}
+
+void CompositionHostWindow::engageMouseLock()
+{
+    if (mouseLockEngaged)
+        return;
+
+    mouseLockEngaged = true;
+    ShowCursor(FALSE);
+    clipCursorToClient();
+
+    auto center = clientCenter();
+    ClientToScreen(hwnd, &center);
+    SetCursorPos(center.x, center.y);
+}
+
+void CompositionHostWindow::disengageMouseLock()
+{
+    if (!mouseLockEngaged)
+        return;
+
+    mouseLockEngaged = false;
+    ClipCursor(nullptr);
+    ShowCursor(TRUE);
+}
+
+void CompositionHostWindow::clipCursorToClient() const
+{
+    RECT client {};
+    GetClientRect(hwnd, &client);
+
+    POINT topLeft {client.left, client.top};
+    POINT bottomRight {client.right, client.bottom};
+    ClientToScreen(hwnd, &topLeft);
+    ClientToScreen(hwnd, &bottomRight);
+
+    RECT screenRect {topLeft.x, topLeft.y, bottomRight.x, bottomRight.y};
+    ClipCursor(&screenRect);
+}
+
+POINT CompositionHostWindow::clientCenter() const
+{
+    RECT client {};
+    GetClientRect(hwnd, &client);
+    return {client.right / 2, client.bottom / 2};
+}
+
+void CompositionHostWindow::handleLockedMouseMove(LPARAM lParam)
+{
+    auto center = clientCenter();
+    auto x = getXFromLParam(lParam);
+    auto y = getYFromLParam(lParam);
+
+    // The echo of our own recentering SetCursorPos carries no motion.
+    if (x == center.x && y == center.y)
+        return;
+
+    auto screenCenter = center;
+    ClientToScreen(hwnd, &screenCenter);
+    SetCursorPos(screenCenter.x, screenCenter.y);
+
+    if (!contentView)
+        return;
+
+    auto scale = getDpiScale();
+    MouseEvent event;
+    event.type = MouseEventType::Moved;
+    event.modifiers = getModifiers();
+    event.pos = {static_cast<float>(center.x) / scale,
+                 static_cast<float>(center.y) / scale};
+    event.delta = {static_cast<float>(x - center.x) / scale,
+                   static_cast<float>(y - center.y) / scale};
+    dispatchMouseToContentView(event);
+}
+
 void CompositionHostWindow::teardown()
 {
+    disengageMouseLock();
+
     if (rootVisual)
         rootVisual.Children().RemoveAll();
 
@@ -328,7 +416,26 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
         case WM_SIZE:
             resizeContentViewToClient();
             InvalidateRect(hwnd, nullptr, FALSE);
+
+            if (mouseLockEngaged)
+                clipCursorToClient();
             return 0;
+
+        // The clip rectangle is in screen coordinates, so a moved window
+        // needs it refreshed to keep confining the pinned cursor.
+        case WM_MOVE:
+            if (mouseLockEngaged)
+                clipCursorToClient();
+            return std::nullopt;
+
+        case WM_SETFOCUS:
+            if (mouseLockIntent)
+                engageMouseLock();
+            return std::nullopt;
+
+        case WM_KILLFOCUS:
+            disengageMouseLock();
+            return std::nullopt;
 
         case WM_ERASEBKGND:
             return 1;
@@ -387,6 +494,12 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
 
         case WM_MOUSEMOVE:
         {
+            if (mouseLockEngaged)
+            {
+                handleLockedMouseMove(lParam);
+                return 0;
+            }
+
             // Arm a WM_MOUSELEAVE so a cursor leaving the surface produces an
             // Exited event, clearing any hover (e.g. a WebView's :hover state).
             ensureMouseLeaveTracking();

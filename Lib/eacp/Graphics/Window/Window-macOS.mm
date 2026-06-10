@@ -46,6 +46,9 @@ void repositionTrafficLights(NSWindow* window, NSPoint inset)
     eacp::Graphics::ResizeCallback onResize;
     eacp::Graphics::WillResizeCallback onWillResize;
     eacp::Graphics::WindowEvents* events;
+    // Internal key-focus listener (mouse lock suspend/resume), invoked
+    // alongside the user-facing events->onActivationChanged.
+    std::function<void(bool)> onKeyStateChanged;
     BOOL keepTrafficLightsPositioned;
     NSPoint trafficLightInset;
 }
@@ -87,12 +90,18 @@ void repositionTrafficLights(NSWindow* window, NSPoint inset)
 
 - (void)windowDidBecomeKey:(NSNotification*)notification
 {
+    if (onKeyStateChanged)
+        onKeyStateChanged(true);
+
     if (events != nullptr && events->onActivationChanged)
         events->onActivationChanged(true);
 }
 
 - (void)windowDidResignKey:(NSNotification*)notification
 {
+    if (onKeyStateChanged)
+        onKeyStateChanged(false);
+
     if (events != nullptr && events->onActivationChanged)
         events->onActivationChanged(false);
 }
@@ -172,6 +181,8 @@ struct Window::Native
 
         delegate = createWindowDelegate(options);
         delegate.get()->events = &eventsToUse;
+        delegate.get()->onKeyStateChanged = [this](bool isKey)
+        { keyStateChanged(isKey); };
 
         [getWindow() setRestorable:NO];
         [getWindow() setReleasedWhenClosed:NO];
@@ -237,10 +248,77 @@ struct Window::Native
 
     NSWindow* getWindow() { return handle.get(); }
 
-    ~Native() { [handle.get() close]; }
+    void setMouseLocked(bool locked)
+    {
+        if (mouseLockIntent == locked)
+            return;
+
+        mouseLockIntent = locked;
+
+        if (locked && [getWindow() isKeyWindow])
+            engageMouseLock();
+        else if (!locked)
+            disengageMouseLock();
+    }
+
+    void keyStateChanged(bool isKey)
+    {
+        if (!mouseLockIntent)
+            return;
+
+        if (isKey)
+            engageMouseLock();
+        else
+            disengageMouseLock();
+    }
+
+    // Disassociating first means the warp itself cannot surface as a motion
+    // delta on the next mouse event.
+    void engageMouseLock()
+    {
+        if (mouseLockEngaged)
+            return;
+
+        mouseLockEngaged = true;
+        [getWindow() setAcceptsMouseMovedEvents:YES];
+        CGAssociateMouseAndMouseCursorPosition(false);
+        warpCursorToWindowCenter();
+        [NSCursor hide];
+    }
+
+    void disengageMouseLock()
+    {
+        if (!mouseLockEngaged)
+            return;
+
+        mouseLockEngaged = false;
+        CGAssociateMouseAndMouseCursorPosition(true);
+        [NSCursor unhide];
+    }
+
+    void warpCursorToWindowCenter()
+    {
+        auto content =
+            [getWindow() contentRectForFrameRect:[getWindow() frame]];
+        auto center = NSMakePoint(NSMidX(content), NSMidY(content));
+
+        // AppKit screen coordinates have their origin at the primary
+        // screen's bottom-left; the CG warp wants top-left.
+        auto primaryHeight = NSMaxY([[NSScreen screens] firstObject].frame);
+        CGWarpMouseCursorPosition(
+            CGPointMake(center.x, primaryHeight - center.y));
+    }
+
+    ~Native()
+    {
+        disengageMouseLock();
+        [handle.get() close];
+    }
 
     ObjC::Ptr<NSWindow> handle;
     ObjC::Ptr<WindowDelegateBridge> delegate;
+    bool mouseLockIntent = false;
+    bool mouseLockEngaged = false;
 };
 
 Window::Window(const WindowOptions& optionsToUse)
@@ -275,6 +353,16 @@ void* Window::getContentViewHandle()
 }
 
 Window::~Window() = default;
+
+void Window::setMouseLocked(bool locked)
+{
+    impl->setMouseLocked(locked);
+}
+
+bool Window::isMouseLocked() const
+{
+    return impl->mouseLockIntent;
+}
 
 bool Window::isKeyPressed(uint16_t virtualKeyCode) const
 {

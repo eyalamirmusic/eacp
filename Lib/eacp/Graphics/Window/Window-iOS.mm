@@ -104,6 +104,14 @@ void* Window::getHandle()
 
 Window::~Window() = default;
 
+// No pointer on iOS; mouse lock is meaningless there.
+void Window::setMouseLocked(bool) {}
+
+bool Window::isMouseLocked() const
+{
+    return false;
+}
+
 bool Window::isKeyPressed(uint16_t virtualKeyCode) const
 {
     return Keyboard::isKeyPressed(virtualKeyCode);
