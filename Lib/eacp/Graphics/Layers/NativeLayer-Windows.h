@@ -23,6 +23,12 @@ wuc::Compositor getWinRTCompositor();
 wuc::CompositionGraphicsDevice getCompositionGraphicsDevice();
 ID2D1Device* getD2DDevice();
 
+// Recovers the shared rendering device when `hr` is a device-loss HRESULT
+// (DXGI_ERROR_DEVICE_REMOVED/RESET, D2DERR_RECREATE_TARGET). Returns true if
+// recovery ran; the caller should drop the current frame — every host redraws
+// once the replacement device is installed. Defined in D2DFactory-Windows.cpp.
+bool handleDeviceLossIfNeeded(HRESULT hr);
+
 struct NativeLayerBase
 {
     virtual ~NativeLayerBase() = default;
@@ -96,10 +102,26 @@ struct NativeLayerBase
         surfaceBrush = nullptr;
     }
 
-    static float getDpiScale()
+    static float systemDpiScale()
     {
         auto dpi = GetDpiForSystem();
         return static_cast<float>(dpi) / 96.f;
+    }
+
+    float getDpiScale() const { return dpiScale; }
+
+    // The host window's DPI scale, pushed before each render pass by
+    // CompositionHostWindow::ensureAllLayersRendered. A change (the window
+    // moved to a monitor with different scaling) recreates the surface at
+    // the new pixel size.
+    void setDpiScale(float scale)
+    {
+        if (dpiScale == scale)
+            return;
+
+        dpiScale = scale;
+        surfaceDirty = true;
+        contentDirty = true;
     }
 
     virtual void createSurface()
@@ -120,14 +142,24 @@ struct NativeLayerBase
             return;
         }
 
-        auto dpiScale = getDpiScale();
         auto surfaceWidth = static_cast<int>(bounds.w * dpiScale);
         auto surfaceHeight = static_cast<int>(bounds.h * dpiScale);
 
-        surface = graphicsDevice.CreateDrawingSurface(
-            {static_cast<float>(surfaceWidth), static_cast<float>(surfaceHeight)},
-            wgdx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
-            wgdx::DirectXAlphaMode::Premultiplied);
+        try
+        {
+            surface = graphicsDevice.CreateDrawingSurface(
+                {static_cast<float>(surfaceWidth),
+                 static_cast<float>(surfaceHeight)},
+                wgdx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                wgdx::DirectXAlphaMode::Premultiplied);
+        }
+        catch (const winrt::hresult_error& e)
+        {
+            // Keep surfaceDirty set: the post-recovery redraw retries.
+            handleDeviceLossIfNeeded(e.code());
+            surface = nullptr;
+            return;
+        }
 
         if (surface)
         {
@@ -192,6 +224,7 @@ struct NativeLayerBase
     Rect bounds;
     Point position;
     float opacity = 1.0f;
+    float dpiScale = systemDpiScale();
     bool hidden = false;
 
     wuc::SpriteVisual visual {nullptr};

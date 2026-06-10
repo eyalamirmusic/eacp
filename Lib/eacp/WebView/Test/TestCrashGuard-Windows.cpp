@@ -16,10 +16,12 @@ LONG WINAPI shutdownAccessViolationFilter(EXCEPTION_POINTERS* info)
     auto code = info->ExceptionRecord->ExceptionCode;
 
     // Only swallow access violations that happen after the test runner has
-    // reported its result. WebView2 + WinRT teardown deterministically touches
-    // freed memory somewhere during DLL detach on this build; skipping the
-    // resulting crash lets CTest see the actual exit code the tests produced
-    // instead of SEGFAULT.
+    // reported its result. The known in-framework cause (winrt::uninit_apartment
+    // running in a static destructor underneath WebView2 / WinRT statics) is
+    // fixed, and the suite passes locally without this guard; it stays as a
+    // safety net against third-party teardown faults (WebView2 runtime
+    // variations on CI hosts), so CTest sees the actual test exit code instead
+    // of SEGFAULT.
     if (gShuttingDown.load() && code == EXCEPTION_ACCESS_VIOLATION)
         TerminateProcess(GetCurrentProcess(), static_cast<UINT>(gExitCode.load()));
 

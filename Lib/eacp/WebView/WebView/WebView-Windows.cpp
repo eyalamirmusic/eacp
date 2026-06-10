@@ -27,6 +27,7 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Composition.h>
 
+#include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Logging.h>
 
@@ -69,6 +70,32 @@ struct CoTaskMemString
 
 namespace
 {
+// WebView2's default user data folder sits next to the executable, which is
+// read-only for installed apps (e.g. Program Files) and makes environment
+// creation fail outright. Use %LOCALAPPDATA%\<exe name>\WebView2 instead;
+// WebView2 creates the directories on demand.
+std::wstring defaultUserDataFolder()
+{
+    PWSTR localAppData = nullptr;
+    if (FAILED(
+            SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localAppData)))
+        return {};
+
+    auto folder = std::wstring {localAppData};
+    CoTaskMemFree(localAppData);
+
+    wchar_t modulePath[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+
+    auto exeName = std::wstring {PathFindFileNameW(modulePath)};
+    if (auto dot = exeName.rfind(L'.'); dot != std::wstring::npos)
+        exeName.resize(dot);
+    if (exeName.empty())
+        exeName = L"eacp";
+
+    return folder + L"\\" + exeName + L"\\WebView2";
+}
+
 // A read-only IStream over a bounded byte range of a StreamingResource.
 // WebView2 pulls the response body from this stream, so bytes are fetched
 // lazily through ResourceReader::read instead of buffering the whole resource
@@ -313,10 +340,11 @@ struct WebView::Native
         }
 
         auto envOptions = buildEnvironmentOptions();
+        auto userDataFolder = defaultUserDataFolder();
 
         auto hr = CreateCoreWebView2EnvironmentWithOptions(
             nullptr,
-            nullptr,
+            userDataFolder.empty() ? nullptr : userDataFolder.c_str(),
             envOptions.Get(),
             Microsoft::WRL::Callback<
                 ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
@@ -341,6 +369,25 @@ struct WebView::Native
                 + hresultHex(hr));
             initInProgress = false;
         }
+    }
+
+    // Headless CI machines intermittently abort composition controller
+    // creation (E_ABORT) even though an immediate retry succeeds. Real
+    // sessions fail for real reasons (e.g. a missing runtime) and should
+    // surface the error right away.
+    bool shouldRetryCompositionControllerCreate() const
+    {
+        return Apps::getAppEnvironment().headless
+               && compositionCreateRetries < maxCompositionCreateRetries;
+    }
+
+    HRESULT retryCompositionControllerCreate()
+    {
+        ++compositionCreateRetries;
+        LOG("WebView2: retrying composition controller create ("
+            + std::to_string(compositionCreateRetries) + "/"
+            + std::to_string(maxCompositionCreateRetries) + ")");
+        return createCompositionController();
     }
 
     // Creates the visual-hosting composition controller from `environment` (set
@@ -370,6 +417,10 @@ struct WebView::Native
                     {
                         LOG("WebView2: composition controller create failed hr=0x"
                             + hresultHex(result));
+
+                        if (shouldRetryCompositionControllerCreate())
+                            return retryCompositionControllerCreate();
+
                         initInProgress = false;
                         return result;
                     }
@@ -774,6 +825,60 @@ struct WebView::Native
         {
             settings->put_AreDevToolsEnabled(options.debugConsole ? TRUE : FALSE);
         }
+    }
+
+    void evaluateScript(const std::string& script,
+                        const WebView::JSCallback& callback)
+    {
+        if (!webView)
+        {
+            if (callback)
+                callback("", "WebView not initialized");
+            return;
+        }
+
+        auto wideScript = toWideString(script);
+
+        webView->ExecuteScript(
+            wideScript.c_str(),
+            Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+                [callback](HRESULT errorCode, LPCWSTR resultJson) -> HRESULT
+                {
+                    if (callback)
+                    {
+                        std::string result;
+                        std::string error;
+
+                        if (FAILED(errorCode))
+                        {
+                            error = "Script execution failed";
+                        }
+                        else if (resultJson)
+                        {
+                            // WebView2 always returns JSON-encoded values, so a
+                            // JS string like "abc" arrives as "\"abc\"". macOS
+                            // hands back the raw string. Decode one JSON layer
+                            // when the value is a string so both backends look
+                            // the same to callers; numbers / bools / objects
+                            // pass through.
+                            auto rawJson = fromWideString(resultJson);
+                            try
+                            {
+                                auto value = Miro::Json::parse(rawJson);
+                                result =
+                                    value.isString() ? value.asString() : rawJson;
+                            }
+                            catch (const Miro::Json::ParseError&)
+                            {
+                                result = rawJson;
+                            }
+                        }
+
+                        callback(result, error);
+                    }
+                    return S_OK;
+                })
+                .Get());
     }
 
     void setupEventHandlers()
@@ -1313,6 +1418,9 @@ struct WebView::Native
     bool initialized = false;
     bool initInProgress = false;
 
+    static constexpr int maxCompositionCreateRetries = 3;
+    int compositionCreateRetries = 0;
+
     // Tracks navigation in flight (NavigationStarting -> Completed), so
     // isLoading() can answer like the macOS backend's webView.isLoading.
     bool loading = false;
@@ -1415,36 +1523,51 @@ void WebView::loadHTML(const std::string& html, const std::string& baseURL)
         });
 }
 
+// Like loadURL/loadHTML, the navigation commands queue until the lazily
+// created CoreWebView2 exists, so e.g. loadURL() + reload() issued back to
+// back both take effect instead of the latter being dropped.
 void WebView::goBack()
 {
-    if (impl->webView)
-    {
-        impl->webView->GoBack();
-    }
+    impl->ensureInitialized();
+    impl->queueOperation(
+        [this]
+        {
+            if (impl->webView)
+                impl->webView->GoBack();
+        });
 }
 
 void WebView::goForward()
 {
-    if (impl->webView)
-    {
-        impl->webView->GoForward();
-    }
+    impl->ensureInitialized();
+    impl->queueOperation(
+        [this]
+        {
+            if (impl->webView)
+                impl->webView->GoForward();
+        });
 }
 
 void WebView::reload()
 {
-    if (impl->webView)
-    {
-        impl->webView->Reload();
-    }
+    impl->ensureInitialized();
+    impl->queueOperation(
+        [this]
+        {
+            if (impl->webView)
+                impl->webView->Reload();
+        });
 }
 
 void WebView::stopLoading()
 {
-    if (impl->webView)
-    {
-        impl->webView->Stop();
-    }
+    impl->ensureInitialized();
+    impl->queueOperation(
+        [this]
+        {
+            if (impl->webView)
+                impl->webView->Stop();
+        });
 }
 
 bool WebView::canGoBack() const
@@ -1492,57 +1615,14 @@ std::string WebView::getTitle() const
     return title.toString();
 }
 
+// Queues like loadURL/loadHTML, so a script evaluated right after loadURL() on
+// a not-yet-initialized WebView runs once the CoreWebView2 exists instead of
+// being silently dropped.
 void WebView::evaluateJavaScript(const std::string& script, JSCallback callback)
 {
-    if (!impl->webView)
-    {
-        if (callback)
-        {
-            callback("", "WebView not initialized");
-        }
-        return;
-    }
-
-    auto wideScript = toWideString(script);
-
-    impl->webView->ExecuteScript(
-        wideScript.c_str(),
-        Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
-            [callback](HRESULT errorCode, LPCWSTR resultJson) -> HRESULT
-            {
-                if (callback)
-                {
-                    std::string result;
-                    std::string error;
-
-                    if (FAILED(errorCode))
-                    {
-                        error = "Script execution failed";
-                    }
-                    else if (resultJson)
-                    {
-                        // WebView2 always returns JSON-encoded values, so a JS
-                        // string like "abc" arrives as "\"abc\"". macOS hands
-                        // back the raw string. Decode one JSON layer when the
-                        // value is a string so both backends look the same to
-                        // callers; numbers / bools / objects pass through.
-                        auto rawJson = fromWideString(resultJson);
-                        try
-                        {
-                            auto value = Miro::Json::parse(rawJson);
-                            result = value.isString() ? value.asString() : rawJson;
-                        }
-                        catch (const Miro::Json::ParseError&)
-                        {
-                            result = rawJson;
-                        }
-                    }
-
-                    callback(result, error);
-                }
-                return S_OK;
-            })
-            .Get());
+    impl->ensureInitialized();
+    impl->queueOperation([this, script, callback = std::move(callback)]()
+                         { impl->evaluateScript(script, callback); });
 }
 
 void WebView::takeSnapshot(SnapshotCallback callback)
@@ -1730,8 +1810,13 @@ void WebView::armWindowDrag()
 void WebView::setZoom(double level)
 {
     auto clamped = detail::clampZoom(level);
-    if (impl->controller)
-        impl->controller->put_ZoomFactor(clamped);
+    impl->ensureInitialized();
+    impl->queueOperation(
+        [this, clamped]
+        {
+            if (impl->controller)
+                impl->controller->put_ZoomFactor(clamped);
+        });
 }
 
 double WebView::getZoom() const

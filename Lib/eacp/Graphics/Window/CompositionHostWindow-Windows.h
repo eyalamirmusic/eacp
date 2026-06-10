@@ -25,6 +25,10 @@ void registerContentViewHwnd(View* root, HWND hwnd);
 void unregisterContentViewHwnd(View* root);
 HWND findHostHwndForView(View* view);
 
+// Marks `view` and all its subviews for repaint, e.g. after a DPI change or a
+// rendering-device replacement invalidates every backing surface.
+void repaintViewTree(View* view);
+
 // The composition-hosted HWND machinery shared by the two Windows surfaces: the
 // top-level Window and the child EmbeddedView. It owns the DesktopWindowTarget,
 // the root visual, the content view, DPI, keyboard state, and the WndProc
@@ -70,6 +74,11 @@ struct CompositionHostWindow
     std::bitset<256> keyState;
     bool trackingMouseLeave = false;
 
+    // Button-down seen, matching up not yet dispatched. Lets WM_CAPTURECHANGED
+    // synthesize the Up a stolen capture would otherwise swallow.
+    bool mouseButtonHeld = false;
+    MouseButton heldMouseButton = MouseButton::Left;
+
     // Fired after a WM_SIZE updates the content-view bounds, with the new
     // content size in points. The top-level Window wires this to
     // WindowOptions::onResize; EmbeddedView leaves it unset.
@@ -79,6 +88,10 @@ private:
     void resizeContentViewToClient();
     void ensureMouseLeaveTracking();
     void dispatchMouseToContentView(const MouseEvent& event) const;
+    void ensureAllLayersRendered(const View* view, float dpiScale) const;
+    void dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lParam);
+    void synthesizeMouseUpOnCaptureLoss();
+    std::string takePendingCharacters() const;
 };
 
 } // namespace eacp::Graphics

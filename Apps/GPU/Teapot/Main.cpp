@@ -213,10 +213,13 @@ struct TeapotView final : GPUView
         setContinuous(true);
     }
 
+    void update(Threads::FrameTime time) override
+    {
+        spin += radiansPerSecond * static_cast<float>(time.delta);
+    }
+
     void render(Frame& frame) override
     {
-        spin += 0.01f;
-
         auto bounds = getLocalBounds();
 
         // The CPU uploads only scalars now; the shader builds every matrix.
@@ -228,6 +231,8 @@ struct TeapotView final : GPUView
         auto pass = frame.beginPass({Graphics::Color {0.09f, 0.10f, 0.13f}});
         pass.draw(shader);
     }
+
+    static constexpr float radiansPerSecond = 0.6f;
 
     TeapotMesh mesh;
     TeapotShader shader;

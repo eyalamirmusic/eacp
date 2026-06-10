@@ -61,8 +61,8 @@ struct DisplayLink::Native
     DisplayLinkTarget* target = nil;
 };
 
-DisplayLink::DisplayLink(const Callback& cbToUse)
-    : callback(cbToUse)
+DisplayLink::DisplayLink(const FrameCallback& cb)
+    : callback(timedTick(cb))
     , impl(callback)
 {
 }

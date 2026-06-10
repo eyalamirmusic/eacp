@@ -1,6 +1,9 @@
 #pragma once
 
+#include <eacp/Graphics/Helpers/DisplayLink.h>
 #include <eacp/Graphics/View/View.h>
+
+#include <functional>
 
 namespace eacp::GPU
 {
@@ -24,6 +27,11 @@ public:
 
     virtual void render(Frame&) {}
 
+    // Called once per display refresh while continuous mode is on; the view
+    // then redraws via render(). Advance animation state here, scaled by the
+    // frame's delta time, so motion stays smooth and rate-independent.
+    virtual void update(Threads::FrameTime) {}
+
     void resized() override;
 
     // Multisample (MSAA) count used for rendering; defaults to 4 for smooth
@@ -39,6 +47,12 @@ public:
 
     void setContinuous(bool continuous);
     bool isContinuous() const;
+
+    // Fired after the GPU device was lost and replaced (driver update, GPU
+    // reset — Windows only). The view's swapchain and MSAA/depth targets are
+    // already rebuilt; recreate app-owned Buffers and pipelines here, since
+    // resources created on the lost device no longer render.
+    std::function<void()> onDeviceRestored = [] {};
 
 private:
     // Internal: drives the GPU render from the View draw cycle. Subclasses

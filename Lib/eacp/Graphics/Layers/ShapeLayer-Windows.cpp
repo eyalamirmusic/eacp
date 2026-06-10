@@ -66,7 +66,10 @@ struct ShapeLayer::Native : NativeLayerBase
         HRESULT hr =
             interop->BeginDraw(&updateRect, IID_PPV_ARGS(dc.put()), &offset);
         if (FAILED(hr) || !dc)
+        {
+            handleDeviceLossIfNeeded(hr);
             return;
+        }
 
         dc->Clear(D2D1::ColorF(0, 0, 0, 0));
 

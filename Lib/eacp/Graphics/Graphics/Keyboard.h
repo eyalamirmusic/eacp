@@ -72,6 +72,10 @@ constexpr uint16_t F9 = 0x65;
 constexpr uint16_t F10 = 0x6D;
 constexpr uint16_t F11 = 0x67;
 constexpr uint16_t F12 = 0x6F;
+
+// A platform key with no framework mapping. Backends that translate native
+// codes (Windows) report it for keys outside the table above.
+constexpr uint16_t Unknown = 0xFFFF;
 } // namespace KeyCode
 
 struct ModifierKeys
