@@ -69,6 +69,17 @@ bool contains(const std::string& haystack, const std::string& needle)
 {
     return haystack.find(needle) != std::string::npos;
 }
+
+int countOccurrences(const std::string& haystack, const std::string& needle)
+{
+    auto count = 0;
+
+    for (auto found = haystack.find(needle); found != std::string::npos;
+         found = haystack.find(needle, found + needle.size()))
+        ++count;
+
+    return count;
+}
 } // namespace
 
 // The generated vertex layout is derived from the same input declarations that
@@ -263,12 +274,53 @@ auto tCodegenNegatedNegative = test("GPU/codegenNegatedNegativeConstant") = []
     auto position = builder.vertexInput<Float2>();
     auto negated = -builder.constant(-0.5f);
 
-    builder.position(float4(float2(negated, negated), 0.0f, 1.0f));
-    builder.fragment(float4(position, float2(negated, negated)));
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(float4(float2(negated, negated), float2(negated, negated)));
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "(-(-0.5))"));
     check(!contains(metal, "--"));
+};
+
+// An operation referenced more than once is hoisted into a named local and
+// computed once per stage, so generated source stays linear in the graph size
+// instead of re-inlining shared subtrees at every use. Leaf reads stay inline.
+auto tCodegenSharedSubexpressions = test("GPU/codegenSharedSubexpressions") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto color = builder.vertexInput<Float3>();
+    auto angle = builder.uniform<Float>();
+    auto varyingColor = builder.varying(color);
+
+    // cos/sin each feed both rotated components: one local each in the vertex
+    // stage.
+    auto c = cos(angle);
+    auto s = sin(angle);
+    auto px = position.x();
+    auto py = position.y();
+    builder.position(float4(float2(px * c - py * s, px * s + py * c), 0.0f, 1.0f));
+
+    // normalize() feeds both the colour and its scale: one local in the
+    // fragment stage.
+    auto unit = normalize(varyingColor);
+    builder.fragment(float4(unit * length(unit), 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "    float t0 = cos(uniforms.u0);\n"));
+    check(contains(metal, "    float t1 = sin(uniforms.u0);\n"));
+    check(countOccurrences(metal, "cos(") == 1);
+    check(countOccurrences(metal, "sin(") == 1);
+
+    check(contains(metal, "    float3 t0 = normalize(input.v0);\n"));
+    check(countOccurrences(metal, "normalize(") == 1);
+    check(contains(metal, "length(t0)"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(countOccurrences(hlsl, "cos(") == 1);
+    check(countOccurrences(hlsl, "sin(") == 1);
+    check(countOccurrences(hlsl, "normalize(") == 1);
 };
 
 // Intrinsics carry the canonical MSL name and translate where HLSL spells

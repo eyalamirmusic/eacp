@@ -74,6 +74,7 @@ public:
     void setFragment(int node) { fragmentNode = node; }
 
     const Expr& expr(int node) const { return nodes[node]; }
+    int nodeCount() const { return nodes.size(); }
     const Vector<ValueType>& inputs() const { return inputTypes; }
     const Vector<VaryingSlot>& varyings() const { return varyingSlots; }
     const Vector<ValueType>& uniforms() const { return uniformTypes; }
