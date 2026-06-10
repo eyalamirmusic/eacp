@@ -37,6 +37,16 @@ typedef NS_OPTIONS(NSUInteger, _WKCaptureDevices) {
 };
 #endif
 
+// Private WKPreferences SPI (WKPreferencesPrivate.h, stable since
+// macOS 10.12 / iOS 10): the two switches behind hidden-page power saving.
+// Declared as a category and called behind respondsToSelector: so a WebKit
+// that removes them degrades to the default (throttled) behaviour instead
+// of crashing. See WebView::Options::backgroundThrottling.
+@interface WKPreferences (EacpBackgroundThrottlingSPI)
+- (void)_setPageVisibilityBasedProcessSuppressionEnabled:(BOOL)enabled;
+- (void)_setHiddenPageDOMTimerThrottlingEnabled:(BOOL)enabled;
+@end
+
 namespace eacp::Graphics
 {
 class WebView;
@@ -107,6 +117,19 @@ struct WebView::Native
         {
             [config.get().preferences setValue:@YES
                                         forKey:@"developerExtrasEnabled"];
+        }
+
+        if (!options.backgroundThrottling)
+        {
+            WKPreferences* prefs = config.get().preferences;
+
+            if ([prefs respondsToSelector:@selector
+                       (_setPageVisibilityBasedProcessSuppressionEnabled:)])
+                [prefs _setPageVisibilityBasedProcessSuppressionEnabled:NO];
+
+            if ([prefs respondsToSelector:@selector
+                       (_setHiddenPageDOMTimerThrottlingEnabled:)])
+                [prefs _setHiddenPageDOMTimerThrottlingEnabled:NO];
         }
 
         for (auto& [scheme, provider]: options.schemes)
