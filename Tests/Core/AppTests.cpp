@@ -66,10 +66,11 @@ auto tFactoryIsSingleton = test("App/getAppFactoryReturnsSameInstance") = []
 auto tFactoryStartsEmpty = test("App/getAppFactoryStartsEmpty") = []
 {
     resetAppState();
-    check(! getAppFactory());
+    check(!getAppFactory());
 };
 
-auto tRunStyleFactoryCreatesApp = test("App/factoryInvocationCreatesAppInstance") = []
+auto tRunStyleFactoryCreatesApp =
+    test("App/factoryInvocationCreatesAppInstance") = []
 {
     resetAppState();
     installCountedFactory();
@@ -89,39 +90,40 @@ auto tRunStyleFactoryCreatesApp = test("App/factoryInvocationCreatesAppInstance"
     resetAppState();
 };
 
-auto tRestartReplacesInstance = test("App/restartDestroysOldInstanceAndCreatesNew") = []
+auto tRestartReplacesInstance =
+    test("App/restartDestroysOldInstanceAndCreatesNew") = []
 {
     resetAppState();
     installCountedFactory();
 
-    auto stopped = runEventLoopFor(
-        std::chrono::seconds(2),
-        []
-        {
-            getAppFactory()();
-
-            callAsync(
-                []
-                {
-                    check(CountedPayload::ctorCount == 1);
-                    check(CountedPayload::dtorCount == 0);
-                    check(getGlobalApp().get() != nullptr);
-
-                    restart();
-
-                    // restart() posts its destroy+recreate via callAsync;
-                    // this callAsync is queued right after and runs once
-                    // that work is done (FIFO ordering on the runloop).
-                    callAsync(
+    auto stopped =
+        runEventLoopFor(std::chrono::seconds(2),
                         []
                         {
-                            check(CountedPayload::ctorCount == 2);
-                            check(CountedPayload::dtorCount == 1);
-                            check(getGlobalApp().get() != nullptr);
-                            stopEventLoop();
+                            getAppFactory()();
+
+                            callAsync(
+                                []
+                                {
+                                    check(CountedPayload::ctorCount == 1);
+                                    check(CountedPayload::dtorCount == 0);
+                                    check(getGlobalApp().get() != nullptr);
+
+                                    restart();
+
+                                    // restart() posts its destroy+recreate via callAsync;
+                                    // this callAsync is queued right after and runs once
+                                    // that work is done (FIFO ordering on the runloop).
+                                    callAsync(
+                                        []
+                                        {
+                                            check(CountedPayload::ctorCount == 2);
+                                            check(CountedPayload::dtorCount == 1);
+                                            check(getGlobalApp().get() != nullptr);
+                                            stopEventLoop();
+                                        });
+                                });
                         });
-                });
-        });
 
     check(stopped);
     resetAppState();
@@ -131,20 +133,20 @@ auto tRestartWithoutFactoryIsSafe = test("App/restartIsNoOpWhenFactoryIsEmpty") 
 {
     resetAppState();
 
-    auto stopped = runEventLoopFor(
-        std::chrono::seconds(2),
-        []
-        {
-            restart();
+    auto stopped =
+        runEventLoopFor(std::chrono::seconds(2),
+                        []
+                        {
+                            restart();
 
-            callAsync(
-                []
-                {
-                    check(getGlobalApp().get() == nullptr);
-                    check(CountedPayload::ctorCount == 0);
-                    stopEventLoop();
-                });
-        });
+                            callAsync(
+                                []
+                                {
+                                    check(getGlobalApp().get() == nullptr);
+                                    check(CountedPayload::ctorCount == 0);
+                                    stopEventLoop();
+                                });
+                        });
 
     check(stopped);
     resetAppState();
@@ -157,19 +159,18 @@ auto tRestartFromAnyThread = test("App/restartIsSafeFromBackgroundThread") = []
 
     auto worker = std::thread();
 
-    auto stopped = runEventLoopFor(
-        std::chrono::seconds(2),
-        [&]
-        {
-            getAppFactory()();
+    auto stopped = runEventLoopFor(std::chrono::seconds(2),
+                                   [&]
+                                   {
+                                       getAppFactory()();
 
-            worker = std::thread(
-                []
-                {
-                    restart();
-                    callAsync([] { stopEventLoop(); });
-                });
-        });
+                                       worker = std::thread(
+                                           []
+                                           {
+                                               restart();
+                                               callAsync([] { stopEventLoop(); });
+                                           });
+                                   });
 
     if (worker.joinable())
         worker.join();
@@ -180,21 +181,28 @@ auto tRestartFromAnyThread = test("App/restartIsSafeFromBackgroundThread") = []
     resetAppState();
 };
 
-auto tQuitTearsDownAppAndStopsLoop = test("App/quitDestroysAppAndStopsLoop") = []
+// quit() only stops the loop; the app must survive until the loop has fully
+// unwound and is destroyed afterwards (run<T>()'s destroyApp call), so no
+// nested native pump can still be delivering events to its views.
+auto tQuitStopsLoopAndKeepsAppUntilTeardown =
+    test("App/quitStopsLoopWithoutDestroyingApp") = []
 {
     resetAppState();
     installCountedFactory();
 
-    auto stopped = runEventLoopFor(
-        std::chrono::seconds(2),
-        []
-        {
-            getAppFactory()();
-            callAsync([] { quit(); });
-        });
+    auto stopped = runEventLoopFor(std::chrono::seconds(2),
+                                   []
+                                   {
+                                       getAppFactory()();
+                                       callAsync([] { quit(); });
+                                   });
 
     check(stopped);
     check(CountedPayload::ctorCount == 1);
+    check(CountedPayload::dtorCount == 0);
+    check(getGlobalApp().get() != nullptr);
+
+    eacp::Apps::destroyApp();
     check(CountedPayload::dtorCount == 1);
     check(getGlobalApp().get() == nullptr);
 

@@ -33,9 +33,13 @@ void destroyApp()
     getGlobalApp().reset();
 }
 
+// Quitting only stops the loop. The app is destroyed by run<T>() after the
+// loop has fully unwound, never from inside a runloop callback: a callback
+// can fire from a nested native pump (a window resize/drag tracking loop, a
+// modal), and destroying views while the platform is mid-event-delivery on
+// them is a use-after-free.
 static void quitSync()
 {
-    destroyApp();
     Threads::getEventLoop().quit();
 }
 
