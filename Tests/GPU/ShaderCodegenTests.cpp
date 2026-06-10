@@ -282,6 +282,45 @@ auto tCodegenNegatedNegative = test("GPU/codegenNegatedNegativeConstant") = []
     check(!contains(metal, "--"));
 };
 
+// Vector constructors take any mix of handles and literals whose components
+// total the width - including the previously missing float4(vec3, scalar
+// handle) shape - and compile through the real shader compiler. Self-skips
+// the compile half without a GPU device.
+auto tCodegenMixedConstructors = test("GPU/codegenMixedConstructors") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto color = builder.vertexInput<Float3>();
+    auto varyingColor = builder.varying(color);
+
+    auto lifted = float3(position.x(), position);
+    builder.position(float4(1.0f - lifted.x(), lifted.y(), 0.5f, 1));
+    builder.fragment(float4(varyingColor, length(varyingColor)));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "float3((input.a0).x, input.a0)"));
+    check(contains(metal, ", 0.5, 1.0)"));
+    check(contains(metal, "float4(input.v0, length(input.v0))"));
+
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
+};
+
 // An operation referenced more than once is hoisted into a named local and
 // computed once per stage, so generated source stays linear in the graph size
 // instead of re-inlining shared subtrees at every use. Leaf reads stay inline.

@@ -27,7 +27,7 @@ struct PathFillShader final : GPU::ShaderProgram
         auto clipX = position.x() / (viewport.x() * 0.5f) - 1.0f;
         auto clipY = 1.0f - position.y() / (viewport.y() * 0.5f);
 
-        setPosition(float4(clipX, clipY, constant(0.0f), constant(1.0f)));
+        setPosition(float4(clipX, clipY, 0.0f, 1.0f));
         setFragment(color);
     }
 };

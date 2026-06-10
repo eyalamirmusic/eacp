@@ -174,8 +174,7 @@ struct Uniform : T
         return *this;
     }
 
-    template <typename V>
-        requires ShaderValueIs<V, T>
+    template <ShaderValueIs<T> V>
     Uniform& operator=(const V& subValue)
     {
         static_assert(sizeof(V) == sizeof(Cpu),
