@@ -20,6 +20,13 @@ namespace
 {
 
 constexpr auto defaultTimeoutMs = 5000;
+
+// Budget for the page's first navigation. The first WebView2 launch on
+// a cold CI runner regularly blows past the per-command timeout
+// (runtime spin-up, profile creation, antivirus scans), so the wait
+// for the initial load gets its own generous budget; the regular 5s
+// default only governs commands once the page is up.
+constexpr auto startupTimeoutMs = 30000;
 constexpr auto waitForPollMs = 50;
 constexpr auto defaultSnapshotSubdir = "test-results/snapshots";
 
@@ -228,7 +235,8 @@ Threads::Async<void> AppDriver::waitForFirstNavigationAsync(const CallOptions&)
 
 void AppDriver::waitForFirstNavigation(const CallOptions& opts)
 {
-    auto timeout = std::chrono::milliseconds {effectiveTimeoutMs(opts)};
+    auto timeout = std::chrono::milliseconds {opts.timeoutMs ? *opts.timeoutMs
+                                                             : startupTimeoutMs};
     try
     {
         firstNavigation.waitFor(timeout);
@@ -291,12 +299,19 @@ Miro::JSON unwrapJsResult(const std::string& raw)
 // "Async::waitFor timed out" from the wrapper.
 constexpr auto syncTimeoutBufferMs = 1000;
 
-std::chrono::milliseconds syncOuterTimeout(int innerTimeoutMs)
-{
-    return std::chrono::milliseconds {innerTimeoutMs + syncTimeoutBufferMs};
-}
-
 } // namespace
+
+std::chrono::milliseconds AppDriver::syncOuterTimeout(int innerTimeoutMs) const
+{
+    // Until the first navigation has fired, the inner coroutine is
+    // still waiting on the page load, which gets the (much larger)
+    // startup budget — extend the outer wait to match so a slow cold
+    // start isn't cut short by the per-command timeout.
+    auto startupGraceMs = firstNavigationFired ? 0 : startupTimeoutMs;
+
+    return std::chrono::milliseconds {innerTimeoutMs + syncTimeoutBufferMs
+                                      + startupGraceMs};
+}
 
 Threads::Async<Miro::JSON> AppDriver::runJsAsync(const std::string& expression,
                                                  const CallOptions& opts)
@@ -487,6 +502,10 @@ int AppDriver::count(const std::string& selector, CallOptions opts)
 Threads::Async<bool> AppDriver::waitForAsync(const std::string& selector,
                                              CallOptions opts)
 {
+    // Start the poll deadline only once the page is up, so it measures
+    // page responsiveness rather than (possibly slow) startup.
+    co_await waitForFirstNavigationAsync({});
+
     auto deadline = std::chrono::steady_clock::now()
                     + std::chrono::milliseconds {effectiveTimeoutMs(opts)};
 
@@ -514,6 +533,8 @@ Threads::Async<bool> AppDriver::waitForCountAsync(const std::string& selector,
                                                   int count,
                                                   CallOptions opts)
 {
+    co_await waitForFirstNavigationAsync({});
+
     auto deadline = std::chrono::steady_clock::now()
                     + std::chrono::milliseconds {effectiveTimeoutMs(opts)};
 

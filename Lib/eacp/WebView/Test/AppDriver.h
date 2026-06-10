@@ -239,6 +239,7 @@ private:
     Threads::Async<> waitForFirstNavigationAsync(const CallOptions& opts);
     void waitForFirstNavigation(const CallOptions& opts);
     int effectiveTimeoutMs(const CallOptions& opts) const;
+    std::chrono::milliseconds syncOuterTimeout(int innerTimeoutMs) const;
 
     eacp::Graphics::WebView& webView;
     Miro::Bridge& bridge;
