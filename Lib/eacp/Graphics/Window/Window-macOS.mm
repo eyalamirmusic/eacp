@@ -348,6 +348,24 @@ struct Window::Native
             [getWindow() makeKeyAndOrderFront:nil];
     }
 
+    void minimize()
+    {
+        if (eacp::Apps::getAppEnvironment().headless)
+            return;
+
+        [getWindow() miniaturize:nil];
+    }
+
+    void toggleMaximize()
+    {
+        if (eacp::Apps::getAppEnvironment().headless)
+            return;
+
+        // zoom: is itself a toggle — it restores the saved frame when the
+        // window is already zoomed, matching the Windows caption button.
+        [getWindow() zoom:nil];
+    }
+
     NSWindow* getWindow() { return handle.get(); }
 
     ~Native() { [handle.get() close]; }
@@ -381,6 +399,16 @@ void Window::toFront()
 void Window::setVisible(bool visible)
 {
     impl->setVisible(visible);
+}
+
+void Window::minimize()
+{
+    impl->minimize();
+}
+
+void Window::toggleMaximize()
+{
+    impl->toggleMaximize();
 }
 
 void* Window::getHandle()

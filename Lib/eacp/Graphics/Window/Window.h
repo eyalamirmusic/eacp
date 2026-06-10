@@ -161,6 +161,16 @@ public:
     // headless and on iOS.
     void setVisible(bool visible);
 
+    // Minimizes to the Dock / taskbar (macOS miniaturize, Windows
+    // SW_MINIMIZE). Lets borderless windows with web-rendered window
+    // controls offer the standard button. No-op under headless and on iOS.
+    void minimize();
+
+    // Maximizes (macOS zoom, Windows SW_MAXIMIZE), or restores the previous
+    // frame when already maximized — the standard caption-button toggle.
+    // No-op under headless and on iOS.
+    void toggleMaximize();
+
     // Keyboard state.
     bool isKeyPressed(uint16_t virtualKeyCode) const;
     bool isShiftPressed() const;

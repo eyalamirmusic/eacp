@@ -157,6 +157,9 @@ struct Window::Native
         if (options.flags.contains(WindowFlags::Borderless))
         {
             style = WS_POPUP;
+            framelessRounded = options.cornerRadius.has_value();
+            framelessResizable =
+                framelessRounded && options.flags.contains(WindowFlags::Resizable);
         }
 
         std::wstring wideTitle =
@@ -169,6 +172,14 @@ struct Window::Native
 
         RECT rect = {0, 0, physicalWidth, physicalHeight};
         AdjustWindowRectExForDpi(&rect, style, FALSE, 0, dpi);
+
+        // DWM only rounds windows that carry a frame style — a bare
+        // WS_POPUP is silently left square even with DWMWCP_ROUND. Keep
+        // WS_THICKFRAME so rounding (and the system shadow) apply; the
+        // visible frame is removed again in WM_NCCALCSIZE, after the rect
+        // above was computed without it so the client size stays exact.
+        if (framelessRounded)
+            style |= WS_THICKFRAME;
 
         DWORD exStyle = options.alwaysOnTop ? WS_EX_TOPMOST : 0;
         showWithoutActivating = options.showInactive;
@@ -204,12 +215,11 @@ struct Window::Native
     // attribute and the window stays square.
     void applyRoundedCorners() const
     {
-        const DWORD attrWindowCornerPreference = 33; // DWMWA_WINDOW_CORNER_PREFERENCE
-        DWORD preference = 2;                        // DWMWCP_ROUND
-        DwmSetWindowAttribute(hwnd,
-                              attrWindowCornerPreference,
-                              &preference,
-                              sizeof(preference));
+        const DWORD attrWindowCornerPreference =
+            33; // DWMWA_WINDOW_CORNER_PREFERENCE
+        DWORD preference = 2; // DWMWCP_ROUND
+        DwmSetWindowAttribute(
+            hwnd, attrWindowCornerPreference, &preference, sizeof(preference));
     }
 
     void setVisible(bool visible)
@@ -224,6 +234,37 @@ struct Window::Native
         }
 
         ShowWindow(hwnd, showWithoutActivating ? SW_SHOWNOACTIVATE : SW_SHOW);
+    }
+
+    void minimize()
+    {
+        if (!hwnd || eacp::Apps::getAppEnvironment().headless)
+            return;
+
+        ShowWindow(hwnd, SW_MINIMIZE);
+    }
+
+    void toggleMaximize()
+    {
+        if (!hwnd || eacp::Apps::getAppEnvironment().headless)
+            return;
+
+        ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+    }
+
+    // A maximized window overhangs the monitor by its resize frame on every
+    // side. With the frame eaten by WM_NCCALCSIZE the client area would
+    // inherit that overhang and the content edges would land offscreen, so
+    // inset the proposed rect back to the visible area.
+    static void clampMaximizedClientRect(HWND hwnd, RECT& rect)
+    {
+        if (!IsZoomed(hwnd))
+            return;
+
+        auto dpi = GetDpiForWindow(hwnd);
+        auto frame = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi)
+                     + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+        InflateRect(&rect, -frame, -frame);
     }
 
     void initializeComposition()
@@ -379,6 +420,8 @@ struct Window::Native
     winrt::event_token pointerMovedToken;
     bool useWinRTPointerInput = false;
     bool showWithoutActivating = false;
+    bool framelessRounded = false;
+    bool framelessResizable = false;
 
     std::bitset<256> keyState;
 };
@@ -536,6 +579,27 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
 
     switch (msg)
     {
+        // The WS_THICKFRAME a frameless-rounded window keeps for DWM
+        // rounding must not produce a visible frame: claim the whole
+        // window rect as client area...
+        case WM_NCCALCSIZE:
+            if (wParam && self->framelessRounded)
+            {
+                auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam);
+                clampMaximizedClientRect(hwnd, params->rgrc[0]);
+                return 0;
+            }
+            break;
+
+        // ...and for fixed-size windows, keep the edge band the frame would
+        // reserve for resize hit-testing behaving as ordinary content. With
+        // WindowFlags::Resizable the band stays live, so a frameless window
+        // still resizes from its edges (Electron-style).
+        case WM_NCHITTEST:
+            if (self->framelessRounded && !self->framelessResizable)
+                return HTCLIENT;
+            break;
+
         case WM_CLOSE:
 
             self->quitCallback();
@@ -706,8 +770,7 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
                              static_cast<float>(pt.y) / dpiScale};
                 event.type = MouseEventType::Wheel;
 
-                auto wheelDelta =
-                    static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam));
+                auto wheelDelta = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam));
                 event.delta = (msg == WM_MOUSEWHEEL) ? Point {0.f, wheelDelta}
                                                      : Point {wheelDelta, 0.f};
 
@@ -791,6 +854,16 @@ void Window::toFront()
 void Window::setVisible(bool visible)
 {
     impl->setVisible(visible);
+}
+
+void Window::minimize()
+{
+    impl->minimize();
+}
+
+void Window::toggleMaximize()
+{
+    impl->toggleMaximize();
 }
 
 bool Window::isKeyPressed(uint16_t virtualKeyCode) const

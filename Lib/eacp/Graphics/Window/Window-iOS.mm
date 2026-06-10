@@ -102,6 +102,16 @@ void Window::setVisible(bool)
     // iOS apps are single-window; there's nothing to hide or show.
 }
 
+void Window::minimize()
+{
+    // iOS apps are single-window; there's nothing to minimize.
+}
+
+void Window::toggleMaximize()
+{
+    // iOS windows always fill the screen; there's nothing to toggle.
+}
+
 void* Window::getHandle()
 {
     return impl->getWindow();
