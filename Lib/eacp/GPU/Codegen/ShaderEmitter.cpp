@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 // The single source-of-truth walker. MSL and HLSL differ only in the binding
 // syntax and the stage scaffolding captured by the helpers below; the expression
@@ -59,98 +60,251 @@ std::string positionSemantic(Backend backend)
     return " : SV_Position";
 }
 
-std::string printExpr(const ShaderGraph& graph, int node, Backend backend)
+// Call nodes carry the canonical (MSL) builtin name; the few HLSL spells
+// differently are translated here.
+std::string callName(Backend backend, const std::string& name)
 {
-    const auto& expr = graph.expr(node);
-
-    switch (expr.kind)
+    if (backend == Backend::DirectX)
     {
-        case ExprKind::Input:
-            return "input.a" + std::to_string(expr.index);
+        if (name == "fract")
+            return "frac";
 
-        case ExprKind::Varying:
-            return "input.v" + std::to_string(expr.index);
-
-        case ExprKind::Uniform:
-            return "uniforms.u" + std::to_string(expr.index);
-
-        case ExprKind::Constant:
-            return floatLiteral(expr.value);
-
-        case ExprKind::Construct:
-        {
-            auto text = std::string(typeName(expr.type)) + "(";
-
-            for (auto i = 0; i < expr.args.size(); ++i)
-            {
-                if (i > 0)
-                    text += ", ";
-
-                text += printExpr(graph, expr.args[i], backend);
-            }
-
-            text += ")";
-
-            // float4x4(c0..c3) passes the four columns. MSL fills a matrix from
-            // columns, but HLSL fills it from rows, so the same call yields the
-            // transpose there; transpose() restores the column-major value, so the
-            // mul() paths stay identical across both backends.
-            if (backend == Backend::DirectX && expr.type == ValueType::Float4x4)
-                return "transpose(" + text + ")";
-
-            return text;
-        }
-
-        case ExprKind::Swizzle:
-            return "(" + printExpr(graph, expr.args[0], backend) + ")." + expr.text;
-
-        case ExprKind::Call:
-        {
-            auto text = expr.text + "(";
-
-            for (auto i = 0; i < expr.args.size(); ++i)
-            {
-                if (i > 0)
-                    text += ", ";
-
-                text += printExpr(graph, expr.args[i], backend);
-            }
-
-            return text + ")";
-        }
-
-        case ExprKind::Binary:
-            return "(" + printExpr(graph, expr.args[0], backend) + " "
-                   + std::string(1, expr.op) + " "
-                   + printExpr(graph, expr.args[1], backend) + ")";
-
-        case ExprKind::Mul:
-        {
-            // Matrix * vector. MSL spells it with the * operator (column-major);
-            // HLSL multiplies a matrix and vector with mul().
-            auto matrix = printExpr(graph, expr.args[0], backend);
-            auto vector = printExpr(graph, expr.args[1], backend);
-
-            if (backend == Backend::Metal)
-                return "(" + matrix + " * " + vector + ")";
-
-            return "mul(" + matrix + ", " + vector + ")";
-        }
-
-        case ExprKind::Sample:
-        {
-            // Texture sample at a float2 coordinate, through the sampler
-            // declared at the same index as the texture.
-            auto name = "texture" + std::to_string(expr.index);
-            auto sampler = "sampler" + std::to_string(expr.index);
-            auto method = backend == Backend::Metal ? ".sample(" : ".Sample(";
-
-            return name + method + sampler + ", "
-                   + printExpr(graph, expr.args[0], backend) + ")";
-        }
+        if (name == "mix")
+            return "lerp";
     }
 
-    return {};
+    return name;
+}
+
+// Prints one stage's expressions. Nodes the stage plan named as locals print
+// as tN references; everything else prints inline. print() spells out a node's
+// own expression (used for both inline nodes and local definitions), ref() is
+// what children and outputs go through, so shared subtrees collapse to a name.
+struct ExprPrinter
+{
+    const ShaderGraph& graph;
+    Backend backend;
+    const std::vector<int>& locals; // node id -> local index, -1 = inline
+
+    std::string ref(int node) const
+    {
+        if (locals[node] >= 0)
+            return "t" + std::to_string(locals[node]);
+
+        return print(node);
+    }
+
+    std::string print(int node) const
+    {
+        const auto& expr = graph.expr(node);
+
+        switch (expr.kind)
+        {
+            case ExprKind::Input:
+                return "input.a" + std::to_string(expr.index);
+
+            case ExprKind::Varying:
+                return "input.v" + std::to_string(expr.index);
+
+            case ExprKind::Uniform:
+                return "uniforms.u" + std::to_string(expr.index);
+
+            case ExprKind::Constant:
+                return floatLiteral(expr.value);
+
+            case ExprKind::Construct:
+            {
+                auto text = std::string(typeName(expr.type)) + "(";
+
+                for (auto i = 0; i < expr.args.size(); ++i)
+                {
+                    if (i > 0)
+                        text += ", ";
+
+                    text += ref(expr.args[i]);
+                }
+
+                text += ")";
+
+                // float4x4(c0..c3) passes the four columns. MSL fills a matrix
+                // from columns, but HLSL fills it from rows, so the same call
+                // yields the transpose there; transpose() restores the
+                // column-major value, so the mul() paths stay identical across
+                // both backends.
+                if (backend == Backend::DirectX && expr.type == ValueType::Float4x4)
+                    return "transpose(" + text + ")";
+
+                return text;
+            }
+
+            case ExprKind::Swizzle:
+                return "(" + ref(expr.args[0]) + ")." + expr.text;
+
+            case ExprKind::Call:
+            {
+                auto text = callName(backend, expr.text) + "(";
+
+                for (auto i = 0; i < expr.args.size(); ++i)
+                {
+                    if (i > 0)
+                        text += ", ";
+
+                    text += ref(expr.args[i]);
+                }
+
+                return text + ")";
+            }
+
+            case ExprKind::Unary:
+                // The operand gets its own parentheses: negating a negative
+                // constant must print (-(-1.0)), never the pre-decrement
+                // (--1.0).
+                return "(" + std::string(1, expr.op) + "(" + ref(expr.args[0])
+                       + "))";
+
+            case ExprKind::Binary:
+                return "(" + ref(expr.args[0]) + " " + std::string(1, expr.op) + " "
+                       + ref(expr.args[1]) + ")";
+
+            case ExprKind::Mul:
+            {
+                // Matrix * vector. MSL spells it with the * operator
+                // (column-major); HLSL multiplies a matrix and vector with
+                // mul().
+                auto matrix = ref(expr.args[0]);
+                auto vector = ref(expr.args[1]);
+
+                if (backend == Backend::Metal)
+                    return "(" + matrix + " * " + vector + ")";
+
+                return "mul(" + matrix + ", " + vector + ")";
+            }
+
+            case ExprKind::Sample:
+            {
+                // Texture sample at a float2 coordinate, through the sampler
+                // declared at the same index as the texture.
+                auto name = "texture" + std::to_string(expr.index);
+                auto sampler = "sampler" + std::to_string(expr.index);
+                auto method = backend == Backend::Metal ? ".sample(" : ".Sample(";
+
+                return name + method + sampler + ", " + ref(expr.args[0]) + ")";
+            }
+        }
+
+        return {};
+    }
+};
+
+// Operation nodes are worth naming when evaluated more than once; leaf reads
+// and swizzles stay inline - naming them saves nothing and hurts readability.
+bool wantsLocal(ExprKind kind)
+{
+    switch (kind)
+    {
+        case ExprKind::Construct:
+        case ExprKind::Call:
+        case ExprKind::Unary:
+        case ExprKind::Binary:
+        case ExprKind::Mul:
+        case ExprKind::Sample:
+            return true;
+
+        case ExprKind::Input:
+        case ExprKind::Varying:
+        case ExprKind::Uniform:
+        case ExprKind::Constant:
+        case ExprKind::Swizzle:
+            return false;
+    }
+
+    return false;
+}
+
+// Counts how many references each node receives across the stage's roots: one
+// per root plus one per parent edge, visiting each node's children only once.
+void countUses(const ShaderGraph& graph,
+               int node,
+               std::vector<int>& uses,
+               std::vector<char>& seen)
+{
+    if (node < 0)
+        return;
+
+    ++uses[node];
+
+    if (seen[node])
+        return;
+
+    seen[node] = 1;
+
+    for (auto argument: graph.expr(node).args)
+        countUses(graph, argument, uses, seen);
+}
+
+// Which nodes a stage emits as named locals, in dependency (post) order so
+// every definition precedes its uses.
+struct StagePlan
+{
+    std::vector<int> order;
+    std::vector<int> locals; // node id -> local index, -1 = inline
+};
+
+void orderLocals(const ShaderGraph& graph,
+                 int node,
+                 const std::vector<int>& uses,
+                 std::vector<char>& seen,
+                 StagePlan& plan)
+{
+    if (node < 0 || seen[node])
+        return;
+
+    seen[node] = 1;
+
+    for (auto argument: graph.expr(node).args)
+        orderLocals(graph, argument, uses, seen, plan);
+
+    if (uses[node] > 1 && wantsLocal(graph.expr(node).kind))
+    {
+        plan.locals[node] = (int) plan.order.size();
+        plan.order.push_back(node);
+    }
+}
+
+// Plans one stage: any operation the stage would evaluate more than once
+// becomes a tN local, so shared subtrees are computed - and printed - once
+// instead of being inlined at every use.
+StagePlan planStage(const ShaderGraph& graph, const std::vector<int>& roots)
+{
+    auto count = (std::size_t) graph.nodeCount();
+
+    auto plan = StagePlan {};
+    plan.locals.assign(count, -1);
+
+    auto uses = std::vector<int>(count, 0);
+    auto seen = std::vector<char>(count, 0);
+
+    for (auto root: roots)
+        countUses(graph, root, uses, seen);
+
+    auto ordered = std::vector<char>(count, 0);
+
+    for (auto root: roots)
+        orderLocals(graph, root, uses, ordered, plan);
+
+    return plan;
+}
+
+std::string emitLocals(const ExprPrinter& printer, const StagePlan& plan)
+{
+    auto source = std::string {};
+
+    for (auto node: plan.order)
+        source += "    " + std::string(typeName(printer.graph.expr(node).type))
+                  + " t" + std::to_string(plan.locals[node]) + " = "
+                  + printer.print(node) + ";\n";
+
+    return source;
 }
 
 // Whether the expression tree under node reads a uniform. A Varying read is the
@@ -287,14 +441,21 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         source += "VertexOut vertexMain(VertexIn input)\n{\n";
     }
 
+    auto vertexRoots = std::vector<int> {graph.position()};
+
+    for (auto i = 0; i < graph.varyings().size(); ++i)
+        vertexRoots.push_back(graph.varyings()[i].sourceNode);
+
+    auto vertexPlan = planStage(graph, vertexRoots);
+    auto vertexPrinter = ExprPrinter {graph, backend, vertexPlan.locals};
+
+    source += emitLocals(vertexPrinter, vertexPlan);
     source += "    VertexOut output;\n";
-    source += "    output.position = " + printExpr(graph, graph.position(), backend)
-              + ";\n";
+    source += "    output.position = " + vertexPrinter.ref(graph.position()) + ";\n";
 
     for (auto i = 0; i < graph.varyings().size(); ++i)
         source += "    output.v" + std::to_string(i) + " = "
-                  + printExpr(graph, graph.varyings()[i].sourceNode, backend)
-                  + ";\n";
+                  + vertexPrinter.ref(graph.varyings()[i].sourceNode) + ";\n";
 
     source += "    return output;\n}\n\n";
 
@@ -318,7 +479,11 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         source += "float4 fragmentMain(VertexOut input) : SV_Target\n{\n";
     }
 
-    source += "    return " + printExpr(graph, graph.fragment(), backend) + ";\n}\n";
+    auto fragmentPlan = planStage(graph, {graph.fragment()});
+    auto fragmentPrinter = ExprPrinter {graph, backend, fragmentPlan.locals};
+
+    source += emitLocals(fragmentPrinter, fragmentPlan);
+    source += "    return " + fragmentPrinter.ref(graph.fragment()) + ";\n}\n";
 
     return source;
 }

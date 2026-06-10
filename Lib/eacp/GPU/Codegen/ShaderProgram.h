@@ -15,6 +15,7 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <optional>
 
@@ -174,8 +175,7 @@ struct Uniform : T
         return *this;
     }
 
-    template <typename V>
-        requires ShaderValueIs<V, T>
+    template <ShaderValueIs<T> V>
     Uniform& operator=(const V& subValue)
     {
         static_assert(sizeof(V) == sizeof(Cpu),
@@ -372,10 +372,36 @@ public:
         vertexCountValue = count;
     }
 
+    // Uploads typed index data and owns the resulting buffer; draw(program)
+    // then draws indexed. The index width is inferred from the element type.
+    template <std::size_t N>
+    void setIndices(const std::uint32_t (&data)[N])
+    {
+        setIndices(data, (int) N);
+    }
+
+    template <std::size_t N>
+    void setIndices(const std::uint16_t (&data)[N])
+    {
+        setIndices(data, (int) N);
+    }
+
+    void setIndices(const std::uint32_t* data, int count)
+    {
+        uploadIndices(data, sizeof(std::uint32_t), count, IndexFormat::UInt32);
+    }
+
+    void setIndices(const std::uint16_t* data, int count)
+    {
+        uploadIndices(data, sizeof(std::uint16_t), count, IndexFormat::UInt16);
+    }
+
     // Builds the shader library and render pipeline. sampleCount must match the
     // render target (GPUView::sampleCount()); set depth when the view has a depth
     // buffer (GPUView::setDepth(true)).
-    void prepare(int sampleCount, bool depth = false)
+    void prepare(int sampleCount,
+                 bool depth = false,
+                 PrimitiveTopology topology = PrimitiveTopology::Triangles)
     {
         shaderLibrary.emplace(Device::shared(), generated.source);
 
@@ -384,6 +410,7 @@ public:
         descriptor.sampleCount = sampleCount;
         descriptor.vertexLayout = generated.vertexLayout;
         descriptor.depth = depth;
+        descriptor.topology = topology;
 
         pipelineState.emplace(Device::shared(), descriptor);
     }
@@ -391,6 +418,11 @@ public:
     const RenderPipeline& pipeline() const { return *pipelineState; }
     const Buffer& vertices() const { return *vertexBufferData; }
     int vertexCount() const { return vertexCountValue; }
+
+    bool hasIndices() const { return indexBufferData.has_value(); }
+    const Buffer& indices() const { return *indexBufferData; }
+    int indexCount() const { return indexCountValue; }
+    IndexFormat indexFormat() const { return indexFormatValue; }
 
     // Re-packs the current uniform values and returns the block, ready for
     // RenderPass::setVertexBytes. Cheap - the block is a handful of floats.
@@ -487,7 +519,7 @@ protected:
         auto z0 = constant(0.0f);
         auto o = constant(1.0f);
         return float4x4(float4(c, s, z0, z0),
-                        float4(z0 - s, c, z0, z0),
+                        float4(-s, c, z0, z0),
                         float4(z0, z0, o, z0),
                         float4(z0, z0, z0, o));
     }
@@ -500,7 +532,7 @@ protected:
         auto o = constant(1.0f);
         return float4x4(float4(o, z0, z0, z0),
                         float4(z0, c, s, z0),
-                        float4(z0, z0 - s, c, z0),
+                        float4(z0, -s, c, z0),
                         float4(z0, z0, z0, o));
     }
 
@@ -533,15 +565,31 @@ private:
         reflectMembers(uploadVisitor);
     }
 
+    void uploadIndices(const void* data,
+                       std::size_t elementSize,
+                       int count,
+                       IndexFormat format)
+    {
+        indexBufferData.emplace(Device::shared(),
+                                data,
+                                elementSize * (std::size_t) count,
+                                BufferUsage::Index);
+        indexCountValue = count;
+        indexFormatValue = format;
+    }
+
     ShaderBuilder builder;
     GeneratedShader generated;
     VertexLayout vertexLayoutData;
     Vector<std::byte> uniformBytes;
 
     std::optional<Buffer> vertexBufferData;
+    std::optional<Buffer> indexBufferData;
     std::optional<ShaderLibrary> shaderLibrary;
     std::optional<RenderPipeline> pipelineState;
     int vertexCountValue = 0;
+    int indexCountValue = 0;
+    IndexFormat indexFormatValue = IndexFormat::UInt32;
 };
 } // namespace eacp::GPU
 

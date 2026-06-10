@@ -88,6 +88,16 @@ int ShaderGraph::addCall(ValueType type, std::string name, Vector<int> args)
     return add(std::move(node));
 }
 
+int ShaderGraph::addUnary(ValueType type, char op, int child)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Unary;
+    node.type = type;
+    node.op = op;
+    node.args.add(child);
+    return add(std::move(node));
+}
+
 int ShaderGraph::addBinary(ValueType type, char op, int lhs, int rhs)
 {
     auto node = Expr {};

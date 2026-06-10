@@ -79,9 +79,17 @@ Vec3 controlPoint(int patch, int i, int j)
     return {p[0], p[1], p[2]};
 }
 
-// Tessellates the 32 Bezier patches into a flat, centred, unit-scaled triangle
-// list with per-vertex normals (from the surface partial derivatives).
-Vector<Vertex> buildTeapot()
+struct TeapotMesh
+{
+    Vector<Vertex> vertices;
+    Vector<std::uint32_t> indices;
+};
+
+// Tessellates the 32 Bezier patches into a centred, unit-scaled indexed mesh
+// with per-vertex normals (from the surface partial derivatives). Each patch
+// shares its grid vertices between quads through the index buffer, so the
+// upload is a fraction of the unindexed triangle list.
+TeapotMesh buildTeapot()
 {
     auto low = Vec3 {1e9f, 1e9f, 1e9f};
     auto high = Vec3 {-1e9f, -1e9f, -1e9f};
@@ -102,11 +110,12 @@ Vector<Vertex> buildTeapot()
     auto scale = 2.0f / extent;
 
     constexpr auto steps = 12;
-    auto vertices = Vector<Vertex> {};
+    constexpr auto rowLength = steps + 1;
+    auto mesh = TeapotMesh {};
 
     for (auto p = 0; p < teapot::patchCount; ++p)
     {
-        Vertex grid[steps + 1][steps + 1];
+        auto base = (std::uint32_t) mesh.vertices.size();
 
         for (auto iu = 0; iu <= steps; ++iu)
         {
@@ -133,23 +142,24 @@ Vector<Vertex> buildTeapot()
 
                 auto normal = normalize(cross(tangentU, tangentV));
                 auto centred = (position - center) * scale;
-                grid[iu][iv] = {centred, normal};
+                mesh.vertices.add({centred, normal});
             }
         }
 
         for (auto iu = 0; iu < steps; ++iu)
             for (auto iv = 0; iv < steps; ++iv)
             {
-                auto a = grid[iu][iv];
-                auto b = grid[iu + 1][iv];
-                auto c = grid[iu + 1][iv + 1];
-                auto d = grid[iu][iv + 1];
+                auto a = base + (std::uint32_t) (iu * rowLength + iv);
+                auto b = a + rowLength;
+                auto c = b + 1;
+                auto d = a + 1;
 
-                vertices.getVector().insert(vertices.end(), {a, b, c, a, c, d});
+                mesh.indices.getVector().insert(mesh.indices.end(),
+                                                {a, b, c, a, c, d});
             }
     }
 
-    return vertices;
+    return mesh;
 }
 
 // Per-vertex (Gouraud) shaded teapot. The whole transform pipeline - model spin,
@@ -183,9 +193,8 @@ struct TeapotShader final : ShaderProgram
         auto toLight = normalize(lightDir);
 
         // Two-sided diffuse term: |N . L|, so inward-facing patches still light.
-        auto facing = dot(worldNormal, toLight);
-        auto diffuse = max(facing, facing * constant(-1.0f));
-        auto shade = diffuse * constant(0.8f) + constant(0.2f);
+        auto diffuse = abs(dot(worldNormal, toLight));
+        auto shade = diffuse * 0.8f + 0.2f;
 
         setFragment(float4(varying(baseColor * shade), 1.0f));
     }
@@ -198,7 +207,8 @@ struct TeapotView final : GPUView
         : mesh(buildTeapot())
     {
         setDepth(true);
-        shader.setVertices(mesh.data(), (int) mesh.size());
+        shader.setVertices(mesh.vertices.data(), mesh.vertices.size());
+        shader.setIndices(mesh.indices.data(), mesh.indices.size());
         shader.prepare(sampleCount(), true);
         setContinuous(true);
     }
@@ -224,7 +234,7 @@ struct TeapotView final : GPUView
 
     static constexpr float radiansPerSecond = 0.6f;
 
-    Vector<Vertex> mesh;
+    TeapotMesh mesh;
     TeapotShader shader;
     float spin = 0.0f;
 };

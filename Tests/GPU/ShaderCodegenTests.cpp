@@ -69,6 +69,17 @@ bool contains(const std::string& haystack, const std::string& needle)
 {
     return haystack.find(needle) != std::string::npos;
 }
+
+int countOccurrences(const std::string& haystack, const std::string& needle)
+{
+    auto count = 0;
+
+    for (auto found = haystack.find(needle); found != std::string::npos;
+         found = haystack.find(needle, found + needle.size()))
+        ++count;
+
+    return count;
+}
 } // namespace
 
 // The generated vertex layout is derived from the same input declarations that
@@ -234,6 +245,202 @@ auto tCodegenCbufferPaddingFloat2 = test("GPU/codegenHlslCbufferPaddingFloat2") 
     vectors.fragment(color);
 
     check(!contains(emitHlsl(vectors.graph()), "pad"));
+};
+
+// Unary minus and float literal operands record IR nodes directly, with no
+// constant() wrapping at the call site. Pure string generation.
+auto tCodegenOperatorSugar = test("GPU/codegenOperatorSugar") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto x = position.x();
+
+    builder.position(float4(float2(-x * 2.0f, 1.0f - x), 0.0f, 1.0f));
+    builder.fragment(float4(float3(x, x, x), 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "(-((input.a0).x))"));
+    check(contains(metal, " * 2.0)"));
+    check(contains(metal, "(1.0 - (input.a0).x)"));
+};
+
+// Negating a negative constant emits nested parentheses, not a pre-decrement:
+// rotateX(-72 degrees) bakes sin() as a negative literal and then negates it.
+auto tCodegenNegatedNegative = test("GPU/codegenNegatedNegativeConstant") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto negated = -builder.constant(-0.5f);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(float4(float2(negated, negated), float2(negated, negated)));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "(-(-0.5))"));
+    check(!contains(metal, "--"));
+};
+
+// Vector constructors take any mix of handles and literals whose components
+// total the width - including the previously missing float4(vec3, scalar
+// handle) shape - and compile through the real shader compiler. Self-skips
+// the compile half without a GPU device.
+auto tCodegenMixedConstructors = test("GPU/codegenMixedConstructors") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto color = builder.vertexInput<Float3>();
+    auto varyingColor = builder.varying(color);
+
+    auto lifted = float3(position.x(), position);
+    builder.position(float4(1.0f - lifted.x(), lifted.y(), 0.5f, 1));
+    builder.fragment(float4(varyingColor, length(varyingColor)));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "float3((input.a0).x, input.a0)"));
+    check(contains(metal, ", 0.5, 1.0)"));
+    check(contains(metal, "float4(input.v0, length(input.v0))"));
+
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
+};
+
+// An operation referenced more than once is hoisted into a named local and
+// computed once per stage, so generated source stays linear in the graph size
+// instead of re-inlining shared subtrees at every use. Leaf reads stay inline.
+auto tCodegenSharedSubexpressions = test("GPU/codegenSharedSubexpressions") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto color = builder.vertexInput<Float3>();
+    auto angle = builder.uniform<Float>();
+    auto varyingColor = builder.varying(color);
+
+    // cos/sin each feed both rotated components: one local each in the vertex
+    // stage.
+    auto c = cos(angle);
+    auto s = sin(angle);
+    auto px = position.x();
+    auto py = position.y();
+    builder.position(float4(float2(px * c - py * s, px * s + py * c), 0.0f, 1.0f));
+
+    // normalize() feeds both the colour and its scale: one local in the
+    // fragment stage.
+    auto unit = normalize(varyingColor);
+    builder.fragment(float4(unit * length(unit), 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "    float t0 = cos(uniforms.u0);\n"));
+    check(contains(metal, "    float t1 = sin(uniforms.u0);\n"));
+    check(countOccurrences(metal, "cos(") == 1);
+    check(countOccurrences(metal, "sin(") == 1);
+
+    check(contains(metal, "    float3 t0 = normalize(input.v0);\n"));
+    check(countOccurrences(metal, "normalize(") == 1);
+    check(contains(metal, "length(t0)"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(countOccurrences(hlsl, "cos(") == 1);
+    check(countOccurrences(hlsl, "sin(") == 1);
+    check(countOccurrences(hlsl, "normalize(") == 1);
+};
+
+// Intrinsics carry the canonical MSL name and translate where HLSL spells
+// differently: fract -> frac, mix -> lerp; the rest are shared. Pure string
+// generation.
+auto tCodegenIntrinsicNames = test("GPU/codegenIntrinsicNames") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto color = builder.vertexInput<Float3>();
+    auto varyingColor = builder.varying(color);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto t = fract(varyingColor.x());
+    auto shaped = smoothstep(0.0f, 1.0f, t);
+    auto tinted = mix(varyingColor, normalize(varyingColor), shaped);
+    auto lit = clamp(tinted * abs(varyingColor.y()), 0.0f, 1.0f);
+    builder.fragment(float4(lit, 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "fract("));
+    check(contains(metal, "mix("));
+    check(contains(metal, "smoothstep(0.0, 1.0, "));
+    check(contains(metal, "clamp("));
+    check(contains(metal, "abs("));
+    check(contains(metal, "normalize("));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "frac("));
+    check(contains(hlsl, "lerp("));
+    check(contains(hlsl, "smoothstep("));
+    check(!contains(hlsl, "fract("));
+    check(!contains(hlsl, "mix("));
+};
+
+// Runs the whole vocabulary through the real platform shader compiler, so
+// every intrinsic spelling and broadcast form is validated against the actual
+// language. Self-skips without a GPU device.
+auto tCodegenIntrinsicsCompile = test("GPU/codegenIntrinsicsCompile") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto normal = builder.vertexInput<Float3>();
+    auto angle = builder.uniform<Float>();
+
+    auto swirled = float2(position.x() * cos(angle) - position.y() * sin(angle),
+                          position.x() * sin(angle) + position.y() * cos(angle));
+    auto lifted = swirled * min(pow(abs(angle), 2.0f) + 0.25f, 1.0f);
+    builder.position(float4(lifted, 0.0f, 1.0f));
+
+    auto unit = normalize(builder.varying(normal));
+    auto up = float3(
+        builder.constant(0.0f), builder.constant(0.0f), builder.constant(1.0f));
+    auto facing = abs(dot(unit, cross(unit, up) + up));
+    auto rim = pow(clamp(-facing + 1.0f, 0.0f, 1.0f), 2.0f);
+    auto banded = step(0.5f, fract(facing * 4.0f));
+    auto soft = smoothstep(0.0f, 1.0f, mix(rim, banded, 0.5f));
+    auto stepped = floor(facing * 3.0f) / 3.0f;
+    auto grey = max(min(sqrt(length(unit) * soft) * stepped, 1.0f), 0.0f);
+    auto biased = unit * 0.5f + 0.5f;
+    builder.fragment(float4(biased * grey, 1.0f));
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
 };
 
 // A uniform read only by the fragment expression binds the block to the

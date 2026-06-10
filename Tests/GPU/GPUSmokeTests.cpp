@@ -113,6 +113,35 @@ auto tDeviceBuildsResources = test("GPU/deviceBuildsResources") = []
     check(pipeline.isValid());
 };
 
+// An Index-usage buffer builds (D3D11 needs the index bind flag), and the
+// pipeline carries its topology through for the render pass to read at draw
+// time. Self-skips without a GPU device.
+auto tDeviceBuildsIndexBuffer = test("GPU/deviceBuildsIndexBuffer") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    const std::uint32_t indices[] = {0, 1, 2, 0, 2, 3};
+
+    auto buffer = device.makeBuffer(indices, BufferUsage::Index);
+    check(buffer.isValid());
+    check(buffer.size() == sizeof(indices));
+
+    auto library = device.makeShaderLibrary(smokeShaderSource());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout.attribute(VertexFormat::Float4, 0);
+    descriptor.vertexLayout.stride = sizeof(float) * 4;
+    descriptor.topology = PrimitiveTopology::TriangleStrip;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
+    check(pipeline.topology() == PrimitiveTopology::TriangleStrip);
+};
+
 // A texture builds from raw pixels and reports its size; both filter modes and
 // a null-pixel (uninitialised) texture build too. Self-skips without a device.
 auto tDeviceBuildsTexture = test("GPU/deviceBuildsTexture") = []

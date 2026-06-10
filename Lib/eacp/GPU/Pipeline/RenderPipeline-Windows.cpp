@@ -19,6 +19,25 @@ namespace eacp::GPU
 {
 namespace
 {
+D3D11_PRIMITIVE_TOPOLOGY toD3DTopology(PrimitiveTopology topology)
+{
+    switch (topology)
+    {
+        case PrimitiveTopology::Triangles:
+            return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+        case PrimitiveTopology::TriangleStrip:
+            return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+        case PrimitiveTopology::Lines:
+            return D3D11_PRIMITIVE_TOPOLOGY_LINELIST;
+        case PrimitiveTopology::LineStrip:
+            return D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP;
+        case PrimitiveTopology::Points:
+            return D3D11_PRIMITIVE_TOPOLOGY_POINTLIST;
+    }
+
+    return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+}
+
 DXGI_FORMAT toDXGIFormat(VertexFormat format)
 {
     switch (format)
@@ -123,7 +142,10 @@ winrt::com_ptr<ID3D11BlendState> makeBlendState(ID3D11Device* device)
 struct RenderPipeline::Native
 {
     Native(Device& device, const RenderPipelineDescriptor& descriptor)
+        : topology(descriptor.topology)
     {
+        pipeline.topology = toD3DTopology(descriptor.topology);
+
         auto* d3dDevice = static_cast<ID3D11Device*>(device.nativeDevice());
 
         if (d3dDevice == nullptr || descriptor.library == nullptr)
@@ -150,6 +172,7 @@ struct RenderPipeline::Native
             pipeline.depthStencilState = makeDepthStencilState(d3dDevice);
     }
 
+    PrimitiveTopology topology = PrimitiveTopology::Triangles;
     D3DPipeline pipeline;
 };
 
@@ -163,6 +186,11 @@ bool RenderPipeline::isValid() const
 {
     return impl->pipeline.vertexShader != nullptr
            && impl->pipeline.pixelShader != nullptr;
+}
+
+PrimitiveTopology RenderPipeline::topology() const
+{
+    return impl->topology;
 }
 
 void* RenderPipeline::nativeState() const

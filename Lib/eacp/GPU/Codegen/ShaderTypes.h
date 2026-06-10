@@ -14,7 +14,7 @@ enum class ValueType
     Float4x4
 };
 
-inline int componentCount(ValueType type)
+constexpr int componentCount(ValueType type)
 {
     switch (type)
     {
@@ -33,7 +33,7 @@ inline int componentCount(ValueType type)
     return 1;
 }
 
-inline int byteSize(ValueType type)
+constexpr int byteSize(ValueType type)
 {
     return componentCount(type) * 4;
 }

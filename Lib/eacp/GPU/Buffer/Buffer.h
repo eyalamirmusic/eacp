@@ -8,14 +8,23 @@ namespace eacp::GPU
 {
 class Device;
 
-// What a buffer is bound as. A Vertex buffer feeds the vertex stage; a Storage
-// buffer is read/written by a compute kernel and can be read back to the CPU.
-// On Metal both are plain MTLBuffers; on D3D11 a Storage buffer additionally
+// What a buffer is bound as. A Vertex buffer feeds the vertex stage; an Index
+// buffer feeds drawIndexed; a Storage buffer is read/written by a compute
+// kernel and can be read back to the CPU. On Metal all are plain MTLBuffers;
+// on D3D11 the usage picks the bind flags, and a Storage buffer additionally
 // carries the shader-resource and unordered-access views compute binds.
 enum class BufferUsage
 {
     Vertex,
+    Index,
     Storage
+};
+
+// The width of the indices in an Index buffer, told to drawIndexed.
+enum class IndexFormat
+{
+    UInt16,
+    UInt32
 };
 
 // RAII wrapper around a GPU buffer (MTLBuffer on Metal). Create via

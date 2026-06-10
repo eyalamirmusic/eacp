@@ -5,6 +5,7 @@
 
 #include <concepts>
 #include <initializer_list>
+#include <utility>
 
 // The string-free EDSL surface. Float/Float2/Float3/Float4 are lightweight value
 // handles into a ShaderGraph: operators and the free float2/float3/float4()
@@ -117,12 +118,43 @@ struct ValueTypeOf<Float4x4>
     static constexpr ValueType value = ValueType::Float4x4;
 };
 
+namespace detail
+{
+// The plain handle type a possibly-derived handle maps back to: a
+// Uniform<Float3> member is a Float3 to every operator and intrinsic below.
+// Declared, never defined - overload resolution does the mapping.
+Float baseOf(const Float&);
+Float2 baseOf(const Float2&);
+Float3 baseOf(const Float3&);
+Float4 baseOf(const Float4&);
+} // namespace detail
+
+// Any value handle, or a type derived from one (e.g. a Uniform<> member), so
+// uniforms and vertex inputs work directly in expressions.
 template <typename T>
-concept IsShaderVector =
-    std::same_as<T, Float2> || std::same_as<T, Float3> || std::same_as<T, Float4>;
+concept ShaderValueLike = requires(const T& value) { detail::baseOf(value); };
+
+// The handle type T stands in for.
+template <typename T>
+using ShaderBase = decltype(detail::baseOf(std::declval<const T&>()));
+
+// T stands in for exactly the given base handle: ShaderShape<Float3> accepts a
+// Float3 or a Uniform<Float3>.
+template <typename T, typename Base>
+concept ShaderShape = ShaderValueLike<T> && std::same_as<ShaderBase<T>, Base>;
 
 template <typename T>
-concept IsShaderValue = std::same_as<T, Float> || IsShaderVector<T>;
+concept ShaderScalarLike = ShaderShape<T, Float>;
+
+template <typename T>
+concept ShaderVectorLike = ShaderValueLike<T> && !ShaderScalarLike<T>;
+
+// An operand of the same shape as another, written as a type constraint with
+// the reference type as its argument: template <typename L, SameShaderShape<L> R>
+// reads "R shaped like L" and accepts e.g. a Float3 next to a Uniform<Float3>.
+template <typename T, typename Other>
+concept SameShaderShape =
+    ShaderValueLike<Other> && ShaderShape<T, ShaderBase<Other>>;
 
 namespace detail
 {
@@ -144,6 +176,32 @@ T scalarOp(char op, const ValueHandle& lhs, float rhs)
     result.node = lhs.graph->addBinary(
         ValueTypeOf<T>::value, op, lhs.node, lhs.graph->addConstant(rhs));
     return result;
+}
+
+template <typename T>
+T scalarOpLeft(char op, float lhs, const ValueHandle& rhs)
+{
+    auto result = T {};
+    result.graph = rhs.graph;
+    result.node = rhs.graph->addBinary(
+        ValueTypeOf<T>::value, op, rhs.graph->addConstant(lhs), rhs.node);
+    return result;
+}
+
+template <typename T>
+T unaryOp(char op, const ValueHandle& value)
+{
+    auto result = T {};
+    result.graph = value.graph;
+    result.node = value.graph->addUnary(ValueTypeOf<T>::value, op, value.node);
+    return result;
+}
+
+// A float literal as a handle on the same graph as an existing value, for
+// intrinsics taking scalar-literal arguments.
+inline ValueHandle constantOn(const ValueHandle& value, float literal)
+{
+    return {value.graph, value.graph->addConstant(literal)};
 }
 
 template <typename T>
@@ -175,78 +233,319 @@ T call2(const ValueHandle& a, const ValueHandle& b, ValueType type, const char* 
     result.node = a.graph->addCall(type, name, args);
     return result;
 }
+
+template <typename T>
+T call3(const ValueHandle& a,
+        const ValueHandle& b,
+        const ValueHandle& c,
+        ValueType type,
+        const char* name)
+{
+    auto result = T {};
+    result.graph = a.graph;
+    auto args = Vector<int> {};
+    args.add(a.node);
+    args.add(b.node);
+    args.add(c.node);
+    result.node = a.graph->addCall(type, name, args);
+    return result;
+}
+
+// Componentwise builtins shaped like their argument: the result is the
+// argument's base handle type.
+template <typename T>
+ShaderBase<T> componentCall(const T& value, const char* name)
+{
+    return call<ShaderBase<T>>(value, ValueTypeOf<ShaderBase<T>>::value, name);
+}
+
+template <typename L, typename R>
+ShaderBase<L> componentCall2(const L& a, const R& b, const char* name)
+{
+    return call2<ShaderBase<L>>(a, b, ValueTypeOf<ShaderBase<L>>::value, name);
+}
+
+template <typename T>
+ShaderBase<T> componentCall2(const T& a, float b, const char* name)
+{
+    return call2<ShaderBase<T>>(
+        a, constantOn(a, b), ValueTypeOf<ShaderBase<T>>::value, name);
+}
 } // namespace detail
 
-inline Float sin(const Float& value)
+// Componentwise builtins. Call nodes carry the MSL spelling; the emitter
+// translates the few HLSL spells differently (fract -> frac, mix -> lerp).
+template <ShaderValueLike T>
+ShaderBase<T> sin(const T& value)
 {
-    return detail::call<Float>(value, ValueType::Float, "sin");
+    return detail::componentCall(value, "sin");
 }
 
-inline Float cos(const Float& value)
+template <ShaderValueLike T>
+ShaderBase<T> cos(const T& value)
 {
-    return detail::call<Float>(value, ValueType::Float, "cos");
+    return detail::componentCall(value, "cos");
 }
 
-inline Float3 normalize(const Float3& value)
+template <ShaderValueLike T>
+ShaderBase<T> abs(const T& value)
 {
-    return detail::call<Float3>(value, ValueType::Float3, "normalize");
+    return detail::componentCall(value, "abs");
 }
 
-inline Float dot(const Float3& a, const Float3& b)
+template <ShaderValueLike T>
+ShaderBase<T> floor(const T& value)
+{
+    return detail::componentCall(value, "floor");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> fract(const T& value)
+{
+    return detail::componentCall(value, "fract");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> sqrt(const T& value)
+{
+    return detail::componentCall(value, "sqrt");
+}
+
+template <typename L, SameShaderShape<L> R>
+ShaderBase<L> min(const L& a, const R& b)
+{
+    return detail::componentCall2(a, b, "min");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> min(const T& a, float b)
+{
+    return detail::componentCall2(a, b, "min");
+}
+
+template <typename L, SameShaderShape<L> R>
+ShaderBase<L> max(const L& a, const R& b)
+{
+    return detail::componentCall2(a, b, "max");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> max(const T& a, float b)
+{
+    return detail::componentCall2(a, b, "max");
+}
+
+template <typename L, SameShaderShape<L> R>
+ShaderBase<L> pow(const L& base, const R& exponent)
+{
+    return detail::componentCall2(base, exponent, "pow");
+}
+
+template <ShaderScalarLike T>
+Float pow(const T& base, float exponent)
+{
+    return detail::componentCall2(base, exponent, "pow");
+}
+
+// step(edge, x): 0 where x < edge, 1 elsewhere - the branchless building block
+// until comparisons and select arrive.
+template <typename L, SameShaderShape<L> R>
+ShaderBase<R> step(const L& edge, const R& value)
+{
+    return detail::call2<ShaderBase<R>>(
+        edge, value, ValueTypeOf<ShaderBase<R>>::value, "step");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> step(float edge, const T& value)
+{
+    return detail::call2<ShaderBase<T>>(detail::constantOn(value, edge),
+                                        value,
+                                        ValueTypeOf<ShaderBase<T>>::value,
+                                        "step");
+}
+
+template <ShaderVectorLike T>
+Float length(const T& value)
+{
+    return detail::call<Float>(value, ValueType::Float, "length");
+}
+
+template <ShaderVectorLike T>
+ShaderBase<T> normalize(const T& value)
+{
+    return detail::componentCall(value, "normalize");
+}
+
+template <ShaderVectorLike L, SameShaderShape<L> R>
+Float dot(const L& a, const R& b)
 {
     return detail::call2<Float>(a, b, ValueType::Float, "dot");
 }
 
-inline Float max(const Float& a, const Float& b)
+template <ShaderShape<Float3> L, SameShaderShape<L> R>
+Float3 cross(const L& a, const R& b)
 {
-    return detail::call2<Float>(a, b, ValueType::Float, "max");
+    return detail::call2<Float3>(a, b, ValueType::Float3, "cross");
 }
 
-// vector * scalar (broadcast), e.g. a colour scaled by a lighting term.
-inline Float3 operator*(const Float3& vector, const Float& scalar)
+template <typename T, SameShaderShape<T> Low, SameShaderShape<T> High>
+ShaderBase<T> clamp(const T& value, const Low& low, const High& high)
 {
-    return detail::binaryOp<Float3>('*', vector, scalar);
+    return detail::call3<ShaderBase<T>>(
+        value, low, high, ValueTypeOf<ShaderBase<T>>::value, "clamp");
 }
 
-inline Float3 operator*(const Float& scalar, const Float3& vector)
+template <ShaderValueLike T>
+ShaderBase<T> clamp(const T& value, float low, float high)
 {
-    return detail::binaryOp<Float3>('*', vector, scalar);
+    return detail::call3<ShaderBase<T>>(value,
+                                        detail::constantOn(value, low),
+                                        detail::constantOn(value, high),
+                                        ValueTypeOf<ShaderBase<T>>::value,
+                                        "clamp");
 }
 
-template <IsShaderValue T>
-T operator+(const T& lhs, const T& rhs)
+// mix(from, to, amount): linear interpolation (HLSL lerp). The amount is a
+// value of the same shape, a scalar broadcast across a vector, or a literal.
+template <typename A, SameShaderShape<A> B, SameShaderShape<A> T>
+ShaderBase<A> mix(const A& from, const B& to, const T& amount)
 {
-    return detail::binaryOp<T>('+', lhs, rhs);
+    return detail::call3<ShaderBase<A>>(
+        from, to, amount, ValueTypeOf<ShaderBase<A>>::value, "mix");
 }
 
-template <IsShaderValue T>
-T operator-(const T& lhs, const T& rhs)
+template <ShaderVectorLike A, SameShaderShape<A> B, ShaderScalarLike S>
+ShaderBase<A> mix(const A& from, const B& to, const S& amount)
 {
-    return detail::binaryOp<T>('-', lhs, rhs);
+    return detail::call3<ShaderBase<A>>(
+        from, to, amount, ValueTypeOf<ShaderBase<A>>::value, "mix");
 }
 
-template <IsShaderValue T>
-T operator*(const T& lhs, const T& rhs)
+template <typename A, SameShaderShape<A> B>
+ShaderBase<A> mix(const A& from, const B& to, float amount)
 {
-    return detail::binaryOp<T>('*', lhs, rhs);
+    return detail::call3<ShaderBase<A>>(from,
+                                        to,
+                                        detail::constantOn(from, amount),
+                                        ValueTypeOf<ShaderBase<A>>::value,
+                                        "mix");
 }
 
-template <IsShaderValue T>
-T operator/(const T& lhs, const T& rhs)
+template <typename T, SameShaderShape<T> E0, SameShaderShape<T> E1>
+ShaderBase<T> smoothstep(const E0& edge0, const E1& edge1, const T& value)
 {
-    return detail::binaryOp<T>('/', lhs, rhs);
+    return detail::call3<ShaderBase<T>>(
+        edge0, edge1, value, ValueTypeOf<ShaderBase<T>>::value, "smoothstep");
 }
 
-template <IsShaderVector T>
-T operator*(const T& lhs, float rhs)
+template <ShaderValueLike T>
+ShaderBase<T> smoothstep(float edge0, float edge1, const T& value)
 {
-    return detail::scalarOp<T>('*', lhs, rhs);
+    return detail::call3<ShaderBase<T>>(detail::constantOn(value, edge0),
+                                        detail::constantOn(value, edge1),
+                                        value,
+                                        ValueTypeOf<ShaderBase<T>>::value,
+                                        "smoothstep");
 }
 
-template <IsShaderVector T>
-T operator*(float lhs, const T& rhs)
+// Componentwise arithmetic between two values of the same shape.
+template <typename L, SameShaderShape<L> R>
+ShaderBase<L> operator+(const L& lhs, const R& rhs)
 {
-    return detail::scalarOp<T>('*', rhs, lhs);
+    return detail::binaryOp<ShaderBase<L>>('+', lhs, rhs);
+}
+
+template <typename L, SameShaderShape<L> R>
+ShaderBase<L> operator-(const L& lhs, const R& rhs)
+{
+    return detail::binaryOp<ShaderBase<L>>('-', lhs, rhs);
+}
+
+template <typename L, SameShaderShape<L> R>
+ShaderBase<L> operator*(const L& lhs, const R& rhs)
+{
+    return detail::binaryOp<ShaderBase<L>>('*', lhs, rhs);
+}
+
+template <typename L, SameShaderShape<L> R>
+ShaderBase<L> operator/(const L& lhs, const R& rhs)
+{
+    return detail::binaryOp<ShaderBase<L>>('/', lhs, rhs);
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> operator-(const T& value)
+{
+    return detail::unaryOp<ShaderBase<T>>('-', value);
+}
+
+// Scalar float literals on either side, broadcast across vectors.
+template <ShaderValueLike T>
+ShaderBase<T> operator+(const T& lhs, float rhs)
+{
+    return detail::scalarOp<ShaderBase<T>>('+', lhs, rhs);
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> operator+(float lhs, const T& rhs)
+{
+    return detail::scalarOpLeft<ShaderBase<T>>('+', lhs, rhs);
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> operator-(const T& lhs, float rhs)
+{
+    return detail::scalarOp<ShaderBase<T>>('-', lhs, rhs);
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> operator-(float lhs, const T& rhs)
+{
+    return detail::scalarOpLeft<ShaderBase<T>>('-', lhs, rhs);
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> operator*(const T& lhs, float rhs)
+{
+    return detail::scalarOp<ShaderBase<T>>('*', lhs, rhs);
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> operator*(float lhs, const T& rhs)
+{
+    return detail::scalarOpLeft<ShaderBase<T>>('*', lhs, rhs);
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> operator/(const T& lhs, float rhs)
+{
+    return detail::scalarOp<ShaderBase<T>>('/', lhs, rhs);
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> operator/(float lhs, const T& rhs)
+{
+    return detail::scalarOpLeft<ShaderBase<T>>('/', lhs, rhs);
+}
+
+// vector op scalar handle broadcasts, e.g. a colour scaled by a lighting term.
+template <ShaderVectorLike T, ShaderScalarLike S>
+ShaderBase<T> operator*(const T& vector, const S& scalar)
+{
+    return detail::binaryOp<ShaderBase<T>>('*', vector, scalar);
+}
+
+template <ShaderScalarLike S, ShaderVectorLike T>
+ShaderBase<T> operator*(const S& scalar, const T& vector)
+{
+    return detail::binaryOp<ShaderBase<T>>('*', vector, scalar);
+}
+
+template <ShaderVectorLike T, ShaderScalarLike S>
+ShaderBase<T> operator/(const T& vector, const S& scalar)
+{
+    return detail::binaryOp<ShaderBase<T>>('/', vector, scalar);
 }
 
 // Matrix * vector, e.g. an MVP transform applied to a clip-space position.
@@ -278,52 +577,91 @@ inline Float4x4
         graph, ValueType::Float4x4, {c0.node, c1.node, c2.node, c3.node});
 }
 
-inline Float2 float2(const Float& x, const Float& y)
+// A vector-constructor argument: any value handle (or derived member), or a
+// numeric literal that becomes a constant node.
+template <typename T>
+concept ShaderComponent = ShaderValueLike<T> || std::is_arithmetic_v<T>;
+
+namespace detail
 {
-    auto& graph = *x.graph;
-    return detail::construct<Float2>(graph, ValueType::Float2, {x.node, y.node});
+template <typename T>
+constexpr int componentsOf()
+{
+    if constexpr (std::is_arithmetic_v<T>)
+        return 1;
+    else
+        return componentCount(ValueTypeOf<ShaderBase<T>>::value);
 }
 
-inline Float3 float3(const Float& x, const Float& y, const Float& z)
+// The graph the constructed vector records into, taken from the first handle
+// argument (the constraint guarantees one exists).
+inline ShaderGraph* graphOf()
 {
-    auto& graph = *x.graph;
-    return detail::construct<Float3>(
-        graph, ValueType::Float3, {x.node, y.node, z.node});
+    return nullptr;
 }
 
-inline Float3 float3(const Float2& xy, float z)
+template <typename First, typename... Rest>
+ShaderGraph* graphOf(const First& first, const Rest&... rest)
 {
-    auto& graph = *xy.graph;
-    return detail::construct<Float3>(
-        graph, ValueType::Float3, {xy.node, graph.addConstant(z)});
+    if constexpr (std::is_arithmetic_v<First>)
+        return graphOf(rest...);
+    else
+        return first.graph;
 }
 
-inline Float4 float4(const Float& x, const Float& y, const Float& z, const Float& w)
+template <typename T>
+int nodeOf(ShaderGraph& graph, const T& value)
 {
-    auto& graph = *x.graph;
-    return detail::construct<Float4>(
-        graph, ValueType::Float4, {x.node, y.node, z.node, w.node});
+    if constexpr (std::is_arithmetic_v<T>)
+        return graph.addConstant((float) value);
+    else
+        return value.node;
 }
 
-inline Float4 float4(const Float2& xy, float z, float w)
+template <typename Result, typename... Args>
+Result constructFrom(ValueType type, const Args&... args)
 {
-    auto& graph = *xy.graph;
-    return detail::construct<Float4>(
-        graph,
-        ValueType::Float4,
-        {xy.node, graph.addConstant(z), graph.addConstant(w)});
+    auto& graph = *graphOf(args...);
+
+    auto nodes = Vector<int> {};
+    (nodes.add(nodeOf(graph, args)), ...);
+
+    auto result = Result {};
+    result.graph = &graph;
+    result.node = graph.addConstruct(type, std::move(nodes));
+    return result;
+}
+} // namespace detail
+
+// A pack that fills a vector of the given width: handles and numeric literals
+// whose components sum to it, with at least one handle to supply the graph an
+// all-literal vector lacks (those still go through constant()).
+template <int Width, typename... Args>
+concept ComponentsFor = (ShaderComponent<Args> && ...)
+                        && (detail::componentsOf<Args>() + ... + 0) == Width
+                        && (ShaderValueLike<Args> || ...);
+
+// Vector constructors from any mix of value handles and numeric literals whose
+// components total the vector's width: float4(position, 0.0f, 1.0f),
+// float4(color, alpha), float3(x, uv)...
+template <typename... Args>
+    requires ComponentsFor<2, Args...>
+Float2 float2(const Args&... args)
+{
+    return detail::constructFrom<Float2>(ValueType::Float2, args...);
 }
 
-inline Float4 float4(const Float2& xy, const Float2& zw)
+template <typename... Args>
+    requires ComponentsFor<3, Args...>
+Float3 float3(const Args&... args)
 {
-    auto& graph = *xy.graph;
-    return detail::construct<Float4>(graph, ValueType::Float4, {xy.node, zw.node});
+    return detail::constructFrom<Float3>(ValueType::Float3, args...);
 }
 
-inline Float4 float4(const Float3& xyz, float w)
+template <typename... Args>
+    requires ComponentsFor<4, Args...>
+Float4 float4(const Args&... args)
 {
-    auto& graph = *xyz.graph;
-    return detail::construct<Float4>(
-        graph, ValueType::Float4, {xyz.node, graph.addConstant(w)});
+    return detail::constructFrom<Float4>(ValueType::Float4, args...);
 }
 } // namespace eacp::GPU
