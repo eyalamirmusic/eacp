@@ -87,4 +87,19 @@ void run(int argc, char* argv[])
     run<T>();
 }
 
+// Function overload — runs `func` once on the first loop tick and quits when
+// it returns, for app-shaped work with no app state to keep alive (a compute
+// job, a test runner). The loop is fully bootstrapped while `func` runs, so
+// timers fire and nested pumps (runEventLoopFor / runEventLoopUntil) work.
+// Use run<T>() when state must outlive a single call (windows, tray icons).
+inline void run(const Callback& func)
+{
+    Threads::runEventLoop(
+        [&func]
+        {
+            func();
+            quit();
+        });
+}
+
 } // namespace eacp::Apps
