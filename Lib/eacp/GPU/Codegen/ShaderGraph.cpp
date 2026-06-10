@@ -49,6 +49,15 @@ int ShaderGraph::addConstant(float value)
     return add(std::move(node));
 }
 
+int ShaderGraph::addUIntConstant(unsigned value)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Constant;
+    node.type = ValueType::UInt;
+    node.index = (int) value;
+    return add(std::move(node));
+}
+
 int ShaderGraph::addConstruct(ValueType type, Vector<int> args)
 {
     auto node = Expr {};

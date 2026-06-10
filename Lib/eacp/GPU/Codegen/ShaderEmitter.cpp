@@ -111,6 +111,10 @@ struct ExprPrinter
                 return "uniforms.u" + std::to_string(expr.index);
 
             case ExprKind::Constant:
+                // The uint spelling is shared by MSL and HLSL, like floatN.
+                if (expr.type == ValueType::UInt)
+                    return std::to_string(expr.index) + "u";
+
                 return floatLiteral(expr.value);
 
             case ExprKind::Construct:

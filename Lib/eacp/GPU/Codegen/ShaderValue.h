@@ -36,9 +36,10 @@ struct Float : detail::ValueHandle
 {
 };
 
-// The compute thread id and anything derived from it. Deliberately outside the
-// float operator vocabulary: its uses are indexing a storage buffer and
-// toFloat() into arithmetic.
+// The compute thread id and any index computed from it (+ - * / %, min/max,
+// uint uniforms and integer literals). Deliberately outside the float operator
+// vocabulary; it indexes storage buffers and crosses into float arithmetic via
+// toFloat().
 struct UInt : detail::ValueHandle
 {
 };
@@ -240,6 +241,12 @@ T unaryOp(char op, const ValueHandle& value)
 inline ValueHandle constantOn(const ValueHandle& value, float literal)
 {
     return {value.graph, value.graph->addConstant(literal)};
+}
+
+// Its integer sibling, for uint index arithmetic.
+inline ValueHandle uintConstantOn(const ValueHandle& value, unsigned literal)
+{
+    return {value.graph, value.graph->addUIntConstant(literal)};
 }
 
 template <typename T>
@@ -591,6 +598,110 @@ template <ShaderVectorLike T, ShaderScalarLike S>
 ShaderBase<T> operator/(const T& vector, const S& scalar)
 {
     return detail::binaryOp<ShaderBase<T>>('/', vector, scalar);
+}
+
+// Index arithmetic on uint values: against another uint (a Uniform<UInt>
+// binds here too) or an integer literal, which records a uint constant node.
+// Deliberately separate from the float operator vocabulary - there are no
+// implicit conversions between the two; cross over with toFloat(). Subtraction
+// wraps below zero like the languages it emits into, so guard a backwards
+// step with max(), or wrap deliberately with %.
+inline UInt operator+(const UInt& lhs, const UInt& rhs)
+{
+    return detail::binaryOp<UInt>('+', lhs, rhs);
+}
+
+inline UInt operator+(const UInt& lhs, unsigned rhs)
+{
+    return detail::binaryOp<UInt>('+', lhs, detail::uintConstantOn(lhs, rhs));
+}
+
+inline UInt operator+(unsigned lhs, const UInt& rhs)
+{
+    return detail::binaryOp<UInt>('+', detail::uintConstantOn(rhs, lhs), rhs);
+}
+
+inline UInt operator-(const UInt& lhs, const UInt& rhs)
+{
+    return detail::binaryOp<UInt>('-', lhs, rhs);
+}
+
+inline UInt operator-(const UInt& lhs, unsigned rhs)
+{
+    return detail::binaryOp<UInt>('-', lhs, detail::uintConstantOn(lhs, rhs));
+}
+
+inline UInt operator-(unsigned lhs, const UInt& rhs)
+{
+    return detail::binaryOp<UInt>('-', detail::uintConstantOn(rhs, lhs), rhs);
+}
+
+inline UInt operator*(const UInt& lhs, const UInt& rhs)
+{
+    return detail::binaryOp<UInt>('*', lhs, rhs);
+}
+
+inline UInt operator*(const UInt& lhs, unsigned rhs)
+{
+    return detail::binaryOp<UInt>('*', lhs, detail::uintConstantOn(lhs, rhs));
+}
+
+inline UInt operator*(unsigned lhs, const UInt& rhs)
+{
+    return detail::binaryOp<UInt>('*', detail::uintConstantOn(rhs, lhs), rhs);
+}
+
+inline UInt operator/(const UInt& lhs, const UInt& rhs)
+{
+    return detail::binaryOp<UInt>('/', lhs, rhs);
+}
+
+inline UInt operator/(const UInt& lhs, unsigned rhs)
+{
+    return detail::binaryOp<UInt>('/', lhs, detail::uintConstantOn(lhs, rhs));
+}
+
+inline UInt operator/(unsigned lhs, const UInt& rhs)
+{
+    return detail::binaryOp<UInt>('/', detail::uintConstantOn(rhs, lhs), rhs);
+}
+
+inline UInt operator%(const UInt& lhs, const UInt& rhs)
+{
+    return detail::binaryOp<UInt>('%', lhs, rhs);
+}
+
+inline UInt operator%(const UInt& lhs, unsigned rhs)
+{
+    return detail::binaryOp<UInt>('%', lhs, detail::uintConstantOn(lhs, rhs));
+}
+
+inline UInt operator%(unsigned lhs, const UInt& rhs)
+{
+    return detail::binaryOp<UInt>('%', detail::uintConstantOn(rhs, lhs), rhs);
+}
+
+// uint min/max, the branchless way to clamp an index to a valid range.
+inline UInt min(const UInt& a, const UInt& b)
+{
+    return detail::call2<UInt>(a, b, ValueType::UInt, "min");
+}
+
+inline UInt min(const UInt& a, unsigned b)
+{
+    return detail::call2<UInt>(
+        a, detail::uintConstantOn(a, b), ValueType::UInt, "min");
+}
+
+inline UInt max(const UInt& a, const UInt& b)
+{
+    return detail::call2<UInt>(a, b, ValueType::UInt, "max");
+}
+
+inline UInt max(const UInt& a, unsigned b)
+{
+    return detail::call2<UInt>(
+        a, detail::uintConstantOn(a, b), ValueType::UInt, "max");
 }
 
 // Matrix * vector, e.g. an MVP transform applied to a clip-space position.

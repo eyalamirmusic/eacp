@@ -57,6 +57,28 @@ struct CrossfadeKernel final : ComputeProgram
     }
 };
 
+// A 3-tap smoothing filter using index arithmetic: each sample averaged with
+// its neighbours, found with uint +, -, % and the buffer length uniform. The
+// blend holds whole cycles of both tones, so wrapping around the ends reads
+// the periodic signal seamlessly - no edge clamping needed.
+struct SmoothKernel final : ComputeProgram
+{
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+    Uniform<UInt> length;
+    EACP_SHADER(input, output, length)
+
+    SmoothKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto previous = input[(i + length - 1u) % length];
+        auto next = input[(i + 1u) % length];
+        write(output, i, (previous + input[i] + next) / 3.0f);
+    }
+};
+
 void printWave(const char* name, const float* samples, int count)
 {
     std::printf("%s\n", name);
@@ -101,6 +123,7 @@ int main()
     auto toneA = device.makeBuffer(bytes);
     auto toneB = device.makeBuffer(bytes);
     auto blended = device.makeBuffer(bytes);
+    auto smoothed = device.makeBuffer(bytes);
 
     auto tone = ToneKernel {};
     tone.sampleRate = (float) count;
@@ -113,6 +136,12 @@ int main()
     crossfade.blend = 0.5f;
     crossfade.gain = 0.9f;
     crossfade.prepare();
+
+    auto smooth = SmoothKernel {};
+    smooth.input = blended;
+    smooth.output = smoothed;
+    smooth.length = count;
+    smooth.prepare();
 
     auto commands = device.makeCommandBuffer();
 
@@ -133,18 +162,26 @@ int main()
         pass.dispatch(crossfade, count);
     }
 
+    {
+        auto pass = commands.beginCompute();
+        pass.dispatch(smooth, count);
+    }
+
     commands.commit();
 
     float a[count] = {};
     float b[count] = {};
     float out[count] = {};
+    float soft[count] = {};
     toneA.read(a, sizeof(a));
     toneB.read(b, sizeof(b));
     blended.read(out, sizeof(out));
+    smoothed.read(soft, sizeof(soft));
 
     printWave("Compute: tone A (1 cycle, 3 harmonics)", a, count);
     printWave("Compute: tone B (2 cycles, 3 harmonics)", b, count);
     printWave("Compute: crossfaded and soft-clipped", out, count);
+    printWave("Compute: smoothed (3-tap wrap-around average)", soft, count);
 
     return 0;
 }

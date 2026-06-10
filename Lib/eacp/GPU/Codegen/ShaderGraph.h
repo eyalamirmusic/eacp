@@ -42,8 +42,8 @@ struct Expr
 {
     ExprKind kind = ExprKind::Constant;
     ValueType type = ValueType::Float;
-    int index = 0; // Input / Varying / Uniform slot
-    float value = 0.0f; // Constant
+    int index = 0; // Input / Varying / Uniform slot; value of a UInt Constant
+    float value = 0.0f; // Float Constant
     char op = '+'; // Binary
     std::string text; // Swizzle components ("xy") or Call name ("sin")
     Vector<int> args; // child node ids
@@ -77,6 +77,7 @@ public:
     int addVarying(ValueType type, int sourceNode);
     int addUniform(ValueType type);
     int addConstant(float value);
+    int addUIntConstant(unsigned value);
     int addConstruct(ValueType type, Vector<int> args);
     int addSwizzle(ValueType type, int child, std::string components);
     int addCall(ValueType type, std::string name, int argument);

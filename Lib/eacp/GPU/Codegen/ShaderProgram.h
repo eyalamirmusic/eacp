@@ -87,13 +87,28 @@ struct CpuValueOf<Float4x4>
     using type = std::array<float, 16>;
 };
 
+template <>
+struct CpuValueOf<UInt>
+{
+    using type = std::uint32_t;
+};
+
 // The shader value a CPU type maps to. Built in for float / float[N] / array; a
 // user type opts in either intrusively (a `using ShaderValue = Float3;` member,
 // like MIRO_REFLECT) or non-intrusively via EACP_SHADER_VALUE (like
 // MIRO_REFLECT_EXTERNAL). This is what lets a `Color` struct stand in for a
-// float3 vertex field or uniform.
+// float3 vertex field or uniform. The unmapped primary stays empty so the
+// sub-type assignment constraint below fails softly for plain types (e.g. an
+// int assigned to a Uniform<UInt> picks the CPU-value overload) instead of
+// erroring inside `typename T::ShaderValue`.
 template <typename T>
 struct ShaderValueOf
+{
+};
+
+template <typename T>
+    requires requires { typename T::ShaderValue; }
+struct ShaderValueOf<T>
 {
     using type = typename T::ShaderValue;
 };
@@ -148,7 +163,8 @@ struct ShaderValueOf<std::array<float, 16>>
 
 // True when V is a CPU type registered as the shader value type T.
 template <typename V, typename T>
-concept ShaderValueIs = std::same_as<typename ShaderValueOf<V>::type, T>;
+concept ShaderValueIs = requires { typename ShaderValueOf<V>::type; }
+                        && std::same_as<typename ShaderValueOf<V>::type, T>;
 
 // Byte offset of a data member within its struct, computed from a real object so
 // it stays within defined behaviour (unlike the classic null-pointer offsetof).

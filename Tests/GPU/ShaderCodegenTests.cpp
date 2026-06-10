@@ -642,6 +642,34 @@ auto tCodegenComputeSharedRead = test("GPU/codegenComputeSharedRead") = []
     check(shader.vertexLayout.attributes.size() == 0);
 };
 
+// Index arithmetic: uint operators against uint values and integer literals
+// (recorded as uint constant nodes), a uint uniform read inside an index
+// expression, and uint min/max. The spelling is shared by both backends.
+auto tCodegenComputeIndexArithmetic = test("GPU/codegenComputeIndexArithmetic") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto length = builder.uniform<UInt>();
+    auto gid = builder.threadId();
+
+    auto previous = input[(gid + length - 1u) % length];
+    auto next = input[min(gid + 1u, max(length, 1u) - 1u)];
+    builder.write(output, gid * 2u, (previous + next) / 2.0f);
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "uint u0;"));
+    check(contains(metal, "buffer0[(((gid + uniforms.u0) - 1u) % uniforms.u0)]"));
+    check(contains(metal, "min((gid + 1u), (max(uniforms.u0, 1u) - 1u))"));
+    check(contains(metal, "buffer1[(gid * 2u)] = "));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "uint u0;"));
+    check(contains(hlsl, "buffer0[(((gid + uniforms.u0) - 1u) % uniforms.u0)]"));
+    check(contains(hlsl, "buffer1[(gid * 2u)] = "));
+};
+
 // Feeds an EDSL compute kernel (including the toFloat(threadId) cast) through
 // the real platform shader compiler and builds a compute pipeline. Self-skips
 // without a GPU device.
