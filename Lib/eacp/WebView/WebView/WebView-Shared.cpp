@@ -476,8 +476,43 @@ void WebView::installWindowControlSupport()
                             { performWindowControl(action); });
 }
 
+void WebView::performWindowControl(const std::string& action)
+{
+    auto parsed = detail::parseWindowControlAction(action);
+    if (!parsed)
+        return;
+
+    applyWindowControl(*parsed);
+
+    // Report the resulting state back so the page's data-eacp-maximized
+    // attribute tracks reality instead of guessing.
+    if (*parsed == detail::WindowControlAction::Maximize)
+        evaluateJavaScript(detail::getSetMaximizedScript(isHostWindowMaximized()));
+}
+
 namespace detail
 {
+std::optional<WindowControlAction>
+    parseWindowControlAction(const std::string& action)
+{
+    if (action == windowControlMinimize)
+        return WindowControlAction::Minimize;
+
+    if (action == windowControlMaximize)
+        return WindowControlAction::Maximize;
+
+    if (action == windowControlClose)
+        return WindowControlAction::Close;
+
+    return std::nullopt;
+}
+
+std::string getSetMaximizedScript(bool maximized)
+{
+    return maximized ? "window.__eacpSetMaximized(true)"
+                     : "window.__eacpSetMaximized(false)";
+}
+
 Vector<WebView*>& registeredWebViews()
 {
     static auto instances = Vector<WebView*>();

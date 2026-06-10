@@ -84,6 +84,19 @@ StreamingProvider fileStreamProvider(
 
 struct WebViewNativeAccess;
 
+namespace detail
+{
+// A caption-button action posted by the injected window-controls.js. The
+// string protocol is parsed once in WebView-Shared.cpp (see WebViewDetail.h);
+// platform backends only implement the enum.
+enum class WindowControlAction
+{
+    Minimize,
+    Maximize,
+    Close
+};
+} // namespace detail
+
 class WebView : public View
 {
 public:
@@ -230,7 +243,13 @@ private:
     void initNative(Options options);
     void installWindowDragSupport();
     void installWindowControlSupport();
+
+    // Shared entry for __eacpWindowControl messages: parses the action,
+    // applies it via the platform backend, and mirrors the resulting
+    // maximize state back to the page. Defined in WebView-Shared.cpp.
     void performWindowControl(const std::string& action);
+    void applyWindowControl(detail::WindowControlAction action);
+    bool isHostWindowMaximized() const;
     std::shared_ptr<Native> impl;
 };
 

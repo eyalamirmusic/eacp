@@ -125,42 +125,41 @@ void armWindowDrag(WKWebView* webView)
     [(EacpDragWebView*) webView armWindowDrag];
 }
 
-void performWindowControl(WKWebView* webView, const std::string& action)
+void applyWindowControl(WKWebView* webView, WindowControlAction action)
 {
     NSWindow* window = webView.window;
     if (window == nil)
         return;
 
-    if (action == "minimize")
+    switch (action)
     {
-        [window miniaturize:nil];
-        return;
-    }
+        case WindowControlAction::Minimize:
+            [window miniaturize:nil];
+            return;
 
-    if (action == "maximize")
-    {
-        // zoom: is itself a toggle — it restores the saved frame when the
-        // window is already zoomed. Report the resulting state back so the
-        // page's data-eacp-maximized attribute tracks reality.
-        [window zoom:nil];
-        auto* script = window.zoomed ? @"window.__eacpSetMaximized(true)"
-                                     : @"window.__eacpSetMaximized(false)";
-        [webView evaluateJavaScript:script completionHandler:nil];
-        return;
-    }
+        case WindowControlAction::Maximize:
+            // zoom: is itself a toggle — it restores the saved frame when
+            // the window is already zoomed.
+            [window zoom:nil];
+            return;
 
-    if (action == "close")
-    {
-        // performClose: respects windowShouldClose:, but beeps and refuses
-        // on windows without a close button — exactly the frameless windows
-        // that need web-rendered controls — so those close directly.
-        // windowWillClose still fires either way, so the window's quit
-        // policy runs.
-        if ((window.styleMask & NSWindowStyleMaskClosable) != 0)
-            [window performClose:nil];
-        else
-            [window close];
+        case WindowControlAction::Close:
+            // performClose: respects windowShouldClose:, but beeps and
+            // refuses on windows without a close button — exactly the
+            // frameless windows that need web-rendered controls — so those
+            // close directly. windowWillClose still fires either way, so
+            // the window's quit policy runs.
+            if ((window.styleMask & NSWindowStyleMaskClosable) != 0)
+                [window performClose:nil];
+            else
+                [window close];
+            return;
     }
+}
+
+bool isWindowMaximized(WKWebView* webView)
+{
+    return webView.window != nil && webView.window.zoomed;
 }
 
 void attachWKWebViewToParent(WKWebView* webView, void* parentHandle)

@@ -45,8 +45,9 @@ void armFileDrag(WKWebView* webView, const Vector<std::string>& paths);
 // translation unit provides a no-op.
 void armWindowDrag(WKWebView* webView);
 
-// Performs a caption-button action ("minimize" / "maximize" / "close") on the
-// window hosting the web view, posted by the injected window-controls.js.
-// macOS-only; the iOS translation unit provides a no-op.
-void performWindowControl(WKWebView* webView, const std::string& action);
+// Applies a caption-button action to the window hosting the web view, posted
+// by the injected window-controls.js and parsed in WebView-Shared.cpp.
+// macOS-only; the iOS translation unit provides no-ops.
+void applyWindowControl(WKWebView* webView, WindowControlAction action);
+bool isWindowMaximized(WKWebView* webView);
 } // namespace eacp::Graphics::detail
