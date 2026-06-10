@@ -7,132 +7,114 @@
 namespace eacp::Graphics
 {
 
-static int toVirtualKey(uint16_t keyCode)
+namespace
 {
-    switch (keyCode)
-    {
-        case KeyCode::A:
-            return 'A';
-        case KeyCode::S:
-            return 'S';
-        case KeyCode::D:
-            return 'D';
-        case KeyCode::F:
-            return 'F';
-        case KeyCode::H:
-            return 'H';
-        case KeyCode::G:
-            return 'G';
-        case KeyCode::Z:
-            return 'Z';
-        case KeyCode::X:
-            return 'X';
-        case KeyCode::C:
-            return 'C';
-        case KeyCode::V:
-            return 'V';
-        case KeyCode::B:
-            return 'B';
-        case KeyCode::Q:
-            return 'Q';
-        case KeyCode::W:
-            return 'W';
-        case KeyCode::E:
-            return 'E';
-        case KeyCode::R:
-            return 'R';
-        case KeyCode::Y:
-            return 'Y';
-        case KeyCode::T:
-            return 'T';
-        case KeyCode::O:
-            return 'O';
-        case KeyCode::U:
-            return 'U';
-        case KeyCode::I:
-            return 'I';
-        case KeyCode::P:
-            return 'P';
-        case KeyCode::L:
-            return 'L';
-        case KeyCode::J:
-            return 'J';
-        case KeyCode::K:
-            return 'K';
-        case KeyCode::N:
-            return 'N';
-        case KeyCode::M:
-            return 'M';
+struct KeyMapping
+{
+    uint16_t keyCode;
+    int vk;
+};
 
-        case KeyCode::Num0:
-            return '0';
-        case KeyCode::Num1:
-            return '1';
-        case KeyCode::Num2:
-            return '2';
-        case KeyCode::Num3:
-            return '3';
-        case KeyCode::Num4:
-            return '4';
-        case KeyCode::Num5:
-            return '5';
-        case KeyCode::Num6:
-            return '6';
-        case KeyCode::Num7:
-            return '7';
-        case KeyCode::Num8:
-            return '8';
-        case KeyCode::Num9:
-            return '9';
+// The single source of truth between framework KeyCodes (macOS virtual key
+// values, see Keyboard.h) and Windows virtual keys; both lookup directions
+// derive from it.
+constexpr KeyMapping keyMappings[] = {
+    {KeyCode::A, 'A'},
+    {KeyCode::S, 'S'},
+    {KeyCode::D, 'D'},
+    {KeyCode::F, 'F'},
+    {KeyCode::H, 'H'},
+    {KeyCode::G, 'G'},
+    {KeyCode::Z, 'Z'},
+    {KeyCode::X, 'X'},
+    {KeyCode::C, 'C'},
+    {KeyCode::V, 'V'},
+    {KeyCode::B, 'B'},
+    {KeyCode::Q, 'Q'},
+    {KeyCode::W, 'W'},
+    {KeyCode::E, 'E'},
+    {KeyCode::R, 'R'},
+    {KeyCode::Y, 'Y'},
+    {KeyCode::T, 'T'},
+    {KeyCode::O, 'O'},
+    {KeyCode::U, 'U'},
+    {KeyCode::I, 'I'},
+    {KeyCode::P, 'P'},
+    {KeyCode::L, 'L'},
+    {KeyCode::J, 'J'},
+    {KeyCode::K, 'K'},
+    {KeyCode::N, 'N'},
+    {KeyCode::M, 'M'},
 
-        case KeyCode::Space:
-            return VK_SPACE;
-        case KeyCode::Return:
-            return VK_RETURN;
-        case KeyCode::Tab:
-            return VK_TAB;
-        case KeyCode::Delete:
-            return VK_BACK;
-        case KeyCode::Escape:
-            return VK_ESCAPE;
+    {KeyCode::Num0, '0'},
+    {KeyCode::Num1, '1'},
+    {KeyCode::Num2, '2'},
+    {KeyCode::Num3, '3'},
+    {KeyCode::Num4, '4'},
+    {KeyCode::Num5, '5'},
+    {KeyCode::Num6, '6'},
+    {KeyCode::Num7, '7'},
+    {KeyCode::Num8, '8'},
+    {KeyCode::Num9, '9'},
 
-        case KeyCode::LeftArrow:
-            return VK_LEFT;
-        case KeyCode::RightArrow:
-            return VK_RIGHT;
-        case KeyCode::DownArrow:
-            return VK_DOWN;
-        case KeyCode::UpArrow:
-            return VK_UP;
+    {KeyCode::Space, VK_SPACE},
+    {KeyCode::Return, VK_RETURN},
+    {KeyCode::Tab, VK_TAB},
+    {KeyCode::Delete, VK_BACK},
+    {KeyCode::Escape, VK_ESCAPE},
 
-        case KeyCode::F1:
-            return VK_F1;
-        case KeyCode::F2:
-            return VK_F2;
-        case KeyCode::F3:
-            return VK_F3;
-        case KeyCode::F4:
-            return VK_F4;
-        case KeyCode::F5:
-            return VK_F5;
-        case KeyCode::F6:
-            return VK_F6;
-        case KeyCode::F7:
-            return VK_F7;
-        case KeyCode::F8:
-            return VK_F8;
-        case KeyCode::F9:
-            return VK_F9;
-        case KeyCode::F10:
-            return VK_F10;
-        case KeyCode::F11:
-            return VK_F11;
-        case KeyCode::F12:
-            return VK_F12;
+    {KeyCode::LeftArrow, VK_LEFT},
+    {KeyCode::RightArrow, VK_RIGHT},
+    {KeyCode::DownArrow, VK_DOWN},
+    {KeyCode::UpArrow, VK_UP},
 
-        default:
-            return 0;
-    }
+    {KeyCode::F1, VK_F1},
+    {KeyCode::F2, VK_F2},
+    {KeyCode::F3, VK_F3},
+    {KeyCode::F4, VK_F4},
+    {KeyCode::F5, VK_F5},
+    {KeyCode::F6, VK_F6},
+    {KeyCode::F7, VK_F7},
+    {KeyCode::F8, VK_F8},
+    {KeyCode::F9, VK_F9},
+    {KeyCode::F10, VK_F10},
+    {KeyCode::F11, VK_F11},
+    {KeyCode::F12, VK_F12},
+};
+
+int toVirtualKey(uint16_t keyCode)
+{
+    for (auto& mapping: keyMappings)
+        if (mapping.keyCode == keyCode)
+            return mapping.vk;
+
+    return 0;
+}
+
+std::string characterForVirtualKey(int vk)
+{
+    unsigned char keyState[256] = {0};
+    GetKeyboardState(keyState);
+
+    wchar_t buffer[4] = {0};
+    int result = ToUnicode(vk, 0, keyState, buffer, 4, 0);
+
+    if (result > 0)
+        return fromWideString(std::wstring(buffer, result));
+
+    return "";
+}
+} // namespace
+
+// Used by CompositionHostWindow to dispatch KeyEvents in framework KeyCode
+// units, so cross-platform comparisons against KeyCode:: constants hold.
+uint16_t keyCodeFromVirtualKey(int vk)
+{
+    for (auto& mapping: keyMappings)
+        if (mapping.vk == vk)
+            return mapping.keyCode;
+
+    return KeyCode::Unknown;
 }
 
 bool Keyboard::isKeyPressed(uint16_t keyCode)
@@ -176,13 +158,13 @@ Vector<Key> Keyboard::getPressedKeys()
 {
     Vector<Key> keys;
 
-    for (int vk = 0; vk < 256; ++vk)
+    for (auto& mapping: keyMappings)
     {
-        if (GetAsyncKeyState(vk) & 0x8000)
+        if (GetAsyncKeyState(mapping.vk) & 0x8000)
         {
             Key key;
-            key.keyCode = static_cast<uint16_t>(vk);
-            key.character = keyCodeToCharacter(key.keyCode);
+            key.keyCode = mapping.keyCode;
+            key.character = characterForVirtualKey(mapping.vk);
             keys.add(key);
         }
     }
@@ -196,18 +178,7 @@ std::string Keyboard::keyCodeToCharacter(uint16_t keyCode)
     if (vk == 0)
         return "";
 
-    unsigned char keyState[256] = {0};
-    GetKeyboardState(keyState);
-
-    wchar_t buffer[4] = {0};
-    int result = ToUnicode(vk, 0, keyState, buffer, 4, 0);
-
-    if (result > 0)
-    {
-        return fromWideString(std::wstring(buffer, result));
-    }
-
-    return "";
+    return characterForVirtualKey(vk);
 }
 
 // Window-scoped keyboard state implementations

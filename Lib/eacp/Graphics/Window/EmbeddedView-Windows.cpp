@@ -40,7 +40,7 @@ struct EmbeddedView::Native
 
     void createChildWindow(HWND parent, const EmbeddedViewOptions& options)
     {
-        auto dpi = GetDpiForSystem();
+        auto dpi = parent ? GetDpiForWindow(parent) : GetDpiForSystem();
         auto dpiScale = static_cast<float>(dpi) / 96.f;
         auto physicalWidth = static_cast<int>(options.width * dpiScale);
         auto physicalHeight = static_cast<int>(options.height * dpiScale);

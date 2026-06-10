@@ -73,14 +73,17 @@ struct TextLayer::Native : NativeLayerBase
         HRESULT hr =
             interop->BeginDraw(&updateRect, IID_PPV_ARGS(dc.put()), &offset);
         if (FAILED(hr) || !dc)
+        {
+            handleDeviceLossIfNeeded(hr);
             return;
+        }
 
         dc->Clear(D2D1::ColorF(0, 0, 0, 0));
 
-        auto baseTransform = D2D1::Matrix3x2F::Scale(dpiScale, dpiScale)
-                             * D2D1::Matrix3x2F::Translation(
-                                 static_cast<float>(offset.x),
-                                 static_cast<float>(offset.y));
+        auto baseTransform =
+            D2D1::Matrix3x2F::Scale(dpiScale, dpiScale)
+            * D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x),
+                                            static_cast<float>(offset.y));
         dc->SetTransform(baseTransform);
 
         ComPtr<ID2D1SolidColorBrush> brush;

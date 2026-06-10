@@ -153,8 +153,8 @@ public:
             return;
 
         applyTransform();
-        dc->FillRoundedRectangle(
-            D2D1::RoundedRect(toD2DRect(rect), radius, radius), brush.Get());
+        dc->FillRoundedRectangle(D2D1::RoundedRect(toD2DRect(rect), radius, radius),
+                                 brush.Get());
     }
 
     void setLineWidth(float width) override { lineWidth = width; }
@@ -306,7 +306,9 @@ void paintDirtyViewsForHost(HWND host)
         target->renderBackingStore();
 }
 
-struct View::Native : PaintTarget, BackingSurface
+struct View::Native
+    : PaintTarget
+    , BackingSurface
 {
     Native(View* owner)
         : ownerView(owner)
@@ -423,6 +425,17 @@ struct View::Native : PaintTarget, BackingSurface
     void focus() { hasFocusFlag = true; }
     bool hasFocus() const { return hasFocusFlag; }
 
+    // The DPI scale of the window hosting this view, so paint surfaces stay
+    // crisp on a monitor whose scaling differs from the system DPI. Falls back
+    // to the system DPI while the view is not yet parented into a window.
+    float hostDpiScale() const
+    {
+        if (auto host = findHostHwndForView(ownerView))
+            return static_cast<float>(GetDpiForWindow(host)) / 96.f;
+
+        return NativeLayerBase::systemDpiScale();
+    }
+
     // --- PaintTarget: invoked from the host window's WM_PAINT ----------------
     void renderBackingStore() override
     {
@@ -460,13 +473,16 @@ struct View::Native : PaintTarget, BackingSurface
         auto hr =
             interop->BeginDraw(&updateRect, IID_PPV_ARGS(paintDc.put()), &offset);
         if (FAILED(hr) || !paintDc)
+        {
+            handleDeviceLossIfNeeded(hr);
             return nullptr;
+        }
 
-        auto dpiScale = NativeLayerBase::getDpiScale();
-        baseTransform = D2D1::Matrix3x2F::Scale(dpiScale, dpiScale)
-                        * D2D1::Matrix3x2F::Translation(
-                            static_cast<float>(offset.x),
-                            static_cast<float>(offset.y));
+        auto dpiScale = hostDpiScale();
+        baseTransform =
+            D2D1::Matrix3x2F::Scale(dpiScale, dpiScale)
+            * D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x),
+                                            static_cast<float>(offset.y));
         return paintDc.get();
     }
 
@@ -476,8 +492,9 @@ struct View::Native : PaintTarget, BackingSurface
         {
             paintDc->SetTransform(D2D1::Matrix3x2F::Identity());
 
-            if (auto interop = paintSurface.as<ABI::Windows::UI::Composition::
-                                                   ICompositionDrawingSurfaceInterop>())
+            if (auto interop =
+                    paintSurface.as<ABI::Windows::UI::Composition::
+                                        ICompositionDrawingSurfaceInterop>())
                 interop->EndDraw();
         }
 
@@ -496,7 +513,7 @@ struct View::Native : PaintTarget, BackingSurface
         if (b.w <= 0 || b.h <= 0)
             return false;
 
-        auto dpiScale = NativeLayerBase::getDpiScale();
+        auto dpiScale = hostDpiScale();
         auto pixelWidth = static_cast<int>(b.w * dpiScale);
         auto pixelHeight = static_cast<int>(b.h * dpiScale);
         if (pixelWidth <= 0 || pixelHeight <= 0)
@@ -516,10 +533,21 @@ struct View::Native : PaintTarget, BackingSurface
         if (!paintSurface || surfacePixelWidth != pixelWidth
             || surfacePixelHeight != pixelHeight)
         {
-            paintSurface = graphicsDevice.CreateDrawingSurface(
-                {static_cast<float>(pixelWidth), static_cast<float>(pixelHeight)},
-                wgdx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
-                wgdx::DirectXAlphaMode::Premultiplied);
+            try
+            {
+                paintSurface = graphicsDevice.CreateDrawingSurface(
+                    {static_cast<float>(pixelWidth),
+                     static_cast<float>(pixelHeight)},
+                    wgdx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                    wgdx::DirectXAlphaMode::Premultiplied);
+            }
+            catch (const winrt::hresult_error& e)
+            {
+                // The post-recovery redraw re-enters here with a live device.
+                handleDeviceLossIfNeeded(e.code());
+                paintSurface = nullptr;
+                return false;
+            }
 
             if (!paintSurface)
                 return false;

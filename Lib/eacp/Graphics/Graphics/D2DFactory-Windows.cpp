@@ -6,6 +6,7 @@
 #include <d2d1_1.h>
 #include <dwrite.h>
 
+#include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Composition.h>
 #include <windows.ui.composition.interop.h>
 
@@ -14,6 +15,12 @@ namespace wuc = winrt::Windows::UI::Composition;
 namespace eacp::Graphics
 {
 
+// Defined in CompositionHostWindow-Windows.cpp: re-renders every layer and
+// repaints every painting view of all composition-hosted windows. Needed after
+// the rendering device is replaced, which keeps the composition surfaces alive
+// but discards their contents.
+void redrawAllCompositionHosts();
+
 class WinRTCompositor
 {
 public:
@@ -21,6 +28,15 @@ public:
     {
         static auto instance = WinRTCompositor();
         return instance;
+    }
+
+    bool recoverFromDeviceLoss(HRESULT hr)
+    {
+        if (hr != DXGI_ERROR_DEVICE_REMOVED && hr != DXGI_ERROR_DEVICE_RESET
+            && hr != D2DERR_RECREATE_TARGET)
+            return false;
+
+        return recreateRenderingDevice();
     }
 
     ID2D1Factory1* getD2DFactory() const { return d2dFactory.get(); }
@@ -42,6 +58,38 @@ private:
             DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,
                                 __uuidof(IDWriteFactory),
                                 reinterpret_cast<IUnknown**>(dwriteFactory.put())));
+
+        winrt::check_hresult(
+            D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, d2dFactory.put()));
+
+        createRenderingDevice();
+
+        compositor = wuc::Compositor();
+
+        namespace Interop = ABI::Windows::UI::Composition;
+        auto interop = compositor.as<Interop::ICompositorInterop>();
+        winrt::com_ptr<Interop::ICompositionGraphicsDevice> abiDevice;
+        winrt::check_hresult(
+            interop->CreateGraphicsDevice(d2dDevice.get(), abiDevice.put()));
+
+        graphicsDevice = abiDevice.as<wuc::CompositionGraphicsDevice>();
+
+        // Fires after SetRenderingDevice below, and also when the system
+        // replaces the device on its own (driver update, GPU reset). Surfaces
+        // survive the swap but lose their pixels, so everything re-renders.
+        graphicsDevice.RenderingDeviceReplaced([](auto&&, auto&&)
+                                               { redrawAllCompositionHosts(); });
+
+        initialized = true;
+    }
+
+    // Creates (or re-creates, after device loss) the D3D + D2D device pair the
+    // factories stay independent of.
+    void createRenderingDevice()
+    {
+        d2dDevice = nullptr;
+        dxgiDevice = nullptr;
+        d3dDevice = nullptr;
 
         // BGRA support is required for D2D interop.
         Array featureLevels = {D3D_FEATURE_LEVEL_11_1,
@@ -82,22 +130,32 @@ private:
         dxgiDevice = d3dDevice.as<IDXGIDevice>();
 
         winrt::check_hresult(
-            D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, d2dFactory.put()));
-
-        winrt::check_hresult(
             d2dFactory->CreateDevice(dxgiDevice.get(), d2dDevice.put()));
+    }
 
-        compositor = wuc::Compositor();
+    bool recreateRenderingDevice()
+    {
+        try
+        {
+            createRenderingDevice();
 
-        namespace Interop = ABI::Windows::UI::Composition;
-        auto interop = compositor.as<Interop::ICompositorInterop>();
-        winrt::com_ptr<Interop::ICompositionGraphicsDevice> abiDevice;
-        winrt::check_hresult(
-            interop->CreateGraphicsDevice(d2dDevice.get(), abiDevice.put()));
+            namespace Interop = ABI::Windows::UI::Composition;
+            auto interop =
+                graphicsDevice.as<Interop::ICompositionGraphicsDeviceInterop>();
+            winrt::check_hresult(interop->SetRenderingDevice(d2dDevice.get()));
 
-        graphicsDevice = abiDevice.as<wuc::CompositionGraphicsDevice>();
-
-        initialized = true;
+            // RenderingDeviceReplaced redraws too, but it can arrive
+            // asynchronously; redraw directly so recovery doesn't depend on
+            // event delivery.
+            redrawAllCompositionHosts();
+            return true;
+        }
+        catch (const winrt::hresult_error&)
+        {
+            // The GPU may still be resetting; the next BeginDraw failure
+            // retries recovery.
+            return false;
+        }
     }
 
     ~WinRTCompositor()
@@ -160,6 +218,11 @@ wuc::CompositionGraphicsDevice getCompositionGraphicsDevice()
 bool isCompositorInitialized()
 {
     return WinRTCompositor::instance().isInitialized();
+}
+
+bool handleDeviceLossIfNeeded(HRESULT hr)
+{
+    return WinRTCompositor::instance().recoverFromDeviceLoss(hr);
 }
 
 } // namespace eacp::Graphics
