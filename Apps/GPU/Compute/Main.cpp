@@ -1,3 +1,4 @@
+#include <eacp/Core/App/App.h>
 #include <eacp/GPU/GPU.h>
 
 #include <algorithm>
@@ -99,22 +100,21 @@ void printWave(const char* name, const float* samples, int count)
 
     std::printf("\n");
 }
-} // namespace
 
-// Headless compute with the shader EDSL: two struct-authored kernels chained
-// over storage buffers, no native shader strings anywhere. The tone kernel is
+// Compute with the shader EDSL: two struct-authored kernels chained over
+// storage buffers, no native shader strings anywhere. The tone kernel is
 // dispatched twice with different uniforms and output buffers; the crossfade
 // kernel then reads both renders. Each stage gets its own pass, because the
 // encoder boundary is what orders a write before the read that consumes it on
 // both backends (and lets D3D rebind the outputs as inputs).
-int main()
+void runCompute()
 {
     auto& device = Device::shared();
 
     if (!device.isValid())
     {
         std::printf("Compute: no GPU device available; skipping.\n");
-        return 0;
+        return;
     }
 
     constexpr auto count = 24;
@@ -182,6 +182,10 @@ int main()
     printWave("Compute: tone B (2 cycles, 3 harmonics)", b, count);
     printWave("Compute: crossfaded and soft-clipped", out, count);
     printWave("Compute: smoothed (3-tap wrap-around average)", soft, count);
+}
+} // namespace
 
-    return 0;
+int main()
+{
+    Apps::run(runCompute);
 }
