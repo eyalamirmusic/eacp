@@ -59,6 +59,22 @@ std::string positionSemantic(Backend backend)
     return " : SV_Position";
 }
 
+// Call nodes carry the canonical (MSL) builtin name; the few HLSL spells
+// differently are translated here.
+std::string callName(Backend backend, const std::string& name)
+{
+    if (backend == Backend::DirectX)
+    {
+        if (name == "fract")
+            return "frac";
+
+        if (name == "mix")
+            return "lerp";
+    }
+
+    return name;
+}
+
 std::string printExpr(const ShaderGraph& graph, int node, Backend backend)
 {
     const auto& expr = graph.expr(node);
@@ -106,7 +122,7 @@ std::string printExpr(const ShaderGraph& graph, int node, Backend backend)
 
         case ExprKind::Call:
         {
-            auto text = expr.text + "(";
+            auto text = callName(backend, expr.text) + "(";
 
             for (auto i = 0; i < expr.args.size(); ++i)
             {
@@ -118,6 +134,12 @@ std::string printExpr(const ShaderGraph& graph, int node, Backend backend)
 
             return text + ")";
         }
+
+        case ExprKind::Unary:
+            // The operand gets its own parentheses: negating a negative
+            // constant must print (-(-1.0)), never the pre-decrement (--1.0).
+            return "(" + std::string(1, expr.op) + "("
+                   + printExpr(graph, expr.args[0], backend) + "))";
 
         case ExprKind::Binary:
             return "(" + printExpr(graph, expr.args[0], backend) + " "

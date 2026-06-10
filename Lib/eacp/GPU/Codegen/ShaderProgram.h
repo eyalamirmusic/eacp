@@ -487,7 +487,7 @@ protected:
         auto z0 = constant(0.0f);
         auto o = constant(1.0f);
         return float4x4(float4(c, s, z0, z0),
-                        float4(z0 - s, c, z0, z0),
+                        float4(-s, c, z0, z0),
                         float4(z0, z0, o, z0),
                         float4(z0, z0, z0, o));
     }
@@ -500,7 +500,7 @@ protected:
         auto o = constant(1.0f);
         return float4x4(float4(o, z0, z0, z0),
                         float4(z0, c, s, z0),
-                        float4(z0, z0 - s, c, z0),
+                        float4(z0, -s, c, z0),
                         float4(z0, z0, z0, o));
     }
 

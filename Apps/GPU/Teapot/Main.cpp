@@ -183,9 +183,8 @@ struct TeapotShader final : ShaderProgram
         auto toLight = normalize(lightDir);
 
         // Two-sided diffuse term: |N . L|, so inward-facing patches still light.
-        auto facing = dot(worldNormal, toLight);
-        auto diffuse = max(facing, facing * constant(-1.0f));
-        auto shade = diffuse * constant(0.8f) + constant(0.2f);
+        auto diffuse = abs(dot(worldNormal, toLight));
+        auto shade = diffuse * 0.8f + 0.2f;
 
         setFragment(float4(varying(baseColor * shade), 1.0f));
     }

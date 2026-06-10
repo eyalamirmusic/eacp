@@ -16,7 +16,9 @@ enum class ExprKind
     Constant, // scalar float literal; value
     Construct, // floatN(args...); args = child nodes
     Swizzle, // child.<components>; args[0] = child
-    Call, // builtin call text(args[0]); e.g. sin/cos
+    Call, // builtin call text(args...); e.g. sin/cos. The emitter translates
+    // the canonical (MSL) name where HLSL spells it differently.
+    Unary, // (op child); args = {child}; op. Currently only negation.
     Binary, // (lhs op rhs); args = {lhs, rhs}
     Mul, // matrix * vector; args = {matrix, vector}. Emits per-backend (MSL uses
     // the * operator, HLSL uses mul()), so it is not a plain Binary.
@@ -59,6 +61,7 @@ public:
     int addSwizzle(ValueType type, int child, std::string components);
     int addCall(ValueType type, std::string name, int argument);
     int addCall(ValueType type, std::string name, Vector<int> args);
+    int addUnary(ValueType type, char op, int child);
     int addBinary(ValueType type, char op, int lhs, int rhs);
     int addMul(ValueType type, int matrix, int vector);
 
