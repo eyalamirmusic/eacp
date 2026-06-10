@@ -1,6 +1,7 @@
 #include "ShaderEmitter.h"
 
 #include "ShaderGraph.h"
+#include "UniformLayout.h"
 
 #include <cstdio>
 #include <string>
@@ -135,9 +136,56 @@ std::string printExpr(const ShaderGraph& graph, int node, Backend backend)
 
             return "mul(" + matrix + ", " + vector + ")";
         }
+
+        case ExprKind::Sample:
+        {
+            // Texture sample at a float2 coordinate, through the sampler
+            // declared at the same index as the texture.
+            auto name = "texture" + std::to_string(expr.index);
+            auto sampler = "sampler" + std::to_string(expr.index);
+            auto method = backend == Backend::Metal ? ".sample(" : ".Sample(";
+
+            return name + method + sampler + ", "
+                   + printExpr(graph, expr.args[0], backend) + ")";
+        }
     }
 
     return {};
+}
+
+// Whether the expression tree under node reads a uniform. A Varying read is the
+// fragment-stage boundary: its vertex-stage source tree is walked separately as
+// part of the vertex stage, so the walk stops there.
+bool referencesUniform(const ShaderGraph& graph, int node)
+{
+    if (node < 0)
+        return false;
+
+    const auto& expr = graph.expr(node);
+
+    if (expr.kind == ExprKind::Uniform)
+        return true;
+
+    if (expr.kind == ExprKind::Varying)
+        return false;
+
+    for (auto argument: expr.args)
+        if (referencesUniform(graph, argument))
+            return true;
+
+    return false;
+}
+
+bool vertexUsesUniforms(const ShaderGraph& graph)
+{
+    if (referencesUniform(graph, graph.position()))
+        return true;
+
+    for (const auto& varying: graph.varyings())
+        if (referencesUniform(graph, varying.sourceNode))
+            return true;
+
+    return false;
 }
 
 std::string emit(const ShaderGraph& graph, Backend backend)
@@ -171,9 +219,32 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     {
         source += "struct Uniforms\n{\n";
 
+        // The CPU block is packed with MSL struct alignment (UniformLayout.h).
+        // HLSL cbuffer packing only forbids straddling a 16-byte register, so a
+        // vector after a scalar would land lower than the CPU wrote it; emit
+        // explicit pad scalars wherever the two rule sets disagree.
+        auto offsets = uniformOffsets(graph.uniforms());
+        auto hlslCursor = 0;
+        auto padCount = 0;
+
         for (auto i = 0; i < graph.uniforms().size(); ++i)
-            source += "    " + std::string(typeName(graph.uniforms()[i])) + " u"
-                      + std::to_string(i) + ";\n";
+        {
+            auto type = graph.uniforms()[i];
+
+            if (backend == Backend::DirectX)
+            {
+                while (hlslPackedOffset(hlslCursor, type) < offsets[i])
+                {
+                    source += "    float pad" + std::to_string(padCount++) + ";\n";
+                    hlslCursor += 4;
+                }
+
+                hlslCursor = offsets[i] + byteSize(type);
+            }
+
+            source += "    " + std::string(typeName(type)) + " u" + std::to_string(i)
+                      + ";\n";
+        }
 
         source += "};\n\n";
 
@@ -182,12 +253,31 @@ std::string emit(const ShaderGraph& graph, Backend backend)
                       "    Uniforms uniforms;\n};\n\n";
     }
 
+    // HLSL textures and samplers are globals; on Metal they are fragment
+    // function parameters added to the signature below. Texture and sampler
+    // share an index, matching RenderPass::setFragmentTexture.
+    if (backend == Backend::DirectX)
+    {
+        for (auto i = 0; i < graph.textureCount(); ++i)
+            source += "Texture2D texture" + std::to_string(i) + " : register(t"
+                      + std::to_string(i) + ");\nSamplerState sampler"
+                      + std::to_string(i) + " : register(s" + std::to_string(i)
+                      + ");\n";
+
+        if (graph.textureCount() > 0)
+            source += "\n";
+    }
+
+    // On Metal each stage declares the uniform block as a function parameter,
+    // and only when that stage's expressions read one; the HLSL cbuffer is a
+    // global both functions already see. Slot 0 maps to buffer(1) in both
+    // stages (vertex data owns buffer 0 on the vertex side; the fragment side
+    // keeps the same index so one slot rule covers both).
     if (backend == Backend::Metal)
     {
         source += "vertex VertexOut vertexMain(VertexIn input [[stage_in]]";
 
-        // Vertex data owns buffer 0, so the uniform block lives at buffer 1.
-        if (hasUniforms)
+        if (hasUniforms && vertexUsesUniforms(graph))
             source += ", constant Uniforms& uniforms [[buffer(1)]]";
 
         source += ")\n{\n";
@@ -209,9 +299,24 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     source += "    return output;\n}\n\n";
 
     if (backend == Backend::Metal)
-        source += "fragment float4 fragmentMain(VertexOut input [[stage_in]])\n{\n";
+    {
+        source += "fragment float4 fragmentMain(VertexOut input [[stage_in]]";
+
+        if (hasUniforms && referencesUniform(graph, graph.fragment()))
+            source += ",\n    constant Uniforms& uniforms [[buffer(1)]]";
+
+        for (auto i = 0; i < graph.textureCount(); ++i)
+            source += ",\n    texture2d<float> texture" + std::to_string(i)
+                      + " [[texture(" + std::to_string(i)
+                      + ")]],\n    sampler sampler" + std::to_string(i)
+                      + " [[sampler(" + std::to_string(i) + ")]]";
+
+        source += ")\n{\n";
+    }
     else
+    {
         source += "float4 fragmentMain(VertexOut input) : SV_Target\n{\n";
+    }
 
     source += "    return " + printExpr(graph, graph.fragment(), backend) + ";\n}\n";
 

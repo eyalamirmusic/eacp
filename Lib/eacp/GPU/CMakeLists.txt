@@ -27,6 +27,7 @@ if (APPLE)
             Pipeline/ComputePipeline-macOS.mm
             Pipeline/RenderPipeline-macOS.mm
             Shader/ShaderLibrary-macOS.mm
+            Texture/Texture-macOS.mm
             View/GPUView-macOS.mm)
     target_link_libraries(eacp-gpu PRIVATE
             "-framework Foundation"
@@ -44,6 +45,7 @@ elseif (WIN32)
             Pipeline/ComputePipeline-Windows.cpp
             Pipeline/RenderPipeline-Windows.cpp
             Shader/ShaderLibrary-Windows.cpp
+            Texture/Texture-Windows.cpp
             View/GPUView-Windows.cpp)
     target_link_libraries(eacp-gpu PRIVATE
             d3d11

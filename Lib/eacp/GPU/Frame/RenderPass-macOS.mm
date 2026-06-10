@@ -4,6 +4,7 @@
 
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/RenderPipeline.h"
+#include "../Texture/Texture.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
 
@@ -55,6 +56,19 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
                                atIndex:(NSUInteger) index];
 }
 
+void RenderPass::setFragmentTexture(const Texture& texture, int slot)
+{
+    auto activeEncoder = impl->encoder.get();
+    auto metalTexture = (__bridge id<MTLTexture>) texture.nativeTexture();
+    auto metalSampler = (__bridge id<MTLSamplerState>) texture.nativeSampler();
+
+    if (activeEncoder == nil || metalTexture == nil || metalSampler == nil)
+        return;
+
+    [activeEncoder setFragmentTexture:metalTexture atIndex:(NSUInteger) slot];
+    [activeEncoder setFragmentSamplerState:metalSampler atIndex:(NSUInteger) slot];
+}
+
 void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
 {
     // Vertex data is bound at buffer index 0, so uniform slot 0 maps to buffer 1.
@@ -62,6 +76,16 @@ void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
         [activeEncoder setVertexBytes:data
                                length:bytes
                               atIndex:(NSUInteger) (1 + slot)];
+}
+
+void RenderPass::setFragmentBytes(const void* data, std::size_t bytes, int slot)
+{
+    // Same 1 + slot mapping as the vertex stage, so one slot rule covers both;
+    // the generated fragment functions declare the block at buffer(1).
+    if (auto activeEncoder = impl->encoder.get())
+        [activeEncoder setFragmentBytes:data
+                                 length:bytes
+                                atIndex:(NSUInteger) (1 + slot)];
 }
 
 void RenderPass::draw(int vertexCount, int firstVertex)

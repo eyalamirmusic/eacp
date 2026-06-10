@@ -12,4 +12,5 @@
 #include "Pipeline/VertexLayout.h"
 #include "Shader/ShaderLibrary.h"
 #include "Shader/ShaderSource.h"
+#include "Texture/Texture.h"
 #include "View/GPUView.h"

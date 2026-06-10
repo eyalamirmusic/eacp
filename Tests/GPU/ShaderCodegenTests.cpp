@@ -49,6 +49,22 @@ GeneratedShader makeRotatingShader()
     return builder.build();
 }
 
+// Samples a texture at the interpolated vertex UV. Mirrors the Texture demo.
+GeneratedShader makeTexturedShader()
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto uv = builder.vertexInput<Float2>();
+    auto image = builder.texture();
+    auto varyingUv = builder.varying(uv);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(sample(image, varyingUv));
+
+    return builder.build();
+}
+
 bool contains(const std::string& haystack, const std::string& needle)
 {
     return haystack.find(needle) != std::string::npos;
@@ -156,6 +172,203 @@ auto tCodegenUniformEmits = test("GPU/codegenUniformEmits") = []
     // The plain triangle declares no uniforms, so no block is emitted.
     auto plain = makeTriangleShader();
     check(!contains(plain.source.source, "Uniforms"));
+};
+
+// HLSL cbuffer packing only forbids straddling a 16-byte register, while the
+// CPU block follows MSL struct alignment (a vec3 aligns to 16). A scalar
+// followed by a vector is where they disagree: HLSL would pack the float3 at
+// offset 4, the CPU writes it at 16, so the emitter must pad the cbuffer
+// struct up to the CPU offsets.
+auto tCodegenCbufferPadding = test("GPU/codegenHlslCbufferPadding") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto brightness = builder.uniform<Float>();
+    auto tint = builder.uniform<Float3>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(float4(tint * brightness, 1.0f));
+
+    // One pad moves the float3 to offset 8, where the no-straddle rule bumps it
+    // the rest of the way to 16; the emitter pads minimally and lets the rule
+    // finish the job.
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl,
+                   "    float u0;\n"
+                   "    float pad0;\n"
+                   "    float3 u1;\n"));
+
+    // MSL aligns the vec3 to 16 natively, so its struct needs no padding.
+    auto metal = emitMetal(builder.graph());
+    check(!contains(metal, "pad"));
+};
+
+// A float2 after a float packs at 4 in HLSL but at 8 on the CPU side, so it
+// pads by one scalar; vector-only blocks land identically under both rule sets
+// and stay pad-free.
+auto tCodegenCbufferPaddingFloat2 = test("GPU/codegenHlslCbufferPaddingFloat2") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto brightness = builder.uniform<Float>();
+    auto offset = builder.uniform<Float2>();
+
+    builder.position(float4(position + offset, 0.0f, 1.0f));
+    builder.fragment(
+        float4(position.x(), position.y(), brightness, builder.constant(1.0f)));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl,
+                   "    float u0;\n"
+                   "    float pad0;\n"
+                   "    float2 u1;\n"));
+
+    auto vectors = ShaderBuilder {};
+    auto vectorPosition = vectors.vertexInput<Float2>();
+    auto viewport = vectors.uniform<Float2>();
+    auto color = vectors.uniform<Float4>();
+
+    vectors.position(float4(vectorPosition + viewport, 0.0f, 1.0f));
+    vectors.fragment(color);
+
+    check(!contains(emitHlsl(vectors.graph()), "pad"));
+};
+
+// A uniform read only by the fragment expression binds the block to the
+// fragment stage: the MSL fragment function gains the uniforms parameter and
+// the vertex function drops it. The HLSL cbuffer is a global both stages
+// already see. Pure string generation.
+auto tCodegenFragmentUniformEmits = test("GPU/codegenFragmentUniformEmits") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto color = builder.uniform<Float4>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(color);
+
+    auto metal = emitMetal(builder.graph());
+    check(
+        contains(metal, "vertex VertexOut vertexMain(VertexIn input [[stage_in]])"));
+    check(contains(metal,
+                   "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n"
+                   "    constant Uniforms& uniforms [[buffer(1)]])"));
+    check(contains(metal, "return uniforms.u0;"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "cbuffer UniformsCB : register(b0)"));
+    check(contains(hlsl, "return uniforms.u0;"));
+};
+
+// A uniform read by both stages puts the parameter on both Metal functions:
+// one block, bound twice, one slot rule.
+auto tCodegenSharedUniformEmits = test("GPU/codegenSharedUniformEmits") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto scale = builder.uniform<Float>();
+
+    auto scaled = float2(position.x() * scale, position.y() * scale);
+    builder.position(float4(scaled, 0.0f, 1.0f));
+    builder.fragment(float4(scale, scale, scale, builder.constant(1.0f)));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal,
+                   "vertex VertexOut vertexMain(VertexIn input [[stage_in]], "
+                   "constant Uniforms& uniforms [[buffer(1)]])"));
+    check(contains(metal,
+                   "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n"
+                   "    constant Uniforms& uniforms [[buffer(1)]])"));
+};
+
+// Compiles a fragment-uniform shader through the real platform shader compiler
+// and builds a pipeline, exercising the uniform-bearing fragment signature.
+// Self-skips without a GPU device.
+auto tCodegenFragmentUniformCompiles =
+    test("GPU/codegenFragmentUniformCompiles") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto color = builder.uniform<Float4>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(color);
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
+};
+
+// A texture() declaration reaches both backends with paired texture / sampler
+// bindings at the same index: fragment function parameters on Metal, globals
+// with t/s registers on D3D. Pure string generation.
+auto tCodegenTextureEmits = test("GPU/codegenTextureEmits") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto uv = builder.vertexInput<Float2>();
+    auto image = builder.texture();
+    auto varyingUv = builder.varying(uv);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(sample(image, varyingUv));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "texture2d<float> texture0 [[texture(0)]]"));
+    check(contains(metal, "sampler sampler0 [[sampler(0)]]"));
+    check(contains(metal, "texture0.sample(sampler0, input.v0)"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "Texture2D texture0 : register(t0);"));
+    check(contains(hlsl, "SamplerState sampler0 : register(s0);"));
+    check(contains(hlsl, "texture0.Sample(sampler0, input.v0)"));
+
+    // The vertex stage carries no texture parameters; only the fragment
+    // signature gains them on Metal.
+    check(
+        contains(metal, "vertex VertexOut vertexMain(VertexIn input [[stage_in]])"));
+};
+
+// Compiles the sampling shader through the real platform shader compiler and
+// builds a pipeline from its layout, exercising the texture-bearing fragment
+// signature. Self-skips without a GPU device.
+auto tCodegenTextureCompiles = test("GPU/codegenTextureCompiles") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto shader = makeTexturedShader();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
 };
 
 // Compiles the rotating shader (with its uniform block) through the real

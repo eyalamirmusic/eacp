@@ -4,6 +4,7 @@
 
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/RenderPipeline.h"
+#include "../Texture/Texture.h"
 #include "../Windows/D3DTypes.h"
 
 #include <d3d11.h>
@@ -80,6 +81,22 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
         static_cast<UINT>(index), 1, &vertexBuffer, &stride, &offset);
 }
 
+void RenderPass::setFragmentTexture(const Texture& texture, int slot)
+{
+    if (!impl->encoder)
+        return;
+
+    auto* view = static_cast<ID3D11ShaderResourceView*>(texture.nativeReadView());
+    auto* sampler = static_cast<ID3D11SamplerState*>(texture.nativeSampler());
+
+    if (view == nullptr || sampler == nullptr)
+        return;
+
+    auto* context = impl->encoder->context;
+    context->PSSetShaderResources(static_cast<UINT>(slot), 1, &view);
+    context->PSSetSamplers(static_cast<UINT>(slot), 1, &sampler);
+}
+
 void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
 {
     if (!impl->encoder)
@@ -103,6 +120,28 @@ void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
 
     auto* rawBuffer = constantBuffer.get();
     context->VSSetConstantBuffers(static_cast<UINT>(slot), 1, &rawBuffer);
+}
+
+void RenderPass::setFragmentBytes(const void* data, std::size_t bytes, int slot)
+{
+    if (!impl->encoder)
+        return;
+
+    auto* context = impl->encoder->context;
+
+    winrt::com_ptr<ID3D11Device> device;
+    context->GetDevice(device.put());
+
+    if (!device)
+        return;
+
+    auto constantBuffer = makeConstantBuffer(device.get(), data, bytes);
+
+    if (!constantBuffer)
+        return;
+
+    auto* rawBuffer = constantBuffer.get();
+    context->PSSetConstantBuffers(static_cast<UINT>(slot), 1, &rawBuffer);
 }
 
 void RenderPass::draw(int vertexCount, int firstVertex)
