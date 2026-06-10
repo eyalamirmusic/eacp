@@ -578,6 +578,98 @@ auto tCodegenTextureCompiles = test("GPU/codegenTextureCompiles") = []
     check(pipeline.isValid());
 };
 
+// A compute kernel authored via the EDSL: storage buffers, the thread id, a
+// uniform and a store. The kernel scaffolding differs per backend (function
+// parameters on Metal, globals + numthreads on D3D); the body and the implicit
+// element-count guard are shared. Pure string generation.
+auto tCodegenComputeEmits = test("GPU/codegenComputeEmits") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto scale = builder.uniform<Float>();
+    auto gid = builder.threadId();
+
+    builder.write(output, gid, input[gid] * scale);
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "kernel void computeMain("));
+    check(contains(metal, "device const float* buffer0 [[buffer(0)]]"));
+    check(contains(metal, "device float* buffer1 [[buffer(1)]]"));
+    check(contains(metal, "constant Uniforms& uniforms [[buffer(16)]]"));
+    check(contains(metal, "uint gid [[thread_position_in_grid]]"));
+    check(contains(metal, "uint count;"));
+    check(contains(metal, "if (gid >= uniforms.count)"));
+    check(contains(metal, "buffer1[gid] = (buffer0[gid] * uniforms.u0);"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "StructuredBuffer<float> buffer0 : register(t0);"));
+    check(contains(hlsl, "RWStructuredBuffer<float> buffer1 : register(u1);"));
+    check(contains(hlsl, "cbuffer UniformsCB : register(b0)"));
+    check(contains(hlsl, "[numthreads(64, 1, 1)]"));
+    check(contains(hlsl, "uint3 threadId : SV_DispatchThreadID"));
+    check(contains(hlsl, "uint gid = threadId.x;"));
+    check(contains(hlsl, "if (gid >= uniforms.count)"));
+    check(contains(hlsl, "buffer1[gid] = (buffer0[gid] * uniforms.u0);"));
+};
+
+// A buffer element read more than once hoists into a named local like any
+// other shared operation, and build() marks the source as compute with the
+// kernel entry point and no vertex layout. A kernel without user uniforms
+// still gets the block: the implicit count lives there.
+auto tCodegenComputeSharedRead = test("GPU/codegenComputeSharedRead") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto gid = builder.threadId();
+
+    auto value = input[gid];
+    builder.write(output, gid, value * value);
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "struct Uniforms"));
+    check(contains(metal, "uint count;"));
+    check(contains(metal, "    float t0 = buffer0[gid];\n"));
+    check(contains(metal, "buffer1[gid] = (t0 * t0);"));
+    check(countOccurrences(metal, "buffer0[gid]") == 1);
+
+    auto shader = builder.build();
+    check(shader.source.isCompute());
+    check(shader.source.computeEntry == "computeMain");
+    check(shader.vertexLayout.attributes.size() == 0);
+};
+
+// Feeds an EDSL compute kernel (including the toFloat(threadId) cast) through
+// the real platform shader compiler and builds a compute pipeline. Self-skips
+// without a GPU device.
+auto tCodegenComputeCompiles = test("GPU/codegenComputeCompiles") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto scale = builder.uniform<Float>();
+    auto gid = builder.threadId();
+
+    builder.write(output, gid, input[gid] * scale + toFloat(gid));
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto pipeline = device.makeComputePipeline(library);
+    check(pipeline.isValid());
+};
+
 // Compiles the rotating shader (with its uniform block) through the real
 // platform shader compiler. Self-skips without a GPU device.
 auto tCodegenUniformCompiles = test("GPU/codegenUniformCompiles") = []

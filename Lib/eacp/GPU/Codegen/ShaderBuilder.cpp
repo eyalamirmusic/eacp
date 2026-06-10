@@ -19,9 +19,9 @@ VertexFormat toVertexFormat(ValueType type)
         case ValueType::Float3:
             return VertexFormat::Float3;
         case ValueType::Float4:
-            return VertexFormat::Float4;
         case ValueType::Float4x4:
-            return VertexFormat::Float4; // matrices are never vertex attributes
+        case ValueType::UInt:
+            return VertexFormat::Float4; // matrix/uint are never vertex attributes
     }
 
     return VertexFormat::Float;
@@ -57,9 +57,17 @@ void ShaderBuilder::fragment(const Float4& color)
 GeneratedShader ShaderBuilder::build() const
 {
     auto source = detail::nativeShaderSource(graphData);
-    source.withVertex("vertexMain").withFragment("fragmentMain");
 
     auto result = GeneratedShader {};
+
+    if (graphData.isCompute())
+    {
+        source.withCompute("computeMain");
+        result.source = std::move(source);
+        return result;
+    }
+
+    source.withVertex("vertexMain").withFragment("fragmentMain");
     result.source = std::move(source);
     result.vertexLayout = buildVertexLayout(graphData);
     return result;

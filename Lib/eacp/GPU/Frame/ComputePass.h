@@ -52,6 +52,20 @@ public:
     // Runs the kernel over count work items, in groups of threadGroupWidth.
     void dispatch(int count);
 
+    // Binds and dispatches a prepared ComputeProgram in one call: its pipeline,
+    // storage buffers and uniform block (including the implicit element count
+    // its generated bounds guard reads), then a dispatch over count work items.
+    // Templated so this header stays independent of the codegen layer.
+    template <typename Program>
+    void dispatch(Program& program, int count)
+    {
+        setPipeline(program.pipeline());
+        program.bindBuffers(*this);
+        setBytes(program.packedUniforms(count),
+                 (std::size_t) program.uniformByteSize());
+        dispatch(count);
+    }
+
     void end();
 
     // Threadgroup width the 1D dispatch uses; the example kernels declare a

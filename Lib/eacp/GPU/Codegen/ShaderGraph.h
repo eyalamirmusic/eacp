@@ -22,8 +22,18 @@ enum class ExprKind
     Binary, // (lhs op rhs); args = {lhs, rhs}
     Mul, // matrix * vector; args = {matrix, vector}. Emits per-backend (MSL uses
     // the * operator, HLSL uses mul()), so it is not a plain Binary.
-    Sample // texture sample; index = texture slot, args = {uv}. Emits
+    Sample, // texture sample; index = texture slot, args = {uv}. Emits
     // per-backend (MSL t.sample(s, uv), HLSL t.Sample(s, uv)).
+    ThreadId, // compute work-item id; emitted as the kernel's gid parameter
+    BufferRead // storage-buffer element read; index = buffer slot, args = {index}
+};
+
+// How a kernel accesses a storage buffer: a read-only input (Metal device
+// const / D3D SRV) or a writable output (Metal device / D3D UAV).
+enum class BufferAccess
+{
+    Read,
+    Write
 };
 
 // One node in the shader expression tree. Plain data referenced by integer id so
@@ -53,6 +63,16 @@ public:
         int sourceNode = -1; // vertex-stage expression feeding this varying
     };
 
+    // One kernel output write: buffer[index] = value. Stores are the compute
+    // roots, the way position/fragment are the render roots; recording any
+    // store marks the whole graph as a compute kernel.
+    struct Store
+    {
+        int slot = -1;
+        int index = -1;
+        int value = -1;
+    };
+
     int addInput(ValueType type);
     int addVarying(ValueType type, int sourceNode);
     int addUniform(ValueType type);
@@ -70,6 +90,14 @@ public:
     int addTexture();
     int addSample(int textureSlot, int uv);
 
+    // Compute kernel pieces: the 1D work-item id, a storage-buffer slot (float
+    // elements; inputs and outputs share one slot space, so every buffer gets a
+    // distinct index), an element read, and an element write.
+    int addThreadId();
+    int addStorageBuffer(BufferAccess access);
+    int addBufferRead(int slot, int index);
+    void addStore(int slot, int index, int value);
+
     void setPosition(int node) { positionNode = node; }
     void setFragment(int node) { fragmentNode = node; }
 
@@ -82,6 +110,10 @@ public:
     int position() const { return positionNode; }
     int fragment() const { return fragmentNode; }
 
+    const Vector<BufferAccess>& storageBuffers() const { return storageSlots; }
+    const Vector<Store>& stores() const { return storeList; }
+    bool isCompute() const { return storeList.size() > 0; }
+
 private:
     int add(Expr node);
 
@@ -89,6 +121,8 @@ private:
     Vector<ValueType> inputTypes;
     Vector<VaryingSlot> varyingSlots;
     Vector<ValueType> uniformTypes;
+    Vector<BufferAccess> storageSlots;
+    Vector<Store> storeList;
     int textureSlots = 0;
     int positionNode = -1;
     int fragmentNode = -1;

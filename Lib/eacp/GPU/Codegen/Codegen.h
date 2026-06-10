@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ComputeProgram.h"
 #include "GeneratedShader.h"
 #include "ShaderBuilder.h"
 #include "ShaderEmitter.h"
