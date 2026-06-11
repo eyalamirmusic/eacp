@@ -441,12 +441,15 @@ struct GPUView::Native : DeviceResourceHolder
     void startContinuous()
     {
         if (displayLink == nullptr)
-            displayLink = makeOwned<Threads::DisplayLink>(
-                [this](Threads::FrameTime time)
-                {
-                    view.update(time);
-                    view.repaint();
-                });
+        {
+            auto func = [this](Threads::FrameTime time)
+            {
+                view.update(time);
+                view.repaint();
+            };
+
+            displayLink.create(func);
+        }
     }
 
     void stopContinuous() { displayLink = nullptr; }

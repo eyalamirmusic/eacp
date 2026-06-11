@@ -1,4 +1,3 @@
-#include <eacp/Core/Threads/Timer.h>
 #include <eacp/GPU/GPU.h>
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/WebView/WebView.h>
@@ -76,14 +75,14 @@ struct GpuSurface final : GPU::GPUView
         setHandlesMouseEvents(true);
         shader.setVertices(spinningTriangle);
         shader.prepare(sampleCount());
+        setContinuous(true);
     }
 
     void mouseDown(const MouseEvent&) override { spin = -spin * 1.5f; }
 
-    void advance()
+    void update(Threads::FrameTime time) override
     {
-        angle += spin;
-        repaint();
+        angle += spin * static_cast<float>(time.delta);
     }
 
     void render(GPU::Frame& frame) override
@@ -96,8 +95,7 @@ struct GpuSurface final : GPU::GPUView
 
     SpinShader shader;
     float angle = 0.0f;
-    float spin = 0.02f;
-    Threads::Timer timer {[this] { advance(); }, 60};
+    float spin = 1.2f;
 };
 
 // ---------------------------------------------------------------------------
@@ -119,15 +117,16 @@ struct PrimitiveSurface final : View
         ripples.add(Ripple {event.pos, 0.0f});
     }
 
-    void advance()
+    void advance(Threads::FrameTime time)
     {
-        phase += 0.045f;
+        auto delta = static_cast<float>(time.delta);
+        phase += waveSpeed * delta;
 
         auto living = Vector<Ripple> {};
 
         for (auto& ripple: ripples)
         {
-            ripple.radius += 2.6f;
+            ripple.radius += rippleSpeed * delta;
 
             if (ripple.radius < maxRippleRadius)
                 living.add(ripple);
@@ -238,12 +237,14 @@ struct PrimitiveSurface final : View
     }
 
     static constexpr float maxRippleRadius = 90.0f;
+    static constexpr float waveSpeed = 2.7f;
+    static constexpr float rippleSpeed = 156.0f;
 
     float phase = 0.0f;
     Vector<Ripple> ripples;
     Font labelFont {FontOptions().withName("Helvetica-Bold").withSize(14.0f)};
     Font hintFont {FontOptions().withName("Helvetica").withSize(11.0f)};
-    Threads::Timer timer {[this] { advance(); }, 60};
+    Threads::DisplayLink link {[this](Threads::FrameTime time) { advance(time); }};
 };
 
 // ---------------------------------------------------------------------------
@@ -487,9 +488,9 @@ struct LayeredRoot final : View
         addSubview(view);
     }
 
-    void advance()
+    void advance(Threads::FrameTime time)
     {
-        drift += 0.6f;
+        drift += driftSpeed * static_cast<float>(time.delta);
         repaint();
     }
 
@@ -527,12 +528,14 @@ struct LayeredRoot final : View
         repaint();
     }
 
+    static constexpr float driftSpeed = 18.0f;
+
     PrimitivePanel primitivePanel;
     GpuPanel gpuPanel;
     WebPanel webPanel;
     float drift = 0.0f;
     Font titleFont {FontOptions().withName("Helvetica-Bold").withSize(13.0f)};
-    Threads::Timer timer {[this] { advance(); }, 30};
+    Threads::DisplayLink link {[this](Threads::FrameTime time) { advance(time); }};
 };
 
 struct MyApp
