@@ -1,7 +1,44 @@
 include(FindPackageHandleStandardArgs)
 include(FetchContent)
 
-set(WEBVIEW2_VERSION "1.0.2903.40" CACHE STRING "WebView2 NuGet package version")
+set(WEBVIEW2_VERSION "" CACHE STRING
+    "WebView2 NuGet package version (empty = resolve latest stable)")
+set(WEBVIEW2_FALLBACK_VERSION "1.0.4022.49")
+
+if(NOT WEBVIEW2_VERSION)
+    set(webview2_index_file "${CMAKE_BINARY_DIR}/_deps/webview2/index.json")
+    file(DOWNLOAD
+        "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/index.json"
+        "${webview2_index_file}"
+        STATUS webview2_index_status
+        TIMEOUT 15
+    )
+    list(GET webview2_index_status 0 webview2_index_code)
+
+    if(webview2_index_code EQUAL 0)
+        file(READ "${webview2_index_file}" webview2_index_json)
+        string(JSON webview2_version_count LENGTH "${webview2_index_json}" versions)
+        math(EXPR webview2_last_index "${webview2_version_count} - 1")
+
+        # Versions are sorted ascending; the last entry without a prerelease
+        # suffix is the latest stable release.
+        foreach(i RANGE 0 ${webview2_last_index})
+            string(JSON webview2_candidate GET "${webview2_index_json}" versions ${i})
+            if(NOT webview2_candidate MATCHES "-")
+                set(webview2_latest "${webview2_candidate}")
+            endif()
+        endforeach()
+
+        set(WEBVIEW2_VERSION "${webview2_latest}" CACHE STRING
+            "WebView2 NuGet package version (empty = resolve latest stable)" FORCE)
+        message(STATUS "WebView2: resolved latest stable version ${WEBVIEW2_VERSION}")
+    else()
+        set(WEBVIEW2_VERSION "${WEBVIEW2_FALLBACK_VERSION}")
+        message(WARNING
+            "WebView2: could not reach NuGet to resolve the latest version; "
+            "falling back to ${WEBVIEW2_VERSION}")
+    endif()
+endif()
 
 # Detect target architecture for WebView2 library selection
 # Use CMAKE_CXX_COMPILER_ARCHITECTURE_ID which reflects the actual target
