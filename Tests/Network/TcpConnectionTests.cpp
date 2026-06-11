@@ -224,19 +224,25 @@ auto tRefusedConnectFailsFast =
     const auto start = std::chrono::steady_clock::now();
 
     auto threw = false;
+    auto message = std::string {};
     try
     {
         auto client = Connection::connect({"127.0.0.1", port}, {20000ms, 20000ms});
     }
-    catch (const Error&)
+    catch (const Error& e)
     {
         threw = true;
+        message = e.what();
     }
 
     const auto elapsed = std::chrono::steady_clock::now() - start;
 
     check(threw);
     check(elapsed < 10s);
+
+    // A refusal must surface as a connect failure, never mislabelled as a
+    // timeout - which is exactly what the broken path produced.
+    check(message.find("connect timed out") == std::string::npos);
 };
 
 auto tCloseEndsConnection = test("Tcp/closeMakesAConnectionNotOpen") = []

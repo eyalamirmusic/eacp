@@ -1,6 +1,7 @@
 // Simplest possible TCP server: listen on a port and echo every line back.
 // The mirror image of TcpClient - together they exercise both halves of the
-// library with no external server. Ctrl-C to stop.
+// library with no external server. TcpProbe checks whether it is up. Ctrl-C
+// to stop.
 
 #include <eacp/Network/TCP/Listener.h>
 

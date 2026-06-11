@@ -4,6 +4,7 @@ add_subdirectory(HTTP)
 add_subdirectory(BasicHTTP)
 add_subdirectory(HttpServer)
 add_subdirectory(TcpClient)
+add_subdirectory(TcpProbe)
 add_subdirectory(TcpServer)
 
 if (NOT IOS)
