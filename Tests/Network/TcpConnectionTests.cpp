@@ -205,6 +205,40 @@ auto tConnectRefusedThrows = test("Tcp/connectThrowsWhenNothingIsListening") = [
     check(threw);
 };
 
+auto tRefusedConnectFailsFast =
+    test("Tcp/refusedConnectFailsWellBeforeTheConnectTimeout") = []
+{
+    // Claim an ephemeral port, then free it so the connect is refused.
+    auto port = std::uint16_t {0};
+    {
+        auto listener = Listener::bind(0, testTimeouts());
+        port = listener.port();
+    }
+
+    // Regression: WinSock signals a refused non-blocking connect on the
+    // except set, which waitWritable didn't watch - so a refusal blocked
+    // for the full connect timeout instead of failing promptly. Give the
+    // connect a deliberately generous budget and require failure long
+    // before it. (The Windows kernel retries refused loopback connects
+    // internally, so "promptly" is ~2s there rather than instant.)
+    const auto start = std::chrono::steady_clock::now();
+
+    auto threw = false;
+    try
+    {
+        auto client = Connection::connect({"127.0.0.1", port}, {20000ms, 20000ms});
+    }
+    catch (const Error&)
+    {
+        threw = true;
+    }
+
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+
+    check(threw);
+    check(elapsed < 10s);
+};
+
 auto tCloseEndsConnection = test("Tcp/closeMakesAConnectionNotOpen") = []
 {
     auto listener = Listener::bind(0, testTimeouts());
