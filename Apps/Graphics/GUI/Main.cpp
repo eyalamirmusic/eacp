@@ -1,5 +1,7 @@
 #include <eacp/Graphics/Graphics.h>
 
+#include <algorithm>
+
 using namespace eacp;
 using namespace Graphics;
 
@@ -87,28 +89,35 @@ struct AnimatedView final : View
         ellipseLayer.setPath(path);
     }
 
-    void update()
+    void update(Threads::FrameTime time)
     {
-        opacity += 0.02f;
+        auto delta = static_cast<float>(time.delta);
+
+        opacity += fadeSpeed * delta;
 
         if (opacity >= 0.9f)
             opacity = 0.1f;
 
         ellipseLayer.setOpacity(opacity);
 
-        x += dx;
+        x += dx * delta;
 
         if (x < 0.1f || x > 0.9f)
+        {
+            x = std::clamp(x, 0.1f, 0.9f);
             dx = -dx;
+        }
 
         ellipseLayer.setPosition({x * getBounds().w, 0.f});
     }
 
+    static constexpr float fadeSpeed = 1.2f;
+
     ShapeLayer ellipseLayer;
     float opacity = 0.5f;
     float x = 0.3f;
-    float dx = 0.003f;
-    Threads::Timer timer {[&] { update(); }, 60};
+    float dx = 0.18f;
+    Threads::DisplayLink link {[this](Threads::FrameTime time) { update(time); }};
 };
 
 struct FilledRect final : View
