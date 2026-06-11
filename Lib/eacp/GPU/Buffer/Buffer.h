@@ -11,8 +11,8 @@ class Device;
 // What a buffer is bound as. A Vertex buffer feeds the vertex stage; an Index
 // buffer feeds drawIndexed; a Storage buffer is read/written by a compute
 // kernel and can be read back to the CPU. On Metal all are plain MTLBuffers;
-// on D3D11 the usage picks the bind flags, and a Storage buffer additionally
-// carries the shader-resource and unordered-access views compute binds.
+// on D3D12 the usage picks the resource flags (a Storage buffer allows
+// unordered access so a kernel can write it).
 enum class BufferUsage
 {
     Vertex,
@@ -48,8 +48,9 @@ public:
     // Opaque native handle for cross-translation-unit use by other GPU types.
     void* nativeBuffer() const;
 
-    // The read (shader-resource) and write (unordered-access) views a compute
-    // pass binds on D3D11. Null on Metal, where the buffer is bound directly.
+    // The read and write handles a compute pass binds on D3D12 (the same
+    // handle as nativeBuffer; the pass binds by GPU address and direction).
+    // Null on Metal, where the buffer is bound directly.
     void* nativeReadView() const;
     void* nativeWriteView() const;
 

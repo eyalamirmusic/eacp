@@ -46,9 +46,10 @@ elseif (WIN32)
             Pipeline/RenderPipeline-Windows.cpp
             Shader/ShaderLibrary-Windows.cpp
             Texture/Texture-Windows.cpp
-            View/GPUView-Windows.cpp)
+            View/GPUView-Windows.cpp
+            Windows/D3D12Context-Windows.cpp)
     target_link_libraries(eacp-gpu PRIVATE
-            d3d11
+            d3d12
             dxgi
             d3dcompiler
             windowsapp

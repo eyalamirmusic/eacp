@@ -2,69 +2,49 @@
 
 #include "Device.h"
 
-#include <d3d11.h>
+#include "../Windows/D3D12Context.h"
 
 #include <functional>
-#include <winrt/base.h>
 
-// Windows/D3D11 backend. The GPU device reuses the process-wide D3D11 device the
-// graphics layer already created for Windows.UI.Composition (getD3DDevice), so
-// buffers, pipelines and the GPUView swapchain all live on the same device and
-// can be composited together. nativeQueue() is the immediate context (D3D11 has
-// no separate command queue).
+// Windows/D3D12 backend. The GPU device is the process-wide D3D12 device and
+// direct queue owned by getD3D12Context(). The 2D graphics layer keeps its own
+// D3D11 device for Direct2D; the compositor composes output from both, so the
+// devices never need to be shared. nativeQueue() is the direct command queue.
 
 namespace eacp::Graphics
 {
 // Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
-ID3D11Device* getD3DDevice();
 void addRenderingDeviceReplacedListener(std::function<void()> listener);
 } // namespace eacp::Graphics
 
 namespace eacp::GPU
 {
 // Defined in View/GPUView-Windows.cpp: rebuilds every live GPUView's swapchain
-// against the (re-acquired) shared device.
+// against the recreated device.
 void refreshAllGPUViewsForNewDevice();
 
 struct Device::Native
 {
     Native()
     {
-        acquireSharedDevice();
-
-        // Device::shared() lives for the whole process, so capturing `this`
-        // outlives every notification.
+        // A GPU reset kills the 2D layer's D3D11 device and this D3D12 device
+        // together. The graphics layer's recovery fires this listener after it
+        // re-established its own device; if ours died too (or never existed),
+        // rebuild it and every GPUView swapchain. The 2D layer also replaces
+        // its device voluntarily, so a healthy D3D12 device is left alone.
         Graphics::addRenderingDeviceReplacedListener(
-            [this]
+            []
             {
-                acquireSharedDevice();
+                auto& context = getD3D12Context();
+
+                if (context.isValid()
+                    && SUCCEEDED(context.getDevice()->GetDeviceRemovedReason()))
+                    return;
+
+                context.recreateAfterDeviceLoss();
                 refreshAllGPUViewsForNewDevice();
             });
     }
-
-    void acquireSharedDevice()
-    {
-        device = nullptr;
-        context = nullptr;
-
-        // The shared device construction initialises the WinRT compositor and a
-        // D3D11 device; on a headless host without a compositor it can throw.
-        // Swallow it and leave the device invalid so callers self-skip.
-        try
-        {
-            if (auto* shared = Graphics::getD3DDevice())
-            {
-                device.copy_from(shared);
-                device->GetImmediateContext(context.put());
-            }
-        }
-        catch (...)
-        {
-        }
-    }
-
-    winrt::com_ptr<ID3D11Device> device;
-    winrt::com_ptr<ID3D11DeviceContext> context;
 };
 
 Device::Device()
@@ -80,16 +60,16 @@ Device& Device::shared()
 
 bool Device::isValid() const
 {
-    return impl->device != nullptr;
+    return getD3D12Context().isValid();
 }
 
 void* Device::nativeDevice() const
 {
-    return impl->device.get();
+    return getD3D12Context().getDevice();
 }
 
 void* Device::nativeQueue() const
 {
-    return impl->context.get();
+    return getD3D12Context().getQueue();
 }
 } // namespace eacp::GPU

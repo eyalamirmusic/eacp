@@ -3,14 +3,15 @@
 #include "Texture.h"
 
 #include "../Device/Device.h"
+#include "../Windows/D3D12Types.h"
 
-#include <d3d11.h>
+#include <cstring>
 
-#include <winrt/base.h>
-
-// Windows/D3D11 backend. A texture is an ID3D11Texture2D plus the
-// shader-resource view the fragment stage binds and the sampler state baked
-// from the descriptor, mirroring the Metal texture + sampler pair.
+// Windows/D3D12 backend. A texture is a default-heap resource plus an SRV and
+// a sampler descriptor living in the context's shader-visible heaps for the
+// texture's whole lifetime, so binding is a single root-table update. Pixels
+// upload through a transient row-pitch-aligned staging buffer; the resource
+// then stays in PIXEL_SHADER_RESOURCE state forever (it is only ever sampled).
 
 namespace eacp::GPU
 {
@@ -22,16 +23,16 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
                                                : DXGI_FORMAT_R8G8B8A8_UNORM;
 }
 
-D3D11_FILTER toD3DFilter(TextureFilter filter)
+D3D12_FILTER toD3DFilter(TextureFilter filter)
 {
-    return filter == TextureFilter::Nearest ? D3D11_FILTER_MIN_MAG_MIP_POINT
-                                            : D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    return filter == TextureFilter::Nearest ? D3D12_FILTER_MIN_MAG_MIP_POINT
+                                            : D3D12_FILTER_MIN_MAG_MIP_LINEAR;
 }
 
-D3D11_TEXTURE_ADDRESS_MODE toD3DAddressMode(TextureAddressMode mode)
+D3D12_TEXTURE_ADDRESS_MODE toD3DAddressMode(TextureAddressMode mode)
 {
-    return mode == TextureAddressMode::Repeat ? D3D11_TEXTURE_ADDRESS_WRAP
-                                              : D3D11_TEXTURE_ADDRESS_CLAMP;
+    return mode == TextureAddressMode::Repeat ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
+                                              : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
 }
 } // namespace
 
@@ -41,48 +42,140 @@ struct Texture::Native
         : width(descriptor.width)
         , height(descriptor.height)
     {
-        auto* d3dDevice = static_cast<ID3D11Device*>(device.nativeDevice());
+        auto& context = getD3D12Context();
 
-        if (d3dDevice == nullptr || width <= 0 || height <= 0)
+        if (!context.isValid() || !device.isValid() || width <= 0 || height <= 0)
             return;
 
-        D3D11_TEXTURE2D_DESC textureDescriptor = {};
-        textureDescriptor.Width = static_cast<UINT>(width);
-        textureDescriptor.Height = static_cast<UINT>(height);
-        textureDescriptor.MipLevels = 1;
-        textureDescriptor.ArraySize = 1;
-        textureDescriptor.Format = toDXGIFormat(descriptor.format);
-        textureDescriptor.SampleDesc.Count = 1;
-        textureDescriptor.Usage = D3D11_USAGE_DEFAULT;
-        textureDescriptor.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D12_HEAP_PROPERTIES heap = {};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 
-        D3D11_SUBRESOURCE_DATA initialData = {};
-        initialData.pSysMem = pixels;
-        initialData.SysMemPitch = static_cast<UINT>(width) * 4;
+        D3D12_RESOURCE_DESC desc = {};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        desc.Width = static_cast<UINT64>(width);
+        desc.Height = static_cast<UINT>(height);
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = 1;
+        desc.Format = toDXGIFormat(descriptor.format);
+        desc.SampleDesc.Count = 1;
 
-        if (FAILED(d3dDevice->CreateTexture2D(&textureDescriptor,
-                                              pixels != nullptr ? &initialData
-                                                                : nullptr,
-                                              texture.put())))
+        auto initialState = pixels != nullptr
+                                ? D3D12_RESOURCE_STATE_COPY_DEST
+                                : D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+        if (FAILED(context.getDevice()->CreateCommittedResource(
+                &heap,
+                D3D12_HEAP_FLAG_NONE,
+                &desc,
+                initialState,
+                nullptr,
+                __uuidof(ID3D12Resource),
+                data.resource.put_void())))
             return;
 
-        d3dDevice->CreateShaderResourceView(texture.get(), nullptr, readView.put());
+        if (pixels != nullptr)
+            upload(context, pixels);
 
-        D3D11_SAMPLER_DESC samplerDescriptor = {};
-        samplerDescriptor.Filter = toD3DFilter(descriptor.filter);
-        samplerDescriptor.AddressU = toD3DAddressMode(descriptor.addressMode);
-        samplerDescriptor.AddressV = toD3DAddressMode(descriptor.addressMode);
-        samplerDescriptor.AddressW = toD3DAddressMode(descriptor.addressMode);
-        samplerDescriptor.MaxLOD = D3D11_FLOAT32_MAX;
+        if (data.resource != nullptr)
+            createDescriptors(context, descriptor);
+    }
 
-        d3dDevice->CreateSamplerState(&samplerDescriptor, sampler.put());
+    ~Native()
+    {
+        auto& context = getD3D12Context();
+        context.freeTextureDescriptor(data.srv);
+        context.freeSamplerDescriptor(data.sampler);
+        context.deferRelease(std::move(data.resource));
+    }
+
+    void upload(D3D12Context& context, const void* pixels)
+    {
+        auto desc = data.resource->GetDesc();
+
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+        UINT rows = 0;
+        UINT64 rowBytes = 0;
+        UINT64 totalBytes = 0;
+        context.getDevice()->GetCopyableFootprints(
+            &desc, 0, 1, 0, &footprint, &rows, &rowBytes, &totalBytes);
+
+        auto staging = context.makeUploadBuffer(nullptr, totalBytes);
+        auto* commands = context.acquire();
+
+        if (staging == nullptr || commands == nullptr)
+        {
+            context.discard(commands);
+            data.resource = nullptr;
+            return;
+        }
+
+        // Source rows are tightly packed; staging rows need the 256-byte
+        // aligned pitch GetCopyableFootprints reported.
+        void* mapped = nullptr;
+        const D3D12_RANGE noRead = {0, 0};
+
+        if (FAILED(staging->Map(0, &noRead, &mapped)))
+        {
+            context.discard(commands);
+            data.resource = nullptr;
+            return;
+        }
+
+        auto sourcePitch = static_cast<std::size_t>(width) * 4;
+
+        for (auto row = UINT {0}; row < rows; ++row)
+            std::memcpy(static_cast<unsigned char*>(mapped)
+                            + row * footprint.Footprint.RowPitch,
+                        static_cast<const unsigned char*>(pixels)
+                            + row * sourcePitch,
+                        sourcePitch);
+
+        staging->Unmap(0, nullptr);
+
+        D3D12_TEXTURE_COPY_LOCATION destination = {};
+        destination.pResource = data.resource.get();
+        destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+
+        D3D12_TEXTURE_COPY_LOCATION source = {};
+        source.pResource = staging.get();
+        source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        source.PlacedFootprint = footprint;
+
+        commands->list->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+        transition(commands->list.get(),
+                   data.resource.get(),
+                   D3D12_RESOURCE_STATE_COPY_DEST,
+                   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+        commands->transients.push_back(std::move(staging));
+        context.submit(commands);
+    }
+
+    void createDescriptors(D3D12Context& context,
+                           const TextureDescriptor& descriptor)
+    {
+        data.srv = context.allocateTextureDescriptor();
+        data.sampler = context.allocateSamplerDescriptor();
+
+        if (data.srv.cpu.ptr == 0 || data.sampler.cpu.ptr == 0)
+            return;
+
+        context.getDevice()->CreateShaderResourceView(
+            data.resource.get(), nullptr, data.srv.cpu);
+
+        D3D12_SAMPLER_DESC samplerDesc = {};
+        samplerDesc.Filter = toD3DFilter(descriptor.filter);
+        samplerDesc.AddressU = toD3DAddressMode(descriptor.addressMode);
+        samplerDesc.AddressV = toD3DAddressMode(descriptor.addressMode);
+        samplerDesc.AddressW = toD3DAddressMode(descriptor.addressMode);
+        samplerDesc.MaxLOD = D3D12_FLOAT32_MAX;
+
+        context.getDevice()->CreateSampler(&samplerDesc, data.sampler.cpu);
     }
 
     int width = 0;
     int height = 0;
-    winrt::com_ptr<ID3D11Texture2D> texture;
-    winrt::com_ptr<ID3D11ShaderResourceView> readView;
-    winrt::com_ptr<ID3D11SamplerState> sampler;
+    D3D12TextureData data;
 };
 
 Texture::Texture(Device& device,
@@ -104,21 +197,22 @@ int Texture::height() const
 
 bool Texture::isValid() const
 {
-    return impl->readView != nullptr && impl->sampler != nullptr;
+    return impl->data.resource != nullptr && impl->data.srv.cpu.ptr != 0
+           && impl->data.sampler.cpu.ptr != 0;
 }
 
 void* Texture::nativeTexture() const
 {
-    return impl->texture.get();
+    return const_cast<D3D12TextureData*>(&impl->data);
 }
 
 void* Texture::nativeSampler() const
 {
-    return impl->sampler.get();
+    return const_cast<D3D12TextureData*>(&impl->data);
 }
 
 void* Texture::nativeReadView() const
 {
-    return impl->readView.get();
+    return const_cast<D3D12TextureData*>(&impl->data);
 }
 } // namespace eacp::GPU

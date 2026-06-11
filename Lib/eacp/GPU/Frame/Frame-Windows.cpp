@@ -3,14 +3,14 @@
 #include "Frame.h"
 
 #include "../Device/Device.h"
-#include "../Windows/D3DTypes.h"
+#include "../Windows/D3D12Types.h"
 
-#include <d3d11.h>
-
-// Windows/D3D11 backend. The drawable and msaaTexture handles point at the
-// D3DDrawable / D3DMsaaTarget owned by GPUView. beginPass binds the target and
-// clears it; the destructor resolves any multisample target into the back buffer
-// and presents the swapchain (mirroring the Metal frame's present-on-destroy).
+// Windows/D3D12 backend. The drawable and msaaTexture handles point at the
+// D3D12Drawable / D3D12MsaaTarget owned by GPUView. The frame owns one
+// CommandContext recording: beginPass transitions and clears the target, the
+// pass records draws onto it, and the destructor resolves any multisample
+// target, returns the back buffer to PRESENT, executes the recording and
+// presents the swapchain (mirroring the Metal frame's present-on-destroy).
 
 namespace eacp::GPU
 {
@@ -20,30 +20,21 @@ struct Frame::Native
            void* drawableHandle,
            void* msaaTextureHandle,
            void* depthTextureHandle)
-        : context(static_cast<ID3D11DeviceContext*>(device.nativeQueue()))
-        , drawable(static_cast<D3DDrawable*>(drawableHandle))
-        , msaa(static_cast<D3DMsaaTarget*>(msaaTextureHandle))
-        , depth(static_cast<D3DDepthTarget*>(depthTextureHandle))
+        : drawable(static_cast<D3D12Drawable*>(drawableHandle))
+        , msaa(static_cast<D3D12MsaaTarget*>(msaaTextureHandle))
+        , depth(static_cast<D3D12DepthTarget*>(depthTextureHandle))
     {
+        if (device.isValid() && drawable != nullptr)
+            commands = getD3D12Context().acquire();
     }
 
-    ID3D11RenderTargetView* targetView() const
-    {
-        if (msaa != nullptr && msaa->view != nullptr)
-            return msaa->view;
+    bool useMsaa() const { return msaa != nullptr && msaa->texture != nullptr; }
 
-        return drawable != nullptr ? drawable->backBufferView : nullptr;
-    }
-
-    ID3D11DepthStencilView* depthView() const
-    {
-        return depth != nullptr ? depth->view : nullptr;
-    }
-
-    ID3D11DeviceContext* context = nullptr;
-    D3DDrawable* drawable = nullptr;
-    D3DMsaaTarget* msaa = nullptr;
-    D3DDepthTarget* depth = nullptr;
+    CommandContext* commands = nullptr;
+    D3D12Drawable* drawable = nullptr;
+    D3D12MsaaTarget* msaa = nullptr;
+    D3D12DepthTarget* depth = nullptr;
+    bool passBegun = false;
 };
 
 Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture)
@@ -53,18 +44,47 @@ Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTextu
 
 Frame::~Frame()
 {
-    if (impl->context == nullptr || impl->drawable == nullptr)
+    if (impl->commands == nullptr || impl->drawable == nullptr)
         return;
 
-    if (impl->msaa != nullptr && impl->msaa->texture != nullptr
-        && impl->drawable->backBuffer != nullptr)
+    auto* list = impl->commands->list.get();
+    auto* backBuffer = impl->drawable->backBuffer;
+
+    if (impl->useMsaa() && backBuffer != nullptr)
     {
-        impl->context->ResolveSubresource(impl->drawable->backBuffer,
-                                          0,
-                                          impl->msaa->texture,
-                                          0,
-                                          impl->msaa->format);
+        // The MSAA target lives in RENDER_TARGET state between frames; the
+        // back buffer never left PRESENT (the pass rendered into the MSAA
+        // target), so both transition just around the resolve.
+        transition(list,
+                   impl->msaa->texture,
+                   D3D12_RESOURCE_STATE_RENDER_TARGET,
+                   D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
+        transition(list,
+                   backBuffer,
+                   D3D12_RESOURCE_STATE_PRESENT,
+                   D3D12_RESOURCE_STATE_RESOLVE_DEST);
+
+        list->ResolveSubresource(
+            backBuffer, 0, impl->msaa->texture, 0, impl->msaa->format);
+
+        transition(list,
+                   impl->msaa->texture,
+                   D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
+                   D3D12_RESOURCE_STATE_RENDER_TARGET);
+        transition(list,
+                   backBuffer,
+                   D3D12_RESOURCE_STATE_RESOLVE_DEST,
+                   D3D12_RESOURCE_STATE_PRESENT);
     }
+    else if (impl->passBegun && backBuffer != nullptr)
+    {
+        transition(list,
+                   backBuffer,
+                   D3D12_RESOURCE_STATE_RENDER_TARGET,
+                   D3D12_RESOURCE_STATE_PRESENT);
+    }
+
+    getD3D12Context().submit(impl->commands);
 
     if (impl->drawable->swapChain != nullptr)
         impl->drawable->swapChain->Present(1, 0);
@@ -72,38 +92,67 @@ Frame::~Frame()
 
 RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
 {
-    auto* target = impl->targetView();
-
-    if (impl->context == nullptr || target == nullptr)
+    if (impl->commands == nullptr || impl->drawable == nullptr
+        || impl->drawable->backBuffer == nullptr)
         return RenderPass(nullptr);
 
-    auto* depthView = impl->depthView();
-    impl->context->OMSetRenderTargets(1, &target, depthView);
+    auto& context = getD3D12Context();
+    auto* list = impl->commands->list.get();
 
-    D3D11_VIEWPORT viewport = {};
+    // The root signature and heaps are fixed for every render pipeline, so
+    // binding them here frees the pass from caring about call ordering.
+    ID3D12DescriptorHeap* heaps[] = {context.getTextureHeap(),
+                                     context.getSamplerHeap()};
+    list->SetDescriptorHeaps(2, heaps);
+    list->SetGraphicsRootSignature(context.getRenderRootSignature());
+
+    if (!impl->useMsaa() && !impl->passBegun)
+        transition(list,
+                   impl->drawable->backBuffer,
+                   D3D12_RESOURCE_STATE_PRESENT,
+                   D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+    impl->passBegun = true;
+
+    auto target =
+        impl->useMsaa() ? impl->msaa->view : impl->drawable->backBufferView;
+    auto hasDepth = impl->depth != nullptr && impl->depth->view.ptr != 0;
+
+    list->OMSetRenderTargets(
+        1, &target, FALSE, hasDepth ? &impl->depth->view : nullptr);
+
+    D3D12_VIEWPORT viewport = {};
     viewport.Width = static_cast<float>(impl->drawable->width);
     viewport.Height = static_cast<float>(impl->drawable->height);
     viewport.MaxDepth = 1.0f;
-    impl->context->RSSetViewports(1, &viewport);
+    list->RSSetViewports(1, &viewport);
+
+    // D3D12 has no default scissor; an unset one clips everything away.
+    D3D12_RECT scissor = {0,
+                          0,
+                          static_cast<LONG>(impl->drawable->width),
+                          static_cast<LONG>(impl->drawable->height)};
+    list->RSSetScissorRects(1, &scissor);
 
     if (descriptor.clear)
     {
         const auto& color = descriptor.clearColor;
         const float clearColor[4] = {color.r, color.g, color.b, color.a};
-        impl->context->ClearRenderTargetView(target, clearColor);
+        list->ClearRenderTargetView(target, clearColor, 0, nullptr);
     }
 
-    // Depth is cleared to the far plane (1.0) whenever a depth buffer is bound,
-    // matching the Metal pass's unconditional depth clear.
-    if (depthView != nullptr)
-        impl->context->ClearDepthStencilView(depthView, D3D11_CLEAR_DEPTH, 1.0f, 0);
+    // Depth is cleared to the far plane (1.0) whenever a depth buffer is
+    // bound, matching the Metal pass's unconditional depth clear.
+    if (hasDepth)
+        list->ClearDepthStencilView(
+            impl->depth->view, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
-    return RenderPass(new D3DEncoder {impl->context, 0});
+    return RenderPass(new D3D12Encoder {impl->commands, 0});
 }
 
 bool Frame::isValid() const
 {
-    return impl->context != nullptr && impl->drawable != nullptr
-           && impl->drawable->backBufferView != nullptr;
+    return impl->commands != nullptr && impl->drawable != nullptr
+           && impl->drawable->backBuffer != nullptr;
 }
 } // namespace eacp::GPU

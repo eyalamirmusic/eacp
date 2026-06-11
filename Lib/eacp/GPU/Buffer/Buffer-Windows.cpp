@@ -3,97 +3,97 @@
 #include "Buffer.h"
 
 #include "../Device/Device.h"
-
-#include <d3d11.h>
-
-#include <winrt/base.h>
+#include "../Windows/D3D12Types.h"
 
 #include <cstring>
 
-// Windows/D3D11 backend. See Device-Windows.cpp. A Storage buffer is a
-// structured buffer with both a shader-resource view (read) and an
-// unordered-access view (write) so a compute pass can bind it either way; a
-// DEFAULT buffer is not CPU-readable, so read() copies through a staging buffer.
+// Windows/D3D12 backend. Every buffer is a default-heap resource (a Storage
+// buffer additionally allows unordered access); initial data goes through a
+// transient upload buffer submitted at construction, and read() copies into a
+// readback buffer and blocks on the fence, preserving the contract that a read
+// after commit() sees the kernel's output. State is tracked per recording in
+// D3D12BufferData; cross-submit ordering comes from the single direct queue.
 
 namespace eacp::GPU
 {
 namespace
 {
-// Storage elements are 4-byte floats in this first cut (see the compute plan);
-// typed elements arrive with the shader EDSL.
-constexpr UINT storageStride = 4;
-
-UINT toBindFlags(BufferUsage usage)
+D3D12_RESOURCE_FLAGS toResourceFlags(BufferUsage usage)
 {
-    switch (usage)
-    {
-        case BufferUsage::Vertex:
-            return D3D11_BIND_VERTEX_BUFFER;
-        case BufferUsage::Index:
-            return D3D11_BIND_INDEX_BUFFER;
-        case BufferUsage::Storage:
-            return D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
-    }
+    if (usage == BufferUsage::Storage)
+        return D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 
-    return D3D11_BIND_VERTEX_BUFFER;
+    return D3D12_RESOURCE_FLAG_NONE;
+}
+
+winrt::com_ptr<ID3D12Resource> makeDefaultBuffer(ID3D12Device* device,
+                                                 std::size_t bytes,
+                                                 D3D12_RESOURCE_FLAGS flags)
+{
+    D3D12_HEAP_PROPERTIES heap = {};
+    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12_RESOURCE_DESC desc = {};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    desc.Width = bytes;
+    desc.Height = 1;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.SampleDesc.Count = 1;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    desc.Flags = flags;
+
+    auto buffer = winrt::com_ptr<ID3D12Resource>();
+    device->CreateCommittedResource(&heap,
+                                    D3D12_HEAP_FLAG_NONE,
+                                    &desc,
+                                    D3D12_RESOURCE_STATE_COMMON,
+                                    nullptr,
+                                    __uuidof(ID3D12Resource),
+                                    buffer.put_void());
+    return buffer;
 }
 } // namespace
 
 struct Buffer::Native
 {
     Native(Device& device, const void* data, std::size_t bytes, BufferUsage usage)
-        : length(bytes)
     {
-        auto* d3dDevice = static_cast<ID3D11Device*>(device.nativeDevice());
+        bufferData.size = bytes;
 
-        if (d3dDevice == nullptr || bytes == 0)
+        auto& context = getD3D12Context();
+
+        if (!context.isValid() || !device.isValid() || bytes == 0)
             return;
 
-        auto storage = usage == BufferUsage::Storage;
+        bufferData.resource =
+            makeDefaultBuffer(context.getDevice(), bytes, toResourceFlags(usage));
 
-        D3D11_BUFFER_DESC descriptor = {};
-        descriptor.ByteWidth = static_cast<UINT>(bytes);
-        descriptor.Usage = D3D11_USAGE_DEFAULT;
-        descriptor.BindFlags = toBindFlags(usage);
+        if (bufferData.resource != nullptr && data != nullptr)
+            upload(context, data, bytes);
+    }
 
-        if (storage)
+    void upload(D3D12Context& context, const void* data, std::size_t bytes)
+    {
+        auto staging = context.makeUploadBuffer(data, bytes);
+        auto* commands = context.acquire();
+
+        if (staging == nullptr || commands == nullptr)
         {
-            descriptor.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-            descriptor.StructureByteStride = storageStride;
+            context.discard(commands);
+            bufferData.resource = nullptr;
+            return;
         }
 
-        D3D11_SUBRESOURCE_DATA initialData = {};
-        initialData.pSysMem = data;
-
-        if (FAILED(d3dDevice->CreateBuffer(&descriptor,
-                                           data != nullptr ? &initialData : nullptr,
-                                           buffer.put())))
-            return;
-
-        if (storage)
-            makeViews(d3dDevice, static_cast<UINT>(bytes / storageStride));
+        commands->list->CopyBufferRegion(
+            bufferData.resource.get(), 0, staging.get(), 0, bytes);
+        commands->transients.push_back(std::move(staging));
+        context.submit(commands);
     }
 
-    void makeViews(ID3D11Device* d3dDevice, UINT elements)
-    {
-        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-        srvDesc.Format = DXGI_FORMAT_UNKNOWN; // required for a structured buffer
-        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-        srvDesc.Buffer.NumElements = elements;
-        d3dDevice->CreateShaderResourceView(buffer.get(), &srvDesc, readView.put());
-
-        D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-        uavDesc.Format = DXGI_FORMAT_UNKNOWN;
-        uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-        uavDesc.Buffer.NumElements = elements;
-        d3dDevice->CreateUnorderedAccessView(
-            buffer.get(), &uavDesc, writeView.put());
-    }
-
-    winrt::com_ptr<ID3D11Buffer> buffer;
-    winrt::com_ptr<ID3D11ShaderResourceView> readView;
-    winrt::com_ptr<ID3D11UnorderedAccessView> writeView;
-    std::size_t length = 0;
+    // Mutable because the state tracking advances inside the const read():
+    // the copy to the readback buffer is a use like any other.
+    mutable D3D12BufferData bufferData;
 };
 
 Buffer::Buffer(Device& device,
@@ -106,62 +106,86 @@ Buffer::Buffer(Device& device,
 
 std::size_t Buffer::size() const
 {
-    return impl->length;
+    return impl->bufferData.size;
 }
 
 bool Buffer::isValid() const
 {
-    return impl->buffer != nullptr;
+    return impl->bufferData.resource != nullptr;
 }
 
 void Buffer::read(void* dst, std::size_t bytes) const
 {
-    auto* source = impl->buffer.get();
+    auto* source = impl->bufferData.resource.get();
 
     if (source == nullptr)
         return;
 
-    winrt::com_ptr<ID3D11Device> device;
-    source->GetDevice(device.put());
+    auto& context = getD3D12Context();
+    auto* commands = context.acquire();
 
-    winrt::com_ptr<ID3D11DeviceContext> context;
-    device->GetImmediateContext(context.put());
-
-    // A DEFAULT buffer cannot be mapped, so copy into a CPU-readable staging
-    // buffer and map that. CopyResource also serialises behind the dispatch.
-    D3D11_BUFFER_DESC descriptor = {};
-    descriptor.ByteWidth = static_cast<UINT>(impl->length);
-    descriptor.Usage = D3D11_USAGE_STAGING;
-    descriptor.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-
-    winrt::com_ptr<ID3D11Buffer> staging;
-
-    if (FAILED(device->CreateBuffer(&descriptor, nullptr, staging.put())))
+    if (commands == nullptr)
         return;
 
-    context->CopyResource(staging.get(), source);
+    D3D12_HEAP_PROPERTIES heap = {};
+    heap.Type = D3D12_HEAP_TYPE_READBACK;
 
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    D3D12_RESOURCE_DESC desc = {};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    desc.Width = impl->bufferData.size;
+    desc.Height = 1;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.SampleDesc.Count = 1;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-    if (SUCCEEDED(context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &mapped)))
+    auto staging = winrt::com_ptr<ID3D12Resource>();
+
+    if (FAILED(context.getDevice()->CreateCommittedResource(
+            &heap,
+            D3D12_HEAP_FLAG_NONE,
+            &desc,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr,
+            __uuidof(ID3D12Resource),
+            staging.put_void())))
     {
-        std::memcpy(dst, mapped.pData, bytes);
-        context->Unmap(staging.get(), 0);
+        context.discard(commands);
+        return;
+    }
+
+    transitionForUse(*commands, impl->bufferData, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    commands->list->CopyBufferRegion(
+        staging.get(), 0, source, 0, impl->bufferData.size);
+
+    // The copy was enqueued on the same queue as the writes, so waiting on
+    // this submission's fence also waits for them.
+    context.waitFor(context.submit(commands));
+
+    void* mapped = nullptr;
+    const D3D12_RANGE readRange = {0, bytes};
+
+    if (SUCCEEDED(staging->Map(0, &readRange, &mapped)))
+    {
+        std::memcpy(dst, mapped, bytes);
+
+        const D3D12_RANGE noWrite = {0, 0};
+        staging->Unmap(0, &noWrite);
     }
 }
 
 void* Buffer::nativeBuffer() const
 {
-    return impl->buffer.get();
+    return &impl->bufferData;
 }
 
 void* Buffer::nativeReadView() const
 {
-    return impl->readView.get();
+    return &impl->bufferData;
 }
 
 void* Buffer::nativeWriteView() const
 {
-    return impl->writeView.get();
+    return &impl->bufferData;
 }
 } // namespace eacp::GPU

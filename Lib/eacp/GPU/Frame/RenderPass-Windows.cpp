@@ -5,26 +5,25 @@
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/RenderPipeline.h"
 #include "../Texture/Texture.h"
-#include "../Windows/D3DTypes.h"
-
-#include <d3d11.h>
+#include "../Windows/D3D12Types.h"
 
 #include <memory>
 
-// Windows/D3D11 backend. Records draw commands onto the immediate context the
-// frame's beginPass handed over via the D3DEncoder. The encoder is owned here so
-// it is freed when the pass goes out of scope.
+// Windows/D3D12 backend. Records draw commands onto the frame's recording via
+// the D3D12Encoder. The encoder is owned here so it is freed when the pass
+// goes out of scope; the CommandContext it points at stays owned by the Frame,
+// which submits and presents on destruction.
 
 namespace eacp::GPU
 {
 struct RenderPass::Native
 {
     explicit Native(void* encoderHandle)
-        : encoder(static_cast<D3DEncoder*>(encoderHandle))
+        : encoder(static_cast<D3D12Encoder*>(encoderHandle))
     {
     }
 
-    std::unique_ptr<D3DEncoder> encoder;
+    std::unique_ptr<D3D12Encoder> encoder;
 };
 
 RenderPass::RenderPass(void* encoder)
@@ -42,25 +41,14 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
     if (!impl->encoder)
         return;
 
-    auto* state = static_cast<D3DPipeline*>(pipeline.nativeState());
+    auto* state = static_cast<D3D12Pipeline*>(pipeline.nativeState());
 
-    if (state == nullptr)
+    if (state == nullptr || state->state == nullptr)
         return;
 
-    auto* context = impl->encoder->context;
-
-    context->IASetInputLayout(state->inputLayout.get());
-    context->IASetPrimitiveTopology(state->topology);
-    context->VSSetShader(state->vertexShader.get(), nullptr, 0);
-    context->PSSetShader(state->pixelShader.get(), nullptr, 0);
-    context->RSSetState(state->rasterizerState.get());
-
-    // Null state restores D3D's default; with no depth view bound (the non-depth
-    // path) that default has no buffer to test against, so it is a no-op there.
-    context->OMSetDepthStencilState(state->depthStencilState.get(), 0);
-
-    const float blendFactor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    context->OMSetBlendState(state->blendState.get(), blendFactor, 0xffffffff);
+    auto* list = impl->encoder->commands->list.get();
+    list->SetPipelineState(state->state.get());
+    list->IASetPrimitiveTopology(state->topology);
 
     impl->encoder->stride = state->stride;
 }
@@ -70,78 +58,63 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
     if (!impl->encoder)
         return;
 
-    auto* vertexBuffer = static_cast<ID3D11Buffer*>(buffer.nativeBuffer());
+    auto* data = static_cast<D3D12BufferData*>(buffer.nativeBuffer());
 
-    if (vertexBuffer == nullptr)
+    if (data == nullptr || data->resource == nullptr)
         return;
 
-    UINT stride = impl->encoder->stride;
-    UINT offset = 0;
-    impl->encoder->context->IASetVertexBuffers(
-        static_cast<UINT>(index), 1, &vertexBuffer, &stride, &offset);
+    auto& commands = *impl->encoder->commands;
+    transitionForUse(
+        commands, *data, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+
+    D3D12_VERTEX_BUFFER_VIEW view = {};
+    view.BufferLocation = data->resource->GetGPUVirtualAddress();
+    view.SizeInBytes = static_cast<UINT>(data->size);
+    view.StrideInBytes = impl->encoder->stride;
+
+    commands.list->IASetVertexBuffers(static_cast<UINT>(index), 1, &view);
 }
 
 void RenderPass::setFragmentTexture(const Texture& texture, int slot)
 {
-    if (!impl->encoder)
+    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
         return;
 
-    auto* view = static_cast<ID3D11ShaderResourceView*>(texture.nativeReadView());
-    auto* sampler = static_cast<ID3D11SamplerState*>(texture.nativeSampler());
+    auto* data = static_cast<D3D12TextureData*>(texture.nativeTexture());
 
-    if (view == nullptr || sampler == nullptr)
+    if (data == nullptr || data->srv.gpu.ptr == 0 || data->sampler.gpu.ptr == 0)
         return;
 
-    auto* context = impl->encoder->context;
-    context->PSSetShaderResources(static_cast<UINT>(slot), 1, &view);
-    context->PSSetSamplers(static_cast<UINT>(slot), 1, &sampler);
+    auto* list = impl->encoder->commands->list.get();
+    list->SetGraphicsRootDescriptorTable(renderTextureParam(slot), data->srv.gpu);
+    list->SetGraphicsRootDescriptorTable(renderSamplerParam(slot),
+                                         data->sampler.gpu);
 }
 
 void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
 {
-    if (!impl->encoder)
+    if (!impl->encoder || slot < 0 || slot >= maxUniformSlots)
         return;
 
-    auto* context = impl->encoder->context;
+    auto& commands = *impl->encoder->commands;
+    auto address = getD3D12Context().uploadConstants(commands, data, bytes);
 
-    winrt::com_ptr<ID3D11Device> device;
-    context->GetDevice(device.put());
-
-    if (!device)
-        return;
-
-    // A fresh constant buffer per call keeps this self-contained; the context
-    // AddRefs it on bind, so the local com_ptr can release. A Device-cached
-    // dynamic buffer is a future optimisation.
-    auto constantBuffer = makeConstantBuffer(device.get(), data, bytes);
-
-    if (!constantBuffer)
-        return;
-
-    auto* rawBuffer = constantBuffer.get();
-    context->VSSetConstantBuffers(static_cast<UINT>(slot), 1, &rawBuffer);
+    if (address != 0)
+        commands.list->SetGraphicsRootConstantBufferView(renderVertexCBVParam(slot),
+                                                         address);
 }
 
 void RenderPass::setFragmentBytes(const void* data, std::size_t bytes, int slot)
 {
-    if (!impl->encoder)
+    if (!impl->encoder || slot < 0 || slot >= maxUniformSlots)
         return;
 
-    auto* context = impl->encoder->context;
+    auto& commands = *impl->encoder->commands;
+    auto address = getD3D12Context().uploadConstants(commands, data, bytes);
 
-    winrt::com_ptr<ID3D11Device> device;
-    context->GetDevice(device.put());
-
-    if (!device)
-        return;
-
-    auto constantBuffer = makeConstantBuffer(device.get(), data, bytes);
-
-    if (!constantBuffer)
-        return;
-
-    auto* rawBuffer = constantBuffer.get();
-    context->PSSetConstantBuffers(static_cast<UINT>(slot), 1, &rawBuffer);
+    if (address != 0)
+        commands.list->SetGraphicsRootConstantBufferView(renderPixelCBVParam(slot),
+                                                         address);
 }
 
 void RenderPass::draw(int vertexCount, int firstVertex)
@@ -149,8 +122,8 @@ void RenderPass::draw(int vertexCount, int firstVertex)
     if (!impl->encoder)
         return;
 
-    impl->encoder->context->Draw(static_cast<UINT>(vertexCount),
-                                 static_cast<UINT>(firstVertex));
+    impl->encoder->commands->list->DrawInstanced(
+        static_cast<UINT>(vertexCount), 1, static_cast<UINT>(firstVertex), 0);
 }
 
 void RenderPass::drawIndexed(const Buffer& indices,
@@ -161,24 +134,29 @@ void RenderPass::drawIndexed(const Buffer& indices,
     if (!impl->encoder)
         return;
 
-    auto* indexBuffer = static_cast<ID3D11Buffer*>(indices.nativeBuffer());
+    auto* data = static_cast<D3D12BufferData*>(indices.nativeBuffer());
 
-    if (indexBuffer == nullptr)
+    if (data == nullptr || data->resource == nullptr)
         return;
 
-    auto* context = impl->encoder->context;
-    context->IASetIndexBuffer(indexBuffer,
-                              format == IndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT
-                                                            : DXGI_FORMAT_R32_UINT,
-                              0);
-    context->DrawIndexed(
-        static_cast<UINT>(indexCount), static_cast<UINT>(firstIndex), 0);
+    auto& commands = *impl->encoder->commands;
+    transitionForUse(commands, *data, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+
+    D3D12_INDEX_BUFFER_VIEW view = {};
+    view.BufferLocation = data->resource->GetGPUVirtualAddress();
+    view.SizeInBytes = static_cast<UINT>(data->size);
+    view.Format =
+        format == IndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
+
+    commands.list->IASetIndexBuffer(&view);
+    commands.list->DrawIndexedInstanced(
+        static_cast<UINT>(indexCount), 1, static_cast<UINT>(firstIndex), 0, 0);
 }
 
 void RenderPass::end()
 {
-    // Commands are recorded straight onto the immediate context, so there is
-    // nothing to flush; releasing the encoder marks the pass finished.
+    // Commands are recorded onto the frame's list, which submits when the
+    // frame is destroyed; releasing the encoder marks the pass finished.
     impl->encoder.reset();
 }
 } // namespace eacp::GPU

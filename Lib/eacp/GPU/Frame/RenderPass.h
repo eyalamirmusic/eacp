@@ -32,7 +32,8 @@ public:
     void setFragmentTexture(const Texture& texture, int slot = 0);
 
     // Uploads small per-draw constant data to the vertex stage without a buffer
-    // object (Metal setVertexBytes; a constant buffer on D3D11). slot is the
+    // object (Metal setVertexBytes; a transient constant buffer on D3D12). slot
+    // is the
     // uniform-block slot the generated shader declares (slot 0 = the first
     // uniform block). Ideal for values that change every frame, e.g. a transform.
     void setVertexBytes(const void* data, std::size_t bytes, int slot = 0);

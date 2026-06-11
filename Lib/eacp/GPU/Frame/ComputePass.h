@@ -13,8 +13,9 @@ class Buffer;
 // on Metal). Ends the encoder automatically on destruction. Obtained from
 // CommandBuffer::beginCompute.
 //
-// Binding model: Metal uses one flat buffer-index space, D3D11 uses separate
-// SRV/UAV/CBV spaces. setInputBuffer/setOutputBuffer take a slot that maps to
+// Binding model: Metal uses one flat buffer-index space, D3D uses separate
+// SRV/UAV/CBV register spaces. setInputBuffer/setOutputBuffer take a slot
+// that maps to
 // Metal buffer(slot) and to a D3D SRV t<slot> / UAV u<slot>; because Metal
 // shares the space, an input and an output must use distinct slots. setBytes
 // uploads a uniform block at Metal buffer(uniformBase + slot) and D3D CBV

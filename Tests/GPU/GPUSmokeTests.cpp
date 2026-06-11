@@ -15,7 +15,7 @@ namespace
 {
 // Minimal shader whose vertex input matches the single Float4 attribute below,
 // so pipeline creation exercises the full vertex-descriptor path. Provided in
-// the backend the platform compiles (MSL on Metal, HLSL on D3D11).
+// the backend the platform compiles (MSL on Metal, HLSL on D3D12).
 const char* hlslSmokeShader = R"(
 struct VertexIn { float4 position : TEXCOORD0; };
 struct VertexOut { float4 position : SV_Position; };

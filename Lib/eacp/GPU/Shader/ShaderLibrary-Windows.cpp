@@ -3,19 +3,20 @@
 #include "ShaderLibrary.h"
 
 #include "../Device/Device.h"
-#include "../Windows/D3DTypes.h"
+#include "../Windows/D3D12Types.h"
 #include "ShaderSource.h"
 
 #include <eacp/Core/Utils/Logging.h>
 
-#include <d3d11.h>
 #include <d3dcompiler.h>
 
 #include <winrt/base.h>
 
-// Windows/D3D11 backend. Compiles the HLSL source into a vertex and pixel shader
-// (D3D11 keeps them as separate objects, unlike a single Metal library) and
-// keeps the vertex bytecode so the pipeline can validate its input layout.
+// Windows/D3D12 backend. Compiles the HLSL source with FXC into vertex/pixel
+// (or compute) bytecode; D3D12 consumes the blobs directly at pipeline
+// creation, so no shader objects exist at this level. SM 5.0 DXBC remains
+// valid input for D3D12 pipelines, which keeps the hand-written HLSL in tests
+// and examples working unchanged.
 
 namespace eacp::GPU
 {
@@ -56,54 +57,24 @@ struct ShaderLibrary::Native
 {
     Native(Device& device, const ShaderSource& source)
     {
-        auto* d3dDevice = static_cast<ID3D11Device*>(device.nativeDevice());
-
-        if (d3dDevice == nullptr)
+        if (!device.isValid())
             return;
 
         if (source.isCompute())
-            compileCompute(d3dDevice, source);
+        {
+            program.computeBytecode =
+                compileStage(source.source, source.computeEntry, "cs_5_0");
+        }
         else
-            compileRender(d3dDevice, source);
+        {
+            program.vertexBytecode =
+                compileStage(source.source, source.vertexEntry, "vs_5_0");
+            program.pixelBytecode =
+                compileStage(source.source, source.fragmentEntry, "ps_5_0");
+        }
     }
 
-    void compileRender(ID3D11Device* d3dDevice, const ShaderSource& source)
-    {
-        auto vertexBlob = compileStage(source.source, source.vertexEntry, "vs_5_0");
-        auto fragmentBlob =
-            compileStage(source.source, source.fragmentEntry, "ps_5_0");
-
-        if (!vertexBlob || !fragmentBlob)
-            return;
-
-        d3dDevice->CreateVertexShader(vertexBlob->GetBufferPointer(),
-                                      vertexBlob->GetBufferSize(),
-                                      nullptr,
-                                      program.vertexShader.put());
-
-        d3dDevice->CreatePixelShader(fragmentBlob->GetBufferPointer(),
-                                     fragmentBlob->GetBufferSize(),
-                                     nullptr,
-                                     program.pixelShader.put());
-
-        program.vertexBytecode = vertexBlob;
-    }
-
-    void compileCompute(ID3D11Device* d3dDevice, const ShaderSource& source)
-    {
-        auto computeBlob =
-            compileStage(source.source, source.computeEntry, "cs_5_0");
-
-        if (!computeBlob)
-            return;
-
-        d3dDevice->CreateComputeShader(computeBlob->GetBufferPointer(),
-                                       computeBlob->GetBufferSize(),
-                                       nullptr,
-                                       program.computeShader.put());
-    }
-
-    D3DShaderProgram program;
+    D3D12ShaderProgram program;
 };
 
 ShaderLibrary::ShaderLibrary(Device& device, const ShaderSource& source)
@@ -116,15 +87,15 @@ ShaderLibrary::ShaderLibrary(Device& device, const ShaderSource& source)
 
 bool ShaderLibrary::isValid() const
 {
-    if (impl->program.computeShader != nullptr)
+    if (impl->program.computeBytecode != nullptr)
         return true;
 
-    return impl->program.vertexShader != nullptr
-           && impl->program.pixelShader != nullptr;
+    return impl->program.vertexBytecode != nullptr
+           && impl->program.pixelBytecode != nullptr;
 }
 
 void* ShaderLibrary::nativeLibrary() const
 {
-    return const_cast<D3DShaderProgram*>(&impl->program);
+    return const_cast<D3D12ShaderProgram*>(&impl->program);
 }
 } // namespace eacp::GPU

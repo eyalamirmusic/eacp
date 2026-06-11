@@ -3,25 +3,32 @@
 #include "CommandBuffer.h"
 
 #include "../Device/Device.h"
-#include "../Windows/D3DTypes.h"
+#include "../Windows/D3D12Types.h"
 
-#include <d3d11.h>
-
-// Windows/D3D11 backend. D3D11 records onto the immediate context with no
-// separate command buffer, so this wraps that context; commit() flushes it. The
-// staging copy in Buffer::read serialises behind the dispatch, so a read after
-// commit sees the kernel's output.
+// Windows/D3D12 backend. Owns one CommandContext recording for its lifetime:
+// passes record onto its list, commit() executes it on the direct queue, and
+// an uncommitted recording is discarded on destruction. The fence wait inside
+// Buffer::read serialises behind the committed work, so a read after commit
+// sees the kernel's output.
 
 namespace eacp::GPU
 {
 struct CommandBuffer::Native
 {
     explicit Native(Device& device)
-        : context(static_cast<ID3D11DeviceContext*>(device.nativeQueue()))
     {
+        if (device.isValid())
+            commands = getD3D12Context().acquire();
     }
 
-    ID3D11DeviceContext* context = nullptr;
+    ~Native()
+    {
+        if (commands != nullptr && !committed)
+            getD3D12Context().discard(commands);
+    }
+
+    CommandContext* commands = nullptr;
+    bool committed = false;
 };
 
 CommandBuffer::CommandBuffer(Device& device)
@@ -31,20 +38,28 @@ CommandBuffer::CommandBuffer(Device& device)
 
 ComputePass CommandBuffer::beginCompute()
 {
-    if (impl->context == nullptr)
+    if (impl->commands == nullptr || impl->committed)
         return ComputePass(nullptr);
 
-    return ComputePass(new D3DComputeEncoder {impl->context});
+    // The root signature is fixed for every compute pipeline, so binding it
+    // here frees the pass from caring about setPipeline/set*Buffer ordering.
+    impl->commands->list->SetComputeRootSignature(
+        getD3D12Context().getComputeRootSignature());
+
+    return ComputePass(new D3D12ComputeEncoder {impl->commands});
 }
 
 void CommandBuffer::commit()
 {
-    if (impl->context != nullptr)
-        impl->context->Flush();
+    if (impl->commands == nullptr || impl->committed)
+        return;
+
+    impl->committed = true;
+    getD3D12Context().submit(impl->commands);
 }
 
 bool CommandBuffer::isValid() const
 {
-    return impl->context != nullptr;
+    return impl->commands != nullptr;
 }
 } // namespace eacp::GPU

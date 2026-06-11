@@ -4,38 +4,55 @@
 
 #include "../Device/Device.h"
 #include "../Shader/ShaderLibrary.h"
-#include "../Windows/D3DTypes.h"
-
-#include <d3d11.h>
+#include "../Windows/D3D12Types.h"
 
 #include <vector>
 
 #include <winrt/base.h>
 
-// Windows/D3D11 backend. Assembles the shaders compiled by ShaderLibrary with an
-// input layout and fixed-function state into the D3DPipeline a render pass binds.
+// Windows/D3D12 backend. Everything the D3D11 backend kept as five separate
+// state objects bakes into a single pipeline-state object against the shared
+// render root signature; only the topology and vertex stride stay outside the
+// PSO, read by the render pass at draw time.
 
 namespace eacp::GPU
 {
 namespace
 {
-D3D11_PRIMITIVE_TOPOLOGY toD3DTopology(PrimitiveTopology topology)
+D3D12_PRIMITIVE_TOPOLOGY toD3DTopology(PrimitiveTopology topology)
 {
     switch (topology)
     {
         case PrimitiveTopology::Triangles:
-            return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+            return D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
         case PrimitiveTopology::TriangleStrip:
-            return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+            return D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
         case PrimitiveTopology::Lines:
-            return D3D11_PRIMITIVE_TOPOLOGY_LINELIST;
+            return D3D_PRIMITIVE_TOPOLOGY_LINELIST;
         case PrimitiveTopology::LineStrip:
-            return D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP;
+            return D3D_PRIMITIVE_TOPOLOGY_LINESTRIP;
         case PrimitiveTopology::Points:
-            return D3D11_PRIMITIVE_TOPOLOGY_POINTLIST;
+            return D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
     }
 
-    return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    return D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+}
+
+D3D12_PRIMITIVE_TOPOLOGY_TYPE toTopologyType(PrimitiveTopology topology)
+{
+    switch (topology)
+    {
+        case PrimitiveTopology::Triangles:
+        case PrimitiveTopology::TriangleStrip:
+            return D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        case PrimitiveTopology::Lines:
+        case PrimitiveTopology::LineStrip:
+            return D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
+        case PrimitiveTopology::Points:
+            return D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
+    }
+
+    return D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 }
 
 DXGI_FORMAT toDXGIFormat(VertexFormat format)
@@ -55,87 +72,73 @@ DXGI_FORMAT toDXGIFormat(VertexFormat format)
     return DXGI_FORMAT_R32G32B32_FLOAT;
 }
 
-// Vertex attributes are matched to the HLSL input by a TEXCOORD semantic indexed
-// by attribute position, mirroring Metal's [[attribute(n)]] index-based binding.
-winrt::com_ptr<ID3D11InputLayout> makeInputLayout(ID3D11Device* device,
-                                                  const VertexLayout& layout,
-                                                  ID3DBlob* vertexBytecode)
+// Vertex attributes are matched to the HLSL input by a TEXCOORD semantic
+// indexed by attribute position, mirroring Metal's [[attribute(n)]] binding.
+std::vector<D3D12_INPUT_ELEMENT_DESC> makeInputLayout(const VertexLayout& layout)
 {
-    if (layout.attributes.empty() || vertexBytecode == nullptr)
-        return nullptr;
-
-    auto elements = std::vector<D3D11_INPUT_ELEMENT_DESC>();
+    auto elements = std::vector<D3D12_INPUT_ELEMENT_DESC>();
 
     for (auto i = 0; i < layout.attributes.size(); ++i)
     {
         const auto& attribute = layout.attributes[i];
 
-        D3D11_INPUT_ELEMENT_DESC element = {};
+        D3D12_INPUT_ELEMENT_DESC element = {};
         element.SemanticName = "TEXCOORD";
         element.SemanticIndex = static_cast<UINT>(i);
         element.Format = toDXGIFormat(attribute.format);
         element.InputSlot = static_cast<UINT>(attribute.bufferIndex);
         element.AlignedByteOffset = static_cast<UINT>(attribute.offset);
-        element.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
+        element.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
 
         elements.push_back(element);
     }
 
-    winrt::com_ptr<ID3D11InputLayout> inputLayout;
-    device->CreateInputLayout(elements.data(),
-                              static_cast<UINT>(elements.size()),
-                              vertexBytecode->GetBufferPointer(),
-                              vertexBytecode->GetBufferSize(),
-                              inputLayout.put());
-
-    return inputLayout;
+    return elements;
 }
 
-winrt::com_ptr<ID3D11RasterizerState> makeRasterizerState(ID3D11Device* device,
-                                                          int sampleCount)
+D3D12_RASTERIZER_DESC makeRasterizerDesc(int sampleCount)
 {
-    D3D11_RASTERIZER_DESC descriptor = {};
-    descriptor.FillMode = D3D11_FILL_SOLID;
+    D3D12_RASTERIZER_DESC desc = {};
+    desc.FillMode = D3D12_FILL_MODE_SOLID;
     // Match Metal's default of no face culling.
-    descriptor.CullMode = D3D11_CULL_NONE;
-    descriptor.DepthClipEnable = TRUE;
-    descriptor.MultisampleEnable = sampleCount > 1 ? TRUE : FALSE;
+    desc.CullMode = D3D12_CULL_MODE_NONE;
+    desc.DepthClipEnable = TRUE;
+    desc.MultisampleEnable = sampleCount > 1 ? TRUE : FALSE;
+    return desc;
+}
 
-    winrt::com_ptr<ID3D11RasterizerState> state;
-    device->CreateRasterizerState(&descriptor, state.put());
-    return state;
+D3D12_BLEND_DESC makeBlendDesc(bool blending)
+{
+    D3D12_BLEND_DESC desc = {};
+    auto& target = desc.RenderTarget[0];
+    target.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+    if (!blending)
+        return desc;
+
+    target.BlendEnable = TRUE;
+    target.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+    target.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+    target.BlendOp = D3D12_BLEND_OP_ADD;
+    target.SrcBlendAlpha = D3D12_BLEND_SRC_ALPHA;
+    target.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+    target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    return desc;
 }
 
 // Less-equal depth test with depth writes on, matching the Metal backend. The
 // [0,1] depth range is shared by both APIs, so no convention flip is needed.
-winrt::com_ptr<ID3D11DepthStencilState> makeDepthStencilState(ID3D11Device* device)
+D3D12_DEPTH_STENCIL_DESC makeDepthStencilDesc(bool depth)
 {
-    D3D11_DEPTH_STENCIL_DESC descriptor = {};
-    descriptor.DepthEnable = TRUE;
-    descriptor.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
-    descriptor.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+    D3D12_DEPTH_STENCIL_DESC desc = {};
 
-    winrt::com_ptr<ID3D11DepthStencilState> state;
-    device->CreateDepthStencilState(&descriptor, state.put());
-    return state;
-}
+    if (!depth)
+        return desc;
 
-winrt::com_ptr<ID3D11BlendState> makeBlendState(ID3D11Device* device)
-{
-    D3D11_BLEND_DESC descriptor = {};
-    auto& target = descriptor.RenderTarget[0];
-    target.BlendEnable = TRUE;
-    target.SrcBlend = D3D11_BLEND_SRC_ALPHA;
-    target.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-    target.BlendOp = D3D11_BLEND_OP_ADD;
-    target.SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA;
-    target.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-    target.BlendOpAlpha = D3D11_BLEND_OP_ADD;
-    target.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-
-    winrt::com_ptr<ID3D11BlendState> state;
-    device->CreateBlendState(&descriptor, state.put());
-    return state;
+    desc.DepthEnable = TRUE;
+    desc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    desc.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    return desc;
 }
 } // namespace
 
@@ -145,35 +148,51 @@ struct RenderPipeline::Native
         : topology(descriptor.topology)
     {
         pipeline.topology = toD3DTopology(descriptor.topology);
+        pipeline.stride = static_cast<UINT>(descriptor.vertexLayout.stride);
+        pipeline.depth = descriptor.depth;
 
-        auto* d3dDevice = static_cast<ID3D11Device*>(device.nativeDevice());
+        auto& context = getD3D12Context();
 
-        if (d3dDevice == nullptr || descriptor.library == nullptr)
+        if (!context.isValid() || !device.isValid()
+            || context.getRenderRootSignature() == nullptr
+            || descriptor.library == nullptr)
             return;
 
         auto* program =
-            static_cast<D3DShaderProgram*>(descriptor.library->nativeLibrary());
+            static_cast<D3D12ShaderProgram*>(descriptor.library->nativeLibrary());
 
-        if (program == nullptr || !program->vertexShader || !program->pixelShader)
+        if (program == nullptr || program->vertexBytecode == nullptr
+            || program->pixelBytecode == nullptr)
             return;
 
-        pipeline.vertexShader = program->vertexShader;
-        pipeline.pixelShader = program->pixelShader;
-        pipeline.inputLayout = makeInputLayout(
-            d3dDevice, descriptor.vertexLayout, program->vertexBytecode.get());
-        pipeline.rasterizerState =
-            makeRasterizerState(d3dDevice, descriptor.sampleCount);
-        pipeline.stride = static_cast<UINT>(descriptor.vertexLayout.stride);
+        auto inputLayout = makeInputLayout(descriptor.vertexLayout);
 
-        if (descriptor.blending)
-            pipeline.blendState = makeBlendState(d3dDevice);
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC desc = {};
+        desc.pRootSignature = context.getRenderRootSignature();
+        desc.VS.pShaderBytecode = program->vertexBytecode->GetBufferPointer();
+        desc.VS.BytecodeLength = program->vertexBytecode->GetBufferSize();
+        desc.PS.pShaderBytecode = program->pixelBytecode->GetBufferPointer();
+        desc.PS.BytecodeLength = program->pixelBytecode->GetBufferSize();
+        desc.BlendState = makeBlendDesc(descriptor.blending);
+        desc.SampleMask = UINT_MAX;
+        desc.RasterizerState = makeRasterizerDesc(descriptor.sampleCount);
+        desc.DepthStencilState = makeDepthStencilDesc(descriptor.depth);
+        desc.InputLayout.pInputElementDescs = inputLayout.data();
+        desc.InputLayout.NumElements = static_cast<UINT>(inputLayout.size());
+        desc.PrimitiveTopologyType = toTopologyType(descriptor.topology);
+        desc.NumRenderTargets = 1;
+        desc.RTVFormats[0] = DXGI_FORMAT_B8G8R8A8_UNORM;
+        desc.DSVFormat =
+            descriptor.depth ? DXGI_FORMAT_D32_FLOAT : DXGI_FORMAT_UNKNOWN;
+        desc.SampleDesc.Count = static_cast<UINT>(
+            descriptor.sampleCount > 1 ? descriptor.sampleCount : 1);
 
-        if (descriptor.depth)
-            pipeline.depthStencilState = makeDepthStencilState(d3dDevice);
+        context.getDevice()->CreateGraphicsPipelineState(
+            &desc, __uuidof(ID3D12PipelineState), pipeline.state.put_void());
     }
 
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
-    D3DPipeline pipeline;
+    D3D12Pipeline pipeline;
 };
 
 RenderPipeline::RenderPipeline(Device& device,
@@ -184,8 +203,7 @@ RenderPipeline::RenderPipeline(Device& device,
 
 bool RenderPipeline::isValid() const
 {
-    return impl->pipeline.vertexShader != nullptr
-           && impl->pipeline.pixelShader != nullptr;
+    return impl->pipeline.state != nullptr;
 }
 
 PrimitiveTopology RenderPipeline::topology() const
@@ -195,11 +213,14 @@ PrimitiveTopology RenderPipeline::topology() const
 
 void* RenderPipeline::nativeState() const
 {
-    return const_cast<D3DPipeline*>(&impl->pipeline);
+    return const_cast<D3D12Pipeline*>(&impl->pipeline);
 }
 
 void* RenderPipeline::nativeDepthState() const
 {
-    return impl->pipeline.depthStencilState.get();
+    // Depth state is baked into the PSO on D3D12; the handle exists for the
+    // Metal backend, which binds it separately.
+    return impl->pipeline.depth ? const_cast<D3D12Pipeline*>(&impl->pipeline)
+                                : nullptr;
 }
 } // namespace eacp::GPU

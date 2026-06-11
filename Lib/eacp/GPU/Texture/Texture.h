@@ -37,8 +37,8 @@ struct TextureDescriptor
     TextureAddressMode addressMode = TextureAddressMode::Clamp;
 };
 
-// A 2D texture sampled by the fragment stage (MTLTexture on Metal, an
-// ID3D11Texture2D with its shader-resource view on D3D11). Create via
+// A 2D texture sampled by the fragment stage (MTLTexture on Metal, a D3D12
+// resource with its SRV and sampler descriptors on Windows). Create via
 // Device::makeTexture with tightly packed 4-byte pixels, row 0 at the top, or
 // null pixels for an uninitialised texture. Bind with
 // RenderPass::setFragmentTexture.
@@ -55,8 +55,8 @@ public:
     void* nativeTexture() const;
     void* nativeSampler() const;
 
-    // The shader-resource view the fragment stage binds on D3D11. Null on
-    // Metal, where the texture is bound directly (mirrors Buffer's views).
+    // The read view the fragment stage binds on D3D12 (the same handle as
+    // nativeTexture). Null on Metal, where the texture is bound directly.
     void* nativeReadView() const;
 
 private:
