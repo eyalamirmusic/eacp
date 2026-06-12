@@ -54,10 +54,16 @@ void armWindowDrag(WKWebView*)
     assert(false && "armWindowDrag is macOS-only");
 }
 
-void performWindowControl(WKWebView*, const std::string&)
+void applyWindowControl(WKWebView*, WindowControlAction)
 {
     // Caption buttons are a desktop affordance; the shim that posts these
     // actions is only installed on macOS.
-    assert(false && "performWindowControl is macOS-only");
+    assert(false && "applyWindowControl is macOS-only");
+}
+
+bool isWindowMaximized(WKWebView*)
+{
+    // iOS windows always fill the screen; there's no maximize state.
+    return false;
 }
 } // namespace eacp::Graphics::detail

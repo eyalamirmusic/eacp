@@ -1810,31 +1810,32 @@ void WebView::armWindowDrag()
     impl->windowDragArmed = true;
 }
 
-void WebView::performWindowControl(const std::string& action)
+void WebView::applyWindowControl(detail::WindowControlAction action)
 {
     auto root = impl->hostHwnd ? GetAncestor(impl->hostHwnd, GA_ROOT) : nullptr;
     if (!root)
         return;
 
-    if (action == "minimize")
+    switch (action)
     {
-        ShowWindow(root, SW_MINIMIZE);
-        return;
+        case detail::WindowControlAction::Minimize:
+            ShowWindow(root, SW_MINIMIZE);
+            return;
+
+        case detail::WindowControlAction::Maximize:
+            ShowWindow(root, IsZoomed(root) ? SW_RESTORE : SW_MAXIMIZE);
+            return;
+
+        case detail::WindowControlAction::Close:
+            PostMessageW(root, WM_CLOSE, 0, 0);
+            return;
     }
+}
 
-    if (action == "maximize")
-    {
-        ShowWindow(root, IsZoomed(root) ? SW_RESTORE : SW_MAXIMIZE);
-
-        // Report the resulting state back so the page's data-eacp-maximized
-        // attribute tracks reality instead of guessing.
-        evaluateJavaScript(IsZoomed(root) ? "window.__eacpSetMaximized(true)"
-                                          : "window.__eacpSetMaximized(false)");
-        return;
-    }
-
-    if (action == "close")
-        PostMessageW(root, WM_CLOSE, 0, 0);
+bool WebView::isHostWindowMaximized() const
+{
+    auto root = impl->hostHwnd ? GetAncestor(impl->hostHwnd, GA_ROOT) : nullptr;
+    return root && IsZoomed(root);
 }
 
 void WebView::setZoom(double level)

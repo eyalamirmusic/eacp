@@ -797,9 +797,14 @@ void WebView::armWindowDrag()
     detail::armWindowDrag(impl->webView.get());
 }
 
-void WebView::performWindowControl(const std::string& action)
+void WebView::applyWindowControl(detail::WindowControlAction action)
 {
-    detail::performWindowControl(impl->webView.get(), action);
+    detail::applyWindowControl(impl->webView.get(), action);
+}
+
+bool WebView::isHostWindowMaximized() const
+{
+    return detail::isWindowMaximized(impl->webView.get());
 }
 
 void WebView::resized()
