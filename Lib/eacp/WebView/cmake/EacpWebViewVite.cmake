@@ -1,5 +1,7 @@
 option(EACP_WEBVIEW_VITE_BUILD "Let CMake drive '<pm> install' + 'vite build' for embedded webview apps. When OFF, the prebuilt dist committed at SOURCE_DIR/dist is embedded as-is." ON)
 
+option(EACP_WEBVIEW_DEV "Dev mode: skip the vite production build and resource embedding entirely. Apps serve their UI from the vite dev server (run '<pm> run dev' in the app's web dir); the runtime already prefers a reachable dev server over embedded resources." OFF)
+
 set(EACP_WEBVIEW_PACKAGE_MANAGER "npm" CACHE STRING
         "Package manager used to drive embedded vite builds (e.g. npm, pnpm, yarn, bun). Can be overridden per-call via the PACKAGE_MANAGER argument to eacp_webview_add_vite.")
 
@@ -22,6 +24,18 @@ function(eacp_webview_add_vite TARGET)
     endif ()
     if (NOT ARG_DIST_DIR)
         set(ARG_DIST_DIR "${ARG_SOURCE_DIR}/dist")
+    endif ()
+
+    # Dev mode: no production bundle, no embed. Schema codegen still runs
+    # (the app target depends on it directly), so the dev server picks up
+    # fresh generated TS. Without a running dev server the app has no UI
+    # to load — that's the expected trade-off of this mode.
+    if (EACP_WEBVIEW_DEV)
+        message(STATUS
+                "eacp_webview_add_vite(${TARGET}): EACP_WEBVIEW_DEV is ON — "
+                "skipping vite build + resource embed; serve the UI with the "
+                "vite dev server from ${ARG_SOURCE_DIR}")
+        return()
     endif ()
 
     if (EACP_WEBVIEW_VITE_BUILD AND EXISTS "${ARG_SOURCE_DIR}/package.json")

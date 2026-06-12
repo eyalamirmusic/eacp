@@ -45,6 +45,17 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON
 ```
 
+- `EACP_WEBVIEW_DEV` (default `OFF`): skips the Vite production build and
+  resource embedding for webview apps. The UI is served from the Vite dev
+  server instead (`npm run dev` in the app's `web/` dir); the runtime already
+  prefers a reachable dev server (`Options::Embedded::preferDevServer`).
+  Schema codegen still emits TS into `web/src/generated` on every app build.
+
+```bash
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
+      -DEACP_WEBVIEW_DEV=ON
+```
+
 ### Local Miro source
 
 Miro is fetched via CPM from `eyalamirmusic/Miro` by default. To work against a
