@@ -3,7 +3,11 @@
 #include <NanoTest/NanoTest.h>
 
 #include <chrono>
+#include <csignal>
 #include <string>
+
+#include <sys/types.h>
+#include <unistd.h>
 
 using namespace nano;
 using namespace std::chrono_literals;
@@ -93,4 +97,23 @@ auto tRunAsyncResolves = test("Process/runAsync/resolvesOnMainThread") = []
 
     check(result.exitCode == 0);
     check(result.output == "async\n");
+};
+
+auto tDetachedSurvivesDestruction = test("Process/detached/survivesDestruction") = []
+{
+    auto pid = long {-1};
+
+    {
+        auto options = Proc::ProcessOptions {"/bin/sleep", {"30"}};
+        options.detached = true;
+
+        auto process = Proc::Process {std::move(options)};
+        check(process.launched());
+        check(process.isRunning());
+        pid = process.id();
+    }
+
+    // Destroying the Process must leave a detached child running.
+    check(::kill((pid_t) pid, 0) == 0);
+    ::kill((pid_t) pid, SIGKILL);
 };

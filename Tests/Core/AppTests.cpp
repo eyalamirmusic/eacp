@@ -208,3 +208,10 @@ auto tQuitStopsLoopAndKeepsAppUntilTeardown =
 
     resetAppState();
 };
+
+// Test binaries are local builds — unsigned or linker ad-hoc signed — so the
+// distribution check must say no. (The positive case needs a Developer
+// ID/Authenticode-signed binary, which a local test run can't produce.)
+auto tLocalBuildIsNotDistributionSigned =
+    test("App/localBuildIsNotDistributionSigned") = []
+{ check(!eacp::Apps::isDistributionSigned()); };

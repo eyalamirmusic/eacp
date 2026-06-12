@@ -43,6 +43,7 @@ if (APPLE)
                 Threads/EventLoop-macOS.mm)
         target_link_libraries(eacp-core PRIVATE
                 "-framework Cocoa"
+                "-framework Security"
                 "-framework UniformTypeIdentifiers")
     endif ()
 elseif (WIN32)
@@ -55,7 +56,7 @@ elseif (WIN32)
             Utils/Environment-Windows.cpp
             Utils/Files-Windows.cpp
             Utils/Logging-Windows.cpp)
-    target_link_libraries(eacp-core PRIVATE windowsapp)
+    target_link_libraries(eacp-core PRIVATE windowsapp crypt32)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-core PRIVATE
             App/App-Linux.cpp

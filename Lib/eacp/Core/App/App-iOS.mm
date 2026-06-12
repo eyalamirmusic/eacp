@@ -8,6 +8,16 @@ namespace eacp::Apps
 // iOS has no Dock / activation policy.
 void setDockIconVisible(bool) {}
 
+// On iOS every binary is signed, so signature presence means nothing; what
+// distinguishes a dev build is the development provisioning profile Xcode
+// embeds. Store/TestFlight builds carry none.
+bool isDistributionSigned()
+{
+    return [NSBundle.mainBundle pathForResource:@"embedded"
+                                         ofType:@"mobileprovision"]
+           == nil;
+}
+
 void openExternalURL(const std::string& url)
 {
     auto* nsString = [NSString stringWithUTF8String:url.c_str()];

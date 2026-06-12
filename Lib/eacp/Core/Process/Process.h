@@ -26,6 +26,14 @@ struct ProcessOptions
     // captured into output()/errorOutput(). Suits long-running children whose
     // output would otherwise buffer unbounded. POSIX only for now.
     bool captureOutput = true;
+
+    // When true the child is launched detached: destroying the Process never
+    // kills it, so it survives both the object and the launching process. For
+    // hand-off launches, e.g. an updater starting its replacement before
+    // exiting. Implies captureOutput = false; the launcher is expected to exit
+    // soon after (a detached child that outlives a still-running launcher is
+    // not reaped on POSIX until the launcher exits).
+    bool detached = false;
 };
 
 struct ProcessResult

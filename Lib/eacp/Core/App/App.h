@@ -49,6 +49,17 @@ void openExternalURL(const std::string& url);
 // runtime. No-op on Windows, Linux and iOS.
 void setDockIconVisible(bool visible);
 
+// True when this process's executable carries a distribution code signature:
+// Developer ID or Apple-issued (App Store / system) on macOS, an embedded
+// Authenticode signature on Windows, no development provisioning profile on
+// iOS. Local builds — unsigned, linker ad-hoc signed, or Xcode
+// development-signed — return false, so this doubles as a "running a released
+// build?" check. Deliberately ignores certificate expiry and revocation: the
+// answer must stay stable offline and over time, and a false negative would
+// silently flip a released install into dev behaviour. Linux has no signing
+// convention and returns false.
+bool isDistributionSigned();
+
 struct FilePickerOptions
 {
     Vector<std::string> allowedExtensions;

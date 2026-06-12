@@ -70,13 +70,23 @@ Vector<char*> toCArray(Vector<std::string>& strings)
 struct Process::Native
 {
     explicit Native(ProcessOptions options)
+        : detached(options.detached)
     {
         ignoreSigPipeOnce();
+
+        if (detached)
+            options.captureOutput = false;
+
         launch(options);
     }
 
     ~Native()
     {
+        // A detached child is deliberately left running and unreaped — it
+        // outlives this object (and typically this process).
+        if (detached)
+            return;
+
         if (isRunning())
             ::kill(pid, SIGKILL);
 
@@ -214,13 +224,24 @@ private:
 #pragma clang diagnostic pop
         }
 
+        auto attr = posix_spawnattr_t {};
+        posix_spawnattr_init(&attr);
+
+#if defined(POSIX_SPAWN_SETSID)
+        // A detached child becomes its own session leader so it survives the
+        // launcher's terminal/session, not just the launcher process.
+        if (options.detached)
+            posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
+#endif
+
         auto result = posix_spawnp(&pid,
                                    options.executable.c_str(),
                                    &actions,
-                                   nullptr,
+                                   &attr,
                                    argv.data(),
                                    envp.data());
 
+        posix_spawnattr_destroy(&attr);
         posix_spawn_file_actions_destroy(&actions);
 
         if (result != 0)
@@ -361,6 +382,7 @@ private:
 
     pid_t pid = -1;
     bool execFailed = false; // posix_spawn couldn't exec → report 127
+    const bool detached;
     int inputFd = -1;
 
     std::thread outReader;

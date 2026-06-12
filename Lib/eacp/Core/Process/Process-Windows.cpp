@@ -151,11 +151,16 @@ std::wstring buildEnvironmentBlock(const Vector<EnvironmentVariable>& overrides)
 
 struct Process::Native
 {
-    explicit Native(ProcessOptions options) { launch(std::move(options)); }
+    explicit Native(ProcessOptions options)
+        : detached(options.detached)
+    {
+        launch(std::move(options));
+    }
 
     ~Native()
     {
-        if (isRunning())
+        // A detached child is deliberately left running; just drop our handles.
+        if (!detached && isRunning())
             ::TerminateProcess(processHandle, 1);
 
         closeInput();
@@ -236,6 +241,14 @@ struct Process::Native
 private:
     void launch(ProcessOptions options)
     {
+        // Detached children get no pipes: nobody would drain them, and a
+        // full pipe would eventually block the child.
+        if (detached)
+        {
+            launchDetached(options);
+            return;
+        }
+
         SECURITY_ATTRIBUTES inherit {};
         inherit.nLength = sizeof inherit;
         inherit.bInheritHandle = TRUE;
@@ -315,6 +328,42 @@ private:
         errReader = std::thread([this, errRead] { drain(errRead, errBuffer); });
     }
 
+    void launchDetached(const ProcessOptions& options)
+    {
+        STARTUPINFOW startup {};
+        startup.cb = sizeof startup;
+
+        auto commandLine = buildCommandLine(options.executable, options.arguments);
+        commandLine.push_back(L'\0');
+
+        auto workingDir = toWide(options.workingDirectory);
+        auto environment = buildEnvironmentBlock(options.environment);
+
+        // DETACHED_PROCESS: no inherited console, so the child survives the
+        // launcher's console/job the way a setsid'd POSIX child survives its
+        // session.
+        PROCESS_INFORMATION info {};
+        auto created = CreateProcessW(
+            nullptr,
+            commandLine.data(),
+            nullptr,
+            nullptr,
+            FALSE,
+            DETACHED_PROCESS
+                | (environment.empty() ? 0 : CREATE_UNICODE_ENVIRONMENT),
+            environment.empty() ? nullptr : (LPVOID) environment.data(),
+            workingDir.empty() ? nullptr : workingDir.c_str(),
+            &startup,
+            &info);
+
+        if (!created)
+            return;
+
+        processHandle = info.hProcess;
+        threadHandle = info.hThread;
+        processId = info.dwProcessId;
+    }
+
     void drain(HANDLE handle, std::string& dest)
     {
         char buffer[4096];
@@ -385,6 +434,7 @@ private:
     HANDLE processHandle = nullptr;
     HANDLE threadHandle = nullptr;
     DWORD processId = 0;
+    const bool detached;
     HANDLE inputWrite = nullptr;
 
     std::thread outReader;
