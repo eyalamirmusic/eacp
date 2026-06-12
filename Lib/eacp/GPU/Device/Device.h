@@ -12,6 +12,11 @@
 
 #include <cstddef>
 
+namespace eacp::Graphics
+{
+class Image;
+}
+
 namespace eacp::GPU
 {
 // The GPU device (MTLDevice + command queue on Metal). Owns the resource
@@ -49,6 +54,14 @@ public:
     {
         return {*this, descriptor, pixels};
     }
+
+    // A 2D texture sized from a decoded image and uploaded from its RGBA8
+    // pixels. The image is taken as tightly packed 8-bit RGBA (what
+    // Graphics::Image holds), so the format is always RGBA8Unorm. An invalid or
+    // empty image yields an invalid texture. Defined in Device.cpp.
+    Texture makeTexture(const Graphics::Image& image,
+                        TextureFilter filter = TextureFilter::Linear,
+                        TextureAddressMode addressMode = TextureAddressMode::Clamp);
 
     ShaderLibrary makeShaderLibrary(const ShaderSource& source)
     {

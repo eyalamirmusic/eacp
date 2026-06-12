@@ -1,6 +1,7 @@
 #include <eacp/GPU/GPU.h>
 
 #include <eacp/Core/Platform/Platform.h>
+#include <eacp/Graphics/Image/Image.h>
 
 #include <NanoTest/NanoTest.h>
 
@@ -208,6 +209,24 @@ auto tDeviceBuildsTexture = test("GPU/deviceBuildsTexture") = []
 
     auto invalid = device.makeTexture(TextureDescriptor {});
     check(!invalid.isValid());
+};
+
+// A texture builds straight from a decoded Graphics::Image: the bridge sizes
+// the texture from the image and uploads its RGBA8 pixels. Self-skips without a
+// device.
+auto tDeviceBuildsTextureFromImage = test("GPU/deviceBuildsTextureFromImage") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto image = Graphics::Image(2, 2);
+
+    auto texture = device.makeTexture(image);
+    check(texture.isValid());
+    check(texture.width() == 2);
+    check(texture.height() == 2);
 };
 
 // Runs a compute kernel end to end - storage buffers in and out, a uniform, a
