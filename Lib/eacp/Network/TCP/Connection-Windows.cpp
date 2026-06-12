@@ -38,12 +38,22 @@ bool waitWritable(SOCKET socket, std::chrono::milliseconds timeout)
     FD_ZERO(&writable);
     FD_SET(socket, &writable);
 
+    // WinSock reports a FAILED non-blocking connect on the except set, not
+    // the write set (unlike POSIX, where the socket becomes writable and
+    // SO_ERROR carries the failure). Without watching it, a refused
+    // connection blocks for the full timeout instead of failing promptly.
+    auto failed = fd_set {};
+    FD_ZERO(&failed);
+    FD_SET(socket, &failed);
+
     auto tv = timeval {};
     tv.tv_sec = (long) (timeout.count() / 1000);
     tv.tv_usec = (long) ((timeout.count() % 1000) * 1000);
 
     auto* deadline = timeout.count() > 0 ? &tv : nullptr; // null = block forever
-    return ::select(0, nullptr, &writable, nullptr, deadline) > 0;
+    // > 0 covers both sets: the caller checks SO_ERROR next, which reports
+    // the refusal for the except-set case.
+    return ::select(0, nullptr, &writable, &failed, deadline) > 0;
 }
 
 int pendingSocketError(SOCKET socket)

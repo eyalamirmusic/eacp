@@ -3,6 +3,9 @@
 // point it at the local TcpServer with:
 //
 //   TcpClient --host 127.0.0.1 --port 5050
+//
+// If the connect fails, TcpProbe tells you whether the port is refusing or
+// just unresponsive - and how quickly the library found out.
 
 #include <eacp/Network/TCP/Connection.h>
 
