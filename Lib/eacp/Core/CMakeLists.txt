@@ -10,6 +10,7 @@ target_sources(eacp-core PRIVATE
         Process/Process.cpp
         Threads/EventLoop.cpp
         Threads/TaskSemaphore.cpp
+        Utils/Base64.cpp
         Utils/Environment.cpp
         Utils/File.cpp
         Utils/Files.cpp

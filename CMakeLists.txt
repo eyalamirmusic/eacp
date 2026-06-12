@@ -43,6 +43,7 @@ endif ()
 include(TargetSetup)
 include(CPM)
 include(EacpSchema)
+include(EacpAgentHarness)
 
 if (PROJECT_IS_TOP_LEVEL)
     eacp_default_setup()

@@ -10,3 +10,4 @@ set_target_properties(GUI PROPERTIES
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
 
 set_default_target_setting(GUI)
+eacp_add_agent_harness(GUI)
