@@ -17,6 +17,7 @@ target_link_libraries(eacp-graphics PUBLIC eacp-core)
 if (APPLE)
     target_sources(eacp-graphics PRIVATE
             Graphics/GraphicsContextImpl.mm
+            Helpers/SystemAppearance-Apple.mm
             Image/Image-Apple.mm
             Layers/Layer.mm
             Layers/ShapeLayer.mm
@@ -62,6 +63,7 @@ elseif (WIN32)
     target_sources(eacp-graphics PRIVATE
             Graphics/D2DFactory-Windows.cpp
             Graphics/Keyboard-Windows.cpp
+            Helpers/DarkMode-Windows.cpp
             Helpers/DisplayLink-Windows.cpp
             Image/Image-Windows.cpp
             Layers/Layer-Windows.cpp
