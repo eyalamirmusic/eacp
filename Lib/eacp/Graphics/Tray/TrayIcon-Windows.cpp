@@ -2,6 +2,7 @@
 
 #include "TrayIcon.h"
 #include "../Helpers/StringUtils-Windows.h"
+#include "../Helpers/DarkMode-Windows.h"
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Threads/EventLoop.h>
 
@@ -96,6 +97,9 @@ struct TrayIcon::Native
     {
         if (eacp::Apps::getAppEnvironment().headless)
             return;
+
+        // So the popup menu drawn by TrackPopupMenu follows the system theme.
+        ensureDarkModeAppInitialised();
 
         // Set before the window exists: a WM_NCCREATE-time TaskbarCreated check
         // would otherwise read a zero id.
@@ -336,6 +340,11 @@ struct TrayIcon::Native
             }
             return 0;
         }
+
+        // Refresh the cached menu theme so an open-after-switch picks up a
+        // live light/dark change.
+        if (msg == WM_SETTINGCHANGE && isThemeChangeMessage(lParam))
+            refreshMenuTheme();
 
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
