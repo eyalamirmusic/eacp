@@ -9,21 +9,65 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <mutex>
 
 // macOS capture backend (AVFoundation). One AVCaptureVideoDataOutput delivers
 // 32-bit BGRA frames on a dedicated serial queue; the delegate wraps each
 // CVPixelBuffer in a CameraFrame view (valid only for the callback) and hands it
-// to the user callback. alwaysDiscardsLateVideoFrames provides the drop-stale
+// to the user callback, and also stashes the buffer as the latest frame for the
+// display path. alwaysDiscardsLateVideoFrames provides the drop-stale
 // backpressure. MRC throughout — every alloc/init is owned by an ObjC::Ptr.
 
 namespace eacp::Cameras
 {
+// Thread-safe holder for the most recent frame's pixel buffer: the capture
+// thread sets it, the render thread acquires it. Each access is a tiny critical
+// section guarding a retained CVPixelBuffer.
+struct LatestFrame
+{
+    ~LatestFrame()
+    {
+        if (current != nullptr)
+            CFRelease(current);
+    }
+
+    void set(CVPixelBufferRef buffer)
+    {
+        auto* retained = (CVPixelBufferRef) CFRetain(buffer);
+        CVPixelBufferRef previous = nullptr;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            previous = current;
+            current = retained;
+        }
+
+        if (previous != nullptr)
+            CFRelease(previous);
+    }
+
+    // Returns the current buffer retained (caller releases), or null.
+    void* acquire()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+
+        if (current != nullptr)
+            CFRetain(current);
+
+        return current;
+    }
+
+    std::mutex mutex;
+    CVPixelBufferRef current = nullptr;
+};
+
 // The capture queue calls back into this; Camera::Native owns it and points the
 // delegate at it. The callback is set before start(), so the capture thread only
 // reads it.
 struct CaptureContext
 {
     FrameCallback callback;
+    LatestFrame latest;
 };
 } // namespace eacp::Cameras
 
@@ -42,7 +86,7 @@ struct CaptureContext
 {
     using namespace eacp::Cameras;
 
-    if (context == nullptr || !context->callback)
+    if (context == nullptr)
         return;
 
     auto imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
@@ -51,6 +95,13 @@ struct CaptureContext
         return;
 
     auto pixelBuffer = (CVPixelBufferRef) imageBuffer;
+
+    // The display path only needs the buffer (it wraps the IOSurface on the GPU),
+    // so stash it before the CPU-side lock the raw callback needs.
+    context->latest.set(pixelBuffer);
+
+    if (!context->callback)
+        return;
 
     CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
 
@@ -196,11 +247,12 @@ struct Camera::Native
         output.get().alwaysDiscardsLateVideoFrames =
             config.discardLateFrames ? YES : NO;
 
-        queue = dispatch_queue_create("com.eacp.camera.capture", DISPATCH_QUEUE_SERIAL);
+        captureQueue =
+            dispatch_queue_create("com.eacp.camera.capture", DISPATCH_QUEUE_SERIAL);
 
         delegate = [[EacpCameraDelegate alloc] init];
         delegate.get()->context = &context;
-        [output.get() setSampleBufferDelegate:delegate.get() queue:queue];
+        [output.get() setSampleBufferDelegate:delegate.get() queue:captureQueue];
 
         if (![session.get() canAddOutput:output.get()])
         {
@@ -214,24 +266,38 @@ struct Camera::Native
 
         applyFrameRate(device, config.frameRate);
 
-        // startRunning blocks while the device warms up; acceptable for the
-        // capture probe. The display path (CameraView) moves it off the main
-        // thread in a later phase.
-        [session.get() startRunning];
-        running.store([session.get() isRunning]);
+        // startRunning blocks while the device warms up, so run it on a serial
+        // session queue rather than the caller's (often the main) thread. stop()
+        // serialises with it on the same queue.
+        sessionQueue =
+            dispatch_queue_create("com.eacp.camera.session", DISPATCH_QUEUE_SERIAL);
 
-        if (!running.load())
-            teardown();
+        auto* sessionPtr = session.get();
+        auto* runningPtr = &running;
 
-        return running.load();
+        dispatch_async(sessionQueue, ^ {
+            [sessionPtr startRunning];
+            runningPtr->store([sessionPtr isRunning]);
+        });
+
+        return true;
     }
 
     void stop()
     {
         ObjC::AutoReleasePool pool;
 
-        if (session && [session.get() isRunning])
-            [session.get() stopRunning];
+        // Serialise with the pending startRunning, then stop, on the session
+        // queue before tearing anything down.
+        if (sessionQueue != nullptr && session)
+        {
+            auto* sessionPtr = session.get();
+
+            dispatch_sync(sessionQueue, ^ {
+                if ([sessionPtr isRunning])
+                    [sessionPtr stopRunning];
+            });
+        }
 
         teardown();
         running.store(false);
@@ -244,18 +310,24 @@ struct Camera::Native
 
         // Drain any delegate call still in flight before the context it points
         // at goes away.
-        if (queue != nullptr)
-            dispatch_sync(queue, ^ {
+        if (captureQueue != nullptr)
+            dispatch_sync(captureQueue, ^ {
             });
 
         delegate.release();
         output.release();
         session.release();
 
-        if (queue != nullptr)
+        if (captureQueue != nullptr)
         {
-            dispatch_release(queue);
-            queue = nullptr;
+            dispatch_release(captureQueue);
+            captureQueue = nullptr;
+        }
+
+        if (sessionQueue != nullptr)
+        {
+            dispatch_release(sessionQueue);
+            sessionQueue = nullptr;
         }
     }
 
@@ -263,7 +335,8 @@ struct Camera::Native
     ObjC::Ptr<AVCaptureSession> session;
     ObjC::Ptr<AVCaptureVideoDataOutput> output;
     ObjC::Ptr<EacpCameraDelegate> delegate;
-    dispatch_queue_t queue = nullptr;
+    dispatch_queue_t captureQueue = nullptr;
+    dispatch_queue_t sessionQueue = nullptr;
     std::atomic<bool> running {false};
 };
 
@@ -386,5 +459,16 @@ bool Camera::isRunning() const
 void* Camera::nativeSession() const
 {
     return (__bridge void*) impl->session.get();
+}
+
+void* Camera::acquireLatestPixelBuffer()
+{
+    return impl->context.latest.acquire();
+}
+
+void Camera::releasePixelBuffer(void* buffer)
+{
+    if (buffer != nullptr)
+        CFRelease(buffer);
 }
 } // namespace eacp::Cameras

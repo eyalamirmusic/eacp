@@ -142,8 +142,11 @@ public:
     // Sets the per-frame callback. Set it before start(). Passing {} clears it.
     void setFrameCallback(FrameCallback callback);
 
-    // Opens the configured device and begins delivering frames. Returns false
-    // if the device can't be opened or permission is not granted.
+    // Opens and configures the device, then starts the capture session on a
+    // background thread (device warm-up can block). Returns false if the device
+    // can't be opened or configured; otherwise frames begin arriving shortly
+    // after — poll isRunning() or wait for the first frame. Check
+    // permissionStatus() first, since capture needs Granted.
     bool start(const CameraConfig& config = {});
     void stop();
     bool isRunning() const;
@@ -151,6 +154,16 @@ public:
     // The platform capture session (AVCaptureSession* on macOS), for the
     // display View to attach to without copying frames. Null when not running.
     void* nativeSession() const;
+
+    // The most recent frame's native pixel buffer (CVPixelBufferRef on macOS),
+    // retained — the caller owns the reference and must hand it back to
+    // releasePixelBuffer. Null when no frame has arrived. Thread-safe; the
+    // display path (CameraView) calls this on the render thread to wrap the
+    // frame zero-copy, independently of the frame callback.
+    void* acquireLatestPixelBuffer();
+
+    // Releases a buffer returned by acquireLatestPixelBuffer.
+    static void releasePixelBuffer(void* buffer);
 
 private:
     struct Native;
