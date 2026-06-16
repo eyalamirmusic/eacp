@@ -1,9 +1,12 @@
 #include <eacp/GPU/GPU.h>
 #include <eacp/Graphics/Graphics.h>
+#include <eacp/Graphics/Helpers/WindowRecorder.h>
 #include <eacp/WebView/WebView.h>
 
 #include <cmath>
+#include <cstdlib>
 #include <functional>
+#include <optional>
 #include <string>
 
 using namespace eacp;
@@ -538,6 +541,17 @@ struct LayeredRoot final : View
     Threads::DisplayLink link {[this](Threads::FrameTime time) { advance(time); }};
 };
 
+// Capture the whole run to an MP4 when EACP_RECORD_WINDOW names a path —
+// the scoped recorder starts with the window and flushes the file when the
+// app shuts down. Unset means no recording (and no permission prompt).
+inline std::optional<ScopedWindowRecorder> recordWindow(Window& window)
+{
+    if (auto* path = std::getenv("EACP_RECORD_WINDOW"); path && *path)
+        return std::optional<ScopedWindowRecorder> {std::in_place, window, path};
+
+    return std::nullopt;
+}
+
 struct MyApp
 {
     MyApp() { window.setContentView(root); }
@@ -556,6 +570,9 @@ struct MyApp
 
     LayeredRoot root;
     Window window {options()};
+
+    // Declared after `window` so it is already on-screen when recording starts.
+    std::optional<ScopedWindowRecorder> recorder = recordWindow(window);
 };
 
 int main()
