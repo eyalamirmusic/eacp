@@ -1,6 +1,11 @@
 #include <eacp/Graphics/Graphics.h>
+#include <eacp/Graphics/Helpers/WindowRecorder.h>
 
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
+#include <optional>
+#include <string>
 
 using namespace eacp;
 using namespace Graphics;
@@ -243,12 +248,26 @@ struct ParentView final : View
     TextDisplay text;
 };
 
+// Capture the whole run to an MP4 when EACP_RECORD_WINDOW names a path —
+// the scoped recorder starts with the window and flushes the file when the
+// app shuts down. Unset means no recording (and no permission prompt).
+inline std::optional<ScopedWindowRecorder> recordWindow(Window& window)
+{
+    if (auto* path = std::getenv("EACP_RECORD_WINDOW"); path && *path)
+        return std::optional<ScopedWindowRecorder> {std::in_place, window, path};
+
+    return std::nullopt;
+}
+
 struct MyApp
 {
     MyApp() { window.setContentView(parentView); }
 
     ParentView parentView;
     Window window;
+
+    // Declared after `window` so it is already on-screen when recording starts.
+    std::optional<ScopedWindowRecorder> recorder = recordWindow(window);
 };
 
 int main()

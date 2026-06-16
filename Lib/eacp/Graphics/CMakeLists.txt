@@ -38,6 +38,7 @@ if (APPLE)
         target_sources(eacp-graphics PRIVATE
                 Graphics/Keyboard-iOS.mm
                 Helpers/DisplayLink-iOS.mm
+                Helpers/WindowRecorder.cpp
                 Menu/Menu-iOS.mm
                 Tray/TrayIcon-iOS.mm
                 View/View-iOS.mm
@@ -49,15 +50,23 @@ if (APPLE)
         target_sources(eacp-graphics PRIVATE
                 Graphics/Keyboard-macOS.mm
                 Helpers/DisplayLink-macOS.mm
+                Helpers/WindowRecorder-macOS.mm
                 Menu/AppKitMenu.mm
                 Menu/Menu-macOS.mm
                 Tray/TrayIcon-macOS.mm
                 View/View-macOS.mm
                 Window/EmbeddedView-macOS.mm
                 Window/Window-macOS.mm)
+        # WindowRecorder-macOS.mm holds AVFoundation objects as members,
+        # so it needs ARC (the rest of the lib is manual-retain ObjC++).
+        set_source_files_properties(Helpers/WindowRecorder-macOS.mm
+                PROPERTIES COMPILE_FLAGS "-fobjc-arc")
         target_link_libraries(eacp-graphics PRIVATE
                 "-framework Cocoa"
-                "-framework Carbon")
+                "-framework Carbon"
+                "-framework AVFoundation"
+                "-framework CoreMedia"
+                "-framework ScreenCaptureKit")
     endif ()
 elseif (WIN32)
     target_sources(eacp-graphics PRIVATE
@@ -70,6 +79,7 @@ elseif (WIN32)
             Layers/ShapeLayer-Windows.cpp
             Layers/TextLayer-Windows.cpp
             Menu/Menu-Windows.cpp
+            Helpers/WindowRecorder.cpp
             Primitives/Font-Windows.cpp
             Primitives/Path-Windows.cpp
             Primitives/TextMetrics-Windows.cpp
