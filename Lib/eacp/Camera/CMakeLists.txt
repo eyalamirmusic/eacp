@@ -6,8 +6,17 @@ target_sources(eacp-camera PRIVATE
         Camera.cpp)
 
 if (APPLE)
+    # Camera-Apple.mm is the shared AVFoundation capture pipeline; the matching
+    # platform file supplies only the bits that differ (device discovery).
     target_sources(eacp-camera PRIVATE
-            Camera-macOS.mm)
+            Camera-Apple.mm)
+
+    if (IOS)
+        target_sources(eacp-camera PRIVATE Camera-iOS.mm)
+    else ()
+        target_sources(eacp-camera PRIVATE Camera-macOS.mm)
+    endif ()
+
     target_link_libraries(eacp-camera PRIVATE
             "-framework AVFoundation"
             "-framework CoreMedia"
