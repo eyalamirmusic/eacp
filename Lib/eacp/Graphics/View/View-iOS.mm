@@ -183,13 +183,6 @@ struct View::Native
 
     CALayer* getLayer() { return nativeView.get().layer; }
 
-    Point getMousePosition() const
-    {
-        // On iOS, we don't have a persistent mouse position
-        // Return the last known touch position or center of view
-        return {0.f, 0.f};
-    }
-
     void focus() { [nativeView.get() becomeFirstResponder]; }
 
     bool hasFocus() const { return [nativeView.get() isFirstResponder]; }
@@ -228,11 +221,6 @@ void View::setOpacity(float opacity)
 Rect View::getBounds() const
 {
     return impl->getBounds();
-}
-
-Point View::getMousePosition() const
-{
-    return impl->getMousePosition();
 }
 
 void View::focus()

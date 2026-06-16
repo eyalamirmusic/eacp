@@ -112,8 +112,19 @@ struct PrimitiveSurface final : View
 
     PrimitiveSurface() { setHandlesMouseEvents(true); }
 
+    // A stateful immediate-mode button: clicking it (a real mouse or an agent's
+    // synthetic click, through the same dispatch) bumps the counter.
+    Rect buttonRect() const { return {14.0f, 40.0f, 168.0f, 40.0f}; }
+
     void mouseDown(const MouseEvent& event) override
     {
+        if (buttonRect().contains(event.pos))
+        {
+            ++clickCount;
+            repaint();
+            return;
+        }
+
         ripples.add(Ripple {event.pos, 0.0f});
     }
 
@@ -149,14 +160,27 @@ struct PrimitiveSurface final : View
         paintWave(g, bounds);
         paintOrbiters(g, bounds);
         paintRipples(g, bounds);
-
-        g.setColor(Color {0.6f, 0.85f, 1.0f});
-        g.drawText("Immediate-mode primitives", {14.0f, 24.0f}, labelFont);
+        paintButton(g);
 
         g.setColor(Color::white(0.45f));
         g.drawText("lines · paths · fills · text — click to ripple",
                    {14.0f, bounds.h - 16.0f},
                    hintFont);
+    }
+
+    void paintButton(Context& g) const
+    {
+        auto button = buttonRect();
+
+        auto shape = Path();
+        shape.addRoundedRect(button, 9.0f);
+        g.setColor(Color {0.18f, 0.5f, 0.85f, 0.95f});
+        g.fillPath(shape);
+
+        g.setColor(Color::white());
+        g.drawText("Clicks: " + std::to_string(clickCount),
+                   {button.x + 16.0f, button.y + 26.0f},
+                   labelFont);
     }
 
     void paintGrid(Context& g, const Rect& bounds) const
@@ -241,6 +265,7 @@ struct PrimitiveSurface final : View
     static constexpr float rippleSpeed = 156.0f;
 
     float phase = 0.0f;
+    int clickCount = 0;
     Vector<Ripple> ripples;
     Font labelFont {FontOptions().withName("Helvetica-Bold").withSize(14.0f)};
     Font hintFont {FontOptions().withName("Helvetica").withSize(11.0f)};
@@ -257,7 +282,9 @@ struct Panel : View
     Panel(const std::string& titleToUse, const Color& accentToUse)
         : accent(accentToUse)
     {
-        setHandlesMouseEvents(true);
+        // Draggable through the standard affordance — moved by the dispatched
+        // mouse events, so a human and an agent drag it the same way.
+        setDraggable(true);
 
         // Group opacity makes the whole panel — chrome plus its GPU / web /
         // primitive content — blend over the panels stacked behind it.
@@ -282,33 +309,9 @@ struct Panel : View
 
     void attachContent() { addSubview(getContent()); }
 
-    // Grabbing the title bar starts a drag; releasing raises the panel so it is
-    // never reordered mid-drag (which would drop the mouse capture).
-    void mouseDown(const MouseEvent&) override
-    {
-        auto* host = getParent();
-
-        if (host == nullptr)
-            return;
-
-        auto mouse = host->getMousePosition();
-        auto bounds = getBounds();
-        dragOffset = {mouse.x - bounds.x, mouse.y - bounds.y};
-    }
-
-    void mouseDragged(const MouseEvent&) override
-    {
-        auto* host = getParent();
-
-        if (host == nullptr)
-            return;
-
-        auto mouse = host->getMousePosition();
-        auto bounds = getBounds();
-        setBounds(
-            bounds.withPosition(mouse.x - dragOffset.x, mouse.y - dragOffset.y));
-    }
-
+    // Dragging is handled by the draggable affordance (setDraggable); on
+    // release the panel raises to the front so it is never reordered mid-drag
+    // (which would drop the mouse capture).
     void mouseUp(const MouseEvent&) override
     {
         if (onRaise)
@@ -351,7 +354,6 @@ private:
     ShapeLayerView frame;
     ShapeLayerView titleBar;
     TextLayerView titleLabel;
-    Point dragOffset;
 };
 
 struct PrimitivePanel final : Panel

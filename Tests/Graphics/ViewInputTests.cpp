@@ -70,6 +70,36 @@ auto tDispatchRespectsGate = test("View/dispatchRespectsHandlesMouseEvents") = [
     check(probe.ups == 1);
 };
 
+// The standard drag affordance moves a view by the pointer's motion, driven
+// purely by the dispatched events — so a human and an agent (synthetic events
+// through the same dispatch) drag it identically. A view that didn't opt in
+// stays put on the same gesture.
+auto tDraggable = test("View/draggableFollowsPointerMotion") = []
+{
+    auto view = View {};
+    view.setDraggable(true);
+    view.setBounds({100, 100, 80, 40});
+
+    // Press inside the view (local coords), then move the pointer by (+30, +20).
+    view.dispatchMouseEvent(mouseAt(40, 20, MouseEventType::Down));
+    view.dispatchMouseEvent(mouseAt(70, 40, MouseEventType::Dragged));
+    view.dispatchMouseEvent(mouseAt(70, 40, MouseEventType::Up));
+
+    check(view.getBounds().x == 130);
+    check(view.getBounds().y == 120);
+
+    // Same gesture on a non-draggable view: it doesn't move.
+    auto fixed = View {};
+    fixed.setHandlesMouseEvents(true);
+    fixed.setBounds({10, 10, 80, 40});
+
+    fixed.dispatchMouseEvent(mouseAt(40, 20, MouseEventType::Down));
+    fixed.dispatchMouseEvent(mouseAt(70, 40, MouseEventType::Dragged));
+
+    check(fixed.getBounds().x == 10);
+    check(fixed.getBounds().y == 10);
+};
+
 // Keyboard goes through the single dispatchKeyEvent entry — the same one the
 // native layer and the agent's `key` tool call.
 auto tKeyDispatch = test("View/dispatchKeyEventReachesHandler") = []

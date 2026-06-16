@@ -274,15 +274,6 @@ struct View::Native
 
     CALayer* getLayer() { return nativeView.get().layer; }
 
-    Point getMousePosition() const
-    {
-        auto view = nativeView.get();
-        auto windowPoint = [view.window mouseLocationOutsideOfEventStream];
-        auto localPoint = [view convertPoint:windowPoint fromView:nil];
-
-        return {(float) localPoint.x, (float) localPoint.y};
-    }
-
     void focus()
     {
         auto view = nativeView.get();
@@ -329,11 +320,6 @@ void View::setOpacity(float opacity)
 Rect View::getBounds() const
 {
     return impl->getBounds();
-}
-
-Point View::getMousePosition() const
-{
-    return impl->getMousePosition();
 }
 
 void View::focus()

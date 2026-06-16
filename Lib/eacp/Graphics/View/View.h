@@ -46,6 +46,12 @@ struct ViewProperties
 {
     bool handlesMouseEvents = false;
     bool grabsFocusOnMouseDown = false;
+
+    // When set, the view is dragged within its parent by the mouse — moved
+    // by the pointer's motion straight from the dispatched events, so a real
+    // mouse and an agent's synthetic input drag it through the identical
+    // path. See View::setDraggable.
+    bool draggable = false;
 };
 
 class View
@@ -91,6 +97,13 @@ public:
 
     View& setHandlesMouseEvents(bool value = true);
     View& setGrabsFocusOnMouseDown(bool value = true);
+
+    // Makes the view draggable within its parent: while held, it follows the
+    // pointer, driven purely by the dispatched mouse events (no OS-cursor
+    // side channel), so a human and an agent move it the same way. Implies
+    // setHandlesMouseEvents(true). The view's own mouse handlers still fire,
+    // so it can react to being dragged.
+    View& setDraggable(bool value = true);
 
     Point getMousePosition() const;
 
@@ -138,7 +151,7 @@ protected:
 
 private:
     void handleMouseEvent(const MouseEvent& event);
-    Point convertPointToDescendant(const Point& point, View* descendant);
+    Point convertPointToDescendant(const Point& point, View* descendant) const;
     MouseEvent
         createLocalEvent(const MouseEvent& event, View* target, MouseEventType type);
 
@@ -156,6 +169,15 @@ private:
     View* parent = nullptr;
     View* hoveredView = nullptr;
     View* mouseDownTarget = nullptr;
+
+    // Pointer position (this view's coordinate space) at the last drag step,
+    // for moving a draggable captured target by the pointer's motion.
+    Point lastDragPos;
+
+    // Latest dispatched pointer position (root view's coordinate space).
+    // getMousePosition() reads this rather than the OS cursor, so it reflects
+    // the same event stream real and synthetic input both flow through.
+    Point lastPointerPos;
 
     ViewProperties properties;
 

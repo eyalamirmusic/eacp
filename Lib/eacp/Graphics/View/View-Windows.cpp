@@ -402,26 +402,6 @@ struct View::Native
 
     wuc::ContainerVisual getVisual() { return visual; }
 
-    Point getMousePosition() const
-    {
-        POINT pt;
-        GetCursorPos(&pt);
-
-        // Views work in logical, window-client coordinates (that is how mouse
-        // events are delivered — WndProc divides by the DPI scale). GetCursorPos
-        // is in physical screen pixels, so convert to client space and back out
-        // the DPI factor; otherwise callers that mix this with getBounds() (e.g.
-        // drag handling) move at DPI-times speed on high-DPI displays.
-        auto host = findHostHwndForView(ownerView);
-        if (!host)
-            return Point(static_cast<float>(pt.x), static_cast<float>(pt.y));
-
-        ScreenToClient(host, &pt);
-        auto dpiScale = static_cast<float>(GetDpiForWindow(host)) / 96.f;
-        return Point(static_cast<float>(pt.x) / dpiScale,
-                     static_cast<float>(pt.y) / dpiScale);
-    }
-
     void focus() { hasFocusFlag = true; }
     bool hasFocus() const { return hasFocusFlag; }
 
@@ -612,11 +592,6 @@ Rect View::getBounds() const
 void View::setBounds(const Rect& bounds)
 {
     impl->setBounds(bounds);
-}
-
-Point View::getMousePosition() const
-{
-    return impl->getMousePosition();
 }
 
 void View::focus()
