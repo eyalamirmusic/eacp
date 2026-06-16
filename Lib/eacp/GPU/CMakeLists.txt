@@ -31,6 +31,7 @@ if (APPLE)
             Texture/Texture-macOS.mm
             View/GPUView-macOS.mm)
     target_link_libraries(eacp-gpu PRIVATE
+            "-framework CoreVideo"
             "-framework Foundation"
             "-framework Metal"
             "-framework QuartzCore")

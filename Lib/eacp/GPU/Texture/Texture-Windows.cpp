@@ -80,6 +80,12 @@ struct Texture::Native
             createDescriptors(context, descriptor);
     }
 
+    // Zero-copy wrapping of a shared D3D11/DXGI surface into the D3D12 backend
+    // is a planned optimisation; until then the camera/video path uploads via
+    // update(). A null resource yields an invalid texture, which the higher
+    // layer detects and falls back from.
+    Native(Device&, void*, TextureFilter, TextureAddressMode) {}
+
     ~Native()
     {
         auto& context = getD3D12Context();
@@ -88,7 +94,16 @@ struct Texture::Native
         context.deferRelease(std::move(data.resource));
     }
 
-    void upload(D3D12Context& context, const void* pixels)
+    // Maps a staging buffer, copies width*4 bytes from each source row
+    // (advancing the source by sourcePitch to skip any padding) into the
+    // 256-byte-aligned staging rows GetCopyableFootprints reports, then records
+    // the copy and the transition back to PIXEL_SHADER_RESOURCE. The resource
+    // must already be in COPY_DEST. Returns false on a staging failure, having
+    // recorded nothing.
+    bool copyPixels(D3D12Context& context,
+                    CommandContext* commands,
+                    const void* pixels,
+                    std::size_t sourcePitch)
     {
         auto desc = data.resource->GetDesc();
 
@@ -100,35 +115,24 @@ struct Texture::Native
             &desc, 0, 1, 0, &footprint, &rows, &rowBytes, &totalBytes);
 
         auto staging = context.makeUploadBuffer(nullptr, totalBytes);
-        auto* commands = context.acquire();
 
-        if (staging == nullptr || commands == nullptr)
-        {
-            context.discard(commands);
-            data.resource = nullptr;
-            return;
-        }
+        if (staging == nullptr)
+            return false;
 
-        // Source rows are tightly packed; staging rows need the 256-byte
-        // aligned pitch GetCopyableFootprints reported.
         void* mapped = nullptr;
         const D3D12_RANGE noRead = {0, 0};
 
         if (FAILED(staging->Map(0, &noRead, &mapped)))
-        {
-            context.discard(commands);
-            data.resource = nullptr;
-            return;
-        }
+            return false;
 
-        auto sourcePitch = static_cast<std::size_t>(width) * 4;
+        auto copyBytes = static_cast<std::size_t>(width) * 4;
 
         for (auto row = UINT {0}; row < rows; ++row)
             std::memcpy(static_cast<unsigned char*>(mapped)
                             + row * footprint.Footprint.RowPitch,
                         static_cast<const unsigned char*>(pixels)
                             + row * sourcePitch,
-                        sourcePitch);
+                        copyBytes);
 
         staging->Unmap(0, nullptr);
 
@@ -148,6 +152,65 @@ struct Texture::Native
                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
         commands->transients.push_back(std::move(staging));
+        return true;
+    }
+
+    void upload(D3D12Context& context, const void* pixels)
+    {
+        auto* commands = context.acquire();
+
+        if (commands == nullptr)
+        {
+            data.resource = nullptr;
+            return;
+        }
+
+        // The resource was created in COPY_DEST, so the copy records with no
+        // leading barrier.
+        if (!copyPixels(
+                context, commands, pixels, static_cast<std::size_t>(width) * 4))
+        {
+            context.discard(commands);
+            data.resource = nullptr;
+            return;
+        }
+
+        context.submit(commands);
+    }
+
+    void update(const void* pixels, std::size_t bytesPerRow)
+    {
+        if (data.resource == nullptr || pixels == nullptr || width <= 0
+            || height <= 0)
+            return;
+
+        auto& context = getD3D12Context();
+
+        if (!context.isValid())
+            return;
+
+        auto* commands = context.acquire();
+
+        if (commands == nullptr)
+            return;
+
+        auto sourcePitch =
+            bytesPerRow != 0 ? bytesPerRow : static_cast<std::size_t>(width) * 4;
+
+        // The resource rests in PIXEL_SHADER_RESOURCE between frames; move it to
+        // COPY_DEST for the upload, and put it back if staging fails so the next
+        // bind still sees a sampleable resource.
+        transition(commands->list.get(),
+                   data.resource.get(),
+                   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                   D3D12_RESOURCE_STATE_COPY_DEST);
+
+        if (!copyPixels(context, commands, pixels, sourcePitch))
+            transition(commands->list.get(),
+                       data.resource.get(),
+                       D3D12_RESOURCE_STATE_COPY_DEST,
+                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
         context.submit(commands);
     }
 
@@ -183,6 +246,19 @@ Texture::Texture(Device& device,
                  const void* pixels)
     : impl(device, descriptor, pixels)
 {
+}
+
+Texture::Texture(Device& device,
+                 void* nativePixelBuffer,
+                 TextureFilter filter,
+                 TextureAddressMode addressMode)
+    : impl(device, nativePixelBuffer, filter, addressMode)
+{
+}
+
+void Texture::update(const void* pixels, std::size_t bytesPerRow)
+{
+    impl->update(pixels, bytesPerRow);
 }
 
 int Texture::width() const

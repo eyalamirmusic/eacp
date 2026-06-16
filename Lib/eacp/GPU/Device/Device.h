@@ -63,6 +63,18 @@ public:
                         TextureFilter filter = TextureFilter::Linear,
                         TextureAddressMode addressMode = TextureAddressMode::Clamp);
 
+    // Wraps an existing platform pixel buffer (a CVPixelBuffer on macOS) as a
+    // sampleable texture without copying its pixels — the zero-copy path for
+    // camera and video frames. Returns an invalid texture on backends without
+    // zero-copy support (Windows for now), where Texture::update is the path.
+    Texture
+        wrapPixelBuffer(void* nativePixelBuffer,
+                        TextureFilter filter = TextureFilter::Linear,
+                        TextureAddressMode addressMode = TextureAddressMode::Clamp)
+    {
+        return {*this, nativePixelBuffer, filter, addressMode};
+    }
+
     ShaderLibrary makeShaderLibrary(const ShaderSource& source)
     {
         return {*this, source};
@@ -85,6 +97,10 @@ public:
     // Opaque native handles for cross-translation-unit use by other GPU types.
     void* nativeDevice() const;
     void* nativeQueue() const;
+
+    // The Metal CVMetalTextureCache backing zero-copy pixel-buffer textures.
+    // Null on backends without it (Windows), where wrapPixelBuffer is a no-op.
+    void* nativeTextureCache() const;
 
 private:
     struct Native;

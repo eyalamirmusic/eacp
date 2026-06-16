@@ -1,9 +1,11 @@
+#import <CoreVideo/CoreVideo.h>
 #import <Metal/Metal.h>
 
 #include "Texture.h"
 
 #include "../Device/Device.h"
 
+#include <eacp/Core/ObjC/CFRef.h>
 #include <eacp/Core/ObjC/ObjC.h>
 
 namespace eacp::GPU
@@ -26,6 +28,36 @@ MTLSamplerAddressMode toMetalAddressMode(TextureAddressMode mode)
 {
     return mode == TextureAddressMode::Repeat ? MTLSamplerAddressModeRepeat
                                               : MTLSamplerAddressModeClampToEdge;
+}
+
+ObjC::Ptr<NSObject<MTLSamplerState>> makeSampler(id<MTLDevice> metalDevice,
+                                                 TextureFilter filter,
+                                                 TextureAddressMode addressMode)
+{
+    auto samplerDescriptor = ObjC::makePtr<MTLSamplerDescriptor>();
+    samplerDescriptor.get().minFilter = toMetalFilter(filter);
+    samplerDescriptor.get().magFilter = toMetalFilter(filter);
+    samplerDescriptor.get().sAddressMode = toMetalAddressMode(addressMode);
+    samplerDescriptor.get().tAddressMode = toMetalAddressMode(addressMode);
+
+    return [metalDevice newSamplerStateWithDescriptor:samplerDescriptor.get()];
+}
+
+// Camera/video pixel buffers reach us as 32-bit BGRA (what the capture path
+// requests); planar formats such as NV12 are a later addition.
+bool toMetalFormat(CVPixelBufferRef pixelBuffer, MTLPixelFormat& out)
+{
+    switch (CVPixelBufferGetPixelFormatType(pixelBuffer))
+    {
+        case kCVPixelFormatType_32BGRA:
+            out = MTLPixelFormatBGRA8Unorm;
+            return true;
+        case kCVPixelFormatType_32RGBA:
+            out = MTLPixelFormatRGBA8Unorm;
+            return true;
+        default:
+            return false;
+    }
 }
 } // namespace
 
@@ -52,29 +84,77 @@ struct Texture::Native
         // The default storage mode keeps replaceRegion valid on every Mac
         // generation; it handles the CPU-to-GPU synchronisation itself.
         if (texture.get() != nil && pixels != nullptr)
-            [texture.get() replaceRegion:MTLRegionMake2D(0,
-                                                         0,
-                                                         (NSUInteger) width,
-                                                         (NSUInteger) height)
-                             mipmapLevel:0
-                               withBytes:pixels
-                             bytesPerRow:(NSUInteger) width * 4];
+            update(pixels, 0);
 
-        auto samplerDescriptor = ObjC::makePtr<MTLSamplerDescriptor>();
-        samplerDescriptor.get().minFilter = toMetalFilter(descriptor.filter);
-        samplerDescriptor.get().magFilter = toMetalFilter(descriptor.filter);
-        samplerDescriptor.get().sAddressMode =
-            toMetalAddressMode(descriptor.addressMode);
-        samplerDescriptor.get().tAddressMode =
-            toMetalAddressMode(descriptor.addressMode);
+        sampler = makeSampler(metalDevice, descriptor.filter, descriptor.addressMode);
+    }
 
-        sampler = [metalDevice newSamplerStateWithDescriptor:samplerDescriptor.get()];
+    // Zero-copy wrap of a CVPixelBuffer: the texture cache maps the buffer's
+    // IOSurface straight into an MTLTexture. cvTexture owns that mapping and
+    // keeps it alive for the texture's lifetime.
+    Native(Device& device,
+           void* pixelBufferHandle,
+           TextureFilter filter,
+           TextureAddressMode addressMode)
+    {
+        auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
+        auto cache = (CVMetalTextureCacheRef) device.nativeTextureCache();
+        auto pixelBuffer = (CVPixelBufferRef) pixelBufferHandle;
+
+        if (metalDevice == nil || cache == nullptr || pixelBuffer == nullptr)
+            return;
+
+        MTLPixelFormat metalFormat;
+
+        if (!toMetalFormat(pixelBuffer, metalFormat))
+            return;
+
+        width = (int) CVPixelBufferGetWidth(pixelBuffer);
+        height = (int) CVPixelBufferGetHeight(pixelBuffer);
+
+        CVMetalTextureRef mapped = nullptr;
+        auto status = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
+                                                                cache,
+                                                                pixelBuffer,
+                                                                nullptr,
+                                                                metalFormat,
+                                                                (size_t) width,
+                                                                (size_t) height,
+                                                                0,
+                                                                &mapped);
+
+        if (status != kCVReturnSuccess || mapped == nullptr)
+            return;
+
+        cvTexture.reset(mapped);
+
+        // The MTLTexture is owned by the CVMetalTexture mapping; retain it so
+        // the Ptr's release on destruction stays balanced.
+        texture.reset(CVMetalTextureGetTexture(mapped));
+        sampler = makeSampler(metalDevice, filter, addressMode);
+    }
+
+    void update(const void* pixels, std::size_t bytesPerRow)
+    {
+        if (texture.get() == nil || pixels == nullptr || width <= 0 || height <= 0)
+            return;
+
+        auto stride = bytesPerRow != 0 ? bytesPerRow : (std::size_t) width * 4;
+
+        [texture.get() replaceRegion:MTLRegionMake2D(0,
+                                                     0,
+                                                     (NSUInteger) width,
+                                                     (NSUInteger) height)
+                         mipmapLevel:0
+                           withBytes:pixels
+                         bytesPerRow:(NSUInteger) stride];
     }
 
     int width = 0;
     int height = 0;
     ObjC::Ptr<NSObject<MTLTexture>> texture;
     ObjC::Ptr<NSObject<MTLSamplerState>> sampler;
+    CFRef<CVMetalTextureRef> cvTexture;
 };
 
 Texture::Texture(Device& device,
@@ -82,6 +162,19 @@ Texture::Texture(Device& device,
                  const void* pixels)
     : impl(device, descriptor, pixels)
 {
+}
+
+Texture::Texture(Device& device,
+                 void* nativePixelBuffer,
+                 TextureFilter filter,
+                 TextureAddressMode addressMode)
+    : impl(device, nativePixelBuffer, filter, addressMode)
+{
+}
+
+void Texture::update(const void* pixels, std::size_t bytesPerRow)
+{
+    impl->update(pixels, bytesPerRow);
 }
 
 int Texture::width() const
