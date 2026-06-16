@@ -38,12 +38,22 @@ bool waitWritable(SOCKET socket, std::chrono::milliseconds timeout)
     FD_ZERO(&writable);
     FD_SET(socket, &writable);
 
+    // Winsock signals a FAILED non-blocking connect (e.g. connection refused by a
+    // closed port) ONLY in the exception set — never as writable, unlike POSIX.
+    // Without watching it, select() ignores the refusal and blocks for the entire
+    // connectTimeout (15 s for the Ableton probe), stalling whatever thread the
+    // connect runs on. The caller distinguishes success from failure right after
+    // via pendingSocketError(), so reporting "ready" on either event is correct.
+    auto failed = fd_set {};
+    FD_ZERO(&failed);
+    FD_SET(socket, &failed);
+
     auto tv = timeval {};
     tv.tv_sec = (long) (timeout.count() / 1000);
     tv.tv_usec = (long) ((timeout.count() % 1000) * 1000);
 
     auto* deadline = timeout.count() > 0 ? &tv : nullptr; // null = block forever
-    return ::select(0, nullptr, &writable, nullptr, deadline) > 0;
+    return ::select(0, nullptr, &writable, &failed, deadline) > 0;
 }
 
 int pendingSocketError(SOCKET socket)
@@ -61,10 +71,10 @@ void armTimeouts(SOCKET socket, std::chrono::milliseconds ioTimeout)
         return;
 
     auto millis = (DWORD) ioTimeout.count();
-    ::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*) &millis,
-                 sizeof(millis));
-    ::setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, (const char*) &millis,
-                 sizeof(millis));
+    ::setsockopt(
+        socket, SOL_SOCKET, SO_RCVTIMEO, (const char*) &millis, sizeof(millis));
+    ::setsockopt(
+        socket, SOL_SOCKET, SO_SNDTIMEO, (const char*) &millis, sizeof(millis));
 }
 
 // Connects a single resolved address. Returns a ready socket, or
@@ -84,8 +94,7 @@ SOCKET tryConnect(const addrinfo& candidate,
     }
 
     setNonBlocking(socket, true);
-    auto result =
-        ::connect(socket, candidate.ai_addr, (int) candidate.ai_addrlen);
+    auto result = ::connect(socket, candidate.ai_addr, (int) candidate.ai_addrlen);
 
     if (result != 0)
     {
@@ -96,7 +105,7 @@ SOCKET tryConnect(const addrinfo& candidate,
             return INVALID_SOCKET;
         }
 
-        if (! waitWritable(socket, connectTimeout))
+        if (!waitWritable(socket, connectTimeout))
         {
             why = "connect timed out";
             ::closesocket(socket);
@@ -116,7 +125,10 @@ SOCKET tryConnect(const addrinfo& candidate,
     return socket;
 }
 
-bool timedOut() { return WSAGetLastError() == WSAETIMEDOUT; }
+bool timedOut()
+{
+    return WSAGetLastError() == WSAETIMEDOUT;
+}
 } // namespace
 
 NativeSocket socketConnect(const Address& address,
