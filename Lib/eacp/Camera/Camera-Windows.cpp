@@ -57,4 +57,11 @@ void* Camera::nativeSession() const
 {
     return nullptr;
 }
+
+void* Camera::acquireLatestPixelBuffer()
+{
+    return nullptr;
+}
+
+void Camera::releasePixelBuffer(void*) {}
 } // namespace eacp::Cameras
