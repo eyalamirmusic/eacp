@@ -15,7 +15,9 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <thread>
 
@@ -57,6 +59,44 @@ void ensureApartment()
     catch (const winrt::hresult_error&)
     {
     }
+}
+
+bool isUncompressedSubtype(const winrt::hstring& subtype)
+{
+    auto name = winrt::to_string(subtype);
+    return _stricmp(name.c_str(), "NV12") == 0
+           || _stricmp(name.c_str(), "YUY2") == 0;
+}
+
+// Color sources frequently default to a compressed subtype (e.g. MJPG), which
+// the frame reader hands back as a raw buffer rather than a decoded
+// SoftwareBitmap. Selecting an uncompressed mode closest to the requested size
+// makes frames arrive as bitmaps the BGRA conversion can consume.
+frames::MediaFrameFormat
+    chooseUncompressedFormat(const frames::MediaFrameSource& source,
+                             const CameraConfig& config)
+{
+    auto best = frames::MediaFrameFormat {nullptr};
+    auto bestScore = std::numeric_limits<int>::max();
+
+    for (auto const& format: source.SupportedFormats())
+    {
+        auto video = format.VideoFormat();
+
+        if (video == nullptr || !isUncompressedSubtype(format.Subtype()))
+            continue;
+
+        auto score = std::abs((int) video.Width() - config.width)
+                     + std::abs((int) video.Height() - config.height);
+
+        if (score < bestScore)
+        {
+            bestScore = score;
+            best = format;
+        }
+    }
+
+    return best;
 }
 } // namespace
 
@@ -161,16 +201,24 @@ struct Camera::Native
             if (!colorSource)
                 return;
 
-            reader = mediaCapture
-                         .CreateFrameReaderAsync(
-                             colorSource, mediaprops::MediaEncodingSubtypes::Bgra8())
-                         .get();
+            if (auto format = chooseUncompressedFormat(colorSource, config))
+                colorSource.SetFormatAsync(format).get();
+
+            reader = mediaCapture.CreateFrameReaderAsync(colorSource).get();
             reader.AcquisitionMode(
                 frames::MediaFrameReaderAcquisitionMode::Realtime);
             frameToken = reader.FrameArrived([this](auto const& sender, auto const&)
                                              { onFrame(sender); });
 
-            reader.StartAsync().get();
+            if (reader.StartAsync().get()
+                != frames::MediaFrameReaderStartStatus::Success)
+            {
+                running.store(false);
+                reader = nullptr;
+                mediaCapture = nullptr;
+                return;
+            }
+
             running.store(true);
         }
         catch (const winrt::hresult_error&)
