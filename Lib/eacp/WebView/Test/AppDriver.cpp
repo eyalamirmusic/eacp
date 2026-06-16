@@ -30,6 +30,9 @@ constexpr auto startupTimeoutMs = 30000;
 constexpr auto waitForPollMs = 50;
 constexpr auto defaultSnapshotSubdir = "test-results/snapshots";
 
+// How long a recorded run dwells on each action so the video is watchable.
+constexpr auto recordingPaceMs = 600;
+
 std::string jsStringLiteral(std::string_view value)
 {
     auto out = std::string {"\""};
@@ -379,10 +382,18 @@ Threads::Async<bool> AppDriver::clickAsync(const std::string& selector,
     co_return asBool(result);
 }
 
+void AppDriver::pace()
+{
+    if (recorder.isRecording())
+        Threads::runEventLoopFor(std::chrono::milliseconds {recordingPaceMs});
+}
+
 bool AppDriver::click(const std::string& selector, CallOptions opts)
 {
-    return clickAsync(selector, opts)
-        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+    auto result = clickAsync(selector, opts)
+                      .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+    pace();
+    return result;
 }
 
 Threads::Async<bool> AppDriver::fillAsync(const std::string& selector,
@@ -400,8 +411,10 @@ bool AppDriver::fill(const std::string& selector,
                      const std::string& value,
                      CallOptions opts)
 {
-    return fillAsync(selector, value, opts)
-        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+    auto result = fillAsync(selector, value, opts)
+                      .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+    pace();
+    return result;
 }
 
 Threads::Async<bool> AppDriver::pressAsync(const std::string& selector,
@@ -419,8 +432,10 @@ bool AppDriver::press(const std::string& selector,
                       const std::string& key,
                       CallOptions opts)
 {
-    return pressAsync(selector, key, opts)
-        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+    auto result = pressAsync(selector, key, opts)
+                      .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+    pace();
+    return result;
 }
 
 Threads::Async<bool> AppDriver::submitAsync(const std::string& selector,
@@ -433,8 +448,10 @@ Threads::Async<bool> AppDriver::submitAsync(const std::string& selector,
 
 bool AppDriver::submit(const std::string& selector, CallOptions opts)
 {
-    return submitAsync(selector, opts)
-        .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+    auto result = submitAsync(selector, opts)
+                      .waitFor(syncOuterTimeout(effectiveTimeoutMs(opts)));
+    pace();
+    return result;
 }
 
 Threads::Async<std::string> AppDriver::textAsync(const std::string& selector,

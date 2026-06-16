@@ -87,9 +87,7 @@ auto tAddsNewTodo = test("WebViewTodo/addsNewTodoViaForm") = []
     auto before = driver().count(itemSelector);
 
     driver().fill(inputSelector, "Buy milk");
-    settle();
     driver().click(addSelector);
-    settle();
 
     check(driver().count(itemSelector) == before + 1);
     check(driver().text(lastItemDescendant(textSelector)) == "Buy milk");
@@ -103,7 +101,6 @@ auto tToggleFlipsCompletion =
     auto before = std::stoi(driver().text(remainingSelector));
 
     driver().click(firstItemDescendant(toggleSelector));
-    settle();
 
     auto remaining = std::stoi(driver().text(remainingSelector));
     check(remaining == before - 1);
@@ -116,7 +113,6 @@ auto tRemovingTodo = test("WebViewTodo/removingTodoDecrementsCount") = []
     auto before = driver().count(itemSelector);
 
     driver().click(firstItemDescendant(removeSelector));
-    settle();
 
     check(driver().count(itemSelector) == before - 1);
 };

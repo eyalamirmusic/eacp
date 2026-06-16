@@ -248,6 +248,12 @@ public:
     }
 
 private:
+    // After a visible action, while recording, hold the run loop briefly so
+    // the step is watchable in the exported video. A no-op when not
+    // recording, so live test runs stay fast. Test authors get sane videos
+    // without sprinkling waits through their tests.
+    void pace();
+
     Threads::Async<Miro::JSON> runJsAsync(const std::string& expression,
                                           const CallOptions& opts);
     Miro::JSON runJs(const std::string& expression, const CallOptions& opts);
