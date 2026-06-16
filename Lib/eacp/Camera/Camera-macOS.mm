@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <mutex>
 
 // macOS capture backend (AVFoundation). One AVCaptureVideoDataOutput delivers
@@ -40,6 +41,7 @@ struct LatestFrame
             std::lock_guard<std::mutex> lock(mutex);
             previous = current;
             current = retained;
+            ++sequence;
         }
 
         if (previous != nullptr)
@@ -57,8 +59,53 @@ struct LatestFrame
         return current;
     }
 
+    // Copies the current frame into `out` as tightly packed BGRA when it is
+    // newer than out.sequence. The buffer is retained under the lock and copied
+    // outside it so the capture thread is never blocked on the memcpy.
+    bool copyInto(FramePixels& out)
+    {
+        CVPixelBufferRef buffer = nullptr;
+        std::uint64_t copiedSequence = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+
+            if (current == nullptr || sequence == out.sequence)
+                return false;
+
+            buffer = (CVPixelBufferRef) CFRetain(current);
+            copiedSequence = sequence;
+        }
+
+        CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+
+        auto width = (int) CVPixelBufferGetWidth(buffer);
+        auto height = (int) CVPixelBufferGetHeight(buffer);
+        auto stride = CVPixelBufferGetBytesPerRow(buffer);
+        const auto* base = (const std::uint8_t*) CVPixelBufferGetBaseAddress(buffer);
+
+        out.width = width;
+        out.height = height;
+        out.format = PixelFormat::BGRA8;
+        out.data.resize(width * height * 4);
+
+        auto rowBytes = (std::size_t) width * 4;
+
+        for (auto y = 0; y < height; ++y)
+            std::memcpy(out.data.data() + (std::size_t) y * rowBytes,
+                        base + (std::size_t) y * stride,
+                        rowBytes);
+
+        CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+        CFRelease(buffer);
+
+        out.sequence = copiedSequence;
+        return true;
+    }
+
     std::mutex mutex;
     CVPixelBufferRef current = nullptr;
+    std::uint64_t sequence = 0;
 };
 
 // The capture queue calls back into this; Camera::Native owns it and points the
@@ -470,5 +517,10 @@ void Camera::releasePixelBuffer(void* buffer)
 {
     if (buffer != nullptr)
         CFRelease(buffer);
+}
+
+bool Camera::copyLatestFrame(FramePixels& out)
+{
+    return impl->context.latest.copyInto(out);
 }
 } // namespace eacp::Cameras

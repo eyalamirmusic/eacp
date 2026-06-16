@@ -28,11 +28,22 @@ public:
         Cover // fill the view, cropping the overflow (default)
     };
 
+    // How the frame reaches the GPU. Auto prefers the zero-copy native-buffer
+    // path (macOS) and falls back to a CPU upload (the only path on Windows for
+    // now); ZeroCopy and Copy force one path, which is useful for testing.
+    enum class UploadMode
+    {
+        Auto,
+        ZeroCopy,
+        Copy
+    };
+
     void attach(Camera& camera);
     void detach();
 
     void setFit(Fit fitToUse);
     void setMirrored(bool mirroredToUse); // horizontal flip, e.g. front cameras
+    void setUploadMode(UploadMode mode);
 
     // Called after the camera image each frame, sharing the same render pass.
     // imageArea is the on-screen rect (logical points) the camera image fills,
@@ -54,12 +65,22 @@ protected:
 
 private:
     void ensureRenderer();
+    Graphics::Rect imageAreaFor(int textureWidth, int textureHeight) const;
+
+    // Each returns whether a camera image was drawn and, if so, sets imageArea.
+    bool renderZeroCopy(Graphics::Rect& imageArea);
+    bool renderCpuUpload(Graphics::Rect& imageArea);
 
     Camera* camera = nullptr;
     Fit fit = Fit::Cover;
     bool mirrored = false;
+    UploadMode uploadMode = UploadMode::Auto;
 
     std::optional<Sprites::SpriteRenderer> renderer;
     Graphics::Point rendererSize {0.0f, 0.0f};
+
+    // CPU-upload path: a frame reused across calls and the texture it feeds.
+    FramePixels scratch;
+    std::optional<GPU::Texture> uploadTexture;
 };
 } // namespace eacp::Cameras

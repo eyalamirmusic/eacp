@@ -112,6 +112,19 @@ private:
 // the main thread (Threads::callAsync) as needed.
 using FrameCallback = std::function<void(const CameraFrame&)>;
 
+// A CPU-side copy of a frame for the upload display path (used on backends
+// without a zero-copy native buffer, e.g. Windows) and other pull-based
+// consumers. data is tightly packed BGRA8 (stride == width * 4). sequence bumps
+// once per captured frame so a consumer can skip work when nothing is new.
+struct FramePixels
+{
+    int width = 0;
+    int height = 0;
+    PixelFormat format = PixelFormat::BGRA8;
+    Vector<std::uint8_t> data;
+    std::uint64_t sequence = 0;
+};
+
 // Captures video from a camera. Raw frames go to the frame callback on a
 // background thread; the same device feeds the display path (CameraView) via
 // nativeSession(). One Camera drives one device at a time.
@@ -164,6 +177,12 @@ public:
 
     // Releases a buffer returned by acquireLatestPixelBuffer.
     static void releasePixelBuffer(void* buffer);
+
+    // Copies the most recent frame into `out` when it is newer than
+    // out.sequence, reusing out's storage; returns true if a new frame was
+    // copied, false if there is nothing newer. Thread-safe. The display path
+    // uses this on backends without a zero-copy native buffer.
+    bool copyLatestFrame(FramePixels& out);
 
 private:
     struct Native;

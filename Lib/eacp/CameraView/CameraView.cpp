@@ -37,6 +37,11 @@ void CameraView::setMirrored(bool mirroredToUse)
     mirrored = mirroredToUse;
 }
 
+void CameraView::setUploadMode(UploadMode mode)
+{
+    uploadMode = mode;
+}
+
 Graphics::Rect CameraView::computeImageArea(
     float viewWidth, float viewHeight, int textureWidth, int textureHeight, Fit fit)
 {
@@ -74,6 +79,64 @@ void CameraView::ensureRenderer()
     }
 }
 
+Graphics::Rect CameraView::imageAreaFor(int textureWidth, int textureHeight) const
+{
+    auto bounds = getLocalBounds();
+    return computeImageArea(bounds.w, bounds.h, textureWidth, textureHeight, fit);
+}
+
+bool CameraView::renderZeroCopy(Graphics::Rect& imageArea)
+{
+    auto* buffer = camera->acquireLatestPixelBuffer();
+
+    if (buffer == nullptr)
+        return false;
+
+    auto texture = GPU::Device::shared().wrapPixelBuffer(buffer);
+    auto drew = false;
+
+    if (texture.isValid())
+    {
+        imageArea = imageAreaFor(texture.width(), texture.height());
+        renderer->drawTexture(texture, imageArea, mirrored, false);
+        drew = true;
+    }
+
+    // The wrapped texture holds its own reference to the frame's surface, so the
+    // buffer can be released now.
+    Camera::releasePixelBuffer(buffer);
+    return drew;
+}
+
+bool CameraView::renderCpuUpload(Graphics::Rect& imageArea)
+{
+    if (camera->copyLatestFrame(scratch))
+    {
+        auto sizeChanged = !uploadTexture.has_value()
+                           || uploadTexture->width() != scratch.width
+                           || uploadTexture->height() != scratch.height;
+
+        if (sizeChanged)
+        {
+            auto descriptor = GPU::TextureDescriptor {};
+            descriptor.width = scratch.width;
+            descriptor.height = scratch.height;
+            descriptor.format = GPU::TextureFormat::BGRA8Unorm;
+            uploadTexture.emplace(GPU::Device::shared().makeTexture(descriptor));
+        }
+
+        uploadTexture->update(scratch.data.data());
+    }
+
+    if (!uploadTexture.has_value() || !uploadTexture->isValid()
+        || scratch.width <= 0)
+        return false;
+
+    imageArea = imageAreaFor(scratch.width, scratch.height);
+    renderer->drawTexture(*uploadTexture, imageArea, mirrored, false);
+    return true;
+}
+
 void CameraView::render(GPU::Frame& frame)
 {
     ensureRenderer();
@@ -85,24 +148,13 @@ void CameraView::render(GPU::Frame& frame)
 
     if (camera != nullptr)
     {
-        auto* buffer = camera->acquireLatestPixelBuffer();
+        auto drew = false;
 
-        if (buffer != nullptr)
-        {
-            auto texture = GPU::Device::shared().wrapPixelBuffer(buffer);
+        if (uploadMode != UploadMode::Copy)
+            drew = renderZeroCopy(imageArea);
 
-            if (texture.isValid())
-            {
-                auto bounds = getLocalBounds();
-                imageArea = computeImageArea(
-                    bounds.w, bounds.h, texture.width(), texture.height(), fit);
-                renderer->drawTexture(texture, imageArea, mirrored, false);
-            }
-
-            // The wrapped texture holds its own reference to the frame's surface,
-            // so the buffer can be released now.
-            Camera::releasePixelBuffer(buffer);
-        }
+        if (!drew && uploadMode != UploadMode::ZeroCopy)
+            renderCpuUpload(imageArea);
     }
 
     drawOverlay(*renderer, imageArea);

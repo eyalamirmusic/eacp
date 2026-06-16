@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 using namespace eacp;
 
@@ -88,6 +89,11 @@ struct CameraApp
     {
         if (const auto* env = std::getenv("EACP_DEMO_AUTOQUIT_SECONDS"))
             view.autoQuitSeconds = std::atof(env);
+
+        // Force the CPU-upload display path (Windows uses it) for verification.
+        if (const auto* mode = std::getenv("EACP_DEMO_UPLOAD_MODE"))
+            if (std::strcmp(mode, "copy") == 0)
+                view.setUploadMode(Cameras::CameraView::UploadMode::Copy);
 
         view.setMirrored(true); // front-camera-style preview
         view.attach(camera);

@@ -16,6 +16,7 @@ if (APPLE)
 elseif (WIN32)
     target_sources(eacp-camera PRIVATE
             Camera-Windows.cpp)
+    target_link_libraries(eacp-camera PRIVATE windowsapp)
 endif ()
 
 set_default_target_setting(eacp-camera)
