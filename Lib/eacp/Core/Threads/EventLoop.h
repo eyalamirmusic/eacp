@@ -22,6 +22,12 @@ bool runEventLoopFor(
 void callAsync(const Callback& func);
 void stopEventLoop();
 
+// Schedules the app's one-time startup callback (the app/window creation that
+// runEventLoop kicks off). Most platforms post it to the loop immediately; iOS
+// defers it to UIScene connection so the window is created with a live scene
+// after activation, not before. Platform-specific.
+void scheduleStartup(const Callback& func);
+
 // Pumps the event loop in short slices until `ready()` returns true or
 // `timeout` elapses. Returns true if the predicate was met, false on
 // timeout. Must be called on the main thread, and must not be re-entered
