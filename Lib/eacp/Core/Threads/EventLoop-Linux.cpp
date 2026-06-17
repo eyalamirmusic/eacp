@@ -171,4 +171,9 @@ void EventLoop::call(Callback func)
     loop.waker.wake();
 }
 
+void scheduleStartup(const Callback& func)
+{
+    callAsync(func);
+}
+
 } // namespace eacp::Threads

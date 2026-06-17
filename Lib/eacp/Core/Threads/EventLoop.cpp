@@ -15,7 +15,7 @@ void callAsync(const Callback& func)
 
 void runEventLoop(const Callback& func)
 {
-    callAsync(func);
+    scheduleStartup(func);
     getEventLoop().run();
 }
 

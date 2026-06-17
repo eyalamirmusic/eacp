@@ -290,4 +290,9 @@ void stopEventLoop()
         PostThreadMessageW(id, WM_QUIT, 0, 0);
 }
 
+void scheduleStartup(const Callback& func)
+{
+    callAsync(func);
+}
+
 } // namespace eacp::Threads
