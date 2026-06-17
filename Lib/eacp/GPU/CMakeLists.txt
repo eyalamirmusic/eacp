@@ -17,24 +17,34 @@ target_sources(eacp-gpu PRIVATE
         Codegen/ShaderBuilder.cpp)
 
 if (APPLE)
+    # The Metal backend is shared across macOS and iOS (the -Apple files); only
+    # GPUView's backing-scale lookup is platform-specific.
     target_sources(eacp-gpu PRIVATE
-            Buffer/Buffer-macOS.mm
-            Codegen/ShaderBuilder-macOS.cpp
-            CommandBuffer/CommandBuffer-macOS.mm
-            Device/Device-macOS.mm
-            Frame/ComputePass-macOS.mm
-            Frame/Frame-macOS.mm
-            Frame/RenderPass-macOS.mm
-            Pipeline/ComputePipeline-macOS.mm
-            Pipeline/RenderPipeline-macOS.mm
-            Shader/ShaderLibrary-macOS.mm
-            Texture/Texture-macOS.mm
-            View/GPUView-macOS.mm)
+            Buffer/Buffer-Apple.mm
+            Codegen/ShaderBuilder-Apple.cpp
+            CommandBuffer/CommandBuffer-Apple.mm
+            Device/Device-Apple.mm
+            Frame/ComputePass-Apple.mm
+            Frame/Frame-Apple.mm
+            Frame/RenderPass-Apple.mm
+            Pipeline/ComputePipeline-Apple.mm
+            Pipeline/RenderPipeline-Apple.mm
+            Shader/ShaderLibrary-Apple.mm
+            Texture/Texture-Apple.mm
+            View/GPUView-Apple.mm)
     target_link_libraries(eacp-gpu PRIVATE
             "-framework CoreVideo"
             "-framework Foundation"
             "-framework Metal"
             "-framework QuartzCore")
+
+    if (IOS)
+        target_sources(eacp-gpu PRIVATE View/GPUView-iOS.mm)
+        target_link_libraries(eacp-gpu PRIVATE "-framework UIKit")
+    else ()
+        target_sources(eacp-gpu PRIVATE View/GPUView-macOS.mm)
+        target_link_libraries(eacp-gpu PRIVATE "-framework Cocoa")
+    endif ()
 elseif (WIN32)
     target_sources(eacp-gpu PRIVATE
             Buffer/Buffer-Windows.cpp
