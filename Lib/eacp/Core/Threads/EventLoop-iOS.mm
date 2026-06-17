@@ -49,6 +49,16 @@ void runPendingLaunch()
 {
     return YES;
 }
+
+// Fallback for bundles that declare no UIScene manifest (apps with a custom
+// Info.plist): the scene delegate's willConnect never fires, so launch here once
+// the app delegate activates. UIKit only delivers this in the legacy lifecycle —
+// scene-based apps get sceneDidBecomeActive instead — so the two paths never both
+// run, and runPendingLaunch is guarded to fire once regardless.
+- (void)applicationDidBecomeActive:(UIApplication*)application
+{
+    eacp::Threads::runPendingLaunch();
+}
 @end
 
 namespace eacp::Threads

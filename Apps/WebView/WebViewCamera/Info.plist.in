@@ -36,5 +36,22 @@
 	<string>This example uses the camera to demonstrate getUserMedia from a WebView.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This example uses the microphone to demonstrate getUserMedia from a WebView.</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>EACPSceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
 </dict>
 </plist>
