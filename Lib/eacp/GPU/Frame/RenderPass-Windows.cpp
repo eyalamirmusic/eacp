@@ -24,6 +24,11 @@ struct RenderPass::Native
     }
 
     std::unique_ptr<D3D12Encoder> encoder;
+
+    // Whether a valid pipeline state is currently bound. A pipeline whose
+    // compilation failed has a null state; drawing without one is flagged by the
+    // D3D12 debug layer, so draws are skipped when false.
+    bool pipelineBound = false;
 };
 
 RenderPass::RenderPass(void* encoder)
@@ -43,7 +48,9 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
 
     auto* state = static_cast<D3D12Pipeline*>(pipeline.nativeState());
 
-    if (state == nullptr || state->state == nullptr)
+    impl->pipelineBound = state != nullptr && state->state != nullptr;
+
+    if (!impl->pipelineBound)
         return;
 
     auto* list = impl->encoder->commands->list.get();
@@ -119,7 +126,7 @@ void RenderPass::setFragmentBytes(const void* data, std::size_t bytes, int slot)
 
 void RenderPass::draw(int vertexCount, int firstVertex)
 {
-    if (!impl->encoder)
+    if (!impl->encoder || !impl->pipelineBound)
         return;
 
     impl->encoder->commands->list->DrawInstanced(
@@ -131,7 +138,7 @@ void RenderPass::drawIndexed(const Buffer& indices,
                              IndexFormat format,
                              int firstIndex)
 {
-    if (!impl->encoder)
+    if (!impl->encoder || !impl->pipelineBound)
         return;
 
     auto* data = static_cast<D3D12BufferData*>(indices.nativeBuffer());
