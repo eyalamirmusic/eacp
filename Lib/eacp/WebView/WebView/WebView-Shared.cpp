@@ -40,12 +40,14 @@ std::string mimeForPath(std::string_view path)
     // Text / web
     if (endsWith(".html"))
         return "text/html; charset=utf-8";
-    if (endsWith(".js"))
+    if (endsWith(".js") || endsWith(".mjs") || endsWith(".cjs"))
         return "application/javascript; charset=utf-8";
     if (endsWith(".css"))
         return "text/css; charset=utf-8";
-    if (endsWith(".json"))
+    if (endsWith(".json") || endsWith(".map"))
         return "application/json; charset=utf-8";
+    if (endsWith(".wasm"))
+        return "application/wasm";
 
     // Images
     if (endsWith(".svg"))
