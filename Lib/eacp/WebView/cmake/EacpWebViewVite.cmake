@@ -43,6 +43,13 @@ function(eacp_webview_add_vite TARGET)
                 NAMES ${ARG_PACKAGE_MANAGER}.cmd ${ARG_PACKAGE_MANAGER}
                 REQUIRED)
         set(PM_EXECUTABLE "${EACP_WEBVIEW_PM_EXECUTABLE_${ARG_PACKAGE_MANAGER}}")
+        # The package manager lives alongside node in its bin dir. Xcode runs
+        # build phases with a restricted PATH that excludes node (commonly an
+        # nvm/homebrew/fnm location), so npm — itself a `#!/usr/bin/env node`
+        # script — fails with "env: node: No such file or directory". Prepend that
+        # dir to PATH for the build-time vite command so node resolves under any
+        # generator.
+        get_filename_component(PM_DIR "${PM_EXECUTABLE}" DIRECTORY)
         set(BUILD_DIST_DIR "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}-vite-dist")
 
         if (NOT EXISTS "${ARG_SOURCE_DIR}/node_modules")
@@ -88,7 +95,8 @@ function(eacp_webview_add_vite TARGET)
         set(VITE_STAMP "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}-vite.stamp")
         add_custom_command(
                 OUTPUT "${VITE_STAMP}"
-                COMMAND ${BUILD_CMD}
+                COMMAND ${CMAKE_COMMAND} -E env
+                        --modify "PATH=path_list_prepend:${PM_DIR}" -- ${BUILD_CMD}
                 COMMAND ${CMAKE_COMMAND} -E touch "${VITE_STAMP}"
                 WORKING_DIRECTORY "${ARG_SOURCE_DIR}"
                 DEPENDS ${VITE_SOURCES} ${ARG_DEPENDS}
