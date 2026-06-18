@@ -48,6 +48,11 @@ struct RenderPass::Native
     // bound pipeline's topology.
     MTLPrimitiveType primitiveType = MTLPrimitiveTypeTriangle;
     bool ended = false;
+
+    // Whether a valid pipeline state is currently bound. A pipeline whose
+    // compilation failed has a nil state; drawing without one aborts under Metal
+    // API validation (the Xcode debug default), so draws are skipped when false.
+    bool pipelineBound = false;
 };
 
 RenderPass::RenderPass(void* encoder)
@@ -65,7 +70,9 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
     auto activeEncoder = impl->encoder.get();
     auto state = (__bridge id<MTLRenderPipelineState>) pipeline.nativeState();
 
-    if (activeEncoder != nil && state != nil)
+    impl->pipelineBound = activeEncoder != nil && state != nil;
+
+    if (impl->pipelineBound)
         [activeEncoder setRenderPipelineState:state];
 
     if (auto depthState =
@@ -120,6 +127,9 @@ void RenderPass::setFragmentBytes(const void* data, std::size_t bytes, int slot)
 
 void RenderPass::draw(int vertexCount, int firstVertex)
 {
+    if (! impl->pipelineBound)
+        return;
+
     if (auto activeEncoder = impl->encoder.get())
         [activeEncoder drawPrimitives:impl->primitiveType
                           vertexStart:(NSUInteger) firstVertex
@@ -134,7 +144,7 @@ void RenderPass::drawIndexed(const Buffer& indices,
     auto activeEncoder = impl->encoder.get();
     auto metalBuffer = (__bridge id<MTLBuffer>) indices.nativeBuffer();
 
-    if (activeEncoder == nil || metalBuffer == nil)
+    if (! impl->pipelineBound || activeEncoder == nil || metalBuffer == nil)
         return;
 
     auto indexType = format == IndexFormat::UInt16 ? MTLIndexTypeUInt16

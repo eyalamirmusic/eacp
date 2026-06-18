@@ -116,4 +116,9 @@ void EventLoop::quit()
 
     [getApp() postEvent:makeWakeEvent() atStart:YES];
 }
+
+void scheduleStartup(const Callback& func)
+{
+    callAsync(func);
+}
 } // namespace eacp::Threads
