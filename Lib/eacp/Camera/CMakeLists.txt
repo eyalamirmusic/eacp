@@ -1,0 +1,33 @@
+add_library(eacp-camera STATIC)
+
+target_link_libraries(eacp-camera PUBLIC eacp-core eacp-graphics)
+
+target_sources(eacp-camera PRIVATE
+        Camera.cpp)
+
+if (APPLE)
+    # Camera-Apple.mm is the shared AVFoundation capture pipeline; the matching
+    # platform file supplies only the bits that differ (device discovery).
+    target_sources(eacp-camera PRIVATE
+            Camera-Apple.mm)
+
+    if (IOS)
+        target_sources(eacp-camera PRIVATE Camera-iOS.mm)
+    else ()
+        target_sources(eacp-camera PRIVATE Camera-macOS.mm)
+    endif ()
+
+    target_link_libraries(eacp-camera PRIVATE
+            "-framework AVFoundation"
+            "-framework CoreMedia"
+            "-framework CoreVideo"
+            "-framework Foundation")
+elseif (WIN32)
+    target_sources(eacp-camera PRIVATE
+            Camera-Windows.cpp)
+    target_link_libraries(eacp-camera PRIVATE windowsapp)
+endif ()
+
+set_default_target_setting(eacp-camera)
+eacp_enable_unity_build(eacp-camera)
+add_ide_sources(eacp-camera)

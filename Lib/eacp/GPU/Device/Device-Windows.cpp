@@ -72,4 +72,11 @@ void* Device::nativeQueue() const
 {
     return getD3D12Context().getQueue();
 }
+
+void* Device::nativeTextureCache() const
+{
+    // No zero-copy pixel-buffer cache on the D3D12 backend yet; the camera/video
+    // path uploads frames through Texture::update instead.
+    return nullptr;
+}
 } // namespace eacp::GPU
