@@ -24,10 +24,6 @@ option(EACP_BUILD_GRAPHICS "Build the Graphics, SVG and WebView modules" ON)
 option(EACP_BUILD_WEBVIEW "Build the WebView module" ON)
 option(EACP_CI_BUILD "Mirror the exact flag set used by CI builds" OFF)
 
-# EACP_CI_BUILD is the single switch CI passes so local builds can reproduce
-# the CI configuration exactly. It forces on the unity-build flag of every
-# project that exposes one: eacp's own (EACP_UNITY_BUILD) and Miro's
-# (MIRO_UNITY_BUILD). These are set before the dependencies are pulled in below.
 if (EACP_CI_BUILD)
     set(EACP_UNITY_BUILD ON CACHE BOOL
             "Compile eacp libraries as CMake unity builds" FORCE)
