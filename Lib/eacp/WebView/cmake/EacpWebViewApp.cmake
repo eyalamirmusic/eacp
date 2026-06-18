@@ -201,6 +201,16 @@ function(eacp_add_webview_app TARGET)
                 target_link_libraries(${TARGET}Schema_Codegen PRIVATE
                         ${ARG_LINK_LIBRARIES})
             endif ()
+
+            # This is a build-time host tool a PostBuild script runs immediately
+            # after linking. Under the Xcode generator on Apple Silicon, Xcode
+            # passes the linker -no_adhoc_codesign (it expects to sign in a later
+            # CodeSign phase), so the tool runs unsigned and the kernel kills it
+            # (SIGKILL) on exec — arm64 binaries must be signed. Disabling signing
+            # lets the linker apply its default ad-hoc signature so the tool runs.
+            # (XCODE_ATTRIBUTE_* is ignored by the Ninja/Makefiles generators.)
+            set_target_properties(${TARGET}Schema_Codegen PROPERTIES
+                    XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO)
         endif ()
     endif ()
 
