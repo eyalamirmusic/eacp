@@ -1879,4 +1879,12 @@ WebView* WebView::focused()
     return nullptr;
 }
 
+bool WebView::isRuntimeAvailable()
+{
+    auto version = CoTaskMemString();
+    auto hr = GetAvailableCoreWebView2BrowserVersionString(nullptr, &version);
+
+    return SUCCEEDED(hr) && version;
+}
+
 } // namespace eacp::Graphics

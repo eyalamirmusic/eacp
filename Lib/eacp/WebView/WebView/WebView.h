@@ -179,6 +179,15 @@ public:
 
     static WebView* focused();
 
+    // True when the platform web runtime backing WebView is present. Always
+    // true on macOS/iOS, where WKWebView ships with the OS. On Windows it
+    // probes for the Microsoft Edge WebView2 Runtime, which Windows 11 and
+    // most updated Windows 10 machines have but which is not guaranteed.
+    // Call this before constructing a WebView to fail gracefully (e.g. prompt
+    // the user to install the runtime) instead of hitting a silent
+    // environment-creation failure later.
+    static bool isRuntimeAvailable();
+
     void addScriptMessageHandler(
         const std::string& name,
         std::function<void(const std::string& message)> handler);
