@@ -168,6 +168,14 @@ function(eacp_add_webview_app TARGET)
                 OUTPUT_DIR ${TS_GENERATED_DIR}
                 BASENAME ${ARG_SCHEMA_NAME})
 
+        # Dev/test loopback bridge (window.eacp) so the generated client runs
+        # host-less (`npm run dev`, jsdom tests). Generic transport; the app
+        # supplies the scenario. Tree-shaken from the production embed — only an
+        # app's dev scenario imports it.
+        eacp_webview_generate_mock(
+                OUTPUT_DIR ${TS_GENERATED_DIR}
+                BASENAME ${ARG_SCHEMA_NAME})
+
         # SOURCES mode needs HANDLERS splicing (so MIRO_EXPORT_COMMAND
         # static initializers fire). API mode binds at runtime via
         # bridge.use(api), so only the generated headers are needed.
