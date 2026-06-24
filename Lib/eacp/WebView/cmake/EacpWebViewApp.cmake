@@ -35,6 +35,10 @@
 #       [LINK_LIBRARIES <libs>]           # extra link deps for the app AND the
 #                                         # schema codegen tool (see note below)
 #       [REACT]                           # emit React hook bindings
+#       [NO_DEBUG_SERVER]                 # opt this app out of the MCP
+#                                         # debug server (see below)
+#       [NO_ASAN]                         # opt this app out of the dev
+#                                         # AddressSanitizer default
 #   )
 #
 # LINK_LIBRARIES is for native libraries the app's API/command headers
@@ -46,8 +50,33 @@
 # destruction ODR-uses — passing the library here covers include dirs and link
 # in one shot, so callers don't have to reach into the generated
 # ${TARGET}Schema_Codegen target by hand.
+# The MCP debug server for a WebView app. Its capture half (screenshot +
+# recording) is the window-level server EVERY app can have, enabled here
+# via eacp_enable_window_debug_server. This adds the WebView DOM tools
+# (list/click/fill/console/invoke) on top, layered onto that same server
+# so the app exposes a single MCP endpoint. Gated by EACP_DEBUG_SERVER
+# (defined in CMake/EacpAgentHarness.cmake); AUTO -> non-release builds.
+function(eacp_enable_debug_server TARGET)
+    # The window-level capture server — the base every app gets.
+    eacp_enable_window_debug_server(${TARGET})
+
+    # The WebView DOM tools, compiled in to enrich that base server.
+    if (NOT TARGET eacp-webview-remote)
+        return ()
+    endif ()
+
+    eacp_tristate_enabled("${EACP_DEBUG_SERVER}" ENABLED)
+    if (NOT ENABLED)
+        return ()
+    endif ()
+
+    get_target_property(REMOTE_DIR eacp-webview-remote SOURCE_DIR)
+    target_link_libraries(${TARGET} PRIVATE eacp-webview-remote)
+    target_sources(${TARGET} PRIVATE ${REMOTE_DIR}/AutoAttachRegister.cpp)
+endfunction()
+
 function(eacp_add_webview_app TARGET)
-    set(options REACT)
+    set(options REACT NO_DEBUG_SERVER NO_ASAN)
     set(oneValueArgs WEB_DIR BUNDLE_ID BUNDLE_NAME NAMESPACE CATEGORY SCHEMA_NAME
             PACKAGE_MANAGER APP_HEADER)
     set(multiValueArgs SOURCES COMMAND_SOURCES SCHEMA_FORMATS API API_HEADER
@@ -121,6 +150,20 @@ function(eacp_add_webview_app TARGET)
         set(APP_LIB_TARGET "${TARGET}")
         add_executable(${TARGET} ${ARG_SOURCES})
         target_link_libraries(${TARGET} PRIVATE eacp-webview eacp-network-rpc)
+    endif ()
+
+    # The three developer affordances, on the app executable only (test
+    # binaries link ${TARGET}_app, not ${TARGET}, so they inherit none
+    # of it): the debugger-wrapped launcher, AddressSanitizer, and the
+    # MCP debug server — each independently gated by its own switch.
+    eacp_add_agent_harness(${TARGET})
+
+    if (NOT ARG_NO_ASAN)
+        eacp_enable_agent_asan(${TARGET})
+    endif ()
+
+    if (NOT ARG_NO_DEBUG_SERVER)
+        eacp_enable_debug_server(${TARGET})
     endif ()
 
     # Caller-supplied native link deps. PUBLIC on the static lib in library
@@ -251,8 +294,34 @@ function(eacp_add_webview_app TARGET)
             MACOSX_BUNDLE_GUI_IDENTIFIER ${ARG_BUNDLE_ID}
             XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${ARG_BUNDLE_ID})
 
+    # Stable code signature (if EACP_CODESIGN_IDENTITY is set) so the app's
+    # TCC grants survive rebuilds — must run after the bundle id is set.
+    eacp_codesign_app(${TARGET})
+
     set_default_target_setting(${TARGET})
     if (ARG_APP_HEADER)
         set_default_target_setting(${APP_LIB_TARGET})
     endif ()
+
+    # IDE grouping: every target this app spawns lives in its own
+    # folder (e.g. Examples/WebView/Calculator) so the parent folder
+    # shows one entry per app instead of the _app / Schema_Codegen /
+    # agentharness- siblings flattened next to each other.
+    # eacp_add_webview_test parks the test target in the same folder.
+    if (CMAKE_FOLDER)
+        set(APP_FOLDER "${CMAKE_FOLDER}/${TARGET}")
+    else ()
+        set(APP_FOLDER "${TARGET}")
+    endif ()
+
+    foreach (SUB_TARGET IN ITEMS
+            ${TARGET}
+            ${TARGET}_app
+            ${TARGET}Schema
+            ${TARGET}Schema_Codegen
+            agentharness-${TARGET})
+        if (TARGET ${SUB_TARGET})
+            set_target_properties(${SUB_TARGET} PROPERTIES FOLDER "${APP_FOLDER}")
+        endif ()
+    endforeach ()
 endfunction()

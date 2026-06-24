@@ -6,5 +6,6 @@ nano_add_executable(WindowTests
         NO_MAIN
         SOURCES
             WindowTests.cpp
+            ViewInputTests.cpp
             TestMain.cpp
         TARGETS eacp-graphics)

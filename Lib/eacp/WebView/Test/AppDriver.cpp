@@ -5,6 +5,7 @@
 #include <eacp/Core/Threads/Async.h>
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/WebView/WebView.h>
+#include <eacp/WebView/WebView/ElementIds.h>
 
 #include <chrono>
 #include <cstdio>
@@ -79,6 +80,13 @@ std::string jsStringLiteral(std::string_view value)
     }
     out += '"';
     return out;
+}
+
+// Selectors are resolved through ElementIds before they reach the
+// page, so the @id shorthand works everywhere a selector does.
+std::string selectorLiteral(std::string_view selector)
+{
+    return jsStringLiteral(Graphics::ElementIds::resolveSelector(selector));
 }
 
 // Wraps an arbitrary JS expression so the callback always gets a
@@ -188,6 +196,14 @@ AppDriver::AppDriver(Graphics::WebView& webViewToUse,
             return;
 
         firstNavigationFired = true;
+
+        // The document-start user script misses a navigation that was
+        // already in flight when the driver attached (non-headless apps
+        // start loading inside the WebView constructor). The agent is
+        // idempotent, so evaluating it again is harmless when the user
+        // script did run. Issued before resolve() so it lands ahead of
+        // any queued command evaluation.
+        webView.evaluateJavaScript(loadTestAgentSource());
         firstNavigationPromise.resolve();
     };
 
@@ -209,6 +225,18 @@ AppDriver::AppDriver(Graphics::WebView& webViewToUse,
         firstNavigationFired = true;
         firstNavigationPromise.reject(error);
     };
+
+    // Attaching to a page that already finished loading (e.g. a debug
+    // server constructed long after startup) would otherwise wait
+    // forever for a navigation event that already fired. Inject the
+    // agent directly — the document-start user script missed this page
+    // — and release the latch.
+    if (!webView.isLoading() && !webView.getURL().empty())
+    {
+        firstNavigationFired = true;
+        webView.evaluateJavaScript(loadTestAgentSource());
+        firstNavigationPromise.resolve();
+    }
 }
 
 AppDriver::~AppDriver()
@@ -375,7 +403,7 @@ Threads::Async<bool> AppDriver::clickAsync(const std::string& selector,
                                            CallOptions opts)
 {
     auto result = co_await runJsAsync(
-        "window.__test.click(" + jsStringLiteral(selector) + ")", opts);
+        "window.__test.click(" + selectorLiteral(selector) + ")", opts);
     co_return asBool(result);
 }
 
@@ -390,7 +418,7 @@ Threads::Async<bool> AppDriver::fillAsync(const std::string& selector,
                                           CallOptions opts)
 {
     auto result =
-        co_await runJsAsync("window.__test.fill(" + jsStringLiteral(selector) + ","
+        co_await runJsAsync("window.__test.fill(" + selectorLiteral(selector) + ","
                                 + jsStringLiteral(value) + ")",
                             opts);
     co_return asBool(result);
@@ -409,7 +437,7 @@ Threads::Async<bool> AppDriver::pressAsync(const std::string& selector,
                                            CallOptions opts)
 {
     auto result =
-        co_await runJsAsync("window.__test.press(" + jsStringLiteral(selector) + ","
+        co_await runJsAsync("window.__test.press(" + selectorLiteral(selector) + ","
                                 + jsStringLiteral(key) + ")",
                             opts);
     co_return asBool(result);
@@ -427,7 +455,7 @@ Threads::Async<bool> AppDriver::submitAsync(const std::string& selector,
                                             CallOptions opts)
 {
     auto result = co_await runJsAsync(
-        "window.__test.submit(" + jsStringLiteral(selector) + ")", opts);
+        "window.__test.submit(" + selectorLiteral(selector) + ")", opts);
     co_return asBool(result);
 }
 
@@ -441,7 +469,7 @@ Threads::Async<std::string> AppDriver::textAsync(const std::string& selector,
                                                  CallOptions opts)
 {
     auto result = co_await runJsAsync(
-        "window.__test.text(" + jsStringLiteral(selector) + ")", opts);
+        "window.__test.text(" + selectorLiteral(selector) + ")", opts);
     co_return asString(result);
 }
 
@@ -455,7 +483,7 @@ Threads::Async<std::optional<std::string>> AppDriver::attrAsync(
     const std::string& selector, const std::string& name, CallOptions opts)
 {
     auto result =
-        co_await runJsAsync("window.__test.attr(" + jsStringLiteral(selector) + ","
+        co_await runJsAsync("window.__test.attr(" + selectorLiteral(selector) + ","
                                 + jsStringLiteral(name) + ")",
                             opts);
     if (result.isNull())
@@ -475,7 +503,7 @@ Threads::Async<bool> AppDriver::existsAsync(const std::string& selector,
                                             CallOptions opts)
 {
     auto result = co_await runJsAsync(
-        "window.__test.exists(" + jsStringLiteral(selector) + ")", opts);
+        "window.__test.exists(" + selectorLiteral(selector) + ")", opts);
     co_return asBool(result);
 }
 
@@ -489,7 +517,7 @@ Threads::Async<int> AppDriver::countAsync(const std::string& selector,
                                           CallOptions opts)
 {
     auto result = co_await runJsAsync(
-        "window.__test.count(" + jsStringLiteral(selector) + ")", opts);
+        "window.__test.count(" + selectorLiteral(selector) + ")", opts);
     co_return asInt(result);
 }
 
@@ -512,7 +540,7 @@ Threads::Async<bool> AppDriver::waitForAsync(const std::string& selector,
     while (true)
     {
         auto result = co_await runJsAsync(
-            "window.__test.exists(" + jsStringLiteral(selector) + ")", {});
+            "window.__test.exists(" + selectorLiteral(selector) + ")", {});
         if (asBool(result))
             co_return true;
         if (std::chrono::steady_clock::now() >= deadline)
@@ -541,7 +569,7 @@ Threads::Async<bool> AppDriver::waitForCountAsync(const std::string& selector,
     while (true)
     {
         auto result = co_await runJsAsync(
-            "window.__test.count(" + jsStringLiteral(selector) + ")", {});
+            "window.__test.count(" + selectorLiteral(selector) + ")", {});
         if (asInt(result) == count)
             co_return true;
         if (std::chrono::steady_clock::now() >= deadline)
@@ -577,7 +605,7 @@ Miro::JSON AppDriver::evaluate(const std::string& expression, CallOptions opts)
 Threads::Async<std::string> AppDriver::domAsync(std::string_view selector,
                                                 CallOptions opts)
 {
-    auto arg = selector.empty() ? std::string {"null"} : jsStringLiteral(selector);
+    auto arg = selector.empty() ? std::string {"null"} : selectorLiteral(selector);
     auto result = co_await runJsAsync("window.__test.dom(" + arg + ")", opts);
     co_return asString(result);
 }
@@ -592,7 +620,7 @@ Threads::Async<std::optional<DomNode>>
     AppDriver::tryQueryAsync(const std::string& selector, CallOptions opts)
 {
     auto result = co_await runJsAsync(
-        "window.__test.queryNode(" + jsStringLiteral(selector) + ")", opts);
+        "window.__test.queryNode(" + selectorLiteral(selector) + ")", opts);
     if (result.isNull())
         co_return std::nullopt;
 
@@ -630,7 +658,7 @@ Threads::Async<Vector<DomNode>> AppDriver::queryAllAsync(const std::string& sele
                                                          CallOptions opts)
 {
     auto result = co_await runJsAsync(
-        "window.__test.queryNodes(" + jsStringLiteral(selector) + ")", opts);
+        "window.__test.queryNodes(" + selectorLiteral(selector) + ")", opts);
 
     auto nodes = Vector<DomNode> {};
     Miro::fromJSON(nodes, result);

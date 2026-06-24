@@ -1,5 +1,6 @@
 set(CMAKE_FOLDER Examples/WebView)
 
+add_subdirectory(Calculator)
 add_subdirectory(SimpleView)
 add_subdirectory(FancyWindow)
 add_subdirectory(WebViewEmbed)

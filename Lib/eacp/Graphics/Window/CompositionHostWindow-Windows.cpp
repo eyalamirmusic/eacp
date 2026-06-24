@@ -601,12 +601,8 @@ void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lPa
     {
         event.characters = takePendingCharacters();
         event.isRepeat = (lParam & 0x40000000) != 0;
-        contentView->keyDown(event);
     }
-    else
-    {
-        contentView->keyUp(event);
-    }
+    contentView->dispatchKeyEvent(event);
 
     ensureAllLayersRendered(contentView);
 }

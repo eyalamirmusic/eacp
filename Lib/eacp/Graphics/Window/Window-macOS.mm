@@ -457,6 +457,7 @@ Window::Window(const WindowOptions& optionsToUse)
     : options(optionsToUse)
     , impl(options, events)
 {
+    attachDebugServer();
 }
 
 void Window::setTitle(const std::string& title)
@@ -466,6 +467,7 @@ void Window::setTitle(const std::string& title)
 
 void Window::setContentView(View& view)
 {
+    contentView = &view;
     impl->setContentView(view.getHandle());
 }
 

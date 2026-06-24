@@ -54,3 +54,16 @@ target_link_libraries(eacp-network-rpc PUBLIC eacp-network Miro)
 set_default_target_setting(eacp-network-rpc)
 eacp_enable_unity_build(eacp-network-rpc)
 add_ide_sources(eacp-network-rpc)
+
+# MCP (Model Context Protocol) server primitive — mounts agent-callable
+# tools on an HTTP::Server, sibling to the HTTPRpc bridge transport.
+add_library(eacp-network-mcp STATIC)
+
+target_sources(eacp-network-mcp PRIVATE
+        MCP/McpServer.cpp)
+
+target_link_libraries(eacp-network-mcp PUBLIC eacp-network Miro)
+
+set_default_target_setting(eacp-network-mcp)
+eacp_enable_unity_build(eacp-network-mcp)
+add_ide_sources(eacp-network-mcp)

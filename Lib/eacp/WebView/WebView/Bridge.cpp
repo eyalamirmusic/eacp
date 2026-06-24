@@ -1,7 +1,10 @@
 #include "Bridge.h"
 
+#include "DebugAttach.h"
 #include "JsStringLiteral.h"
 #include "StateBridge.h"
+
+#include <eacp/Core/App/AppEnvironment.h>
 
 #include <ResEmbed/ResEmbed.h>
 
@@ -38,6 +41,13 @@ WebViewBridge::WebViewBridge(WebView& webViewToUse)
     stateListeners = attachStaticStateBinders(bridge);
     registerBuiltins();
     webView.addUserScript(loadBridgeShim(), true);
+
+    // Developer affordance: when the build linked a debug transport
+    // (see DebugAttach.h), let it attach to this WebView + bridge. Headless
+    // test fixtures opt out — they drive the WebView in-process.
+    if (auto& hook = Detail::webViewDebugHook();
+        hook && !Apps::getAppEnvironment().headless)
+        hook(webView, bridge);
     webView.addScriptMessageHandler(
         bridgeChannel, [this](const std::string& body) { onMessage(body); });
 }

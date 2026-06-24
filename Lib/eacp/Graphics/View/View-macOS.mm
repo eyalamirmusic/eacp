@@ -201,13 +201,13 @@ namespace eacp::Graphics
 - (void)keyDown:(NSEvent*)event
 {
     auto e = eacp::Graphics::keyEventFrom(event, eacp::Graphics::KeyEventType::Down);
-    cppView->keyDown(e);
+    cppView->dispatchKeyEvent(e);
 }
 
 - (void)keyUp:(NSEvent*)event
 {
     auto e = eacp::Graphics::keyEventFrom(event, eacp::Graphics::KeyEventType::Up);
-    cppView->keyUp(e);
+    cppView->dispatchKeyEvent(e);
 }
 
 - (void)updateTrackingAreas
@@ -274,15 +274,6 @@ struct View::Native
 
     CALayer* getLayer() { return nativeView.get().layer; }
 
-    Point getMousePosition() const
-    {
-        auto view = nativeView.get();
-        auto windowPoint = [view.window mouseLocationOutsideOfEventStream];
-        auto localPoint = [view convertPoint:windowPoint fromView:nil];
-
-        return {(float) localPoint.x, (float) localPoint.y};
-    }
-
     void focus()
     {
         auto view = nativeView.get();
@@ -329,11 +320,6 @@ void View::setOpacity(float opacity)
 Rect View::getBounds() const
 {
     return impl->getBounds();
-}
-
-Point View::getMousePosition() const
-{
-    return impl->getMousePosition();
 }
 
 void View::focus()

@@ -1,0 +1,98 @@
+* {
+    box-sizing: border-box;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+html, body, #app {
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+    background: radial-gradient(120% 120% at 20% 0%, #221d33 0%, #14101f 60%, #0e0b16 100%);
+    color: #f3f0ff;
+}
+
+.calc {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 14px;
+    gap: 12px;
+}
+
+.screen {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: flex-end;
+    gap: 4px;
+    padding: 18px 16px 14px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    min-height: 110px;
+    overflow: hidden;
+}
+
+.expression {
+    font-size: 17px;
+    color: #8f86ad;
+    min-height: 1.3em;
+    font-variant-numeric: tabular-nums;
+}
+
+.display {
+    font-size: 44px;
+    font-weight: 300;
+    letter-spacing: 0.5px;
+    font-variant-numeric: tabular-nums;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.display.error {
+    color: #ff6b81;
+}
+
+.keys {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+
+.key {
+    border: none;
+    border-radius: 14px;
+    font-size: 22px;
+    font-weight: 500;
+    color: #f3f0ff;
+    background: rgba(255, 255, 255, 0.08);
+    cursor: pointer;
+    transition: filter 0.06s ease, transform 0.06s ease;
+}
+
+.key:active {
+    filter: brightness(1.5);
+    transform: scale(0.97);
+}
+
+.key.fn {
+    background: rgba(255, 255, 255, 0.16);
+    color: #cfc8ea;
+}
+
+.key.op {
+    background: #7c5cff;
+    font-size: 26px;
+}
+
+.key.zero {
+    grid-column: span 2;
+}

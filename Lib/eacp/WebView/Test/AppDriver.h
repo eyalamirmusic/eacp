@@ -78,6 +78,11 @@ struct SnapshotResult
 // Methods throw std::runtime_error on JS exceptions, timeouts, or
 // missing selectors. Use exists()/waitFor() to gate optional
 // behaviour instead of catching.
+//
+// Every selector accepts the @id shorthand for elements tagged with
+// the ElementIds attribute: click("@todo-add") targets
+// [data-testid="todo-add"] (see WebView/ElementIds.h, including how
+// apps rename the attribute).
 class AppDriver
 {
 public:

@@ -57,7 +57,9 @@ struct DomNode
     // Descendant search over the captured subtree — self is never
     // matched, mirroring element.querySelector. Supports a CSS subset:
     // tag, .class, #id, [attr], [attr=value] (quoted or bare), * and the
-    // descendant combinator (space). find() throws when nothing matches;
+    // descendant combinator (space), plus the @id shorthand for the
+    // ElementIds attribute ("@todo-item" matches
+    // [data-testid="todo-item"]). find() throws when nothing matches;
     // tryFind() returns nullopt; findAll() returns every match (document
     // order for a single compound selector).
     DomNode find(std::string_view selector) const;

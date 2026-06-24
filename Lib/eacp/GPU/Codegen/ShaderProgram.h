@@ -464,9 +464,11 @@ public:
 
     // Builds the shader library and render pipeline. sampleCount must match the
     // render target (GPUView::sampleCount()); set depth when the view has a depth
-    // buffer (GPUView::setDepth(true)).
+    // buffer (GPUView::setDepth(true)); set blending for standard src-alpha-over
+    // transparency (e.g. an overlay drawn on top of an opaque pass).
     void prepare(int sampleCount,
                  bool depth = false,
+                 bool blending = false,
                  PrimitiveTopology topology = PrimitiveTopology::Triangles)
     {
         shaderLibrary.emplace(Device::shared(), generated.source);
@@ -476,6 +478,7 @@ public:
         descriptor.sampleCount = sampleCount;
         descriptor.vertexLayout = generated.vertexLayout;
         descriptor.depth = depth;
+        descriptor.blending = blending;
         descriptor.topology = topology;
 
         pipelineState.emplace(Device::shared(), descriptor);

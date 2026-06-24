@@ -2,7 +2,12 @@
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/WebView/WebView.h>
 
+#include "../../GPU/Teapot/TeapotData.h"
+
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -10,60 +15,197 @@ using namespace eacp;
 using namespace eacp::Graphics;
 
 // ---------------------------------------------------------------------------
-// 1. A GPU surface: a Metal/D3D triangle that spins, built with the shader EDSL.
+// 1. A GPU surface: the Utah teapot, tessellated from its Bezier patches and
+//    Gouraud-shaded with the shader EDSL — depth-buffered, the whole transform
+//    pipeline built in the shader from scalar uniforms.
 // ---------------------------------------------------------------------------
-
-struct GpuVec2
-{
-    float x, y;
-};
-
-struct GpuRGB
-{
-    float r, g, b;
-};
-
-struct GpuVertex
-{
-    GpuVec2 position;
-    GpuRGB color;
-};
-
-EACP_SHADER_VALUE(GpuVec2, Float2)
-EACP_SHADER_VALUE(GpuRGB, Float3)
 
 namespace
 {
 using namespace eacp::GPU;
 
-const GpuVertex spinningTriangle[] = {
-    {{0.0f, 0.8f}, {1.0f, 0.3f, 0.3f}},
-    {{-0.8f, -0.8f}, {0.3f, 1.0f, 0.4f}},
-    {{0.8f, -0.8f}, {0.35f, 0.5f, 1.0f}},
+// A 3-float value used for both CPU mesh math and as a Float3 vertex attribute.
+struct Vec3
+{
+    float x, y, z;
+    using ShaderValue = Float3;
 };
 
-struct SpinShader final : ShaderProgram
+struct TeapotVertex
+{
+    Vec3 position;
+    Vec3 normal;
+};
+
+constexpr float teapotPi = 3.14159265358979f;
+
+float radians(float degrees)
+{
+    return degrees * (teapotPi / 180.0f);
+}
+
+Vec3 operator-(Vec3 a, Vec3 b)
+{
+    return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+Vec3 operator+(Vec3 a, Vec3 b)
+{
+    return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+
+Vec3 operator*(Vec3 a, float s)
+{
+    return {a.x * s, a.y * s, a.z * s};
+}
+
+Vec3 cross(Vec3 a, Vec3 b)
+{
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+
+Vec3 normalize(Vec3 v)
+{
+    auto length = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    return length > 1.0e-6f ? v * (1.0f / length) : Vec3 {0.0f, 0.0f, 1.0f};
+}
+
+// Cubic Bernstein basis and its derivative, for evaluating a bicubic patch.
+void bernstein(float t, float* basis, float* derivative)
+{
+    auto it = 1.0f - t;
+    basis[0] = it * it * it;
+    basis[1] = 3.0f * t * it * it;
+    basis[2] = 3.0f * t * t * it;
+    basis[3] = t * t * t;
+
+    derivative[0] = -3.0f * it * it;
+    derivative[1] = 3.0f * it * it - 6.0f * t * it;
+    derivative[2] = 6.0f * t * it - 3.0f * t * t;
+    derivative[3] = 3.0f * t * t;
+}
+
+Vec3 controlPoint(int patch, int i, int j)
+{
+    const auto& p = teapot::patches[patch][i * 4 + j];
+    return {p[0], p[1], p[2]};
+}
+
+struct TeapotMesh
+{
+    Vector<TeapotVertex> vertices;
+    Vector<std::uint32_t> indices;
+};
+
+// Tessellates the 32 Bezier patches into a centred, unit-scaled indexed mesh
+// with per-vertex normals from the surface partial derivatives.
+TeapotMesh buildTeapot()
+{
+    auto low = Vec3 {1e9f, 1e9f, 1e9f};
+    auto high = Vec3 {-1e9f, -1e9f, -1e9f};
+
+    for (auto p = 0; p < teapot::patchCount; ++p)
+        for (auto k = 0; k < 16; ++k)
+        {
+            auto cp = controlPoint(p, k / 4, k % 4);
+            low = {
+                std::min(low.x, cp.x), std::min(low.y, cp.y), std::min(low.z, cp.z)};
+            high = {std::max(high.x, cp.x),
+                    std::max(high.y, cp.y),
+                    std::max(high.z, cp.z)};
+        }
+
+    auto center = (low + high) * 0.5f;
+    auto extent = std::max({high.x - low.x, high.y - low.y, high.z - low.z});
+    auto scale = 2.0f / extent;
+
+    constexpr auto steps = 12;
+    constexpr auto rowLength = steps + 1;
+    auto mesh = TeapotMesh {};
+
+    for (auto p = 0; p < teapot::patchCount; ++p)
+    {
+        auto base = (std::uint32_t) mesh.vertices.size();
+
+        for (auto iu = 0; iu <= steps; ++iu)
+        {
+            float bu[4], dbu[4];
+            bernstein((float) iu / steps, bu, dbu);
+
+            for (auto iv = 0; iv <= steps; ++iv)
+            {
+                float bv[4], dbv[4];
+                bernstein((float) iv / steps, bv, dbv);
+
+                auto position = Vec3 {0.0f, 0.0f, 0.0f};
+                auto tangentU = Vec3 {0.0f, 0.0f, 0.0f};
+                auto tangentV = Vec3 {0.0f, 0.0f, 0.0f};
+
+                for (auto i = 0; i < 4; ++i)
+                    for (auto j = 0; j < 4; ++j)
+                    {
+                        auto cp = controlPoint(p, i, j);
+                        position = position + cp * (bu[i] * bv[j]);
+                        tangentU = tangentU + cp * (dbu[i] * bv[j]);
+                        tangentV = tangentV + cp * (bu[i] * dbv[j]);
+                    }
+
+                auto normal = normalize(cross(tangentU, tangentV));
+                auto centred = (position - center) * scale;
+                mesh.vertices.add({centred, normal});
+            }
+        }
+
+        for (auto iu = 0; iu < steps; ++iu)
+            for (auto iv = 0; iv < steps; ++iv)
+            {
+                auto a = base + (std::uint32_t) (iu * rowLength + iv);
+                auto b = a + rowLength;
+                auto c = b + 1;
+                auto d = a + 1;
+
+                mesh.indices.getVector().insert(mesh.indices.end(),
+                                                {a, b, c, a, c, d});
+            }
+    }
+
+    return mesh;
+}
+
+// Per-vertex (Gouraud) shaded teapot. The whole transform pipeline — model
+// spin, view, perspective — is built in the shader from scalar uniforms; the
+// CPU uploads no matrices.
+struct TeapotShader final : ShaderProgram
 {
     Uniform<Float> angle;
+    Uniform<Float> aspect;
+    Uniform<Float3> lightDir;
+    Uniform<Float3> baseColor;
 
-    EACP_SHADER(angle)
+    EACP_SHADER(angle, aspect, lightDir, baseColor)
 
-    SpinShader() { compile(); }
+    TeapotShader() { compile(); }
 
     void define() override
     {
-        auto position = vertexInput(&GpuVertex::position);
-        auto color = vertexInput(&GpuVertex::color);
-        auto varyingColor = varying(color);
+        auto position = vertexInput(&TeapotVertex::position);
+        auto normal = vertexInput(&TeapotVertex::normal);
 
-        auto c = cos(angle);
-        auto s = sin(angle);
-        auto px = position.x();
-        auto py = position.y();
-        auto rotated = float2(px * c - py * s, px * s + py * c);
+        auto model = rotateZ(angle);
+        auto view = translate(0.0f, -0.15f, -3.2f) * rotateX(radians(-72.0f));
+        auto projection = perspective(aspect, radians(45.0f), 0.1f, 100.0f);
+        auto modelView = view * model;
 
-        setPosition(float4(rotated, 0.0f, 1.0f));
-        setFragment(float4(varyingColor, 1.0f));
+        setPosition(projection * modelView * float4(position, 1.0f));
+
+        auto worldNormal = normalize((modelView * float4(normal, 0.0f)).xyz());
+        auto toLight = normalize(lightDir);
+
+        // Two-sided diffuse term: |N . L|, so inward-facing patches still light.
+        auto diffuse = abs(dot(worldNormal, toLight));
+        auto shade = diffuse * 0.8f + 0.2f;
+
+        setFragment(float4(varying(baseColor * shade), 1.0f));
     }
 };
 } // namespace
@@ -71,13 +213,18 @@ struct SpinShader final : ShaderProgram
 struct GpuSurface final : GPU::GPUView
 {
     GpuSurface()
+        : mesh(buildTeapot())
     {
         setHandlesMouseEvents(true);
-        shader.setVertices(spinningTriangle);
-        shader.prepare(sampleCount());
+        setDepth(true);
+        shader.setVertices(mesh.vertices.data(), mesh.vertices.size());
+        shader.setIndices(mesh.indices.data(), mesh.indices.size());
+        shader.prepare(sampleCount(), true);
         setContinuous(true);
     }
 
+    // Clicking flips the spin — the same interaction the triangle had, now on
+    // the teapot, through the real dispatch path.
     void mouseDown(const MouseEvent&) override { spin = -spin * 1.5f; }
 
     void update(Threads::FrameTime time) override
@@ -87,15 +234,21 @@ struct GpuSurface final : GPU::GPUView
 
     void render(GPU::Frame& frame) override
     {
+        auto bounds = getLocalBounds();
+
         shader.angle = angle;
+        shader.aspect = bounds.h > 0.0f ? bounds.w / bounds.h : 1.0f;
+        shader.lightDir = std::array {0.4f, 0.5f, 0.8f};
+        shader.baseColor = std::array {0.85f, 0.5f, 0.32f};
 
         auto pass = frame.beginPass({Color {0.05f, 0.06f, 0.09f}});
         pass.draw(shader);
     }
 
-    SpinShader shader;
+    TeapotMesh mesh;
+    TeapotShader shader;
     float angle = 0.0f;
-    float spin = 1.2f;
+    float spin = 0.8f;
 };
 
 // ---------------------------------------------------------------------------
@@ -112,8 +265,19 @@ struct PrimitiveSurface final : View
 
     PrimitiveSurface() { setHandlesMouseEvents(true); }
 
+    // A stateful immediate-mode button: clicking it (a real mouse or an agent's
+    // synthetic click, through the same dispatch) bumps the counter.
+    Rect buttonRect() const { return {14.0f, 40.0f, 168.0f, 40.0f}; }
+
     void mouseDown(const MouseEvent& event) override
     {
+        if (buttonRect().contains(event.pos))
+        {
+            ++clickCount;
+            repaint();
+            return;
+        }
+
         ripples.add(Ripple {event.pos, 0.0f});
     }
 
@@ -149,14 +313,27 @@ struct PrimitiveSurface final : View
         paintWave(g, bounds);
         paintOrbiters(g, bounds);
         paintRipples(g, bounds);
-
-        g.setColor(Color {0.6f, 0.85f, 1.0f});
-        g.drawText("Immediate-mode primitives", {14.0f, 24.0f}, labelFont);
+        paintButton(g);
 
         g.setColor(Color::white(0.45f));
         g.drawText("lines · paths · fills · text — click to ripple",
                    {14.0f, bounds.h - 16.0f},
                    hintFont);
+    }
+
+    void paintButton(Context& g) const
+    {
+        auto button = buttonRect();
+
+        auto shape = Path();
+        shape.addRoundedRect(button, 9.0f);
+        g.setColor(Color {0.18f, 0.5f, 0.85f, 0.95f});
+        g.fillPath(shape);
+
+        g.setColor(Color::white());
+        g.drawText("Clicks: " + std::to_string(clickCount),
+                   {button.x + 16.0f, button.y + 26.0f},
+                   labelFont);
     }
 
     void paintGrid(Context& g, const Rect& bounds) const
@@ -241,6 +418,7 @@ struct PrimitiveSurface final : View
     static constexpr float rippleSpeed = 156.0f;
 
     float phase = 0.0f;
+    int clickCount = 0;
     Vector<Ripple> ripples;
     Font labelFont {FontOptions().withName("Helvetica-Bold").withSize(14.0f)};
     Font hintFont {FontOptions().withName("Helvetica").withSize(11.0f)};
@@ -257,7 +435,9 @@ struct Panel : View
     Panel(const std::string& titleToUse, const Color& accentToUse)
         : accent(accentToUse)
     {
-        setHandlesMouseEvents(true);
+        // Draggable through the standard affordance — moved by the dispatched
+        // mouse events, so a human and an agent drag it the same way.
+        setDraggable(true);
 
         // Group opacity makes the whole panel — chrome plus its GPU / web /
         // primitive content — blend over the panels stacked behind it.
@@ -282,33 +462,9 @@ struct Panel : View
 
     void attachContent() { addSubview(getContent()); }
 
-    // Grabbing the title bar starts a drag; releasing raises the panel so it is
-    // never reordered mid-drag (which would drop the mouse capture).
-    void mouseDown(const MouseEvent&) override
-    {
-        auto* host = getParent();
-
-        if (host == nullptr)
-            return;
-
-        auto mouse = host->getMousePosition();
-        auto bounds = getBounds();
-        dragOffset = {mouse.x - bounds.x, mouse.y - bounds.y};
-    }
-
-    void mouseDragged(const MouseEvent&) override
-    {
-        auto* host = getParent();
-
-        if (host == nullptr)
-            return;
-
-        auto mouse = host->getMousePosition();
-        auto bounds = getBounds();
-        setBounds(
-            bounds.withPosition(mouse.x - dragOffset.x, mouse.y - dragOffset.y));
-    }
-
+    // Dragging is handled by the draggable affordance (setDraggable); on
+    // release the panel raises to the front so it is never reordered mid-drag
+    // (which would drop the mouse capture).
     void mouseUp(const MouseEvent&) override
     {
         if (onRaise)
@@ -351,7 +507,6 @@ private:
     ShapeLayerView frame;
     ShapeLayerView titleBar;
     TextLayerView titleLabel;
-    Point dragOffset;
 };
 
 struct PrimitivePanel final : Panel
@@ -370,7 +525,7 @@ struct PrimitivePanel final : Panel
 struct GpuPanel final : Panel
 {
     GpuPanel()
-        : Panel("GPU · spinning triangle", {0.85f, 0.35f, 0.55f})
+        : Panel("GPU · Utah teapot", {0.85f, 0.35f, 0.55f})
     {
         attachContent();
 
@@ -466,6 +621,12 @@ struct LayeredRoot final : View
     LayeredRoot()
     {
         addChildren({primitivePanel, gpuPanel, webPanel});
+
+        // Tag the panels so an agent can locate and drive them by name
+        // (list_views / click_view) instead of eyeballing pixel coordinates.
+        primitivePanel.setId("primitives-panel");
+        gpuPanel.setId("gpu-panel");
+        webPanel.setId("web-panel");
 
         wireRaise(primitivePanel);
         wireRaise(gpuPanel);

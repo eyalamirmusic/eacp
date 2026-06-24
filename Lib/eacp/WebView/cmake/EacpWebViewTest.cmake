@@ -42,6 +42,12 @@ function(eacp_add_webview_test TARGET)
 
     add_executable(${TARGET} ${ARG_SOURCES})
 
+    # Group with the app's other targets in IDE target trees.
+    get_target_property(APP_FOLDER ${ARG_APP} FOLDER)
+    if (APP_FOLDER)
+        set_target_properties(${TARGET} PROPERTIES FOLDER "${APP_FOLDER}")
+    endif ()
+
     # Link the app's static lib (gets MyApp's header + all the
     # plumbing — schema, web resources, eacp-webview, etc.) plus the
     # test driver and prebuilt main.

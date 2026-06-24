@@ -421,6 +421,7 @@ Window::Window(const WindowOptions& optionsToUse)
     : options(optionsToUse)
     , impl(optionsToUse)
 {
+    attachDebugServer();
 }
 
 Window::~Window() = default;
@@ -442,6 +443,7 @@ void* Window::getContentViewHandle()
 
 void Window::setContentView(View& view)
 {
+    contentView = &view;
     impl->setContentView(&view);
 }
 

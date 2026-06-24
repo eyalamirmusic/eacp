@@ -15,6 +15,50 @@ View& View::setGrabsFocusOnMouseDown(bool value)
     return *this;
 }
 
+View& View::setDraggable(bool value)
+{
+    properties.draggable = value;
+
+    // A view has to be a hit target to be grabbed; dragging without handling
+    // mouse events is meaningless.
+    if (value)
+        properties.handlesMouseEvents = true;
+
+    return *this;
+}
+
+View& View::setId(std::string newId)
+{
+    viewId = std::move(newId);
+    return *this;
+}
+
+View* View::findChildById(const std::string& target)
+{
+    if (viewId == target)
+        return this;
+
+    for (auto* child: subviews)
+        if (auto* found = child->findChildById(target))
+            return found;
+
+    return nullptr;
+}
+
+Rect View::getWindowBounds() const
+{
+    auto bounds = getBounds();
+
+    for (auto* ancestor = parent; ancestor != nullptr; ancestor = ancestor->parent)
+    {
+        auto parentBounds = ancestor->getBounds();
+        bounds.x += parentBounds.x;
+        bounds.y += parentBounds.y;
+    }
+
+    return bounds;
+}
+
 void View::removeFromParent()
 {
     if (parent != nullptr)
@@ -110,7 +154,7 @@ View* View::hitTest(const Point& point)
     return nullptr;
 }
 
-Point View::convertPointToDescendant(const Point& point, View* descendant)
+Point View::convertPointToDescendant(const Point& point, View* descendant) const
 {
     if (descendant == nullptr || descendant == this)
         return point;
@@ -130,6 +174,20 @@ Point View::convertPointToDescendant(const Point& point, View* descendant)
     return {point.x - offset.x, point.y - offset.y};
 }
 
+Point View::getMousePosition() const
+{
+    // The root view (where native events enter) tracks the latest dispatched
+    // pointer position; convert it into this view's local space. It's the same
+    // position the events carried, so a real mouse and an agent's synthetic
+    // events report identically — no OS-cursor side channel.
+    auto* root = this;
+    while (root->parent != nullptr)
+        root = root->parent;
+
+    return root->convertPointToDescendant(root->lastPointerPos,
+                                          const_cast<View*>(this));
+}
+
 MouseEvent View::createLocalEvent(const MouseEvent& event,
                                   View* target,
                                   MouseEventType type)
@@ -145,6 +203,21 @@ void View::forwardDragOrUpToCapturedTarget(const MouseEvent& event)
 {
     if (mouseDownTarget != nullptr)
     {
+        // Standard drag affordance: move the captured target by the pointer's
+        // motion since the last step. Driven entirely by the event position
+        // (this view's coordinate space, same as the target's bounds), so it
+        // is correct for a real mouse and an agent's synthetic events alike —
+        // no OS-cursor side channel. The target's own mouseDragged still runs.
+        if (event.type == MouseEventType::Dragged
+            && mouseDownTarget->properties.draggable)
+        {
+            auto bounds = mouseDownTarget->getBounds();
+            mouseDownTarget->setBounds(
+                bounds.withPosition(bounds.x + (event.pos.x - lastDragPos.x),
+                                    bounds.y + (event.pos.y - lastDragPos.y)));
+            lastDragPos = event.pos;
+        }
+
         mouseDownTarget->handleMouseEvent(
             createLocalEvent(event, mouseDownTarget, event.type));
     }
@@ -199,11 +272,22 @@ void View::dispatchMouseDown(View* target, const MouseEvent& event)
     mouseDownTarget = target;
 
     if (target != nullptr)
+    {
+        // Anchor the drag at the press position (see
+        // forwardDragOrUpToCapturedTarget).
+        if (target->properties.draggable)
+            lastDragPos = event.pos;
+
         target->handleMouseEvent(createLocalEvent(event, target, event.type));
+    }
 }
 
 void View::dispatchMouseEvent(const MouseEvent& event)
 {
+    // Record where the pointer is from the event itself, so getMousePosition()
+    // reflects this stream (real or synthetic) rather than the OS cursor.
+    lastPointerPos = event.pos;
+
     if (event.type == MouseEventType::Dragged || event.type == MouseEventType::Up)
     {
         forwardDragOrUpToCapturedTarget(event);
@@ -232,6 +316,18 @@ void View::dispatchMouseEvent(const MouseEvent& event)
 
     if (target != nullptr)
         target->handleMouseEvent(createLocalEvent(event, target, event.type));
+}
+
+void View::dispatchKeyEvent(const KeyEvent& event)
+{
+    // The single public entry for keyboard input (the native layer and the
+    // debug server's input tools both call this), routing to the protected
+    // handlers. Mirrors dispatchMouseEvent so no caller reaches keyDown/keyUp
+    // directly.
+    if (event.type == KeyEventType::Up)
+        keyUp(event);
+    else
+        keyDown(event);
 }
 
 void View::handleMouseEvent(const MouseEvent& event)

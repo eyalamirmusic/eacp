@@ -1,5 +1,7 @@
 #include "DomNode.h"
 
+#include <eacp/WebView/WebView/ElementIds.h>
+
 #include <stdexcept>
 #include <utility>
 
@@ -97,6 +99,12 @@ Compound parseCompound(std::string_view token)
             auto end = close == std::string_view::npos ? token.size() : close;
             compound.attrs.add(parseAttr(token.substr(i + 1, end - i - 1)));
             i = close == std::string_view::npos ? end : close + 1;
+        }
+        else if (c == '@')
+        {
+            ++i;
+            compound.attrs.add(
+                AttrCondition {Graphics::ElementIds::attributeName(), readName()});
         }
         else
         {

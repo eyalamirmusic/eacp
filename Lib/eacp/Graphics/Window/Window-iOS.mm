@@ -89,6 +89,7 @@ void Window::setTitle(const std::string& title)
 
 void Window::setContentView(View& view)
 {
+    contentView = &view;
     impl->setContentView(view.getHandle());
 }
 
