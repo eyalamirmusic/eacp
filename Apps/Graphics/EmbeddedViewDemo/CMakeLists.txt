@@ -9,4 +9,5 @@ set_target_properties(EmbeddedViewDemo PROPERTIES
         MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
 
+eacp_set_gui_subsystem(EmbeddedViewDemo)
 set_default_target_setting(EmbeddedViewDemo)

@@ -11,4 +11,5 @@ set_target_properties(SimpleView PROPERTIES
 
 
 
+eacp_set_gui_subsystem(SimpleView)
 set_default_target_setting(SimpleView)

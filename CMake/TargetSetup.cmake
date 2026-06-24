@@ -24,6 +24,21 @@ function(eacp_enable_unity_build target)
     endif ()
 endfunction()
 
+# Mark an executable as a windowed GUI app so launching it never pops a console
+# window on Windows — the cross-platform analogue of MACOSX_BUNDLE on Apple. A
+# no-op everywhere but Windows. Call this on any eacp app that owns a window
+# (graphics/tray/webview apps) rather than a console.
+function(eacp_set_gui_subsystem target)
+    set_target_properties(${target} PROPERTIES WIN32_EXECUTABLE TRUE)
+    # WIN32_EXECUTABLE selects /SUBSYSTEM:WINDOWS, whose default MSVC entry point
+    # is WinMainCRTStartup (it expects WinMain). eacp apps use a standard
+    # int main(), so redirect the entry to the console CRT startup — it still
+    # parses argv and calls main(), just without a console attached.
+    if (MSVC)
+        target_link_options(${target} PRIVATE "/ENTRY:mainCRTStartup")
+    endif ()
+endfunction()
+
 function(add_ide_sources target)
     file(GLOB_RECURSE ALL_HEADERS
             "${CMAKE_CURRENT_SOURCE_DIR}/*.h"

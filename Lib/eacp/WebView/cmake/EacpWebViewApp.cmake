@@ -251,6 +251,10 @@ function(eacp_add_webview_app TARGET)
             MACOSX_BUNDLE_GUI_IDENTIFIER ${ARG_BUNDLE_ID}
             XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${ARG_BUNDLE_ID})
 
+    # A WebView app owns a window, never a console — the Windows counterpart to
+    # MACOSX_BUNDLE above. No-op on non-Windows.
+    eacp_set_gui_subsystem(${TARGET})
+
     set_default_target_setting(${TARGET})
     if (ARG_APP_HEADER)
         set_default_target_setting(${APP_LIB_TARGET})

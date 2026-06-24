@@ -9,4 +9,5 @@ set_target_properties(Paths PROPERTIES
         MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
 
+eacp_set_gui_subsystem(Paths)
 set_default_target_setting(Paths)

@@ -9,4 +9,5 @@ set_target_properties(Teapot PROPERTIES
         MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
 
+eacp_set_gui_subsystem(Teapot)
 set_default_target_setting(Teapot)
