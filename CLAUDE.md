@@ -24,6 +24,29 @@ Output executables:
 - `build/Apps/GUI/GUI.app` (macOS bundle)
 - `build/Apps/Console/Console` (command-line app)
 
+### Running apps (the agent harness)
+
+Every app target gets an **agent harness** launcher generated at
+`build/agentharness/<Target>` (see `CMake/EacpAgentHarness.cmake`).
+Claude must always launch app binaries through it — never execute the
+bundle binary directly. It behaves like a plain launch (args, env,
+stdio pass through; the MCP debug server still comes up), but runs the
+app under lldb in batch mode so a crash prints a full backtrace and
+exits non-zero. Set `EACP_NO_DEBUGGER=1` to bypass when the debugger
+itself is the problem.
+
+```bash
+EACP_DEBUG_PORT=9744 build/agentharness/Calculator
+```
+
+The harness is one of three independent developer affordances eacp
+apps get by default in non-release builds, each with its own
+`AUTO`/`ON`/`OFF` switch (`AUTO` = non-release builds):
+`EACP_AGENT_HARNESS` (this launcher), `EACP_ASAN` (AddressSanitizer on
+the app executable), and `EACP_DEBUG_SERVER` (the embedded MCP debug
+server). They are independent — e.g. `-DEACP_ASAN=ON
+-DEACP_AGENT_HARNESS=OFF` gives ASan with no launcher.
+
 ### Build Options
 
 - `EACP_UNITY_BUILD` (default `ON`): compiles eacp libraries as CMake unity

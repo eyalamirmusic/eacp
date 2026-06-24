@@ -1,7 +1,10 @@
 #include "Bridge.h"
 
+#include "ElementIds.h"
 #include "JsStringLiteral.h"
 #include "StateBridge.h"
+
+#include <eacp/Core/App/AppEnvironment.h>
 
 #include <ResEmbed/ResEmbed.h>
 
@@ -38,6 +41,20 @@ WebViewBridge::WebViewBridge(WebView& webViewToUse)
     stateListeners = attachStaticStateBinders(bridge);
     registerBuiltins();
     webView.addUserScript(loadBridgeShim(), true);
+
+    // Page code (event tracking, dev tooling) reads the configured
+    // ElementIds attribute from here rather than hardcoding it.
+    webView.addUserScript("window.__eacpElementIdAttribute = "
+                              + jsStringLiteral(ElementIds::attributeName()) + ";",
+                          true);
+
+    // Developer affordance: when the build linked a debug transport
+    // (see DebugAttach.h), attach it to this WebView + bridge pair.
+    // Headless runs (test fixtures) drive the WebView in-process and
+    // don't want servers spawning per fixture rebuild.
+    if (auto& factory = Detail::debugAttachFactory();
+        factory && !Apps::getAppEnvironment().headless)
+        debugAttachment = factory(webView, bridge);
     webView.addScriptMessageHandler(
         bridgeChannel, [this](const std::string& body) { onMessage(body); });
 }

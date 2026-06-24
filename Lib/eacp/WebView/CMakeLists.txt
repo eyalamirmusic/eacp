@@ -27,6 +27,7 @@ target_sources(eacp-webview PRIVATE
         WebView/WebView-Shared.cpp
         WebView/DevServerProbe.cpp
         WebView/Bridge.cpp
+        WebView/ElementIds.cpp
         WebView/StateBridge.cpp
         WebView/MenuHelpers.cpp)
 
@@ -100,3 +101,7 @@ endif ()
 # binary and drives the WebView directly. Self-gates to Apple-not-iOS
 # + Windows; iOS / Linux are no-ops.
 add_subdirectory(Test)
+
+# Remote debug server — the driver's capabilities served as MCP tools
+# over HTTP for external agents. Same platform gate as Test.
+add_subdirectory(Remote)
