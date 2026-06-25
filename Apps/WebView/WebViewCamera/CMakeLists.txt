@@ -9,6 +9,7 @@ set_target_properties(WebViewCamera PROPERTIES
         MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
 
+eacp_set_gui_subsystem(WebViewCamera)
 set_default_target_setting(WebViewCamera)
 
 # Override the shared bundle plist with one that carries the

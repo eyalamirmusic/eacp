@@ -15,4 +15,5 @@ set_target_properties(SVG PROPERTIES
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID}
         RESOURCE "${SVG_RESOURCES}")
 
+eacp_set_gui_subsystem(SVG)
 set_default_target_setting(SVG)

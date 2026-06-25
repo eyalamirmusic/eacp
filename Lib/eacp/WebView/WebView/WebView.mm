@@ -689,6 +689,11 @@ WebView* WebView::focused()
     return detail::findFocusedWebView();
 }
 
+bool WebView::isRuntimeAvailable()
+{
+    return true;
+}
+
 void WebView::evaluateJavaScript(const std::string& script, const JSCallback& callback)
 {
     auto* nsScript = [NSString stringWithUTF8String:script.c_str()];

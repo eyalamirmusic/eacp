@@ -15,4 +15,5 @@ set_target_properties(TrayApp PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST
         "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in")
 
+eacp_set_gui_subsystem(TrayApp)
 set_default_target_setting(TrayApp)
