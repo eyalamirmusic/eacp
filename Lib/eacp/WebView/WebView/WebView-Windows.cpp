@@ -73,8 +73,11 @@ namespace
 // WebView2's default user data folder sits next to the executable, which is
 // read-only for installed apps (e.g. Program Files) and makes environment
 // creation fail outright. Use %LOCALAPPDATA%\<exe name>\WebView2 instead;
-// WebView2 creates the directories on demand.
-std::wstring defaultUserDataFolder()
+// WebView2 creates the directories on demand. A non-empty `suffix`
+// (Options::userDataFolderSuffix) isolates a WebView into its own folder
+// (WebView2-<suffix>) so views with different custom-scheme registrations in
+// the same executable don't collide on a shared folder — see the option's doc.
+std::wstring defaultUserDataFolder(const std::string& suffix)
 {
     PWSTR localAppData = nullptr;
     if (FAILED(
@@ -93,7 +96,11 @@ std::wstring defaultUserDataFolder()
     if (exeName.empty())
         exeName = L"eacp";
 
-    return folder + L"\\" + exeName + L"\\WebView2";
+    auto leaf = std::wstring {L"WebView2"};
+    if (!suffix.empty())
+        leaf += L"-" + toWideString(suffix);
+
+    return folder + L"\\" + exeName + L"\\" + leaf;
 }
 
 // A read-only IStream over a bounded byte range of a StreamingResource.
@@ -340,7 +347,7 @@ struct WebView::Native
         }
 
         auto envOptions = buildEnvironmentOptions();
-        auto userDataFolder = defaultUserDataFolder();
+        auto userDataFolder = defaultUserDataFolder(options.userDataFolderSuffix);
 
         auto hr = CreateCoreWebView2EnvironmentWithOptions(
             nullptr,

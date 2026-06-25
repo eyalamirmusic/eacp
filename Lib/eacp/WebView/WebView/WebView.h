@@ -127,6 +127,19 @@ public:
         Embedded embedded;
         bool debugConsole = true;
 
+        // Windows only: a suffix that isolates this WebView's WebView2
+        // user-data-folder (%LOCALAPPDATA%\<exe>\WebView2[-<suffix>]). WebView2
+        // requires every environment sharing a user-data-folder to register the
+        // SAME custom URL schemes; two WebViews in one executable that declare
+        // different `schemes`/`streamingSchemes` (e.g. an updater UI and the
+        // main app, only one of which serves a local-audio:// scheme) otherwise
+        // collide — the second CreateCoreWebView2EnvironmentWithOptions fails
+        // with ERROR_INVALID_STATE and the view never navigates (blank window).
+        // Give such WebViews distinct suffixes so each gets its own folder.
+        // Empty (the default) keeps the shared per-exe folder. No-op on macOS,
+        // where scheme handlers are per-WKWebViewConfiguration, not per-folder.
+        std::string userDataFolderSuffix;
+
         // macOS: deliver the first click on an unfocused window to the page
         // instead of swallowing it as activation (NSView acceptsFirstMouse).
         // Without it, app-region drag handles need one click to focus and a
