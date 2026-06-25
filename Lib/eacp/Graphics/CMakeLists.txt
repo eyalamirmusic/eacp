@@ -3,6 +3,7 @@ add_library(eacp-graphics STATIC)
 target_sources(eacp-graphics PRIVATE
         Helpers/DisplayLink.cpp
         Image/Image.cpp
+        Image/ImageOps.cpp
         Layers/Layer.cpp
         Layers/LayerViews.cpp
         Layers/ShapeLayer.cpp
