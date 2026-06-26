@@ -117,6 +117,11 @@ uint16_t keyCodeFromVirtualKey(int vk)
     return KeyCode::Unknown;
 }
 
+int virtualKeyFromKeyCode(uint16_t keyCode)
+{
+    return toVirtualKey(keyCode);
+}
+
 bool Keyboard::isKeyPressed(uint16_t keyCode)
 {
     int vk = toVirtualKey(keyCode);

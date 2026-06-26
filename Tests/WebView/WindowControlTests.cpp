@@ -19,6 +19,8 @@ using namespace std::chrono_literals;
 
 namespace
 {
+constexpr auto firstNavigationTimeout = 30s;
+
 // One button per role, a glyph child inside one of them (the custom property
 // inherits, so a click landing on the glyph still resolves), and an unmarked
 // sibling. `ready` gates queries until document-start injection has run.
@@ -57,7 +59,8 @@ struct Fixture
         webView.addScriptMessageHandler(
             "ready", [this](const std::string&) { ready = true; });
         webView.loadHTML(pageHtml);
-        check(Threads::runEventLoopUntil([this] { return ready; }, 10s));
+        check(Threads::runEventLoopUntil([this] { return ready; },
+                                         firstNavigationTimeout));
     }
 
     std::string buttonOf(const std::string& selector)

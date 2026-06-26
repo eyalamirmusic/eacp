@@ -48,6 +48,10 @@ void armFileDrag(WKWebView*, const Vector<std::string>&)
     assert(false && "armFileDrag is macOS-only");
 }
 
+void setFileDragStartedCallback(WKWebView*, Callback)
+{
+}
+
 void armWindowDrag(WKWebView*)
 {
     // Window dragging is a desktop affordance; iOS windows aren't movable.
