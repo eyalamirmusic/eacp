@@ -4,6 +4,7 @@
 
 #include <eacp/Core/Threads/Async.h>
 #include <eacp/Core/Utils/Environment.h>
+#include <eacp/Core/Utils/Logging.h>
 #include <MakeASound/MakeASound.h>
 #include <Miro/Miro.h>
 #include <miniaudio.h>
@@ -190,8 +191,14 @@ public:
             onShowCopyToast(request.sampleName);
     }
 
+    // Disabled while the panel is hidden (see setPlaybackEnabled). A request
+    // that arrives after the window closed — e.g. the click that ends a
+    // drag-out — must not decode or play.
     void playAudio(const PlayAudioRequest& request)
     {
+        if (!playbackEnabled.load())
+            return;
+
         ensureAudioStarted();
 
         auto generation = ++decodeGeneration;
@@ -209,7 +216,8 @@ public:
                 eacp::Threads::callAsync(
                     [this, generation, path, decoded = std::move(decoded)]() mutable
                     {
-                        if (generation != decodeGeneration.load())
+                        if (generation != decodeGeneration.load()
+                            || !playbackEnabled.load())
                             return;
 
                         if (decoded.samples.empty() || decoded.channels <= 0)
@@ -240,6 +248,17 @@ public:
         currentPath.clear();
         playbackPosition.store(0);
         playback.publish(getPlayback());
+    }
+
+    // Driven by the panel's visibility: showing enables playback, hiding
+    // disables it and stops anything already running. While disabled, playAudio
+    // is a no-op and any decode that lands can't start, so closing the window
+    // (or dragging a sample out) reliably silences the app.
+    void setPlaybackEnabled(bool enabled)
+    {
+        playbackEnabled.store(enabled);
+        if (!enabled)
+            stopAudio();
     }
 
     PlaybackState getPlayback() const
@@ -375,6 +394,7 @@ private:
     int outputSampleRate = 48000;
     std::atomic<unsigned long long> decodeGeneration {0};
     std::atomic<bool> playing {false};
+    std::atomic<bool> playbackEnabled {true};
     std::atomic<std::size_t> playbackPosition {0};
     std::string currentPath;
     std::mutex audioMutex;

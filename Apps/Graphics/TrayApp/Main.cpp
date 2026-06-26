@@ -221,12 +221,11 @@ struct TrayApp
                                       CommandExecution::WorkerThread);
 
         webView.onFileDragStarted = [this] { hidePanel(); };
-        webView.onNavigationFinished =
-            [this](const std::string&)
-            {
-                if (window.isVisible())
-                    focusPrompt();
-            };
+        webView.onNavigationFinished = [this](const std::string&)
+        {
+            if (window.isVisible())
+                focusPrompt();
+        };
         webView.loadURL("app://local/index.html");
 
         // The window shows itself on construction; hide it immediately so
@@ -235,12 +234,11 @@ struct TrayApp
         // where the user left it.
         window.setContentView(webView);
         window.setVisible(false);
-        window.events.onActivationChanged =
-            [this](bool isKey)
-            {
-                if (!isKey && window.isVisible())
-                    hidePanel();
-            };
+        window.events.onActivationChanged = [this](bool isKey)
+        {
+            if (!isKey && window.isVisible())
+                hidePanel();
+        };
 
         tray.setIcon(makeTrayIcon());
         tray.setTooltip("eacp Tray App");
@@ -319,6 +317,7 @@ struct TrayApp
 
     void showPanel()
     {
+        api.setPlaybackEnabled(true);
         window.setVisible(true);
         window.toFront();
         focusPrompt();
@@ -352,7 +351,7 @@ struct TrayApp
 
     void hidePanel()
     {
-        api.stopAudio();
+        api.setPlaybackEnabled(false);
         window.setVisible(false);
     }
 
