@@ -39,16 +39,19 @@ if (APPLE)
     else ()
         target_sources(eacp-core PRIVATE
                 App/App-macOS.mm
+                App/LoginItem-macOS.mm
                 Process/Process-Posix.cpp
                 Threads/EventLoop-macOS.mm)
         target_link_libraries(eacp-core PRIVATE
                 "-framework Cocoa"
                 "-framework Security"
+                "-framework ServiceManagement"
                 "-framework UniformTypeIdentifiers")
     endif ()
 elseif (WIN32)
     target_sources(eacp-core PRIVATE
             App/App-Windows.cpp
+            App/LoginItem-Windows.cpp
             Process/Process-Windows.cpp
             Threads/EventLoop-Windows.cpp
             Threads/ThreadUtils-Windows.cpp

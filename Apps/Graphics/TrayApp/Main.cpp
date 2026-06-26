@@ -1,7 +1,12 @@
 #include <eacp/Graphics/Graphics.h>
 
+#include <optional>
+
 using namespace eacp;
 using namespace Graphics;
+
+static constexpr ModifierKeys launcherModifiers {.shift = true, .control = true};
+static constexpr uint16_t launcherKeyCode = KeyCode::L;
 
 // A smooth orange disc, generated so the example needs no asset file. On
 // macOS the menu bar renders it as a template (alpha-only, system tinted);
@@ -33,17 +38,21 @@ static Image makeTrayIcon()
     return image;
 }
 
-// The content of the floating panel below. The window's cornerRadius clips
-// this view, so it just fills its bounds — the rounding comes for free.
 struct PanelView final : View
 {
     PanelView()
+        : textInput(FontOptions().withName("Helvetica").withSize(18.f))
     {
         background->setFillColor({0.11f, 0.11f, 0.13f});
-        title->setColor({0.95f, 0.95f, 0.95f});
-        subtitle->setColor({0.62f, 0.62f, 0.68f});
 
-        addChildren({background, title, subtitle});
+        textInput.setPlaceholder("What can I help you with today?");
+        textInput.setTextColor({0.95f, 0.95f, 0.95f});
+        textInput.setBackgroundColor({0.11f, 0.11f, 0.13f});
+        textInput.setBorderColor({0.f, 0.f, 0.f, 0.f});
+        textInput.setPadding(18.f);
+
+        addChildren({background});
+        addSubview(textInput);
     }
 
     void resized() override
@@ -54,14 +63,12 @@ struct PanelView final : View
         path.addRect(bounds);
         background->setPath(path);
 
-        scaleToFit({background, title, subtitle});
-        title->setPosition({20.f, bounds.h - 44.f});
-        subtitle->setPosition({20.f, bounds.h - 70.f});
+        scaleToFit({background});
+        textInput.setBounds({0.f, 0.f, bounds.w, bounds.h});
     }
 
     ShapeLayerView background;
-    TextLayerView title {"Quick Panel"};
-    TextLayerView subtitle {"Toggled from the tray, never recreated"};
+    TextInput textInput;
 };
 
 struct TrayApp
@@ -69,6 +76,9 @@ struct TrayApp
     TrayApp()
     {
         Apps::setDockIconVisible(false);
+        Apps::setLaunchAtLogin(true);
+
+        panelView.textInput.onSubmit([this](const std::string&) { swallowAndHide(); });
 
         // The window shows itself on construction; hide it immediately so
         // the app starts as a bare tray icon. setVisible keeps the window
@@ -86,6 +96,8 @@ struct TrayApp
         // menu stays on right-click). On macOS the menu owns the click, so
         // this never fires there — use the menu item instead.
         tray.setOnClick([this] { togglePanel(); });
+
+        hotKey.emplace(launcherModifiers, launcherKeyCode, [this] { showPanel(); });
     }
 
     // A small tray companion: borderless and rounded (cornerRadius defines
@@ -114,18 +126,38 @@ struct TrayApp
     {
         auto menu = Menu();
         menu.add(MenuItem::withAction("Toggle Panel", [this] { togglePanel(); }));
-        menu.add(
-            MenuItem::withAction("Say Hello", [] { LOG("Hello from the tray!"); }));
         menu.addSeparator();
         menu.add(MenuItem::withAction("Quit", [] { Apps::quit(); }));
         return menu;
     }
 
-    void togglePanel() { window.setVisible(!window.isVisible()); }
+    void showPanel()
+    {
+        window.setVisible(true);
+        window.toFront();
+        panelView.textInput.focus();
+    }
+
+    void hidePanel() { window.setVisible(false); }
+
+    void swallowAndHide()
+    {
+        panelView.textInput.setText("");
+        hidePanel();
+    }
+
+    void togglePanel()
+    {
+        if (window.isVisible())
+            hidePanel();
+        else
+            showPanel();
+    }
 
     PanelView panelView;
     Window window {getPanelOptions()};
     TrayIcon tray;
+    std::optional<GlobalHotKey> hotKey;
 };
 
 int main()
