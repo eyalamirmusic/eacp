@@ -3,11 +3,14 @@
 #include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/App/Clipboard.h>
 #include <eacp/Graphics/Graphics.h>
+#include <eacp/Graphics/Graphics/GraphicsContext.h>
+#include <eacp/Graphics/Primitives/TextMetrics.h>
 #include <eacp/WebView/WebView.h>
 
+#include <algorithm>
 #include <chrono>
 #include <optional>
-#include <string_view>
+#include <string>
 
 using namespace eacp;
 using namespace Graphics;
@@ -17,149 +20,72 @@ static constexpr uint16_t launcherKeyCode = KeyCode::L;
 static constexpr const char* searchDownloadsCommand = "searchDownloads";
 static constexpr auto copyToastDuration = std::chrono::milliseconds {1500};
 
-static std::string escapeHTML(std::string_view text)
+// The "Copied" HUD, drawn natively rather than through a WebView — a tiny
+// confirmation card doesn't justify a second WebView2 environment (which also
+// rendered blank while it span up). Fills its rounded window with a dark card
+// and centres the asterisk mark, title and detail; the toast timer drives the
+// fade via View::setOpacity.
+class CopyToastView : public View
 {
-    auto result = std::string {};
-    result.reserve(text.size());
-
-    for (auto c: text)
+public:
+    void setSampleName(const std::string& name)
     {
-        switch (c)
+        detail = name + " to clipboard";
+        repaint();
+    }
+
+    void paint(Context& g) override
+    {
+        auto bounds = getLocalBounds();
+
+        g.setColor(Color {0.110f, 0.110f, 0.125f, 0.96f});
+        g.fillRect(bounds);
+
+        auto centreX = bounds.x + bounds.w * 0.5f;
+
+        paintMark(g, centreX, bounds.y + 58.f);
+
+        g.setColor(Color {0.965f, 0.957f, 0.949f, 1.f});
+        drawCentred(g, "Copied", centreX, bounds.y + 130.f, titleFont);
+
+        g.setColor(Color {0.965f, 0.957f, 0.949f, 0.66f});
+        drawCentred(g, detail, centreX, bounds.y + 160.f, detailFont);
+    }
+
+private:
+    void drawCentred(Context& g,
+                     const std::string& text,
+                     float centreX,
+                     float baselineY,
+                     const Font& font) const
+    {
+        auto width = TextMetrics::measureWidth(text, font);
+        g.drawText(text, {centreX - width * 0.5f, baselineY}, font);
+    }
+
+    // Eight rounded bars fanned around a centre — the same asterisk mark the
+    // launcher composer shows.
+    void paintMark(Context& g, float centreX, float centreY) const
+    {
+        constexpr auto bars = 8;
+        constexpr auto half = 26.f;
+
+        g.setColor(Color {0.945f, 0.945f, 0.949f, 1.f});
+
+        for (auto i = 0; i < bars; ++i)
         {
-            case '&':
-                result += "&amp;";
-                break;
-            case '<':
-                result += "&lt;";
-                break;
-            case '>':
-                result += "&gt;";
-                break;
-            case '"':
-                result += "&quot;";
-                break;
-            case '\'':
-                result += "&#39;";
-                break;
-            default:
-                result += c;
-                break;
+            g.saveState();
+            g.translate(centreX, centreY);
+            g.rotate(static_cast<float>(i) * 3.14159265f / bars);
+            g.fillRoundedRect(Rect {-3.f, -half, 6.f, half * 2.f}, 3.f);
+            g.restoreState();
         }
     }
 
-    return result;
-}
-
-static std::string copyToastHTML(const std::string& sampleName)
-{
-    return R"html(
-<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-:root {
-    color-scheme: dark;
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: transparent;
-}
-
-* { box-sizing: border-box; }
-
-html,
-body {
-    width: 100%;
-    height: 100%;
-    margin: 0;
-    overflow: hidden;
-    background: transparent;
-}
-
-body {
-    display: grid;
-    place-items: center;
-}
-
-.hud {
-    display: grid;
-    justify-items: center;
-    width: 300px;
-    min-height: 190px;
-    padding: 30px 26px 24px;
-    border-radius: 32px;
-    background: rgba(28, 28, 32, 0.93);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-    animation: hud-in 1500ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.mark {
-    position: relative;
-    width: 58px;
-    height: 58px;
-    margin-bottom: 18px;
-}
-
-.mark span {
-    position: absolute;
-    left: 26px;
-    top: 3px;
-    width: 6px;
-    height: 52px;
-    border-radius: 999px;
-    background: #f1f1f2;
-    transform-origin: 50% 50%;
-}
-
-.mark span:nth-child(2) { transform: rotate(22.5deg); }
-.mark span:nth-child(3) { transform: rotate(45deg); }
-.mark span:nth-child(4) { transform: rotate(67.5deg); }
-.mark span:nth-child(5) { transform: rotate(90deg); }
-.mark span:nth-child(6) { transform: rotate(112.5deg); }
-.mark span:nth-child(7) { transform: rotate(135deg); }
-.mark span:nth-child(8) { transform: rotate(157.5deg); }
-
-.title {
-    color: #f6f4f2;
-    font-size: 26px;
-    font-weight: 720;
-    letter-spacing: 0;
-    line-height: 1.1;
-}
-
-.detail {
-    max-width: 100%;
-    margin-top: 8px;
-    color: rgba(246, 244, 242, 0.68);
-    font-size: 13px;
-    font-weight: 550;
-    line-height: 1.28;
-    overflow: hidden;
-    text-align: center;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-@keyframes hud-in {
-    0% { opacity: 0; transform: translateY(10px) scale(0.94); }
-    10%, 72% { opacity: 1; transform: translateY(0) scale(1); }
-    100% { opacity: 0; transform: translateY(-8px) scale(0.98); }
-}
-</style>
-</head>
-<body>
-<div class="hud">
-    <div class="mark" aria-hidden="true">
-        <span></span><span></span><span></span><span></span>
-        <span></span><span></span><span></span><span></span>
-    </div>
-    <div class="title">Copied</div>
-    <div class="detail">)html" + escapeHTML(sampleName) + R"html( to clipboard</div>
-</div>
-</body>
-</html>
-)html";
-}
+    std::string detail = " to clipboard";
+    Font titleFont {FontOptions().withSize(25.f)};
+    Font detailFont {FontOptions().withSize(13.f)};
+};
 
 // A smooth orange disc, generated so the example needs no asset file. On
 // macOS the menu bar renders it as a template (alpha-only, system tinted);
@@ -252,7 +178,7 @@ struct TrayApp
 
         hotKey.emplace(launcherModifiers, launcherKeyCode, [this] { showPanel(); });
 
-        copyToastWindow.setContentView(copyToastWebView);
+        copyToastWindow.setContentView(copyToastView);
         copyToastWindow.setVisible(false);
     }
 
@@ -294,15 +220,6 @@ struct TrayApp
         options.showInactive = true;
         options.ignoresMouseEvents = true;
 
-        return options;
-    }
-
-    static WebView::Options getCopyToastWebViewOptions()
-    {
-        auto options = WebView::Options();
-        options.embedded.autoLoad = false;
-        options.debugConsole = false;
-        options.transparentBackground = true;
         return options;
     }
 
@@ -357,9 +274,10 @@ struct TrayApp
 
     void showCopyToast(const std::string& sampleName)
     {
-        copyToastWebView.loadHTML(copyToastHTML(sampleName));
+        copyToastView.setSampleName(sampleName);
         copyToastVisible = true;
-        copyToastDeadline = std::chrono::steady_clock::now() + copyToastDuration;
+        copyToastStart = std::chrono::steady_clock::now();
+        copyToastView.setOpacity(0.f);
         copyToastWindow.setVisible(true);
     }
 
@@ -368,11 +286,36 @@ struct TrayApp
         if (!copyToastVisible)
             return;
 
-        if (std::chrono::steady_clock::now() < copyToastDeadline)
-            return;
+        auto elapsed = std::chrono::steady_clock::now() - copyToastStart;
 
-        copyToastVisible = false;
-        copyToastWindow.setVisible(false);
+        if (elapsed >= copyToastDuration)
+        {
+            copyToastVisible = false;
+            copyToastWindow.setVisible(false);
+            return;
+        }
+
+        copyToastView.setOpacity(copyToastOpacity(elapsed));
+    }
+
+    // A quick fade in, a hold, then a fade out over the toast's lifetime.
+    static float copyToastOpacity(std::chrono::steady_clock::duration elapsed)
+    {
+        using Millis = std::chrono::duration<float, std::milli>;
+        constexpr auto fadeIn = 130.f;
+        constexpr auto fadeOut = 300.f;
+
+        auto total = std::chrono::duration_cast<Millis>(copyToastDuration).count();
+        auto now = std::chrono::duration_cast<Millis>(elapsed).count();
+        auto remaining = total - now;
+
+        if (now < fadeIn)
+            return now / fadeIn;
+
+        if (remaining < fadeOut)
+            return std::clamp(remaining / fadeOut, 0.f, 1.f);
+
+        return 1.f;
     }
 
     void swallowAndHide()
@@ -396,10 +339,10 @@ if (input) input.value = '';
     WebView webView {getWebViewOptions()};
     WebViewBridge transport {webView, api};
     Window window {getPanelOptions()};
-    WebView copyToastWebView {getCopyToastWebViewOptions()};
+    CopyToastView copyToastView;
     Window copyToastWindow {getCopyToastOptions()};
     bool copyToastVisible = false;
-    std::chrono::steady_clock::time_point copyToastDeadline {};
+    std::chrono::steady_clock::time_point copyToastStart {};
     Threads::Timer copyToastTimer {[this] { updateCopyToast(); }, 10};
     TrayIcon tray;
     std::optional<GlobalHotKey> hotKey;
