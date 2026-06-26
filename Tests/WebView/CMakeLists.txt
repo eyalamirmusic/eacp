@@ -54,4 +54,10 @@ if (TARGET eacp-webview-test-main)
             eacp-webview
             eacp-webview-test-main)
     nano_discover_tests(WindowControlTests)
+
+    add_executable(WebViewAffordanceTests WebViewAffordanceTests.cpp)
+    target_link_libraries(WebViewAffordanceTests PRIVATE
+            eacp-webview
+            eacp-webview-test-main)
+    nano_discover_tests(WebViewAffordanceTests)
 endif ()
