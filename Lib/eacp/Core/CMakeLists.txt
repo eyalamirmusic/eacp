@@ -67,6 +67,7 @@ elseif (UNIX AND NOT APPLE)
     target_sources(eacp-core PRIVATE
             App/App-Linux.cpp
             App/Clipboard-Linux.cpp
+            App/LoginItem-Linux.cpp
             Process/Process-Posix.cpp
             Threads/EventLoop-Linux.cpp
             Threads/EventLoop-Default.cpp

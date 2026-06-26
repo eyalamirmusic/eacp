@@ -95,6 +95,9 @@ elseif (WIN32)
             windowscodecs
             windowsapp
             runtimeobject)
+elseif (UNIX)
+    target_sources(eacp-graphics PRIVATE
+            HotKey/GlobalHotKey-Linux.cpp)
 endif ()
 
 set_default_target_setting(eacp-graphics)
