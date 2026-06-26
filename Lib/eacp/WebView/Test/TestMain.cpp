@@ -5,6 +5,8 @@
 
 #include <NanoTest/NanoTest.h>
 
+#include <cstdlib>
+
 // Prebuilt main() for in-process WebView test binaries (linked via
 // eacp-webview-test-main).
 //
@@ -65,7 +67,11 @@ int main(int argc, char* argv[])
     // Skip Window's show/activate calls so test binaries can run on
     // CI machines without an active windowing session. WebView/JS
     // still functions; only the visible surface is suppressed.
-    eacp::Apps::getAppEnvironment().headless = true;
+    //
+    // Window video recording (AppDriver::startRecording) needs a real
+    // on-screen window, so EACP_RECORD_DIR forces a visible run.
+    auto* recordDir = std::getenv("EACP_RECORD_DIR");
+    eacp::Apps::getAppEnvironment().headless = !(recordDir && *recordDir);
 
     eacp::Apps::run<TestRunner>(argc, argv);
     return gExitCode;
