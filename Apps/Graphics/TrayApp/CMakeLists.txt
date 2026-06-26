@@ -11,6 +11,12 @@ eacp_add_webview_app(TrayApp
         CATEGORY    TrayApp
         REACT)
 
+if(APPLE)
+    target_sources(TrayApp PRIVATE Clipboard-macOS.mm)
+elseif(WIN32)
+    target_sources(TrayApp PRIVATE Clipboard-Windows.cpp)
+endif()
+
 set(BUNDLE_ID "com.eacp.trayapp")
 
 set_target_properties(TrayApp PROPERTIES

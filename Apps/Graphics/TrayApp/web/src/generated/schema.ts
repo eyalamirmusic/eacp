@@ -18,6 +18,14 @@ export interface ArmDragRequest {
     paths: string[];
 }
 
+export interface CopyFilesRequest {
+    paths: string[];
+}
+
+export interface CopyFilesResponse {
+    copied: boolean;
+}
+
 export interface PlayAudioRequest {
     path: string;
 }

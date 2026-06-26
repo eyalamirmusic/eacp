@@ -30,6 +30,8 @@ export default function App()
 {
     const inputRef = useRef<HTMLInputElement>(null);
     const resultRefs = useRef<Array<HTMLButtonElement | null>>([]);
+    const resultsRef = useRef<DownloadResult[]>([]);
+    const selectedIndexRef = useRef(-1);
     const playback = usePlayback();
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<DownloadResult[]>([]);
@@ -38,11 +40,35 @@ export default function App()
 
     useEffect(() =>
     {
-        function onKeyDown(event: KeyboardEvent)
+        resultsRef.current = results;
+    }, [results]);
+
+    useEffect(() =>
+    {
+        selectedIndexRef.current = selectedIndex;
+    }, [selectedIndex]);
+
+    useEffect(() =>
+    {
+        function onKeyDown(event: globalThis.KeyboardEvent)
         {
+            if (event.metaKey && !event.ctrlKey && event.key.toLowerCase() === 'c')
+            {
+                const index = selectedIndexRef.current;
+                const result = index >= 0 ? resultsRef.current[index] : undefined;
+                if (!result)
+                    return;
+
+                event.preventDefault();
+                event.stopPropagation();
+                void copyResult(result);
+                return;
+            }
+
             if (event.key === 'Escape' || (event.ctrlKey && event.key.toLowerCase() === 'c'))
             {
                 event.preventDefault();
+                event.stopPropagation();
                 void backend.dismiss();
             }
         }
@@ -121,6 +147,22 @@ export default function App()
         void backend.armDrag({ paths: [result.path] });
     }
 
+    function copyResult(result: DownloadResult)
+    {
+        setStatus(`Copying ${result.name}...`);
+        void backend.copyFiles({ paths: [result.path] })
+            .then((response) =>
+            {
+                setStatus(response.copied
+                    ? `Copied ${result.name}`
+                    : `Could not copy ${result.name}`);
+            })
+            .catch((error) =>
+            {
+                setStatus(`Copy failed: ${String(error)}`);
+            });
+    }
+
     function togglePlayback(result: DownloadResult)
     {
         if (playback.playing && playback.path === result.path)
@@ -187,6 +229,13 @@ export default function App()
             else if (result)
                 armDrag(result);
         }
+        else if (event.metaKey && event.key.toLowerCase() === 'c' && selectedIndex >= 0)
+        {
+            event.preventDefault();
+            const result = results[selectedIndex];
+            if (result)
+                copyResult(result);
+        }
     }
 
     function onResultKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number)
@@ -224,6 +273,13 @@ export default function App()
             setSelectedIndex(-1);
             inputRef.current?.focus();
             inputRef.current?.select();
+        }
+        else if (event.metaKey && event.key.toLowerCase() === 'c')
+        {
+            event.preventDefault();
+            const result = results[index];
+            if (result)
+                copyResult(result);
         }
     }
 

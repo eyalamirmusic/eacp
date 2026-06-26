@@ -59,6 +59,20 @@ struct ArmDragRequest
     MIRO_REFLECT(paths)
 };
 
+struct CopyFilesRequest
+{
+    EA::Vector<std::string> paths;
+
+    MIRO_REFLECT(paths)
+};
+
+struct CopyFilesResponse
+{
+    bool copied = false;
+
+    MIRO_REFLECT(copied)
+};
+
 struct PlayAudioRequest
 {
     std::string path;
@@ -158,6 +172,7 @@ public:
         using T = TrayLauncherApi;
         r.commands<&T::searchDownloads,
                    &T::armDrag,
+                   &T::copyFiles,
                    &T::playAudio,
                    &T::stopAudio,
                    &T::getPlayback,
@@ -217,6 +232,11 @@ public:
     {
         if (onArmDrag)
             onArmDrag(request.paths);
+    }
+
+    CopyFilesResponse copyFiles(const CopyFilesRequest& request)
+    {
+        return {.copied = onCopyFiles && onCopyFiles(request.paths)};
     }
 
     void playAudio(const PlayAudioRequest& request)
@@ -292,6 +312,7 @@ public:
     }
 
     std::function<void(const EA::Vector<std::string>&)> onArmDrag;
+    std::function<bool(const EA::Vector<std::string>&)> onCopyFiles;
     std::function<void(const std::string&)> onSubmit;
     std::function<void()> onDismiss;
     Miro::Event<PlaybackState> playback;

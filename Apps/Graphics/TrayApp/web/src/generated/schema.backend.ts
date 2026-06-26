@@ -9,6 +9,8 @@ export function makeBackend(invoke: Invoke)
             invoke('searchDownloads', req) as Promise<T.SearchDownloadsResponse>,
         armDrag: (req: T.ArmDragRequest): Promise<void> =>
             invoke('armDrag', req) as Promise<void>,
+        copyFiles: (req: T.CopyFilesRequest): Promise<T.CopyFilesResponse> =>
+            invoke('copyFiles', req) as Promise<T.CopyFilesResponse>,
         playAudio: (req: T.PlayAudioRequest): Promise<void> =>
             invoke('playAudio', req) as Promise<void>,
         stopAudio: (): Promise<void> =>

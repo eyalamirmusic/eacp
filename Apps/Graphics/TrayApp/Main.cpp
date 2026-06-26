@@ -1,4 +1,5 @@
 #include "Types.h"
+#include "Clipboard.h"
 
 #include <eacp/Core/Threads/Async.h>
 #include <eacp/Graphics/Graphics.h>
@@ -61,6 +62,8 @@ struct TrayApp
 
         api.onArmDrag = [this](const EA::Vector<std::string>& paths)
         { webView.armFileDrag(paths); };
+        api.onCopyFiles = [](const EA::Vector<std::string>& paths)
+        { return TrayAppNative::copyFilesToClipboard(paths); };
         api.onSubmit = [this](const std::string&) { swallowAndHide(); };
         api.onDismiss = [this] { hidePanel(); };
         webView.onFileDragStarted =
