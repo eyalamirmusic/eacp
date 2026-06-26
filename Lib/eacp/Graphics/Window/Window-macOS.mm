@@ -211,6 +211,7 @@ struct Window::Native
                                                           : NSWindowTitleHidden];
         [getWindow()
             setTitlebarAppearsTransparent:options.titlebarTransparent];
+        [getWindow() setIgnoresMouseEvents:options.ignoresMouseEvents];
 
         if (@available(macOS 11.0, *))
         {

@@ -126,6 +126,7 @@ public:
         std::unordered_map<std::string, StreamingProvider> streamingSchemes;
         Embedded embedded;
         bool debugConsole = true;
+        bool transparentBackground = false;
 
         // Windows only: a suffix that isolates this WebView's WebView2
         // user-data-folder (%LOCALAPPDATA%\<exe>\WebView2[-<suffix>]). WebView2

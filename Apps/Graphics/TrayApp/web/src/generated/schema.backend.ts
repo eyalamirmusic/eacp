@@ -11,6 +11,8 @@ export function makeBackend(invoke: Invoke)
             invoke('armDrag', req) as Promise<void>,
         copyFiles: (req: T.CopyFilesRequest): Promise<T.CopyFilesResponse> =>
             invoke('copyFiles', req) as Promise<T.CopyFilesResponse>,
+        showCopyToast: (req: T.ShowCopyToastRequest): Promise<void> =>
+            invoke('showCopyToast', req) as Promise<void>,
         playAudio: (req: T.PlayAudioRequest): Promise<void> =>
             invoke('playAudio', req) as Promise<void>,
         stopAudio: (): Promise<void> =>

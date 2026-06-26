@@ -111,6 +111,10 @@ struct WindowOptions
     // can still become key when clicked. Mirrors Electron's showInactive().
     bool showInactive = false;
 
+    // Lets mouse clicks pass through this window to whatever is underneath.
+    // Useful for transient HUDs and overlays. No-op on iOS.
+    bool ignoresMouseEvents = false;
+
     // Initial position of the window's top-left corner in screen points,
     // measured from the primary display's top-left (Electron convention).
     // Unset centers the window (macOS) / uses the system default (Windows).

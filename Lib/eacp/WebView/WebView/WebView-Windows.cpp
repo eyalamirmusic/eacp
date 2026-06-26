@@ -446,6 +446,7 @@ struct WebView::Native
                     }
 
                     controller->get_CoreWebView2(&webView);
+                    applyBackground();
 
                     // Render into our composition visual.
                     compositionController->put_RootVisualTarget(
@@ -832,6 +833,19 @@ struct WebView::Native
         {
             settings->put_AreDevToolsEnabled(options.debugConsole ? TRUE : FALSE);
         }
+    }
+
+    void applyBackground()
+    {
+        if (!options.transparentBackground || !controller)
+            return;
+
+        ComPtr<ICoreWebView2Controller2> controller2;
+        if (FAILED(controller.As(&controller2)) || !controller2)
+            return;
+
+        COREWEBVIEW2_COLOR clear = {};
+        controller2->put_DefaultBackgroundColor(clear);
     }
 
     void evaluateScript(const std::string& script,

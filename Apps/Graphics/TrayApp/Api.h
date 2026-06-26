@@ -106,6 +106,7 @@ public:
         r.commands<&T::searchDownloads,
                    &T::armDrag,
                    &T::copyFiles,
+                   &T::showCopyToast,
                    &T::playAudio,
                    &T::stopAudio,
                    &T::getPlayback,
@@ -183,6 +184,12 @@ public:
         return {.copied = onCopyFiles && onCopyFiles(request.paths)};
     }
 
+    void showCopyToast(const ShowCopyToastRequest& request) const
+    {
+        if (onShowCopyToast)
+            onShowCopyToast(request.sampleName);
+    }
+
     void playAudio(const PlayAudioRequest& request)
     {
         ensureAudioStarted();
@@ -254,6 +261,7 @@ public:
 
     std::function<void(const EA::Vector<std::string>&)> onArmDrag;
     std::function<bool(const EA::Vector<std::string>&)> onCopyFiles;
+    std::function<void(const std::string&)> onShowCopyToast;
     std::function<void(const std::string&)> onSubmit;
     std::function<void()> onDismiss;
     Miro::Event<PlaybackState> playback;

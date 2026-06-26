@@ -134,6 +134,20 @@ struct WebView::Native
               .acceptFirstMouse = options.acceptFirstMouse
             }
         );
+        if (options.transparentBackground)
+        {
+#if TARGET_OS_IPHONE
+            webView.get().opaque = NO;
+            webView.get().backgroundColor = UIColor.clearColor;
+            webView.get().scrollView.backgroundColor = UIColor.clearColor;
+#else
+            [webView.get() setValue:@NO forKey:@"drawsBackground"];
+            webView.get().wantsLayer = YES;
+            webView.get().layer.backgroundColor = NSColor.clearColor.CGColor;
+            if (@available(macOS 12.0, *))
+                webView.get().underPageBackgroundColor = NSColor.clearColor;
+#endif
+        }
         detail::setFileDragStartedCallback(
             webView.get(),
             [this] { owner.onFileDragStarted(); });

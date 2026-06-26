@@ -153,15 +153,17 @@ export default function App()
         void backend.copyFiles({ paths: [result.path] })
             .then((response) =>
             {
-                if (response.copied && dismissAfterCopy)
-                {
-                    void backend.dismiss();
-                    return;
-                }
-
                 setStatus(response.copied
                     ? `Copied ${result.name}`
                     : `Could not copy ${result.name}`);
+
+                if (response.copied)
+                {
+                    void backend.showCopyToast({ sampleName: result.name });
+
+                    if (dismissAfterCopy)
+                        void backend.dismiss();
+                }
             })
             .catch((error) =>
             {

@@ -26,6 +26,10 @@ export interface CopyFilesResponse {
     copied: boolean;
 }
 
+export interface ShowCopyToastRequest {
+    sampleName: string;
+}
+
 export interface PlayAudioRequest {
     path: string;
 }

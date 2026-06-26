@@ -58,6 +58,13 @@ struct CopyFilesResponse
     MIRO_REFLECT(copied)
 };
 
+struct ShowCopyToastRequest
+{
+    std::string sampleName;
+
+    MIRO_REFLECT(sampleName)
+};
+
 struct PlayAudioRequest
 {
     std::string path;

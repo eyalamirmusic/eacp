@@ -126,7 +126,11 @@ struct Window::Native
             style |= WS_THICKFRAME;
 
         DWORD exStyle = options.alwaysOnTop ? WS_EX_TOPMOST : 0;
+        if (options.ignoresMouseEvents)
+            exStyle |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
+
         showWithoutActivating = options.showInactive;
+        ignoresMouseEvents = options.ignoresMouseEvents;
 
         auto windowWidth = rect.right - rect.left;
         auto windowHeight = rect.bottom - rect.top;
@@ -350,6 +354,7 @@ struct Window::Native
     int minWidth = 0;
     int minHeight = 0;
     bool showWithoutActivating = false;
+    bool ignoresMouseEvents = false;
     bool framelessRounded = false;
     bool framelessResizable = false;
 };
@@ -395,6 +400,9 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
         // WindowFlags::Resizable the band stays live, so a frameless window
         // still resizes from its edges (Electron-style).
         case WM_NCHITTEST:
+            if (self->ignoresMouseEvents)
+                return HTTRANSPARENT;
+
             if (self->framelessRounded && !self->framelessResizable)
                 return HTCLIENT;
             break;
