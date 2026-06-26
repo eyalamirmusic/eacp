@@ -147,12 +147,18 @@ export default function App()
         void backend.armDrag({ paths: [result.path] });
     }
 
-    function copyResult(result: DownloadResult)
+    function copyResult(result: DownloadResult, dismissAfterCopy = false)
     {
         setStatus(`Copying ${result.name}...`);
         void backend.copyFiles({ paths: [result.path] })
             .then((response) =>
             {
+                if (response.copied && dismissAfterCopy)
+                {
+                    void backend.dismiss();
+                    return;
+                }
+
                 setStatus(response.copied
                     ? `Copied ${result.name}`
                     : `Could not copy ${result.name}`);
@@ -224,10 +230,8 @@ export default function App()
         {
             event.preventDefault();
             const result = results[selectedIndex];
-            if (result && isAudioResult(result))
-                togglePlayback(result);
-            else if (result)
-                armDrag(result);
+            if (result)
+                copyResult(result, true);
         }
         else if (event.metaKey && event.key.toLowerCase() === 'c' && selectedIndex >= 0)
         {
@@ -262,10 +266,8 @@ export default function App()
         {
             event.preventDefault();
             const result = results[index];
-            if (result && isAudioResult(result))
-                togglePlayback(result);
-            else if (result)
-                armDrag(result);
+            if (result)
+                copyResult(result, true);
         }
         else if (event.key === '/')
         {
