@@ -1757,6 +1757,13 @@ void WebView::resized()
     impl->updateBounds();
 }
 
+// Visual hosting gives the WebView no input HWND of its own, and the key-focus
+// routing that needs this is macOS-only, so the host view is the right target.
+void* WebView::nativeFocusTarget()
+{
+    return View::nativeFocusTarget();
+}
+
 // In visual hosting mode the WebView is a composition visual with no input
 // HWND, so the framework's routed mouse events are forwarded to the WebView2
 // composition controller. (On macOS the native WKWebView receives input

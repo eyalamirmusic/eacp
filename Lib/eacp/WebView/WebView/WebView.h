@@ -233,6 +233,10 @@ public:
 protected:
     void resized() override;
 
+    // The platform web view itself, so a window focuses the live page rather
+    // than the empty container View that hosts it. See View::nativeFocusTarget.
+    void* nativeFocusTarget() override;
+
     // Windows hosts the WebView as a composition visual (no input HWND), so the
     // framework's routed mouse events are forwarded to the browser here. On
     // macOS/iOS the native web view receives input directly and these are

@@ -813,6 +813,14 @@ void WebView::resized()
     impl->updateFrame();
 }
 
+void* WebView::nativeFocusTarget()
+{
+    if (impl != nullptr && impl->webView.get() != nil)
+        return impl->webView.get();
+
+    return View::nativeFocusTarget();
+}
+
 // The native WKWebView is a real subview that receives input directly, so the
 // framework never routes these to us; they exist only to satisfy the shared
 // declaration the Windows composition-hosted backend needs.

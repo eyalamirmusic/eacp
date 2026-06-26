@@ -202,7 +202,17 @@ struct Window::Native
         delegate = createWindowDelegate(options);
         delegate.get()->events = &eventsToUse;
         delegate.get()->onKeyStateChanged = [this](bool isKey)
-        { keyStateChanged(isKey); };
+        {
+            keyStateChanged(isKey);
+
+            // Becoming key is the moment to hand keyboard focus to the content.
+            // AppKit would otherwise park first responder on the content view
+            // itself; for a WebView that is the empty container, leaving the
+            // page unfocused until clicked. Re-run on every activation so focus
+            // is restored after a sibling window (settings / keyboard) took it.
+            if (isKey)
+                focusContentView();
+        };
 
         [getWindow() setRestorable:NO];
         [getWindow() setReleasedWhenClosed:NO];
@@ -304,11 +314,18 @@ struct Window::Native
         [getWindow() setTitle:@(title.c_str())];
     }
 
-    void setContentView(void* contentView)
+    void setContentView(View& view)
     {
-        auto v = (NSView*) contentView;
+        contentView = &view;
+
+        auto v = (NSView*) view.getHandle();
         [getWindow() setContentView:v];
         [v setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+
+        // Content set after the window is already key (e.g. shown, then
+        // populated) misses windowDidBecomeKey, so focus the target now.
+        if ([getWindow() isKeyWindow])
+            focusContentView();
 
         if (opts.cornerRadius)
         {
@@ -392,6 +409,25 @@ struct Window::Native
             disengageMouseLock();
     }
 
+    void focusContentView()
+    {
+        if (contentView == nullptr)
+            return;
+
+        auto* target = (NSView*) contentView->nativeFocusTarget();
+        if (target == nil)
+            return;
+
+        // Leave focus alone when it already lives inside the target (e.g. a
+        // text field the user is editing), so re-activating doesn't blur it.
+        id current = [getWindow() firstResponder];
+        if ([current isKindOfClass:[NSView class]]
+            && [(NSView*) current isDescendantOf:target])
+            return;
+
+        [getWindow() makeFirstResponder:target];
+    }
+
     void keyStateChanged(bool isKey)
     {
         if (!mouseLockIntent)
@@ -449,6 +485,7 @@ struct Window::Native
     WindowOptions opts;
     ObjC::Ptr<NSWindow> handle;
     ObjC::Ptr<WindowDelegateBridge> delegate;
+    View* contentView = nullptr;
     bool mouseLockIntent = false;
     bool mouseLockEngaged = false;
 };
@@ -466,7 +503,7 @@ void Window::setTitle(const std::string& title)
 
 void Window::setContentView(View& view)
 {
-    impl->setContentView(view.getHandle());
+    impl->setContentView(view);
 }
 
 void Window::toFront()
