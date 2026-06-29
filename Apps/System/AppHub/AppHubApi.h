@@ -592,6 +592,22 @@ inline Updater::ProductCatalog loadCatalog(const fs::path& root,
     return loadOrCreateCatalog(root);
 }
 
+inline Updater::ProductCatalog loadCatalogContaining(const fs::path& root,
+                                                     const std::string& productId)
+{
+    for (auto attempt = 0; attempt < 12; ++attempt)
+    {
+        if (auto remote = fetchRemoteCatalog(root))
+        {
+            if (Updater::findProduct(*remote, productId) != nullptr)
+                return *remote;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+    }
+
+    return loadCatalog(root, false);
+}
+
 inline std::string nowUtc()
 {
     auto now = std::chrono::system_clock::now();
@@ -676,7 +692,7 @@ public:
                        "Planning dependency install",
                        request.productId);
 
-        auto catalog = Detail::loadCatalog(root);
+        auto catalog = Detail::loadCatalogContaining(root, request.productId);
         auto helper = Detail::makeMockHelper(root);
         auto plan = Updater::planInstallWithDependencies(catalog,
                                                          helper.receipts(),
