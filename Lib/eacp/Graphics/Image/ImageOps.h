@@ -31,4 +31,10 @@ Image warpAffineInverse(const Image& src,
                         int dstWidth,
                         int dstHeight);
 
+// Crop the rectangle (x, y, width, height) out of src and mirror it horizontally
+// (selfie view) in a single pass. Mirroring commutes with a centred crop, so this
+// equals mirroring the whole source then cropping, at a fraction of the per-pixel
+// work. Returns an invalid image if the rectangle is not fully inside src.
+Image mirroredCrop(const Image& src, int x, int y, int width, int height);
+
 } // namespace eacp::Graphics

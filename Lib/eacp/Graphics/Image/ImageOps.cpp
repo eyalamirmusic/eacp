@@ -1,6 +1,5 @@
 #include <eacp/Graphics/Image/ImageOps.h>
 
-#include <cmath>
 #include <utility>
 
 namespace eacp::Graphics
@@ -17,7 +16,8 @@ int clampi(int v, int lo, int hi)
 // then clamp: the rounded result can land a hair above 255.
 std::uint8_t toU8(float v)
 {
-    return static_cast<std::uint8_t>(clampi(static_cast<int>(std::lround(v)), 0, 255));
+    return static_cast<std::uint8_t>(
+        clampi(static_cast<int>(std::lround(v)), 0, 255));
 }
 
 float blend(const std::uint8_t* p00,
@@ -30,8 +30,10 @@ float blend(const std::uint8_t* p00,
             float w11,
             int channel)
 {
-    return w00 * static_cast<float>(p00[channel]) + w10 * static_cast<float>(p10[channel])
-         + w01 * static_cast<float>(p01[channel]) + w11 * static_cast<float>(p11[channel]);
+    return w00 * static_cast<float>(p00[channel])
+           + w10 * static_cast<float>(p10[channel])
+           + w01 * static_cast<float>(p01[channel])
+           + w11 * static_cast<float>(p11[channel]);
 }
 
 } // namespace
@@ -85,7 +87,7 @@ Image resizeBilinear(const Image& src, int dstWidth, int dstHeight)
             out += 4;
         }
     }
-    return Image(dstWidth, dstHeight, std::move(outData));
+    return {dstWidth, dstHeight, std::move(outData)};
 }
 
 Image warpAffineInverse(const Image& src,
@@ -99,8 +101,8 @@ Image warpAffineInverse(const Image& src,
     const int srcW = src.width();
     const int srcH = src.height();
     const std::uint8_t* in = src.pixels().data();
-    ImageData outData(dstWidth * dstHeight * 4);
-    std::uint8_t* out = outData.data();
+    auto outData = ImageData(dstWidth * dstHeight * 4);
+    auto* out = outData.data();
 
     const int maxX = srcW - 1;
     const int maxY = srcH - 1;
@@ -130,8 +132,10 @@ Image warpAffineInverse(const Image& src,
             const float w01 = (1.f - wx) * wy;
             const float w11 = wx * wy;
 
-            const std::uint8_t* rowTop = in + static_cast<std::ptrdiff_t>(y0c) * srcW * 4;
-            const std::uint8_t* rowBot = in + static_cast<std::ptrdiff_t>(y1c) * srcW * 4;
+            const std::uint8_t* rowTop =
+                in + static_cast<std::ptrdiff_t>(y0c) * srcW * 4;
+            const std::uint8_t* rowBot =
+                in + static_cast<std::ptrdiff_t>(y1c) * srcW * 4;
             const std::uint8_t* p00 = rowTop + x0c * 4;
             const std::uint8_t* p10 = rowTop + x1c * 4;
             const std::uint8_t* p01 = rowBot + x0c * 4;
@@ -142,7 +146,33 @@ Image warpAffineInverse(const Image& src,
             out += 4;
         }
     }
-    return Image(dstWidth, dstHeight, std::move(outData));
+    return {dstWidth, dstHeight, std::move(outData)};
+}
+
+Image mirroredCrop(const Image& src, int x, int y, int width, int height)
+{
+    if (!src.isValid() || width <= 0 || height <= 0)
+        return {};
+
+    const auto srcW = src.width();
+    const auto srcH = src.height();
+
+    if (x < 0 || y < 0 || x + width > srcW || y + height > srcH)
+        return {};
+
+    auto outData = ImageData(width * height * 4);
+    const auto* in = src.pixels().data();
+    auto* out = outData.data();
+
+    for (int dy = 0; dy < height; ++dy)
+    {
+        const std::uint8_t* srcRow =
+            in + (static_cast<std::size_t>(y + dy) * srcW + x) * 4;
+        std::uint8_t* dstRow = out + static_cast<std::size_t>(dy) * width * 4;
+        for (int dx = 0; dx < width; ++dx)
+            std::memcpy(dstRow + dx * 4, srcRow + (width - 1 - dx) * 4, 4);
+    }
+    return {width, height, std::move(outData)};
 }
 
 } // namespace eacp::Graphics

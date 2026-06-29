@@ -13,6 +13,19 @@ target_sources(eacp-graphics PRIVATE
         View/View.cpp
         Widgets/TextInput.cpp)
 
+# The image kernels (resizeBilinear / warpAffineInverse / mirroredCrop) are
+# per-pixel hot loops on the gesture-camera fast path. At -O0 their unoptimized
+# codegen runs ~17x slower, enough on its own to drop the live feed to ~8fps.
+# Compile just this TU at -O2 even in a Debug build so the kernels stay fast while
+# the rest of eacp keeps -O0 + symbols for debugging. The -O2 is appended after
+# the config's -O0, so it wins; -g is untouched. Clang/GCC only — MSVC's Debug
+# config ships /RTC1, which is a hard error combined with /O2 (D8016), and Windows
+# debug-camera perf is not the issue addressed here. Release/RelWithDebInfo are
+# already -O2 globally, so the generator expression is Debug-scoped and a no-op
+# there. (A per-source option also pulls this file out of the unity blob — fine.)
+set_source_files_properties(Image/ImageOps.cpp PROPERTIES COMPILE_OPTIONS
+        "$<$<AND:$<CONFIG:Debug>,$<CXX_COMPILER_ID:AppleClang,Clang,GNU>>:-O2>")
+
 target_link_libraries(eacp-graphics PUBLIC eacp-core)
 
 if (APPLE)
