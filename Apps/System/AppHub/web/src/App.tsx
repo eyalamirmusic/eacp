@@ -79,8 +79,9 @@ export default function App()
                 <RemoteCard
                     title="AppHub"
                     status={state.hubApp}
-                    installLabel="Update Hub"
+                    installLabel={state.hubApp.updateAvailable ? 'Update Hub' : 'Up to date'}
                     launchLabel="Open Installed Hub"
+                    installDisabled={!state.hubApp.updateAvailable}
                     onInstall={() => void backend.updateHub({ manifestUrl: '' })}
                     onLaunch={() => void backend.launchHub()}
                 />
@@ -159,6 +160,7 @@ interface RemoteCardProps
     status: RemoteAppStatus;
     installLabel: string;
     launchLabel: string;
+    installDisabled?: boolean;
     onInstall: () => void;
     onLaunch: () => void;
 }
@@ -168,6 +170,7 @@ function RemoteCard({
     status,
     installLabel,
     launchLabel,
+    installDisabled = false,
     onInstall,
     onLaunch,
 }: RemoteCardProps)
@@ -184,7 +187,12 @@ function RemoteCard({
                 <Metric label="Latest" value={status.latestVersion || '-'} />
             </dl>
             <div className="button-row">
-                <button type="button" className="primary" onClick={onInstall}>
+                <button
+                    type="button"
+                    className="primary"
+                    onClick={onInstall}
+                    disabled={installDisabled}
+                >
                     {installLabel}
                 </button>
                 <button type="button" onClick={onLaunch} disabled={!status.installed}>

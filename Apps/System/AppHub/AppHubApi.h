@@ -26,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 #ifndef EACP_APPHUB_VERSION
 #define EACP_APPHUB_VERSION "0.0.0"
@@ -809,9 +810,23 @@ public:
 
     CommandResult updateHub(const RemoteInstallRequest& request)
     {
-        return installRemoteApp(request.manifestUrl.empty()
-                                    ? std::string(Detail::defaultHubManifestUrl)
-                                    : request.manifestUrl);
+        auto manifestUrl = request.manifestUrl.empty()
+                               ? std::string(Detail::defaultHubManifestUrl)
+                               : request.manifestUrl;
+        auto manifest = Detail::fetchRemoteManifest(manifestUrl);
+        if (!manifest)
+            return fail("Manifest download failed");
+
+        auto installedVersion = Detail::executableVersion(
+            AppHub::installedHubAppExecutablePath().string());
+        if (!installedVersion.empty()
+            && !Updater::isNewerVersion(manifest->version, installedVersion))
+        {
+            updateRemoteStatuses();
+            return ok("AppHub is up to date: " + installedVersion);
+        }
+
+        return installRemoteApp(manifestUrl, std::move(manifest));
     }
 
     CommandResult launchDemoApp()
@@ -853,13 +868,17 @@ public:
     Miro::Event<HubState> hubState;
 
 private:
-    CommandResult installRemoteApp(const std::string& manifestUrl)
+    CommandResult installRemoteApp(
+        const std::string& manifestUrl,
+        std::optional<Updater::RemoteAppManifest> prefetchedManifest = std::nullopt)
     {
         beginOperation(HubOperationKind::DownloadingManifest,
                        "Downloading manifest",
                        manifestUrl);
 
-        auto manifest = Detail::fetchRemoteManifest(manifestUrl);
+        auto manifest = std::move(prefetchedManifest);
+        if (!manifest)
+            manifest = Detail::fetchRemoteManifest(manifestUrl);
         if (!manifest)
         {
             finishOperation(false, "Manifest download failed");
