@@ -82,9 +82,13 @@ export function ensureTamberSigningIdentity(keychainPath = remoteDemoKeychainPat
 }
 
 export function signPath(path, keychainPath = remoteDemoKeychainPath) {
+  const timestampArgs = process.env.APPLE_CODESIGN_TIMESTAMP === '1'
+    ? ['--timestamp']
+    : [];
+
   run('codesign', [
     '--force',
-    '--timestamp',
+    ...timestampArgs,
     '--options',
     'runtime',
     '--keychain',
