@@ -93,7 +93,24 @@ export function signPath(path, keychainPath = remoteDemoKeychainPath) {
     process.env.APPLE_SIGNING_IDENTITY,
     path,
   ]);
+  verifyCodeSignature(path);
+}
+
+export function verifyCodeSignature(path) {
   run('codesign', ['--verify', '--strict', '--verbose=2', path]);
+}
+
+export function verifyAppHubPrivilegedHelper(
+  appBundle,
+  helperLabel = 'com.tamber.AppHub.PrivilegedHelper',
+) {
+  verifyCodeSignature(join(
+    appBundle,
+    'Contents',
+    'Library',
+    'LaunchServices',
+    helperLabel,
+  ));
 }
 
 export function adHocSignPath(path) {

@@ -12,7 +12,12 @@ import {
   sha256File,
   writeJson,
 } from './lib/cli.mjs';
-import { ensureTamberSigningIdentity, signPath } from './lib/macos-signing.mjs';
+import {
+  ensureTamberSigningIdentity,
+  signPath,
+  verifyAppHubPrivilegedHelper,
+  verifyCodeSignature,
+} from './lib/macos-signing.mjs';
 
 const version = env('VERSION', '1.0.0');
 const releaseTag = env('RELEASE_TAG', `remote-demo-v${version}`);
@@ -60,6 +65,7 @@ const demoApp = join(buildDir, 'Apps', 'System', 'RealUpdateDemo', demoAppName);
 log('Sign AppHub helper and app');
 signPath(appHubHelper);
 signPath(appHubApp);
+verifyAppHubPrivilegedHelper(appHubApp);
 
 log('Sign Demo App');
 signPath(demoApp);
@@ -71,6 +77,14 @@ log('Package release assets');
 cleanDir(outDir);
 run('ditto', ['-c', '-k', '--keepParent', appHubApp, join(outDir, appHubZip)]);
 run('ditto', ['-c', '-k', '--keepParent', demoApp, join(outDir, demoZip)]);
+
+log('Verify packaged AppHub artifact');
+const packagedVerifyDir = join(buildDir, 'packaged-apphub-verify');
+cleanDir(packagedVerifyDir);
+run('ditto', ['-x', '-k', join(outDir, appHubZip), packagedVerifyDir]);
+const packagedAppHub = join(packagedVerifyDir, 'AppHub.app');
+verifyCodeSignature(packagedAppHub);
+verifyAppHubPrivilegedHelper(packagedAppHub);
 
 const demoSha = sha256File(join(outDir, demoZip));
 const manifest = {
