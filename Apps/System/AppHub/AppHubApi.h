@@ -624,8 +624,8 @@ public:
                        "Checking for updates",
                        "Fetching remote catalog");
         refreshState("Fetched remote catalog", true);
-        updateHubStatus();
         finishOperation(true, "Update check complete");
+        updateHubStatus();
         return ok("Update check complete");
     }
 
