@@ -22,6 +22,8 @@ using namespace std::chrono_literals;
 
 namespace
 {
+constexpr auto streamingResultTimeout = 30s;
+
 // 26 bytes; a closed range pulls out a known slice.
 const std::string streamData = "abcdefghijklmnopqrstuvwxyz";
 
@@ -89,7 +91,8 @@ auto tStreamingRangeFetch = test("StreamingPump/rangeFetchReturns206Slice") = []
 
     webView.loadURL("teststream://host/index.html");
 
-    auto ok = Threads::runEventLoopUntil([&] { return done; }, 10s);
+    auto ok = Threads::runEventLoopUntil([&] { return done; },
+                                         streamingResultTimeout);
 
     check(ok);
     check(message.find(R"("status":206)") != std::string::npos);

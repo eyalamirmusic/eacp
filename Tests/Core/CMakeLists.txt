@@ -10,6 +10,10 @@ nano_add_executable(AppTests
         SOURCES AppTests.cpp
         TARGETS eacp-core)
 
+nano_add_executable(AppAffordanceTests
+        SOURCES AppAffordanceTests.cpp
+        TARGETS eacp-core)
+
 nano_add_executable(EventLoopTests
         SOURCES EventLoopTests.cpp
         TARGETS eacp-core)

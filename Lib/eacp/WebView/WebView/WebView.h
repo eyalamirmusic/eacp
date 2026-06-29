@@ -126,6 +126,7 @@ public:
         std::unordered_map<std::string, StreamingProvider> streamingSchemes;
         Embedded embedded;
         bool debugConsole = true;
+        bool transparentBackground = false;
 
         // Windows only: a suffix that isolates this WebView's WebView2
         // user-data-folder (%LOCALAPPDATA%\<exe>\WebView2[-<suffix>]). WebView2
@@ -190,6 +191,11 @@ public:
     void setZoom(double level);
     double getZoom() const;
 
+    // Focuses the browser runtime itself, not just the framework wrapper View.
+    // Use this before JS focus() calls that should leave page inputs ready for
+    // typing.
+    void focusContent();
+
     static WebView* focused();
 
     // True when the platform web runtime backing WebView is present. Always
@@ -226,12 +232,17 @@ public:
     std::function<bool(OwningPointer<WebView> popup, const std::string& url)>
         onNewWindowRequested = [](auto&&, auto&&) { return false; };
 
+    std::function<void()> onFileDragStarted = [] {};
     std::function<void()> onClose = [] {};
 
     struct Native;
 
 protected:
     void resized() override;
+
+    // The platform web view itself, so a window focuses the live page rather
+    // than the empty container View that hosts it. See View::nativeFocusTarget.
+    void* nativeFocusTarget() override;
 
     // Windows hosts the WebView as a composition visual (no input HWND), so the
     // framework's routed mouse events are forwarded to the browser here. On

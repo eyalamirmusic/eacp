@@ -32,6 +32,7 @@
 @interface EacpDragWebView : WKWebView
 @property(nonatomic) BOOL eacpAcceptFirstMouse;
 - (void)armFileDragWithPaths:(const eacp::Vector<std::string>&)paths;
+- (void)setFileDragStartedCallback:(eacp::Callback)callback;
 - (void)armWindowDrag;
 @end
 
@@ -48,12 +49,12 @@ EacpDragSource* sharedDragSource()
 }
 } // namespace
 
-void beginFileDrag(WKWebView* webView,
+bool beginFileDrag(WKWebView* webView,
                    NSEvent* event,
                    const Vector<std::string>& paths)
 {
     if (webView == nil || event == nil || paths.empty())
-        return;
+        return false;
 
     auto* source = sharedDragSource();
     constexpr CGFloat iconSize = 64.0;
@@ -92,11 +93,10 @@ void beginFileDrag(WKWebView* webView,
     }
 
     if (items.count == 0)
-        return;
+        return false;
 
-    // The event is live and OS-delivered (from mouseDragged:), exactly what the
-    // session needs -- no [NSApp currentEvent], no fabricated event.
     [webView beginDraggingSessionWithItems:items event:event source:source];
+    return true;
 }
 
 WKWebView* createWebView(WKWebViewConfiguration* config,
@@ -115,6 +115,14 @@ void armFileDrag(WKWebView* webView, const Vector<std::string>& paths)
         return;
 
     [(EacpDragWebView*) webView armFileDragWithPaths:paths];
+}
+
+void setFileDragStartedCallback(WKWebView* webView, Callback callback)
+{
+    if (![webView isKindOfClass:[EacpDragWebView class]])
+        return;
+
+    [(EacpDragWebView*) webView setFileDragStartedCallback:std::move(callback)];
 }
 
 void armWindowDrag(WKWebView* webView)
@@ -201,6 +209,7 @@ WebView* findFocusedWebView()
 @implementation EacpDragWebView
 {
     eacp::Vector<std::string> armedPaths;
+    eacp::Callback fileDragStartedCallback;
     NSPoint mouseDownLocation;
     BOOL dragArmed;
     BOOL dragStarted;
@@ -214,6 +223,11 @@ WebView* findFocusedWebView()
     // nothing stale to guard against here.
     armedPaths = paths;
     dragArmed = ! paths.empty();
+}
+
+- (void)setFileDragStartedCallback:(eacp::Callback)callback
+{
+    fileDragStartedCallback = std::move(callback);
 }
 
 - (void)armWindowDrag
@@ -238,7 +252,7 @@ WebView* findFocusedWebView()
     dragStarted = NO;
     windowDragArmed = NO;
     armedPaths.clear();
-    [super mouseDown:event]; // let the page see the mousedown (and arm)
+    [super mouseDown:event];
 }
 
 - (void)mouseDragged:(NSEvent*)event
@@ -253,19 +267,25 @@ WebView* findFocusedWebView()
         {
             dragStarted = YES;
             dragArmed = NO;
-            eacp::Graphics::detail::beginFileDrag(self, event, armedPaths);
+            auto didStart =
+                eacp::Graphics::detail::beginFileDrag(self, event, armedPaths);
             armedPaths.clear();
-            return; // consume: no WebKit selection/drag underneath
+            if (didStart && fileDragStartedCallback)
+            {
+                auto callback = fileDragStartedCallback;
+                dispatch_async(dispatch_get_main_queue(),
+                               ^{ callback(); });
+            }
+            return;
         }
     }
 
-    // No threshold: AppKit's move loop owns the gesture from the first drag.
     if (windowDragArmed && ! dragStarted)
     {
         dragStarted = YES;
         windowDragArmed = NO;
         [self.window performWindowDragWithEvent:event];
-        return; // consume: the OS now owns the gesture
+        return;
     }
 
     [super mouseDragged:event];

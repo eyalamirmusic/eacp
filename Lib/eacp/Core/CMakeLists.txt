@@ -33,22 +33,29 @@ if (APPLE)
     if (IOS)
         target_sources(eacp-core PRIVATE
                 App/App-iOS.mm
+                App/Clipboard-iOS.mm
+                App/LoginItem-iOS.cpp
                 Process/Process-iOS.cpp
                 Threads/EventLoop-iOS.mm)
         target_link_libraries(eacp-core PRIVATE "-framework UIKit")
     else ()
         target_sources(eacp-core PRIVATE
                 App/App-macOS.mm
+                App/Clipboard-macOS.mm
+                App/LoginItem-macOS.mm
                 Process/Process-Posix.cpp
                 Threads/EventLoop-macOS.mm)
         target_link_libraries(eacp-core PRIVATE
                 "-framework Cocoa"
                 "-framework Security"
+                "-framework ServiceManagement"
                 "-framework UniformTypeIdentifiers")
     endif ()
 elseif (WIN32)
     target_sources(eacp-core PRIVATE
             App/App-Windows.cpp
+            App/Clipboard-Windows.cpp
+            App/LoginItem-Windows.cpp
             Process/Process-Windows.cpp
             Threads/EventLoop-Windows.cpp
             Threads/ThreadUtils-Windows.cpp
@@ -56,10 +63,12 @@ elseif (WIN32)
             Utils/Environment-Windows.cpp
             Utils/Files-Windows.cpp
             Utils/Logging-Windows.cpp)
-    target_link_libraries(eacp-core PRIVATE windowsapp crypt32)
+    target_link_libraries(eacp-core PRIVATE windowsapp crypt32 user32 advapi32)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-core PRIVATE
             App/App-Linux.cpp
+            App/Clipboard-Linux.cpp
+            App/LoginItem-Linux.cpp
             Process/Process-Posix.cpp
             Threads/EventLoop-Linux.cpp
             Threads/EventLoop-Default.cpp

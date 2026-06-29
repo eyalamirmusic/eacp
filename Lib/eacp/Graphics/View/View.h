@@ -115,6 +115,14 @@ public:
     void focus();
     bool hasFocus() const;
 
+    // The native view that should receive keyboard focus when this view is a
+    // window's content view and the window becomes key. Defaults to this
+    // view's own backing view. WebView overrides it so the nested platform web
+    // view is focused rather than the empty container that hosts it — without
+    // that, the page never gets key focus and its inputs stay dead until
+    // clicked directly. See Window's key-activation handling.
+    virtual void* nativeFocusTarget();
+
     const Vector<View*>& getSubviews() const { return subviews; }
     const Vector<Layer*>& getLayers() const { return layers; }
     View* getParent() const { return parent; }

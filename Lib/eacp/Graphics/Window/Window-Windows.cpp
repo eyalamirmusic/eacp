@@ -42,12 +42,13 @@ NonClientInsets nonClientInsets(HWND hwnd)
 
 struct Window::Native
 {
-    Native(const WindowOptions& options)
+    Native(const WindowOptions& options, WindowEvents& eventsToUse)
         : quitCallback(options.effectiveOnQuit())
         , onResize(options.onResize)
         , onWillResize(options.onWillResize)
         , minWidth(options.minWidth)
         , minHeight(options.minHeight)
+        , events(&eventsToUse)
     {
         // Process-wide DPI awareness (per-monitor v2) is established by
         // initLoopThread() before any app code runs.
@@ -75,6 +76,22 @@ struct Window::Native
 
         RegisterClassExW(&wc);
         windowClassRegistered = true;
+    }
+
+    static RECT activeMonitorWorkArea()
+    {
+        auto cursor = POINT {};
+        GetCursorPos(&cursor);
+
+        auto monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
+
+        auto info = MONITORINFO {};
+        info.cbSize = sizeof(info);
+        if (GetMonitorInfoW(monitor, &info))
+            return info.rcWork;
+
+        return RECT {
+            0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
     }
 
     void createWindow(const WindowOptions& options)
@@ -109,7 +126,14 @@ struct Window::Native
             style |= WS_THICKFRAME;
 
         DWORD exStyle = options.alwaysOnTop ? WS_EX_TOPMOST : 0;
+        if (options.ignoresMouseEvents)
+            exStyle |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
+
         showWithoutActivating = options.showInactive;
+        ignoresMouseEvents = options.ignoresMouseEvents;
+
+        auto windowWidth = rect.right - rect.left;
+        auto windowHeight = rect.bottom - rect.top;
 
         auto x = CW_USEDEFAULT;
         auto y = CW_USEDEFAULT;
@@ -117,6 +141,12 @@ struct Window::Native
         {
             x = static_cast<int>(options.initialPosition->x * dpiScale);
             y = static_cast<int>(options.initialPosition->y * dpiScale);
+        }
+        else
+        {
+            auto area = activeMonitorWorkArea();
+            x = area.left + ((area.right - area.left) - windowWidth) / 2;
+            y = area.top + ((area.bottom - area.top) - windowHeight) / 2;
         }
 
         host.hwnd = CreateWindowExW(exStyle,
@@ -221,7 +251,25 @@ struct Window::Native
             return;
 
         ShowWindow(host.hwnd, SW_SHOW);
-        SetForegroundWindow(host.hwnd);
+        forceForeground(host.hwnd);
+    }
+
+    static void forceForeground(HWND hwnd)
+    {
+        auto foreground = GetForegroundWindow();
+        auto thisThread = GetCurrentThreadId();
+        auto foregroundThread =
+            foreground ? GetWindowThreadProcessId(foreground, nullptr) : thisThread;
+
+        auto attached = foregroundThread != thisThread
+                        && AttachThreadInput(foregroundThread, thisThread, TRUE);
+
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+        SetFocus(hwnd);
+
+        if (attached)
+            AttachThreadInput(foregroundThread, thisThread, FALSE);
     }
 
     void setTitle(const std::string& title) const
@@ -302,9 +350,11 @@ struct Window::Native
     Callback quitCallback = [] {};
     ResizeCallback onResize;
     WillResizeCallback onWillResize;
+    WindowEvents* events = nullptr;
     int minWidth = 0;
     int minHeight = 0;
     bool showWithoutActivating = false;
+    bool ignoresMouseEvents = false;
     bool framelessRounded = false;
     bool framelessResizable = false;
 };
@@ -350,8 +400,16 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
         // WindowFlags::Resizable the band stays live, so a frameless window
         // still resizes from its edges (Electron-style).
         case WM_NCHITTEST:
+            if (self->ignoresMouseEvents)
+                return HTTRANSPARENT;
+
             if (self->framelessRounded && !self->framelessResizable)
                 return HTCLIENT;
+            break;
+
+        case WM_ACTIVATE:
+            if (self->events && self->events->onActivationChanged)
+                self->events->onActivationChanged(LOWORD(wParam) != WA_INACTIVE);
             break;
 
         case WM_CLOSE:
@@ -419,7 +477,7 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
 
 Window::Window(const WindowOptions& optionsToUse)
     : options(optionsToUse)
-    , impl(optionsToUse)
+    , impl(optionsToUse, events)
 {
 }
 

@@ -52,6 +52,7 @@ if (APPLE)
         target_sources(eacp-graphics PRIVATE
                 Graphics/Keyboard-iOS.mm
                 Helpers/DisplayLink-iOS.mm
+                HotKey/GlobalHotKey-iOS.mm
                 Menu/Menu-iOS.mm
                 Tray/TrayIcon-iOS.mm
                 View/View-iOS.mm
@@ -63,6 +64,7 @@ if (APPLE)
         target_sources(eacp-graphics PRIVATE
                 Graphics/Keyboard-macOS.mm
                 Helpers/DisplayLink-macOS.mm
+                HotKey/GlobalHotKey-macOS.mm
                 Menu/AppKitMenu.mm
                 Menu/Menu-macOS.mm
                 Tray/TrayIcon-macOS.mm
@@ -79,6 +81,7 @@ elseif (WIN32)
             Graphics/Keyboard-Windows.cpp
             Helpers/DarkMode-Windows.cpp
             Helpers/DisplayLink-Windows.cpp
+            HotKey/GlobalHotKey-Windows.cpp
             Image/Image-Windows.cpp
             Layers/Layer-Windows.cpp
             Layers/ShapeLayer-Windows.cpp
@@ -106,6 +109,9 @@ elseif (WIN32)
             windowscodecs
             windowsapp
             runtimeobject)
+elseif (UNIX)
+    target_sources(eacp-graphics PRIVATE
+            HotKey/GlobalHotKey-Linux.cpp)
 endif ()
 
 set_default_target_setting(eacp-graphics)

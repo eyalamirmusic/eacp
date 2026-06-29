@@ -15,6 +15,11 @@ View& View::setGrabsFocusOnMouseDown(bool value)
     return *this;
 }
 
+void* View::nativeFocusTarget()
+{
+    return getHandle();
+}
+
 void View::removeFromParent()
 {
     if (parent != nullptr)
