@@ -40,6 +40,7 @@ WKWebView* createWebView(WKWebViewConfiguration* config,
 // Arms a native file drag-out for the next mouse gesture with the given on-disk
 // paths. macOS-only behaviour; the iOS translation unit provides a no-op.
 void armFileDrag(WKWebView* webView, const Vector<std::string>& paths);
+void setFileDragStartedCallback(WKWebView* webView, Callback callback);
 
 // Arms a native window drag for the next mouse gesture. macOS-only; the iOS
 // translation unit provides a no-op.

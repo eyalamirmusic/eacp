@@ -446,6 +446,7 @@ struct WebView::Native
                     }
 
                     controller->get_CoreWebView2(&webView);
+                    applyBackground();
 
                     // Render into our composition visual.
                     compositionController->put_RootVisualTarget(
@@ -834,6 +835,19 @@ struct WebView::Native
         }
     }
 
+    void applyBackground()
+    {
+        if (!options.transparentBackground || !controller)
+            return;
+
+        ComPtr<ICoreWebView2Controller2> controller2;
+        if (FAILED(controller.As(&controller2)) || !controller2)
+            return;
+
+        COREWEBVIEW2_COLOR clear = {};
+        controller2->put_DefaultBackgroundColor(clear);
+    }
+
     void evaluateScript(const std::string& script,
                         const WebView::JSCallback& callback)
     {
@@ -1216,6 +1230,15 @@ struct WebView::Native
         sendMouse(upKindFor(event.button), event.pos);
     }
 
+    void moveFocusToContent()
+    {
+        if (hostHwnd)
+            SetFocus(hostHwnd);
+
+        if (controller)
+            controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+    }
+
     void handleMouseMove(const MouseEvent& event)
     {
         sendMouse(
@@ -1259,10 +1282,11 @@ struct WebView::Native
         if (paths.empty() || !hostHwnd)
             return;
 
-        // DoDragDrop needs the thread OLE-initialized. The app inits COM as an
-        // STA for WinRT, but OLE drag/drop wants OleInitialize specifically;
-        // balance it with OleUninitialize once the modal drag returns.
+        auto ownerWindow = hostHwnd;
+        auto onDragStarted = owner.onFileDragStarted;
         auto oleHr = OleInitialize(nullptr);
+        if (FAILED(oleHr))
+            return;
 
         auto pidls = Vector<PIDLIST_ABSOLUTE> {};
 
@@ -1290,16 +1314,18 @@ struct WebView::Native
                         nullptr, BHID_DataObject, IID_PPV_ARGS(&dataObject)))
                     && dataObject)
                 {
-                    // A null drop source lets the shell supply the default drag
-                    // image and cursor; it also runs the modal drag loop and
-                    // tracks the real (physically-down) mouse button, so the
-                    // drag can escape to Explorer.
-                    DWORD effect = DROPEFFECT_NONE;
-                    SHDoDragDrop(hostHwnd,
-                                 dataObject.Get(),
-                                 nullptr,
-                                 DROPEFFECT_COPY,
-                                 &effect);
+                    if (onDragStarted)
+                        onDragStarted();
+
+                    if (IsWindow(ownerWindow))
+                    {
+                        DWORD effect = DROPEFFECT_NONE;
+                        SHDoDragDrop(ownerWindow,
+                                     dataObject.Get(),
+                                     nullptr,
+                                     DROPEFFECT_COPY,
+                                     &effect);
+                    }
                 }
             }
         }
@@ -1635,6 +1661,13 @@ void WebView::evaluateJavaScript(const std::string& script,
                          { impl->evaluateScript(script, callback); });
 }
 
+void WebView::focusContent()
+{
+    focus();
+    impl->ensureInitialized();
+    impl->queueOperation([this] { impl->moveFocusToContent(); });
+}
+
 void WebView::takeSnapshot(SnapshotCallback callback)
 {
     if (!callback)
@@ -1755,6 +1788,13 @@ void WebView::resized()
     View::resized();
     impl->ensureInitialized();
     impl->updateBounds();
+}
+
+// Visual hosting gives the WebView no input HWND of its own, and the key-focus
+// routing that needs this is macOS-only, so the host view is the right target.
+void* WebView::nativeFocusTarget()
+{
+    return View::nativeFocusTarget();
 }
 
 // In visual hosting mode the WebView is a composition visual with no input

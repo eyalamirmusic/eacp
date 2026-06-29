@@ -34,8 +34,7 @@ using WillResizeCallback = std::function<void(int& width, int& height)>;
 // thread.
 struct WindowEvents
 {
-    // Fires when the window gains (true) or loses (false) key focus. macOS
-    // only; other platforms never invoke it (yet).
+    // Fires when the window gains (true) or loses (false) key focus.
     std::function<void(bool isKey)> onActivationChanged;
 };
 
@@ -111,6 +110,10 @@ struct WindowOptions
     // frontmost app (macOS orderFront vs makeKeyAndOrderFront). The window
     // can still become key when clicked. Mirrors Electron's showInactive().
     bool showInactive = false;
+
+    // Lets mouse clicks pass through this window to whatever is underneath.
+    // Useful for transient HUDs and overlays. No-op on iOS.
+    bool ignoresMouseEvents = false;
 
     // Initial position of the window's top-left corner in screen points,
     // measured from the primary display's top-left (Electron convention).

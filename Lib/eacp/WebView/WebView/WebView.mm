@@ -1,5 +1,6 @@
 #import <WebKit/WebKit.h>
 #import <Foundation/Foundation.h>
+#import <TargetConditionals.h>
 #include "Snapshot-Apple.h"
 #include "WebView.h"
 #include "WebViewPlatform-Apple.h"
@@ -133,6 +134,23 @@ struct WebView::Native
               .acceptFirstMouse = options.acceptFirstMouse
             }
         );
+        if (options.transparentBackground)
+        {
+#if TARGET_OS_IPHONE
+            webView.get().opaque = NO;
+            webView.get().backgroundColor = UIColor.clearColor;
+            webView.get().scrollView.backgroundColor = UIColor.clearColor;
+#else
+            [webView.get() setValue:@NO forKey:@"drawsBackground"];
+            webView.get().wantsLayer = YES;
+            webView.get().layer.backgroundColor = NSColor.clearColor.CGColor;
+            if (@available(macOS 12.0, *))
+                webView.get().underPageBackgroundColor = NSColor.clearColor;
+#endif
+        }
+        detail::setFileDragStartedCallback(
+            webView.get(),
+            [this] { owner.onFileDragStarted(); });
 
         webView.get().navigationDelegate = delegate.get();
         webView.get().UIDelegate = delegate.get();
@@ -684,6 +702,15 @@ double WebView::getZoom() const
     return detail::readNativeZoom(impl->webView.get(), impl->zoomLevel);
 }
 
+void WebView::focusContent()
+{
+#if TARGET_OS_IPHONE
+    [impl->webView.get() becomeFirstResponder];
+#else
+    [impl->webView.get().window makeFirstResponder:impl->webView.get()];
+#endif
+}
+
 WebView* WebView::focused()
 {
     return detail::findFocusedWebView();
@@ -811,6 +838,14 @@ void WebView::resized()
 {
     View::resized();
     impl->updateFrame();
+}
+
+void* WebView::nativeFocusTarget()
+{
+    if (impl != nullptr && impl->webView.get() != nil)
+        return impl->webView.get();
+
+    return View::nativeFocusTarget();
 }
 
 // The native WKWebView is a real subview that receives input directly, so the
