@@ -622,8 +622,9 @@ public:
     {
         beginOperation(HubOperationKind::Checking,
                        "Checking for updates",
-                       "Fetching remote manifests");
-        updateRemoteStatuses();
+                       "Fetching remote catalog");
+        refreshState("Fetched remote catalog", true);
+        updateHubStatus();
         finishOperation(true, "Update check complete");
         return ok("Update check complete");
     }
@@ -822,7 +823,7 @@ public:
         if (!installedVersion.empty()
             && !Updater::isNewerVersion(manifest->version, installedVersion))
         {
-            updateRemoteStatuses();
+            updateHubStatus();
             return ok("AppHub is up to date: " + installedVersion);
         }
 
@@ -968,7 +969,11 @@ private:
             return fail(installResult.error);
         }
 
-        updateRemoteStatuses();
+        if (manifest->productId == "com.tamber.AppHub")
+            updateHubStatus();
+        else
+            refreshState("Installed " + manifest->name + " " + manifest->version,
+                         true);
         finishOperation(true, "Installed " + manifest->name + " "
                                   + manifest->version);
         if (manifest->productId == "com.tamber.AppHub")
@@ -1241,12 +1246,8 @@ private:
         publish(next);
     }
 
-    void updateRemoteStatuses()
+    void updateHubStatus()
     {
-        auto demo = remoteStatusFromManifest(Detail::defaultDemoManifestUrl,
-                                             AppHub::installedDemoAppExecutablePath()
-                                                 .string(),
-                                             "Demo App");
         auto hub = remoteStatusFromManifest(Detail::defaultHubManifestUrl,
                                             AppHub::installedHubAppExecutablePath()
                                                 .string(),
@@ -1254,7 +1255,6 @@ private:
 
         {
             auto lock = std::lock_guard(stateMutex);
-            state.demoApp = std::move(demo);
             state.hubApp = std::move(hub);
         }
         publishCurrent();
