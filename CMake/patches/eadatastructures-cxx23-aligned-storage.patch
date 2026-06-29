@@ -1,0 +1,63 @@
+diff --git a/ea_data_structures/Allocators/SmallVectorAllocator.h b/ea_data_structures/Allocators/SmallVectorAllocator.h
+index 9d93a1f..795c179 100644
+--- a/ea_data_structures/Allocators/SmallVectorAllocator.h
++++ b/ea_data_structures/Allocators/SmallVectorAllocator.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <cstddef>
+ #include "DefaultAllocators.h"
+ 
+ namespace EA::Allocators::SmallVector
+@@ -65,7 +66,7 @@ struct Allocator : Base
+         return isSmallBuffer == !other.isSmallBuffer;
+     }
+ 
+-    std::aligned_storage_t<sizeof(T), alignof(T)> buffer[MaxSize];
++    alignas(T) std::byte buffer[sizeof(T) * MaxSize];
+ };
+ 
+ } // namespace EA::Allocators::SmallVector
+diff --git a/ea_data_structures/Allocators/StaticVectorAllocator.h b/ea_data_structures/Allocators/StaticVectorAllocator.h
+index 5168dfc..8a56534 100644
+--- a/ea_data_structures/Allocators/StaticVectorAllocator.h
++++ b/ea_data_structures/Allocators/StaticVectorAllocator.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <cstddef>
+ #include <cassert>
+ 
+ namespace EA::Allocators::StaticVector
+@@ -40,7 +41,7 @@ struct Allocator
+ 
+     bool operator==(const Allocator&) const { return false; }
+ 
+-    std::aligned_storage_t<sizeof(T), alignof(T)> buffer[MaxSize];
++    alignas(T) std::byte buffer[sizeof(T) * MaxSize];
+ };
+ 
+ } // namespace EA::Allocators::StaticVector
+diff --git a/ea_data_structures/Structures/FixedDynamicArray.h b/ea_data_structures/Structures/FixedDynamicArray.h
+index 5e878b3..44b8c50 100644
+--- a/ea_data_structures/Structures/FixedDynamicArray.h
++++ b/ea_data_structures/Structures/FixedDynamicArray.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <cstddef>
+ #include <type_traits>
+ 
+ namespace EA
+@@ -11,7 +12,10 @@ template <typename T>
+ class FixedDynamicArray
+ {
+ public:
+-    using Aligned = std::aligned_storage_t<sizeof(T), alignof(T)>;
++    struct alignas(T) Aligned
++    {
++        std::byte bytes[sizeof(T)];
++    };
+ 
+     template <typename... ARGS>
+     explicit FixedDynamicArray(int sizeToUse, ARGS&&... args)
