@@ -1,5 +1,6 @@
 add_subdirectory(Core)
 add_subdirectory(Network)
+add_subdirectory(Updater)
 
 if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(Graphics)

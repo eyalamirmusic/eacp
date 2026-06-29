@@ -1,0 +1,77 @@
+name: Publish Remote Signed Demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Demo app version to build and publish.
+        required: true
+        default: 1.0.0
+      release_tag:
+        description: GitHub Release tag for the signed remote demo.
+        required: true
+        default: remote-demo-v1
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Build, Sign, Publish, Smoke Install
+    runs-on: macos-latest
+
+    env:
+      VERSION: ${{ inputs.version }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}
+      OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: 1password/install-cli-action@v2
+
+      - name: Build signed release assets
+        run: >
+          op run
+          --env-file=.github/op/tamber-signing.env
+          --
+          Scripts/package-remote-signed-demo-assets.sh
+
+      - name: Create or update release
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/remote-signed-demo/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/remote-signed-demo/* \
+              --target "$GITHUB_SHA" \
+              --title "Remote signed demo ${VERSION}" \
+              --notes "Signed AppHub and Demo App ${VERSION} remote install smoke artifacts."
+          fi
+
+      - name: Smoke install from published internet artifacts
+        run: |
+          set -euo pipefail
+
+          smoke_root="$(mktemp -d)"
+          apphub_zip="${smoke_root}/AppHub-remote-demo.app.zip"
+          manifest_url="${RELEASE_BASE_URL}/manifest.json"
+
+          curl --fail --location --silent --show-error \
+            "${RELEASE_BASE_URL}/AppHub-remote-demo.app.zip" \
+            --output "$apphub_zip"
+
+          ditto -x -k "$apphub_zip" "$smoke_root"
+          codesign --verify --strict --verbose=2 "${smoke_root}/AppHub.app"
+
+          "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" \
+            --root "${smoke_root}/hub-state" \
+            remote-install \
+            --manifest-url "$manifest_url"
+
+          installed="/Applications/Tamber Local Update Demo.app/Contents/MacOS/Tamber Local Update Demo"
+          test -x "$installed"
+          installed_version="$("$installed" --version)"
+          test "$installed_version" = "$VERSION"
+          echo "Installed remote signed Demo App ${installed_version} from ${manifest_url}"

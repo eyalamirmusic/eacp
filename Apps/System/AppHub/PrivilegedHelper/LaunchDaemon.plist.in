@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>@EACP_APPHUB_HELPER_LABEL@</string>
+    <key>MachServices</key>
+    <dict>
+        <key>@EACP_APPHUB_HELPER_LABEL@</key>
+        <true/>
+    </dict>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/PrivilegedHelperTools/@EACP_APPHUB_HELPER_LABEL@</string>
+    </array>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

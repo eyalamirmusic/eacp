@@ -3,6 +3,7 @@ set(CMAKE_FOLDER Tests)
 find_package(NanoTest REQUIRED)
 
 add_subdirectory(Core)
+add_subdirectory(Updater)
 
 if (APPLE)
     add_subdirectory(ObjC)
@@ -32,4 +33,3 @@ endif ()
 if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND EACP_BUILD_WEBVIEW)
     add_subdirectory(WebView)
 endif ()
-

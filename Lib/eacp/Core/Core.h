@@ -6,4 +6,5 @@
 #include "Threads/Timer.h"
 #include "Threads/Async.h"
 #include "Utils/Random.h"
+#include "Utils/SHA256.h"
 #include "Utils/Files.h"

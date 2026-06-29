@@ -6,6 +6,10 @@ nano_add_executable(FileTests
         SOURCES FileTests.cpp
         TARGETS eacp-core)
 
+nano_add_executable(SHA256Tests
+        SOURCES SHA256Tests.cpp
+        TARGETS eacp-core)
+
 nano_add_executable(AppTests
         SOURCES AppTests.cpp
         TARGETS eacp-core)
