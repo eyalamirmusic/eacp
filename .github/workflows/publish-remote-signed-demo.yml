@@ -121,6 +121,8 @@ jobs:
           ditto -x -k "$apphub_zip" "$smoke_root"
           codesign --verify --strict --verbose=2 "${smoke_root}/AppHub.app"
 
+          "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" bless-helper
+
           "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" \
             --root "${smoke_root}/hub-state" \
             remote-install \
@@ -147,6 +149,8 @@ jobs:
 
           ditto -x -k "$apphub_zip" "$smoke_root"
           codesign --verify --strict --verbose=2 "${smoke_root}/AppHub.app"
+
+          "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" bless-helper
 
           "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" \
             --root "${smoke_root}/hub-state" \
