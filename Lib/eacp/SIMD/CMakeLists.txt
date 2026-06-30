@@ -59,32 +59,12 @@ set_default_target_setting(eacp-simd)
 set_target_properties(eacp-simd PROPERTIES
         INTERPROCEDURAL_OPTIMIZATION_RELEASE FALSE)
 
-# Always build the SIMD kernels at the platform maximum optimization, in EVERY
-# configuration including Debug: at -O0/-Od the intrinsics spill badly and the
-# whole point of this module (fast image hot loops) is lost, while the rest of
-# eacp keeps the config default + debug symbols. The optimization flag is
-# appended after the config's level so it wins, and -g / /Zi debug info is
-# untouched -- Debug builds of this target stay debuggable, just fast.
-#
-# MSVC's maximum-speed level is /O2 (there is no /O3). In a Debug build the
-# default runtime checks (/RTC1) are incompatible with ANY optimization (error
-# D8016), so strip them first. This set() shadows the cache variable within the
-# SIMD subdirectory only (eacp-simd is its sole target), so the rest of the
-# project keeps /RTC1.
-if (MSVC)
-    string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_CXX_FLAGS_DEBUG
-            "${CMAKE_CXX_FLAGS_DEBUG}")
-endif ()
-
-# -ffp-contract=off keeps every backend bit-exact with the scalar oracle: no
-# silent multiply-add fusion (FMA), which would shift the low bit. Maximum
-# optimization does NOT enable fast-math, so IEEE FP semantics (and the
-# bit-exact cross-backend guarantee) are preserved. MSVC does not contract by
-# default (/fp:precise), so the contraction flag is only needed for Clang/GCC.
-target_compile_options(eacp-simd PRIVATE
-        $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-O3>
-        $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-ffp-contract=off>
-        $<$<CXX_COMPILER_ID:MSVC>:/O2>)
+# Build the SIMD kernels at the platform maximum optimization in EVERY config
+# (including Debug): at -O0/-Od the intrinsics spill badly and the whole point of
+# this module -- fast image hot loops -- is lost. The helper keeps results
+# bit-exact with the scalar oracle (no fast-math, no FMA contraction), leaves
+# debug info intact, and handles the cl / clang-cl / GCC driver differences.
+eacp_force_optimization(eacp-simd)
 
 eacp_enable_unity_build(eacp-simd)
 add_ide_sources(eacp-simd)
