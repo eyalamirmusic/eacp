@@ -186,9 +186,9 @@ void benchSwap(long long pixels)
 
 int main()
 {
-#ifndef NDEBUG
-    std::printf("WARNING: debug build -- every backend is -O0, so these numbers "
-                "are not representative. Build Release for a real comparison.\n\n");
+#if defined(_MSC_VER) && !defined(NDEBUG)
+    std::printf("Note: MSVC Debug -- the kernels are /O2 but this benchmark "
+                "harness is /Od; build Release for the cleanest numbers.\n\n");
 #endif
 
     std::printf("eacp-simd benchmark | baseline SIMD = %s", baselineName());
