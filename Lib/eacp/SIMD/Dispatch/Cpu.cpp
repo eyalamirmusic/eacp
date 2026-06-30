@@ -32,13 +32,17 @@ std::uint64_t readXcr0()
 
 bool detectAvx2Fma() noexcept
 {
-    std::uint32_t eax = 0, ebx = 0, ecx = 0, edx = 0;
+    // Only ecx (leaf 1) and ebx (leaf 7) are consumed; eax/edx exist solely as
+    // __get_cpuid_count out-params, so they live on the non-MSVC path only --
+    // declaring them on the MSVC path (which reads regs[]) would warn C4189.
+    std::uint32_t ebx = 0, ecx = 0;
 
 #if defined(_MSC_VER)
     int regs[4];
     __cpuidex(regs, 1, 0);
     ecx = static_cast<std::uint32_t>(regs[2]);
 #else
+    std::uint32_t eax = 0, edx = 0;
     if (!__get_cpuid_count(1, 0, &eax, &ebx, &ecx, &edx))
         return false;
 #endif
