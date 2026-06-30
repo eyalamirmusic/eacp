@@ -1,6 +1,7 @@
 #include <eacp/SIMD/Backends.h>
 #include <eacp/SIMD/Kernels/ResizeBilinear.h>
 #include <eacp/SIMD/Kernels/SwapRedBlue.h>
+#include <eacp/SIMD/Kernels/WarpAffine.h>
 
 // The per-architecture baseline backend, reached without a special compile
 // flag: SSE2 on x86-64 (guaranteed by the ABI), NEON on AArch64 (mandatory).
@@ -31,6 +32,18 @@ void resizeBilinear_sse2(const std::uint8_t* src,
         src, srcWidth, srcHeight, dst, dstWidth, dstHeight);
 }
 
+void warpAffineInverse_sse2(const std::uint8_t* src,
+                            int srcWidth,
+                            int srcHeight,
+                            const float* inverse2x3,
+                            std::uint8_t* dst,
+                            int dstWidth,
+                            int dstHeight)
+{
+    kernels::warpAffineInverseImpl<backend::Sse2>(
+        src, srcWidth, srcHeight, inverse2x3, dst, dstWidth, dstHeight);
+}
+
 } // namespace eacp::simd::backends
 
 #elif defined(__aarch64__) || defined(_M_ARM64)
@@ -56,6 +69,18 @@ void resizeBilinear_neon(const std::uint8_t* src,
 {
     kernels::resizeBilinearImpl<backend::Neon>(
         src, srcWidth, srcHeight, dst, dstWidth, dstHeight);
+}
+
+void warpAffineInverse_neon(const std::uint8_t* src,
+                            int srcWidth,
+                            int srcHeight,
+                            const float* inverse2x3,
+                            std::uint8_t* dst,
+                            int dstWidth,
+                            int dstHeight)
+{
+    kernels::warpAffineInverseImpl<backend::Neon>(
+        src, srcWidth, srcHeight, inverse2x3, dst, dstWidth, dstHeight);
 }
 
 } // namespace eacp::simd::backends

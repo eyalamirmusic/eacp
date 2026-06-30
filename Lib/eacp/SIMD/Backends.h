@@ -25,6 +25,14 @@ void resizeBilinear_scalar(const std::uint8_t* src,
                            int dstWidth,
                            int dstHeight);
 
+void warpAffineInverse_scalar(const std::uint8_t* src,
+                              int srcWidth,
+                              int srcHeight,
+                              const float* inverse2x3,
+                              std::uint8_t* dst,
+                              int dstWidth,
+                              int dstHeight);
+
 #if defined(__x86_64__) || defined(_M_X64)
 void swapRedBlue_sse2(const std::uint8_t* in,
                       std::uint8_t* out,
@@ -35,6 +43,13 @@ void resizeBilinear_sse2(const std::uint8_t* src,
                          std::uint8_t* dst,
                          int dstWidth,
                          int dstHeight);
+void warpAffineInverse_sse2(const std::uint8_t* src,
+                            int srcWidth,
+                            int srcHeight,
+                            const float* inverse2x3,
+                            std::uint8_t* dst,
+                            int dstWidth,
+                            int dstHeight);
 #if defined(EACP_SIMD_HAS_AVX2)
 void swapRedBlue_avx2(const std::uint8_t* in,
                       std::uint8_t* out,
@@ -50,6 +65,13 @@ void resizeBilinear_neon(const std::uint8_t* src,
                          std::uint8_t* dst,
                          int dstWidth,
                          int dstHeight);
+void warpAffineInverse_neon(const std::uint8_t* src,
+                            int srcWidth,
+                            int srcHeight,
+                            const float* inverse2x3,
+                            std::uint8_t* dst,
+                            int dstWidth,
+                            int dstHeight);
 #endif
 
 } // namespace eacp::simd::backends

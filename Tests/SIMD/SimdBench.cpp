@@ -31,6 +31,8 @@ using Pixels = EA::Vector<std::uint8_t>;
 using Floats = EA::Vector<float>;
 using ResizeFn = void (*)(const std::uint8_t*, int, int, std::uint8_t*, int, int);
 using SwapFn = void (*)(const std::uint8_t*, std::uint8_t*, std::size_t);
+using WarpFn =
+    void (*)(const std::uint8_t*, int, int, const float*, std::uint8_t*, int, int);
 
 // A volatile sink that consumes one output byte per iteration so the optimizer
 // cannot elide the calls. Combined with perturbing an input byte per iteration
@@ -171,6 +173,17 @@ SwapFn baselineSwap()
 #endif
 }
 
+WarpFn baselineWarp()
+{
+#if defined(__x86_64__) || defined(_M_X64)
+    return &eacp::simd::backends::warpAffineInverse_sse2;
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    return &eacp::simd::backends::warpAffineInverse_neon;
+#else
+    return &eacp::simd::backends::warpAffineInverse_scalar;
+#endif
+}
+
 struct ResizeConfig
 {
     int srcW, srcH, dstW, dstH;
@@ -199,6 +212,43 @@ void benchResize(const ResizeConfig& c)
         src.size(),
         dst.data(),
         [&] { simd(src.data(), c.srcW, c.srcH, dst.data(), c.dstW, c.dstH); });
+
+    std::printf("  %4dx%-4d -> %4dx%-4d | scalar %8.3f ms %7.1f Mpix/s",
+                c.srcW,
+                c.srcH,
+                c.dstW,
+                c.dstH,
+                scalarMs,
+                perSec(outPixels, scalarMs));
+    report(baselineName(), outPixels, simdMs, scalarMs, "Mpix/s");
+    std::printf("\n");
+}
+
+void benchWarp(const ResizeConfig& c)
+{
+    auto src = makeBuffer(c.srcW * c.srcH * 4);
+    auto dst = Pixels(c.dstW * c.dstH * 4);
+    // A rotate + scale + translate inverse matrix (the values don't affect timing).
+    const float m[6] = {0.8f, -0.2f, 8.f, 0.2f, 0.8f, 5.f};
+    const long long outPixels = static_cast<long long>(c.dstW) * c.dstH;
+    const int iters =
+        static_cast<int>(std::max<long long>(20, 80'000'000LL / outPixels));
+
+    const auto scalar = &eacp::simd::backends::warpAffineInverse_scalar;
+    const auto simd = baselineWarp();
+
+    const auto scalarMs = timeMs(
+        iters,
+        src.data(),
+        src.size(),
+        dst.data(),
+        [&] { scalar(src.data(), c.srcW, c.srcH, m, dst.data(), c.dstW, c.dstH); });
+    const auto simdMs = timeMs(
+        iters,
+        src.data(),
+        src.size(),
+        dst.data(),
+        [&] { simd(src.data(), c.srcW, c.srcH, m, dst.data(), c.dstW, c.dstH); });
 
     std::printf("  %4dx%-4d -> %4dx%-4d | scalar %8.3f ms %7.1f Mpix/s",
                 c.srcW,
@@ -330,6 +380,10 @@ int main()
     };
     for (const auto& cfg: resizes)
         benchResize(cfg);
+
+    std::printf("\nwarpAffineInverse:\n");
+    for (const auto& cfg: resizes)
+        benchWarp(cfg);
 
     std::printf("\nswapRedBlue:\n");
     for (long long pixels: {1'000'000LL, 8'000'000LL})

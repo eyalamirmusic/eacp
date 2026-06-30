@@ -1,5 +1,7 @@
 #pragma once
 
+#include <eacp/SIMD/Kernels/Bilinear.h>
+
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -7,18 +9,12 @@
 namespace eacp::simd::kernels
 {
 
-inline int clampi(int v, int lo, int hi)
-{
-    return v < lo ? lo : (v > hi ? hi : v);
-}
-
 // Bilinear resize of a tightly-packed RGBA8 image, written once over a backend B
-// and run on every platform -- instantiating it with the Scalar backend makes
-// it the reference oracle. Each output pixel's four channels are blended as one
-// B::F4 in a fixed per-channel reduction order with the same weights, so all
-// backends agree bit-for-bit when compiled with -ffp-contract=off (no silent
-// multiply-add fusion). Half-pixel-center mapping with edge clamping (OpenCV
-// semantics). No heap allocation: the source mapping is computed inline.
+// and run on every platform -- instantiating it with the Scalar backend makes it
+// the reference oracle. Half-pixel-center mapping with edge clamping (OpenCV
+// semantics); no heap allocation (the source mapping is computed inline). The
+// per-pixel blend is the shared blendTaps primitive, so all backends agree
+// bit-for-bit when the TU is compiled -ffp-contract=off.
 template <class B>
 void resizeBilinearImpl(const std::uint8_t* in,
                         int srcW,
@@ -27,8 +23,6 @@ void resizeBilinearImpl(const std::uint8_t* in,
                         int dstW,
                         int dstH)
 {
-    using F4 = typename B::F4;
-
     const float scaleX = static_cast<float>(srcW) / static_cast<float>(dstW);
     const float scaleY = static_cast<float>(srcH) / static_cast<float>(dstH);
     const int maxX = srcW - 1;
@@ -54,21 +48,15 @@ void resizeBilinearImpl(const std::uint8_t* in,
             const int x0c = clampi(x0, 0, maxX);
             const int x1c = clampi(x0 + 1, 0, maxX);
 
-            const float w00 = oneMinusWx * oneMinusWy;
-            const float w10 = wx * oneMinusWy;
-            const float w01 = oneMinusWx * wy;
-            const float w11 = wx * wy;
-
-            const std::uint8_t* p00 = rowTop + x0c * 4;
-            const std::uint8_t* p10 = rowTop + x1c * 4;
-            const std::uint8_t* p01 = rowBot + x0c * 4;
-            const std::uint8_t* p11 = rowBot + x1c * 4;
-
-            const auto acc = F4::broadcast(w00) * F4::loadPixel(p00)
-                             + F4::broadcast(w10) * F4::loadPixel(p10)
-                             + F4::broadcast(w01) * F4::loadPixel(p01)
-                             + F4::broadcast(w11) * F4::loadPixel(p11);
-            F4::storePixel(out, acc);
+            blendTaps<B>(rowTop + x0c * 4,
+                         rowTop + x1c * 4,
+                         rowBot + x0c * 4,
+                         rowBot + x1c * 4,
+                         oneMinusWx * oneMinusWy,
+                         wx * oneMinusWy,
+                         oneMinusWx * wy,
+                         wx * wy,
+                         out);
             out += 4;
         }
     }

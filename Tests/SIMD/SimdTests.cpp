@@ -161,6 +161,57 @@ auto tBaselineResizeMatchesScalar = test("SIMD/baselineResizeMatchesScalar") = [
 #endif
 };
 
+namespace
+{
+using WarpFn =
+    void (*)(const std::uint8_t*, int, int, const float*, std::uint8_t*, int, int);
+
+struct WarpCase
+{
+    int srcW, srcH, dstW, dstH;
+    float m[6];
+};
+
+// Identity, scale+translate, rotate-ish, shear, a degenerate source width, and
+// odd sizes -- exercising edge clamping and the affine coordinate math.
+constexpr WarpCase kWarpCases[] = {
+    {16, 16, 16, 16, {1.f, 0.f, 0.f, 0.f, 1.f, 0.f}},
+    {16, 16, 20, 12, {0.7f, 0.f, 1.f, 0.f, 0.7f, 1.f}},
+    {16, 16, 16, 16, {0.9f, -0.3f, 2.f, 0.3f, 0.9f, 1.f}},
+    {16, 16, 24, 24, {0.5f, 0.2f, 0.f, 0.1f, 0.5f, 0.f}},
+    {1, 16, 8, 8, {0.f, 0.f, 0.f, 0.f, 1.f, 0.f}},
+    {33, 17, 9, 21, {1.3f, 0.1f, -2.f, -0.2f, 1.1f, 3.f}},
+};
+
+Pixels runWarp(WarpFn fn, const Pixels& src, const WarpCase& c)
+{
+    auto dst = Pixels(c.dstW * c.dstH * 4);
+    fn(src.data(), c.srcW, c.srcH, c.m, dst.data(), c.dstW, c.dstH);
+    return dst;
+}
+
+void checkWarpAgainstScalar(WarpFn fn)
+{
+    for (const auto& c: kWarpCases)
+    {
+        const auto src = makeImage(c.srcW, c.srcH);
+        const auto got = runWarp(fn, src, c);
+        const auto oracle =
+            runWarp(&eacp::simd::backends::warpAffineInverse_scalar, src, c);
+        check(got == oracle);
+    }
+}
+} // namespace
+
+auto tBaselineWarpMatchesScalar = test("SIMD/baselineWarpMatchesScalar") = []
+{
+#if defined(__x86_64__) || defined(_M_X64)
+    checkWarpAgainstScalar(&eacp::simd::backends::warpAffineInverse_sse2);
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    checkWarpAgainstScalar(&eacp::simd::backends::warpAffineInverse_neon);
+#endif
+};
+
 auto tResizeIdentityReturnsSource = test("SIMD/resizeIdentityReturnsSource") = []
 {
     // Same-size bilinear with half-pixel centers samples each pixel exactly, so

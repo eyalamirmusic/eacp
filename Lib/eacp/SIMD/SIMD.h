@@ -29,6 +29,19 @@ void resizeBilinear(const std::uint8_t* src,
                     int dstWidth,
                     int dstHeight);
 
+// Inverse affine warp of a tightly-packed RGBA8 image with bilinear sampling and
+// edge clamping. `inverse2x3` points to the six row-major coefficients of the
+// 2x3 inverse matrix ([m0 m1 m2; m3 m4 m5]): each destination pixel (dx, dy)
+// samples the source at (m0*dx + m1*dy + m2, m3*dx + m4*dy + m5). `dst` holds
+// dstW*dstH*4 bytes.
+void warpAffineInverse(const std::uint8_t* src,
+                       int srcWidth,
+                       int srcHeight,
+                       const float* inverse2x3,
+                       std::uint8_t* dst,
+                       int dstWidth,
+                       int dstHeight);
+
 // --- Elementwise float-array primitives ---
 //
 // Each processes `count` floats. `out` may alias an input (safe, elementwise).

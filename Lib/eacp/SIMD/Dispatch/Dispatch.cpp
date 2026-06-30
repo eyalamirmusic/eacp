@@ -44,6 +44,21 @@ ResizeFn pickResizeBilinear() noexcept
 #endif
 }
 
+using WarpFn =
+    void (*)(const std::uint8_t*, int, int, const float*, std::uint8_t*, int, int);
+
+WarpFn pickWarpAffineInverse() noexcept
+{
+    // Same 128-bit per-pixel blend as resizeBilinear, so AVX2 adds nothing yet.
+#if defined(__x86_64__) || defined(_M_X64)
+    return &backends::warpAffineInverse_sse2;
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    return &backends::warpAffineInverse_neon;
+#else
+    return &backends::warpAffineInverse_scalar;
+#endif
+}
+
 } // namespace
 
 void swapRedBlue(const std::uint8_t* in, std::uint8_t* out, std::size_t pixelCount)
@@ -61,6 +76,18 @@ void resizeBilinear(const std::uint8_t* src,
 {
     static const ResizeFn fn = pickResizeBilinear();
     fn(src, srcWidth, srcHeight, dst, dstWidth, dstHeight);
+}
+
+void warpAffineInverse(const std::uint8_t* src,
+                       int srcWidth,
+                       int srcHeight,
+                       const float* inverse2x3,
+                       std::uint8_t* dst,
+                       int dstWidth,
+                       int dstHeight)
+{
+    static const WarpFn fn = pickWarpAffineInverse();
+    fn(src, srcWidth, srcHeight, inverse2x3, dst, dstWidth, dstHeight);
 }
 
 } // namespace eacp::simd
