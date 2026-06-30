@@ -1,3 +1,4 @@
+#include <eacp/SIMD/Backends.h>
 #include <eacp/SIMD/SIMD.h>
 
 #include <NanoTest/NanoTest.h>
@@ -173,4 +174,72 @@ auto tResizeIdentityReturnsSource = test("SIMD/resizeIdentityReturnsSource") = [
             src.data(), c.srcW, c.srcH, dst.data(), c.dstW, c.dstH);
         check(dst == src);
     }
+};
+
+namespace
+{
+// A length that is not a multiple of any backend's vector width, to exercise the
+// scalar tail. Integer-valued data keeps every result exact (so the comparison
+// is fusion-agnostic for multiplyAdd).
+constexpr int kArrayCount = 1003;
+
+EA::Vector<float> ramp(int stride, int offset)
+{
+    auto v = EA::Vector<float>(kArrayCount);
+    for (int i = 0; i < kArrayCount; ++i)
+        v[i] = static_cast<float>((i % stride) + offset);
+    return v;
+}
+} // namespace
+
+auto tArrayAddMatchesReference = test("SIMD/arrayAddMatchesReference") = []
+{
+    const auto a = ramp(17, 1);
+    const auto b = ramp(23, 0);
+    auto out = EA::Vector<float>(kArrayCount);
+    eacp::simd::add(a.data(), b.data(), out.data(), kArrayCount);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(out[i] == a[i] + b[i]);
+};
+
+auto tArraySubtractMatchesReference = test("SIMD/arraySubtractMatchesReference") = []
+{
+    const auto a = ramp(29, 5);
+    const auto b = ramp(13, 0);
+    auto out = EA::Vector<float>(kArrayCount);
+    eacp::simd::subtract(a.data(), b.data(), out.data(), kArrayCount);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(out[i] == a[i] - b[i]);
+};
+
+auto tArrayMultiplyMatchesReference = test("SIMD/arrayMultiplyMatchesReference") = []
+{
+    const auto a = ramp(11, 0);
+    const auto b = ramp(7, 1);
+    auto out = EA::Vector<float>(kArrayCount);
+    eacp::simd::multiply(a.data(), b.data(), out.data(), kArrayCount);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(out[i] == a[i] * b[i]);
+};
+
+auto tArrayMultiplyByScalarMatches =
+    test("SIMD/arrayMultiplyByScalarMatchesReference") = []
+{
+    const auto a = ramp(19, 2);
+    auto out = EA::Vector<float>(kArrayCount);
+    eacp::simd::multiplyByScalar(a.data(), 3.f, out.data(), kArrayCount);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(out[i] == a[i] * 3.f);
+};
+
+auto tArrayMultiplyAddMatchesReference =
+    test("SIMD/arrayMultiplyAddMatchesReference") = []
+{
+    const auto a = ramp(11, 0);
+    const auto b = ramp(7, 1);
+    const auto c = ramp(5, 0);
+    auto out = EA::Vector<float>(kArrayCount);
+    eacp::simd::multiplyAdd(a.data(), b.data(), c.data(), out.data(), kArrayCount);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(out[i] == a[i] * b[i] + c[i]);
 };

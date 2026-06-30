@@ -1,6 +1,6 @@
+#include <eacp/SIMD/Backends.h>
 #include <eacp/SIMD/Kernels/ResizeBilinear.h>
 #include <eacp/SIMD/Kernels/SwapRedBlue.h>
-#include <eacp/SIMD/SIMD.h>
 
 // The per-architecture baseline backend, reached without a special compile
 // flag: SSE2 on x86-64 (guaranteed by the ABI), NEON on AArch64 (mandatory).

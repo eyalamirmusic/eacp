@@ -4,6 +4,7 @@ target_include_directories(eacp-simd PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../../)
 target_sources(eacp-simd PRIVATE
         Dispatch/Cpu.cpp
         Dispatch/Dispatch.cpp
+        Tu/ArrayOps.cpp
         Tu/Scalar.cpp
         Tu/Baseline.cpp)
 
