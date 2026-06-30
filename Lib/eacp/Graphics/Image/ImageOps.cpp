@@ -53,17 +53,8 @@ Image mirroredCrop(const Image& src, int x, int y, int width, int height)
         return {};
 
     auto outData = ImageData(width * height * 4);
-    const auto* in = src.pixels().data();
-    auto* out = outData.data();
-
-    for (int dy = 0; dy < height; ++dy)
-    {
-        const std::uint8_t* srcRow =
-            in + (static_cast<std::size_t>(y + dy) * srcW + x) * 4;
-        std::uint8_t* dstRow = out + static_cast<std::size_t>(dy) * width * 4;
-        for (int dx = 0; dx < width; ++dx)
-            std::memcpy(dstRow + dx * 4, srcRow + (width - 1 - dx) * 4, 4);
-    }
+    eacp::simd::mirroredCrop(
+        src.pixels().data(), srcW, x, y, width, height, outData.data());
     return {width, height, std::move(outData)};
 }
 
