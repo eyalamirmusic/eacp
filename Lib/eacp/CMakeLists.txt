@@ -1,4 +1,5 @@
 add_subdirectory(Core)
+add_subdirectory(SIMD)
 add_subdirectory(Network)
 
 if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)

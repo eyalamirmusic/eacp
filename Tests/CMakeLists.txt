@@ -3,6 +3,7 @@ set(CMAKE_FOLDER Tests)
 find_package(NanoTest REQUIRED)
 
 add_subdirectory(Core)
+add_subdirectory(SIMD)
 
 if (APPLE)
     add_subdirectory(ObjC)

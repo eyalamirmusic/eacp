@@ -26,7 +26,7 @@ target_sources(eacp-graphics PRIVATE
 set_source_files_properties(Image/ImageOps.cpp PROPERTIES COMPILE_OPTIONS
         "$<$<AND:$<CONFIG:Debug>,$<CXX_COMPILER_ID:AppleClang,Clang,GNU>>:-O2>")
 
-target_link_libraries(eacp-graphics PUBLIC eacp-core)
+target_link_libraries(eacp-graphics PUBLIC eacp-core eacp-simd)
 
 if (APPLE)
     target_sources(eacp-graphics PRIVATE
