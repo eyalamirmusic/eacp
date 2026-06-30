@@ -1,16 +1,18 @@
 #pragma once
 
-#include <eacp/SIMD/Dispatch/Cpu.h>
-
 #include <cstddef>
 #include <cstdint>
 
-// eacp-simd: a small, self-contained portable SIMD layer for image hot loops.
-// Public kernels pick the fastest backend available on the host once, at first
-// call, through a function pointer; the per-backend entry points are also
-// exposed so tests and benchmarks can drive a specific backend directly.
+// eacp-simd: a small, self-contained portable SIMD layer.
+//
+// This is the public, portable surface. It carries NO architecture or feature
+// conditionals -- every one of those lives in the implementation (and in the
+// internal <eacp/SIMD/Backends.h>). Each call selects the fastest backend
+// available on the host at runtime, once, behind a function pointer.
 namespace eacp::simd
 {
+
+// --- Image kernels ---
 
 // Swap the red and blue channels of `pixelCount` tightly-packed 8-bit RGBA
 // pixels (RGBA <-> BGRA), writing to `out`. `in` and `out` may be equal
@@ -27,50 +29,26 @@ void resizeBilinear(const std::uint8_t* src,
                     int dstWidth,
                     int dstHeight);
 
-// Backend-specific entry points. Only the entries valid for the architecture
-// the library was built for are declared and defined. EACP_SIMD_HAS_AVX2 is a
-// PUBLIC compile definition set by the build when the AVX2 translation unit is
-// compiled (single-arch x86-64 only), so consumers see a consistent view.
-namespace backends
-{
+// --- Elementwise float-array primitives ---
+//
+// Each processes `count` floats. `out` may alias an input (safe, elementwise).
+// SIMD-accelerated and deterministic: being elementwise, the result is identical
+// at any vector width and on every build.
 
-void swapRedBlue_scalar(const std::uint8_t* in,
-                        std::uint8_t* out,
-                        std::size_t pixelCount);
+// out[i] = a[i] + b[i]
+void add(const float* a, const float* b, float* out, std::size_t count);
 
-void resizeBilinear_scalar(const std::uint8_t* src,
-                           int srcWidth,
-                           int srcHeight,
-                           std::uint8_t* dst,
-                           int dstWidth,
-                           int dstHeight);
+// out[i] = a[i] - b[i]
+void subtract(const float* a, const float* b, float* out, std::size_t count);
 
-#if defined(__x86_64__) || defined(_M_X64)
-void swapRedBlue_sse2(const std::uint8_t* in,
-                      std::uint8_t* out,
-                      std::size_t pixelCount);
-void resizeBilinear_sse2(const std::uint8_t* src,
-                         int srcWidth,
-                         int srcHeight,
-                         std::uint8_t* dst,
-                         int dstWidth,
-                         int dstHeight);
-#if defined(EACP_SIMD_HAS_AVX2)
-void swapRedBlue_avx2(const std::uint8_t* in,
-                      std::uint8_t* out,
-                      std::size_t pixelCount);
-#endif
-#elif defined(__aarch64__) || defined(_M_ARM64)
-void swapRedBlue_neon(const std::uint8_t* in,
-                      std::uint8_t* out,
-                      std::size_t pixelCount);
-void resizeBilinear_neon(const std::uint8_t* src,
-                         int srcWidth,
-                         int srcHeight,
-                         std::uint8_t* dst,
-                         int dstWidth,
-                         int dstHeight);
-#endif
+// out[i] = a[i] * b[i]
+void multiply(const float* a, const float* b, float* out, std::size_t count);
 
-} // namespace backends
+// out[i] = a[i] * scalar
+void multiplyByScalar(const float* a, float scalar, float* out, std::size_t count);
+
+// out[i] = a[i] * b[i] + c[i]
+void multiplyAdd(
+    const float* a, const float* b, const float* c, float* out, std::size_t count);
+
 } // namespace eacp::simd

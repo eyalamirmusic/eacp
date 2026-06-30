@@ -1,9 +1,11 @@
+#include <eacp/SIMD/Backends.h>
 #include <eacp/SIMD/SIMD.h>
 
-// Public kernel entry points. Each resolves the best available backend once
-// (CPUID on x86-64, fixed on every other architecture) and calls it through a
-// function pointer. The indirect call is a deliberate, non-inlinable boundary
-// between baseline and AVX2 code.
+// Public image-kernel entry points. Each resolves the best available backend
+// once (CPUID on x86-64, fixed on every other architecture) and calls it through
+// a function pointer -- a deliberate, non-inlinable boundary between baseline and
+// AVX2 code. (The float-array primitives live in Tu/ArrayOps.cpp; being
+// memory-bound and auto-vectorized, they need no runtime dispatch.)
 namespace eacp::simd
 {
 namespace
