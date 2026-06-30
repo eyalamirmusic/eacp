@@ -5,6 +5,7 @@ target_sources(eacp-simd PRIVATE
         Dispatch/Cpu.cpp
         Dispatch/Dispatch.cpp
         Tu/ArrayOps.cpp
+        Tu/MirroredCrop.cpp
         Tu/Scalar.cpp
         Tu/Baseline.cpp)
 

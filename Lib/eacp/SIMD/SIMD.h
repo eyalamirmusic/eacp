@@ -42,6 +42,17 @@ void warpAffineInverse(const std::uint8_t* src,
                        int dstWidth,
                        int dstHeight);
 
+// Crop a width x height region at (x, y) of a tightly-packed RGBA8 image and
+// mirror it horizontally in one pass. `dst` holds width*height*4 bytes. The
+// caller guarantees the crop region lies within the source.
+void mirroredCrop(const std::uint8_t* src,
+                  int srcWidth,
+                  int x,
+                  int y,
+                  int width,
+                  int height,
+                  std::uint8_t* dst);
+
 // --- Elementwise float-array primitives ---
 //
 // Each processes `count` floats. `out` may alias an input (safe, elementwise).
