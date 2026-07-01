@@ -13,6 +13,10 @@ namespace eacp
 // getenv on MSVC; Environment-Posix.cpp uses std::getenv).
 std::optional<std::string> getEnv(std::string_view name);
 
+// Reads an environment variable, or an empty string when it is unset, for
+// callers that treat "unset" and "empty" the same.
+std::string getEnvValue(std::string_view name);
+
 // The current user's home directory, or an empty path when it can't be
 // resolved. Reads USERPROFILE on Windows and HOME elsewhere.
 std::filesystem::path homeDirectory();

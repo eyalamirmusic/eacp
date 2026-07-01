@@ -87,13 +87,12 @@ struct CameraApp
 {
     CameraApp()
     {
-        if (auto env = getEnv("EACP_DEMO_AUTOQUIT_SECONDS"))
-            view.autoQuitSeconds = std::atof(env->c_str());
+        view.autoQuitSeconds =
+            std::atof(getEnvValue("EACP_DEMO_AUTOQUIT_SECONDS").c_str());
 
         // Force the CPU-upload display path (Windows uses it) for verification.
-        if (auto mode = getEnv("EACP_DEMO_UPLOAD_MODE"))
-            if (*mode == "copy")
-                view.setUploadMode(Cameras::CameraView::UploadMode::Copy);
+        if (getEnvValue("EACP_DEMO_UPLOAD_MODE") == "copy")
+            view.setUploadMode(Cameras::CameraView::UploadMode::Copy);
 
         view.setMirrored(true); // front-camera-style preview
         view.attach(camera);

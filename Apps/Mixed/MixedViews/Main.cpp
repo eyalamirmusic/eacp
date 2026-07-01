@@ -278,8 +278,8 @@ struct MixedViewsApp
 {
     MixedViewsApp()
     {
-        if (auto env = getEnv("EACP_DEMO_AUTOQUIT_SECONDS"))
-            root.cameraView.autoQuitSeconds = std::atof(env->c_str());
+        root.cameraView.autoQuitSeconds =
+            std::atof(getEnvValue("EACP_DEMO_AUTOQUIT_SECONDS").c_str());
 
         root.cameraView.attach(camera);
         window.setContentView(root);

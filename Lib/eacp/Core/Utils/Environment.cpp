@@ -5,11 +5,15 @@
 namespace eacp
 {
 
+std::string getEnvValue(std::string_view name)
+{
+    return getEnv(name).value_or(std::string {});
+}
+
 std::filesystem::path homeDirectory()
 {
     auto variable = Platform::isWindows() ? "USERPROFILE" : "HOME";
-    auto value = getEnv(variable);
-    return value ? std::filesystem::path {*value} : std::filesystem::path {};
+    return std::filesystem::path {getEnvValue(variable)};
 }
 
 } // namespace eacp
