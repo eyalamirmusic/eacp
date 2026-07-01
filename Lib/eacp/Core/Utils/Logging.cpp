@@ -50,7 +50,7 @@ std::string timestamp()
 
 } // namespace
 
-void LOG(std::string_view text)
+void logMessage(std::string_view text)
 {
     auto line = timestamp() + " | " + std::string {text};
 

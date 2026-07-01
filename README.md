@@ -55,7 +55,7 @@ struct App
 {
     void update()
     {
-        eacp::LOG(std::to_string(numTimes));
+        eacp::LOG(numTimes);
         if (++numTimes == 4)
             eacp::Apps::quit();
     }

@@ -53,8 +53,7 @@ struct GlobalHotKey::Native
         auto vk = virtualKeyFromKeyCode(keyCode);
         if (vk == 0)
         {
-            LOG("GlobalHotKey: no Windows virtual key for keyCode "
-                + std::to_string(keyCode));
+            LOG("GlobalHotKey: no Windows virtual key for keyCode ", keyCode);
             return;
         }
 
@@ -66,8 +65,7 @@ struct GlobalHotKey::Native
         if (!RegisterHotKey(
                 window, id, toWinModifiers(modifiers), static_cast<UINT>(vk)))
         {
-            LOG("GlobalHotKey registration failed: error "
-                + std::to_string(GetLastError()));
+            LOG("GlobalHotKey registration failed: error ", GetLastError());
             id = 0;
             destroyWindow();
         }
@@ -123,8 +121,8 @@ struct GlobalHotKey::Native
 
         if (window == nullptr)
         {
-            LOG("GlobalHotKey: message window creation failed, error "
-                + std::to_string(GetLastError()));
+            LOG("GlobalHotKey: message window creation failed, error ",
+                GetLastError());
             return false;
         }
 
@@ -158,8 +156,7 @@ struct GlobalHotKey::Native
             auto error = GetLastError();
             if (error != ERROR_CLASS_ALREADY_EXISTS)
             {
-                LOG("GlobalHotKey: window class registration failed, error "
-                    + std::to_string(error));
+                LOG("GlobalHotKey: window class registration failed, error ", error);
                 return false;
             }
         }

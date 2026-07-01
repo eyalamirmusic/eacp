@@ -5,7 +5,7 @@ using namespace eacp;
 
 void printResponse(const eacp::HTTP::Response& res)
 {
-    LOG("Status: " + std::to_string(res.statusCode));
+    LOG("Status: ", res.statusCode);
     if (!res.error.empty())
         LOG("Error: " + res.error);
     else
@@ -78,7 +78,7 @@ int main()
         auto req = HTTP::Request("https://jsonplaceholder.typicode.com/posts/1");
         auto res = req.downloadTo("/tmp/eacp-download-test.json");
 
-        LOG("Download status: " + std::to_string(res.statusCode));
+        LOG("Download status: ", res.statusCode);
 
         if (!res.error.empty())
             LOG("Download error: " + res.error);

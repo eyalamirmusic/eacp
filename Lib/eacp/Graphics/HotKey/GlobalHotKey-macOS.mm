@@ -81,8 +81,7 @@ bool installHandlerOnce()
                                                  nullptr);
     if (status != noErr)
     {
-        LOG("GlobalHotKey handler installation failed: status "
-            + std::to_string(status));
+        LOG("GlobalHotKey handler installation failed: status ", status);
         return false;
     }
 
@@ -118,8 +117,7 @@ struct GlobalHotKey::Native
         }
         else
         {
-            LOG("GlobalHotKey registration failed: status "
-                + std::to_string(status));
+            LOG("GlobalHotKey registration failed: status ", status);
             hotKeyRef = nullptr;
             id = 0;
         }

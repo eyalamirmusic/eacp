@@ -391,9 +391,11 @@ struct WebView::Native
     HRESULT retryCompositionControllerCreate()
     {
         ++compositionCreateRetries;
-        LOG("WebView2: retrying composition controller create ("
-            + std::to_string(compositionCreateRetries) + "/"
-            + std::to_string(maxCompositionCreateRetries) + ")");
+        LOG("WebView2: retrying composition controller create (",
+            compositionCreateRetries,
+            "/",
+            maxCompositionCreateRetries,
+            ")");
         return createCompositionController();
     }
 
