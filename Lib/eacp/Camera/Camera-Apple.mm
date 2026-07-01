@@ -6,6 +6,7 @@
 #include <eacp/Core/ObjC/AutoReleasePool.h>
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Threads/EventLoop.h>
+#include <eacp/Core/Utils/Logging.h>
 
 #include <algorithm>
 #include <atomic>
@@ -208,7 +209,66 @@ AVCaptureDevice* resolveDevice(const std::optional<std::string>& deviceId)
     return [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
 }
 
-void applyFrameRate(AVCaptureDevice* device, double frameRate)
+bool formatSupportsRate(AVCaptureDeviceFormat* format, double frameRate)
+{
+    for (AVFrameRateRange* range in format.videoSupportedFrameRateRanges)
+        if (frameRate >= range.minFrameRate && frameRate <= range.maxFrameRate)
+            return true;
+
+    return false;
+}
+
+CGSize formatDimensions(AVCaptureDeviceFormat* format)
+{
+    auto dims = CMVideoFormatDescriptionGetDimensions(
+        (CMVideoFormatDescriptionRef) format.formatDescription);
+
+    return CGSizeMake(dims.width, dims.height);
+}
+
+// The session preset fixes the active format, and macOS 720p/1080p presets
+// usually cap at 30fps — so a higher requested rate needs an explicit format
+// that actually supports it. Prefer the smallest format that still covers the
+// requested resolution (we downscale anyway); if none is large enough, take the
+// largest available. Returns nil when no format supports the rate.
+AVCaptureDeviceFormat*
+    bestFormatForRate(AVCaptureDevice* device, int width, int height, double frameRate)
+{
+    AVCaptureDeviceFormat* smallestCovering = nil;
+    AVCaptureDeviceFormat* largest = nil;
+
+    for (AVCaptureDeviceFormat* format in device.formats)
+    {
+        if (!formatSupportsRate(format, frameRate))
+            continue;
+
+        auto size = formatDimensions(format);
+        auto area = size.width * size.height;
+
+        if (largest == nil || area > formatDimensions(largest).width
+                                          * formatDimensions(largest).height)
+            largest = format;
+
+        if (size.width >= width && size.height >= height)
+        {
+            if (smallestCovering == nil
+                || area < formatDimensions(smallestCovering).width
+                              * formatDimensions(smallestCovering).height)
+                smallestCovering = format;
+        }
+    }
+
+    return smallestCovering != nil ? smallestCovering : largest;
+}
+
+// Pick a format that supports the requested rate (only when the preset's active
+// format doesn't), then pin min == max frame duration so the device runs at
+// exactly that rate. If nothing supports it, the active format's default rate
+// stands — no regression for the common 30fps path.
+void configureFormatAndFrameRate(AVCaptureDevice* device,
+                                 int width,
+                                 int height,
+                                 double frameRate)
 {
     if (frameRate <= 0.0)
         return;
@@ -218,20 +278,36 @@ void applyFrameRate(AVCaptureDevice* device, double frameRate)
     if (![device lockForConfiguration:&error])
         return;
 
-    auto duration = CMTimeMake(1, (int32_t) std::llround(frameRate));
-
-    for (AVFrameRateRange* range in device.activeFormat
-             .videoSupportedFrameRateRanges)
+    if (!formatSupportsRate(device.activeFormat, frameRate))
     {
-        if (frameRate >= range.minFrameRate && frameRate <= range.maxFrameRate)
-        {
-            device.activeVideoMinFrameDuration = duration;
-            device.activeVideoMaxFrameDuration = duration;
-            break;
-        }
+        if (auto* format = bestFormatForRate(device, width, height, frameRate))
+            device.activeFormat = format;
+    }
+
+    if (formatSupportsRate(device.activeFormat, frameRate))
+    {
+        auto duration = CMTimeMake(1, (int32_t) std::llround(frameRate));
+        device.activeVideoMinFrameDuration = duration;
+        device.activeVideoMaxFrameDuration = duration;
     }
 
     [device unlockForConfiguration];
+
+    auto size = formatDimensions(device.activeFormat);
+    auto maxRate = 0.0;
+
+    for (AVFrameRateRange* range in device.activeFormat
+             .videoSupportedFrameRateRanges)
+        maxRate = std::max(maxRate, range.maxFrameRate);
+
+    LOG("[camera] active format ",
+        (int) size.width,
+        "x",
+        (int) size.height,
+        " formatMaxFps=",
+        maxRate,
+        " requestedFps=",
+        frameRate);
 }
 } // namespace
 
@@ -301,7 +377,8 @@ struct Camera::Native
         [session.get() addOutput:output.get()];
         [session.get() commitConfiguration];
 
-        applyFrameRate(device, config.frameRate);
+        configureFormatAndFrameRate(
+            device, config.width, config.height, config.frameRate);
 
         // startRunning blocks while the device warms up, so run it on a serial
         // session queue rather than the caller's (often the main) thread. stop()
