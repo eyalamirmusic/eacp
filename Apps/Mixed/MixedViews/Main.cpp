@@ -1,6 +1,7 @@
 #include <eacp/Camera/Camera.h>
 #include <eacp/CameraView/CameraView.h>
 #include <eacp/Core/App/App.h>
+#include <eacp/Core/Utils/Environment.h>
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/WebView/WebView.h>
 
@@ -277,8 +278,8 @@ struct MixedViewsApp
 {
     MixedViewsApp()
     {
-        if (const auto* env = std::getenv("EACP_DEMO_AUTOQUIT_SECONDS"))
-            root.cameraView.autoQuitSeconds = std::atof(env);
+        if (auto env = getEnv("EACP_DEMO_AUTOQUIT_SECONDS"))
+            root.cameraView.autoQuitSeconds = std::atof(env->c_str());
 
         root.cameraView.attach(camera);
         window.setContentView(root);

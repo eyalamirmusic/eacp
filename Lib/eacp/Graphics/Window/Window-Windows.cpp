@@ -46,9 +46,9 @@ struct Window::Native
         : quitCallback(options.effectiveOnQuit())
         , onResize(options.onResize)
         , onWillResize(options.onWillResize)
+        , events(&eventsToUse)
         , minWidth(options.minWidth)
         , minHeight(options.minHeight)
-        , events(&eventsToUse)
     {
         // Process-wide DPI awareness (per-monitor v2) is established by
         // initLoopThread() before any app code runs.
