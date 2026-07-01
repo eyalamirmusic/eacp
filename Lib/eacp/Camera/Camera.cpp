@@ -1,6 +1,7 @@
 #include "Camera.h"
 
 #include <eacp/Graphics/Image/Image.h>
+#include <eacp/SIMD/SIMD.h>
 
 // Portable Camera members. The platform backends (Camera-macOS.mm /
 // Camera-Windows.cpp) own the capture session and frame delivery; conversions
@@ -11,8 +12,8 @@ namespace eacp::Cameras
 {
 namespace
 {
-// BGRA (camera byte order) → RGBA (Graphics::Image byte order), copying
-// width * 4 bytes per row and dropping any trailing row padding.
+// BGRA (camera byte order) → RGBA (Graphics::Image byte order): the SIMD
+// red/blue swap does the per-pixel work, dropping any trailing row padding.
 Graphics::Image bgraToImage(const std::uint8_t* data,
                             int width,
                             int height,
@@ -21,18 +22,20 @@ Graphics::Image bgraToImage(const std::uint8_t* data,
     auto rgba = Graphics::ImageData {};
     rgba.resize((std::size_t) width * height * 4);
 
-    for (auto y = 0; y < height; ++y)
-    {
-        const auto* source = data + (std::size_t) y * bytesPerRow;
-        auto* destination = rgba.data() + (std::size_t) y * width * 4;
+    const auto rowPixels = (std::size_t) width;
+    const auto tightRowBytes = rowPixels * 4;
 
-        for (auto x = 0; x < width; ++x)
-        {
-            destination[x * 4 + 0] = source[x * 4 + 2]; // R ← B
-            destination[x * 4 + 1] = source[x * 4 + 1]; // G
-            destination[x * 4 + 2] = source[x * 4 + 0]; // B ← R
-            destination[x * 4 + 3] = source[x * 4 + 3]; // A
-        }
+    // Tightly-packed frames swap in a single pass; padded rows go one by one.
+    if (bytesPerRow == tightRowBytes)
+    {
+        eacp::simd::swapRedBlue(data, rgba.data(), rowPixels * (std::size_t) height);
+    }
+    else
+    {
+        for (auto y = 0; y < height; ++y)
+            eacp::simd::swapRedBlue(data + (std::size_t) y * bytesPerRow,
+                                    rgba.data() + (std::size_t) y * tightRowBytes,
+                                    rowPixels);
     }
 
     return Graphics::Image(width, height, std::move(rgba));

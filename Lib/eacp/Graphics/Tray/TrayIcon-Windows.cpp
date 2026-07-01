@@ -5,6 +5,7 @@
 #include "../Helpers/DarkMode-Windows.h"
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Threads/EventLoop.h>
+#include <eacp/SIMD/SIMD.h>
 
 #include <shellapi.h>
 
@@ -66,14 +67,7 @@ HICON toHIcon(const Image& image)
     // RGBA (source) -> BGRA (DIB byte order).
     auto* dst = static_cast<std::uint8_t*>(bits);
     const auto* src = image.pixels().data();
-    auto pixelCount = width * height;
-    for (auto i = 0; i < pixelCount; ++i)
-    {
-        dst[i * 4 + 0] = src[i * 4 + 2];
-        dst[i * 4 + 1] = src[i * 4 + 1];
-        dst[i * 4 + 2] = src[i * 4 + 0];
-        dst[i * 4 + 3] = src[i * 4 + 3];
-    }
+    eacp::simd::swapRedBlue(src, dst, (std::size_t) width * height);
 
     auto maskBitmap = CreateBitmap(width, height, 1, 1, nullptr);
 
