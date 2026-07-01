@@ -31,7 +31,7 @@ constexpr SpriteVertex unitQuad[] = {
 constexpr unsigned char whitePixel[] = {255, 255, 255, 255};
 
 // Built manually instead of through ShaderProgram::prepare(), which has no way
-// to enable blending; everything the renderer draws is alpha-blended.
+// to pick a blend mode; everything the renderer draws is alpha-blended.
 GPU::RenderPipelineDescriptor
     blendedDescriptor(const GPU::ShaderLibrary& library,
                       const GPU::VertexLayout& vertexLayout,
@@ -41,7 +41,7 @@ GPU::RenderPipelineDescriptor
     descriptor.library = &library;
     descriptor.vertexLayout = vertexLayout;
     descriptor.sampleCount = sampleCount;
-    descriptor.blending = true;
+    descriptor.blendMode = GPU::BlendMode::AlphaBlend;
     return descriptor;
 }
 

@@ -107,22 +107,36 @@ D3D12_RASTERIZER_DESC makeRasterizerDesc(int sampleCount)
     return desc;
 }
 
-D3D12_BLEND_DESC makeBlendDesc(bool blending)
+D3D12_BLEND_DESC makeBlendDesc(BlendMode mode)
 {
     D3D12_BLEND_DESC desc = {};
     auto& target = desc.RenderTarget[0];
     target.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 
-    if (!blending)
-        return desc;
+    switch (mode)
+    {
+        case BlendMode::None:
+            return desc;
+        case BlendMode::AlphaBlend:
+            target.BlendEnable = TRUE;
+            target.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+            target.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+            target.BlendOp = D3D12_BLEND_OP_ADD;
+            target.SrcBlendAlpha = D3D12_BLEND_SRC_ALPHA;
+            target.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+            target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+            return desc;
+        case BlendMode::Additive:
+            target.BlendEnable = TRUE;
+            target.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+            target.DestBlend = D3D12_BLEND_ONE;
+            target.BlendOp = D3D12_BLEND_OP_ADD;
+            target.SrcBlendAlpha = D3D12_BLEND_ONE;
+            target.DestBlendAlpha = D3D12_BLEND_ONE;
+            target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+            return desc;
+    }
 
-    target.BlendEnable = TRUE;
-    target.SrcBlend = D3D12_BLEND_SRC_ALPHA;
-    target.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-    target.BlendOp = D3D12_BLEND_OP_ADD;
-    target.SrcBlendAlpha = D3D12_BLEND_SRC_ALPHA;
-    target.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
-    target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
     return desc;
 }
 
@@ -173,7 +187,7 @@ struct RenderPipeline::Native
         desc.VS.BytecodeLength = program->vertexBytecode->GetBufferSize();
         desc.PS.pShaderBytecode = program->pixelBytecode->GetBufferPointer();
         desc.PS.BytecodeLength = program->pixelBytecode->GetBufferSize();
-        desc.BlendState = makeBlendDesc(descriptor.blending);
+        desc.BlendState = makeBlendDesc(descriptor.blendMode);
         desc.SampleMask = UINT_MAX;
         desc.RasterizerState = makeRasterizerDesc(descriptor.sampleCount);
         desc.DepthStencilState = makeDepthStencilDesc(descriptor.depth);

@@ -102,15 +102,26 @@ struct RenderPipeline::Native
         auto colorAttachment = pipelineDescriptor.colorAttachments[0];
         colorAttachment.pixelFormat = toMetalPixelFormat(descriptor.colorFormat);
 
-        if (descriptor.blending)
+        switch (descriptor.blendMode)
         {
-            colorAttachment.blendingEnabled = YES;
-            colorAttachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-            colorAttachment.destinationRGBBlendFactor =
-                MTLBlendFactorOneMinusSourceAlpha;
-            colorAttachment.sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
-            colorAttachment.destinationAlphaBlendFactor =
-                MTLBlendFactorOneMinusSourceAlpha;
+            case BlendMode::None:
+                break;
+            case BlendMode::AlphaBlend:
+                colorAttachment.blendingEnabled = YES;
+                colorAttachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+                colorAttachment.destinationRGBBlendFactor =
+                    MTLBlendFactorOneMinusSourceAlpha;
+                colorAttachment.sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
+                colorAttachment.destinationAlphaBlendFactor =
+                    MTLBlendFactorOneMinusSourceAlpha;
+                break;
+            case BlendMode::Additive:
+                colorAttachment.blendingEnabled = YES;
+                colorAttachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+                colorAttachment.destinationRGBBlendFactor = MTLBlendFactorOne;
+                colorAttachment.sourceAlphaBlendFactor = MTLBlendFactorOne;
+                colorAttachment.destinationAlphaBlendFactor = MTLBlendFactorOne;
+                break;
         }
 
         NSError* error = nil;
