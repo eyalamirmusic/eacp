@@ -1,13 +1,13 @@
 #include <eacp/Camera/Camera.h>
 #include <eacp/CameraView/CameraView.h>
 #include <eacp/Core/App/App.h>
+#include <eacp/Core/Utils/Environment.h>
 #include <eacp/Graphics/Graphics.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 
 using namespace eacp;
 
@@ -87,12 +87,12 @@ struct CameraApp
 {
     CameraApp()
     {
-        if (const auto* env = std::getenv("EACP_DEMO_AUTOQUIT_SECONDS"))
-            view.autoQuitSeconds = std::atof(env);
+        if (auto env = getEnv("EACP_DEMO_AUTOQUIT_SECONDS"))
+            view.autoQuitSeconds = std::atof(env->c_str());
 
         // Force the CPU-upload display path (Windows uses it) for verification.
-        if (const auto* mode = std::getenv("EACP_DEMO_UPLOAD_MODE"))
-            if (std::strcmp(mode, "copy") == 0)
+        if (auto mode = getEnv("EACP_DEMO_UPLOAD_MODE"))
+            if (*mode == "copy")
                 view.setUploadMode(Cameras::CameraView::UploadMode::Copy);
 
         view.setMirrored(true); // front-camera-style preview
