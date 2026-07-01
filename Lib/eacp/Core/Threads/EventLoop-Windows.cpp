@@ -2,12 +2,15 @@
 
 #include "EventLoop.h"
 #include "ThreadUtils-Windows.h"
+#include "../App/App.h"
 #include "../Utils/Singleton.h"
 
 #include <eacp/Core/Utils/Containers.h>
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <thread>
+#include <tlhelp32.h>
 
 namespace eacp::Threads
 {
@@ -123,6 +126,73 @@ static void destroyMessageWindow()
         DestroyWindow(hwnd);
 }
 
+// An IDE like CLion, when NOT emulating a terminal, launches the app under a
+// helper process and — on "Stop" — kills that helper rather than the app. That
+// orphans the app: it gets no WM_CLOSE and no console event (a WebView app in
+// particular just keeps running, since WebView2 keeps a message pump alive). So
+// tie our lifetime to the launching process: when it exits, quit as if the
+// window had been closed.
+//
+// Gated to non-distribution builds at the call site: a shipped app must never
+// quit just because whatever launched it exited — an updater that launches-and-
+// exits, or even Explorer restarting after a crash, would otherwise take it down.
+static DWORD getParentProcessId()
+{
+    auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return 0;
+
+    auto entry = PROCESSENTRY32W {};
+    entry.dwSize = sizeof(entry);
+    auto self = GetCurrentProcessId();
+    auto parent = DWORD {0};
+
+    if (Process32FirstW(snapshot, &entry))
+        do
+        {
+            if (entry.th32ProcessID == self)
+            {
+                parent = entry.th32ParentProcessID;
+                break;
+            }
+        } while (Process32NextW(snapshot, &entry));
+
+    CloseHandle(snapshot);
+    return parent;
+}
+
+static void installParentDeathWatchdog()
+{
+    auto parentPid = getParentProcessId();
+    if (parentPid == 0)
+        return;
+
+    auto parent = OpenProcess(SYNCHRONIZE, FALSE, parentPid);
+    if (!parent)
+        return;
+
+    // If the parent has already exited (e.g. a spawn-and-exit launcher), the
+    // process the IDE actually tracks is elsewhere — don't watch, or we'd quit a
+    // legitimately-running app immediately.
+    if (WaitForSingleObject(parent, 0) != WAIT_TIMEOUT)
+    {
+        CloseHandle(parent);
+        return;
+    }
+
+    std::thread(
+        [parent]
+        {
+            WaitForSingleObject(parent, INFINITE);
+            CloseHandle(parent);
+            // Same graceful quit the window's close button drives; callAsync
+            // posts to the message-only window (thread-safe) so teardown runs on
+            // the main thread.
+            callAsync([] { getEventLoop().quit(); });
+        })
+        .detach();
+}
+
 namespace
 {
 void initLoopThread()
@@ -133,6 +203,12 @@ void initLoopThread()
     initMainThread();
     mainThreadId = GetCurrentThreadId();
     ensureMessageWindow();
+
+    // Dev convenience only, never in a signed/shipped build (see the watchdog's
+    // note): quit when the process that launched us exits, so an IDE "Stop" that
+    // kills its launcher helper rather than the app still takes the app down.
+    if (!Apps::isDistributionSigned())
+        installParentDeathWatchdog();
 
     // Any callbacks queued before the loop existed will have been buffered
     // in PendingCallbacks; nudge the pump to drain them on the next
