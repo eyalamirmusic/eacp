@@ -1,5 +1,6 @@
 #include <eacp/SIMD/Backends.h>
 #include <eacp/SIMD/SIMD.h>
+#include <eacp/SIMD/Ops.h>
 
 #include <NanoTest/NanoTest.h>
 #include <ea_data_structures/ea_data_structures.h>
@@ -293,4 +294,97 @@ auto tArrayMultiplyAddMatchesReference =
     eacp::simd::multiplyAdd(a.data(), b.data(), c.data(), out.data(), kArrayCount);
     for (int i = 0; i < kArrayCount; ++i)
         check(out[i] == a[i] * b[i] + c[i]);
+};
+
+auto tArrayMultiplyAddScalarMatchesReference =
+    test("SIMD/arrayMultiplyAddScalarMatchesReference") = []
+{
+    const auto a = ramp(11, 0);
+    const auto c = ramp(5, 0);
+    auto out = EA::Vector<float>(kArrayCount);
+    eacp::simd::multiplyAdd(a.data(), 3.f, c.data(), out.data(), kArrayCount);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(out[i] == a[i] * 3.f + c[i]);
+};
+
+// out == c is the accumulate-in-place shape the docs promise (out[i] += a[i]*b).
+auto tArrayMultiplyAddScalarAccumulatesInPlace =
+    test("SIMD/arrayMultiplyAddScalarAccumulatesInPlace") = []
+{
+    const auto a = ramp(11, 0);
+    const auto before = ramp(5, 0);
+    auto out = before;
+    eacp::simd::multiplyAdd(a.data(), 2.f, out.data(), out.data(), kArrayCount);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(out[i] == before[i] + a[i] * 2.f);
+};
+
+// t = 0.25 keeps every intermediate exactly representable, so the comparison
+// stays exact whether or not the compiler contracts the multiply-add.
+auto tArrayLerpMatchesReference = test("SIMD/arrayLerpMatchesReference") = []
+{
+    const auto a = ramp(17, 1);
+    const auto b = ramp(23, 0);
+    auto out = EA::Vector<float>(kArrayCount);
+    eacp::simd::lerp(a.data(), b.data(), 0.25f, out.data(), kArrayCount);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(out[i] == a[i] + 0.25f * (b[i] - a[i]));
+};
+
+// The buffer-level helpers in Ops.h: each forwards to the raw primitive, in
+// place on its first argument.
+auto tOpsHelpersForwardToPrimitives = test("SIMD/opsHelpersForwardToPrimitives") = []
+{
+    const auto a = ramp(17, 1);
+    const auto b = ramp(23, 0);
+
+    auto dst = a;
+    eacp::simd::add(dst, b);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(dst[i] == a[i] + b[i]);
+
+    dst = a;
+    eacp::simd::subtract(dst, b);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(dst[i] == a[i] - b[i]);
+
+    dst = a;
+    eacp::simd::multiply(dst, b);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(dst[i] == a[i] * b[i]);
+
+    dst = a;
+    eacp::simd::multiply(dst, 3.f);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(dst[i] == a[i] * 3.f);
+
+    dst = a;
+    eacp::simd::multiplyAdd(dst, b, 2.f);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(dst[i] == a[i] + b[i] * 2.f);
+
+    dst = a;
+    eacp::simd::multiplyAdd(dst, a, b);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(dst[i] == a[i] + a[i] * b[i]);
+
+    dst = a;
+    eacp::simd::lerp(dst, b, 0.25f);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(dst[i] == a[i] + 0.25f * (b[i] - a[i]));
+};
+
+// Mismatched sizes process the common prefix and never touch the tail.
+auto tOpsHelpersStopAtShortestBuffer =
+    test("SIMD/opsHelpersStopAtShortestBuffer") = []
+{
+    const auto a = ramp(17, 1);
+    auto shorter = EA::Vector<float>(kArrayCount / 2);
+    for (int i = 0; i < shorter.size(); ++i)
+        shorter[i] = 1.f;
+
+    auto dst = a;
+    eacp::simd::add(dst, shorter);
+    for (int i = 0; i < kArrayCount; ++i)
+        check(dst[i] == (i < kArrayCount / 2 ? a[i] + 1.f : a[i]));
 };

@@ -75,4 +75,12 @@ void multiplyByScalar(const float* a, float scalar, float* out, std::size_t coun
 void multiplyAdd(
     const float* a, const float* b, const float* c, float* out, std::size_t count);
 
+// out[i] = a[i] * b + c[i] -- the axpy shape; with out == c it accumulates a
+// scaled array in place (out[i] += a[i] * b).
+void multiplyAdd(
+    const float* a, float b, const float* c, float* out, std::size_t count);
+
+// out[i] = a[i] + t * (b[i] - a[i])
+void lerp(const float* a, const float* b, float t, float* out, std::size_t count);
+
 } // namespace eacp::simd
