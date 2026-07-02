@@ -120,6 +120,12 @@ struct WindowOptions
     // Unset centers the window (macOS) / uses the system default (Windows).
     std::optional<Point> initialPosition;
 
+    // Windows: stamps the executable's embedded icon resource (the first
+    // icon group, whatever its ID) onto the window so the taskbar and
+    // Alt-Tab show it instead of the generic application icon. No-op on
+    // macOS, where windows take the bundle icon automatically.
+    bool useEmbeddedApplicationIcon = false;
+
     // Rounds the window's corners (points). Borderless windows are square
     // by default; set this to get the standard macOS rounded shape. On
     // macOS this makes the window non-opaque with a clear background

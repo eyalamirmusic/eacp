@@ -141,6 +141,11 @@ public:
         // where scheme handlers are per-WKWebViewConfiguration, not per-folder.
         std::string userDataFolderSuffix;
 
+        // Windows: WebView2's status bar — the hover-link URL overlay in the
+        // bottom corner. Off by default so the embedding matches macOS,
+        // where WKWebView has no status bar. No-op on Apple platforms.
+        bool statusBar = false;
+
         // macOS: deliver the first click on an unfocused window to the page
         // instead of swallowing it as activation (NSView acceptsFirstMouse).
         // Without it, app-region drag handles need one click to focus and a
