@@ -102,7 +102,7 @@ struct RenderPipeline::Native
         auto colorAttachment = pipelineDescriptor.colorAttachments[0];
         colorAttachment.pixelFormat = toMetalPixelFormat(descriptor.colorFormat);
 
-        switch (descriptor.blendMode)
+        switch (resolveBlendMode(descriptor))
         {
             case BlendMode::None:
                 break;

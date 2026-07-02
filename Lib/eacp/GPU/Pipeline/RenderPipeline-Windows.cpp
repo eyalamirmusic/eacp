@@ -187,7 +187,7 @@ struct RenderPipeline::Native
         desc.VS.BytecodeLength = program->vertexBytecode->GetBufferSize();
         desc.PS.pShaderBytecode = program->pixelBytecode->GetBufferPointer();
         desc.PS.BytecodeLength = program->pixelBytecode->GetBufferSize();
-        desc.BlendState = makeBlendDesc(descriptor.blendMode);
+        desc.BlendState = makeBlendDesc(resolveBlendMode(descriptor));
         desc.SampleMask = UINT_MAX;
         desc.RasterizerState = makeRasterizerDesc(descriptor.sampleCount);
         desc.DepthStencilState = makeDepthStencilDesc(descriptor.depth);

@@ -37,6 +37,30 @@ enum class BlendMode
     Additive
 };
 
+// Back-compat wrapper for the old `bool blending` field. Marking a bool
+// member `[[deprecated]]` directly would fire the warning inside the
+// descriptor's implicit copy/move constructors too, spraying deprecation
+// noise across every caller that returns a descriptor by value. Scoping the
+// attribute to the assignment operator instead means only the write
+// (`descriptor.blending = true;`) triggers the warning, while reads and
+// copies stay silent. Read implicitly converts back to bool so backends and
+// resolveBlendMode() see it as a plain bool.
+struct DeprecatedBlendingField
+{
+    bool value = false;
+
+    DeprecatedBlendingField() = default;
+
+    [[deprecated("Use blendMode = BlendMode::AlphaBlend instead.")]]
+    DeprecatedBlendingField& operator=(bool newValue)
+    {
+        value = newValue;
+        return *this;
+    }
+
+    operator bool() const { return value; }
+};
+
 struct RenderPipelineDescriptor
 {
     const ShaderLibrary* library = nullptr;
@@ -48,10 +72,27 @@ struct RenderPipelineDescriptor
     int sampleCount = 1;
     BlendMode blendMode = BlendMode::None;
 
+    // Deprecated: set `blendMode = BlendMode::AlphaBlend` instead. Pre-BlendMode
+    // code (`descriptor.blending = true;`) still compiles and behaves the same.
+    // Resolved by resolveBlendMode() below: if blendMode is anything but None
+    // it wins; only then does `blending` upgrade a None to AlphaBlend.
+    DeprecatedBlendingField blending;
+
     // Depth testing (less-equal, depth writes on). Requires the view to provide a
     // depth buffer (GPUView::setDepth(true)). Needed for correct 3D occlusion.
     bool depth = false;
 };
+
+// Resolves the effective blend mode from the descriptor, honouring the
+// deprecated `blending` bool for callers that haven't migrated yet. `blendMode`
+// wins whenever set; the bool only upgrades a None default to AlphaBlend.
+inline BlendMode resolveBlendMode(const RenderPipelineDescriptor& descriptor)
+{
+    if (descriptor.blendMode != BlendMode::None)
+        return descriptor.blendMode;
+
+    return descriptor.blending ? BlendMode::AlphaBlend : BlendMode::None;
+}
 
 // A compiled render pipeline state (MTLRenderPipelineState on Metal). Create via
 // Device::makeRenderPipeline.
