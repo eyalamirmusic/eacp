@@ -107,6 +107,16 @@ struct CameraApp
         auto config = Cameras::CameraConfig {};
         config.width = 1280;
         config.height = 720;
+
+        for (const auto& device: Cameras::Camera::devices())
+        {
+            if (device.isFrontFacing)
+            {
+                config.deviceId = device.id;
+                break;
+            }
+        }
+
         camera.start(config);
     }
 

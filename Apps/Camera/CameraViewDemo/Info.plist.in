@@ -34,6 +34,14 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>This demo shows the live camera in a GPU view to exercise the eacp camera subsystem.</string>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
