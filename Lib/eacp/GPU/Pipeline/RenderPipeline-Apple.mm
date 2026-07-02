@@ -7,6 +7,8 @@
 
 #include <eacp/Core/ObjC/ObjC.h>
 
+#include <cassert>
+
 namespace eacp::GPU
 {
 static MTLVertexFormat toMetalVertexFormat(VertexFormat format)
@@ -102,15 +104,33 @@ struct RenderPipeline::Native
         auto colorAttachment = pipelineDescriptor.colorAttachments[0];
         colorAttachment.pixelFormat = toMetalPixelFormat(descriptor.colorFormat);
 
-        if (descriptor.blending)
+        switch (descriptor.blendMode)
         {
-            colorAttachment.blendingEnabled = YES;
-            colorAttachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-            colorAttachment.destinationRGBBlendFactor =
-                MTLBlendFactorOneMinusSourceAlpha;
-            colorAttachment.sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
-            colorAttachment.destinationAlphaBlendFactor =
-                MTLBlendFactorOneMinusSourceAlpha;
+            case BlendMode::None:
+                break;
+            case BlendMode::AlphaBlend:
+                colorAttachment.blendingEnabled = YES;
+                colorAttachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+                colorAttachment.destinationRGBBlendFactor =
+                    MTLBlendFactorOneMinusSourceAlpha;
+                colorAttachment.sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
+                colorAttachment.destinationAlphaBlendFactor =
+                    MTLBlendFactorOneMinusSourceAlpha;
+                break;
+            case BlendMode::Additive:
+                colorAttachment.blendingEnabled = YES;
+                colorAttachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+                colorAttachment.destinationRGBBlendFactor = MTLBlendFactorOne;
+                colorAttachment.sourceAlphaBlendFactor = MTLBlendFactorOne;
+                colorAttachment.destinationAlphaBlendFactor = MTLBlendFactorOne;
+                break;
+            default:
+                // Guards against a future BlendMode value that this backend
+                // was never taught to handle - would otherwise silently
+                // produce a no-blend pipeline. Loud in Debug, degrades to
+                // None in Release (both backends match this behaviour).
+                assert(false && "eacp: unhandled BlendMode in Metal backend");
+                break;
         }
 
         NSError* error = nil;
