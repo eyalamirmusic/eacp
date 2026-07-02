@@ -25,6 +25,18 @@ enum class PrimitiveTopology
     Points
 };
 
+// Color-attachment blending. AlphaBlend is the classic straight-alpha over
+// (SRC_ALPHA, ONE_MINUS_SRC_ALPHA), for translucency stacking. Additive is
+// alpha-weighted (SRC_ALPHA, ONE), for glow / accumulation effects where
+// overlapping fragments brighten. None keeps the pipeline opaque - the source
+// fragment replaces whatever was in the target.
+enum class BlendMode
+{
+    None,
+    AlphaBlend,
+    Additive
+};
+
 struct RenderPipelineDescriptor
 {
     const ShaderLibrary* library = nullptr;
@@ -34,7 +46,7 @@ struct RenderPipelineDescriptor
     // Multisample count for anti-aliasing. Must match the render pass's sample
     // count (GPUView::sampleCount()). 1 = no MSAA.
     int sampleCount = 1;
-    bool blending = false;
+    BlendMode blendMode = BlendMode::None;
 
     // Depth testing (less-equal, depth writes on). Requires the view to provide a
     // depth buffer (GPUView::setDepth(true)). Needed for correct 3D occlusion.

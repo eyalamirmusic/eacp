@@ -183,6 +183,32 @@ auto tDeviceBuildsIndexBuffer = test("GPU/deviceBuildsIndexBuffer") = []
     check(pipeline.topology() == PrimitiveTopology::TriangleStrip);
 };
 
+// Every BlendMode value produces a valid pipeline - the switch in the backend
+// covers every case, and the D3D12 blend descriptor path is populated for the
+// modes that need it. Self-skips without a GPU device.
+auto tDeviceBuildsPipelineForEachBlendMode =
+    test("GPU/deviceBuildsPipelineForEachBlendMode") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto library = device.makeShaderLibrary(smokeShaderSource());
+
+    for (auto mode: {BlendMode::None, BlendMode::AlphaBlend, BlendMode::Additive})
+    {
+        auto descriptor = RenderPipelineDescriptor {};
+        descriptor.library = &library;
+        descriptor.vertexLayout.attribute(VertexFormat::Float4, 0);
+        descriptor.vertexLayout.stride = sizeof(float) * 4;
+        descriptor.blendMode = mode;
+
+        auto pipeline = device.makeRenderPipeline(descriptor);
+        check(pipeline.isValid());
+    }
+};
+
 // A texture builds from raw pixels and reports its size; both filter modes and
 // a null-pixel (uninitialised) texture build too. Self-skips without a device.
 auto tDeviceBuildsTexture = test("GPU/deviceBuildsTexture") = []
