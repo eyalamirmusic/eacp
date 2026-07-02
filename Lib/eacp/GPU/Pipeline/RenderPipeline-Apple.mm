@@ -7,6 +7,8 @@
 
 #include <eacp/Core/ObjC/ObjC.h>
 
+#include <cassert>
+
 namespace eacp::GPU
 {
 static MTLVertexFormat toMetalVertexFormat(VertexFormat format)
@@ -102,7 +104,7 @@ struct RenderPipeline::Native
         auto colorAttachment = pipelineDescriptor.colorAttachments[0];
         colorAttachment.pixelFormat = toMetalPixelFormat(descriptor.colorFormat);
 
-        switch (resolveBlendMode(descriptor))
+        switch (descriptor.blendMode)
         {
             case BlendMode::None:
                 break;
@@ -121,6 +123,13 @@ struct RenderPipeline::Native
                 colorAttachment.destinationRGBBlendFactor = MTLBlendFactorOne;
                 colorAttachment.sourceAlphaBlendFactor = MTLBlendFactorOne;
                 colorAttachment.destinationAlphaBlendFactor = MTLBlendFactorOne;
+                break;
+            default:
+                // Guards against a future BlendMode value that this backend
+                // was never taught to handle - would otherwise silently
+                // produce a no-blend pipeline. Loud in Debug, degrades to
+                // None in Release (both backends match this behaviour).
+                assert(false && "eacp: unhandled BlendMode in Metal backend");
                 break;
         }
 

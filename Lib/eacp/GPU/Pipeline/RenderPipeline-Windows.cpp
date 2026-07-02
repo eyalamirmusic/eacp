@@ -6,6 +6,7 @@
 #include "../Shader/ShaderLibrary.h"
 #include "../Windows/D3D12Types.h"
 
+#include <cassert>
 #include <vector>
 
 #include <winrt/base.h>
@@ -135,9 +136,15 @@ D3D12_BLEND_DESC makeBlendDesc(BlendMode mode)
             target.DestBlendAlpha = D3D12_BLEND_ONE;
             target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
             return desc;
+        default:
+            // Guards against a future BlendMode value that this backend was
+            // never taught to handle - would otherwise silently produce a
+            // no-blend pipeline (that's what the zero-initialised desc is).
+            // Loud in Debug, degrades to None in Release (both backends
+            // match this behaviour).
+            assert(false && "eacp: unhandled BlendMode in D3D12 backend");
+            return desc;
     }
-
-    return desc;
 }
 
 // Less-equal depth test with depth writes on, matching the Metal backend. The
@@ -187,7 +194,7 @@ struct RenderPipeline::Native
         desc.VS.BytecodeLength = program->vertexBytecode->GetBufferSize();
         desc.PS.pShaderBytecode = program->pixelBytecode->GetBufferPointer();
         desc.PS.BytecodeLength = program->pixelBytecode->GetBufferSize();
-        desc.BlendState = makeBlendDesc(resolveBlendMode(descriptor));
+        desc.BlendState = makeBlendDesc(descriptor.blendMode);
         desc.SampleMask = UINT_MAX;
         desc.RasterizerState = makeRasterizerDesc(descriptor.sampleCount);
         desc.DepthStencilState = makeDepthStencilDesc(descriptor.depth);

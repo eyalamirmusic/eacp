@@ -209,47 +209,6 @@ auto tDeviceBuildsPipelineForEachBlendMode =
     }
 };
 
-// The deprecated `blending` bool still resolves through to AlphaBlend when a
-// caller sets only the legacy field. Guards against silent regressions of the
-// back-compat alias. Self-skips without a GPU device.
-auto tDeviceHonoursDeprecatedBlendingAlias =
-    test("GPU/deviceHonoursDeprecatedBlendingAlias") = []
-{
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto library = device.makeShaderLibrary(smokeShaderSource());
-
-    auto descriptor = RenderPipelineDescriptor {};
-    descriptor.library = &library;
-    descriptor.vertexLayout.attribute(VertexFormat::Float4, 0);
-    descriptor.vertexLayout.stride = sizeof(float) * 4;
-
-    // Deliberately using the deprecated field here - suppressing the warning
-    // just so a warnings-as-errors build (external consumer) still runs this
-    // regression test cleanly.
-#if defined(__clang__) || defined(__GNUC__)
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#elif defined(_MSC_VER)
-    #pragma warning(push)
-    #pragma warning(disable : 4996)
-#endif
-    descriptor.blending = true;
-#if defined(__clang__) || defined(__GNUC__)
-    #pragma GCC diagnostic pop
-#elif defined(_MSC_VER)
-    #pragma warning(pop)
-#endif
-
-    check(resolveBlendMode(descriptor) == BlendMode::AlphaBlend);
-
-    auto pipeline = device.makeRenderPipeline(descriptor);
-    check(pipeline.isValid());
-};
-
 // A texture builds from raw pixels and reports its size; both filter modes and
 // a null-pixel (uninitialised) texture build too. Self-skips without a device.
 auto tDeviceBuildsTexture = test("GPU/deviceBuildsTexture") = []
