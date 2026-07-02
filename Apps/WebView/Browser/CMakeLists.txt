@@ -12,6 +12,9 @@ set_target_properties(Browser PROPERTIES
 eacp_set_gui_subsystem(Browser)
 set_default_target_setting(Browser)
 
-# The blue icon everywhere, except the Windows Alt-Tab switcher, which shows
-# the orange one — demonstrating the WINDOWS_ALT_TAB_ICON override.
-eacp_set_icon(Browser MAIN_ICON Icon.png WINDOWS_ALT_TAB_ICON AltTabIcon.png)
+# The app icon travels as a plain embedded resource; Main.cpp decodes it
+# and hands it to WindowOptions::applicationIcon.
+res_embed_add(Browser
+        FILES     Icon.png
+        NAMESPACE Browser
+        CATEGORY  Browser)

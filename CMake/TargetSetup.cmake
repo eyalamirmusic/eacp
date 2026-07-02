@@ -1,5 +1,4 @@
 include(AppleSetup)
-include(IconSetup)
 
 function(set_default_warnings_level target)
     if (MSVC)
@@ -74,10 +73,6 @@ function(eacp_set_gui_subsystem target)
     if (MSVC)
         target_link_options(${target} PRIVATE "/ENTRY:mainCRTStartup")
     endif ()
-
-    # Every GUI app gets an application icon — the eacp default unless the
-    # app overrides it with eacp_set_icon() (see IconSetup.cmake).
-    _eacp_schedule_icon_setup(${target})
 endfunction()
 
 function(add_ide_sources target)

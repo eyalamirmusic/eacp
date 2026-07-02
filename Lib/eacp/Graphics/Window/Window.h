@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <eacp/Core/Utils/Containers.h>
+#include "../Image/Image.h"
 #include "../Primitives/Primitives.h"
 #include "../View/View.h"
 #include <eacp/Core/App/App.h>
@@ -120,14 +121,11 @@ struct WindowOptions
     // Unset centers the window (macOS) / uses the system default (Windows).
     std::optional<Point> initialPosition;
 
-    // Windows: stamps the executable's embedded icon resource onto the
-    // window so the taskbar and Alt-Tab show it instead of the generic
-    // application icon. eacp_set_icon() embeds the groups it looks for:
-    // ID 1 is the application icon, ID 2 an optional Alt-Tab override; a
-    // hand-authored .rc also works (the first icon group found is used).
-    // No-op when the executable embeds no icon, and on macOS, where windows
-    // take the bundle icon automatically.
-    bool useEmbeddedApplicationIcon = true;
+    // Provides the application's icon, typically decoding a PNG embedded
+    // with ResEmbed. Called once when the window is constructed: Windows
+    // stamps the icon on the window so the taskbar and Alt-Tab show it;
+    // macOS applies it as the Dock icon. Unset keeps the system default.
+    std::function<Image()> applicationIcon;
 
     // Rounds the window's corners (points). Borderless windows are square
     // by default; set this to get the standard macOS rounded shape. On

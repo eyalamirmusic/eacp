@@ -1,15 +1,16 @@
 #include <eacp/WebView/WebView.h>
 
 #include <eacp/Graphics/Widgets/TextInput.h>
+#include <ResEmbed/ResEmbed.h>
 
 using namespace eacp;
 using namespace Graphics;
 
-// A minimal browser demonstrating the Windows chrome options:
+// A minimal browser demonstrating the window chrome options:
 //
-//   eacp_set_icon (CMakeLists.txt)   embeds the app icon, plus a distinct
-//       Alt-Tab icon via WINDOWS_ALT_TAB_ICON; windows pick both up
-//       automatically (WindowOptions::useEmbeddedApplicationIcon)
+//   WindowOptions::applicationIcon   decodes the PNG embedded with ResEmbed
+//       (CMakeLists.txt) — the Windows taskbar / Alt-Tab switcher and the
+//       macOS Dock show it instead of the generic application icon
 //   WebView::Options::statusBar      off, so hovering a link shows no URL
 //       overlay — the same behaviour as WKWebView
 //
@@ -67,6 +68,12 @@ struct BrowserApp
         options.height = 760;
         options.minWidth = 480;
         options.minHeight = 320;
+
+        options.applicationIcon = []
+        {
+            auto png = ResEmbed::get("Icon.png", "Browser");
+            return Image::decode(png.data(), png.getSize());
+        };
 
         return options;
     }

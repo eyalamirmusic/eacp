@@ -4,6 +4,7 @@
 #include "CompositionHostWindow-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
 #include "../Helpers/DarkMode-Windows.h"
+#include "../Helpers/ImageConversion-Windows.h"
 #include "../Helpers/SystemAppearance.h"
 #include <eacp/Core/App/AppEnvironment.h>
 
@@ -39,68 +40,6 @@ NonClientInsets nonClientInsets(HWND hwnd)
     return {rect.right - rect.left, rect.bottom - rect.top};
 }
 
-// The first icon group embedded in the executable, whatever its resource ID.
-// String names are only valid during enumeration, so they are copied out.
-struct IconGroupName
-{
-    bool found = false;
-    LPWSTR id = nullptr;
-    std::wstring text;
-
-    LPCWSTR get() const { return id != nullptr ? id : text.c_str(); }
-};
-
-BOOL CALLBACK firstIconGroupName(HMODULE, LPCWSTR, LPWSTR name, LONG_PTR param)
-{
-    auto& result = *reinterpret_cast<IconGroupName*>(param);
-    result.found = true;
-
-    if (IS_INTRESOURCE(name))
-        result.id = name;
-    else
-        result.text = name;
-
-    return FALSE;
-}
-
-// The icon group IDs eacp_set_icon (IconSetup.cmake) embeds: 1 is the
-// application icon, 2 the optional Alt-Tab override.
-constexpr auto mainIconResourceId = 1;
-constexpr auto altTabIconResourceId = 2;
-
-// LR_SHARED icons live in the system's per-resource cache and must not be
-// destroyed, so they safely outlive the window.
-HICON loadIconResource(LPCWSTR name, int size)
-{
-    return static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),
-                                         name,
-                                         IMAGE_ICON,
-                                         size,
-                                         size,
-                                         LR_DEFAULTCOLOR | LR_SHARED));
-}
-
-HICON loadEmbeddedApplicationIcon(int size, int preferredResourceId)
-{
-    if (auto* icon = loadIconResource(MAKEINTRESOURCEW(preferredResourceId), size))
-        return icon;
-
-    // Hand-authored resource scripts can use any ID, so fall back to the
-    // first icon group in the executable. RT_GROUP_ICON comes from the ANSI
-    // MAKEINTRESOURCE (UNICODE is not defined project-wide); the W API wants
-    // the same ordinal as a wide pointer.
-    auto* iconGroupType = reinterpret_cast<LPCWSTR>(RT_GROUP_ICON);
-
-    auto name = IconGroupName {};
-    EnumResourceNamesW(GetModuleHandleW(nullptr),
-                       iconGroupType,
-                       firstIconGroupName,
-                       reinterpret_cast<LONG_PTR>(&name));
-    if (!name.found)
-        return nullptr;
-
-    return loadIconResource(name.get(), size);
-}
 } // namespace
 
 struct Window::Native
@@ -121,7 +60,13 @@ struct Window::Native
         host.onContentResized = onResize;
     }
 
-    ~Native() { host.teardown(); }
+    ~Native()
+    {
+        host.teardown();
+
+        if (applicationIcon)
+            DestroyIcon(applicationIcon);
+    }
 
     static void registerWindowClass()
     {
@@ -236,23 +181,26 @@ struct Window::Native
             applyTitleBarTheme(host.hwnd, isSystemDarkMode());
         }
 
-        if (host.hwnd && options.useEmbeddedApplicationIcon)
-            applyEmbeddedApplicationIcon();
+        if (host.hwnd && options.applicationIcon)
+            applyApplicationIcon(options.applicationIcon());
     }
 
-    // Alt-Tab shows the big icon, so the override group wins there when
-    // present; otherwise the main group serves both slots.
-    void applyEmbeddedApplicationIcon()
+    // The same image serves both slots: ICON_SMALL drives the title bar and
+    // taskbar, ICON_BIG the Alt-Tab switcher; the system scales as needed.
+    void applyApplicationIcon(const Image& image)
     {
-        if (auto* icon = loadEmbeddedApplicationIcon(GetSystemMetrics(SM_CXSMICON),
-                                                     mainIconResourceId))
-            SendMessageW(
-                host.hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+        applicationIcon = toHIcon(image);
+        if (!applicationIcon)
+            return;
 
-        if (auto* icon = loadEmbeddedApplicationIcon(GetSystemMetrics(SM_CXICON),
-                                                     altTabIconResourceId))
-            SendMessageW(
-                host.hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+        SendMessageW(host.hwnd,
+                     WM_SETICON,
+                     ICON_SMALL,
+                     reinterpret_cast<LPARAM>(applicationIcon));
+        SendMessageW(host.hwnd,
+                     WM_SETICON,
+                     ICON_BIG,
+                     reinterpret_cast<LPARAM>(applicationIcon));
     }
 
     // Windows 11+: ask DWM to round the window at the system radius (the
@@ -428,6 +376,7 @@ struct Window::Native
                                        LPARAM lParam);
 
     CompositionHostWindow host;
+    HICON applicationIcon = nullptr;
     Callback quitCallback = [] {};
     ResizeCallback onResize;
     WillResizeCallback onWillResize;

@@ -68,20 +68,21 @@ auto tWindowOptionsNewAffordancesDefaultOff =
     check(!options.visibleOnAllWorkspaces);
 };
 
-// The embedded icon is opt-out: eacp_set_icon embeds an icon group for
-// every GUI app, and it should reach the window without any app code.
-auto tEmbeddedApplicationIconDefaultsOn =
-    test("WindowOptions/embeddedIconDefaultsOn") = []
-{ check(WindowOptions {}.useEmbeddedApplicationIcon); };
+// The icon is bring-your-own: nothing is applied unless the app provides
+// a provider, so the default must be unset.
+auto tApplicationIconDefaultsUnset =
+    test("WindowOptions/applicationIconDefaultsUnset") = []
+{ check(!WindowOptions {}.applicationIcon); };
 
-// Live behaviour (the icon actually landing on the window) is demonstrated
-// by Apps/WebView/Browser; the default-on option just has to be safe on a
-// window that never materializes.
-auto tEmbeddedApplicationIconConstructsUnderHeadless =
-    test("WindowOptions/embeddedIconConstructsUnderHeadless") = []
+// Live behaviour (the icon actually landing on the window / Dock) is
+// demonstrated by Apps/WebView/Browser; a provided icon just has to be
+// safe on a window that never materializes.
+auto tApplicationIconConstructsUnderHeadless =
+    test("WindowOptions/applicationIconConstructsUnderHeadless") = []
 {
     auto options = WindowOptions {};
     options.isPrimary = false;
+    options.applicationIcon = [] { return Image {8, 8}; };
 
     auto window = Window {options};
     check(true);
