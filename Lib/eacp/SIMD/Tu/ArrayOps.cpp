@@ -45,4 +45,17 @@ void multiplyAdd(
         out[i] = a[i] * b[i] + c[i];
 }
 
+void multiplyAdd(
+    const float* a, float b, const float* c, float* out, std::size_t count)
+{
+    for (std::size_t i = 0; i < count; ++i)
+        out[i] = a[i] * b + c[i];
+}
+
+void lerp(const float* a, const float* b, float t, float* out, std::size_t count)
+{
+    for (std::size_t i = 0; i < count; ++i)
+        out[i] = a[i] + t * (b[i] - a[i]);
+}
+
 } // namespace eacp::simd
