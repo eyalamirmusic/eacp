@@ -84,4 +84,18 @@ void lerp(Dst& dst, const Target& target, float t)
     lerp(dst.data(), target.data(), t, dst.data(), commonCount(dst, target));
 }
 
+// sum(src[i]^2)
+template <FloatBuffer Src>
+double sumOfSquares(const Src& src)
+{
+    return sumOfSquares(src.data(), static_cast<std::size_t>(src.size()));
+}
+
+// max(|src[i]|)
+template <FloatBuffer Src>
+float peakAbs(const Src& src)
+{
+    return peakAbs(src.data(), static_cast<std::size_t>(src.size()));
+}
+
 } // namespace eacp::simd

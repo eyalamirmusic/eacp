@@ -83,4 +83,19 @@ void multiplyAdd(
 // out[i] = a[i] + t * (b[i] - a[i])
 void lerp(const float* a, const float* b, float t, float* out, std::size_t count);
 
+// --- Float-array reductions ---
+//
+// Unlike the elementwise primitives, a reduction has an accumulation order.
+// These use a fixed four-lane interleave (explicitly reassociated so the
+// compiler can vectorize them without fast-math), so the result is still
+// deterministic — identical on every build and architecture — but it is NOT
+// bit-equal to a naive sequential loop over the same data.
+
+// Returns sum(a[i]^2), accumulated in double for precision. 0.0 when count == 0.
+double sumOfSquares(const float* a, std::size_t count);
+
+// Returns max(|a[i]|), 0.f when count == 0. Max is order-independent, so this
+// one matches a sequential loop exactly.
+float peakAbs(const float* a, std::size_t count);
+
 } // namespace eacp::simd

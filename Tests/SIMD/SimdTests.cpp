@@ -331,6 +331,42 @@ auto tArrayLerpMatchesReference = test("SIMD/arrayLerpMatchesReference") = []
         check(out[i] == a[i] + 0.25f * (b[i] - a[i]));
 };
 
+// Integer-valued data keeps the double accumulation exact regardless of the
+// four-lane interleave, so the comparison against a sequential sum is exact.
+auto tArraySumOfSquaresMatchesReference =
+    test("SIMD/arraySumOfSquaresMatchesReference") = []
+{
+    const auto a = ramp(17, -8); // mixed signs
+    auto expected = 0.0;
+    for (int i = 0; i < kArrayCount; ++i)
+        expected += (double) a[i] * (double) a[i];
+
+    check(eacp::simd::sumOfSquares(a.data(), kArrayCount) == expected);
+    check(eacp::simd::sumOfSquares(a.data(), 0) == 0.0);
+
+    // Counts around the four-lane width exercise the tail loop.
+    for (auto count: {1, 2, 3, 4, 5, 7, 8, 9})
+    {
+        auto partial = 0.0;
+        for (int i = 0; i < count; ++i)
+            partial += (double) a[i] * (double) a[i];
+        check(eacp::simd::sumOfSquares(a.data(), (std::size_t) count) == partial);
+    }
+};
+
+auto tArrayPeakAbsMatchesReference = test("SIMD/arrayPeakAbsMatchesReference") = []
+{
+    auto a = ramp(29, -14); // mixed signs; peak is a negative value's magnitude
+    check(eacp::simd::peakAbs(a.data(), kArrayCount) == 14.f);
+    check(eacp::simd::peakAbs(a.data(), 0) == 0.f);
+
+    // The peak can land in any lane, including the tail.
+    a[kArrayCount - 1] = -99.f;
+    check(eacp::simd::peakAbs(a.data(), kArrayCount) == 99.f);
+    a[2] = 200.f;
+    check(eacp::simd::peakAbs(a.data(), kArrayCount) == 200.f);
+};
+
 // The buffer-level helpers in Ops.h: each forwards to the raw primitive, in
 // place on its first argument.
 auto tOpsHelpersForwardToPrimitives = test("SIMD/opsHelpersForwardToPrimitives") = []
@@ -372,6 +408,10 @@ auto tOpsHelpersForwardToPrimitives = test("SIMD/opsHelpersForwardToPrimitives")
     eacp::simd::lerp(dst, b, 0.25f);
     for (int i = 0; i < kArrayCount; ++i)
         check(dst[i] == a[i] + 0.25f * (b[i] - a[i]));
+
+    check(eacp::simd::sumOfSquares(a)
+          == eacp::simd::sumOfSquares(a.data(), kArrayCount));
+    check(eacp::simd::peakAbs(a) == eacp::simd::peakAbs(a.data(), kArrayCount));
 };
 
 // Mismatched sizes process the common prefix and never touch the tail.
