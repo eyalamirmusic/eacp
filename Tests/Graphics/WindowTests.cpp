@@ -68,13 +68,14 @@ auto tWindowOptionsNewAffordancesDefaultOff =
     check(!options.visibleOnAllWorkspaces);
 };
 
-// The icons are bring-your-own: nothing is applied unless the app provides
-// a provider, so the defaults must be unset.
-auto tApplicationIconDefaultsUnset =
-    test("WindowOptions/applicationIconDefaultsUnset") = []
+// The icons are bring-your-own, and the providers are never null: the
+// defaults are callable and return an invalid Image, which keeps the
+// system default without any null checks at the call sites.
+auto tIconProvidersDefaultToInvalidImage =
+    test("WindowOptions/iconProvidersDefaultToInvalidImage") = []
 {
-    check(!WindowOptions {}.applicationIcon);
-    check(!WindowOptions {}.altTabIcon);
+    check(!WindowOptions {}.applicationIcon());
+    check(!WindowOptions {}.altTabIcon());
 };
 
 // Live behaviour (the icon actually landing on the window / Dock) is

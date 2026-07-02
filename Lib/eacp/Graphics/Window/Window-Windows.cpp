@@ -193,11 +193,8 @@ struct Window::Native
     // big slot when present, otherwise applicationIcon serves both.
     void applyApplicationIcons(const WindowOptions& options)
     {
-        if (options.applicationIcon)
-            applicationIcon = toHIcon(options.applicationIcon());
-
-        if (options.altTabIcon)
-            altTabIcon = toHIcon(options.altTabIcon());
+        applicationIcon = toHIcon(options.applicationIcon());
+        altTabIcon = toHIcon(options.altTabIcon());
 
         if (applicationIcon)
             SendMessageW(host.hwnd,

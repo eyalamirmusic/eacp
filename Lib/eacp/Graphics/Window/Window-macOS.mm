@@ -301,8 +301,7 @@ struct Window::Native
                 NSMakePoint(options.trafficLightPosition->x,
                             options.trafficLightPosition->y));
 
-        if (options.applicationIcon)
-            applyApplicationIcon(options.applicationIcon());
+        applyApplicationIcon(options.applicationIcon());
     }
 
     // macOS has no per-window icons; the icon is the app's Dock tile,
