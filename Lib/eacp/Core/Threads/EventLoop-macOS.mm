@@ -1,9 +1,23 @@
 #include "EventLoop.h"
+#include "../ObjC/ObjC.h"
 #import <Foundation/Foundation.h>
 #import <Cocoa/Cocoa.h>
 
 #include <cassert>
 #include <chrono>
+
+// terminate: (Cmd+Q, Dock quit, quit Apple Events) calls exit() without
+// unwinding run<T>(); cancel it and stop the loop so the normal teardown runs.
+@interface AppTerminationBridge : NSObject <NSApplicationDelegate>
+@end
+
+@implementation AppTerminationBridge
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender
+{
+    eacp::Threads::getEventLoop().quit();
+    return NSTerminateCancel;
+}
+@end
 
 namespace eacp::Threads
 {
@@ -31,6 +45,11 @@ NSApplication* getApp()
     static NSApplication* app = [] {
         auto* application = [NSApplication sharedApplication];
         [application setActivationPolicy:activationPolicyFromBundle()];
+
+        static auto delegate =
+            ObjC::Ptr<AppTerminationBridge>([[AppTerminationBridge alloc] init]);
+        [application setDelegate:delegate.get()];
+
         return application;
     }();
     return app;

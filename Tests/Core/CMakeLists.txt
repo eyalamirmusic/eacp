@@ -14,6 +14,18 @@ nano_add_executable(AppAffordanceTests
         SOURCES AppAffordanceTests.cpp
         TARGETS eacp-core)
 
+if (APPLE AND NOT IOS)
+    add_executable(AppTerminationHarness AppTerminationHarness.mm)
+    target_link_libraries(AppTerminationHarness PRIVATE eacp-core)
+
+    nano_add_executable(AppTerminationTests
+            SOURCES AppTerminationTests.cpp
+            TARGETS eacp-core)
+    target_compile_definitions(AppTerminationTests PRIVATE
+            EACP_TERMINATION_HARNESS="$<TARGET_FILE:AppTerminationHarness>")
+    add_dependencies(AppTerminationTests AppTerminationHarness)
+endif ()
+
 nano_add_executable(EventLoopTests
         SOURCES EventLoopTests.cpp
         TARGETS eacp-core)
