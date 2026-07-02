@@ -21,6 +21,20 @@ auto tTransparentBackgroundOptionIsOptIn =
     check(options.transparentBackground);
 };
 
+// Off matches WKWebView, which has no status bar at all; Windows opts in.
+auto tStatusBarDefaultsOff = test("WebViewOptions/statusBarDefaultsOff") = []
+{
+    auto options = WebView::Options {};
+    check(!options.statusBar);
+};
+
+auto tStatusBarIsOptIn = test("WebViewOptions/statusBarIsOptIn") = []
+{
+    auto options = WebView::Options {};
+    options.statusBar = true;
+    check(options.statusBar);
+};
+
 auto tFileDragStartedCallbackIsUserOwned =
     test("WebView/fileDragStartedCallbackIsUserOwned") = []
 {

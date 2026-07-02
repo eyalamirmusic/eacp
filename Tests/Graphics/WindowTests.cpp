@@ -66,6 +66,21 @@ auto tWindowOptionsNewAffordancesDefaultOff =
     check(!options.ignoresMouseEvents);
     check(!options.showInactive);
     check(!options.visibleOnAllWorkspaces);
+    check(!options.useEmbeddedApplicationIcon);
+};
+
+// Live behaviour (the icon actually landing on the window) is demonstrated
+// by Apps/WebView/Browser; here the option just has to be safe to enable on
+// a window that never materializes.
+auto tEmbeddedApplicationIconConstructsUnderHeadless =
+    test("WindowOptions/embeddedIconConstructsUnderHeadless") = []
+{
+    auto options = WindowOptions {};
+    options.useEmbeddedApplicationIcon = true;
+    options.isPrimary = false;
+
+    auto window = Window {options};
+    check(true);
 };
 
 auto tGlobalHotKeyConstructsUnderHeadless =
@@ -77,10 +92,9 @@ auto tGlobalHotKeyConstructsUnderHeadless =
 
     auto calls = 0;
     {
-        auto hotKey = GlobalHotKey {
-            ModifierKeys {.alt = true, .command = true},
-            KeyCode::L,
-            [&] { ++calls; }};
+        auto hotKey = GlobalHotKey {ModifierKeys {.alt = true, .command = true},
+                                    KeyCode::L,
+                                    [&] { ++calls; }};
     }
 
     check(calls == 0);
