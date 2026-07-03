@@ -13,6 +13,7 @@ add_subdirectory(Network)
 
 if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(Graphics)
+    add_subdirectory(SVG)
 endif ()
 
 if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND NOT IOS)

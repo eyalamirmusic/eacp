@@ -4,8 +4,10 @@ target_sources(eacp-svg PRIVATE
         NumberReader.cpp
         SVGAttributes.cpp
         SVGBuilder.cpp
+        SVGImage.cpp
         SVGParser.cpp
         SVGPathParser.cpp
+        SVGShapes.cpp
         XMLParser.cpp)
 
 target_link_libraries(eacp-svg PUBLIC eacp-graphics)

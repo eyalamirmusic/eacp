@@ -25,4 +25,9 @@ ImageData encodeImageBytes(const std::uint8_t* rgba,
                            float quality,
                            std::string& error);
 
+// Straighten premultiplied RGBA (as produced by CGBitmapContext / Direct2D
+// render targets) into the straight alpha Image stores. Opaque and fully
+// transparent pixels are left untouched.
+void unpremultiply(ImageData& rgba);
+
 } // namespace eacp::Graphics::detail

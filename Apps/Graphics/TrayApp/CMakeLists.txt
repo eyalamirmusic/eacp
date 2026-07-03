@@ -1,5 +1,5 @@
 add_executable(TrayApp Main.cpp)
-target_link_libraries(TrayApp PRIVATE eacp-graphics)
+target_link_libraries(TrayApp PRIVATE eacp-graphics eacp-svg)
 
 set(BUNDLE_ID "com.eacp.trayapp")
 

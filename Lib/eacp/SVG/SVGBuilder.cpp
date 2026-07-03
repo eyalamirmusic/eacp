@@ -1,6 +1,6 @@
 #include "SVGBuilder.h"
 #include "SVGAttributes.h"
-#include "SVGPathParser.h"
+#include "SVGShapes.h"
 
 #include <eacp/Core/Utils/Strings.h>
 
@@ -8,24 +8,27 @@ namespace eacp::SVG
 {
 
 static void applyFillAndStroke(Graphics::ShapeLayer& layer,
-                               const SVGElement& element)
+                               const SVGElement& element,
+                               const InheritedStyle& style,
+                               float sx,
+                               float sy)
 {
-    auto fillStr = element.attr("fill", "black");
-    auto fillResult = parseColor(fillStr);
+    auto fillResult = parseColor(style.fill);
     if (!fillResult.isNone)
         layer.setFillColor(fillResult.color);
 
-    auto strokeStr = element.attr("stroke");
-    if (!strokeStr.empty())
+    if (!style.stroke.empty())
     {
-        auto strokeResult = parseColor(strokeStr);
+        auto strokeResult = parseColor(style.stroke);
         if (!strokeResult.isNone)
             layer.setStrokeColor(strokeResult.color);
     }
 
-    auto strokeWidth = element.attr("stroke-width");
-    if (!strokeWidth.empty())
-        layer.setStrokeWidth(Strings::parseFloatOr(strokeWidth));
+    // Geometry is scaled by (sx, sy), so stroke widths must scale with it;
+    // a layer has a single stroke width, so non-uniform stretch averages out.
+    if (!style.strokeWidth.empty())
+        layer.setStrokeWidth(Strings::parseFloatOr(style.strokeWidth) * (sx + sy)
+                             * 0.5f);
 
     auto opacity = element.attr("opacity");
     if (!opacity.empty())
@@ -34,106 +37,22 @@ static void applyFillAndStroke(Graphics::ShapeLayer& layer,
 
 static void addShapeLayer(SVGView& view,
                           const SVGElement& element,
-                          const Graphics::Path& path)
+                          const InheritedStyle& style,
+                          const Graphics::Path& path,
+                          float sx,
+                          float sy)
 {
     auto& layer = view.ownedLayers.createNew();
     layer.setPath(path);
-    applyFillAndStroke(layer, element);
+    applyFillAndStroke(layer, element, style, sx, sy);
     view.addLayer(layer);
 }
 
-static void buildRect(SVGView& view, const SVGElement& element, float sx, float sy)
-{
-    auto x = element.numAttr("x") * sx;
-    auto y = element.numAttr("y") * sy;
-    auto w = element.numAttr("width") * sx;
-    auto h = element.numAttr("height") * sy;
-    auto rx = element.numAttr("rx") * sx;
-    auto ry = element.numAttr("ry") * sy;
-
-    if (rx <= 0.f && ry > 0.f)
-        rx = ry;
-    if (ry <= 0.f && rx > 0.f)
-        ry = rx;
-
-    Graphics::Path path;
-    Graphics::Rect rect {x, y, w, h};
-
-    if (rx > 0.f || ry > 0.f)
-        path.addRoundedRect(rect, rx);
-    else
-        path.addRect(rect);
-
-    addShapeLayer(view, element, std::move(path));
-}
-
-static void buildCircle(SVGView& view, const SVGElement& element, float sx, float sy)
-{
-    auto cx = element.numAttr("cx") * sx;
-    auto cy = element.numAttr("cy") * sy;
-    auto rx = element.numAttr("r") * sx;
-    auto ry = element.numAttr("r") * sy;
-
-    Graphics::Path path;
-    path.addEllipse({cx - rx, cy - ry, rx * 2.f, ry * 2.f});
-    addShapeLayer(view, element, std::move(path));
-}
-
-static void
-    buildEllipse(SVGView& view, const SVGElement& element, float sx, float sy)
-{
-    auto cx = element.numAttr("cx") * sx;
-    auto cy = element.numAttr("cy") * sy;
-    auto rx = element.numAttr("rx") * sx;
-    auto ry = element.numAttr("ry") * sy;
-
-    Graphics::Path path;
-    path.addEllipse({cx - rx, cy - ry, rx * 2.f, ry * 2.f});
-    addShapeLayer(view, element, std::move(path));
-}
-
-static void buildLine(SVGView& view, const SVGElement& element, float sx, float sy)
-{
-    auto x1 = element.numAttr("x1") * sx;
-    auto y1 = element.numAttr("y1") * sy;
-    auto x2 = element.numAttr("x2") * sx;
-    auto y2 = element.numAttr("y2") * sy;
-
-    Graphics::Path path;
-    path.moveTo({x1, y1});
-    path.lineTo({x2, y2});
-    addShapeLayer(view, element, std::move(path));
-}
-
-static void buildPolyline(
-    SVGView& view, const SVGElement& element, bool close, float sx, float sy)
-{
-    auto pointsStr = element.attr("points");
-    auto points = parsePointList(pointsStr);
-    if (points.empty())
-        return;
-
-    Graphics::Path path;
-    path.moveTo({points[0].x * sx, points[0].y * sy});
-    for (auto i = 1; i < points.size(); ++i)
-        path.lineTo({points[i].x * sx, points[i].y * sy});
-    if (close)
-        path.close();
-
-    addShapeLayer(view, element, std::move(path));
-}
-
-static void buildPath(SVGView& view, const SVGElement& element, float sx, float sy)
-{
-    auto d = element.attr("d");
-    if (d.empty())
-        return;
-
-    auto path = parseSVGPath(d).scaled(sx, sy);
-    addShapeLayer(view, element, std::move(path));
-}
-
-static void buildText(SVGView& view, const SVGElement& element, float sx, float sy)
+static void buildText(SVGView& view,
+                      const SVGElement& element,
+                      const InheritedStyle& style,
+                      float sx,
+                      float sy)
 {
     auto x = element.numAttr("x") * sx;
     auto y = element.numAttr("y") * sy;
@@ -152,8 +71,7 @@ static void buildText(SVGView& view, const SVGElement& element, float sx, float 
         Graphics::FontOptions().withName(fontFamily).withSize(fontSize);
     layer.setFont(Graphics::Font(fontOptions));
 
-    auto fillStr = element.attr("fill", "black");
-    auto fillResult = parseColor(fillStr);
+    auto fillResult = parseColor(style.fill);
     if (!fillResult.isNone)
         layer.setColor(fillResult.color);
 
@@ -179,11 +97,17 @@ static void buildText(SVGView& view, const SVGElement& element, float sx, float 
     view.addLayer(layer);
 }
 
-static void
-    buildElement(SVGView& view, const SVGElement& element, float sx, float sy);
+static void buildElement(SVGView& view,
+                         const SVGElement& element,
+                         const InheritedStyle& style,
+                         float sx,
+                         float sy);
 
-static void
-    buildGroup(SVGView& parent, const SVGElement& element, float sx, float sy)
+static void buildGroup(SVGView& parent,
+                       const SVGElement& element,
+                       const InheritedStyle& style,
+                       float sx,
+                       float sy)
 {
     auto& child = parent.ownedChildren.createNew();
 
@@ -198,40 +122,32 @@ static void
     }
 
     for (auto& childElement: element.children)
-        buildElement(child, childElement, sx, sy);
+        buildElement(child, childElement, style, sx, sy);
 
     parent.addSubview(child);
 }
 
-static void
-    buildElement(SVGView& view, const SVGElement& element, float sx, float sy)
+static void buildElement(SVGView& view,
+                         const SVGElement& element,
+                         const InheritedStyle& style,
+                         float sx,
+                         float sy)
 {
-    auto& tag = element.tag;
+    auto resolved = style.applied(element);
 
-    if (tag == "rect")
-        buildRect(view, element, sx, sy);
-    else if (tag == "circle")
-        buildCircle(view, element, sx, sy);
-    else if (tag == "ellipse")
-        buildEllipse(view, element, sx, sy);
-    else if (tag == "line")
-        buildLine(view, element, sx, sy);
-    else if (tag == "polyline")
-        buildPolyline(view, element, false, sx, sy);
-    else if (tag == "polygon")
-        buildPolyline(view, element, true, sx, sy);
-    else if (tag == "path")
-        buildPath(view, element, sx, sy);
-    else if (tag == "text")
-        buildText(view, element, sx, sy);
-    else if (tag == "g")
-        buildGroup(view, element, sx, sy);
+    if (auto path = makeShapePath(element, sx, sy))
+        addShapeLayer(view, element, resolved, *path, sx, sy);
+    else if (element.tag == "text")
+        buildText(view, element, resolved, sx, sy);
+    else if (element.tag == "g")
+        buildGroup(view, element, resolved, sx, sy);
 }
 
 static void buildContent(SVGView& view, const SVGElement& root, float sx, float sy)
 {
+    auto style = InheritedStyle {}.applied(root);
     for (auto& child: root.children)
-        buildElement(view, child, sx, sy);
+        buildElement(view, child, style, sx, sy);
 }
 
 void SVGView::clearContent()
@@ -273,21 +189,7 @@ ParseResult buildSVG(const SVGElement& root)
     ParseResult result;
     result.root.create();
 
-    auto width = root.numAttr("width", 300.f);
-    auto height = root.numAttr("height", 150.f);
-
-    auto viewBox = root.attr("viewBox");
-    if (!viewBox.empty())
-    {
-        auto nums = parseNumberList(viewBox);
-        if (nums.size() >= 4)
-        {
-            if (width <= 0.f)
-                width = nums[2];
-            if (height <= 0.f)
-                height = nums[3];
-        }
-    }
+    auto [width, height] = documentSize(root);
 
     result.width = width;
     result.height = height;

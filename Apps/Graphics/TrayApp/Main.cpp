@@ -1,36 +1,46 @@
 #include <eacp/Graphics/Graphics.h>
+#include <eacp/Graphics/Helpers/SystemAppearance.h>
+#include <eacp/SVG/SVG.h>
 
 using namespace eacp;
 using namespace Graphics;
 
-// A smooth orange disc, generated so the example needs no asset file. On
-// macOS the menu bar renders it as a template (alpha-only, system tinted);
-// on Windows the colour shows in the notification area.
+static constexpr std::string_view logoSvgMarkup()
+{
+    return R"SVG(
+
+<svg width="585" height="510" viewBox="0 0 585 510" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M193.823 193.365V27H27V193.365" stroke="black" stroke-width="54"/>
+    <path d="M376.159 509.48V426.527C376.159 380.46 338.814 343.115 292.747 343.115C246.681 343.115 209.336 380.46 209.336 426.527V509.48" stroke="black" stroke-width="54"/>
+    <path d="M558 193.365V27H391.177V193.365" stroke="black" stroke-width="54"/>
+    <path d="M197.445 13.622L292.413 182.393L387.709 13.622" stroke="black" stroke-width="54" stroke-linejoin="bevel"/>
+    <path d="M193.723 192.984C193.723 247.439 237.979 291.584 292.571 291.584C347.163 291.584 391.177 247.687 391.177 193.231" stroke="black" stroke-width="54"/>
+</svg>
+
+)SVG";
+}
+
+// The logo SVG rasterized at tray size and centred on a square transparent
+// canvas (the art is slightly wider than tall). The rendered strokes supply
+// coverage through their alpha; the colour follows the system theme, which
+// is what Windows shows in the notification area. macOS ignores the colour
+// and tints the template icon from alpha by itself.
 static Image makeTrayIcon()
 {
-    constexpr int size = 36;
-    auto image = Image(size, size);
+    constexpr auto size = 36;
 
-    auto center = (size - 1) / 2.f;
-    auto radius = size * 0.42f;
+    auto logo = SVG::toImage(std::string(logoSvgMarkup()), size);
+    auto icon = Image(size, size);
 
-    for (auto y = 0; y < size; ++y)
-    {
-        for (auto x = 0; x < size; ++x)
-        {
-            auto dx = static_cast<float>(x) - center;
-            auto dy = static_cast<float>(y) - center;
-            auto distance = std::sqrt(dx * dx + dy * dy);
+    auto offsetX = (size - logo.width()) / 2;
+    auto offsetY = (size - logo.height()) / 2;
+    auto tint = isSystemDarkMode() ? Color::white() : Color::black();
 
-            auto coverage = std::clamp(radius - distance, 0.f, 1.f);
-            if (coverage <= 0.f)
-                continue;
+    for (auto y = 0; y < logo.height(); ++y)
+        for (auto x = 0; x < logo.width(); ++x)
+            icon.set(offsetX + x, offsetY + y, tint.withAlpha(logo.at(x, y).a));
 
-            image.set(x, y, Color(0.95f, 0.55f, 0.1f, coverage));
-        }
-    }
-
-    return image;
+    return icon;
 }
 
 // The content of the floating panel below. The window's cornerRadius clips

@@ -262,4 +262,25 @@ bool Image::operator!=(const Image& other) const
     return !equals(other);
 }
 
+namespace detail
+{
+void unpremultiply(ImageData& rgba)
+{
+    auto count = rgba.size();
+    auto* p = rgba.data();
+    for (auto i = 0; i + 3 < count; i += 4)
+    {
+        auto a = p[i + 3];
+        if (a == 0 || a == 255)
+            continue;
+
+        for (auto c = 0; c < 3; ++c)
+        {
+            auto straight = (static_cast<int>(p[i + c]) * 255 + a / 2) / a;
+            p[i + c] = static_cast<std::uint8_t>(std::min(straight, 255));
+        }
+    }
+}
+} // namespace detail
+
 } // namespace eacp::Graphics

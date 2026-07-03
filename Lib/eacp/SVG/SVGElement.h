@@ -24,6 +24,11 @@ struct SVGElement
         return fallback;
     }
 
+    bool hasAttr(const std::string& name) const
+    {
+        return attributes.find(name) != attributes.end();
+    }
+
     float numAttr(const std::string& name, float fallback = 0.f) const
     {
         auto it = attributes.find(name);

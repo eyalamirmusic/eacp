@@ -224,4 +224,18 @@ Vector<Graphics::Point> parsePointList(const std::string& value)
     return points;
 }
 
+InheritedStyle InheritedStyle::applied(const SVGElement& element) const
+{
+    auto result = *this;
+
+    if (element.hasAttr("fill"))
+        result.fill = element.attr("fill");
+    if (element.hasAttr("stroke"))
+        result.stroke = element.attr("stroke");
+    if (element.hasAttr("stroke-width"))
+        result.strokeWidth = element.attr("stroke-width");
+
+    return result;
+}
+
 } // namespace eacp::SVG

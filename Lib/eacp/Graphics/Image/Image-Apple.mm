@@ -19,27 +19,6 @@ CFRef<CGColorSpaceRef> deviceRGB()
     return {CGColorSpaceCreateDeviceRGB()};
 }
 
-// CGBitmapContext only produces premultiplied alpha. Straighten it so
-// the stored RGBA matches what PNG/WIC consider canonical. Opaque and
-// fully transparent pixels are left untouched.
-void unpremultiply(ImageData& rgba)
-{
-    auto count = rgba.size();
-    auto* p = rgba.data();
-    for (auto i = 0; i + 3 < count; i += 4)
-    {
-        auto a = p[i + 3];
-        if (a == 0 || a == 255)
-            continue;
-
-        for (auto c = 0; c < 3; ++c)
-        {
-            auto straight = (static_cast<int>(p[i + c]) * 255 + a / 2) / a;
-            p[i + c] = static_cast<std::uint8_t>(std::min(straight, 255));
-        }
-    }
-}
-
 // Fast, lossless path: when the decoded image is already 8-bit straight
 // RGBA (or RGBX) in R,G,B,A byte order, copy its pixels straight out of
 // the data provider instead of redrawing through a premultiplied bitmap

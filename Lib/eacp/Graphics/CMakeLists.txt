@@ -24,6 +24,7 @@ if (APPLE)
             Graphics/GraphicsContextImpl.mm
             Helpers/SystemAppearance-Apple.mm
             Image/Image-Apple.mm
+            Image/ImageRender-Apple.mm
             Layers/Layer.mm
             Layers/ShapeLayer.mm
             Layers/TextLayer.mm
@@ -76,6 +77,7 @@ elseif (WIN32)
             Helpers/ImageConversion-Windows.cpp
             HotKey/GlobalHotKey-Windows.cpp
             Image/Image-Windows.cpp
+            Image/ImageRender-Windows.cpp
             Layers/Layer-Windows.cpp
             Layers/ShapeLayer-Windows.cpp
             Layers/TextLayer-Windows.cpp

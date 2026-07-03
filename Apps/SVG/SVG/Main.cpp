@@ -1,6 +1,22 @@
 #include <eacp/SVG/SVG.h>
+#include <eacp/Graphics/Tray/TrayIcon.h>
 
 using namespace eacp;
+
+static constexpr std::string_view logoSvgMarkup()
+{
+    return R"SVG(
+
+<svg width="585" height="510" viewBox="0 0 585 510" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M193.823 193.365V27H27V193.365" stroke="black" stroke-width="54"/>
+  <path d="M376.159 509.48V426.527C376.159 380.46 338.814 343.115 292.747 343.115C246.681 343.115 209.336 380.46 209.336 426.527V509.48" stroke="black" stroke-width="54"/>
+  <path d="M558 193.365V27H391.177V193.365" stroke="black" stroke-width="54"/>
+  <path d="M197.445 13.622L292.413 182.393L387.709 13.622" stroke="black" stroke-width="54" stroke-linejoin="bevel"/>
+  <path d="M193.723 192.984C193.723 247.439 237.979 291.584 292.571 291.584C347.163 291.584 391.177 247.687 391.177 193.231" stroke="black" stroke-width="54"/>
+</svg>
+
+)SVG";
+}
 
 struct MyApp
 {
@@ -15,10 +31,14 @@ struct MyApp
             result.root->stretchToFit();
             window.setContentView(*result.root);
         }
+
+        trayIcon.setIcon(SVG::toImage(std::string(logoSvgMarkup()), 36, 36));
+        trayIcon.setTooltip("SVG App");
     }
 
     SVG::ParseResult result;
     Graphics::Window window;
+    Graphics::TrayIcon trayIcon;
 };
 
 int main()
