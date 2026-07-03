@@ -16,16 +16,29 @@ static constexpr std::string_view logoSvgMarkup()
 )SVG";
 }
 
-// The same markup rasterized through SVG::toImage at a run of sizes and
-// painted with Context::drawImage — the raster counterpart of the live
-// SVGView above it.
-struct RasterStrip final : Graphics::View
+// Every bundled SVG rasterized through SVG::toImage at a run of heights
+// and painted with Context::drawImage — a farm of raster renders beneath
+// the live vector SVGView.
+struct SvgFarm final : Graphics::View
 {
-    void setMarkup(const std::string& markup)
+    struct Entry
     {
-        images.clear();
-        for (auto size: {16, 32, 64, 128})
-            images.add(SVG::toImage(markup, size));
+        std::string name;
+        Vector<Graphics::Image> images;
+    };
+
+    void addEntry(const std::string& name, const std::string& markup)
+    {
+        auto entry = Entry {name, {}};
+        for (auto height: {12, 24, 48, 96})
+        {
+            auto image = SVG::toImage(markup, 0, height);
+            if (image.isValid())
+                entry.images.add(std::move(image));
+        }
+
+        if (!entry.images.empty())
+            entries.add(std::move(entry));
 
         repaint();
     }
@@ -33,20 +46,37 @@ struct RasterStrip final : Graphics::View
     void paint(Graphics::Context& context) override
     {
         auto bounds = getLocalBounds();
-        context.setColor(Graphics::Color::gray(0.93f));
+        context.setColor(Graphics::Color::gray(0.95f));
         context.fillRect(bounds);
 
-        auto x = 16.f;
-        for (auto& image: images)
+        constexpr auto cellWidth = 262.f;
+        constexpr auto cellHeight = 132.f;
+        auto columns = std::max(1, static_cast<int>(bounds.w / cellWidth));
+
+        auto font = Graphics::Font(
+            Graphics::FontOptions().withName("Helvetica").withSize(11.f));
+
+        for (auto i = 0; i < entries.size(); ++i)
         {
-            auto w = static_cast<float>(image.width());
-            auto h = static_cast<float>(image.height());
-            context.drawImage(image, {x, (bounds.h - h) / 2.f, w, h});
-            x += w + 16.f;
+            auto& entry = entries[i];
+            auto cellX = static_cast<float>(i % columns) * cellWidth + 12.f;
+            auto baseline = static_cast<float>(i / columns) * cellHeight + 104.f;
+
+            auto x = cellX;
+            for (auto& image: entry.images)
+            {
+                auto w = static_cast<float>(image.width());
+                auto h = static_cast<float>(image.height());
+                context.drawImage(image, {x, baseline - h, w, h});
+                x += w + 8.f;
+            }
+
+            context.setColor(Graphics::Color::gray(0.35f));
+            context.drawText(entry.name, {cellX, baseline + 16.f}, font);
         }
     }
 
-    Vector<Graphics::Image> images;
+    Vector<Entry> entries;
 };
 
 struct MainView final : Graphics::View
@@ -54,23 +84,31 @@ struct MainView final : Graphics::View
     void resized() override
     {
         auto bounds = getLocalBounds();
-        auto stripBounds = bounds.removeFromBottom(160.f);
+        auto vectorBounds = bounds.removeFromTop(170.f);
 
         if (vectorView != nullptr)
-            vectorView->setBounds(bounds);
-        strip.setBounds(stripBounds);
+            vectorView->setBounds(vectorBounds.inset(8.f));
+        farm.setBounds(bounds);
     }
 
     Graphics::View* vectorView = nullptr;
-    RasterStrip strip;
+    SvgFarm farm;
 };
+
+static Graphics::WindowOptions getWindowOptions()
+{
+    auto options = Graphics::WindowOptions();
+    options.width = 810;
+    options.height = 720;
+    options.title = "SVG Farm";
+    return options;
+}
 
 struct MyApp
 {
     MyApp()
     {
-        auto path = Files::getBundleResourcePath("example.svg");
-        auto contents = Files::readFile(path);
+        auto contents = Files::readFile(Files::getBundleResourcePath("example.svg"));
         result = SVG::parse(contents);
         if (result.root)
         {
@@ -79,8 +117,21 @@ struct MyApp
             main.addSubview(*result.root);
         }
 
-        main.strip.setMarkup(contents);
-        main.addSubview(main.strip);
+        main.farm.addEntry("example.svg", contents);
+        for (auto* name: {"bootstrap-camera.svg",
+                          "bootstrap-heart-fill.svg",
+                          "feather-activity.svg",
+                          "feather-check-circle.svg",
+                          "flag-fr.svg",
+                          "flag-jp.svg",
+                          "material-home.svg",
+                          "simpleicons-github.svg",
+                          "tabler-star.svg",
+                          "twemoji-smile.svg"})
+            main.farm.addEntry(name,
+                               Files::readFile(Files::getBundleResourcePath(name)));
+
+        main.addSubview(main.farm);
         window.setContentView(main);
 
         trayIcon.setIcon(SVG::toImage(std::string {logoSvgMarkup()}, 36, 36));
@@ -89,7 +140,7 @@ struct MyApp
 
     SVG::ParseResult result;
     MainView main;
-    Graphics::Window window;
+    Graphics::Window window {getWindowOptions()};
     Graphics::TrayIcon trayIcon;
 };
 
