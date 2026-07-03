@@ -116,8 +116,8 @@ std::optional<Graphics::Path>
 
 Graphics::Point documentSize(const SVGElement& root)
 {
-    auto width = root.numAttr("width", 300.f);
-    auto height = root.numAttr("height", 150.f);
+    auto width = root.numAttr("width", 0.f);
+    auto height = root.numAttr("height", 0.f);
 
     auto viewBox = root.attr("viewBox");
     if (!viewBox.empty())
@@ -131,6 +131,12 @@ Graphics::Point documentSize(const SVGElement& root)
                 height = nums[3];
         }
     }
+
+    // The CSS default size for an <svg> with no width, height or viewBox.
+    if (width <= 0.f)
+        width = 300.f;
+    if (height <= 0.f)
+        height = 150.f;
 
     return {width, height};
 }

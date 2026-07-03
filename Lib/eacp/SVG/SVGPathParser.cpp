@@ -174,14 +174,157 @@ void handleSmoothQuadratic(NumberReader& reader,
     } while (reader.hasNumber());
 }
 
-void handleArc(NumberReader& reader)
+// Arc flags are single digits that the grammar allows to run straight into
+// the next number ("...0 01.5 2"), so they cannot be read as floats.
+bool readArcFlag(NumberReader& reader)
 {
-    LOG("SVG: Arc commands (A/a) not yet supported");
-    while (reader.hasNumber())
+    reader.skipWhitespaceAndCommas();
+    if (reader.atEnd())
+        return false;
+
+    auto c = reader.peek();
+    if (c == '0' || c == '1')
     {
-        for (auto i = 0; i < 7 && reader.hasNumber(); ++i)
-            reader.readFloat();
+        reader.pos++;
+        return c == '1';
     }
+    return reader.readFloat() != 0.f;
+}
+
+// Approximates one elliptical-arc slice of `step` radians (at most a
+// quarter turn) with a single cubic, using the standard tangent-scaled
+// control points.
+void emitArcSegment(Graphics::Path& path,
+                    const Graphics::Point& center,
+                    float rx,
+                    float ry,
+                    float cosPhi,
+                    float sinPhi,
+                    float theta,
+                    float step)
+{
+    auto pointAt = [&](float t)
+    {
+        auto ex = rx * std::cos(t);
+        auto ey = ry * std::sin(t);
+        return Graphics::Point {center.x + ex * cosPhi - ey * sinPhi,
+                                center.y + ex * sinPhi + ey * cosPhi};
+    };
+    auto derivativeAt = [&](float t)
+    {
+        auto ex = -rx * std::sin(t);
+        auto ey = ry * std::cos(t);
+        return Graphics::Point {ex * cosPhi - ey * sinPhi,
+                                ex * sinPhi + ey * cosPhi};
+    };
+
+    auto k = 4.f / 3.f * std::tan(step / 4.f);
+    auto from = pointAt(theta);
+    auto to = pointAt(theta + step);
+    auto d1 = derivativeAt(theta);
+    auto d2 = derivativeAt(theta + step);
+
+    path.cubicTo(from.x + k * d1.x,
+                 from.y + k * d1.y,
+                 to.x - k * d2.x,
+                 to.y - k * d2.y,
+                 to.x,
+                 to.y);
+}
+
+// SVG spec appendix B.2.4: convert the endpoint parameterization to the
+// centre form, then emit one cubic per quarter turn.
+void emitArc(Graphics::Path& path,
+             const Graphics::Point& start,
+             const Graphics::Point& end,
+             float rx,
+             float ry,
+             float rotationDegrees,
+             bool largeArc,
+             bool sweep)
+{
+    if (start.x == end.x && start.y == end.y)
+        return;
+
+    rx = std::abs(rx);
+    ry = std::abs(ry);
+    if (rx == 0.f || ry == 0.f)
+    {
+        path.lineTo(end);
+        return;
+    }
+
+    constexpr auto pi = 3.14159265358979323846f;
+    auto phi = rotationDegrees * pi / 180.f;
+    auto cosPhi = std::cos(phi);
+    auto sinPhi = std::sin(phi);
+
+    auto dx = (start.x - end.x) / 2.f;
+    auto dy = (start.y - end.y) / 2.f;
+    auto x1 = cosPhi * dx + sinPhi * dy;
+    auto y1 = -sinPhi * dx + cosPhi * dy;
+
+    // Radii too small to span the endpoints get scaled up uniformly.
+    auto lambda = (x1 * x1) / (rx * rx) + (y1 * y1) / (ry * ry);
+    if (lambda > 1.f)
+    {
+        auto scale = std::sqrt(lambda);
+        rx *= scale;
+        ry *= scale;
+    }
+
+    auto numerator = rx * rx * ry * ry - rx * rx * y1 * y1 - ry * ry * x1 * x1;
+    auto denominator = rx * rx * y1 * y1 + ry * ry * x1 * x1;
+    auto factor = std::sqrt(std::max(0.f, numerator / denominator));
+    if (largeArc == sweep)
+        factor = -factor;
+
+    auto cx1 = factor * rx * y1 / ry;
+    auto cy1 = -factor * ry * x1 / rx;
+    auto center =
+        Graphics::Point {cosPhi * cx1 - sinPhi * cy1 + (start.x + end.x) / 2.f,
+                         sinPhi * cx1 + cosPhi * cy1 + (start.y + end.y) / 2.f};
+
+    auto theta1 = std::atan2((y1 - cy1) / ry, (x1 - cx1) / rx);
+    auto theta2 = std::atan2((-y1 - cy1) / ry, (-x1 - cx1) / rx);
+    auto delta = theta2 - theta1;
+    if (!sweep && delta > 0.f)
+        delta -= 2.f * pi;
+    if (sweep && delta < 0.f)
+        delta += 2.f * pi;
+
+    auto segments =
+        std::max(1, static_cast<int>(std::ceil(std::abs(delta) / (pi / 2.f))));
+    auto step = delta / static_cast<float>(segments);
+
+    for (auto i = 0; i < segments; ++i)
+        emitArcSegment(path,
+                       center,
+                       rx,
+                       ry,
+                       cosPhi,
+                       sinPhi,
+                       theta1 + step * static_cast<float>(i),
+                       step);
+}
+
+void handleArc(NumberReader& reader,
+               Graphics::Path& path,
+               PathState& state,
+               bool relative)
+{
+    do
+    {
+        auto rx = reader.readFloat();
+        auto ry = reader.readFloat();
+        auto rotation = reader.readFloat();
+        auto largeArc = readArcFlag(reader);
+        auto sweep = readArcFlag(reader);
+        auto end = readPoint(reader, relative, state.current);
+
+        emitArc(path, state.current, end, rx, ry, rotation, largeArc, sweep);
+        state.current = end;
+    } while (reader.hasNumber());
 }
 
 void handleClosePath(Graphics::Path& path, PathState& state)
@@ -236,7 +379,7 @@ void dispatchCommand(char cmd,
             handleSmoothQuadratic(reader, path, state, relative);
             break;
         case 'A':
-            handleArc(reader);
+            handleArc(reader, path, state, relative);
             break;
         case 'Z':
             handleClosePath(path, state);

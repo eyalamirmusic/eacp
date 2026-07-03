@@ -4,6 +4,8 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 using namespace nano;
@@ -30,6 +32,26 @@ bool isRed(const Color& color)
 bool isTransparent(const Color& color)
 {
     return roughly(color.a, 0.f);
+}
+
+bool isOpaque(const Color& color)
+{
+    return roughly(color.a, 1.f);
+}
+
+// Real-world icons downloaded verbatim from their upstream repositories;
+// see TestFiles/README.md for sources and licenses.
+std::string readTestFile(const std::string& name)
+{
+    auto file = std::ifstream {std::filesystem::path {EACP_SVG_TEST_FILES} / name};
+    auto buffer = std::stringstream {};
+    buffer << file.rdbuf();
+    return buffer.str();
+}
+
+Image renderTestFile(const std::string& name)
+{
+    return eacp::SVG::toImage(readTestFile(name), 128, 128);
 }
 } // namespace
 
@@ -173,14 +195,118 @@ auto tMiterJoinStaysPointy = test("SVGImage/miterJoinStaysPointy") = []
     check(!isTransparent(image.at(292, 235)));
 };
 
-// Writes the rendered logo next to the executable's temp dir so it can be
-// inspected by eye after a test run.
-auto tLogoRendersToDisk = test("SVGImage/logoRendersToDisk") = []
+// A circle drawn as two half-circle arc commands. Locks the arc-to-cubic
+// conversion independently of the downloaded icons: the parser used to
+// drop A/a commands entirely (and lose the pen position with them).
+auto tArcCommandsDrawCircle = test("SVGImage/arcCommandsDrawCircle") = []
 {
-    auto image = eacp::SVG::toImage(logoSvg);
-    check(image.isValid());
+    constexpr auto svg = R"SVG(<svg width="16" height="16">
+      <path d="M2 8A6 6 0 1 1 14 8A6 6 0 1 1 2 8" fill="#ff0000"/>
+    </svg>)SVG";
 
-    auto path = std::filesystem::temp_directory_path() / "eacp-svg-logo.png";
-    image.save(path);
-    check(std::filesystem::exists(path));
+    auto image = eacp::SVG::toImage(svg);
+    check(isRed(image.at(8, 8)));
+    check(isTransparent(image.at(1, 1)));
+    check(isTransparent(image.at(15, 15)));
+};
+
+// The arc grammar allows the two flags to run straight into the next
+// number ("0 1112 0" = flags 1,1 then x=12), so they cannot be read as
+// floats. Both spellings must produce the identical image.
+auto tArcFlagsWithoutSeparators = test("SVGImage/arcFlagsWithoutSeparators") = []
+{
+    constexpr auto separated = R"SVG(<svg width="16" height="16">
+      <path d="M2 8a6 6 0 1 1 12 0a6 6 0 1 1 -12 0" fill="#ff0000"/>
+    </svg>)SVG";
+    constexpr auto compact = R"SVG(<svg width="16" height="16">
+      <path d="M2 8a6 6 0 1112 0a6 6 0 11-12 0" fill="#ff0000"/>
+    </svg>)SVG";
+
+    auto reference = eacp::SVG::toImage(separated);
+    check(isRed(reference.at(8, 8)));
+    check(eacp::SVG::toImage(compact) == reference);
+};
+
+// An <svg> with no width/height sizes itself from the viewBox, not the
+// 300x150 CSS fallback.
+auto tViewBoxOnlySizing = test("SVGImage/viewBoxOnlySizing") = []
+{
+    auto image = eacp::SVG::toImage(readTestFile("simpleicons-github.svg"));
+    check(image.width() == 24);
+    check(image.height() == 24);
+};
+
+auto tGithubMark = test("SVGImage/realWorld/githubMark") = []
+{
+    auto image = renderTestFile("simpleicons-github.svg");
+    check(isOpaque(image.at(64, 12)));
+    check(isTransparent(image.at(64, 64)));
+    check(isTransparent(image.at(4, 4)));
+};
+
+auto tBootstrapCamera = test("SVGImage/realWorld/bootstrapCamera") = []
+{
+    auto image = renderTestFile("bootstrap-camera.svg");
+    check(isOpaque(image.at(40, 76)));
+    check(isTransparent(image.at(64, 32)));
+    check(isTransparent(image.at(4, 4)));
+};
+
+auto tBootstrapHeartFill = test("SVGImage/realWorld/bootstrapHeartFill") = []
+{
+    auto image = renderTestFile("bootstrap-heart-fill.svg");
+    check(isOpaque(image.at(64, 64)));
+    check(isTransparent(image.at(64, 4)));
+};
+
+auto tFeatherActivity = test("SVGImage/realWorld/featherActivity") = []
+{
+    auto image = renderTestFile("feather-activity.svg");
+    check(isOpaque(image.at(64, 64)));
+    check(isOpaque(image.at(12, 64)));
+    check(isTransparent(image.at(4, 4)));
+};
+
+auto tFeatherCheckCircle = test("SVGImage/realWorld/featherCheckCircle") = []
+{
+    auto image = renderTestFile("feather-check-circle.svg");
+    check(isOpaque(image.at(64, 12)));
+    check(isTransparent(image.at(64, 64)));
+};
+
+auto tMaterialHome = test("SVGImage/realWorld/materialHome") = []
+{
+    auto image = renderTestFile("material-home.svg");
+    check(isOpaque(image.at(64, 64)));
+    check(isOpaque(image.at(64, 24)));
+    check(isTransparent(image.at(4, 4)));
+};
+
+auto tTablerStar = test("SVGImage/realWorld/tablerStar") = []
+{
+    auto image = renderTestFile("tabler-star.svg");
+    check(isOpaque(image.at(64, 12)));
+    check(isTransparent(image.at(64, 64)));
+    check(isTransparent(image.at(4, 4)));
+};
+
+// Writes every render into the temp dir so a test run leaves the images
+// ready for inspection by eye.
+auto tRendersToDisk = test("SVGImage/rendersToDisk") = []
+{
+    auto dir = std::filesystem::temp_directory_path();
+
+    auto logo = eacp::SVG::toImage(logoSvg);
+    check(logo.isValid());
+    logo.save(dir / "eacp-svg-logo.png");
+
+    for (auto& entry: std::filesystem::directory_iterator {EACP_SVG_TEST_FILES})
+    {
+        if (entry.path().extension() != ".svg")
+            continue;
+
+        auto image = renderTestFile(entry.path().filename().string());
+        check(image.isValid());
+        image.save(dir / entry.path().filename().replace_extension(".png"));
+    }
 };
