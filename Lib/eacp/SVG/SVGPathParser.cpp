@@ -1,9 +1,9 @@
 #include "SVGPathParser.h"
 #include "NumberReader.h"
 
-#include <eacp/Core/Utils/Logging.h>
-
+#include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace eacp::SVG
 {
