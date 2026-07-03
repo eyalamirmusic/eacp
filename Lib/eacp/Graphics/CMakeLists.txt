@@ -55,6 +55,7 @@ if (APPLE)
         target_sources(eacp-graphics PRIVATE
                 Graphics/Keyboard-macOS.mm
                 Helpers/DisplayLink-macOS.mm
+                Helpers/ImageConversion-macOS.mm
                 HotKey/GlobalHotKey-macOS.mm
                 Menu/AppKitMenu.mm
                 Menu/Menu-macOS.mm
@@ -72,6 +73,7 @@ elseif (WIN32)
             Graphics/Keyboard-Windows.cpp
             Helpers/DarkMode-Windows.cpp
             Helpers/DisplayLink-Windows.cpp
+            Helpers/ImageConversion-Windows.cpp
             HotKey/GlobalHotKey-Windows.cpp
             Image/Image-Windows.cpp
             Layers/Layer-Windows.cpp

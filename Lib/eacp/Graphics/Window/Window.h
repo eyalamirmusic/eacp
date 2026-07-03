@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <eacp/Core/Utils/Containers.h>
+#include "../Image/Image.h"
 #include "../Primitives/Primitives.h"
 #include "../View/View.h"
 #include <eacp/Core/App/App.h>
@@ -119,6 +120,19 @@ struct WindowOptions
     // measured from the primary display's top-left (Electron convention).
     // Unset centers the window (macOS) / uses the system default (Windows).
     std::optional<Point> initialPosition;
+
+    // Provides the application's icon, typically decoding a PNG embedded
+    // with ResEmbed. Called once when the window is constructed: Windows
+    // stamps the icon on the window so the taskbar and Alt-Tab show it;
+    // macOS applies it as the Dock icon. Returning an invalid Image (the
+    // default) keeps the system default.
+    std::function<Image()> applicationIcon = [] { return Image {}; };
+
+    // Windows: overrides the icon the Alt-Tab switcher shows (the big-icon
+    // slot); the title bar and taskbar keep applicationIcon. An invalid
+    // Image (the default) falls back to applicationIcon. No-op on macOS,
+    // which has no per-window icons.
+    std::function<Image()> altTabIcon = [] { return Image {}; };
 
     // Rounds the window's corners (points). Borderless windows are square
     // by default; set this to get the standard macOS rounded shape. On

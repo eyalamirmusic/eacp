@@ -1,5 +1,6 @@
 #include "Window.h"
 #include "../Graphics/Keyboard.h"
+#include "../Helpers/ImageConversion-macOS.h"
 #include "../Primitives/GraphicUtils.h"
 #include <eacp/Core/App/AppEnvironment.h>
 #import <Cocoa/Cocoa.h>
@@ -299,6 +300,16 @@ struct Window::Native
                 getWindow(),
                 NSMakePoint(options.trafficLightPosition->x,
                             options.trafficLightPosition->y));
+
+        applyApplicationIcon(options.applicationIcon());
+    }
+
+    // macOS has no per-window icons; the icon is the app's Dock tile,
+    // shared by every window.
+    static void applyApplicationIcon(const Image& image)
+    {
+        if (auto* icon = toNSImage(image))
+            [NSApp setApplicationIconImage:icon];
     }
 
     void toFront()

@@ -4,6 +4,7 @@
 #include "CompositionHostWindow-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
 #include "../Helpers/DarkMode-Windows.h"
+#include "../Helpers/ImageConversion-Windows.h"
 #include "../Helpers/SystemAppearance.h"
 #include <eacp/Core/App/AppEnvironment.h>
 
@@ -38,6 +39,7 @@ NonClientInsets nonClientInsets(HWND hwnd)
     AdjustWindowRectExForDpi(&rect, style, FALSE, exStyle, dpi);
     return {rect.right - rect.left, rect.bottom - rect.top};
 }
+
 } // namespace
 
 struct Window::Native
@@ -58,7 +60,16 @@ struct Window::Native
         host.onContentResized = onResize;
     }
 
-    ~Native() { host.teardown(); }
+    ~Native()
+    {
+        host.teardown();
+
+        if (applicationIcon)
+            DestroyIcon(applicationIcon);
+
+        if (altTabIcon)
+            DestroyIcon(altTabIcon);
+    }
 
     static void registerWindowClass()
     {
@@ -172,6 +183,28 @@ struct Window::Native
             ensureDarkModeAppInitialised();
             applyTitleBarTheme(host.hwnd, isSystemDarkMode());
         }
+
+        if (host.hwnd)
+            applyApplicationIcons(options);
+    }
+
+    // ICON_SMALL drives the title bar and taskbar, ICON_BIG the Alt-Tab
+    // switcher; the system scales as needed. The Alt-Tab override wins the
+    // big slot when present, otherwise applicationIcon serves both.
+    void applyApplicationIcons(const WindowOptions& options)
+    {
+        applicationIcon = toHIcon(options.applicationIcon());
+        altTabIcon = toHIcon(options.altTabIcon());
+
+        if (applicationIcon)
+            SendMessageW(host.hwnd,
+                         WM_SETICON,
+                         ICON_SMALL,
+                         reinterpret_cast<LPARAM>(applicationIcon));
+
+        if (auto* bigIcon = altTabIcon ? altTabIcon : applicationIcon)
+            SendMessageW(
+                host.hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(bigIcon));
     }
 
     // Windows 11+: ask DWM to round the window at the system radius (the
@@ -347,6 +380,8 @@ struct Window::Native
                                        LPARAM lParam);
 
     CompositionHostWindow host;
+    HICON applicationIcon = nullptr;
+    HICON altTabIcon = nullptr;
     Callback quitCallback = [] {};
     ResizeCallback onResize;
     WillResizeCallback onWillResize;

@@ -140,6 +140,10 @@ Don't use auto for functions and member functions
 
 Don't use comments unless absolutely needed. Use named functions to make code self documenting.
 
+Give std::function members a non-null default — a no-op lambda, or one
+returning an empty value (e.g. `[] { return Image {}; }`) — so call sites
+invoke them directly without null checks.
+
 
 Enforced via `.clang-format`:
 - Allman brace style

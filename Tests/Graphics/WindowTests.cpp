@@ -68,6 +68,30 @@ auto tWindowOptionsNewAffordancesDefaultOff =
     check(!options.visibleOnAllWorkspaces);
 };
 
+// The icons are bring-your-own, and the providers are never null: the
+// defaults are callable and return an invalid Image, which keeps the
+// system default without any null checks at the call sites.
+auto tIconProvidersDefaultToInvalidImage =
+    test("WindowOptions/iconProvidersDefaultToInvalidImage") = []
+{
+    check(!WindowOptions {}.applicationIcon());
+    check(!WindowOptions {}.altTabIcon());
+};
+
+// Live behaviour (the icon actually landing on the window / Dock) is
+// demonstrated by Apps/WebView/Browser; a provided icon just has to be
+// safe on a window that never materializes.
+auto tApplicationIconConstructsUnderHeadless =
+    test("WindowOptions/applicationIconConstructsUnderHeadless") = []
+{
+    auto options = WindowOptions {};
+    options.isPrimary = false;
+    options.applicationIcon = [] { return Image {8, 8}; };
+
+    auto window = Window {options};
+    check(true);
+};
+
 auto tGlobalHotKeyConstructsUnderHeadless =
     test("GlobalHotKey/headlessConstructionIsInert") = []
 {
@@ -77,10 +101,9 @@ auto tGlobalHotKeyConstructsUnderHeadless =
 
     auto calls = 0;
     {
-        auto hotKey = GlobalHotKey {
-            ModifierKeys {.alt = true, .command = true},
-            KeyCode::L,
-            [&] { ++calls; }};
+        auto hotKey = GlobalHotKey {ModifierKeys {.alt = true, .command = true},
+                                    KeyCode::L,
+                                    [&] { ++calls; }};
     }
 
     check(calls == 0);

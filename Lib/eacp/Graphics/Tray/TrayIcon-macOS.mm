@@ -1,57 +1,14 @@
 #import <Cocoa/Cocoa.h>
 
 #include "TrayIcon.h"
+#include "../Helpers/ImageConversion-macOS.h"
 #include "../Menu/AppKitMenu.h"
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/ObjC/Strings.h>
 
-#include <cstring>
-
 namespace eacp::Graphics
 {
-namespace
-{
-NSImage* toNSImage(const Image& image)
-{
-    auto width = image.width();
-    auto height = image.height();
-
-    if (width <= 0 || height <= 0)
-        return nil;
-
-    // The Image stores straight (non-premultiplied) 8-bit RGBA, top-left
-    // origin — exactly an NSBitmapImageRep with the non-premultiplied flag.
-    auto* rep = [[NSBitmapImageRep alloc]
-        initWithBitmapDataPlanes:nullptr
-                      pixelsWide:width
-                      pixelsHigh:height
-                   bitsPerSample:8
-                 samplesPerPixel:4
-                        hasAlpha:YES
-                        isPlanar:NO
-                  colorSpaceName:NSDeviceRGBColorSpace
-                    bitmapFormat:NSBitmapFormatAlphaNonpremultiplied
-                     bytesPerRow:width * 4
-                    bitsPerPixel:32];
-
-    std::memcpy([rep bitmapData],
-                image.pixels().data(),
-                static_cast<std::size_t>(width) * height * 4);
-
-    // Menu-bar icons read best at ~18pt tall; scale preserving aspect so a
-    // high-resolution source still renders crisply on Retina.
-    constexpr CGFloat menuBarHeight = 18.0;
-    auto scale = menuBarHeight / height;
-
-    auto* nsImage =
-        [[NSImage alloc] initWithSize:NSMakeSize(width * scale, menuBarHeight)];
-    [nsImage addRepresentation:rep];
-    [rep release];
-
-    return [nsImage autorelease];
-}
-} // namespace
 
 struct TrayIcon::Native
 {
@@ -81,6 +38,12 @@ struct TrayIcon::Native
         auto* nsImage = toNSImage(icon);
         if (nsImage == nil)
             return;
+
+        // Menu-bar icons read best at ~18pt tall; scale preserving aspect so
+        // a high-resolution source still renders crisply on Retina.
+        constexpr CGFloat menuBarHeight = 18.0;
+        auto scale = menuBarHeight / icon.height();
+        [nsImage setSize:NSMakeSize(icon.width() * scale, menuBarHeight)];
 
         [nsImage setTemplate:templateRendering ? YES : NO];
         [statusItem.get().button setImage:nsImage];
