@@ -11,6 +11,7 @@ clang-tidy can't express. Built on the libclang Python bindings; reads
 # exists (use -DEACP_UNITY_BUILD=OFF for per-file compile commands):
 uv run main.py                      # checks Lib/ and Apps/
 uv run main.py ../Lib/eacp/Core     # restrict to a subtree
+uv run main.py ../Apps/GUI/Main.cpp # single file (headers work too)
 uv run main.py -p ../build          # explicit build dir (default: ../build)
 uv run main.py --checks eacp-use-auto,eacp-no-raw-new-delete
 uv run main.py --checks '*,-eacp-no-body-comments'
@@ -20,6 +21,25 @@ uv run main.py --list-checks
 Exit code is 1 when any warning is emitted, so it can gate CI. The
 `eacp-tidy` job in `.github/workflows/build.yml` runs it on every push and
 pull request against a non-unity macOS build.
+
+A path argument may be a single file: a `.cpp`/`.mm` analyzes just its own
+translation unit (~0.5 s, fast enough for editors), and a header is analyzed
+through the TUs under the nearest ancestor directory that has any.
+
+## Editor integration (Neovim)
+
+`nvim/eacp-tidy.lua` surfaces the warnings as native buffer diagnostics —
+no plugins needed. Add to your nvim config:
+
+```lua
+dofile("/path/to/eacp/ExtraClangRules/nvim/eacp-tidy.lua").setup()
+```
+
+It lints `.cpp`/`.mm`/`.h` buffers inside this repo on open and on save
+(against the file on disk, so unsaved edits aren't seen). clangd cannot load
+external checks, which is why this runs as a separate linter. Files must
+appear in `build/compile_commands.json` — a newly added source file needs a
+CMake reconfigure before it gets diagnostics.
 
 ## Auto-fix
 
