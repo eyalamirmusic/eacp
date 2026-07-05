@@ -42,12 +42,13 @@ Class getDragSourceClass()
 // work queue, so a singleton is safe and outlives every drag session.
 id<NSDraggingSource> sharedDragSource()
 {
-    static id<NSDraggingSource> source =
-        (id<NSDraggingSource>) [[getDragSourceClass() alloc] init];
+    static auto source = (id<NSDraggingSource>) [[getDragSourceClass() alloc] init];
     return source;
 }
 } // namespace
 
+// A multi-file drag fans the icon stack out a few px per item so it reads
+// as multiple items rather than one.
 bool beginFileDrag(WKWebView* webView,
                    NSEvent* event,
                    const Vector<std::string>& paths)
@@ -56,8 +57,8 @@ bool beginFileDrag(WKWebView* webView,
         return false;
 
     auto* source = sharedDragSource();
-    constexpr CGFloat iconSize = 64.0;
-    constexpr CGFloat stackOffset = 8.0;
+    constexpr auto iconSize = 64.0;
+    constexpr auto stackOffset = 8.0;
 
     auto* items = [NSMutableArray arrayWithCapacity:paths.size()];
     auto* workspace = [NSWorkspace sharedWorkspace];
@@ -77,8 +78,6 @@ bool beginFileDrag(WKWebView* webView,
         auto* icon = [workspace iconForFile:nsPath];
         icon.size = NSMakeSize(iconSize, iconSize);
 
-        // Fan the stack out a few px per item so a multi-file drag reads as
-        // multiple items rather than one.
         auto offset = (CGFloat) index * stackOffset;
         [item setDraggingFrame:NSMakeRect(anchor.x - iconSize / 2 + offset,
                                           anchor.y - iconSize / 2 - offset,
@@ -203,7 +202,7 @@ void dragWebViewMouseDragged(id self, SEL, NSEvent* event)
     {
         auto dx = event.locationInWindow.x - state->mouseDownLocation.x;
         auto dy = event.locationInWindow.y - state->mouseDownLocation.y;
-        constexpr CGFloat threshold = 4.0;
+        constexpr auto threshold = 4.0;
 
         if (dx * dx + dy * dy >= threshold * threshold)
         {
@@ -404,6 +403,15 @@ void reportKeyVerdict(WKWebView* webView, bool isDown, bool consumed)
         state->unhandledKeyCallback(event.get(), isDown);
 }
 
+// "maximize" uses zoom:, which is itself a toggle — it restores the saved
+// frame when the window is already zoomed — and the resulting state is
+// reported back so the page's data-eacp-maximized attribute tracks reality.
+//
+// "close" prefers performClose:, which respects windowShouldClose:, but it
+// beeps and refuses on windows without a close button — exactly the
+// frameless windows that need web-rendered controls — so those close
+// directly. windowWillClose still fires either way, so the window's quit
+// policy runs.
 void performWindowControl(WKWebView* webView, const std::string& action)
 {
     NSWindow* window = webView.window;
@@ -418,9 +426,6 @@ void performWindowControl(WKWebView* webView, const std::string& action)
 
     if (action == "maximize")
     {
-        // zoom: is itself a toggle — it restores the saved frame when the
-        // window is already zoomed. Report the resulting state back so the
-        // page's data-eacp-maximized attribute tracks reality.
         [window zoom:nil];
         auto* script = window.zoomed ? @"window.__eacpSetMaximized(true)"
                                      : @"window.__eacpSetMaximized(false)";
@@ -430,11 +435,6 @@ void performWindowControl(WKWebView* webView, const std::string& action)
 
     if (action == "close")
     {
-        // performClose: respects windowShouldClose:, but beeps and refuses
-        // on windows without a close button — exactly the frameless windows
-        // that need web-rendered controls — so those close directly.
-        // windowWillClose still fires either way, so the window's quit
-        // policy runs.
         if ((window.styleMask & NSWindowStyleMaskClosable) != 0)
             [window performClose:nil];
         else

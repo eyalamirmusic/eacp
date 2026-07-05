@@ -13,6 +13,23 @@ Graphics::Color
             a.b + (b.b - a.b) * t,
             a.a + (b.a - a.a) * t};
 }
+
+// The point projected onto the gradient axis, as a parameter clamped to [0, 1].
+float projectOntoGradientAxis(const Graphics::LinearGradient& gradient,
+                              const Graphics::Point& point)
+{
+    auto axisX = gradient.end.x - gradient.start.x;
+    auto axisY = gradient.end.y - gradient.start.y;
+    auto lengthSquared = axisX * axisX + axisY * axisY;
+
+    if (lengthSquared <= 1e-12f)
+        return 0.0f;
+
+    auto dx = point.x - gradient.start.x;
+    auto dy = point.y - gradient.start.y;
+
+    return std::clamp((dx * axisX + dy * axisY) / lengthSquared, 0.0f, 1.0f);
+}
 } // namespace
 
 Graphics::Color colorAt(const Graphics::LinearGradient& gradient,
@@ -26,21 +43,7 @@ Graphics::Color colorAt(const Graphics::LinearGradient& gradient,
     if (stops.size() == 1)
         return stops[0].color;
 
-    // Project the point onto the gradient axis to a parameter in [0, 1].
-    auto axisX = gradient.end.x - gradient.start.x;
-    auto axisY = gradient.end.y - gradient.start.y;
-    auto lengthSquared = axisX * axisX + axisY * axisY;
-
-    auto t = 0.0f;
-
-    if (lengthSquared > 1e-12f)
-    {
-        auto dx = point.x - gradient.start.x;
-        auto dy = point.y - gradient.start.y;
-        t = (dx * axisX + dy * axisY) / lengthSquared;
-    }
-
-    t = std::clamp(t, 0.0f, 1.0f);
+    auto t = projectOntoGradientAxis(gradient, point);
 
     auto sorted = stops;
     std::sort(sorted.begin(),

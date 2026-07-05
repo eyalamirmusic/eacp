@@ -110,7 +110,8 @@ struct Server::Impl
     OwningPointer<Dispatcher> dispatcher;
     CFSocketRef listenSocket = nullptr;
     CFRunLoopSourceRef listenSource = nullptr;
-    RequestHandler handler;
+    RequestHandler handler = [](const eacp::HTTP::Request&)
+    { return eacp::HTTP::Response {}; };
     int boundPort = -1;
     std::map<CFSocketRef, OwningPointer<Connection>> connections;
 };

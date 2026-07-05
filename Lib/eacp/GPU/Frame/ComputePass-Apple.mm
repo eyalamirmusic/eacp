@@ -70,6 +70,8 @@ void ComputePass::setInputBuffer(const BufferRange& range, int slot)
                      atIndex:(NSUInteger) slot];
 }
 
+// Metal binds a device buffer the same way whether the kernel reads or
+// writes it; the read/write distinction only matters to D3D's view types.
 void ComputePass::setOutputBuffer(const Buffer& buffer, int slot)
 {
     setOutputBuffer(BufferRange::of(buffer), slot);

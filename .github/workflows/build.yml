@@ -154,6 +154,24 @@ jobs:
           EACP_REQUIRE_DISPLAY: '1'
         run: Scripts/with-weston ctest --test-dir build --output-on-failure -j 4
 
+  eacp-tidy:
+    name: eacp-tidy (CLAUDE.md rules)
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Configure
+        run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Run eacp-tidy
+        run: uv run --project ExtraClangRules ExtraClangRules/main.py
+
   build-ios:
     name: iOS Simulator
     runs-on: macos-latest

@@ -95,7 +95,7 @@ std::string Keyboard::keyCodeToCharacter(uint16_t keyCode)
     UniChar chars[4];
     UniCharCount actualLength = 0;
 
-    OSStatus status = UCKeyTranslate(keyboardLayout,
+    auto status = UCKeyTranslate(keyboardLayout,
                                      keyCode,
                                      kUCKeyActionDown,
                                      0,

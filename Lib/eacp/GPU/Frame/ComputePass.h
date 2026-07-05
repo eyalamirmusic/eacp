@@ -201,11 +201,11 @@ public:
 
     // The Metal buffer index the first uniform block binds to. Storage buffers
     // take the low indices, so uniforms start above them.
-    static constexpr int uniformBase = 16;
+    static constexpr auto uniformBase = 16;
 
     // The stock threadgroup width of a 1D dispatch, used by every kernel that
     // named no ThreadGroupShape of its own.
-    static constexpr int threadGroupWidth = 64;
+    static constexpr auto threadGroupWidth = 64;
 
     // The stock 2D group is this squared, which is the same 64 threads the 1D
     // path already budgets for - and square, so a group covers a tile rather

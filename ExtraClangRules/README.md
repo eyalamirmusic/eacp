@@ -17,7 +17,9 @@ uv run main.py --checks '*,-eacp-no-body-comments'
 uv run main.py --list-checks
 ```
 
-Exit code is 1 when any warning is emitted, so it can gate CI.
+Exit code is 1 when any warning is emitted, so it can gate CI. The
+`eacp-tidy` job in `.github/workflows/build.yml` runs it on every push and
+pull request against a non-unity macOS build.
 
 ## Auto-fix
 

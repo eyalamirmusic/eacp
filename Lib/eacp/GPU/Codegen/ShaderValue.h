@@ -1098,25 +1098,25 @@ struct ValueTypeOf;
 template <>
 struct ValueTypeOf<Float>
 {
-    static constexpr ValueType value = ValueType::Float;
+    static constexpr auto value = ValueType::Float;
 };
 
 template <>
 struct ValueTypeOf<Float2>
 {
-    static constexpr ValueType value = ValueType::Float2;
+    static constexpr auto value = ValueType::Float2;
 };
 
 template <>
 struct ValueTypeOf<Float3>
 {
-    static constexpr ValueType value = ValueType::Float3;
+    static constexpr auto value = ValueType::Float3;
 };
 
 template <>
 struct ValueTypeOf<Float4>
 {
-    static constexpr ValueType value = ValueType::Float4;
+    static constexpr auto value = ValueType::Float4;
 };
 
 template <>
@@ -1134,13 +1134,13 @@ struct ValueTypeOf<Float3x3>
 template <>
 struct ValueTypeOf<Float4x4>
 {
-    static constexpr ValueType value = ValueType::Float4x4;
+    static constexpr auto value = ValueType::Float4x4;
 };
 
 template <>
 struct ValueTypeOf<UInt>
 {
-    static constexpr ValueType value = ValueType::UInt;
+    static constexpr auto value = ValueType::UInt;
 };
 
 template <>
