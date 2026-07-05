@@ -117,13 +117,17 @@ def real(path: str) -> str:
     return os.path.realpath(path)
 
 
-def in_scope(path: str | None, scope_prefixes: tuple[str, ...]) -> bool:
+Scope = tuple[tuple[str, ...], frozenset[str]]  # (directory prefixes, files)
+
+
+def in_scope(path: str | None, scope: Scope) -> bool:
     if not path:
         return False
     path = real(path)
     if "/build/" in path or "/_deps/" in path:
         return False
-    return path.startswith(scope_prefixes)
+    prefixes, files = scope
+    return path in files or path.startswith(prefixes)
 
 
 def tokens_before_name(cursor: Cursor) -> list[Token]:
@@ -531,7 +535,7 @@ def build_clang_args(entry: dict[str, Any]) -> list[str]:
 
 
 def analyze(
-    entry: dict[str, Any], scope_prefixes: tuple[str, ...], checks: set[str]
+    entry: dict[str, Any], scope: Scope, checks: set[str]
 ) -> tuple[list[Diagnostic], str | None]:
     diags: set[Diagnostic] = set()
     configure_libclang()
@@ -566,7 +570,7 @@ def analyze(
         if f is None:
             return
         path = real(f.name)
-        if in_scope(path, scope_prefixes):
+        if in_scope(path, scope):
             diags.add(
                 Diagnostic(
                     path, location.line, location.column, check, message, fix
@@ -576,7 +580,7 @@ def analyze(
     def walk(cursor: Cursor, parent: Cursor | None) -> None:
         loc_file = cursor.location.file
         if cursor.kind != CursorKind.TRANSLATION_UNIT and (
-            loc_file is None or not in_scope(loc_file.name, scope_prefixes)
+            loc_file is None or not in_scope(loc_file.name, scope)
         ):
             return
         if "eacp-use-auto" in checks:
@@ -667,6 +671,36 @@ def suppressed(diag: Diagnostic, line_cache: dict[str, list[str]]) -> bool:
     return matches(same, nextline=False) or matches(prev, nextline=True)
 
 
+def select_entries(
+    database: list[dict[str, Any]], scope: Scope
+) -> list[dict[str, Any]]:
+    """Compile-commands entries to analyze. A directory selects every TU under
+    it; a file selects its own TU, or — for headers, which have no compile
+    command — the TUs under the nearest ancestor directory that has any, so
+    the header is seen through the code that includes it."""
+    entries = [e for e in database if in_scope(entry_path(e), scope)]
+    seen = {entry_path(e) for e in entries}
+
+    _, files = scope
+    for path in files:
+        if path in seen or any(entry_path(e) == path for e in database):
+            continue
+        directory = Path(path).parent
+        while directory != directory.parent:
+            prefix = str(directory) + os.sep
+            hits = [e for e in database if entry_path(e).startswith(prefix)]
+            if hits:
+                entries += [e for e in hits if entry_path(e) not in seen]
+                seen.update(entry_path(e) for e in hits)
+                break
+            directory = directory.parent
+    return entries
+
+
+def entry_path(entry: dict[str, Any]) -> str:
+    return real(os.path.join(str(entry["directory"]), str(entry["file"])))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument(
@@ -714,18 +748,18 @@ def main() -> int:
             return 2
 
     scope_paths = args.paths or [str(REPO_ROOT / "Lib"), str(REPO_ROOT / "Apps")]
-    scope_prefixes = tuple(str(Path(p).resolve()) + os.sep for p in scope_paths)
+    resolved = [Path(p).resolve() for p in scope_paths]
+    scope: Scope = (
+        tuple(str(p) + os.sep for p in resolved if p.is_dir()),
+        frozenset(str(p) for p in resolved if p.is_file()),
+    )
 
     db_path = Path(args.build_dir) / "compile_commands.json"
     if not db_path.exists():
         print(f"no compile_commands.json in {args.build_dir}", file=sys.stderr)
         return 2
     database: list[dict[str, Any]] = json.loads(db_path.read_text())
-    entries = [
-        e
-        for e in database
-        if in_scope(str(Path(e["file"]).resolve()), scope_prefixes)
-    ]
+    entries = select_entries(database, scope)
     if not entries:
         print("no compile commands match the given paths", file=sys.stderr)
         return 2
@@ -733,7 +767,7 @@ def main() -> int:
     all_diags: set[Diagnostic] = set()
     errors: list[str] = []
     with concurrent.futures.ProcessPoolExecutor(max_workers=args.j) as pool:
-        futures = [pool.submit(analyze, e, scope_prefixes, checks) for e in entries]
+        futures = [pool.submit(analyze, e, scope, checks) for e in entries]
         for future in concurrent.futures.as_completed(futures):
             diags, error = future.result()
             all_diags.update(diags)
