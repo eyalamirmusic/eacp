@@ -1,9 +1,19 @@
 [project]
 name = "extraclangrules"
 version = "0.1.0"
-description = "Add your description here"
+description = "Custom clang-tidy-style checks for the eacp CLAUDE.md rules"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "libclang>=18.1.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.411",
+]
+
+[tool.pyright]
+include = ["main.py"]
+stubPath = "typings"
+typeCheckingMode = "standard"
