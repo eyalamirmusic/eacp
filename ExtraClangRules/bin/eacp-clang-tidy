@@ -1,0 +1,20 @@
+#!/bin/sh
+# Stock clang-tidy from the pinned LLVM with the eacp checks plugin loaded.
+# Point CLion's "Clang-Tidy executable" setting at this script; CI and the
+# nvim integration use it too. Build the plugin first (see ../README.md).
+set -e
+
+dir="$(cd "$(dirname "$0")" && pwd)"
+llvm="${EACP_LLVM_PREFIX:-/opt/homebrew/opt/llvm@21}"
+plugin="$dir/../plugin/build/libEacpTidyChecks.so"
+
+if [ ! -f "$plugin" ]; then
+    echo "eacp-clang-tidy: plugin not built at $plugin" >&2
+    echo "  cmake -G Ninja -B '$dir/../plugin/build' \\" >&2
+    echo "        -DCMAKE_BUILD_TYPE=Release \\" >&2
+    echo "        -DCMAKE_PREFIX_PATH=$llvm '$dir/../plugin'" >&2
+    echo "  cmake --build '$dir/../plugin/build'" >&2
+    exit 1
+fi
+
+exec "$llvm/bin/clang-tidy" --load "$plugin" "$@"

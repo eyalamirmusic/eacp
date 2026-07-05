@@ -26,14 +26,14 @@ void repositionTrafficLights(NSWindow* window, NSPoint inset)
     if (close == nil || miniaturize == nil || zoom == nil)
         return;
 
-    NSView* container = close.superview;
+    auto container = close.superview;
     auto containerHeight = NSHeight(container.frame);
     auto spacing = NSMinX(miniaturize.frame) - NSMinX(close.frame);
 
     NSButton* buttons[] = {close, miniaturize, zoom};
     for (auto i = 0; i < 3; ++i)
     {
-        NSRect frame = buttons[i].frame;
+        auto frame = buttons[i].frame;
         frame.origin.x = inset.x + i * spacing;
         frame.origin.y = containerHeight - inset.y - NSHeight(frame);
         buttons[i].frame = frame;
@@ -196,7 +196,7 @@ Class windowClassForStyle(NSWindowStyleMask style)
 // whose origin is the primary screen's bottom-left.
 NSPoint frameTopLeftFromScreenTopLeft(double x, double y)
 {
-    NSScreen* primary = NSScreen.screens.firstObject;
+    auto primary = NSScreen.screens.firstObject;
     auto screenTop = primary != nil ? NSMaxY(primary.frame) : 0.0;
     return NSMakePoint(x, screenTop - y);
 }

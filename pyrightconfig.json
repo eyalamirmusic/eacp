@@ -1,8 +1,0 @@
-{
-    "include": ["ExtraClangRules"],
-    "exclude": ["ExtraClangRules/venv", "ExtraClangRules/.venv", "build"],
-    "stubPath": "ExtraClangRules/typings",
-    "venvPath": "ExtraClangRules",
-    "venv": "venv",
-    "typeCheckingMode": "strict"
-}

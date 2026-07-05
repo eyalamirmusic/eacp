@@ -32,4 +32,4 @@ xcschememanagement.plist
 
 workspace.xml
 xcuserdata
-ExtraClangRules/__pycache__
+ExtraClangRules/plugin/build/

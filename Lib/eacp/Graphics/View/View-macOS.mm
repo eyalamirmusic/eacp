@@ -75,7 +75,7 @@ namespace eacp::Graphics
 - (NativeView*)rootView
 {
     auto* root = self;
-    NSView* current = self.superview;
+    auto current = self.superview;
 
     while (current != nil)
     {

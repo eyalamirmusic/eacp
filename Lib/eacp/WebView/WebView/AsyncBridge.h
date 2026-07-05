@@ -38,15 +38,15 @@ enum class CommandExecution
 // around: Miro stays event-loop-agnostic (it only calls a std::function
 // on completion); eacp owns the threading and composes its Async on top.
 // The returned Async always settles on the main thread, so continuations
-// (delivery to the WebView) run where the transport lives.
+// (delivery to the WebView) run where the transport lives: whatever
+// thread `invoke` settles on, `settle` hops back to the main thread to
+// resolve, because AsyncPromise (and the delivery that follows) is
+// main-thread only.
 template <typename Invoke>
 Threads::Async<Miro::Json::Value> runCommand(CommandExecution mode, Invoke invoke)
 {
     auto promise = Threads::AsyncPromise<Miro::Json::Value> {};
 
-    // Whatever thread `invoke` settles on, hop back to the main thread to
-    // resolve — AsyncPromise (and the delivery that follows) is
-    // main-thread only.
     auto settle =
         [promise](const Miro::Json::Value& result, const std::string* error)
     {

@@ -57,14 +57,15 @@ public:
     // storage buffers and uniform block (including the implicit element count
     // its generated bounds guard reads), then a dispatch over count work items.
     // Templated so this header stays independent of the codegen layer.
+    // packedUniforms() is sequenced in its own statement because packing must
+    // happen before uniformByteSize() is read, and argument evaluation order
+    // would not guarantee that.
     template <typename Program>
     void dispatch(Program& program, int count)
     {
         setPipeline(program.pipeline());
         program.bindBuffers(*this);
 
-        // Sequenced separately: packing must happen before the size is read,
-        // and argument evaluation order would not guarantee that.
         const auto* uniforms = program.packedUniforms(count);
         setBytes(uniforms, (std::size_t) program.uniformByteSize());
         dispatch(count);

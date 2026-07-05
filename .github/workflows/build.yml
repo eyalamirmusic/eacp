@@ -71,10 +71,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: astral-sh/setup-uv@v7
-
-      - name: Typecheck eacp-tidy (pyright)
-        run: uv run --project ExtraClangRules --group dev pyright --project ExtraClangRules
+      - name: Install pinned LLVM
+        run: brew install llvm@21
 
       - name: Configure
         run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
@@ -82,8 +80,32 @@ jobs:
       - name: Build
         run: cmake --build build
 
+      - name: Build eacp-tidy plugin
+        run: >
+          cmake -G Ninja -B ExtraClangRules/plugin/build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/llvm@21
+          ExtraClangRules/plugin
+          && cmake --build ExtraClangRules/plugin/build
+
+      - name: Check the fixture still trips every check
+        run: >
+          ExtraClangRules/bin/eacp-clang-tidy --checks='-*,eacp-*'
+          ExtraClangRules/plugin/test/Sample.cpp --
+          -std=c++20 -isysroot "$(xcrun --show-sdk-path)"
+          2>/dev/null | grep -c "warning:.*eacp-" | grep -qx 18
+
       - name: Run eacp-tidy
-        run: uv run --project ExtraClangRules ExtraClangRules/main.py
+        run: >
+          /opt/homebrew/opt/llvm@21/bin/run-clang-tidy
+          -clang-tidy-binary "$PWD/ExtraClangRules/bin/eacp-clang-tidy"
+          -p build
+          -checks='-*,eacp-*'
+          -warnings-as-errors='eacp-*'
+          -header-filter='.*/(Lib|Apps)/.*'
+          -exclude-header-filter='.*/(build|_deps)/.*'
+          -quiet
+          "$PWD/(Lib|Apps)/.*"
 
   build-ios:
     name: iOS Simulator

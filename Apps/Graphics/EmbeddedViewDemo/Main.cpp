@@ -8,7 +8,6 @@ struct PluginContent final : View
 {
     PluginContent()
     {
-        // testing
         background->setFillColor({0.15f, 0.18f, 0.22f});
         accent->setFillColor({0.9f, 0.55f, 0.2f});
 
