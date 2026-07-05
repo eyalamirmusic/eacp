@@ -16,4 +16,4 @@ dev = [
 [tool.pyright]
 include = ["main.py"]
 stubPath = "typings"
-typeCheckingMode = "standard"
+typeCheckingMode = "strict"

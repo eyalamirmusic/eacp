@@ -23,6 +23,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Protocol
 
 from clang.cindex import (
     Config,
@@ -70,6 +71,26 @@ ALL_CHECKS = {
 
 
 Edit = tuple[int, int, str]  # byte offsets [start, end) -> replacement
+
+
+class AddFn(Protocol):
+    def __call__(
+        self,
+        cursor: Cursor,
+        check: str,
+        message: str,
+        fix: tuple[Edit, ...] | None = None,
+    ) -> None: ...
+
+
+class AddAtFn(Protocol):
+    def __call__(
+        self,
+        location: SourceLocation,
+        check: str,
+        message: str,
+        fix: tuple[Edit, ...] | None = None,
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -175,7 +196,7 @@ def unwrap_implicit(expr: Cursor) -> Cursor:
 # --------------------------------------------------------------------------
 
 
-def check_use_auto(cursor: Cursor, parent: Cursor | None, add) -> None:
+def check_use_auto(cursor: Cursor, parent: Cursor | None, add: AddFn) -> None:
     if cursor.kind != CursorKind.VAR_DECL:
         return
     if parent is not None and parent.kind == CursorKind.CXX_CATCH_STMT:
@@ -251,7 +272,9 @@ def use_auto_fix(
     return ((start, end, "auto"),)
 
 
-def check_no_auto_return(cursor: Cursor, parent: Cursor | None, add) -> None:
+def check_no_auto_return(
+    cursor: Cursor, parent: Cursor | None, add: AddFn
+) -> None:
     if cursor.kind not in (
         CursorKind.FUNCTION_DECL,
         CursorKind.CXX_METHOD,
@@ -287,9 +310,12 @@ def auto_return_fix(cursor: Cursor, auto_tok: Token) -> tuple[Edit, ...] | None:
 
     if cursor.kind == CursorKind.FUNCTION_TEMPLATE:
         return None
+
     deduced = cursor.result_type.spelling
+
     if not deduced or re.search(r"\bauto\b|\bdecltype\b|\(lambda|\(unnamed", deduced):
         return None
+
     return ((*auto_span, deduced),)
 
 
@@ -310,7 +336,7 @@ def trailing_return_tokens(
             return None
     if arrow is None:
         return None
-    type_toks = []
+    type_toks: list[Token] = []
     for tok in toks[arrow + 1 :]:
         if tok.kind == TokenKind.COMMENT or tok.spelling in (
             "{",
@@ -326,7 +352,9 @@ def trailing_return_tokens(
 NULL_DEFAULTS = {"{}", "={}", "=nullptr", "{nullptr}", "=NULL", "{NULL}"}
 
 
-def check_std_function_member(cursor: Cursor, parent: Cursor | None, add) -> None:
+def check_std_function_member(
+    cursor: Cursor, parent: Cursor | None, add: AddFn
+) -> None:
     if cursor.kind != CursorKind.FIELD_DECL:
         return
     canonical = cursor.type.get_canonical().spelling
@@ -408,7 +436,9 @@ def extract_signature(spelling: str) -> tuple[str, str] | None:
     return None
 
 
-def check_raw_new_delete(cursor: Cursor, parent: Cursor | None, add) -> None:
+def check_raw_new_delete(
+    cursor: Cursor, parent: Cursor | None, add: AddFn
+) -> None:
     if cursor.kind == CursorKind.CXX_NEW_EXPR:
         add(
             cursor,
@@ -424,7 +454,9 @@ def check_raw_new_delete(cursor: Cursor, parent: Cursor | None, add) -> None:
         )
 
 
-def check_body_comments(cursor: Cursor, tu: TranslationUnit, add_at) -> None:
+def check_body_comments(
+    cursor: Cursor, tu: TranslationUnit, add_at: AddAtFn
+) -> None:
     if cursor.kind not in (
         CursorKind.FUNCTION_DECL,
         CursorKind.CXX_METHOD,
@@ -470,9 +502,9 @@ def system_resource_dir() -> str | None:
     return None
 
 
-def build_clang_args(entry: dict) -> list[str]:
-    raw = entry.get("arguments") or shlex.split(entry["command"])
-    args = []
+def build_clang_args(entry: dict[str, Any]) -> list[str]:
+    raw: list[str] = entry.get("arguments") or shlex.split(entry["command"])
+    args: list[str] = []
     skip_next = False
     for arg in raw[1:]:
         if skip_next:
@@ -498,7 +530,9 @@ def build_clang_args(entry: dict) -> list[str]:
     return args
 
 
-def analyze(entry: dict, scope_prefixes: tuple[str, ...], checks: set[str]):
+def analyze(
+    entry: dict[str, Any], scope_prefixes: tuple[str, ...], checks: set[str]
+) -> tuple[list[Diagnostic], str | None]:
     diags: set[Diagnostic] = set()
     configure_libclang()
     index = Index.create()
@@ -514,10 +548,20 @@ def analyze(entry: dict, scope_prefixes: tuple[str, ...], checks: set[str]):
     fatal = [d.spelling for d in tu.diagnostics if d.severity >= 4]
     error = f"{entry['file']}: {fatal[0]}" if fatal else None
 
-    def add(cursor: Cursor, check: str, message: str, fix=None) -> None:
+    def add(
+        cursor: Cursor,
+        check: str,
+        message: str,
+        fix: tuple[Edit, ...] | None = None,
+    ) -> None:
         add_at(cursor.location, check, message, fix)
 
-    def add_at(location, check: str, message: str, fix=None) -> None:
+    def add_at(
+        location: SourceLocation,
+        check: str,
+        message: str,
+        fix: tuple[Edit, ...] | None = None,
+    ) -> None:
         f = location.file
         if f is None:
             return
@@ -560,11 +604,11 @@ def apply_fixes(diags: list[Diagnostic]) -> list[tuple[str, int]]:
         if diag.fix:
             edits_by_file.setdefault(diag.file, set()).update(diag.fix)
 
-    changed = []
+    changed: list[tuple[str, int]] = []
     for path, edits in sorted(edits_by_file.items()):
         data = Path(path).read_bytes()
         applied: list[tuple[int, int]] = []
-        touched_lines = []
+        touched_lines: list[int] = []
         delta = 0
         for start, end, text in sorted(edits):
             if any(start < e and end > s for s, e in applied):
@@ -676,9 +720,10 @@ def main() -> int:
     if not db_path.exists():
         print(f"no compile_commands.json in {args.build_dir}", file=sys.stderr)
         return 2
+    database: list[dict[str, Any]] = json.loads(db_path.read_text())
     entries = [
         e
-        for e in json.loads(db_path.read_text())
+        for e in database
         if in_scope(str(Path(e["file"]).resolve()), scope_prefixes)
     ]
     if not entries:
