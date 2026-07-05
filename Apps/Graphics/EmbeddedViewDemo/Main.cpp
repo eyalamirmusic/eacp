@@ -30,7 +30,6 @@ struct PluginContent final : UI::Component
 {
     PluginContent()
     {
-        // testing
         label.setFontStyle(UI::FontStyle::Bold);
         label.setColour({0.95f, 0.95f, 0.95f, 1.f});
 

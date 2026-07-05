@@ -127,5 +127,10 @@ readability-simplify-subscript-expr,
 readability-static-accessed-through-instance,
 readability-static-definition-in-anonymous-namespace,
 readability-string-compare,
-readability-uniqueptr-delete-release'
+readability-uniqueptr-delete-release,
+eacp-use-auto,
+eacp-no-auto-function-return,
+eacp-std-function-member-default,
+eacp-no-raw-new-delete,
+eacp-no-body-comments'
 

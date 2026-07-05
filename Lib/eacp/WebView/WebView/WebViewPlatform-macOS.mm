@@ -414,7 +414,7 @@ void reportKeyVerdict(WKWebView* webView, bool isDown, bool consumed)
 // policy runs.
 void performWindowControl(WKWebView* webView, const std::string& action)
 {
-    NSWindow* window = webView.window;
+    auto window = webView.window;
     if (window == nil)
         return;
 

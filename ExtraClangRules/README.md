@@ -1,110 +1,95 @@
 # ExtraClangRules
 
-Custom clang-tidy-style checks for the eacp repo rules (CLAUDE.md) that stock
-clang-tidy can't express. Built on the libclang Python bindings; reads
-`compile_commands.json` and prints clang-tidy-style diagnostics.
-
-## Usage
-
-```bash
-# From this directory. Configure the build first so compile_commands.json
-# exists (use -DEACP_UNITY_BUILD=OFF for per-file compile commands):
-uv run main.py                      # checks Lib/ and Apps/
-uv run main.py ../Lib/eacp/Core     # restrict to a subtree
-uv run main.py ../Apps/GUI/Main.cpp # single file (headers work too)
-uv run main.py -p ../build          # explicit build dir (default: ../build)
-uv run main.py --checks eacp-use-auto,eacp-no-raw-new-delete
-uv run main.py --checks '*,-eacp-no-body-comments'
-uv run main.py --list-checks
-```
-
-Exit code is 1 when any warning is emitted, so it can gate CI. The
-`eacp-tidy` job in `.github/workflows/build.yml` runs it on every push and
-pull request against a non-unity macOS build.
-
-A path argument may be a single file: a `.cpp`/`.mm` analyzes just its own
-translation unit (~0.5 s, fast enough for editors), and a header is analyzed
-through the TUs under the nearest ancestor directory that has any.
-
-## Editor integration (Neovim)
-
-`nvim/eacp-tidy.lua` surfaces the warnings as native buffer diagnostics —
-no plugins needed. Add to your nvim config:
-
-```lua
-dofile("/path/to/eacp/ExtraClangRules/nvim/eacp-tidy.lua").setup()
-```
-
-It lints `.cpp`/`.mm`/`.h` buffers inside this repo on open and on save
-(against the file on disk, so unsaved edits aren't seen). clangd cannot load
-external checks, which is why this runs as a separate linter. Files must
-appear in `build/compile_commands.json` — a newly added source file needs a
-CMake reconfigure before it gets diagnostics.
-
-## Auto-fix
-
-```bash
-uv run main.py --fix                # apply fixes repo-wide
-uv run main.py --fix ../Lib/eacp/Core
-```
-
-`--fix` applies clang-tidy-style fix-its, then runs `clang-format` on just the
-touched lines (picking up the repo `.clang-format`). Without `--fix`, fixable
-warnings are marked `(has fix)`. What gets fixed:
-
-- `eacp-use-auto`: the spelled-out type is replaced with `auto`, keeping
-  `const`/`&`/`*` (`Widget* w = ...` → `auto* w = ...`). Only copy-init
-  (`T x = ...`) and range-for variables are rewritten; paren-init like
-  `T x(...)` is warn-only since the fix would need restructuring.
-- `eacp-no-auto-function-return`: the deduced return type replaces `auto`
-  (`auto area() { return 1.0; }` → `double area()`), and trailing return
-  types are folded back (`auto f() -> int` → `int f()`). Function templates
-  whose return stays dependent are warn-only.
-- `eacp-std-function-member-default`: missing/null defaults become a no-op
-  lambda matching the signature — `= [] {}`, or
-  `= [] (const Args&) { return R {}; }` for non-void signatures.
-
-`eacp-no-raw-new-delete` and `eacp-no-body-comments` are never auto-fixed —
-those need a human (ownership redesign / extracting named functions).
+Custom clang-tidy checks enforcing the eacp CLAUDE.md rules, implemented the
+canonical way: an out-of-tree [clang-tidy check plugin](https://clang.llvm.org/extra/clang-tidy/Contributing.html)
+(`plugin/`) that stock clang-tidy loads with `--load`. The checks then behave
+exactly like built-in ones — configured through the repo `.clang-tidy`,
+suppressed with `NOLINT(check-name)` / `NOLINTNEXTLINE(check-name)`, and
+fixable with `-fix`.
 
 ## Checks
 
 | Check | Repo rule |
 | --- | --- |
-| `eacp-use-auto` | "Use auto for variables and whenever possible." Flags a variable that spells out its type when the initializer already has exactly that type, so `auto` is a drop-in (init-list and array initializers are exempt, since `auto` would change the meaning). |
-| `eacp-no-auto-function-return` | "Don't use auto for functions and member functions." Flags `auto`/`auto ... ->` return types on functions, methods, and function templates (lambdas exempt). |
-| `eacp-std-function-member-default` | "Give std::function members a non-null default." Flags `std::function` data members (including via aliases like `Callback`) with no default or a null default (`{}`, `nullptr`). |
-| `eacp-no-raw-new-delete` | "Always use the most modern C++ and RAII practices." Flags raw `new`/`delete` expressions. |
-| `eacp-no-body-comments` | "Don't use comments unless absolutely needed. Use named functions to make code self documenting." Flags comments inside function bodies. |
+| `eacp-use-auto` | "Use auto for variables and whenever possible." Flags a variable that spells out a type its initializer already has. Fix-it where dropping the type is a pure substitution (copy-init and range-for). Exempt: `= {...}` initializers (auto would deduce `initializer_list`) and `id` (deducing `id` is a clang warning). |
+| `eacp-no-auto-function-return` | "Don't use auto for functions and member functions." Flags `auto` and trailing return types on functions, methods, and function templates; lambdas exempt. Fix-it substitutes the deduced type where clang has resolved it. |
+| `eacp-std-function-member-default` | "Give std::function members a non-null default." Flags `std::function` data members (through aliases) with no default or a null default; the fix-it generates a signature-matching no-op lambda. Exempt: lambda captures and Objective-C ivars (often branched on for emptiness). |
+| `eacp-no-raw-new-delete` | "Always use the most modern C++ and RAII practices." Flags raw `new`/`delete`. |
+| `eacp-no-body-comments` | "Don't use comments unless absolutely needed. Use named functions to make code self documenting." Flags comments inside function/lambda bodies (comments containing NOLINT are ignored). |
 
-## Suppressing a finding
+## The pinned LLVM
 
-Same syntax as clang-tidy, on the offending line or the one above:
+Plugins have **no ABI stability guarantee** — the library must be built
+against the exact clang-tidy that loads it. The team pin is **LLVM 21**:
 
-```cpp
-int status = 0; // NOLINT(eacp-use-auto) — out-param for waitpid
-// NOLINTNEXTLINE(eacp-no-raw-new-delete)
-auto* raw = new Widget();
+```bash
+brew install llvm@21          # macOS; CI uses the same formula
 ```
 
-## Type checking
+To move the pin, bump it here, in `bin/eacp-clang-tidy`, and in
+`.github/workflows/build.yml`, then rebuild the plugin.
 
-The tool is typechecked with pyright in strict mode (`uv run pyright`, config
-in `pyproject.toml`). The libclang wheel builds `CursorKind`/`TokenKind`
-members dynamically at import time, so `typings/clang/cindex.pyi` declares the
-slice of the cindex API this tool uses; extend the stub when using new API. CI
-runs pyright before the checker itself.
+## Building the plugin
 
-For editors: the repo-root `pyrightconfig.json` points the pyright/Pylance
-language server at this project and its `venv/`, so diagnostics appear when
-the workspace is the repo root. If imports fail to resolve, the venv is
-missing — run `uv sync --project ExtraClangRules` once to create it.
+```bash
+cmake -G Ninja -B ExtraClangRules/plugin/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/llvm@21 \
+      ExtraClangRules/plugin
+cmake --build ExtraClangRules/plugin/build
+```
 
-## Notes
+## Running
 
-- Uses the Xcode toolchain's `libclang.dylib` when available (it matches the
-  SDK headers); falls back to the pip-bundled libclang plus the system clang's
-  `-resource-dir`. Override with `EACP_LIBCLANG=/path/to/libclang.dylib`.
-- Headers are checked through every TU that includes them; duplicate findings
-  are deduplicated, and anything outside the given paths (system headers,
-  `build/`, `_deps/`) is ignored.
+`bin/eacp-clang-tidy` is stock clang-tidy from the pinned LLVM with the
+plugin pre-loaded (`EACP_LLVM_PREFIX` overrides the LLVM location):
+
+```bash
+# One file (needs build/compile_commands.json: configure with
+# -DEACP_UNITY_BUILD=OFF):
+ExtraClangRules/bin/eacp-clang-tidy -p build --checks='-*,eacp-*' \
+    Lib/eacp/Core/Threads/Timer.mm
+
+# Apply fix-its:
+ExtraClangRules/bin/eacp-clang-tidy -p build --checks='-*,eacp-*' -fix <file>
+
+# Whole repo, in parallel:
+/opt/homebrew/opt/llvm@21/bin/run-clang-tidy \
+    -clang-tidy-binary "$PWD/ExtraClangRules/bin/eacp-clang-tidy" \
+    -p build -checks='-*,eacp-*' \
+    -header-filter='.*/(Lib|Apps)/.*' \
+    -exclude-header-filter='.*/(build|_deps)/.*' \
+    -quiet "$PWD/(Lib|Apps)/.*"
+```
+
+CI (`eacp-tidy` job in `.github/workflows/build.yml`) does exactly the
+whole-repo run with `-warnings-as-errors='eacp-*'`, after first asserting
+that `plugin/test/Sample.cpp` still trips all 18 expected findings.
+
+## Editor setup
+
+**CLion** — Settings → Languages & Frameworks → C/C++ → Clang-Tidy → set
+the Clang-Tidy executable to `<repo>/ExtraClangRules/bin/eacp-clang-tidy`.
+The eacp checks are already enabled in the repo `.clang-tidy`, so squiggles
+appear natively. (The setting is IDE-wide, but the wrapper degrades to plain
+pinned clang-tidy semantics elsewhere.)
+
+**Neovim / VS Code (clangd)** — clangd cannot load clang-tidy plugins
+([clangd#1458](https://github.com/clangd/clangd/issues/1458)); the other
+`.clang-tidy` checks still come through clangd, and unknown `eacp-*` names
+are ignored. For the eacp checks, run the wrapper as a linter:
+
+- nvim, dependency-free: `dofile("<repo>/ExtraClangRules/nvim/eacp-tidy.lua").setup()`
+  lints on open/save via `vim.diagnostic`.
+- nvim-lint users: use the built-in `clangtidy` linter with
+  `cmd = "<repo>/ExtraClangRules/bin/eacp-clang-tidy"`.
+- VS Code: the clang-tidy extension accepts a custom executable path the
+  same way.
+
+## History
+
+The first implementation was a Python checker on libclang bindings; it was
+retired for this plugin once the plugin reached parity (the plugin actually
+sees more: template bodies, ObjC ivars, lambda captures). The five rules were
+applied repo-wide under the Python tool — roughly 250 auto conversions,
+std::function defaults, and ~380 in-body comments relocated or extracted.

@@ -24,7 +24,7 @@ View* getView(id self)
 NSView* getRootView(id self)
 {
     auto* root = (NSView*) self;
-    NSView* current = [root superview];
+    auto current = [root superview];
 
     while (current != nil)
     {

@@ -212,8 +212,7 @@ public:
     {
         struct SnapshotOnExit
         {
-            // Swallows snapshot errors so they don't mask the
-            // original failure.
+            // Don't mask the original failure. NOLINT(eacp-no-body-comments)
             ~SnapshotOnExit()
             {
                 try
