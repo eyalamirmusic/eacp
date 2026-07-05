@@ -73,6 +73,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
 
+      - name: Typecheck eacp-tidy (pyright)
+        run: uv run --project ExtraClangRules --group dev pyright --project ExtraClangRules
+
       - name: Configure
         run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
 

@@ -29,6 +29,8 @@ from clang.cindex import (
     Cursor,
     CursorKind,
     Index,
+    SourceLocation,
+    Token,
     TokenKind,
     TranslationUnit,
 )
@@ -103,10 +105,10 @@ def in_scope(path: str | None, scope_prefixes: tuple[str, ...]) -> bool:
     return path.startswith(scope_prefixes)
 
 
-def tokens_before_name(cursor: Cursor) -> list:
+def tokens_before_name(cursor: Cursor) -> list[Token]:
     """Tokens of a declaration up to its identifier, skipping template<...>
     parameter lists."""
-    toks = []
+    toks: list[Token] = []
     depth = 0
     saw_template = False
     for tok in cursor.get_tokens():
@@ -129,7 +131,7 @@ def tokens_before_name(cursor: Cursor) -> list:
     return toks
 
 
-def tokens_after_name(cursor: Cursor) -> list:
+def tokens_after_name(cursor: Cursor) -> list[Token]:
     toks = list(cursor.get_tokens())
     names = [i for i, t in enumerate(toks) if t.spelling == cursor.spelling]
     return toks[names[0] + 1 :] if names else []
@@ -173,7 +175,7 @@ def unwrap_implicit(expr: Cursor) -> Cursor:
 # --------------------------------------------------------------------------
 
 
-def check_use_auto(cursor: Cursor, parent: Cursor, add) -> None:
+def check_use_auto(cursor: Cursor, parent: Cursor | None, add) -> None:
     if cursor.kind != CursorKind.VAR_DECL:
         return
     if parent is not None and parent.kind == CursorKind.CXX_CATCH_STMT:
@@ -224,7 +226,10 @@ NON_TYPE_TOKENS = {
 
 
 def use_auto_fix(
-    cursor: Cursor, parent: Cursor, before: list, in_range_for: bool
+    cursor: Cursor,
+    parent: Cursor | None,
+    before: list[Token],
+    in_range_for: bool,
 ) -> tuple[Edit, ...] | None:
     after = tokens_after_name(cursor)
     copy_init = bool(after) and after[0].spelling == "="
@@ -246,7 +251,7 @@ def use_auto_fix(
     return ((start, end, "auto"),)
 
 
-def check_no_auto_return(cursor: Cursor, parent: Cursor, add) -> None:
+def check_no_auto_return(cursor: Cursor, parent: Cursor | None, add) -> None:
     if cursor.kind not in (
         CursorKind.FUNCTION_DECL,
         CursorKind.CXX_METHOD,
@@ -266,7 +271,7 @@ def check_no_auto_return(cursor: Cursor, parent: Cursor, add) -> None:
     )
 
 
-def auto_return_fix(cursor: Cursor, auto_tok) -> tuple[Edit, ...] | None:
+def auto_return_fix(cursor: Cursor, auto_tok: Token) -> tuple[Edit, ...] | None:
     auto_span = (auto_tok.extent.start.offset, auto_tok.extent.end.offset)
 
     trailing = trailing_return_tokens(cursor)
@@ -288,7 +293,9 @@ def auto_return_fix(cursor: Cursor, auto_tok) -> tuple[Edit, ...] | None:
     return ((*auto_span, deduced),)
 
 
-def trailing_return_tokens(cursor: Cursor):
+def trailing_return_tokens(
+    cursor: Cursor,
+) -> tuple[Token, list[Token]] | None:
     """The '->' token and the return-type tokens after it, or None."""
     toks = list(cursor.get_tokens())
     arrow = None
@@ -319,7 +326,7 @@ def trailing_return_tokens(cursor: Cursor):
 NULL_DEFAULTS = {"{}", "={}", "=nullptr", "{nullptr}", "=NULL", "{NULL}"}
 
 
-def check_std_function_member(cursor: Cursor, parent: Cursor, add) -> None:
+def check_std_function_member(cursor: Cursor, parent: Cursor | None, add) -> None:
     if cursor.kind != CursorKind.FIELD_DECL:
         return
     canonical = cursor.type.get_canonical().spelling
@@ -401,7 +408,7 @@ def extract_signature(spelling: str) -> tuple[str, str] | None:
     return None
 
 
-def check_raw_new_delete(cursor: Cursor, parent: Cursor, add) -> None:
+def check_raw_new_delete(cursor: Cursor, parent: Cursor | None, add) -> None:
     if cursor.kind == CursorKind.CXX_NEW_EXPR:
         add(
             cursor,
@@ -617,7 +624,7 @@ def suppressed(diag: Diagnostic, line_cache: dict[str, list[str]]) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument(
         "paths",
         nargs="*",

@@ -67,6 +67,14 @@ int status = 0; // NOLINT(eacp-use-auto) — out-param for waitpid
 auto* raw = new Widget();
 ```
 
+## Type checking
+
+The tool is typechecked with pyright (`uv run pyright`, config in
+`pyproject.toml`). The libclang wheel builds `CursorKind`/`TokenKind` members
+dynamically at import time, so `typings/clang/cindex.pyi` declares the slice
+of the cindex API this tool uses; extend the stub when using new API. CI runs
+pyright before the checker itself.
+
 ## Notes
 
 - Uses the Xcode toolchain's `libclang.dylib` when available (it matches the
