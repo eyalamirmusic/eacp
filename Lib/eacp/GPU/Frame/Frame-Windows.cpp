@@ -147,7 +147,7 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
         list->ClearDepthStencilView(
             impl->depth->view, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
-    return RenderPass(new D3D12Encoder {impl->commands, 0});
+    return RenderPass(new D3D12Encoder {impl->commands, {}});
 }
 
 bool Frame::isValid() const
