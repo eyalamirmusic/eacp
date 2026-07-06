@@ -121,17 +121,24 @@ struct WindowOptions
     // Unset centers the window (macOS) / uses the system default (Windows).
     std::optional<Point> initialPosition;
 
-    // Provides the application's icon, typically decoding a PNG embedded
-    // with ResEmbed. Called once when the window is constructed: Windows
-    // stamps the icon on the window so the taskbar and Alt-Tab show it;
-    // macOS applies it as the Dock icon. Returning an invalid Image (the
-    // default) keeps the system default.
+    // Overrides the RUNNING app's icon with a dynamically generated one —
+    // badge counts, progress overlays, theme-aware art. Called once when
+    // the window is constructed: Windows stamps it on the window (title
+    // bar, taskbar, Alt-Tab); macOS swaps the Dock tile.
+    //
+    // This is not how an app gets its icon. Finder, Explorer and a
+    // not-yet-running Dock tile never execute the binary — they read the
+    // static icon that eacp_set_app_icon (CMake) bakes into the bundle
+    // (.icns) / executable (ICON resource). Returning an invalid Image
+    // (the default) keeps that static icon, so apps whose icon never
+    // changes need only the CMake call.
     std::function<Image()> applicationIcon = [] { return Image {}; };
 
     // Windows: overrides the icon the Alt-Tab switcher shows (the big-icon
     // slot); the title bar and taskbar keep applicationIcon. An invalid
-    // Image (the default) falls back to applicationIcon. No-op on macOS,
-    // which has no per-window icons.
+    // Image (the default) falls back to applicationIcon, then to the
+    // executable's embedded icon. No-op on macOS, which has no per-window
+    // icons.
     std::function<Image()> altTabIcon = [] { return Image {}; };
 
     // Rounds the window's corners (points). Borderless windows are square
