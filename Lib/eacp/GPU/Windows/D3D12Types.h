@@ -72,9 +72,28 @@ struct D3D12Pipeline
 {
     winrt::com_ptr<ID3D12PipelineState> state;
     D3D12_PRIMITIVE_TOPOLOGY topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-    UINT stride = 0;
+    // Per-slot strides so multi-buffer draws (e.g. instancing) know the
+    // stride at each bound slot when setVertexBuffer wires the D3D12 view.
+    // Legacy single-buffer pipelines carry one entry at index 0.
+    std::vector<UINT> strides;
     bool depth = false;
 };
+
+// The single "stride for a bound slot" rule shared by RenderPipeline (which
+// builds the table) and RenderPass::setVertexBuffer (which reads it): if the
+// slot has an explicit stride use it; otherwise fall back to slot 0's stride
+// so legacy single-buffer pipelines (which build a one-entry table for
+// slot 0) still bind correctly when the caller happens to pass a non-zero
+// slot index. Kept in one place so the two sites can't drift apart on the
+// platform I can't test.
+inline UINT strideForSlot(const std::vector<UINT>& strides, int slot)
+{
+    if (slot >= 0 && slot < static_cast<int>(strides.size()))
+        return strides[slot];
+    if (! strides.empty())
+        return strides[0];
+    return 0;
+}
 
 // What Buffer::nativeBuffer() points to. Tracks the resource's state within
 // the current recording: buffers decay to COMMON after every
@@ -128,13 +147,15 @@ struct D3D12DepthTarget
     D3D12_CPU_DESCRIPTOR_HANDLE view = {};
 };
 
-// Carries the frame's recording (and the active pipeline stride) from
-// beginPass to the RenderPass. The CommandContext stays owned by the Frame,
-// which submits and presents on destruction; the encoder is owned by the pass.
+// Carries the frame's recording (and the active pipeline's per-slot strides)
+// from beginPass to the RenderPass. The CommandContext stays owned by the
+// Frame, which submits and presents on destruction; the encoder is owned by
+// the pass. Strides are per-slot so multi-buffer draws (e.g. instancing)
+// bind each slot with its own stride.
 struct D3D12Encoder
 {
     CommandContext* commands = nullptr;
-    UINT stride = 0;
+    std::vector<UINT> strides;
 };
 
 // The compute sibling of D3D12Encoder. The CommandContext stays owned by the

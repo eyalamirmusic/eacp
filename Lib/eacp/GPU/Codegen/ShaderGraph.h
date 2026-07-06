@@ -2,6 +2,8 @@
 
 #include "ShaderTypes.h"
 
+#include "../Pipeline/VertexLayout.h"
+
 #include <eacp/Core/Utils/Containers.h>
 
 #include <string>
@@ -74,6 +76,17 @@ public:
     };
 
     int addInput(ValueType type);
+
+    // A per-instance input. Emitted shader source is identical to a per-vertex
+    // input; the split shows up only in the emitted VertexLayout, which routes
+    // instance inputs to a dedicated buffer slot with PerInstance step rate.
+    // The zero-arg form auto-assigns slot 1 (the common case: one
+    // per-instance buffer alongside the per-vertex buffer at slot 0). Pass an
+    // explicit bufferIndex when a shader needs multiple per-instance streams
+    // in distinct buffers (e.g. per-instance transform in slot 1, per-instance
+    // colour in slot 2).
+    int addInstanceInput(ValueType type);
+    int addInstanceInput(ValueType type, int bufferIndex);
     int addVarying(ValueType type, int sourceNode);
     int addUniform(ValueType type);
     int addConstant(float value);
@@ -105,6 +118,8 @@ public:
     const Expr& expr(int node) const { return nodes[node]; }
     int nodeCount() const { return nodes.size(); }
     const Vector<ValueType>& inputs() const { return inputTypes; }
+    const Vector<StepRate>& inputStepRates() const { return inputRates; }
+    const Vector<int>& inputBufferIndices() const { return inputSlots; }
     const Vector<VaryingSlot>& varyings() const { return varyingSlots; }
     const Vector<ValueType>& uniforms() const { return uniformTypes; }
     int textureCount() const { return textureSlots; }
@@ -120,6 +135,8 @@ private:
 
     Vector<Expr> nodes;
     Vector<ValueType> inputTypes;
+    Vector<StepRate> inputRates;   // parallel to inputTypes
+    Vector<int> inputSlots;        // parallel to inputTypes; the buffer slot
     Vector<VaryingSlot> varyingSlots;
     Vector<ValueType> uniformTypes;
     Vector<BufferAccess> storageSlots;

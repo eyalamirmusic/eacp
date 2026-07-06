@@ -17,6 +17,14 @@ class Texture;
 class RenderPass
 {
 public:
+    // The Metal buffer index the first uniform block binds to. Vertex buffers
+    // take the low indices, so uniforms start above them - matching how
+    // ComputePass reserves buffer(uniformBase) for its own uniforms. Reserving
+    // a high slot lets multi-slot vertex layouts (e.g. instancing with a
+    // per-vertex slot + N per-instance slots) coexist with uniforms without
+    // the two paths clobbering each other's buffer(N).
+    static constexpr int uniformBase = 16;
+
     explicit RenderPass(void* encoder);
     ~RenderPass();
 
@@ -72,12 +80,45 @@ public:
 
     void draw(int vertexCount, int firstVertex = 0);
 
+    // CAUTION (unverified draw path - read before editing this or the D3D12
+    // vertex-buffer/stride wiring): the instanced *draw* calls below have no
+    // automated test coverage on any platform. The GPU tests only build
+    // instanced pipelines and resources (they can't issue a draw without a live
+    // frame + drawable), and the demo that does draw - Apps/GPU/Instancing - is
+    // not run in CI. So on Windows the draw path is verified by code inspection
+    // and the interactive demo only: WARP-backed CI exercises makeInputLayout /
+    // makeStrideTable (pipeline build), NOT DrawInstanced arg order,
+    // firstInstance offset, or per-slot setVertexBuffer stride wiring. If you
+    // touch either instanced draw or the D3D12 setVertexBuffer/stride code, CI
+    // will NOT catch a behavioural regression - validate by running the
+    // Instancing app on Windows, or add a render-to-offscreen-texture test.
+    //
+    // Instanced sibling of draw: runs the vertex shader vertexCount times per
+    // instance, for instanceCount instances. Per-vertex buffers (slots with
+    // StepRate::PerVertex) rewind each instance; per-instance buffers
+    // (StepRate::PerInstance) advance once per instance. firstInstance is a
+    // constant added to the shader's instance-id lookup, useful for drawing a
+    // subrange of a shared instance buffer.
+    void drawInstanced(int vertexCount,
+                       int instanceCount,
+                       int firstVertex = 0,
+                       int firstInstance = 0);
+
     // Draws indexCount indices from an Index-usage buffer, assembling with the
     // pipeline's topology. firstIndex is an offset into the index buffer.
     void drawIndexed(const Buffer& indices,
                      int indexCount,
                      IndexFormat format = IndexFormat::UInt32,
                      int firstIndex = 0);
+
+    // Instanced sibling of drawIndexed: reuses the index buffer per instance.
+    // Same step-rate semantics as drawInstanced.
+    void drawIndexedInstanced(const Buffer& indices,
+                              int indexCount,
+                              int instanceCount,
+                              IndexFormat format = IndexFormat::UInt32,
+                              int firstIndex = 0,
+                              int firstInstance = 0);
 
     // Binds and draws a prepared ShaderProgram in one call: its pipeline, vertex
     // buffer, uniform block and textures, then an indexed draw when the program

@@ -1,6 +1,7 @@
 #include "ShaderEmitter.h"
 
 #include "../Frame/ComputePass.h"
+#include "../Frame/RenderPass.h"
 #include "ShaderGraph.h"
 #include "UniformLayout.h"
 
@@ -548,15 +549,18 @@ std::string emit(const ShaderGraph& graph, Backend backend)
 
     // On Metal each stage declares the uniform block as a function parameter,
     // and only when that stage's expressions read one; the HLSL cbuffer is a
-    // global both functions already see. Slot 0 maps to buffer(1) in both
-    // stages (vertex data owns buffer 0 on the vertex side; the fragment side
-    // keeps the same index so one slot rule covers both).
+    // global both functions already see. Slot 0 maps to buffer(uniformBase)
+    // in both stages, matching what RenderPass::setVertexBytes /
+    // setFragmentBytes bind. Uniforms live at buffer(uniformBase..) so a
+    // vertex layout with multiple per-instance slots (0..N) never collides
+    // with them.
     if (backend == Backend::Metal)
     {
         source += "vertex VertexOut vertexMain(VertexIn input [[stage_in]]";
 
         if (hasUniforms && vertexUsesUniforms(graph))
-            source += ", constant Uniforms& uniforms [[buffer(1)]]";
+            source += ", constant Uniforms& uniforms [[buffer("
+                      + std::to_string(RenderPass::uniformBase) + ")]]";
 
         source += ")\n{\n";
     }
@@ -588,7 +592,8 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         source += "fragment float4 fragmentMain(VertexOut input [[stage_in]]";
 
         if (hasUniforms && referencesUniform(graph, graph.fragment()))
-            source += ",\n    constant Uniforms& uniforms [[buffer(1)]]";
+            source += ",\n    constant Uniforms& uniforms [[buffer("
+                      + std::to_string(RenderPass::uniformBase) + ")]]";
 
         for (auto i = 0; i < graph.textureCount(); ++i)
             source += ",\n    texture2d<float> texture" + std::to_string(i)

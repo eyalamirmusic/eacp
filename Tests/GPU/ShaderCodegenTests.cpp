@@ -70,6 +70,15 @@ bool contains(const std::string& haystack, const std::string& needle)
     return haystack.find(needle) != std::string::npos;
 }
 
+// Derives the MSL uniform-block declaration string from the runtime constant
+// that the emitter uses (RenderPass::uniformBase / ComputePass::uniformBase).
+// Bumping the constant flows into both the emitter's output and the tests'
+// expectation - one source of truth, no drift.
+std::string uniformDecl(int base)
+{
+    return "constant Uniforms& uniforms [[buffer(" + std::to_string(base) + ")]]";
+}
+
 int countOccurrences(const std::string& haystack, const std::string& needle)
 {
     auto count = 0;
@@ -171,7 +180,7 @@ auto tCodegenUniformEmits = test("GPU/codegenUniformEmits") = []
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "struct Uniforms"));
-    check(contains(metal, "constant Uniforms& uniforms [[buffer(1)]]"));
+    check(contains(metal, uniformDecl(RenderPass::uniformBase)));
     check(contains(metal, "cos(uniforms.u0)"));
     check(contains(metal, "sin(uniforms.u0)"));
 
@@ -461,8 +470,8 @@ auto tCodegenFragmentUniformEmits = test("GPU/codegenFragmentUniformEmits") = []
     check(
         contains(metal, "vertex VertexOut vertexMain(VertexIn input [[stage_in]])"));
     check(contains(metal,
-                   "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n"
-                   "    constant Uniforms& uniforms [[buffer(1)]])"));
+                   "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n    "
+                       + uniformDecl(RenderPass::uniformBase) + ")"));
     check(contains(metal, "return uniforms.u0;"));
 
     auto hlsl = emitHlsl(builder.graph());
@@ -486,10 +495,10 @@ auto tCodegenSharedUniformEmits = test("GPU/codegenSharedUniformEmits") = []
     auto metal = emitMetal(builder.graph());
     check(contains(metal,
                    "vertex VertexOut vertexMain(VertexIn input [[stage_in]], "
-                   "constant Uniforms& uniforms [[buffer(1)]])"));
+                       + uniformDecl(RenderPass::uniformBase) + ")"));
     check(contains(metal,
-                   "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n"
-                   "    constant Uniforms& uniforms [[buffer(1)]])"));
+                   "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n    "
+                       + uniformDecl(RenderPass::uniformBase) + ")"));
 };
 
 // Compiles a fragment-uniform shader through the real platform shader compiler
@@ -597,7 +606,7 @@ auto tCodegenComputeEmits = test("GPU/codegenComputeEmits") = []
     check(contains(metal, "kernel void computeMain("));
     check(contains(metal, "device const float* buffer0 [[buffer(0)]]"));
     check(contains(metal, "device float* buffer1 [[buffer(1)]]"));
-    check(contains(metal, "constant Uniforms& uniforms [[buffer(16)]]"));
+    check(contains(metal, uniformDecl(ComputePass::uniformBase)));
     check(contains(metal, "uint gid [[thread_position_in_grid]]"));
     check(contains(metal, "uint count;"));
     check(contains(metal, "if (gid >= uniforms.count)"));

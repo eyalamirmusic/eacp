@@ -57,7 +57,7 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
     list->SetPipelineState(state->state.get());
     list->IASetPrimitiveTopology(state->topology);
 
-    impl->encoder->stride = state->stride;
+    impl->encoder->strides = state->strides;
 }
 
 void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
@@ -77,7 +77,7 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
     D3D12_VERTEX_BUFFER_VIEW view = {};
     view.BufferLocation = data->resource->GetGPUVirtualAddress();
     view.SizeInBytes = static_cast<UINT>(data->size);
-    view.StrideInBytes = impl->encoder->stride;
+    view.StrideInBytes = strideForSlot(impl->encoder->strides, index);
 
     commands.list->IASetVertexBuffers(static_cast<UINT>(index), 1, &view);
 }
@@ -133,6 +133,20 @@ void RenderPass::draw(int vertexCount, int firstVertex)
         static_cast<UINT>(vertexCount), 1, static_cast<UINT>(firstVertex), 0);
 }
 
+void RenderPass::drawInstanced(int vertexCount,
+                               int instanceCount,
+                               int firstVertex,
+                               int firstInstance)
+{
+    if (!impl->encoder || !impl->pipelineBound)
+        return;
+
+    impl->encoder->commands->list->DrawInstanced(static_cast<UINT>(vertexCount),
+                                                  static_cast<UINT>(instanceCount),
+                                                  static_cast<UINT>(firstVertex),
+                                                  static_cast<UINT>(firstInstance));
+}
+
 void RenderPass::drawIndexed(const Buffer& indices,
                              int indexCount,
                              IndexFormat format,
@@ -158,6 +172,38 @@ void RenderPass::drawIndexed(const Buffer& indices,
     commands.list->IASetIndexBuffer(&view);
     commands.list->DrawIndexedInstanced(
         static_cast<UINT>(indexCount), 1, static_cast<UINT>(firstIndex), 0, 0);
+}
+
+void RenderPass::drawIndexedInstanced(const Buffer& indices,
+                                      int indexCount,
+                                      int instanceCount,
+                                      IndexFormat format,
+                                      int firstIndex,
+                                      int firstInstance)
+{
+    if (!impl->encoder || !impl->pipelineBound)
+        return;
+
+    auto* data = static_cast<D3D12BufferData*>(indices.nativeBuffer());
+
+    if (data == nullptr || data->resource == nullptr)
+        return;
+
+    auto& commands = *impl->encoder->commands;
+    transitionForUse(commands, *data, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+
+    D3D12_INDEX_BUFFER_VIEW view = {};
+    view.BufferLocation = data->resource->GetGPUVirtualAddress();
+    view.SizeInBytes = static_cast<UINT>(data->size);
+    view.Format =
+        format == IndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
+
+    commands.list->IASetIndexBuffer(&view);
+    commands.list->DrawIndexedInstanced(static_cast<UINT>(indexCount),
+                                        static_cast<UINT>(instanceCount),
+                                        static_cast<UINT>(firstIndex),
+                                        0,
+                                        static_cast<UINT>(firstInstance));
 }
 
 void RenderPass::end()

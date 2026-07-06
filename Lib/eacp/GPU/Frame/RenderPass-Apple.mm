@@ -108,21 +108,24 @@ void RenderPass::setFragmentTexture(const Texture& texture, int slot)
 
 void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
 {
-    // Vertex data is bound at buffer index 0, so uniform slot 0 maps to buffer 1.
+    // Uniforms live at buffer(uniformBase + slot) so multi-slot vertex
+    // layouts (e.g. instancing with slots 0..N) never collide with the
+    // uniform bind. Matches ComputePass::uniformBase.
     if (auto activeEncoder = impl->encoder.get())
         [activeEncoder setVertexBytes:data
                                length:bytes
-                              atIndex:(NSUInteger) (1 + slot)];
+                              atIndex:(NSUInteger) (uniformBase + slot)];
 }
 
 void RenderPass::setFragmentBytes(const void* data, std::size_t bytes, int slot)
 {
-    // Same 1 + slot mapping as the vertex stage, so one slot rule covers both;
-    // the generated fragment functions declare the block at buffer(1).
+    // Same uniformBase mapping as the vertex stage, so one slot rule covers
+    // both; the generated fragment functions declare the block at
+    // buffer(uniformBase).
     if (auto activeEncoder = impl->encoder.get())
         [activeEncoder setFragmentBytes:data
                                  length:bytes
-                                atIndex:(NSUInteger) (1 + slot)];
+                                atIndex:(NSUInteger) (uniformBase + slot)];
 }
 
 void RenderPass::draw(int vertexCount, int firstVertex)
@@ -134,6 +137,22 @@ void RenderPass::draw(int vertexCount, int firstVertex)
         [activeEncoder drawPrimitives:impl->primitiveType
                           vertexStart:(NSUInteger) firstVertex
                           vertexCount:(NSUInteger) vertexCount];
+}
+
+void RenderPass::drawInstanced(int vertexCount,
+                               int instanceCount,
+                               int firstVertex,
+                               int firstInstance)
+{
+    if (! impl->pipelineBound)
+        return;
+
+    if (auto activeEncoder = impl->encoder.get())
+        [activeEncoder drawPrimitives:impl->primitiveType
+                          vertexStart:(NSUInteger) firstVertex
+                          vertexCount:(NSUInteger) vertexCount
+                        instanceCount:(NSUInteger) instanceCount
+                         baseInstance:(NSUInteger) firstInstance];
 }
 
 void RenderPass::drawIndexed(const Buffer& indices,
@@ -157,6 +176,34 @@ void RenderPass::drawIndexed(const Buffer& indices,
                                indexType:indexType
                              indexBuffer:metalBuffer
                        indexBufferOffset:(NSUInteger) firstIndex * indexSize];
+}
+
+void RenderPass::drawIndexedInstanced(const Buffer& indices,
+                                      int indexCount,
+                                      int instanceCount,
+                                      IndexFormat format,
+                                      int firstIndex,
+                                      int firstInstance)
+{
+    auto activeEncoder = impl->encoder.get();
+    auto metalBuffer = (__bridge id<MTLBuffer>) indices.nativeBuffer();
+
+    if (! impl->pipelineBound || activeEncoder == nil || metalBuffer == nil)
+        return;
+
+    auto indexType = format == IndexFormat::UInt16 ? MTLIndexTypeUInt16
+                                                   : MTLIndexTypeUInt32;
+    auto indexSize = format == IndexFormat::UInt16 ? sizeof(std::uint16_t)
+                                                   : sizeof(std::uint32_t);
+
+    [activeEncoder drawIndexedPrimitives:impl->primitiveType
+                              indexCount:(NSUInteger) indexCount
+                               indexType:indexType
+                             indexBuffer:metalBuffer
+                       indexBufferOffset:(NSUInteger) firstIndex * indexSize
+                           instanceCount:(NSUInteger) instanceCount
+                              baseVertex:0
+                            baseInstance:(NSUInteger) firstInstance];
 }
 
 void RenderPass::end()

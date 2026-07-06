@@ -17,6 +17,25 @@ int ShaderGraph::addInput(ValueType type)
     node.type = type;
     node.index = inputTypes.size();
     inputTypes.add(type);
+    inputRates.add(StepRate::PerVertex);
+    inputSlots.add(0);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addInstanceInput(ValueType type)
+{
+    return addInstanceInput(type, 1);
+}
+
+int ShaderGraph::addInstanceInput(ValueType type, int bufferIndex)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Input;
+    node.type = type;
+    node.index = inputTypes.size();
+    inputTypes.add(type);
+    inputRates.add(StepRate::PerInstance);
+    inputSlots.add(bufferIndex);
     return add(std::move(node));
 }
 

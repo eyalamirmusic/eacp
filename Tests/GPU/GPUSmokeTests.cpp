@@ -183,6 +183,117 @@ auto tDeviceBuildsIndexBuffer = test("GPU/deviceBuildsIndexBuffer") = []
     check(pipeline.topology() == PrimitiveTopology::TriangleStrip);
 };
 
+// An EDSL shader with an instanceInput<T> emits a two-slot VertexLayout
+// (slot 0 per-vertex, slot 1 per-instance) whose stride sums the byte size
+// of the inputs at each rate. Pipeline builds against the generated layout.
+// Self-skips without a GPU device.
+auto tShaderBuilderEmitsInstancedLayout =
+    test("GPU/shaderBuilderEmitsInstancedLayout") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+    auto vertexPos = builder.vertexInput<Float2>();         // slot 0, 8 bytes
+    auto vertexUv = builder.vertexInput<Float2>();          // slot 0, +8 = 16
+    auto instanceCentre = builder.instanceInput<Float2>();  // slot 1, 8 bytes
+    auto instanceScale = builder.instanceInput<Float>();    // slot 1, +4 = 12
+    auto varyingUv = builder.varying(vertexUv);
+    auto zero = builder.constant(0.f);
+    auto one = builder.constant(1.f);
+    // Simple math that references every input so the emitted layout covers
+    // all of them; the exact math is placeholder.
+    auto shiftedX = vertexPos.x() + instanceCentre.x() * instanceScale;
+    auto shiftedY = vertexPos.y() + instanceCentre.y();
+    builder.position(float4(shiftedX, shiftedY, zero, one));
+    builder.fragment(float4(varyingUv, zero, one));
+
+    auto shader = builder.build();
+
+    // Two slots, right strides, right step rates.
+    check(shader.vertexLayout.buffers.size() == 2);
+    check(shader.vertexLayout.buffers[0].stride == 16);
+    check(shader.vertexLayout.buffers[0].stepRate == StepRate::PerVertex);
+    check(shader.vertexLayout.buffers[1].stride == 12);
+    check(shader.vertexLayout.buffers[1].stepRate == StepRate::PerInstance);
+
+    // Attributes route to their slots.
+    auto& attrs = shader.vertexLayout.attributes;
+    check(attrs.size() == 4);
+    check(attrs[0].bufferIndex == 0);
+    check(attrs[1].bufferIndex == 0);
+    check(attrs[2].bufferIndex == 1);
+    check(attrs[3].bufferIndex == 1);
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
+};
+
+// A shader without any instanceInput calls still emits the legacy
+// single-buffer shape (buffers empty, stride populated). Guards against
+// silently changing the layout for pre-instancing consumers.
+auto tShaderBuilderPreservesSingleBufferShape =
+    test("GPU/shaderBuilderPreservesSingleBufferShape") = []
+{
+    auto builder = ShaderBuilder {};
+    auto position = builder.vertexInput<Float4>();
+    auto one = builder.constant(1.f);
+    builder.position(position);
+    builder.fragment(float4(one, one, one, one));
+
+    auto shader = builder.build();
+
+    check(shader.vertexLayout.buffers.size() == 0);
+    check(shader.vertexLayout.stride == 16);
+    check(shader.vertexLayout.attributes.size() == 1);
+    check(shader.vertexLayout.attributes[0].bufferIndex == 0);
+};
+
+// An indexed-instanced draw's resource shape - Index buffer + a pipeline whose
+// layout carries a PerInstance slot - all builds cleanly. The draw itself
+// requires a live frame + drawable, so this test only guards the resource path
+// that drawIndexedInstanced consumes at call time. Self-skips without a GPU.
+auto tDeviceBuildsIndexedInstancedResources =
+    test("GPU/deviceBuildsIndexedInstancedResources") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    const std::uint16_t indices[] = {0, 1, 2};
+    auto indexBuffer = device.makeBuffer(indices, BufferUsage::Index);
+    check(indexBuffer.isValid());
+
+    auto builder = ShaderBuilder {};
+    auto vertexPos = builder.vertexInput<Float2>();
+    auto instanceCentre = builder.instanceInput<Float2>();
+    auto zero = builder.constant(0.f);
+    auto one = builder.constant(1.f);
+    builder.position(float4(vertexPos + instanceCentre, zero, one));
+    builder.fragment(float4(one, one, one, one));
+
+    auto shader = builder.build();
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
+};
+
 // Every BlendMode value produces a valid pipeline - the switch in the backend
 // covers every case, and the D3D12 blend descriptor path is populated for the
 // modes that need it. Self-skips without a GPU device.
