@@ -30,13 +30,13 @@ constexpr float gpuBotY = -0.72f;
 // Non-instanced grid (window 1).
 constexpr int nonInstCols = 3;
 constexpr int nonInstRows = 12;
-constexpr int nonInstCount = nonInstCols * nonInstRows;   // 36
+constexpr int nonInstCount = nonInstCols * nonInstRows; // 36
 constexpr float nonInstTriRadius = 0.055f;
 
 // Instanced grid (windows 2 and 3 share the same 40x25 layout).
 constexpr int gridCols = 40;
 constexpr int gridRows = 25;
-constexpr int instanceCount = gridCols * gridRows;        // 1000
+constexpr int instanceCount = gridCols * gridRows; // 1000
 constexpr float instTriRadius = 0.020f;
 constexpr float rowScanTriRadius = 0.028f;
 
@@ -104,12 +104,42 @@ Graphics::Color hueColor(float hueTurns)
 
     float r = 0.f, g = 0.f, b = 0.f;
 
-    if (h6 < 1.f)      { r = 1.f; g = x;   b = 0.f; }
-    else if (h6 < 2.f) { r = x;   g = 1.f; b = 0.f; }
-    else if (h6 < 3.f) { r = 0.f; g = 1.f; b = x;   }
-    else if (h6 < 4.f) { r = 0.f; g = x;   b = 1.f; }
-    else if (h6 < 5.f) { r = x;   g = 0.f; b = 1.f; }
-    else               { r = 1.f; g = 0.f; b = x;   }
+    if (h6 < 1.f)
+    {
+        r = 1.f;
+        g = x;
+        b = 0.f;
+    }
+    else if (h6 < 2.f)
+    {
+        r = x;
+        g = 1.f;
+        b = 0.f;
+    }
+    else if (h6 < 3.f)
+    {
+        r = 0.f;
+        g = 1.f;
+        b = x;
+    }
+    else if (h6 < 4.f)
+    {
+        r = 0.f;
+        g = x;
+        b = 1.f;
+    }
+    else if (h6 < 5.f)
+    {
+        r = x;
+        g = 0.f;
+        b = 1.f;
+    }
+    else
+    {
+        r = 1.f;
+        g = 0.f;
+        b = x;
+    }
 
     return {r, g, b};
 }
@@ -151,8 +181,8 @@ std::vector<PerInstanceTransform> buildInstancedTransforms()
     for (auto i = 0; i < instanceCount; ++i)
     {
         float x, y;
-        cellCentre(i, gridCols, gridRows,
-                   gridLeftX, gridRightX, gpuBotY, gpuTopY, x, y);
+        cellCentre(
+            i, gridCols, gridRows, gridLeftX, gridRightX, gpuBotY, gpuTopY, x, y);
         out.push_back({{x, y}, rotationSpeedFor(i, instanceCount)});
     }
     return out;
@@ -180,8 +210,8 @@ std::vector<FatVertex> buildNonInstancedVerts()
     for (auto tri = 0; tri < nonInstCount; ++tri)
     {
         float cx, cy;
-        cellCentre(tri, nonInstCols, nonInstRows,
-                   -0.6f, +0.6f, gpuBotY, gpuTopY, cx, cy);
+        cellCentre(
+            tri, nonInstCols, nonInstRows, -0.6f, +0.6f, gpuBotY, gpuTopY, cx, cy);
         auto speed = rotationSpeedFor(tri, nonInstCount);
         auto col = colorFor(tri, nonInstCols, nonInstRows);
 
@@ -303,10 +333,7 @@ struct NonInstancedView final : GPUView
         return Device::shared().makeRenderPipeline(descriptor);
     }
 
-    void update(Threads::FrameTime time) override
-    {
-        elapsed += (float) time.delta;
-    }
+    void update(Threads::FrameTime time) override { elapsed += (float) time.delta; }
 
     void render(Frame& frame) override
     {
@@ -353,10 +380,7 @@ struct InstancedView final : GPUView
         return Device::shared().makeRenderPipeline(descriptor);
     }
 
-    void update(Threads::FrameTime time) override
-    {
-        elapsed += (float) time.delta;
-    }
+    void update(Threads::FrameTime time) override { elapsed += (float) time.delta; }
 
     void render(Frame& frame) override
     {
@@ -415,10 +439,7 @@ struct RowScanView final : GPUView
         return Device::shared().makeRenderPipeline(descriptor);
     }
 
-    void update(Threads::FrameTime time) override
-    {
-        elapsed += (float) time.delta;
-    }
+    void update(Threads::FrameTime time) override { elapsed += (float) time.delta; }
 
     void render(Frame& frame) override
     {
@@ -457,8 +478,9 @@ struct RowScanView final : GPUView
 struct LabelView final : Graphics::View
 {
     LabelView(std::string t, std::string yss, std::string tt)
-        : title(std::move(t)), youShouldSee(std::move(yss)),
-          thisTests(std::move(tt))
+        : title(std::move(t))
+        , youShouldSee(std::move(yss))
+        , thisTests(std::move(tt))
     {
     }
 
@@ -475,17 +497,16 @@ struct LabelView final : Graphics::View
 
         g.setColor(Graphics::Color::white());
 
-        g.drawText(title,
-                   {cx - (float) title.size() * halfCharTitle, titleY},
-                   titleFont);
+        g.drawText(
+            title, {cx - (float) title.size() * halfCharTitle, titleY}, titleFont);
         g.drawText(youShouldSee,
                    {cx - (float) youShouldSee.size() * halfCharBody,
                     bounds.h - bodyLine1Yoff},
                    bodyFont);
-        g.drawText(thisTests,
-                   {cx - (float) thisTests.size() * halfCharBody,
-                    bounds.h - bodyLine2Yoff},
-                   bodyFont);
+        g.drawText(
+            thisTests,
+            {cx - (float) thisTests.size() * halfCharBody, bounds.h - bodyLine2Yoff},
+            bodyFont);
     }
 
     std::string title;
@@ -541,7 +562,7 @@ struct InstancingApp
     InstancedView gpuB;
     LabelView labelB {
         "drawInstanced",
-        "you should see: 1000 triangles (40x25), rainbow rows, all spinning",
+        "you should see: 1000 triangles (40x25), rainbow rows, all spinning at varied rates",
         "tests: multi-buffer layout (slots 0/1/2) and drawInstanced(3, 1000)",
     };
     Graphics::Window windowB {windowOptions("eacp - drawInstanced", 1)};
@@ -551,7 +572,7 @@ struct InstancingApp
     RowScanView gpuC;
     LabelView labelC {
         "drawIndexedInstanced + firstInstance",
-        "you should see: one row of 40 triangles scanning top->bottom, ~5s per cycle",
+        "you should see: one row of 40 triangles at a time scanning top->bottom over time",
         "tests: firstInstance offset stepping through the buffer, indexed instanced draw",
     };
     Graphics::Window windowC {windowOptions("eacp - firstInstance scan", 2)};
