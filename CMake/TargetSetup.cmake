@@ -1,5 +1,10 @@
 include(AppleSetup)
 
+# Captured at include time: inside a function CMAKE_CURRENT_LIST_DIR is the
+# caller's list file, not this one, so eacp_set_app_icon needs this to find
+# the scripts that live next to this module.
+set(EACP_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+
 function(set_default_warnings_level target)
     if (MSVC)
         target_compile_options(${target} PRIVATE /W4)
@@ -83,15 +88,22 @@ endfunction()
 # This generates that .icns at build time from a single PNG master
 # (1024x1024 with transparency recommended) via sips + iconutil.
 #
-# macOS-only for now. The Windows analogue is an ICON resource compiled into
-# the .exe from an .rc file — not yet wired; Windows apps keep the runtime
-# WindowOptions::applicationIcon path.
+# On Windows the at-rest equivalent is an ICON resource compiled into the
+# .exe: Explorer reads it from the binary without running it. The same PNG
+# master is packed into a multi-resolution .ico (MakeIco.ps1, stock
+# PowerShell + System.Drawing) and embedded via a generated .rc. The runtime
+# WindowOptions::applicationIcon path stays as-is on both platforms for the
+# live window/Dock icon.
 function(eacp_set_app_icon target icon)
+    get_filename_component(icon "${icon}" ABSOLUTE)
+
+    if (WIN32)
+        eacp_set_app_icon_windows(${target} "${icon}")
+    endif ()
+
     if (NOT APPLE OR IOS)
         return()
     endif ()
-
-    get_filename_component(icon "${icon}" ABSOLUTE)
     set(iconset_dir "${CMAKE_CURRENT_BINARY_DIR}/${target}.iconset")
     set(icns_file "${CMAKE_CURRENT_BINARY_DIR}/${target}-icon/AppIcon.icns")
 
@@ -123,6 +135,31 @@ function(eacp_set_app_icon target icon)
             GENERATED TRUE)
     set_target_properties(${target} PROPERTIES
             MACOSX_BUNDLE_ICON_FILE AppIcon.icns)
+endfunction()
+
+# Windows half of eacp_set_app_icon: pack the PNG master into a .ico and
+# compile it into the .exe through a generated .rc. Explorer picks the ICON
+# resource with the lowest ID for the at-rest icon, hence resource id 1.
+function(eacp_set_app_icon_windows target icon)
+    set(icon_dir "${CMAKE_CURRENT_BINARY_DIR}/${target}-icon")
+    set(ico_file "${icon_dir}/${target}.ico")
+    set(rc_file "${icon_dir}/${target}-icon.rc")
+
+    add_custom_command(OUTPUT "${ico_file}"
+            COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File "${EACP_CMAKE_DIR}/MakeIco.ps1"
+            -Source "${icon}" -Output "${ico_file}"
+            DEPENDS "${icon}" "${EACP_CMAKE_DIR}/MakeIco.ps1"
+            COMMENT "Generating ${target}.ico"
+            VERBATIM)
+
+    # The .rc references the .ico by bare name: rc resolves relative paths
+    # against the .rc file's own directory, and both live in icon_dir.
+    file(CONFIGURE OUTPUT "${rc_file}" CONTENT "1 ICON \"${target}.ico\"\n")
+
+    target_sources(${target} PRIVATE "${rc_file}")
+    set_source_files_properties("${rc_file}" PROPERTIES
+            OBJECT_DEPENDS "${ico_file}")
 endfunction()
 
 function(add_ide_sources target)
