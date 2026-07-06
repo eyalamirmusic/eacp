@@ -3,6 +3,7 @@
 #include "../Helpers/ImageConversion-macOS.h"
 #include "../Primitives/GraphicUtils.h"
 #include <eacp/Core/App/AppEnvironment.h>
+#include <eacp/Core/Utils/Logging.h>
 #import <Cocoa/Cocoa.h>
 
 namespace
@@ -305,11 +306,28 @@ struct Window::Native
     }
 
     // macOS has no per-window icons; the icon is the app's Dock tile,
-    // shared by every window.
+    // shared by every window. An invalid image leaves the bundle's .icns
+    // showing — the same icon Finder uses at rest — so this only fires for
+    // dynamic runtime icons. When neither exists, say so: a silently
+    // generic Dock tile otherwise looks like a rendering bug.
     static void applyApplicationIcon(const Image& image)
     {
         if (auto* icon = toNSImage(image))
+        {
             [NSApp setApplicationIconImage:icon];
+            return;
+        }
+
+        if (eacp::Apps::getAppEnvironment().headless)
+            return;
+
+        NSString* iconFile = [NSBundle.mainBundle
+            objectForInfoDictionaryKey:@"CFBundleIconFile"];
+
+        if (iconFile.length == 0)
+            LOG("This app has no icon: set one with eacp_set_app_icon in "
+                "CMake, or provide WindowOptions::applicationIcon for a "
+                "dynamic one. The Dock and Finder show the generic icon.");
     }
 
     void toFront()
