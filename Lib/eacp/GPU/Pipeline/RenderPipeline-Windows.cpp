@@ -75,6 +75,16 @@ DXGI_FORMAT toDXGIFormat(VertexFormat format)
 
 // Vertex attributes are matched to the HLSL input by a TEXCOORD semantic
 // indexed by attribute position, mirroring Metal's [[attribute(n)]] binding.
+// Reads the step rate for a given slot from the layout. Multi-buffer layouts
+// carry per-slot metadata; legacy single-buffer layouts (buffers empty) are
+// always PerVertex at slot 0.
+StepRate stepRateForSlot(const VertexLayout& layout, int slot)
+{
+    if (slot >= 0 && slot < (int) layout.buffers.size())
+        return layout.buffers[slot].stepRate;
+    return StepRate::PerVertex;
+}
+
 std::vector<D3D12_INPUT_ELEMENT_DESC> makeInputLayout(const VertexLayout& layout)
 {
     auto elements = std::vector<D3D12_INPUT_ELEMENT_DESC>();
@@ -82,6 +92,8 @@ std::vector<D3D12_INPUT_ELEMENT_DESC> makeInputLayout(const VertexLayout& layout
     for (auto i = 0; i < layout.attributes.size(); ++i)
     {
         const auto& attribute = layout.attributes[i];
+        auto rate = stepRateForSlot(layout, attribute.bufferIndex);
+        auto perInstance = rate == StepRate::PerInstance;
 
         D3D12_INPUT_ELEMENT_DESC element = {};
         element.SemanticName = "TEXCOORD";
@@ -89,12 +101,32 @@ std::vector<D3D12_INPUT_ELEMENT_DESC> makeInputLayout(const VertexLayout& layout
         element.Format = toDXGIFormat(attribute.format);
         element.InputSlot = static_cast<UINT>(attribute.bufferIndex);
         element.AlignedByteOffset = static_cast<UINT>(attribute.offset);
-        element.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+        element.InputSlotClass = perInstance
+            ? D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
+            : D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+        element.InstanceDataStepRate = perInstance ? 1 : 0;
 
         elements.push_back(element);
     }
 
     return elements;
+}
+
+// Builds the per-slot stride table the RenderPass reads at setVertexBuffer
+// time. Populated from layout.buffers when present; falls back to a single
+// slot with layout.stride so single-buffer callers see no behavioural change.
+std::vector<UINT> makeStrideTable(const VertexLayout& layout)
+{
+    if (! layout.buffers.empty())
+    {
+        auto strides = std::vector<UINT>();
+        strides.reserve(layout.buffers.size());
+        for (auto i = 0; i < layout.buffers.size(); ++i)
+            strides.push_back(static_cast<UINT>(layout.buffers[i].stride));
+        return strides;
+    }
+
+    return {static_cast<UINT>(layout.stride)};
 }
 
 D3D12_RASTERIZER_DESC makeRasterizerDesc(int sampleCount)
@@ -169,7 +201,7 @@ struct RenderPipeline::Native
         : topology(descriptor.topology)
     {
         pipeline.topology = toD3DTopology(descriptor.topology);
-        pipeline.stride = static_cast<UINT>(descriptor.vertexLayout.stride);
+        pipeline.strides = makeStrideTable(descriptor.vertexLayout);
         pipeline.depth = descriptor.depth;
 
         auto& context = getD3D12Context();

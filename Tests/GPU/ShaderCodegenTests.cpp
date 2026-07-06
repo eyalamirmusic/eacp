@@ -171,7 +171,7 @@ auto tCodegenUniformEmits = test("GPU/codegenUniformEmits") = []
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "struct Uniforms"));
-    check(contains(metal, "constant Uniforms& uniforms [[buffer(1)]]"));
+    check(contains(metal, "constant Uniforms& uniforms [[buffer(16)]]"));
     check(contains(metal, "cos(uniforms.u0)"));
     check(contains(metal, "sin(uniforms.u0)"));
 
@@ -462,7 +462,7 @@ auto tCodegenFragmentUniformEmits = test("GPU/codegenFragmentUniformEmits") = []
         contains(metal, "vertex VertexOut vertexMain(VertexIn input [[stage_in]])"));
     check(contains(metal,
                    "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n"
-                   "    constant Uniforms& uniforms [[buffer(1)]])"));
+                   "    constant Uniforms& uniforms [[buffer(16)]])"));
     check(contains(metal, "return uniforms.u0;"));
 
     auto hlsl = emitHlsl(builder.graph());
@@ -486,10 +486,10 @@ auto tCodegenSharedUniformEmits = test("GPU/codegenSharedUniformEmits") = []
     auto metal = emitMetal(builder.graph());
     check(contains(metal,
                    "vertex VertexOut vertexMain(VertexIn input [[stage_in]], "
-                   "constant Uniforms& uniforms [[buffer(1)]])"));
+                   "constant Uniforms& uniforms [[buffer(16)]])"));
     check(contains(metal,
                    "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n"
-                   "    constant Uniforms& uniforms [[buffer(1)]])"));
+                   "    constant Uniforms& uniforms [[buffer(16)]])"));
 };
 
 // Compiles a fragment-uniform shader through the real platform shader compiler

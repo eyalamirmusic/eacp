@@ -30,16 +30,51 @@ VertexFormat toVertexFormat(ValueType type)
 VertexLayout buildVertexLayout(const ShaderGraph& graph)
 {
     auto layout = VertexLayout {};
-    auto offset = 0;
+
+    // Group inputs by slot: each slot's attributes accumulate their offsets in
+    // declaration order, and the slot's stride is the sum of its byte sizes.
+    // Step rate is inherited from the first attribute assigned to a slot -
+    // callers who pass explicit bufferIndex are responsible for keeping all
+    // attributes in a given slot at the same rate.
+    auto perSlotOffsets = Vector<int> {};
+    auto perSlotRates = Vector<StepRate> {};
+    auto sawInstance = false;
 
     for (auto i = 0; i < graph.inputs().size(); ++i)
     {
         auto type = graph.inputs()[i];
-        layout.attribute(toVertexFormat(type), offset);
-        offset += byteSize(type);
+        auto rate = graph.inputStepRates()[i];
+        auto slot = graph.inputBufferIndices()[i];
+
+        while (perSlotOffsets.size() <= slot)
+        {
+            perSlotOffsets.add(0);
+            perSlotRates.add(StepRate::PerVertex);
+        }
+
+        layout.attribute(toVertexFormat(type), perSlotOffsets[slot], slot);
+        perSlotOffsets[slot] += byteSize(type);
+        perSlotRates[slot] = rate;
+
+        if (rate == StepRate::PerInstance)
+            sawInstance = true;
     }
 
-    layout.stride = offset;
+    if (sawInstance)
+    {
+        // Multi-slot layout: publish stride + rate for every slot the graph
+        // populated. Empty leading slots (rare) get PerVertex + stride 0 by
+        // default, which is a safe no-op for backends.
+        for (auto slot = 0; slot < perSlotOffsets.size(); ++slot)
+            layout.buffer(slot, perSlotOffsets[slot], perSlotRates[slot]);
+    }
+    else
+    {
+        // Single-buffer shortcut: keep the pre-instancing shape (buffers empty,
+        // stride populated) so existing single-buffer consumers see no change.
+        layout.stride = perSlotOffsets.empty() ? 0 : perSlotOffsets[0];
+    }
+
     return layout;
 }
 } // namespace

@@ -72,7 +72,10 @@ struct D3D12Pipeline
 {
     winrt::com_ptr<ID3D12PipelineState> state;
     D3D12_PRIMITIVE_TOPOLOGY topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-    UINT stride = 0;
+    // Per-slot strides so multi-buffer draws (e.g. instancing) know the
+    // stride at each bound slot when setVertexBuffer wires the D3D12 view.
+    // Legacy single-buffer pipelines carry one entry at index 0.
+    std::vector<UINT> strides;
     bool depth = false;
 };
 
@@ -128,13 +131,15 @@ struct D3D12DepthTarget
     D3D12_CPU_DESCRIPTOR_HANDLE view = {};
 };
 
-// Carries the frame's recording (and the active pipeline stride) from
-// beginPass to the RenderPass. The CommandContext stays owned by the Frame,
-// which submits and presents on destruction; the encoder is owned by the pass.
+// Carries the frame's recording (and the active pipeline's per-slot strides)
+// from beginPass to the RenderPass. The CommandContext stays owned by the
+// Frame, which submits and presents on destruction; the encoder is owned by
+// the pass. Strides are per-slot so multi-buffer draws (e.g. instancing)
+// bind each slot with its own stride.
 struct D3D12Encoder
 {
     CommandContext* commands = nullptr;
-    UINT stride = 0;
+    std::vector<UINT> strides;
 };
 
 // The compute sibling of D3D12Encoder. The CommandContext stays owned by the
