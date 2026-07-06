@@ -7,6 +7,7 @@
 #include "../Helpers/ImageConversion-Windows.h"
 #include "../Helpers/SystemAppearance.h"
 #include <eacp/Core/App/AppEnvironment.h>
+#include <eacp/Core/Utils/Logging.h>
 
 // DwmSetWindowAttribute, used for Win11 rounded corners.
 #include <dwmapi.h>
@@ -84,6 +85,13 @@ struct Window::Native
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wc.hbrBackground = nullptr;
         wc.lpszClassName = WINDOW_CLASS_NAME;
+
+        // The class icon is what every window falls back to when no runtime
+        // WindowOptions::applicationIcon is stamped via WM_SETICON. It is
+        // the executable's embedded icon (see embeddedApplicationIcon), so
+        // the running window matches the at-rest Explorer icon by default;
+        // null (no resource) keeps the system default.
+        wc.hIcon = embeddedApplicationIcon();
 
         RegisterClassExW(&wc);
         windowClassRegistered = true;
@@ -188,9 +196,23 @@ struct Window::Native
             applyApplicationIcons(options);
     }
 
+    // The ICON resource eacp_set_app_icon compiles into the executable
+    // under id 1 — the icon Explorer shows at rest. Icons loaded from a
+    // module's resources with LoadIconW are shared and must NOT be passed
+    // to DestroyIcon, unlike the CreateIconIndirect-built ones the
+    // destructor releases.
+    static HICON embeddedApplicationIcon()
+    {
+        return LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
+    }
+
     // ICON_SMALL drives the title bar and taskbar, ICON_BIG the Alt-Tab
     // switcher; the system scales as needed. The Alt-Tab override wins the
-    // big slot when present, otherwise applicationIcon serves both.
+    // big slot when present, otherwise applicationIcon serves both. Both
+    // are runtime overrides for dynamic icons (badges, theme changes);
+    // when unset, the class icon — the executable's embedded icon — serves
+    // every slot. When neither exists, say so: a silently generic taskbar
+    // icon otherwise looks like a rendering bug.
     void applyApplicationIcons(const WindowOptions& options)
     {
         applicationIcon = toHIcon(options.applicationIcon());
@@ -205,6 +227,14 @@ struct Window::Native
         if (auto* bigIcon = altTabIcon ? altTabIcon : applicationIcon)
             SendMessageW(
                 host.hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(bigIcon));
+
+        if (applicationIcon || embeddedApplicationIcon()
+            || eacp::Apps::getAppEnvironment().headless)
+            return;
+
+        LOG("This app has no icon: set one with eacp_set_app_icon in "
+            "CMake, or provide WindowOptions::applicationIcon for a "
+            "dynamic one. The taskbar and Explorer show the generic icon.");
     }
 
     // Windows 11+: ask DWM to round the window at the system radius (the

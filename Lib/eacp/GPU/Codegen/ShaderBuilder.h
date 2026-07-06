@@ -31,6 +31,35 @@ public:
         return value;
     }
 
+    // Per-instance sibling of vertexInput<T>. The returned handle behaves
+    // identically in shader expressions; the emitted VertexLayout routes
+    // instance inputs to a dedicated buffer slot with PerInstance step rate,
+    // so the caller binds a separate per-instance buffer at that slot.
+    //
+    // The zero-arg form auto-assigns slot 1 (the common case: one per-instance
+    // buffer alongside the per-vertex buffer at slot 0). Pass an explicit
+    // bufferIndex when a shader needs multiple per-instance streams in
+    // distinct buffers (e.g. per-instance transform in slot 1, per-instance
+    // colour in slot 2).
+    template <typename T>
+    T instanceInput()
+    {
+        auto value = T {};
+        value.graph = &graphData;
+        value.node = graphData.addInstanceInput(ValueTypeOf<T>::value);
+        return value;
+    }
+
+    template <typename T>
+    T instanceInput(int bufferIndex)
+    {
+        auto value = T {};
+        value.graph = &graphData;
+        value.node =
+            graphData.addInstanceInput(ValueTypeOf<T>::value, bufferIndex);
+        return value;
+    }
+
     template <typename T>
     T varying(const T& vertexValue)
     {
@@ -87,6 +116,14 @@ public:
     detail::ValueHandle addVertexInput(ValueType type)
     {
         return {&graphData, graphData.addInput(type)};
+    }
+
+    // Per-instance sibling of addVertexInput, keyed on a runtime ValueType for
+    // the reflection-driven ShaderProgram path. Routes the input to the given
+    // buffer slot with PerInstance step rate (see the templated instanceInput).
+    detail::ValueHandle addInstanceInput(ValueType type, int bufferIndex)
+    {
+        return {&graphData, graphData.addInstanceInput(type, bufferIndex)};
     }
 
     detail::ValueHandle addUniform(ValueType type)

@@ -39,6 +39,18 @@ static MTLPixelFormat toMetalPixelFormat(PixelFormat format)
     return MTLPixelFormatBGRA8Unorm;
 }
 
+static MTLVertexStepFunction toMetalStepFunction(StepRate rate)
+{
+    switch (rate)
+    {
+        case StepRate::PerVertex:
+            return MTLVertexStepFunctionPerVertex;
+        case StepRate::PerInstance:
+            return MTLVertexStepFunctionPerInstance;
+    }
+    return MTLVertexStepFunctionPerVertex;
+}
+
 static MTLVertexDescriptor* makeVertexDescriptor(const VertexLayout& layout)
 {
     if (layout.attributes.empty())
@@ -54,7 +66,24 @@ static MTLVertexDescriptor* makeVertexDescriptor(const VertexLayout& layout)
         descriptor.attributes[i].bufferIndex = (NSUInteger) attribute.bufferIndex;
     }
 
-    descriptor.layouts[0].stride = (NSUInteger) layout.stride;
+    // Multi-slot when `buffers` is populated; single-slot fallback otherwise
+    // (pre-instancing shape). Metal needs stride and step function per bound
+    // slot; a slot without an entry defaults to PerVertex with stride 0.
+    if (! layout.buffers.empty())
+    {
+        for (auto slot = 0; slot < layout.buffers.size(); ++slot)
+        {
+            descriptor.layouts[slot].stride = (NSUInteger) layout.buffers[slot].stride;
+            descriptor.layouts[slot].stepFunction =
+                toMetalStepFunction(layout.buffers[slot].stepRate);
+        }
+    }
+    else
+    {
+        descriptor.layouts[0].stride = (NSUInteger) layout.stride;
+        descriptor.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
+    }
+
     return descriptor;
 }
 

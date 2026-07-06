@@ -11,11 +11,14 @@ set_target_properties(Browser PROPERTIES
 
 eacp_set_gui_subsystem(Browser)
 set_default_target_setting(Browser)
+eacp_set_app_icon(Browser
+        ICNS "${CMAKE_CURRENT_SOURCE_DIR}/Icon.icns"
+        ICO "${CMAKE_CURRENT_SOURCE_DIR}/Icon.ico")
 
-# The icons travel as plain embedded resources; Main.cpp decodes them into
-# WindowOptions::applicationIcon and (Windows) the altTabIcon override.
+# The Alt-Tab override travels as a plain embedded resource; Main.cpp
+# decodes it into WindowOptions::altTabIcon. The application icon itself is
+# baked in by eacp_set_app_icon above — no runtime copy needed.
 res_embed_add(Browser
-        FILES     Icon.png
-                  AltTabIcon.png
+        FILES     AltTabIcon.png
         NAMESPACE Browser
         CATEGORY  Browser)

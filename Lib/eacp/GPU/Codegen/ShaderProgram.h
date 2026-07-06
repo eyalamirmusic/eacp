@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <vector>
 
 // A shader authored as a struct. Uniforms are named, typed members you set by
 // name; vertex inputs are pulled straight out of the CPU vertex struct inside
@@ -49,6 +50,15 @@
 //   ...
 //   shader.angle = 0.5f;
 //   pass.draw(shader);                       // pipeline + vertices + uniforms
+//
+// Instancing follows the same shape: pull per-instance fields with
+// instanceInput(&Instance::field, slot), feed them with setInstances(slot, ...),
+// and draw with pass.drawInstanced(shader, instanceCount [, firstInstance]). The
+// per-vertex geometry stays at slot 0; each instanceInput slot becomes a
+// PerInstance vertex-buffer binding.
+//
+//       auto pos    = vertexInput(&Vertex::position);       // slot 0, per vertex
+//       auto centre = instanceInput(&Instance::centre, 1);  // slot 1, per instance
 
 namespace eacp::GPU
 {
@@ -462,6 +472,34 @@ public:
         uploadIndices(data, sizeof(std::uint16_t), count, IndexFormat::UInt16);
     }
 
+    // Uploads typed per-instance data for a buffer slot and owns the buffer.
+    // bufferIndex must match the slot an instanceInput() pulled into; the
+    // element type's size must match that slot's per-instance stride. All
+    // instance slots carry the same element count - the instance count passed
+    // to RenderPass::drawInstanced(program, ...).
+    template <typename I, std::size_t N>
+    void setInstances(int bufferIndex, const I (&data)[N])
+    {
+        setInstances(bufferIndex, data, (int) N);
+    }
+
+    template <typename I>
+    void setInstances(int bufferIndex, const I* data, int count)
+    {
+        assert(bufferIndex >= 0 && bufferIndex < vertexLayout().buffers.size()
+               && "instance buffer slot was not declared via instanceInput");
+        assert(sizeof(I) == (std::size_t) vertexLayout().buffers[bufferIndex].stride
+               && "instance element size does not match the shader's "
+                  "per-instance layout");
+
+        if ((int) instanceBuffers.size() <= bufferIndex)
+            instanceBuffers.resize((std::size_t) bufferIndex + 1);
+
+        instanceBuffers[(std::size_t) bufferIndex].emplace(
+            Device::shared(), data, sizeof(I) * (std::size_t) count);
+        instanceCountValue = count;
+    }
+
     // Builds the shader library and render pipeline. sampleCount must match the
     // render target (GPUView::sampleCount()); set depth when the view has a depth
     // buffer (GPUView::setDepth(true)).
@@ -509,6 +547,24 @@ public:
         reflectMembers(bindVisitor);
     }
 
+    // True once any instanceInput() was pulled: the program feeds one or more
+    // per-instance buffers and is drawn with drawInstanced(program, ...).
+    bool isInstanced() const { return usesInstancing; }
+
+    // The element count last uploaded via setInstances - the number of
+    // instances the owned per-instance buffers hold.
+    int instanceCount() const { return instanceCountValue; }
+
+    // Binds every owned per-instance buffer at the slot it was uploaded to.
+    // RenderPass::drawInstanced(program, ...) calls this after binding the
+    // per-vertex buffer at slot 0.
+    void bindInstances(RenderPass& pass)
+    {
+        for (auto slot = 0; slot < (int) instanceBuffers.size(); ++slot)
+            if (instanceBuffers[(std::size_t) slot].has_value())
+                pass.setVertexBuffer(*instanceBuffers[(std::size_t) slot], slot);
+    }
+
 protected:
     // Runs the uniform build walk, the user's define() (which pulls vertex inputs),
     // then emits source + layouts. Called from the most-derived constructor.
@@ -522,7 +578,17 @@ protected:
         // define() assembled the vertex layout from the pulled fields' real
         // offsets; use it when any input was pulled.
         if (vertexLayoutData.attributes.size() > 0)
+        {
+            // instanceInput populated the per-instance slots; publish the
+            // per-vertex slot 0 too so every bound buffer carries a stride and
+            // step rate. Single-buffer programs keep the pre-instancing shape
+            // (empty buffers + stride) untouched.
+            if (usesInstancing)
+                vertexLayoutData.buffer(
+                    0, vertexLayoutData.stride, StepRate::PerVertex);
+
             generated.vertexLayout = vertexLayoutData;
+        }
 
         packUniforms();
     }
@@ -542,6 +608,34 @@ protected:
         vertexLayoutData.stride = (int) sizeof(C);
 
         auto added = builder.addVertexInput(type);
+
+        auto handle = Handle {};
+        handle.graph = added.graph;
+        handle.node = added.node;
+        return handle;
+    }
+
+    // Per-instance sibling of vertexInput: pulls an attribute out of a CPU
+    // per-instance struct and routes it to a dedicated buffer slot with
+    // PerInstance step rate. bufferIndex is the slot the matching per-instance
+    // buffer binds to (setInstances(bufferIndex, ...)); the per-vertex geometry
+    // always stays at slot 0. Use 1 for a single per-instance stream, and
+    // distinct slots (1, 2, ...) when a shader needs several - e.g. a transform
+    // stream in slot 1 and a colour stream in slot 2.
+    template <typename C, typename M>
+    typename ShaderValueOf<M>::type instanceInput(M C::* member, int bufferIndex)
+    {
+        using Handle = typename ShaderValueOf<M>::type;
+        static_assert(sizeof(M) == sizeof(typename CpuValueOf<Handle>::type),
+                      "instance field size does not match its shader value type");
+
+        constexpr auto type = ValueTypeOf<Handle>::value;
+        vertexLayoutData.attribute(
+            toVertexFormat(type), memberOffset(member), bufferIndex);
+        vertexLayoutData.buffer(bufferIndex, (int) sizeof(C), StepRate::PerInstance);
+        usesInstancing = true;
+
+        auto added = builder.addInstanceInput(type, bufferIndex);
 
         auto handle = Handle {};
         handle.graph = added.graph;
@@ -675,6 +769,14 @@ private:
     std::optional<Buffer> indexBufferData;
     std::optional<ShaderLibrary> shaderLibrary;
     std::optional<RenderPipeline> pipelineState;
+
+    // Per-instance buffers indexed by their vertex-buffer slot; slot 0 stays
+    // empty (the per-vertex buffer). Populated by setInstances, bound by
+    // bindInstances. usesInstancing gates the multi-slot layout in compile().
+    bool usesInstancing = false;
+    std::vector<std::optional<Buffer>> instanceBuffers;
+    int instanceCountValue = 0;
+
     int vertexCountValue = 0;
     int indexCountValue = 0;
     IndexFormat indexFormatValue = IndexFormat::UInt32;

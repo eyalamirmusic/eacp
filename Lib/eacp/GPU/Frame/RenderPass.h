@@ -17,6 +17,14 @@ class Texture;
 class RenderPass
 {
 public:
+    // The Metal buffer index the first uniform block binds to. Vertex buffers
+    // take the low indices, so uniforms start above them - matching how
+    // ComputePass reserves buffer(uniformBase) for its own uniforms. Reserving
+    // a high slot lets multi-slot vertex layouts (e.g. instancing with a
+    // per-vertex slot + N per-instance slots) coexist with uniforms without
+    // the two paths clobbering each other's buffer(N).
+    static constexpr int uniformBase = 16;
+
     explicit RenderPass(void* encoder);
     ~RenderPass();
 
@@ -72,12 +80,32 @@ public:
 
     void draw(int vertexCount, int firstVertex = 0);
 
+    // Instanced sibling of draw: runs the vertex shader vertexCount times per
+    // instance, for instanceCount instances. Per-vertex buffers (slots with
+    // StepRate::PerVertex) rewind each instance; per-instance buffers
+    // (StepRate::PerInstance) advance once per instance. firstInstance is a
+    // constant added to the shader's instance-id lookup, useful for drawing a
+    // subrange of a shared instance buffer.
+    void drawInstanced(int vertexCount,
+                       int instanceCount,
+                       int firstVertex = 0,
+                       int firstInstance = 0);
+
     // Draws indexCount indices from an Index-usage buffer, assembling with the
     // pipeline's topology. firstIndex is an offset into the index buffer.
     void drawIndexed(const Buffer& indices,
                      int indexCount,
                      IndexFormat format = IndexFormat::UInt32,
                      int firstIndex = 0);
+
+    // Instanced sibling of drawIndexed: reuses the index buffer per instance.
+    // Same step-rate semantics as drawInstanced.
+    void drawIndexedInstanced(const Buffer& indices,
+                              int indexCount,
+                              int instanceCount,
+                              IndexFormat format = IndexFormat::UInt32,
+                              int firstIndex = 0,
+                              int firstInstance = 0);
 
     // Binds and draws a prepared ShaderProgram in one call: its pipeline, vertex
     // buffer, uniform block and textures, then an indexed draw when the program
@@ -104,6 +132,39 @@ public:
                 program.indices(), program.indexCount(), program.indexFormat());
         else
             draw(program.vertexCount());
+    }
+
+    // Instanced sibling of draw(program): binds the program's pipeline, its
+    // per-vertex buffer (slot 0), every per-instance buffer, the uniform block
+    // and textures, then issues an instanced draw - indexed when the program
+    // owns indices, otherwise a plain instanced draw. firstInstance offsets into
+    // the per-instance buffers, for drawing a subrange of a shared instance set
+    // (e.g. one row at a time). Templated so this header stays independent of
+    // the codegen layer.
+    template <typename Program>
+    void drawInstanced(Program& program, int instanceCount, int firstInstance = 0)
+    {
+        setPipeline(program.pipeline());
+        setVertexBuffer(program.vertices(), 0);
+        program.bindInstances(*this);
+
+        if (program.hasUniforms())
+        {
+            setVertexUniforms(program);
+            setFragmentUniforms(program);
+        }
+
+        program.bindTextures(*this);
+
+        if (program.hasIndices())
+            drawIndexedInstanced(program.indices(),
+                                 program.indexCount(),
+                                 instanceCount,
+                                 program.indexFormat(),
+                                 0,
+                                 firstInstance);
+        else
+            drawInstanced(program.vertexCount(), instanceCount, 0, firstInstance);
     }
 
     void end();

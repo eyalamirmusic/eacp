@@ -11,3 +11,6 @@ set_target_properties(Teapot PROPERTIES
 
 eacp_set_gui_subsystem(Teapot)
 set_default_target_setting(Teapot)
+eacp_set_app_icon(Teapot
+        ICNS "${CMAKE_CURRENT_SOURCE_DIR}/Icon.icns"
+        ICO "${CMAKE_CURRENT_SOURCE_DIR}/Icon.ico")

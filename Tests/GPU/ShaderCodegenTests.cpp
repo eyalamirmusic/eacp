@@ -65,9 +65,63 @@ GeneratedShader makeTexturedShader()
     return builder.build();
 }
 
+// Vertex + per-instance structs for the ShaderProgram instancing test below.
+struct ProgVertex
+{
+    float position[2];
+    float uv[2];
+};
+
+struct ProgInstanceTransform
+{
+    float center[2];
+    float scale;
+};
+
+struct ProgInstanceColor
+{
+    float color[3];
+};
+
+// A struct-authored shader that pulls geometry per-vertex (slot 0) and a
+// transform + colour per-instance (slots 1 and 2), mirroring what the
+// Instancing demo does. Exercises ShaderProgram::instanceInput and the
+// multi-slot vertex layout it assembles.
+struct InstancedProgram final : ShaderProgram
+{
+    Uniform<Float> time;
+
+    EACP_SHADER(time)
+
+    InstancedProgram() { compile(); }
+
+    void define() override
+    {
+        auto position = vertexInput(&ProgVertex::position);
+        auto uv = vertexInput(&ProgVertex::uv);
+        auto center = instanceInput(&ProgInstanceTransform::center, 1);
+        auto scale = instanceInput(&ProgInstanceTransform::scale, 1);
+        auto color = instanceInput(&ProgInstanceColor::color, 2);
+
+        auto placed = position * (scale * time);
+        setPosition(
+            float4(placed.x() + center.x(), placed.y() + center.y(), 0.f, 1.f));
+        setFragment(float4(varying(color) * varying(uv).y(), 1.f));
+    }
+};
+
 bool contains(const std::string& haystack, const std::string& needle)
 {
     return haystack.find(needle) != std::string::npos;
+}
+
+// Derives the MSL uniform-block declaration string from the runtime constant
+// that the emitter uses (RenderPass::uniformBase / ComputePass::uniformBase).
+// Bumping the constant flows into both the emitter's output and the tests'
+// expectation - one source of truth, no drift.
+std::string uniformDecl(int base)
+{
+    return "constant Uniforms& uniforms [[buffer(" + std::to_string(base) + ")]]";
 }
 
 int countOccurrences(const std::string& haystack, const std::string& needle)
@@ -99,6 +153,68 @@ auto tCodegenLayout = test("GPU/codegenVertexLayout") = []
 
     check(shader.source.vertexEntry == "vertexMain");
     check(shader.source.fragmentEntry == "fragmentMain");
+};
+
+// ShaderProgram::instanceInput assembles a multi-slot vertex layout from the
+// real CPU struct offsets: slot 0 per-vertex, the instanceInput slots
+// per-instance, each with the source struct's size as its stride. The layout
+// half is pure logic; the pipeline build + instance-count wiring self-skips
+// without a GPU device (matches the compile tests here).
+auto tShaderProgramInstancedLayout = test("GPU/shaderProgramInstancedLayout") = []
+{
+    auto program = InstancedProgram {};
+    const auto& layout = program.vertexLayout();
+
+    // Three bound slots: one per-vertex, two per-instance, strides taken from
+    // the CPU structs (not a byte-size sum), so padded structs stay correct.
+    check(program.isInstanced());
+    check(layout.buffers.size() == 3);
+    check(layout.buffers[0].stride == (int) sizeof(ProgVertex));
+    check(layout.buffers[0].stepRate == StepRate::PerVertex);
+    check(layout.buffers[1].stride == (int) sizeof(ProgInstanceTransform));
+    check(layout.buffers[1].stepRate == StepRate::PerInstance);
+    check(layout.buffers[2].stride == (int) sizeof(ProgInstanceColor));
+    check(layout.buffers[2].stepRate == StepRate::PerInstance);
+
+    // Every attribute routes to its slot at its real member offset.
+    const auto& attrs = layout.attributes;
+    check(attrs.size() == 5);
+    check(attrs[0].bufferIndex == 0 && attrs[0].offset == 0);
+    check(attrs[1].bufferIndex == 0 && attrs[1].offset == (int) sizeof(float) * 2);
+    check(attrs[2].bufferIndex == 1 && attrs[2].offset == 0);
+    check(attrs[3].bufferIndex == 1 && attrs[3].offset == (int) sizeof(float) * 2);
+    check(attrs[4].bufferIndex == 2 && attrs[4].offset == 0);
+
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    const ProgVertex verts[3] = {
+        {{0.f, 1.f}, {0.5f, 1.f}},
+        {{-1.f, -1.f}, {0.f, 0.f}},
+        {{1.f, -1.f}, {1.f, 0.f}},
+    };
+    const ProgInstanceTransform transforms[4] = {
+        {{-0.5f, 0.f}, 0.2f},
+        {{0.5f, 0.f}, 0.2f},
+        {{0.f, 0.5f}, 0.2f},
+        {{0.f, -0.5f}, 0.2f},
+    };
+    const ProgInstanceColor colors[4] = {
+        {{1.f, 0.f, 0.f}},
+        {{0.f, 1.f, 0.f}},
+        {{0.f, 0.f, 1.f}},
+        {{1.f, 1.f, 0.f}},
+    };
+
+    program.setVertices(verts);
+    program.setInstances(1, transforms);
+    program.setInstances(2, colors);
+    check(program.instanceCount() == 4);
+
+    program.prepare(1);
+    check(program.pipeline().isValid());
 };
 
 // One IR emits both backends; assert each carries its backend-specific binding
@@ -171,7 +287,7 @@ auto tCodegenUniformEmits = test("GPU/codegenUniformEmits") = []
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "struct Uniforms"));
-    check(contains(metal, "constant Uniforms& uniforms [[buffer(1)]]"));
+    check(contains(metal, uniformDecl(RenderPass::uniformBase)));
     check(contains(metal, "cos(uniforms.u0)"));
     check(contains(metal, "sin(uniforms.u0)"));
 
@@ -461,8 +577,8 @@ auto tCodegenFragmentUniformEmits = test("GPU/codegenFragmentUniformEmits") = []
     check(
         contains(metal, "vertex VertexOut vertexMain(VertexIn input [[stage_in]])"));
     check(contains(metal,
-                   "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n"
-                   "    constant Uniforms& uniforms [[buffer(1)]])"));
+                   "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n    "
+                       + uniformDecl(RenderPass::uniformBase) + ")"));
     check(contains(metal, "return uniforms.u0;"));
 
     auto hlsl = emitHlsl(builder.graph());
@@ -486,10 +602,10 @@ auto tCodegenSharedUniformEmits = test("GPU/codegenSharedUniformEmits") = []
     auto metal = emitMetal(builder.graph());
     check(contains(metal,
                    "vertex VertexOut vertexMain(VertexIn input [[stage_in]], "
-                   "constant Uniforms& uniforms [[buffer(1)]])"));
+                       + uniformDecl(RenderPass::uniformBase) + ")"));
     check(contains(metal,
-                   "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n"
-                   "    constant Uniforms& uniforms [[buffer(1)]])"));
+                   "fragment float4 fragmentMain(VertexOut input [[stage_in]],\n    "
+                       + uniformDecl(RenderPass::uniformBase) + ")"));
 };
 
 // Compiles a fragment-uniform shader through the real platform shader compiler
@@ -597,7 +713,7 @@ auto tCodegenComputeEmits = test("GPU/codegenComputeEmits") = []
     check(contains(metal, "kernel void computeMain("));
     check(contains(metal, "device const float* buffer0 [[buffer(0)]]"));
     check(contains(metal, "device float* buffer1 [[buffer(1)]]"));
-    check(contains(metal, "constant Uniforms& uniforms [[buffer(16)]]"));
+    check(contains(metal, uniformDecl(ComputePass::uniformBase)));
     check(contains(metal, "uint gid [[thread_position_in_grid]]"));
     check(contains(metal, "uint count;"));
     check(contains(metal, "if (gid >= uniforms.count)"));

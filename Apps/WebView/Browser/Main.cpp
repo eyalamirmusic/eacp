@@ -8,13 +8,14 @@ using namespace Graphics;
 
 // A minimal browser demonstrating the window chrome options:
 //
-//   WindowOptions::applicationIcon   decodes a PNG embedded with ResEmbed
-//       (CMakeLists.txt) — the Windows taskbar and the macOS Dock show it
-//       instead of the generic application icon
-//   WindowOptions::altTabIcon        the blue icon everywhere, except the
-//       Windows Alt-Tab switcher, which shows this orange override
-//   WebView::Options::statusBar      off, so hovering a link shows no URL
-//       overlay — the same behaviour as WKWebView
+//   eacp_set_app_icon (CMakeLists.txt)  bakes Icon.icns / Icon.ico into
+//       the bundle / executable — Finder, Explorer, the Dock and the
+//       taskbar all show it, at rest and while running, with no runtime
+//       code
+//   WindowOptions::altTabIcon           the blue icon everywhere, except
+//       the Windows Alt-Tab switcher, which shows this orange override
+//   WebView::Options::statusBar         off, so hovering a link shows no
+//       URL overlay — the same behaviour as WKWebView
 //
 // Type a URL in the address bar and press return to navigate.
 
@@ -71,7 +72,6 @@ struct BrowserApp
         options.minWidth = 480;
         options.minHeight = 320;
 
-        options.applicationIcon = [] { return decodeIcon("Icon.png"); };
         options.altTabIcon = [] { return decodeIcon("AltTabIcon.png"); };
 
         return options;

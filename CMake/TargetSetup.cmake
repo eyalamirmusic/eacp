@@ -75,6 +75,47 @@ function(eacp_set_gui_subsystem target)
     endif ()
 endfunction()
 
+# Gives an app its at-rest icon — the one Finder, Explorer and a
+# not-yet-running Dock/taskbar tile draw. Those are rendered by processes
+# that never execute the binary, so a runtime WindowOptions::applicationIcon
+# cannot supply them: macOS reads the bundle's .icns (named by
+# CFBundleIconFile), Windows reads an ICON resource compiled into the .exe.
+# Apps supply the platform-native files directly:
+#
+#   eacp_set_app_icon(MyApp
+#           ICNS "${CMAKE_CURRENT_SOURCE_DIR}/Icon.icns"
+#           ICO  "${CMAKE_CURRENT_SOURCE_DIR}/Icon.ico")
+#
+# Either argument may be omitted for a platform the app doesn't ship on.
+# Explorer picks the ICON resource with the lowest ID for the at-rest icon,
+# hence resource id 1 in the generated .rc.
+function(eacp_set_app_icon target)
+    cmake_parse_arguments(ARG "" "ICNS;ICO" "" ${ARGN})
+
+    if (APPLE AND NOT IOS AND ARG_ICNS)
+        get_filename_component(icns "${ARG_ICNS}" ABSOLUTE)
+        get_filename_component(icns_name "${icns}" NAME)
+
+        target_sources(${target} PRIVATE "${icns}")
+        set_source_files_properties("${icns}" PROPERTIES
+                MACOSX_PACKAGE_LOCATION Resources)
+        set_target_properties(${target} PROPERTIES
+                MACOSX_BUNDLE_ICON_FILE "${icns_name}")
+    endif ()
+
+    if (WIN32 AND ARG_ICO)
+        # get_filename_component normalises to forward slashes, which rc.exe
+        # accepts and which don't act as escape characters in the .rc string.
+        get_filename_component(ico "${ARG_ICO}" ABSOLUTE)
+        set(rc_file "${CMAKE_CURRENT_BINARY_DIR}/${target}-icon.rc")
+
+        file(CONFIGURE OUTPUT "${rc_file}" CONTENT "1 ICON \"${ico}\"\n")
+        target_sources(${target} PRIVATE "${rc_file}")
+        set_source_files_properties("${rc_file}" PROPERTIES
+                OBJECT_DEPENDS "${ico}")
+    endif ()
+endfunction()
+
 function(add_ide_sources target)
     file(GLOB_RECURSE ALL_HEADERS
             "${CMAKE_CURRENT_SOURCE_DIR}/*.h"
