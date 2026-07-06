@@ -44,10 +44,6 @@ const GpuVertex spinningTriangle[] = {
 
 struct SpinShader final : ShaderProgram
 {
-    Uniform<Float> angle;
-
-    EACP_SHADER(angle)
-
     SpinShader() { compile(); }
 
     void define() override
@@ -65,6 +61,10 @@ struct SpinShader final : ShaderProgram
         setPosition(float4(rotated, 0.0f, 1.0f));
         setFragment(float4(varyingColor, 1.0f));
     }
+
+    Uniform<Float> angle;
+
+    EACP_SHADER(angle)
 };
 } // namespace
 

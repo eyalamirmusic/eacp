@@ -40,10 +40,6 @@ const Vertex triangleVertices[] = {
 // sync, and the layout reads the fields' real offsets.
 struct RotatingShader final : ShaderProgram
 {
-    Uniform<Float> angle;
-
-    EACP_SHADER(angle)
-
     RotatingShader() { compile(); }
 
     void define() override
@@ -61,6 +57,10 @@ struct RotatingShader final : ShaderProgram
         setPosition(float4(rotated, 0.0f, 1.0f));
         setFragment(float4(varyingColor, 1.0f));
     }
+
+    Uniform<Float> angle;
+
+    EACP_SHADER(angle)
 };
 } // namespace
 

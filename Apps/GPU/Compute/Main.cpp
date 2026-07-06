@@ -20,11 +20,6 @@ constexpr auto twoPi = 2.0f * std::numbers::pi_v<float>;
 // the emitter hoists it into one named local.
 struct ToneKernel final : ComputeProgram
 {
-    Uniform<OutputBuffer> output;
-    Uniform<Float> frequency;
-    Uniform<Float> sampleRate;
-    EACP_SHADER(output, frequency, sampleRate)
-
     ToneKernel() { compile(); }
 
     void define() override
@@ -34,19 +29,17 @@ struct ToneKernel final : ComputeProgram
         auto wave = sin(phase) + sin(phase * 2.0f) / 2.0f + sin(phase * 3.0f) / 3.0f;
         write(output, i, wave);
     }
+
+    Uniform<OutputBuffer> output;
+    Uniform<Float> frequency;
+    Uniform<Float> sampleRate;
+    EACP_SHADER(output, frequency, sampleRate)
 };
 
 // Crossfades two rendered tones, then soft-clips the blend with x / (1 + |x|)
 // so the harmonic stacks stay inside [-1, 1] without a hard clamp.
 struct CrossfadeKernel final : ComputeProgram
 {
-    Uniform<InputBuffer> toneA;
-    Uniform<InputBuffer> toneB;
-    Uniform<OutputBuffer> output;
-    Uniform<Float> blend;
-    Uniform<Float> gain;
-    EACP_SHADER(toneA, toneB, output, blend, gain)
-
     CrossfadeKernel() { compile(); }
 
     void define() override
@@ -56,6 +49,13 @@ struct CrossfadeKernel final : ComputeProgram
         auto shaped = mixed / (abs(mixed) + 1.0f);
         write(output, i, shaped * gain);
     }
+
+    Uniform<InputBuffer> toneA;
+    Uniform<InputBuffer> toneB;
+    Uniform<OutputBuffer> output;
+    Uniform<Float> blend;
+    Uniform<Float> gain;
+    EACP_SHADER(toneA, toneB, output, blend, gain)
 };
 
 // A 3-tap smoothing filter using index arithmetic: each sample averaged with
@@ -64,11 +64,6 @@ struct CrossfadeKernel final : ComputeProgram
 // the periodic signal seamlessly - no edge clamping needed.
 struct SmoothKernel final : ComputeProgram
 {
-    Uniform<InputBuffer> input;
-    Uniform<OutputBuffer> output;
-    Uniform<UInt> length;
-    EACP_SHADER(input, output, length)
-
     SmoothKernel() { compile(); }
 
     void define() override
@@ -78,6 +73,11 @@ struct SmoothKernel final : ComputeProgram
         auto next = input[(i + 1u) % length];
         write(output, i, (previous + input[i] + next) / 3.0f);
     }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+    Uniform<UInt> length;
+    EACP_SHADER(input, output, length)
 };
 
 void printWave(const char* name, const float* samples, int count)

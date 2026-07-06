@@ -247,11 +247,6 @@ struct SpinInputs
 // per frame from render().
 struct SpinProgram : ShaderProgram
 {
-    Uniform<Float> time;
-    Uniform<Float> scale;
-
-    EACP_SHADER(time, scale)
-
     void emitBody(const SpinInputs& in)
     {
         auto varyingUv = varying(in.uv);
@@ -272,6 +267,11 @@ struct SpinProgram : ShaderProgram
         auto brightness = varyingUv.y() * 0.7f + 0.3f;
         setFragment(float4(varyingColor * brightness, 1.f));
     }
+
+    Uniform<Float> time;
+    Uniform<Float> scale;
+
+    EACP_SHADER(time, scale)
 };
 
 // Panel 1: every field is per-vertex, pulled straight out of the fat vertex.

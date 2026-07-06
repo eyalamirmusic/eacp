@@ -168,13 +168,6 @@ TeapotMesh buildTeapot()
 // stage and handed to the fragment as a varying.
 struct TeapotShader final : ShaderProgram
 {
-    Uniform<Float> angle;
-    Uniform<Float> aspect;
-    Uniform<Float3> lightDir;
-    Uniform<Float3> baseColor;
-
-    EACP_SHADER(angle, aspect, lightDir, baseColor)
-
     TeapotShader() { compile(); }
 
     void define() override
@@ -198,6 +191,13 @@ struct TeapotShader final : ShaderProgram
 
         setFragment(float4(varying(baseColor * shade), 1.0f));
     }
+
+    Uniform<Float> angle;
+    Uniform<Float> aspect;
+    Uniform<Float3> lightDir;
+    Uniform<Float3> baseColor;
+
+    EACP_SHADER(angle, aspect, lightDir, baseColor)
 };
 } // namespace
 

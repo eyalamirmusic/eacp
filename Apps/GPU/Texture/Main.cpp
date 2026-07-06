@@ -47,10 +47,6 @@ Texture makeCheckerboard(Device& device)
 // interpolated vertex UV.
 struct TexturedShader final : ShaderProgram
 {
-    Uniform<Texture2D> image;
-
-    EACP_SHADER(image)
-
     TexturedShader() { compile(); }
 
     void define() override
@@ -61,6 +57,10 @@ struct TexturedShader final : ShaderProgram
         setPosition(float4(position, 0.0f, 1.0f));
         setFragment(sample(image, varying(uv)));
     }
+
+    Uniform<Texture2D> image;
+
+    EACP_SHADER(image)
 };
 } // namespace
 

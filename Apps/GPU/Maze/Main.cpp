@@ -300,14 +300,6 @@ MazeMesh buildMaze()
 // itself, so the CPU never touches a matrix.
 struct MazeShader final : ShaderProgram
 {
-    Uniform<Float> camX;
-    Uniform<Float> camZ;
-    Uniform<Float> yaw;
-    Uniform<Float> aspect;
-    Uniform<Texture2D> atlas;
-
-    EACP_SHADER(camX, camZ, yaw, aspect, atlas)
-
     MazeShader() { compile(); }
 
     void define() override
@@ -323,6 +315,14 @@ struct MazeShader final : ShaderProgram
         auto color = sample(atlas, varying(uv));
         setFragment(float4(color.xyz() * varying(shade), 1.0f));
     }
+
+    Uniform<Float> camX;
+    Uniform<Float> camZ;
+    Uniform<Float> yaw;
+    Uniform<Float> aspect;
+    Uniform<Texture2D> atlas;
+
+    EACP_SHADER(camX, camZ, yaw, aspect, atlas)
 };
 } // namespace
 
