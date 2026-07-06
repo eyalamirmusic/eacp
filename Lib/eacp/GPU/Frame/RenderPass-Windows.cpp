@@ -74,20 +74,10 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
     transitionForUse(
         commands, *data, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
 
-    // Look up the stride for THIS slot (multi-buffer draws bind different
-    // strides at different slots). Fall back to slot 0's stride if the caller
-    // binds a slot the pipeline didn't declare a stride for - preserves the
-    // pre-instancing behaviour, which always used one stride for everything.
-    auto stride = UINT {0};
-    if (index >= 0 && index < (int) impl->encoder->strides.size())
-        stride = impl->encoder->strides[index];
-    else if (! impl->encoder->strides.empty())
-        stride = impl->encoder->strides[0];
-
     D3D12_VERTEX_BUFFER_VIEW view = {};
     view.BufferLocation = data->resource->GetGPUVirtualAddress();
     view.SizeInBytes = static_cast<UINT>(data->size);
-    view.StrideInBytes = stride;
+    view.StrideInBytes = strideForSlot(impl->encoder->strides, index);
 
     commands.list->IASetVertexBuffers(static_cast<UINT>(index), 1, &view);
 }

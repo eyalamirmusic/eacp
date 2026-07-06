@@ -2,6 +2,7 @@
 
 #include "../Pipeline/VertexLayout.h"
 
+#include <cassert>
 #include <utility>
 
 namespace eacp::GPU
@@ -52,9 +53,26 @@ VertexLayout buildVertexLayout(const ShaderGraph& graph)
             perSlotRates.add(StepRate::PerVertex);
         }
 
+        // First attribute in a slot establishes its step rate; every later
+        // attribute must match. Mixing PerVertex + PerInstance in a single
+        // slot would produce a subtly wrong pipeline that each backend
+        // resolves differently - a silent cross-platform footgun. Loud in
+        // Debug matches the assert-on-unhandled-mode convention added in
+        // the BlendModes PR.
+        auto firstInSlot = perSlotOffsets[slot] == 0;
+        if (firstInSlot)
+        {
+            perSlotRates[slot] = rate;
+        }
+        else
+        {
+            assert(perSlotRates[slot] == rate
+                   && "eacp: attributes in a single vertex-buffer slot must "
+                      "share a step rate (all PerVertex or all PerInstance)");
+        }
+
         layout.attribute(toVertexFormat(type), perSlotOffsets[slot], slot);
         perSlotOffsets[slot] += byteSize(type);
-        perSlotRates[slot] = rate;
 
         if (rate == StepRate::PerInstance)
             sawInstance = true;

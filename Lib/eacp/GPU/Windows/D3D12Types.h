@@ -79,6 +79,22 @@ struct D3D12Pipeline
     bool depth = false;
 };
 
+// The single "stride for a bound slot" rule shared by RenderPipeline (which
+// builds the table) and RenderPass::setVertexBuffer (which reads it): if the
+// slot has an explicit stride use it; otherwise fall back to slot 0's stride
+// so legacy single-buffer pipelines (which build a one-entry table for
+// slot 0) still bind correctly when the caller happens to pass a non-zero
+// slot index. Kept in one place so the two sites can't drift apart on the
+// platform I can't test.
+inline UINT strideForSlot(const std::vector<UINT>& strides, int slot)
+{
+    if (slot >= 0 && slot < static_cast<int>(strides.size()))
+        return strides[slot];
+    if (! strides.empty())
+        return strides[0];
+    return 0;
+}
+
 // What Buffer::nativeBuffer() points to. Tracks the resource's state within
 // the current recording: buffers decay to COMMON after every
 // ExecuteCommandLists and are implicitly promoted on first use, so a barrier

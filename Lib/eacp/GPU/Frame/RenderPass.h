@@ -80,6 +80,19 @@ public:
 
     void draw(int vertexCount, int firstVertex = 0);
 
+    // CAUTION (unverified draw path - read before editing this or the D3D12
+    // vertex-buffer/stride wiring): the instanced *draw* calls below have no
+    // automated test coverage on any platform. The GPU tests only build
+    // instanced pipelines and resources (they can't issue a draw without a live
+    // frame + drawable), and the demo that does draw - Apps/GPU/Instancing - is
+    // not run in CI. So on Windows the draw path is verified by code inspection
+    // and the interactive demo only: WARP-backed CI exercises makeInputLayout /
+    // makeStrideTable (pipeline build), NOT DrawInstanced arg order,
+    // firstInstance offset, or per-slot setVertexBuffer stride wiring. If you
+    // touch either instanced draw or the D3D12 setVertexBuffer/stride code, CI
+    // will NOT catch a behavioural regression - validate by running the
+    // Instancing app on Windows, or add a render-to-offscreen-texture test.
+    //
     // Instanced sibling of draw: runs the vertex shader vertexCount times per
     // instance, for instanceCount instances. Per-vertex buffers (slots with
     // StepRate::PerVertex) rewind each instance; per-instance buffers
