@@ -1,10 +1,5 @@
 include(AppleSetup)
 
-# Captured at include time: inside a function CMAKE_CURRENT_LIST_DIR is the
-# caller's list file, not this one, so eacp_set_app_icon needs this to find
-# the scripts that live next to this module.
-set(EACP_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}")
-
 function(set_default_warnings_level target)
     if (MSVC)
         target_compile_options(${target} PRIVATE /W4)
@@ -80,86 +75,45 @@ function(eacp_set_gui_subsystem target)
     endif ()
 endfunction()
 
-# Gives a bundled app its at-rest icon — the one Finder, the Applications
-# folder and a not-yet-running Dock tile draw. Those are rendered by other
-# processes that never execute the binary, so a runtime
-# setApplicationIconImage cannot supply them: macOS reads
-# Contents/Resources/AppIcon.icns, named by CFBundleIconFile in Info.plist.
-# This generates that .icns at build time from a single PNG master
-# (1024x1024 with transparency recommended) via sips + iconutil.
+# Gives an app its at-rest icon — the one Finder, Explorer and a
+# not-yet-running Dock/taskbar tile draw. Those are rendered by processes
+# that never execute the binary, so a runtime WindowOptions::applicationIcon
+# cannot supply them: macOS reads the bundle's .icns (named by
+# CFBundleIconFile), Windows reads an ICON resource compiled into the .exe.
+# Apps supply the platform-native files directly:
 #
-# On Windows the at-rest equivalent is an ICON resource compiled into the
-# .exe: Explorer reads it from the binary without running it. The same PNG
-# master is packed into a multi-resolution .ico (MakeIco.ps1, stock
-# PowerShell + System.Drawing) and embedded via a generated .rc. The runtime
-# WindowOptions::applicationIcon path stays as-is on both platforms for the
-# live window/Dock icon.
-function(eacp_set_app_icon target icon)
-    get_filename_component(icon "${icon}" ABSOLUTE)
+#   eacp_set_app_icon(MyApp
+#           ICNS "${CMAKE_CURRENT_SOURCE_DIR}/Icon.icns"
+#           ICO  "${CMAKE_CURRENT_SOURCE_DIR}/Icon.ico")
+#
+# Either argument may be omitted for a platform the app doesn't ship on.
+# Explorer picks the ICON resource with the lowest ID for the at-rest icon,
+# hence resource id 1 in the generated .rc.
+function(eacp_set_app_icon target)
+    cmake_parse_arguments(ARG "" "ICNS;ICO" "" ${ARGN})
 
-    if (WIN32)
-        eacp_set_app_icon_windows(${target} "${icon}")
+    if (APPLE AND NOT IOS AND ARG_ICNS)
+        get_filename_component(icns "${ARG_ICNS}" ABSOLUTE)
+        get_filename_component(icns_name "${icns}" NAME)
+
+        target_sources(${target} PRIVATE "${icns}")
+        set_source_files_properties("${icns}" PROPERTIES
+                MACOSX_PACKAGE_LOCATION Resources)
+        set_target_properties(${target} PROPERTIES
+                MACOSX_BUNDLE_ICON_FILE "${icns_name}")
     endif ()
 
-    if (NOT APPLE OR IOS)
-        return()
+    if (WIN32 AND ARG_ICO)
+        # get_filename_component normalises to forward slashes, which rc.exe
+        # accepts and which don't act as escape characters in the .rc string.
+        get_filename_component(ico "${ARG_ICO}" ABSOLUTE)
+        set(rc_file "${CMAKE_CURRENT_BINARY_DIR}/${target}-icon.rc")
+
+        file(CONFIGURE OUTPUT "${rc_file}" CONTENT "1 ICON \"${ico}\"\n")
+        target_sources(${target} PRIVATE "${rc_file}")
+        set_source_files_properties("${rc_file}" PROPERTIES
+                OBJECT_DEPENDS "${ico}")
     endif ()
-    set(iconset_dir "${CMAKE_CURRENT_BINARY_DIR}/${target}.iconset")
-    set(icns_file "${CMAKE_CURRENT_BINARY_DIR}/${target}-icon/AppIcon.icns")
-
-    # iconutil requires the exact icon_<N>x<N>[@2x].png names inside the
-    # .iconset; sips scales the master to each slot.
-    set(resize_commands)
-    foreach (size IN ITEMS 16 32 128 256 512)
-        math(EXPR retina "${size} * 2")
-        list(APPEND resize_commands
-                COMMAND sips -z ${size} ${size} "${icon}"
-                --out "${iconset_dir}/icon_${size}x${size}.png"
-                COMMAND sips -z ${retina} ${retina} "${icon}"
-                --out "${iconset_dir}/icon_${size}x${size}@2x.png")
-    endforeach ()
-
-    add_custom_command(OUTPUT "${icns_file}"
-            COMMAND ${CMAKE_COMMAND} -E rm -rf "${iconset_dir}"
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${iconset_dir}"
-            ${resize_commands}
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/${target}-icon"
-            COMMAND iconutil -c icns -o "${icns_file}" "${iconset_dir}"
-            DEPENDS "${icon}"
-            COMMENT "Generating ${target} AppIcon.icns"
-            VERBATIM)
-
-    target_sources(${target} PRIVATE "${icns_file}")
-    set_source_files_properties("${icns_file}" PROPERTIES
-            MACOSX_PACKAGE_LOCATION Resources
-            GENERATED TRUE)
-    set_target_properties(${target} PROPERTIES
-            MACOSX_BUNDLE_ICON_FILE AppIcon.icns)
-endfunction()
-
-# Windows half of eacp_set_app_icon: pack the PNG master into a .ico and
-# compile it into the .exe through a generated .rc. Explorer picks the ICON
-# resource with the lowest ID for the at-rest icon, hence resource id 1.
-function(eacp_set_app_icon_windows target icon)
-    set(icon_dir "${CMAKE_CURRENT_BINARY_DIR}/${target}-icon")
-    set(ico_file "${icon_dir}/${target}.ico")
-    set(rc_file "${icon_dir}/${target}-icon.rc")
-
-    add_custom_command(OUTPUT "${ico_file}"
-            COMMAND powershell -NoProfile -ExecutionPolicy Bypass
-            -File "${EACP_CMAKE_DIR}/MakeIco.ps1"
-            -Source "${icon}" -Output "${ico_file}"
-            DEPENDS "${icon}" "${EACP_CMAKE_DIR}/MakeIco.ps1"
-            COMMENT "Generating ${target}.ico"
-            VERBATIM)
-
-    # The .rc references the .ico by bare name: rc resolves relative paths
-    # against the .rc file's own directory, and both live in icon_dir.
-    file(CONFIGURE OUTPUT "${rc_file}" CONTENT "1 ICON \"${target}.ico\"\n")
-
-    target_sources(${target} PRIVATE "${rc_file}")
-    set_source_files_properties("${rc_file}" PROPERTIES
-            OBJECT_DEPENDS "${ico_file}")
 endfunction()
 
 function(add_ide_sources target)

@@ -8,9 +8,10 @@ using namespace Graphics;
 
 // A minimal browser demonstrating the window chrome options:
 //
-//   eacp_set_app_icon (CMakeLists.txt)  bakes Icon.png into the bundle /
-//       executable — Finder, Explorer, the Dock and the taskbar all show
-//       it, at rest and while running, with no runtime code
+//   eacp_set_app_icon (CMakeLists.txt)  bakes Icon.icns / Icon.ico into
+//       the bundle / executable — Finder, Explorer, the Dock and the
+//       taskbar all show it, at rest and while running, with no runtime
+//       code
 //   WindowOptions::altTabIcon           the blue icon everywhere, except
 //       the Windows Alt-Tab switcher, which shows this orange override
 //   WebView::Options::statusBar         off, so hovering a link shows no
