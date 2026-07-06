@@ -25,6 +25,8 @@ struct BrowserView final : View
         addressBar.onSubmit([this](const std::string& text)
                             { webView.loadURL(withScheme(text)); });
 
+        // fooo
+
         webView.loadURL(homePage);
         addChildren({addressBar, webView});
     }

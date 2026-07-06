@@ -42,6 +42,7 @@ constexpr auto pi = 3.14159265358979f;
 
 float radians(float degrees)
 {
+    // foo
     return degrees * (pi / 180.0f);
 }
 
