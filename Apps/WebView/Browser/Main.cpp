@@ -26,7 +26,6 @@ struct BrowserView final : View
                             { webView.loadURL(withScheme(text)); });
 
         // fooo
-
         webView.loadURL(homePage);
         addChildren({addressBar, webView});
     }
