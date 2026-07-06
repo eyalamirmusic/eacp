@@ -1,6 +1,7 @@
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/GPU/GPU.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -9,31 +10,37 @@
 using namespace eacp;
 using namespace GPU;
 
-// Three windows, one per test surface. All three use the shared shader math
-// authored via emitShaderBody() so a break in any one panel isolates to that
-// panel's plumbing (shader / drawInstanced / firstInstance) rather than
-// something upstream.
+// One window, three side-by-side panels - each a GPUView with its own render
+// pass, so a break in any one panel isolates to that panel's plumbing (shader /
+// drawInstanced / firstInstance) rather than something upstream.
+//
+// All three panels are authored as ShaderPrograms sharing one shader body
+// (SpinProgram::emitBody). The panels differ only in where the per-triangle
+// center / speed / colour come from: pulled per-vertex for the non-instanced
+// baseline, or per-instance for the two instanced panels. The body never knows
+// the difference.
 
 namespace
 {
-constexpr int windowW = 600;
+// Per-panel width the window opens at (three panels side by side); the layout
+// re-flows to equal thirds on resize, so this is only the initial size.
+constexpr int windowW = 480;
 constexpr int windowH = 750;
-constexpr int windowGap = 20;
 
 // The GPU render's Y range in NDC. Labels sit above and below this band; the
-// GPU view fills the whole window and the labels overlay as a sibling paint
-// surface, so keeping the geometry within [gpuBotY, gpuTopY] keeps triangles
-// clear of the label text.
+// GPU view fills its panel and the labels overlay as a sibling paint surface,
+// so keeping the geometry within [gpuBotY, gpuTopY] keeps triangles clear of
+// the label text.
 constexpr float gpuTopY = +0.72f;
 constexpr float gpuBotY = -0.72f;
 
-// Non-instanced grid (window 1).
+// Non-instanced grid (panel 1).
 constexpr int nonInstCols = 3;
 constexpr int nonInstRows = 12;
 constexpr int nonInstCount = nonInstCols * nonInstRows; // 36
 constexpr float nonInstTriRadius = 0.055f;
 
-// Instanced grid (windows 2 and 3 share the same 40x25 layout).
+// Instanced grid (panels 2 and 3 share the same 40x25 layout).
 constexpr int gridCols = 40;
 constexpr int gridRows = 25;
 constexpr int instanceCount = gridCols * gridRows; // 1000
@@ -43,7 +50,7 @@ constexpr float rowScanTriRadius = 0.028f;
 constexpr float gridLeftX = -0.9f;
 constexpr float gridRightX = +0.9f;
 
-// Row-scan cadence for window 3: each row of 40 stays visible for rowSeconds,
+// Row-scan cadence for panel 3: each row of 40 stays visible for rowSeconds,
 // so a full top-to-bottom scan takes ~gridRows * rowSeconds seconds.
 constexpr float rowScanRowSeconds = 0.2f;
 
@@ -79,14 +86,6 @@ struct FatVertex
     float center[2];
     float rotationSpeed;
     float color[3];
-};
-
-struct Uniforms
-{
-    float time;
-    float scale;
-    float _pad0 = 0.f;
-    float _pad1 = 0.f;
 };
 
 constexpr PerVertex unitTriangleVerts[] = {
@@ -229,82 +228,96 @@ std::vector<FatVertex> buildNonInstancedVerts()
     return out;
 }
 
-// Same shader body, three different input sources across the three pipelines.
-struct Inputs
+// ─── Shaders: one body, three input sources ─────────────────────────────
+
+// The handles emitBody() reads. Each panel's define() fills them from either a
+// per-vertex or a per-instance source, then hands them to the shared body.
+struct SpinInputs
 {
     Float2 position;
     Float2 uv;
     Float2 center;
     Float rotationSpeed;
     Float3 color;
-    Float time;
-    Float scale;
 };
 
-void emitShaderBody(ShaderBuilder& builder, const Inputs& in)
+// The shared shader math: spin the unit triangle by time*rotationSpeed, scale
+// it, place it at its center, shade it by UV. Authored once here; the three
+// panels reuse it verbatim. `time` and `scale` are named uniform members set
+// per frame from render().
+struct SpinProgram : ShaderProgram
 {
-    auto varyingUv = builder.varying(in.uv);
-    auto varyingColor = builder.varying(in.color);
+    Uniform<Float> time;
+    Uniform<Float> scale;
 
-    auto angle = in.time * in.rotationSpeed;
-    auto c = cos(angle);
-    auto s = sin(angle);
+    EACP_SHADER(time, scale)
 
-    auto px = in.position.x();
-    auto py = in.position.y();
-    auto rotatedX = (px * c - py * s) * in.scale;
-    auto rotatedY = (px * s + py * c) * in.scale;
+    void emitBody(const SpinInputs& in)
+    {
+        auto varyingUv = varying(in.uv);
+        auto varyingColor = varying(in.color);
 
-    auto worldX = in.center.x() + rotatedX;
-    auto worldY = in.center.y() + rotatedY;
+        auto angle = time * in.rotationSpeed;
+        auto c = cos(angle);
+        auto s = sin(angle);
 
-    builder.position(float4(worldX, worldY, 0.f, 1.f));
+        auto px = in.position.x();
+        auto py = in.position.y();
+        auto rotatedX = (px * c - py * s) * scale;
+        auto rotatedY = (px * s + py * c) * scale;
 
-    auto brightness = varyingUv.y() * 0.7f + 0.3f;
-    auto shaded = varyingColor * brightness;
-    builder.fragment(float4(shaded, 1.f));
-}
+        setPosition(
+            float4(in.center.x() + rotatedX, in.center.y() + rotatedY, 0.f, 1.f));
 
-GeneratedShader makeInstancedShader()
+        auto brightness = varyingUv.y() * 0.7f + 0.3f;
+        setFragment(float4(varyingColor * brightness, 1.f));
+    }
+};
+
+// Panel 1: every field is per-vertex, pulled straight out of the fat vertex.
+struct NonInstancedProgram final : SpinProgram
 {
-    auto builder = ShaderBuilder {};
-    Inputs in;
-    in.position = builder.vertexInput<Float2>();
-    in.uv = builder.vertexInput<Float2>();
-    in.center = builder.instanceInput<Float2>();
-    in.rotationSpeed = builder.instanceInput<Float>();
-    in.color = builder.instanceInput<Float3>(2);
-    in.time = builder.uniform<Float>();
-    in.scale = builder.uniform<Float>();
-    emitShaderBody(builder, in);
-    return builder.build();
-}
+    NonInstancedProgram() { compile(); }
 
-GeneratedShader makeNonInstancedShader()
+    void define() override
+    {
+        SpinInputs in;
+        in.position = vertexInput(&FatVertex::position);
+        in.uv = vertexInput(&FatVertex::uv);
+        in.center = vertexInput(&FatVertex::center);
+        in.rotationSpeed = vertexInput(&FatVertex::rotationSpeed);
+        in.color = vertexInput(&FatVertex::color);
+        emitBody(in);
+    }
+};
+
+// Panels 2 and 3: geometry + UV per-vertex at slot 0; transform per-instance at
+// slot 1; colour per-instance at slot 2. Same body, three buffers.
+struct InstancedProgram final : SpinProgram
 {
-    auto builder = ShaderBuilder {};
-    Inputs in;
-    in.position = builder.vertexInput<Float2>();
-    in.uv = builder.vertexInput<Float2>();
-    in.center = builder.vertexInput<Float2>();
-    in.rotationSpeed = builder.vertexInput<Float>();
-    in.color = builder.vertexInput<Float3>();
-    in.time = builder.uniform<Float>();
-    in.scale = builder.uniform<Float>();
-    emitShaderBody(builder, in);
-    return builder.build();
-}
+    InstancedProgram() { compile(); }
 
-Graphics::WindowOptions windowOptions(std::string title, int slotIndex)
+    void define() override
+    {
+        SpinInputs in;
+        in.position = vertexInput(&PerVertex::position);
+        in.uv = vertexInput(&PerVertex::uv);
+        in.center = instanceInput(&PerInstanceTransform::center, 1);
+        in.rotationSpeed = instanceInput(&PerInstanceTransform::rotationSpeed, 1);
+        in.color = instanceInput(&PerInstanceColor::color, 2);
+        emitBody(in);
+    }
+};
+
+Graphics::WindowOptions windowOptions()
 {
     auto options = Graphics::WindowOptions {};
-    options.width = windowW;
+    // Three panels side by side; the layout re-flows to equal thirds on resize.
+    options.width = 3 * windowW;
     options.height = windowH;
-    options.title = std::move(title);
-    // Place the three windows side by side at the top of the primary display,
-    // slightly offset from the corner so the title bars are visible.
-    options.initialPosition =
-        Graphics::Point {(float) (40 + slotIndex * (windowW + windowGap)), 80.f};
+    options.title = "eacp - Instancing";
+    options.minWidth = windowW;
+    options.minHeight = 320;
     return options;
 }
 } // namespace
@@ -314,163 +327,100 @@ Graphics::WindowOptions windowOptions(std::string title, int slotIndex)
 struct NonInstancedView final : GPUView
 {
     NonInstancedView()
-        : shader(makeNonInstancedShader())
-        , fatVertsData(buildNonInstancedVerts())
-        , fatVertsBuffer(Device::shared().makeBuffer(
-              fatVertsData.data(), fatVertsData.size() * sizeof(FatVertex)))
-        , library(Device::shared().makeShaderLibrary(shader.source))
-        , pipeline(makePipeline())
+        : fatVertsData(buildNonInstancedVerts())
     {
+        shader.setVertices(fatVertsData.data(), (int) fatVertsData.size());
+        shader.prepare(sampleCount());
         setContinuous(true);
-    }
-
-    RenderPipeline makePipeline()
-    {
-        auto descriptor = RenderPipelineDescriptor {};
-        descriptor.library = &library;
-        descriptor.sampleCount = sampleCount();
-        descriptor.vertexLayout = shader.vertexLayout;
-        return Device::shared().makeRenderPipeline(descriptor);
     }
 
     void update(Threads::FrameTime time) override { elapsed += (float) time.delta; }
 
     void render(Frame& frame) override
     {
+        shader.time = elapsed;
+        shader.scale = nonInstTriRadius;
+
         auto pass = frame.beginPass({Graphics::Color {0.05f, 0.05f, 0.07f}});
-        auto uniforms = Uniforms {elapsed, nonInstTriRadius};
-        pass.setPipeline(pipeline);
-        pass.setVertexBuffer(fatVertsBuffer, 0);
-        pass.setVertexBytes(&uniforms, sizeof(uniforms), 0);
-        pass.draw((int) fatVertsData.size());
+        pass.draw(shader);
     }
 
-    float elapsed = 0.f;
-    GeneratedShader shader;
     std::vector<FatVertex> fatVertsData;
-    Buffer fatVertsBuffer;
-    ShaderLibrary library;
-    RenderPipeline pipeline;
+    NonInstancedProgram shader;
+    float elapsed = 0.f;
 };
 
 struct InstancedView final : GPUView
 {
     InstancedView()
-        : shader(makeInstancedShader())
-        , unitTriangleBuffer(Device::shared().makeBuffer(unitTriangleVerts))
-        , transformsData(buildInstancedTransforms())
-        , transformsBuffer(Device::shared().makeBuffer(
-              transformsData.data(),
-              transformsData.size() * sizeof(PerInstanceTransform)))
+        : transformsData(buildInstancedTransforms())
         , colorsData(buildInstancedColors())
-        , colorsBuffer(Device::shared().makeBuffer(
-              colorsData.data(), colorsData.size() * sizeof(PerInstanceColor)))
-        , library(Device::shared().makeShaderLibrary(shader.source))
-        , pipeline(makePipeline())
     {
+        shader.setVertices(unitTriangleVerts);
+        shader.setInstances(1, transformsData.data(), (int) transformsData.size());
+        shader.setInstances(2, colorsData.data(), (int) colorsData.size());
+        shader.prepare(sampleCount());
         setContinuous(true);
-    }
-
-    RenderPipeline makePipeline()
-    {
-        auto descriptor = RenderPipelineDescriptor {};
-        descriptor.library = &library;
-        descriptor.sampleCount = sampleCount();
-        descriptor.vertexLayout = shader.vertexLayout;
-        return Device::shared().makeRenderPipeline(descriptor);
     }
 
     void update(Threads::FrameTime time) override { elapsed += (float) time.delta; }
 
     void render(Frame& frame) override
     {
+        shader.time = elapsed;
+        shader.scale = instTriRadius;
+
         auto pass = frame.beginPass({Graphics::Color {0.05f, 0.05f, 0.07f}});
-        auto uniforms = Uniforms {elapsed, instTriRadius};
-        pass.setPipeline(pipeline);
-        pass.setVertexBuffer(unitTriangleBuffer, 0);
-        pass.setVertexBuffer(transformsBuffer, 1);
-        pass.setVertexBuffer(colorsBuffer, 2);
-        pass.setVertexBytes(&uniforms, sizeof(uniforms), 0);
-        pass.drawInstanced(3, instanceCount);
+        pass.drawInstanced(shader, instanceCount);
     }
 
-    float elapsed = 0.f;
-    GeneratedShader shader;
-    Buffer unitTriangleBuffer;
     std::vector<PerInstanceTransform> transformsData;
-    Buffer transformsBuffer;
     std::vector<PerInstanceColor> colorsData;
-    Buffer colorsBuffer;
-    ShaderLibrary library;
-    RenderPipeline pipeline;
+    InstancedProgram shader;
+    float elapsed = 0.f;
 };
 
-// Same buffers and pipeline shape as InstancedView, but draws only ONE row's
+// Same buffers and program shape as InstancedView, but draws only ONE row's
 // worth (gridCols instances) each frame, walking `firstInstance` down the
-// buffer to make a single horizontal strip of triangles scan through the
-// panel top-to-bottom.
+// buffer so a single horizontal strip of triangles scans through the panel
+// top-to-bottom.
 struct RowScanView final : GPUView
 {
     static constexpr std::uint16_t indices[3] = {0, 1, 2};
 
     RowScanView()
-        : shader(makeInstancedShader())
-        , unitTriangleBuffer(Device::shared().makeBuffer(unitTriangleVerts))
-        , transformsData(buildInstancedTransforms())
-        , transformsBuffer(Device::shared().makeBuffer(
-              transformsData.data(),
-              transformsData.size() * sizeof(PerInstanceTransform)))
+        : transformsData(buildInstancedTransforms())
         , colorsData(buildInstancedColors())
-        , colorsBuffer(Device::shared().makeBuffer(
-              colorsData.data(), colorsData.size() * sizeof(PerInstanceColor)))
-        , indexBuffer(Device::shared().makeBuffer(indices, BufferUsage::Index))
-        , library(Device::shared().makeShaderLibrary(shader.source))
-        , pipeline(makePipeline())
     {
+        shader.setVertices(unitTriangleVerts);
+        shader.setInstances(1, transformsData.data(), (int) transformsData.size());
+        shader.setInstances(2, colorsData.data(), (int) colorsData.size());
+        shader.setIndices(indices);
+        shader.prepare(sampleCount());
         setContinuous(true);
-    }
-
-    RenderPipeline makePipeline()
-    {
-        auto descriptor = RenderPipelineDescriptor {};
-        descriptor.library = &library;
-        descriptor.sampleCount = sampleCount();
-        descriptor.vertexLayout = shader.vertexLayout;
-        return Device::shared().makeRenderPipeline(descriptor);
     }
 
     void update(Threads::FrameTime time) override { elapsed += (float) time.delta; }
 
     void render(Frame& frame) override
     {
-        auto pass = frame.beginPass({Graphics::Color {0.05f, 0.05f, 0.07f}});
-
         // Row 0 sits at the bottom of the grid; scan visually top-to-bottom
         // by inverting the row index.
         auto stepIndex = (int) (elapsed / rowScanRowSeconds);
         auto rowFromBottom = (gridRows - 1) - (stepIndex % gridRows);
         auto firstInstance = rowFromBottom * gridCols;
 
-        auto uniforms = Uniforms {elapsed, rowScanTriRadius};
-        pass.setPipeline(pipeline);
-        pass.setVertexBuffer(unitTriangleBuffer, 0);
-        pass.setVertexBuffer(transformsBuffer, 1);
-        pass.setVertexBuffer(colorsBuffer, 2);
-        pass.setVertexBytes(&uniforms, sizeof(uniforms), 0);
-        pass.drawIndexedInstanced(
-            indexBuffer, 3, gridCols, IndexFormat::UInt16, 0, firstInstance);
+        shader.time = elapsed;
+        shader.scale = rowScanTriRadius;
+
+        auto pass = frame.beginPass({Graphics::Color {0.05f, 0.05f, 0.07f}});
+        pass.drawInstanced(shader, gridCols, firstInstance);
     }
 
-    float elapsed = 0.f;
-    GeneratedShader shader;
-    Buffer unitTriangleBuffer;
     std::vector<PerInstanceTransform> transformsData;
-    Buffer transformsBuffer;
     std::vector<PerInstanceColor> colorsData;
-    Buffer colorsBuffer;
-    Buffer indexBuffer;
-    ShaderLibrary library;
-    RenderPipeline pipeline;
+    InstancedProgram shader;
+    float elapsed = 0.f;
 };
 
 // ─── Chrome: title + bottom "what you see / what this tests" ────────────
@@ -495,18 +445,24 @@ struct LabelView final : Graphics::View
         const auto bounds = getLocalBounds();
         const auto cx = bounds.w * 0.5f;
 
+        // Centre each line, but never start it left of a small margin, so a
+        // line wider than the panel stays readable from its start instead of
+        // being clipped off the left edge.
+        constexpr float leftMargin = 8.f;
+        const auto startX = [&](const std::string& text, float halfChar)
+        {
+            return std::max(leftMargin, cx - (float) text.size() * halfChar);
+        };
+
         g.setColor(Graphics::Color::white());
 
-        g.drawText(
-            title, {cx - (float) title.size() * halfCharTitle, titleY}, titleFont);
+        g.drawText(title, {startX(title, halfCharTitle), titleY}, titleFont);
         g.drawText(youShouldSee,
-                   {cx - (float) youShouldSee.size() * halfCharBody,
-                    bounds.h - bodyLine1Yoff},
+                   {startX(youShouldSee, halfCharBody), bounds.h - bodyLine1Yoff},
                    bodyFont);
-        g.drawText(
-            thisTests,
-            {cx - (float) thisTests.size() * halfCharBody, bounds.h - bodyLine2Yoff},
-            bodyFont);
+        g.drawText(thisTests,
+                   {startX(thisTests, halfCharBody), bounds.h - bodyLine2Yoff},
+                   bodyFont);
     }
 
     std::string title;
@@ -519,7 +475,11 @@ struct LabelView final : Graphics::View
         Graphics::FontOptions().withName("Menlo").withSize(11.f)};
 };
 
-struct RootView final : Graphics::View
+// ─── Layout: one window, three panels side by side ──────────────────────
+
+// One panel: the GPU view fills it, the label overlays it. Insertion order is
+// z-order, so the label (added second) sits on top of the GPU view.
+struct PanelView final : Graphics::View
 {
     void resized() override
     {
@@ -528,54 +488,76 @@ struct RootView final : Graphics::View
     }
 };
 
-// ─── App: three parallel windows ────────────────────────────────────────
+// Tiles its panel children left-to-right in equal columns, so the three test
+// surfaces share one window and re-flow on resize.
+struct RootView final : Graphics::View
+{
+    void resized() override
+    {
+        const auto bounds = getLocalBounds();
+        const auto count = getSubviews().size();
+        if (count <= 0)
+            return;
+
+        const auto panelW = bounds.w / (float) count;
+        for (auto i = 0; i < count; ++i)
+            getSubviews()[i]->setBounds(
+                {bounds.x + (float) i * panelW, bounds.y, panelW, bounds.h});
+    }
+};
+
+// ─── App: one window, three panels ──────────────────────────────────────
 
 struct InstancingApp
 {
     InstancingApp()
     {
-        rootA.addSubview(gpuA);
-        rootA.addSubview(labelA);
-        windowA.setContentView(rootA);
+        panelA.addSubview(gpuA);
+        panelA.addSubview(labelA);
 
-        rootB.addSubview(gpuB);
-        rootB.addSubview(labelB);
-        windowB.setContentView(rootB);
+        panelB.addSubview(gpuB);
+        panelB.addSubview(labelB);
 
-        rootC.addSubview(gpuC);
-        rootC.addSubview(labelC);
-        windowC.setContentView(rootC);
+        panelC.addSubview(gpuC);
+        panelC.addSubview(labelC);
+
+        root.addSubview(panelA);
+        root.addSubview(panelB);
+        root.addSubview(panelC);
+
+        window.setContentView(root);
     }
 
-    // Window A - baseline (no instancing).
-    RootView rootA;
+    RootView root;
+
+    // Panel A - baseline (no instancing).
+    PanelView panelA;
     NonInstancedView gpuA;
     LabelView labelA {
         "Non-instanced",
         "you should see: 36 triangles, hue by row, spinning at varied rates",
         "tests: the shared shader math without instancing (baseline)",
     };
-    Graphics::Window windowA {windowOptions("eacp - Non-instanced", 0)};
 
-    // Window B - drawInstanced.
-    RootView rootB;
+    // Panel B - drawInstanced.
+    PanelView panelB;
     InstancedView gpuB;
     LabelView labelB {
         "drawInstanced",
         "you should see: 1000 triangles (40x25), rainbow rows, all spinning at varied rates",
-        "tests: multi-buffer layout (slots 0/1/2) and drawInstanced(3, 1000)",
+        "tests: multi-buffer layout (slots 0/1/2) and drawInstanced(program, 1000)",
     };
-    Graphics::Window windowB {windowOptions("eacp - drawInstanced", 1)};
 
-    // Window C - drawIndexedInstanced + firstInstance.
-    RootView rootC;
+    // Panel C - drawIndexedInstanced + firstInstance.
+    PanelView panelC;
     RowScanView gpuC;
     LabelView labelC {
         "drawIndexedInstanced + firstInstance",
         "you should see: one row of 40 triangles at a time scanning top->bottom over time",
         "tests: firstInstance offset stepping through the buffer, indexed instanced draw",
     };
-    Graphics::Window windowC {windowOptions("eacp - firstInstance scan", 2)};
+
+    Graphics::Window window {windowOptions()};
 };
 
 int main()

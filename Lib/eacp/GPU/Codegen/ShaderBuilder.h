@@ -118,6 +118,14 @@ public:
         return {&graphData, graphData.addInput(type)};
     }
 
+    // Per-instance sibling of addVertexInput, keyed on a runtime ValueType for
+    // the reflection-driven ShaderProgram path. Routes the input to the given
+    // buffer slot with PerInstance step rate (see the templated instanceInput).
+    detail::ValueHandle addInstanceInput(ValueType type, int bufferIndex)
+    {
+        return {&graphData, graphData.addInstanceInput(type, bufferIndex)};
+    }
+
     detail::ValueHandle addUniform(ValueType type)
     {
         return {&graphData, graphData.addUniform(type)};
