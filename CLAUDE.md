@@ -165,6 +165,13 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
       -DEACP_WEBVIEW_DEV=ON
 ```
 
+- `EACP_TIDY_PLUGIN` (default `ON`, top-level builds only): builds the
+  ExtraClangRules clang-tidy plugin as part of the normal build when the
+  pinned LLVM (`brew install llvm@21`) is present, so
+  `ExtraClangRules/bin/eacp-clang-tidy` and the IDE integrations work
+  immediately. Skips with a configure-time hint when LLVM is missing. See
+  `ExtraClangRules/README.md`.
+
 ### Local Miro source
 
 Miro is fetched via CPM from `eyalamirmusic/Miro` by default. To work against a

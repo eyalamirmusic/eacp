@@ -167,16 +167,8 @@ jobs:
       - name: Configure
         run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
 
-      - name: Build
+      - name: Build (includes the eacp-tidy plugin)
         run: cmake --build build
-
-      - name: Build eacp-tidy plugin
-        run: >
-          cmake -G Ninja -B ExtraClangRules/plugin/build
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/llvm@21
-          ExtraClangRules/plugin
-          && cmake --build ExtraClangRules/plugin/build
 
       - name: Check the fixture still trips every check
         run: >

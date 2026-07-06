@@ -10,6 +10,9 @@ plugin="$dir/../plugin/build/libEacpTidyChecks.so"
 
 if [ ! -f "$plugin" ]; then
     echo "eacp-clang-tidy: plugin not built at $plugin" >&2
+    echo "A top-level eacp build produces it (needs llvm@21 installed):" >&2
+    echo "  cmake --build build" >&2
+    echo "Or build it standalone:" >&2
     echo "  cmake -G Ninja -B '$dir/../plugin/build' \\" >&2
     echo "        -DCMAKE_BUILD_TYPE=Release \\" >&2
     echo "        -DCMAKE_PREFIX_PATH=$llvm '$dir/../plugin'" >&2

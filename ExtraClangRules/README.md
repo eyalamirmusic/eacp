@@ -31,6 +31,16 @@ To move the pin, bump it here, in `bin/eacp-clang-tidy`, and in
 
 ## Building the plugin
 
+When eacp is the top-level CMake project and the pinned LLVM is installed,
+the plugin builds automatically as part of the normal build (the
+`EacpTidyPlugin` external project, see `CMake/EacpTidyPlugin.cmake`) — a
+plain `cmake --build build` leaves `bin/eacp-clang-tidy` ready for IDEs. If
+LLVM is missing, configure prints a hint and skips the plugin; install
+`llvm@21` (or set `EACP_LLVM_PREFIX`) and reconfigure. Opt out with
+`-DEACP_TIDY_PLUGIN=OFF`.
+
+To build it standalone (no eacp configure needed):
+
 ```bash
 cmake -G Ninja -B ExtraClangRules/plugin/build \
       -DCMAKE_BUILD_TYPE=Release \

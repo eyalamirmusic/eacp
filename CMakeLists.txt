@@ -129,6 +129,14 @@ option(EACP_ENABLE_TESTS "Enable Tests for EACP" ${PROJECT_IS_TOP_LEVEL})
 
 if (PROJECT_IS_TOP_LEVEL)
     eacp_default_setup()
+
+    option(EACP_TIDY_PLUGIN
+            "Build the ExtraClangRules clang-tidy plugin" ON)
+
+    if (EACP_TIDY_PLUGIN AND NOT WIN32)
+        include(EacpTidyPlugin)
+        eacp_setup_tidy_plugin()
+    endif ()
 endif ()
 
 # Deliberately outside that guard: a consumer building eacp as a subproject is
