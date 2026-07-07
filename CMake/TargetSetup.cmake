@@ -80,17 +80,55 @@ endfunction()
 # that never execute the binary, so a runtime WindowOptions::applicationIcon
 # cannot supply them: macOS reads the bundle's .icns (named by
 # CFBundleIconFile), Windows reads an ICON resource compiled into the .exe.
-# Apps supply the platform-native files directly:
+# Apps either point IMAGE at one source PNG/JPEG and let the build generate the
+# right container for the platform being built, or supply the platform-native
+# files directly:
+#
+#   eacp_set_app_icon(MyApp IMAGE "${CMAKE_CURRENT_SOURCE_DIR}/Icon.png")
 #
 #   eacp_set_app_icon(MyApp
 #           ICNS "${CMAKE_CURRENT_SOURCE_DIR}/Icon.icns"
 #           ICO  "${CMAKE_CURRENT_SOURCE_DIR}/Icon.ico")
 #
-# Either argument may be omitted for a platform the app doesn't ship on.
-# Explorer picks the ICON resource with the lowest ID for the at-rest icon,
-# hence resource id 1 in the generated .rc.
+# IMAGE runs eacp-icon-tool at build time to emit .icns on macOS / .ico on
+# Windows, and wins over a prebuilt ICNS/ICO for that platform. Any argument
+# may be omitted for a platform the app doesn't ship on. Explorer picks the
+# ICON resource with the lowest ID for the at-rest icon, hence resource id 1 in
+# the generated .rc.
 function(eacp_set_app_icon target)
-    cmake_parse_arguments(ARG "" "ICNS;ICO" "" ${ARGN})
+    cmake_parse_arguments(ARG "" "ICNS;ICO;IMAGE" "" ${ARGN})
+
+    # A source image generates the current platform's container into the build
+    # tree; feed it into the same wiring the prebuilt paths use below.
+    if (ARG_IMAGE)
+        get_filename_component(image "${ARG_IMAGE}" ABSOLUTE)
+
+        if (APPLE AND NOT IOS)
+            set(generated_icns "${CMAKE_CURRENT_BINARY_DIR}/${target}.icns")
+            add_custom_command(
+                    OUTPUT "${generated_icns}"
+                    COMMAND eacp-icon-tool --format icns
+                            --in "${image}" --out "${generated_icns}"
+                    DEPENDS eacp-icon-tool "${image}"
+                    VERBATIM)
+            set(ARG_ICNS "${generated_icns}")
+        elseif (WIN32)
+            set(generated_ico "${CMAKE_CURRENT_BINARY_DIR}/${target}.ico")
+            add_custom_command(
+                    OUTPUT "${generated_ico}"
+                    COMMAND eacp-icon-tool --format ico
+                            --in "${image}" --out "${generated_ico}"
+                    DEPENDS eacp-icon-tool "${image}"
+                    VERBATIM)
+            # The .rc references the .ico via OBJECT_DEPENDS rather than
+            # compiling it, so list the generated file as a non-compiled source
+            # to make CMake schedule its custom command.
+            set_source_files_properties("${generated_ico}" PROPERTIES
+                    GENERATED TRUE HEADER_FILE_ONLY TRUE)
+            target_sources(${target} PRIVATE "${generated_ico}")
+            set(ARG_ICO "${generated_ico}")
+        endif ()
+    endif ()
 
     if (APPLE AND NOT IOS AND ARG_ICNS)
         get_filename_component(icns "${ARG_ICNS}" ABSOLUTE)

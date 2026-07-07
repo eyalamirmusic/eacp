@@ -110,3 +110,5 @@ endif ()
 set_default_target_setting(eacp-graphics)
 eacp_enable_unity_build(eacp-graphics)
 add_ide_sources(eacp-graphics)
+
+add_subdirectory(IconTool)
