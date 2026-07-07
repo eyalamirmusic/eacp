@@ -17,9 +17,6 @@ struct Neon
     // Four unsigned 32-bit lanes (128-bit).
     struct U32
     {
-        uint32x4_t v;
-        static constexpr std::size_t lanes = 4;
-
         U32 operator&(U32 o) const { return {vandq_u32(v, o.v)}; }
         U32 operator|(U32 o) const { return {vorrq_u32(v, o.v)}; }
 
@@ -46,13 +43,14 @@ struct Neon
         {
             vst1q_u32(reinterpret_cast<std::uint32_t*>(p), a.v);
         }
+
+        uint32x4_t v;
+        static constexpr std::size_t lanes = 4;
     };
 
     // The four channels of one RGBA pixel held as floats (128-bit).
     struct F4
     {
-        float32x4_t v;
-
         F4 operator+(F4 o) const { return {vaddq_f32(v, o.v)}; }
         F4 operator*(F4 o) const { return {vmulq_f32(v, o.v)}; }
 
@@ -78,6 +76,8 @@ struct Neon
             const auto packed = vget_lane_u32(vreinterpret_u32_u8(bytes), 0);
             std::memcpy(out, &packed, 4);
         }
+
+        float32x4_t v;
     };
 };
 

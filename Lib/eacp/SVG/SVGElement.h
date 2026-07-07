@@ -11,11 +11,6 @@ namespace eacp::SVG
 
 struct SVGElement
 {
-    std::string tag;
-    std::unordered_map<std::string, std::string> attributes;
-    Vector<SVGElement> children;
-    std::string textContent;
-
     std::string attr(const std::string& name, const std::string& fallback = "") const
     {
         auto it = attributes.find(name);
@@ -31,6 +26,11 @@ struct SVGElement
             return fallback;
         return Strings::parseFloatOr(it->second, fallback);
     }
+
+    std::string tag;
+    std::unordered_map<std::string, std::string> attributes;
+    Vector<SVGElement> children;
+    std::string textContent;
 };
 
 } // namespace eacp::SVG

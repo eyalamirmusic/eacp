@@ -25,20 +25,6 @@ ID2D1Factory1* getD2DFactory();
 
 struct ShapeLayer::Native : NativeLayerBase
 {
-    // Path geometry (owned - AddRef'd to keep alive)
-    ComPtr<ID2D1PathGeometry> pathGeometry;
-
-    // Fill settings
-    Color fillColor;
-    LinearGradient gradient;
-    bool useGradient = false;
-    bool hasFill = false;
-
-    // Stroke settings
-    Color strokeColor;
-    float strokeWidth = 1.0f;
-    bool hasStroke = false;
-
     void renderContent() override
     {
         if (!surface || !pathGeometry)
@@ -149,6 +135,20 @@ struct ShapeLayer::Native : NativeLayerBase
         dc->SetTransform(D2D1::Matrix3x2F::Identity());
         interop->EndDraw();
     }
+
+    // Path geometry (owned - AddRef'd to keep alive)
+    ComPtr<ID2D1PathGeometry> pathGeometry;
+
+    // Fill settings
+    Color fillColor;
+    LinearGradient gradient;
+    bool useGradient = false;
+    bool hasFill = false;
+
+    // Stroke settings
+    Color strokeColor;
+    float strokeWidth = 1.0f;
+    bool hasStroke = false;
 };
 
 ShapeLayer::ShapeLayer()

@@ -71,6 +71,15 @@ struct Server::Impl
     {
     }
 
+    ~Impl();
+
+    bool start(int port, RequestHandler h);
+    void stop();
+
+    void acceptLoop();
+    void handleConnection(int fd, const std::string& remoteAddr, int remotePort);
+    void dispatchRequest(int fd, Request request);
+
     ServerOptions options;
     OwningPointer<Dispatcher> dispatcher;
     int listenSocket = -1;
@@ -81,15 +90,6 @@ struct Server::Impl
 
     std::mutex clientMutex;
     Vector<std::thread> clientThreads;
-
-    ~Impl();
-
-    bool start(int port, RequestHandler h);
-    void stop();
-
-    void acceptLoop();
-    void handleConnection(int fd, const std::string& remoteAddr, int remotePort);
-    void dispatchRequest(int fd, Request request);
 };
 
 Server::Server(ServerOptions options)

@@ -73,17 +73,6 @@ struct Server::Impl
     {
     }
 
-    ServerOptions options;
-    OwningPointer<Dispatcher> dispatcher;
-    SOCKET listenSocket = INVALID_SOCKET;
-    int boundPort = -1;
-    RequestHandler handler;
-    std::thread acceptThread;
-    std::atomic<bool> running {false};
-
-    std::mutex clientMutex;
-    Vector<std::thread> clientThreads;
-
     ~Impl();
 
     bool start(int port, RequestHandler h);
@@ -94,6 +83,17 @@ struct Server::Impl
                           const std::string& remoteAddr,
                           int remotePort);
     void dispatchRequest(SOCKET fd, Request request);
+
+    ServerOptions options;
+    OwningPointer<Dispatcher> dispatcher;
+    SOCKET listenSocket = INVALID_SOCKET;
+    int boundPort = -1;
+    RequestHandler handler;
+    std::thread acceptThread;
+    std::atomic<bool> running {false};
+
+    std::mutex clientMutex;
+    Vector<std::thread> clientThreads;
 };
 
 Server::Server(ServerOptions options)

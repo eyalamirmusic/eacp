@@ -5,9 +5,6 @@ namespace eacp::SVG
 
 struct XMLReader
 {
-    std::string_view src;
-    size_t pos = 0;
-
     bool atEnd() const { return pos >= src.size(); }
     char peek() const { return src[pos]; }
     char advance() { return src[pos++]; }
@@ -192,6 +189,9 @@ struct XMLReader
         if (!atEnd())
             advance();
     }
+
+    std::string_view src;
+    size_t pos = 0;
 };
 
 std::optional<SVGElement> parseXML(std::string_view input)

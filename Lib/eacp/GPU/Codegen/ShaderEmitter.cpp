@@ -84,10 +84,6 @@ std::string callName(Backend backend, const std::string& name)
 // what children and outputs go through, so shared subtrees collapse to a name.
 struct ExprPrinter
 {
-    const ShaderGraph& graph;
-    Backend backend;
-    const std::vector<int>& locals; // node id -> local index, -1 = inline
-
     std::string ref(int node) const
     {
         if (locals[node] >= 0)
@@ -208,6 +204,10 @@ struct ExprPrinter
 
         return {};
     }
+
+    const ShaderGraph& graph;
+    Backend backend;
+    const std::vector<int>& locals; // node id -> local index, -1 = inline
 };
 
 // Operation nodes are worth naming when evaluated more than once; leaf reads

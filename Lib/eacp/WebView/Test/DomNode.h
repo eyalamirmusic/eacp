@@ -22,26 +22,6 @@ namespace eacp::WebView::Test
 // round-trips. Re-query through the driver to observe later DOM changes.
 struct DomNode
 {
-    // Lower-cased tag name ("li", "input", ...).
-    std::string tagName;
-
-    // Every attribute on the element, keyed by name.
-    std::map<std::string, std::string> attributes;
-
-    // Trimmed textContent of the element (includes descendant text).
-    std::string textContent;
-
-    // Current value of a form control ("" for elements without one).
-    std::string value;
-
-    // Checkbox / radio checked state (false for everything else).
-    bool checked = false;
-
-    // Element children only — text nodes are folded into textContent.
-    Vector<DomNode> children;
-
-    MIRO_REFLECT(tagName, attributes, textContent, value, checked, children)
-
     const std::string& tag() const;
     const std::string& text() const;
 
@@ -63,6 +43,26 @@ struct DomNode
     DomNode find(std::string_view selector) const;
     std::optional<DomNode> tryFind(std::string_view selector) const;
     Vector<DomNode> findAll(std::string_view selector) const;
+
+    // Lower-cased tag name ("li", "input", ...).
+    std::string tagName;
+
+    // Every attribute on the element, keyed by name.
+    std::map<std::string, std::string> attributes;
+
+    // Trimmed textContent of the element (includes descendant text).
+    std::string textContent;
+
+    // Current value of a form control ("" for elements without one).
+    std::string value;
+
+    // Checkbox / radio checked state (false for everything else).
+    bool checked = false;
+
+    // Element children only — text nodes are folded into textContent.
+    Vector<DomNode> children;
+
+    MIRO_REFLECT(tagName, attributes, textContent, value, checked, children)
 };
 
 } // namespace eacp::WebView::Test

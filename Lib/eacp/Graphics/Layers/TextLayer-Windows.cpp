@@ -45,10 +45,6 @@ struct TextLayer::Native : NativeLayerBase
         }
     }
 
-    std::wstring text;
-    ComPtr<IDWriteTextFormat> textFormat;
-    Color color {1.0f, 1.0f, 1.0f, 1.0f};
-
     void renderContent() override
     {
         if (!surface || text.empty() || !textFormat)
@@ -104,6 +100,10 @@ struct TextLayer::Native : NativeLayerBase
         dc->SetTransform(D2D1::Matrix3x2F::Identity());
         interop->EndDraw();
     }
+
+    std::wstring text;
+    ComPtr<IDWriteTextFormat> textFormat;
+    Color color {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 TextLayer::TextLayer()

@@ -210,10 +210,6 @@ public:
     {
         struct SnapshotOnExit
         {
-            AppDriver& driver;
-            const std::string& name;
-            const SnapshotOptions& options;
-
             ~SnapshotOnExit()
             {
                 try
@@ -225,6 +221,10 @@ public:
                     // Don't mask the original failure.
                 }
             }
+
+            AppDriver& driver;
+            const std::string& name;
+            const SnapshotOptions& options;
         };
 
         auto guard = SnapshotOnExit {*this, name, options};

@@ -16,9 +16,6 @@ struct Scalar
     // A natural-width vector of unsigned 32-bit lanes (one lane here).
     struct U32
     {
-        std::uint32_t v;
-        static constexpr std::size_t lanes = 1;
-
         U32 operator&(U32 o) const { return {v & o.v}; }
         U32 operator|(U32 o) const { return {v | o.v}; }
 
@@ -47,13 +44,14 @@ struct Scalar
         {
             std::memcpy(p, &a.v, sizeof(a.v));
         }
+
+        std::uint32_t v;
+        static constexpr std::size_t lanes = 1;
     };
 
     // The four channels of one RGBA pixel held as floats.
     struct F4
     {
-        float v[4];
-
         F4 operator+(F4 o) const
         {
             return {{v[0] + o.v[0], v[1] + o.v[1], v[2] + o.v[2], v[3] + o.v[3]}};
@@ -83,6 +81,8 @@ struct Scalar
                 out[c] = static_cast<std::uint8_t>(r < 0 ? 0 : (r > 255 ? 255 : r));
             }
         }
+
+        float v[4];
     };
 };
 

@@ -83,14 +83,6 @@ struct Server::Impl
     {
     }
 
-    ServerOptions options;
-    OwningPointer<Dispatcher> dispatcher;
-    CFSocketRef listenSocket = nullptr;
-    CFRunLoopSourceRef listenSource = nullptr;
-    RequestHandler handler;
-    int boundPort = -1;
-    std::map<CFSocketRef, OwningPointer<Connection>> connections;
-
     ~Impl();
 
     bool start(int port, RequestHandler h);
@@ -116,6 +108,14 @@ struct Server::Impl
     {
         static_cast<Impl*>(info)->onClientReadable(cf);
     }
+
+    ServerOptions options;
+    OwningPointer<Dispatcher> dispatcher;
+    CFSocketRef listenSocket = nullptr;
+    CFRunLoopSourceRef listenSource = nullptr;
+    RequestHandler handler;
+    int boundPort = -1;
+    std::map<CFSocketRef, OwningPointer<Connection>> connections;
 };
 
 Server::Server(ServerOptions options)

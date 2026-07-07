@@ -25,18 +25,18 @@ class Menu;
 
 struct MenuItem
 {
-    std::string title;
-    MenuAction action = [] {};
-    std::optional<KeyEquivalent> shortcut;
-    std::shared_ptr<Menu> submenu;
-    bool isSeparator = false;
-
     static MenuItem separator();
     static MenuItem withAction(
         std::string title,
         MenuAction action = [] {},
         std::optional<KeyEquivalent> shortcut = {});
     static MenuItem withSubmenu(std::string title, Menu menu);
+
+    std::string title;
+    MenuAction action = [] {};
+    std::optional<KeyEquivalent> shortcut;
+    std::shared_ptr<Menu> submenu;
+    bool isSeparator = false;
 };
 
 class Menu

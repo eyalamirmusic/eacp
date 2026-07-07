@@ -18,9 +18,6 @@ namespace detail
 {
 struct ValueHandle
 {
-    ShaderGraph* graph = nullptr;
-    int node = -1;
-
     template <typename Result>
     Result swizzle(ValueType type, const char* components) const
     {
@@ -29,6 +26,9 @@ struct ValueHandle
         result.node = graph->addSwizzle(type, node, components);
         return result;
     }
+
+    ShaderGraph* graph = nullptr;
+    int node = -1;
 };
 } // namespace detail
 
@@ -100,9 +100,6 @@ inline Float4 sample(const Texture2D& texture, const Float2& coordinates)
 // (ComputePass::setInputBuffer / setOutputBuffer).
 struct InputBuffer
 {
-    ShaderGraph* graph = nullptr;
-    int slot = -1;
-
     Float operator[](const UInt& index) const
     {
         auto result = Float {};
@@ -110,6 +107,9 @@ struct InputBuffer
         result.node = graph->addBufferRead(slot, index.node);
         return result;
     }
+
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
 };
 
 struct OutputBuffer

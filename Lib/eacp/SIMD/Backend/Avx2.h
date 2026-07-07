@@ -17,9 +17,6 @@ struct Avx2
     // Eight unsigned 32-bit lanes (256-bit).
     struct U32
     {
-        __m256i v;
-        static constexpr std::size_t lanes = 8;
-
         U32 operator&(U32 o) const { return {_mm256_and_si256(v, o.v)}; }
         U32 operator|(U32 o) const { return {_mm256_or_si256(v, o.v)}; }
 
@@ -49,6 +46,9 @@ struct Avx2
         {
             _mm256_storeu_si256(reinterpret_cast<__m256i*>(p), a.v);
         }
+
+        __m256i v;
+        static constexpr std::size_t lanes = 8;
     };
 };
 

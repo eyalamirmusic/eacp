@@ -17,14 +17,6 @@ class Texture;
 class RenderPass
 {
 public:
-    // The Metal buffer index the first uniform block binds to. Vertex buffers
-    // take the low indices, so uniforms start above them - matching how
-    // ComputePass reserves buffer(uniformBase) for its own uniforms. Reserving
-    // a high slot lets multi-slot vertex layouts (e.g. instancing with a
-    // per-vertex slot + N per-instance slots) coexist with uniforms without
-    // the two paths clobbering each other's buffer(N).
-    static constexpr int uniformBase = 16;
-
     explicit RenderPass(void* encoder);
     ~RenderPass();
 
@@ -168,6 +160,14 @@ public:
     }
 
     void end();
+
+    // The Metal buffer index the first uniform block binds to. Vertex buffers
+    // take the low indices, so uniforms start above them - matching how
+    // ComputePass reserves buffer(uniformBase) for its own uniforms. Reserving
+    // a high slot lets multi-slot vertex layouts (e.g. instancing with a
+    // per-vertex slot + N per-instance slots) coexist with uniforms without
+    // the two paths clobbering each other's buffer(N).
+    static constexpr int uniformBase = 16;
 
 private:
     struct Native;

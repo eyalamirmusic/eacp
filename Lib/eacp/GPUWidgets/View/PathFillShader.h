@@ -13,11 +13,6 @@ namespace eacp::GPUWidgets
 // drawing any 2D triangle mesh in a flat colour.
 struct PathFillShader final : GPU::ShaderProgram
 {
-    GPU::Uniform<GPU::Float2> viewport; // logical width/height paths map into
-    GPU::Uniform<GPU::Float4> color; // solid RGBA fill
-
-    EACP_SHADER(viewport, color)
-
     PathFillShader() { compile(); }
 
     void define() override
@@ -30,5 +25,10 @@ struct PathFillShader final : GPU::ShaderProgram
         setPosition(float4(clipX, clipY, 0.0f, 1.0f));
         setFragment(color);
     }
+
+    GPU::Uniform<GPU::Float2> viewport; // logical width/height paths map into
+    GPU::Uniform<GPU::Float4> color; // solid RGBA fill
+
+    EACP_SHADER(viewport, color)
 };
 } // namespace eacp::GPUWidgets

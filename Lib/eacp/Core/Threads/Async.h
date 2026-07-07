@@ -60,16 +60,16 @@ struct AsyncState : AsyncValue<T>
         Rejected
     };
 
-    Status status = Status::Pending;
-    std::string error;
-    Vector<Callback> continuations;
-
     void settle()
     {
         auto fired = std::move(continuations);
         for (auto& c: fired)
             c();
     }
+
+    Status status = Status::Pending;
+    std::string error;
+    Vector<Callback> continuations;
 };
 } // namespace detail
 
@@ -129,17 +129,17 @@ namespace detail
 template <typename T>
 struct PromiseReturn
 {
-    AsyncPromise<T> promise;
-
     void return_value(T value) { promise.resolve(std::move(value)); }
+
+    AsyncPromise<T> promise;
 };
 
 template <>
 struct PromiseReturn<void>
 {
-    AsyncPromise<void> promise;
-
     void return_void() { promise.resolve(); }
+
+    AsyncPromise<void> promise;
 };
 } // namespace detail
 

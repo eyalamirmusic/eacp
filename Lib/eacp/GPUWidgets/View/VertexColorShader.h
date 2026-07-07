@@ -13,10 +13,6 @@ namespace eacp::GPUWidgets
 // surface.
 struct VertexColorShader final : GPU::ShaderProgram
 {
-    GPU::Uniform<GPU::Float2> viewport; // logical width/height paths map into
-
-    EACP_SHADER(viewport)
-
     VertexColorShader() { compile(); }
 
     void define() override
@@ -31,5 +27,9 @@ struct VertexColorShader final : GPU::ShaderProgram
         setPosition(float4(clipX, clipY, 0.0f, 1.0f));
         setFragment(fragColor);
     }
+
+    GPU::Uniform<GPU::Float2> viewport; // logical width/height paths map into
+
+    EACP_SHADER(viewport)
 };
 } // namespace eacp::GPUWidgets

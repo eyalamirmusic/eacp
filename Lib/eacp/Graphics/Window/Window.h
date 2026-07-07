@@ -49,6 +49,13 @@ struct WindowOptions
                    WindowFlags::Resizable});
     }
 
+    Callback effectiveOnQuit() const
+    {
+        if (onQuit)
+            return onQuit;
+        return isPrimary ? Callback {Apps::quit} : Callback {[] {}};
+    }
+
     // When the user closes the window. If left empty, falls back to
     // Apps::quit when isPrimary is true, or a no-op otherwise.
     Callback onQuit {};
@@ -150,13 +157,6 @@ struct WindowOptions
     std::optional<float> cornerRadius;
 
     EA::Vector<WindowFlags> flags;
-
-    Callback effectiveOnQuit() const
-    {
-        if (onQuit)
-            return onQuit;
-        return isPrimary ? Callback {Apps::quit} : Callback {[] {}};
-    }
 };
 
 struct ModifierKeys;

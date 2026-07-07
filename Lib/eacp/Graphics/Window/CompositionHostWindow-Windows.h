@@ -99,9 +99,6 @@ private:
     POINT clientCenter() const;
     void handleLockedMouseMove(LPARAM lParam);
 
-    bool mouseLockIntent = false;
-    bool mouseLockEngaged = false;
-
     void resizeContentViewToClient();
     void ensureMouseLeaveTracking();
     void dispatchMouseToContentView(const MouseEvent& event) const;
@@ -109,6 +106,9 @@ private:
     void dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lParam);
     void synthesizeMouseUpOnCaptureLoss();
     std::string takePendingCharacters() const;
+
+    bool mouseLockIntent = false;
+    bool mouseLockEngaged = false;
 };
 
 } // namespace eacp::Graphics

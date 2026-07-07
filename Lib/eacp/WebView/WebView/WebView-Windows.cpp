@@ -48,8 +48,6 @@ using MessageHandlerMap =
 
 struct CoTaskMemString
 {
-    LPWSTR ptr = nullptr;
-
     ~CoTaskMemString()
     {
         if (ptr)
@@ -66,6 +64,8 @@ struct CoTaskMemString
             return "";
         return fromWideString(ptr);
     }
+
+    LPWSTR ptr = nullptr;
 };
 
 namespace

@@ -138,6 +138,7 @@ private:
     DescriptorSlot allocateFrom(DescriptorAllocator& allocator);
     void freeFrom(DescriptorAllocator& allocator, const DescriptorSlot& slot);
     std::uint64_t signal();
+    void purgeRetired();
 
     winrt::com_ptr<ID3D12Device> device;
     winrt::com_ptr<ID3D12CommandQueue> queue;
@@ -162,8 +163,6 @@ private:
         winrt::com_ptr<ID3D12Resource> resource;
         std::uint64_t fenceValue = 0;
     };
-
-    void purgeRetired();
 
     std::vector<Retired> retired;
 };

@@ -17,9 +17,6 @@ struct Sse2
     // Four unsigned 32-bit lanes (128-bit).
     struct U32
     {
-        __m128i v;
-        static constexpr std::size_t lanes = 4;
-
         U32 operator&(U32 o) const { return {_mm_and_si128(v, o.v)}; }
         U32 operator|(U32 o) const { return {_mm_or_si128(v, o.v)}; }
 
@@ -49,13 +46,14 @@ struct Sse2
         {
             _mm_storeu_si128(reinterpret_cast<__m128i*>(p), a.v);
         }
+
+        __m128i v;
+        static constexpr std::size_t lanes = 4;
     };
 
     // The four channels of one RGBA pixel held as floats (128-bit).
     struct F4
     {
-        __m128 v;
-
         F4 operator+(F4 o) const { return {_mm_add_ps(v, o.v)}; }
         F4 operator*(F4 o) const { return {_mm_mul_ps(v, o.v)}; }
 
@@ -84,6 +82,8 @@ struct Sse2
             const int packed = _mm_cvtsi128_si32(bytes);
             std::memcpy(out, &packed, 4);
         }
+
+        __m128 v;
     };
 };
 

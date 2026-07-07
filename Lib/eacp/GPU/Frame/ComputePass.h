@@ -23,10 +23,6 @@ class Buffer;
 class ComputePass
 {
 public:
-    // The Metal buffer index the first uniform block binds to. Storage buffers
-    // take the low indices, so uniforms start above them.
-    static constexpr int uniformBase = 16;
-
     explicit ComputePass(void* encoder);
     ~ComputePass();
 
@@ -71,6 +67,10 @@ public:
     }
 
     void end();
+
+    // The Metal buffer index the first uniform block binds to. Storage buffers
+    // take the low indices, so uniforms start above them.
+    static constexpr int uniformBase = 16;
 
     // Threadgroup width the 1D dispatch uses; the example kernels declare a
     // matching [numthreads(64,1,1)] on D3D.
