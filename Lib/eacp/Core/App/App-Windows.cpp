@@ -64,7 +64,7 @@ std::wstring buildFilterPattern(const Vector<std::string>& extensions)
             pattern += L';';
 
         pattern += L"*.";
-        // Extensions are ASCII (wav, mp3, ...), so a per-char widen is exact.
+        // Extensions are ASCII, so a per-char widen is exact.
         for (char c: extension)
             pattern += static_cast<wchar_t>(static_cast<unsigned char>(c));
     }
@@ -101,9 +101,7 @@ std::optional<std::string> chooseWithDialog(bool pickFolders,
 
 namespace
 {
-// The real, interactive dialog behind chooseFile()/chooseDirectory(). Split
-// from the pure logic in detail:: so the latter stays unit-testable — see
-// App-Windows-FilePicker.h. Returns the picked path, or nullopt on cancel.
+// Real IFileOpenDialog behind the detail:: seam; tests substitute a fake.
 std::optional<std::wstring> showShellOpenDialog(bool pickFolders,
                                                 const FilePickerOptions& options)
 {
@@ -111,8 +109,8 @@ std::optional<std::wstring> showShellOpenDialog(bool pickFolders,
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     const bool shouldUninitialize = SUCCEEDED(coInit);
 
-    // COM objects must release before CoUninitialize, so the whole dialog lives
-    // in this lambda; its com_ptrs unwind at return, ahead of the uninit below.
+    // COM objects must release before CoUninitialize, so the dialog lives in
+    // this lambda — its com_ptrs unwind before the uninit below.
     const auto result = [&]() -> std::optional<std::wstring>
     {
         auto dialog = winrt::com_ptr<IFileOpenDialog> {};

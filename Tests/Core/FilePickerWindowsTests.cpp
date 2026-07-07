@@ -12,8 +12,6 @@ using eacp::Apps::detail::buildFilterPattern;
 using eacp::Apps::detail::chooseWithDialog;
 using eacp::Apps::detail::shellResultToPath;
 
-// --- buildFilterPattern ---------------------------------------------------
-
 auto tFilterEmpty = test("FilePicker/Windows/emptyExtensionsGiveEmptyPattern") = []
 { check(buildFilterPattern({}).empty()); };
 
@@ -25,8 +23,6 @@ auto tFilterMany = test("FilePicker/Windows/joinsExtensionsWithSemicolons") = []
     check(buildFilterPattern({"wav", "mp3", "flac"})
           == std::wstring(L"*.wav;*.mp3;*.flac"));
 };
-
-// --- shellResultToPath ----------------------------------------------------
 
 auto tCancelNull = test("FilePicker/Windows/nullSelectionIsCancel") = []
 { check(!shellResultToPath(nullptr).has_value()); };
@@ -43,19 +39,14 @@ auto tAsciiPath = test("FilePicker/Windows/asciiPathRoundTrips") = []
 
 auto tUnicodePath = test("FilePicker/Windows/unicodePathEncodesToUtf8") = []
 {
-    // Escapes, not raw glyphs, so both sides are independent of source
-    // encoding: the wide U+00FC maps to the two UTF-8 bytes 0xC3 0xBC.
+    // Escapes not glyphs, so the test is independent of source encoding:
+    // U+00FC -> UTF-8 0xC3 0xBC.
     const auto path = shellResultToPath(L"C:\\M\u00fcsic");
     check(path.has_value());
     check(*path
           == std::string("C:\\M\xC3\xBC"
                          "sic"));
 };
-
-// --- chooseWithDialog: proves the reported bug ----------------------------
-// Before the fix the Windows chooseDirectory()/chooseFile() returned nullopt
-// no matter what the user picked - "selecting a dir does nothing". Driving the
-// shared core with a fake dialog makes that contract checkable headlessly.
 
 auto tHonoursSelection = test("FilePicker/Windows/returnsThePickedDirectory") = []
 {
