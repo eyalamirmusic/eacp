@@ -13,6 +13,12 @@ endif ()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if (PROJECT_IS_TOP_LEVEL AND NOT WIN32)
+    execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink
+            "${CMAKE_BINARY_DIR}/compile_commands.json"
+            "${CMAKE_SOURCE_DIR}/compile_commands.json")
+endif ()
+
 if (APPLE)
     enable_language(OBJCXX)
 endif ()
