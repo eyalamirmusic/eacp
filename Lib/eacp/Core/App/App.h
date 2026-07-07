@@ -67,14 +67,14 @@ struct FilePickerOptions
 
 // Shows the OS's native file chooser, blocking until the user picks a file
 // or cancels. Returns the chosen absolute path, or std::nullopt on cancel.
-// Must be called on the UI thread. Implemented on macOS; other backends
-// return std::nullopt for now.
+// Must be called on the UI thread. Implemented on macOS and Windows; Linux
+// returns std::nullopt for now.
 std::optional<std::string> chooseFile(const FilePickerOptions& options = {});
 
 // Shows the OS's native folder chooser, blocking until the user picks a
 // directory or cancels. Returns the chosen absolute path, or std::nullopt
-// on cancel. Must be called on the UI thread. Implemented on macOS; other
-// backends return std::nullopt for now.
+// on cancel. Must be called on the UI thread. Implemented on macOS and
+// Windows; Linux returns std::nullopt for now.
 std::optional<std::string> chooseDirectory();
 
 template <typename T>

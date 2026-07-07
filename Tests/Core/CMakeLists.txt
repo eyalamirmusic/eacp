@@ -45,3 +45,10 @@ if (NOT WIN32)
             SOURCES ProcessTests.cpp
             TARGETS eacp-core)
 endif ()
+
+# The file/folder picker seam is Windows-only (App-Windows-FilePicker.h).
+if (WIN32)
+    nano_add_executable(FilePickerWindowsTests
+            SOURCES FilePickerWindowsTests.cpp
+            TARGETS eacp-core)
+endif ()
