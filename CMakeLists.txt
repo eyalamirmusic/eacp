@@ -20,6 +20,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # PIC for every target, including the CPM-fetched dependencies configured below.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+if (PROJECT_IS_TOP_LEVEL AND NOT WIN32)
+    execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink
+            "${CMAKE_BINARY_DIR}/compile_commands.json"
+            "${CMAKE_SOURCE_DIR}/compile_commands.json")
+endif ()
+
 if (APPLE)
     enable_language(OBJCXX)
 
