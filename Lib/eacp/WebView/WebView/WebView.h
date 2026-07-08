@@ -153,6 +153,19 @@ public:
         // normal window it makes accidental first-click page interaction
         // possible. No-op on Windows, where clicks already reach the page.
         bool acceptFirstMouse = false;
+
+        // macOS: hand key events the page leaves unhandled back to the native
+        // responder chain, instead of letting WKWebView swallow them all. The
+        // page consumes a key with preventDefault(), or implicitly when it
+        // lands on a control that uses it (a text field, arrows on a slider);
+        // everything else fires onUnhandledKeyEvent and, unless that consumes
+        // it, continues past the framework container to whatever hosts the
+        // view — for an embedded plugin editor, the DAW's own window, so host
+        // shortcuts like spacebar transport keep working while the editor has
+        // focus. The verdict comes from the page, so re-dispatch is
+        // asynchronous (a few ms after the original event). Opt-in; not yet
+        // implemented on Windows, and iOS has no hardware-key chain to feed.
+        bool forwardUnhandledKeys = false;
     };
 
     WebView();
@@ -240,6 +253,11 @@ public:
     std::function<void()> onFileDragStarted = [] {};
     std::function<void()> onClose = [] {};
 
+    // Fired (with Options::forwardUnhandledKeys) for every key event the page
+    // did not consume. Return true to consume it here; returning false sends
+    // it on up the native responder chain to whatever hosts the view.
+    std::function<bool(const KeyEvent&)> onUnhandledKeyEvent;
+
     struct Native;
 
 protected:
@@ -268,6 +286,7 @@ private:
     void initNative(Options options);
     void installWindowDragSupport();
     void installWindowControlSupport();
+    void installKeyEventSupport();
     void performWindowControl(const std::string& action);
     std::shared_ptr<Native> impl;
 };

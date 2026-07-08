@@ -3,6 +3,7 @@
 
 #include "WebViewPlatform-Apple.h"
 
+#include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/ObjC/Strings.h>
 
 // NSDraggingSource for native file drag-out. We drag real on-disk files as
@@ -34,6 +35,8 @@
 - (void)armFileDragWithPaths:(const eacp::Vector<std::string>&)paths;
 - (void)setFileDragStartedCallback:(eacp::Callback)callback;
 - (void)armWindowDrag;
+- (void)setUnhandledKeyCallback:(eacp::Graphics::detail::UnhandledNSKeyCallback)callback;
+- (void)handleKeyVerdictIsDown:(BOOL)isDown consumed:(BOOL)consumed;
 @end
 
 namespace eacp::Graphics::detail
@@ -133,6 +136,22 @@ void armWindowDrag(WKWebView* webView)
     [(EacpDragWebView*) webView armWindowDrag];
 }
 
+void setUnhandledKeyCallback(WKWebView* webView, UnhandledNSKeyCallback callback)
+{
+    if (![webView isKindOfClass:[EacpDragWebView class]])
+        return;
+
+    [(EacpDragWebView*) webView setUnhandledKeyCallback:std::move(callback)];
+}
+
+void reportKeyVerdict(WKWebView* webView, bool isDown, bool consumed)
+{
+    if (![webView isKindOfClass:[EacpDragWebView class]])
+        return;
+
+    [(EacpDragWebView*) webView handleKeyVerdictIsDown:isDown consumed:consumed];
+}
+
 void performWindowControl(WKWebView* webView, const std::string& action)
 {
     NSWindow* window = webView.window;
@@ -206,10 +225,29 @@ WebView* findFocusedWebView()
 }
 } // namespace eacp::Graphics::detail
 
+namespace
+{
+// Stashed key events older than this have lost their page verdict (a
+// navigation raced the report, or WebKit never dispatched a DOM event for
+// them) and are dropped rather than mispaired with a later verdict.
+constexpr NSTimeInterval keyEventExpirySeconds = 2.0;
+constexpr int maxPendingKeyEvents = 64;
+
+void dropExpiredKeyEvents(eacp::Vector<eacp::ObjC::Ptr<NSEvent>>& queue)
+{
+    auto now = [NSProcessInfo processInfo].systemUptime;
+    queue.eraseIf([now](auto& event)
+                  { return now - event.get().timestamp > keyEventExpirySeconds; });
+}
+} // namespace
+
 @implementation EacpDragWebView
 {
     eacp::Vector<std::string> armedPaths;
     eacp::Callback fileDragStartedCallback;
+    eacp::Graphics::detail::UnhandledNSKeyCallback unhandledKeyCallback;
+    eacp::Vector<eacp::ObjC::Ptr<NSEvent>> pendingKeyDowns;
+    eacp::Vector<eacp::ObjC::Ptr<NSEvent>> pendingKeyUps;
     NSPoint mouseDownLocation;
     BOOL dragArmed;
     BOOL dragStarted;
@@ -247,6 +285,15 @@ WebView* findFocusedWebView()
 
 - (void)mouseDown:(NSEvent*)event
 {
+    // WKWebView takes part in AppKit's delayed-window-ordering protocol (for
+    // dragging content out of background windows), which suppresses the
+    // click-to-focus a plain NSView gets for free — without this, a click on
+    // an unfocused window only landed focus after a drag or a second click.
+    // Claim key status explicitly before the page sees the click.
+    if (self.window != nil && !self.window.keyWindow
+        && self.window.canBecomeKeyWindow)
+        [self.window makeKeyWindow];
+
     mouseDownLocation = event.locationInWindow;
     dragArmed = NO;
     dragStarted = NO;
@@ -298,6 +345,63 @@ WebView* findFocusedWebView()
     windowDragArmed = NO;
     armedPaths.clear();
     [super mouseUp:event];
+}
+
+- (void)setUnhandledKeyCallback:(eacp::Graphics::detail::UnhandledNSKeyCallback)callback
+{
+    unhandledKeyCallback = std::move(callback);
+}
+
+- (void)stashKeyEvent:(NSEvent*)event
+                 into:(eacp::Vector<eacp::ObjC::Ptr<NSEvent>>&)queue
+{
+    dropExpiredKeyEvents(queue);
+
+    if (queue.size() >= maxPendingKeyEvents)
+        queue.removeAt(0);
+
+    auto retained = eacp::ObjC::Ptr<NSEvent>();
+    retained.reset(event);
+    queue.add(retained);
+}
+
+// Cmd combos travel the key-equivalent path, not keyDown:, and the page shim
+// skips them symmetrically — stashing one here would desync the verdict queue.
+- (BOOL)shouldStashKeyEvent:(NSEvent*)event
+{
+    return unhandledKeyCallback != nullptr
+           && (event.modifierFlags & NSEventModifierFlagCommand) == 0;
+}
+
+- (void)keyDown:(NSEvent*)event
+{
+    if ([self shouldStashKeyEvent:event])
+        [self stashKeyEvent:event into:pendingKeyDowns];
+
+    [super keyDown:event];
+}
+
+- (void)keyUp:(NSEvent*)event
+{
+    if ([self shouldStashKeyEvent:event])
+        [self stashKeyEvent:event into:pendingKeyUps];
+
+    [super keyUp:event];
+}
+
+- (void)handleKeyVerdictIsDown:(BOOL)isDown consumed:(BOOL)consumed
+{
+    auto& queue = isDown ? pendingKeyDowns : pendingKeyUps;
+    dropExpiredKeyEvents(queue);
+
+    if (queue.empty())
+        return; // verdict from a page state we no longer track (navigation)
+
+    auto event = queue[0];
+    queue.removeAt(0);
+
+    if (!consumed && unhandledKeyCallback != nullptr)
+        unhandledKeyCallback(event.get(), isDown);
 }
 
 @end

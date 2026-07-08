@@ -64,4 +64,14 @@ void performWindowControl(WKWebView*, const std::string&)
     // actions is only installed on macOS.
     assert(false && "performWindowControl is macOS-only");
 }
+
+void setUnhandledKeyCallback(WKWebView*, UnhandledNSKeyCallback)
+{
+    // Key forwarding targets desktop responder chains; the shim that produces
+    // verdicts is only installed on macOS.
+}
+
+void reportKeyVerdict(WKWebView*, bool, bool)
+{
+}
 } // namespace eacp::Graphics::detail
