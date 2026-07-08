@@ -982,8 +982,13 @@ struct WebView::Native
                     if (!messageRaw)
                         return S_OK;
 
-                    // The envelope is {"name": "...", "body": "..."} where body
-                    // is itself a JSON-encoded string handed through unchanged.
+                    // The envelope is {"name": "...", "body": ...}. `body` is
+                    // usually a JSON-encoded string, handed to the handler
+                    // unchanged. A page may also post it as an object/value
+                    // (e.g. postMessage({type:'ready'})); mirror the macOS
+                    // handler and serialise any non-string body back to JSON so
+                    // it arrives intact — the app-side handler parses `body` as
+                    // JSON either way.
                     auto name = std::string {};
                     auto body = std::string {};
                     try
@@ -995,9 +1000,9 @@ struct WebView::Native
                             if (auto* field = Miro::Json::find(obj, "name");
                                 field && field->isString())
                                 name = field->asString();
-                            if (auto* field = Miro::Json::find(obj, "body");
-                                field && field->isString())
-                                body = field->asString();
+                            if (auto* field = Miro::Json::find(obj, "body"); field)
+                                body = field->isString() ? field->asString()
+                                                         : Miro::Json::print(*field);
                         }
                     }
                     catch (const Miro::Json::ParseError&)
