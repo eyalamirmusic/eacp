@@ -60,4 +60,15 @@ if (TARGET eacp-webview-test-main)
             eacp-webview
             eacp-webview-test-main)
     nano_discover_tests(WebViewAffordanceTests)
+
+    # Drives the unhandled-key forwarding pipeline (key-events.js + the native
+    # verdict queue) on a real WKWebView. Synthesizing the key NSEvents is
+    # AppKit-specific, so macOS only.
+    if (APPLE)
+        add_executable(KeyForwardingTests KeyForwardingTests.mm)
+        target_link_libraries(KeyForwardingTests PRIVATE
+                eacp-webview
+                eacp-webview-test-main)
+        nano_discover_tests(KeyForwardingTests)
+    endif ()
 endif ()

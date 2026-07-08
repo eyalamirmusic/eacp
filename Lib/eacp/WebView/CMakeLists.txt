@@ -35,6 +35,7 @@ res_embed_add(eacp-webview
         FILES     WebView/Resources/bridge-shim.js
                   WebView/Resources/window-drag.js
                   WebView/Resources/window-controls.js
+                  WebView/Resources/key-events.js
         NAMESPACE EacpWebView
         CATEGORY  EacpWebView)
 

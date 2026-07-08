@@ -9,11 +9,15 @@
 #include <eacp/Core/ObjC/Strings.h>
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
+#if !TARGET_OS_IPHONE
+#include <eacp/Graphics/Graphics/Keyboard-MacOS.h>
+#endif
 #include <eacp/Core/Utils/Containers.h>
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 
@@ -591,6 +595,8 @@ WKWebView* wkWebViewOf(WebView* view)
 
 void WebView::initNative(Options options)
 {
+    auto forwardKeys = options.forwardUnhandledKeys;
+
     impl = std::make_shared<Native>(*this, std::move(options));
     impl->delegate.get()->nativeWeak = impl;
     impl->attachToParentView();
@@ -600,6 +606,9 @@ void WebView::initNative(Options options)
     {
         installWindowDragSupport();
         installWindowControlSupport();
+
+        if (forwardKeys)
+            installKeyEventSupport();
     }
 }
 
@@ -832,6 +841,65 @@ void WebView::armWindowDrag()
 void WebView::performWindowControl(const std::string& action)
 {
     detail::performWindowControl(impl->webView.get(), action);
+}
+
+// Injects key-events.js + its verdict handler, and points the platform view's
+// unhandled-key callback at us: keys the page leaves unconsumed go first to
+// onUnhandledKeyEvent, then — unless that claims them — up the responder chain
+// PAST the framework container view, so they reach whatever hosts the web view
+// (a DAW's plugin window, our own NSWindow, …). macOS-only: the Windows
+// backend doesn't implement forwarding yet, and iOS has no key chain to feed.
+void WebView::installKeyEventSupport()
+{
+#if !TARGET_OS_IPHONE
+    auto shim = ResEmbed::get("key-events.js", "EacpWebView");
+    if (!shim)
+        throw std::runtime_error(
+            "eacp-webview: embedded key-events.js resource not found");
+
+    addUserScript(shim.toString(), true);
+
+    // The page posts "<down|up>:<0|1>" once each key event's dispatch has
+    // finished; 1 means the page consumed it.
+    addScriptMessageHandler("__eacpKeyEvent",
+                            [this](const std::string& message)
+                            {
+                                auto colon = message.find(':');
+                                if (colon == std::string::npos)
+                                    return;
+
+                                auto isDown =
+                                    message.compare(0, colon, "down") == 0;
+                                auto consumed = message.compare(
+                                                    colon + 1,
+                                                    std::string::npos,
+                                                    "1")
+                                                == 0;
+                                detail::reportKeyVerdict(impl->webView.get(),
+                                                         isDown,
+                                                         consumed);
+                            });
+
+    detail::setUnhandledKeyCallback(
+        impl->webView.get(),
+        [this](NSEvent* event, bool isDown)
+        {
+            auto type = isDown ? KeyEventType::Down : KeyEventType::Up;
+
+            if (onUnhandledKeyEvent && onUnhandledKeyEvent(keyEventFrom(event, type)))
+                return;
+
+            auto* webView = impl->webView.get();
+            NSResponder* next = webView.superview.nextResponder;
+            if (next == nil)
+                return;
+
+            if (isDown)
+                [next keyDown:event];
+            else
+                [next keyUp:event];
+        });
+#endif
 }
 
 void WebView::resized()
