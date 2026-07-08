@@ -97,6 +97,12 @@ public:
     // frame has no readable pixels. Defined in Camera.cpp (cross-platform).
     Graphics::Image toImage() const;
 
+    // As above, but converts into `reuse`, recycling its storage — no
+    // per-frame allocation or zero-fill when it already holds the frame size
+    // (see Image::prepareForOverwrite). `reuse` is left empty on an unreadable
+    // or unsupported frame. For per-frame capture loops that keep one buffer.
+    void toImage(Graphics::Image& reuse) const;
+
 private:
     int frameWidth = 0;
     int frameHeight = 0;

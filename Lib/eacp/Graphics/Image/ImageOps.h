@@ -37,4 +37,15 @@ Image warpAffineInverse(const Image& src,
 // work. Returns an invalid image if the rectangle is not fully inside src.
 Image mirroredCrop(const Image& src, int x, int y, int width, int height);
 
+// Reuse overloads: write the result into `dst`, recycling its storage. When
+// `dst` already holds the destination size there is no allocation and no
+// zero-fill (see Image::prepareForOverwrite) -- only the fill done by the
+// optimized simd kernel remains. Semantics otherwise match the returning
+// overloads above (`dst` is left empty on invalid input). Intended for
+// per-frame pipelines that recycle one destination image across calls. `dst`
+// must not alias `src`.
+void resizeBilinear(const Image& src, int dstWidth, int dstHeight, Image& dst);
+void mirroredCrop(
+    const Image& src, int x, int y, int width, int height, Image& dst);
+
 } // namespace eacp::Graphics
