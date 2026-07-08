@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <eacp/Core/Utils/Containers.h>
 #include <cassert>
+#include <cstdlib>
 #include <unordered_map>
 #include <queue>
 #include <functional>
@@ -39,6 +40,11 @@ namespace eacp::Graphics
 using Microsoft::WRL::ComPtr;
 
 HWND findHostHwndForView(View* view);
+
+// Defined in Graphics/Keyboard-Windows.cpp: Windows virtual key -> framework
+// KeyCode (KeyCode::Unknown when unmapped). Lets forwarded keys carry the same
+// keyCode the host window's own WM_KEYDOWN path would produce.
+uint16_t keyCodeFromVirtualKey(int vk);
 
 // Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
 wuc::Compositor getWinRTCompositor();
@@ -1500,6 +1506,9 @@ void WebView::initNative(Options options)
     detail::registerWebView(this);
     installWindowDragSupport();
     installWindowControlSupport();
+
+    if (impl->options.forwardUnhandledKeys)
+        installKeyEventSupport();
 }
 
 // Popup constructor (window.open). Builds the Native in popup mode: it adopts
@@ -1890,6 +1899,123 @@ void WebView::performWindowControl(const std::string& action)
 
     if (action == "close")
         PostMessageW(root, WM_CLOSE, 0, 0);
+}
+
+namespace
+{
+struct KeyVerdict
+{
+    bool isDown = false;
+    bool consumed = false;
+    int virtualKey = 0;
+    ModifierKeys modifiers;
+    bool isRepeat = false;
+    std::string characters;
+};
+
+// Parses key-events.js's "<down|up>:<0|1>:<keyCode>:<mods>:<repeat>:<key>".
+// event.key sits last so a literal ':' key can't split the message. Returns
+// false only when the kind/verdict prefix is missing or malformed.
+bool parseKeyVerdict(const std::string& message, KeyVerdict& out)
+{
+    auto pos = std::size_t {0};
+
+    auto next = [&]() -> std::string
+    {
+        if (pos == std::string::npos)
+            return {};
+
+        auto colon = message.find(':', pos);
+        auto token = message.substr(
+            pos, colon == std::string::npos ? std::string::npos : colon - pos);
+        pos = colon == std::string::npos ? std::string::npos : colon + 1;
+        return token;
+    };
+
+    auto kind = next();
+    if (kind != "down" && kind != "up")
+        return false;
+
+    auto toInt = [](const std::string& field)
+    { return field.empty() ? 0 : std::atoi(field.c_str()); };
+
+    out.isDown = kind == "down";
+    out.consumed = next() == "1";
+    out.virtualKey = toInt(next());
+
+    auto mods = toInt(next());
+    out.modifiers = {
+        (mods & 1) != 0, (mods & 2) != 0, (mods & 4) != 0, (mods & 8) != 0};
+
+    out.isRepeat = next() == "1";
+
+    // The remainder is event.key. Treat it as typed text only when it is a
+    // single code point; named keys ("Enter", "ArrowUp") are multi-char ASCII
+    // and carry no characters, matching the host window's WM_CHAR-derived text.
+    auto key = pos == std::string::npos ? std::string {} : message.substr(pos);
+    if (!key.empty()
+        && (key.size() == 1 || static_cast<unsigned char>(key[0]) >= 0x80))
+        out.characters = key;
+
+    return true;
+}
+
+// Re-injects an unconsumed key into the host window's normal keyboard path
+// (CompositionHostWindow turns it back into a framework KeyEvent). Always a
+// plain key message -- never WM_SYSKEYDOWN, whose DefWindowProc would poke the
+// window menu. Bit 30 of lParam marks an auto-repeat keydown, the one field the
+// host actually reads back.
+void forwardKeyToHost(HWND host, const KeyVerdict& verdict)
+{
+    if (!host || verdict.virtualKey == 0)
+        return;
+
+    auto message = verdict.isDown ? UINT {WM_KEYDOWN} : UINT {WM_KEYUP};
+    auto lParam = LPARAM {verdict.isDown && verdict.isRepeat ? 0x40000000 : 0};
+
+    PostMessageW(host, message, static_cast<WPARAM>(verdict.virtualKey), lParam);
+}
+} // namespace
+
+// Windows counterpart to the macOS installKeyEventSupport (see WebView.mm).
+// WebView2 exposes no native hook for plain character keys -- its
+// AcceleratorKeyPressed event only fires for Ctrl/Alt combos and non-character
+// keys, never a bare Space -- so we make the injected key-events.js the single
+// source of truth: it reports every key the page saw, whether the page consumed
+// it, and the key's identity. Unconsumed keys go to onUnhandledKeyEvent and,
+// unless it claims them, are re-injected into the host window's WM_KEYDOWN path
+// -- the Windows analog of macOS's walk up the responder chain past the
+// framework container.
+void WebView::installKeyEventSupport()
+{
+    auto shim = ResEmbed::get("key-events.js", "EacpWebView");
+    if (!shim)
+        throw std::runtime_error(
+            "eacp-webview: embedded key-events.js resource not found");
+
+    addUserScript(shim.toString(), true);
+
+    addScriptMessageHandler(
+        "__eacpKeyEvent",
+        [this](const std::string& message)
+        {
+            auto verdict = KeyVerdict {};
+            if (!parseKeyVerdict(message, verdict) || verdict.consumed)
+                return;
+
+            auto event = KeyEvent {};
+            event.type = verdict.isDown ? KeyEventType::Down : KeyEventType::Up;
+            event.keyCode = keyCodeFromVirtualKey(verdict.virtualKey);
+            event.modifiers = verdict.modifiers;
+            event.isRepeat = verdict.isRepeat;
+            event.characters = verdict.characters;
+            event.charactersIgnoringModifiers = verdict.characters;
+
+            if (onUnhandledKeyEvent && onUnhandledKeyEvent(event))
+                return;
+
+            forwardKeyToHost(impl->hostHwnd, verdict);
+        });
 }
 
 void WebView::setZoom(double level)
