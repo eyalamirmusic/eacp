@@ -7,19 +7,28 @@
 namespace eacp::Graphics
 {
 
-Image resizeBilinear(const Image& src, int dstWidth, int dstHeight)
+void resizeBilinear(const Image& src, int dstWidth, int dstHeight, Image& dst)
 {
     if (!src.isValid() || dstWidth <= 0 || dstHeight <= 0)
-        return {};
+    {
+        dst = {};
+        return;
+    }
 
-    auto outData = ImageData(dstWidth * dstHeight * 4);
+    auto* out = dst.prepareForOverwrite(dstWidth, dstHeight);
     eacp::simd::resizeBilinear(src.pixels().data(),
                                src.width(),
                                src.height(),
-                               outData.data(),
+                               out,
                                dstWidth,
                                dstHeight);
-    return {dstWidth, dstHeight, std::move(outData)};
+}
+
+Image resizeBilinear(const Image& src, int dstWidth, int dstHeight)
+{
+    auto dst = Image {};
+    resizeBilinear(src, dstWidth, dstHeight, dst);
+    return dst;
 }
 
 Image warpAffineInverse(const Image& src,
@@ -41,21 +50,26 @@ Image warpAffineInverse(const Image& src,
     return {dstWidth, dstHeight, std::move(outData)};
 }
 
+void mirroredCrop(
+    const Image& src, int x, int y, int width, int height, Image& dst)
+{
+    if (!src.isValid() || width <= 0 || height <= 0 || x < 0 || y < 0
+        || x + width > src.width() || y + height > src.height())
+    {
+        dst = {};
+        return;
+    }
+
+    auto* out = dst.prepareForOverwrite(width, height);
+    eacp::simd::mirroredCrop(
+        src.pixels().data(), src.width(), x, y, width, height, out);
+}
+
 Image mirroredCrop(const Image& src, int x, int y, int width, int height)
 {
-    if (!src.isValid() || width <= 0 || height <= 0)
-        return {};
-
-    const auto srcW = src.width();
-    const auto srcH = src.height();
-
-    if (x < 0 || y < 0 || x + width > srcW || y + height > srcH)
-        return {};
-
-    auto outData = ImageData(width * height * 4);
-    eacp::simd::mirroredCrop(
-        src.pixels().data(), srcW, x, y, width, height, outData.data());
-    return {width, height, std::move(outData)};
+    auto dst = Image {};
+    mirroredCrop(src, x, y, width, height, dst);
+    return dst;
 }
 
 } // namespace eacp::Graphics

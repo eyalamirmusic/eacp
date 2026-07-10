@@ -198,6 +198,27 @@ void Image::set(int x, int y, const Color& color)
     p[i + 3] = toByte(color.a);
 }
 
+std::uint8_t* Image::prepareForOverwrite(int width, int height)
+{
+    auto bytes = byteCountFor(width, height);
+    if (bytes <= 0) // non-positive dimension or would overflow int
+    {
+        w = 0;
+        h = 0;
+        rgba.clear();
+        return nullptr;
+    }
+
+    w = width;
+    h = height;
+    // Resize only on a size change: a same-size call is a no-op, so a recycled
+    // image skips both the reallocation and std::vector's zero-fill of the new
+    // bytes -- which the writer would immediately overwrite anyway.
+    if (rgba.size() != bytes)
+        rgba.resize(bytes);
+    return rgba.data();
+}
+
 ImageData Image::encode(ImageFormat format, float quality) const
 {
     if (!isValid())

@@ -859,22 +859,27 @@ void WebView::installKeyEventSupport()
 
     addUserScript(shim.toString(), true);
 
-    // The page posts "<down|up>:<0|1>" once each key event's dispatch has
-    // finished; 1 means the page consumed it.
+    // The page posts "<down|up>:<0|1>:..." once each key event's dispatch has
+    // finished; 1 means the page consumed it. Trailing fields carry the key's
+    // identity for the Windows backend (which has no native stash); here we only
+    // need the verdict, since we re-dispatch the NSEvent we stashed ourselves.
     addScriptMessageHandler("__eacpKeyEvent",
                             [this](const std::string& message)
                             {
-                                auto colon = message.find(':');
-                                if (colon == std::string::npos)
+                                auto first = message.find(':');
+                                if (first == std::string::npos)
                                     return;
 
                                 auto isDown =
-                                    message.compare(0, colon, "down") == 0;
-                                auto consumed = message.compare(
-                                                    colon + 1,
-                                                    std::string::npos,
-                                                    "1")
-                                                == 0;
+                                    message.compare(0, first, "down") == 0;
+
+                                auto second = message.find(':', first + 1);
+                                auto count = second == std::string::npos
+                                                 ? std::string::npos
+                                                 : second - (first + 1);
+                                auto consumed =
+                                    message.substr(first + 1, count) == "1";
+
                                 detail::reportKeyVerdict(impl->webView.get(),
                                                          isDown,
                                                          consumed);

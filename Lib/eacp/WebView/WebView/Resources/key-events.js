@@ -52,9 +52,30 @@
         event.isComposing ||
         event.key === 'Tab' || // in-page focus navigation
         targetConsumes(event);
+      // Message: "<down|up>:<0|1>:<keyCode>:<mods>:<repeat>:<key>". macOS reads
+      // only the first two fields -- it re-dispatches the native event it
+      // stashed. Windows keeps no native stash, so it rebuilds the key from the
+      // identity fields: keyCode (a Win32 virtual key), a modifier bitmask
+      // (shift 1, ctrl 2, alt 4, meta 8), the repeat flag, and event.key last so
+      // a ':' key can never split the message.
+      var mods =
+        (event.shiftKey ? 1 : 0) |
+        (event.ctrlKey ? 2 : 0) |
+        (event.altKey ? 4 : 0) |
+        (event.metaKey ? 8 : 0);
       try {
         window.webkit.messageHandlers.__eacpKeyEvent.postMessage(
-          kind + ':' + (consumed ? '1' : '0'),
+          kind +
+            ':' +
+            (consumed ? '1' : '0') +
+            ':' +
+            (event.keyCode || 0) +
+            ':' +
+            mods +
+            ':' +
+            (event.repeat ? '1' : '0') +
+            ':' +
+            (event.key || ''),
         );
       } catch (err) {}
     }, 0);

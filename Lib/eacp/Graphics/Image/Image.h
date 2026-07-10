@@ -64,6 +64,18 @@ public:
     Color at(int x, int y) const;
     void set(int x, int y, const Color& color);
 
+    // Reuse this image's storage as a width*height RGBA render target for an
+    // external writer that fills every byte (an eacp::simd image kernel, a
+    // camera colour-convert, ...). Only (re)allocates when the pixel count
+    // changes; when it already matches, there is no allocation and no zero-fill
+    // -- the previous bytes are left for the writer to overwrite in full. This
+    // lets a per-frame pipeline recycle one Image instead of allocating (and
+    // zero-filling) a fresh buffer each frame. Returns the writable pixel buffer
+    // (width*height*4 bytes), or nullptr for a non-positive / oversized size
+    // (leaving the image empty). Prefer the ImageOps reuse overloads and
+    // CameraFrame::toImage(Image&) over calling this directly.
+    std::uint8_t* prepareForOverwrite(int width, int height);
+
     // Encode into an in-memory buffer. quality (0..1) applies to JPEG
     // only and is ignored for PNG. Throws std::runtime_error on an
     // empty/invalid image or codec failure.
