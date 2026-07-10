@@ -3,6 +3,7 @@
 #include "../Helpers/ImageConversion-macOS.h"
 #include "../Primitives/GraphicUtils.h"
 #include <eacp/Core/App/AppEnvironment.h>
+#include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/Utils/Logging.h>
 #import <Cocoa/Cocoa.h>
 
@@ -41,101 +42,158 @@ void repositionTrafficLights(NSWindow* window, NSPoint inset)
 }
 } // namespace
 
+namespace eacp::Graphics
+{
+namespace
+{
 // Borderless NSWindows refuse key status by default, which would make a
 // frameless overlay's text inputs untypeable. Same override Electron ships
 // for frame:false windows.
-@interface EacpKeyableBorderlessWindow : NSWindow
-@end
-
-@implementation EacpKeyableBorderlessWindow
-- (BOOL)canBecomeKeyWindow
+BOOL canBecomeKeyWindow(id, SEL)
 {
     return YES;
 }
-@end
 
-@interface WindowDelegateBridge : NSObject <NSWindowDelegate>
+Class getKeyableBorderlessWindowClass()
 {
-@public
-    eacp::Callback cb;
-    eacp::Graphics::ResizeCallback onResize;
-    eacp::Graphics::WillResizeCallback onWillResize;
-    eacp::Graphics::WindowEvents* events;
+    static auto instance = []
+    {
+        auto builder =
+            new ObjC::RuntimeClass<NSWindow>("EacpKeyableBorderlessWindow");
+        builder->addMethod(@selector(canBecomeKeyWindow), canBecomeKeyWindow);
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+
+// Runtime classes get no automatic C++ ivar construction, so the delegate's
+// C++ state lives behind one raw pointer, created with the delegate and
+// deleted in its dealloc.
+struct WindowDelegateState
+{
+    Callback cb = [] {};
+    ResizeCallback onResize;
+    WillResizeCallback onWillResize;
+    WindowEvents* events = nullptr;
     // Internal key-focus listener (mouse lock suspend/resume), invoked
     // alongside the user-facing events->onActivationChanged.
     std::function<void(bool)> onKeyStateChanged;
-    BOOL keepTrafficLightsPositioned;
-    NSPoint trafficLightInset;
-}
-@end
+    bool keepTrafficLightsPositioned = false;
+    NSPoint trafficLightInset {};
+};
 
-@implementation WindowDelegateBridge
-- (void)windowWillClose:(NSNotification *)notification
+WindowDelegateState* getDelegateState(id self)
 {
-    cb();
+    return (WindowDelegateState*) ObjC::getIvar<void*>(self, "state");
 }
 
-- (NSSize)windowWillResize:(NSWindow*)sender toSize:(NSSize)frameSize
+void windowWillClose(id self, SEL, NSNotification*)
 {
-    if (!onWillResize)
+    getDelegateState(self)->cb();
+}
+
+NSSize windowWillResize(id self, SEL, NSWindow* sender, NSSize frameSize)
+{
+    auto* state = getDelegateState(self);
+
+    if (!state->onWillResize)
         return frameSize;
 
     auto proposedFrame = NSMakeRect(0, 0, frameSize.width, frameSize.height);
     auto proposedContent = [sender contentRectForFrameRect:proposedFrame];
     auto width = (int) proposedContent.size.width;
     auto height = (int) proposedContent.size.height;
-    onWillResize(width, height);
+    state->onWillResize(width, height);
     proposedContent.size = NSMakeSize(width, height);
     return [sender frameRectForContentRect:proposedContent].size;
 }
 
-- (void)windowDidResize:(NSNotification*)notification
+void windowDidResize(id self, SEL, NSNotification* notification)
 {
+    auto* state = getDelegateState(self);
     auto* window = (NSWindow*) notification.object;
 
-    if (keepTrafficLightsPositioned)
-        repositionTrafficLights(window, trafficLightInset);
+    if (state->keepTrafficLightsPositioned)
+        repositionTrafficLights(window, state->trafficLightInset);
 
-    if (!onResize)
+    if (!state->onResize)
         return;
 
     auto content = [window contentRectForFrameRect:[window frame]];
-    onResize((int) content.size.width, (int) content.size.height);
+    state->onResize((int) content.size.width, (int) content.size.height);
 }
 
-- (void)windowDidBecomeKey:(NSNotification*)notification
+void notifyKeyState(id self, bool isKey)
 {
-    if (onKeyStateChanged)
-        onKeyStateChanged(true);
+    auto* state = getDelegateState(self);
 
-    if (events != nullptr && events->onActivationChanged)
-        events->onActivationChanged(true);
+    if (state->onKeyStateChanged)
+        state->onKeyStateChanged(isKey);
+
+    if (state->events != nullptr && state->events->onActivationChanged)
+        state->events->onActivationChanged(isKey);
 }
 
-- (void)windowDidResignKey:(NSNotification*)notification
+void windowDidBecomeKey(id self, SEL, NSNotification*)
 {
-    if (onKeyStateChanged)
-        onKeyStateChanged(false);
-
-    if (events != nullptr && events->onActivationChanged)
-        events->onActivationChanged(false);
+    notifyKeyState(self, true);
 }
-@end
 
-namespace eacp::Graphics
+void windowDidResignKey(id self, SEL, NSNotification*)
 {
-WindowDelegateBridge* createWindowDelegate(const WindowOptions& options)
+    notifyKeyState(self, false);
+}
+
+void deallocDelegate(id self, SEL)
 {
-    auto bridge = [[WindowDelegateBridge alloc] init];
-    bridge->cb = options.effectiveOnQuit();
-    bridge->onResize = options.onResize;
-    bridge->onWillResize = options.onWillResize;
-    bridge->keepTrafficLightsPositioned = options.trafficLightPosition.has_value();
+    delete getDelegateState(self);
+    ObjC::sendSuper<void>(self, [NSObject class], @selector(dealloc));
+}
+
+Class getWindowDelegateClass()
+{
+    static auto instance = []
+    {
+        auto builder =
+            new ObjC::RuntimeClass<NSObject>("EacpWindowDelegateBridge");
+
+        builder->addIvar<void*>("state");
+        builder->addProtocol(@protocol(NSWindowDelegate));
+
+        builder->addMethod(@selector(windowWillClose:), windowWillClose);
+        builder->addMethod(@selector(windowWillResize:toSize:),
+                           windowWillResize);
+        builder->addMethod(@selector(windowDidResize:), windowDidResize);
+        builder->addMethod(@selector(windowDidBecomeKey:), windowDidBecomeKey);
+        builder->addMethod(@selector(windowDidResignKey:), windowDidResignKey);
+        builder->addMethod(@selector(dealloc), deallocDelegate);
+
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+} // namespace
+
+NSObject* createWindowDelegate(const WindowOptions& options)
+{
+    NSObject* bridge = [[getWindowDelegateClass() alloc] init];
+
+    auto* state = new WindowDelegateState();
+    state->cb = options.effectiveOnQuit();
+    state->onResize = options.onResize;
+    state->onWillResize = options.onWillResize;
+    state->keepTrafficLightsPositioned =
+        options.trafficLightPosition.has_value();
 
     if (options.trafficLightPosition)
-        bridge->trafficLightInset = NSMakePoint(options.trafficLightPosition->x,
-                                                options.trafficLightPosition->y);
+        state->trafficLightInset = NSMakePoint(options.trafficLightPosition->x,
+                                               options.trafficLightPosition->y);
 
+    ObjC::getIvar<void*>(bridge, "state") = state;
     return bridge;
 }
 
@@ -194,7 +252,7 @@ struct Window::Native
         // the Titled bit, so that's what selects the keyable subclass.
         auto windowClass = (style & NSWindowStyleMaskTitled) != 0
                                ? [NSWindow class]
-                               : [EacpKeyableBorderlessWindow class];
+                               : getKeyableBorderlessWindowClass();
 
         handle = [[windowClass alloc] initWithContentRect:contentRect
                                                 styleMask:style
@@ -202,8 +260,8 @@ struct Window::Native
                                                     defer:NO];
 
         delegate = createWindowDelegate(options);
-        delegate.get()->events = &eventsToUse;
-        delegate.get()->onKeyStateChanged = [this](bool isKey)
+        getDelegateState(delegate.get())->events = &eventsToUse;
+        getDelegateState(delegate.get())->onKeyStateChanged = [this](bool isKey)
         {
             keyStateChanged(isKey);
 
@@ -284,7 +342,7 @@ struct Window::Native
             [getWindow() center];
         }
 
-        [getWindow() setDelegate:delegate.get()];
+        [getWindow() setDelegate:(id<NSWindowDelegate>) delegate.get()];
 
         if (options.showInactive)
         {
@@ -520,7 +578,7 @@ struct Window::Native
 
     WindowOptions opts;
     ObjC::Ptr<NSWindow> handle;
-    ObjC::Ptr<WindowDelegateBridge> delegate;
+    ObjC::Ptr<NSObject> delegate;
     View* contentView = nullptr;
     bool mouseLockIntent = false;
     bool mouseLockEngaged = false;

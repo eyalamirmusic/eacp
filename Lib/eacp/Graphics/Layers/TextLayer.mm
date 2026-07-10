@@ -2,28 +2,38 @@
 #import <CoreText/CoreText.h>
 #include "TextLayer.h"
 #include "NativeLayer.h"
+#include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/ObjC/Strings.h>
-
-@interface ImmediateTextLayer : CATextLayer
-@end
-
-@implementation ImmediateTextLayer
-
-- (id<CAAction>)actionForKey:(NSString*)event
-{
-    return [NSNull null];
-}
-
-@end
 
 namespace eacp::Graphics
 {
+namespace
+{
+id<CAAction> immediateActionForKey(id, SEL, NSString*)
+{
+    return (id<CAAction>) [NSNull null];
+}
+
+CATextLayer* createImmediateTextLayer()
+{
+    static auto cls = []
+    {
+        auto builder =
+            new ObjC::RuntimeClass<CATextLayer>("EacpImmediateTextLayer");
+        builder->addMethod(@selector(actionForKey:), immediateActionForKey);
+        builder->registerClass();
+        return builder->get();
+    }();
+
+    return [[[cls alloc] init] autorelease];
+}
+} // namespace
 
 struct TextLayer::Native : NativeLayer
 {
     Native()
     {
-        layer = [ImmediateTextLayer layer];
+        layer = createImmediateTextLayer();
         layer.get().anchorPoint = CGPointMake(0, 0);
         layer.get().wrapped = NO;
         layer.get().truncationMode = kCATruncationEnd;
@@ -50,7 +60,7 @@ struct TextLayer::Native : NativeLayer
         layer.get().foregroundColor = toCGColor(color);
     }
 
-    ObjC::Ptr<ImmediateTextLayer> layer;
+    ObjC::Ptr<CATextLayer> layer;
 };
 
 TextLayer::TextLayer()

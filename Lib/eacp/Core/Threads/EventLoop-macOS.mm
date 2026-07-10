@@ -1,23 +1,11 @@
 #include "EventLoop.h"
 #include "../ObjC/ObjC.h"
+#include "../ObjC/RuntimeClass.h"
 #import <Foundation/Foundation.h>
 #import <Cocoa/Cocoa.h>
 
 #include <cassert>
 #include <chrono>
-
-// terminate: (Cmd+Q, Dock quit, quit Apple Events) calls exit() without
-// unwinding run<T>(); cancel it and stop the loop so the normal teardown runs.
-@interface AppTerminationBridge : NSObject <NSApplicationDelegate>
-@end
-
-@implementation AppTerminationBridge
-- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender
-{
-    eacp::Threads::getEventLoop().quit();
-    return NSTerminateCancel;
-}
-@end
 
 namespace eacp::Threads
 {
@@ -26,6 +14,30 @@ namespace
 bool s_inRootRunLoop = false;
 int s_nestedDepth = 0;
 bool s_quitRequested = false;
+
+// terminate: (Cmd+Q, Dock quit, quit Apple Events) calls exit() without
+// unwinding run<T>(); cancel it and stop the loop so the normal teardown runs.
+NSApplicationTerminateReply applicationShouldTerminate(id, SEL, NSApplication*)
+{
+    getEventLoop().quit();
+    return NSTerminateCancel;
+}
+
+id createAppTerminationBridge()
+{
+    static auto cls = []
+    {
+        auto builder =
+            new ObjC::RuntimeClass<NSObject>("EacpAppTerminationBridge");
+        builder->addProtocol(@protocol(NSApplicationDelegate));
+        builder->addMethod(@selector(applicationShouldTerminate:),
+                           applicationShouldTerminate);
+        builder->registerClass();
+        return builder->get();
+    }();
+
+    return [[cls alloc] init];
+}
 
 NSApplicationActivationPolicy activationPolicyFromBundle()
 {
@@ -46,9 +58,8 @@ NSApplication* getApp()
         auto* application = [NSApplication sharedApplication];
         [application setActivationPolicy:activationPolicyFromBundle()];
 
-        static auto delegate =
-            ObjC::Ptr<AppTerminationBridge>([[AppTerminationBridge alloc] init]);
-        [application setDelegate:delegate.get()];
+        static auto delegate = ObjC::Ptr<NSObject>(createAppTerminationBridge());
+        [application setDelegate:(id<NSApplicationDelegate>) delegate.get()];
 
         return application;
     }();

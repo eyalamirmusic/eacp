@@ -5,6 +5,7 @@
 #include "../Helpers/DarkMode-Windows.h"
 #include "../Helpers/ImageConversion-Windows.h"
 #include <eacp/Core/App/AppEnvironment.h>
+#include <eacp/Core/Plugins/ModuleInfo.h>
 #include <eacp/Core/Threads/EventLoop.h>
 
 #include <shellapi.h>
@@ -14,7 +15,10 @@
 namespace eacp::Graphics
 {
 
-static const wchar_t* TRAY_WINDOW_CLASS_NAME = L"EACPTrayWindowClass";
+static const std::wstring TRAY_WINDOW_CLASS_NAME_STORAGE =
+    eacp::Plugins::getUniqueWindowClassName(L"EACPTrayWindowClass");
+static const wchar_t* TRAY_WINDOW_CLASS_NAME =
+    TRAY_WINDOW_CLASS_NAME_STORAGE.c_str();
 static bool trayWindowClassRegistered = false;
 
 // The notification-area callback message and the icon's per-window id.
@@ -62,11 +66,10 @@ struct TrayIcon::Native
         WNDCLASSEXW wc = {};
         wc.cbSize = sizeof(WNDCLASSEXW);
         wc.lpfnWndProc = windowProc;
-        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.hInstance = (HINSTANCE) eacp::Plugins::getCurrentModuleHandle();
         wc.lpszClassName = TRAY_WINDOW_CLASS_NAME;
 
-        RegisterClassExW(&wc);
-        trayWindowClassRegistered = true;
+        trayWindowClassRegistered = RegisterClassExW(&wc) != 0;
     }
 
     // A normal (but never shown) window. Unlike a message-only window it can be
@@ -74,18 +77,19 @@ struct TrayIcon::Native
     // correctly.
     void createMessageWindow()
     {
-        messageWindow = CreateWindowExW(0,
-                                        TRAY_WINDOW_CLASS_NAME,
-                                        L"",
-                                        WS_POPUP,
-                                        0,
-                                        0,
-                                        0,
-                                        0,
-                                        nullptr,
-                                        nullptr,
-                                        GetModuleHandleW(nullptr),
-                                        this);
+        messageWindow =
+            CreateWindowExW(0,
+                            TRAY_WINDOW_CLASS_NAME,
+                            L"",
+                            WS_POPUP,
+                            0,
+                            0,
+                            0,
+                            0,
+                            nullptr,
+                            nullptr,
+                            (HINSTANCE) eacp::Plugins::getCurrentModuleHandle(),
+                            this);
     }
 
     void addIcon()

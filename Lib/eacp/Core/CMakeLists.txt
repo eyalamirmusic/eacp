@@ -22,6 +22,7 @@ if (APPLE)
             ObjC/AutoReleasePool.mm
             ObjC/Strings.mm
             Plugins/DynamicLibrary-Posix.cpp
+            Plugins/ModuleInfo-Posix.cpp
             Threads/EventLoop.mm
             Threads/EventLoop-Default.cpp
             Threads/Timer.mm
@@ -58,6 +59,7 @@ elseif (WIN32)
             App/Clipboard-Windows.cpp
             App/LoginItem-Windows.cpp
             Plugins/DynamicLibrary-Windows.cpp
+            Plugins/ModuleInfo-Windows.cpp
             Process/Process-Windows.cpp
             Threads/EventLoop-Windows.cpp
             Threads/ThreadUtils-Windows.cpp
@@ -72,6 +74,7 @@ elseif (UNIX AND NOT APPLE)
             App/Clipboard-Linux.cpp
             App/LoginItem-Linux.cpp
             Plugins/DynamicLibrary-Posix.cpp
+            Plugins/ModuleInfo-Posix.cpp
             Process/Process-Posix.cpp
             Threads/EventLoop-Linux.cpp
             Threads/EventLoop-Default.cpp
