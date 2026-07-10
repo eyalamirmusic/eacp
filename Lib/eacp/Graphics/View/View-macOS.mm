@@ -4,88 +4,28 @@
 #include "../Graphics/GraphicsContextImpl.h"
 #include "../Graphics/Keyboard-MacOS.h"
 
+#include <eacp/Core/ObjC/RuntimeClass.h>
+
 namespace eacp::Graphics
 {
-
-} // namespace eacp::Graphics
-
-@interface NativeView : NSView <CALayerDelegate>
+namespace
 {
-@public
-    eacp::Graphics::View* cppView;
-    NSPoint mouseDownPosition;
-}
-@end
+Class getNativeViewClass();
 
-@implementation NativeView
-
-- (void)drawRect:(NSRect)dirtyRect
+View* getView(id self)
 {
+    return (View*) ObjC::getIvar<void*>(self, "cppView");
 }
 
-- (void)drawLayer:(CALayer*)layer inContext:(CGContextRef)ctx
+id getRootView(id self)
 {
-    if (cppView == nullptr)
-        return;
-
-    auto nativeContext = eacp::Graphics::MacOSContext(ctx);
-    cppView->paint(nativeContext);
-}
-
-- (void)layout
-{
-    [super layout];
-
-    if (cppView != nullptr)
-        cppView->resized();
-}
-
-- (BOOL)isFlipped
-{
-    return YES;
-}
-
-- (BOOL)isOpaque
-{
-    return NO;
-}
-
-- (BOOL)acceptsFirstResponder
-{
-    return YES;
-}
-
-- (void)viewDidChangeBackingProperties
-{
-    [super viewDidChangeBackingProperties];
-    self.layer.contentsScale = self.window.backingScaleFactor;
-}
-
-- (void)setFrame:(NSRect)newFrame
-{
-    NSRect oldFrame = [self frame];
-    [super setFrame:newFrame];
-
-    if (!NSEqualSizes(oldFrame.size, newFrame.size))
-    {
-        [self setNeedsDisplay:YES];
-
-        if (self.wantsLayer && self.layer)
-        {
-            [self.layer setNeedsDisplay];
-        }
-    }
-}
-
-- (NativeView*)rootView
-{
-    NativeView* root = self;
-    NSView* current = self.superview;
+    id root = self;
+    NSView* current = [(NSView*) self superview];
 
     while (current != nil)
     {
-        if ([current isKindOfClass:[NativeView class]])
-            root = (NativeView*) current;
+        if ([current isKindOfClass:getNativeViewClass()])
+            root = current;
 
         current = current.superview;
     }
@@ -93,169 +33,240 @@ namespace eacp::Graphics
     return root;
 }
 
-- (eacp::Graphics::MouseButton)mouseButtonFromEvent:(NSEvent*)event
+MouseButton mouseButtonFromEvent(NSEvent* event)
 {
     switch (event.buttonNumber)
     {
         case 0:
-            return eacp::Graphics::MouseButton::Left;
+            return MouseButton::Left;
         case 1:
-            return eacp::Graphics::MouseButton::Right;
+            return MouseButton::Right;
         case 2:
-            return eacp::Graphics::MouseButton::Middle;
+            return MouseButton::Middle;
         default:
-            return eacp::Graphics::MouseButton::Other;
+            return MouseButton::Other;
     }
 }
 
-- (void)dispatchMouseEvent:(NSEvent*)event type:(eacp::Graphics::MouseEventType)type
+void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
 {
-
-
-    auto root = [self rootView];
+    auto root = getRootView(self);
     auto windowPos = [event locationInWindow];
-    auto localPos = [root convertPoint:windowPos fromView:nil];
+    auto localPos = [(NSView*) root convertPoint:windowPos fromView:nil];
 
-    auto e = eacp::Graphics::MouseEvent();
+    auto e = MouseEvent();
 
     e.pos = {(float) localPos.x, (float) localPos.y};
     e.type = type;
-    e.button = [self mouseButtonFromEvent:event];
-    e.modifiers = eacp::Graphics::modifierKeysFromEvent(event);
+    e.button = mouseButtonFromEvent(event);
+    e.modifiers = modifierKeysFromEvent(event);
 
     e.timestamp = event.timestamp;
     e.delta = {(float) event.deltaX, (float) event.deltaY};
 
-    if (type == eacp::Graphics::MouseEventType::Down
-        || type == eacp::Graphics::MouseEventType::Up)
+    if (type == MouseEventType::Down || type == MouseEventType::Up)
     {
         e.pressure = event.pressure;
         e.clickCount = (int) event.clickCount;
     }
 
-    if (type == eacp::Graphics::MouseEventType::Down)
-        root->mouseDownPosition = localPos;
+    auto& mouseDownPosition = ObjC::getIvar<NSPoint>(root, "mouseDownPosition");
 
-    e.downPos = {(float) root->mouseDownPosition.x,
-                 (float) root->mouseDownPosition.y};
+    if (type == MouseEventType::Down)
+        mouseDownPosition = localPos;
 
-    if (root->cppView != nullptr)
-        root->cppView->dispatchMouseEvent(e);
+    e.downPos = {(float) mouseDownPosition.x, (float) mouseDownPosition.y};
+
+    if (auto* view = getView(root))
+        view->dispatchMouseEvent(e);
 }
 
-- (void)mouseDown:(NSEvent*)event
+void drawRect(id, SEL, NSRect)
 {
-    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Down];
 }
 
-- (void)mouseUp:(NSEvent*)event
+void drawLayerInContext(id self, SEL, CALayer*, CGContextRef ctx)
 {
-    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Up];
+    if (auto* view = getView(self))
+    {
+        auto nativeContext = MacOSContext(ctx);
+        view->paint(nativeContext);
+    }
 }
 
-- (void)mouseDragged:(NSEvent*)event
+void layout(id self, SEL)
 {
-    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Dragged];
+    ObjC::sendSuper<void>(self, [NSView class], @selector(layout));
+
+    if (auto* view = getView(self))
+        view->resized();
 }
 
-- (void)mouseMoved:(NSEvent*)event
+BOOL isFlipped(id, SEL)
 {
-    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Moved];
+    return YES;
 }
 
-- (void)mouseEntered:(NSEvent*)event
+BOOL isOpaque(id, SEL)
 {
-    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Entered];
+    return NO;
 }
 
-- (void)mouseExited:(NSEvent*)event
+BOOL acceptsFirstResponder(id, SEL)
 {
-    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Exited];
+    return YES;
 }
 
-- (void)rightMouseDown:(NSEvent*)event
+void viewDidChangeBackingProperties(id self, SEL)
 {
-    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Down];
+    ObjC::sendSuper<void>(
+        self, [NSView class], @selector(viewDidChangeBackingProperties));
+
+    auto* view = (NSView*) self;
+    view.layer.contentsScale = view.window.backingScaleFactor;
 }
 
-- (void)rightMouseUp:(NSEvent*)event
+void setFrame(id self, SEL, NSRect newFrame)
 {
-    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Up];
+    auto* view = (NSView*) self;
+    auto oldFrame = [view frame];
+
+    ObjC::sendSuper<void>(self, [NSView class], @selector(setFrame:), newFrame);
+
+    if (!NSEqualSizes(oldFrame.size, newFrame.size))
+    {
+        [view setNeedsDisplay:YES];
+
+        if (view.wantsLayer && view.layer)
+            [view.layer setNeedsDisplay];
+    }
 }
 
-- (void)rightMouseDragged:(NSEvent*)event
+void mouseDown(id self, SEL, NSEvent* event)
 {
-    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Dragged];
+    dispatchMouseEvent(self, event, MouseEventType::Down);
 }
 
-// Other mouse buttons (middle, etc.)
-- (void)otherMouseDown:(NSEvent*)event
+void mouseUp(id self, SEL, NSEvent* event)
 {
-    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Down];
+    dispatchMouseEvent(self, event, MouseEventType::Up);
 }
 
-- (void)otherMouseUp:(NSEvent*)event
+void mouseDragged(id self, SEL, NSEvent* event)
 {
-    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Up];
+    dispatchMouseEvent(self, event, MouseEventType::Dragged);
 }
 
-- (void)otherMouseDragged:(NSEvent*)event
+void mouseMoved(id self, SEL, NSEvent* event)
 {
-    [self dispatchMouseEvent:event type:eacp::Graphics::MouseEventType::Dragged];
+    dispatchMouseEvent(self, event, MouseEventType::Moved);
 }
 
-- (void)keyDown:(NSEvent*)event
+void mouseEntered(id self, SEL, NSEvent* event)
 {
-    if (cppView == nullptr)
-        return;
-
-    auto e = eacp::Graphics::keyEventFrom(event, eacp::Graphics::KeyEventType::Down);
-    cppView->keyDown(e);
+    dispatchMouseEvent(self, event, MouseEventType::Entered);
 }
 
-- (void)keyUp:(NSEvent*)event
+void mouseExited(id self, SEL, NSEvent* event)
 {
-    if (cppView == nullptr)
-        return;
-
-    auto e = eacp::Graphics::keyEventFrom(event, eacp::Graphics::KeyEventType::Up);
-    cppView->keyUp(e);
+    dispatchMouseEvent(self, event, MouseEventType::Exited);
 }
 
-- (void)updateTrackingAreas
+void keyDown(id self, SEL, NSEvent* event)
 {
-    [super updateTrackingAreas];
+    if (auto* view = getView(self))
+        view->keyDown(keyEventFrom(event, KeyEventType::Down));
+}
 
-    for (NSTrackingArea* area in self.trackingAreas)
-        [self removeTrackingArea:area];
+void keyUp(id self, SEL, NSEvent* event)
+{
+    if (auto* view = getView(self))
+        view->keyUp(keyEventFrom(event, KeyEventType::Up));
+}
+
+void updateTrackingAreas(id self, SEL)
+{
+    ObjC::sendSuper<void>(self, [NSView class], @selector(updateTrackingAreas));
+
+    auto* view = (NSView*) self;
+
+    for (NSTrackingArea* area in view.trackingAreas)
+        [view removeTrackingArea:area];
 
     NSTrackingAreaOptions options =
         NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved
         | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect;
 
-    NSTrackingArea* trackingArea = [[NSTrackingArea alloc] initWithRect:self.bounds
-                                                                options:options
-                                                                  owner:self
-                                                               userInfo:nil];
-    [self addTrackingArea:trackingArea];
+    NSTrackingArea* trackingArea =
+        [[NSTrackingArea alloc] initWithRect:view.bounds
+                                     options:options
+                                       owner:view
+                                    userInfo:nil];
+    [view addTrackingArea:trackingArea];
+    [trackingArea release];
 }
 
-@end
-namespace eacp::Graphics
+Class getNativeViewClass()
 {
-NativeView* createNativeView(View* view)
+    static auto instance = []
+    {
+        auto builder = new ObjC::RuntimeClass<NSView>("EacpNativeView");
+
+        builder->addIvar<void*>("cppView");
+        builder->addIvar<NSPoint>("mouseDownPosition");
+
+        builder->addProtocol(@protocol(CALayerDelegate));
+
+        builder->addMethod(@selector(drawRect:), drawRect);
+        builder->addMethod(@selector(drawLayer:inContext:), drawLayerInContext);
+        builder->addMethod(@selector(layout), layout);
+        builder->addMethod(@selector(isFlipped), isFlipped);
+        builder->addMethod(@selector(isOpaque), isOpaque);
+        builder->addMethod(@selector(acceptsFirstResponder),
+                           acceptsFirstResponder);
+        builder->addMethod(@selector(viewDidChangeBackingProperties),
+                           viewDidChangeBackingProperties);
+        builder->addMethod(@selector(setFrame:), setFrame);
+
+        builder->addMethod(@selector(mouseDown:), mouseDown);
+        builder->addMethod(@selector(mouseUp:), mouseUp);
+        builder->addMethod(@selector(mouseDragged:), mouseDragged);
+        builder->addMethod(@selector(mouseMoved:), mouseMoved);
+        builder->addMethod(@selector(mouseEntered:), mouseEntered);
+        builder->addMethod(@selector(mouseExited:), mouseExited);
+        builder->addMethod(@selector(rightMouseDown:), mouseDown);
+        builder->addMethod(@selector(rightMouseUp:), mouseUp);
+        builder->addMethod(@selector(rightMouseDragged:), mouseDragged);
+        builder->addMethod(@selector(otherMouseDown:), mouseDown);
+        builder->addMethod(@selector(otherMouseUp:), mouseUp);
+        builder->addMethod(@selector(otherMouseDragged:), mouseDragged);
+
+        builder->addMethod(@selector(keyDown:), keyDown);
+        builder->addMethod(@selector(keyUp:), keyUp);
+        builder->addMethod(@selector(updateTrackingAreas),
+                           updateTrackingAreas);
+
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+
+NSView* createNativeView(View* view)
 {
     auto rect = NSMakeRect(0.f, 0.f, 100.f, 100.f);
-    auto newView = [[NativeView alloc] initWithFrame:rect];
+    NSView* newView = [[getNativeViewClass() alloc] initWithFrame:rect];
 
     newView.wantsLayer = YES;
     newView.layerContentsRedrawPolicy = NSViewLayerContentsRedrawOnSetNeedsDisplay;
     newView.layer.contentsScale = [NSScreen mainScreen].backingScaleFactor;
-    newView.layer.delegate = newView;
+    newView.layer.delegate = (id<CALayerDelegate>) newView;
 
-    newView->cppView = view;
+    ObjC::getIvar<void*>(newView, "cppView") = view;
     return newView;
 }
+} // namespace
 
 struct View::Native
 {
@@ -268,7 +279,7 @@ struct View::Native
     ~Native()
     {
         auto* view = nativeView.get();
-        view->cppView = nullptr;
+        ObjC::getIvar<void*>(view, "cppView") = nullptr;
         view.layer.delegate = nil;
         [view removeFromSuperview];
     }
@@ -286,13 +297,13 @@ struct View::Native
 
     void addSubview(View& view)
     {
-        auto* childNativeView = (NativeView*) view.getHandle();
+        auto* childNativeView = (NSView*) view.getHandle();
         [nativeView.get() addSubview:childNativeView];
     }
 
     void removeSubview(View& view)
     {
-        auto* childNativeView = (NativeView*) view.getHandle();
+        auto* childNativeView = (NSView*) view.getHandle();
         [childNativeView removeFromSuperview];
     }
 
@@ -319,7 +330,7 @@ struct View::Native
         return view.window.firstResponder == view;
     }
 
-    ObjC::Ptr<NativeView> nativeView;
+    ObjC::Ptr<NSView> nativeView;
 };
 
 View::View()

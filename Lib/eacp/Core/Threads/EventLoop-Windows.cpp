@@ -3,6 +3,7 @@
 #include "EventLoop.h"
 #include "ThreadUtils-Windows.h"
 #include "../App/App.h"
+#include "../Plugins/ModuleInfo.h"
 #include "../Utils/Singleton.h"
 
 #include <eacp/Core/Utils/Containers.h>
@@ -92,7 +93,8 @@ static void ensureMessageWindow()
     if (messageWindow.load())
         return;
 
-    static const wchar_t* className = L"EACPEventLoopMessageWindow";
+    static const auto className =
+        Plugins::getUniqueWindowClassName(L"EACPEventLoopMessageWindow");
     static auto classRegistered = false;
 
     if (!classRegistered)
@@ -100,14 +102,13 @@ static void ensureMessageWindow()
         auto wc = WNDCLASSEXW {};
         wc.cbSize = sizeof(WNDCLASSEXW);
         wc.lpfnWndProc = messageWindowProc;
-        wc.hInstance = GetModuleHandleW(nullptr);
-        wc.lpszClassName = className;
-        RegisterClassExW(&wc);
-        classRegistered = true;
+        wc.hInstance = (HINSTANCE) Plugins::getCurrentModuleHandle();
+        wc.lpszClassName = className.c_str();
+        classRegistered = RegisterClassExW(&wc) != 0;
     }
 
     messageWindow = CreateWindowExW(0,
-                                    className,
+                                    className.c_str(),
                                     L"",
                                     0,
                                     0,
@@ -116,7 +117,7 @@ static void ensureMessageWindow()
                                     0,
                                     HWND_MESSAGE,
                                     nullptr,
-                                    GetModuleHandleW(nullptr),
+                                    (HINSTANCE) Plugins::getCurrentModuleHandle(),
                                     nullptr);
 }
 

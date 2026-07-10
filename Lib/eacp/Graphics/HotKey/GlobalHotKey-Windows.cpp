@@ -2,6 +2,7 @@
 
 #include "GlobalHotKey.h"
 #include <eacp/Core/App/AppEnvironment.h>
+#include <eacp/Core/Plugins/ModuleInfo.h>
 #include <eacp/Core/Utils/Logging.h>
 
 #include <atomic>
@@ -15,7 +16,9 @@ int virtualKeyFromKeyCode(uint16_t keyCode);
 
 namespace
 {
-constexpr wchar_t hotKeyWindowClass[] = L"EACPGlobalHotKeyWindow";
+const std::wstring hotKeyWindowClassStorage =
+    eacp::Plugins::getUniqueWindowClassName(L"EACPGlobalHotKeyWindow");
+const wchar_t* hotKeyWindowClass = hotKeyWindowClassStorage.c_str();
 
 UINT toWinModifiers(ModifierKeys modifiers)
 {
@@ -116,7 +119,7 @@ struct GlobalHotKey::Native
                                  0,
                                  HWND_MESSAGE,
                                  nullptr,
-                                 GetModuleHandleW(nullptr),
+                                 (HINSTANCE) eacp::Plugins::getCurrentModuleHandle(),
                                  nullptr);
 
         if (window == nullptr)
@@ -148,7 +151,7 @@ struct GlobalHotKey::Native
         auto wc = WNDCLASSEXW {};
         wc.cbSize = sizeof(WNDCLASSEXW);
         wc.lpfnWndProc = wndProc;
-        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.hInstance = (HINSTANCE) eacp::Plugins::getCurrentModuleHandle();
         wc.lpszClassName = hotKeyWindowClass;
 
         if (!RegisterClassExW(&wc))

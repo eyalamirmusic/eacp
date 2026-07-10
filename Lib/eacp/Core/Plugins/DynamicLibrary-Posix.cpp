@@ -41,7 +41,13 @@ DynamicLibrary& DynamicLibrary::operator=(DynamicLibrary&& other) noexcept
 bool DynamicLibrary::open(const std::string& path)
 {
     close();
-    handle = dlopen(path.c_str(), RTLD_LOCAL | RTLD_NOW);
+
+    // RTLD_NODELETE: close() releases the handle but the image is never
+    // unmapped. A plugin's runtime-registered ObjC classes (and pending
+    // CoreAnimation work referencing them) outlive dlclose, so unmapping the
+    // code they point into crashes the process later — the same reason JUCE
+    // hosts and VST3 never unload plugin images on macOS.
+    handle = dlopen(path.c_str(), RTLD_LOCAL | RTLD_NOW | RTLD_NODELETE);
     return handle != nullptr;
 }
 
