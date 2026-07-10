@@ -39,6 +39,7 @@ endif ()
 include(TargetSetup)
 include(CPM)
 include(EacpSchema)
+include(EacpPlugin)
 
 option(EACP_ENABLE_TESTS "Enable Tests for EACP" ${PROJECT_IS_TOP_LEVEL})
 

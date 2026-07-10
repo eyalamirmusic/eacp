@@ -11,6 +11,17 @@ endfunction()
 function(set_default_target_setting target)
     set_default_warnings_level(${target})
     set_target_properties(${target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+    # eacp never exports its symbol surface: plugins (eacp_add_plugin) expose
+    # only what they mark EACP_PLUGIN_EXPORT, and these presets keep the eacp
+    # libraries statically linked into them out of the dynamic export table.
+    # For executables this just trims the symbol table. No-op for MSVC, which
+    # exports nothing without __declspec(dllexport).
+    set_target_properties(${target} PROPERTIES
+            C_VISIBILITY_PRESET hidden
+            CXX_VISIBILITY_PRESET hidden
+            OBJC_VISIBILITY_PRESET hidden
+            OBJCXX_VISIBILITY_PRESET hidden
+            VISIBILITY_INLINES_HIDDEN TRUE)
     if (IOS)
         set_target_properties(${target} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${EACP_IOS_PLIST}")
     elseif (APPLE)

@@ -2,6 +2,7 @@ set(CMAKE_FOLDER Examples)
 
 add_subdirectory(Console)
 add_subdirectory(Network)
+add_subdirectory(Plugins)
 
 if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(Graphics)

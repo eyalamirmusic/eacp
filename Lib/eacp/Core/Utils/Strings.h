@@ -30,6 +30,10 @@ inline std::string toString(const char* s)
 {
     return std::string {s};
 }
+inline std::string toString(char* s)
+{
+    return std::string {s};
+}
 inline std::string toString(char c)
 {
     return std::string(1, c);
