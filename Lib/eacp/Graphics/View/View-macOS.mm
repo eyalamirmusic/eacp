@@ -25,6 +25,9 @@ namespace eacp::Graphics
 
 - (void)drawLayer:(CALayer*)layer inContext:(CGContextRef)ctx
 {
+    if (cppView == nullptr)
+        return;
+
     auto nativeContext = eacp::Graphics::MacOSContext(ctx);
     cppView->paint(nativeContext);
 }
@@ -32,7 +35,9 @@ namespace eacp::Graphics
 - (void)layout
 {
     [super layout];
-    cppView->resized();
+
+    if (cppView != nullptr)
+        cppView->resized();
 }
 
 - (BOOL)isFlipped
@@ -134,7 +139,8 @@ namespace eacp::Graphics
     e.downPos = {(float) root->mouseDownPosition.x,
                  (float) root->mouseDownPosition.y};
 
-    root->cppView->dispatchMouseEvent(e);
+    if (root->cppView != nullptr)
+        root->cppView->dispatchMouseEvent(e);
 }
 
 - (void)mouseDown:(NSEvent*)event
@@ -200,12 +206,18 @@ namespace eacp::Graphics
 
 - (void)keyDown:(NSEvent*)event
 {
+    if (cppView == nullptr)
+        return;
+
     auto e = eacp::Graphics::keyEventFrom(event, eacp::Graphics::KeyEventType::Down);
     cppView->keyDown(e);
 }
 
 - (void)keyUp:(NSEvent*)event
 {
+    if (cppView == nullptr)
+        return;
+
     auto e = eacp::Graphics::keyEventFrom(event, eacp::Graphics::KeyEventType::Up);
     cppView->keyUp(e);
 }
@@ -248,6 +260,18 @@ NativeView* createNativeView(View* view)
 struct View::Native
 {
     Native(View& view) { nativeView = createNativeView(&view); }
+
+    // AppKit and CoreAnimation can outlive our ObjC::Ptr reference — a pending
+    // CA transaction still draws the backing layer after the C++ View died
+    // (e.g. a window torn down right after a repaint). Break both back-links so
+    // a surviving NativeView is inert instead of dereferencing a freed View.
+    ~Native()
+    {
+        auto* view = nativeView.get();
+        view->cppView = nullptr;
+        view.layer.delegate = nil;
+        [view removeFromSuperview];
+    }
 
     void repaint() { [nativeView.get() setNeedsDisplay:YES]; }
 

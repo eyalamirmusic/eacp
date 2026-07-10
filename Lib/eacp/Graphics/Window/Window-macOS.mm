@@ -509,6 +509,12 @@ struct Window::Native
     ~Native()
     {
         disengageMouseLock();
+
+        // Mirror Window-Windows.cpp's WM_DESTROY: programmatic destruction
+        // must not fire the quit callback — only a user-initiated close may.
+        // The delegate's windowWillClose: would invoke it during [close], so
+        // detach the delegate first.
+        [handle.get() setDelegate:nil];
         [handle.get() close];
     }
 
