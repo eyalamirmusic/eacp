@@ -41,7 +41,15 @@ include(CPM)
 include(EacpSchema)
 include(EacpPlugin)
 
-eacp_default_hidden_visibility()
+option(EACP_HIDDEN_VISIBILITY "Compile eacp with hidden symbol visibility" ON)
+
+if (EACP_HIDDEN_VISIBILITY)
+    set(CMAKE_C_VISIBILITY_PRESET hidden)
+    set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+    set(CMAKE_OBJC_VISIBILITY_PRESET hidden)
+    set(CMAKE_OBJCXX_VISIBILITY_PRESET hidden)
+    set(CMAKE_VISIBILITY_INLINES_HIDDEN TRUE)
+endif ()
 
 option(EACP_ENABLE_TESTS "Enable Tests for EACP" ${PROJECT_IS_TOP_LEVEL})
 

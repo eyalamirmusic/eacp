@@ -1,12 +1,8 @@
-# Declares a runtime-loaded eacp plugin: a MODULE library that statically
-# links its own eacp copy. Everything defaults to hidden visibility — here for
-# the plugin's own sources, and via set_default_target_setting for the eacp
-# libraries linked into it — so the module's export table contains only the C
-# functions the plugin marks with EACP_PLUGIN_EXPORT (see
-# Core/Plugins/PluginExport.h). Which functions those are is the app's own
-# contract; eacp imposes none. A host built with a different eacp version can
-# never bind against the plugin's eacp, and RTLD_LOCAL loading
-# (eacp::Plugins::DynamicLibrary) seals the reverse direction.
+# A runtime-loaded eacp plugin: a MODULE library that statically links its
+# own eacp copy. eacp and its dependencies compile with hidden visibility, so
+# the module re-exports none of their symbols; plugin entry points are marked
+# with EACP_PLUGIN_EXPORT (Core/Plugins/PluginExport.h), and the visibility
+# of the plugin's own remaining code is the plugin author's choice.
 #
 #   eacp_add_plugin(MyPlugin Plugin.cpp)
 #   target_link_libraries(MyPlugin PRIVATE eacp-core)

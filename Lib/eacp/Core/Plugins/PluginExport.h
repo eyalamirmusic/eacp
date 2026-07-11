@@ -1,9 +1,8 @@
 #pragma once
 
-// Marks a C function as exported from an eacp plugin (eacp_add_plugin builds
-// with hidden visibility, so only functions marked this way appear in the
-// module's export table). The host resolves them with
-// DynamicLibrary::findFunction after enumerating via getFunctionNames.
+// Marks a C function as exported from an eacp plugin. The host resolves
+// them with DynamicLibrary::findFunction after enumerating via
+// getFunctionNames.
 //
 // The set of exported functions — and, when host and plugin ship
 // independently, their versioning — is the app's own contract. eacp never
