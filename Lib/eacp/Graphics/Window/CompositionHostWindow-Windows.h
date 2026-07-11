@@ -1,15 +1,11 @@
 #pragma once
 
-#include <eacp/Core/Utils/WinInclude.h>
+#include "../Common-Windows.h"
 
 #include "../View/View.h"
 
 #include <bitset>
-#include <cstdint>
-#include <functional>
-#include <optional>
 
-#include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.UI.Composition.Desktop.h>
 
 namespace wuc = winrt::Windows::UI::Composition;

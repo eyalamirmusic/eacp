@@ -1,7 +1,6 @@
 #pragma once
 
 #include <eacp/GPU/GPU.h>
-#include <eacp/Graphics/Primitives/Primitives.h>
 
 namespace eacp::Sprites
 {

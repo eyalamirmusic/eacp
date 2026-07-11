@@ -2,13 +2,9 @@
 
 #include "DisplayLink.h"
 
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Core/Threads/ThreadUtils.h>
-
 #include <dcomp.h>
 
 #include <atomic>
-#include <memory>
 #include <thread>
 
 namespace eacp::Threads

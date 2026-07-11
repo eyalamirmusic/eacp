@@ -2,11 +2,8 @@
 
 #include "../Utils/WinInclude.h"
 
-#include <algorithm>
-#include <cstdint>
 #include <cwctype>
 #include <mutex>
-#include <string>
 #include <thread>
 #include <vector>
 

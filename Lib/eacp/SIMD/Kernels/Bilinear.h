@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cstdint>
+#include "../Common.h"
 
 namespace eacp::simd::kernels
 {

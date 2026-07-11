@@ -1,6 +1,4 @@
 #include "Primitives.h"
-#include <algorithm>
-#include <cmath>
 
 namespace eacp::Graphics
 {

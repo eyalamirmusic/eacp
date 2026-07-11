@@ -1,10 +1,6 @@
 #pragma once
 
-#include <eacp/Core/Utils/Common.h>
-
 #include "../Buffer/Buffer.h"
-
-#include <cstddef>
 
 namespace eacp::GPU
 {

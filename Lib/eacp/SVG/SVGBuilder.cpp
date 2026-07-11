@@ -2,8 +2,6 @@
 #include "SVGAttributes.h"
 #include "SVGPathParser.h"
 
-#include <eacp/Core/Utils/Strings.h>
-
 namespace eacp::SVG
 {
 

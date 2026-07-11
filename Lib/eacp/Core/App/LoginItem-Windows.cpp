@@ -1,15 +1,13 @@
 #include "LoginItem.h"
+#include "../Utils/Common.h"
 
-#include <eacp/Core/Utils/WinInclude.h>
-
-#include <string>
+#include "../Utils/WinInclude.h"
 
 namespace eacp::Apps
 {
 namespace
 {
-constexpr auto* runKeyPath =
-    L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr auto* runKeyPath = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
 std::wstring executablePath()
 {
@@ -79,8 +77,7 @@ void setLaunchAtLogin(bool enabled)
                        0,
                        REG_SZ,
                        reinterpret_cast<const BYTE*>(command.c_str()),
-                       static_cast<DWORD>((command.size() + 1)
-                                           * sizeof(wchar_t)));
+                       static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
     }
     else
     {
@@ -106,13 +103,8 @@ bool isLaunchAtLogin()
     auto expected = runCommandForPath(path);
     auto bytes = DWORD {};
 
-    auto status = RegGetValueW(key,
-                               nullptr,
-                               valueName.c_str(),
-                               RRF_RT_REG_SZ,
-                               nullptr,
-                               nullptr,
-                               &bytes);
+    auto status = RegGetValueW(
+        key, nullptr, valueName.c_str(), RRF_RT_REG_SZ, nullptr, nullptr, &bytes);
 
     if (status != ERROR_SUCCESS || bytes == 0)
     {

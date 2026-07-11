@@ -1,6 +1,6 @@
 #pragma once
 
-#include <eacp/Core/Utils/Containers.h>
+#include "../Common.h"
 
 namespace eacp::GPU
 {

@@ -1,16 +1,8 @@
 #include "Image.h"
 
 #include "ImageCodec.h"
-#include <eacp/Core/Utils/Strings.h>
 
-#include <algorithm>
-#include <cmath>
-#include <cstdint>
-#include <fstream>
 #include <ios>
-#include <limits>
-#include <stdexcept>
-#include <utility>
 
 namespace eacp::Graphics
 {

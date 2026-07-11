@@ -1,7 +1,5 @@
 #include "App.h"
 
-#include <cassert>
-
 namespace eacp::Apps
 {
 // No Dock/activation-policy concept here.

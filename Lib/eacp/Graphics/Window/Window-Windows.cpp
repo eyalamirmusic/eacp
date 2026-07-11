@@ -6,10 +6,6 @@
 #include "../Helpers/DarkMode-Windows.h"
 #include "../Helpers/ImageConversion-Windows.h"
 #include "../Helpers/SystemAppearance.h"
-#include <eacp/Core/App/AppEnvironment.h>
-#include <eacp/Core/Plugins/ModuleInfo.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Core/Utils/Logging.h>
 
 // DwmSetWindowAttribute, used for Win11 rounded corners.
 #include <dwmapi.h>

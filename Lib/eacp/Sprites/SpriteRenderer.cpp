@@ -1,7 +1,5 @@
 #include "SpriteRenderer.h"
 
-#include <array>
-
 namespace eacp::Sprites
 {
 void SpriteShader::define()

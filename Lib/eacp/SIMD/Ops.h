@@ -1,10 +1,9 @@
 #pragma once
 
-#include <eacp/SIMD/SIMD.h>
+#include "SIMD.h"
 
 #include <algorithm>
 #include <concepts>
-#include <cstddef>
 
 // Header-only, buffer-level conveniences over the raw float-array primitives in
 // SIMD.h. Anything contiguous with data()/size() qualifies (EA::Vector,

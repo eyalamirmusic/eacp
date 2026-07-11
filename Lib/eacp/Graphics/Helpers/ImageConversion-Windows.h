@@ -1,7 +1,7 @@
 #pragma once
 
 #include <eacp/Core/Utils/WinInclude.h>
-#include <eacp/Graphics/Image/Image.h>
+#include "../Image/Image.h"
 
 namespace eacp::Graphics
 {

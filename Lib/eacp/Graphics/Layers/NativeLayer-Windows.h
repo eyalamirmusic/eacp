@@ -1,14 +1,9 @@
 #pragma once
 
-#include <eacp/Core/Utils/WinInclude.h>
+#include "../Common-Windows.h"
 
 #include "../Primitives/Primitives.h"
 
-#include <d2d1_1.h>
-#include <wrl/client.h>
-
-#include <winrt/Windows.Foundation.h>
-#include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.Graphics.DirectX.h>
 
 namespace wuc = winrt::Windows::UI::Composition;

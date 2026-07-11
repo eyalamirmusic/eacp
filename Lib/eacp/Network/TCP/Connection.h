@@ -1,13 +1,6 @@
 #pragma once
 
-#include <eacp/Core/Utils/Containers.h>
-
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
-#include <stdexcept>
-#include <string>
-#include <string_view>
+#include "../Common.h"
 
 namespace eacp::TCP
 {

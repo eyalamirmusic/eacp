@@ -3,11 +3,6 @@
 #include "JsStringLiteral.h"
 #include "StateBridge.h"
 
-#include <ResEmbed/ResEmbed.h>
-
-#include <optional>
-#include <stdexcept>
-
 namespace eacp::Graphics
 {
 namespace

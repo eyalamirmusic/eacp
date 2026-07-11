@@ -1,11 +1,7 @@
 #pragma once
 
 #include <eacp/Camera/Camera.h>
-#include <eacp/GPU/View/GPUView.h>
-#include <eacp/Graphics/Primitives/Primitives.h>
-#include <eacp/Sprites/SpriteRenderer.h>
-
-#include <optional>
+#include <eacp/Sprites/Sprites.h>
 
 namespace eacp::Cameras
 {

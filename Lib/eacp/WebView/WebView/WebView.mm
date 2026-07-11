@@ -8,19 +8,11 @@
 
 #include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/ObjC/Strings.h>
-#include <eacp/Core/Platform/Platform.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
 #if !TARGET_OS_IPHONE
 #include <eacp/Graphics/Graphics/Keyboard-MacOS.h>
 #endif
-#include <eacp/Core/Utils/Containers.h>
-#include <algorithm>
 #include <atomic>
-#include <cstddef>
-#include <memory>
-#include <stdexcept>
-#include <string>
-#include <unordered_map>
 
 namespace
 {

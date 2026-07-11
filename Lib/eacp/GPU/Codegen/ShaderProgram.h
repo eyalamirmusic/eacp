@@ -8,16 +8,6 @@
 #include "ShaderValue.h"
 #include "UniformLayout.h"
 
-#include <eacp/Core/Utils/Containers.h>
-
-#include <array>
-#include <cassert>
-#include <cmath>
-#include <concepts>
-#include <cstddef>
-#include <cstdint>
-#include <cstring>
-#include <optional>
 #include <vector>
 
 // A shader authored as a struct. Uniforms are named, typed members you set by

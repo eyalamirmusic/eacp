@@ -2,8 +2,6 @@
 
 #include "../Image/Image.h"
 #include "../Menu/Menu.h"
-#include <eacp/Core/Utils/Common.h>
-#include <string>
 
 namespace eacp::Graphics
 {

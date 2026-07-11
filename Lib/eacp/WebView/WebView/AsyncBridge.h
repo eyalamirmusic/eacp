@@ -1,12 +1,8 @@
 #pragma once
 
-#include <eacp/Core/Threads/Async.h>
+#include "../Common.h"
 
-#include <Miro/Miro.h>
-
-#include <string>
 #include <thread>
-#include <utility>
 
 namespace eacp::Graphics
 {

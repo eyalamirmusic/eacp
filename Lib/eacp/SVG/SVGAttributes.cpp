@@ -1,11 +1,7 @@
 #include "SVGAttributes.h"
 #include "NumberReader.h"
 
-#include <eacp/Core/Utils/Strings.h>
-
-#include <cctype>
 #include <sstream>
-#include <unordered_map>
 
 namespace eacp::SVG
 {

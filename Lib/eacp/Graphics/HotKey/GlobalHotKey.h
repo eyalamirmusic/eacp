@@ -1,9 +1,6 @@
 #pragma once
 
 #include "../Graphics/Keyboard.h"
-#include <eacp/Core/Utils/Common.h>
-#include <eacp/Core/Utils/Pimpl.h>
-#include <cstdint>
 
 namespace eacp::Graphics
 {

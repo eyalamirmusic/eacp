@@ -2,10 +2,6 @@
 
 #include "Connection.h"
 
-#include <eacp/Core/Utils/Containers.h>
-
-#include <cstdint>
-
 namespace eacp::TCP
 {
 

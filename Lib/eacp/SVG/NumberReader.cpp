@@ -1,8 +1,5 @@
 #include "NumberReader.h"
 
-#include <cctype>
-#include <string>
-
 namespace eacp::SVG
 {
 

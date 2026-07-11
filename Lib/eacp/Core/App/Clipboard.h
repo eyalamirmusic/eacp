@@ -1,9 +1,6 @@
 #pragma once
 
-#include <eacp/Core/Utils/Containers.h>
-
-#include <string>
-#include <string_view>
+#include "../Utils/Common.h"
 
 namespace eacp::Clipboard
 {

@@ -3,8 +3,6 @@
 #include "WebView.h"
 #include "WebViewDetail.h"
 
-#include <functional>
-
 @class WKWebView;
 @class WKWebViewConfiguration;
 @class NSEvent;

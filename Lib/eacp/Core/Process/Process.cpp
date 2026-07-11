@@ -1,7 +1,6 @@
 #include "Process.h"
 
 #include <thread>
-#include <utility>
 
 namespace eacp::Processes
 {

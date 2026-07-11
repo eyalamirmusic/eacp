@@ -1,13 +1,8 @@
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "GlobalHotKey.h"
-#include <eacp/Core/App/AppEnvironment.h>
-#include <eacp/Core/Plugins/ModuleInfo.h>
-#include <eacp/Core/Utils/Logging.h>
 
 #include <atomic>
-#include <string>
-#include <utility>
 
 namespace eacp::Graphics
 {

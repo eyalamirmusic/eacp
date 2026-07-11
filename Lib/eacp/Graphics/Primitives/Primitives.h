@@ -1,6 +1,7 @@
 #pragma once
 
-#include <eacp/Core/Utils/Containers.h>
+#include "../Common.h"
+
 #include <initializer_list>
 
 namespace eacp::Graphics

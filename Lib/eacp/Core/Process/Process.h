@@ -3,10 +3,6 @@
 #include "../Threads/Async.h"
 #include "../Utils/Common.h"
 
-#include <eacp/Core/Utils/Containers.h>
-
-#include <string>
-
 namespace eacp::Processes
 {
 struct EnvironmentVariable

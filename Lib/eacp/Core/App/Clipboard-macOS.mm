@@ -2,7 +2,7 @@
 
 #include "Clipboard.h"
 
-#include <eacp/Core/ObjC/Strings.h>
+#include "../ObjC/Strings.h"
 
 namespace eacp::Clipboard
 {

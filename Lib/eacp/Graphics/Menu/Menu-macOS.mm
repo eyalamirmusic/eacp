@@ -1,7 +1,6 @@
 #import <AppKit/AppKit.h>
 #include "AppKitMenu.h"
 #include "Menu.h"
-#include <eacp/Core/App/App.h>
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/ObjC/Strings.h>
 

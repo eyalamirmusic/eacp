@@ -1,8 +1,5 @@
 #include "DomNode.h"
 
-#include <stdexcept>
-#include <utility>
-
 namespace eacp::WebView::Test
 {
 

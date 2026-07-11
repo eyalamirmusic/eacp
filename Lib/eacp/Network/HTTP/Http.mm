@@ -4,8 +4,6 @@
 #include <eacp/Core/ObjC/AutoReleasePool.h>
 #include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/ObjC/Strings.h>
-#include <eacp/Core/Threads/TaskSemaphore.h>
-#include <stdexcept>
 
 namespace eacp::HTTP
 {
@@ -30,7 +28,7 @@ void downloadDelegateDidWriteData(id self,
                                   SEL,
                                   NSURLSession*,
                                   NSURLSessionDownloadTask* task,
-                                  int64_t bytesWritten,
+                                  int64_t /*bytesWritten*/,
                                   int64_t totalBytesWritten,
                                   int64_t totalBytesExpectedToWrite)
 {

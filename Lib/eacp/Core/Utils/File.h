@@ -1,7 +1,7 @@
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
+#include "Common.h"
+
 #include <filesystem>
 #include <fstream>
 #include <span>

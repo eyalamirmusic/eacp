@@ -1,8 +1,8 @@
 #include "Logging.h"
+#include "Common.h"
 
 #include "LoggingPlatform.h"
 
-#include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -10,7 +10,6 @@
 #include <iostream>
 #include <mutex>
 #include <sstream>
-#include <string>
 #include <system_error>
 
 namespace eacp

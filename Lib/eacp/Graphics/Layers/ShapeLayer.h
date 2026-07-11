@@ -1,8 +1,9 @@
 #pragma once
 
+#include "../Common.h"
+
 #include "../Primitives/Path.h"
 #include "Layer.h"
-#include <eacp/Core/Utils/Common.h>
 
 namespace eacp::Graphics
 {

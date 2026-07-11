@@ -1,6 +1,6 @@
 #include "Camera.h"
 
-#include <eacp/Graphics/Image/Image.h>
+#include <eacp/Graphics/Graphics.h>
 #include <eacp/SIMD/SIMD.h>
 
 // Portable Camera members. The platform backends (Camera-macOS.mm /

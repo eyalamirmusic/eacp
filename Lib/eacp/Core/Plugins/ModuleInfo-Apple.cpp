@@ -1,6 +1,5 @@
 #include "ModuleInfo.h"
 
-#include <cstdint>
 #include <dlfcn.h>
 #include <mach-o/loader.h>
 

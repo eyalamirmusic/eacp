@@ -1,8 +1,5 @@
-#include <eacp/SIMD/SIMD.h>
-
-#include <cstddef>
-#include <cstdint>
-#include <cstring>
+#include "../SIMD.h"
+#include "../Common.h"
 
 // Crop a width x height region at (x, y) of a tightly-packed RGBA8 image and
 // mirror it horizontally, in a single pass. This only moves bytes, so it is

@@ -1,18 +1,9 @@
-#include <eacp/Core/Utils/WinInclude.h>
-#include <eacp/Core/Utils/Containers.h>
-#include <eacp/Core/Utils/Logging.h>
-
 #include <cstdio>
-#include <functional>
+#include "../Common-Windows.h"
+#include "../Common.h"
 
 #include <d3d11.h>
 #include <dxgi1_2.h>
-#include <d2d1_1.h>
-#include <dwrite.h>
-
-#include <winrt/Windows.Foundation.h>
-#include <winrt/Windows.UI.Composition.h>
-#include <windows.ui.composition.interop.h>
 
 namespace wuc = winrt::Windows::UI::Composition;
 

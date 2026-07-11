@@ -1,10 +1,8 @@
 #include <eacp/Core/Utils/WinInclude.h>
+#include "../Common.h"
 
 #include "D3D12Context.h"
 #include "D3D12Types.h"
-
-#include <algorithm>
-#include <cstring>
 
 namespace eacp::GPU
 {

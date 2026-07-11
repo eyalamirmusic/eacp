@@ -5,24 +5,6 @@
 #include "StreamingRange.h"
 #include "WebViewDetail.h"
 
-#include <eacp/Core/App/AppEnvironment.h>
-#include <eacp/Core/Platform/Platform.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Core/Utils/File.h>
-
-#include <ResEmbed/ResEmbed.h>
-
-#include <algorithm>
-#include <cctype>
-#include <cstdio>
-#include <filesystem>
-#include <functional>
-#include <memory>
-#include <optional>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-
 namespace eacp::Graphics
 {
 std::string mimeForPath(std::string_view path)

@@ -1,12 +1,10 @@
 #pragma once
 
+#include "../Common.h"
+
 #include "ShaderTypes.h"
 
 #include "../Pipeline/VertexLayout.h"
-
-#include <eacp/Core/Utils/Containers.h>
-
-#include <string>
 
 namespace eacp::GPU
 {
@@ -135,8 +133,8 @@ private:
 
     Vector<Expr> nodes;
     Vector<ValueType> inputTypes;
-    Vector<StepRate> inputRates;   // parallel to inputTypes
-    Vector<int> inputSlots;        // parallel to inputTypes; the buffer slot
+    Vector<StepRate> inputRates; // parallel to inputTypes
+    Vector<int> inputSlots; // parallel to inputTypes; the buffer slot
     Vector<VaryingSlot> varyingSlots;
     Vector<ValueType> uniformTypes;
     Vector<BufferAccess> storageSlots;

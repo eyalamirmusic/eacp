@@ -2,9 +2,7 @@
 #include "../Graphics/Keyboard.h"
 #include "../Helpers/ImageConversion-macOS.h"
 #include "../Primitives/GraphicUtils.h"
-#include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/ObjC/RuntimeClass.h>
-#include <eacp/Core/Utils/Logging.h>
 #import <Cocoa/Cocoa.h>
 
 namespace

@@ -1,21 +1,8 @@
 #include "HttpServer.h"
+#include "../Common-Posix.h"
 #include "HttpServerDispatcher.h"
 
-#include <eacp/Network/HTTP/HttpProtocol.h>
-
-#include <eacp/Core/Utils/Containers.h>
-
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-#include <atomic>
-#include <csignal>
-#include <cstring>
-#include <mutex>
-#include <string>
-#include <thread>
+#include "../HTTP/HttpProtocol.h"
 
 namespace eacp::HTTP
 {

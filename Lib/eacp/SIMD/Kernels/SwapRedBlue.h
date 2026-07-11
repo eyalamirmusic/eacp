@@ -1,9 +1,6 @@
 #pragma once
 
-#include <eacp/SIMD/Backend/Scalar.h>
-
-#include <cstddef>
-#include <cstdint>
+#include "../Backend/Scalar.h"
 
 namespace eacp::simd::kernels
 {

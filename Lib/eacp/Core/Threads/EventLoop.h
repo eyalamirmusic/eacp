@@ -1,8 +1,6 @@
 #pragma once
 
 #include "../Utils/Common.h"
-#include <algorithm>
-#include <chrono>
 
 namespace eacp::Threads
 {

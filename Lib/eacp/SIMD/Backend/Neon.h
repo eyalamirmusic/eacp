@@ -1,11 +1,10 @@
 #pragma once
 
+#include "../Common.h"
+
 #if defined(__aarch64__) || defined(_M_ARM64)
 
 #include <arm_neon.h>
-#include <cstddef>
-#include <cstdint>
-#include <cstring>
 
 // NEON backend (128-bit). NEON is mandatory on AArch64, so it is the
 // unconditional baseline there and needs no runtime dispatch or compile flag.

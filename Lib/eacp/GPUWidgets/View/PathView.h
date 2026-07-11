@@ -2,10 +2,6 @@
 
 #include "../Path/Path.h"
 
-#include <eacp/Core/Utils/Pimpl.h>
-#include <eacp/GPU/View/GPUView.h>
-#include <eacp/Graphics/Primitives/Primitives.h>
-
 namespace eacp::GPU
 {
 class Frame;

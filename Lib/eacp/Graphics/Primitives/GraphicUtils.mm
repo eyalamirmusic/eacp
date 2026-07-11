@@ -1,7 +1,5 @@
 #include "GraphicUtils.h"
 
-#include <eacp/Core/Utils/Containers.h>
-
 namespace eacp::Graphics
 {
 CGRect toCGRect(const Rect& r)

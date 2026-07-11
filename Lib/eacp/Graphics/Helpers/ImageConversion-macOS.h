@@ -2,7 +2,7 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include <eacp/Graphics/Image/Image.h>
+#include "../Image/Image.h"
 
 namespace eacp::Graphics
 {

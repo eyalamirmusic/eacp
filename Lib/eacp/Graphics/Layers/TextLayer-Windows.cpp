@@ -5,15 +5,10 @@
 #include "NativeLayer-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
 
-#include <cassert>
-
-#include <d2d1_1.h>
-#include <dwrite.h>
 #include <wrl/client.h>
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Composition.h>
-#include <windows.ui.composition.interop.h>
 
 namespace wuc = winrt::Windows::UI::Composition;
 

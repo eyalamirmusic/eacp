@@ -1,7 +1,6 @@
 #include "DynamicLibrary.h"
 
 #include <dlfcn.h>
-#include <utility>
 
 namespace eacp::Plugins
 {

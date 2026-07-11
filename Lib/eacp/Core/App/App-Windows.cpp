@@ -8,9 +8,6 @@
 #include <wincrypt.h>
 #include <winrt/base.h>
 
-#include <optional>
-#include <string>
-
 namespace eacp::Apps
 {
 // No Dock concept on Windows; an app with no Window already has no taskbar

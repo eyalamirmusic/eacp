@@ -1,8 +1,8 @@
-#include <eacp/SIMD/Backend/Scalar.h>
-#include <eacp/SIMD/Backends.h>
-#include <eacp/SIMD/Kernels/ResizeBilinear.h>
-#include <eacp/SIMD/Kernels/SwapRedBlue.h>
-#include <eacp/SIMD/Kernels/WarpAffine.h>
+#include "../Backend/Scalar.h"
+#include "../Backends.h"
+#include "../Kernels/ResizeBilinear.h"
+#include "../Kernels/SwapRedBlue.h"
+#include "../Kernels/WarpAffine.h"
 
 // Scalar backend entry points. Always compiled, on every architecture: it is
 // the correctness oracle and the SIMD kernels' tail fallback.

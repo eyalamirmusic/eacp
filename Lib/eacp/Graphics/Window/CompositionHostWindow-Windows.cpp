@@ -7,7 +7,6 @@
 #include <unordered_map>
 
 #include <Windows.UI.Composition.Desktop.h>
-#include <windows.ui.composition.interop.h>
 
 namespace eacp::Graphics
 {

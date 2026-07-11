@@ -1,20 +1,7 @@
 #pragma once
 
-#include <eacp/Core/Threads/Async.h>
-#include <eacp/Core/Utils/Range.h>
-#include <eacp/Graphics/Graphics.h>
-#include <Miro/Miro.h>
-#include <ResEmbed/ResEmbed.h>
-#include <eacp/Core/Utils/Containers.h>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <optional>
-#include <span>
-#include <string>
-#include <string_view>
-#include <unordered_map>
+#include "../Common.h"
+
 namespace eacp::Graphics
 {
 // Owning byte buffer and non-owning views used across the resource API.

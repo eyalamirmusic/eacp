@@ -1,9 +1,9 @@
 #pragma once
 
+#include "../Common.h"
+
 #if defined(__x86_64__) || defined(_M_X64)
 
-#include <cstddef>
-#include <cstdint>
 #include <immintrin.h>
 
 // AVX2 backend (256-bit). Only ever compiled inside Tu/Avx2.cpp, which carries

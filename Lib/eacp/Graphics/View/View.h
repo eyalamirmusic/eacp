@@ -1,8 +1,5 @@
 #pragma once
 
-#include <eacp/Core/Utils/Common.h>
-#include <eacp/Core/Utils/Containers.h>
-
 #include "../Graphics/GraphicsContext.h"
 #include "../Layers/Layer.h"
 #include "../Graphics/Keyboard.h"

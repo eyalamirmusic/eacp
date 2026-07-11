@@ -3,7 +3,6 @@
 #import <AppKit/AppKit.h>
 #include "Menu.h"
 #include <eacp/Core/ObjC/ObjC.h>
-#include <eacp/Core/Utils/Containers.h>
 
 namespace eacp::Graphics
 {

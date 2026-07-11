@@ -2,9 +2,6 @@
 
 #include "Image.h"
 
-#include <cstdint>
-#include <string>
-
 // Internal seam between the cross-platform Image logic (Image.cpp) and
 // the per-platform codecs (Image-Apple.mm, Image-Windows.cpp). Not part
 // of the public Graphics surface.

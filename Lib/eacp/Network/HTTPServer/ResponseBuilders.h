@@ -1,8 +1,6 @@
 #pragma once
 
-#include <eacp/Network/HTTP/Http.h>
-
-#include <string>
+#include "../HTTP/Http.h"
 
 namespace eacp::HTTP
 {

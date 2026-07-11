@@ -2,14 +2,6 @@
 
 #include "EventRegistry.h"
 
-#include <Miro/Miro.h>
-
-#include <eacp/Core/Utils/Containers.h>
-
-#include <functional>
-#include <string>
-#include <utility>
-
 namespace eacp::Graphics
 {
 

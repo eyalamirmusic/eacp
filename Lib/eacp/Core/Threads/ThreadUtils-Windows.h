@@ -1,6 +1,6 @@
 #pragma once
 
-#include <eacp/Core/Utils/WinInclude.h>
+#include "../Utils/WinInclude.h"
 
 #include "ThreadUtils.h"
 #include <winrt/Windows.System.h>

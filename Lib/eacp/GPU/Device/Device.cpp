@@ -1,7 +1,5 @@
 #include "Device.h"
 
-#include <eacp/Graphics/Image/Image.h>
-
 // Portable Device members. The platform backends (Device-macOS.mm /
 // Device-Windows.cpp) own construction and the native handles; anything that
 // only builds on the public API lives here so it compiles once for every

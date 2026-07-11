@@ -1,6 +1,6 @@
 #include "ThreadUtils-Linux.h"
+#include "../Utils/Common.h"
 
-#include <cassert>
 #include <pthread.h>
 
 namespace eacp::Threads

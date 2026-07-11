@@ -1,7 +1,5 @@
 #include "Gradient.h"
 
-#include <algorithm>
-
 namespace eacp::GPUWidgets
 {
 namespace

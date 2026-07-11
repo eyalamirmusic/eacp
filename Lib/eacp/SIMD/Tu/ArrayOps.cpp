@@ -1,8 +1,7 @@
-#include <eacp/SIMD/SIMD.h>
+#include "../SIMD.h"
+#include "../Common.h"
 
 #include <algorithm>
-#include <cmath>
-#include <cstddef>
 
 // Elementwise float-array primitives. These are plain loops that the compiler
 // auto-vectorizes to the module's target ISA at -O3 (SSE2 on x86-64, NEON on

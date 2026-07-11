@@ -1,8 +1,8 @@
 #pragma once
 
-#include "Vertices.h"
+#include "../Common.h"
 
-#include <eacp/GPU/GPU.h>
+#include "Vertices.h"
 
 namespace eacp::GPUWidgets
 {

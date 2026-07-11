@@ -3,13 +3,7 @@
 #include "AsyncBridge.h"
 #include "WebView.h"
 
-#include <Miro/Miro.h>
-
 #include <ea_data_structures/Pointers/Broadcaster.h>
-#include <eacp/Core/Utils/Containers.h>
-
-#include <string>
-#include <unordered_map>
 
 namespace eacp::Graphics
 {

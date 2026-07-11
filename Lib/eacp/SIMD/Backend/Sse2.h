@@ -1,10 +1,9 @@
 #pragma once
 
+#include "../Common.h"
+
 #if defined(__x86_64__) || defined(_M_X64)
 
-#include <cstddef>
-#include <cstdint>
-#include <cstring>
 #include <emmintrin.h>
 
 // SSE2 backend. SSE2 is part of the x86-64 baseline, so this header needs no

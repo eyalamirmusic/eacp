@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../View/View.h"
-#include <eacp/Core/Utils/Common.h>
 
 namespace eacp::Graphics
 {

@@ -2,9 +2,6 @@
 
 #include "../Pipeline/VertexLayout.h"
 
-#include <cassert>
-#include <utility>
-
 namespace eacp::GPU
 {
 namespace

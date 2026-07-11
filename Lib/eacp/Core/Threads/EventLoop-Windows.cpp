@@ -7,11 +7,8 @@
 #include "../Utils/Environment.h"
 #include "../Utils/Singleton.h"
 
-#include <eacp/Core/Utils/Containers.h>
 #include <atomic>
-#include <chrono>
 #include <mutex>
-#include <string>
 #include <thread>
 #include <tlhelp32.h>
 

@@ -1,11 +1,6 @@
 #pragma once
 
 #include "../Graphics/Keyboard.h"
-#include <eacp/Core/Utils/Containers.h>
-#include <functional>
-#include <memory>
-#include <optional>
-#include <string>
 
 namespace eacp::Graphics
 {

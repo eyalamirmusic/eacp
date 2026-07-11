@@ -1,5 +1,5 @@
-#include <eacp/SIMD/Backends.h>
-#include <eacp/SIMD/SIMD.h>
+#include "../Backends.h"
+#include "../SIMD.h"
 
 // Public image-kernel entry points. Each resolves the best available backend
 // once (CPUID on x86-64, fixed on every other architecture) and calls it through

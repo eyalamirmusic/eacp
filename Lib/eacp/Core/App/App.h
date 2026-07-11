@@ -4,9 +4,6 @@
 #include "../Threads/EventLoop.h"
 #include "../Utils/Common.h"
 #include "AppEnvironment.h"
-#include <eacp/Core/Utils/Containers.h>
-#include <optional>
-#include <string>
 
 namespace eacp::Apps
 {

@@ -1,10 +1,6 @@
 #pragma once
 
-#include <eacp/Core/Utils/Strings.h>
-
-#include <eacp/Core/Utils/Containers.h>
-#include <string>
-#include <unordered_map>
+#include "Common.h"
 
 namespace eacp::SVG
 {
