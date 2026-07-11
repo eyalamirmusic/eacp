@@ -19,6 +19,14 @@ void* getCurrentModuleHandle()
     return module;
 }
 
+bool isDynamicLibrary()
+{
+    static const auto result =
+        getCurrentModuleHandle() != (void*) GetModuleHandleW(nullptr);
+
+    return result;
+}
+
 std::string getCurrentModulePath()
 {
     auto buffer = std::wstring(MAX_PATH, L'\0');

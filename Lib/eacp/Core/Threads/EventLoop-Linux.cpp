@@ -176,4 +176,8 @@ void scheduleStartup(const Callback& func)
     callAsync(func);
 }
 
+// The Linux loop is per-copy (no process-global pump to reach into yet);
+// wire this up alongside a Linux plugin host when one exists.
+void stopProcessRootLoop() {}
+
 } // namespace eacp::Threads

@@ -1,4 +1,5 @@
 #include "Platform.h"
+#include "../Plugins/ModuleInfo.h"
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
@@ -50,6 +51,16 @@ bool isLinux()
 bool isPosix()
 {
     return isApple() || isLinux();
+}
+
+bool isStandalone()
+{
+    return !isDLL();
+}
+
+bool isDLL()
+{
+    return Plugins::isDynamicLibrary();
 }
 
 std::string_view name()

@@ -17,6 +17,12 @@ std::string getCurrentModulePath();
 // uniquify names in process-global OS namespaces (Win32 window classes).
 std::string getModuleIdentitySuffix();
 
+// True when this eacp copy is compiled into a dynamic library (dylib, DLL,
+// .so) rather than the process executable. Each copy answers for its own
+// image, which is what run<T>()'s loop-ownership decision needs.
+// Platform::isDLL/isStandalone are the friendly spellings.
+bool isDynamicLibrary();
+
 #ifdef _WIN32
 // This module's HINSTANCE (as void* to keep windows.h out of the header):
 // the value CreateWindowExW/RegisterClassExW/FindResourceW should use so a

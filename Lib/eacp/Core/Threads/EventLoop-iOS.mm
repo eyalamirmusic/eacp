@@ -104,4 +104,7 @@ void EventLoop::quit()
     // meant to terminate themselves.
     CFRunLoopStop(CFRunLoopGetCurrent());
 }
+
+// No plugin hosts on iOS — an app is always the process executable.
+void stopProcessRootLoop() {}
 } // namespace eacp::Threads

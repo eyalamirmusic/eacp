@@ -4,12 +4,14 @@
 #include "ThreadUtils-Windows.h"
 #include "../App/App.h"
 #include "../Plugins/ModuleInfo.h"
+#include "../Utils/Environment.h"
 #include "../Utils/Singleton.h"
 
 #include <eacp/Core/Utils/Containers.h>
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <tlhelp32.h>
 
@@ -222,6 +224,13 @@ void EventLoop::run()
 {
     initLoopThread();
 
+    // Loop ownership is advertised through the process environment so it
+    // crosses eacp copies: a plugin-hosted app's quit reads it to know the
+    // running loop is eacp's to stop (see stopProcessRootLoop). The thread
+    // id rides along because WM_QUIT must target the pumping thread.
+    setEnv("EACP_ROOT_LOOP", "1");
+    setEnv("EACP_ROOT_LOOP_THREAD", std::to_string(GetCurrentThreadId()));
+
     // Outer run exits only on WM_QUIT — never on WM_EACP_STOP_LOOP, so
     // nested runFor calls can settle without taking the whole process
     // down with them.
@@ -246,6 +255,7 @@ void EventLoop::run()
         DispatchMessage(&msg);
     }
 
+    setEnv("EACP_ROOT_LOOP", "0");
     mainThreadId = 0;
     destroyMessageWindow();
 
@@ -331,6 +341,17 @@ void EventLoop::quit()
     auto id = mainThreadId.load();
     if (id != 0)
         PostThreadMessageW(id, WM_QUIT, 0, 0);
+}
+
+void stopProcessRootLoop()
+{
+    if (getEnvValue("EACP_ROOT_LOOP") != "1")
+        return;
+
+    auto thread = getEnvValue("EACP_ROOT_LOOP_THREAD");
+
+    if (!thread.empty())
+        PostThreadMessageW((DWORD) std::stoul(thread), WM_QUIT, 0, 0);
 }
 
 void EventLoop::call(Callback func)

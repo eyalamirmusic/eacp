@@ -1,6 +1,7 @@
 #include "EventLoop.h"
 #include "../ObjC/ObjC.h"
 #include "../ObjC/RuntimeClass.h"
+#include "../Utils/Environment.h"
 #import <Foundation/Foundation.h>
 #import <Cocoa/Cocoa.h>
 
@@ -90,7 +91,14 @@ void enterRootRunLoop()
     s_inRootRunLoop = true;
     s_quitRequested = false;
     configureAppForLoopOwnership();
+
+    // Loop ownership is advertised through the process environment so it
+    // crosses eacp copies: a plugin-hosted app's quit reads it to know the
+    // running loop is eacp's to stop (see stopProcessRootLoop).
+    setEnv("EACP_ROOT_LOOP", "1");
     [getApp() run];
+    setEnv("EACP_ROOT_LOOP", "0");
+
     s_inRootRunLoop = false;
 }
 
@@ -162,6 +170,17 @@ void EventLoop::quit()
     if (s_nestedDepth == 0 && s_inRootRunLoop)
         [getApp() stop:nil];
 
+    [getApp() postEvent:makeWakeEvent() atStart:YES];
+}
+
+void stopProcessRootLoop()
+{
+    if (getEnvValue("EACP_ROOT_LOOP") != "1")
+        return;
+
+    // NSApp is shared by every copy in the process, so stopping it from
+    // here reaches the root loop no matter which eacp copy entered it.
+    [getApp() stop:nil];
     [getApp() postEvent:makeWakeEvent() atStart:YES];
 }
 
