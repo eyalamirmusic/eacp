@@ -21,6 +21,7 @@ if (APPLE)
     target_sources(eacp-core PRIVATE
             ObjC/AutoReleasePool.mm
             ObjC/Strings.mm
+            Plugins/DynamicLibrary-Apple.cpp
             Plugins/DynamicLibrary-Posix.cpp
             Plugins/ModuleInfo-Apple.cpp
             Plugins/ModuleInfo-Posix.cpp
@@ -74,6 +75,7 @@ elseif (UNIX AND NOT APPLE)
             App/App-Linux.cpp
             App/Clipboard-Linux.cpp
             App/LoginItem-Linux.cpp
+            Plugins/DynamicLibrary-Linux.cpp
             Plugins/DynamicLibrary-Posix.cpp
             Plugins/ModuleInfo-Linux.cpp
             Plugins/ModuleInfo-Posix.cpp
