@@ -40,6 +40,9 @@ struct App
 
         if (auto openWindow = library.findFunction<void (*)()>("demo_open_window"))
             openWindow();
+
+        if (auto tryQuit = library.findFunction<void (*)()>("demo_try_quit"))
+            tryQuit();
     }
 
     void update()

@@ -13,4 +13,9 @@ void stopEventLoop()
     getEventLoop().quit();
 }
 
+// The main run loop is a process singleton here (CFRunLoopGetMain /
+// the glib main context), so a hosted eacp copy's callAsync and timers
+// already reach the host's loop without any setup.
+void attachCurrentThreadAsMain() {}
+
 } // namespace eacp::Threads

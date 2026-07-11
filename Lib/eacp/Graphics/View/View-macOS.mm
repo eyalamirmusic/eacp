@@ -17,10 +17,10 @@ View* getView(id self)
     return (View*) ObjC::getIvar<void*>(self, "cppView");
 }
 
-id getRootView(id self)
+NSView* getRootView(id self)
 {
-    id root = self;
-    NSView* current = [(NSView*) self superview];
+    auto* root = (NSView*) self;
+    NSView* current = [root superview];
 
     while (current != nil)
     {
@@ -50,9 +50,9 @@ MouseButton mouseButtonFromEvent(NSEvent* event)
 
 void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
 {
-    auto root = getRootView(self);
+    auto* root = getRootView(self);
     auto windowPos = [event locationInWindow];
-    auto localPos = [(NSView*) root convertPoint:windowPos fromView:nil];
+    auto localPos = [root convertPoint:windowPos fromView:nil];
 
     auto e = MouseEvent();
 

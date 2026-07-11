@@ -4,6 +4,7 @@
 #include <DispatcherQueue.h>
 #include <winrt/Windows.Foundation.h>
 
+#include <atomic>
 #include <cstdio>
 
 namespace eacp::Threads
@@ -12,34 +13,32 @@ namespace eacp::Threads
 static System::DispatcherQueueController dispatcherController {nullptr};
 static System::DispatcherQueue dispatcherQueue {nullptr};
 
-// Captured at static-init time, which on Windows runs on the main
-// thread before main(). Used as a fallback for isMainThread() when
-// the dispatcher queue hasn't been initialized yet (e.g. tests that
-// call callAsync before any runEventLoop / runFor has bootstrapped
-// the DispatcherQueue).
-static const DWORD initialMainThreadId = GetCurrentThreadId();
+// Captured at static-init time — for an executable that runs on the main
+// thread before main(), and for a dlopen'd plugin on whichever thread the
+// host loaded it (usually, but not guaranteed, its UI thread). Used as a
+// fallback for isMainThread() when the dispatcher queue hasn't been
+// initialized; re-seedable via setCurrentThreadAsMainFallback so a hosted
+// plugin can correct it from a call that is known to be on the UI thread.
+static std::atomic<DWORD> fallbackMainThreadId {GetCurrentThreadId()};
 
-// Suppress Windows Error Reporting + the JIT-debugger pop-up that
-// otherwise interrupts every test run any time WebView2 / WinRT trips
-// an access violation during DLL detach at shutdown. The actual crash
-// is intercepted by the vectored exception handler in test main; this
-// only stops the OS from also showing a dialog before that runs.
-// Runs at static-init on the main thread, so the suppression is in
-// place before any test code (or app code) executes.
-namespace
+void setCurrentThreadAsMainFallback()
 {
-const auto crashDialogSuppression = []
-{
-    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
-                 | SEM_NOOPENFILEERRORBOX);
-    return 0;
-}();
-} // namespace
+    fallbackMainThreadId = GetCurrentThreadId();
+}
 
 void initMainThread()
 {
     if (dispatcherQueue)
         return;
+
+    // Suppress Windows Error Reporting + the JIT-debugger pop-up that
+    // otherwise interrupts every test run any time WebView2 / WinRT trips
+    // an access violation during DLL detach at shutdown. Lives here — the
+    // loop owner's bootstrap — rather than at static init, so merely
+    // dlopen-loading an eacp plugin doesn't overwrite the host process's
+    // error mode.
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
+                 | SEM_NOOPENFILEERRORBOX);
 
     // DQTAT_COM_NONE: caller (initLoopThread / our test main()) has
     // already winrt::init_apartment'd this thread, so the dispatcher
@@ -80,9 +79,9 @@ bool isMainThread()
     if (dispatcherQueue)
         return dispatcherQueue.HasThreadAccess();
 
-    // Pre-dispatcher fallback: just compare the thread that loaded
-    // this TU (always the main thread on Windows) against the caller.
-    return GetCurrentThreadId() == initialMainThreadId;
+    // Pre-dispatcher fallback: compare against the captured (or re-seeded)
+    // main-thread id.
+    return GetCurrentThreadId() == fallbackMainThreadId.load();
 }
 
 void assertMainThread()

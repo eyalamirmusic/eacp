@@ -337,6 +337,15 @@ void EventLoop::call(Callback func)
 {
     getPendingCallbacks().add(func);
 
+    // Hosted copy (eacp inside a dlopen'd plugin — no run()/initLoopThread
+    // ever happens): the first callAsync on the UI thread creates the
+    // message-only window, whose messages the HOST's pump then dispatches
+    // into this copy's messageWindowProc. Off-thread first use stays
+    // buffered until attachCurrentThreadAsMain or a Window/EmbeddedView
+    // brings the window up.
+    if (messageWindow.load() == nullptr && isMainThread())
+        ensureMessageWindow();
+
     // Wake the pump so it drains the callback list on the next tick.
     // Posting to our message-only window means the wake survives foreign
     // modal loops. Before the window exists we fall back to a thread
@@ -370,6 +379,19 @@ void stopEventLoop()
 void scheduleStartup(const Callback& func)
 {
     callAsync(func);
+}
+
+// Deliberately does NOT touch mainThreadId: that doubles as the
+// loop-ownership marker quit()/stopEventLoop() post WM_QUIT through, and a
+// hosted plugin must never be able to quit the host's loop.
+void attachCurrentThreadAsMain()
+{
+    setCurrentThreadAsMainFallback();
+    ensureMessageWindow();
+
+    // Drain anything buffered before the wake channel existed.
+    if (auto hwnd = messageWindow.load())
+        PostMessageW(hwnd, WM_EACP_RUN_PENDING, 0, 0);
 }
 
 } // namespace eacp::Threads

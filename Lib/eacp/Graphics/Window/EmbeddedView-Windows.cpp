@@ -3,6 +3,7 @@
 #include "EmbeddedView.h"
 #include "CompositionHostWindow-Windows.h"
 #include <eacp/Core/Plugins/ModuleInfo.h>
+#include <eacp/Core/Threads/EventLoop.h>
 
 namespace eacp::Graphics
 {
@@ -16,6 +17,7 @@ struct EmbeddedView::Native
 {
     Native(void* hostParentHandle, const EmbeddedViewOptions& options)
     {
+        Threads::attachCurrentThreadAsMain();
         registerWindowClass();
         createChildWindow((HWND) hostParentHandle, options);
         host.initializeComposition(false);

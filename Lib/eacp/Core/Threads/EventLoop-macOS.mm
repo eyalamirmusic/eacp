@@ -54,16 +54,27 @@ NSApplicationActivationPolicy activationPolicyFromBundle()
 
 NSApplication* getApp()
 {
-    static NSApplication* app = [] {
-        auto* application = [NSApplication sharedApplication];
+    return [NSApplication sharedApplication];
+}
+
+// Installing the termination delegate and activation policy is what makes
+// this eacp copy "the app" — only the copy that runs the root loop may do
+// it. An eacp inside a dlopen-hosted plugin shares NSApp with the host and
+// must never overwrite the host's delegate or policy, so this lives in
+// enterRootRunLoop, not in getApp().
+void configureAppForLoopOwnership()
+{
+    static auto once = []
+    {
+        auto* application = getApp();
         [application setActivationPolicy:activationPolicyFromBundle()];
 
         static auto delegate = ObjC::Ptr<NSObject>(createAppTerminationBridge());
         [application setDelegate:(id<NSApplicationDelegate>) delegate.get()];
 
-        return application;
+        return 0;
     }();
-    return app;
+    (void) once;
 }
 
 // Single wrapper around [NSApp run]. Apple says NSApplication's run
@@ -78,6 +89,7 @@ void enterRootRunLoop()
 
     s_inRootRunLoop = true;
     s_quitRequested = false;
+    configureAppForLoopOwnership();
     [getApp() run];
     s_inRootRunLoop = false;
 }
@@ -136,6 +148,12 @@ bool EventLoop::runFor(std::chrono::milliseconds timeout)
 
 void EventLoop::quit()
 {
+    // An eacp copy that never entered a loop — eacp statically linked into
+    // a dlopen-hosted plugin — has nothing to quit, and NSApp belongs to
+    // the host. Quitting the application is the host's decision.
+    if (!s_inRootRunLoop && s_nestedDepth == 0)
+        return;
+
     s_quitRequested = true;
 
     // [NSApp stop:] applies to the active [NSApp run]. If a nested

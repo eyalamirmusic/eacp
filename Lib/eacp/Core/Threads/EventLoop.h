@@ -22,6 +22,16 @@ bool runEventLoopFor(
 void callAsync(const Callback& func);
 void stopEventLoop();
 
+// Marks the calling thread as this eacp copy's main/UI thread and brings up
+// the services callAsync depends on, without running an event loop. For eacp
+// statically linked into a dlopen-hosted plugin: the host owns the loop, so
+// call this once on the host's UI thread (creating a Window or EmbeddedView
+// does it implicitly) and the host's own pump then drives this copy's async
+// callbacks and timers. Idempotent. A no-op where the main run loop is a
+// process singleton (macOS/Linux) — there callAsync already reaches the
+// host's loop without any setup.
+void attachCurrentThreadAsMain();
+
 // Schedules the app's one-time startup callback (the app/window creation that
 // runEventLoop kicks off). Most platforms post it to the loop immediately; iOS
 // defers it to UIScene connection so the window is created with a live scene

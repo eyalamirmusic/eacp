@@ -8,6 +8,7 @@
 #include "../Helpers/SystemAppearance.h"
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Plugins/ModuleInfo.h>
+#include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Logging.h>
 
 // DwmSetWindowAttribute, used for Win11 rounded corners.
@@ -57,7 +58,10 @@ struct Window::Native
         , minHeight(options.minHeight)
     {
         // Process-wide DPI awareness (per-monitor v2) is established by
-        // initLoopThread() before any app code runs.
+        // initLoopThread() before any app code runs. In a hosted plugin no
+        // loop bootstrap ever ran, so adopt the (host UI) thread creating
+        // the first window as this copy's main thread.
+        Threads::attachCurrentThreadAsMain();
         registerWindowClass();
         createWindow(options);
         host.initializeComposition(true);
