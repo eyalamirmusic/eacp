@@ -2,6 +2,7 @@
 #include "Http.h"
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/ObjC/AutoReleasePool.h>
+#include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/ObjC/Strings.h>
 #include <eacp/Core/Threads/TaskSemaphore.h>
 #include <stdexcept>
@@ -17,21 +18,23 @@ struct DownloadContext
     ObjC::Ptr<NSURLResponse> response;
     ObjC::Ptr<NSError> error;
 };
-} // namespace eacp::HTTP
 
-@interface EacpDownloadDelegate : NSObject<NSURLSessionDownloadDelegate>
-@property(nonatomic, assign) eacp::HTTP::DownloadContext* ctx;
-@end
-
-@implementation EacpDownloadDelegate
-
-- (void)URLSession:(NSURLSession*)session
-                 downloadTask:(NSURLSessionDownloadTask*)task
-                 didWriteData:(int64_t)bytesWritten
-            totalBytesWritten:(int64_t)totalBytesWritten
-    totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite
+namespace
 {
-    if (auto* p = self.ctx->progress)
+DownloadContext* downloadDelegateContext(id self)
+{
+    return (DownloadContext*) ObjC::getIvar<void*>(self, "ctx");
+}
+
+void downloadDelegateDidWriteData(id self,
+                                  SEL,
+                                  NSURLSession*,
+                                  NSURLSessionDownloadTask* task,
+                                  int64_t bytesWritten,
+                                  int64_t totalBytesWritten,
+                                  int64_t totalBytesExpectedToWrite)
+{
+    if (auto* p = downloadDelegateContext(self)->progress)
     {
         p->bytesReceived.store(totalBytesWritten);
         p->totalBytes.store(totalBytesExpectedToWrite);
@@ -41,39 +44,66 @@ struct DownloadContext
     }
 }
 
-- (void)URLSession:(NSURLSession*)session
-                 downloadTask:(NSURLSessionDownloadTask*)task
-    didFinishDownloadingToURL:(NSURL*)location
+void downloadDelegateDidFinishDownloading(id self,
+                                          SEL,
+                                          NSURLSession*,
+                                          NSURLSessionDownloadTask* task,
+                                          NSURL* location)
 {
-    self.ctx->response.reset(task.response);
+    auto* ctx = downloadDelegateContext(self);
 
-    auto destURL =
-        [NSURL fileURLWithPath:eacp::Strings::toNSString(self.ctx->filePath)];
+    ctx->response.reset(task.response);
+
+    auto destURL = [NSURL fileURLWithPath:Strings::toNSString(ctx->filePath)];
     auto fm = [NSFileManager defaultManager];
     [fm removeItemAtURL:destURL error:nil];
 
     NSError* moveError = nil;
     if (![fm moveItemAtURL:location toURL:destURL error:&moveError])
-        self.ctx->moveError = eacp::Strings::toStdString(moveError);
+        ctx->moveError = Strings::toStdString(moveError);
 }
 
-- (void)URLSession:(NSURLSession*)session
-                    task:(NSURLSessionTask*)task
-    didCompleteWithError:(NSError*)error
+void downloadDelegateDidComplete(
+    id self, SEL, NSURLSession*, NSURLSessionTask* task, NSError* error)
 {
+    auto* ctx = downloadDelegateContext(self);
+
     if (error)
-        self.ctx->error.reset(error);
+        ctx->error.reset(error);
 
-    if (!self.ctx->response)
-        self.ctx->response.reset(task.response);
+    if (!ctx->response)
+        ctx->response.reset(task.response);
 
-    self.ctx->semaphore->signal();
+    ctx->semaphore->signal();
 }
 
-@end
-
-namespace eacp::HTTP
+Class getDownloadDelegateClass()
 {
+    static auto instance = []
+    {
+        auto builder = new ObjC::RuntimeClass<NSObject>("EacpDownloadDelegate");
+
+        builder->addIvar<void*>("ctx");
+        builder->addProtocol(@protocol(NSURLSessionDownloadDelegate));
+
+        builder->addMethod(@selector(URLSession:
+                                       downloadTask:didWriteData:totalBytesWritten
+                                                   :totalBytesExpectedToWrite:),
+                           downloadDelegateDidWriteData);
+        builder->addMethod(
+            @selector(URLSession:downloadTask:didFinishDownloadingToURL:),
+            downloadDelegateDidFinishDownloading);
+        builder->addMethod(@selector(URLSession:task:didCompleteWithError:),
+                           downloadDelegateDidComplete);
+
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+} // namespace
+
 NSMutableURLRequest* getRequest(const Request& req)
 {
     if (req.url.empty())
@@ -213,14 +243,15 @@ Response downloadFileInternal(const Request& req,
     ctx.semaphore = &semaphore;
     ctx.filePath = filePath;
 
-    auto delegate = ObjC::makePtr<EacpDownloadDelegate>();
-    delegate.get().ctx = &ctx;
+    auto delegate =
+        ObjC::Ptr<NSObject>([[getDownloadDelegateClass() alloc] init]);
+    ObjC::getIvar<void*>(delegate.get(), "ctx") = &ctx;
 
     auto config = [NSURLSessionConfiguration defaultSessionConfiguration];
-    auto session = ObjC::attachPtr(
-        [NSURLSession sessionWithConfiguration:config
-                                      delegate:delegate.get()
-                                 delegateQueue:nil]);
+    auto session = ObjC::attachPtr([NSURLSession
+        sessionWithConfiguration:config
+                        delegate:(id<NSURLSessionDelegate>) delegate.get()
+                   delegateQueue:nil]);
 
     auto task = [session.get() downloadTaskWithRequest:request];
     [task resume];

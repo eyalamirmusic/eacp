@@ -28,6 +28,12 @@ void setCommandLineArgs(int argc, char* argv[])
         args.emplace_back(argv[i]);
 }
 
+void setHeadless(bool headless)
+{
+    getAppEnvironment().headless = headless;
+    setEnv("EACP_HEADLESS", headless ? "1" : "0");
+}
+
 void destroyApp()
 {
     getGlobalApp().reset();

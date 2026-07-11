@@ -18,4 +18,9 @@ std::optional<std::string> getEnv(std::string_view name)
     return result;
 }
 
+void setEnv(std::string_view name, std::string_view value)
+{
+    _putenv_s(std::string {name}.c_str(), std::string {value}.c_str());
+}
+
 } // namespace eacp

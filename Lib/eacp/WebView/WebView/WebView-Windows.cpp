@@ -29,6 +29,7 @@
 #include <winrt/Windows.UI.Composition.h>
 
 #include <eacp/Core/App/AppEnvironment.h>
+#include <eacp/Core/Plugins/ModuleInfo.h>
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Logging.h>
 
@@ -94,19 +95,20 @@ std::wstring defaultUserDataFolder(const std::string& suffix)
     CoTaskMemFree(localAppData);
 
     wchar_t modulePath[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+    GetModuleFileNameW(
+        (HMODULE) eacp::Plugins::getCurrentModuleHandle(), modulePath, MAX_PATH);
 
-    auto exeName = std::wstring {PathFindFileNameW(modulePath)};
-    if (auto dot = exeName.rfind(L'.'); dot != std::wstring::npos)
-        exeName.resize(dot);
-    if (exeName.empty())
-        exeName = L"eacp";
+    auto moduleName = std::wstring {PathFindFileNameW(modulePath)};
+    if (auto dot = moduleName.rfind(L'.'); dot != std::wstring::npos)
+        moduleName.resize(dot);
+    if (moduleName.empty())
+        moduleName = L"eacp";
 
     auto leaf = std::wstring {L"WebView2"};
     if (!suffix.empty())
         leaf += L"-" + toWideString(suffix);
 
-    return folder + L"\\" + exeName + L"\\" + leaf;
+    return folder + L"\\" + moduleName + L"\\" + leaf;
 }
 
 // A read-only IStream over a bounded byte range of a StreamingResource.

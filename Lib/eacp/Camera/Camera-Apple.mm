@@ -5,6 +5,7 @@
 
 #include <eacp/Core/ObjC/AutoReleasePool.h>
 #include <eacp/Core/ObjC/ObjC.h>
+#include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Logging.h>
 
@@ -118,22 +119,16 @@ struct CaptureContext
     FrameCallback callback;
     LatestFrame latest;
 };
-} // namespace eacp::Cameras
 
-@interface EacpCameraDelegate
-    : NSObject <AVCaptureVideoDataOutputSampleBufferDelegate>
+namespace
 {
-@public
-    eacp::Cameras::CaptureContext* context;
-}
-@end
-
-@implementation EacpCameraDelegate
-- (void)captureOutput:(AVCaptureOutput*)output
-    didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
-           fromConnection:(AVCaptureConnection*)connection
+void cameraDelegateCaptureOutput(id self,
+                                 SEL,
+                                 AVCaptureOutput*,
+                                 CMSampleBufferRef sampleBuffer,
+                                 AVCaptureConnection*)
 {
-    using namespace eacp::Cameras;
+    auto* context = (CaptureContext*) ObjC::getIvar<void*>(self, "context");
 
     if (context == nullptr)
         return;
@@ -175,12 +170,28 @@ struct CaptureContext
 
     CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
 }
-@end
 
-namespace eacp::Cameras
+Class getCameraDelegateClass()
 {
-namespace
-{
+    static auto instance = []
+    {
+        auto builder = new ObjC::RuntimeClass<NSObject>("EacpCameraDelegate");
+
+        builder->addIvar<void*>("context");
+        builder->addProtocol(
+            @protocol(AVCaptureVideoDataOutputSampleBufferDelegate));
+
+        builder->addMethod(
+            @selector(captureOutput:didOutputSampleBuffer:fromConnection:),
+            cameraDelegateCaptureOutput);
+
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+
 AVCaptureSessionPreset presetFor(int width, int height)
 {
     if (width >= 1920 || height >= 1080)
@@ -363,9 +374,12 @@ struct Camera::Native
         captureQueue =
             dispatch_queue_create("com.eacp.camera.capture", DISPATCH_QUEUE_SERIAL);
 
-        delegate = [[EacpCameraDelegate alloc] init];
-        delegate.get()->context = &context;
-        [output.get() setSampleBufferDelegate:delegate.get() queue:captureQueue];
+        delegate = [[getCameraDelegateClass() alloc] init];
+        ObjC::getIvar<void*>(delegate.get(), "context") = &context;
+        [output.get()
+            setSampleBufferDelegate:
+                (id<AVCaptureVideoDataOutputSampleBufferDelegate>) delegate.get()
+                              queue:captureQueue];
 
         if (![session.get() canAddOutput:output.get()])
         {
@@ -448,7 +462,7 @@ struct Camera::Native
     CaptureContext context;
     ObjC::Ptr<AVCaptureSession> session;
     ObjC::Ptr<AVCaptureVideoDataOutput> output;
-    ObjC::Ptr<EacpCameraDelegate> delegate;
+    ObjC::Ptr<NSObject> delegate;
     dispatch_queue_t captureQueue = nullptr;
     dispatch_queue_t sessionQueue = nullptr;
     std::atomic<bool> running {false};

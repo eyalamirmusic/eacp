@@ -11,31 +11,30 @@
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Graphics/Helpers/DisplayLink.h>
+#include <eacp/Graphics/Layers/ImmediateLayerClass.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
-
-// Suppresses implicit Core Animation actions so the layer tracks the view's
-// size instantly during live resize instead of animating to it (matches the
-// Immediate* layer convention in eacp::Graphics).
-@interface ImmediateMetalLayer : CAMetalLayer
-@end
-
-@implementation ImmediateMetalLayer
-
-- (id<CAAction>)actionForKey:(NSString*)event
-{
-    return [NSNull null];
-}
-
-@end
 
 namespace eacp::GPU
 {
+namespace
+{
+// Suppresses implicit Core Animation actions so the layer tracks the view's
+// size instantly during live resize instead of animating to it (matches the
+// Immediate* layer convention in eacp::Graphics).
+Class getImmediateMetalLayerClass()
+{
+    static auto cls = Graphics::makeImmediateLayerClass<CAMetalLayer>(
+        "EacpImmediateMetalLayer");
+    return cls;
+}
+} // namespace
+
 struct GPUView::Native
 {
     explicit Native(GPUView& viewToUse)
         : view(viewToUse)
     {
-        metalLayer = [[ImmediateMetalLayer alloc] init];
+        metalLayer = [[getImmediateMetalLayerClass() alloc] init];
 
         auto metalDevice = (__bridge id<MTLDevice>) Device::shared().nativeDevice();
         metalLayer.get().device = metalDevice;
