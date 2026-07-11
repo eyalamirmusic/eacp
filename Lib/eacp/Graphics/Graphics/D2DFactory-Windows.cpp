@@ -1,6 +1,8 @@
 #include <eacp/Core/Utils/WinInclude.h>
 #include <eacp/Core/Utils/Containers.h>
+#include <eacp/Core/Utils/Logging.h>
 
+#include <cstdio>
 #include <functional>
 
 #include <d3d11.h>
@@ -89,35 +91,69 @@ private:
     // singleton's static destructor releases plain COM references at exit and
     // never tears the apartment down under other statics (WebView2, WinRT
     // factory caches) that still have to release.
+    //
+    // A headless or hosted context — most notably a plugin editor opened on a
+    // CI runner or in a session with no accessible desktop compositor — can fail
+    // to create the Direct3D / DirectComposition device, typically with
+    // E_ACCESSDENIED. Every getWinRTCompositor() consumer already guards a null
+    // compositor and degrades to no GPU compositing, so a failure here must NOT
+    // escape: an unhandled winrt::hresult_error would propagate into a host (a
+    // DAW, a validator) that installed no handler and terminate it. Catch it,
+    // log it, and leave the singleton uninitialised instead.
     WinRTCompositor()
     {
-        winrt::check_hresult(
-            DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,
-                                __uuidof(IDWriteFactory),
-                                reinterpret_cast<IUnknown**>(dwriteFactory.put())));
+        try
+        {
+            winrt::check_hresult(DWriteCreateFactory(
+                DWRITE_FACTORY_TYPE_SHARED,
+                __uuidof(IDWriteFactory),
+                reinterpret_cast<IUnknown**>(dwriteFactory.put())));
 
-        winrt::check_hresult(
-            D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, d2dFactory.put()));
+            winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                                                   d2dFactory.put()));
 
-        createRenderingDevice();
+            createRenderingDevice();
 
-        compositor = wuc::Compositor();
+            compositor = wuc::Compositor();
 
-        namespace Interop = ABI::Windows::UI::Composition;
-        auto interop = compositor.as<Interop::ICompositorInterop>();
-        winrt::com_ptr<Interop::ICompositionGraphicsDevice> abiDevice;
-        winrt::check_hresult(
-            interop->CreateGraphicsDevice(d2dDevice.get(), abiDevice.put()));
+            namespace Interop = ABI::Windows::UI::Composition;
+            auto interop = compositor.as<Interop::ICompositorInterop>();
+            winrt::com_ptr<Interop::ICompositionGraphicsDevice> abiDevice;
+            winrt::check_hresult(
+                interop->CreateGraphicsDevice(d2dDevice.get(), abiDevice.put()));
 
-        graphicsDevice = abiDevice.as<wuc::CompositionGraphicsDevice>();
+            graphicsDevice = abiDevice.as<wuc::CompositionGraphicsDevice>();
 
-        // Fires after SetRenderingDevice below, and also when the system
-        // replaces the device on its own (driver update, GPU reset). Surfaces
-        // survive the swap but lose their pixels, so everything re-renders.
-        graphicsDevice.RenderingDeviceReplaced([](auto&&, auto&&)
-                                               { handleRenderingDeviceReplaced(); });
+            // Fires after SetRenderingDevice below, and also when the system
+            // replaces the device on its own (driver update, GPU reset). Surfaces
+            // survive the swap but lose their pixels, so everything re-renders.
+            graphicsDevice.RenderingDeviceReplaced(
+                [](auto&&, auto&&) { handleRenderingDeviceReplaced(); });
 
-        initialized = true;
+            initialized = true;
+        }
+        catch (const winrt::hresult_error& error)
+        {
+            char hr[16];
+            std::snprintf(
+                hr, sizeof hr, "0x%08lx", static_cast<unsigned long>(error.code()));
+            LOG("WinRTCompositor: composition/graphics device init failed (hr=",
+                hr,
+                "); GPU compositing unavailable. Expected on headless sessions "
+                "and plugin hosts without an accessible desktop compositor — "
+                "views degrade to no compositing instead of crashing the host.");
+
+            // Leave the singleton fully uninitialised (mirrors ~WinRTCompositor)
+            // so every getter returns null and isInitialized() stays false,
+            // regardless of how far construction got before it threw.
+            graphicsDevice = nullptr;
+            compositor = nullptr;
+            d2dDevice = nullptr;
+            d2dFactory = nullptr;
+            dxgiDevice = nullptr;
+            d3dDevice = nullptr;
+            dwriteFactory = nullptr;
+        }
     }
 
     // Creates (or re-creates, after device loss) the D3D + D2D device pair the
