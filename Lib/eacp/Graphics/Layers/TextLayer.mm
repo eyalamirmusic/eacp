@@ -2,29 +2,17 @@
 #import <CoreText/CoreText.h>
 #include "TextLayer.h"
 #include "NativeLayer.h"
-#include <eacp/Core/ObjC/RuntimeClass.h>
+#include "ImmediateLayerClass.h"
 #include <eacp/Core/ObjC/Strings.h>
 
 namespace eacp::Graphics
 {
 namespace
 {
-id<CAAction> immediateActionForKey(id, SEL, NSString*)
-{
-    return (id<CAAction>) [NSNull null];
-}
-
 CATextLayer* createImmediateTextLayer()
 {
-    static auto cls = []
-    {
-        auto builder =
-            new ObjC::RuntimeClass<CATextLayer>("EacpImmediateTextLayer");
-        builder->addMethod(@selector(actionForKey:), immediateActionForKey);
-        builder->registerClass();
-        return builder->get();
-    }();
-
+    static auto cls =
+        makeImmediateLayerClass<CATextLayer>("EacpImmediateTextLayer");
     return [[[cls alloc] init] autorelease];
 }
 } // namespace

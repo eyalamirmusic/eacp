@@ -2,27 +2,12 @@
 #include "ShapeLayer.h"
 #include "../Primitives/GraphicUtils.h"
 
-#include <eacp/Core/ObjC/RuntimeClass.h>
+#include "ImmediateLayerClass.h"
 
 namespace eacp::Graphics
 {
 namespace
 {
-// Suppresses implicit animations so property changes apply immediately.
-id<CAAction> immediateActionForKey(id, SEL, NSString*)
-{
-    return (id<CAAction>) [NSNull null];
-}
-
-template <typename LayerType>
-Class makeImmediateLayerClass(const char* nameRoot)
-{
-    auto builder = new ObjC::RuntimeClass<LayerType>(nameRoot);
-    builder->addMethod(@selector(actionForKey:), immediateActionForKey);
-    builder->registerClass();
-    return builder->get();
-}
-
 CAShapeLayer* createImmediateShapeLayer()
 {
     static auto cls =
