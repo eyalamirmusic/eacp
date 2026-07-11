@@ -41,6 +41,8 @@ include(CPM)
 include(EacpSchema)
 include(EacpPlugin)
 
+eacp_default_hidden_visibility()
+
 option(EACP_ENABLE_TESTS "Enable Tests for EACP" ${PROJECT_IS_TOP_LEVEL})
 
 if (PROJECT_IS_TOP_LEVEL)

@@ -4,50 +4,46 @@
 #include "WebViewPlatform-Apple.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
+#include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/ObjC/Strings.h>
-
-// NSDraggingSource for native file drag-out. We drag real on-disk files as
-// public.file-url pasteboard items (NSURL is an NSPasteboardWriting), which is
-// the representation Finder, DAWs, and virtually every drop target understand
-// -- unlike a file promise, which apps that read only file-urls silently drop.
-@interface EacpDragSource : NSObject <NSDraggingSource>
-@end
-
-@implementation EacpDragSource
-
-- (NSDragOperation)draggingSession:(NSDraggingSession*)session
-    sourceOperationMaskForDraggingContext:(NSDraggingContext)context
-{
-    return NSDragOperationCopy;
-}
-
-@end
-
-// WKWebView subclass that owns native file drag-out. The page arms a drag on
-// mousedown (via window.eacp.armFileDrag); by the time the pointer crosses the
-// drag threshold the armed paths have arrived over the message channel, so we
-// start the session from the genuine NSEventTypeLeftMouseDragged event. That
-// real, OS-delivered event is what lets the drag escape the app -- a session
-// started from the async script-message callback is confined to the app
-// (NSDraggingContextWithinApplication) and never reaches Finder.
-@interface EacpDragWebView : WKWebView
-@property(nonatomic) BOOL eacpAcceptFirstMouse;
-- (void)armFileDragWithPaths:(const eacp::Vector<std::string>&)paths;
-- (void)setFileDragStartedCallback:(eacp::Callback)callback;
-- (void)armWindowDrag;
-- (void)setUnhandledKeyCallback:(eacp::Graphics::detail::UnhandledNSKeyCallback)callback;
-- (void)handleKeyVerdictIsDown:(BOOL)isDown consumed:(BOOL)consumed;
-@end
 
 namespace eacp::Graphics::detail
 {
 namespace
 {
+// NSDraggingSource for native file drag-out. We drag real on-disk files as
+// public.file-url pasteboard items (NSURL is an NSPasteboardWriting), which is
+// the representation Finder, DAWs, and virtually every drop target understand
+// -- unlike a file promise, which apps that read only file-urls silently drop.
+NSDragOperation dragSourceOperationMask(id, SEL, NSDraggingSession*, NSDraggingContext)
+{
+    return NSDragOperationCopy;
+}
+
+Class getDragSourceClass()
+{
+    static auto instance = []
+    {
+        auto builder = new ObjC::RuntimeClass<NSObject>("EacpDragSource");
+
+        builder->addProtocol(@protocol(NSDraggingSource));
+        builder->addMethod(
+            @selector(draggingSession:sourceOperationMaskForDraggingContext:),
+            dragSourceOperationMask);
+
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+
 // One shared drag source for the whole app -- it is stateless apart from the
 // work queue, so a singleton is safe and outlives every drag session.
-EacpDragSource* sharedDragSource()
+id<NSDraggingSource> sharedDragSource()
 {
-    static EacpDragSource* source = [[EacpDragSource alloc] init];
+    static id<NSDraggingSource> source =
+        (id<NSDraggingSource>) [[getDragSourceClass() alloc] init];
     return source;
 }
 } // namespace
@@ -102,54 +98,268 @@ bool beginFileDrag(WKWebView* webView,
     return true;
 }
 
+namespace
+{
+// Stashed key events older than this have lost their page verdict (a
+// navigation raced the report, or WebKit never dispatched a DOM event for
+// them) and are dropped rather than mispaired with a later verdict.
+constexpr NSTimeInterval keyEventExpirySeconds = 2.0;
+constexpr int maxPendingKeyEvents = 64;
+
+void dropExpiredKeyEvents(Vector<ObjC::Ptr<NSEvent>>& queue)
+{
+    auto now = [NSProcessInfo processInfo].systemUptime;
+    queue.eraseIf([now](auto& event)
+                  { return now - event.get().timestamp > keyEventExpirySeconds; });
+}
+
+// WKWebView subclass that owns native file drag-out. The page arms a drag on
+// mousedown (via window.eacp.armFileDrag); by the time the pointer crosses the
+// drag threshold the armed paths have arrived over the message channel, so we
+// start the session from the genuine NSEventTypeLeftMouseDragged event. That
+// real, OS-delivered event is what lets the drag escape the app -- a session
+// started from the async script-message callback is confined to the app
+// (NSDraggingContextWithinApplication) and never reaches Finder.
+//
+// Runtime classes get no automatic C++ ivar construction, so the view's C++
+// state lives behind one raw "state" pointer, created with the view and
+// deleted in its dealloc.
+struct DragWebViewState
+{
+    Vector<std::string> armedPaths;
+    Callback fileDragStartedCallback;
+    UnhandledNSKeyCallback unhandledKeyCallback;
+    Vector<ObjC::Ptr<NSEvent>> pendingKeyDowns;
+    Vector<ObjC::Ptr<NSEvent>> pendingKeyUps;
+    NSPoint mouseDownLocation {};
+    bool dragArmed = false;
+    bool dragStarted = false;
+    bool windowDragArmed = false;
+    bool acceptFirstMouse = false;
+};
+
+DragWebViewState* getDragWebViewState(id self)
+{
+    return (DragWebViewState*) ObjC::getIvar<void*>(self, "state");
+}
+
+// With acceptFirstMouse set, the click that activates an unfocused
+// window also reaches the page — so a drag region starts moving the window
+// on the FIRST click-drag instead of needing one click to focus first.
+BOOL dragWebViewAcceptsFirstMouse(id self, SEL, NSEvent* event)
+{
+    if (getDragWebViewState(self)->acceptFirstMouse)
+        return YES;
+
+    return ObjC::sendSuper<BOOL>(
+        self, [WKWebView class], @selector(acceptsFirstMouse:), event);
+}
+
+void dragWebViewMouseDown(id self, SEL, NSEvent* event)
+{
+    auto* view = (WKWebView*) self;
+    auto* state = getDragWebViewState(self);
+
+    // WKWebView takes part in AppKit's delayed-window-ordering protocol (for
+    // dragging content out of background windows), which suppresses the
+    // click-to-focus a plain NSView gets for free — without this, a click on
+    // an unfocused window only landed focus after a drag or a second click.
+    // Claim key status explicitly before the page sees the click.
+    if (view.window != nil && !view.window.keyWindow
+        && view.window.canBecomeKeyWindow)
+        [view.window makeKeyWindow];
+
+    state->mouseDownLocation = event.locationInWindow;
+    state->dragArmed = false;
+    state->dragStarted = false;
+    state->windowDragArmed = false;
+    state->armedPaths.clear();
+    ObjC::sendSuper<void>(self, [WKWebView class], @selector(mouseDown:), event);
+}
+
+void dragWebViewMouseDragged(id self, SEL, NSEvent* event)
+{
+    auto* view = (WKWebView*) self;
+    auto* state = getDragWebViewState(self);
+
+    if (state->dragArmed && ! state->dragStarted)
+    {
+        auto dx = event.locationInWindow.x - state->mouseDownLocation.x;
+        auto dy = event.locationInWindow.y - state->mouseDownLocation.y;
+        constexpr CGFloat threshold = 4.0;
+
+        if (dx * dx + dy * dy >= threshold * threshold)
+        {
+            state->dragStarted = true;
+            state->dragArmed = false;
+            auto didStart = beginFileDrag(view, event, state->armedPaths);
+            state->armedPaths.clear();
+            if (didStart && state->fileDragStartedCallback)
+            {
+                auto callback = state->fileDragStartedCallback;
+                dispatch_async(dispatch_get_main_queue(),
+                               ^{ callback(); });
+            }
+            return;
+        }
+    }
+
+    if (state->windowDragArmed && ! state->dragStarted)
+    {
+        state->dragStarted = true;
+        state->windowDragArmed = false;
+        [view.window performWindowDragWithEvent:event];
+        return;
+    }
+
+    ObjC::sendSuper<void>(
+        self, [WKWebView class], @selector(mouseDragged:), event);
+}
+
+void dragWebViewMouseUp(id self, SEL, NSEvent* event)
+{
+    auto* state = getDragWebViewState(self);
+
+    state->dragArmed = false;
+    state->dragStarted = false;
+    state->windowDragArmed = false;
+    state->armedPaths.clear();
+    ObjC::sendSuper<void>(self, [WKWebView class], @selector(mouseUp:), event);
+}
+
+void stashKeyEvent(NSEvent* event, Vector<ObjC::Ptr<NSEvent>>& queue)
+{
+    dropExpiredKeyEvents(queue);
+
+    if (queue.size() >= maxPendingKeyEvents)
+        queue.removeAt(0);
+
+    auto retained = ObjC::Ptr<NSEvent>();
+    retained.reset(event);
+    queue.add(retained);
+}
+
+// Cmd combos travel the key-equivalent path, not keyDown:, and the page shim
+// skips them symmetrically — stashing one here would desync the verdict queue.
+bool shouldStashKeyEvent(id self, NSEvent* event)
+{
+    return getDragWebViewState(self)->unhandledKeyCallback != nullptr
+           && (event.modifierFlags & NSEventModifierFlagCommand) == 0;
+}
+
+void dragWebViewKeyDown(id self, SEL, NSEvent* event)
+{
+    if (shouldStashKeyEvent(self, event))
+        stashKeyEvent(event, getDragWebViewState(self)->pendingKeyDowns);
+
+    ObjC::sendSuper<void>(self, [WKWebView class], @selector(keyDown:), event);
+}
+
+void dragWebViewKeyUp(id self, SEL, NSEvent* event)
+{
+    if (shouldStashKeyEvent(self, event))
+        stashKeyEvent(event, getDragWebViewState(self)->pendingKeyUps);
+
+    ObjC::sendSuper<void>(self, [WKWebView class], @selector(keyUp:), event);
+}
+
+void deallocDragWebView(id self, SEL)
+{
+    delete getDragWebViewState(self);
+    ObjC::sendSuper<void>(self, [WKWebView class], @selector(dealloc));
+}
+
+Class getDragWebViewClass()
+{
+    static auto instance = []
+    {
+        auto builder = new ObjC::RuntimeClass<WKWebView>("EacpDragWebView");
+
+        builder->addIvar<void*>("state");
+
+        builder->addMethod(@selector(acceptsFirstMouse:),
+                           dragWebViewAcceptsFirstMouse);
+        builder->addMethod(@selector(mouseDown:), dragWebViewMouseDown);
+        builder->addMethod(@selector(mouseDragged:), dragWebViewMouseDragged);
+        builder->addMethod(@selector(mouseUp:), dragWebViewMouseUp);
+        builder->addMethod(@selector(keyDown:), dragWebViewKeyDown);
+        builder->addMethod(@selector(keyUp:), dragWebViewKeyUp);
+        builder->addMethod(@selector(dealloc), deallocDragWebView);
+
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+} // namespace
+
 WKWebView* createWebView(WKWebViewConfiguration* config,
                          const WebKitOptions& options)
 {
     auto rect = CGRectMake(0, 0, 100, 100);
-    auto* webView = [[EacpDragWebView alloc] initWithFrame:rect
-                                             configuration:config];
-    webView.eacpAcceptFirstMouse = options.acceptFirstMouse;
+    auto* webView = (WKWebView*) [[getDragWebViewClass() alloc]
+        initWithFrame:rect
+        configuration:config];
+    ObjC::getIvar<void*>(webView, "state") = new DragWebViewState();
+    getDragWebViewState(webView)->acceptFirstMouse = options.acceptFirstMouse;
     return webView;
 }
 
 void armFileDrag(WKWebView* webView, const Vector<std::string>& paths)
 {
-    if (![webView isKindOfClass:[EacpDragWebView class]])
+    if (![webView isKindOfClass:getDragWebViewClass()])
         return;
 
-    [(EacpDragWebView*) webView armFileDragWithPaths:paths];
+    // Always lands after this gesture's mouseDown: (the page's JS mousedown is
+    // dispatched only once our mouseDown: forwards to super), so there is
+    // nothing stale to guard against here.
+    auto* state = getDragWebViewState(webView);
+    state->armedPaths = paths;
+    state->dragArmed = ! paths.empty();
 }
 
 void setFileDragStartedCallback(WKWebView* webView, Callback callback)
 {
-    if (![webView isKindOfClass:[EacpDragWebView class]])
+    if (![webView isKindOfClass:getDragWebViewClass()])
         return;
 
-    [(EacpDragWebView*) webView setFileDragStartedCallback:std::move(callback)];
+    getDragWebViewState(webView)->fileDragStartedCallback = std::move(callback);
 }
 
 void armWindowDrag(WKWebView* webView)
 {
-    if (![webView isKindOfClass:[EacpDragWebView class]])
+    if (![webView isKindOfClass:getDragWebViewClass()])
         return;
 
-    [(EacpDragWebView*) webView armWindowDrag];
+    getDragWebViewState(webView)->windowDragArmed = true;
 }
 
 void setUnhandledKeyCallback(WKWebView* webView, UnhandledNSKeyCallback callback)
 {
-    if (![webView isKindOfClass:[EacpDragWebView class]])
+    if (![webView isKindOfClass:getDragWebViewClass()])
         return;
 
-    [(EacpDragWebView*) webView setUnhandledKeyCallback:std::move(callback)];
+    getDragWebViewState(webView)->unhandledKeyCallback = std::move(callback);
 }
 
 void reportKeyVerdict(WKWebView* webView, bool isDown, bool consumed)
 {
-    if (![webView isKindOfClass:[EacpDragWebView class]])
+    if (![webView isKindOfClass:getDragWebViewClass()])
         return;
 
-    [(EacpDragWebView*) webView handleKeyVerdictIsDown:isDown consumed:consumed];
+    auto* state = getDragWebViewState(webView);
+    auto& queue = isDown ? state->pendingKeyDowns : state->pendingKeyUps;
+    dropExpiredKeyEvents(queue);
+
+    if (queue.empty())
+        return; // verdict from a page state we no longer track (navigation)
+
+    auto event = queue[0];
+    queue.removeAt(0);
+
+    if (!consumed && state->unhandledKeyCallback != nullptr)
+        state->unhandledKeyCallback(event.get(), isDown);
 }
 
 void performWindowControl(WKWebView* webView, const std::string& action)
@@ -224,184 +434,3 @@ WebView* findFocusedWebView()
     return nullptr;
 }
 } // namespace eacp::Graphics::detail
-
-namespace
-{
-// Stashed key events older than this have lost their page verdict (a
-// navigation raced the report, or WebKit never dispatched a DOM event for
-// them) and are dropped rather than mispaired with a later verdict.
-constexpr NSTimeInterval keyEventExpirySeconds = 2.0;
-constexpr int maxPendingKeyEvents = 64;
-
-void dropExpiredKeyEvents(eacp::Vector<eacp::ObjC::Ptr<NSEvent>>& queue)
-{
-    auto now = [NSProcessInfo processInfo].systemUptime;
-    queue.eraseIf([now](auto& event)
-                  { return now - event.get().timestamp > keyEventExpirySeconds; });
-}
-} // namespace
-
-@implementation EacpDragWebView
-{
-    eacp::Vector<std::string> armedPaths;
-    eacp::Callback fileDragStartedCallback;
-    eacp::Graphics::detail::UnhandledNSKeyCallback unhandledKeyCallback;
-    eacp::Vector<eacp::ObjC::Ptr<NSEvent>> pendingKeyDowns;
-    eacp::Vector<eacp::ObjC::Ptr<NSEvent>> pendingKeyUps;
-    NSPoint mouseDownLocation;
-    BOOL dragArmed;
-    BOOL dragStarted;
-    BOOL windowDragArmed;
-}
-
-- (void)armFileDragWithPaths:(const eacp::Vector<std::string>&)paths
-{
-    // Always lands after this gesture's mouseDown: (the page's JS mousedown is
-    // dispatched only once our mouseDown: forwards to super), so there is
-    // nothing stale to guard against here.
-    armedPaths = paths;
-    dragArmed = ! paths.empty();
-}
-
-- (void)setFileDragStartedCallback:(eacp::Callback)callback
-{
-    fileDragStartedCallback = std::move(callback);
-}
-
-- (void)armWindowDrag
-{
-    windowDragArmed = YES;
-}
-
-// With eacpAcceptFirstMouse set, the click that activates an unfocused
-// window also reaches the page — so a drag region starts moving the window
-// on the FIRST click-drag instead of needing one click to focus first.
-- (BOOL)acceptsFirstMouse:(NSEvent*)event
-{
-    if (self.eacpAcceptFirstMouse)
-        return YES;
-    return [super acceptsFirstMouse:event];
-}
-
-- (void)mouseDown:(NSEvent*)event
-{
-    // WKWebView takes part in AppKit's delayed-window-ordering protocol (for
-    // dragging content out of background windows), which suppresses the
-    // click-to-focus a plain NSView gets for free — without this, a click on
-    // an unfocused window only landed focus after a drag or a second click.
-    // Claim key status explicitly before the page sees the click.
-    if (self.window != nil && !self.window.keyWindow
-        && self.window.canBecomeKeyWindow)
-        [self.window makeKeyWindow];
-
-    mouseDownLocation = event.locationInWindow;
-    dragArmed = NO;
-    dragStarted = NO;
-    windowDragArmed = NO;
-    armedPaths.clear();
-    [super mouseDown:event];
-}
-
-- (void)mouseDragged:(NSEvent*)event
-{
-    if (dragArmed && ! dragStarted)
-    {
-        auto dx = event.locationInWindow.x - mouseDownLocation.x;
-        auto dy = event.locationInWindow.y - mouseDownLocation.y;
-        constexpr CGFloat threshold = 4.0;
-
-        if (dx * dx + dy * dy >= threshold * threshold)
-        {
-            dragStarted = YES;
-            dragArmed = NO;
-            auto didStart =
-                eacp::Graphics::detail::beginFileDrag(self, event, armedPaths);
-            armedPaths.clear();
-            if (didStart && fileDragStartedCallback)
-            {
-                auto callback = fileDragStartedCallback;
-                dispatch_async(dispatch_get_main_queue(),
-                               ^{ callback(); });
-            }
-            return;
-        }
-    }
-
-    if (windowDragArmed && ! dragStarted)
-    {
-        dragStarted = YES;
-        windowDragArmed = NO;
-        [self.window performWindowDragWithEvent:event];
-        return;
-    }
-
-    [super mouseDragged:event];
-}
-
-- (void)mouseUp:(NSEvent*)event
-{
-    dragArmed = NO;
-    dragStarted = NO;
-    windowDragArmed = NO;
-    armedPaths.clear();
-    [super mouseUp:event];
-}
-
-- (void)setUnhandledKeyCallback:(eacp::Graphics::detail::UnhandledNSKeyCallback)callback
-{
-    unhandledKeyCallback = std::move(callback);
-}
-
-- (void)stashKeyEvent:(NSEvent*)event
-                 into:(eacp::Vector<eacp::ObjC::Ptr<NSEvent>>&)queue
-{
-    dropExpiredKeyEvents(queue);
-
-    if (queue.size() >= maxPendingKeyEvents)
-        queue.removeAt(0);
-
-    auto retained = eacp::ObjC::Ptr<NSEvent>();
-    retained.reset(event);
-    queue.add(retained);
-}
-
-// Cmd combos travel the key-equivalent path, not keyDown:, and the page shim
-// skips them symmetrically — stashing one here would desync the verdict queue.
-- (BOOL)shouldStashKeyEvent:(NSEvent*)event
-{
-    return unhandledKeyCallback != nullptr
-           && (event.modifierFlags & NSEventModifierFlagCommand) == 0;
-}
-
-- (void)keyDown:(NSEvent*)event
-{
-    if ([self shouldStashKeyEvent:event])
-        [self stashKeyEvent:event into:pendingKeyDowns];
-
-    [super keyDown:event];
-}
-
-- (void)keyUp:(NSEvent*)event
-{
-    if ([self shouldStashKeyEvent:event])
-        [self stashKeyEvent:event into:pendingKeyUps];
-
-    [super keyUp:event];
-}
-
-- (void)handleKeyVerdictIsDown:(BOOL)isDown consumed:(BOOL)consumed
-{
-    auto& queue = isDown ? pendingKeyDowns : pendingKeyUps;
-    dropExpiredKeyEvents(queue);
-
-    if (queue.empty())
-        return; // verdict from a page state we no longer track (navigation)
-
-    auto event = queue[0];
-    queue.removeAt(0);
-
-    if (!consumed && unhandledKeyCallback != nullptr)
-        unhandledKeyCallback(event.get(), isDown);
-}
-
-@end

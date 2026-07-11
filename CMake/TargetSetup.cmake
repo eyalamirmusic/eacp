@@ -29,6 +29,25 @@ function(set_default_target_setting target)
     endif ()
 endfunction()
 
+# eacp never exports its symbol surface (plugins expose only what they mark
+# EACP_PLUGIN_EXPORT), and neither should static libraries linked into it.
+# These variables initialise the visibility properties of every target
+# created after this point in the current scope AND every subdirectory —
+# including CPM/FetchContent dependencies (Miro, ResEmbed, NanoTest, ...),
+# which are plain add_subdirectory under the hood — so no per-dependency
+# bookkeeping is needed. Call from the top-level CMakeLists before any
+# dependency or eacp target is declared. Cannot affect prebuilt/imported
+# libraries (nothing recompiles) or targets a consuming project creates in
+# its own scope. No-op for MSVC, which exports nothing without
+# __declspec(dllexport).
+macro(eacp_default_hidden_visibility)
+    set(CMAKE_C_VISIBILITY_PRESET hidden)
+    set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+    set(CMAKE_OBJC_VISIBILITY_PRESET hidden)
+    set(CMAKE_OBJCXX_VISIBILITY_PRESET hidden)
+    set(CMAKE_VISIBILITY_INLINES_HIDDEN TRUE)
+endmacro()
+
 function(eacp_enable_unity_build target)
     if (EACP_UNITY_BUILD)
         set_target_properties(${target} PROPERTIES UNITY_BUILD ON)

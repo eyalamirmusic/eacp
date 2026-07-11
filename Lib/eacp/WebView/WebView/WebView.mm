@@ -6,6 +6,7 @@
 #include "WebViewPlatform-Apple.h"
 #include "StreamingRange.h"
 
+#include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/ObjC/Strings.h>
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
@@ -50,17 +51,29 @@ class WebView;
 using MessageHandlerMap =
     std::unordered_map<std::string, std::function<void(const std::string&)>>;
 
-@interface WebViewDelegate
-    : NSObject <WKNavigationDelegate, WKScriptMessageHandler, WKUIDelegate>
-{
-@public
-    std::weak_ptr<eacp::Graphics::WebView::Native> nativeWeak;
-}
-@property(assign) MessageHandlerMap* messageHandlers;
-@end
-
 namespace
 {
+// Runtime classes (see RuntimeClass.h) get no automatic C++ ivar
+// construction, so each instance's C++ members live behind one raw "state"
+// pointer, created next to the instance and deleted in its dealloc.
+//
+// State of the runtime-built delegate class implementing
+// WKNavigationDelegate, WKScriptMessageHandler and WKUIDelegate.
+struct WebViewDelegateState
+{
+    std::weak_ptr<eacp::Graphics::WebView::Native> nativeWeak;
+    MessageHandlerMap* messageHandlers = nullptr;
+};
+
+WebViewDelegateState* getWebViewDelegateState(id self)
+{
+    return (WebViewDelegateState*) eacp::ObjC::getIvar<void*>(self, "state");
+}
+
+// Defined below WebView::Native — the delegate's methods need its complete
+// type. Returns a +1 (alloc'd) instance with a fresh state.
+NSObject* createWebViewDelegate();
+
 // Per-request streaming state: the resource being pulled, how far we've read,
 // how much is left to deliver, and a reusable chunk buffer. The buffer is
 // filled on a background queue and consumed on the main thread, but never
@@ -74,11 +87,10 @@ struct StreamContext
 };
 
 constexpr int streamChunkSize = 256 * 1024;
-} // namespace
 
-@interface ResourceSchemeHandler : NSObject <WKURLSchemeHandler>
+// State of the runtime-built WKURLSchemeHandler class.
+struct ResourceSchemeHandlerState
 {
-@public
     eacp::Graphics::ResourceProvider provider;
     eacp::Graphics::StreamingProvider streamingProvider;
     // Live flags for in-flight streaming tasks, keyed by the task pointer.
@@ -86,8 +98,16 @@ constexpr int streamChunkSize = 256 * 1024;
     // needs no locking; flipping a flag to false stops further delivery.
     std::unordered_map<const void*, std::shared_ptr<std::atomic<bool>>>
         streamingTasks;
+};
+
+ResourceSchemeHandlerState* getSchemeHandlerState(id self)
+{
+    return (ResourceSchemeHandlerState*) eacp::ObjC::getIvar<void*>(self,
+                                                                    "state");
 }
-@end
+
+NSObject* createResourceSchemeHandler();
+} // namespace
 
 
 namespace eacp::Graphics
@@ -103,8 +123,9 @@ struct WebView::Native
     Native(WebView& ownerToUse, Options options)
         : owner(ownerToUse)
     {
-        delegate = [[WebViewDelegate alloc] init];
-        delegate.get().messageHandlers = &messageHandlers;
+        delegate = createWebViewDelegate();
+        getWebViewDelegateState(delegate.get())->messageHandlers =
+            &messageHandlers;
 
         config = [[WKWebViewConfiguration alloc] init];
 
@@ -116,19 +137,22 @@ struct WebView::Native
 
         for (auto& [scheme, provider]: options.schemes)
         {
-            auto handler = ObjC::Ptr {[[ResourceSchemeHandler alloc] init]};
-            handler.get()->provider = std::move(provider);
-            [config.get() setURLSchemeHandler:handler.get()
-                                 forURLScheme:Strings::toNSString(scheme)];
+            auto handler = ObjC::Ptr {createResourceSchemeHandler()};
+            getSchemeHandlerState(handler.get())->provider = std::move(provider);
+            [config.get()
+                setURLSchemeHandler:(id<WKURLSchemeHandler>) handler.get()
+                       forURLScheme:Strings::toNSString(scheme)];
             schemeHandlers.push_back(handler);
         }
 
         for (auto& [scheme, streamingProvider]: options.streamingSchemes)
         {
-            auto handler = ObjC::Ptr {[[ResourceSchemeHandler alloc] init]};
-            handler.get()->streamingProvider = std::move(streamingProvider);
-            [config.get() setURLSchemeHandler:handler.get()
-                                 forURLScheme:Strings::toNSString(scheme)];
+            auto handler = ObjC::Ptr {createResourceSchemeHandler()};
+            getSchemeHandlerState(handler.get())->streamingProvider =
+                std::move(streamingProvider);
+            [config.get()
+                setURLSchemeHandler:(id<WKURLSchemeHandler>) handler.get()
+                       forURLScheme:Strings::toNSString(scheme)];
             schemeHandlers.push_back(handler);
         }
 
@@ -156,8 +180,9 @@ struct WebView::Native
             webView.get(),
             [this] { owner.onFileDragStarted(); });
 
-        webView.get().navigationDelegate = delegate.get();
-        webView.get().UIDelegate = delegate.get();
+        webView.get().navigationDelegate =
+            (id<WKNavigationDelegate>) delegate.get();
+        webView.get().UIDelegate = (id<WKUIDelegate>) delegate.get();
 
         [webView.get() addObserver:delegate.get()
                         forKeyPath:@"title"
@@ -175,15 +200,17 @@ struct WebView::Native
     Native(WebView& ownerToUse, WebView::PopupInit init)
         : owner(ownerToUse)
     {
-        delegate = [[WebViewDelegate alloc] init];
-        delegate.get().messageHandlers = &messageHandlers;
+        delegate = createWebViewDelegate();
+        getWebViewDelegateState(delegate.get())->messageHandlers =
+            &messageHandlers;
 
         config = ObjC::Ptr {init.configuration, ObjC::RetainMode {}};
 
         auto rect = CGRectMake(0, 0, 100, 100);
         webView = [[WKWebView alloc] initWithFrame:rect configuration:config.get()];
-        webView.get().navigationDelegate = delegate.get();
-        webView.get().UIDelegate = delegate.get();
+        webView.get().navigationDelegate =
+            (id<WKNavigationDelegate>) delegate.get();
+        webView.get().UIDelegate = (id<WKUIDelegate>) delegate.get();
 
         [webView.get() addObserver:delegate.get()
                         forKeyPath:@"title"
@@ -227,9 +254,9 @@ struct WebView::Native
     }
 
     ObjC::Ptr<WKWebView> webView;
-    ObjC::Ptr<WebViewDelegate> delegate;
+    ObjC::Ptr<NSObject> delegate;
     ObjC::Ptr<WKWebViewConfiguration> config;
-    Vector<ObjC::Ptr<ResourceSchemeHandler>> schemeHandlers;
+    Vector<ObjC::Ptr<NSObject>> schemeHandlers;
     MessageHandlerMap messageHandlers;
     WebView& owner;
     double zoomLevel = 1.0;
@@ -253,71 +280,88 @@ struct WebViewNativeAccess
 
 } // namespace eacp::Graphics
 
-@implementation WebViewDelegate
-
-- (void)webView:(WKWebView*)webView
-    didStartProvisionalNavigation:(WKNavigation*)navigation
+namespace
+{
+void webViewDelegateDidStartNavigation(id self,
+                                       SEL,
+                                       WKWebView* webView,
+                                       WKNavigation*)
 {
     auto url = safeString([webView.URL.absoluteString UTF8String]);
-    eacp::Threads::callAsync([weak = nativeWeak, url]() {
-        if (auto native = weak.lock())
-            native->owner.onNavigationStarted(url);
-    });
+    eacp::Threads::callAsync(
+        [weak = getWebViewDelegateState(self)->nativeWeak, url]()
+        {
+            if (auto native = weak.lock())
+                native->owner.onNavigationStarted(url);
+        });
 }
 
-- (void)webView:(WKWebView*)webView didFinishNavigation:(WKNavigation*)navigation
+void webViewDelegateDidFinishNavigation(id self,
+                                        SEL,
+                                        WKWebView* webView,
+                                        WKNavigation*)
 {
     auto url = safeString([webView.URL.absoluteString UTF8String]);
-    eacp::Threads::callAsync([weak = nativeWeak, url]() {
-        if (auto native = weak.lock())
-            native->owner.onNavigationFinished(url);
-    });
+    eacp::Threads::callAsync(
+        [weak = getWebViewDelegateState(self)->nativeWeak, url]()
+        {
+            if (auto native = weak.lock())
+                native->owner.onNavigationFinished(url);
+        });
 }
 
-- (void)webView:(WKWebView*)webView
-    didFailProvisionalNavigation:(WKNavigation*)navigation
-                       withError:(NSError*)error
+void webViewDelegateDidFailProvisionalNavigation(
+    id self, SEL, WKWebView*, WKNavigation*, NSError* error)
 {
     auto errorStr =
         safeString([error.localizedDescription UTF8String], "Unknown error");
-    eacp::Threads::callAsync([weak = nativeWeak, errorStr]() {
-        if (auto native = weak.lock())
-            native->owner.onNavigationFailed(errorStr);
-    });
+    eacp::Threads::callAsync(
+        [weak = getWebViewDelegateState(self)->nativeWeak, errorStr]()
+        {
+            if (auto native = weak.lock())
+                native->owner.onNavigationFailed(errorStr);
+        });
 }
 
-- (void)webView:(WKWebView*)webView
-    didFailNavigation:(WKNavigation*)navigation
-            withError:(NSError*)error
+void webViewDelegateDidFailNavigation(
+    id self, SEL, WKWebView*, WKNavigation*, NSError* error)
 {
     auto errorStr =
         safeString([error.localizedDescription UTF8String], "Unknown error");
-    eacp::Threads::callAsync([weak = nativeWeak, errorStr]() {
-        if (auto native = weak.lock())
-            native->owner.onNavigationFailed(errorStr);
-    });
+    eacp::Threads::callAsync(
+        [weak = getWebViewDelegateState(self)->nativeWeak, errorStr]()
+        {
+            if (auto native = weak.lock())
+                native->owner.onNavigationFailed(errorStr);
+        });
 }
 
-- (void)observeValueForKeyPath:(NSString*)keyPath
-                      ofObject:(id)object
-                        change:(NSDictionary<NSKeyValueChangeKey, id>*)change
-                       context:(void*)context
+void webViewDelegateObserveValue(id self,
+                                 SEL,
+                                 NSString* keyPath,
+                                 id object,
+                                 NSDictionary<NSKeyValueChangeKey, id>*,
+                                 void*)
 {
     if (! [keyPath isEqualToString:@"title"])
         return;
 
     auto* webView = (WKWebView*) object;
     auto title = safeString([webView.title UTF8String]);
-    eacp::Threads::callAsync([weak = nativeWeak, title]() {
-        if (auto native = weak.lock())
-            native->owner.onTitleChanged(title);
-    });
+    eacp::Threads::callAsync(
+        [weak = getWebViewDelegateState(self)->nativeWeak, title]()
+        {
+            if (auto native = weak.lock())
+                native->owner.onTitleChanged(title);
+        });
 }
 
-- (WKWebView*)webView:(WKWebView*)webView
-    createWebViewWithConfiguration:(WKWebViewConfiguration*)configuration
-               forNavigationAction:(WKNavigationAction*)navigationAction
-                    windowFeatures:(WKWindowFeatures*)windowFeatures
+WKWebView* webViewDelegateCreateWebView(id self,
+                                        SEL,
+                                        WKWebView* webView,
+                                        WKWebViewConfiguration* configuration,
+                                        WKNavigationAction* navigationAction,
+                                        WKWindowFeatures*)
 {
     auto url = safeString([navigationAction.request.URL.absoluteString UTF8String]);
 
@@ -325,7 +369,7 @@ struct WebViewNativeAccess
     if (@available(macOS 13.3, iOS 16.4, *))
         inspectable = webView.inspectable;
 
-    auto native = nativeWeak.lock();
+    auto native = getWebViewDelegateState(self)->nativeWeak.lock();
     if (! native)
         return nil;
 
@@ -344,21 +388,25 @@ struct WebViewNativeAccess
     return nil;
 }
 
-- (void)webViewDidClose:(WKWebView*)webView
+void webViewDelegateDidClose(id self, SEL, WKWebView*)
 {
-    eacp::Threads::callAsync([weak = nativeWeak]() {
-        if (auto native = weak.lock())
-            native->owner.onClose();
-    });
+    eacp::Threads::callAsync(
+        [weak = getWebViewDelegateState(self)->nativeWeak]()
+        {
+            if (auto native = weak.lock())
+                native->owner.onClose();
+        });
 }
 
-- (void)webView:(WKWebView*)webView
-    requestMediaCapturePermissionForOrigin:(WKSecurityOrigin*)origin
-                          initiatedByFrame:(WKFrameInfo*)frame
-                                      type:(WKMediaCaptureType)type
-                           decisionHandler:
-                               (void (^)(WKPermissionDecision decision))handler
-    API_AVAILABLE(macos(12.0), ios(15.0))
+API_AVAILABLE(macos(12.0), ios(15.0))
+void webViewDelegateRequestMediaCapture(
+    id,
+    SEL,
+    WKWebView*,
+    WKSecurityOrigin*,
+    WKFrameInfo*,
+    WKMediaCaptureType,
+    void (^handler)(WKPermissionDecision decision))
 {
     handler(WKPermissionDecisionGrant);
 }
@@ -369,11 +417,13 @@ struct WebViewNativeAccess
 // guard makes the preference explicit: if some future WebKit ever dispatched
 // both, the public path still wins and we'd no-op here. handler() is always
 // invoked so the request never hangs.
-- (void)_webView:(WKWebView*)webView
-    requestUserMediaAuthorizationForDevices:(_WKCaptureDevices)devices
-                                        url:(NSURL*)url
-                               mainFrameURL:(NSURL*)mainFrameURL
-                            decisionHandler:(void (^)(BOOL authorized))handler
+void webViewDelegateRequestUserMediaSPI(id,
+                                        SEL,
+                                        WKWebView*,
+                                        _WKCaptureDevices,
+                                        NSURL*,
+                                        NSURL*,
+                                        void (^handler)(BOOL authorized))
 {
     if (@available(macOS 12.0, *))
     {
@@ -384,14 +434,18 @@ struct WebViewNativeAccess
 }
 #endif
 
-- (void)userContentController:(WKUserContentController*)userContentController
-      didReceiveScriptMessage:(WKScriptMessage*)message
+void webViewDelegateDidReceiveScriptMessage(id self,
+                                            SEL,
+                                            WKUserContentController*,
+                                            WKScriptMessage* message)
 {
-    if (_messageHandlers)
+    auto* messageHandlers = getWebViewDelegateState(self)->messageHandlers;
+
+    if (messageHandlers)
     {
         auto name = std::string([message.name UTF8String]);
-        auto it = _messageHandlers->find(name);
-        if (it != _messageHandlers->end())
+        auto it = messageHandlers->find(name);
+        if (it != messageHandlers->end())
         {
             std::string body;
             if ([message.body isKindOfClass:[NSString class]])
@@ -418,61 +472,141 @@ struct WebViewNativeAccess
     }
 }
 
-@end
-
-@interface ResourceSchemeHandler ()
-- (void)beginStreamingTask:(id<WKURLSchemeTask>)task forURL:(const std::string&)url;
-- (void)pumpTask:(id<WKURLSchemeTask>)task
-         context:(std::shared_ptr<StreamContext>)context
-            live:(std::shared_ptr<std::atomic<bool>>)live;
-@end
-
-@implementation ResourceSchemeHandler
-
-- (void)webView:(WKWebView*)webView
-    startURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
+void deallocWebViewDelegate(id self, SEL)
 {
-    auto* url = urlSchemeTask.request.URL.absoluteString;
-    auto urlStr = std::string([url UTF8String]);
+    delete getWebViewDelegateState(self);
+    eacp::ObjC::sendSuper<void>(self, [NSObject class], @selector(dealloc));
+}
 
-    if (streamingProvider)
+Class getWebViewDelegateClass()
+{
+    static auto instance = []
     {
-        [self beginStreamingTask:urlSchemeTask forURL:urlStr];
-        return;
-    }
+        auto builder =
+            new eacp::ObjC::RuntimeClass<NSObject>("EacpWebViewDelegate");
 
-    auto response = provider ? provider(urlStr) : std::nullopt;
+        builder->addIvar<void*>("state");
+        builder->addProtocol(@protocol(WKNavigationDelegate));
+        builder->addProtocol(@protocol(WKScriptMessageHandler));
+        builder->addProtocol(@protocol(WKUIDelegate));
 
-    if (!response)
-    {
-        auto* error =
-            [NSError errorWithDomain:NSURLErrorDomain
-                                code:NSURLErrorResourceUnavailable
-                            userInfo:nil];
-        [urlSchemeTask didFailWithError:error];
-        return;
-    }
+        builder->addMethod(@selector(webView:didStartProvisionalNavigation:),
+                           webViewDelegateDidStartNavigation);
+        builder->addMethod(@selector(webView:didFinishNavigation:),
+                           webViewDelegateDidFinishNavigation);
+        builder->addMethod(
+            @selector(webView:didFailProvisionalNavigation:withError:),
+            webViewDelegateDidFailProvisionalNavigation);
+        builder->addMethod(@selector(webView:didFailNavigation:withError:),
+                           webViewDelegateDidFailNavigation);
+        builder->addMethod(
+            @selector(observeValueForKeyPath:ofObject:change:context:),
+            webViewDelegateObserveValue);
+        builder->addMethod(
+            @selector(webView:
+                createWebViewWithConfiguration:forNavigationAction:windowFeatures:),
+            webViewDelegateCreateWebView);
+        builder->addMethod(@selector(webViewDidClose:), webViewDelegateDidClose);
 
-    auto* mime = eacp::Strings::toNSString(response->mimeType);
-    auto* httpResponse = [[[NSHTTPURLResponse alloc]
-        initWithURL:urlSchemeTask.request.URL
-         statusCode:response->statusCode
-        HTTPVersion:@"HTTP/1.1"
-       headerFields:@{@"Content-Type": mime}] autorelease];
+        // The public media-capture selector (and the WKMediaCaptureType /
+        // WKPermissionDecision types in its signature) only exists on
+        // macOS 12 / iOS 15+, so registration is gated the same way. Older
+        // systems never dispatch it; they use the SPI fallback below.
+        if (@available(macOS 12.0, iOS 15.0, *))
+            builder->addMethod(
+                @selector(webView:
+                    requestMediaCapturePermissionForOrigin:initiatedByFrame:type
+                                                          :decisionHandler:),
+                webViewDelegateRequestMediaCapture);
 
-    [urlSchemeTask didReceiveResponse:httpResponse];
+#if EACP_WEBVIEW_PRIVATE_MEDIA_CAPTURE_SPI
+        builder->addMethod(
+            @selector(_webView:
+                requestUserMediaAuthorizationForDevices:url:mainFrameURL
+                                                       :decisionHandler:),
+            webViewDelegateRequestUserMediaSPI);
+#endif
 
-    auto* data = [NSData dataWithBytes:response->data.data()
-                                length:response->data.size()];
-    [urlSchemeTask didReceiveData:data];
-    [urlSchemeTask didFinish];
+        builder->addMethod(
+            @selector(userContentController:didReceiveScriptMessage:),
+            webViewDelegateDidReceiveScriptMessage);
+        builder->addMethod(@selector(dealloc), deallocWebViewDelegate);
+
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+
+NSObject* createWebViewDelegate()
+{
+    NSObject* delegate = [[getWebViewDelegateClass() alloc] init];
+    eacp::ObjC::getIvar<void*>(delegate, "state") = new WebViewDelegateState();
+    return delegate;
+}
+} // namespace
+
+namespace
+{
+// Reads one chunk off a background queue, then hops to the main thread to feed
+// it to the task and schedule the next chunk. WKURLSchemeTask methods must run
+// on the thread that started the task and must not run after it's stopped, so
+// every task call sits behind the main thread plus the `live` guard.
+void schemeHandlerPumpTask(id self,
+                           id<WKURLSchemeTask> task,
+                           std::shared_ptr<StreamContext> context,
+                           std::shared_ptr<std::atomic<bool>> live)
+{
+    auto* key = (__bridge const void*) task;
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      auto want = std::min<eacp::Graphics::RangeSize>(
+          static_cast<eacp::Graphics::RangeSize>(context->buffer.size()),
+          context->remaining);
+
+      auto got = context->resource.read(
+          context->offset,
+          eacp::Graphics::ByteSpan {context->buffer.data(),
+                                    static_cast<std::size_t>(want)});
+
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (! live->load())
+            return;
+
+        if (got == 0)
+        {
+            [task didFinish];
+            getSchemeHandlerState(self)->streamingTasks.erase(key);
+            return;
+        }
+
+        auto* data = [NSData dataWithBytes:context->buffer.data()
+                                    length:static_cast<NSUInteger>(got)];
+        [task didReceiveData:data];
+
+        context->offset += got;
+        context->remaining -= got;
+
+        if (context->remaining == 0)
+        {
+            [task didFinish];
+            getSchemeHandlerState(self)->streamingTasks.erase(key);
+            return;
+        }
+
+        schemeHandlerPumpTask(self, task, context, live);
+      });
+    });
 }
 
 // Resolves the request's Range header against the resource size, sends the
 // matching 200 / 206 / 416 headers, then kicks off the chunked body pump.
-- (void)beginStreamingTask:(id<WKURLSchemeTask>)task forURL:(const std::string&)url
+void schemeHandlerBeginStreamingTask(id self,
+                                     id<WKURLSchemeTask> task,
+                                     const std::string& url)
 {
-    auto resource = streamingProvider(url);
+    auto resource = getSchemeHandlerState(self)->streamingProvider(url);
 
     if (!resource)
     {
@@ -514,64 +648,61 @@ struct WebViewNativeAccess
     context->buffer.resize(streamChunkSize);
 
     auto live = std::make_shared<std::atomic<bool>>(true);
-    streamingTasks[(__bridge const void*) task] = live;
+    getSchemeHandlerState(self)->streamingTasks[(__bridge const void*) task] =
+        live;
 
-    [self pumpTask:task context:context live:live];
+    schemeHandlerPumpTask(self, task, context, live);
 }
 
-// Reads one chunk off a background queue, then hops to the main thread to feed
-// it to the task and schedule the next chunk. WKURLSchemeTask methods must run
-// on the thread that started the task and must not run after it's stopped, so
-// every task call sits behind the main thread plus the `live` guard.
-- (void)pumpTask:(id<WKURLSchemeTask>)task
-         context:(std::shared_ptr<StreamContext>)context
-            live:(std::shared_ptr<std::atomic<bool>>)live
+void schemeHandlerStartTask(id self,
+                            SEL,
+                            WKWebView*,
+                            id<WKURLSchemeTask> urlSchemeTask)
 {
-    auto* key = (__bridge const void*) task;
+    auto* url = urlSchemeTask.request.URL.absoluteString;
+    auto urlStr = std::string([url UTF8String]);
 
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-      auto want = std::min<eacp::Graphics::RangeSize>(
-          static_cast<eacp::Graphics::RangeSize>(context->buffer.size()),
-          context->remaining);
+    auto* state = getSchemeHandlerState(self);
 
-      auto got = context->resource.read(
-          context->offset,
-          eacp::Graphics::ByteSpan {context->buffer.data(),
-                                    static_cast<std::size_t>(want)});
+    if (state->streamingProvider)
+    {
+        schemeHandlerBeginStreamingTask(self, urlSchemeTask, urlStr);
+        return;
+    }
 
-      dispatch_async(dispatch_get_main_queue(), ^{
-        if (! live->load())
-            return;
+    auto response = state->provider ? state->provider(urlStr) : std::nullopt;
 
-        if (got == 0)
-        {
-            [task didFinish];
-            self->streamingTasks.erase(key);
-            return;
-        }
+    if (!response)
+    {
+        auto* error =
+            [NSError errorWithDomain:NSURLErrorDomain
+                                code:NSURLErrorResourceUnavailable
+                            userInfo:nil];
+        [urlSchemeTask didFailWithError:error];
+        return;
+    }
 
-        auto* data = [NSData dataWithBytes:context->buffer.data()
-                                    length:static_cast<NSUInteger>(got)];
-        [task didReceiveData:data];
+    auto* mime = eacp::Strings::toNSString(response->mimeType);
+    auto* httpResponse = [[[NSHTTPURLResponse alloc]
+        initWithURL:urlSchemeTask.request.URL
+         statusCode:response->statusCode
+        HTTPVersion:@"HTTP/1.1"
+       headerFields:@{@"Content-Type": mime}] autorelease];
 
-        context->offset += got;
-        context->remaining -= got;
+    [urlSchemeTask didReceiveResponse:httpResponse];
 
-        if (context->remaining == 0)
-        {
-            [task didFinish];
-            self->streamingTasks.erase(key);
-            return;
-        }
-
-        [self pumpTask:task context:context live:live];
-      });
-    });
+    auto* data = [NSData dataWithBytes:response->data.data()
+                                length:response->data.size()];
+    [urlSchemeTask didReceiveData:data];
+    [urlSchemeTask didFinish];
 }
 
-- (void)webView:(WKWebView*)webView
-    stopURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
+void schemeHandlerStopTask(id self,
+                           SEL,
+                           WKWebView*,
+                           id<WKURLSchemeTask> urlSchemeTask)
 {
+    auto& streamingTasks = getSchemeHandlerState(self)->streamingTasks;
     auto it = streamingTasks.find((__bridge const void*) urlSchemeTask);
 
     if (it != streamingTasks.end())
@@ -581,7 +712,43 @@ struct WebViewNativeAccess
     }
 }
 
-@end
+void deallocSchemeHandler(id self, SEL)
+{
+    delete getSchemeHandlerState(self);
+    eacp::ObjC::sendSuper<void>(self, [NSObject class], @selector(dealloc));
+}
+
+Class getResourceSchemeHandlerClass()
+{
+    static auto instance = []
+    {
+        auto builder =
+            new eacp::ObjC::RuntimeClass<NSObject>("EacpResourceSchemeHandler");
+
+        builder->addIvar<void*>("state");
+        builder->addProtocol(@protocol(WKURLSchemeHandler));
+
+        builder->addMethod(@selector(webView:startURLSchemeTask:),
+                           schemeHandlerStartTask);
+        builder->addMethod(@selector(webView:stopURLSchemeTask:),
+                           schemeHandlerStopTask);
+        builder->addMethod(@selector(dealloc), deallocSchemeHandler);
+
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+
+NSObject* createResourceSchemeHandler()
+{
+    NSObject* handler = [[getResourceSchemeHandlerClass() alloc] init];
+    eacp::ObjC::getIvar<void*>(handler, "state") =
+        new ResourceSchemeHandlerState();
+    return handler;
+}
+} // namespace
 
 namespace eacp::Graphics
 {
@@ -598,7 +765,7 @@ void WebView::initNative(Options options)
     auto forwardKeys = options.forwardUnhandledKeys;
 
     impl = std::make_shared<Native>(*this, std::move(options));
-    impl->delegate.get()->nativeWeak = impl;
+    getWebViewDelegateState(impl->delegate.get())->nativeWeak = impl;
     impl->attachToParentView();
     detail::registerWebView(this);
 
@@ -615,7 +782,7 @@ void WebView::initNative(Options options)
 WebView::WebView(PopupInit init)
 {
     impl = std::make_shared<Native>(*this, init);
-    impl->delegate.get()->nativeWeak = impl;
+    getWebViewDelegateState(impl->delegate.get())->nativeWeak = impl;
     impl->attachToParentView();
     detail::registerWebView(this);
 }
@@ -802,7 +969,9 @@ void WebView::addScriptMessageHandler(
 
     auto* controller = impl->config.get().userContentController;
     auto* nsName = [NSString stringWithUTF8String:name.c_str()];
-    [controller addScriptMessageHandler:impl->delegate.get() name:nsName];
+    [controller
+        addScriptMessageHandler:(id<WKScriptMessageHandler>) impl->delegate.get()
+                           name:nsName];
 }
 
 void WebView::removeScriptMessageHandler(const std::string& name)

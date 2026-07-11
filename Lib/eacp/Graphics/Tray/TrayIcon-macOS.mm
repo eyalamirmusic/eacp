@@ -94,7 +94,7 @@ struct TrayIcon::Native
 
     ObjC::Ptr<NSStatusItem> statusItem;
     ObjC::Ptr<NSMenu> menuPtr;
-    ObjC::Ptr<EacpMenuTarget> clickTarget;
+    ObjC::Ptr<NSObject> clickTarget;
     MenuTargets targets;
     bool templateRendering = true;
     Callback onClick;

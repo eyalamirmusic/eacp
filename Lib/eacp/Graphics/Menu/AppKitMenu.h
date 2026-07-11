@@ -5,29 +5,20 @@
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Utils/Containers.h>
 
-// Objective-C target that forwards an NSMenuItem (or NSButton) action to a
-// C++ MenuAction. Shared by the application menu bar and the tray icon.
-@interface EacpMenuTarget : NSObject
-{
-@public
-    eacp::Graphics::MenuAction action;
-}
-- (void)trigger:(id)sender;
-@end
-
 namespace eacp::Graphics
 {
 // An NSMenuItem's target is held weakly (assign), so the forwarding targets
 // must outlive the menu. Build a menu into one of these and keep it alive for
-// as long as the menu is in use.
-using MenuTargets = Vector<ObjC::Ptr<EacpMenuTarget>>;
+// as long as the menu is in use. Each target is a runtime-built object (see
+// AppKitMenu.mm) whose trigger: action forwards to a C++ MenuAction.
+using MenuTargets = Vector<ObjC::Ptr<NSObject>>;
 
 // Builds an NSMenu mirroring `menu`, appending every action-forwarding target
 // it creates to `targets`.
 NSMenu* buildAppKitMenu(const Menu& menu, MenuTargets& targets);
 
 // Wraps a single MenuAction in a target so a plain NSButton (e.g. a status
-// item's button) can forward its click to C++. The returned target must be
-// kept alive for as long as the button references it.
-ObjC::Ptr<EacpMenuTarget> makeActionTarget(const MenuAction& action);
+// item's button) can forward its click to C++ via @selector(trigger:). The
+// returned target must be kept alive for as long as the button references it.
+ObjC::Ptr<NSObject> makeActionTarget(const MenuAction& action);
 } // namespace eacp::Graphics
