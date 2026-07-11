@@ -39,6 +39,22 @@ void destroyApp()
     getGlobalApp().reset();
 }
 
+namespace
+{
+bool s_runningAsPlugin = false;
+}
+
+bool isRunningAsPlugin()
+{
+    return s_runningAsPlugin;
+}
+
+void Detail::runAsPlugin(const AppFactory& createFunc)
+{
+    s_runningAsPlugin = true;
+    Threads::scheduleStartup(createFunc);
+}
+
 // Quitting only stops the loop. The app is destroyed by run<T>() after the
 // loop has fully unwound, never from inside a runloop callback: a callback
 // can fire from a nested native pump (a window resize/drag tracking loop, a
@@ -46,6 +62,13 @@ void destroyApp()
 // them is a use-after-free.
 static void quitSync()
 {
+    // A plugin-hosted app (run<T> in a DLL) has no loop of its own; its
+    // quit stops the process root loop — reachable only when an eacp copy
+    // runs it (the thin-host case). Under a foreign host (a DAW),
+    // stopProcessRootLoop is a no-op: quitting is the host's decision.
+    if (isRunningAsPlugin())
+        Threads::stopProcessRootLoop();
+
     Threads::getEventLoop().quit();
 }
 

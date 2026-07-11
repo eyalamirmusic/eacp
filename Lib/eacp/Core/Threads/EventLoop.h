@@ -32,6 +32,15 @@ void stopEventLoop();
 // host's loop without any setup.
 void attachCurrentThreadAsMain();
 
+// Stops the process's root run loop, provided an eacp copy is running it —
+// any copy: loop ownership is marked in the process environment
+// (EACP_ROOT_LOOP), which crosses DLL boundaries. The quit path for an app
+// that lives in a dynamic library while a thin host executable pumps the
+// loop (Apps::run<T> detects that case and rides the host's loop). A loop
+// owned by a foreign host (a DAW) carries no marker, so this is a no-op
+// there: that loop is never ours to stop.
+void stopProcessRootLoop();
+
 // Schedules the app's one-time startup callback (the app/window creation that
 // runEventLoop kicks off). Most platforms post it to the loop immediately; iOS
 // defers it to UIScene connection so the window is created with a live scene

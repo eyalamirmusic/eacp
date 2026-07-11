@@ -26,6 +26,16 @@ bool isWindows();
 bool isLinux();
 bool isPosix(); // Apple || Linux
 
+// Linkage of this eacp copy: isStandalone when it is compiled into the
+// process executable, isDLL when it lives in a dynamic library (a
+// runtime-loaded plugin). Resolved from this copy's own image
+// (Plugins::isDynamicLibrary), so every statically linked eacp copy in a
+// process answers for itself. Apps::run<T> uses it to decide loop
+// ownership: a DLL app is scheduled onto the host's loop instead of
+// running its own.
+bool isStandalone();
+bool isDLL();
+
 std::string_view name();
 
 } // namespace eacp::Platform

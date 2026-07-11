@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../Platform/Platform.h"
 #include "../Threads/EventLoop.h"
 #include "../Utils/Common.h"
 #include "AppEnvironment.h"
@@ -77,11 +78,35 @@ std::optional<std::string> chooseFile(const FilePickerOptions& options = {});
 // Windows; Linux returns std::nullopt for now.
 std::optional<std::string> chooseDirectory();
 
+// True when this copy's app was started by run<T>() from inside a dynamic
+// library — it rides the host executable's loop instead of owning one, and
+// its quit() stops that loop rather than its own (see Apps::quit).
+bool isRunningAsPlugin();
+
+namespace Detail
+{
+// run<T>()'s dynamic-library path: marks this copy as a plugin-hosted app
+// and schedules its construction onto the loop the host runs.
+void runAsPlugin(const AppFactory& createFunc);
+} // namespace Detail
+
 template <typename T>
 void run()
 {
     auto createFunc = [] { getGlobalApp().template create<App<T>>(); };
     getAppFactory() = createFunc;
+
+    // In a dynamic library the process executable owns the root loop —
+    // running one here would fight it (or, under a foreign host, steal its
+    // app delegate). Schedule the app onto the host's loop and return
+    // immediately; the app is destroyed when the library's image is torn
+    // down, after the host's loop has exited.
+    if (Platform::isDLL())
+    {
+        Detail::runAsPlugin(createFunc);
+        return;
+    }
+
     Threads::runEventLoop(createFunc);
     // The single teardown point: the app is constructed on the first loop
     // tick and destroyed here on the main thread once the loop has fully

@@ -22,6 +22,7 @@ if (APPLE)
             ObjC/AutoReleasePool.mm
             ObjC/Strings.mm
             Plugins/DynamicLibrary-Posix.cpp
+            Plugins/ModuleInfo-Apple.cpp
             Plugins/ModuleInfo-Posix.cpp
             Threads/EventLoop.mm
             Threads/EventLoop-Default.cpp
@@ -74,6 +75,7 @@ elseif (UNIX AND NOT APPLE)
             App/Clipboard-Linux.cpp
             App/LoginItem-Linux.cpp
             Plugins/DynamicLibrary-Posix.cpp
+            Plugins/ModuleInfo-Linux.cpp
             Plugins/ModuleInfo-Posix.cpp
             Process/Process-Posix.cpp
             Threads/EventLoop-Linux.cpp
