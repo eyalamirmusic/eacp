@@ -1,7 +1,5 @@
-#include <eacp/Core/App/App.h>
-#include <eacp/Core/App/AppEnvironment.h>
-
 #include "TestCrashGuard.h"
+#include <eacp/Core/Core.h>
 
 #include <NanoTest/NanoTest.h>
 

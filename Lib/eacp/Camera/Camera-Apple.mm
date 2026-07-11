@@ -6,10 +6,7 @@
 #include <eacp/Core/ObjC/AutoReleasePool.h>
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/ObjC/RuntimeClass.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Core/Utils/Logging.h>
 
-#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>

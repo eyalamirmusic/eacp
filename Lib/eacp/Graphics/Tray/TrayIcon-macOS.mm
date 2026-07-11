@@ -3,7 +3,6 @@
 #include "TrayIcon.h"
 #include "../Helpers/ImageConversion-macOS.h"
 #include "../Menu/AppKitMenu.h"
-#include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/ObjC/Strings.h>
 

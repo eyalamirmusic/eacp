@@ -5,8 +5,6 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 
-#include <cstring>
-
 // Windows/D3D12 backend. A texture is a default-heap resource plus an SRV and
 // a sampler descriptor living in the context's shader-visible heaps for the
 // texture's whole lifetime, so binding is a single root-table update. Pixels

@@ -6,7 +6,6 @@
 #include "UniformLayout.h"
 
 #include <cstdio>
-#include <string>
 #include <vector>
 
 // The single source-of-truth walker. MSL and HLSL differ only in the binding

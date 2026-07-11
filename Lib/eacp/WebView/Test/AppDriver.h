@@ -1,10 +1,8 @@
 #pragma once
 
-#include "DomNode.h"
+#include "../Common.h"
 
-#include <eacp/Core/Threads/Async.h>
-#include <eacp/Graphics/Image/Image.h>
-#include <Miro/Miro.h>
+#include "DomNode.h"
 
 namespace eacp::Graphics
 {

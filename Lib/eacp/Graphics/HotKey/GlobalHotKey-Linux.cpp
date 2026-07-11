@@ -1,7 +1,5 @@
 #include "GlobalHotKey.h"
 
-#include <utility>
-
 namespace eacp::Graphics
 {
 

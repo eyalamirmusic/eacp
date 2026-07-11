@@ -2,8 +2,6 @@
 
 #include "EmbeddedView.h"
 #include "CompositionHostWindow-Windows.h"
-#include <eacp/Core/Plugins/ModuleInfo.h>
-#include <eacp/Core/Threads/EventLoop.h>
 
 namespace eacp::Graphics
 {

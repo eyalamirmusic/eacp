@@ -3,19 +3,11 @@
 #include "EventLoop.h"
 #include "ThreadUtils.h"
 
-#include <eacp/Core/Utils/Containers.h>
-
-#include <chrono>
 #include <coroutine>
 #include <exception>
-#include <functional>
-#include <memory>
-#include <optional>
 #include <stdexcept>
-#include <string>
 #include <thread>
 #include <type_traits>
-#include <utility>
 
 namespace eacp::Threads
 {

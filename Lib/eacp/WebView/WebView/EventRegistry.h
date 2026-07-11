@@ -2,11 +2,7 @@
 
 #include <Miro/Miro.h>
 
-#include <eacp/Core/Utils/Containers.h>
-
-#include <functional>
-#include <string>
-#include <utility>
+#include <eacp/Core/Core.h>
 
 // Codegen-time metadata for bridge events declared via EACP_STATE /
 // EACP_KEYED_STATE. At static-init time the macros append one EventEntry

@@ -1,8 +1,6 @@
 #pragma once
 
 #include "SVGElement.h"
-#include <string_view>
-#include <optional>
 
 namespace eacp::SVG
 {

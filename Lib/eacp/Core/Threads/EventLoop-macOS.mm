@@ -5,9 +5,6 @@
 #import <Foundation/Foundation.h>
 #import <Cocoa/Cocoa.h>
 
-#include <cassert>
-#include <chrono>
-
 namespace eacp::Threads
 {
 namespace

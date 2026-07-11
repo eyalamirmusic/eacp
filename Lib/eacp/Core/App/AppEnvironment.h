@@ -1,8 +1,8 @@
 #pragma once
 
-#include <eacp/Core/Utils/Containers.h>
-#include <eacp/Core/Utils/Environment.h>
-#include <string>
+#include "../Utils/Common.h"
+
+#include "../Utils/Environment.h"
 
 namespace eacp::Apps
 {

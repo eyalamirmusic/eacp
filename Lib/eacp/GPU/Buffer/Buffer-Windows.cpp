@@ -5,8 +5,6 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 
-#include <cstring>
-
 // Windows/D3D12 backend. Every buffer is a default-heap resource (a Storage
 // buffer additionally allows unordered access); initial data goes through a
 // transient upload buffer submitted at construction, and read() copies into a

@@ -2,10 +2,6 @@
 
 #include "Connection.h"
 
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
-
 // The platform-specific socket backend, kept behind this header so the
 // buffering and looping logic in Connection.cpp stays platform-free. POSIX
 // (macOS + Linux) and Winsock implementations live in Connection-Posix.cpp

@@ -6,8 +6,6 @@
 
 #include <eacp/Core/ObjC/ObjC.h>
 
-#include <cstring>
-
 namespace eacp::GPU
 {
 struct Buffer::Native

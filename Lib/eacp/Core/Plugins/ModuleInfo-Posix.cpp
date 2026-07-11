@@ -1,6 +1,5 @@
 #include "ModuleInfo.h"
 
-#include <cstdint>
 #include <dlfcn.h>
 
 namespace eacp::Plugins

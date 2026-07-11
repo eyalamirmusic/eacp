@@ -2,16 +2,7 @@
 
 #include "TestAgent.h"
 
-#include <eacp/Core/Threads/Async.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/WebView/WebView.h>
-
-#include <chrono>
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
-#include <stdexcept>
-#include <utility>
+#include "../WebView.h"
 
 namespace eacp::WebView::Test
 {

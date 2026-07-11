@@ -1,9 +1,6 @@
 #include "DisplayLink.h"
 #include <eacp/Core/ObjC/ObjC.h>
-#include <eacp/Core/Threads/ThreadUtils.h>
 #import <CoreVideo/CoreVideo.h>
-
-#include <memory>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"

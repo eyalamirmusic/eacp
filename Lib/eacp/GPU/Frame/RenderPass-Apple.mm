@@ -8,8 +8,6 @@
 
 #include <eacp/Core/ObjC/ObjC.h>
 
-#include <cstdint>
-
 namespace eacp::GPU
 {
 namespace

@@ -2,11 +2,7 @@
 
 #include <Miro/CommandExport/ResolvedTypes.h>
 
-#include <eacp/Core/Utils/Containers.h>
-
 #include <cctype>
-#include <cstddef>
-#include <optional>
 #include <sstream>
 
 namespace eacp::Graphics::Codegen

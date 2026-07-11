@@ -9,8 +9,6 @@
 #include "../Frame/Frame.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
-#include <eacp/Core/Utils/Containers.h>
-#include <eacp/Graphics/Helpers/DisplayLink.h>
 #include <eacp/Graphics/Layers/ImmediateLayerClass.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
 

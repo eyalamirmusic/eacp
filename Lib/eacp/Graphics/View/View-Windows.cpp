@@ -8,11 +8,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include <dwrite.h>
-
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Composition.h>
-#include <windows.ui.composition.interop.h>
 
 namespace wuc = winrt::Windows::UI::Composition;
 

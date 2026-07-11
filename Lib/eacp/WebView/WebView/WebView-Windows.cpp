@@ -5,14 +5,8 @@
 #include "WebViewDetail.h"
 #include <eacp/Graphics/Helpers/StringUtils-Windows.h>
 
-#include <algorithm>
-#include <eacp/Core/Utils/Containers.h>
-#include <cassert>
 #include <cstdlib>
-#include <unordered_map>
 #include <queue>
-#include <functional>
-#include <string>
 
 #include <objbase.h>
 #include <shlwapi.h>
@@ -23,15 +17,8 @@
 #include <WebView2.h>
 #include <WebView2EnvironmentOptions.h>
 
-#include <cmath>
-
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Composition.h>
-
-#include <eacp/Core/App/AppEnvironment.h>
-#include <eacp/Core/Plugins/ModuleInfo.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Core/Utils/Logging.h>
 
 namespace wuc = winrt::Windows::UI::Composition;
 

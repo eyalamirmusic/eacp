@@ -1,8 +1,6 @@
 #pragma once
 
-#include <eacp/Graphics/Primitives/Primitives.h>
-#include <eacp/Core/Utils/Containers.h>
-#include <string>
+#include "Common.h"
 
 namespace eacp::SVG
 {

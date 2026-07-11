@@ -2,17 +2,9 @@
 
 #include "AppDriver.h"
 
-#include <eacp/Core/Utils/Singleton.h>
-
 #include <NanoTest/NanoTest.h>
 
-#include <chrono>
-#include <functional>
-#include <optional>
-#include <string>
-#include <string_view>
 #include <type_traits>
-#include <utility>
 
 namespace eacp::WebView::Test
 {

@@ -1,9 +1,6 @@
 #pragma once
 
-#include <cmath>
-#include <cstddef>
-#include <cstdint>
-#include <cstring>
+#include "../Common.h"
 
 // The Scalar backend is the reference implementation of the primitive set:
 // SIMD backends mirror it lane-for-lane, the swap kernel's width-remainder tail

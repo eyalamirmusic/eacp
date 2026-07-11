@@ -1,8 +1,6 @@
 #pragma once
 
-#include <cstdint>
-#include <eacp/Core/Utils/Containers.h>
-#include <string>
+#include "../Common.h"
 
 namespace eacp::Graphics
 {

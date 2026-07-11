@@ -1,7 +1,8 @@
 #pragma once
 
-#include <eacp/Graphics/Image/Image.h>
-#include <filesystem>
+#include "../Common.h"
+
+#include "../Image/Image.h"
 
 // Assembles platform icon containers from a single source image, wrapping PNG
 // frames the framework already knows how to encode (Image::toPng). The byte

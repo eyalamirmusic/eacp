@@ -1,9 +1,7 @@
 #include "IconContainers.h"
 
-#include <eacp/Graphics/Image/Image.h>
+#include "../Image/Image.h"
 #include <iostream>
-#include <string>
-#include <string_view>
 
 using namespace eacp::Graphics;
 

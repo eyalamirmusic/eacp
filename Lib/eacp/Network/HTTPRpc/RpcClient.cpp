@@ -1,8 +1,6 @@
 #include "RpcClient.h"
 
-#include <eacp/Network/HTTPServer/HttpServer.h>
-
-#include <utility>
+#include <eacp/Network/Network.h>
 
 namespace eacp::HTTP::Rpc
 {
@@ -29,7 +27,8 @@ Client::Client(std::string baseUrlToUse)
 {
 }
 
-Miro::JSON Client::invokeRaw(const std::string& command, const Miro::JSON& payload) const
+Miro::JSON Client::invokeRaw(const std::string& command,
+                             const Miro::JSON& payload) const
 {
     auto envelope = Miro::JSON {Miro::Json::Object {}};
     envelope.asObject()["command"] = Miro::JSON {command};

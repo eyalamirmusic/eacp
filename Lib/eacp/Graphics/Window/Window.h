@@ -1,13 +1,8 @@
 #pragma once
 
-#include <functional>
-#include <optional>
-#include <string>
-#include <eacp/Core/Utils/Containers.h>
 #include "../Image/Image.h"
 #include "../Primitives/Primitives.h"
 #include "../View/View.h"
-#include <eacp/Core/App/App.h>
 
 namespace eacp::Graphics
 {

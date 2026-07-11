@@ -3,12 +3,6 @@
 
 #include "Snapshot-Apple.h"
 
-#include <eacp/Core/Threads/EventLoop.h>
-
-#include <cstdint>
-#include <string>
-#include <utility>
-
 namespace eacp::Graphics::detail
 {
 namespace

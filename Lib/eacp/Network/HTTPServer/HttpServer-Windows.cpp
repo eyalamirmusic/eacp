@@ -3,16 +3,10 @@
 #include "HttpServer.h"
 #include "HttpServerDispatcher.h"
 
-#include <eacp/Network/HTTP/HttpProtocol.h>
+#include "../HTTP/HttpProtocol.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
-
-#include <atomic>
-#include <eacp/Core/Utils/Containers.h>
-#include <mutex>
-#include <string>
-#include <thread>
 
 namespace eacp::HTTP
 {

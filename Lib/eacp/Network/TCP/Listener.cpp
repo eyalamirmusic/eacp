@@ -2,8 +2,6 @@
 
 #include "ConnectionInternal.h"
 
-#include <memory>
-
 namespace eacp::TCP
 {
 

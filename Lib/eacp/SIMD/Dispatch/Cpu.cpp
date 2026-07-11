@@ -1,11 +1,10 @@
-#include <eacp/SIMD/Dispatch/Cpu.h>
+#include "Cpu.h"
+#include "../Common.h"
 
 // Runtime CPU feature detection. Compiled at baseline (no -mavx2), since it must
 // run on any CPU to decide whether the AVX2 path is safe to call.
 
 #if defined(__x86_64__) || defined(_M_X64)
-
-#include <cstdint>
 
 #if defined(_MSC_VER)
 #include <intrin.h>

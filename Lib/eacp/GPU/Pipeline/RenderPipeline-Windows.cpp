@@ -6,7 +6,6 @@
 #include "../Shader/ShaderLibrary.h"
 #include "../Windows/D3D12Types.h"
 
-#include <cassert>
 #include <vector>
 
 #include <winrt/base.h>
@@ -102,8 +101,8 @@ std::vector<D3D12_INPUT_ELEMENT_DESC> makeInputLayout(const VertexLayout& layout
         element.InputSlot = static_cast<UINT>(attribute.bufferIndex);
         element.AlignedByteOffset = static_cast<UINT>(attribute.offset);
         element.InputSlotClass = perInstance
-            ? D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
-            : D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+                                     ? D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
+                                     : D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
         element.InstanceDataStepRate = perInstance ? 1 : 0;
 
         elements.push_back(element);
@@ -117,7 +116,7 @@ std::vector<D3D12_INPUT_ELEMENT_DESC> makeInputLayout(const VertexLayout& layout
 // slot with layout.stride so single-buffer callers see no behavioural change.
 std::vector<UINT> makeStrideTable(const VertexLayout& layout)
 {
-    if (! layout.buffers.empty())
+    if (!layout.buffers.empty())
     {
         auto strides = std::vector<UINT>();
         strides.reserve(layout.buffers.size());

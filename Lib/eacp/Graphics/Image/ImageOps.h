@@ -1,6 +1,6 @@
 #pragma once
 
-#include <eacp/Graphics/Image/Image.h>
+#include "Image.h"
 
 // Bilinear resampling on Graphics::Image, reproducing the exact OpenCV semantics
 // that image-processing pipelines (e.g. ML preprocessing) are validated against,
@@ -45,7 +45,6 @@ Image mirroredCrop(const Image& src, int x, int y, int width, int height);
 // per-frame pipelines that recycle one destination image across calls. `dst`
 // must not alias `src`.
 void resizeBilinear(const Image& src, int dstWidth, int dstHeight, Image& dst);
-void mirroredCrop(
-    const Image& src, int x, int y, int width, int height, Image& dst);
+void mirroredCrop(const Image& src, int x, int y, int width, int height, Image& dst);
 
 } // namespace eacp::Graphics

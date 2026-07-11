@@ -2,8 +2,6 @@
 
 #include <eacp/SIMD/SIMD.h>
 
-#include <cstdint>
-
 namespace eacp::Graphics
 {
 

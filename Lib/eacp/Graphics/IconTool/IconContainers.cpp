@@ -1,11 +1,7 @@
 #include "IconContainers.h"
 
-#include <eacp/Graphics/Image/ImageOps.h>
+#include "../Image/ImageOps.h"
 #include <array>
-#include <cstdint>
-#include <fstream>
-#include <stdexcept>
-#include <string>
 #include <vector>
 
 namespace eacp::Graphics::Icons

@@ -1,8 +1,6 @@
-#include <eacp/Graphics/Image/ImageOps.h>
+#include "ImageOps.h"
 
 #include <eacp/SIMD/SIMD.h>
-
-#include <utility>
 
 namespace eacp::Graphics
 {
@@ -16,12 +14,8 @@ void resizeBilinear(const Image& src, int dstWidth, int dstHeight, Image& dst)
     }
 
     auto* out = dst.prepareForOverwrite(dstWidth, dstHeight);
-    eacp::simd::resizeBilinear(src.pixels().data(),
-                               src.width(),
-                               src.height(),
-                               out,
-                               dstWidth,
-                               dstHeight);
+    eacp::simd::resizeBilinear(
+        src.pixels().data(), src.width(), src.height(), out, dstWidth, dstHeight);
 }
 
 Image resizeBilinear(const Image& src, int dstWidth, int dstHeight)
@@ -50,8 +44,7 @@ Image warpAffineInverse(const Image& src,
     return {dstWidth, dstHeight, std::move(outData)};
 }
 
-void mirroredCrop(
-    const Image& src, int x, int y, int width, int height, Image& dst)
+void mirroredCrop(const Image& src, int x, int y, int width, int height, Image& dst)
 {
     if (!src.isValid() || width <= 0 || height <= 0 || x < 0 || y < 0
         || x + width > src.width() || y + height > src.height())

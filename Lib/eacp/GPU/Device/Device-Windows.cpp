@@ -4,8 +4,6 @@
 
 #include "../Windows/D3D12Context.h"
 
-#include <functional>
-
 // Windows/D3D12 backend. The GPU device is the process-wide D3D12 device and
 // direct queue owned by getD3D12Context(). The 2D graphics layer keeps its own
 // D3D11 device for Direct2D; the compositor composes output from both, so the

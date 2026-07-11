@@ -1,13 +1,8 @@
 #include "Http.h"
 
-#include <eacp/Core/Utils/Strings.h>
-
 #include <curl/curl.h>
 
 #include <cstdio>
-#include <map>
-#include <stdexcept>
-#include <string>
 
 namespace eacp::HTTP
 {
@@ -74,11 +69,8 @@ struct CurlEasy
     CURL* handle = nullptr;
 };
 
-int progressCallback(void* userp,
-                     curl_off_t dltotal,
-                     curl_off_t dlnow,
-                     curl_off_t,
-                     curl_off_t)
+int progressCallback(
+    void* userp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t, curl_off_t)
 {
     auto* progress = static_cast<DownloadProgress*>(userp);
     progress->bytesReceived.store(dlnow);

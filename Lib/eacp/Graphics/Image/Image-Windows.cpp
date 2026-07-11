@@ -1,14 +1,8 @@
-#include <eacp/Core/Utils/WinInclude.h>
-
 #include "ImageCodec.h"
+#include "../Common-Windows.h"
 
 #include <objbase.h>
 #include <wincodec.h>
-#include <wrl/client.h>
-
-#include <algorithm>
-#include <cstdint>
-#include <limits>
 
 namespace eacp::Graphics::detail
 {

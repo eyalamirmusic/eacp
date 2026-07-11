@@ -1,22 +1,11 @@
-#include <eacp/Core/Utils/WinInclude.h>
-
 #include "GPUView.h"
+#include <eacp/Graphics/Common-Windows.h>
 
 #include "../Device/Device.h"
 #include "../Frame/Frame.h"
 #include "../Windows/D3D12Types.h"
 
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Core/Utils/Containers.h>
-#include <eacp/Graphics/Helpers/DisplayLink.h>
-
-#include <dxgi1_4.h>
-
-#include <array>
 #include <unordered_set>
-
-#include <winrt/Windows.UI.Composition.h>
-#include <windows.ui.composition.interop.h>
 
 namespace wuc = winrt::Windows::UI::Composition;
 

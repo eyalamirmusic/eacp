@@ -5,9 +5,6 @@
 
 #include <eacp/Core/ObjC/Strings.h>
 
-#include <cassert>
-#include <string>
-
 namespace eacp::Graphics::detail
 {
 void attachWKWebViewToParent(WKWebView* webView, void* parentHandle)

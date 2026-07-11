@@ -5,10 +5,6 @@
 #include "../Pipeline/ComputePipeline.h"
 #include "ShaderProgram.h"
 
-#include <cstdint>
-#include <cstring>
-#include <optional>
-
 // A compute kernel authored as a struct, the compute sibling of ShaderProgram.
 // Uniforms are named, typed members set by name; storage buffers are members
 // assigned the GPU::Buffer to bind, with slots taken from declaration order.

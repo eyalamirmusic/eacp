@@ -4,9 +4,6 @@
 #include "../Helpers/StringUtils-Windows.h"
 #include "../Helpers/DarkMode-Windows.h"
 #include "../Helpers/ImageConversion-Windows.h"
-#include <eacp/Core/App/AppEnvironment.h>
-#include <eacp/Core/Plugins/ModuleInfo.h>
-#include <eacp/Core/Threads/EventLoop.h>
 
 #include <shellapi.h>
 

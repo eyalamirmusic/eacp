@@ -1,6 +1,6 @@
 #pragma once
 
-#include <string>
+#include "../Utils/Common.h"
 
 namespace eacp::Plugins
 {

@@ -1,6 +1,6 @@
 #include "Environment.h"
 
-#include <eacp/Core/Platform/Platform.h>
+#include "../Platform/Platform.h"
 
 namespace eacp
 {

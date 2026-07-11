@@ -4,13 +4,10 @@
 
 #include <atomic>
 #include <cerrno>
-#include <chrono>
-#include <eacp/Core/Utils/Containers.h>
 #include <fcntl.h>
 #include <mutex>
 #include <poll.h>
 #include <unistd.h>
-#include <utility>
 
 namespace eacp::Threads
 {

@@ -1,10 +1,6 @@
-#include <eacp/Core/Utils/WinInclude.h>
-
 #include "Font.h"
+#include "../Common-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
-
-#include <dwrite.h>
-#include <wrl/client.h>
 
 namespace eacp::Graphics
 {
@@ -30,15 +26,24 @@ struct Font::Native
 
         auto wideName = toWideString(options.name);
 
-        factory->CreateTextFormat(wideName.c_str(), nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-                                  DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                                  options.size, L"en-us", textFormat.GetAddressOf());
+        factory->CreateTextFormat(wideName.c_str(),
+                                  nullptr,
+                                  DWRITE_FONT_WEIGHT_NORMAL,
+                                  DWRITE_FONT_STYLE_NORMAL,
+                                  DWRITE_FONT_STRETCH_NORMAL,
+                                  options.size,
+                                  L"en-us",
+                                  textFormat.GetAddressOf());
 
         if (!textFormat)
         {
-            factory->CreateTextFormat(L"Arial", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+            factory->CreateTextFormat(L"Arial",
+                                      nullptr,
+                                      DWRITE_FONT_WEIGHT_NORMAL,
                                       DWRITE_FONT_STYLE_NORMAL,
-                                      DWRITE_FONT_STRETCH_NORMAL, options.size, L"en-us",
+                                      DWRITE_FONT_STRETCH_NORMAL,
+                                      options.size,
+                                      L"en-us",
                                       textFormat.GetAddressOf());
         }
 

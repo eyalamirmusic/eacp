@@ -1,16 +1,10 @@
 #include "ConnectionInternal.h"
+#include "../Common-Posix.h"
 
-#include <arpa/inet.h>
-#include <cerrno>
-#include <cstring>
 #include <fcntl.h>
 #include <netdb.h>
-#include <netinet/in.h>
-#include <string>
 #include <sys/select.h>
-#include <sys/socket.h>
 #include <sys/time.h>
-#include <unistd.h>
 
 namespace eacp::TCP::detail
 {
@@ -99,7 +93,7 @@ int tryConnect(const addrinfo& candidate,
             return kInvalidFd;
         }
 
-        if (! waitWritable(fd, connectTimeout))
+        if (!waitWritable(fd, connectTimeout))
         {
             why = "connect timed out";
             ::close(fd);
@@ -119,7 +113,10 @@ int tryConnect(const addrinfo& candidate,
     return fd;
 }
 
-bool timedOut() { return errno == EAGAIN || errno == EWOULDBLOCK; }
+bool timedOut()
+{
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+}
 
 int sendFlags()
 {

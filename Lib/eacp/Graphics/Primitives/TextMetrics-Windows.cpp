@@ -1,10 +1,6 @@
-#include <eacp/Core/Utils/WinInclude.h>
-
 #include "TextMetrics.h"
+#include "../Common-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
-
-#include <dwrite.h>
-#include <wrl/client.h>
 
 namespace eacp::Graphics
 {
@@ -27,8 +23,12 @@ float TextMetrics::measureWidth(const std::string& text, const Font& font)
     auto wideText = toWideString(text);
 
     auto textLayout = ComPtr<IDWriteTextLayout>();
-    factory->CreateTextLayout(wideText.c_str(), static_cast<UINT32>(wideText.length()),
-                              textFormat, 10000.0f, 10000.0f, textLayout.GetAddressOf());
+    factory->CreateTextLayout(wideText.c_str(),
+                              static_cast<UINT32>(wideText.length()),
+                              textFormat,
+                              10000.0f,
+                              10000.0f,
+                              textLayout.GetAddressOf());
 
     if (!textLayout)
         return 0.0f;
@@ -39,7 +39,8 @@ float TextMetrics::measureWidth(const std::string& text, const Font& font)
     return metrics.width;
 }
 
-float TextMetrics::getOffsetForIndex(const std::string& text, size_t index,
+float TextMetrics::getOffsetForIndex(const std::string& text,
+                                     size_t index,
                                      const Font& font)
 {
     if (index == 0)
@@ -49,7 +50,8 @@ float TextMetrics::getOffsetForIndex(const std::string& text, size_t index,
     return measureWidth(substring, font);
 }
 
-size_t TextMetrics::getIndexForOffset(const std::string& text, float xOffset,
+size_t TextMetrics::getIndexForOffset(const std::string& text,
+                                      float xOffset,
                                       const Font& font)
 {
     auto* textFormat = static_cast<IDWriteTextFormat*>(font.getHandle());
@@ -60,8 +62,12 @@ size_t TextMetrics::getIndexForOffset(const std::string& text, float xOffset,
 
     auto wideText = toWideString(text);
     auto textLayout = ComPtr<IDWriteTextLayout>();
-    factory->CreateTextLayout(wideText.c_str(), static_cast<UINT32>(wideText.length()),
-                              textFormat, 10000.0f, 10000.0f, textLayout.GetAddressOf());
+    factory->CreateTextLayout(wideText.c_str(),
+                              static_cast<UINT32>(wideText.length()),
+                              textFormat,
+                              10000.0f,
+                              10000.0f,
+                              textLayout.GetAddressOf());
 
     if (!textLayout)
         return 0;
@@ -83,8 +89,8 @@ float TextMetrics::getLineHeight(const Font& font)
         return 0.0f;
 
     auto textLayout = ComPtr<IDWriteTextLayout>();
-    factory->CreateTextLayout(L"X", 1, textFormat, 10000.0f, 10000.0f,
-                              textLayout.GetAddressOf());
+    factory->CreateTextLayout(
+        L"X", 1, textFormat, 10000.0f, 10000.0f, textLayout.GetAddressOf());
 
     if (!textLayout)
         return 0.0f;
@@ -105,8 +111,8 @@ float TextMetrics::getAscent(const Font& font)
         return 0.0f;
 
     auto textLayout = ComPtr<IDWriteTextLayout>();
-    factory->CreateTextLayout(L"X", 1, textFormat, 10000.0f, 10000.0f,
-                              textLayout.GetAddressOf());
+    factory->CreateTextLayout(
+        L"X", 1, textFormat, 10000.0f, 10000.0f, textLayout.GetAddressOf());
 
     if (!textLayout)
         return 0.0f;
@@ -127,8 +133,8 @@ float TextMetrics::getDescent(const Font& font)
         return 0.0f;
 
     auto textLayout = ComPtr<IDWriteTextLayout>();
-    factory->CreateTextLayout(L"X", 1, textFormat, 10000.0f, 10000.0f,
-                              textLayout.GetAddressOf());
+    factory->CreateTextLayout(
+        L"X", 1, textFormat, 10000.0f, 10000.0f, textLayout.GetAddressOf());
 
     if (!textLayout)
         return 0.0f;

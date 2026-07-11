@@ -2,9 +2,6 @@
 
 #include "Path.h"
 
-#include <eacp/Core/Utils/Containers.h>
-#include <eacp/Graphics/Primitives/Primitives.h>
-
 namespace eacp::GPUWidgets
 {
 // Triangulates a path's filled interior into a triangle list: a flat array where

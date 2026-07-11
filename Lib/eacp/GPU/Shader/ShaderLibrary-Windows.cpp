@@ -6,8 +6,6 @@
 #include "../Windows/D3D12Types.h"
 #include "ShaderSource.h"
 
-#include <eacp/Core/Utils/Logging.h>
-
 #include <d3dcompiler.h>
 
 #include <winrt/base.h>
