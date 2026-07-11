@@ -1,10 +1,5 @@
-#include <eacp/Core/Process/Process.h>
-#include <eacp/Core/Threads/Async.h>
-#include <NanoTest/NanoTest.h>
-
-#include <chrono>
+#include "Common.h"
 #include <csignal>
-#include <string>
 
 #include <sys/types.h>
 #include <unistd.h>

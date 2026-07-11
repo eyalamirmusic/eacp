@@ -1,8 +1,5 @@
 #include <eacp/WebView/WebView.h>
 
-#include <eacp/Graphics/Widgets/TextInput.h>
-#include <ResEmbed/ResEmbed.h>
-
 using namespace eacp;
 using namespace Graphics;
 

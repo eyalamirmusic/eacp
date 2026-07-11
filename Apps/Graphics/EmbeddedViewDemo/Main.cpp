@@ -1,5 +1,4 @@
 #include <eacp/Graphics/Graphics.h>
-#include <eacp/Graphics/Window/EmbeddedView.h>
 
 using namespace eacp;
 using namespace Graphics;

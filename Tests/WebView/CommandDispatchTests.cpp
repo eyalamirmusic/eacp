@@ -1,3 +1,4 @@
+#include "Common.h"
 // Drives the page -> C++ command path on a real WebView (window.eacp.invoke
 // -> WebViewBridge::onMessage -> Miro dispatch). Covers the two features
 // layered on top of the basic sync dispatch:
@@ -9,15 +10,6 @@
 //
 // Both run end to end through the injected JS bridge shim, so they also
 // exercise the wire round-trip, not just the C++ seam.
-
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/WebView/WebView.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <functional>
-#include <string>
-#include <thread>
 
 using namespace nano;
 using namespace eacp;

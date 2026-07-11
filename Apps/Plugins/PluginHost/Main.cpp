@@ -1,5 +1,3 @@
-#include <eacp/Core/Core.h>
-#include <eacp/Core/Plugins/DynamicLibrary.h>
 #include <eacp/Graphics/Graphics.h>
 
 struct HostView final : eacp::Graphics::View

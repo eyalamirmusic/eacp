@@ -1,16 +1,9 @@
+#include "Common.h"
 // window-controls.js (auto-injected) exposes window.__eacpResolveWindowButton,
 // which classifies an element as a caption-button role (minimize / maximize /
 // close). These assert that classification on a real engine, plus the
 // attributes the shim mirrors onto <html> so pages can drive their chrome
 // from pure CSS: data-eacp-platform and data-eacp-maximized.
-
-#include <eacp/Core/Platform/Platform.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/WebView/WebView.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <string>
 
 using namespace nano;
 using namespace eacp;

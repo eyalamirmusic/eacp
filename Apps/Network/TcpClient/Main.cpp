@@ -4,11 +4,9 @@
 //
 //   TcpClient --host 127.0.0.1 --port 5050
 
-#include <eacp/Network/TCP/Connection.h>
+#include <eacp/Network/Network.h>
 
-#include <cstdint>
 #include <iostream>
-#include <string>
 
 int main(int argc, char** argv)
 {

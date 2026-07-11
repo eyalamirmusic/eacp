@@ -1,17 +1,7 @@
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Network/HTTP/Http.h>
-#include <eacp/Network/HTTPServer/HttpServer.h>
-#include <NanoTest/NanoTest.h>
-
-#include <atomic>
-#include <chrono>
-#include <cstdint>
+#include "Common.h"
 #include <filesystem>
 #include <fstream>
-#include <sstream>
-#include <string>
 #include <system_error>
-#include <thread>
 
 using namespace nano;
 using eacp::HTTP::DownloadProgress;

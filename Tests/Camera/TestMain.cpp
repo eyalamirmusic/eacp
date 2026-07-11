@@ -1,6 +1,4 @@
-#include <eacp/Core/App/App.h>
-
-#include <NanoTest/NanoTest.h>
+#include "Common.h"
 
 namespace
 {

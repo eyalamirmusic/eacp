@@ -1,4 +1,3 @@
-#include <eacp/Graphics/Graphics.h>
 #include <eacp/GPU/GPU.h>
 
 using namespace eacp;

@@ -1,10 +1,7 @@
-#include <eacp/Graphics/Graphics.h>
 #include <eacp/GPU/GPU.h>
 
 #include "TeapotData.h"
 
-#include <algorithm>
-#include <cmath>
 #include <vector>
 
 using namespace eacp;

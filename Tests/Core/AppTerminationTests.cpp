@@ -1,5 +1,4 @@
-#include <eacp/Core/Process/Process.h>
-#include <NanoTest/NanoTest.h>
+#include "Common.h"
 
 using namespace nano;
 namespace Proc = eacp::Processes;

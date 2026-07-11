@@ -1,12 +1,8 @@
-#include <eacp/Core/Utils/File.h>
-#include <NanoTest/NanoTest.h>
-
+#include "Common.h"
 #include <array>
-#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <span>
-#include <string>
 
 using namespace nano;
 using eacp::File;

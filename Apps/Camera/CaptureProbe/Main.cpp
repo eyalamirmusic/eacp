@@ -1,14 +1,8 @@
 #include <eacp/Camera/Camera.h>
-#include <eacp/Core/App/App.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Graphics/Image/Image.h>
+#include <eacp/Graphics/Graphics.h>
 
 #include <atomic>
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
 #include <cstdio>
-#include <memory>
 
 using namespace eacp;
 using namespace std::chrono_literals;

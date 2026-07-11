@@ -1,3 +1,4 @@
+#include "Common.h"
 // Drives the unhandled-key forwarding pipeline (Options::forwardUnhandledKeys)
 // end to end on a real WebView2: a page dispatches DOM KeyboardEvents, the
 // injected key-events.js reports whether the page consumed each one plus its
@@ -8,13 +9,6 @@
 // our code without OS-level key injection. That same reason makes this a
 // Windows-only suite: on macOS a DOM-dispatched event has no stashed NSEvent to
 // pair the verdict with, so nothing would forward.
-
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/WebView/WebView.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <string>
 
 using namespace nano;
 using namespace eacp;

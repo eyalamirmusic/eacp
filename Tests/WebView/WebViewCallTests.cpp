@@ -1,16 +1,10 @@
+#include "Common.h"
 // Drives the C++ -> page call path on a real WKWebView: the page registers
 // functions with window.eacp.expose(...), and the native side calls them via
 // WebViewBridge::call(...), awaiting the resolved value. Covers a synchronous
 // exposed function, an async (Promise-returning) one, the typed overload, and
 // the error path — proving Miro/eacp can call async JavaScript from C++ and
 // get the result back as an eacp Async.
-
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/WebView/WebView.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <string>
 
 using namespace nano;
 using namespace eacp;

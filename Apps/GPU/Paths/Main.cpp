@@ -1,8 +1,4 @@
-#include <eacp/GPU/GPU.h>
 #include <eacp/GPUWidgets/GPUWidgets.h>
-#include <eacp/Graphics/Graphics.h>
-
-#include <cmath>
 
 using namespace eacp;
 using namespace eacp::GPUWidgets;

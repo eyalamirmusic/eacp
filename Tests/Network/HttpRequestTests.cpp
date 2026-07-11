@@ -1,5 +1,4 @@
-#include <eacp/Network/HTTP/Http.h>
-#include <NanoTest/NanoTest.h>
+#include "Common.h"
 
 using namespace nano;
 using eacp::HTTP::Request;

@@ -1,8 +1,4 @@
-#include <eacp/Core/App/AppEnvironment.h>
-#include <eacp/Graphics/HotKey/GlobalHotKey.h>
-#include <eacp/Graphics/Window/Window.h>
-
-#include <NanoTest/NanoTest.h>
+#include "Common.h"
 
 using namespace nano;
 using namespace eacp::Graphics;

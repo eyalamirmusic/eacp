@@ -1,5 +1,5 @@
 #include <Miro/Miro.h>
-#include <eacp/Network/HTTP/Http.h>
+#include <eacp/Network/Network.h>
 #include <iostream>
 
 struct Req

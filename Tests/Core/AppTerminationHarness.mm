@@ -1,10 +1,9 @@
 // Subprocess harness for AppTerminationTests: quits a running app via
 // terminate: and reports whether run<T>() unwound.
-#include <eacp/Core/App/App.h>
+#include <eacp/Core/Core.h>
 
 #import <Cocoa/Cocoa.h>
 
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <thread>

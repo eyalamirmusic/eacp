@@ -1,10 +1,6 @@
 #include "Schema.h"
 
-#include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Network/HTTPRpc/RpcServer.h>
-#include <eacp/Network/HTTPServer/HttpServer.h>
-
-#include <Miro/Miro.h>
 
 #include <iostream>
 
@@ -23,7 +19,7 @@ int main(int argc, char** argv)
     auto httpServer = eacp::HTTP::Server {};
     auto rpc = eacp::HTTP::Rpc::Server {httpServer, bridge};
 
-    if (! httpServer.listen(port))
+    if (!httpServer.listen(port))
     {
         std::cerr << "Failed to bind RPC server on port " << port << "\n";
         return 1;

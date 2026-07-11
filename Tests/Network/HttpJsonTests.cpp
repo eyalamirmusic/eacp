@@ -1,13 +1,6 @@
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Network/HTTP/Http.h>
-#include <eacp/Network/HTTPServer/HttpServer.h>
+#include "Common.h"
 #include <eacp/Network/HTTPServer/Json.h>
-#include <NanoTest/NanoTest.h>
 
-#include <atomic>
-#include <chrono>
-#include <string>
-#include <thread>
 #include <vector>
 
 using namespace nano;

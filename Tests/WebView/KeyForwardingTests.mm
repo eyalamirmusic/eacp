@@ -1,17 +1,11 @@
+#include "Common.h"
 // Drives the unhandled-key forwarding pipeline (Options::forwardUnhandledKeys)
 // end to end on a real WKWebView: a synthesized NSEvent goes to the platform
 // view, the injected key-events.js reports whether the page consumed it, and
 // the unconsumed ones must come back out through onUnhandledKeyEvent. The
 // NSEvent synthesis is AppKit-specific, so this suite is macOS-only.
 
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/WebView/WebView.h>
-
 #import <AppKit/AppKit.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <string>
 
 using namespace nano;
 using namespace eacp;

@@ -1,10 +1,6 @@
 #include "Types.h"
 
-#include <eacp/Core/Plugins/PluginExport.h>
-#include <eacp/Core/Threads/Timer.h>
 #include <eacp/WebView/WebView.h>
-
-#include <memory>
 
 // The same app as Main.cpp, packaged as a runtime-loaded plugin: the host
 // owns the event loop, so the window is created and destroyed through the

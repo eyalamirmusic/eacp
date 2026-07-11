@@ -1,12 +1,4 @@
-#include <eacp/Network/TCP/Connection.h>
-#include <eacp/Network/TCP/Listener.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <chrono>
-#include <string>
-#include <thread>
-#include <utility>
+#include "Common.h"
 #include <vector>
 
 using namespace nano;
@@ -213,7 +205,7 @@ auto tCloseEndsConnection = test("Tcp/closeMakesAConnectionNotOpen") = []
     auto client = dial(listener);
     check(client.isOpen());
     client.close();
-    check(! client.isOpen());
+    check(!client.isOpen());
 
     server.join();
 };
@@ -341,7 +333,7 @@ auto tMoveConnection = test("Tcp/movingAConnectionTransfersTheSocket") = []
     auto client = dial(listener);
     auto moved = std::move(client);
 
-    check(! client.isOpen()); // NOLINT - intentionally inspecting moved-from
+    check(!client.isOpen()); // NOLINT - intentionally inspecting moved-from
     check(moved.isOpen());
 
     moved.send("through-the-moved-handle\n");
@@ -357,7 +349,7 @@ auto tMoveListener = test("Tcp/movingAListenerKeepsItServing") = []
     auto port = original.port();
     auto listener = std::move(original);
 
-    check(! original.isListening()); // NOLINT - moved-from
+    check(!original.isListening()); // NOLINT - moved-from
     check(listener.isListening());
     check(listener.port() == port);
 
@@ -398,7 +390,7 @@ auto tAcceptAfterClose = test("Tcp/acceptThrowsAfterTheListenerIsClosed") = []
     check(listener.isListening());
 
     listener.close();
-    check(! listener.isListening());
+    check(!listener.isListening());
 
     auto threw = false;
     try
@@ -475,7 +467,7 @@ auto tSendToHungUpPeer = test("Tcp/sendToAHungUpPeerThrowsRatherThanCrashing") =
     auto threw = false;
     try
     {
-        for (auto i = 0; i < 5000 && ! threw; ++i)
+        for (auto i = 0; i < 5000 && !threw; ++i)
             client.send(std::string(4096, 'x'));
     }
     catch (const Error&)
@@ -524,7 +516,7 @@ auto tSplitDelimiter = test("Tcp/receiveUntilHandlesADelimiterSplitAcrossReads")
         });
 
     auto client = dial(listener);
-    auto first = client.receiveLine();  // delimiter arrives in the 2nd read
+    auto first = client.receiveLine(); // delimiter arrives in the 2nd read
     auto second = client.receiveLine(); // came in as overshoot on the 1st
 
     server.join();
@@ -546,7 +538,8 @@ auto tIdleReceiveTimesOut =
         });
 
     // Short io timeout so the idle read trips quickly.
-    auto client = Connection::connect({"127.0.0.1", listener.port()}, {2000ms, 200ms});
+    auto client =
+        Connection::connect({"127.0.0.1", listener.port()}, {2000ms, 200ms});
 
     auto timedOut = false;
     try
@@ -623,7 +616,7 @@ auto tDoubleClose = test("Tcp/doubleCloseIsHarmless") = []
     client.close();
     client.close(); // must be a safe no-op
 
-    check(! client.isOpen());
+    check(!client.isOpen());
     server.join();
 };
 

@@ -1,14 +1,6 @@
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Network/HTTP/Http.h>
+#include "Common.h"
 #include <eacp/Network/HTTPRpc/RpcClient.h>
 #include <eacp/Network/HTTPRpc/RpcServer.h>
-#include <eacp/Network/HTTPServer/HttpServer.h>
-#include <NanoTest/NanoTest.h>
-
-#include <atomic>
-#include <chrono>
-#include <string>
-#include <thread>
 
 using namespace nano;
 using eacp::HTTP::Error;

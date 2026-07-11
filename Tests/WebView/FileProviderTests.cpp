@@ -1,13 +1,5 @@
-#include <eacp/WebView/WebView.h>
-
-#include <NanoTest/NanoTest.h>
-
+#include "Common.h"
 #include <array>
-#include <cstdint>
-#include <filesystem>
-#include <fstream>
-#include <span>
-#include <string>
 
 using namespace nano;
 using namespace eacp::Graphics;

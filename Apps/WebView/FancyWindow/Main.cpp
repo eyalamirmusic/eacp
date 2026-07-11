@@ -1,5 +1,4 @@
 #include <eacp/WebView/WebView.h>
-#include <eacp/Core/Platform/Platform.h>
 
 using namespace eacp;
 using namespace Graphics;

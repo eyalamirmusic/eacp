@@ -1,11 +1,5 @@
-#include <eacp/Camera/Camera.h>
 #include <eacp/CameraView/CameraView.h>
-#include <eacp/Core/App/App.h>
-#include <eacp/Core/Utils/Environment.h>
-#include <eacp/Graphics/Graphics.h>
 
-#include <algorithm>
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 

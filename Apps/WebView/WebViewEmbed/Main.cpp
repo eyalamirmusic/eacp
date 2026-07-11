@@ -1,6 +1,5 @@
 #include "Types.h"
 
-#include <eacp/Core/Threads/Timer.h>
 #include <eacp/WebView/WebView.h>
 
 using namespace eacp;

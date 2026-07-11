@@ -1,3 +1,4 @@
+#include "Common.h"
 // Exercises the bridge-side async model: C++ command handlers stay
 // completely synchronous, and the bridge turns each call into an async
 // one. runCommand runs a Miro dispatch under a chosen execution mode and
@@ -7,16 +8,6 @@
 //
 // These drive the real event loop via Async::waitFor / runEventLoopUntil,
 // the same way Tests/Core/AsyncTests.cpp does in a bare NanoTest main.
-
-#include <eacp/WebView/WebView/AsyncBridge.h>
-
-#include <Miro/Miro.h>
-#include <NanoTest/NanoTest.h>
-
-#include <chrono>
-#include <optional>
-#include <string>
-#include <thread>
 
 using namespace nano;
 using namespace std::chrono_literals;

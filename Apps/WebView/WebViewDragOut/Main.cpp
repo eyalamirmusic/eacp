@@ -1,15 +1,8 @@
 #include <eacp/WebView/WebView.h>
-#include <eacp/Core/Utils/Environment.h>
-#include <ResEmbed/ResEmbed.h>
 #include <WebResources.h>
 
-#include <algorithm>
 #include <array>
-#include <cctype>
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <string>
 #include <vector>
 
 using namespace eacp;

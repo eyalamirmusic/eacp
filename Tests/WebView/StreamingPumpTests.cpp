@@ -1,19 +1,10 @@
+#include "Common.h"
 // Drives the macOS streaming scheme handler end-to-end on a real WKWebView:
 // a page loaded from a custom streaming scheme issues a ranged fetch() against
 // a sibling URL on the same scheme, and posts the status / headers / body back
 // over a script message handler. This exercises the actual chunked pump (the
 // background read -> main-thread didReceiveData loop) and the 206 / Range
 // header path, not just the pure resolveRangeHeader logic.
-
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/WebView/WebView.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <algorithm>
-#include <cstring>
-#include <optional>
-#include <string>
 
 using namespace nano;
 using namespace eacp;
@@ -91,8 +82,8 @@ auto tStreamingRangeFetch = test("StreamingPump/rangeFetchReturns206Slice") = []
 
     webView.loadURL("teststream://host/index.html");
 
-    auto ok = Threads::runEventLoopUntil([&] { return done; },
-                                         streamingResultTimeout);
+    auto ok =
+        Threads::runEventLoopUntil([&] { return done; }, streamingResultTimeout);
 
     check(ok);
     check(message.find(R"("status":206)") != std::string::npos);

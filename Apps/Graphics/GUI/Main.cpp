@@ -1,7 +1,5 @@
 #include <eacp/Graphics/Graphics.h>
 
-#include <algorithm>
-
 using namespace eacp;
 using namespace Graphics;
 
@@ -142,10 +140,7 @@ struct FilledRect final : View
 
 struct GradientRect final : View
 {
-    GradientRect()
-    {
-        addChildren({layer});
-    }
+    GradientRect() { addChildren({layer}); }
 
     void resized() override
     {
@@ -154,12 +149,11 @@ struct GradientRect final : View
         path.addRoundedRect(bounds, 12.f);
         layer->setPath(path);
 
-        LinearGradient gradient(
-            {0.f, 0.f},
-            {bounds.w, bounds.h},
-            {{{0.2f, 0.4f, 0.9f}, 0.f},
-             {{0.9f, 0.2f, 0.5f}, 0.5f},
-             {{0.9f, 0.6f, 0.1f}, 1.f}});
+        LinearGradient gradient({0.f, 0.f},
+                                {bounds.w, bounds.h},
+                                {{{0.2f, 0.4f, 0.9f}, 0.f},
+                                 {{0.9f, 0.2f, 0.5f}, 0.5f},
+                                 {{0.9f, 0.6f, 0.1f}, 1.f}});
 
         layer->setFillGradient(gradient);
         layer.scaleToFit();
@@ -219,7 +213,8 @@ struct ParentView final : View
 {
     ParentView()
     {
-        addChildren({rec, stroke, child1, child2, child3, gradient, animatedChild, text});
+        addChildren(
+            {rec, stroke, child1, child2, child3, gradient, animatedChild, text});
     }
 
     void resized() override

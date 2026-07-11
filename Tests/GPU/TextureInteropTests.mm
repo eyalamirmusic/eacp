@@ -1,9 +1,7 @@
 #import <CoreVideo/CoreVideo.h>
 
+#include "Common.h"
 #include <eacp/Core/ObjC/AutoReleasePool.h>
-#include <eacp/GPU/GPU.h>
-
-#include <NanoTest/NanoTest.h>
 
 using namespace nano;
 using namespace eacp;

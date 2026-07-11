@@ -1,8 +1,5 @@
 #include <eacp/WebView/WebView.h>
 
-#include <ea_data_structures/Pointers/OwningPointer.h>
-#include <ea_data_structures/Structures/OwnedVector.h>
-
 using namespace eacp;
 using namespace Graphics;
 
@@ -60,16 +57,12 @@ struct ParentView final : View
 
     void openPopup(EA::OwningPointer<WebView> popupWebView)
     {
-        popups.createNew(
-            std::move(popupWebView),
-            [this](PopupWindow* p)
-            { Threads::callAsync([this, p]() { closePopup(p); }); });
+        popups.createNew(std::move(popupWebView),
+                         [this](PopupWindow* p)
+                         { Threads::callAsync([this, p]() { closePopup(p); }); });
     }
 
-    void closePopup(PopupWindow* popup)
-    {
-        popups.removeItem(*popup);
-    }
+    void closePopup(PopupWindow* popup) { popups.removeItem(*popup); }
 
     WebView webView;
     EA::OwnedVector<PopupWindow> popups;

@@ -1,10 +1,5 @@
 #include <eacp/GPU/GPU.h>
-#include <eacp/Graphics/Graphics.h>
 #include <eacp/WebView/WebView.h>
-
-#include <cmath>
-#include <functional>
-#include <string>
 
 using namespace eacp;
 using namespace eacp::Graphics;

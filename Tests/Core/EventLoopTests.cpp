@@ -1,8 +1,4 @@
-#include <eacp/Core/Threads/EventLoop.h>
-#include <NanoTest/NanoTest.h>
-
-#include <chrono>
-#include <thread>
+#include "Common.h"
 
 using namespace nano;
 using eacp::Threads::callAsync;

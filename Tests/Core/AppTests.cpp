@@ -1,10 +1,4 @@
-#include <eacp/Core/App/App.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <NanoTest/NanoTest.h>
-
-#include <atomic>
-#include <chrono>
-#include <thread>
+#include "Common.h"
 
 using namespace nano;
 using eacp::Apps::App;

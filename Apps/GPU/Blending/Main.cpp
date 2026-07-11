@@ -1,9 +1,5 @@
-#include <eacp/Graphics/Graphics.h>
 #include <eacp/GPU/GPU.h>
 
-#include <cmath>
-#include <cstring>
-#include <string>
 #include <vector>
 
 using namespace eacp;
@@ -26,7 +22,7 @@ constexpr float pi = 3.14159265358979323846f;
 constexpr float circleRadius = 0.20f;
 constexpr float circleAlpha = 0.75f;
 constexpr int circleSegments = 64;
-constexpr float centerDistance = 0.15f;  // origin to each circle centre
+constexpr float centerDistance = 0.15f; // origin to each circle centre
 
 struct Vertex
 {
@@ -69,8 +65,7 @@ void appendCircle(std::vector<Vertex>& out, const CircleSpec& c)
         const auto a0 = (float) i / (float) circleSegments * 2.f * pi;
         const auto a1 = (float) (i + 1) / (float) circleSegments * 2.f * pi;
 
-        const Vertex centre {{c.centerX, c.centerY},
-                             {c.r, c.g, c.b, circleAlpha}};
+        const Vertex centre {{c.centerX, c.centerY}, {c.r, c.g, c.b, circleAlpha}};
         const Vertex rim0 {{c.centerX + circleRadius * std::cos(a0),
                             c.centerY + circleRadius * std::sin(a0)},
                            {c.r, c.g, c.b, circleAlpha}};
@@ -104,8 +99,7 @@ GeneratedShader makeBlendingShader()
     auto panelOffsetX = builder.uniform<Float>();
     auto varyingColor = builder.varying(color);
 
-    builder.position(
-        float4(position.x() + panelOffsetX, position.y(), 0.0f, 1.0f));
+    builder.position(float4(position.x() + panelOffsetX, position.y(), 0.0f, 1.0f));
     builder.fragment(varyingColor);
     return builder.build();
 }
@@ -128,9 +122,8 @@ struct BlendingView final : GPUView
     BlendingView()
         : shader(makeBlendingShader())
         , vertexData(buildCircleMesh())
-        , vertexBuffer(Device::shared().makeBuffer(vertexData.data(),
-                                                    vertexData.size()
-                                                        * sizeof(Vertex)))
+        , vertexBuffer(Device::shared().makeBuffer(
+              vertexData.data(), vertexData.size() * sizeof(Vertex)))
         , library(Device::shared().makeShaderLibrary(shader.source))
         , none(makePipeline(BlendMode::None))
         , alphaBlend(makePipeline(BlendMode::AlphaBlend))
@@ -217,8 +210,8 @@ struct LabelStripView final : Graphics::View
 
             const auto nameWidth =
                 (float) std::strlen(panels[i].name) * nameHalfCharWidth * 2.f;
-            const auto expectedWidth =
-                (float) std::strlen(panels[i].expected) * expectedHalfCharWidth * 2.f;
+            const auto expectedWidth = (float) std::strlen(panels[i].expected)
+                                       * expectedHalfCharWidth * 2.f;
 
             g.drawText(std::string {panels[i].name},
                        {panelCentreX - nameWidth * 0.5f, topBaselineY},

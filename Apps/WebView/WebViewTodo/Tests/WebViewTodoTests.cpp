@@ -2,9 +2,6 @@
 
 #include <eacp/WebView/Test/TestApp.h>
 
-#include <NanoTest/NanoTest.h>
-
-#include <string>
 #include <vector>
 
 using namespace std::chrono_literals;

@@ -5,8 +5,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstddef>
-#include <cstdint>
 #include <cstdio>
 
 // Micro-benchmark comparing the scalar reference against the active SIMD backend

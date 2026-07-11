@@ -1,9 +1,4 @@
-#include <eacp/Core/Core.h>
-#include <eacp/Core/Plugins/PluginExport.h>
-#include <eacp/Core/Utils/Logging.h>
 #include <eacp/Graphics/Graphics.h>
-
-#include <memory>
 
 namespace
 {

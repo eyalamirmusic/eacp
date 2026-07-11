@@ -1,15 +1,8 @@
+#include "Common.h"
 // window-drag.js (auto-injected) exposes window.__eacpResolveAppRegion, which
 // classifies a point as drag / no-drag. These assert that classification on a
 // real WKWebView -- which also pins down that the `--eacp-app-region` custom
 // property is readable via getComputedStyle (the native one is not).
-
-#include <eacp/Core/Platform/Platform.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/WebView/WebView.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <string>
 
 using namespace nano;
 using namespace eacp;

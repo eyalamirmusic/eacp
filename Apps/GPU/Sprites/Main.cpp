@@ -1,11 +1,6 @@
 #include <eacp/Sprites/Sprites.h>
 
-#include <eacp/GPU/GPU.h>
-#include <eacp/Graphics/Graphics.h>
-#include <eacp/Graphics/Image/Image.h>
-
 #include <cstdlib>
-#include <optional>
 
 using namespace eacp;
 
