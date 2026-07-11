@@ -1,4 +1,5 @@
 #import <AVFoundation/AVFoundation.h>
+#import <TargetConditionals.h>
 
 #include "Camera.h"
 #include "CameraDevices-Apple.h"
@@ -309,6 +310,27 @@ void configureFormatAndFrameRate(AVCaptureDevice* device,
         " requestedFps=",
         frameRate);
 }
+
+void configureUprightOrientation(AVCaptureConnection* connection)
+{
+#if TARGET_OS_IOS
+    if (connection == nil)
+        return;
+
+    if (@available(iOS 17.0, *))
+    {
+        if ([connection isVideoRotationAngleSupported:90.0])
+            connection.videoRotationAngle = 90.0;
+
+        return;
+    }
+
+    if (connection.isVideoOrientationSupported)
+        connection.videoOrientation = AVCaptureVideoOrientationPortrait;
+#else
+    (void) connection;
+#endif
+}
 } // namespace
 
 struct Camera::Native
@@ -375,6 +397,8 @@ struct Camera::Native
         }
 
         [session.get() addOutput:output.get()];
+        configureUprightOrientation(
+            [output.get() connectionWithMediaType:AVMediaTypeVideo]);
         [session.get() commitConfiguration];
 
         configureFormatAndFrameRate(
