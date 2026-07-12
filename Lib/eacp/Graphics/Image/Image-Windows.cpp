@@ -1,5 +1,5 @@
 #include "ImageCodec.h"
-#include "../Common-Windows.h"
+#include "../D2D-Windows.h"
 #include <algorithm>
 
 #include <objbase.h>

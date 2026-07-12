@@ -1,5 +1,5 @@
 #include "GPUView.h"
-#include <eacp/Graphics/Common-Windows.h>
+#include <eacp/Graphics/Composition-Windows.h>
 
 #include "../Device/Device.h"
 #include "../Frame/Frame.h"

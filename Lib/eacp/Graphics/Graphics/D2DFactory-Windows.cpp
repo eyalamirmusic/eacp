@@ -1,5 +1,7 @@
 #include <cstdio>
-#include "../Common-Windows.h"
+#include "../Composition-Windows.h"
+#include "../D2D-Windows.h"
+
 #include "../Common.h"
 
 #include <d3d11.h>
