@@ -166,6 +166,7 @@ function(add_ide_sources target)
 endfunction()
 
 function(eacp_default_setup)
+    add_compile_definitions(_LIBCPP_REMOVE_TRANSITIVE_INCLUDES)
     eacp_setup_apple()
 
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")

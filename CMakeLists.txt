@@ -37,7 +37,6 @@ if (NOT EACP_BUILD_GRAPHICS)
 endif ()
 
 include(TargetSetup)
-include(CPM)
 include(EacpSchema)
 include(EacpPlugin)
 
@@ -51,6 +50,7 @@ if (EACP_HIDDEN_VISIBILITY)
     set(CMAKE_VISIBILITY_INLINES_HIDDEN TRUE)
 endif ()
 
+
 option(EACP_ENABLE_TESTS "Enable Tests for EACP" ${PROJECT_IS_TOP_LEVEL})
 
 if (PROJECT_IS_TOP_LEVEL)
@@ -60,7 +60,9 @@ endif ()
 set(CMAKE_CXX_STANDARD 20)
 add_subdirectory(Lib)
 
-if (PROJECT_IS_TOP_LEVEL)
+option(EACP_ENABLE_EXAMPLES "Enable Examples for EACP" ${PROJECT_IS_TOP_LEVEL})
+
+if (EACP_ENABLE_EXAMPLES)
     add_subdirectory(Apps)
 endif ()
 
