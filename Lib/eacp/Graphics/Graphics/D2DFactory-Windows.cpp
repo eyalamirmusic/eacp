@@ -1,5 +1,5 @@
 #include <cstdio>
-#include "../Composition-Windows.h"
+#include "../CompositionInterop-Windows.h"
 #include "../D2D-Windows.h"
 
 #include "../Common.h"

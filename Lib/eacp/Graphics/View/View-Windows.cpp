@@ -1,6 +1,7 @@
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "View.h"
+#include "../CompositionInterop-Windows.h"
 #include "../Graphics/GraphicsContext.h"
 #include "../Layers/NativeLayer-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"

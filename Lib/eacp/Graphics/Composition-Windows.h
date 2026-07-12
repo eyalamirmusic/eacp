@@ -1,13 +1,11 @@
 #pragma once
 
-// WinRT composition (the Visual layer) plus its classic-COM interop. This is by
-// far the most expensive include in the Windows graphics stack, so only the TUs
-// that actually build a visual tree should pull it in -- see D2D-Windows.h for
-// the drawing-only half.
+// WinRT composition (the Visual layer). Expensive, so only the TUs that build a
+// visual tree should pull it in -- see D2D-Windows.h for the drawing-only half,
+// and CompositionInterop-Windows.h for the classic-COM bridges, which cost far
+// more again and are needed by only a handful of files.
 
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Composition.h>
-
-#include <windows.ui.composition.interop.h>
