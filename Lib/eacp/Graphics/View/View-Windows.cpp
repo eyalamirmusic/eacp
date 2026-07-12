@@ -432,19 +432,29 @@ struct View::Native
         POINT pt;
         GetCursorPos(&pt);
 
-        // Views work in logical, window-client coordinates (that is how mouse
-        // events are delivered — WndProc divides by the DPI scale). GetCursorPos
-        // is in physical screen pixels, so convert to client space and back out
-        // the DPI factor; otherwise callers that mix this with getBounds() (e.g.
-        // drag handling) move at DPI-times speed on high-DPI displays.
+        // View-local logical coordinates, matching the macOS implementation
+        // (convertPoint:fromView:nil) — isHovering() compares this against
+        // getLocalBounds(). GetCursorPos is in physical screen pixels, so map
+        // to the client area, back out the DPI factor (otherwise callers move
+        // at DPI-times speed on high-DPI displays), then subtract the view's
+        // accumulated origin within the window.
         auto host = findHostHwndForView(ownerView);
         if (!host)
             return Point(static_cast<float>(pt.x), static_cast<float>(pt.y));
 
         ScreenToClient(host, &pt);
         auto dpiScale = static_cast<float>(GetDpiForWindow(host)) / 96.f;
-        return Point(static_cast<float>(pt.x) / dpiScale,
-                     static_cast<float>(pt.y) / dpiScale);
+        auto local = Point(static_cast<float>(pt.x) / dpiScale,
+                           static_cast<float>(pt.y) / dpiScale);
+
+        for (auto* view = ownerView; view != nullptr; view = view->getParent())
+        {
+            auto viewBounds = view->getBounds();
+            local.x -= viewBounds.x;
+            local.y -= viewBounds.y;
+        }
+
+        return local;
     }
 
     void focus() { hasFocusFlag = true; }
