@@ -4,13 +4,13 @@
 
 namespace eacp::Plugins
 {
-std::string getCurrentModulePath()
+FilePath getCurrentModulePath()
 {
     auto info = Dl_info {};
 
     if (dladdr((const void*) &getCurrentModulePath, &info) != 0
         && info.dli_fname != nullptr)
-        return info.dli_fname;
+        return FilePath {info.dli_fname};
 
     return {};
 }

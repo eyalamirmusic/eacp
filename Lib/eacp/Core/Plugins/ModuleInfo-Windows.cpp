@@ -25,7 +25,7 @@ bool isDynamicLibrary()
     return result;
 }
 
-std::string getCurrentModulePath()
+FilePath getCurrentModulePath()
 {
     auto buffer = std::wstring(MAX_PATH, L'\0');
     auto length = GetModuleFileNameW(
@@ -55,7 +55,11 @@ std::string getCurrentModulePath()
                         nullptr,
                         nullptr);
 
-    return result;
+    for (auto& character: result)
+        if (character == '\\')
+            character = '/';
+
+    return FilePath {std::move(result)};
 }
 
 std::string getModuleIdentitySuffix()

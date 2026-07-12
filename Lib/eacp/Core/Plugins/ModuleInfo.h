@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Utils/Common.h"
+#include "../Utils/FilePath.h"
 
 namespace eacp::Plugins
 {
@@ -10,7 +11,7 @@ namespace eacp::Plugins
 // they answer for the executable. Every eacp copy in a process gets its own
 // answer, which is exactly what per-image resource lookup and per-image OS
 // registrations need.
-std::string getCurrentModulePath();
+FilePath getCurrentModulePath();
 
 // A short hex token derived from this module's identity, stable for the
 // module's lifetime and distinct between eacp copies in one process. Used to
