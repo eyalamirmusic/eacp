@@ -4,6 +4,7 @@
 #include "WebView.h"
 #include "StreamingRange.h"
 #include "WebViewDetail.h"
+#include <eacp/Graphics/DComp-Windows.h>
 #include <eacp/Graphics/Helpers/StringUtils-Windows.h>
 
 #include <cstdlib>
@@ -18,10 +19,7 @@
 #include <WebView2.h>
 #include <WebView2EnvironmentOptions.h>
 
-#include <winrt/Windows.Foundation.h>
-#include <winrt/Windows.UI.Composition.h>
 
-namespace wuc = winrt::Windows::UI::Composition;
 
 namespace eacp::Graphics
 {
@@ -36,7 +34,6 @@ HWND findHostHwndForView(View* view);
 uint16_t keyCodeFromVirtualKey(int vk);
 
 // Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
-wuc::Compositor getWinRTCompositor();
 
 using MessageHandlerMap =
     std::unordered_map<std::string, std::function<void(const std::string&)>>;
@@ -282,12 +279,12 @@ struct WebView::Native
         // Remove the render visual from the View's composition tree.
         if (webViewVisual)
         {
-            if (auto* container =
-                    static_cast<wuc::ContainerVisual*>(owner.getNativeLayer()))
-                if (*container)
-                    (*container).Children().Remove(webViewVisual);
+            if (auto* container = static_cast<IDCompositionVisual2*>(
+                    owner.getNativeLayer()))
+                container->RemoveVisual(webViewVisual.Get());
 
-            webViewVisual = nullptr;
+            webViewVisual.Reset();
+            commitComposition();
         }
     }
 
@@ -315,16 +312,21 @@ struct WebView::Native
         if (webViewVisual)
             return;
 
-        auto compositor = getWinRTCompositor();
-        if (!compositor)
+        auto* device = getCompositionDevice();
+        if (!device)
             return;
 
-        webViewVisual = compositor.CreateContainerVisual();
+        if (FAILED(device->CreateVisual(webViewVisual.GetAddressOf())))
+        {
+            webViewVisual.Reset();
+            return;
+        }
 
         if (auto* container =
-                static_cast<wuc::ContainerVisual*>(owner.getNativeLayer()))
-            if (*container)
-                (*container).Children().InsertAtTop(webViewVisual);
+                static_cast<IDCompositionVisual2*>(owner.getNativeLayer()))
+            insertVisualAtTop(container, webViewVisual.Get());
+
+        commitComposition();
     }
 
     void createWebView2()
@@ -448,7 +450,7 @@ struct WebView::Native
 
                     // Render into our composition visual.
                     compositionController->put_RootVisualTarget(
-                        reinterpret_cast<IUnknown*>(winrt::get_abi(webViewVisual)));
+                        webViewVisual.Get());
 
                     applySettings();
                     setupEventHandlers();
@@ -1131,16 +1133,23 @@ struct WebView::Native
 
         // The render visual lives inside the WebView's own View container, which
         // the View tree already positions and (via the Panel) applies opacity
-        // to. So it only needs to sit at the container origin and be sized.
+        // to. So it only needs to sit at the container origin.
         //
         // WebView2 treats the RootVisualTarget's coordinate space as physical
         // pixels, but our composition root is already DPI-scaled. Counter-scale
-        // the visual by 1/dpi and size it in pixels, so the browser's
-        // pixel-space content maps back to the correct logical size on screen
-        // (without this it renders dpi-times too large on high-DPI displays).
-        webViewVisual.Offset({0.0f, 0.0f, 0.0f});
-        webViewVisual.Scale({1.0f / dpiScale, 1.0f / dpiScale, 1.0f});
-        webViewVisual.Size({widthPx, heightPx});
+        // the visual by 1/dpi so the browser's pixel-space content maps back to
+        // the correct logical size on screen (without this it renders dpi-times
+        // too large on high-DPI displays). DComp visuals carry no size — the
+        // extent comes from the content WebView2 renders, and from the bounds
+        // handed to put_Bounds below.
+        webViewVisual->SetOffsetX(0.0f);
+        webViewVisual->SetOffsetY(0.0f);
+
+        if (dpiScale > 0.f)
+            webViewVisual->SetTransform(
+                D2D1::Matrix3x2F::Scale(1.0f / dpiScale, 1.0f / dpiScale));
+
+        commitComposition();
 
         if (!controller)
             return;
@@ -1447,7 +1456,7 @@ struct WebView::Native
     // WebView's own View ContainerVisual, so it inherits the View tree's
     // position, opacity and z-order — letting the WebView layer, blend and
     // overlap with GPU and primitive content (impossible with a child HWND).
-    wuc::ContainerVisual webViewVisual {nullptr};
+    Microsoft::WRL::ComPtr<IDCompositionVisual2> webViewVisual;
     MessageHandlerMap messageHandlers;
     std::unordered_map<std::string, ResourceProvider> schemeProviders;
     std::unordered_map<std::string, StreamingProvider> streamingProviders;

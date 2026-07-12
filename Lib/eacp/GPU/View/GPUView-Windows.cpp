@@ -1,20 +1,11 @@
 #include "GPUView.h"
-#include <eacp/Graphics/CompositionInterop-Windows.h>
+#include <eacp/Graphics/DComp-Windows.h>
 
 #include "../Device/Device.h"
 #include "../Frame/Frame.h"
 #include "../Windows/D3D12Types.h"
 
 #include <unordered_set>
-
-namespace wuc = winrt::Windows::UI::Composition;
-
-namespace eacp::Graphics
-{
-// Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
-wuc::Compositor getWinRTCompositor();
-bool handleDeviceLossIfNeeded(HRESULT hr);
-} // namespace eacp::Graphics
 
 namespace eacp::GPU
 {
@@ -61,18 +52,21 @@ struct GPUView::Native : DeviceResourceHolder
     {
         liveGPUViews().insert(this);
 
-        compositor = Graphics::getWinRTCompositor();
+        compositionDevice = Graphics::getCompositionDevice();
         device = static_cast<ID3D12Device*>(Device::shared().nativeDevice());
 
-        if (!compositor || device == nullptr)
+        if (!compositionDevice || device == nullptr)
             return;
 
-        spriteVisual = compositor.CreateSpriteVisual();
+        if (FAILED(compositionDevice->CreateVisual(spriteVisual.GetAddressOf())))
+        {
+            spriteVisual.Reset();
+            return;
+        }
 
         if (auto* container =
-                static_cast<wuc::ContainerVisual*>(view.getNativeLayer()))
-            if (*container)
-                container->Children().InsertAtTop(spriteVisual);
+                static_cast<IDCompositionVisual2*>(view.getNativeLayer()))
+            Graphics::insertVisualAtTop(container, spriteVisual.Get());
     }
 
     ~Native() override
@@ -86,9 +80,10 @@ struct GPUView::Native : DeviceResourceHolder
 
         if (spriteVisual)
             if (auto* container =
-                    static_cast<wuc::ContainerVisual*>(view.getNativeLayer()))
-                if (*container)
-                    container->Children().Remove(spriteVisual);
+                    static_cast<IDCompositionVisual2*>(view.getNativeLayer()))
+                container->RemoveVisual(spriteVisual.Get());
+
+        Graphics::commitComposition();
     }
 
     // Drops every resource created on the lost device, re-acquires the
@@ -107,7 +102,20 @@ struct GPUView::Native : DeviceResourceHolder
         frameFences = {};
 
         if (spriteVisual)
-            spriteVisual.Brush(nullptr);
+            spriteVisual->SetContent(nullptr);
+
+        // The DComp device is replaced along with the rendering device, so
+        // re-acquire it and rebuild the visual before the swapchain reattaches.
+        compositionDevice = Graphics::getCompositionDevice();
+        spriteVisual.Reset();
+
+        if (compositionDevice
+            && SUCCEEDED(compositionDevice->CreateVisual(spriteVisual.GetAddressOf())))
+        {
+            if (auto* container =
+                    static_cast<IDCompositionVisual2*>(view.getNativeLayer()))
+                Graphics::insertVisualAtTop(container, spriteVisual.Get());
+        }
 
         device = static_cast<ID3D12Device*>(Device::shared().nativeDevice());
 
@@ -122,7 +130,7 @@ struct GPUView::Native : DeviceResourceHolder
 
     void updateSize()
     {
-        if (!compositor || device == nullptr)
+        if (!compositionDevice || device == nullptr)
             return;
 
         auto bounds = view.getLocalBounds();
@@ -138,8 +146,7 @@ struct GPUView::Native : DeviceResourceHolder
         else
             resizeSwapChain();
 
-        if (spriteVisual)
-            spriteVisual.Size({bounds.w, bounds.h});
+        applyContentScale();
 
         updateMultisampleTexture();
         updateDepthTexture();
@@ -183,23 +190,28 @@ struct GPUView::Native : DeviceResourceHolder
         createBackBufferViews();
     }
 
+    // DComp takes a swapchain as visual content directly — no interop surface and
+    // no surface brush, which is what WinRT needed CreateCompositionSurfaceForSwap
+    // Chain + CompositionStretch::Fill for. The swapchain is already sized in
+    // physical pixels, so the visual counter-scales by 1/dpiScale to cancel the
+    // root's DPI transform (see NativeLayer-Windows.h).
     void attachSwapChainToVisual()
     {
-        namespace abi = ABI::Windows::UI::Composition;
-
-        auto interop = compositor.as<abi::ICompositorInterop>();
-        auto abiSurface = winrt::com_ptr<abi::ICompositionSurface>();
-
-        if (FAILED(interop->CreateCompositionSurfaceForSwapChain(swapChain.get(),
-                                                                 abiSurface.put())))
+        if (!spriteVisual || !swapChain)
             return;
 
-        auto surface = abiSurface.as<wuc::ICompositionSurface>();
-        auto brush = compositor.CreateSurfaceBrush(surface);
-        brush.Stretch(wuc::CompositionStretch::Fill);
+        spriteVisual->SetContent(swapChain.get());
+        applyContentScale();
+        Graphics::commitComposition();
+    }
 
-        if (spriteVisual)
-            spriteVisual.Brush(brush);
+    void applyContentScale()
+    {
+        auto scale = dpiScale();
+
+        if (spriteVisual && scale > 0.f)
+            spriteVisual->SetTransform(
+                D2D1::Matrix3x2F::Scale(1.f / scale, 1.f / scale));
     }
 
     void createDescriptorHeaps()
@@ -450,8 +462,8 @@ struct GPUView::Native : DeviceResourceHolder
     UINT width = 0;
     UINT height = 0;
 
-    wuc::Compositor compositor {nullptr};
-    wuc::SpriteVisual spriteVisual {nullptr};
+    IDCompositionDesktopDevice* compositionDevice = nullptr;
+    Microsoft::WRL::ComPtr<IDCompositionVisual2> spriteVisual;
     ID3D12Device* device = nullptr;
 
     winrt::com_ptr<IDXGISwapChain3> swapChain;

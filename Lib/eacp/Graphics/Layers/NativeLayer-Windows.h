@@ -1,30 +1,23 @@
 #pragma once
 
-#include "../Composition-Windows.h"
-#include "../D2D-Windows.h"
+#include "../DComp-Windows.h"
 
 #include "../Primitives/Primitives.h"
-
-#include <winrt/Windows.Graphics.DirectX.h>
-
-namespace wuc = winrt::Windows::UI::Composition;
-namespace wgdx = winrt::Windows::Graphics::DirectX;
 
 namespace eacp::Graphics
 {
 
-using Microsoft::WRL::ComPtr;
-
-wuc::Compositor getWinRTCompositor();
-wuc::CompositionGraphicsDevice getCompositionGraphicsDevice();
-ID2D1Device* getD2DDevice();
-
-// Recovers the shared rendering device when `hr` is a device-loss HRESULT
-// (DXGI_ERROR_DEVICE_REMOVED/RESET, D2DERR_RECREATE_TARGET). Returns true if
-// recovery ran; the caller should drop the current frame — every host redraws
-// once the replacement device is installed. Defined in D2DFactory-Windows.cpp.
-bool handleDeviceLossIfNeeded(HRESULT hr);
-
+// DComp has no SpriteVisual/ContainerVisual split — one visual type both holds
+// content and parents children — and no surface *brush*: a surface is set as the
+// visual's content directly.
+//
+// It also has no visual Size, and no stretch: SetContent draws the surface 1:1
+// in the visual's local space. The root visual is scaled by the DPI factor (see
+// CompositionHostWindow::rescaleRootVisualToDpi), so a content visual would show
+// its already-DPI-sized surface scaled a second time. Counter-scaling the
+// content visual by 1/dpiScale cancels that, which keeps offsets and bounds in
+// logical points exactly as the WinRT backend had them — DComp applies offsets
+// in parent space, so they are unaffected by the visual's own transform.
 struct NativeLayerBase
 {
     virtual ~NativeLayerBase() = default;
@@ -45,57 +38,53 @@ struct NativeLayerBase
         position = pos;
 
         if (visual)
-            visual.Offset({position.x, position.y, 0.0f});
+        {
+            visual->SetOffsetX(position.x);
+            visual->SetOffsetY(position.y);
+            commitComposition();
+        }
     }
 
     void setHidden(bool hiddenState)
     {
         hidden = hiddenState;
-
-        if (visual)
-            visual.Opacity(hiddenState ? 0.0f : opacity);
+        applyOpacity(hiddenState ? 0.0f : opacity);
     }
 
     void setOpacity(float op)
     {
         opacity = op;
 
-        if (visual && !hidden)
-            visual.Opacity(opacity);
+        if (!hidden)
+            applyOpacity(opacity);
     }
 
-    void attachTo(wuc::ContainerVisual parent)
+    void attachTo(IDCompositionVisual2* parent)
     {
         if (!parent)
             return;
 
         parentVisual = parent;
 
-        auto compositor = getWinRTCompositor();
-        if (!compositor)
+        // ensureVisual() parents the visual itself when parentVisual is already
+        // set, so do not AddVisual again here — DComp reparents on a second add.
+        if (!ensureVisual())
             return;
 
-        if (!visual)
-            visual = compositor.CreateSpriteVisual();
-
-        if (visual)
-        {
-            parent.Children().InsertAtTop(visual);
-            surfaceDirty = true;
-            contentDirty = true;
-            positionDirty = true;
-        }
+        surfaceDirty = true;
+        contentDirty = true;
+        positionDirty = true;
+        commitComposition();
     }
 
     void detach()
     {
         if (parentVisual && visual)
-        {
-            parentVisual.Children().Remove(visual);
-        }
-        parentVisual = nullptr;
-        surface = nullptr;
-        surfaceBrush = nullptr;
+            parentVisual->RemoveVisual(visual.Get());
+
+        parentVisual.Reset();
+        surface.Reset();
+        commitComposition();
     }
 
     static float systemDpiScale()
@@ -122,47 +111,40 @@ struct NativeLayerBase
 
     virtual void createSurface()
     {
-        if (!visual)
-            return;
-
-        auto graphicsDevice = getCompositionGraphicsDevice();
-        auto compositor = getWinRTCompositor();
-        if (!graphicsDevice || !compositor)
+        if (!ensureVisual())
             return;
 
         if (bounds.w <= 0 || bounds.h <= 0)
         {
-            surface = nullptr;
-            surfaceBrush = nullptr;
-            visual.Brush(nullptr);
+            surface.Reset();
+            visual->SetContent(nullptr);
             return;
         }
+
+        auto* device = getCompositionDevice();
+        if (!device)
+            return;
 
         auto surfaceWidth = static_cast<int>(bounds.w * dpiScale);
         auto surfaceHeight = static_cast<int>(bounds.h * dpiScale);
 
-        try
-        {
-            surface = graphicsDevice.CreateDrawingSurface(
-                {static_cast<float>(surfaceWidth),
-                 static_cast<float>(surfaceHeight)},
-                wgdx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
-                wgdx::DirectXAlphaMode::Premultiplied);
-        }
-        catch (const winrt::hresult_error& e)
+        surface.Reset();
+        auto hr = device->CreateSurface(static_cast<UINT>(surfaceWidth),
+                                        static_cast<UINT>(surfaceHeight),
+                                        DXGI_FORMAT_B8G8R8A8_UNORM,
+                                        DXGI_ALPHA_MODE_PREMULTIPLIED,
+                                        surface.GetAddressOf());
+
+        if (FAILED(hr))
         {
             // Keep surfaceDirty set: the post-recovery redraw retries.
-            handleDeviceLossIfNeeded(e.code());
-            surface = nullptr;
+            handleDeviceLossIfNeeded(hr);
+            surface.Reset();
             return;
         }
 
-        if (surface)
-        {
-            surfaceBrush = compositor.CreateSurfaceBrush(surface);
-            visual.Brush(surfaceBrush);
-            visual.Size({bounds.w, bounds.h});
-        }
+        visual->SetContent(surface.Get());
+        applyContentScale();
 
         surfaceDirty = false;
     }
@@ -173,7 +155,8 @@ struct NativeLayerBase
     {
         if (visual && positionDirty)
         {
-            visual.Offset({position.x, position.y, 0.0f});
+            visual->SetOffsetX(position.x);
+            visual->SetOffsetY(position.y);
             positionDirty = false;
         }
     }
@@ -182,7 +165,7 @@ struct NativeLayerBase
     {
         if (visual && opacityDirty)
         {
-            visual.Opacity(opacity);
+            applyOpacity(opacity);
             opacityDirty = false;
         }
     }
@@ -191,11 +174,7 @@ struct NativeLayerBase
     {
         if (visual && visibilityDirty)
         {
-            if (hidden)
-                visual.Opacity(0.0f);
-            else
-                visual.Opacity(opacity);
-
+            applyOpacity(hidden ? 0.0f : opacity);
             visibilityDirty = false;
         }
     }
@@ -217,16 +196,77 @@ struct NativeLayerBase
 
     void markContentDirty() { contentDirty = true; }
 
+    // Rebuilds the visual after a device loss moved the generation, and creates
+    // it on first use. Everything downstream (surface, content, position) is
+    // re-derived by ensureContent, so dropping them here is enough.
+    bool ensureVisual()
+    {
+        auto current = getCompositionGeneration();
+
+        if (generation != current)
+        {
+            generation = current;
+            visual.Reset();
+            visual3.Reset();
+            surface.Reset();
+            surfaceDirty = true;
+            contentDirty = true;
+            positionDirty = true;
+        }
+
+        if (visual)
+            return true;
+
+        auto* device = getCompositionDevice();
+        if (!device)
+            return false;
+
+        if (FAILED(device->CreateVisual(visual.GetAddressOf())))
+        {
+            visual.Reset();
+            return false;
+        }
+
+        // Opacity lives on IDCompositionVisual3; the QI is done once and cached.
+        visual.As(&visual3);
+
+        if (parentVisual)
+            insertVisualAtTop(parentVisual.Get(), visual.Get());
+
+        return true;
+    }
+
+    void applyOpacity(float value)
+    {
+        if (!visual3)
+            return;
+
+        visual3->SetOpacity(value);
+        commitComposition();
+    }
+
+    // Undoes the root visual's DPI scale for this visual's physical-pixel
+    // surface — see the note at the top of the struct.
+    void applyContentScale()
+    {
+        if (!visual || dpiScale <= 0.f)
+            return;
+
+        visual->SetTransform(
+            D2D1::Matrix3x2F::Scale(1.f / dpiScale, 1.f / dpiScale));
+    }
+
     Rect bounds;
     Point position;
     float opacity = 1.0f;
     float dpiScale = systemDpiScale();
     bool hidden = false;
 
-    wuc::SpriteVisual visual {nullptr};
-    wuc::CompositionDrawingSurface surface {nullptr};
-    wuc::CompositionSurfaceBrush surfaceBrush {nullptr};
-    wuc::ContainerVisual parentVisual {nullptr};
+    ComPtr<IDCompositionVisual2> visual;
+    ComPtr<IDCompositionVisual3> visual3;
+    ComPtr<IDCompositionSurface> surface;
+    ComPtr<IDCompositionVisual2> parentVisual;
+    uint64_t generation = 0;
 
     bool contentDirty = true;
     bool surfaceDirty = true;

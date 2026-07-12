@@ -1,9 +1,8 @@
 #pragma once
 
-// Direct2D / DirectWrite only. Kept separate from Composition-Windows.h because
-// the WinRT composition headers cost ~2s of parse time per translation unit and
-// the drawing primitives (Path, Font, TextMetrics, Image) never touch WinRT.
-// Include the narrowest of the two that a TU actually needs.
+// Direct2D / DirectWrite only, for the drawing primitives (Path, Font,
+// TextMetrics, Image) that never touch the compositor. Anything that builds a
+// visual tree wants DComp-Windows.h, which includes this.
 
 #include <eacp/Core/Utils/WinInclude.h>
 

@@ -31,7 +31,7 @@ constexpr UINT WM_EACP_STOP_LOOP = WM_APP + 0x42E0;
 // those is on screen.
 constexpr UINT WM_EACP_RUN_PENDING = WM_APP + 0x42E1;
 
-static std::atomic<DWORD> mainThreadId {0};
+static std::atomic<DWORD> loopThreadId {0};
 static thread_local int runForDepth = 0;
 
 struct PendingCallbacks
@@ -199,9 +199,13 @@ void initLoopThread()
 {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-    winrt::init_apartment(winrt::apartment_type::single_threaded);
+    // A single-threaded (STA) apartment, as WebView2, the shell dialogs and
+    // DirectComposition all expect. This was winrt::init_apartment; plain COM
+    // now that the compositor no longer pulls cppwinrt into Core.
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
     initMainThread();
-    mainThreadId = GetCurrentThreadId();
+    loopThreadId = GetCurrentThreadId();
     ensureMessageWindow();
 
     // Dev convenience only, never in a signed/shipped build (see the watchdog's
@@ -253,14 +257,9 @@ void EventLoop::run()
     }
 
     setEnv("EACP_ROOT_LOOP", "0");
-    mainThreadId = 0;
+    loopThreadId = 0;
     destroyMessageWindow();
 
-    // Tear down the dispatcher queue while COM is still healthy. If
-    // we leave its WinRT smart pointers alive until static destruction
-    // their Release runs after the apartment is gone and the process
-    // crashes with STATUS_ACCESS_VIOLATION on exit (turning a passing
-    // test run into a failure in CTest's eyes).
     shutdownMainThread();
 }
 
@@ -333,7 +332,7 @@ void EventLoop::quit()
     // and the loop exits. Inner runFor calls will also see it (via
     // PeekMessage) and unwind, re-posting WM_QUIT on their way out so
     // the outer run still gets it.
-    auto id = mainThreadId.load();
+    auto id = loopThreadId.load();
     if (id != 0)
         PostThreadMessageW(id, WM_QUIT, 0, 0);
 }
@@ -369,7 +368,7 @@ void EventLoop::call(Callback func)
     // initLoopThread() drains it once the loop starts.
     if (auto hwnd = messageWindow.load())
         PostMessageW(hwnd, WM_EACP_RUN_PENDING, 0, 0);
-    else if (auto id = mainThreadId.load())
+    else if (auto id = loopThreadId.load())
         PostThreadMessageW(id, WM_EACP_RUN_PENDING, 0, 0);
 }
 
@@ -382,7 +381,7 @@ void EventLoop::call(Callback func)
 // outer run exits.
 void stopEventLoop()
 {
-    auto id = mainThreadId.load();
+    auto id = loopThreadId.load();
     if (id == 0)
         return;
 
@@ -397,9 +396,9 @@ void scheduleStartup(const Callback& func)
     callAsync(func);
 }
 
-// Deliberately does NOT touch mainThreadId: that doubles as the
-// loop-ownership marker quit()/stopEventLoop() post WM_QUIT through, and a
-// hosted plugin must never be able to quit the host's loop.
+// Deliberately does NOT touch loopThreadId: that is the loop-ownership
+// marker quit()/stopEventLoop() post WM_QUIT through, and a hosted plugin
+// must never be able to quit the host's loop.
 void attachCurrentThreadAsMain()
 {
     setCurrentThreadAsMainFallback();

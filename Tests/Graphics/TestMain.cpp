@@ -13,8 +13,8 @@ void runTests()
 } // namespace
 
 // Window construction needs the app environment initLoopThread() sets up
-// (on Windows: the COM apartment and DispatcherQueue the compositor
-// requires), so the tests run inside Apps::run like the GPU tests do.
+// (on Windows: the COM apartment), so the tests run inside Apps::run like
+// the GPU tests do.
 int main(int argc, char* argv[])
 {
     argCount = argc;
