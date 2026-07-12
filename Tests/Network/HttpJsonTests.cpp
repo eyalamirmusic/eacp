@@ -1,6 +1,7 @@
 #include "Common.h"
 #include <eacp/Network/HTTPServer/Json.h>
 
+#include <thread>
 #include <vector>
 
 using namespace nano;

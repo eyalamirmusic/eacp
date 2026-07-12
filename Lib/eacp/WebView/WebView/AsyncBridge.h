@@ -2,10 +2,13 @@
 
 #include "../Common.h"
 
-#include <thread>
-
 namespace eacp::Graphics
 {
+
+// Runs `work` on a detached worker thread. The seam runCommand uses for
+// CommandExecution::WorkerThread, defined out of line so this header
+// doesn't need <thread>.
+void runOnWorkerThread(Callback work);
 
 // Selects how the bridge executes a command when turning a TypeScript
 // call into an async one. The C++ handler is always an ordinary
@@ -59,9 +62,8 @@ Threads::Async<Miro::Json::Value> runCommand(CommandExecution mode, Invoke invok
     };
 
     if (mode == CommandExecution::WorkerThread)
-        std::thread([invoke = std::move(invoke), settle]() mutable
-                    { invoke(settle); })
-            .detach();
+        runOnWorkerThread([invoke = std::move(invoke), settle]() mutable
+                          { invoke(settle); });
     else
         Threads::callAsync([invoke = std::move(invoke), settle]() mutable
                            { invoke(settle); });

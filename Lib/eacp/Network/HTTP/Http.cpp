@@ -5,6 +5,7 @@
 #include <fstream>
 #include <random>
 #include <system_error>
+#include <thread>
 
 namespace eacp::HTTP
 {

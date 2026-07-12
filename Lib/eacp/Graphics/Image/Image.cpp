@@ -2,6 +2,7 @@
 
 #include "ImageCodec.h"
 
+#include <fstream>
 #include <ios>
 
 namespace eacp::Graphics

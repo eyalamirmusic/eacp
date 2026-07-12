@@ -8,6 +8,7 @@ target_sources(eacp-core PRIVATE
         App/App.cpp
         Platform/Platform.cpp
         Process/Process.cpp
+        Threads/Async.cpp
         Threads/EventLoop.cpp
         Threads/TaskSemaphore.cpp
         Utils/Environment.cpp

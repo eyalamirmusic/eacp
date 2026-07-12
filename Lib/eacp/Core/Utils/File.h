@@ -3,7 +3,6 @@
 #include "Common.h"
 
 #include <filesystem>
-#include <fstream>
 #include <span>
 
 namespace eacp
@@ -34,7 +33,7 @@ public:
     // opened. A no-op once already open.
     bool openForRead();
 
-    bool isOpen() const { return stream.is_open(); }
+    bool isOpen() const;
 
     // Reads up to `out.size()` bytes starting at byte `offset`, returning the
     // number actually read (0 at end of file). Opens the file on first use,
@@ -43,8 +42,9 @@ public:
     std::size_t read(std::uint64_t offset, std::span<std::uint8_t> out);
 
 private:
+    struct Impl;
+
     std::filesystem::path filePath;
-    std::ifstream stream;
-    std::uint64_t position = 0;
+    Pimpl<Impl> impl;
 };
 } // namespace eacp

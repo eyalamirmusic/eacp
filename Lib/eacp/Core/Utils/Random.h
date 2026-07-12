@@ -1,6 +1,6 @@
 #pragma once
 
-#include <random>
+#include "Pimpl.h"
 
 namespace eacp
 {
@@ -15,13 +15,13 @@ public:
     template <typename T>
     T get(T min, T max)
     {
-        return static_cast<T>(getNext(static_cast<double>(min),
-                                      static_cast<double>(max)));
+        return static_cast<T>(
+            getNext(static_cast<double>(min), static_cast<double>(max)));
     }
 
 private:
-    std::mt19937 engine;
+    struct Impl;
+    Pimpl<Impl> impl;
 };
 
-
-}
+} // namespace eacp

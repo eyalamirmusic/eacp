@@ -26,6 +26,7 @@ endif ()
 target_sources(eacp-webview PRIVATE
         WebView/WebView-Shared.cpp
         WebView/DevServerProbe.cpp
+        WebView/AsyncBridge.cpp
         WebView/Bridge.cpp
         WebView/StateBridge.cpp
         WebView/MenuHelpers.cpp)

@@ -1,7 +1,15 @@
 #include "File.h"
 
+#include <fstream>
+
 namespace eacp
 {
+struct File::Impl
+{
+    std::ifstream stream;
+    std::uint64_t position = 0;
+};
+
 File::File(std::filesystem::path path)
     : filePath(std::move(path))
 {
@@ -45,12 +53,17 @@ std::uint64_t File::size() const
 
 bool File::openForRead()
 {
-    if (stream.is_open())
+    if (impl->stream.is_open())
         return true;
 
-    stream.open(filePath, std::ios::binary);
-    position = 0;
-    return stream.is_open();
+    impl->stream.open(filePath, std::ios::binary);
+    impl->position = 0;
+    return impl->stream.is_open();
+}
+
+bool File::isOpen() const
+{
+    return impl->stream.is_open();
 }
 
 std::size_t File::read(std::uint64_t offset, std::span<std::uint8_t> out)
@@ -58,19 +71,21 @@ std::size_t File::read(std::uint64_t offset, std::span<std::uint8_t> out)
     if (!openForRead() || out.empty())
         return 0;
 
-    if (offset != position)
+    auto& stream = impl->stream;
+
+    if (offset != impl->position)
     {
         // Clear any EOF/fail bit left by a previous read before seeking.
         stream.clear();
         stream.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
-        position = offset;
+        impl->position = offset;
     }
 
     stream.read(reinterpret_cast<char*>(out.data()),
                 static_cast<std::streamsize>(out.size()));
 
     auto got = static_cast<std::size_t>(stream.gcount());
-    position += got;
+    impl->position += got;
     return got;
 }
 } // namespace eacp

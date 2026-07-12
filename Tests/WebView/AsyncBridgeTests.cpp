@@ -1,4 +1,6 @@
 #include "Common.h"
+
+#include <thread>
 // Exercises the bridge-side async model: C++ command handlers stay
 // completely synchronous, and the bridge turns each call into an async
 // one. runCommand runs a Miro dispatch under a chosen execution mode and

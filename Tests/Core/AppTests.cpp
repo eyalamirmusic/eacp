@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <thread>
+
 using namespace nano;
 using eacp::Apps::App;
 using eacp::Apps::getAppFactory;

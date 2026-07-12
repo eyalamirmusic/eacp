@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdlib>
+#include <fstream>
 #include <vector>
 
 using namespace eacp;

@@ -2,6 +2,7 @@
 
 #include <condition_variable>
 #include <deque>
+#include <thread>
 
 namespace eacp::HTTP
 {

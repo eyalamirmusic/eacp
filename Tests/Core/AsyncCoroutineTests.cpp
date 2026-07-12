@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <thread>
+
 using namespace nano;
 using eacp::Threads::Async;
 using eacp::Threads::AsyncError;

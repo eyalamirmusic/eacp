@@ -2,6 +2,7 @@
 
 #include "../Image/ImageOps.h"
 #include <array>
+#include <fstream>
 #include <vector>
 
 namespace eacp::Graphics::Icons

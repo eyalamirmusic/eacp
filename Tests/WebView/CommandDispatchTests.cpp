@@ -1,4 +1,6 @@
 #include "Common.h"
+
+#include <thread>
 // Drives the page -> C++ command path on a real WebView (window.eacp.invoke
 // -> WebViewBridge::onMessage -> Miro dispatch). Covers the two features
 // layered on top of the basic sync dispatch:

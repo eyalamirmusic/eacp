@@ -2,6 +2,8 @@
 #include <eacp/Network/HTTPRpc/RpcClient.h>
 #include <eacp/Network/HTTPRpc/RpcServer.h>
 
+#include <thread>
+
 using namespace nano;
 using eacp::HTTP::Error;
 using eacp::HTTP::Request;

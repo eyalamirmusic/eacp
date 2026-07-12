@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <fstream>
 #include <system_error>
+#include <thread>
 
 using namespace nano;
 using eacp::HTTP::DownloadProgress;

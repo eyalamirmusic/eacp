@@ -1,5 +1,6 @@
 #include "Common.h"
 #include <array>
+#include <fstream>
 
 using namespace nano;
 using namespace eacp::Graphics;

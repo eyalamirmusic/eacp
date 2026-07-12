@@ -1,4 +1,5 @@
 #include "Common.h"
+#include <thread>
 #include <vector>
 
 using namespace nano;

@@ -4,6 +4,8 @@
 
 #include "../HTTP/HttpProtocol.h"
 
+#include <thread>
+
 namespace eacp::HTTP
 {
 
