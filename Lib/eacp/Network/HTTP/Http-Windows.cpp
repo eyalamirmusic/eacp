@@ -2,149 +2,369 @@
 
 #include "Http.h"
 
-#include <winrt/Windows.Foundation.h>
-#include <winrt/Windows.Foundation.Collections.h>
-#include <winrt/Windows.Storage.Streams.h>
-#include <winrt/Windows.Web.Http.h>
-#include <winrt/Windows.Web.Http.Headers.h>
+#include <winhttp.h>
 
+// WinHTTP (classic Win32) rather than Windows.Web.Http (WinRT): no apartment
+// requirement, no cppwinrt include cost, and bodies travel as raw bytes both
+// ways — the WinRT backend routed them through UTF-8 *string* content, which
+// corrupted binary payloads (e.g. multipart file uploads).
 namespace eacp::HTTP
 {
-
-namespace winhttp = winrt::Windows::Web::Http;
-namespace streams = winrt::Windows::Storage::Streams;
-using Method = winhttp::HttpMethod;
 
 namespace
 {
 
-Method toHttpMethod(const std::string& method)
+std::wstring toWide(const std::string& utf8)
 {
-    if (method == "GET")
-        return Method::Get();
-    if (method == "POST")
-        return Method::Post();
-    if (method == "PUT")
-        return Method::Put();
-    if (method == "DELETE")
-        return Method::Delete();
-    if (method == "PATCH")
-        return Method::Patch();
-    if (method == "HEAD")
-        return Method::Head();
-    if (method == "OPTIONS")
-        return Method::Options();
+    if (utf8.empty())
+        return {};
 
-    return Method(winrt::to_hstring(method));
+    auto length = MultiByteToWideChar(
+        CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+    auto wide = std::wstring(static_cast<size_t>(length), L'\0');
+    MultiByteToWideChar(
+        CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(), length);
+    return wide;
 }
 
-void ensureMultiThreadedApartment()
+std::string fromWide(const std::wstring& wide)
 {
-    try
+    if (wide.empty())
+        return {};
+
+    auto length = WideCharToMultiByte(CP_UTF8,
+                                      0,
+                                      wide.data(),
+                                      static_cast<int>(wide.size()),
+                                      nullptr,
+                                      0,
+                                      nullptr,
+                                      nullptr);
+    auto utf8 = std::string(static_cast<size_t>(length), '\0');
+    WideCharToMultiByte(CP_UTF8,
+                        0,
+                        wide.data(),
+                        static_cast<int>(wide.size()),
+                        utf8.data(),
+                        length,
+                        nullptr,
+                        nullptr);
+    return utf8;
+}
+
+[[noreturn]] void throwLastError(const std::string& what)
+{
+    auto code = GetLastError();
+
+    // WinHTTP error strings live in winhttp.dll's message table, not the
+    // system's, so search both.
+    wchar_t text[512] {};
+    FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_FROM_HMODULE
+                       | FORMAT_MESSAGE_IGNORE_INSERTS,
+                   GetModuleHandleW(L"winhttp.dll"),
+                   code,
+                   0,
+                   text,
+                   static_cast<DWORD>(std::size(text)),
+                   nullptr);
+
+    auto message = Strings::trim(fromWide(text));
+    if (message.empty())
+        message = what + " failed (error " + std::to_string(code) + ")";
+
+    throw std::runtime_error(message);
+}
+
+struct Handle
+{
+    Handle() = default;
+
+    explicit Handle(HINTERNET handleToUse)
+        : handle(handleToUse)
     {
-        winrt::init_apartment(winrt::apartment_type::multi_threaded);
     }
-    catch (const winrt::hresult_error&)
+
+    Handle(Handle&& other) noexcept
+        : handle(std::exchange(other.handle, nullptr))
     {
     }
-}
 
-void appendRequestHeaders(winhttp::HttpRequestMessage& message,
-                          const std::map<std::string, std::string>& headers)
-{
-    for (const auto& [key, value]: headers)
+    Handle& operator=(Handle&& other) noexcept
     {
-        auto hKey = winrt::to_hstring(key);
-        auto hValue = winrt::to_hstring(value);
-
-        if (message.Headers().TryAppendWithoutValidation(hKey, hValue))
-            continue;
-
-        if (message.Content())
-            message.Content().Headers().TryAppendWithoutValidation(hKey, hValue);
+        std::swap(handle, other.handle);
+        return *this;
     }
-}
 
-void appendContentHeaders(winhttp::HttpStringContent& content,
-                          const std::map<std::string, std::string>& headers)
-{
-    for (const auto& [key, value]: headers)
+    Handle(const Handle&) = delete;
+    Handle& operator=(const Handle&) = delete;
+
+    ~Handle()
     {
-        auto hKey = winrt::to_hstring(key);
-        auto hValue = winrt::to_hstring(value);
-        content.Headers().TryAppendWithoutValidation(hKey, hValue);
+        if (handle)
+            WinHttpCloseHandle(handle);
     }
-}
 
-void attachBody(winhttp::HttpRequestMessage& message, const Request& req)
+    explicit operator bool() const { return handle != nullptr; }
+
+    HINTERNET handle = nullptr;
+};
+
+// One process-wide session, never closed: WinHTTP session handles are
+// thread-safe and cheap to share. AUTOMATIC_PROXY honours the system proxy
+// configuration (as Windows.Web.Http did); the fallback covers systems
+// predating it (Win8.0).
+HINTERNET session()
 {
-    if (req.body.empty())
-        return;
+    static auto handle = []
+    {
+        auto opened = WinHttpOpen(L"eacp",
+                                  WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                                  WINHTTP_NO_PROXY_NAME,
+                                  WINHTTP_NO_PROXY_BYPASS,
+                                  0);
+        if (!opened)
+            opened = WinHttpOpen(L"eacp",
+                                 WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                 WINHTTP_NO_PROXY_NAME,
+                                 WINHTTP_NO_PROXY_BYPASS,
+                                 0);
+        return opened;
+    }();
 
-    auto content = winhttp::HttpStringContent(winrt::to_hstring(req.body),
-                                              streams::UnicodeEncoding::Utf8);
-
-    appendContentHeaders(content, req.headers);
-    message.Content(content);
+    return handle;
 }
 
-winhttp::HttpRequestMessage buildRequestMessage(const Request& req)
+struct CrackedUrl
+{
+    std::wstring host;
+    std::wstring pathWithQuery;
+    INTERNET_PORT port = 0;
+    bool secure = false;
+};
+
+CrackedUrl crackUrl(const std::string& url)
+{
+    auto wide = toWide(url);
+
+    auto parts = URL_COMPONENTS {};
+    parts.dwStructSize = sizeof(parts);
+    parts.dwSchemeLength = static_cast<DWORD>(-1);
+    parts.dwHostNameLength = static_cast<DWORD>(-1);
+    parts.dwUrlPathLength = static_cast<DWORD>(-1);
+    parts.dwExtraInfoLength = static_cast<DWORD>(-1);
+
+    if (!WinHttpCrackUrl(wide.c_str(), 0, 0, &parts))
+        throwLastError("Parsing the URL");
+
+    auto cracked = CrackedUrl {};
+    cracked.host.assign(parts.lpszHostName, parts.dwHostNameLength);
+    cracked.pathWithQuery.assign(parts.lpszUrlPath, parts.dwUrlPathLength);
+
+    if (parts.lpszExtraInfo && parts.dwExtraInfoLength > 0)
+        cracked.pathWithQuery.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
+
+    if (cracked.pathWithQuery.empty())
+        cracked.pathWithQuery = L"/";
+
+    cracked.port = parts.nPort;
+    cracked.secure = parts.nScheme == INTERNET_SCHEME_HTTPS;
+    return cracked;
+}
+
+struct OpenedRequest
+{
+    Handle connection;
+    Handle request;
+};
+
+OpenedRequest sendRequest(const Request& req)
 {
     if (req.url.empty())
         throw std::invalid_argument("URL cannot be empty");
 
-    auto uri = winrt::Windows::Foundation::Uri(winrt::to_hstring(req.url));
-    auto message = winhttp::HttpRequestMessage(toHttpMethod(req.type), uri);
+    if (!session())
+        throwLastError("Opening the WinHTTP session");
 
-    appendRequestHeaders(message, req.headers);
-    attachBody(message, req);
+    auto cracked = crackUrl(req.url);
 
-    return message;
+    auto opened = OpenedRequest {};
+    opened.connection =
+        Handle(WinHttpConnect(session(), cracked.host.c_str(), cracked.port, 0));
+
+    if (!opened.connection)
+        throwLastError("Connecting");
+
+    opened.request =
+        Handle(WinHttpOpenRequest(opened.connection.handle,
+                                  toWide(req.type).c_str(),
+                                  cracked.pathWithQuery.c_str(),
+                                  nullptr,
+                                  WINHTTP_NO_REFERER,
+                                  WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                  cracked.secure ? WINHTTP_FLAG_SECURE : 0));
+
+    if (!opened.request)
+        throwLastError("Opening the request");
+
+    // Responses arrive decompressed, matching NSURLSession and the previous
+    // backend. Best-effort: unsupported systems just skip Accept-Encoding.
+    auto decompression = DWORD {WINHTTP_DECOMPRESSION_FLAG_ALL};
+    WinHttpSetOption(opened.request.handle,
+                     WINHTTP_OPTION_DECOMPRESSION,
+                     &decompression,
+                     sizeof(decompression));
+
+    auto headerLines = std::string();
+    for (const auto& [key, value]: req.headers)
+    {
+        headerLines.append(key);
+        headerLines.append(": ");
+        headerLines.append(value);
+        headerLines.append("\r\n");
+    }
+
+    auto headerBlock = toWide(headerLines);
+
+    if (!headerBlock.empty())
+        WinHttpAddRequestHeaders(opened.request.handle,
+                                 headerBlock.c_str(),
+                                 static_cast<DWORD>(headerBlock.size()),
+                                 WINHTTP_ADDREQ_FLAG_ADD);
+
+    auto bodySize = static_cast<DWORD>(req.body.size());
+    auto* bodyData = req.body.empty() ? WINHTTP_NO_REQUEST_DATA
+                                      : const_cast<char*>(req.body.data());
+
+    if (!WinHttpSendRequest(opened.request.handle,
+                            WINHTTP_NO_ADDITIONAL_HEADERS,
+                            0,
+                            bodyData,
+                            bodySize,
+                            bodySize,
+                            0))
+        throwLastError("Sending the request");
+
+    if (!WinHttpReceiveResponse(opened.request.handle, nullptr))
+        throwLastError("Receiving the response");
+
+    return opened;
 }
 
-void copyResponseHeaders(const winhttp::HttpResponseMessage& source,
-                         Response& response)
+int queryStatusCode(HINTERNET request)
 {
-    for (auto&& [name, value]: source.Headers())
-        response.headers[winrt::to_string(name)] = winrt::to_string(value);
+    auto status = DWORD {0};
+    auto size = DWORD {sizeof(status)};
+    WinHttpQueryHeaders(request,
+                        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX,
+                        &status,
+                        &size,
+                        WINHTTP_NO_HEADER_INDEX);
+    return static_cast<int>(status);
+}
 
-    if (source.Content())
+// Same line handling as the curl backend: one entry per "Key: Value" line,
+// keys kept verbatim, values trimmed. The status line has no colon and skips
+// itself.
+void copyResponseHeaders(HINTERNET request, Response& response)
+{
+    auto size = DWORD {0};
+    WinHttpQueryHeaders(request,
+                        WINHTTP_QUERY_RAW_HEADERS_CRLF,
+                        WINHTTP_HEADER_NAME_BY_INDEX,
+                        WINHTTP_NO_OUTPUT_BUFFER,
+                        &size,
+                        WINHTTP_NO_HEADER_INDEX);
+
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || size == 0)
+        return;
+
+    auto raw = std::wstring(size / sizeof(wchar_t), L'\0');
+    if (!WinHttpQueryHeaders(request,
+                             WINHTTP_QUERY_RAW_HEADERS_CRLF,
+                             WINHTTP_HEADER_NAME_BY_INDEX,
+                             raw.data(),
+                             &size,
+                             WINHTTP_NO_HEADER_INDEX))
+        return;
+
+    auto text = fromWide(raw);
+    auto start = size_t {0};
+
+    while (start < text.size())
     {
-        for (auto&& [name, value]: source.Content().Headers())
-            response.headers[winrt::to_string(name)] = winrt::to_string(value);
+        auto end = text.find("\r\n", start);
+        if (end == std::string::npos)
+            end = text.size();
+
+        auto line = text.substr(start, end - start);
+        auto colon = line.find(':');
+
+        if (colon != std::string::npos)
+        {
+            auto key = Strings::trim(line.substr(0, colon));
+            auto value = Strings::trim(line.substr(colon + 1));
+            if (!key.empty())
+                response.headers[key] = value;
+        }
+
+        start = end + 2;
     }
 }
 
-Response httpRequestInternal(const Request& req)
+std::int64_t queryContentLength(HINTERNET request)
 {
-    auto message = buildRequestMessage(req);
-    auto client = winhttp::HttpClient();
-    auto responseMessage = client.SendRequestAsync(message).get();
+    wchar_t text[32] {};
+    auto size = DWORD {sizeof(text)};
 
-    auto response = Response();
-    response.statusCode = static_cast<int>(responseMessage.StatusCode());
-    copyResponseHeaders(responseMessage, response);
-
-    auto rawRes = responseMessage.Content().ReadAsStringAsync().get();
-    response.content = winrt::to_string(rawRes);
-
-    return response;
-}
-
-std::int64_t readContentLength(const winhttp::HttpResponseMessage& responseMessage)
-{
-    auto contentLength = responseMessage.Content().Headers().ContentLength();
-
-    if (!contentLength)
+    if (!WinHttpQueryHeaders(request,
+                             WINHTTP_QUERY_CONTENT_LENGTH,
+                             WINHTTP_HEADER_NAME_BY_INDEX,
+                             text,
+                             &size,
+                             WINHTTP_NO_HEADER_INDEX))
         return -1;
 
-    return static_cast<std::int64_t>(contentLength.GetUInt64());
+    try
+    {
+        return std::stoll(fromWide(text));
+    }
+    catch (...)
+    {
+        return -1;
+    }
+}
+
+std::string readBodyToString(HINTERNET request)
+{
+    auto body = std::string();
+
+    while (true)
+    {
+        auto available = DWORD {0};
+        if (!WinHttpQueryDataAvailable(request, &available))
+            throwLastError("Reading the response");
+
+        if (available == 0)
+            return body;
+
+        auto offset = body.size();
+        body.resize(offset + available);
+
+        auto read = DWORD {0};
+        if (!WinHttpReadData(request, body.data() + offset, available, &read))
+            throwLastError("Reading the response");
+
+        body.resize(offset + read);
+
+        if (read == 0)
+            return body;
+    }
 }
 
 HANDLE openDestinationFileForWrite(const std::string& filePath)
 {
-    auto wideFilePath = winrt::to_hstring(filePath);
-    auto handle = CreateFileW(wideFilePath.c_str(),
+    auto handle = CreateFileW(toWide(filePath).c_str(),
                               GENERIC_WRITE,
                               0,
                               nullptr,
@@ -158,116 +378,96 @@ HANDLE openDestinationFileForWrite(const std::string& filePath)
     return handle;
 }
 
-void writeChunkToFile(HANDLE handle,
-                      const streams::IBuffer& chunk,
+void streamBodyToFile(HINTERNET request,
+                      HANDLE file,
+                      const Request& req,
                       const std::string& filePath)
 {
-    auto len = chunk.Length();
-    auto reader = streams::DataReader::FromBuffer(chunk);
-    auto bytes = Vector<uint8_t>((int) len);
-    reader.ReadBytes(bytes.getVector());
-
-    DWORD written = 0;
-    if (!WriteFile(handle, bytes.data(), static_cast<DWORD>(len), &written, nullptr))
-        throw std::runtime_error("Failed to write file: " + filePath);
-}
-
-void streamResponseToFile(const winhttp::HttpResponseMessage& responseMessage,
-                          HANDLE handle,
-                          const Request& req,
-                          const std::string& filePath)
-{
-    auto inputStream = responseMessage.Content().ReadAsInputStreamAsync().get();
-    auto buffer = streams::Buffer(64 * 1024);
-    auto received = std::int64_t(0);
+    auto buffer = std::string(64 * 1024, '\0');
+    auto received = std::int64_t {0};
 
     while (true)
     {
         if (req.progress && req.progress->cancel.load())
             throw std::runtime_error("Download cancelled");
 
-        auto chunk = inputStream
-                         .ReadAsync(buffer,
-                                    buffer.Capacity(),
-                                    streams::InputStreamOptions::Partial)
-                         .get();
+        auto available = DWORD {0};
+        if (!WinHttpQueryDataAvailable(request, &available))
+            throwLastError("Reading the response");
 
-        auto len = chunk.Length();
-        if (len == 0)
-            break;
+        if (available == 0)
+            return;
 
-        writeChunkToFile(handle, chunk, filePath);
-        received += static_cast<std::int64_t>(len);
+        auto toRead = std::min(available, static_cast<DWORD>(buffer.size()));
+        auto read = DWORD {0};
+        if (!WinHttpReadData(request, buffer.data(), toRead, &read))
+            throwLastError("Reading the response");
 
+        if (read == 0)
+            return;
+
+        auto written = DWORD {0};
+        if (!WriteFile(file, buffer.data(), read, &written, nullptr))
+            throw std::runtime_error("Failed to write file: " + filePath);
+
+        received += read;
         if (req.progress)
             req.progress->bytesReceived.store(received);
     }
 }
 
-Response downloadFileInternal(const Request& req, const std::string& filePath)
+Response httpRequestInternal(const Request& req)
 {
-    auto message = buildRequestMessage(req);
-    auto client = winhttp::HttpClient();
-    auto responseMessage =
-        client
-            .SendRequestAsync(message,
-                              winhttp::HttpCompletionOption::ResponseHeadersRead)
-            .get();
+    auto opened = sendRequest(req);
 
     auto response = Response();
-    response.statusCode = static_cast<int>(responseMessage.StatusCode());
-    copyResponseHeaders(responseMessage, response);
-
-    if (req.progress)
-        req.progress->totalBytes.store(readContentLength(responseMessage));
-
-    auto handle = openDestinationFileForWrite(filePath);
-
-    try
-    {
-        streamResponseToFile(responseMessage, handle, req, filePath);
-    }
-    catch (...)
-    {
-        CloseHandle(handle);
-        throw;
-    }
-
-    CloseHandle(handle);
+    response.statusCode = queryStatusCode(opened.request.handle);
+    copyResponseHeaders(opened.request.handle, response);
+    response.content = readBodyToString(opened.request.handle);
     return response;
 }
 
-void captureExceptionAsError(Response& res, const std::exception& e)
+Response downloadFileInternal(const Request& req, const std::string& filePath)
 {
-    res.error = e.what();
-    res.statusCode = 0;
-}
+    auto opened = sendRequest(req);
 
-void captureWinrtErrorAsError(Response& res, const winrt::hresult_error& e)
-{
-    res.error = winrt::to_string(e.message());
-    res.statusCode = 0;
+    auto response = Response();
+    response.statusCode = queryStatusCode(opened.request.handle);
+    copyResponseHeaders(opened.request.handle, response);
+
+    if (req.progress)
+        req.progress->totalBytes.store(queryContentLength(opened.request.handle));
+
+    auto file = openDestinationFileForWrite(filePath);
+
+    try
+    {
+        streamBodyToFile(opened.request.handle, file, req, filePath);
+    }
+    catch (...)
+    {
+        CloseHandle(file);
+        throw;
+    }
+
+    CloseHandle(file);
+    return response;
 }
 
 } // namespace
 
 Response httpRequest(const Request& req)
 {
-    ensureMultiThreadedApartment();
-
     auto res = Response();
 
     try
     {
         return httpRequestInternal(req);
     }
-    catch (const winrt::hresult_error& e)
-    {
-        captureWinrtErrorAsError(res, e);
-    }
     catch (const std::exception& e)
     {
-        captureExceptionAsError(res, e);
+        res.error = e.what();
+        res.statusCode = 0;
     }
 
     return res;
@@ -275,21 +475,16 @@ Response httpRequest(const Request& req)
 
 Response downloadFile(const Request& req, const std::string& filePath)
 {
-    ensureMultiThreadedApartment();
-
     auto res = Response();
 
     try
     {
         res = downloadFileInternal(req, filePath);
     }
-    catch (const winrt::hresult_error& e)
-    {
-        captureWinrtErrorAsError(res, e);
-    }
     catch (const std::exception& e)
     {
-        captureExceptionAsError(res, e);
+        res.error = e.what();
+        res.statusCode = 0;
     }
 
     if (req.progress)

@@ -8,9 +8,9 @@
 //
 // Tests run on the same main thread that hosts the WebView's event
 // loop. Reusing Apps::run<T> for the entry point gives the tests a
-// fully bootstrapped runloop (NSApplication on Apple; WinRT
-// apartment + DispatcherQueueController on Windows) before any test
-// touches a Window or WebView — same as a normal app would have.
+// fully bootstrapped runloop (NSApplication on Apple; the COM
+// apartment on Windows) before any test touches a Window or WebView —
+// same as a normal app would have.
 //
 // The TestRunner construction is dispatched onto the runloop's first
 // tick by Apps::run<T>; nano::run() blocks the main thread on that
@@ -47,8 +47,8 @@ struct TestRunner
     {
         gExitCode = nano::run(parseRunOptions());
 
-        // Let the platform crash guard know the real result before WebView2 /
-        // WinRT teardown can fault during process shutdown (see TestCrashGuard).
+        // Let the platform crash guard know the real result before WebView2
+        // teardown can fault during process shutdown (see TestCrashGuard).
         eacp::WebView::Test::markTestShutdown(gExitCode);
         eacp::Apps::quit();
     }

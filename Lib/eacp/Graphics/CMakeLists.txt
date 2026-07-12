@@ -99,9 +99,7 @@ elseif (WIN32)
             gdi32
             ole32
             shell32
-            windowscodecs
-            windowsapp
-            runtimeobject)
+            windowscodecs)
 elseif (UNIX)
     target_sources(eacp-graphics PRIVATE
             HotKey/GlobalHotKey-Linux.cpp)
