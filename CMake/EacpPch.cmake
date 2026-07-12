@@ -57,6 +57,13 @@ function(eacp_add_shared_pch)
     add_library(eacp-pch STATIC ${sources})
     target_precompile_headers(eacp-pch PRIVATE ${headers})
 
+    # The producer must be able to resolve whatever Pch.h includes. It cannot
+    # link eacp-core for that: every eacp target reuses this PCH and so already
+    # depends on it, and linking back would close the cycle.
+    find_package(EADataStructures REQUIRED)
+    target_link_libraries(eacp-pch PRIVATE ea_data_structures)
+    target_include_directories(eacp-pch PRIVATE "${dir}/../Lib")
+
     # cl compares the consumer's warning level against the one baked into the
     # PCH, so the producer has to be built at the project's level too.
     set_default_warnings_level(eacp-pch)
