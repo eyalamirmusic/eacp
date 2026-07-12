@@ -2,6 +2,7 @@
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "ShapeLayer.h"
+#include "../CompositionInterop-Windows.h"
 #include "NativeLayer-Windows.h"
 
 #include <wrl/client.h>

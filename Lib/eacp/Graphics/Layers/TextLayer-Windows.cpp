@@ -2,6 +2,7 @@
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "TextLayer.h"
+#include "../CompositionInterop-Windows.h"
 #include "NativeLayer-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
 

@@ -1,6 +1,7 @@
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "CompositionHostWindow-Windows.h"
+#include "../CompositionInterop-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
 #include "../Layers/NativeLayer-Windows.h"
 
