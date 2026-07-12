@@ -1,8 +1,4 @@
-#include <eacp/CameraView/CameraView.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <cmath>
+#include "Common.h"
 
 using namespace nano;
 using namespace eacp;

@@ -1,5 +1,4 @@
 #include <eacp/WebView/WebView.h>
-#include <eacp/Core/Platform/Platform.h>
 
 using namespace eacp;
 using namespace Graphics;
@@ -202,6 +201,5 @@ struct MyApp
 
 int main()
 {
-    eacp::Apps::run<MyApp>();
-    return 0;
+    return eacp::Apps::run<MyApp>();
 }

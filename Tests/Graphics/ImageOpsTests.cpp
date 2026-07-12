@@ -1,9 +1,4 @@
-#include <eacp/Graphics/Image/Image.h>
-#include <eacp/Graphics/Image/ImageOps.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <cstdint>
+#include "Common.h"
 
 using namespace nano;
 using eacp::Graphics::Image;

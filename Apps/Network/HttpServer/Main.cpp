@@ -1,5 +1,4 @@
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Network/HTTPServer/HttpServer.h>
+#include <eacp/Network/Network.h>
 
 #include <iostream>
 

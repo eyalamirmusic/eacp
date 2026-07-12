@@ -1,8 +1,4 @@
-#include <eacp/Core/App/Clipboard.h>
-#include <eacp/Core/App/LoginItem.h>
-
-#include <NanoTest/NanoTest.h>
-
+#include "Common.h"
 #include <type_traits>
 
 using namespace nano;
@@ -15,10 +11,7 @@ auto tClipboardCopyFilesRejectsEmptyList =
 };
 
 auto tClipboardTextApiReturnsBool = test("Clipboard/copyTextApiReturnsBool") = []
-{
-    static_assert(std::is_same_v<decltype(eacp::Clipboard::copyText("")),
-                                 bool>);
-};
+{ static_assert(std::is_same_v<decltype(eacp::Clipboard::copyText("")), bool>); };
 
 auto tLoginItemQueryIsSideEffectFreeBool =
     test("LoginItem/isLaunchAtLoginReturnsBool") = []

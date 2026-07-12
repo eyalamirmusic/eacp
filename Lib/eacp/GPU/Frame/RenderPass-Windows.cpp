@@ -7,8 +7,6 @@
 #include "../Texture/Texture.h"
 #include "../Windows/D3D12Types.h"
 
-#include <memory>
-
 // Windows/D3D12 backend. Records draw commands onto the frame's recording via
 // the D3D12Encoder. The encoder is owned here so it is freed when the pass
 // goes out of scope; the CommandContext it points at stays owned by the Frame,
@@ -142,9 +140,9 @@ void RenderPass::drawInstanced(int vertexCount,
         return;
 
     impl->encoder->commands->list->DrawInstanced(static_cast<UINT>(vertexCount),
-                                                  static_cast<UINT>(instanceCount),
-                                                  static_cast<UINT>(firstVertex),
-                                                  static_cast<UINT>(firstInstance));
+                                                 static_cast<UINT>(instanceCount),
+                                                 static_cast<UINT>(firstVertex),
+                                                 static_cast<UINT>(firstInstance));
 }
 
 void RenderPass::drawIndexed(const Buffer& indices,

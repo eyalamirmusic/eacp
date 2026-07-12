@@ -1,20 +1,12 @@
+#include "Common.h"
 // window-drag.js (auto-injected) exposes window.__eacpResolveAppRegion, which
 // classifies a point as drag / no-drag. These assert that classification on a
 // real WKWebView -- which also pins down that the `--eacp-app-region` custom
 // property is readable via getComputedStyle (the native one is not).
 
-#include <eacp/Core/Platform/Platform.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/WebView/WebView.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <string>
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
-using namespace std::chrono_literals;
 
 namespace
 {
@@ -55,14 +47,15 @@ struct Fixture
         webView.addScriptMessageHandler(
             "ready", [this](const std::string&) { ready = true; });
         webView.loadHTML(pageHtml);
-        check(Threads::runEventLoopUntil([this] { return ready; }, 10s));
+        check(Threads::runEventLoopUntil([this] { return ready; },
+                                         eacp::Time::MS {10000}));
     }
 
     std::string regionOf(const std::string& selector)
     {
         auto script = "window.__eacpResolveAppRegion(document.querySelector('"
                       + selector + "'))";
-        return webView.callJS(script).waitFor(10s);
+        return webView.callJS(script).waitFor(eacp::Time::MS {10000});
     }
 };
 } // namespace
@@ -115,7 +108,8 @@ struct NumberMessageProbe
         webView.loadHTML("<!doctype html><html><body><script>"
                          "window.webkit.messageHandlers.numberProbe.postMessage(1);"
                          "</script></body></html>");
-        check(Threads::runEventLoopUntil([this] { return called; }, 10s));
+        check(Threads::runEventLoopUntil([this] { return called; },
+                                         eacp::Time::MS {10000}));
     }
 };
 
@@ -150,7 +144,8 @@ struct MarkerProbe
             "</style></head><body><div id=\"m\">x</div>"
             "<script>window.webkit.messageHandlers.ready.postMessage('r');</script>"
             "</body></html>");
-        check(Threads::runEventLoopUntil([this] { return ready; }, 10s));
+        check(Threads::runEventLoopUntil([this] { return ready; },
+                                         eacp::Time::MS {10000}));
     }
 
     std::string computed(const std::string& prop)
@@ -159,7 +154,7 @@ struct MarkerProbe
             .callJS("getComputedStyle(document.getElementById('m'))"
                     ".getPropertyValue('"
                     + prop + "').trim()")
-            .waitFor(10s);
+            .waitFor(eacp::Time::MS {10000});
     }
 };
 

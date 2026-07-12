@@ -1,19 +1,10 @@
 #include "HttpServer.h"
+#include "../Common-Posix.h"
 #include "HttpServerDispatcher.h"
 
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Network/HTTP/HttpProtocol.h>
-
-#include <eacp/Core/Utils/Containers.h>
+#include "../HTTP/HttpProtocol.h"
 
 #include <CoreFoundation/CoreFoundation.h>
-
-#include <arpa/inet.h>
-#include <csignal>
-#include <map>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 namespace eacp::HTTP
 {
@@ -72,6 +63,11 @@ void readPeerEndpoint(int fd, std::string& addr, int& port)
     inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
     addr = ip;
     port = (int) ntohs(peer.sin_port);
+}
+
+in_addr_t bindAddress(BindInterface bindTo)
+{
+    return htonl(bindTo == BindInterface::any ? INADDR_ANY : INADDR_LOOPBACK);
 }
 
 } // namespace
@@ -169,7 +165,7 @@ bool Server::Impl::start(int port, RequestHandler h)
     auto addr = sockaddr_in{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons((uint16_t) port);
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_addr.s_addr = bindAddress(options.bindTo);
 
     auto data = CFDataCreate(kCFAllocatorDefault,
                              (const UInt8*) &addr, sizeof(addr));

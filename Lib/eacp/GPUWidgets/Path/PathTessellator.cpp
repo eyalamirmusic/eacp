@@ -1,7 +1,5 @@
 #include "PathTessellator.h"
-
 #include <algorithm>
-#include <cmath>
 
 #include "../Common.h"
 
@@ -10,7 +8,6 @@ namespace eacp::GPUWidgets
 namespace
 {
 using Graphics::Point;
-
 
 // Round joins / caps are discs of this many triangles. Modest is plenty at
 // stroke-width scale.

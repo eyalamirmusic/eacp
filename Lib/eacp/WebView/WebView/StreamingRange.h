@@ -1,10 +1,8 @@
 #pragma once
 
-#include "WebView.h"
+#include "../Common.h"
 
-#include <string>
-#include <string_view>
-#include <utility>
+#include "WebView.h"
 
 namespace eacp::Graphics
 {

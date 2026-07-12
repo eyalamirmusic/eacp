@@ -1,12 +1,5 @@
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Network/HTTP/Http.h>
-#include <eacp/Network/HTTPServer/HttpServer.h>
-#include <NanoTest/NanoTest.h>
-
-#include <chrono>
-#include <cstdint>
+#include "Common.h"
 #include <filesystem>
-#include <string>
 #include <system_error>
 #include <thread>
 
@@ -27,8 +20,7 @@ std::string baseUrl(int port)
 
 std::string tempPath(const std::string& name)
 {
-    auto path = std::filesystem::temp_directory_path()
-              / ("eacp-progress-" + name);
+    auto path = std::filesystem::temp_directory_path() / ("eacp-progress-" + name);
     std::error_code ec;
     std::filesystem::remove(path, ec);
     return path.string();
@@ -44,7 +36,7 @@ void performDownload(Server& server,
                      const Request& clientRequest,
                      const std::string& destPath,
                      DownloadOutcome& out,
-                     std::chrono::milliseconds timeout = std::chrono::seconds(5))
+                     eacp::Time::MS timeout = eacp::Time::MS {5000})
 {
     auto worker = std::thread();
     auto stopped = eacp::Threads::runEventLoopFor(
@@ -67,8 +59,7 @@ void performDownload(Server& server,
 }
 } // namespace
 
-auto tDefaults =
-    test("HttpDownloadProgress/defaultsAreZeroedExceptTotalBytes") = []
+auto tDefaults = test("HttpDownloadProgress/defaultsAreZeroedExceptTotalBytes") = []
 {
     auto p = DownloadProgress();
     check(p.bytesReceived.load() == 0);
@@ -197,8 +188,7 @@ auto tCancelHaltsTransfer = test("HttpDownloadProgress/cancelHaltsTransfer") = [
     req.progress = &progress;
 
     auto out = DownloadOutcome();
-    performDownload(server, req, tempPath("cancel.bin"), out,
-                    std::chrono::seconds(5));
+    performDownload(server, req, tempPath("cancel.bin"), out, eacp::Time::MS {5000});
 
     check(progress.done.load());
     check(progress.cancel.load());

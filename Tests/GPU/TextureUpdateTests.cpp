@@ -1,8 +1,4 @@
-#include <eacp/GPU/GPU.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <cstdint>
+#include "Common.h"
 
 using namespace nano;
 using namespace eacp;

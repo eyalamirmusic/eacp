@@ -1,6 +1,5 @@
 #pragma once
 
-#include <eacp/Core/Core.h>
 #include "../View/View.h"
 #include "../Layers/ShapeLayer.h"
 #include "../Layers/TextLayer.h"

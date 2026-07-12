@@ -4,6 +4,7 @@ add_subdirectory(Console)
 add_subdirectory(Network)
 
 if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
+    add_subdirectory(Plugins)
     add_subdirectory(Graphics)
     add_subdirectory(SVG)
     add_subdirectory(GPU)

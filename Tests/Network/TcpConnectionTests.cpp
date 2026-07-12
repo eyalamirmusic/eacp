@@ -1,16 +1,8 @@
-#include <eacp/Network/TCP/Connection.h>
-#include <eacp/Network/TCP/Listener.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <chrono>
-#include <string>
+#include "Common.h"
 #include <thread>
-#include <utility>
 #include <vector>
 
 using namespace nano;
-using namespace std::chrono_literals;
 using eacp::TCP::Connection;
 using eacp::TCP::Error;
 using eacp::TCP::Listener;
@@ -22,7 +14,7 @@ namespace
 // hanging on the generous production defaults.
 eacp::TCP::Timeouts testTimeouts()
 {
-    return {2000ms, 2000ms};
+    return {eacp::Time::MS {2000}, eacp::Time::MS {2000}};
 }
 
 Connection dial(const Listener& listener)
@@ -213,7 +205,7 @@ auto tCloseEndsConnection = test("Tcp/closeMakesAConnectionNotOpen") = []
     auto client = dial(listener);
     check(client.isOpen());
     client.close();
-    check(! client.isOpen());
+    check(!client.isOpen());
 
     server.join();
 };
@@ -341,7 +333,7 @@ auto tMoveConnection = test("Tcp/movingAConnectionTransfersTheSocket") = []
     auto client = dial(listener);
     auto moved = std::move(client);
 
-    check(! client.isOpen()); // NOLINT - intentionally inspecting moved-from
+    check(!client.isOpen()); // NOLINT - intentionally inspecting moved-from
     check(moved.isOpen());
 
     moved.send("through-the-moved-handle\n");
@@ -357,7 +349,7 @@ auto tMoveListener = test("Tcp/movingAListenerKeepsItServing") = []
     auto port = original.port();
     auto listener = std::move(original);
 
-    check(! original.isListening()); // NOLINT - moved-from
+    check(!original.isListening()); // NOLINT - moved-from
     check(listener.isListening());
     check(listener.port() == port);
 
@@ -377,7 +369,7 @@ auto tMoveListener = test("Tcp/movingAListenerKeepsItServing") = []
 
 auto tAcceptTimeout = test("Tcp/acceptTimesOutWhenNoClientConnects") = []
 {
-    auto listener = Listener::bind(0, {200ms, 2000ms});
+    auto listener = Listener::bind(0, {eacp::Time::MS {200}, eacp::Time::MS {2000}});
 
     auto threw = false;
     try
@@ -398,7 +390,7 @@ auto tAcceptAfterClose = test("Tcp/acceptThrowsAfterTheListenerIsClosed") = []
     check(listener.isListening());
 
     listener.close();
-    check(! listener.isListening());
+    check(!listener.isListening());
 
     auto threw = false;
     try
@@ -467,7 +459,7 @@ auto tSendToHungUpPeer = test("Tcp/sendToAHungUpPeerThrowsRatherThanCrashing") =
 
     auto client = dial(listener);
     server.join();
-    std::this_thread::sleep_for(50ms); // let the reset reach us
+    eacp::Time::sleepMS(50); // let the reset reach us
 
     // Writing to a peer that has gone away must surface as an Error, not a
     // SIGPIPE that takes the whole process down. Keep pushing until the OS
@@ -475,7 +467,7 @@ auto tSendToHungUpPeer = test("Tcp/sendToAHungUpPeerThrowsRatherThanCrashing") =
     auto threw = false;
     try
     {
-        for (auto i = 0; i < 5000 && ! threw; ++i)
+        for (auto i = 0; i < 5000 && !threw; ++i)
             client.send(std::string(4096, 'x'));
     }
     catch (const Error&)
@@ -498,7 +490,7 @@ auto tFragmentedReply = test("Tcp/reassemblesAReplyArrivingInTinyFragments") = [
             for (auto c: message)
             {
                 peer.send(std::string(1, c));
-                std::this_thread::sleep_for(2ms);
+                eacp::Time::sleepMS(2);
             }
             peer.send("\n");
         });
@@ -519,12 +511,12 @@ auto tSplitDelimiter = test("Tcp/receiveUntilHandlesADelimiterSplitAcrossReads")
         {
             auto peer = listener.accept();
             peer.send("alpha-");
-            std::this_thread::sleep_for(20ms);
+            eacp::Time::sleepMS(20);
             peer.send("beta\nsecond-line\n");
         });
 
     auto client = dial(listener);
-    auto first = client.receiveLine();  // delimiter arrives in the 2nd read
+    auto first = client.receiveLine(); // delimiter arrives in the 2nd read
     auto second = client.receiveLine(); // came in as overshoot on the 1st
 
     server.join();
@@ -542,11 +534,12 @@ auto tIdleReceiveTimesOut =
         [&]
         {
             auto peer = listener.accept();
-            std::this_thread::sleep_for(500ms);
+            eacp::Time::sleepMS(500);
         });
 
     // Short io timeout so the idle read trips quickly.
-    auto client = Connection::connect({"127.0.0.1", listener.port()}, {2000ms, 200ms});
+    auto client = Connection::connect({"127.0.0.1", listener.port()},
+                                      {eacp::Time::MS {2000}, eacp::Time::MS {200}});
 
     auto timedOut = false;
     try
@@ -623,7 +616,7 @@ auto tDoubleClose = test("Tcp/doubleCloseIsHarmless") = []
     client.close();
     client.close(); // must be a safe no-op
 
-    check(! client.isOpen());
+    check(!client.isOpen());
     server.join();
 };
 
@@ -634,7 +627,8 @@ auto tUnreachableHost = test("Tcp/connectToAnUnreachableHostFails") = []
     auto threw = false;
     try
     {
-        auto client = Connection::connect({"192.0.2.1", 80}, {800ms, 800ms});
+        auto client = Connection::connect(
+            {"192.0.2.1", 80}, {eacp::Time::MS {800}, eacp::Time::MS {800}});
     }
     catch (const Error&)
     {

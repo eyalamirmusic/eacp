@@ -2,9 +2,6 @@
 
 #include <NanoTest/NanoTest.h>
 
-#include <cmath>
-#include <string>
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPUWidgets;

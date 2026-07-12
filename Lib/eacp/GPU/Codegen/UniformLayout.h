@@ -1,8 +1,8 @@
 #pragma once
 
-#include "ShaderTypes.h"
+#include "../Common.h"
 
-#include <eacp/Core/Utils/Containers.h>
+#include "ShaderTypes.h"
 
 namespace eacp::GPU
 {

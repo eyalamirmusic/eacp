@@ -1,12 +1,4 @@
-#include <eacp/GPU/GPU.h>
-
-#include <eacp/Core/Platform/Platform.h>
-#include <eacp/Graphics/Image/Image.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <cmath>
-#include <cstdint>
+#include "Common.h"
 
 using namespace nano;
 using namespace eacp;
@@ -196,10 +188,10 @@ auto tShaderBuilderEmitsInstancedLayout =
         return;
 
     auto builder = ShaderBuilder {};
-    auto vertexPos = builder.vertexInput<Float2>();         // slot 0, 8 bytes
-    auto vertexUv = builder.vertexInput<Float2>();          // slot 0, +8 = 16
-    auto instanceCentre = builder.instanceInput<Float2>();  // slot 1, 8 bytes
-    auto instanceScale = builder.instanceInput<Float>();    // slot 1, +4 = 12
+    auto vertexPos = builder.vertexInput<Float2>(); // slot 0, 8 bytes
+    auto vertexUv = builder.vertexInput<Float2>(); // slot 0, +8 = 16
+    auto instanceCentre = builder.instanceInput<Float2>(); // slot 1, 8 bytes
+    auto instanceScale = builder.instanceInput<Float>(); // slot 1, +4 = 12
     auto varyingUv = builder.varying(vertexUv);
     auto zero = builder.constant(0.f);
     auto one = builder.constant(1.f);

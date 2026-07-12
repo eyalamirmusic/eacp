@@ -1,9 +1,5 @@
 #include <eacp/Graphics/Graphics.h>
-#include <eacp/Core/Core.h>
-#include <ea_data_structures/Pointers/OwningPointer.h>
-#include <ea_data_structures/Structures/Vector.h>
 #include <algorithm>
-#include <functional>
 
 using namespace eacp;
 using namespace Graphics;
@@ -185,7 +181,6 @@ struct TaskCard final : View
     TextLayerView descLayer;
     Button deleteButton {"×", {0.5f, 0.2f, 0.2f}};
 };
-
 
 struct Column final : View
 {
@@ -443,15 +438,15 @@ struct TaskBoardView final : View
 
     void addSampleTasks()
     {
-        static const auto sampleTitles = EA::Vector<std::string> {
-            "Design system architecture",
-            "Implement user auth",
-            "Write unit tests",
-            "Review pull request",
-            "Fix memory leak",
-            "Update documentation",
-            "Optimize database",
-            "Deploy to staging"};
+        static const auto sampleTitles =
+            EA::Vector<std::string> {"Design system architecture",
+                                     "Implement user auth",
+                                     "Write unit tests",
+                                     "Review pull request",
+                                     "Fix memory leak",
+                                     "Update documentation",
+                                     "Optimize database",
+                                     "Deploy to staging"};
 
         static const auto sampleDescs = EA::Vector<std::string> {"High priority",
                                                                  "Needs review",
@@ -812,6 +807,5 @@ struct TaskBoardApp
 
 int main()
 {
-    eacp::Apps::run<TaskBoardApp>();
-    return 0;
+    return eacp::Apps::run<TaskBoardApp>();
 }

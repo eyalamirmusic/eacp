@@ -6,8 +6,6 @@
 #include "../Pipeline/ComputePipeline.h"
 #include "../Windows/D3D12Types.h"
 
-#include <memory>
-
 // Windows/D3D12 backend. Records onto the command buffer's recording via the
 // D3D12ComputeEncoder. Buffers bind as root descriptors by GPU address (no
 // descriptor heap involved); uniforms upload into a transient buffer bound as

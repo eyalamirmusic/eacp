@@ -1,13 +1,6 @@
 #pragma once
 
-#include <eacp/Core/Utils/Common.h>
-#include <eacp/Core/Utils/Containers.h>
-
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <optional>
-#include <string>
+#include <eacp/Core/Core.h>
 
 namespace eacp::Graphics
 {
@@ -96,6 +89,12 @@ public:
     // Graphics::Image consumers and GPU upload. Returns an empty image when the
     // frame has no readable pixels. Defined in Camera.cpp (cross-platform).
     Graphics::Image toImage() const;
+
+    // As above, but converts into `reuse`, recycling its storage — no
+    // per-frame allocation or zero-fill when it already holds the frame size
+    // (see Image::prepareForOverwrite). `reuse` is left empty on an unreadable
+    // or unsupported frame. For per-frame capture loops that keep one buffer.
+    void toImage(Graphics::Image& reuse) const;
 
 private:
     int frameWidth = 0;

@@ -1,14 +1,10 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <ImageIO/ImageIO.h>
+#include <algorithm>
 
 #include "ImageCodec.h"
 
 #include <eacp/Core/ObjC/CFRef.h>
-
-#include <algorithm>
-#include <cstdint>
-#include <cstring>
-#include <limits>
 
 namespace eacp::Graphics::detail
 {

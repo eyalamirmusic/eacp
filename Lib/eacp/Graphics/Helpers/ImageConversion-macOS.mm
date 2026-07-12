@@ -1,7 +1,5 @@
 #include "ImageConversion-macOS.h"
 
-#include <cstring>
-
 namespace eacp::Graphics
 {
 

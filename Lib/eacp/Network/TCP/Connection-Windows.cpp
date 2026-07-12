@@ -3,8 +3,6 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-#include <string>
-
 namespace eacp::TCP::detail
 {
 namespace
@@ -32,7 +30,7 @@ void setNonBlocking(SOCKET socket, bool enabled)
     ::ioctlsocket(socket, FIONBIO, &mode);
 }
 
-bool waitWritable(SOCKET socket, std::chrono::milliseconds timeout)
+bool waitWritable(SOCKET socket, Time::MS timeout)
 {
     auto writable = fd_set {};
     FD_ZERO(&writable);
@@ -49,10 +47,10 @@ bool waitWritable(SOCKET socket, std::chrono::milliseconds timeout)
     FD_SET(socket, &failed);
 
     auto tv = timeval {};
-    tv.tv_sec = (long) (timeout.count() / 1000);
-    tv.tv_usec = (long) ((timeout.count() % 1000) * 1000);
+    tv.tv_sec = (long) (timeout.count / 1000);
+    tv.tv_usec = (long) ((timeout.count % 1000) * 1000);
 
-    auto* deadline = timeout.count() > 0 ? &tv : nullptr; // null = block forever
+    auto* deadline = timeout.count > 0 ? &tv : nullptr; // null = block forever
     return ::select(0, nullptr, &writable, &failed, deadline) > 0;
 }
 
@@ -65,12 +63,12 @@ int pendingSocketError(SOCKET socket)
     return error;
 }
 
-void armTimeouts(SOCKET socket, std::chrono::milliseconds ioTimeout)
+void armTimeouts(SOCKET socket, Time::MS ioTimeout)
 {
-    if (ioTimeout.count() <= 0) // otherwise leave the socket blocking forever
+    if (ioTimeout.count <= 0) // otherwise leave the socket blocking forever
         return;
 
-    auto millis = (DWORD) ioTimeout.count();
+    auto millis = (DWORD) ioTimeout.count;
     ::setsockopt(
         socket, SOL_SOCKET, SO_RCVTIMEO, (const char*) &millis, sizeof(millis));
     ::setsockopt(
@@ -81,8 +79,8 @@ void armTimeouts(SOCKET socket, std::chrono::milliseconds ioTimeout)
 // INVALID_SOCKET with why filled in so the caller can report the last
 // failure across candidates.
 SOCKET tryConnect(const addrinfo& candidate,
-                  std::chrono::milliseconds connectTimeout,
-                  std::chrono::milliseconds ioTimeout,
+                  Time::MS connectTimeout,
+                  Time::MS ioTimeout,
                   std::string& why)
 {
     auto socket =
@@ -132,8 +130,8 @@ bool timedOut()
 } // namespace
 
 NativeSocket socketConnect(const Address& address,
-                           std::chrono::milliseconds connectTimeout,
-                           std::chrono::milliseconds ioTimeout)
+                           Time::MS connectTimeout,
+                           Time::MS ioTimeout)
 {
     ensureWinsockInitialized();
 
@@ -193,7 +191,8 @@ std::size_t socketReceive(NativeSocket socket, char* buffer, std::size_t length)
     return (std::size_t) received;
 }
 
-NativeSocket socketListen(std::uint16_t port, std::uint16_t& boundPort)
+NativeSocket
+    socketListen(std::uint16_t port, std::uint16_t& boundPort, BindInterface bindTo)
 {
     ensureWinsockInitialized();
 
@@ -206,7 +205,8 @@ NativeSocket socketListen(std::uint16_t port, std::uint16_t& boundPort)
 
     auto addr = sockaddr_in {};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_addr.s_addr =
+        htonl(bindTo == BindInterface::any ? INADDR_ANY : INADDR_LOOPBACK);
     addr.sin_port = htons(port);
 
     if (::bind(sock, (sockaddr*) &addr, sizeof(addr)) == SOCKET_ERROR)
@@ -230,8 +230,8 @@ NativeSocket socketListen(std::uint16_t port, std::uint16_t& boundPort)
 }
 
 NativeSocket socketAccept(NativeSocket listenSocket,
-                          std::chrono::milliseconds acceptTimeout,
-                          std::chrono::milliseconds ioTimeout,
+                          Time::MS acceptTimeout,
+                          Time::MS ioTimeout,
                           Address& peer)
 {
     auto lsock = (SOCKET) listenSocket;
@@ -241,10 +241,10 @@ NativeSocket socketAccept(NativeSocket listenSocket,
     FD_SET(lsock, &readable);
 
     auto tv = timeval {};
-    tv.tv_sec = (long) (acceptTimeout.count() / 1000);
-    tv.tv_usec = (long) ((acceptTimeout.count() % 1000) * 1000);
+    tv.tv_sec = (long) (acceptTimeout.count / 1000);
+    tv.tv_usec = (long) ((acceptTimeout.count % 1000) * 1000);
 
-    auto* deadline = acceptTimeout.count() > 0 ? &tv : nullptr; // null = forever
+    auto* deadline = acceptTimeout.count > 0 ? &tv : nullptr; // null = forever
     auto ready = ::select(0, &readable, nullptr, nullptr, deadline);
     if (ready == 0)
         throw TimeoutError("accept timed out");

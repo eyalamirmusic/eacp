@@ -18,14 +18,23 @@
 #    resources, link deps) and an executable that links it. Tests
 #    link ${TARGET}_app via eacp_add_webview_test().
 #
+# Orthogonally, PLUGIN swaps the app target's kind: instead of an
+# executable it becomes a runtime-loaded eacp plugin (eacp_add_plugin —
+# MODULE, hidden visibility, only EACP_PLUGIN_EXPORT functions exported).
+# The whole pipeline (schema codegen, vite build, resource embedding,
+# EACP_WEBVIEW_DEV) is unchanged; only the executable-shaped setup
+# (MACOSX_BUNDLE, GUI subsystem, BUNDLE_ID/BUNDLE_NAME) is dropped, so
+# those two args become optional and ignored. SOURCES then carry the
+# plugin's exported entry points instead of main().
+#
 # Usage (library mode):
 #   eacp_add_webview_app(<TARGET>
 #       APP_HEADER      <header>          # header containing the app struct
 #       SOURCES         <files>           # at least Main.cpp (no MyApp body)
 #       [COMMAND_SOURCES <files>]         # MIRO_EXPORT_COMMAND TUs
 #       WEB_DIR         <path>
-#       BUNDLE_ID       <com.example.app>
-#       BUNDLE_NAME     "Display name"
+#       BUNDLE_ID       <com.example.app> # required unless PLUGIN
+#       BUNDLE_NAME     "Display name"    # required unless PLUGIN
 #       [NAMESPACE      <ns>]             # res-embed namespace; default WebResources
 #       [CATEGORY       <cat>]            # res-embed category; default WebApp
 #       [SCHEMA_NAME    <stem>]           # default: schema
@@ -35,6 +44,8 @@
 #       [LINK_LIBRARIES <libs>]           # extra link deps for the app AND the
 #                                         # schema codegen tool (see note below)
 #       [REACT]                           # emit React hook bindings
+#       [PLUGIN]                          # build an eacp plugin (MODULE)
+#                                         # instead of an executable
 #   )
 #
 # LINK_LIBRARIES is for native libraries the app's API/command headers
@@ -47,7 +58,7 @@
 # in one shot, so callers don't have to reach into the generated
 # ${TARGET}Schema_Codegen target by hand.
 function(eacp_add_webview_app TARGET)
-    set(options REACT)
+    set(options REACT PLUGIN)
     set(oneValueArgs WEB_DIR BUNDLE_ID BUNDLE_NAME NAMESPACE CATEGORY SCHEMA_NAME
             PACKAGE_MANAGER APP_HEADER)
     set(multiValueArgs SOURCES COMMAND_SOURCES SCHEMA_FORMATS API API_HEADER
@@ -70,10 +81,10 @@ function(eacp_add_webview_app TARGET)
     if (NOT ARG_WEB_DIR)
         message(FATAL_ERROR "eacp_add_webview_app(${TARGET}): WEB_DIR is required")
     endif ()
-    if (NOT ARG_BUNDLE_ID)
+    if (NOT ARG_BUNDLE_ID AND NOT ARG_PLUGIN)
         message(FATAL_ERROR "eacp_add_webview_app(${TARGET}): BUNDLE_ID is required")
     endif ()
-    if (NOT ARG_BUNDLE_NAME)
+    if (NOT ARG_BUNDLE_NAME AND NOT ARG_PLUGIN)
         message(FATAL_ERROR "eacp_add_webview_app(${TARGET}): BUNDLE_NAME is required")
     endif ()
     if (NOT ARG_NAMESPACE)
@@ -114,12 +125,25 @@ function(eacp_add_webview_app TARGET)
         set_source_files_properties(${ARG_APP_HEADER} PROPERTIES
                 HEADER_FILE_ONLY TRUE)
 
-        add_executable(${TARGET} ${ARG_SOURCES})
+        if (ARG_PLUGIN)
+            eacp_add_plugin(${TARGET} ${ARG_SOURCES})
+            # The MODULE pulls the whole app archive into a shared image, so
+            # the static lib must compile as PIC (implicit on Apple/Windows,
+            # not on Linux).
+            set_target_properties(${APP_LIB_TARGET} PROPERTIES
+                    POSITION_INDEPENDENT_CODE ON)
+        else ()
+            add_executable(${TARGET} ${ARG_SOURCES})
+        endif ()
         target_link_libraries(${TARGET} PRIVATE ${APP_LIB_TARGET})
     else ()
-        # Legacy single-executable layout.
+        # Legacy single-target layout.
         set(APP_LIB_TARGET "${TARGET}")
-        add_executable(${TARGET} ${ARG_SOURCES})
+        if (ARG_PLUGIN)
+            eacp_add_plugin(${TARGET} ${ARG_SOURCES})
+        else ()
+            add_executable(${TARGET} ${ARG_SOURCES})
+        endif ()
         target_link_libraries(${TARGET} PRIVATE eacp-webview eacp-network-rpc)
     endif ()
 
@@ -253,17 +277,22 @@ function(eacp_add_webview_app TARGET)
     # them), or on the executable in legacy mode.
     eacp_webview_add_vite(${APP_LIB_TARGET} ${VITE_ARGS})
 
-    set_target_properties(${TARGET} PROPERTIES
-            MACOSX_BUNDLE TRUE
-            MACOSX_BUNDLE_BUNDLE_NAME "${ARG_BUNDLE_NAME}"
-            MACOSX_BUNDLE_GUI_IDENTIFIER ${ARG_BUNDLE_ID}
-            XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${ARG_BUNDLE_ID})
+    # Bundle + GUI-subsystem setup only makes sense for executables. A plugin
+    # is a plain MODULE the host dlopens — eacp_add_plugin already applied
+    # the default target settings (hidden visibility included).
+    if (NOT ARG_PLUGIN)
+        set_target_properties(${TARGET} PROPERTIES
+                MACOSX_BUNDLE TRUE
+                MACOSX_BUNDLE_BUNDLE_NAME "${ARG_BUNDLE_NAME}"
+                MACOSX_BUNDLE_GUI_IDENTIFIER ${ARG_BUNDLE_ID}
+                XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${ARG_BUNDLE_ID})
 
-    # A WebView app owns a window, never a console — the Windows counterpart to
-    # MACOSX_BUNDLE above. No-op on non-Windows.
-    eacp_set_gui_subsystem(${TARGET})
+        # A WebView app owns a window, never a console — the Windows
+        # counterpart to MACOSX_BUNDLE above. No-op on non-Windows.
+        eacp_set_gui_subsystem(${TARGET})
 
-    set_default_target_setting(${TARGET})
+        set_default_target_setting(${TARGET})
+    endif ()
     if (ARG_APP_HEADER)
         set_default_target_setting(${APP_LIB_TARGET})
     endif ()

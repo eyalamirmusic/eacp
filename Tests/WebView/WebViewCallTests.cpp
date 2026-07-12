@@ -1,3 +1,4 @@
+#include "Common.h"
 // Drives the C++ -> page call path on a real WKWebView: the page registers
 // functions with window.eacp.expose(...), and the native side calls them via
 // WebViewBridge::call(...), awaiting the resolved value. Covers a synchronous
@@ -5,17 +6,9 @@
 // the error path — proving Miro/eacp can call async JavaScript from C++ and
 // get the result back as an eacp Async.
 
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/WebView/WebView.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <string>
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
-using namespace std::chrono_literals;
 
 namespace
 {
@@ -60,7 +53,8 @@ struct Fixture
         webView.addScriptMessageHandler(
             "ready", [this](const std::string&) { ready = true; });
         webView.loadHTML(pageHtml);
-        check(Threads::runEventLoopUntil([this] { return ready; }, 10s));
+        check(Threads::runEventLoopUntil([this] { return ready; },
+                                         eacp::Time::MS {10000}));
     }
 };
 } // namespace
@@ -70,8 +64,8 @@ auto tCallSyncExposedFunction =
 {
     auto fix = Fixture {};
 
-    auto result =
-        fix.transport.call("echo", Miro::toJSON(Message {"hi"})).waitFor(10s);
+    auto result = fix.transport.call("echo", Miro::toJSON(Message {"hi"}))
+                      .waitFor(eacp::Time::MS {10000});
 
     check(result.isObject());
     check(result["text"].asString() == "hi!");
@@ -81,8 +75,8 @@ auto tCallAsyncExposedFunction = test("WebViewCall/awaitsAsyncExposedFunction") 
 {
     auto fix = Fixture {};
 
-    auto result =
-        fix.transport.call("echoAsync", Miro::toJSON(Message {"hi"})).waitFor(10s);
+    auto result = fix.transport.call("echoAsync", Miro::toJSON(Message {"hi"}))
+                      .waitFor(eacp::Time::MS {10000});
 
     check(result.isObject());
     check(result["text"].asString() == "hi-async");
@@ -92,7 +86,8 @@ auto tCallTypedOverload = test("WebViewCall/typedOverloadRoundTrips") = []
 {
     auto fix = Fixture {};
 
-    auto reply = fix.transport.call<Message>("echo", Message {"yo"}).waitFor(10s);
+    auto reply = fix.transport.call<Message>("echo", Message {"yo"})
+                     .waitFor(eacp::Time::MS {10000});
 
     check(reply.text == "yo!");
 };
@@ -105,7 +100,7 @@ auto tCallThrowingFunctionRejects =
     auto threw = false;
     try
     {
-        fix.transport.call("boom").waitFor(10s);
+        fix.transport.call("boom").waitFor(eacp::Time::MS {10000});
     }
     catch (const Threads::AsyncError& e)
     {
@@ -124,7 +119,7 @@ auto tCallMissingFunctionRejects =
     auto threw = false;
     try
     {
-        fix.transport.call("nope").waitFor(10s);
+        fix.transport.call("nope").waitFor(eacp::Time::MS {10000});
     }
     catch (const Threads::AsyncError& e)
     {

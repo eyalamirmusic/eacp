@@ -1,13 +1,7 @@
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Network/HTTP/Http.h>
+#include "Common.h"
 #include <eacp/Network/HTTPRpc/RpcClient.h>
 #include <eacp/Network/HTTPRpc/RpcServer.h>
-#include <eacp/Network/HTTPServer/HttpServer.h>
-#include <NanoTest/NanoTest.h>
 
-#include <atomic>
-#include <chrono>
-#include <string>
 #include <thread>
 
 using namespace nano;
@@ -46,7 +40,7 @@ void performExchange(eacp::HTTP::Server& server,
     auto worker = std::thread();
 
     auto stopped = eacp::Threads::runEventLoopFor(
-        std::chrono::seconds(5),
+        eacp::Time::MS {5000},
         [&]
         {
             worker = std::thread(
@@ -225,7 +219,7 @@ void runWithServer(int port, eacp::HTTP::Server& server, Fn&& clientWork)
 {
     auto worker = std::thread();
     auto stopped = eacp::Threads::runEventLoopFor(
-        std::chrono::seconds(5),
+        eacp::Time::MS {5000},
         [&]
         {
             worker = std::thread(

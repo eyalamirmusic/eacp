@@ -10,9 +10,9 @@
 
 #if defined(__x86_64__) || defined(_M_X64)
 
-#include <eacp/SIMD/Backend/Avx2.h>
-#include <eacp/SIMD/Backends.h>
-#include <eacp/SIMD/Kernels/SwapRedBlue.h>
+#include "../Backend/Avx2.h"
+#include "../Backends.h"
+#include "../Kernels/SwapRedBlue.h"
 
 namespace eacp::simd::backends
 {

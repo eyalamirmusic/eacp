@@ -1,12 +1,8 @@
 #include <eacp/SIMD/Backends.h>
-#include <eacp/SIMD/SIMD.h>
 #include <eacp/SIMD/Ops.h>
 
 #include <NanoTest/NanoTest.h>
 #include <ea_data_structures/ea_data_structures.h>
-
-#include <cstddef>
-#include <cstdint>
 
 using namespace nano;
 

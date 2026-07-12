@@ -6,13 +6,16 @@
 namespace eacp::Graphics
 {
 
-static const wchar_t* EMBEDDED_CLASS_NAME = L"EACPEmbeddedViewClass";
+static const std::wstring EMBEDDED_CLASS_NAME_STORAGE =
+    eacp::Plugins::getUniqueWindowClassName(L"EACPEmbeddedViewClass");
+static const wchar_t* EMBEDDED_CLASS_NAME = EMBEDDED_CLASS_NAME_STORAGE.c_str();
 static bool embeddedClassRegistered = false;
 
 struct EmbeddedView::Native
 {
     Native(void* hostParentHandle, const EmbeddedViewOptions& options)
     {
+        Threads::attachCurrentThreadAsMain();
         registerWindowClass();
         createChildWindow((HWND) hostParentHandle, options);
         host.initializeComposition(false);
@@ -29,13 +32,12 @@ struct EmbeddedView::Native
         wc.cbSize = sizeof(WNDCLASSEXW);
         wc.style = CS_HREDRAW | CS_VREDRAW;
         wc.lpfnWndProc = windowProc;
-        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.hInstance = (HINSTANCE) eacp::Plugins::getCurrentModuleHandle();
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wc.hbrBackground = nullptr;
         wc.lpszClassName = EMBEDDED_CLASS_NAME;
 
-        RegisterClassExW(&wc);
-        embeddedClassRegistered = true;
+        embeddedClassRegistered = RegisterClassExW(&wc) != 0;
     }
 
     void createChildWindow(HWND parent, const EmbeddedViewOptions& options)
@@ -47,18 +49,19 @@ struct EmbeddedView::Native
 
         DWORD style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
 
-        host.hwnd = CreateWindowExW(0,
-                                    EMBEDDED_CLASS_NAME,
-                                    L"",
-                                    style,
-                                    0,
-                                    0,
-                                    physicalWidth,
-                                    physicalHeight,
-                                    parent,
-                                    nullptr,
-                                    GetModuleHandleW(nullptr),
-                                    this);
+        host.hwnd =
+            CreateWindowExW(0,
+                            EMBEDDED_CLASS_NAME,
+                            L"",
+                            style,
+                            0,
+                            0,
+                            physicalWidth,
+                            physicalHeight,
+                            parent,
+                            nullptr,
+                            (HINSTANCE) eacp::Plugins::getCurrentModuleHandle(),
+                            this);
     }
 
     void setSize(int width, int height)

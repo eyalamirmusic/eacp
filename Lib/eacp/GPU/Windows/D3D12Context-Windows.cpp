@@ -1,10 +1,10 @@
 #include <eacp/Core/Utils/WinInclude.h>
+#include "../Common.h"
 
 #include "D3D12Context.h"
 #include "D3D12Types.h"
 
 #include <algorithm>
-#include <cstring>
 
 namespace eacp::GPU
 {
@@ -297,14 +297,13 @@ void D3D12Context::deferRelease(winrt::com_ptr<ID3D12Resource> resource)
     // Stamped with the value the next signal will carry: by the time that
     // value completes, everything submitted before this call — and the open
     // recording that submits next — has finished with the resource.
-    retired.push_back({std::move(resource), nextFenceValue});
+    retired.add({std::move(resource), nextFenceValue});
 }
 
 void D3D12Context::purgeRetired()
 {
-    std::erase_if(retired,
-                  [this](const Retired& entry)
-                  { return hasCompleted(entry.fenceValue); });
+    retired.eraseIf([this](const Retired& entry)
+                    { return hasCompleted(entry.fenceValue); });
 }
 
 CommandContext* D3D12Context::acquire()
@@ -331,7 +330,7 @@ CommandContext* D3D12Context::acquire()
     }
     else
     {
-        auto fresh = std::make_unique<CommandContext>();
+        auto fresh = makeOwned<CommandContext>();
 
         if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
                                                   __uuidof(ID3D12CommandAllocator),
@@ -345,7 +344,7 @@ CommandContext* D3D12Context::acquire()
             return nullptr;
 
         commands = fresh.get();
-        pool.push_back(std::move(fresh));
+        pool.add(std::move(fresh));
     }
 
     commands->fenceValue = 0;
@@ -441,7 +440,7 @@ D3D12_GPU_VIRTUAL_ADDRESS D3D12Context::uploadConstants(CommandContext& commands
     buffer->Unmap(0, nullptr);
 
     auto address = buffer->GetGPUVirtualAddress();
-    commands.transients.push_back(std::move(buffer));
+    commands.transients.add(std::move(buffer));
     return address;
 }
 

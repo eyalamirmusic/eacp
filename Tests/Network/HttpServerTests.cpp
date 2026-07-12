@@ -1,16 +1,8 @@
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Network/HTTP/Http.h>
-#include <eacp/Network/HTTPServer/HttpServer.h>
-#include <NanoTest/NanoTest.h>
-
-#include <algorithm>
-#include <atomic>
-#include <chrono>
-#include <memory>
-#include <mutex>
-#include <string>
+#include "Common.h"
 #include <thread>
 #include <vector>
+#include <algorithm>
+#include <mutex>
 
 using namespace nano;
 using eacp::HTTP::Request;
@@ -48,7 +40,7 @@ void performExchange(Server& server, const Request& clientRequest, Exchange& out
     auto worker = std::thread();
 
     auto stopped = eacp::Threads::runEventLoopFor(
-        std::chrono::seconds(5),
+        eacp::Time::MS {5000},
         [&]
         {
             worker = std::thread(
@@ -70,11 +62,10 @@ struct ParallelExchange
     bool completed = false;
 };
 
-void performParallelExchange(
-    Server& server,
-    const std::vector<Request>& requests,
-    ParallelExchange& out,
-    std::chrono::milliseconds timeout = std::chrono::seconds(10))
+void performParallelExchange(Server& server,
+                             const std::vector<Request>& requests,
+                             ParallelExchange& out,
+                             eacp::Time::MS timeout = eacp::Time::MS {10000})
 {
     auto n = requests.size();
     out.responses.assign(n, Response());
@@ -416,23 +407,23 @@ auto tEventLoopModeSerializesHandlers =
     auto inFlight = std::atomic<int> {0};
     auto maxInFlight = std::atomic<int> {0};
 
-    auto ok = server.listen(
-        port,
-        [&](const Request&)
-        {
-            auto cur = inFlight.fetch_add(1) + 1;
-            auto m = maxInFlight.load();
-            while (cur > m && !maxInFlight.compare_exchange_weak(m, cur))
-            {
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(40));
-            inFlight.fetch_sub(1);
+    auto ok = server.listen(port,
+                            [&](const Request&)
+                            {
+                                auto cur = inFlight.fetch_add(1) + 1;
+                                auto m = maxInFlight.load();
+                                while (cur > m
+                                       && !maxInFlight.compare_exchange_weak(m, cur))
+                                {
+                                }
+                                eacp::Time::sleepMS(40);
+                                inFlight.fetch_sub(1);
 
-            auto res = Response();
-            res.statusCode = 200;
-            res.content = "ok";
-            return res;
-        });
+                                auto res = Response();
+                                res.statusCode = 200;
+                                res.content = "ok";
+                                return res;
+                            });
     check(ok);
     port = server.boundPort();
 
@@ -465,26 +456,25 @@ auto tThreadPoolModeRunsHandlersInParallel =
     auto barrierCount = std::atomic<int> {0};
     auto allArrived = std::atomic<bool> {false};
 
-    auto ok = server.listen(
-        port,
-        [&](const Request&)
-        {
-            barrierCount.fetch_add(1);
+    auto ok =
+        server.listen(port,
+                      [&](const Request&)
+                      {
+                          barrierCount.fetch_add(1);
 
-            auto deadline =
-                std::chrono::steady_clock::now() + std::chrono::seconds(2);
-            while (barrierCount.load() < 4
-                   && std::chrono::steady_clock::now() < deadline)
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                          auto deadline =
+                              eacp::Time::Deadline {eacp::Time::MS {2000}};
+                          while (barrierCount.load() < 4 && !deadline.expired())
+                              eacp::Time::sleepMS(2);
 
-            if (barrierCount.load() >= 4)
-                allArrived.store(true);
+                          if (barrierCount.load() >= 4)
+                              allArrived.store(true);
 
-            auto res = Response();
-            res.statusCode = 200;
-            res.content = "ok";
-            return res;
-        });
+                          auto res = Response();
+                          res.statusCode = 200;
+                          res.content = "ok";
+                          return res;
+                      });
     check(ok);
     port = server.boundPort();
 

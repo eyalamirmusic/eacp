@@ -1,12 +1,14 @@
 // Subprocess harness for AppTerminationTests: quits a running app via
-// terminate: and reports whether run<T>() unwound.
-#include <eacp/Core/App/App.h>
+// terminate: or Apps::quit(returnValue) and reports whether run<T>()
+// unwound. main() returns run<T>()'s value so the parent can check the
+// process exit code.
+#include <eacp/Core/Core.h>
 
 #import <Cocoa/Cocoa.h>
 
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <string_view>
 #include <thread>
 
 namespace
@@ -24,21 +26,40 @@ struct TerminatingApp
         std::fflush(stdout);
     }
 };
+
+struct QuitWithCodeApp
+{
+    QuitWithCodeApp() { eacp::Apps::quit(42); }
+
+    ~QuitWithCodeApp()
+    {
+        std::puts("app-destroyed");
+        std::fflush(stdout);
+    }
+};
+
+int runHarnessApp(int argc, char* argv[])
+{
+    if (argc > 1 && std::string_view(argv[1]) == "quit-code")
+        return eacp::Apps::run<QuitWithCodeApp>();
+
+    return eacp::Apps::run<TerminatingApp>();
+}
 } // namespace
 
-int main()
+int main(int argc, char* argv[])
 {
     std::thread(
         []
         {
-            std::this_thread::sleep_for(std::chrono::seconds(15));
+            eacp::Time::sleepMS(15000);
             std::_Exit(3);
         })
         .detach();
 
-    eacp::Apps::run<TerminatingApp>();
+    auto exitCode = runHarnessApp(argc, argv);
 
     std::puts("run-returned");
     std::fflush(stdout);
-    return 0;
+    return exitCode;
 }

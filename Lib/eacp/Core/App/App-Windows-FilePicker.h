@@ -5,10 +5,6 @@
 
 #include "App.h"
 
-#include <functional>
-#include <optional>
-#include <string>
-
 namespace eacp::Apps::detail
 {
 // {"wav", "mp3"} -> L"*.wav;*.mp3".

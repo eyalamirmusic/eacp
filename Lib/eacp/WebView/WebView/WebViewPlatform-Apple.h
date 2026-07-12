@@ -5,6 +5,7 @@
 
 @class WKWebView;
 @class WKWebViewConfiguration;
+@class NSEvent;
 
 namespace eacp::Graphics::detail
 {
@@ -50,4 +51,14 @@ void armWindowDrag(WKWebView* webView);
 // window hosting the web view, posted by the injected window-controls.js.
 // macOS-only; the iOS translation unit provides a no-op.
 void performWindowControl(WKWebView* webView, const std::string& action);
+
+// Unhandled-key forwarding (pairs with the injected key-events.js; see
+// Options::forwardUnhandledKeys). Setting the callback makes the macOS web
+// view stash each incoming key NSEvent; reportKeyVerdict consumes the page's
+// per-event consumed/unconsumed verdict in delivery order and fires the
+// callback with the original event when the page left it unhandled.
+// macOS-only; the iOS translation unit provides no-ops.
+using UnhandledNSKeyCallback = std::function<void(NSEvent* event, bool isDown)>;
+void setUnhandledKeyCallback(WKWebView* webView, UnhandledNSKeyCallback callback);
+void reportKeyVerdict(WKWebView* webView, bool isDown, bool consumed);
 } // namespace eacp::Graphics::detail

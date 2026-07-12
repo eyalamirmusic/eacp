@@ -1,8 +1,6 @@
 #import <Carbon/Carbon.h>
 
 #include "GlobalHotKey.h"
-#include <eacp/Core/App/AppEnvironment.h>
-#include <eacp/Core/Utils/Logging.h>
 
 #include <map>
 #include <memory>
@@ -13,7 +11,23 @@ namespace eacp::Graphics
 {
 namespace
 {
-constexpr OSType hotKeySignature = 'eHKy';
+// Derived from the module identity: hotkey events are delivered to every
+// installed application handler, so each eacp copy needs its own signature
+// to claim only its own registrations.
+OSType hotKeySignature()
+{
+    static const auto signature = []
+    {
+        auto result = OSType {'eHKy'};
+
+        for (auto c: Plugins::getModuleIdentitySuffix())
+            result = result * 31 + (unsigned char) c;
+
+        return result;
+    }();
+
+    return signature;
+}
 
 using Registry = std::map<UInt32, Callback*>;
 
@@ -57,7 +71,7 @@ OSStatus hotKeyHandler(EventHandlerCallRef, EventRef event, void*)
                                     nullptr,
                                     &hotKeyID);
 
-    if (status != noErr || hotKeyID.signature != hotKeySignature)
+    if (status != noErr || hotKeyID.signature != hotKeySignature())
         return eventNotHandledErr;
 
     auto hotKeys = registry();
@@ -106,7 +120,7 @@ struct GlobalHotKey::Native
             return;
 
         id = nextHotKeyID();
-        auto eventID = EventHotKeyID {hotKeySignature, id};
+        auto eventID = EventHotKeyID {hotKeySignature(), id};
 
         auto status = RegisterEventHotKey(keyCode,
                                           toCarbonModifiers(modifiers),

@@ -1,10 +1,8 @@
 #pragma once
 
-#include <eacp/Network/HTTPServer/HttpServer.h>
+#include <eacp/Network/Network.h>
 
-#include <Miro/Miro.h>
-
-#include <string>
+#include <Miro/Bridge.h>
 
 namespace eacp::HTTP::Rpc
 {

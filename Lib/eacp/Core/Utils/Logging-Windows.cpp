@@ -1,8 +1,7 @@
 #include "LoggingPlatform.h"
+#include "Common.h"
 
 #include "WinInclude.h"
-
-#include <string>
 
 namespace eacp::Detail
 {

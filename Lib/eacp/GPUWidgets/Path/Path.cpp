@@ -1,8 +1,6 @@
 #include "Path.h"
-
 #include <algorithm>
-#include <cmath>
-#include <limits>
+
 #include "../Common.h"
 
 namespace eacp::GPUWidgets

@@ -1,8 +1,7 @@
 #include <eacp/Core/Utils/WinInclude.h>
+#include <chrono>
 
 #include "Camera.h"
-
-#include <eacp/Core/Threads/EventLoop.h>
 
 #include <winrt/Windows.Devices.Enumeration.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -13,7 +12,6 @@
 #include <winrt/Windows.Media.MediaProperties.h>
 
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>

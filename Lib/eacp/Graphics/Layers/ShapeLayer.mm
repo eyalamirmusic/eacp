@@ -2,38 +2,32 @@
 #include "ShapeLayer.h"
 #include "../Primitives/GraphicUtils.h"
 
-@interface ImmediateShapeLayer : CAShapeLayer
-@end
-
-@implementation ImmediateShapeLayer
-
-- (id<CAAction>)actionForKey:(NSString*)event
-{
-    return [NSNull null];
-}
-
-@end
-
-@interface ImmediateGradientLayer : CAGradientLayer
-@end
-
-@implementation ImmediateGradientLayer
-
-- (id<CAAction>)actionForKey:(NSString*)event
-{
-    return [NSNull null];
-}
-
-@end
+#include "ImmediateLayerClass.h"
 
 namespace eacp::Graphics
 {
+namespace
+{
+CAShapeLayer* createImmediateShapeLayer()
+{
+    static auto cls =
+        makeImmediateLayerClass<CAShapeLayer>("EacpImmediateShapeLayer");
+    return [[[cls alloc] init] autorelease];
+}
+
+CAGradientLayer* createImmediateGradientLayer()
+{
+    static auto cls =
+        makeImmediateLayerClass<CAGradientLayer>("EacpImmediateGradientLayer");
+    return [[[cls alloc] init] autorelease];
+}
+} // namespace
 
 struct ShapeLayer::Native : public NativeLayer
 {
     Native()
     {
-        layer = [ImmediateShapeLayer layer];
+        layer = createImmediateShapeLayer();
         layer.get().fillColor = nil;
         layer.get().strokeColor = nil;
         layer.get().lineWidth = 1.0f;
@@ -68,7 +62,7 @@ struct ShapeLayer::Native : public NativeLayer
 
         if (!gradientLayer)
         {
-            gradientLayer = [ImmediateGradientLayer layer];
+            gradientLayer = createImmediateGradientLayer();
             gradientLayer.get().anchorPoint = CGPointMake(0, 0);
             [layer.get() addSublayer:gradientLayer.get()];
         }
@@ -108,7 +102,7 @@ struct ShapeLayer::Native : public NativeLayer
             gradientLayer.get().endPoint = toCGPoint(end);
         }
 
-        auto maskLayer = [ImmediateShapeLayer layer];
+        auto maskLayer = createImmediateShapeLayer();
 
         auto transform =
             CGAffineTransformMakeTranslation(-cgBounds.origin.x, -cgBounds.origin.y);
@@ -136,8 +130,8 @@ struct ShapeLayer::Native : public NativeLayer
 
     void setStrokeWidth(float width) { layer.get().lineWidth = width; }
 
-    ObjC::Ptr<ImmediateShapeLayer> layer;
-    ObjC::Ptr<ImmediateGradientLayer> gradientLayer;
+    ObjC::Ptr<CAShapeLayer> layer;
+    ObjC::Ptr<CAGradientLayer> gradientLayer;
     LinearGradient currentGradient;
 };
 

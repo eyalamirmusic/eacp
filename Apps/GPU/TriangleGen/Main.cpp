@@ -1,4 +1,3 @@
-#include <eacp/Graphics/Graphics.h>
 #include <eacp/GPU/GPU.h>
 
 using namespace eacp;
@@ -80,6 +79,5 @@ struct MyApp
 
 int main()
 {
-    eacp::Apps::run<MyApp>();
-    return 0;
+    return eacp::Apps::run<MyApp>();
 }

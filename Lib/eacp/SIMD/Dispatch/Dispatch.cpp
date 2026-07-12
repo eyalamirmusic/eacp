@@ -1,5 +1,5 @@
-#include <eacp/SIMD/Backends.h>
-#include <eacp/SIMD/SIMD.h>
+#include "../Backends.h"
+#include "../SIMD.h"
 
 // Public image-kernel entry points. Each resolves the best available backend
 // once (CPUID on x86-64, fixed on every other architecture) and calls it through
@@ -65,6 +65,34 @@ void swapRedBlue(const std::uint8_t* in, std::uint8_t* out, std::size_t pixelCou
 {
     static const SwapFn fn = pickSwapRedBlue();
     fn(in, out, pixelCount);
+}
+
+void convertBgraToRgba(const std::uint8_t* src,
+                       std::size_t srcBytesPerRow,
+                       std::uint8_t* dst,
+                       int width,
+                       int height)
+{
+    if (src == nullptr || dst == nullptr || width <= 0 || height <= 0)
+        return;
+
+    const auto rowPixels = static_cast<std::size_t>(width);
+    const auto tightRowBytes = rowPixels * 4;
+
+    // Tightly-packed frames swap in a single pass; padded rows go one by one.
+    // Either way the per-pixel work runs through the dispatched swapRedBlue, and
+    // this whole routine is compiled at the SIMD module's forced optimization.
+    if (srcBytesPerRow == tightRowBytes)
+    {
+        swapRedBlue(src, dst, rowPixels * static_cast<std::size_t>(height));
+    }
+    else
+    {
+        for (auto y = 0; y < height; ++y)
+            swapRedBlue(src + static_cast<std::size_t>(y) * srcBytesPerRow,
+                        dst + static_cast<std::size_t>(y) * tightRowBytes,
+                        rowPixels);
+    }
 }
 
 void resizeBilinear(const std::uint8_t* src,

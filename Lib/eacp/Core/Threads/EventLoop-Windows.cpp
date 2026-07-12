@@ -3,11 +3,11 @@
 #include "EventLoop.h"
 #include "ThreadUtils-Windows.h"
 #include "../App/App.h"
+#include "../Plugins/ModuleInfo.h"
+#include "../Utils/Environment.h"
 #include "../Utils/Singleton.h"
 
-#include <eacp/Core/Utils/Containers.h>
 #include <atomic>
-#include <chrono>
 #include <mutex>
 #include <thread>
 #include <tlhelp32.h>
@@ -31,7 +31,7 @@ constexpr UINT WM_EACP_STOP_LOOP = WM_APP + 0x42E0;
 // those is on screen.
 constexpr UINT WM_EACP_RUN_PENDING = WM_APP + 0x42E1;
 
-static std::atomic<DWORD> mainThreadId {0};
+static std::atomic<DWORD> loopThreadId {0};
 static thread_local int runForDepth = 0;
 
 struct PendingCallbacks
@@ -92,7 +92,8 @@ static void ensureMessageWindow()
     if (messageWindow.load())
         return;
 
-    static const wchar_t* className = L"EACPEventLoopMessageWindow";
+    static const auto className =
+        Plugins::getUniqueWindowClassName(L"EACPEventLoopMessageWindow");
     static auto classRegistered = false;
 
     if (!classRegistered)
@@ -100,14 +101,13 @@ static void ensureMessageWindow()
         auto wc = WNDCLASSEXW {};
         wc.cbSize = sizeof(WNDCLASSEXW);
         wc.lpfnWndProc = messageWindowProc;
-        wc.hInstance = GetModuleHandleW(nullptr);
-        wc.lpszClassName = className;
-        RegisterClassExW(&wc);
-        classRegistered = true;
+        wc.hInstance = (HINSTANCE) Plugins::getCurrentModuleHandle();
+        wc.lpszClassName = className.c_str();
+        classRegistered = RegisterClassExW(&wc) != 0;
     }
 
     messageWindow = CreateWindowExW(0,
-                                    className,
+                                    className.c_str(),
                                     L"",
                                     0,
                                     0,
@@ -116,7 +116,7 @@ static void ensureMessageWindow()
                                     0,
                                     HWND_MESSAGE,
                                     nullptr,
-                                    GetModuleHandleW(nullptr),
+                                    (HINSTANCE) Plugins::getCurrentModuleHandle(),
                                     nullptr);
 }
 
@@ -199,9 +199,13 @@ void initLoopThread()
 {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-    winrt::init_apartment(winrt::apartment_type::single_threaded);
+    // A single-threaded (STA) apartment, as WebView2, the shell dialogs and
+    // DirectComposition all expect. This was winrt::init_apartment; plain COM
+    // now that the compositor no longer pulls cppwinrt into Core.
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
     initMainThread();
-    mainThreadId = GetCurrentThreadId();
+    loopThreadId = GetCurrentThreadId();
     ensureMessageWindow();
 
     // Dev convenience only, never in a signed/shipped build (see the watchdog's
@@ -220,6 +224,13 @@ void initLoopThread()
 void EventLoop::run()
 {
     initLoopThread();
+
+    // Loop ownership is advertised through the process environment so it
+    // crosses eacp copies: a plugin-hosted app's quit reads it to know the
+    // running loop is eacp's to stop (see stopProcessRootLoop). The thread
+    // id rides along because WM_QUIT must target the pumping thread.
+    setEnv("EACP_ROOT_LOOP", "1");
+    setEnv("EACP_ROOT_LOOP_THREAD", std::to_string(GetCurrentThreadId()));
 
     // Outer run exits only on WM_QUIT — never on WM_EACP_STOP_LOOP, so
     // nested runFor calls can settle without taking the whole process
@@ -245,39 +256,33 @@ void EventLoop::run()
         DispatchMessage(&msg);
     }
 
-    mainThreadId = 0;
+    setEnv("EACP_ROOT_LOOP", "0");
+    loopThreadId = 0;
     destroyMessageWindow();
 
-    // Tear down the dispatcher queue while COM is still healthy. If
-    // we leave its WinRT smart pointers alive until static destruction
-    // their Release runs after the apartment is gone and the process
-    // crashes with STATUS_ACCESS_VIOLATION on exit (turning a passing
-    // test run into a failure in CTest's eyes).
     shutdownMainThread();
 }
 
-bool EventLoop::runFor(std::chrono::milliseconds timeout)
+bool EventLoop::runFor(Time::MS timeout)
 {
     initLoopThread();
 
     runForDepth++;
     auto popDepth = std::shared_ptr<void> {nullptr, [](void*) { runForDepth--; }};
 
-    auto deadline = std::chrono::steady_clock::now() + timeout;
+    auto deadline = Time::Deadline {timeout};
     auto timedOut = false;
     auto running = true;
 
     while (running)
     {
-        auto now = std::chrono::steady_clock::now();
-        if (now >= deadline)
+        if (deadline.expired())
         {
             timedOut = true;
             break;
         }
 
-        auto remaining =
-            std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
+        auto remaining = deadline.remaining().count;
 
         auto wait = MsgWaitForMultipleObjectsEx(
             0, nullptr, (DWORD) remaining, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
@@ -327,14 +332,34 @@ void EventLoop::quit()
     // and the loop exits. Inner runFor calls will also see it (via
     // PeekMessage) and unwind, re-posting WM_QUIT on their way out so
     // the outer run still gets it.
-    auto id = mainThreadId.load();
+    auto id = loopThreadId.load();
     if (id != 0)
         PostThreadMessageW(id, WM_QUIT, 0, 0);
+}
+
+void stopProcessRootLoop()
+{
+    if (getEnvValue("EACP_ROOT_LOOP") != "1")
+        return;
+
+    auto thread = getEnvValue("EACP_ROOT_LOOP_THREAD");
+
+    if (!thread.empty())
+        PostThreadMessageW((DWORD) std::stoul(thread), WM_QUIT, 0, 0);
 }
 
 void EventLoop::call(Callback func)
 {
     getPendingCallbacks().add(func);
+
+    // Hosted copy (eacp inside a dlopen'd plugin — no run()/initLoopThread
+    // ever happens): the first callAsync on the UI thread creates the
+    // message-only window, whose messages the HOST's pump then dispatches
+    // into this copy's messageWindowProc. Off-thread first use stays
+    // buffered until attachCurrentThreadAsMain or a Window/EmbeddedView
+    // brings the window up.
+    if (messageWindow.load() == nullptr && isMainThread())
+        ensureMessageWindow();
 
     // Wake the pump so it drains the callback list on the next tick.
     // Posting to our message-only window means the wake survives foreign
@@ -343,7 +368,7 @@ void EventLoop::call(Callback func)
     // initLoopThread() drains it once the loop starts.
     if (auto hwnd = messageWindow.load())
         PostMessageW(hwnd, WM_EACP_RUN_PENDING, 0, 0);
-    else if (auto id = mainThreadId.load())
+    else if (auto id = loopThreadId.load())
         PostThreadMessageW(id, WM_EACP_RUN_PENDING, 0, 0);
 }
 
@@ -356,7 +381,7 @@ void EventLoop::call(Callback func)
 // outer run exits.
 void stopEventLoop()
 {
-    auto id = mainThreadId.load();
+    auto id = loopThreadId.load();
     if (id == 0)
         return;
 
@@ -369,6 +394,19 @@ void stopEventLoop()
 void scheduleStartup(const Callback& func)
 {
     callAsync(func);
+}
+
+// Deliberately does NOT touch loopThreadId: that is the loop-ownership
+// marker quit()/stopEventLoop() post WM_QUIT through, and a hosted plugin
+// must never be able to quit the host's loop.
+void attachCurrentThreadAsMain()
+{
+    setCurrentThreadAsMainFallback();
+    ensureMessageWindow();
+
+    // Drain anything buffered before the wake channel existed.
+    if (auto hwnd = messageWindow.load())
+        PostMessageW(hwnd, WM_EACP_RUN_PENDING, 0, 0);
 }
 
 } // namespace eacp::Threads

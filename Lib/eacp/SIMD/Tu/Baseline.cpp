@@ -1,7 +1,7 @@
-#include <eacp/SIMD/Backends.h>
-#include <eacp/SIMD/Kernels/ResizeBilinear.h>
-#include <eacp/SIMD/Kernels/SwapRedBlue.h>
-#include <eacp/SIMD/Kernels/WarpAffine.h>
+#include "../Backends.h"
+#include "../Kernels/ResizeBilinear.h"
+#include "../Kernels/SwapRedBlue.h"
+#include "../Kernels/WarpAffine.h"
 
 // The per-architecture baseline backend, reached without a special compile
 // flag: SSE2 on x86-64 (guaranteed by the ABI), NEON on AArch64 (mandatory).
@@ -9,7 +9,7 @@
 
 #if defined(__x86_64__) || defined(_M_X64)
 
-#include <eacp/SIMD/Backend/Sse2.h>
+#include "../Backend/Sse2.h"
 
 namespace eacp::simd::backends
 {
@@ -48,7 +48,7 @@ void warpAffineInverse_sse2(const std::uint8_t* src,
 
 #elif defined(__aarch64__) || defined(_M_ARM64)
 
-#include <eacp/SIMD/Backend/Neon.h>
+#include "../Backend/Neon.h"
 
 namespace eacp::simd::backends
 {

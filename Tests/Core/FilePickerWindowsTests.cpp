@@ -1,10 +1,5 @@
+#include "Common.h"
 #include <eacp/Core/App/App-Windows-FilePicker.h>
-#include <eacp/Core/App/App.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <optional>
-#include <string>
 
 using namespace nano;
 using eacp::Apps::FilePickerOptions;

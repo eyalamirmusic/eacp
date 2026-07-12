@@ -19,6 +19,17 @@ namespace eacp::simd
 // (in place) but must not otherwise overlap.
 void swapRedBlue(const std::uint8_t* in, std::uint8_t* out, std::size_t pixelCount);
 
+// Convert a BGRA8 camera frame to tightly-packed RGBA8 in one pass: swap
+// red/blue and drop any trailing row padding. `src` rows are `srcBytesPerRow`
+// apart (>= width*4); `dst` holds width*height*4 bytes with no padding. This
+// lives in the SIMD module so its per-byte work is always built at the platform
+// optimization maximum, independent of the (possibly unoptimized) caller.
+void convertBgraToRgba(const std::uint8_t* src,
+                       std::size_t srcBytesPerRow,
+                       std::uint8_t* dst,
+                       int width,
+                       int height);
+
 // Resize a tightly-packed RGBA8 image with bilinear sampling, half-pixel-center
 // mapping and edge clamping (OpenCV semantics). `dst` holds dstW*dstH*4 bytes.
 // Caller guarantees src/dst dimensions are positive and buffers correctly sized.

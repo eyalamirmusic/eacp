@@ -8,24 +8,32 @@ target_sources(eacp-core PRIVATE
         App/App.cpp
         Platform/Platform.cpp
         Process/Process.cpp
+        Threads/Async.cpp
         Threads/EventLoop.cpp
         Threads/TaskSemaphore.cpp
         Utils/Environment.cpp
         Utils/File.cpp
+        Utils/FilePath.cpp
         Utils/Files.cpp
         Utils/Logging.cpp
         Utils/Random.cpp
-        Utils/Strings.cpp)
+        Utils/Strings.cpp
+        Utils/Time.cpp)
 
 if (APPLE)
     target_sources(eacp-core PRIVATE
             ObjC/AutoReleasePool.mm
             ObjC/Strings.mm
+            Plugins/DynamicLibrary-Apple.cpp
+            Plugins/DynamicLibrary-Posix.cpp
+            Plugins/ModuleInfo-Apple.cpp
+            Plugins/ModuleInfo-Posix.cpp
             Threads/EventLoop.mm
             Threads/EventLoop-Default.cpp
             Threads/Timer.mm
             Threads/ThreadUtils.mm
             Utils/Environment-Posix.cpp
+            Utils/FilePath-Apple.mm
             Utils/Files.mm
             Utils/Logging-Posix.cpp)
     target_link_libraries(eacp-core PRIVATE
@@ -56,25 +64,34 @@ elseif (WIN32)
             App/App-Windows.cpp
             App/Clipboard-Windows.cpp
             App/LoginItem-Windows.cpp
+            Plugins/DynamicLibrary-Windows.cpp
+            Plugins/ModuleInfo-Windows.cpp
             Process/Process-Windows.cpp
             Threads/EventLoop-Windows.cpp
             Threads/ThreadUtils-Windows.cpp
             Threads/Timer-Windows.cpp
             Utils/Environment-Windows.cpp
+            Utils/FilePath-Windows.cpp
             Utils/Files-Windows.cpp
             Utils/Logging-Windows.cpp)
-    target_link_libraries(eacp-core PRIVATE windowsapp crypt32 user32 advapi32)
+    target_link_libraries(eacp-core PRIVATE
+            windowsapp crypt32 user32 advapi32 shell32 ole32 uuid)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-core PRIVATE
             App/App-Linux.cpp
             App/Clipboard-Linux.cpp
             App/LoginItem-Linux.cpp
+            Plugins/DynamicLibrary-Linux.cpp
+            Plugins/DynamicLibrary-Posix.cpp
+            Plugins/ModuleInfo-Linux.cpp
+            Plugins/ModuleInfo-Posix.cpp
             Process/Process-Posix.cpp
             Threads/EventLoop-Linux.cpp
             Threads/EventLoop-Default.cpp
             Threads/ThreadUtils-Linux.cpp
             Threads/Timer-Linux.cpp
             Utils/Environment-Posix.cpp
+            Utils/FilePath-Linux.cpp
             Utils/Files-Linux.cpp
             Utils/Logging-Posix.cpp)
     find_package(Threads REQUIRED)

@@ -1,15 +1,13 @@
 #pragma once
 
 #include "../Utils/Common.h"
-#include <algorithm>
-#include <chrono>
 
 namespace eacp::Threads
 {
 struct EventLoop
 {
     void run();
-    bool runFor(std::chrono::milliseconds timeout);
+    bool runFor(Time::MS timeout);
     void quit();
     void call(Callback func);
 };
@@ -17,10 +15,28 @@ struct EventLoop
 EventLoop& getEventLoop();
 
 void runEventLoop(const Callback& func = [] {});
-bool runEventLoopFor(
-    std::chrono::milliseconds timeout, const Callback& func = [] {});
+bool runEventLoopFor(Time::MS timeout, const Callback& func = [] {});
 void callAsync(const Callback& func);
 void stopEventLoop();
+
+// Marks the calling thread as this eacp copy's main/UI thread and brings up
+// the services callAsync depends on, without running an event loop. For eacp
+// statically linked into a dlopen-hosted plugin: the host owns the loop, so
+// call this once on the host's UI thread (creating a Window or EmbeddedView
+// does it implicitly) and the host's own pump then drives this copy's async
+// callbacks and timers. Idempotent. A no-op where the main run loop is a
+// process singleton (macOS/Linux) — there callAsync already reaches the
+// host's loop without any setup.
+void attachCurrentThreadAsMain();
+
+// Stops the process's root run loop, provided an eacp copy is running it —
+// any copy: loop ownership is marked in the process environment
+// (EACP_ROOT_LOOP), which crosses DLL boundaries. The quit path for an app
+// that lives in a dynamic library while a thin host executable pumps the
+// loop (Apps::run<T> detects that case and rides the host's loop). A loop
+// owned by a foreign host (a DAW) carries no marker, so this is a no-op
+// there: that loop is never ours to stop.
+void stopProcessRootLoop();
 
 // Schedules the app's one-time startup callback (the app/window creation that
 // runEventLoop kicks off). Most platforms post it to the loop immediately; iOS
@@ -33,29 +49,24 @@ void scheduleStartup(const Callback& func);
 // timeout. Must be called on the main thread, and must not be re-entered
 // from inside another event-loop callback.
 template <typename Predicate>
-bool runEventLoopUntil(
-    Predicate ready,
-    std::chrono::milliseconds timeout,
-    std::chrono::milliseconds slice = std::chrono::milliseconds(20))
+bool runEventLoopUntil(Predicate ready,
+                       Time::MS timeout,
+                       Time::MS slice = Time::MS {20})
 {
     if (ready())
         return true;
 
-    auto deadline = std::chrono::steady_clock::now() + timeout;
+    auto deadline = Time::Deadline {timeout};
 
-    while (true)
+    while (!deadline.expired())
     {
-        auto now = std::chrono::steady_clock::now();
-        if (now >= deadline)
-            return ready();
-
-        auto remaining =
-            std::chrono::ceil<std::chrono::milliseconds>(deadline - now);
-
-        runEventLoopFor(std::min(slice, remaining));
+        auto remaining = deadline.remaining();
+        runEventLoopFor(slice < remaining ? slice : remaining);
 
         if (ready())
             return true;
     }
+
+    return ready();
 }
 } // namespace eacp::Threads

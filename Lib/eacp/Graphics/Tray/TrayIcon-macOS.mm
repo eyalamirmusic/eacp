@@ -3,7 +3,6 @@
 #include "TrayIcon.h"
 #include "../Helpers/ImageConversion-macOS.h"
 #include "../Menu/AppKitMenu.h"
-#include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/ObjC/Strings.h>
 
@@ -94,7 +93,7 @@ struct TrayIcon::Native
 
     ObjC::Ptr<NSStatusItem> statusItem;
     ObjC::Ptr<NSMenu> menuPtr;
-    ObjC::Ptr<EacpMenuTarget> clickTarget;
+    ObjC::Ptr<NSObject> clickTarget;
     MenuTargets targets;
     bool templateRendering = true;
     Callback onClick;

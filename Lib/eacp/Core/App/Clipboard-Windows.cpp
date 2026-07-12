@@ -1,6 +1,6 @@
 #include "Clipboard.h"
 
-#include <eacp/Core/Utils/WinInclude.h>
+#include "../Utils/WinInclude.h"
 
 #include <shellapi.h>
 #include <shlobj.h>
@@ -83,8 +83,8 @@ bool copyText(std::string_view text)
         return false;
     }
 
-    auto ok = EmptyClipboard()
-              && SetClipboardData(CF_UNICODETEXT, handle) != nullptr;
+    auto ok =
+        EmptyClipboard() && SetClipboardData(CF_UNICODETEXT, handle) != nullptr;
     CloseClipboard();
 
     if (!ok)
@@ -132,8 +132,8 @@ bool copyFiles(const Vector<std::string>& paths)
     dropFiles->pFiles = sizeof(DROPFILES);
     dropFiles->fWide = TRUE;
 
-    auto* cursor = reinterpret_cast<wchar_t*>(
-        reinterpret_cast<char*>(dropFiles) + sizeof(DROPFILES));
+    auto* cursor = reinterpret_cast<wchar_t*>(reinterpret_cast<char*>(dropFiles)
+                                              + sizeof(DROPFILES));
     for (const auto& path: widePaths)
     {
         std::memcpy(cursor, path.c_str(), path.size() * sizeof(wchar_t));

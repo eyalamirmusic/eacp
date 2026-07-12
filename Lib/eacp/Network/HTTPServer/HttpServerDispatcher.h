@@ -1,9 +1,6 @@
 #pragma once
 
-#include <eacp/Network/HTTPServer/HttpServer.h>
-
-#include <eacp/Core/Utils/Containers.h>
-#include <functional>
+#include "HttpServer.h"
 
 namespace eacp::HTTP
 {

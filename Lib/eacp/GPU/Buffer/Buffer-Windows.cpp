@@ -5,8 +5,6 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 
-#include <cstring>
-
 // Windows/D3D12 backend. Every buffer is a default-heap resource (a Storage
 // buffer additionally allows unordered access); initial data goes through a
 // transient upload buffer submitted at construction, and read() copies into a
@@ -87,7 +85,7 @@ struct Buffer::Native
 
         commands->list->CopyBufferRegion(
             bufferData.resource.get(), 0, staging.get(), 0, bytes);
-        commands->transients.push_back(std::move(staging));
+        commands->transients.add(std::move(staging));
         context.submit(commands);
     }
 

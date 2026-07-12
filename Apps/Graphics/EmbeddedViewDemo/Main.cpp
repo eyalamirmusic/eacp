@@ -1,5 +1,4 @@
 #include <eacp/Graphics/Graphics.h>
-#include <eacp/Graphics/Window/EmbeddedView.h>
 
 using namespace eacp;
 using namespace Graphics;
@@ -55,6 +54,5 @@ struct FakeHostApp
 
 int main()
 {
-    eacp::Apps::run<FakeHostApp>();
-    return 0;
+    return eacp::Apps::run<FakeHostApp>();
 }

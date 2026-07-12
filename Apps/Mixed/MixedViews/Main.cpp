@@ -1,15 +1,8 @@
-#include <eacp/Camera/Camera.h>
 #include <eacp/CameraView/CameraView.h>
-#include <eacp/Core/App/App.h>
-#include <eacp/Core/Utils/Environment.h>
-#include <eacp/Graphics/Graphics.h>
 #include <eacp/WebView/WebView.h>
-
 #include <algorithm>
-#include <cmath>
-#include <cstdio>
+
 #include <cstdlib>
-#include <string>
 
 using namespace eacp;
 
@@ -325,6 +318,5 @@ struct MixedViewsApp
 
 int main()
 {
-    eacp::Apps::run<MixedViewsApp>();
-    return 0;
+    return eacp::Apps::run<MixedViewsApp>();
 }

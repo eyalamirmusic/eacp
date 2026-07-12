@@ -1,16 +1,10 @@
 #include "ConnectionInternal.h"
+#include "../Common-Posix.h"
 
-#include <arpa/inet.h>
-#include <cerrno>
-#include <cstring>
 #include <fcntl.h>
 #include <netdb.h>
-#include <netinet/in.h>
-#include <string>
 #include <sys/select.h>
-#include <sys/socket.h>
 #include <sys/time.h>
-#include <unistd.h>
 
 namespace eacp::TCP::detail
 {
@@ -29,22 +23,22 @@ void setNonBlocking(int fd, bool enabled)
     ::fcntl(fd, F_SETFL, enabled ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK));
 }
 
-timeval toTimeval(std::chrono::milliseconds timeout)
+timeval toTimeval(Time::MS timeout)
 {
     auto tv = timeval {};
-    tv.tv_sec = (time_t) (timeout.count() / 1000);
-    tv.tv_usec = (suseconds_t) ((timeout.count() % 1000) * 1000);
+    tv.tv_sec = (time_t) (timeout.count / 1000);
+    tv.tv_usec = (suseconds_t) ((timeout.count % 1000) * 1000);
     return tv;
 }
 
-bool waitWritable(int fd, std::chrono::milliseconds timeout)
+bool waitWritable(int fd, Time::MS timeout)
 {
     auto writable = fd_set {};
     FD_ZERO(&writable);
     FD_SET(fd, &writable);
 
     auto tv = toTimeval(timeout);
-    auto* deadline = timeout.count() > 0 ? &tv : nullptr; // null = block forever
+    auto* deadline = timeout.count > 0 ? &tv : nullptr; // null = block forever
     return ::select(fd + 1, nullptr, &writable, nullptr, deadline) > 0;
 }
 
@@ -57,9 +51,9 @@ int pendingSocketError(int fd)
     return error;
 }
 
-void armTimeouts(int fd, std::chrono::milliseconds ioTimeout)
+void armTimeouts(int fd, Time::MS ioTimeout)
 {
-    if (ioTimeout.count() > 0) // otherwise leave the socket blocking forever
+    if (ioTimeout.count > 0) // otherwise leave the socket blocking forever
     {
         auto tv = toTimeval(ioTimeout);
         ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -75,8 +69,8 @@ void armTimeouts(int fd, std::chrono::milliseconds ioTimeout)
 // Connects a single resolved address. Returns a ready fd, or -1 with why
 // filled in so the caller can report the last failure across candidates.
 int tryConnect(const addrinfo& candidate,
-               std::chrono::milliseconds connectTimeout,
-               std::chrono::milliseconds ioTimeout,
+               Time::MS connectTimeout,
+               Time::MS ioTimeout,
                std::string& why)
 {
     auto fd =
@@ -99,7 +93,7 @@ int tryConnect(const addrinfo& candidate,
             return kInvalidFd;
         }
 
-        if (! waitWritable(fd, connectTimeout))
+        if (!waitWritable(fd, connectTimeout))
         {
             why = "connect timed out";
             ::close(fd);
@@ -119,7 +113,10 @@ int tryConnect(const addrinfo& candidate,
     return fd;
 }
 
-bool timedOut() { return errno == EAGAIN || errno == EWOULDBLOCK; }
+bool timedOut()
+{
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+}
 
 int sendFlags()
 {
@@ -132,8 +129,8 @@ int sendFlags()
 } // namespace
 
 NativeSocket socketConnect(const Address& address,
-                           std::chrono::milliseconds connectTimeout,
-                           std::chrono::milliseconds ioTimeout)
+                           Time::MS connectTimeout,
+                           Time::MS ioTimeout)
 {
     auto hints = addrinfo {};
     hints.ai_family = AF_UNSPEC;
@@ -191,7 +188,8 @@ std::size_t socketReceive(NativeSocket socket, char* buffer, std::size_t length)
     return (std::size_t) received;
 }
 
-NativeSocket socketListen(std::uint16_t port, std::uint16_t& boundPort)
+NativeSocket
+    socketListen(std::uint16_t port, std::uint16_t& boundPort, BindInterface bindTo)
 {
     auto fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0)
@@ -202,7 +200,8 @@ NativeSocket socketListen(std::uint16_t port, std::uint16_t& boundPort)
 
     auto addr = sockaddr_in {};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_addr.s_addr =
+        htonl(bindTo == BindInterface::any ? INADDR_ANY : INADDR_LOOPBACK);
     addr.sin_port = htons(port);
 
     if (::bind(fd, (sockaddr*) &addr, sizeof(addr)) < 0)
@@ -230,8 +229,8 @@ NativeSocket socketListen(std::uint16_t port, std::uint16_t& boundPort)
 }
 
 NativeSocket socketAccept(NativeSocket listenSocket,
-                          std::chrono::milliseconds acceptTimeout,
-                          std::chrono::milliseconds ioTimeout,
+                          Time::MS acceptTimeout,
+                          Time::MS ioTimeout,
                           Address& peer)
 {
     auto lfd = (int) listenSocket;
@@ -241,7 +240,7 @@ NativeSocket socketAccept(NativeSocket listenSocket,
     FD_SET(lfd, &readable);
 
     auto tv = toTimeval(acceptTimeout);
-    auto* deadline = acceptTimeout.count() > 0 ? &tv : nullptr; // null = forever
+    auto* deadline = acceptTimeout.count > 0 ? &tv : nullptr; // null = forever
     auto ready = ::select(lfd + 1, &readable, nullptr, nullptr, deadline);
     if (ready == 0)
         throw TimeoutError("accept timed out");

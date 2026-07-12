@@ -1,27 +1,10 @@
 #include "WebView.h"
+#include <algorithm>
 
 #include "DevServerProbe.h"
 #include "JsStringLiteral.h"
 #include "StreamingRange.h"
 #include "WebViewDetail.h"
-
-#include <eacp/Core/App/AppEnvironment.h>
-#include <eacp/Core/Platform/Platform.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Core/Utils/File.h>
-
-#include <ResEmbed/ResEmbed.h>
-
-#include <algorithm>
-#include <cctype>
-#include <cstdio>
-#include <filesystem>
-#include <functional>
-#include <memory>
-#include <optional>
-#include <stdexcept>
-#include <string>
-#include <string_view>
 
 namespace eacp::Graphics
 {
@@ -342,7 +325,7 @@ StreamingProvider
         // Kept open behind a shared_ptr so the reader can pull chunks across
         // many scheme-task callbacks, then closes when the last reader drops.
         // File::isUnder canonicalises, so a raw path is fine here.
-        auto file = std::make_shared<eacp::File>(std::filesystem::path {pathStr});
+        auto file = std::make_shared<eacp::File>(pathStr);
 
         auto allowed =
             roots.empty()

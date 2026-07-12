@@ -1,88 +1,45 @@
 #include "../Utils/WinInclude.h"
 
 #include "ThreadUtils-Windows.h"
-#include <DispatcherQueue.h>
-#include <winrt/Windows.Foundation.h>
 
-#include <cstdio>
+#include <atomic>
+#include <cassert>
 
 namespace eacp::Threads
 {
 
-static System::DispatcherQueueController dispatcherController {nullptr};
-static System::DispatcherQueue dispatcherQueue {nullptr};
+// Captured at static-init time — for an executable that runs on the main thread
+// before main(), and for a dlopen'd plugin on whichever thread the host loaded it
+// (usually, but not guaranteed, its UI thread). initMainThread() overwrites it
+// with the thread that actually owns the loop; setCurrentThreadAsMainFallback
+// lets a hosted plugin correct it from a call known to be on the UI thread.
+static std::atomic<DWORD> mainThreadId {GetCurrentThreadId()};
 
-// Captured at static-init time, which on Windows runs on the main
-// thread before main(). Used as a fallback for isMainThread() when
-// the dispatcher queue hasn't been initialized yet (e.g. tests that
-// call callAsync before any runEventLoop / runFor has bootstrapped
-// the DispatcherQueue).
-static const DWORD initialMainThreadId = GetCurrentThreadId();
-
-// Suppress Windows Error Reporting + the JIT-debugger pop-up that
-// otherwise interrupts every test run any time WebView2 / WinRT trips
-// an access violation during DLL detach at shutdown. The actual crash
-// is intercepted by the vectored exception handler in test main; this
-// only stops the OS from also showing a dialog before that runs.
-// Runs at static-init on the main thread, so the suppression is in
-// place before any test code (or app code) executes.
-namespace
+void setCurrentThreadAsMainFallback()
 {
-const auto crashDialogSuppression = []
-{
-    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
-                 | SEM_NOOPENFILEERRORBOX);
-    return 0;
-}();
-} // namespace
+    mainThreadId = GetCurrentThreadId();
+}
 
 void initMainThread()
 {
-    if (dispatcherQueue)
-        return;
+    // Suppress Windows Error Reporting + the JIT-debugger pop-up that otherwise
+    // interrupts every test run any time WebView2 trips an access violation
+    // during DLL detach at shutdown. Lives here — the loop owner's bootstrap —
+    // rather than at static init, so merely dlopen-loading an eacp plugin doesn't
+    // overwrite the host process's error mode.
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
+                 | SEM_NOOPENFILEERRORBOX);
 
-    // DQTAT_COM_NONE: caller (initLoopThread / our test main()) has
-    // already winrt::init_apartment'd this thread, so the dispatcher
-    // queue must not try to (re)initialize COM with a different
-    // threading mode. Asking for DQTAT_COM_ASTA when COM is already
-    // STA returns RPC_E_CHANGED_MODE and leaves the queue uninitialized.
-    auto options = DispatcherQueueOptions(
-        sizeof(DispatcherQueueOptions), DQTYPE_THREAD_CURRENT, DQTAT_COM_NONE);
-
-    ABI::Windows::System::IDispatcherQueueController* controller = nullptr;
-    auto hr = CreateDispatcherQueueController(options, &controller);
-
-    if (SUCCEEDED(hr) && controller)
-    {
-        winrt::attach_abi(dispatcherController, controller);
-        dispatcherQueue = dispatcherController.DispatcherQueue();
-    }
+    mainThreadId = GetCurrentThreadId();
 }
 
-System::DispatcherQueue getDispatcherQueue()
-{
-    return dispatcherQueue;
-}
-
-System::DispatcherQueueController getDispatcherQueueController()
-{
-    return dispatcherController;
-}
-
-void shutdownMainThread()
-{
-    dispatcherQueue = nullptr;
-    dispatcherController = nullptr;
-}
+// Nothing to tear down any more: the DispatcherQueue controller this used to
+// release (before the COM apartment died under it) no longer exists.
+void shutdownMainThread() {}
 
 bool isMainThread()
 {
-    if (dispatcherQueue)
-        return dispatcherQueue.HasThreadAccess();
-
-    // Pre-dispatcher fallback: just compare the thread that loaded
-    // this TU (always the main thread on Windows) against the caller.
-    return GetCurrentThreadId() == initialMainThreadId;
+    return GetCurrentThreadId() == mainThreadId.load();
 }
 
 void assertMainThread()

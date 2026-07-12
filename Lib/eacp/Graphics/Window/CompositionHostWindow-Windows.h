@@ -1,18 +1,10 @@
 #pragma once
 
-#include <eacp/Core/Utils/WinInclude.h>
+#include "../DComp-Windows.h"
 
 #include "../View/View.h"
 
 #include <bitset>
-#include <cstdint>
-#include <functional>
-#include <optional>
-
-#include <winrt/Windows.UI.Composition.h>
-#include <winrt/Windows.UI.Composition.Desktop.h>
-
-namespace wuc = winrt::Windows::UI::Composition;
 
 namespace eacp::Graphics
 {
@@ -77,8 +69,16 @@ struct CompositionHostWindow
 
     HWND hwnd = nullptr;
     View* contentView = nullptr;
-    wuc::Desktop::DesktopWindowTarget target {nullptr};
-    wuc::ContainerVisual rootVisual {nullptr};
+    ComPtr<IDCompositionTarget> target;
+    ComPtr<IDCompositionVisual2> rootVisual;
+
+    // The composition generation this target/root was built under. DComp cannot
+    // swap its rendering device, so a device loss makes both dead objects — see
+    // DComp-Windows.h. rebuildAllCompositionHosts() re-runs initializeComposition
+    // when this falls behind.
+    uint64_t generation = 0;
+    bool topMostTarget = false;
+
     std::bitset<256> keyState;
     bool trackingMouseLeave = false;
 
@@ -99,6 +99,7 @@ private:
     POINT clientCenter() const;
     void handleLockedMouseMove(LPARAM lParam);
 
+    void fillWindowBackground(HDC dc) const;
     void resizeContentViewToClient();
     void ensureMouseLeaveTracking();
     void dispatchMouseToContentView(const MouseEvent& event) const;

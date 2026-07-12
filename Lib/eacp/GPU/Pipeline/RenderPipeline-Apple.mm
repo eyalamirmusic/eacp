@@ -7,8 +7,6 @@
 
 #include <eacp/Core/ObjC/ObjC.h>
 
-#include <cassert>
-
 namespace eacp::GPU
 {
 static MTLVertexFormat toMetalVertexFormat(VertexFormat format)

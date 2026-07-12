@@ -1,9 +1,5 @@
 #include "TestAgent.h"
 
-#include <ResEmbed/ResEmbed.h>
-
-#include <stdexcept>
-
 namespace eacp::WebView::Test
 {
 

@@ -1,3 +1,6 @@
+#include "Common.h"
+
+#include <thread>
 // Drives the page -> C++ command path on a real WebView (window.eacp.invoke
 // -> WebViewBridge::onMessage -> Miro dispatch). Covers the two features
 // layered on top of the basic sync dispatch:
@@ -10,19 +13,9 @@
 // Both run end to end through the injected JS bridge shim, so they also
 // exercise the wire round-trip, not just the C++ seam.
 
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/WebView/WebView.h>
-
-#include <NanoTest/NanoTest.h>
-
-#include <functional>
-#include <string>
-#include <thread>
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
-using namespace std::chrono_literals;
 
 namespace
 {
@@ -79,7 +72,7 @@ auto tPerCommandWorkerThread =
       });
     </script></body></html>)HTML");
 
-    check(Threads::runEventLoopUntil([&] { return done; }, 10s));
+    check(Threads::runEventLoopUntil([&] { return done; }, eacp::Time::MS {10000}));
 
     // The untagged command ran on the main loop; the tagged one ran on a
     // worker thread the bridge spawned just for it.
@@ -121,7 +114,7 @@ auto tAsyncCommandResolvesPageInvoke =
       });
     </script></body></html>)HTML");
 
-    check(Threads::runEventLoopUntil([&] { return done; }, 10s));
+    check(Threads::runEventLoopUntil([&] { return done; }, eacp::Time::MS {10000}));
     check(result == "go-done");
 };
 
@@ -155,6 +148,6 @@ auto tAsyncCommandRejectsPageInvoke =
       );
     </script></body></html>)HTML");
 
-    check(Threads::runEventLoopUntil([&] { return done; }, 10s));
+    check(Threads::runEventLoopUntil([&] { return done; }, eacp::Time::MS {10000}));
     check(error == "nope");
 };

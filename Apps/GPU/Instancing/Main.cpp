@@ -1,10 +1,6 @@
-#include <eacp/Graphics/Graphics.h>
 #include <eacp/GPU/GPU.h>
-
 #include <algorithm>
-#include <cmath>
-#include <cstdint>
-#include <string>
+
 #include <vector>
 
 using namespace eacp;
@@ -450,9 +446,7 @@ struct LabelView final : Graphics::View
         // being clipped off the left edge.
         constexpr float leftMargin = 8.f;
         const auto startX = [&](const std::string& text, float halfChar)
-        {
-            return std::max(leftMargin, cx - (float) text.size() * halfChar);
-        };
+        { return std::max(leftMargin, cx - (float) text.size() * halfChar); };
 
         g.setColor(Graphics::Color::white());
 
@@ -562,6 +556,5 @@ struct InstancingApp
 
 int main()
 {
-    eacp::Apps::run<InstancingApp>();
-    return 0;
+    return eacp::Apps::run<InstancingApp>();
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include <d3d12.h>
@@ -9,8 +10,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
-#include <vector>
 
 // Process-wide D3D12 plumbing shared by every Windows GPU translation unit:
 // the device and direct queue, the fence that orders CPU/GPU work, a pool of
@@ -29,7 +28,7 @@ struct CommandContext
 {
     winrt::com_ptr<ID3D12CommandAllocator> allocator;
     winrt::com_ptr<ID3D12GraphicsCommandList> list;
-    std::vector<winrt::com_ptr<ID3D12Resource>> transients;
+    Vector<winrt::com_ptr<ID3D12Resource>> transients;
     std::uint64_t fenceValue = 0;
 
     // Identifies the recording for buffer state tracking: a buffer first
@@ -124,7 +123,7 @@ private:
     struct DescriptorAllocator
     {
         winrt::com_ptr<ID3D12DescriptorHeap> heap;
-        std::vector<UINT> freeList;
+        Vector<UINT> freeList;
         UINT next = 0;
         UINT capacity = 0;
         UINT descriptorSize = 0;
@@ -155,8 +154,8 @@ private:
     DescriptorAllocator textureDescriptors;
     DescriptorAllocator samplerDescriptors;
 
-    std::vector<std::unique_ptr<CommandContext>> pool;
-    std::vector<CommandContext*> available;
+    OwnedVector<CommandContext> pool;
+    Vector<CommandContext*> available;
 
     struct Retired
     {
@@ -164,7 +163,7 @@ private:
         std::uint64_t fenceValue = 0;
     };
 
-    std::vector<Retired> retired;
+    Vector<Retired> retired;
 };
 
 // The process-wide context, created on first use. Main-thread only, like the

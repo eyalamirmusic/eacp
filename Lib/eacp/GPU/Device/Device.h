@@ -1,7 +1,5 @@
 #pragma once
 
-#include <eacp/Core/Utils/Common.h>
-
 #include "../Buffer/Buffer.h"
 #include "../CommandBuffer/CommandBuffer.h"
 #include "../Pipeline/ComputePipeline.h"
@@ -9,8 +7,6 @@
 #include "../Shader/ShaderLibrary.h"
 #include "../Shader/ShaderSource.h"
 #include "../Texture/Texture.h"
-
-#include <cstddef>
 
 namespace eacp::Graphics
 {

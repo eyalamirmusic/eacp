@@ -1,31 +1,47 @@
 #include "File.h"
+#include "StdPath.h"
+
+#include <fstream>
 
 namespace eacp
 {
-File::File(std::filesystem::path path)
+struct File::Impl
+{
+    explicit Impl(std::filesystem::path path)
+        : fsPath(std::move(path))
+    {
+    }
+
+    std::filesystem::path fsPath;
+    std::ifstream stream;
+    std::uint64_t position = 0;
+};
+
+File::File(FilePath path)
     : filePath(std::move(path))
+    , impl(toStdPath(filePath))
 {
 }
 
 bool File::exists() const
 {
     auto ec = std::error_code {};
-    return std::filesystem::exists(filePath, ec);
+    return std::filesystem::exists(impl->fsPath, ec);
 }
 
 bool File::isRegularFile() const
 {
     auto ec = std::error_code {};
-    return std::filesystem::is_regular_file(filePath, ec);
+    return std::filesystem::is_regular_file(impl->fsPath, ec);
 }
 
-bool File::isUnder(const std::filesystem::path& root) const
+bool File::isUnder(const FilePath& root) const
 {
     // Canonicalise both sides so the check is symlink-consistent (e.g. macOS
     // /var -> /private/var) regardless of whether the caller pre-normalised.
     auto ec = std::error_code {};
-    auto canonicalRoot = std::filesystem::weakly_canonical(root, ec);
-    auto canonicalFile = std::filesystem::weakly_canonical(filePath, ec);
+    auto canonicalRoot = std::filesystem::weakly_canonical(toStdPath(root), ec);
+    auto canonicalFile = std::filesystem::weakly_canonical(impl->fsPath, ec);
     auto rel = std::filesystem::relative(canonicalFile, canonicalRoot, ec);
 
     if (ec || rel.empty())
@@ -39,18 +55,23 @@ bool File::isUnder(const std::filesystem::path& root) const
 std::uint64_t File::size() const
 {
     auto ec = std::error_code {};
-    auto bytes = std::filesystem::file_size(filePath, ec);
+    auto bytes = std::filesystem::file_size(impl->fsPath, ec);
     return ec ? 0 : static_cast<std::uint64_t>(bytes);
 }
 
 bool File::openForRead()
 {
-    if (stream.is_open())
+    if (impl->stream.is_open())
         return true;
 
-    stream.open(filePath, std::ios::binary);
-    position = 0;
-    return stream.is_open();
+    impl->stream.open(impl->fsPath, std::ios::binary);
+    impl->position = 0;
+    return impl->stream.is_open();
+}
+
+bool File::isOpen() const
+{
+    return impl->stream.is_open();
 }
 
 std::size_t File::read(std::uint64_t offset, std::span<std::uint8_t> out)
@@ -58,19 +79,21 @@ std::size_t File::read(std::uint64_t offset, std::span<std::uint8_t> out)
     if (!openForRead() || out.empty())
         return 0;
 
-    if (offset != position)
+    auto& stream = impl->stream;
+
+    if (offset != impl->position)
     {
         // Clear any EOF/fail bit left by a previous read before seeking.
         stream.clear();
         stream.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
-        position = offset;
+        impl->position = offset;
     }
 
     stream.read(reinterpret_cast<char*>(out.data()),
                 static_cast<std::streamsize>(out.size()));
 
     auto got = static_cast<std::size_t>(stream.gcount());
-    position += got;
+    impl->position += got;
     return got;
 }
 } // namespace eacp

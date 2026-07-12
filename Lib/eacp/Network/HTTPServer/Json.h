@@ -1,10 +1,8 @@
 #pragma once
 
-#include <eacp/Network/HTTPServer/HttpServer.h>
+#include <eacp/Network/Network.h>
 
-#include <Miro/Miro.h>
-
-#include <string>
+#include <Miro/Reflect.h>
 
 namespace eacp::HTTP::Json
 {

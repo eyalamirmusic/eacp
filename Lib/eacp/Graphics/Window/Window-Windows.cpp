@@ -6,8 +6,6 @@
 #include "../Helpers/DarkMode-Windows.h"
 #include "../Helpers/ImageConversion-Windows.h"
 #include "../Helpers/SystemAppearance.h"
-#include <eacp/Core/App/AppEnvironment.h>
-#include <eacp/Core/Utils/Logging.h>
 
 // DwmSetWindowAttribute, used for Win11 rounded corners.
 #include <dwmapi.h>
@@ -16,7 +14,9 @@
 namespace eacp::Graphics
 {
 
-static const wchar_t* WINDOW_CLASS_NAME = L"EACPWindowClass";
+static const std::wstring WINDOW_CLASS_NAME_STORAGE =
+    eacp::Plugins::getUniqueWindowClassName(L"EACPWindowClass");
+static const wchar_t* WINDOW_CLASS_NAME = WINDOW_CLASS_NAME_STORAGE.c_str();
 static bool windowClassRegistered = false;
 
 namespace
@@ -54,7 +54,10 @@ struct Window::Native
         , minHeight(options.minHeight)
     {
         // Process-wide DPI awareness (per-monitor v2) is established by
-        // initLoopThread() before any app code runs.
+        // initLoopThread() before any app code runs. In a hosted plugin no
+        // loop bootstrap ever ran, so adopt the (host UI) thread creating
+        // the first window as this copy's main thread.
+        Threads::attachCurrentThreadAsMain();
         registerWindowClass();
         createWindow(options);
         host.initializeComposition(true);
@@ -81,7 +84,7 @@ struct Window::Native
         wc.cbSize = sizeof(WNDCLASSEXW);
         wc.style = CS_HREDRAW | CS_VREDRAW;
         wc.lpfnWndProc = windowProc;
-        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.hInstance = (HINSTANCE) eacp::Plugins::getCurrentModuleHandle();
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wc.hbrBackground = nullptr;
         wc.lpszClassName = WINDOW_CLASS_NAME;
@@ -93,8 +96,7 @@ struct Window::Native
         // null (no resource) keeps the system default.
         wc.hIcon = embeddedApplicationIcon();
 
-        RegisterClassExW(&wc);
-        windowClassRegistered = true;
+        windowClassRegistered = RegisterClassExW(&wc) != 0;
     }
 
     static RECT activeMonitorWorkArea()
@@ -168,18 +170,19 @@ struct Window::Native
             y = area.top + ((area.bottom - area.top) - windowHeight) / 2;
         }
 
-        host.hwnd = CreateWindowExW(exStyle,
-                                    WINDOW_CLASS_NAME,
-                                    wideTitle.c_str(),
-                                    style,
-                                    x,
-                                    y,
-                                    rect.right - rect.left,
-                                    rect.bottom - rect.top,
-                                    nullptr,
-                                    nullptr,
-                                    GetModuleHandleW(nullptr),
-                                    this);
+        host.hwnd =
+            CreateWindowExW(exStyle,
+                            WINDOW_CLASS_NAME,
+                            wideTitle.c_str(),
+                            style,
+                            x,
+                            y,
+                            rect.right - rect.left,
+                            rect.bottom - rect.top,
+                            nullptr,
+                            nullptr,
+                            (HINSTANCE) eacp::Plugins::getCurrentModuleHandle(),
+                            this);
 
         if (host.hwnd && options.cornerRadius)
             applyRoundedCorners();
@@ -203,7 +206,8 @@ struct Window::Native
     // destructor releases.
     static HICON embeddedApplicationIcon()
     {
-        return LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
+        return LoadIconW((HINSTANCE) eacp::Plugins::getCurrentModuleHandle(),
+                         MAKEINTRESOURCEW(1));
     }
 
     // ICON_SMALL drives the title bar and taskbar, ICON_BIG the Alt-Tab
@@ -507,10 +511,13 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             break;
 
         // The user toggled the OS light/dark setting while we are running;
-        // recolour the caption to match.
+        // recolour the caption and re-erase the window background to match.
         case WM_SETTINGCHANGE:
             if (isThemeChangeMessage(lParam))
+            {
                 applyTitleBarTheme(hwnd, isSystemDarkMode());
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
             break;
 
         case WM_DPICHANGED:

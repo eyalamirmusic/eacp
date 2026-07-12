@@ -1,10 +1,8 @@
 #pragma once
 
-#include "DomNode.h"
+#include "../Common.h"
 
-#include <eacp/Core/Threads/Async.h>
-#include <eacp/Graphics/Image/Image.h>
-#include <Miro/Miro.h>
+#include "DomNode.h"
 
 namespace eacp::Graphics
 {
@@ -239,7 +237,7 @@ private:
     Threads::Async<> waitForFirstNavigationAsync(const CallOptions& opts);
     void waitForFirstNavigation(const CallOptions& opts);
     int effectiveTimeoutMs(const CallOptions& opts) const;
-    std::chrono::milliseconds syncOuterTimeout(int innerTimeoutMs) const;
+    Time::MS syncOuterTimeout(int innerTimeoutMs) const;
 
     eacp::Graphics::WebView& webView;
     Miro::Bridge& bridge;

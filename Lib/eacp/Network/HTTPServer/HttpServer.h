@@ -1,12 +1,6 @@
 #pragma once
 
-#include <eacp/Network/HTTP/Http.h>
-
-#include <eacp/Core/Utils/Containers.h>
-#include <functional>
-#include <map>
-#include <stdexcept>
-#include <string>
+#include "../HTTP/Http.h"
 
 namespace eacp::HTTP
 {
@@ -23,6 +17,7 @@ struct ServerOptions
 {
     ServerThreadingMode threading = ServerThreadingMode::EventLoop;
     int threadPoolSize = 4;
+    BindInterface bindTo = BindInterface::loopback;
 };
 
 struct Error : std::runtime_error

@@ -1,17 +1,14 @@
 #include <eacp/Core/Utils/WinInclude.h>
+#include <algorithm>
 
 #include "WebView.h"
 #include "StreamingRange.h"
 #include "WebViewDetail.h"
+#include <eacp/Graphics/DComp-Windows.h>
 #include <eacp/Graphics/Helpers/StringUtils-Windows.h>
 
-#include <algorithm>
-#include <eacp/Core/Utils/Containers.h>
-#include <cassert>
-#include <unordered_map>
+#include <cstdlib>
 #include <queue>
-#include <functional>
-#include <string>
 
 #include <objbase.h>
 #include <shlwapi.h>
@@ -22,16 +19,7 @@
 #include <WebView2.h>
 #include <WebView2EnvironmentOptions.h>
 
-#include <cmath>
 
-#include <winrt/Windows.Foundation.h>
-#include <winrt/Windows.UI.Composition.h>
-
-#include <eacp/Core/App/AppEnvironment.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Core/Utils/Logging.h>
-
-namespace wuc = winrt::Windows::UI::Composition;
 
 namespace eacp::Graphics
 {
@@ -40,8 +28,12 @@ using Microsoft::WRL::ComPtr;
 
 HWND findHostHwndForView(View* view);
 
+// Defined in Graphics/Keyboard-Windows.cpp: Windows virtual key -> framework
+// KeyCode (KeyCode::Unknown when unmapped). Lets forwarded keys carry the same
+// keyCode the host window's own WM_KEYDOWN path would produce.
+uint16_t keyCodeFromVirtualKey(int vk);
+
 // Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
-wuc::Compositor getWinRTCompositor();
 
 using MessageHandlerMap =
     std::unordered_map<std::string, std::function<void(const std::string&)>>;
@@ -88,19 +80,20 @@ std::wstring defaultUserDataFolder(const std::string& suffix)
     CoTaskMemFree(localAppData);
 
     wchar_t modulePath[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+    GetModuleFileNameW(
+        (HMODULE) eacp::Plugins::getCurrentModuleHandle(), modulePath, MAX_PATH);
 
-    auto exeName = std::wstring {PathFindFileNameW(modulePath)};
-    if (auto dot = exeName.rfind(L'.'); dot != std::wstring::npos)
-        exeName.resize(dot);
-    if (exeName.empty())
-        exeName = L"eacp";
+    auto moduleName = std::wstring {PathFindFileNameW(modulePath)};
+    if (auto dot = moduleName.rfind(L'.'); dot != std::wstring::npos)
+        moduleName.resize(dot);
+    if (moduleName.empty())
+        moduleName = L"eacp";
 
     auto leaf = std::wstring {L"WebView2"};
     if (!suffix.empty())
         leaf += L"-" + toWideString(suffix);
 
-    return folder + L"\\" + exeName + L"\\" + leaf;
+    return folder + L"\\" + moduleName + L"\\" + leaf;
 }
 
 // A read-only IStream over a bounded byte range of a StreamingResource.
@@ -286,12 +279,12 @@ struct WebView::Native
         // Remove the render visual from the View's composition tree.
         if (webViewVisual)
         {
-            if (auto* container =
-                    static_cast<wuc::ContainerVisual*>(owner.getNativeLayer()))
-                if (*container)
-                    (*container).Children().Remove(webViewVisual);
+            if (auto* container = static_cast<IDCompositionVisual2*>(
+                    owner.getNativeLayer()))
+                container->RemoveVisual(webViewVisual.Get());
 
-            webViewVisual = nullptr;
+            webViewVisual.Reset();
+            commitComposition();
         }
     }
 
@@ -319,16 +312,21 @@ struct WebView::Native
         if (webViewVisual)
             return;
 
-        auto compositor = getWinRTCompositor();
-        if (!compositor)
+        auto* device = getCompositionDevice();
+        if (!device)
             return;
 
-        webViewVisual = compositor.CreateContainerVisual();
+        if (FAILED(device->CreateVisual(webViewVisual.GetAddressOf())))
+        {
+            webViewVisual.Reset();
+            return;
+        }
 
         if (auto* container =
-                static_cast<wuc::ContainerVisual*>(owner.getNativeLayer()))
-            if (*container)
-                (*container).Children().InsertAtTop(webViewVisual);
+                static_cast<IDCompositionVisual2*>(owner.getNativeLayer()))
+            insertVisualAtTop(container, webViewVisual.Get());
+
+        commitComposition();
     }
 
     void createWebView2()
@@ -452,7 +450,7 @@ struct WebView::Native
 
                     // Render into our composition visual.
                     compositionController->put_RootVisualTarget(
-                        reinterpret_cast<IUnknown*>(winrt::get_abi(webViewVisual)));
+                        webViewVisual.Get());
 
                     applySettings();
                     setupEventHandlers();
@@ -982,8 +980,13 @@ struct WebView::Native
                     if (!messageRaw)
                         return S_OK;
 
-                    // The envelope is {"name": "...", "body": "..."} where body
-                    // is itself a JSON-encoded string handed through unchanged.
+                    // The envelope is {"name": "...", "body": ...}. `body` is
+                    // usually a JSON-encoded string, handed to the handler
+                    // unchanged. A page may also post an object/array
+                    // (e.g. postMessage({type:'ready'})); mirror the macOS
+                    // handler and serialise those back to JSON so they arrive
+                    // intact. A bare scalar (number/bool/null) drops to an
+                    // empty body, matching macOS's isValidJSONObject guard.
                     auto name = std::string {};
                     auto body = std::string {};
                     try
@@ -995,9 +998,13 @@ struct WebView::Native
                             if (auto* field = Miro::Json::find(obj, "name");
                                 field && field->isString())
                                 name = field->asString();
-                            if (auto* field = Miro::Json::find(obj, "body");
-                                field && field->isString())
-                                body = field->asString();
+                            if (auto* field = Miro::Json::find(obj, "body"); field)
+                            {
+                                if (field->isString())
+                                    body = field->asString();
+                                else if (field->isObject() || field->isArray())
+                                    body = Miro::Json::print(*field);
+                            }
                         }
                     }
                     catch (const Miro::Json::ParseError&)
@@ -1126,16 +1133,23 @@ struct WebView::Native
 
         // The render visual lives inside the WebView's own View container, which
         // the View tree already positions and (via the Panel) applies opacity
-        // to. So it only needs to sit at the container origin and be sized.
+        // to. So it only needs to sit at the container origin.
         //
         // WebView2 treats the RootVisualTarget's coordinate space as physical
         // pixels, but our composition root is already DPI-scaled. Counter-scale
-        // the visual by 1/dpi and size it in pixels, so the browser's
-        // pixel-space content maps back to the correct logical size on screen
-        // (without this it renders dpi-times too large on high-DPI displays).
-        webViewVisual.Offset({0.0f, 0.0f, 0.0f});
-        webViewVisual.Scale({1.0f / dpiScale, 1.0f / dpiScale, 1.0f});
-        webViewVisual.Size({widthPx, heightPx});
+        // the visual by 1/dpi so the browser's pixel-space content maps back to
+        // the correct logical size on screen (without this it renders dpi-times
+        // too large on high-DPI displays). DComp visuals carry no size — the
+        // extent comes from the content WebView2 renders, and from the bounds
+        // handed to put_Bounds below.
+        webViewVisual->SetOffsetX(0.0f);
+        webViewVisual->SetOffsetY(0.0f);
+
+        if (dpiScale > 0.f)
+            webViewVisual->SetTransform(
+                D2D1::Matrix3x2F::Scale(1.0f / dpiScale, 1.0f / dpiScale));
+
+        commitComposition();
 
         if (!controller)
             return;
@@ -1442,7 +1456,7 @@ struct WebView::Native
     // WebView's own View ContainerVisual, so it inherits the View tree's
     // position, opacity and z-order — letting the WebView layer, blend and
     // overlap with GPU and primitive content (impossible with a child HWND).
-    wuc::ContainerVisual webViewVisual {nullptr};
+    Microsoft::WRL::ComPtr<IDCompositionVisual2> webViewVisual;
     MessageHandlerMap messageHandlers;
     std::unordered_map<std::string, ResourceProvider> schemeProviders;
     std::unordered_map<std::string, StreamingProvider> streamingProviders;
@@ -1495,6 +1509,9 @@ void WebView::initNative(Options options)
     detail::registerWebView(this);
     installWindowDragSupport();
     installWindowControlSupport();
+
+    if (impl->options.forwardUnhandledKeys)
+        installKeyEventSupport();
 }
 
 // Popup constructor (window.open). Builds the Native in popup mode: it adopts
@@ -1885,6 +1902,123 @@ void WebView::performWindowControl(const std::string& action)
 
     if (action == "close")
         PostMessageW(root, WM_CLOSE, 0, 0);
+}
+
+namespace
+{
+struct KeyVerdict
+{
+    bool isDown = false;
+    bool consumed = false;
+    int virtualKey = 0;
+    ModifierKeys modifiers;
+    bool isRepeat = false;
+    std::string characters;
+};
+
+// Parses key-events.js's "<down|up>:<0|1>:<keyCode>:<mods>:<repeat>:<key>".
+// event.key sits last so a literal ':' key can't split the message. Returns
+// false only when the kind/verdict prefix is missing or malformed.
+bool parseKeyVerdict(const std::string& message, KeyVerdict& out)
+{
+    auto pos = std::size_t {0};
+
+    auto next = [&]() -> std::string
+    {
+        if (pos == std::string::npos)
+            return {};
+
+        auto colon = message.find(':', pos);
+        auto token = message.substr(
+            pos, colon == std::string::npos ? std::string::npos : colon - pos);
+        pos = colon == std::string::npos ? std::string::npos : colon + 1;
+        return token;
+    };
+
+    auto kind = next();
+    if (kind != "down" && kind != "up")
+        return false;
+
+    auto toInt = [](const std::string& field)
+    { return field.empty() ? 0 : std::atoi(field.c_str()); };
+
+    out.isDown = kind == "down";
+    out.consumed = next() == "1";
+    out.virtualKey = toInt(next());
+
+    auto mods = toInt(next());
+    out.modifiers = {
+        (mods & 1) != 0, (mods & 2) != 0, (mods & 4) != 0, (mods & 8) != 0};
+
+    out.isRepeat = next() == "1";
+
+    // The remainder is event.key. Treat it as typed text only when it is a
+    // single code point; named keys ("Enter", "ArrowUp") are multi-char ASCII
+    // and carry no characters, matching the host window's WM_CHAR-derived text.
+    auto key = pos == std::string::npos ? std::string {} : message.substr(pos);
+    if (!key.empty()
+        && (key.size() == 1 || static_cast<unsigned char>(key[0]) >= 0x80))
+        out.characters = key;
+
+    return true;
+}
+
+// Re-injects an unconsumed key into the host window's normal keyboard path
+// (CompositionHostWindow turns it back into a framework KeyEvent). Always a
+// plain key message -- never WM_SYSKEYDOWN, whose DefWindowProc would poke the
+// window menu. Bit 30 of lParam marks an auto-repeat keydown, the one field the
+// host actually reads back.
+void forwardKeyToHost(HWND host, const KeyVerdict& verdict)
+{
+    if (!host || verdict.virtualKey == 0)
+        return;
+
+    auto message = verdict.isDown ? UINT {WM_KEYDOWN} : UINT {WM_KEYUP};
+    auto lParam = LPARAM {verdict.isDown && verdict.isRepeat ? 0x40000000 : 0};
+
+    PostMessageW(host, message, static_cast<WPARAM>(verdict.virtualKey), lParam);
+}
+} // namespace
+
+// Windows counterpart to the macOS installKeyEventSupport (see WebView.mm).
+// WebView2 exposes no native hook for plain character keys -- its
+// AcceleratorKeyPressed event only fires for Ctrl/Alt combos and non-character
+// keys, never a bare Space -- so we make the injected key-events.js the single
+// source of truth: it reports every key the page saw, whether the page consumed
+// it, and the key's identity. Unconsumed keys go to onUnhandledKeyEvent and,
+// unless it claims them, are re-injected into the host window's WM_KEYDOWN path
+// -- the Windows analog of macOS's walk up the responder chain past the
+// framework container.
+void WebView::installKeyEventSupport()
+{
+    auto shim = ResEmbed::get("key-events.js", "EacpWebView");
+    if (!shim)
+        throw std::runtime_error(
+            "eacp-webview: embedded key-events.js resource not found");
+
+    addUserScript(shim.toString(), true);
+
+    addScriptMessageHandler(
+        "__eacpKeyEvent",
+        [this](const std::string& message)
+        {
+            auto verdict = KeyVerdict {};
+            if (!parseKeyVerdict(message, verdict) || verdict.consumed)
+                return;
+
+            auto event = KeyEvent {};
+            event.type = verdict.isDown ? KeyEventType::Down : KeyEventType::Up;
+            event.keyCode = keyCodeFromVirtualKey(verdict.virtualKey);
+            event.modifiers = verdict.modifiers;
+            event.isRepeat = verdict.isRepeat;
+            event.characters = verdict.characters;
+            event.charactersIgnoringModifiers = verdict.characters;
+
+            if (onUnhandledKeyEvent && onUnhandledKeyEvent(event))
+                return;
+
+            forwardKeyToHost(impl->hostHwnd, verdict);
+        });
 }
 
 void WebView::setZoom(double level)

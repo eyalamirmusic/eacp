@@ -1,20 +1,7 @@
 #pragma once
 
-#include <eacp/Core/Threads/Async.h>
-#include <eacp/Core/Utils/Range.h>
-#include <eacp/Graphics/Graphics.h>
-#include <Miro/Miro.h>
-#include <ResEmbed/ResEmbed.h>
-#include <eacp/Core/Utils/Containers.h>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <optional>
-#include <span>
-#include <string>
-#include <string_view>
-#include <unordered_map>
+#include "../Common.h"
+
 namespace eacp::Graphics
 {
 // Owning byte buffer and non-owning views used across the resource API.
@@ -153,6 +140,22 @@ public:
         // normal window it makes accidental first-click page interaction
         // possible. No-op on Windows, where clicks already reach the page.
         bool acceptFirstMouse = false;
+
+        // Hand key events the page leaves unhandled back to the native host,
+        // instead of letting the web view swallow them all. The page consumes a
+        // key with preventDefault(), or implicitly when it lands on a control
+        // that uses it (a text field, arrows on a slider); everything else fires
+        // onUnhandledKeyEvent and, unless that consumes it, continues to whatever
+        // hosts the view — for an embedded plugin editor, the DAW's own window,
+        // so host shortcuts like spacebar transport keep working while the editor
+        // has focus. On macOS the unconsumed event travels the responder chain
+        // past the framework container; on Windows it is re-injected into the
+        // host window's WM_KEYDOWN path. The verdict comes from the page, so
+        // re-dispatch is asynchronous (a few ms after the original event). Opt-in.
+        // On Windows keys WebView2 claims as browser shortcuts (F5, Ctrl+F, …)
+        // are handled by the page/browser and never forwarded. iOS has no
+        // hardware-key chain to feed, so it is a no-op there.
+        bool forwardUnhandledKeys = false;
     };
 
     WebView();
@@ -240,6 +243,11 @@ public:
     std::function<void()> onFileDragStarted = [] {};
     std::function<void()> onClose = [] {};
 
+    // Fired (with Options::forwardUnhandledKeys) for every key event the page
+    // did not consume. Return true to consume it here; returning false sends
+    // it on up the native responder chain to whatever hosts the view.
+    std::function<bool(const KeyEvent&)> onUnhandledKeyEvent;
+
     struct Native;
 
 protected:
@@ -268,6 +276,7 @@ private:
     void initNative(Options options);
     void installWindowDragSupport();
     void installWindowControlSupport();
+    void installKeyEventSupport();
     void performWindowControl(const std::string& action);
     std::shared_ptr<Native> impl;
 };

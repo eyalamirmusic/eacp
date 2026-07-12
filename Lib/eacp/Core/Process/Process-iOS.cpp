@@ -1,7 +1,5 @@
 #include "Process.h"
 
-#include <cassert>
-
 // iOS sandboxes third-party apps and forbids process creation: posix_spawn,
 // fork and exec are all denied at runtime (EPERM), so the POSIX implementation
 // cannot function here regardless of what compiles. This stub fails loudly in

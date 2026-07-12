@@ -3,9 +3,7 @@
 #include "ShaderGraph.h"
 #include "ShaderTypes.h"
 
-#include <concepts>
 #include <initializer_list>
-#include <utility>
 
 // The string-free EDSL surface. Float/Float2/Float3/Float4 are lightweight value
 // handles into a ShaderGraph: operators and the free float2/float3/float4()

@@ -1,9 +1,5 @@
 #include <eacp/GPU/GPU.h>
-#include <eacp/Graphics/Graphics.h>
-
-#include <cmath>
-#include <cstdint>
-#include <string_view>
+#include <algorithm>
 
 using namespace eacp;
 using namespace GPU;
@@ -467,6 +463,5 @@ struct MyApp
 
 int main()
 {
-    eacp::Apps::run<MyApp>();
-    return 0;
+    return eacp::Apps::run<MyApp>();
 }

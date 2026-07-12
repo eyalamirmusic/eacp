@@ -1,17 +1,10 @@
 #include <eacp/Camera/Camera.h>
-#include <eacp/Core/App/App.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Graphics/Image/Image.h>
+#include <eacp/Graphics/Graphics.h>
 
 #include <atomic>
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
 #include <cstdio>
-#include <memory>
 
 using namespace eacp;
-using namespace std::chrono_literals;
 
 namespace
 {
@@ -119,7 +112,7 @@ void captureFrames(const Cameras::CameraDevice& device)
 
     std::printf("Capturing... (up to 10 frames or 8s)\n");
     Threads::runEventLoopUntil([frameCount] { return frameCount->load() >= 10; },
-                               8000ms);
+                               Time::MS {8000});
 
     camera->stop();
     std::printf("\nDone. Total frames: %d\n", frameCount->load());
@@ -165,5 +158,5 @@ void runProbe()
 
 int main()
 {
-    eacp::Apps::run(runProbe);
+    return eacp::Apps::run(runProbe);
 }

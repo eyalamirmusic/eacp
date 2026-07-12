@@ -1,10 +1,7 @@
 #include "Connection.h"
+#include <algorithm>
 
 #include "ConnectionInternal.h"
-
-#include <algorithm>
-#include <memory>
-#include <utility>
 
 namespace eacp::TCP
 {

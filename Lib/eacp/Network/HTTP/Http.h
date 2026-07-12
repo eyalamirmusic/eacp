@@ -1,10 +1,9 @@
 #pragma once
 
-#include <eacp/Core/Utils/Containers.h>
+#include "../Common.h"
+
 #include <atomic>
-#include <cstdint>
 #include <map>
-#include <string>
 
 namespace eacp::HTTP
 {

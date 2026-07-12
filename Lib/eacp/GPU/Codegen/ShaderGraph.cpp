@@ -1,7 +1,5 @@
 #include "ShaderGraph.h"
 
-#include <utility>
-
 namespace eacp::GPU
 {
 int ShaderGraph::add(Expr node)

@@ -1,8 +1,6 @@
 #include "DisplayLink.h"
-
 #include <algorithm>
 #include <chrono>
-#include <memory>
 
 namespace eacp::Threads
 {

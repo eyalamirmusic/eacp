@@ -1,6 +1,5 @@
 #include "Types.h"
 
-#include <eacp/Core/Threads/Timer.h>
 #include <eacp/WebView/WebView.h>
 
 using namespace eacp;
@@ -27,6 +26,5 @@ struct MyApp
 
 int main()
 {
-    eacp::Apps::run<MyApp>();
-    return 0;
+    return eacp::Apps::run<MyApp>();
 }

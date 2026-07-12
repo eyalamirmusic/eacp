@@ -1,11 +1,8 @@
 #pragma once
 
-#include <eacp/Network/HTTP/Http.h>
+#include <eacp/Network/Network.h>
 
-#include <Miro/Miro.h>
-
-#include <functional>
-#include <string>
+#include <Miro/Reflect.h>
 
 namespace eacp::HTTP::Rpc
 {
@@ -38,13 +35,14 @@ public:
     template <typename Res>
     Res invoke(const std::string& command)
     {
-        auto result = invokeRaw(command, Miro::Json::Object ());
+        auto result = invokeRaw(command, Miro::Json::Object());
         auto out = Res {};
         Miro::fromJSON(out, result);
         return out;
     }
 
-    Miro::JSON invokeRaw(const std::string& command, const Miro::JSON& payload) const;
+    Miro::JSON invokeRaw(const std::string& command,
+                         const Miro::JSON& payload) const;
 
     Invoke asInvoker() const;
 

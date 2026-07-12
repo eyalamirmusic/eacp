@@ -1,11 +1,9 @@
 #pragma once
 
+#include "../Platform/Platform.h"
 #include "../Threads/EventLoop.h"
 #include "../Utils/Common.h"
 #include "AppEnvironment.h"
-#include <eacp/Core/Utils/Containers.h>
-#include <optional>
-#include <string>
 
 namespace eacp::Apps
 {
@@ -27,7 +25,19 @@ AppHandle& getGlobalApp();
 AppFactory& getAppFactory();
 
 void destroyApp();
+
+// The value run<T>() returns once the loop has unwound — main()'s exit
+// code. Defaults to 0 and resets on each run(). Safe to call from any
+// thread; quit(returnValue) is the usual way to set it.
+void setReturnValue(int returnValue);
+int getReturnValue();
+
 void quit();
+
+// Sets the return value and quits, so with
+// `int main() { return Apps::run<App>(); }` the process exits with
+// `returnValue`.
+void quit(int returnValue);
 
 // Destroys the current app instance and recreates it via run<T>()'s
 // factory. Safe to call from any thread; returns immediately and the
@@ -77,27 +87,53 @@ std::optional<std::string> chooseFile(const FilePickerOptions& options = {});
 // Windows; Linux returns std::nullopt for now.
 std::optional<std::string> chooseDirectory();
 
+// True when this copy's app was started by run<T>() from inside a dynamic
+// library — it rides the host executable's loop instead of owning one, and
+// its quit() stops that loop rather than its own (see Apps::quit).
+bool isRunningAsPlugin();
+
+namespace Detail
+{
+// run<T>()'s dynamic-library path: marks this copy as a plugin-hosted app
+// and schedules its construction onto the loop the host runs.
+void runAsPlugin(const AppFactory& createFunc);
+} // namespace Detail
+
 template <typename T>
-void run()
+int run()
 {
     auto createFunc = [] { getGlobalApp().template create<App<T>>(); };
     getAppFactory() = createFunc;
+
+    // In a dynamic library the process executable owns the root loop —
+    // running one here would fight it (or, under a foreign host, steal its
+    // app delegate). Schedule the app onto the host's loop and return
+    // immediately; the app is destroyed when the library's image is torn
+    // down, after the host's loop has exited.
+    if (Platform::isDLL())
+    {
+        Detail::runAsPlugin(createFunc);
+        return 0;
+    }
+
+    setReturnValue(0);
     Threads::runEventLoop(createFunc);
     // The single teardown point: the app is constructed on the first loop
     // tick and destroyed here on the main thread once the loop has fully
     // exited, so no native event delivery or nested pump can still be
     // referencing the views. Apps::quit() only stops the loop.
     destroyApp();
+    return getReturnValue();
 }
 
 // argc/argv overload — captures the command line (see commandLineArgs)
 // before starting the loop, so main() is a one-liner:
-// `Apps::run<MyApp>(argc, argv);`.
+// `return Apps::run<MyApp>(argc, argv);`.
 template <typename T>
-void run(int argc, char* argv[])
+int run(int argc, char* argv[])
 {
     setCommandLineArgs(argc, argv);
-    run<T>();
+    return run<T>();
 }
 
 // Function overload — runs `func` once on the first loop tick and quits when
@@ -105,14 +141,6 @@ void run(int argc, char* argv[])
 // job, a test runner). The loop is fully bootstrapped while `func` runs, so
 // timers fire and nested pumps (runEventLoopFor / runEventLoopUntil) work.
 // Use run<T>() when state must outlive a single call (windows, tray icons).
-inline void run(const Callback& func)
-{
-    Threads::runEventLoop(
-        [&func]
-        {
-            func();
-            quit();
-        });
-}
+int run(const Callback& func);
 
 } // namespace eacp::Apps

@@ -1,11 +1,8 @@
-#include <eacp/Core/App/App.h>
 #include <eacp/GPU/GPU.h>
-
 #include <algorithm>
-#include <cmath>
+
 #include <cstdio>
 #include <numbers>
-#include <string>
 
 using namespace eacp;
 using namespace GPU;
@@ -187,5 +184,5 @@ void runCompute()
 
 int main()
 {
-    Apps::run(runCompute);
+    return Apps::run(runCompute);
 }

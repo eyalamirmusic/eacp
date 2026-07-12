@@ -1,12 +1,6 @@
-#include <eacp/Graphics/Graphics.h>
 #include <eacp/GPU/GPU.h>
 
-#include <eacp/Core/Platform/Platform.h>
-
 #include <ResEmbed/ResEmbed.h>
-
-#include <stdexcept>
-#include <string>
 
 using namespace eacp;
 using namespace GPU;
@@ -86,6 +80,5 @@ struct MyApp
 
 int main()
 {
-    eacp::Apps::run<MyApp>();
-    return 0;
+    return eacp::Apps::run<MyApp>();
 }

@@ -1,15 +1,7 @@
 #include "Http.h"
 #include "HttpProtocol.h"
-
-#include <eacp/Core/Utils/Files.h>
-#include <eacp/Core/Utils/Strings.h>
-
-#include <eacp/Core/Utils/Containers.h>
-
 #include <algorithm>
-#include <atomic>
-#include <chrono>
-#include <cstdint>
+
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -17,7 +9,6 @@
 #include <sstream>
 #include <system_error>
 #include <thread>
-#include <utility>
 
 namespace eacp::HTTP
 {
@@ -340,7 +331,7 @@ std::thread launchProgressAggregator(DownloadProgress* aggregate,
                     if (aggregate->cancel.load())
                         propagateCancelToChunks(chunkProgress);
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(25));
+                Time::sleepMS(25);
             }
         });
 }

@@ -1,13 +1,6 @@
 #pragma once
 
-#include <eacp/Core/Utils/Containers.h>
-
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
-#include <stdexcept>
-#include <string>
-#include <string_view>
+#include "../Common.h"
 
 namespace eacp::TCP
 {
@@ -24,8 +17,8 @@ struct Address
 // — what a long-lived server wants for accept() and reads.
 struct Timeouts
 {
-    std::chrono::milliseconds connect {15000};
-    std::chrono::milliseconds io {20000};
+    Time::MS connect {15000};
+    Time::MS io {20000};
 };
 
 // Every failure - name resolution, refused connect, timeout, peer hangup -
@@ -52,6 +45,11 @@ class Connection
 public:
     // Opens a stream to address, or throws TCP::Error trying.
     static Connection connect(Address address, Timeouts timeouts = {});
+
+    // Wraps an already-connected native socket (an int fd or a SOCKET, passed
+    // as intptr_t) in a Connection that owns it. Listener::accept() is the
+    // caller that matters; reach for connect() to open a stream yourself.
+    static Connection adopt(std::intptr_t nativeSocket, Address peer);
 
     ~Connection();
 
@@ -85,11 +83,6 @@ public:
 
 private:
     Connection();
-
-    // Wraps an already-connected native socket (an int fd or a SOCKET, passed
-    // as intptr_t) in a Connection that owns it. Used by Listener::accept().
-    static Connection adopt(std::intptr_t nativeSocket, Address peer);
-    friend class Listener;
 
     struct Impl;
     OwningPointer<Impl> impl;

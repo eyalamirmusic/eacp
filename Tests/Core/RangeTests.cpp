@@ -1,7 +1,4 @@
-#include <eacp/Core/Utils/Range.h>
-#include <NanoTest/NanoTest.h>
-
-#include <cstdint>
+#include "Common.h"
 
 using namespace nano;
 using eacp::Range;

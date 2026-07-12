@@ -1,9 +1,8 @@
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
-#include <filesystem>
-#include <fstream>
+#include "Common.h"
+#include "FilePath.h"
+
 #include <span>
 
 namespace eacp
@@ -16,16 +15,16 @@ namespace eacp
 class File
 {
 public:
-    explicit File(std::filesystem::path path);
+    explicit File(FilePath path);
 
-    const std::filesystem::path& path() const { return filePath; }
+    const FilePath& path() const { return filePath; }
 
     bool exists() const;
     bool isRegularFile() const;
 
     // True if this file's path resolves inside `root` (no escape via "..",
     // symlinks, etc.). Use it to sandbox files served to untrusted callers.
-    bool isUnder(const std::filesystem::path& root) const;
+    bool isUnder(const FilePath& root) const;
 
     // Size in bytes, or 0 if the file is missing or not a regular file.
     std::uint64_t size() const;
@@ -34,7 +33,7 @@ public:
     // opened. A no-op once already open.
     bool openForRead();
 
-    bool isOpen() const { return stream.is_open(); }
+    bool isOpen() const;
 
     // Reads up to `out.size()` bytes starting at byte `offset`, returning the
     // number actually read (0 at end of file). Opens the file on first use,
@@ -43,8 +42,9 @@ public:
     std::size_t read(std::uint64_t offset, std::span<std::uint8_t> out);
 
 private:
-    std::filesystem::path filePath;
-    std::ifstream stream;
-    std::uint64_t position = 0;
+    struct Impl;
+
+    FilePath filePath;
+    Pimpl<Impl> impl;
 };
 } // namespace eacp

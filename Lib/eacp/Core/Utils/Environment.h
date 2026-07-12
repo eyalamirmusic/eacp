@@ -1,9 +1,6 @@
 #pragma once
 
-#include <filesystem>
-#include <optional>
-#include <string>
-#include <string_view>
+#include "Common.h"
 
 namespace eacp
 {
@@ -17,8 +14,7 @@ std::optional<std::string> getEnv(std::string_view name);
 // callers that treat "unset" and "empty" the same.
 std::string getEnvValue(std::string_view name);
 
-// The current user's home directory, or an empty path when it can't be
-// resolved. Reads USERPROFILE on Windows and HOME elsewhere.
-std::filesystem::path homeDirectory();
+// Sets (or overwrites) an environment variable for this process.
+void setEnv(std::string_view name, std::string_view value);
 
 } // namespace eacp

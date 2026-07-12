@@ -1,9 +1,6 @@
 #pragma once
 
-#include <eacp/Graphics/Helpers/DisplayLink.h>
-#include <eacp/Graphics/View/View.h>
-
-#include <functional>
+#include "../Common.h"
 
 namespace eacp::GPU
 {

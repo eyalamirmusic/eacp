@@ -1,14 +1,10 @@
-#include <eacp/Core/Threads/EventLoop.h>
-#include <NanoTest/NanoTest.h>
+#include "Common.h"
 
-#include <chrono>
 #include <thread>
 
 using namespace nano;
 using eacp::Threads::callAsync;
 using eacp::Threads::runEventLoopUntil;
-
-using namespace std::chrono_literals;
 
 auto tReadyImmediatelyReturnsTrue = test("EventLoop/runUntil/readyImmediately") = []
 {
@@ -19,7 +15,7 @@ auto tReadyImmediatelyReturnsTrue = test("EventLoop/runUntil/readyImmediately") 
             ++called;
             return true;
         },
-        1s);
+        eacp::Time::MS {1000});
 
     check(ok);
     check(called == 1);
@@ -32,7 +28,7 @@ auto tCallAsyncFlipsPredicate =
 
     callAsync([&] { flag = true; });
 
-    auto ok = runEventLoopUntil([&] { return flag; }, 1s);
+    auto ok = runEventLoopUntil([&] { return flag; }, eacp::Time::MS {1000});
 
     check(ok);
     check(flag);
@@ -42,14 +38,14 @@ auto tTimeoutReturnsFalse = test("EventLoop/runUntil/timeoutReturnsFalse") = []
 {
     auto flag = false;
 
-    auto start = std::chrono::steady_clock::now();
-    auto ok = runEventLoopUntil([&] { return flag; }, 100ms);
-    auto elapsed = std::chrono::steady_clock::now() - start;
+    auto lowerBound = eacp::Time::Deadline {eacp::Time::MS {100}};
+    auto upperBound = eacp::Time::Deadline {eacp::Time::MS {1000}};
+    auto ok = runEventLoopUntil([&] { return flag; }, eacp::Time::MS {100});
 
     check(!ok);
     check(!flag);
-    check(elapsed >= 100ms);
-    check(elapsed < 1s);
+    check(lowerBound.expired());
+    check(!upperBound.expired());
 };
 
 auto tWorkerThreadFlipsPredicate =
@@ -59,11 +55,11 @@ auto tWorkerThreadFlipsPredicate =
     auto worker = std::thread(
         [&]
         {
-            std::this_thread::sleep_for(50ms);
+            eacp::Time::sleepMS(50);
             callAsync([&] { flag = true; });
         });
 
-    auto ok = runEventLoopUntil([&] { return flag; }, 2s);
+    auto ok = runEventLoopUntil([&] { return flag; }, eacp::Time::MS {2000});
     worker.join();
 
     check(ok);

@@ -1,20 +1,10 @@
 #include "HttpServer.h"
+#include "../Common-Posix.h"
 #include "HttpServerDispatcher.h"
 
-#include <eacp/Network/HTTP/HttpProtocol.h>
-
-#include <eacp/Core/Utils/Containers.h>
-
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
+#include "../HTTP/HttpProtocol.h"
 #include <atomic>
-#include <csignal>
-#include <cstring>
 #include <mutex>
-#include <string>
 #include <thread>
 
 namespace eacp::HTTP
@@ -59,6 +49,11 @@ std::string remoteAddressString(const sockaddr_in& addr)
     char ip[INET_ADDRSTRLEN] = {0};
     ::inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
     return ip;
+}
+
+in_addr_t bindAddress(BindInterface bindTo)
+{
+    return htonl(bindTo == BindInterface::any ? INADDR_ANY : INADDR_LOOPBACK);
 }
 
 } // namespace
@@ -141,7 +136,7 @@ bool Server::Impl::start(int port, RequestHandler h)
     std::memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons((uint16_t) port);
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_addr.s_addr = bindAddress(options.bindTo);
 
     if (::bind(listenSocket, (sockaddr*) &addr, sizeof(addr)) < 0)
     {

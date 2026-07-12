@@ -5,9 +5,6 @@
 
 #include <eacp/Core/ObjC/Strings.h>
 
-#include <cassert>
-#include <string>
-
 namespace eacp::Graphics::detail
 {
 void attachWKWebViewToParent(WKWebView* webView, void* parentHandle)
@@ -63,5 +60,15 @@ void performWindowControl(WKWebView*, const std::string&)
     // Caption buttons are a desktop affordance; the shim that posts these
     // actions is only installed on macOS.
     assert(false && "performWindowControl is macOS-only");
+}
+
+void setUnhandledKeyCallback(WKWebView*, UnhandledNSKeyCallback)
+{
+    // Key forwarding targets desktop responder chains; the shim that produces
+    // verdicts is only installed on macOS.
+}
+
+void reportKeyVerdict(WKWebView*, bool, bool)
+{
 }
 } // namespace eacp::Graphics::detail

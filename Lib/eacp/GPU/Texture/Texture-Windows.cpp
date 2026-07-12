@@ -5,8 +5,6 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 
-#include <cstring>
-
 // Windows/D3D12 backend. A texture is a default-heap resource plus an SRV and
 // a sampler descriptor living in the context's shader-visible heaps for the
 // texture's whole lifetime, so binding is a single root-table update. Pixels
@@ -151,7 +149,7 @@ struct Texture::Native
                    D3D12_RESOURCE_STATE_COPY_DEST,
                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-        commands->transients.push_back(std::move(staging));
+        commands->transients.add(std::move(staging));
         return true;
     }
 

@@ -1,15 +1,6 @@
-#include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Network/HTTP/Http.h>
-#include <eacp/Network/HTTPServer/HttpServer.h>
-#include <NanoTest/NanoTest.h>
-
-#include <atomic>
-#include <chrono>
-#include <cstdint>
+#include "Common.h"
 #include <filesystem>
 #include <fstream>
-#include <sstream>
-#include <string>
 #include <system_error>
 #include <thread>
 
@@ -121,7 +112,7 @@ void performDownload(Server& server,
                      const Request& clientRequest,
                      const std::string& destPath,
                      ParallelOutcome& out,
-                     std::chrono::milliseconds timeout = std::chrono::seconds(15))
+                     eacp::Time::MS timeout = eacp::Time::MS {15000})
 {
     auto worker = std::thread();
     auto stopped = eacp::Threads::runEventLoopFor(
@@ -262,8 +253,7 @@ auto tParallelReportsIntermediateProgress =
             // interval (25ms, see launchProgressAggregator) or a loaded
             // CI runner can collapse several steps into one sample and
             // starve the >=3 distinct-values check below.
-            std::this_thread::sleep_for(
-                std::chrono::milliseconds(100 * (long long) chunkIndex));
+            eacp::Time::sleepMS(100 * (int) chunkIndex);
         }
         return res;
     };
@@ -295,7 +285,7 @@ auto tParallelReportsIntermediateProgress =
                 }
                 if (total > 0 && received > 0 && received < total)
                     sawIntermediate.store(true);
-                std::this_thread::sleep_for(std::chrono::microseconds(500));
+                eacp::Time::sleepMS(1);
             }
         });
 

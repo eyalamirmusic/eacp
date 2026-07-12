@@ -1,9 +1,5 @@
-#include <eacp/Core/App/App.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <NanoTest/NanoTest.h>
+#include "Common.h"
 
-#include <atomic>
-#include <chrono>
 #include <thread>
 
 using namespace nano;
@@ -97,7 +93,7 @@ auto tRestartReplacesInstance =
     installCountedFactory();
 
     auto stopped =
-        runEventLoopFor(std::chrono::seconds(2),
+        runEventLoopFor(eacp::Time::MS {2000},
                         []
                         {
                             getAppFactory()();
@@ -134,7 +130,7 @@ auto tRestartWithoutFactoryIsSafe = test("App/restartIsNoOpWhenFactoryIsEmpty") 
     resetAppState();
 
     auto stopped =
-        runEventLoopFor(std::chrono::seconds(2),
+        runEventLoopFor(eacp::Time::MS {2000},
                         []
                         {
                             restart();
@@ -159,7 +155,7 @@ auto tRestartFromAnyThread = test("App/restartIsSafeFromBackgroundThread") = []
 
     auto worker = std::thread();
 
-    auto stopped = runEventLoopFor(std::chrono::seconds(2),
+    auto stopped = runEventLoopFor(eacp::Time::MS {2000},
                                    [&]
                                    {
                                        getAppFactory()();
@@ -190,7 +186,7 @@ auto tQuitStopsLoopAndKeepsAppUntilTeardown =
     resetAppState();
     installCountedFactory();
 
-    auto stopped = runEventLoopFor(std::chrono::seconds(2),
+    auto stopped = runEventLoopFor(eacp::Time::MS {2000},
                                    []
                                    {
                                        getAppFactory()();
@@ -206,6 +202,27 @@ auto tQuitStopsLoopAndKeepsAppUntilTeardown =
     check(CountedPayload::dtorCount == 1);
     check(getGlobalApp().get() == nullptr);
 
+    resetAppState();
+};
+
+auto tQuitWithReturnValueStoresIt = test("App/quitWithReturnValueStoresIt") = []
+{
+    resetAppState();
+    installCountedFactory();
+    eacp::Apps::setReturnValue(0);
+
+    auto stopped = runEventLoopFor(eacp::Time::MS {2000},
+                                   []
+                                   {
+                                       getAppFactory()();
+                                       callAsync([] { quit(7); });
+                                   });
+
+    check(stopped);
+    check(eacp::Apps::getReturnValue() == 7);
+
+    eacp::Apps::destroyApp();
+    eacp::Apps::setReturnValue(0);
     resetAppState();
 };
 

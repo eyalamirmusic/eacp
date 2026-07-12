@@ -1,16 +1,10 @@
-#include <eacp/Core/Process/Process.h>
-#include <eacp/Core/Threads/Async.h>
-#include <NanoTest/NanoTest.h>
-
-#include <chrono>
+#include "Common.h"
 #include <csignal>
-#include <string>
 
 #include <sys/types.h>
 #include <unistd.h>
 
 using namespace nano;
-using namespace std::chrono_literals;
 namespace Proc = eacp::Processes;
 
 auto tCapturesStdout = test("Process/run/capturesStdout") = []
@@ -93,7 +87,7 @@ auto tRunAsyncResolves = test("Process/runAsync/resolvesOnMainThread") = []
     auto async =
         Proc::runAsync(Proc::ProcessOptions {"/bin/echo", {"async"}, {}, {}});
 
-    auto result = async.waitFor(5s);
+    auto result = async.waitFor(eacp::Time::MS {5000});
 
     check(result.exitCode == 0);
     check(result.output == "async\n");

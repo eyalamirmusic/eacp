@@ -1,9 +1,5 @@
-#include <eacp/Core/Threads/Async.h>
-#include <eacp/Core/Threads/EventLoop.h>
-#include <NanoTest/NanoTest.h>
+#include "Common.h"
 
-#include <chrono>
-#include <string>
 #include <thread>
 
 using namespace nano;
@@ -11,8 +7,6 @@ using eacp::Threads::Async;
 using eacp::Threads::AsyncError;
 using eacp::Threads::AsyncPromise;
 using eacp::Threads::callAsync;
-
-using namespace std::chrono_literals;
 
 namespace
 {
@@ -48,14 +42,14 @@ Async<int> coroChain(AsyncPromise<int> a, AsyncPromise<int> b)
 
 auto tCoroReturnsValue = test("Async/coro/returnsValue") = []
 {
-    auto result = coroReturning(42).waitFor(1s);
+    auto result = coroReturning(42).waitFor(eacp::Time::MS {1000});
     check(result == 42);
 };
 
 auto tCoroVoidResolves = test("Async/coro/voidResolves") = []
 {
     auto a = coroReturningVoid();
-    a.waitFor(1s);
+    a.waitFor(eacp::Time::MS {1000});
     check(a.isResolved());
 };
 
@@ -64,7 +58,7 @@ auto tCoroAwaitsAlreadyResolved = test("Async/coro/awaitsAlreadyResolved") = []
     auto producer = AsyncPromise<int>();
     producer.resolve(10);
 
-    auto result = coroAwaiting(producer.get()).waitFor(1s);
+    auto result = coroAwaiting(producer.get()).waitFor(eacp::Time::MS {1000});
     check(result == 11);
 };
 
@@ -76,7 +70,7 @@ auto tCoroAwaitsPendingResolvedAsync =
 
     callAsync([producer] { producer.resolve(5); });
 
-    auto result = coro.waitFor(1s);
+    auto result = coro.waitFor(eacp::Time::MS {1000});
     check(result == 6);
 };
 
@@ -88,7 +82,7 @@ auto tCoroExceptionBecomesRejection =
     auto threw = false;
     try
     {
-        coro.waitFor(1s);
+        coro.waitFor(eacp::Time::MS {1000});
     }
     catch (const AsyncError& e)
     {
@@ -111,7 +105,7 @@ auto tCoroChainsMultipleAwaits = test("Async/coro/chainsMultipleAwaits") = []
             b.resolve(4);
         });
 
-    auto result = coro.waitFor(1s);
+    auto result = coro.waitFor(eacp::Time::MS {1000});
     check(result == 7);
 };
 
@@ -123,11 +117,11 @@ auto tCoroResumesAfterWorkerThread = test("Async/coro/resumesAfterWorkerThread")
     auto worker = std::thread(
         [producer]
         {
-            std::this_thread::sleep_for(30ms);
+            eacp::Time::sleepMS(30);
             callAsync([producer] { producer.resolve(100); });
         });
 
-    auto result = coro.waitFor(2s);
+    auto result = coro.waitFor(eacp::Time::MS {2000});
     worker.join();
 
     check(result == 101);
@@ -144,7 +138,7 @@ auto tCoroRejectionPropagatesThroughAwait =
     auto threw = false;
     try
     {
-        coro.waitFor(1s);
+        coro.waitFor(eacp::Time::MS {1000});
     }
     catch (const AsyncError& e)
     {

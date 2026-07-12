@@ -1,8 +1,5 @@
 #pragma once
 
-#include <eacp/Core/Utils/Common.h>
-#include <eacp/Graphics/Primitives/Primitives.h>
-
 #include "RenderPass.h"
 
 namespace eacp::GPU

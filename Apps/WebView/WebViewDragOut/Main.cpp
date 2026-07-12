@@ -1,15 +1,11 @@
 #include <eacp/WebView/WebView.h>
-#include <eacp/Core/Utils/Environment.h>
-#include <ResEmbed/ResEmbed.h>
+#include <eacp/Core/Utils/StdPath.h>
 #include <WebResources.h>
-
 #include <algorithm>
+
 #include <array>
-#include <cctype>
 #include <cstdlib>
-#include <filesystem>
 #include <fstream>
-#include <string>
 #include <vector>
 
 using namespace eacp;
@@ -47,7 +43,7 @@ bool isAudioFile(const std::filesystem::path& path)
 
 std::filesystem::path downloadsDir()
 {
-    return homeDirectory() / "Downloads";
+    return toStdPath(FilePath::downloadsDirectory());
 }
 
 std::filesystem::path bundledAssetDir()
@@ -157,6 +153,5 @@ struct MyApp
 
 int main()
 {
-    eacp::Apps::run<MyApp>();
-    return 0;
+    return eacp::Apps::run<MyApp>();
 }

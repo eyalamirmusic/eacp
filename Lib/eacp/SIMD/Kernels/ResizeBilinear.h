@@ -1,10 +1,6 @@
 #pragma once
 
-#include <eacp/SIMD/Kernels/Bilinear.h>
-
-#include <cmath>
-#include <cstddef>
-#include <cstdint>
+#include "Bilinear.h"
 
 namespace eacp::simd::kernels
 {

@@ -1,6 +1,4 @@
-#include <eacp/WebView/WebView.h>
-
-#include <NanoTest/NanoTest.h>
+#include "Common.h"
 
 using namespace nano;
 using namespace eacp;

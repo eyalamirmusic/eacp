@@ -1,8 +1,4 @@
-#include <eacp/GPU/GPU.h>
 #include <eacp/GPUWidgets/GPUWidgets.h>
-#include <eacp/Graphics/Graphics.h>
-
-#include <cmath>
 
 using namespace eacp;
 using namespace eacp::GPUWidgets;
@@ -120,6 +116,5 @@ struct PathsApp
 
 int main()
 {
-    eacp::Apps::run<PathsApp>();
-    return 0;
+    return eacp::Apps::run<PathsApp>();
 }

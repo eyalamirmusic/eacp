@@ -1,8 +1,5 @@
 #include <eacp/WebView/WebView.h>
 
-#include <eacp/Graphics/Widgets/TextInput.h>
-#include <ResEmbed/ResEmbed.h>
-
 using namespace eacp;
 using namespace Graphics;
 
@@ -89,6 +86,5 @@ struct BrowserApp
 
 int main()
 {
-    eacp::Apps::run<BrowserApp>();
-    return 0;
+    return eacp::Apps::run<BrowserApp>();
 }
