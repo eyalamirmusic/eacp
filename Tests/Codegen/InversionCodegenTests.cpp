@@ -12,7 +12,8 @@
 // inversion path is wire-equivalent to the static-init path for
 // this shape — no MIRO_EXPORT_COMMAND, no EACP_EVENT.
 
-#include <Miro/Miro.h>
+#include <Miro/Codegen.h>
+#include <Miro/Reflect.h>
 #include <NanoTest/NanoTest.h>
 
 #include <string>
@@ -60,9 +61,9 @@ const EmittedFile* findFile(const EA::Vector<EmittedFile>& files,
     for (auto& f: files)
     {
         if (f.filename.size() >= suffix.size()
-            && std::string_view {f.filename}.substr(
-                   f.filename.size() - suffix.size())
-                == suffix)
+            && std::string_view {f.filename}.substr(f.filename.size()
+                                                    - suffix.size())
+                   == suffix)
             return &f;
     }
     return nullptr;
@@ -76,7 +77,8 @@ bool contains(const std::string& haystack, std::string_view needle)
 
 // ---------- Miro-side formats ----------
 
-auto icTypesModule = test("Inversion: ts format matches WebViewReactAnim baseline") = []
+auto icTypesModule =
+    test("Inversion: ts format matches WebViewReactAnim baseline") = []
 {
     auto files = buildCodegen<Clock>("schema", EA::Vector<std::string> {"ts"});
     auto* ts = findFile(files, ".ts");
@@ -91,15 +93,13 @@ auto icTypesModule = test("Inversion: ts format matches WebViewReactAnim baselin
 auto icBackendModule =
     test("Inversion: backend format matches WebViewReactAnim baseline") = []
 {
-    auto files =
-        buildCodegen<Clock>("schema", EA::Vector<std::string> {"backend"});
+    auto files = buildCodegen<Clock>("schema", EA::Vector<std::string> {"backend"});
     auto* backend = findFile(files, ".backend.ts");
 
     check(backend != nullptr);
     // Baseline: "getCurrentTick: (): Promise<T.Tick> =>
     //               invoke('getCurrentTick', {}) as Promise<T.Tick>,"
-    check(contains(backend->contents,
-                   "getCurrentTick: (): Promise<T.Tick>"));
+    check(contains(backend->contents, "getCurrentTick: (): Promise<T.Tick>"));
     check(contains(backend->contents,
                    "invoke('getCurrentTick', {}) as Promise<T.Tick>"));
 };
@@ -107,13 +107,12 @@ auto icBackendModule =
 auto icBridgeModule =
     test("Inversion: bridge format emits the standard runtime") = []
 {
-    auto files =
-        buildCodegen<Clock>("schema", EA::Vector<std::string> {"bridge"});
+    auto files = buildCodegen<Clock>("schema", EA::Vector<std::string> {"bridge"});
     auto* bridge = findFile(files, ".bridge.ts");
 
     check(bridge != nullptr);
     // The bridge runtime is static text — just confirm it landed.
-    check(! bridge->contents.empty());
+    check(!bridge->contents.empty());
 };
 
 // ---------- EACP-side formats — the Phase D milestone ----------
@@ -121,8 +120,7 @@ auto icBridgeModule =
 auto icEventsModule =
     test("Inversion: events format matches WebViewReactAnim baseline") = []
 {
-    auto files =
-        buildCodegen<Clock>("schema", EA::Vector<std::string> {"events"});
+    auto files = buildCodegen<Clock>("schema", EA::Vector<std::string> {"events"});
     auto* events = findFile(files, ".events.ts");
 
     check(events != nullptr);
@@ -157,8 +155,8 @@ auto icHooksModule =
 
 // ---------- Cross-cutting: all formats requested together ----------
 
-auto icAllFormatsTogether =
-    test("Inversion: requesting all default formats produces every expected file") = []
+auto icAllFormatsTogether = test(
+    "Inversion: requesting all default formats produces every expected file") = []
 {
     auto files = buildCodegen<Clock>(
         "schema",
@@ -230,9 +228,9 @@ public:
     PingSub ping;
 };
 
-auto icHooksSubApiBridgeStoreIdentifier = test(
-    "Inversion: sub-API event + matching get<Name> emits a valid TS hook "
-    "identifier") = []
+auto icHooksSubApiBridgeStoreIdentifier =
+    test("Inversion: sub-API event + matching get<Name> emits a valid TS hook "
+         "identifier") = []
 {
     auto files = buildCodegen<HostApi>("schema", EA::Vector<std::string> {"hooks"});
     auto* hooks = findFile(files, ".hooks.ts");
@@ -262,8 +260,8 @@ auto icHooksSubApiBridgeStoreBackendPath = test(
     check(!contains(hooks->contents, "fetch: backend.getClock"));
 };
 
-auto icHooksSubApiBridgeStoreEventName = test(
-    "Inversion: sub-API hooks preserve the dotted wire name in event:") = []
+auto icHooksSubApiBridgeStoreEventName =
+    test("Inversion: sub-API hooks preserve the dotted wire name in event:") = []
 {
     auto files = buildCodegen<HostApi>("schema", EA::Vector<std::string> {"hooks"});
     auto* hooks = findFile(files, ".hooks.ts");
@@ -275,8 +273,8 @@ auto icHooksSubApiBridgeStoreEventName = test(
     check(contains(hooks->contents, "event: 'clock.tick'"));
 };
 
-auto icHooksSubApiPushOnlyIdentifier = test(
-    "Inversion: sub-API push-only event emits a valid TS hook identifier") = []
+auto icHooksSubApiPushOnlyIdentifier =
+    test("Inversion: sub-API push-only event emits a valid TS hook identifier") = []
 {
     auto files = buildCodegen<HostApi>("schema", EA::Vector<std::string> {"hooks"});
     auto* hooks = findFile(files, ".hooks.ts");
@@ -329,9 +327,9 @@ public:
     TodosSub todos;
 };
 
-auto icHooksSubApiKeyedIdentifiers = test(
-    "Inversion: sub-API keyed event emits valid TS identifiers for the store "
-    "+ all-hook") = []
+auto icHooksSubApiKeyedIdentifiers =
+    test("Inversion: sub-API keyed event emits valid TS identifiers for the store "
+         "+ all-hook") = []
 {
     auto files =
         buildCodegen<KeyedHostApi>("schema", EA::Vector<std::string> {"hooks"});
@@ -349,10 +347,11 @@ auto icHooksSubApiKeyedIdentifiers = test(
 
 // ---------- Sub-APIs in the backend module: dotted names nest ----------
 
-auto icBackendSubApiNests = test(
-    "Inversion: sub-API commands nest into the backend object tree") = []
+auto icBackendSubApiNests =
+    test("Inversion: sub-API commands nest into the backend object tree") = []
 {
-    auto files = buildCodegen<HostApi>("schema", EA::Vector<std::string> {"backend"});
+    auto files =
+        buildCodegen<HostApi>("schema", EA::Vector<std::string> {"backend"});
     auto* backend = findFile(files, ".backend.ts");
 
     check(backend != nullptr);

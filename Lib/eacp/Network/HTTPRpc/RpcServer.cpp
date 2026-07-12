@@ -1,5 +1,7 @@
 #include "RpcServer.h"
 
+#include <Miro/Json.h>
+
 namespace eacp::HTTP::Rpc
 {
 

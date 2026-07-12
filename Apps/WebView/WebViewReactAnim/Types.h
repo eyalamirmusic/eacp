@@ -1,6 +1,7 @@
 #pragma once
 
-#include <Miro/Miro.h>
+#include <Miro/Bridge.h>
+#include <Miro/Reflect.h>
 
 #include <chrono>
 #include <cmath>

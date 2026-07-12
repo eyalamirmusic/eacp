@@ -13,7 +13,7 @@
 
 #include "../WebView/EventRegistry.h"
 
-#include <Miro/Miro.h>
+#include <Miro/Codegen.h>
 
 namespace
 {
@@ -28,10 +28,10 @@ using Miro::TypeExport::registerFormat;
 // know about events, so it leaves them empty for downstream resolvers).
 // EventEntry is a Miro::EventInfo alias, so both sides feed the same
 // formatter signature.
-std::span<const eacp::Graphics::EventEntry> eventsFor(
-    const Miro::TypeExport::Context& ctx)
+std::span<const eacp::Graphics::EventEntry>
+    eventsFor(const Miro::TypeExport::Context& ctx)
 {
-    if (! ctx.events.empty())
+    if (!ctx.events.empty())
         return ctx.events;
 
     auto& global = eacp::Graphics::Detail::eventRegistry();

@@ -2,7 +2,8 @@
 
 #include "../WebView/EventRegistry.h"
 
-#include <Miro/Miro.h>
+#include <Miro/CommandExport/CommandEntry.h>
+#include <Miro/TypeTree/TypeTree.h>
 
 #include <span>
 

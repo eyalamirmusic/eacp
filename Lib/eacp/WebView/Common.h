@@ -1,7 +1,8 @@
 #pragma once
 
 #include <eacp/Graphics/Graphics.h>
-#include <Miro/Miro.h>
+#include <Miro/Bridge.h>
+#include <Miro/Reflect.h>
 #include <ResEmbed/ResEmbed.h>
 
 #include <cctype>

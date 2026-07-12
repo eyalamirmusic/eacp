@@ -2,6 +2,8 @@
 
 #include "EventRegistry.h"
 
+#include <Miro/Bridge.h>
+
 namespace eacp::Graphics
 {
 

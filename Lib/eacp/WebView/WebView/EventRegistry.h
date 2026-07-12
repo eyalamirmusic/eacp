@@ -1,6 +1,7 @@
 #pragma once
 
-#include <Miro/Miro.h>
+#include <Miro/Reflect.h>
+#include <Miro/TypeExport/Context.h>
 
 #include <eacp/Core/Core.h>
 

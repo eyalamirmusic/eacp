@@ -2,7 +2,7 @@
 
 #include <eacp/Network/Network.h>
 
-#include <Miro/Miro.h>
+#include <Miro/Bridge.h>
 
 namespace eacp::HTTP::Rpc
 {
