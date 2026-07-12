@@ -2,6 +2,7 @@
 #include <thread>
 #include <vector>
 #include <algorithm>
+#include <mutex>
 
 using namespace nano;
 using eacp::HTTP::Request;
