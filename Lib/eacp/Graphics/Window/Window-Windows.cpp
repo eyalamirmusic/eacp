@@ -511,10 +511,13 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             break;
 
         // The user toggled the OS light/dark setting while we are running;
-        // recolour the caption to match.
+        // recolour the caption and re-erase the window background to match.
         case WM_SETTINGCHANGE:
             if (isThemeChangeMessage(lParam))
+            {
                 applyTitleBarTheme(hwnd, isSystemDarkMode());
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
             break;
 
         case WM_DPICHANGED:
