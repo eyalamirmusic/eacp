@@ -10,6 +10,7 @@ endfunction()
 
 function(set_default_target_setting target)
     set_default_warnings_level(${target})
+    eacp_use_shared_pch(${target})
     set_target_properties(${target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
     if (IOS)
         set_target_properties(${target} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${EACP_IOS_PLIST}")
@@ -34,6 +35,10 @@ endfunction()
 # (hence PARENT_SCOPE), so keep each force-optimized target in its own
 # subdirectory -- the usual case. The rest of the project keeps the defaults.
 function(eacp_force_optimization target)
+    # The shared PCH is built at the project's normal optimization level; a TU
+    # that overrides its own cannot load it.
+    eacp_no_shared_pch(${target})
+
     if (MSVC)
         # The cl/clang-cl Debug defaults fight optimization: /RTC1 is a hard
         # error under any /O level (D8016) and /Od warns when overridden by /O2

@@ -37,6 +37,7 @@ if (NOT EACP_BUILD_GRAPHICS)
 endif ()
 
 include(TargetSetup)
+include(EacpPch)
 include(CPM)
 include(EacpSchema)
 include(EacpPlugin)
@@ -58,6 +59,37 @@ if (PROJECT_IS_TOP_LEVEL)
 endif ()
 
 set(CMAKE_CXX_STANDARD 20)
+
+# C++20 turns on Ninja's module dependency scanning, which preprocesses every
+# translation unit a second time before it can be compiled, and makes each
+# target's objects wait on a collation step for the whole target. eacp uses no
+# modules, so that entire phase buys nothing.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
+# Already a PUBLIC requirement of eacp-gpu and of Miro, so most of the tree
+# compiles with it and the rest does not. Hoisting it to the whole project makes
+# the flag set uniform -- which reusing one precompiled header across targets
+# requires (cl rejects a PCH built under a different conformance mode).
+add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>)
+
+option(EACP_EMBED_DEBUG_INFO
+        "Put MSVC debug info in the objects (/Z7) instead of a PDB (/Zi)" OFF)
+
+# /Z7 is what lets a compiler cache work at all -- a /Zi object references its
+# .pdb by absolute path and so cannot be replayed from a cache -- but it copies
+# the shared PCH's debug info into every object, which roughly doubles link
+# time. Worth it with sccache in front, not worth it without.
+if (EACP_EMBED_DEBUG_INFO)
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT
+            "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
+endif ()
+
+option(EACP_SHARED_PCH "Precompile the standard library once for every target" ON)
+
+if (EACP_SHARED_PCH)
+    eacp_add_shared_pch()
+endif ()
+
 add_subdirectory(Lib)
 
 if (PROJECT_IS_TOP_LEVEL)
