@@ -17,6 +17,7 @@ struct ServerOptions
 {
     ServerThreadingMode threading = ServerThreadingMode::EventLoop;
     int threadPoolSize = 4;
+    BindInterface bindTo = BindInterface::loopback;
 };
 
 struct Error : std::runtime_error

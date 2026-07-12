@@ -16,8 +16,11 @@ public:
     // Binds and listens on port, or throws TCP::Error. Port 0 asks the OS for
     // an ephemeral port - read it back from port() afterwards. The Timeouts'
     // connect bounds how long accept() waits; io is inherited by every
-    // accepted Connection.
-    static Listener bind(std::uint16_t port, Timeouts timeouts = {});
+    // accepted Connection. Pass BindInterface::any to serve other machines,
+    // which a host firewall will want the user to approve.
+    static Listener bind(std::uint16_t port,
+                         Timeouts timeouts = {},
+                         BindInterface bindTo = BindInterface::loopback);
 
     ~Listener();
 

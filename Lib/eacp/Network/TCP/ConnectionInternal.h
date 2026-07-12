@@ -34,7 +34,8 @@ std::size_t socketReceive(NativeSocket socket, char* buffer, std::size_t length)
 
 // Opens a listening socket on port (0 picks an ephemeral one), writing the
 // actually-bound port back to boundPort. Throws TCP::Error on failure.
-NativeSocket socketListen(std::uint16_t port, std::uint16_t& boundPort);
+NativeSocket
+    socketListen(std::uint16_t port, std::uint16_t& boundPort, BindInterface bindTo);
 
 // Waits up to acceptTimeout for an inbound connection, accepts it, arms it
 // with ioTimeout and writes the peer's address to peer. Throws TCP::Error on

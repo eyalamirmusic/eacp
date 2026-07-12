@@ -191,7 +191,8 @@ std::size_t socketReceive(NativeSocket socket, char* buffer, std::size_t length)
     return (std::size_t) received;
 }
 
-NativeSocket socketListen(std::uint16_t port, std::uint16_t& boundPort)
+NativeSocket
+    socketListen(std::uint16_t port, std::uint16_t& boundPort, BindInterface bindTo)
 {
     ensureWinsockInitialized();
 
@@ -204,7 +205,8 @@ NativeSocket socketListen(std::uint16_t port, std::uint16_t& boundPort)
 
     auto addr = sockaddr_in {};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_addr.s_addr =
+        htonl(bindTo == BindInterface::any ? INADDR_ANY : INADDR_LOOPBACK);
     addr.sin_port = htons(port);
 
     if (::bind(sock, (sockaddr*) &addr, sizeof(addr)) == SOCKET_ERROR)

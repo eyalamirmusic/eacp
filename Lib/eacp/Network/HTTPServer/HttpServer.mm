@@ -65,6 +65,11 @@ void readPeerEndpoint(int fd, std::string& addr, int& port)
     port = (int) ntohs(peer.sin_port);
 }
 
+in_addr_t bindAddress(BindInterface bindTo)
+{
+    return htonl(bindTo == BindInterface::any ? INADDR_ANY : INADDR_LOOPBACK);
+}
+
 } // namespace
 
 struct Server::Impl
@@ -160,7 +165,7 @@ bool Server::Impl::start(int port, RequestHandler h)
     auto addr = sockaddr_in{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons((uint16_t) port);
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_addr.s_addr = bindAddress(options.bindTo);
 
     auto data = CFDataCreate(kCFAllocatorDefault,
                              (const UInt8*) &addr, sizeof(addr));
