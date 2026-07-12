@@ -43,7 +43,7 @@ bool isAudioFile(const std::filesystem::path& path)
 
 std::filesystem::path downloadsDir()
 {
-    return toStdPath(homeDirectory()) / "Downloads";
+    return toStdPath(FilePath::downloadsDirectory());
 }
 
 std::filesystem::path bundledAssetDir()

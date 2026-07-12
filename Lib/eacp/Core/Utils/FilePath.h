@@ -33,7 +33,26 @@ public:
         text.assign(u8.begin(), u8.end());
     }
 
+    // Well-known user directories, resolved through the native platform API
+    // (NSSearchPathForDirectoriesInDomains, SHGetKnownFolderPath, the XDG
+    // user dirs on Linux). Empty when the platform can't resolve them.
+    static FilePath homeDirectory();
+    static FilePath documentsDirectory();
+    static FilePath downloadsDirectory();
+    static FilePath musicDirectory();
+    static FilePath moviesDirectory();
+    static FilePath picturesDirectory();
+    static FilePath desktopDirectory();
+    static FilePath tempDirectory();
+
+    // Per-user application data and cache roots: Application Support and
+    // Caches on Apple platforms, Roaming and Local AppData on Windows, the
+    // XDG data and cache homes on Linux.
+    static FilePath appDataDirectory();
+    static FilePath cacheDirectory();
+
     const std::string& str() const;
+    const char* c_str() const;
     bool empty() const;
 
     // ".png" for "dir/image.png"; empty for dotfiles and extension-less

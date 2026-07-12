@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Common.h"
-#include "FilePath.h"
 
 namespace eacp
 {
@@ -17,9 +16,5 @@ std::string getEnvValue(std::string_view name);
 
 // Sets (or overwrites) an environment variable for this process.
 void setEnv(std::string_view name, std::string_view value);
-
-// The current user's home directory, or an empty path when it can't be
-// resolved. Reads USERPROFILE on Windows and HOME elsewhere.
-FilePath homeDirectory();
 
 } // namespace eacp

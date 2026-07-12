@@ -4,7 +4,7 @@
 
 namespace eacp::Plugins
 {
-DynamicLibrary::DynamicLibrary(const std::string& path)
+DynamicLibrary::DynamicLibrary(const FilePath& path)
 {
     open(path);
 }
@@ -30,7 +30,7 @@ DynamicLibrary& DynamicLibrary::operator=(DynamicLibrary&& other) noexcept
     return *this;
 }
 
-bool DynamicLibrary::open(const std::string& path)
+bool DynamicLibrary::open(const FilePath& path)
 {
     close();
 

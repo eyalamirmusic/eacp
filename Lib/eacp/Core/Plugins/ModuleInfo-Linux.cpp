@@ -16,7 +16,7 @@ bool isDynamicLibrary()
         if (ec)
             return false;
 
-        return exe.string() != getCurrentModulePath();
+        return FilePath {exe} != getCurrentModulePath();
     }();
 
     return result;

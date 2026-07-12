@@ -22,6 +22,11 @@ const std::string& FilePath::str() const
     return text;
 }
 
+const char* FilePath::c_str() const
+{
+    return text.c_str();
+}
+
 bool FilePath::empty() const
 {
     return text.empty();

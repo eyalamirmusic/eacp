@@ -23,7 +23,7 @@ std::wstring toWide(const std::string& text)
 }
 } // namespace
 
-DynamicLibrary::DynamicLibrary(const std::string& path)
+DynamicLibrary::DynamicLibrary(const FilePath& path)
 {
     open(path);
 }
@@ -49,10 +49,10 @@ DynamicLibrary& DynamicLibrary::operator=(DynamicLibrary&& other) noexcept
     return *this;
 }
 
-bool DynamicLibrary::open(const std::string& path)
+bool DynamicLibrary::open(const FilePath& path)
 {
     close();
-    handle = LoadLibraryW(toWide(path).c_str());
+    handle = LoadLibraryW(toWide(path.str()).c_str());
     return handle != nullptr;
 }
 
