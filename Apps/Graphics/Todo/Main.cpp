@@ -25,7 +25,8 @@ struct TodoItemView final : View
         textInput.setBackgroundColor({0.f, 0.f, 0.f, 0.f});
         textInput.setBorderColor({0.f, 0.f, 0.f, 0.f});
         textInput.setPadding(0.f);
-        textInput.onSubmit([this](const std::string& newText) { finishEditing(newText); });
+        textInput.onSubmit([this](const std::string& newText)
+                           { finishEditing(newText); });
 
         addChildren({checkboxLayer, checkmarkLayer, textLayer});
     }
@@ -247,7 +248,5 @@ struct TodoApp
 
 int main()
 {
-    eacp::Apps::run<TodoApp>();
-
-    return 0;
+    return eacp::Apps::run<TodoApp>();
 }

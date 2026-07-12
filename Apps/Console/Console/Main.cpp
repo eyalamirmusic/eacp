@@ -18,6 +18,5 @@ struct App
 
 int main()
 {
-    eacp::Apps::run<App>();
-    return 0;
+    return eacp::Apps::run<App>();
 }

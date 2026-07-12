@@ -134,6 +134,5 @@ struct CameraApp
 
 int main()
 {
-    eacp::Apps::run<CameraApp>();
-    return 0;
+    return eacp::Apps::run<CameraApp>();
 }

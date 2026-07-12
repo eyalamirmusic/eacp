@@ -318,6 +318,5 @@ struct MixedViewsApp
 
 int main()
 {
-    eacp::Apps::run<MixedViewsApp>();
-    return 0;
+    return eacp::Apps::run<MixedViewsApp>();
 }

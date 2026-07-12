@@ -184,5 +184,5 @@ void runCompute()
 
 int main()
 {
-    Apps::run(runCompute);
+    return Apps::run(runCompute);
 }

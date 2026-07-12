@@ -110,6 +110,5 @@ struct SpritesApp
 
 int main()
 {
-    eacp::Apps::run<SpritesApp>();
-    return 0;
+    return eacp::Apps::run<SpritesApp>();
 }

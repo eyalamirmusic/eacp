@@ -59,6 +59,10 @@ public:
     // names, mirroring std::filesystem::path::extension().
     std::string extension() const;
 
+    // "dir/sub" for "dir/sub/image.png"; empty when there is no directory
+    // part, mirroring std::filesystem::path::parent_path().
+    FilePath parentDirectory() const;
+
     FilePath operator/(std::string_view part) const;
 
     bool operator==(const FilePath& other) const = default;
