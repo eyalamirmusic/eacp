@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Utils/Common.h"
+#include "../Utils/FilePath.h"
 
 namespace eacp::Plugins
 {
@@ -12,7 +13,7 @@ class DynamicLibrary
 {
 public:
     DynamicLibrary() = default;
-    explicit DynamicLibrary(const std::string& path);
+    explicit DynamicLibrary(const FilePath& path);
     ~DynamicLibrary();
 
     DynamicLibrary(DynamicLibrary&& other) noexcept;
@@ -20,7 +21,7 @@ public:
     DynamicLibrary(const DynamicLibrary&) = delete;
     DynamicLibrary& operator=(const DynamicLibrary&) = delete;
 
-    bool open(const std::string& path);
+    bool open(const FilePath& path);
     void close();
 
     [[nodiscard]] bool isOpen() const;

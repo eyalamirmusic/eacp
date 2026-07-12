@@ -33,6 +33,7 @@ if (APPLE)
             Threads/Timer.mm
             Threads/ThreadUtils.mm
             Utils/Environment-Posix.cpp
+            Utils/FilePath-Apple.mm
             Utils/Files.mm
             Utils/Logging-Posix.cpp)
     target_link_libraries(eacp-core PRIVATE
@@ -70,9 +71,11 @@ elseif (WIN32)
             Threads/ThreadUtils-Windows.cpp
             Threads/Timer-Windows.cpp
             Utils/Environment-Windows.cpp
+            Utils/FilePath-Windows.cpp
             Utils/Files-Windows.cpp
             Utils/Logging-Windows.cpp)
-    target_link_libraries(eacp-core PRIVATE windowsapp crypt32 user32 advapi32)
+    target_link_libraries(eacp-core PRIVATE
+            windowsapp crypt32 user32 advapi32 shell32 ole32 uuid)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-core PRIVATE
             App/App-Linux.cpp
@@ -88,6 +91,7 @@ elseif (UNIX AND NOT APPLE)
             Threads/ThreadUtils-Linux.cpp
             Threads/Timer-Linux.cpp
             Utils/Environment-Posix.cpp
+            Utils/FilePath-Linux.cpp
             Utils/Files-Linux.cpp
             Utils/Logging-Posix.cpp)
     find_package(Threads REQUIRED)
