@@ -8,8 +8,6 @@ using eacp::Threads::AsyncError;
 using eacp::Threads::AsyncPromise;
 using eacp::Threads::callAsync;
 
-using namespace std::chrono_literals;
-
 namespace
 {
 Async<int> coroReturning(int value)
@@ -119,7 +117,7 @@ auto tCoroResumesAfterWorkerThread = test("Async/coro/resumesAfterWorkerThread")
     auto worker = std::thread(
         [producer]
         {
-            std::this_thread::sleep_for(30ms);
+            eacp::Time::sleepMS(30);
             callAsync([producer] { producer.resolve(100); });
         });
 

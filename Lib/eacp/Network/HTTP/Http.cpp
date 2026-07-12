@@ -1,7 +1,6 @@
 #include "Http.h"
 #include "HttpProtocol.h"
 #include <algorithm>
-#include <chrono>
 
 #include <filesystem>
 #include <fstream>
@@ -332,7 +331,7 @@ std::thread launchProgressAggregator(DownloadProgress* aggregate,
                     if (aggregate->cancel.load())
                         propagateCancelToChunks(chunkProgress);
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(25));
+                Time::sleepMS(25);
             }
         });
 }

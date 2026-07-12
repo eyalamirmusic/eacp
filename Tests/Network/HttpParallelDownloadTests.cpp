@@ -3,7 +3,6 @@
 #include <fstream>
 #include <system_error>
 #include <thread>
-#include <chrono>
 
 using namespace nano;
 using eacp::HTTP::DownloadProgress;
@@ -254,8 +253,7 @@ auto tParallelReportsIntermediateProgress =
             // interval (25ms, see launchProgressAggregator) or a loaded
             // CI runner can collapse several steps into one sample and
             // starve the >=3 distinct-values check below.
-            std::this_thread::sleep_for(
-                std::chrono::milliseconds(100 * (long long) chunkIndex));
+            eacp::Time::sleepMS(100 * (int) chunkIndex);
         }
         return res;
     };
@@ -287,7 +285,7 @@ auto tParallelReportsIntermediateProgress =
                 }
                 if (total > 0 && received > 0 && received < total)
                     sawIntermediate.store(true);
-                std::this_thread::sleep_for(std::chrono::microseconds(500));
+                eacp::Time::sleepMS(1);
             }
         });
 
