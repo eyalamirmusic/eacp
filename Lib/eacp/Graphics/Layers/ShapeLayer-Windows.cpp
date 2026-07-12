@@ -1,24 +1,11 @@
-// Windows implementation of ShapeLayer using Windows.UI.Composition surfaces
-#include <eacp/Core/Utils/WinInclude.h>
-
+// Windows implementation of ShapeLayer using DirectComposition surfaces
 #include "ShapeLayer.h"
-#include "../CompositionInterop-Windows.h"
 #include "NativeLayer-Windows.h"
 
-#include <wrl/client.h>
 #include <algorithm>
-
-#include <winrt/Windows.Foundation.h>
-#include <winrt/Windows.UI.Composition.h>
-
-namespace wuc = winrt::Windows::UI::Composition;
 
 namespace eacp::Graphics
 {
-
-using Microsoft::WRL::ComPtr;
-
-ID2D1Factory1* getD2DFactory();
 
 struct ShapeLayer::Native : NativeLayerBase
 {
@@ -37,17 +24,12 @@ struct ShapeLayer::Native : NativeLayerBase
         auto surfaceWidth = static_cast<int>(bounds.w * dpiScale);
         auto surfaceHeight = static_cast<int>(bounds.h * dpiScale);
 
-        auto interop = surface.as<
-            ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
-        if (!interop)
-            return;
-
         POINT offset;
-        winrt::com_ptr<ID2D1DeviceContext> dc;
+        ComPtr<ID2D1DeviceContext> dc;
         RECT updateRect = {0, 0, surfaceWidth, surfaceHeight};
 
-        HRESULT hr =
-            interop->BeginDraw(&updateRect, IID_PPV_ARGS(dc.put()), &offset);
+        HRESULT hr = surface->BeginDraw(
+            &updateRect, IID_PPV_ARGS(dc.GetAddressOf()), &offset);
         if (FAILED(hr) || !dc)
         {
             handleDeviceLossIfNeeded(hr);
@@ -130,7 +112,7 @@ struct ShapeLayer::Native : NativeLayerBase
         }
 
         dc->SetTransform(D2D1::Matrix3x2F::Identity());
-        interop->EndDraw();
+        surface->EndDraw();
     }
 
     // Path geometry (owned - AddRef'd to keep alive)

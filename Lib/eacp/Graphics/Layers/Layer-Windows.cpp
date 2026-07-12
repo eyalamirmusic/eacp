@@ -1,34 +1,23 @@
 #include "Layer.h"
 #include "NativeLayer-Windows.h"
 
-#include <winrt/Windows.UI.Composition.h>
-
-namespace wuc = winrt::Windows::UI::Composition;
-
 namespace eacp::Graphics
 {
 
 void Layer::attachTo(void* parentVisualPtr)
 {
     auto native = static_cast<NativeLayerBase*>(getNativeLayer());
+
     if (native && parentVisualPtr)
-    {
-        auto* containerVisualPtr =
-            static_cast<wuc::ContainerVisual*>(parentVisualPtr);
-        if (containerVisualPtr && *containerVisualPtr)
-        {
-            native->attachTo(*containerVisualPtr);
-        }
-    }
+        native->attachTo(static_cast<IDCompositionVisual2*>(parentVisualPtr));
 }
 
 void Layer::detachFromLayer()
 {
     auto native = static_cast<NativeLayerBase*>(getNativeLayer());
+
     if (native)
-    {
         native->detach();
-    }
 }
 
 void Layer::setBounds(const Rect& bounds)
