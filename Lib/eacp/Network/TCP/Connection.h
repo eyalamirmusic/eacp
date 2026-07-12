@@ -46,6 +46,11 @@ public:
     // Opens a stream to address, or throws TCP::Error trying.
     static Connection connect(Address address, Timeouts timeouts = {});
 
+    // Wraps an already-connected native socket (an int fd or a SOCKET, passed
+    // as intptr_t) in a Connection that owns it. Listener::accept() is the
+    // caller that matters; reach for connect() to open a stream yourself.
+    static Connection adopt(std::intptr_t nativeSocket, Address peer);
+
     ~Connection();
 
     Connection(Connection&&) noexcept;
@@ -78,11 +83,6 @@ public:
 
 private:
     Connection();
-
-    // Wraps an already-connected native socket (an int fd or a SOCKET, passed
-    // as intptr_t) in a Connection that owns it. Used by Listener::accept().
-    static Connection adopt(std::intptr_t nativeSocket, Address peer);
-    friend class Listener;
 
     struct Impl;
     OwningPointer<Impl> impl;
