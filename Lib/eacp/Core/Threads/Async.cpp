@@ -1,5 +1,4 @@
 #include "Async.h"
-#include "../Utils/StdChrono.h"
 
 #include <thread>
 
@@ -11,7 +10,7 @@ Async<void> delay(Time::MS duration)
     std::thread(
         [promise, duration]
         {
-            std::this_thread::sleep_for(toStdChrono(duration));
+            Time::sleep(duration);
             callAsync([promise] { promise.resolve(); });
         })
         .detach();

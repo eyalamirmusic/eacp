@@ -8,8 +8,6 @@ using eacp::Threads::AsyncError;
 using eacp::Threads::AsyncPromise;
 using eacp::Threads::callAsync;
 
-using namespace std::chrono_literals;
-
 auto tWaitForReturnsResolvedValue =
     test("Async/waitFor/resolvedValueIsReturned") = []
 {
@@ -167,7 +165,7 @@ auto tWorkerThreadResolvesViaCallAsync =
     auto worker = std::thread(
         [promise]
         {
-            std::this_thread::sleep_for(30ms);
+            eacp::Time::sleepMS(30);
             callAsync([promise] { promise.resolve(123); });
         });
 

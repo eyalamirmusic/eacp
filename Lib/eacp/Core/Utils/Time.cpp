@@ -1,6 +1,7 @@
 #include "Time.h"
 
 #include <chrono>
+#include <thread>
 
 namespace eacp::Time
 {
@@ -13,6 +14,11 @@ std::int64_t nowMs()
         .count();
 }
 } // namespace
+
+void sleep(MS duration)
+{
+    std::this_thread::sleep_for(std::chrono::milliseconds {duration.count});
+}
 
 Deadline::Deadline(MS timeout)
     : end(nowMs() + timeout.count)

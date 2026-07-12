@@ -30,7 +30,7 @@ int main()
     std::thread(
         []
         {
-            std::this_thread::sleep_for(std::chrono::seconds(15));
+            eacp::Time::sleepMS(15000);
             std::_Exit(3);
         })
         .detach();

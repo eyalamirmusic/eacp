@@ -2,7 +2,6 @@
 #include <thread>
 #include <vector>
 #include <algorithm>
-#include <chrono>
 
 using namespace nano;
 using eacp::HTTP::Request;
@@ -407,23 +406,23 @@ auto tEventLoopModeSerializesHandlers =
     auto inFlight = std::atomic<int> {0};
     auto maxInFlight = std::atomic<int> {0};
 
-    auto ok = server.listen(
-        port,
-        [&](const Request&)
-        {
-            auto cur = inFlight.fetch_add(1) + 1;
-            auto m = maxInFlight.load();
-            while (cur > m && !maxInFlight.compare_exchange_weak(m, cur))
-            {
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(40));
-            inFlight.fetch_sub(1);
+    auto ok = server.listen(port,
+                            [&](const Request&)
+                            {
+                                auto cur = inFlight.fetch_add(1) + 1;
+                                auto m = maxInFlight.load();
+                                while (cur > m
+                                       && !maxInFlight.compare_exchange_weak(m, cur))
+                                {
+                                }
+                                eacp::Time::sleepMS(40);
+                                inFlight.fetch_sub(1);
 
-            auto res = Response();
-            res.statusCode = 200;
-            res.content = "ok";
-            return res;
-        });
+                                auto res = Response();
+                                res.statusCode = 200;
+                                res.content = "ok";
+                                return res;
+                            });
     check(ok);
     port = server.boundPort();
 
@@ -456,26 +455,25 @@ auto tThreadPoolModeRunsHandlersInParallel =
     auto barrierCount = std::atomic<int> {0};
     auto allArrived = std::atomic<bool> {false};
 
-    auto ok = server.listen(
-        port,
-        [&](const Request&)
-        {
-            barrierCount.fetch_add(1);
+    auto ok =
+        server.listen(port,
+                      [&](const Request&)
+                      {
+                          barrierCount.fetch_add(1);
 
-            auto deadline =
-                std::chrono::steady_clock::now() + std::chrono::seconds(2);
-            while (barrierCount.load() < 4
-                   && std::chrono::steady_clock::now() < deadline)
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                          auto deadline =
+                              eacp::Time::Deadline {eacp::Time::MS {2000}};
+                          while (barrierCount.load() < 4 && !deadline.expired())
+                              eacp::Time::sleepMS(2);
 
-            if (barrierCount.load() >= 4)
-                allArrived.store(true);
+                          if (barrierCount.load() >= 4)
+                              allArrived.store(true);
 
-            auto res = Response();
-            res.statusCode = 200;
-            res.content = "ok";
-            return res;
-        });
+                          auto res = Response();
+                          res.statusCode = 200;
+                          res.content = "ok";
+                          return res;
+                      });
     check(ok);
     port = server.boundPort();
 

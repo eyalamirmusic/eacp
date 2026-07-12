@@ -3,7 +3,6 @@
 #include <vector>
 
 using namespace nano;
-using namespace std::chrono_literals;
 using eacp::TCP::Connection;
 using eacp::TCP::Error;
 using eacp::TCP::Listener;
@@ -460,7 +459,7 @@ auto tSendToHungUpPeer = test("Tcp/sendToAHungUpPeerThrowsRatherThanCrashing") =
 
     auto client = dial(listener);
     server.join();
-    std::this_thread::sleep_for(50ms); // let the reset reach us
+    eacp::Time::sleepMS(50); // let the reset reach us
 
     // Writing to a peer that has gone away must surface as an Error, not a
     // SIGPIPE that takes the whole process down. Keep pushing until the OS
@@ -491,7 +490,7 @@ auto tFragmentedReply = test("Tcp/reassemblesAReplyArrivingInTinyFragments") = [
             for (auto c: message)
             {
                 peer.send(std::string(1, c));
-                std::this_thread::sleep_for(2ms);
+                eacp::Time::sleepMS(2);
             }
             peer.send("\n");
         });
@@ -512,7 +511,7 @@ auto tSplitDelimiter = test("Tcp/receiveUntilHandlesADelimiterSplitAcrossReads")
         {
             auto peer = listener.accept();
             peer.send("alpha-");
-            std::this_thread::sleep_for(20ms);
+            eacp::Time::sleepMS(20);
             peer.send("beta\nsecond-line\n");
         });
 
@@ -535,7 +534,7 @@ auto tIdleReceiveTimesOut =
         [&]
         {
             auto peer = listener.accept();
-            std::this_thread::sleep_for(500ms);
+            eacp::Time::sleepMS(500);
         });
 
     // Short io timeout so the idle read trips quickly.
