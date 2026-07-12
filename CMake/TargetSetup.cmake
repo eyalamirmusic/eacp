@@ -166,6 +166,7 @@ function(add_ide_sources target)
 endfunction()
 
 function(eacp_default_setup)
+    set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
     add_compile_definitions(_LIBCPP_REMOVE_TRANSITIVE_INCLUDES)
     eacp_setup_apple()
 
