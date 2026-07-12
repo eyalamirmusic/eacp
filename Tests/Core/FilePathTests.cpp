@@ -35,3 +35,11 @@ auto tJoinFromDirectory = test("FilePath/joinFromDirectory") = []
     check(joined.extension() == ".txt");
     check(joined.str().find("//") == std::string::npos);
 };
+
+auto tParentDirectory = test("FilePath/parentDirectory") = []
+{
+    check(FilePath {"dir/sub/image.png"}.parentDirectory().str() == "dir/sub");
+    check(FilePath {"/file.txt"}.parentDirectory().str() == "/");
+    check(FilePath {"file.txt"}.parentDirectory().empty());
+    check(FilePath {}.parentDirectory().empty());
+};

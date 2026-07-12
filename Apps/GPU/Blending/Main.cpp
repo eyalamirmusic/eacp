@@ -257,6 +257,5 @@ struct BlendingApp
 
 int main()
 {
-    eacp::Apps::run<BlendingApp>();
-    return 0;
+    return eacp::Apps::run<BlendingApp>();
 }

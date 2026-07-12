@@ -48,7 +48,7 @@ struct WindowOptions
     {
         if (onQuit)
             return onQuit;
-        return isPrimary ? Callback {Apps::quit} : Callback {[] {}};
+        return isPrimary ? Callback {[] { Apps::quit(); }} : Callback {[] {}};
     }
 
     // When the user closes the window. If left empty, falls back to

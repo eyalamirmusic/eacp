@@ -2,6 +2,5 @@
 
 int main(int argc, char* argv[])
 {
-    eacp::Apps::run<MyApp>(argc, argv);
-    return 0;
+    return eacp::Apps::run<MyApp>(argc, argv);
 }

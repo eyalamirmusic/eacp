@@ -15,3 +15,16 @@ auto tCocoaTerminateUnwindsRun =
     check(result.exitCode == 0);
     check(result.output == "app-destroyed\nrun-returned\n");
 };
+
+// quit(returnValue) must flow out of run<T>() so main can return it as the
+// process exit code.
+auto tQuitReturnValueBecomesExitCode =
+    test("App/quitReturnValueBecomesProcessExitCode") = []
+{
+    auto result = Proc::run(EACP_TERMINATION_HARNESS, {"quit-code"});
+
+    check(result.launched);
+    check(result.exited);
+    check(result.exitCode == 42);
+    check(result.output == "app-destroyed\nrun-returned\n");
+};

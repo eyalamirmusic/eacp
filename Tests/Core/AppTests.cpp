@@ -205,6 +205,27 @@ auto tQuitStopsLoopAndKeepsAppUntilTeardown =
     resetAppState();
 };
 
+auto tQuitWithReturnValueStoresIt = test("App/quitWithReturnValueStoresIt") = []
+{
+    resetAppState();
+    installCountedFactory();
+    eacp::Apps::setReturnValue(0);
+
+    auto stopped = runEventLoopFor(eacp::Time::MS {2000},
+                                   []
+                                   {
+                                       getAppFactory()();
+                                       callAsync([] { quit(7); });
+                                   });
+
+    check(stopped);
+    check(eacp::Apps::getReturnValue() == 7);
+
+    eacp::Apps::destroyApp();
+    eacp::Apps::setReturnValue(0);
+    resetAppState();
+};
+
 // Test binaries are local builds — unsigned or linker ad-hoc signed — so the
 // distribution check must say no. (The positive case needs a Developer
 // ID/Authenticode-signed binary, which a local test run can't produce.)

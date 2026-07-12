@@ -807,6 +807,5 @@ struct TaskBoardApp
 
 int main()
 {
-    eacp::Apps::run<TaskBoardApp>();
-    return 0;
+    return eacp::Apps::run<TaskBoardApp>();
 }

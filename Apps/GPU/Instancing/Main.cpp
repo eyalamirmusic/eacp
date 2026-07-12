@@ -556,6 +556,5 @@ struct InstancingApp
 
 int main()
 {
-    eacp::Apps::run<InstancingApp>();
-    return 0;
+    return eacp::Apps::run<InstancingApp>();
 }

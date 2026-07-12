@@ -2,6 +2,8 @@
 #include "AppEnvironment.h"
 #include "../Utils/Singleton.h"
 
+#include <atomic>
+
 namespace eacp::Apps
 {
 AppHandle& getGlobalApp()
@@ -42,6 +44,17 @@ void destroyApp()
 namespace
 {
 bool s_runningAsPlugin = false;
+std::atomic<int> s_returnValue {0};
+} // namespace
+
+void setReturnValue(int returnValue)
+{
+    s_returnValue = returnValue;
+}
+
+int getReturnValue()
+{
+    return s_returnValue;
 }
 
 bool isRunningAsPlugin()
@@ -75,6 +88,25 @@ static void quitSync()
 void quit()
 {
     Threads::callAsync(quitSync);
+}
+
+void quit(int returnValue)
+{
+    setReturnValue(returnValue);
+    quit();
+}
+
+int run(const Callback& func)
+{
+    setReturnValue(0);
+    Threads::runEventLoop(
+        [&func]
+        {
+            func();
+            quit();
+        });
+
+    return getReturnValue();
 }
 
 void restart()

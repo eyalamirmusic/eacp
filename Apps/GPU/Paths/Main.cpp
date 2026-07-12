@@ -116,6 +116,5 @@ struct PathsApp
 
 int main()
 {
-    eacp::Apps::run<PathsApp>();
-    return 0;
+    return eacp::Apps::run<PathsApp>();
 }
