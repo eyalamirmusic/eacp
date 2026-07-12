@@ -5,6 +5,9 @@
 
 #include "../HTTP/HttpProtocol.h"
 
+#include <atomic>
+#include <mutex>
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
 

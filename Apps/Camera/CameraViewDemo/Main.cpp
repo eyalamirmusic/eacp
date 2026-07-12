@@ -1,4 +1,5 @@
 #include <eacp/CameraView/CameraView.h>
+#include <algorithm>
 
 #include <cstdio>
 #include <cstdlib>

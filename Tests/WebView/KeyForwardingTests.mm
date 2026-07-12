@@ -10,7 +10,6 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
-using namespace std::chrono_literals;
 
 namespace
 {
@@ -59,7 +58,7 @@ struct Fixture
             return true;
         };
         webView.loadHTML(pageHtml);
-        check(Threads::runEventLoopUntil([this] { return ready; }, 10s));
+        check(Threads::runEventLoopUntil([this] { return ready; }, eacp::Time::MS {10000}));
         webView.focusContent();
     }
 
@@ -73,7 +72,7 @@ struct Fixture
 
         auto* nsWindow = (NSWindow*) window.getHandle();
         auto isKey = Threads::runEventLoopUntil(
-            [nsWindow] { return nsWindow.keyWindow; }, 2s);
+            [nsWindow] { return nsWindow.keyWindow; }, eacp::Time::MS {2000});
 
         if (isKey)
             webView.focusContent();
@@ -115,12 +114,12 @@ struct Fixture
     bool waitForReceivedCount(int count)
     {
         return Threads::runEventLoopUntil(
-            [this, count] { return received.size() >= count; }, 10s);
+            [this, count] { return received.size() >= count; }, eacp::Time::MS {10000});
     }
 
     void runJS(const std::string& script)
     {
-        webView.callJS(script + "; 'ok'").waitFor(10s);
+        webView.callJS(script + "; 'ok'").waitFor(eacp::Time::MS {10000});
     }
 };
 } // namespace

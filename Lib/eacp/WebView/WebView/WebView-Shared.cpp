@@ -1,4 +1,5 @@
 #include "WebView.h"
+#include <algorithm>
 
 #include "DevServerProbe.h"
 #include "JsStringLiteral.h"

@@ -75,7 +75,7 @@ struct D3D12Pipeline
     // Per-slot strides so multi-buffer draws (e.g. instancing) know the
     // stride at each bound slot when setVertexBuffer wires the D3D12 view.
     // Legacy single-buffer pipelines carry one entry at index 0.
-    std::vector<UINT> strides;
+    Vector<UINT> strides;
     bool depth = false;
 };
 
@@ -86,11 +86,11 @@ struct D3D12Pipeline
 // slot 0) still bind correctly when the caller happens to pass a non-zero
 // slot index. Kept in one place so the two sites can't drift apart on the
 // platform I can't test.
-inline UINT strideForSlot(const std::vector<UINT>& strides, int slot)
+inline UINT strideForSlot(const Vector<UINT>& strides, int slot)
 {
-    if (slot >= 0 && slot < static_cast<int>(strides.size()))
+    if (slot >= 0 && slot < strides.size())
         return strides[slot];
-    if (! strides.empty())
+    if (!strides.empty())
         return strides[0];
     return 0;
 }
@@ -155,7 +155,7 @@ struct D3D12DepthTarget
 struct D3D12Encoder
 {
     CommandContext* commands = nullptr;
-    std::vector<UINT> strides;
+    Vector<UINT> strides;
 };
 
 // The compute sibling of D3D12Encoder. The CommandContext stays owned by the

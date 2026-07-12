@@ -5,6 +5,7 @@
 #include "WebView.h"
 #include "WebViewPlatform-Apple.h"
 #include "StreamingRange.h"
+#include <algorithm>
 
 #include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/ObjC/Strings.h>

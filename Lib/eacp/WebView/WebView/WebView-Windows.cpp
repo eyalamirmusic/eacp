@@ -1,4 +1,5 @@
 #include <eacp/Core/Utils/WinInclude.h>
+#include <algorithm>
 
 #include "WebView.h"
 #include "StreamingRange.h"

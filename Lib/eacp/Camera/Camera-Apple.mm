@@ -1,4 +1,5 @@
 #import <AVFoundation/AVFoundation.h>
+#include <algorithm>
 
 #include "Camera.h"
 #include "CameraDevices-Apple.h"

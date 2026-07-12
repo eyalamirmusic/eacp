@@ -1,5 +1,6 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <ImageIO/ImageIO.h>
+#include <algorithm>
 
 #include "ImageCodec.h"
 

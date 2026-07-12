@@ -1,5 +1,6 @@
 #include "ImageCodec.h"
 #include "../Common-Windows.h"
+#include <algorithm>
 
 #include <objbase.h>
 #include <wincodec.h>

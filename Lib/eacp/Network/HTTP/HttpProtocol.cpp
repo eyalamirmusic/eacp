@@ -1,5 +1,7 @@
 #include "HttpProtocol.h"
 
+#include <sstream>
+
 namespace eacp::HTTP
 {
 

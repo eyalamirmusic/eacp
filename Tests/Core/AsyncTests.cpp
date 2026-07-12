@@ -18,7 +18,7 @@ auto tWaitForReturnsResolvedValue =
 
     callAsync([promise] { promise.resolve(42); });
 
-    auto value = async.waitFor(1s);
+    auto value = async.waitFor(eacp::Time::MS {1000});
 
     check(value == 42);
 };
@@ -33,7 +33,7 @@ auto tWaitForThrowsOnReject = test("Async/waitFor/rejectionThrowsAsyncError") = 
     auto threw = false;
     try
     {
-        async.waitFor(1s);
+        async.waitFor(eacp::Time::MS {1000});
     }
     catch (const AsyncError& e)
     {
@@ -52,7 +52,7 @@ auto tWaitForThrowsOnTimeout = test("Async/waitFor/timeoutThrowsAsyncError") = [
     auto threw = false;
     try
     {
-        async.waitFor(50ms);
+        async.waitFor(eacp::Time::MS {50});
     }
     catch (const AsyncError&)
     {
@@ -70,7 +70,7 @@ auto tAlreadyResolvedReturnsWithoutPumping =
     auto async = promise.get();
     promise.resolve("hello");
 
-    auto value = async.waitFor(1s);
+    auto value = async.waitFor(eacp::Time::MS {1000});
 
     check(value == "hello");
     check(async.isReady());
@@ -83,7 +83,7 @@ auto tVoidWaitForResolves = test("Async/waitFor/voidResolves") = []
 
     callAsync([promise] { promise.resolve(); });
 
-    async.waitFor(1s);
+    async.waitFor(eacp::Time::MS {1000});
     check(async.isResolved());
 };
 
@@ -97,7 +97,7 @@ auto tVoidWaitForRejects = test("Async/waitFor/voidRejects") = []
     auto threw = false;
     try
     {
-        async.waitFor(1s);
+        async.waitFor(eacp::Time::MS {1000});
     }
     catch (const AsyncError& e)
     {
@@ -121,7 +121,7 @@ auto tThenFiresAfterResolve = test("Async/then/firesAfterResolve") = []
             promise.resolve(7);
             callAsync([] { eacp::Threads::stopEventLoop(); });
         });
-    eacp::Threads::runEventLoopFor(1s);
+    eacp::Threads::runEventLoopFor(eacp::Time::MS {1000});
 
     check(received == 7);
 };
@@ -153,7 +153,7 @@ auto tThenInvokesErrorCallback = test("Async/then/invokesErrorCallback") = []
             promise.reject("bad");
             callAsync([] { eacp::Threads::stopEventLoop(); });
         });
-    eacp::Threads::runEventLoopFor(1s);
+    eacp::Threads::runEventLoopFor(eacp::Time::MS {1000});
 
     check(received == "bad");
 };
@@ -171,7 +171,7 @@ auto tWorkerThreadResolvesViaCallAsync =
             callAsync([promise] { promise.resolve(123); });
         });
 
-    auto value = async.waitFor(2s);
+    auto value = async.waitFor(eacp::Time::MS {2000});
     worker.join();
 
     check(value == 123);

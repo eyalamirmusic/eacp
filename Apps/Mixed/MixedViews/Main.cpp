@@ -1,5 +1,6 @@
 #include <eacp/CameraView/CameraView.h>
 #include <eacp/WebView/WebView.h>
+#include <algorithm>
 
 #include <cstdlib>
 

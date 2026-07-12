@@ -1,7 +1,9 @@
 #include "HttpServerDispatcher.h"
+#include <algorithm>
 
 #include <condition_variable>
 #include <deque>
+#include <mutex>
 #include <thread>
 
 namespace eacp::HTTP

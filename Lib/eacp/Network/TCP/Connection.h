@@ -17,8 +17,8 @@ struct Address
 // — what a long-lived server wants for accept() and reads.
 struct Timeouts
 {
-    std::chrono::milliseconds connect {15000};
-    std::chrono::milliseconds io {20000};
+    Time::MS connect {15000};
+    Time::MS io {20000};
 };
 
 // Every failure - name resolution, refused connect, timeout, peer hangup -

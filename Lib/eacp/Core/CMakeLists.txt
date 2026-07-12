@@ -17,7 +17,8 @@ target_sources(eacp-core PRIVATE
         Utils/Files.cpp
         Utils/Logging.cpp
         Utils/Random.cpp
-        Utils/Strings.cpp)
+        Utils/Strings.cpp
+        Utils/Time.cpp)
 
 if (APPLE)
     target_sources(eacp-core PRIVATE

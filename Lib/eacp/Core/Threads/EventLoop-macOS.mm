@@ -118,24 +118,22 @@ void EventLoop::run()
     enterRootRunLoop();
 }
 
-bool EventLoop::runFor(std::chrono::milliseconds timeout)
+bool EventLoop::runFor(Time::MS timeout)
 {
     s_nestedDepth++;
     s_quitRequested = false;
 
-    auto deadline = std::chrono::steady_clock::now() + timeout;
+    auto deadline = Time::Deadline {timeout};
 
     while (! s_quitRequested)
     {
-        auto now = std::chrono::steady_clock::now();
-        if (now >= deadline)
+        if (deadline.expired())
         {
             s_nestedDepth--;
             return false;
         }
 
-        auto remainingSecs =
-            std::chrono::duration<double>(deadline - now).count();
+        auto remainingSecs = (double) deadline.remaining().count / 1000.0;
         auto* date = [NSDate dateWithTimeIntervalSinceNow:remainingSecs];
 
         auto* event = [getApp() nextEventMatchingMask:NSEventMaskAny

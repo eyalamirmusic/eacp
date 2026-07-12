@@ -1,4 +1,5 @@
 #include "Primitives.h"
+#include <algorithm>
 
 namespace eacp::Graphics
 {

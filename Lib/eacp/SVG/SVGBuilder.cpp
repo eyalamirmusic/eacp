@@ -1,6 +1,7 @@
 #include "SVGBuilder.h"
 #include "SVGAttributes.h"
 #include "SVGPathParser.h"
+#include <algorithm>
 
 namespace eacp::SVG
 {

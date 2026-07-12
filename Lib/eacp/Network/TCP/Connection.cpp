@@ -1,4 +1,5 @@
 #include "Connection.h"
+#include <algorithm>
 
 #include "ConnectionInternal.h"
 

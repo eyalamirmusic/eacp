@@ -1,4 +1,5 @@
 #include "PathTessellator.h"
+#include <algorithm>
 
 #include "../Common.h"
 

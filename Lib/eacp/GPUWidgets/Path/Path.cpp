@@ -1,4 +1,5 @@
 #include "Path.h"
+#include <algorithm>
 
 #include "../Common.h"
 

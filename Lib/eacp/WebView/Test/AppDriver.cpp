@@ -229,8 +229,7 @@ Threads::Async<void> AppDriver::waitForFirstNavigationAsync(const CallOptions&)
 
 void AppDriver::waitForFirstNavigation(const CallOptions& opts)
 {
-    auto timeout = std::chrono::milliseconds {opts.timeoutMs ? *opts.timeoutMs
-                                                             : startupTimeoutMs};
+    auto timeout = Time::MS {opts.timeoutMs ? *opts.timeoutMs : startupTimeoutMs};
     try
     {
         firstNavigation.waitFor(timeout);
@@ -247,7 +246,7 @@ void AppDriver::waitForFirstNavigation(const CallOptions& opts)
 
         throw std::runtime_error("AppDriver: page did not finish loading "
                                  "within "
-                                 + std::to_string(timeout.count()) + "ms");
+                                 + std::to_string(timeout.count) + "ms");
     }
 }
 
@@ -295,7 +294,7 @@ constexpr auto syncTimeoutBufferMs = 1000;
 
 } // namespace
 
-std::chrono::milliseconds AppDriver::syncOuterTimeout(int innerTimeoutMs) const
+Time::MS AppDriver::syncOuterTimeout(int innerTimeoutMs) const
 {
     // Until the first navigation has fired, the inner coroutine is
     // still waiting on the page load, which gets the (much larger)
@@ -303,8 +302,7 @@ std::chrono::milliseconds AppDriver::syncOuterTimeout(int innerTimeoutMs) const
     // start isn't cut short by the per-command timeout.
     auto startupGraceMs = firstNavigationFired ? 0 : startupTimeoutMs;
 
-    return std::chrono::milliseconds {innerTimeoutMs + syncTimeoutBufferMs
-                                      + startupGraceMs};
+    return Time::MS {innerTimeoutMs + syncTimeoutBufferMs + startupGraceMs};
 }
 
 Threads::Async<Miro::JSON> AppDriver::runJsAsync(const std::string& expression,
@@ -335,7 +333,7 @@ Vector<std::uint8_t> AppDriver::runSnapshotBytes(const CallOptions& opts)
 {
     waitForFirstNavigation(opts);
 
-    auto timeout = std::chrono::milliseconds {effectiveTimeoutMs(opts)};
+    auto timeout = Time::MS {effectiveTimeoutMs(opts)};
     auto state = SnapshotState {};
 
     webView.takeSnapshot(
@@ -351,7 +349,7 @@ Vector<std::uint8_t> AppDriver::runSnapshotBytes(const CallOptions& opts)
     {
         if (!Threads::runEventLoopFor(timeout) && !state.done)
             throw std::runtime_error("AppDriver: screenshot timed out after "
-                                     + std::to_string(timeout.count()) + "ms");
+                                     + std::to_string(timeout.count) + "ms");
     }
 
     if (!state.error.empty())
@@ -500,8 +498,7 @@ Threads::Async<bool> AppDriver::waitForAsync(const std::string& selector,
     // page responsiveness rather than (possibly slow) startup.
     co_await waitForFirstNavigationAsync({});
 
-    auto deadline = std::chrono::steady_clock::now()
-                    + std::chrono::milliseconds {effectiveTimeoutMs(opts)};
+    auto deadline = Time::Deadline {Time::MS {effectiveTimeoutMs(opts)}};
 
     while (true)
     {
@@ -509,11 +506,11 @@ Threads::Async<bool> AppDriver::waitForAsync(const std::string& selector,
             "window.__test.exists(" + jsStringLiteral(selector) + ")", {});
         if (asBool(result))
             co_return true;
-        if (std::chrono::steady_clock::now() >= deadline)
+        if (deadline.expired())
             throw std::runtime_error("AppDriver: waitFor timed out for "
                                      "selector: "
                                      + selector);
-        co_await Threads::delay(std::chrono::milliseconds {waitForPollMs});
+        co_await Threads::delay(Time::MS {waitForPollMs});
     }
 }
 
@@ -529,8 +526,7 @@ Threads::Async<bool> AppDriver::waitForCountAsync(const std::string& selector,
 {
     co_await waitForFirstNavigationAsync({});
 
-    auto deadline = std::chrono::steady_clock::now()
-                    + std::chrono::milliseconds {effectiveTimeoutMs(opts)};
+    auto deadline = Time::Deadline {Time::MS {effectiveTimeoutMs(opts)}};
 
     while (true)
     {
@@ -538,12 +534,12 @@ Threads::Async<bool> AppDriver::waitForCountAsync(const std::string& selector,
             "window.__test.count(" + jsStringLiteral(selector) + ")", {});
         if (asInt(result) == count)
             co_return true;
-        if (std::chrono::steady_clock::now() >= deadline)
+        if (deadline.expired())
             throw std::runtime_error("AppDriver: waitForCount timed out for "
                                      "selector: "
                                      + selector + " (expected "
                                      + std::to_string(count) + ")");
-        co_await Threads::delay(std::chrono::milliseconds {waitForPollMs});
+        co_await Threads::delay(Time::MS {waitForPollMs});
     }
 }
 

@@ -6,8 +6,6 @@
 #include "../Shader/ShaderLibrary.h"
 #include "../Windows/D3D12Types.h"
 
-#include <vector>
-
 #include <winrt/base.h>
 
 // Windows/D3D12 backend. Everything the D3D11 backend kept as five separate
@@ -84,9 +82,9 @@ StepRate stepRateForSlot(const VertexLayout& layout, int slot)
     return StepRate::PerVertex;
 }
 
-std::vector<D3D12_INPUT_ELEMENT_DESC> makeInputLayout(const VertexLayout& layout)
+Vector<D3D12_INPUT_ELEMENT_DESC> makeInputLayout(const VertexLayout& layout)
 {
-    auto elements = std::vector<D3D12_INPUT_ELEMENT_DESC>();
+    auto elements = Vector<D3D12_INPUT_ELEMENT_DESC>();
 
     for (auto i = 0; i < layout.attributes.size(); ++i)
     {
@@ -114,11 +112,11 @@ std::vector<D3D12_INPUT_ELEMENT_DESC> makeInputLayout(const VertexLayout& layout
 // Builds the per-slot stride table the RenderPass reads at setVertexBuffer
 // time. Populated from layout.buffers when present; falls back to a single
 // slot with layout.stride so single-buffer callers see no behavioural change.
-std::vector<UINT> makeStrideTable(const VertexLayout& layout)
+Vector<UINT> makeStrideTable(const VertexLayout& layout)
 {
     if (!layout.buffers.empty())
     {
-        auto strides = std::vector<UINT>();
+        auto strides = Vector<UINT>();
         strides.reserve(layout.buffers.size());
         for (auto i = 0; i < layout.buffers.size(); ++i)
             strides.push_back(static_cast<UINT>(layout.buffers[i].stride));

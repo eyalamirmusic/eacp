@@ -182,7 +182,7 @@ public:
             cont();
     }
 
-    T waitFor(std::chrono::milliseconds timeout)
+    T waitFor(Time::MS timeout)
     {
         pumpUntilSettled(timeout);
         throwIfRejected();
@@ -244,7 +244,7 @@ private:
             cb(*s.value);
     }
 
-    void pumpUntilSettled(std::chrono::milliseconds timeout)
+    void pumpUntilSettled(Time::MS timeout)
     {
         assertMainThread();
         if (!state)
@@ -261,17 +261,10 @@ private:
         // before our state has settled — re-enter and keep pumping
         // until either the state actually settles or the deadline
         // expires.
-        auto deadline = std::chrono::steady_clock::now() + timeout;
-        while (state->status == detail::AsyncState<T>::Status::Pending)
-        {
-            auto now = std::chrono::steady_clock::now();
-            if (now >= deadline)
-                break;
-
-            auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-                deadline - now);
-            runEventLoopFor(remaining);
-        }
+        auto deadline = Time::Deadline {timeout};
+        while (state->status == detail::AsyncState<T>::Status::Pending
+               && !deadline.expired())
+            runEventLoopFor(deadline.remaining());
 
         if (state->status == detail::AsyncState<T>::Status::Pending)
             throw AsyncError {"Async::waitFor timed out"};
@@ -286,6 +279,6 @@ private:
     std::shared_ptr<detail::AsyncState<T>> state;
 };
 
-Async<void> delay(std::chrono::milliseconds duration);
+Async<void> delay(Time::MS duration);
 
 } // namespace eacp::Threads

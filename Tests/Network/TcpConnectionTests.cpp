@@ -15,7 +15,7 @@ namespace
 // hanging on the generous production defaults.
 eacp::TCP::Timeouts testTimeouts()
 {
-    return {2000ms, 2000ms};
+    return {eacp::Time::MS {2000}, eacp::Time::MS {2000}};
 }
 
 Connection dial(const Listener& listener)
@@ -370,7 +370,7 @@ auto tMoveListener = test("Tcp/movingAListenerKeepsItServing") = []
 
 auto tAcceptTimeout = test("Tcp/acceptTimesOutWhenNoClientConnects") = []
 {
-    auto listener = Listener::bind(0, {200ms, 2000ms});
+    auto listener = Listener::bind(0, {eacp::Time::MS {200}, eacp::Time::MS {2000}});
 
     auto threw = false;
     try
@@ -539,8 +539,8 @@ auto tIdleReceiveTimesOut =
         });
 
     // Short io timeout so the idle read trips quickly.
-    auto client =
-        Connection::connect({"127.0.0.1", listener.port()}, {2000ms, 200ms});
+    auto client = Connection::connect({"127.0.0.1", listener.port()},
+                                      {eacp::Time::MS {2000}, eacp::Time::MS {200}});
 
     auto timedOut = false;
     try
@@ -628,7 +628,8 @@ auto tUnreachableHost = test("Tcp/connectToAnUnreachableHostFails") = []
     auto threw = false;
     try
     {
-        auto client = Connection::connect({"192.0.2.1", 80}, {800ms, 800ms});
+        auto client = Connection::connect(
+            {"192.0.2.1", 80}, {eacp::Time::MS {800}, eacp::Time::MS {800}});
     }
     catch (const Error&)
     {

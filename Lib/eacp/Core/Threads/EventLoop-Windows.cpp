@@ -264,28 +264,26 @@ void EventLoop::run()
     shutdownMainThread();
 }
 
-bool EventLoop::runFor(std::chrono::milliseconds timeout)
+bool EventLoop::runFor(Time::MS timeout)
 {
     initLoopThread();
 
     runForDepth++;
     auto popDepth = std::shared_ptr<void> {nullptr, [](void*) { runForDepth--; }};
 
-    auto deadline = std::chrono::steady_clock::now() + timeout;
+    auto deadline = Time::Deadline {timeout};
     auto timedOut = false;
     auto running = true;
 
     while (running)
     {
-        auto now = std::chrono::steady_clock::now();
-        if (now >= deadline)
+        if (deadline.expired())
         {
             timedOut = true;
             break;
         }
 
-        auto remaining =
-            std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
+        auto remaining = deadline.remaining().count;
 
         auto wait = MsgWaitForMultipleObjectsEx(
             0, nullptr, (DWORD) remaining, QS_ALLINPUT, MWMO_INPUTAVAILABLE);

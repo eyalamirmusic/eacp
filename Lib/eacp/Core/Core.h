@@ -7,7 +7,6 @@
 #include "Plugins/ModuleInfo.h"
 #include "Plugins/PluginExport.h"
 #include "Process/Process.h"
-#include "Threads/TaskSemaphore.h"
 #include "Threads/Timer.h"
 #include "Utils/Broadcaster.h"
 #include "Utils/File.h"

@@ -5,7 +5,6 @@
 #include <cstdio>
 
 using namespace eacp;
-using namespace std::chrono_literals;
 
 namespace
 {
@@ -113,7 +112,7 @@ void captureFrames(const Cameras::CameraDevice& device)
 
     std::printf("Capturing... (up to 10 frames or 8s)\n");
     Threads::runEventLoopUntil([frameCount] { return frameCount->load() >= 10; },
-                               8000ms);
+                               Time::MS {8000});
 
     camera->stop();
     std::printf("\nDone. Total frames: %d\n", frameCount->load());

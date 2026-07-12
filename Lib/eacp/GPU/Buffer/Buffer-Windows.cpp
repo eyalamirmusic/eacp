@@ -85,7 +85,7 @@ struct Buffer::Native
 
         commands->list->CopyBufferRegion(
             bufferData.resource.get(), 0, staging.get(), 0, bytes);
-        commands->transients.push_back(std::move(staging));
+        commands->transients.add(std::move(staging));
         context.submit(commands);
     }
 

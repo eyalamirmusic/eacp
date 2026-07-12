@@ -36,7 +36,7 @@ void performDownload(Server& server,
                      const Request& clientRequest,
                      const std::string& destPath,
                      DownloadOutcome& out,
-                     std::chrono::milliseconds timeout = std::chrono::seconds(5))
+                     eacp::Time::MS timeout = eacp::Time::MS {5000})
 {
     auto worker = std::thread();
     auto stopped = eacp::Threads::runEventLoopFor(
@@ -188,8 +188,7 @@ auto tCancelHaltsTransfer = test("HttpDownloadProgress/cancelHaltsTransfer") = [
     req.progress = &progress;
 
     auto out = DownloadOutcome();
-    performDownload(
-        server, req, tempPath("cancel.bin"), out, std::chrono::seconds(5));
+    performDownload(server, req, tempPath("cancel.bin"), out, eacp::Time::MS {5000});
 
     check(progress.done.load());
     check(progress.cancel.load());

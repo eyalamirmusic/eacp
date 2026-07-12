@@ -17,7 +17,7 @@ auto tReadyImmediatelyReturnsTrue = test("EventLoop/runUntil/readyImmediately") 
             ++called;
             return true;
         },
-        1s);
+        eacp::Time::MS {1000});
 
     check(ok);
     check(called == 1);
@@ -30,7 +30,7 @@ auto tCallAsyncFlipsPredicate =
 
     callAsync([&] { flag = true; });
 
-    auto ok = runEventLoopUntil([&] { return flag; }, 1s);
+    auto ok = runEventLoopUntil([&] { return flag; }, eacp::Time::MS {1000});
 
     check(ok);
     check(flag);
@@ -41,7 +41,7 @@ auto tTimeoutReturnsFalse = test("EventLoop/runUntil/timeoutReturnsFalse") = []
     auto flag = false;
 
     auto start = std::chrono::steady_clock::now();
-    auto ok = runEventLoopUntil([&] { return flag; }, 100ms);
+    auto ok = runEventLoopUntil([&] { return flag; }, eacp::Time::MS {100});
     auto elapsed = std::chrono::steady_clock::now() - start;
 
     check(!ok);
@@ -61,7 +61,7 @@ auto tWorkerThreadFlipsPredicate =
             callAsync([&] { flag = true; });
         });
 
-    auto ok = runEventLoopUntil([&] { return flag; }, 2s);
+    auto ok = runEventLoopUntil([&] { return flag; }, eacp::Time::MS {2000});
     worker.join();
 
     check(ok);

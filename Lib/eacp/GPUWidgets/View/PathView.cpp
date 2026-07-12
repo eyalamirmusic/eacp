@@ -1,4 +1,5 @@
 #include "PathView.h"
+#include <algorithm>
 
 #include "../Gradient.h"
 #include "../Path/PathTessellator.h"

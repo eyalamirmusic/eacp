@@ -107,27 +107,25 @@ void EventLoop::run()
     }
 }
 
-bool EventLoop::runFor(std::chrono::milliseconds timeout)
+bool EventLoop::runFor(Time::MS timeout)
 {
     initMainThread();
 
     auto& loop = getLoop();
     loop.running = true;
 
-    auto deadline = std::chrono::steady_clock::now() + timeout;
+    auto deadline = Time::Deadline {timeout};
     auto timedOut = false;
 
     while (loop.running)
     {
-        auto now = std::chrono::steady_clock::now();
-        if (now >= deadline)
+        if (deadline.expired())
         {
             timedOut = true;
             break;
         }
 
-        auto remaining =
-            std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
+        auto remaining = deadline.remaining().count;
 
         auto pfd = pollfd {loop.waker.readFd, POLLIN, 0};
         auto r = ::poll(&pfd, 1, (int) remaining);

@@ -116,7 +116,7 @@ TestApp<T>& createTestApp(std::string_view readySelector = {})
     return instance;
 }
 
-inline constexpr auto defaultTestTimeout = std::chrono::seconds {10};
+inline constexpr auto defaultTestTimeout = Time::MS {10000};
 
 // Drop-in nano::test replacement that fires all registered fixture
 // restarts before the body runs, and transparently handles both

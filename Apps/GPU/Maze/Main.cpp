@@ -1,4 +1,5 @@
 #include <eacp/GPU/GPU.h>
+#include <algorithm>
 
 using namespace eacp;
 using namespace GPU;

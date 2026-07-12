@@ -1,4 +1,5 @@
 #include <eacp/GPU/GPU.h>
+#include <algorithm>
 
 #include "TeapotData.h"
 

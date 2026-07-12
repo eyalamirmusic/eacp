@@ -12,7 +12,6 @@
 // the same way Tests/Core/AsyncTests.cpp does in a bare NanoTest main.
 
 using namespace nano;
-using namespace std::chrono_literals;
 
 using eacp::Graphics::CommandExecution;
 using eacp::Graphics::resolveWith;
@@ -96,7 +95,7 @@ auto tDeferredResolvesWithHandlerResult =
     auto work =
         runCommand(CommandExecution::MainThreadDeferred, echoInvoke(bridge, "hi"));
 
-    auto result = work.waitFor(1s);
+    auto result = work.waitFor(eacp::Time::MS {1000});
 
     check(result.isObject());
     check(result["echoed"].asString() == "hi!");
@@ -112,7 +111,7 @@ auto tWorkerThreadResolvesWithHandlerResult =
     auto work =
         runCommand(CommandExecution::WorkerThread, echoInvoke(bridge, "worker"));
 
-    auto result = work.waitFor(1s);
+    auto result = work.waitFor(eacp::Time::MS {1000});
 
     check(result.isObject());
     check(result["echoed"].asString() == "worker!");
@@ -145,7 +144,8 @@ auto tDeferredDoesNotRunInline =
     check(!delivered.has_value());
     check(!failed.has_value());
 
-    eacp::Threads::runEventLoopUntil([&] { return delivered || failed; }, 1s);
+    eacp::Threads::runEventLoopUntil([&] { return delivered || failed; },
+                                     eacp::Time::MS {1000});
 
     check(delivered.has_value());
     check(*delivered == "later!");
@@ -165,7 +165,7 @@ auto tAsyncHandlerResolvesLater =
     auto work = runCommand(CommandExecution::MainThreadDeferred,
                            dispatchInvoke(bridge, "echoAsync", "later"));
 
-    auto result = work.waitFor(1s);
+    auto result = work.waitFor(eacp::Time::MS {1000});
 
     check(result.isObject());
     check(result["echoed"].asString() == "later!");
@@ -184,7 +184,7 @@ auto tAsyncHandlerRejects =
     auto threw = false;
     try
     {
-        work.waitFor(1s);
+        work.waitFor(eacp::Time::MS {1000});
     }
     catch (const eacp::Threads::AsyncError& e)
     {
@@ -208,7 +208,7 @@ auto tUnknownCommandRejects = test("AsyncBridge/unknownCommand/surfacesAsError")
     auto threw = false;
     try
     {
-        work.waitFor(1s);
+        work.waitFor(eacp::Time::MS {1000});
     }
     catch (const eacp::Threads::AsyncError& e)
     {

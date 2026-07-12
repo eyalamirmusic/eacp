@@ -1,4 +1,5 @@
 #include "Process.h"
+#include <algorithm>
 
 #include "../Utils/WinInclude.h"
 

@@ -2,6 +2,9 @@
 
 #include "../Common.h"
 
+#include <atomic>
+#include <map>
+
 namespace eacp::HTTP
 {
 

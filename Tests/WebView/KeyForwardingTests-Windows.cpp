@@ -13,7 +13,6 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
-using namespace std::chrono_literals;
 
 namespace
 {
@@ -60,7 +59,8 @@ struct Fixture
             return true;
         };
         webView.loadHTML(pageHtml);
-        check(Threads::runEventLoopUntil([this] { return ready; }, 10s));
+        check(Threads::runEventLoopUntil([this] { return ready; },
+                                         eacp::Time::MS {10000}));
     }
 
     // Dispatches a genuine DOM KeyboardEvent so the injected key-events.js runs
@@ -77,13 +77,14 @@ struct Fixture
         auto script = target + ".dispatchEvent(new KeyboardEvent('" + type
                       + "', {key: '" + key + "', keyCode: " + std::to_string(keyCode)
                       + ", bubbles: true, cancelable: true}))";
-        webView.callJS(script + "; 'ok'").waitFor(10s);
+        webView.callJS(script + "; 'ok'").waitFor(eacp::Time::MS {10000});
     }
 
     bool waitForReceivedCount(int count)
     {
-        return Threads::runEventLoopUntil(
-            [this, count] { return received.size() >= count; }, 10s);
+        return Threads::runEventLoopUntil([this, count]
+                                          { return received.size() >= count; },
+                                          eacp::Time::MS {10000});
     }
 };
 } // namespace

@@ -3,6 +3,7 @@
 #include <fstream>
 #include <system_error>
 #include <thread>
+#include <chrono>
 
 using namespace nano;
 using eacp::HTTP::DownloadProgress;
@@ -112,7 +113,7 @@ void performDownload(Server& server,
                      const Request& clientRequest,
                      const std::string& destPath,
                      ParallelOutcome& out,
-                     std::chrono::milliseconds timeout = std::chrono::seconds(15))
+                     eacp::Time::MS timeout = eacp::Time::MS {15000})
 {
     auto worker = std::thread();
     auto stopped = eacp::Threads::runEventLoopFor(

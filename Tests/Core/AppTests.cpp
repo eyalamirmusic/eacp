@@ -93,7 +93,7 @@ auto tRestartReplacesInstance =
     installCountedFactory();
 
     auto stopped =
-        runEventLoopFor(std::chrono::seconds(2),
+        runEventLoopFor(eacp::Time::MS {2000},
                         []
                         {
                             getAppFactory()();
@@ -130,7 +130,7 @@ auto tRestartWithoutFactoryIsSafe = test("App/restartIsNoOpWhenFactoryIsEmpty") 
     resetAppState();
 
     auto stopped =
-        runEventLoopFor(std::chrono::seconds(2),
+        runEventLoopFor(eacp::Time::MS {2000},
                         []
                         {
                             restart();
@@ -155,7 +155,7 @@ auto tRestartFromAnyThread = test("App/restartIsSafeFromBackgroundThread") = []
 
     auto worker = std::thread();
 
-    auto stopped = runEventLoopFor(std::chrono::seconds(2),
+    auto stopped = runEventLoopFor(eacp::Time::MS {2000},
                                    [&]
                                    {
                                        getAppFactory()();
@@ -186,7 +186,7 @@ auto tQuitStopsLoopAndKeepsAppUntilTeardown =
     resetAppState();
     installCountedFactory();
 
-    auto stopped = runEventLoopFor(std::chrono::seconds(2),
+    auto stopped = runEventLoopFor(eacp::Time::MS {2000},
                                    []
                                    {
                                        getAppFactory()();

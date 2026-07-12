@@ -1,6 +1,7 @@
 #include <eacp/WebView/WebView.h>
 #include <eacp/Core/Utils/StdPath.h>
 #include <WebResources.h>
+#include <algorithm>
 
 #include <array>
 #include <cstdlib>

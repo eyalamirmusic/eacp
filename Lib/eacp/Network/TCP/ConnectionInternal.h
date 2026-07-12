@@ -18,8 +18,8 @@ inline constexpr NativeSocket invalidSocket = -1;
 // Resolves address and connects within connectTimeout, then arms the socket
 // so each later send/receive obeys ioTimeout. Throws TCP::Error on failure.
 NativeSocket socketConnect(const Address& address,
-                           std::chrono::milliseconds connectTimeout,
-                           std::chrono::milliseconds ioTimeout);
+                           Time::MS connectTimeout,
+                           Time::MS ioTimeout);
 
 // Closes the handle. A no-op on invalidSocket, so it is always safe to call.
 void socketClose(NativeSocket socket) noexcept;
@@ -40,8 +40,8 @@ NativeSocket socketListen(std::uint16_t port, std::uint16_t& boundPort);
 // with ioTimeout and writes the peer's address to peer. Throws TCP::Error on
 // timeout or failure.
 NativeSocket socketAccept(NativeSocket listenSocket,
-                          std::chrono::milliseconds acceptTimeout,
-                          std::chrono::milliseconds ioTimeout,
+                          Time::MS acceptTimeout,
+                          Time::MS ioTimeout,
                           Address& peer);
 
 } // namespace eacp::TCP::detail

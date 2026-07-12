@@ -1,6 +1,8 @@
 #include "Common.h"
 #include <thread>
 #include <vector>
+#include <algorithm>
+#include <chrono>
 
 using namespace nano;
 using eacp::HTTP::Request;
@@ -38,7 +40,7 @@ void performExchange(Server& server, const Request& clientRequest, Exchange& out
     auto worker = std::thread();
 
     auto stopped = eacp::Threads::runEventLoopFor(
-        std::chrono::seconds(5),
+        eacp::Time::MS {5000},
         [&]
         {
             worker = std::thread(
@@ -60,11 +62,10 @@ struct ParallelExchange
     bool completed = false;
 };
 
-void performParallelExchange(
-    Server& server,
-    const std::vector<Request>& requests,
-    ParallelExchange& out,
-    std::chrono::milliseconds timeout = std::chrono::seconds(10))
+void performParallelExchange(Server& server,
+                             const std::vector<Request>& requests,
+                             ParallelExchange& out,
+                             eacp::Time::MS timeout = eacp::Time::MS {10000})
 {
     auto n = requests.size();
     out.responses.assign(n, Response());

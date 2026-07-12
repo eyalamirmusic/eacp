@@ -40,7 +40,7 @@ void performExchange(eacp::HTTP::Server& server,
     auto worker = std::thread();
 
     auto stopped = eacp::Threads::runEventLoopFor(
-        std::chrono::seconds(5),
+        eacp::Time::MS {5000},
         [&]
         {
             worker = std::thread(

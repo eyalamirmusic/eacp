@@ -1,6 +1,7 @@
 #include "TextInput.h"
 #include "../Primitives/TextMetrics.h"
 #include "../Primitives/Path.h"
+#include <algorithm>
 
 namespace eacp::Graphics
 {

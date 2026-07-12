@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #include "Http.h"
 #include <eacp/Core/ObjC/ObjC.h>
+#include <eacp/Core/Threads/TaskSemaphore.h>
 #include <eacp/Core/ObjC/AutoReleasePool.h>
 #include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/ObjC/Strings.h>

@@ -8,8 +8,6 @@
 #include "ShaderValue.h"
 #include "UniformLayout.h"
 
-#include <vector>
-
 // A shader authored as a struct. Uniforms are named, typed members you set by
 // name; vertex inputs are pulled straight out of the CPU vertex struct inside
 // define(), so that struct is the single source of the vertex layout. The program
@@ -482,10 +480,10 @@ public:
                && "instance element size does not match the shader's "
                   "per-instance layout");
 
-        if ((int) instanceBuffers.size() <= bufferIndex)
-            instanceBuffers.resize((std::size_t) bufferIndex + 1);
+        if (instanceBuffers.size() <= bufferIndex)
+            instanceBuffers.resize(bufferIndex + 1);
 
-        instanceBuffers[(std::size_t) bufferIndex].emplace(
+        instanceBuffers[bufferIndex].emplace(
             Device::shared(), data, sizeof(I) * (std::size_t) count);
         instanceCountValue = count;
     }
@@ -550,9 +548,9 @@ public:
     // per-vertex buffer at slot 0.
     void bindInstances(RenderPass& pass)
     {
-        for (auto slot = 0; slot < (int) instanceBuffers.size(); ++slot)
-            if (instanceBuffers[(std::size_t) slot].has_value())
-                pass.setVertexBuffer(*instanceBuffers[(std::size_t) slot], slot);
+        for (auto slot = 0; slot < instanceBuffers.size(); ++slot)
+            if (instanceBuffers[slot].has_value())
+                pass.setVertexBuffer(*instanceBuffers[slot], slot);
     }
 
 protected:
@@ -764,7 +762,7 @@ private:
     // empty (the per-vertex buffer). Populated by setInstances, bound by
     // bindInstances. usesInstancing gates the multi-slot layout in compile().
     bool usesInstancing = false;
-    std::vector<std::optional<Buffer>> instanceBuffers;
+    Vector<std::optional<Buffer>> instanceBuffers;
     int instanceCountValue = 0;
 
     int vertexCountValue = 0;

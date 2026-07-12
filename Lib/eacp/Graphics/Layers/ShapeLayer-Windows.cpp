@@ -5,6 +5,7 @@
 #include "NativeLayer-Windows.h"
 
 #include <wrl/client.h>
+#include <algorithm>
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Composition.h>

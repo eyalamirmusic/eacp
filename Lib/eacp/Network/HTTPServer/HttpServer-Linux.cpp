@@ -3,7 +3,8 @@
 #include "HttpServerDispatcher.h"
 
 #include "../HTTP/HttpProtocol.h"
-
+#include <atomic>
+#include <mutex>
 #include <thread>
 
 namespace eacp::HTTP

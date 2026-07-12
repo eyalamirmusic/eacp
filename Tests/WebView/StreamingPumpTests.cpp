@@ -1,4 +1,5 @@
 #include "Common.h"
+#include <algorithm>
 // Drives the macOS streaming scheme handler end-to-end on a real WKWebView:
 // a page loaded from a custom streaming scheme issues a ranged fetch() against
 // a sibling URL on the same scheme, and posts the status / headers / body back
@@ -9,11 +10,10 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
-using namespace std::chrono_literals;
 
 namespace
 {
-constexpr auto streamingResultTimeout = 30s;
+constexpr auto streamingResultTimeout = eacp::Time::MS {30000};
 
 // 26 bytes; a closed range pulls out a known slice.
 const std::string streamData = "abcdefghijklmnopqrstuvwxyz";

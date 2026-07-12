@@ -4,7 +4,6 @@
 
 #include <vector>
 
-using namespace std::chrono_literals;
 using namespace eacp::WebView::Test;
 
 using nano::check;
@@ -215,7 +214,7 @@ auto tInputAttributesReadable =
 
 auto tCallJsResolvesWithResult = test("WebViewTodo/callJsResolvesWithResult") = []
 {
-    auto result = callJS("1 + 2").waitFor(2s);
+    auto result = callJS("1 + 2").waitFor(eacp::Time::MS {2000});
     check(result == "3");
 };
 
@@ -224,7 +223,7 @@ auto tCallJsRejectsOnError = test("WebViewTodo/callJsRejectsOnJsException") = []
     auto threw = false;
     try
     {
-        callJS("throw new Error('boom')").waitFor(2s);
+        callJS("throw new Error('boom')").waitFor(eacp::Time::MS {2000});
     }
     catch (const AsyncError& e)
     {
@@ -270,7 +269,9 @@ Graphics::WebViewBridge& transport()
 auto tCallsExposedAsyncPageFunction =
     test("WebViewTodo/callsExposedAsyncPageFunctionFromCpp") = []
 {
-    auto rendered = transport().call<RenderedTodos>("getRenderedTodos").waitFor(5s);
+    auto rendered = transport()
+                        .call<RenderedTodos>("getRenderedTodos")
+                        .waitFor(eacp::Time::MS {5000});
 
     check(rendered.count == 3);
     check(rendered.texts.size() == 3);
@@ -283,7 +284,9 @@ auto tExposedPageFunctionReflectsUiUpdates =
     driver().fill(inputSelector, "Call me from C++");
     driver().click(addSelector);
 
-    auto rendered = transport().call<RenderedTodos>("getRenderedTodos").waitFor(5s);
+    auto rendered = transport()
+                        .call<RenderedTodos>("getRenderedTodos")
+                        .waitFor(eacp::Time::MS {5000});
 
     check(rendered.count == 4);
     check(rendered.texts.back() == "Call me from C++");

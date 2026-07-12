@@ -1,5 +1,6 @@
 #include "Logging.h"
 #include "Common.h"
+#include <chrono>
 
 #include "LoggingPlatform.h"
 
