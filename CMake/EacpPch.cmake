@@ -86,9 +86,12 @@ function(eacp_use_shared_pch target)
     target_precompile_headers(${target} REUSE_FROM eacp-pch)
 endfunction()
 
-# A bare set_property with no value unsets the property; assigning "" would
-# leave it set to an empty target name, which CMake then fails to resolve.
+# Opt a target out, whether or not it has already been given the shared PCH.
+#
+# This declares the target PCH-free rather than trying to strip the reuse
+# property back off it: removing a property is not portable across CMake
+# versions -- 4.x drops it, older ones keep an empty target name and then
+# reject it as a target that does not exist.
 function(eacp_no_shared_pch target)
-    set_property(TARGET ${target} PROPERTY PRECOMPILE_HEADERS_REUSE_FROM)
-    set_property(TARGET ${target} PROPERTY PRECOMPILE_HEADERS)
+    set_target_properties(${target} PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 endfunction()
