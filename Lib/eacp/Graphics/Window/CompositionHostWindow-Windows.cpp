@@ -1,5 +1,6 @@
 #include "CompositionHostWindow-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
+#include "../Helpers/SystemAppearance.h"
 #include "../Layers/NativeLayer-Windows.h"
 
 #include <unordered_map>
@@ -415,6 +416,26 @@ void CompositionHostWindow::teardown()
         DestroyWindow(hwnd);
 }
 
+// The DComp visual tree composites above the window's GDI redirection bitmap,
+// so wherever the app's content is transparent the bitmap shows through. Fill
+// it with the theme's window background — the counterpart of NSWindow's
+// windowBackgroundColor on macOS. Left unpainted it appears as a white
+// rectangle frozen at the window's creation size (resizes reallocate the
+// bitmap but nothing ever painted it).
+void CompositionHostWindow::fillWindowBackground(HDC dc) const
+{
+    if (!dc)
+        return;
+
+    RECT client {};
+    GetClientRect(hwnd, &client);
+
+    auto color = isSystemDarkMode() ? RGB(32, 32, 32) : RGB(243, 243, 243);
+    auto brush = CreateSolidBrush(color);
+    FillRect(dc, &client, brush);
+    DeleteObject(brush);
+}
+
 void CompositionHostWindow::resizeContentViewToClient()
 {
     RECT clientRect;
@@ -487,6 +508,7 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
             return std::nullopt;
 
         case WM_ERASEBKGND:
+            fillWindowBackground(reinterpret_cast<HDC>(wParam));
             return 1;
 
         case WM_PAINT:

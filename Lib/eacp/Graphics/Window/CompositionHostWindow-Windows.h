@@ -99,6 +99,7 @@ private:
     POINT clientCenter() const;
     void handleLockedMouseMove(LPARAM lParam);
 
+    void fillWindowBackground(HDC dc) const;
     void resizeContentViewToClient();
     void ensureMouseLeaveTracking();
     void dispatchMouseToContentView(const MouseEvent& event) const;
