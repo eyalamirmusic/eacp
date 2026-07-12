@@ -62,6 +62,11 @@ std::string remoteAddressString(const sockaddr_in& addr)
     return ip;
 }
 
+ULONG bindAddress(BindInterface bindTo)
+{
+    return htonl(bindTo == BindInterface::any ? INADDR_ANY : INADDR_LOOPBACK);
+}
+
 } // namespace
 
 struct Server::Impl
@@ -141,7 +146,7 @@ bool Server::Impl::start(int port, RequestHandler h)
     auto addr = sockaddr_in();
     addr.sin_family = AF_INET;
     addr.sin_port = htons((u_short) port);
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_addr.s_addr = bindAddress(options.bindTo);
 
     if (::bind(listenSocket, (sockaddr*) &addr, sizeof(addr)) == SOCKET_ERROR)
     {
