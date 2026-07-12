@@ -1,6 +1,7 @@
 #include "../Utils/WinInclude.h"
 
 #include "ThreadUtils-Windows.h"
+#include "../Utils/Singleton.h"
 
 #include <atomic>
 #include <cassert>
@@ -8,16 +9,28 @@
 namespace eacp::Threads
 {
 
-// Captured at static-init time — for an executable that runs on the main thread
+// Captured at construction — for an executable that runs on the main thread
 // before main(), and for a dlopen'd plugin on whichever thread the host loaded it
 // (usually, but not guaranteed, its UI thread). initMainThread() overwrites it
 // with the thread that actually owns the loop; setCurrentThreadAsMainFallback
 // lets a hosted plugin correct it from a call known to be on the UI thread.
-static std::atomic<DWORD> mainThreadId {GetCurrentThreadId()};
+struct MainThreadState
+{
+    std::atomic<DWORD> mainThreadId {GetCurrentThreadId()};
+};
+
+static MainThreadState& getMainThreadState()
+{
+    return Singleton::get<MainThreadState>();
+}
+
+// Forces the capture above to happen at static-init time (on the loading
+// thread), not lazily on whichever thread happens to query first.
+[[maybe_unused]] static MainThreadState& mainThreadStateInit = getMainThreadState();
 
 void setCurrentThreadAsMainFallback()
 {
-    mainThreadId = GetCurrentThreadId();
+    getMainThreadState().mainThreadId = GetCurrentThreadId();
 }
 
 void initMainThread()
@@ -30,7 +43,7 @@ void initMainThread()
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
                  | SEM_NOOPENFILEERRORBOX);
 
-    mainThreadId = GetCurrentThreadId();
+    getMainThreadState().mainThreadId = GetCurrentThreadId();
 }
 
 // Nothing to tear down any more: the DispatcherQueue controller this used to
@@ -39,7 +52,7 @@ void shutdownMainThread() {}
 
 bool isMainThread()
 {
-    return GetCurrentThreadId() == mainThreadId.load();
+    return GetCurrentThreadId() == getMainThreadState().mainThreadId.load();
 }
 
 void assertMainThread()
