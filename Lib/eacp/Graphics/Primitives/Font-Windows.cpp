@@ -1,5 +1,5 @@
 #include "Font.h"
-#include "../Common-Windows.h"
+#include "../D2D-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
 
 namespace eacp::Graphics

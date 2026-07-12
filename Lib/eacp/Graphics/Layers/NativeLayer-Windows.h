@@ -1,6 +1,7 @@
 #pragma once
 
-#include "../Common-Windows.h"
+#include "../Composition-Windows.h"
+#include "../D2D-Windows.h"
 
 #include "../Primitives/Primitives.h"
 

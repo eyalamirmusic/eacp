@@ -1,7 +1,7 @@
 // Windows implementation of Path using Direct2D
 
 #include "Path.h"
-#include "../Common-Windows.h"
+#include "../D2D-Windows.h"
 
 // Forward declaration of factory access
 namespace eacp::Graphics
