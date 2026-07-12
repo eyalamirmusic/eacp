@@ -199,7 +199,11 @@ void initLoopThread()
 {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-    winrt::init_apartment(winrt::apartment_type::single_threaded);
+    // A single-threaded (STA) apartment, as WebView2, the shell dialogs and
+    // DirectComposition all expect. This was winrt::init_apartment; plain COM
+    // now that the compositor no longer pulls cppwinrt into Core.
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
     initMainThread();
     mainThreadId = GetCurrentThreadId();
     ensureMessageWindow();
@@ -256,11 +260,6 @@ void EventLoop::run()
     mainThreadId = 0;
     destroyMessageWindow();
 
-    // Tear down the dispatcher queue while COM is still healthy. If
-    // we leave its WinRT smart pointers alive until static destruction
-    // their Release runs after the apartment is gone and the process
-    // crashes with STATUS_ACCESS_VIOLATION on exit (turning a passing
-    // test run into a failure in CTest's eyes).
     shutdownMainThread();
 }
 

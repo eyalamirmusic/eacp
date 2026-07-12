@@ -1,23 +1,13 @@
-#include <eacp/Core/Utils/WinInclude.h>
-
 #include "View.h"
-#include "../CompositionInterop-Windows.h"
 #include "../Graphics/GraphicsContext.h"
-#include "../Layers/NativeLayer-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
+#include "../Layers/NativeLayer-Windows.h"
 
 #include <unordered_set>
 #include <vector>
 
-#include <winrt/Windows.Foundation.h>
-#include <winrt/Windows.UI.Composition.h>
-
-namespace wuc = winrt::Windows::UI::Composition;
-
 namespace eacp::Graphics
 {
-
-wuc::Compositor getWinRTCompositor();
 
 // Defined in Window-Windows.cpp: the HWND hosting `view`'s root.
 HWND findHostHwndForView(View* view);
@@ -311,21 +301,52 @@ struct View::Native
     Native(View* owner)
         : ownerView(owner)
     {
-        auto compositor = getWinRTCompositor();
-        if (compositor)
-        {
-            visual = compositor.CreateContainerVisual();
-        }
+        ensureVisual();
     }
 
     ~Native() override
     {
         dirtyViews().erase(this);
-        paintBrush = nullptr;
-        paintSurface = nullptr;
-        paintVisual = nullptr;
+        paintSurface.Reset();
+        paintVisual.Reset();
         detachFromParent();
-        visual = nullptr;
+        visual.Reset();
+    }
+
+    // Creates the container visual, and rebuilds it after a device loss moved the
+    // composition generation (DComp visuals do not survive their device — see
+    // DComp-Windows.h). The paint visual and surface are rebuilt lazily by
+    // ensurePaintSurface once the generation matches again.
+    bool ensureVisual()
+    {
+        auto current = getCompositionGeneration();
+
+        if (generation != current)
+        {
+            generation = current;
+            visual.Reset();
+            visual3.Reset();
+            paintVisual.Reset();
+            paintSurface.Reset();
+            surfacePixelWidth = 0;
+            surfacePixelHeight = 0;
+        }
+
+        if (visual)
+            return true;
+
+        auto* device = getCompositionDevice();
+        if (!device)
+            return false;
+
+        if (FAILED(device->CreateVisual(visual.GetAddressOf())))
+        {
+            visual.Reset();
+            return false;
+        }
+
+        visual.As(&visual3);
+        return true;
     }
 
     // Mirrors macOS setNeedsDisplay: mark the view dirty and let Windows
@@ -368,16 +389,20 @@ struct View::Native
 
     void setOpacity(float opacity)
     {
-        if (visual)
-            visual.Opacity(opacity);
+        if (visual3)
+        {
+            visual3->SetOpacity(opacity);
+            commitComposition();
+        }
     }
 
-    void attachToParent(wuc::ContainerVisual parentVisual)
+    void attachToParent(IDCompositionVisual2* parentVisual)
     {
         if (parentVisual && visual)
         {
-            parentVisual.Children().InsertAtTop(visual);
+            parentVisual->AddVisual(visual.Get(), TRUE, nullptr);
             parent = parentVisual;
+            commitComposition();
         }
     }
 
@@ -385,8 +410,9 @@ struct View::Native
     {
         if (parent && visual)
         {
-            parent.Children().Remove(visual);
-            parent = nullptr;
+            parent->RemoveVisual(visual.Get());
+            parent.Reset();
+            commitComposition();
         }
     }
 
@@ -394,11 +420,12 @@ struct View::Native
     {
         if (visual)
         {
-            visual.Offset({bounds.x, bounds.y, 0.0f});
+            visual->SetOffsetX(bounds.x);
+            visual->SetOffsetY(bounds.y);
         }
     }
 
-    wuc::ContainerVisual getVisual() { return visual; }
+    IDCompositionVisual2* getVisual() { return visual.Get(); }
 
     Point getMousePosition() const
     {
@@ -459,17 +486,13 @@ struct View::Native
         if (!ensurePaintSurface())
             return nullptr;
 
-        auto interop = paintSurface.as<
-            ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
-        if (!interop)
-            return nullptr;
-
         POINT offset {};
-        paintDc = nullptr;
+        paintDc.Reset();
         RECT updateRect = {0, 0, surfacePixelWidth, surfacePixelHeight};
 
-        auto hr =
-            interop->BeginDraw(&updateRect, IID_PPV_ARGS(paintDc.put()), &offset);
+        auto hr = paintSurface->BeginDraw(
+            &updateRect, IID_PPV_ARGS(paintDc.GetAddressOf()), &offset);
+
         if (FAILED(hr) || !paintDc)
         {
             handleDeviceLossIfNeeded(hr);
@@ -481,7 +504,7 @@ struct View::Native
             D2D1::Matrix3x2F::Scale(dpiScale, dpiScale)
             * D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x),
                                             static_cast<float>(offset.y));
-        return paintDc.get();
+        return paintDc.Get();
     }
 
     void endDraw() override
@@ -489,14 +512,10 @@ struct View::Native
         if (paintSurface && paintDc)
         {
             paintDc->SetTransform(D2D1::Matrix3x2F::Identity());
-
-            if (auto interop =
-                    paintSurface.as<ABI::Windows::UI::Composition::
-                                        ICompositionDrawingSurfaceInterop>())
-                interop->EndDraw();
+            paintSurface->EndDraw();
         }
 
-        paintDc = nullptr;
+        paintDc.Reset();
     }
 
     // Lazily creates the backing SpriteVisual (behind every child view and
@@ -504,7 +523,7 @@ struct View::Native
     // the bounds change, mirroring NativeLayerBase::createSurface for layers.
     bool ensurePaintSurface()
     {
-        if (!visual)
+        if (!ensureVisual())
             return false;
 
         auto b = ownerView->getBounds();
@@ -517,59 +536,71 @@ struct View::Native
         if (pixelWidth <= 0 || pixelHeight <= 0)
             return false;
 
-        auto graphicsDevice = getCompositionGraphicsDevice();
-        auto compositor = getWinRTCompositor();
-        if (!graphicsDevice || !compositor)
+        auto* device = getCompositionDevice();
+        if (!device)
             return false;
 
+        // Sits behind every child view and layer: AddVisual(..., FALSE) is
+        // DComp's InsertAtBottom.
         if (!paintVisual)
         {
-            paintVisual = compositor.CreateSpriteVisual();
-            visual.Children().InsertAtBottom(paintVisual);
+            if (FAILED(device->CreateVisual(paintVisual.GetAddressOf())))
+            {
+                paintVisual.Reset();
+                return false;
+            }
+
+            visual->AddVisual(paintVisual.Get(), FALSE, nullptr);
         }
 
         if (!paintSurface || surfacePixelWidth != pixelWidth
             || surfacePixelHeight != pixelHeight)
         {
-            try
-            {
-                paintSurface = graphicsDevice.CreateDrawingSurface(
-                    {static_cast<float>(pixelWidth),
-                     static_cast<float>(pixelHeight)},
-                    wgdx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
-                    wgdx::DirectXAlphaMode::Premultiplied);
-            }
-            catch (const winrt::hresult_error& e)
+            paintSurface.Reset();
+
+            auto hr = device->CreateSurface(static_cast<UINT>(pixelWidth),
+                                            static_cast<UINT>(pixelHeight),
+                                            DXGI_FORMAT_B8G8R8A8_UNORM,
+                                            DXGI_ALPHA_MODE_PREMULTIPLIED,
+                                            paintSurface.GetAddressOf());
+
+            if (FAILED(hr))
             {
                 // The post-recovery redraw re-enters here with a live device.
-                handleDeviceLossIfNeeded(e.code());
-                paintSurface = nullptr;
+                handleDeviceLossIfNeeded(hr);
+                paintSurface.Reset();
                 return false;
             }
 
-            if (!paintSurface)
-                return false;
-
-            paintBrush = compositor.CreateSurfaceBrush(paintSurface);
-            paintVisual.Brush(paintBrush);
+            paintVisual->SetContent(paintSurface.Get());
             surfacePixelWidth = pixelWidth;
             surfacePixelHeight = pixelHeight;
         }
 
-        paintVisual.Size({b.w, b.h});
+        // DComp draws the surface's physical pixels 1:1 in the visual's local
+        // space, and the root already scales the tree by the DPI factor, so undo
+        // it here. This is what WinRT's SpriteVisual.Size() + stretching brush
+        // did implicitly.
+        if (dpiScale > 0.f)
+            paintVisual->SetTransform(
+                D2D1::Matrix3x2F::Scale(1.f / dpiScale, 1.f / dpiScale));
+
         return true;
     }
 
     View* ownerView;
     Rect bounds;
     bool hasFocusFlag = false;
-    wuc::ContainerVisual visual {nullptr};
-    wuc::ContainerVisual parent {nullptr};
 
-    wuc::SpriteVisual paintVisual {nullptr};
-    wuc::CompositionDrawingSurface paintSurface {nullptr};
-    wuc::CompositionSurfaceBrush paintBrush {nullptr};
-    winrt::com_ptr<ID2D1DeviceContext> paintDc;
+    ComPtr<IDCompositionVisual2> visual;
+    ComPtr<IDCompositionVisual3> visual3;
+    ComPtr<IDCompositionVisual2> parent;
+
+    ComPtr<IDCompositionVisual2> paintVisual;
+    ComPtr<IDCompositionSurface> paintSurface;
+    ComPtr<ID2D1DeviceContext> paintDc;
+
+    uint64_t generation = 0;
     int surfacePixelWidth = 0;
     int surfacePixelHeight = 0;
 };
@@ -589,7 +620,7 @@ View::~View()
 
 void* View::getHandle()
 {
-    return &impl->visual;
+    return impl->getVisual();
 }
 
 void View::repaint()
@@ -629,7 +660,7 @@ bool View::hasFocus() const
 
 void* View::getNativeLayer()
 {
-    return &impl->visual;
+    return impl->getVisual();
 }
 
 void View::viewAdded(View& view)

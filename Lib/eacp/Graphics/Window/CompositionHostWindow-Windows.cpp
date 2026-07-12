@@ -1,21 +1,17 @@
-#include <eacp/Core/Utils/WinInclude.h>
-
 #include "CompositionHostWindow-Windows.h"
-#include "../CompositionInterop-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
 #include "../Layers/NativeLayer-Windows.h"
 
 #include <unordered_map>
 
-#include <Windows.UI.Composition.Desktop.h>
-
 namespace eacp::Graphics
 {
 
-// paintDirtyViewsForHost() is defined in View-Windows.cpp; getWinRTCompositor()
-// is declared by NativeLayer-Windows.h. Both are linked earlier in the unity
-// build.
+// paintDirtyViewsForHost() is defined in View-Windows.cpp; the composition
+// device accessors come from DComp-Windows.h. Both are linked earlier in the
+// unity build.
 void paintDirtyViewsForHost(HWND host);
+void redrawAllCompositionHosts();
 
 // Defined in Keyboard-Windows.cpp: Windows virtual key -> framework KeyCode
 // (KeyCode::Unknown when unmapped), so KeyEvent::keyCode means the same thing
@@ -127,11 +123,37 @@ void markViewTreeLayersDirty(const View* view)
     for (auto* subview: view->getSubviews())
         markViewTreeLayersDirty(subview);
 }
+
+// Every live host, so a device loss can rebuild each one's target and root.
+// Main-thread only, like the view/HWND registry above.
+Vector<CompositionHostWindow*>& compositionHosts()
+{
+    static auto hosts = Vector<CompositionHostWindow*>();
+    return hosts;
+}
 } // namespace
 
-// Called by the rendering-device recovery in D2DFactory-Windows.cpp: the
-// replaced device keeps all composition surfaces alive but discards their
-// pixels, so every layer re-renders and every painting view repaints.
+// Called by the rendering-device recovery in D2DFactory-Windows.cpp. Unlike
+// Windows.UI.Composition — which could hot-swap the rendering device and keep
+// its surfaces (they merely lost their pixels) — DirectComposition binds the
+// device at creation, so the target, the root visual and every layer/view visual
+// below them are dead objects. Rebuild the hosts' targets first, then let the
+// generation stamp on each view/layer pull the rest through on the redraw.
+void rebuildAllCompositionHosts()
+{
+    for (auto* host: compositionHosts())
+    {
+        host->initializeComposition(host->topMostTarget);
+
+        if (host->contentView)
+            host->attachContentView(host->contentView);
+    }
+
+    redrawAllCompositionHosts();
+}
+
+// Re-renders every layer and repaints every painting view of all
+// composition-hosted windows.
 void redrawAllCompositionHosts()
 {
     for (auto& [root, hostHwnd]: contentViewToHwnd())
@@ -147,24 +169,35 @@ void CompositionHostWindow::initializeComposition(bool topMost)
     if (!hwnd)
         return;
 
-    auto compositor = getWinRTCompositor();
-    if (!compositor)
+    topMostTarget = topMost;
+
+    auto* device = getCompositionDevice();
+    if (!device)
         return;
 
-    auto interop =
-        compositor
-            .as<ABI::Windows::UI::Composition::Desktop::ICompositorDesktopInterop>();
-    winrt::com_ptr<ABI::Windows::UI::Composition::Desktop::IDesktopWindowTarget>
-        abiTarget;
-    auto hr =
-        interop->CreateDesktopWindowTarget(hwnd, topMost ? 1 : 0, abiTarget.put());
-    if (FAILED(hr) || !abiTarget)
-        return;
+    EA::Vectors::addIfNotThere(compositionHosts(), this);
 
-    target = abiTarget.as<wuc::Desktop::DesktopWindowTarget>();
-    rootVisual = compositor.CreateContainerVisual();
+    // Drop anything built against a previous device before rebuilding.
+    rootVisual.Reset();
+    target.Reset();
+    generation = getCompositionGeneration();
+
+    if (FAILED(device->CreateTargetForHwnd(hwnd, topMost, target.GetAddressOf())))
+    {
+        target.Reset();
+        return;
+    }
+
+    if (FAILED(device->CreateVisual(rootVisual.GetAddressOf())))
+    {
+        rootVisual.Reset();
+        target.Reset();
+        return;
+    }
+
     rescaleRootVisualToDpi();
-    target.Root(rootVisual);
+    target->SetRoot(rootVisual.Get());
+    commitComposition();
 }
 
 float CompositionHostWindow::getDpiScale() const
@@ -173,13 +206,17 @@ float CompositionHostWindow::getDpiScale() const
     return static_cast<float>(dpi) / 96.f;
 }
 
+// The root maps logical points to physical pixels for the whole tree. Content
+// visuals below it counter-scale by 1/dpiScale so their physical-pixel surfaces
+// land 1:1 — see the note in NativeLayer-Windows.h.
 void CompositionHostWindow::rescaleRootVisualToDpi()
 {
     if (!rootVisual)
         return;
 
     auto scale = getDpiScale();
-    rootVisual.Scale({scale, scale, 1.0f});
+    rootVisual->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale));
+    commitComposition();
 }
 
 void CompositionHostWindow::attachContentView(View* view)
@@ -202,10 +239,10 @@ void CompositionHostWindow::attachContentView(View* view)
                      static_cast<float>(clientRect.right) / scale,
                      static_cast<float>(clientRect.bottom) / scale});
 
-    auto* viewVisual = static_cast<wuc::ContainerVisual*>(view->getHandle());
+    auto* viewVisual = static_cast<IDCompositionVisual2*>(view->getHandle());
 
     if (rootVisual && viewVisual)
-        rootVisual.Children().InsertAtTop(*viewVisual);
+        rootVisual->AddVisual(viewVisual, TRUE, nullptr);
 
     ensureAllLayersRendered(view);
 }
@@ -213,6 +250,11 @@ void CompositionHostWindow::attachContentView(View* view)
 void CompositionHostWindow::ensureAllLayersRendered(const View* view) const
 {
     ensureAllLayersRendered(view, getDpiScale());
+
+    // DComp batches every visual and surface change made above; nothing reaches
+    // the screen until the device is flushed. WinRT committed implicitly, so
+    // this is the one call the old backend never needed.
+    commitComposition();
 }
 
 void CompositionHostWindow::ensureAllLayersRendered(const View* view,
@@ -357,10 +399,14 @@ void CompositionHostWindow::teardown()
     disengageMouseLock();
 
     if (rootVisual)
-        rootVisual.Children().RemoveAll();
+        rootVisual->RemoveAllVisuals();
 
-    rootVisual = nullptr;
-    target = nullptr;
+    rootVisual.Reset();
+    target.Reset();
+    commitComposition();
+
+    EA::Vectors::eraseIf(compositionHosts(),
+                         [this](auto* host) { return host == this; });
 
     if (contentView)
         unregisterContentViewHwnd(contentView);
