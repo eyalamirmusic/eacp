@@ -4,6 +4,5 @@
 
 #include <cmath>
 #include <cstring>
-#include <filesystem>
 #include <limits>
 #include <stdexcept>

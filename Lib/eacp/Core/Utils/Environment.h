@@ -1,8 +1,7 @@
 #pragma once
 
 #include "Common.h"
-
-#include <filesystem>
+#include "FilePath.h"
 
 namespace eacp
 {
@@ -21,6 +20,6 @@ void setEnv(std::string_view name, std::string_view value);
 
 // The current user's home directory, or an empty path when it can't be
 // resolved. Reads USERPROFILE on Windows and HOME elsewhere.
-std::filesystem::path homeDirectory();
+FilePath homeDirectory();
 
 } // namespace eacp

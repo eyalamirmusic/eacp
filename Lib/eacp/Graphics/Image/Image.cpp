@@ -2,9 +2,6 @@
 
 #include "ImageCodec.h"
 
-#include <fstream>
-#include <ios>
-
 namespace eacp::Graphics
 {
 
@@ -40,9 +37,9 @@ int validatedByteCount(int width, int height)
     return bytes;
 }
 
-ImageFormat formatFromExtension(const std::filesystem::path& path)
+ImageFormat formatFromExtension(const FilePath& path)
 {
-    auto ext = Strings::toLower(path.extension().string());
+    auto ext = Strings::toLower(path.extension());
     if (ext == ".png")
         return ImageFormat::png;
     if (ext == ".jpg" || ext == ".jpeg")
@@ -52,35 +49,27 @@ ImageFormat formatFromExtension(const std::filesystem::path& path)
                              + ext + "' (supported: .png, .jpg, .jpeg)");
 }
 
-ImageData readFileBytes(const std::filesystem::path& path, std::string& error)
+ImageData readFileBytes(const FilePath& path, std::string& error)
 {
-    auto file = std::ifstream {path, std::ios::binary | std::ios::ate};
-    if (!file)
+    auto file = File {path};
+    if (!file.openForRead())
     {
-        error = "cannot open '" + path.string() + "'";
+        error = "cannot open '" + path.str() + "'";
         return {};
     }
 
-    auto size = file.tellg();
-    if (size < 0)
+    auto size = file.size();
+    if (size > static_cast<std::uint64_t>(std::numeric_limits<int>::max()))
     {
-        error = "cannot determine size of '" + path.string() + "'";
+        error = "'" + path.str() + "' is too large to load";
         return {};
     }
 
-    auto offset = static_cast<std::streamoff>(size);
-    if (offset > static_cast<std::streamoff>(std::numeric_limits<int>::max()))
+    auto bytes = ImageData(static_cast<int>(size));
+    auto got = file.read(0, {bytes.data(), static_cast<std::size_t>(bytes.size())});
+    if (got != size)
     {
-        error = "'" + path.string() + "' is too large to load";
-        return {};
-    }
-
-    auto bytes = ImageData(static_cast<int>(offset));
-    file.seekg(0);
-    file.read(reinterpret_cast<char*>(bytes.data()), bytes.size());
-    if (file.bad() || file.gcount() != bytes.size())
-    {
-        error = "failed to read '" + path.string() + "'";
+        error = "failed to read '" + path.str() + "'";
         return {};
     }
 
@@ -120,7 +109,7 @@ Image Image::decode(const ImageData& bytes, std::string* error)
     return decode(bytes.data(), bytes.size(), error);
 }
 
-Image Image::load(const std::filesystem::path& path, std::string* error)
+Image Image::load(const FilePath& path, std::string* error)
 {
     auto err = std::string {};
     auto bytes = readFileBytes(path, err);
@@ -236,29 +225,15 @@ ImageData Image::toJpeg(float quality) const
     return encode(ImageFormat::jpeg, quality);
 }
 
-void Image::save(const std::filesystem::path& path) const
+void Image::save(const FilePath& path) const
 {
     save(path, formatFromExtension(path));
 }
 
-void Image::save(const std::filesystem::path& path,
-                 ImageFormat format,
-                 float quality) const
+void Image::save(const FilePath& path, ImageFormat format, float quality) const
 {
     auto bytes = encode(format, quality);
-
-    if (path.has_parent_path())
-        std::filesystem::create_directories(path.parent_path());
-
-    auto file = std::ofstream {path, std::ios::binary | std::ios::trunc};
-    if (!file)
-        throw std::runtime_error("Image::save: failed to open '" + path.string()
-                                 + "' for writing");
-
-    file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-    if (!file)
-        throw std::runtime_error("Image::save: short write to '" + path.string()
-                                 + "'");
+    Files::writeFile(path, {bytes.data(), static_cast<std::size_t>(bytes.size())});
 }
 
 bool Image::equals(const Image& other) const

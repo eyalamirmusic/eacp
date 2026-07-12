@@ -47,8 +47,7 @@ public:
 
     // Read a file and decode it. Returns an invalid image if the file
     // cannot be read or its contents do not decode.
-    static Image load(const std::filesystem::path& path,
-                      std::string* error = nullptr);
+    static Image load(const FilePath& path, std::string* error = nullptr);
 
     bool isValid() const;
     bool isEmpty() const;
@@ -87,10 +86,8 @@ public:
     // Encode and write to disk. The single-argument form infers the
     // format from the path extension (.png / .jpg / .jpeg). Creates
     // parent directories. Throws on an unknown extension or IO failure.
-    void save(const std::filesystem::path& path) const;
-    void save(const std::filesystem::path& path,
-              ImageFormat format,
-              float quality = 0.9f) const;
+    void save(const FilePath& path) const;
+    void save(const FilePath& path, ImageFormat format, float quality = 0.9f) const;
 
     // Exact comparison: identical dimensions and identical pixels.
     bool equals(const Image& other) const;

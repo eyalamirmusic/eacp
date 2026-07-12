@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <filesystem>
+
 using namespace nano;
 using eacp::Graphics::Image;
 using eacp::Graphics::ImageData;

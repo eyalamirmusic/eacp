@@ -1,4 +1,5 @@
 #include <eacp/WebView/WebView.h>
+#include <eacp/Core/Utils/StdPath.h>
 #include <WebResources.h>
 
 #include <array>
@@ -41,7 +42,7 @@ bool isAudioFile(const std::filesystem::path& path)
 
 std::filesystem::path downloadsDir()
 {
-    return homeDirectory() / "Downloads";
+    return toStdPath(homeDirectory()) / "Downloads";
 }
 
 std::filesystem::path bundledAssetDir()

@@ -13,6 +13,7 @@ target_sources(eacp-core PRIVATE
         Threads/TaskSemaphore.cpp
         Utils/Environment.cpp
         Utils/File.cpp
+        Utils/FilePath.cpp
         Utils/Files.cpp
         Utils/Logging.cpp
         Utils/Random.cpp

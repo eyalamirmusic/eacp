@@ -1,4 +1,5 @@
 #include "File.h"
+#include "StdPath.h"
 
 #include <fstream>
 
@@ -6,34 +7,41 @@ namespace eacp
 {
 struct File::Impl
 {
+    explicit Impl(std::filesystem::path path)
+        : fsPath(std::move(path))
+    {
+    }
+
+    std::filesystem::path fsPath;
     std::ifstream stream;
     std::uint64_t position = 0;
 };
 
-File::File(std::filesystem::path path)
+File::File(FilePath path)
     : filePath(std::move(path))
+    , impl(toStdPath(filePath))
 {
 }
 
 bool File::exists() const
 {
     auto ec = std::error_code {};
-    return std::filesystem::exists(filePath, ec);
+    return std::filesystem::exists(impl->fsPath, ec);
 }
 
 bool File::isRegularFile() const
 {
     auto ec = std::error_code {};
-    return std::filesystem::is_regular_file(filePath, ec);
+    return std::filesystem::is_regular_file(impl->fsPath, ec);
 }
 
-bool File::isUnder(const std::filesystem::path& root) const
+bool File::isUnder(const FilePath& root) const
 {
     // Canonicalise both sides so the check is symlink-consistent (e.g. macOS
     // /var -> /private/var) regardless of whether the caller pre-normalised.
     auto ec = std::error_code {};
-    auto canonicalRoot = std::filesystem::weakly_canonical(root, ec);
-    auto canonicalFile = std::filesystem::weakly_canonical(filePath, ec);
+    auto canonicalRoot = std::filesystem::weakly_canonical(toStdPath(root), ec);
+    auto canonicalFile = std::filesystem::weakly_canonical(impl->fsPath, ec);
     auto rel = std::filesystem::relative(canonicalFile, canonicalRoot, ec);
 
     if (ec || rel.empty())
@@ -47,7 +55,7 @@ bool File::isUnder(const std::filesystem::path& root) const
 std::uint64_t File::size() const
 {
     auto ec = std::error_code {};
-    auto bytes = std::filesystem::file_size(filePath, ec);
+    auto bytes = std::filesystem::file_size(impl->fsPath, ec);
     return ec ? 0 : static_cast<std::uint64_t>(bytes);
 }
 
@@ -56,7 +64,7 @@ bool File::openForRead()
     if (impl->stream.is_open())
         return true;
 
-    impl->stream.open(filePath, std::ios::binary);
+    impl->stream.open(impl->fsPath, std::ios::binary);
     impl->position = 0;
     return impl->stream.is_open();
 }

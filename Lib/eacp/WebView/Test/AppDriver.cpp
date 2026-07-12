@@ -4,6 +4,7 @@
 
 #include "../WebView.h"
 
+#include <filesystem>
 #include <fstream>
 
 namespace eacp::WebView::Test

@@ -324,7 +324,7 @@ StreamingProvider
         // Kept open behind a shared_ptr so the reader can pull chunks across
         // many scheme-task callbacks, then closes when the last reader drops.
         // File::isUnder canonicalises, so a raw path is fine here.
-        auto file = std::make_shared<eacp::File>(std::filesystem::path {pathStr});
+        auto file = std::make_shared<eacp::File>(pathStr);
 
         auto allowed =
             roots.empty()

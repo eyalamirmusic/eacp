@@ -10,10 +10,10 @@ std::string getEnvValue(std::string_view name)
     return getEnv(name).value_or(std::string {});
 }
 
-std::filesystem::path homeDirectory()
+FilePath homeDirectory()
 {
     auto variable = Platform::isWindows() ? "USERPROFILE" : "HOME";
-    return std::filesystem::path {getEnvValue(variable)};
+    return FilePath {getEnvValue(variable)};
 }
 
 } // namespace eacp

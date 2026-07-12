@@ -2,7 +2,6 @@
 
 #include "../Image/ImageOps.h"
 #include <array>
-#include <fstream>
 #include <vector>
 
 namespace eacp::Graphics::Icons
@@ -60,22 +59,6 @@ bool keepSize(int size, int limit, int smallest)
     return size <= limit || size == smallest;
 }
 
-void writeFile(const std::filesystem::path& out, const Bytes& bytes)
-{
-    if (const auto parent = out.parent_path(); !parent.empty())
-        std::filesystem::create_directories(parent);
-
-    std::ofstream stream(out, std::ios::binary);
-    if (!stream)
-        throw std::runtime_error("cannot open '" + out.string() + "'");
-
-    stream.write(reinterpret_cast<const char*>(bytes.data()),
-                 static_cast<std::streamsize>(bytes.size()));
-
-    if (!stream)
-        throw std::runtime_error("cannot write '" + out.string() + "'");
-}
-
 } // namespace
 
 Image downscaleTo(const Image& src, int size)
@@ -87,7 +70,7 @@ Image downscaleTo(const Image& src, int size)
     return resizeBilinear(current, size, size);
 }
 
-void writeIcns(const Image& src, const std::filesystem::path& out)
+void writeIcns(const Image& src, const FilePath& out)
 {
     struct Chunk
     {
@@ -124,10 +107,10 @@ void writeIcns(const Image& src, const std::filesystem::path& out)
     appendBE32(file, static_cast<std::uint32_t>(8 + body.size()));
     file.insert(file.end(), body.begin(), body.end());
 
-    writeFile(out, file);
+    Files::writeFile(out, file);
 }
 
-void writeIco(const Image& src, const std::filesystem::path& out)
+void writeIco(const Image& src, const FilePath& out)
 {
     static constexpr std::array sizes = {16, 24, 32, 48, 64, 128, 256};
 
@@ -173,14 +156,12 @@ void writeIco(const Image& src, const std::filesystem::path& out)
     for (const auto& frame: frames)
         file.insert(file.end(), frame.begin(), frame.end());
 
-    writeFile(out, file);
+    Files::writeFile(out, file);
 }
 
-void writeIconset(const Image& src, const std::filesystem::path& outDir)
+void writeIconset(const Image& src, const FilePath& outDir)
 {
-    std::filesystem::create_directories(outDir);
-
-    writeFile(outDir / "icon_1024.png", pngFrame(src, 1024));
+    Files::writeFile(outDir / "icon_1024.png", pngFrame(src, 1024));
 
     static constexpr auto contents = "{\n"
                                      "  \"images\" : [\n"
@@ -198,7 +179,7 @@ void writeIconset(const Image& src, const std::filesystem::path& outDir)
                                      "}\n";
 
     const std::string json = contents;
-    writeFile(outDir / "Contents.json", Bytes(json.begin(), json.end()));
+    Files::writeFile(outDir / "Contents.json", Bytes(json.begin(), json.end()));
 }
 
 } // namespace eacp::Graphics::Icons
