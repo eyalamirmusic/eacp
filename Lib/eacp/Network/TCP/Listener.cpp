@@ -19,10 +19,10 @@ Listener::~Listener() = default;
 Listener::Listener(Listener&&) noexcept = default;
 Listener& Listener::operator=(Listener&&) noexcept = default;
 
-Listener Listener::bind(std::uint16_t port, Timeouts timeouts)
+Listener Listener::bind(std::uint16_t port, Timeouts timeouts, BindInterface bindTo)
 {
     auto boundPort = port;
-    auto socket = detail::socketListen(port, boundPort);
+    auto socket = detail::socketListen(port, boundPort, bindTo);
 
     auto listener = Listener {};
     listener.impl.create();
