@@ -1,7 +1,8 @@
 # Windows: Windows.UI.Composition → DirectComposition port
 
-**Status: INCOMPLETE. Builds, links, passes 386/387 tests — and renders nothing.**
-Do not merge. See "The bug" below for exactly where to pick this up.
+**Status: RENDERING. The blank-window bug is fixed (inverted AddVisual z-order,
+see below). GUI.exe renders the full demo scene, verified against a DPI-aware
+screen capture.**
 
 ---
 
@@ -39,6 +40,34 @@ problems, in order of how much they actually mattered:
 DComp is also Win8+ (vs Win10 1803+ for `DesktopWindowTarget`), so this *lowers*
 the version floor. It's what Chromium and Firefox use on Windows.
 
+## The bug that kept it blank, and the fix
+
+`GUI.exe` showed a "blank" window and `TaskBoard.exe` rendered partially. Every
+API call succeeded — target, `SetRoot`, `AddVisual`, `CreateSurface`,
+`BeginDraw`/`EndDraw`, `Commit` all returned S_OK. The window was in fact not
+blank: the uniform dark content measured RGB(26,26,26) — exactly the demo's
+first-added full-window `FilledRect {0.1f, 0.1f, 0.1f}`, rendering **on top of
+everything else**.
+
+**Root cause: `AddVisual(child, TRUE, nullptr)` inserts at the BOTTOM of the
+z-order, not the top.** With a null `referenceVisual`, the `insertAbove` flag
+reads inverted: TRUE prepends to the child list (earlier siblings render above
+later ones), FALSE appends. The port had mapped WinRT `InsertAtTop` →
+`AddVisual(..., TRUE, nullptr)` at every call site — exactly backwards — so
+each window painted only whichever child was attached first (GUI: the dark
+background rect; TaskBoard: its first-attached elements).
+
+The fix: named wrappers `insertVisualAtTop()` / `insertVisualAtBottom()` in
+`DComp-Windows.h` encode the correct mapping, and every call site
+(`NativeLayer-Windows.h`, `View-Windows.cpp` ×2, `CompositionHostWindow`,
+`GPUView-Windows.cpp` ×2, `WebView-Windows.cpp`) uses them instead of a bare
+boolean.
+
+Empirically verified in both directions: with the inverted mapping, debug
+squares added to the root *before* the content view rendered on top of it;
+after the fix the same squares were covered by the content view, and the full
+demo scene (layers, gradients, text, animation) rendered correctly.
+
 ## What was validated before writing any code
 
 Two throwaway spikes (see `git log` for this branch; the sources are gone but the
@@ -65,6 +94,9 @@ findings hold):
   Container visuals (View's) get **no** counter-scale; only leaves with content
   (layer visuals, View's paint visual, GPUView's swapchain visual).
 
+  (The spikes never caught the z-order inversion because each attached a single
+  child per parent — z-order needs two siblings to matter.)
+
 ## The one real gap vs WinRT: device loss
 
 `ICompositionGraphicsDeviceInterop::SetRenderingDevice()` let the old backend
@@ -90,7 +122,7 @@ falls through to the old redraw path.
 
 | File | Change |
 |---|---|
-| `Graphics/DComp-Windows.h` | **new** — replaces `Composition-Windows.h` + `CompositionInterop-Windows.h`. Device accessors, `commitComposition()`, generation counter. |
+| `Graphics/DComp-Windows.h` | **new** — replaces `Composition-Windows.h` + `CompositionInterop-Windows.h`. Device accessors, `commitComposition()`, generation counter, `insertVisualAtTop/Bottom()`. |
 | `Graphics/Graphics/D2DFactory-Windows.cpp` | `WinRTCompositor` → `DCompCompositor`. `DCompositionCreateDevice2(d2dDevice)`. No more `CompositionGraphicsDevice` / `ICompositorInterop`. |
 | `Graphics/Layers/NativeLayer-Windows.h` | `SpriteVisual`→`IDCompositionVisual2`, `CompositionDrawingSurface`→`IDCompositionSurface`, brush dropped (`SetContent`), counter-scale, generation stamp. |
 | `Graphics/Layers/{Shape,Text}Layer-Windows.cpp` | interop QI → direct `surface->BeginDraw/EndDraw`. |
@@ -111,50 +143,10 @@ for little gain. `Camera-Windows.cpp` keeps cppwinrt too (it uses
 `Windows.Media.Capture`; the alternative is Media Foundation, which is worse).
 So cppwinrt does **not** leave the build entirely — it's confined to cheap TUs.
 
-## THE BUG — start here
+## The finding that matters beyond this port
 
-**`GUI.exe` renders a completely blank window.** `TaskBoard.exe` renders
-partially (some rounded rects; no text, no cards).
-
-### Ruled out, with evidence
-
-- **`CreateSurface` succeeds.** Instrumented: `hr=0x00000000`, surfaces created
-  at the right sizes (1280×800, 256×160, 1024×160, 600×60).
-- **The composition device is non-null**; visuals are created and parented.
-- **`View::paint()` is not the culprit** — instrumented `beginDraw()` and it is
-  **never entered**. `renderBackingStore()` runs 19× but the views issue no draw
-  calls: GUI.exe's content is Layer-based, not immediate-mode. So the failure is
-  in the retained layer/visual path.
-- **`WS_EX_NOREDIRECTIONBITMAP`** — added to `Window-Windows.cpp`, changed
-  nothing, reverted.
-- **The DPI/transform model** — validated in isolation (see above).
-
-### The lead
-
-**`CompositionHostWindow::initializeComposition()` silently returns on failure and
-its HRESULTs were never checked at runtime.** If `CreateTargetForHwnd`,
-`CreateVisual` or `SetRoot` is failing, everything downstream would behave exactly
-as observed — surfaces created, content set, commits issued — into a visual tree
-that is attached to nothing. **Instrument those three HRESULTs first.** It fits
-every symptom.
-
-Second lead: the spike only validated **two** levels (root → content visual).
-eacp has **three** (root → View container visual → layer visual). Reproduce the
-3-level nesting in a standalone spike before trusting it.
-
-### And the finding that matters beyond this port
-
-**The test suite passed 386/387 against a backend that draws nothing.** Every
-graphics, GPU and WebView test went green. They do not verify pixels. Whatever
-happens to this branch, that gap is worth closing — a single golden-image or
-"is the surface non-empty" assertion would have caught this instantly.
-
-## Repro
-
-```bash
-cmake --build build --target GUI
-build/Apps/Graphics/GUI/GUI.exe        # blank window
-build/Apps/Graphics/ComplexGUI/TaskBoard.exe   # partial
-```
-
-Screenshots must be DPI-aware or they mislead (this box runs at 200%).
+**The test suite passed 386/387 against a backend that drew (effectively)
+nothing.** Every graphics, GPU and WebView test went green while every window
+was covered by its own background. They do not verify pixels. A single
+golden-image or "is the surface non-empty" assertion would have caught this
+instantly — and would have localized it to z-order in minutes. Worth closing.

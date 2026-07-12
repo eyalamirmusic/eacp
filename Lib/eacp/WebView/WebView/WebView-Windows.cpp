@@ -324,7 +324,7 @@ struct WebView::Native
 
         if (auto* container =
                 static_cast<IDCompositionVisual2*>(owner.getNativeLayer()))
-            container->AddVisual(webViewVisual.Get(), TRUE, nullptr);
+            insertVisualAtTop(container, webViewVisual.Get());
 
         commitComposition();
     }

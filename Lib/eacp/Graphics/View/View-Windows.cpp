@@ -400,7 +400,7 @@ struct View::Native
     {
         if (parentVisual && visual)
         {
-            parentVisual->AddVisual(visual.Get(), TRUE, nullptr);
+            insertVisualAtTop(parentVisual, visual.Get());
             parent = parentVisual;
             commitComposition();
         }
@@ -540,8 +540,7 @@ struct View::Native
         if (!device)
             return false;
 
-        // Sits behind every child view and layer: AddVisual(..., FALSE) is
-        // DComp's InsertAtBottom.
+        // Sits behind every child view and layer.
         if (!paintVisual)
         {
             if (FAILED(device->CreateVisual(paintVisual.GetAddressOf())))
@@ -550,7 +549,7 @@ struct View::Native
                 return false;
             }
 
-            visual->AddVisual(paintVisual.Get(), FALSE, nullptr);
+            insertVisualAtBottom(visual.Get(), paintVisual.Get());
         }
 
         if (!paintSurface || surfacePixelWidth != pixelWidth

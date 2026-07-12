@@ -43,6 +43,23 @@ bool isCompositorInitialized();
 // changed, so callers batch a whole render pass and commit once at the end.
 void commitComposition();
 
+// AddVisual's insertAbove flag reads inverted when referenceVisual is null:
+// TRUE prepends to the child list (BOTTOM of the z-order — siblings added
+// earlier render on top), FALSE appends (TOP). These wrappers carry the WinRT
+// Children().InsertAtTop/InsertAtBottom semantics the call sites were written
+// against.
+inline HRESULT insertVisualAtTop(IDCompositionVisual2* parent,
+                                 IDCompositionVisual2* child)
+{
+    return parent->AddVisual(child, FALSE, nullptr);
+}
+
+inline HRESULT insertVisualAtBottom(IDCompositionVisual2* parent,
+                                    IDCompositionVisual2* child)
+{
+    return parent->AddVisual(child, TRUE, nullptr);
+}
+
 // Bumped every time the rendering device is replaced. Anything holding a visual,
 // surface or target must compare against its own stamp and rebuild on a
 // mismatch — see the device-loss note above.

@@ -66,7 +66,7 @@ struct GPUView::Native : DeviceResourceHolder
 
         if (auto* container =
                 static_cast<IDCompositionVisual2*>(view.getNativeLayer()))
-            container->AddVisual(spriteVisual.Get(), TRUE, nullptr);
+            Graphics::insertVisualAtTop(container, spriteVisual.Get());
     }
 
     ~Native() override
@@ -114,7 +114,7 @@ struct GPUView::Native : DeviceResourceHolder
         {
             if (auto* container =
                     static_cast<IDCompositionVisual2*>(view.getNativeLayer()))
-                container->AddVisual(spriteVisual.Get(), TRUE, nullptr);
+                Graphics::insertVisualAtTop(container, spriteVisual.Get());
         }
 
         device = static_cast<ID3D12Device*>(Device::shared().nativeDevice());

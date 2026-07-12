@@ -231,7 +231,7 @@ struct NativeLayerBase
         visual.As(&visual3);
 
         if (parentVisual)
-            parentVisual->AddVisual(visual.Get(), TRUE, nullptr);
+            insertVisualAtTop(parentVisual.Get(), visual.Get());
 
         return true;
     }

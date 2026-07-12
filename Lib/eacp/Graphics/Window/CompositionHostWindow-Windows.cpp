@@ -242,7 +242,7 @@ void CompositionHostWindow::attachContentView(View* view)
     auto* viewVisual = static_cast<IDCompositionVisual2*>(view->getHandle());
 
     if (rootVisual && viewVisual)
-        rootVisual->AddVisual(viewVisual, TRUE, nullptr);
+        insertVisualAtTop(rootVisual.Get(), viewVisual);
 
     ensureAllLayersRendered(view);
 }
