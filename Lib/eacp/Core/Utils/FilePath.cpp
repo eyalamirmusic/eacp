@@ -44,6 +44,19 @@ std::string FilePath::extension() const
     return text.substr(dot);
 }
 
+FilePath FilePath::parentDirectory() const
+{
+    auto separator = text.find_last_of("/\\");
+
+    if (separator == std::string::npos)
+        return {};
+
+    if (separator == 0)
+        return FilePath {"/"};
+
+    return FilePath {text.substr(0, separator)};
+}
+
 FilePath FilePath::operator/(std::string_view part) const
 {
     auto joined = text;

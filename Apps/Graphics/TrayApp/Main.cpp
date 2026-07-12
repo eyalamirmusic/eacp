@@ -131,6 +131,5 @@ struct TrayApp
 
 int main()
 {
-    eacp::Apps::run<TrayApp>();
-    return 0;
+    return eacp::Apps::run<TrayApp>();
 }

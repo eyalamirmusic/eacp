@@ -86,6 +86,5 @@ struct BrowserApp
 
 int main()
 {
-    eacp::Apps::run<BrowserApp>();
-    return 0;
+    return eacp::Apps::run<BrowserApp>();
 }

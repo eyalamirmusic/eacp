@@ -158,5 +158,5 @@ void runProbe()
 
 int main()
 {
-    eacp::Apps::run(runProbe);
+    return eacp::Apps::run(runProbe);
 }

@@ -23,7 +23,5 @@ struct MyApp
 
 int main()
 {
-    Apps::run<MyApp>();
-
-    return 0;
+    return Apps::run<MyApp>();
 }
