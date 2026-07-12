@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git Rules
+
+Claude must never commit or push without explicit permission from the user in
+the current conversation.
+
 ## Project Overview
 
 eacp is a macOS + Windows-focused GUI/graphics framework written in modern C++20 with Objective-C++ interop. It provides abstractions for application lifecycle, graphics rendering (Core Graphics), threading (CFRunLoop), and networking. The framework is self-contained with no third-party dependencies beyond macOS system frameworks.

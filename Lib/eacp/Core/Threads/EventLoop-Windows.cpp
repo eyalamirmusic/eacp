@@ -31,7 +31,25 @@ constexpr UINT WM_EACP_STOP_LOOP = WM_APP + 0x42E0;
 // those is on screen.
 constexpr UINT WM_EACP_RUN_PENDING = WM_APP + 0x42E1;
 
-static std::atomic<DWORD> loopThreadId {0};
+struct EventLoopState
+{
+    // Loop-ownership marker: non-zero only while run()/runFor owns the pump.
+    // quit()/stopEventLoop() post WM_QUIT through it, so a hosted plugin
+    // (which never sets it) can't quit the host's loop.
+    std::atomic<DWORD> loopThreadId {0};
+
+    // Message-only window that EventLoop::call posts WM_EACP_RUN_PENDING to.
+    // Owned by the loop thread (created in initLoopThread, destroyed in
+    // run()'s teardown). Read from worker threads in EventLoop::call —
+    // PostMessage is thread-safe, so an atomic handle is enough.
+    std::atomic<HWND> messageWindow {nullptr};
+};
+
+static EventLoopState& getEventLoopState()
+{
+    return Singleton::get<EventLoopState>();
+}
+
 static thread_local int runForDepth = 0;
 
 struct PendingCallbacks
@@ -67,12 +85,6 @@ PendingCallbacks& getPendingCallbacks()
     return Singleton::get<PendingCallbacks>();
 }
 
-// Message-only window that EventLoop::call posts WM_EACP_RUN_PENDING to.
-// Owned by the loop thread (created in initLoopThread, destroyed in run()'s
-// teardown). Read from worker threads in EventLoop::call — PostMessage is
-// thread-safe, so an atomic handle is enough.
-static std::atomic<HWND> messageWindow {nullptr};
-
 static LRESULT CALLBACK messageWindowProc(HWND hwnd,
                                           UINT msg,
                                           WPARAM wParam,
@@ -89,7 +101,7 @@ static LRESULT CALLBACK messageWindowProc(HWND hwnd,
 
 static void ensureMessageWindow()
 {
-    if (messageWindow.load())
+    if (getEventLoopState().messageWindow.load())
         return;
 
     static const auto className =
@@ -106,23 +118,24 @@ static void ensureMessageWindow()
         classRegistered = RegisterClassExW(&wc) != 0;
     }
 
-    messageWindow = CreateWindowExW(0,
-                                    className.c_str(),
-                                    L"",
-                                    0,
-                                    0,
-                                    0,
-                                    0,
-                                    0,
-                                    HWND_MESSAGE,
-                                    nullptr,
-                                    (HINSTANCE) Plugins::getCurrentModuleHandle(),
-                                    nullptr);
+    getEventLoopState().messageWindow =
+        CreateWindowExW(0,
+                        className.c_str(),
+                        L"",
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        HWND_MESSAGE,
+                        nullptr,
+                        (HINSTANCE) Plugins::getCurrentModuleHandle(),
+                        nullptr);
 }
 
 static void destroyMessageWindow()
 {
-    if (auto hwnd = messageWindow.exchange(nullptr))
+    if (auto hwnd = getEventLoopState().messageWindow.exchange(nullptr))
         DestroyWindow(hwnd);
 }
 
@@ -205,7 +218,7 @@ void initLoopThread()
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     initMainThread();
-    loopThreadId = GetCurrentThreadId();
+    getEventLoopState().loopThreadId = GetCurrentThreadId();
     ensureMessageWindow();
 
     // Dev convenience only, never in a signed/shipped build (see the watchdog's
@@ -217,7 +230,8 @@ void initLoopThread()
     // Any callbacks queued before the loop existed will have been buffered
     // in PendingCallbacks; nudge the pump to drain them on the next
     // iteration.
-    PostMessageW(messageWindow.load(), WM_EACP_RUN_PENDING, 0, 0);
+    PostMessageW(
+        getEventLoopState().messageWindow.load(), WM_EACP_RUN_PENDING, 0, 0);
 }
 } // namespace
 
@@ -257,7 +271,7 @@ void EventLoop::run()
     }
 
     setEnv("EACP_ROOT_LOOP", "0");
-    loopThreadId = 0;
+    getEventLoopState().loopThreadId = 0;
     destroyMessageWindow();
 
     shutdownMainThread();
@@ -332,7 +346,7 @@ void EventLoop::quit()
     // and the loop exits. Inner runFor calls will also see it (via
     // PeekMessage) and unwind, re-posting WM_QUIT on their way out so
     // the outer run still gets it.
-    auto id = loopThreadId.load();
+    auto id = getEventLoopState().loopThreadId.load();
     if (id != 0)
         PostThreadMessageW(id, WM_QUIT, 0, 0);
 }
@@ -358,7 +372,7 @@ void EventLoop::call(Callback func)
     // into this copy's messageWindowProc. Off-thread first use stays
     // buffered until attachCurrentThreadAsMain or a Window/EmbeddedView
     // brings the window up.
-    if (messageWindow.load() == nullptr && isMainThread())
+    if (getEventLoopState().messageWindow.load() == nullptr && isMainThread())
         ensureMessageWindow();
 
     // Wake the pump so it drains the callback list on the next tick.
@@ -366,9 +380,9 @@ void EventLoop::call(Callback func)
     // modal loops. Before the window exists we fall back to a thread
     // message; if neither is up yet the callback stays buffered and
     // initLoopThread() drains it once the loop starts.
-    if (auto hwnd = messageWindow.load())
+    if (auto hwnd = getEventLoopState().messageWindow.load())
         PostMessageW(hwnd, WM_EACP_RUN_PENDING, 0, 0);
-    else if (auto id = loopThreadId.load())
+    else if (auto id = getEventLoopState().loopThreadId.load())
         PostThreadMessageW(id, WM_EACP_RUN_PENDING, 0, 0);
 }
 
@@ -381,7 +395,7 @@ void EventLoop::call(Callback func)
 // outer run exits.
 void stopEventLoop()
 {
-    auto id = loopThreadId.load();
+    auto id = getEventLoopState().loopThreadId.load();
     if (id == 0)
         return;
 
@@ -405,7 +419,7 @@ void attachCurrentThreadAsMain()
     ensureMessageWindow();
 
     // Drain anything buffered before the wake channel existed.
-    if (auto hwnd = messageWindow.load())
+    if (auto hwnd = getEventLoopState().messageWindow.load())
         PostMessageW(hwnd, WM_EACP_RUN_PENDING, 0, 0);
 }
 
