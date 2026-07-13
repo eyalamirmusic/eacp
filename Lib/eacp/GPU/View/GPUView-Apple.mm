@@ -138,7 +138,7 @@ struct GPUView::Native
 
     // Metal allows three by default; two is the framework's default, so a hand
     // is answered a refresh sooner. See GPUView::setFramesInFlight.
-    int framesInFlight = 2;
+    int framesInFlight = 3;
     bool continuous = false;
     bool depthEnabled = false;
     ObjC::Ptr<CAMetalLayer> metalLayer;
