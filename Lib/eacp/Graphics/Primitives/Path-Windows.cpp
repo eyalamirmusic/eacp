@@ -150,7 +150,7 @@ void Path::addRect(const Rect& rect)
 
 void Path::addRoundedRect(const Rect& rect, float radius)
 {
-    float r = radius;
+    float r = clampedCornerRadius(rect, radius);
     float x = rect.x;
     float y = rect.y;
     float w = rect.w;

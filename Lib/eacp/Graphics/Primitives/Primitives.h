@@ -63,6 +63,10 @@ struct Rect
     float h = 0.f;
 };
 
+// Corners bigger than the rect they round are out of contract for the platform
+// path builders, so every rounded-rect call site fits the radius first.
+float clampedCornerRadius(const Rect& rect, float radius);
+
 struct Color
 {
     Color() = default;

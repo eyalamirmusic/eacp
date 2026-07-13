@@ -153,6 +153,12 @@ float Rect::top() const
     return y + h;
 }
 
+float clampedCornerRadius(const Rect& rect, float radius)
+{
+    auto largestFittingRadius = std::max(std::min(rect.w, rect.h) / 2.f, 0.f);
+    return std::clamp(radius, 0.f, largestFittingRadius);
+}
+
 Color::Color(float rToUse, float gToUse, float bToUse, float aToUse)
     : r(rToUse)
     , g(gToUse)
