@@ -7,6 +7,7 @@ target_link_libraries(eacp-core PUBLIC ea_data_structures)
 target_sources(eacp-core PRIVATE
         App/App.cpp
         Platform/Platform.cpp
+        Plugins/DynamicLibrary.cpp
         Process/Process.cpp
         Threads/Async.cpp
         Threads/EventLoop.cpp

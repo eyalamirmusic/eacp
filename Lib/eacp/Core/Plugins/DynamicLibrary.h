@@ -5,10 +5,22 @@
 
 namespace eacp::Plugins
 {
-// RAII handle to a runtime-loaded library (dlopen/LoadLibrary). Symbols are
-// bound locally and resolved eagerly (RTLD_LOCAL | RTLD_NOW), so a module's
-// internals never enter the global symbol namespace — several modules that
-// each statically link their own eacp copy can coexist in one process.
+// RAII shared handle to a runtime-loaded library (dlopen/LoadLibrary).
+// Symbols are bound locally and resolved eagerly (RTLD_LOCAL | RTLD_NOW), so
+// a module's internals never enter the global symbol namespace — several
+// modules that each statically link their own eacp copy can coexist in one
+// process.
+//
+// Instances on the same path share one loaded image through a process-wide
+// refcounted registry: the image stays mapped while any of them is alive,
+// and the last close() (or destruction) unloads it, running the module's
+// static teardown (ObjC::RuntimeClass registrations dispose on the way out).
+// A host that must keep a module resident for the whole process — pending
+// native callbacks can outlive a close, the reason JUCE hosts and VST3 never
+// unload plugin images — expresses that by keeping an instance alive.
+// Whoever closes the last instance mid-process owns proving the module
+// quiescent first: no windows, no timers, no callbacks still queued into its
+// code.
 class DynamicLibrary
 {
 public:
@@ -41,5 +53,6 @@ public:
 
 private:
     void* handle = nullptr;
+    std::string path;
 };
 } // namespace eacp::Plugins
