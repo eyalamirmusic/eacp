@@ -9,8 +9,17 @@ class Device;
 enum class TextureFormat
 {
     RGBA8Unorm,
-    BGRA8Unorm
+    BGRA8Unorm,
+
+    // Single 8-bit channel, sampled as (r, 0, 0, 1). The natural format for
+    // palette indices, masks and other one-byte-per-pixel data.
+    R8Unorm
 };
+
+constexpr int bytesPerPixel(TextureFormat format)
+{
+    return format == TextureFormat::R8Unorm ? 1 : 4;
+}
 
 enum class TextureFilter
 {
@@ -39,9 +48,9 @@ struct TextureDescriptor
 
 // A 2D texture sampled by the fragment stage (MTLTexture on Metal, a D3D12
 // resource with its SRV and sampler descriptors on Windows). Create via
-// Device::makeTexture with tightly packed 4-byte pixels, row 0 at the top, or
-// null pixels for an uninitialised texture. Bind with
-// RenderPass::setFragmentTexture.
+// Device::makeTexture with tightly packed pixels (the format's
+// bytesPerPixel each), row 0 at the top, or null pixels for an
+// uninitialised texture. Bind with RenderPass::setFragmentTexture.
 class Texture
 {
 public:
@@ -63,10 +72,10 @@ public:
 
     // Re-uploads pixels into a texture created by Device::makeTexture, reusing
     // the GPU resource instead of allocating a new one — the per-frame path for
-    // video and camera streams. Source rows are tightly packed 4-byte pixels
-    // unless bytesPerRow gives a larger stride (0 means width * 4), matching the
-    // padded rows capture buffers often carry. A no-op on a wrapped or invalid
-    // texture, or when pixels is null.
+    // video and camera streams. Source rows are tightly packed unless
+    // bytesPerRow gives a larger stride (0 means width * the format's
+    // bytesPerPixel), matching the padded rows capture buffers often carry. A
+    // no-op on a wrapped or invalid texture, or when pixels is null.
     void update(const void* pixels, std::size_t bytesPerRow = 0);
 
     // Opaque native handles for cross-translation-unit use by the render pass.

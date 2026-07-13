@@ -14,8 +14,15 @@ namespace
 {
 MTLPixelFormat toMetalFormat(TextureFormat format)
 {
-    return format == TextureFormat::BGRA8Unorm ? MTLPixelFormatBGRA8Unorm
-                                               : MTLPixelFormatRGBA8Unorm;
+    switch (format)
+    {
+        case TextureFormat::BGRA8Unorm:
+            return MTLPixelFormatBGRA8Unorm;
+        case TextureFormat::R8Unorm:
+            return MTLPixelFormatR8Unorm;
+        default:
+            return MTLPixelFormatRGBA8Unorm;
+    }
 }
 
 MTLSamplerMinMagFilter toMetalFilter(TextureFilter filter)
@@ -66,6 +73,7 @@ struct Texture::Native
     Native(Device& device, const TextureDescriptor& descriptor, const void* pixels)
         : width(descriptor.width)
         , height(descriptor.height)
+        , pixelStride(bytesPerPixel(descriptor.format))
     {
         auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
 
@@ -139,7 +147,8 @@ struct Texture::Native
         if (texture.get() == nil || pixels == nullptr || width <= 0 || height <= 0)
             return;
 
-        auto stride = bytesPerRow != 0 ? bytesPerRow : (std::size_t) width * 4;
+        auto stride =
+            bytesPerRow != 0 ? bytesPerRow : (std::size_t) (width * pixelStride);
 
         [texture.get() replaceRegion:MTLRegionMake2D(0,
                                                      0,
@@ -152,6 +161,10 @@ struct Texture::Native
 
     int width = 0;
     int height = 0;
+
+    // Bytes per pixel of the texture's format; the CV-wrapped path stays at 4
+    // because those buffers are always 32-bit BGRA/RGBA.
+    int pixelStride = 4;
     ObjC::Ptr<NSObject<MTLTexture>> texture;
     ObjC::Ptr<NSObject<MTLSamplerState>> sampler;
     CFRef<CVMetalTextureRef> cvTexture;
