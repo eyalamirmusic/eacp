@@ -45,22 +45,27 @@ public:
     void setContinuous(bool continuous);
     bool isContinuous() const;
 
-    // How many frames may be queued ahead of the one on screen.
+    // How many frames the renderer may have on the go at once.
     //
-    // Every frame queued is a frame of delay between a hand moving and the
-    // picture answering, because what the user is looking at was built that
-    // many refreshes ago. Both platforms queue three of them left to
-    // themselves — Metal's drawable count and DXGI's frame latency each
-    // default to three — which buys throughput for a renderer that sometimes
-    // overruns a refresh, and costs the responsiveness of everything driven by
-    // a hand.
+    // The two backends mean different things by that, and only one of them is a
+    // latency knob:
     //
-    // Two is eacp's default, and the number the engines settle on for the same
-    // reason: it lets the CPU prepare a frame while the GPU draws the last, and
-    // queues nothing further. Three is worth having only for a view whose frame
-    // times are spiky enough to need the slack — the extra frame absorbs an
-    // overrun that would otherwise be dropped — and whose input is not being
-    // aimed with.
+    // On DXGI it is the depth of the present queue. Every frame queued is a
+    // frame of delay between a hand moving and the picture answering, because
+    // what the user is looking at was built that many refreshes ago. Left to
+    // itself DXGI queues three; two lets the CPU prepare a frame while the GPU
+    // draws the last and queues nothing further, so two is the Windows default.
+    //
+    // On Metal it is `maximumDrawableCount`: the size of the pool of buffers the
+    // layer hands out to draw into, not a queue of finished frames waiting their
+    // turn. A display-link-driven view presents exactly one frame per refresh
+    // whichever way this is set, so shrinking the pool dequeues nothing — it
+    // just means that when the renderer asks for a buffer there may not be a
+    // free one, and `nextDrawable` blocks the calling thread until the display
+    // hands one back. That wait lands squarely between sampling the input and
+    // drawing with it, so a smaller pool measurably *raises* latency: on the
+    // Maze view, sample-to-screen goes from 23ms at three to 32ms at two. Three
+    // is therefore the Apple default and there is no reason to lower it.
     //
     // Clamped to what the backend allows (Metal will not take fewer than two).
     // Set before the first frame is drawn.

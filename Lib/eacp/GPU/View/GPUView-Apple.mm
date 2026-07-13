@@ -136,8 +136,9 @@ struct GPUView::Native
     GPUView& view;
     int sampleCount = 4;
 
-    // Metal allows three by default; two is the framework's default, so a hand
-    // is answered a refresh sooner. See GPUView::setFramesInFlight.
+    // The layer's pool of drawables, not a queue of finished frames: three keeps
+    // a free buffer ready so nextDrawable never blocks. Lowering it costs
+    // latency rather than saving it. See GPUView::setFramesInFlight.
     int framesInFlight = 3;
     bool continuous = false;
     bool depthEnabled = false;
