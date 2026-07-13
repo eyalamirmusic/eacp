@@ -42,6 +42,10 @@ target_compile_definitions(DynamicLibraryTests PRIVATE
         EACP_TEST_PLUGIN="$<TARGET_FILE:DynamicLibraryTestPlugin>")
 add_dependencies(DynamicLibraryTests DynamicLibraryTestPlugin)
 
+nano_add_executable(PluginObjectTests
+        SOURCES PluginObjectTests.cpp
+        TARGETS eacp-core)
+
 nano_add_executable(EventLoopTests
         SOURCES EventLoopTests.cpp
         TARGETS eacp-core)
