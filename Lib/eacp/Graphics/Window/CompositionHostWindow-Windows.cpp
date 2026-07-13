@@ -468,8 +468,60 @@ void CompositionHostWindow::ensureMouseLeaveTracking()
     trackingMouseLeave = true;
 }
 
-void CompositionHostWindow::dispatchMouseToContentView(const MouseEvent& event) const
+void CompositionHostWindow::ensureRawMouseRegistered()
 {
+    if (rawMouseRegistered || hwnd == nullptr)
+        return;
+
+    RAWINPUTDEVICE mouse = {};
+    mouse.usUsagePage = 0x01; // generic desktop
+    mouse.usUsage = 0x02; // mouse
+
+    // No RIDEV_NOLEGACY: the ordinary pointer messages must keep coming, since
+    // a MouseEvent reports the pointer's movement as well as the device's.
+    mouse.hwndTarget = hwnd;
+
+    rawMouseRegistered = RegisterRawInputDevices(&mouse, 1, sizeof(mouse)) != FALSE;
+}
+
+void CompositionHostWindow::accumulateRawMouseMovement(LPARAM lParam)
+{
+    RAWINPUT input = {};
+    UINT size = sizeof(input);
+
+    if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam),
+                        RID_INPUT,
+                        &input,
+                        &size,
+                        sizeof(RAWINPUTHEADER))
+        == static_cast<UINT>(-1))
+        return;
+
+    if (input.header.dwType != RIM_TYPEMOUSE)
+        return;
+
+    // A tablet or a remote desktop reports where its pointer *is*, not how far
+    // the hand moved it; there is no device movement in that to report.
+    if ((input.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) != 0)
+        return;
+
+    rawMouseMovement.x += static_cast<float>(input.data.mouse.lLastX);
+    rawMouseMovement.y += static_cast<float>(input.data.mouse.lLastY);
+}
+
+void CompositionHostWindow::dispatchMouseToContentView(MouseEvent event)
+{
+    if (event.type == MouseEventType::Moved || event.type == MouseEventType::Dragged)
+    {
+        // Whatever Raw Input has gathered since the last movement was reported.
+        // A device that cannot report its own movement (a tablet, a remote
+        // desktop) leaves this empty, and the pointer's movement stands in.
+        auto moved = rawMouseMovement.x != 0.0f || rawMouseMovement.y != 0.0f;
+
+        event.rawDelta = moved ? rawMouseMovement : event.delta;
+        rawMouseMovement = {};
+    }
+
     contentView->dispatchMouseEvent(event);
     ensureAllLayersRendered(contentView);
 }
@@ -478,8 +530,16 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
                                                                   WPARAM wParam,
                                                                   LPARAM lParam)
 {
+    ensureRawMouseRegistered();
+
     switch (msg)
     {
+        // Raw Input must reach DefWindowProc to be cleaned up, so this reports
+        // the movement and then stands aside.
+        case WM_INPUT:
+            accumulateRawMouseMovement(lParam);
+            return std::nullopt;
+
         case WM_SIZE:
             resizeContentViewToClient();
             InvalidateRect(hwnd, nullptr, FALSE);

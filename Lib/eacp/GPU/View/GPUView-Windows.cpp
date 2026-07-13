@@ -11,9 +11,13 @@ namespace eacp::GPU
 {
 namespace
 {
-// Two buffers keep one frame in flight while the next records; the per-buffer
-// fence in render() stops the CPU from reusing a buffer the GPU still reads.
-constexpr UINT bufferCount = 2;
+// A buffer for each frame the swapchain may have in flight — the one being
+// shown, the one queued, and the one being drawn. The per-buffer fence in
+// render() stops the CPU from reusing a buffer the GPU still reads, and
+// DXGI is never asked to hold more frames than there are buffers to hold them.
+// See GPUView::setFramesInFlight for what the frames themselves cost.
+constexpr int maxFramesInFlight = 3;
+constexpr UINT bufferCount = maxFramesInFlight;
 
 // Lets the device-loss refresh reach every live GPUView without naming the
 // private GPUView::Native type (same pattern as View-Windows' PaintTarget).
@@ -98,6 +102,12 @@ struct GPUView::Native : DeviceResourceHolder
         depthTexture = nullptr;
         rtvHeap = nullptr;
         dsvHeap = nullptr;
+        if (frameLatencyWaitable != nullptr)
+        {
+            CloseHandle(frameLatencyWaitable);
+            frameLatencyWaitable = nullptr;
+        }
+
         swapChain = nullptr;
         frameFences = {};
 
@@ -110,7 +120,8 @@ struct GPUView::Native : DeviceResourceHolder
         spriteVisual.Reset();
 
         if (compositionDevice
-            && SUCCEEDED(compositionDevice->CreateVisual(spriteVisual.GetAddressOf())))
+            && SUCCEEDED(
+                compositionDevice->CreateVisual(spriteVisual.GetAddressOf())))
         {
             if (auto* container =
                     static_cast<IDCompositionVisual2*>(view.getNativeLayer()))
@@ -174,6 +185,12 @@ struct GPUView::Native : DeviceResourceHolder
         descriptor.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
         descriptor.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
 
+        // A waitable swapchain is what makes the present queue's depth ours to
+        // choose. Without it DXGI queues up to three frames of its own accord,
+        // and the picture on screen can be three refreshes behind the hand that
+        // moved. See GPUView::setFramesInFlight.
+        descriptor.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+
         // A D3D12 swapchain is created from the command queue, not the device.
         auto chain = winrt::com_ptr<IDXGISwapChain1>();
         if (FAILED(factory->CreateSwapChainForComposition(
@@ -184,6 +201,9 @@ struct GPUView::Native : DeviceResourceHolder
 
         if (!swapChain)
             return;
+
+        applyFrameLatency();
+        frameLatencyWaitable = swapChain->GetFrameLatencyWaitableObject();
 
         attachSwapChainToVisual();
         createDescriptorHeaps();
@@ -279,7 +299,11 @@ struct GPUView::Native : DeviceResourceHolder
         frameFences = {};
 
         if (FAILED(swapChain->ResizeBuffers(
-                bufferCount, width, height, DXGI_FORMAT_UNKNOWN, 0)))
+                bufferCount,
+                width,
+                height,
+                DXGI_FORMAT_UNKNOWN,
+                DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT)))
             return;
 
         createBackBufferViews();
@@ -370,12 +394,28 @@ struct GPUView::Native : DeviceResourceHolder
         device->CreateDepthStencilView(depthTexture.get(), nullptr, depthViewHandle);
     }
 
+    // How many frames DXGI may hold, presented but not yet shown. A waitable
+    // swapchain defaults to one, which is the least latency there is but leaves
+    // the GPU waiting on the CPU between frames; Microsoft's own guidance is
+    // that two is what keeps the two working in parallel. It is the same number
+    // Metal is given, so the backends queue alike.
+    void applyFrameLatency()
+    {
+        if (swapChain)
+            swapChain->SetMaximumFrameLatency(static_cast<UINT>(framesInFlight));
+    }
+
     void render()
     {
         auto& context = getD3D12Context();
 
         if (!swapChain || !context.isValid() || width == 0 || height == 0)
             return;
+
+        // Blocks until the swapchain is ready for another frame, so the CPU
+        // runs no further ahead of the display than it was told it may.
+        if (frameLatencyWaitable != nullptr)
+            WaitForSingleObjectEx(frameLatencyWaitable, 1000, TRUE);
 
         auto index = swapChain->GetCurrentBackBufferIndex();
 
@@ -457,6 +497,12 @@ struct GPUView::Native : DeviceResourceHolder
 
     GPUView& view;
     int sampleCount = 4;
+
+    // Two by default, so a hand is answered a refresh sooner than DXGI's own
+    // three would allow. See GPUView::setFramesInFlight.
+    int framesInFlight = 2;
+    HANDLE frameLatencyWaitable = nullptr;
+
     bool continuous = false;
     bool depthEnabled = false;
     UINT width = 0;
@@ -525,6 +571,18 @@ void GPUView::setContinuous(bool continuous)
 bool GPUView::isContinuous() const
 {
     return impl->continuous;
+}
+
+void GPUView::setFramesInFlight(int count)
+{
+    impl->framesInFlight =
+        count < 1 ? 1 : (count > maxFramesInFlight ? maxFramesInFlight : count);
+    impl->applyFrameLatency();
+}
+
+int GPUView::framesInFlight() const
+{
+    return impl->framesInFlight;
 }
 
 void GPUView::resized()

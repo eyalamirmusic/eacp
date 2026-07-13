@@ -30,7 +30,26 @@ struct MouseEvent
 {
     Point pos;
     Point downPos;
+
+    // How far the pointer moved, in points — the movement the system would
+    // have given the cursor, shaped by its acceleration curve. That curve
+    // exists so a cursor can cross a screen and still land on a target, and it
+    // is what a widget dragged by the pointer should follow: an infinite-drag
+    // knob or scrubber moves with the hand's *pointer*, not its device.
     Point delta;
+
+    // How far the device itself moved, with no acceleration curve applied.
+    // Linear: the same physical movement always reports the same figure,
+    // however fast it was made, which is what a camera needs — an FPS look, a
+    // 3D orbit. Applying the pointer's curve to a camera makes an identical
+    // flick of the hand turn different amounts depending on its speed, which
+    // reads as the aim being unpredictable.
+    //
+    // In the device's own units (mouse counts), not points: it does not scale
+    // with the display, so a sensitivity tuned against it stays put across
+    // monitors. Falls back to `delta` where the platform cannot report it.
+    Point rawDelta;
+
     MouseEventType type = MouseEventType::Down;
     MouseButton button = MouseButton::Left;
     ModifierKeys modifiers;

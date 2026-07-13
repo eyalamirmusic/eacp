@@ -45,6 +45,28 @@ public:
     void setContinuous(bool continuous);
     bool isContinuous() const;
 
+    // How many frames may be queued ahead of the one on screen.
+    //
+    // Every frame queued is a frame of delay between a hand moving and the
+    // picture answering, because what the user is looking at was built that
+    // many refreshes ago. Both platforms queue three of them left to
+    // themselves — Metal's drawable count and DXGI's frame latency each
+    // default to three — which buys throughput for a renderer that sometimes
+    // overruns a refresh, and costs the responsiveness of everything driven by
+    // a hand.
+    //
+    // Two is eacp's default, and the number the engines settle on for the same
+    // reason: it lets the CPU prepare a frame while the GPU draws the last, and
+    // queues nothing further. Three is worth having only for a view whose frame
+    // times are spiky enough to need the slack — the extra frame absorbs an
+    // overrun that would otherwise be dropped — and whose input is not being
+    // aimed with.
+    //
+    // Clamped to what the backend allows (Metal will not take fewer than two).
+    // Set before the first frame is drawn.
+    void setFramesInFlight(int count);
+    int framesInFlight() const;
+
     // Fired after the GPU device was lost and replaced (driver update, GPU
     // reset — Windows only). The view's swapchain and MSAA/depth targets are
     // already rebuilt; recreate app-owned Buffers and pipelines here, since

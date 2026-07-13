@@ -2,7 +2,7 @@
 #import <Cocoa/Cocoa.h>
 #include "View.h"
 #include "../Graphics/GraphicsContextImpl.h"
-#include "../Window/MouseWarp-macOS.h"
+#include "../Window/MouseLock-macOS.h"
 #include "../Graphics/Keyboard-MacOS.h"
 
 #include <eacp/Core/ObjC/RuntimeClass.h>
@@ -63,14 +63,25 @@ void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
     e.modifiers = modifierKeysFromEvent(event);
 
     e.timestamp = event.timestamp;
-    e.delta = {(float) event.deltaX, (float) event.deltaY};
 
-    // The first movement reported after the cursor was warped carries the warp
-    // itself in its delta, as though the user had made that jump. Drop it: a
-    // locked camera would otherwise be spun round by it.
+    // Both figures, always: `delta` is the pointer's movement, shaped by the
+    // system's acceleration curve, and `rawDelta` is the device's own. A widget
+    // dragged by the pointer wants the first; a camera wants the second. See
+    // MouseEvent.
+    e.delta = {(float) event.deltaX, (float) event.deltaY};
+    e.rawDelta = e.delta;
+
+    if (CGEventRef cgEvent = [event CGEvent])
+        e.rawDelta = {(float) CGEventGetIntegerValueField(
+                          cgEvent, kCGEventUnacceleratedPointerMovementX),
+                      (float) CGEventGetIntegerValueField(
+                          cgEvent, kCGEventUnacceleratedPointerMovementY)};
+
+    // A warp is not motion, however the system reports it.
     if (detail::cursorWasWarped)
     {
         e.delta = {};
+        e.rawDelta = {};
         detail::cursorWasWarped = false;
     }
 

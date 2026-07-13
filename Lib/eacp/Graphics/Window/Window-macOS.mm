@@ -1,5 +1,5 @@
 #include "Window.h"
-#include "MouseWarp-macOS.h"
+#include "MouseLock-macOS.h"
 #include "../Graphics/Keyboard.h"
 #include "../Helpers/ImageConversion-macOS.h"
 #include "../Primitives/GraphicUtils.h"
