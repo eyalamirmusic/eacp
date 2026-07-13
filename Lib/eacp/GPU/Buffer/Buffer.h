@@ -43,6 +43,14 @@ public:
     // that wrote it has committed (CommandBuffer::commit blocks until then).
     void read(void* dst, std::size_t bytes) const;
 
+    // Overwrites the buffer's contents from the CPU — the per-frame path for
+    // dynamic geometry, reusing the GPU resource instead of allocating a new
+    // one. Copies min(bytes, size()) bytes; a no-op on an invalid buffer or
+    // null data. The new contents are seen by commands encoded after the
+    // call; update at most once per displayed frame, as pacing against
+    // frames still in flight is not synchronised here.
+    void update(const void* data, std::size_t bytes);
+
     // Opaque native handle for cross-translation-unit use by other GPU types.
     void* nativeBuffer() const;
 
