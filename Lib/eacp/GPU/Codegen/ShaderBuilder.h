@@ -143,6 +143,11 @@ public:
     void position(const Float4& clipPosition);
     void fragment(const Float4& color);
 
+    void discardBelow(const Float& value, float threshold)
+    {
+        graphData.setDiscard(value.node, threshold);
+    }
+
     GeneratedShader build() const;
 
     const ShaderGraph& graph() const { return graphData; }

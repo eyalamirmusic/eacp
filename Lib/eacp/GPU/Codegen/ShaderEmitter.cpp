@@ -586,11 +586,24 @@ std::string emit(const ShaderGraph& graph, Backend backend)
 
     source += "    return output;\n}\n\n";
 
+    // The alpha test is a fragment root like the colour is: its subtree is
+    // planned with the colour's, so a value both of them read (the texture
+    // sample, typically) is computed once and shared.
+    auto fragmentRoots = std::vector {graph.fragment()};
+
+    if (graph.discard() >= 0)
+        fragmentRoots.push_back(graph.discard());
+
+    auto fragmentReadsUniform = false;
+
+    for (auto root: fragmentRoots)
+        fragmentReadsUniform |= referencesUniform(graph, root);
+
     if (backend == Backend::Metal)
     {
         source += "fragment float4 fragmentMain(VertexOut input [[stage_in]]";
 
-        if (hasUniforms && referencesUniform(graph, graph.fragment()))
+        if (hasUniforms && fragmentReadsUniform)
             source += ",\n    constant Uniforms& uniforms [[buffer("
                       + std::to_string(RenderPass::uniformBase) + ")]]";
 
@@ -607,10 +620,20 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         source += "float4 fragmentMain(VertexOut input) : SV_Target\n{\n";
     }
 
-    auto fragmentPlan = planStage(graph, {graph.fragment()});
+    auto fragmentPlan = planStage(graph, fragmentRoots);
     auto fragmentPrinter = ExprPrinter {graph, backend, fragmentPlan.locals};
 
     source += emitLocals(fragmentPrinter, fragmentPlan);
+
+    if (graph.discard() >= 0)
+    {
+        auto kill = backend == Backend::Metal ? "discard_fragment();" : "discard;";
+
+        source += "    if (" + fragmentPrinter.ref(graph.discard()) + " < "
+                  + floatLiteral(graph.discardThreshold()) + ")\n        " + kill
+                  + "\n";
+    }
+
     source += "    return " + fragmentPrinter.ref(graph.fragment()) + ";\n}\n";
 
     return source;
