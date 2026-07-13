@@ -25,6 +25,7 @@ if (APPLE)
     target_sources(eacp-core PRIVATE
             ObjC/AutoReleasePool.mm
             ObjC/Strings.mm
+            Platform/ScopedAutoReleasePool-Apple.mm
             Plugins/DynamicLibrary-Apple.cpp
             Plugins/DynamicLibrary-Posix.cpp
             Plugins/ModuleInfo-Apple.cpp
@@ -65,6 +66,7 @@ elseif (WIN32)
             App/App-Windows.cpp
             App/Clipboard-Windows.cpp
             App/LoginItem-Windows.cpp
+            Platform/ScopedAutoReleasePool-Default.cpp
             Plugins/DynamicLibrary-Windows.cpp
             Plugins/ModuleInfo-Windows.cpp
             Process/Process-Windows.cpp
@@ -82,6 +84,7 @@ elseif (UNIX AND NOT APPLE)
             App/App-Linux.cpp
             App/Clipboard-Linux.cpp
             App/LoginItem-Linux.cpp
+            Platform/ScopedAutoReleasePool-Default.cpp
             Plugins/DynamicLibrary-Linux.cpp
             Plugins/DynamicLibrary-Posix.cpp
             Plugins/ModuleInfo-Linux.cpp

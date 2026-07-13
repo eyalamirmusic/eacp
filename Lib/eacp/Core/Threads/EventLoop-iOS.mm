@@ -105,6 +105,13 @@ void EventLoop::quit()
     CFRunLoopStop(CFRunLoopGetCurrent());
 }
 
+// UIApplicationMain runs the loop for the rest of the process's life, so once
+// it has started there is always a loop for callAsync to reach.
+bool isEventLoopRunning()
+{
+    return appInitialized;
+}
+
 // No plugin hosts on iOS — an app is always the process executable.
 void stopProcessRootLoop() {}
 } // namespace eacp::Threads
