@@ -53,6 +53,17 @@ MenuItem MenuItem::withAction(std::string title,
     return item;
 }
 
+MenuItem MenuItem::withResponderSelector(std::string title,
+                                         std::string selector,
+                                         std::optional<KeyEquivalent> shortcut)
+{
+    auto item = MenuItem {};
+    item.title = std::move(title);
+    item.responderSelector = std::move(selector);
+    item.shortcut = std::move(shortcut);
+    return item;
+}
+
 MenuItem MenuItem::withSubmenu(std::string title, Menu menu)
 {
     auto item = MenuItem {};
