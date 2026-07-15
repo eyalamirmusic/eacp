@@ -42,6 +42,13 @@ Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTextu
 {
 }
 
+Frame::Frame(Device& device, const OffscreenTarget&)
+    : impl(device, nullptr, nullptr, nullptr)
+{
+    // Off-screen snapshot render targets are not yet wired on the D3D12 backend;
+    // this yields an invalid frame (no drawable), so beginPass is a no-op.
+}
+
 Frame::~Frame()
 {
     if (impl->commands == nullptr || impl->drawable == nullptr)

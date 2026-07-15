@@ -1,8 +1,19 @@
 #include "View.h"
+#include "../Image/Image.h"
 #include <ranges>
 
 namespace eacp::Graphics
 {
+Image View::renderNativeContent(float)
+{
+    return {};
+}
+
+void View::captureAsyncContent(float, std::function<void(Image)> done)
+{
+    done({});
+}
+
 View& View::setHandlesMouseEvents(bool value)
 {
     properties.handlesMouseEvents = value;

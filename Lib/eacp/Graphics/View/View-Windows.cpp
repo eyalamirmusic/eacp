@@ -4,6 +4,8 @@
 #include "../Image/Image.h"
 #include "../Layers/NativeLayer-Windows.h"
 
+#include <eacp/Core/Threads/Async.h>
+
 #include <unordered_set>
 #include <vector>
 
@@ -639,9 +641,10 @@ void View::repaint()
     impl->repaint();
 }
 
-void View::setOpacity(float opacity)
+void View::setOpacity(float opacityToUse)
 {
-    impl->setOpacity(opacity);
+    opacity = opacityToUse;
+    impl->setOpacity(opacityToUse);
 }
 
 Rect View::getBounds() const
@@ -679,6 +682,15 @@ Image View::renderToImage(float)
     // Not yet implemented on Windows: needs an off-screen WIC/D2D render target
     // to back D2DContext, mirroring the CGBitmapContext path on Apple.
     return {};
+}
+
+Threads::Async<Image> View::renderToImageAsync(float)
+{
+    // Not yet implemented on Windows (see renderToImage); resolve with an
+    // invalid Image so callers still get a settled Async.
+    auto promise = Threads::AsyncPromise<Image> {};
+    promise.resolve({});
+    return promise.get();
 }
 
 void View::viewAdded(View& view)

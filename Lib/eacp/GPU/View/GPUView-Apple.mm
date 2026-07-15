@@ -9,8 +9,11 @@
 #include "../Frame/Frame.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
+#include <eacp/Graphics/Image/Image.h>
 #include <eacp/Graphics/Layers/ImmediateLayerClass.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
+
+#include <cmath>
 
 namespace eacp::GPU
 {
@@ -238,6 +241,98 @@ void GPUView::renderNow()
                            (__bridge void*) impl->msaaTexture.get(),
                            (__bridge void*) impl->depthTexture.get());
         render(frame);
+    }
+}
+
+Graphics::Image GPUView::renderNativeContent(float scale)
+{
+    auto bounds = getLocalBounds();
+    auto pixelWidth = (NSUInteger) std::lround(bounds.w * scale);
+    auto pixelHeight = (NSUInteger) std::lround(bounds.h * scale);
+
+    if (pixelWidth == 0 || pixelHeight == 0)
+        return {};
+
+    auto device = (__bridge id<MTLDevice>) Device::shared().nativeDevice();
+    auto samples = (NSUInteger) impl->sampleCount;
+
+    @autoreleasepool
+    {
+        auto makeTarget = [&](MTLPixelFormat format, bool multisample)
+        {
+            auto descriptor = [MTLTextureDescriptor
+                texture2DDescriptorWithPixelFormat:format
+                                             width:pixelWidth
+                                            height:pixelHeight
+                                         mipmapped:NO];
+            descriptor.usage = MTLTextureUsageRenderTarget;
+            descriptor.storageMode = MTLStorageModePrivate;
+
+            if (multisample)
+            {
+                descriptor.textureType = MTLTextureType2DMultisample;
+                descriptor.sampleCount = samples;
+            }
+
+            return [device newTextureWithDescriptor:descriptor];
+        };
+
+        // The resolve/store target is single-sampled; content renders into the
+        // MSAA texture and resolves into it, mirroring the on-screen path.
+        auto colorTexture = makeTarget(MTLPixelFormatBGRA8Unorm, false);
+        auto msaaTexture =
+            samples > 1 ? makeTarget(MTLPixelFormatBGRA8Unorm, true) : nil;
+        auto depthTexture =
+            impl->depthEnabled ? makeTarget(MTLPixelFormatDepth32Float, samples > 1)
+                               : nil;
+
+        {
+            auto target = OffscreenTarget {(__bridge void*) colorTexture,
+                                           (__bridge void*) msaaTexture,
+                                           (__bridge void*) depthTexture};
+            auto frame = Frame(Device::shared(), target);
+            render(frame);
+        }
+
+        // Copy the private colour texture into a shared buffer so the CPU can
+        // read it (robust across unified and discrete GPUs).
+        auto rowBytes = (NSUInteger) pixelWidth * 4;
+        auto readback = [device newBufferWithLength:rowBytes * pixelHeight
+                                            options:MTLResourceStorageModeShared];
+
+        auto queue = (__bridge id<MTLCommandQueue>) Device::shared().nativeQueue();
+        auto commandBuffer = [queue commandBuffer];
+        auto blit = [commandBuffer blitCommandEncoder];
+        [blit copyFromTexture:colorTexture
+                     sourceSlice:0
+                     sourceLevel:0
+                    sourceOrigin:MTLOriginMake(0, 0, 0)
+                      sourceSize:MTLSizeMake(pixelWidth, pixelHeight, 1)
+                        toBuffer:readback
+               destinationOffset:0
+          destinationBytesPerRow:rowBytes
+        destinationBytesPerImage:rowBytes * pixelHeight];
+        [blit endEncoding];
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+
+        auto image = Graphics::Image {};
+        auto* dst = image.prepareForOverwrite((int) pixelWidth, (int) pixelHeight);
+        if (dst == nullptr)
+            return {};
+
+        // BGRA8 (Metal) -> straight RGBA (Image).
+        auto* src = (const std::uint8_t*) readback.contents;
+        auto count = (std::size_t) pixelWidth * pixelHeight;
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            dst[i * 4 + 0] = src[i * 4 + 2];
+            dst[i * 4 + 1] = src[i * 4 + 1];
+            dst[i * 4 + 2] = src[i * 4 + 0];
+            dst[i * 4 + 3] = src[i * 4 + 3];
+        }
+
+        return image;
     }
 }
 } // namespace eacp::GPU

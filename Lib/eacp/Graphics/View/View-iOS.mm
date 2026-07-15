@@ -4,6 +4,8 @@
 #include "../Graphics/GraphicsContextImpl.h"
 #include "../Image/Image.h"
 
+#include <eacp/Core/Threads/Async.h>
+
 @interface NativeView : UIView
 {
 @public
@@ -226,9 +228,10 @@ void View::repaint()
     impl->repaint();
 }
 
-void View::setOpacity(float opacity)
+void View::setOpacity(float opacityToUse)
 {
-    impl->setOpacity(opacity);
+    opacity = opacityToUse;
+    impl->setOpacity(opacityToUse);
 }
 
 Rect View::getBounds() const
@@ -240,6 +243,12 @@ Image View::renderToImage(float scale)
 {
     auto resolvedScale = scale > 0.0f ? scale : impl->backingScale();
     return renderLayerToImage(*this, getLocalBounds(), resolvedScale);
+}
+
+Threads::Async<Image> View::renderToImageAsync(float scale)
+{
+    auto resolvedScale = scale > 0.0f ? scale : impl->backingScale();
+    return renderViewToImageAsync(*this, getLocalBounds(), resolvedScale);
 }
 
 Point View::getMousePosition() const

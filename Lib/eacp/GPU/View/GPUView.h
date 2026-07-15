@@ -82,6 +82,11 @@ private:
     // Internal: drives the GPU render from the View draw cycle. Subclasses
     // override render(), not this.
     void paint(Graphics::Context&) final;
+
+    // Off-screen render + read-back so View snapshots capture GPU content, which
+    // renderInContext: cannot reach. Runs render() into an app-owned texture.
+    Graphics::Image renderNativeContent(float scale) final;
+
     void renderNow();
 
     struct Native;

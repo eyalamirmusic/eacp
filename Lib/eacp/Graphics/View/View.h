@@ -4,6 +4,14 @@
 #include "../Layers/Layer.h"
 #include "../Graphics/Keyboard.h"
 
+#include <functional>
+
+namespace eacp::Threads
+{
+template <typename T>
+class Async;
+}
+
 namespace eacp::Graphics
 {
 
@@ -77,21 +85,45 @@ public:
     void repaint();
 
     // Renders this view and its child views into an off-screen image, stacked
-    // front-to-back the way the compositor draws them on screen. Captures
-    // paint()-drawn content only: native GPU layers and embedded web content,
-    // which render outside paint(), come out blank. scale is the pixels-per-point
-    // factor (2 on a Retina display); pass 0 to use the view's current backing
-    // scale. Returns an invalid Image for a non-positive size.
+    // front-to-back the way the compositor draws them on screen: paint() chrome,
+    // attached shape/text layers, GPU (Metal) content, and descendant views.
+    // Embedded web content is async and NOT captured here (it comes out blank) --
+    // use renderToImageAsync for that. scale is the pixels-per-point factor (2 on
+    // a Retina display); pass 0 to use the view's current backing scale. Returns
+    // an invalid Image for a non-positive size.
     Image renderToImage(float scale = 0.0f);
+
+    // Like renderToImage, but also folds in embedded WebView content, which the
+    // web runtime only yields asynchronously. Resolves on the main thread once
+    // every descendant WebView has been snapshotted. Prefer the synchronous
+    // renderToImage when the subtree has no web content.
+    Threads::Async<Image> renderToImageAsync(float scale = 0.0f);
 
     // Group opacity for the whole view subtree (chrome, child views and any
     // native GPU/web content), composited over whatever sits behind it. Sibling
     // of Layer::setOpacity, but for an entire View rather than a single layer.
     void setOpacity(float opacity);
+    float getOpacity() const { return opacity; }
 
     void* getHandle();
 
     virtual void paint(Context&) {};
+
+    // Native, non-paint content this view renders itself (a GPUView's Metal
+    // layer), returned as a straight-alpha Image sized to the view's bounds at
+    // `scale` pixels per point. The snapshot compositor draws the result over
+    // paint()/layers, since renderInContext: cannot reach such content. Default
+    // is none (invalid Image). WebView content is async and handled separately.
+    virtual Image renderNativeContent(float scale);
+
+    // Async native content (a WebView's page), which the web runtime only yields
+    // via a callback. hasAsyncContent() reports whether this view has any;
+    // captureAsyncContent() delivers it as a straight-alpha Image sized to the
+    // view's bounds at `scale`, invoking done on the main thread (with an invalid
+    // Image on failure). renderToImageAsync folds the result into the snapshot.
+    virtual bool hasAsyncContent() const { return false; }
+    virtual void captureAsyncContent(float scale, std::function<void(Image)> done);
+
     virtual void mouseDown(const MouseEvent&) {}
     virtual void mouseUp(const MouseEvent&) {}
     virtual void mouseDragged(const MouseEvent&) {}
@@ -172,6 +204,7 @@ private:
 
     Vector<View*> subviews;
     Vector<Layer*> layers;
+    float opacity = 1.0f;
     View* parent = nullptr;
     View* hoveredView = nullptr;
     View* mouseDownTarget = nullptr;
