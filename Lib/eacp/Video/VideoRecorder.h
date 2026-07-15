@@ -11,8 +11,27 @@ class View;
 namespace eacp::Video
 {
 
+enum class CaptureMode
+{
+    // Off-screen compositing via View::renderToImage: captures any content
+    // (paint, layers, GPU, and -- through the async path -- WebView), works
+    // headless with no permission, but re-composites every frame on the CPU so
+    // it is not meant for real-time heavy-GPU capture.
+    Snapshot,
+
+    // Taps the system compositor for this view's host window (ScreenCaptureKit on
+    // macOS, Windows.Graphics.Capture on Windows): the live composited window --
+    // 2D, GPU and WebView together -- delivered GPU-side, in real time. Requires
+    // the window to be on-screen, plus Screen Recording permission on macOS.
+    Screen,
+};
+
 struct VideoOptions
 {
+    // How frames are captured. Snapshot is the portable, permission-free default;
+    // Screen is the real-time full-composite path (see CaptureMode).
+    CaptureMode mode = CaptureMode::Snapshot;
+
     // Pixels per point. 0 uses the view's backing scale, exactly as
     // View::renderToImage does.
     float scale = 0.0f;

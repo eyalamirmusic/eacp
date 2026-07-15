@@ -1,4 +1,6 @@
 #import <AVFoundation/AVFoundation.h>
+#import <AppKit/AppKit.h>
+#import <ScreenCaptureKit/ScreenCaptureKit.h>
 
 #include "VideoRecorder.h"
 
@@ -6,25 +8,71 @@
 #include <eacp/Graphics/Graphics.h>
 
 #include <cctype>
+#include <cmath>
 #include <cstdint>
-#include <string>
-#include <utility>
+#include <functional>
 
-// AVFoundation recorder. A DisplayLink drives one snapshot per refresh
-// (View::renderToImage), each converted from straight-alpha RGBA to BGRA (over
-// black, so the video is opaque) into a pooled CVPixelBuffer and appended with a
-// real-time PTS. finishWriting flushes the container asynchronously. MRC: every
-// alloc/init is adopted by an ObjC::Ptr.
+// Two capture tiers behind one API:
+//   Snapshot -- a DisplayLink drives View::renderToImage each refresh; the RGBA
+//     snapshot is composited over black into a pooled CVPixelBuffer (BGRA) and
+//     appended with a real-time PTS. Portable, off-screen, any content.
+//   Screen   -- ScreenCaptureKit taps the WindowServer's live composite of the
+//     view's host window (2D + GPU + WebView), delivering IOSurface-backed
+//     CVPixelBuffers straight to the encoder. Real-time, GPU-side; needs the
+//     window on-screen and Screen Recording permission.
+// Both feed a shared AVAssetWriter (H.264). MRC: alloc/init adopted by ObjC::Ptr.
 
-namespace eacp::Video
-{
 namespace
 {
 int roundDownToEven(int value)
 {
     return value & ~1;
 }
+} // namespace
 
+// ScreenCaptureKit sample sink. Forwards each complete frame's CVPixelBuffer +
+// PTS to a C++ callback (set right after construction).
+API_AVAILABLE(macos(12.3))
+@interface EacpScreenSink : NSObject <SCStreamOutput, SCStreamDelegate>
+@end
+
+@implementation EacpScreenSink
+{
+@public
+    std::function<void(CVPixelBufferRef, CMTime)> onFrame;
+}
+
+- (void)stream:(SCStream*)stream
+    didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
+                   ofType:(SCStreamOutputType)type
+{
+    if (type != SCStreamOutputTypeScreen || !CMSampleBufferIsValid(sampleBuffer))
+        return;
+
+    // Only "complete" frames carry a fresh surface; skip idle/blank deliveries.
+    auto* attachments =
+        (NSArray*) CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, NO);
+    if (NSDictionary* info = attachments.firstObject)
+    {
+        auto status = (SCFrameStatus) [info[SCStreamFrameInfoStatus] integerValue];
+        if (status != SCFrameStatusComplete)
+            return;
+    }
+
+    auto buffer = (CVPixelBufferRef) CMSampleBufferGetImageBuffer(sampleBuffer);
+    if (buffer != nullptr && onFrame)
+        onFrame(buffer, CMSampleBufferGetPresentationTimeStamp(sampleBuffer));
+}
+
+- (void)stream:(SCStream*)stream didStopWithError:(NSError*)error
+{
+}
+@end
+
+namespace eacp::Video
+{
+namespace
+{
 NSString* fileTypeForPath(const FilePath& path)
 {
     auto extension = path.extension();
@@ -36,29 +84,128 @@ NSString* fileTypeForPath(const FilePath& path)
 
     return AVFileTypeQuickTimeMovie;
 }
+
+// Shared H.264 encoder: an AVAssetWriter fed BGRA CVPixelBuffers with PTS. The
+// writer session starts at the first appended frame's timestamp, so both a
+// zero-based snapshot clock and ScreenCaptureKit's host clock work unchanged.
+struct Encoder
+{
+    ObjC::Ptr<AVAssetWriter> writer;
+    ObjC::Ptr<AVAssetWriterInput> input;
+    ObjC::Ptr<AVAssetWriterInputPixelBufferAdaptor> adaptor;
+    bool sessionStarted = false;
+
+    bool valid() const { return writer && input && adaptor; }
+
+    bool begin(const FilePath& path, int width, int height, int bitrate)
+    {
+        auto* url = [NSURL fileURLWithPath:@(path.c_str())];
+        [[NSFileManager defaultManager] removeItemAtURL:url error:nil];
+
+        NSError* error = nil;
+        auto* w = [[AVAssetWriter alloc] initWithURL:url
+                                            fileType:fileTypeForPath(path)
+                                               error:&error];
+        if (w == nil)
+            return false;
+
+        NSDictionary* compression = @{AVVideoAverageBitRateKey : @(bitrate)};
+        NSDictionary* settings = @{
+            AVVideoCodecKey : AVVideoCodecTypeH264,
+            AVVideoWidthKey : @(width),
+            AVVideoHeightKey : @(height),
+            AVVideoCompressionPropertiesKey : compression
+        };
+
+        auto* in = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo
+                                                  outputSettings:settings];
+        in.expectsMediaDataInRealTime = YES;
+
+        NSDictionary* pixelAttributes = @{
+            (id) kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
+            (id) kCVPixelBufferWidthKey : @(width),
+            (id) kCVPixelBufferHeightKey : @(height)
+        };
+
+        auto* ad = [[AVAssetWriterInputPixelBufferAdaptor alloc]
+            initWithAssetWriterInput:in
+            sourcePixelBufferAttributes:pixelAttributes];
+
+        auto ok = [w canAddInput:in];
+        if (ok)
+        {
+            [w addInput:in];
+            ok = [w startWriting];
+        }
+
+        if (!ok)
+        {
+            [w release];
+            [in release];
+            [ad release];
+            return false;
+        }
+
+        writer = w;
+        input = in;
+        adaptor = ad;
+        return true;
+    }
+
+    CVPixelBufferPoolRef pool() const { return adaptor.get().pixelBufferPool; }
+
+    void append(CVPixelBufferRef buffer, CMTime pts)
+    {
+        if (!sessionStarted)
+        {
+            [writer.get() startSessionAtSourceTime:pts];
+            sessionStarted = true;
+        }
+
+        if ([input.get() isReadyForMoreMediaData])
+            [adaptor.get() appendPixelBuffer:buffer withPresentationTime:pts];
+    }
+
+    Threads::Async<void> finish()
+    {
+        auto promise = Threads::AsyncPromise<void> {};
+        auto result = promise.get();
+
+        if (!writer)
+        {
+            promise.resolve();
+            return result;
+        }
+
+        [input.get() markAsFinished];
+        [writer.get() finishWritingWithCompletionHandler:^{
+            Threads::callAsync([promise] { promise.resolve(); });
+        }];
+
+        return result;
+    }
+};
 } // namespace
 
 struct VideoRecorder::Native
 {
+    CaptureMode mode = CaptureMode::Snapshot;
+    Encoder encoder;
+    bool recording = false;
+
+    // --- Snapshot tier ---
     Graphics::View* view = nullptr;
     float scale = 0.0f;
     int width = 0;
     int height = 0;
-    bool recording = false;
-
-    // Seconds between captured frames (1 / fps), or 0 for the display rate.
-    // `nextCapture` is the scheduled time of the next frame on an ideal grid, so
-    // pacing does not drift against a faster refresh rate.
     double frameInterval = 0.0;
     double nextCapture = 0.0;
-
-    ObjC::Ptr<AVAssetWriter> writer;
-    ObjC::Ptr<AVAssetWriterInput> input;
-    ObjC::Ptr<AVAssetWriterInputPixelBufferAdaptor> adaptor;
-
-    // Declared last so it is destroyed first: the DisplayLink stops firing
-    // before the writer it feeds is released.
     OwningPointer<Threads::DisplayLink> link;
+
+    // --- Screen tier ---
+    ObjC::Ptr<SCStream> stream API_AVAILABLE(macos(12.3));
+    ObjC::Ptr<EacpScreenSink> sink API_AVAILABLE(macos(12.3));
+    dispatch_queue_t sampleQueue = nullptr;
 
     void captureFrame(Threads::FrameTime frameTime)
     {
@@ -66,8 +213,8 @@ struct VideoRecorder::Native
             return;
 
         // Hold the target frame rate against a faster display: capture only when
-        // the next scheduled slot is due, advancing the schedule by a fixed
-        // interval so it doesn't drift. Resync if a slow frame put us behind.
+        // the next scheduled slot is due, advancing on an ideal grid so it does
+        // not drift. Resync if a slow frame put us behind.
         if (frameInterval > 0.0)
         {
             if (frameTime.time < nextCapture)
@@ -78,14 +225,11 @@ struct VideoRecorder::Native
                 nextCapture = frameTime.time + frameInterval;
         }
 
-        if (![input.get() isReadyForMoreMediaData])
-            return;
-
         auto image = view->renderToImage(scale);
         if (!image.isValid() || image.width() < width || image.height() < height)
             return;
 
-        auto* pool = adaptor.get().pixelBufferPool;
+        auto* pool = encoder.pool();
         if (pool == nullptr)
             return;
 
@@ -126,9 +270,190 @@ struct VideoRecorder::Native
 
         CVPixelBufferUnlockBaseAddress(buffer, 0);
 
-        auto pts = CMTimeMakeWithSeconds(frameTime.time, 600);
-        [adaptor.get() appendPixelBuffer:buffer withPresentationTime:pts];
+        encoder.append(buffer, CMTimeMakeWithSeconds(frameTime.time, 600));
         CVPixelBufferRelease(buffer);
+    }
+
+    bool startSnapshot(Graphics::View& viewToUse,
+                       const FilePath& path,
+                       const VideoOptions& options)
+    {
+        view = &viewToUse;
+        scale = options.scale;
+
+        // Probe one frame to size the video; renderToImage resolves the backing
+        // scale itself when options.scale is 0.
+        auto probe = viewToUse.renderToImage(options.scale);
+        width = roundDownToEven(probe.width());
+        height = roundDownToEven(probe.height());
+
+        if (width <= 0 || height <= 0)
+            return false;
+
+        auto bitrate = options.bitrate > 0 ? options.bitrate : width * height * 8;
+        if (!encoder.begin(path, width, height, bitrate))
+            return false;
+
+        frameInterval = options.fps > 0 ? 1.0 / options.fps : 0.0;
+        nextCapture = 0.0;
+        recording = true;
+
+        auto* native = this;
+        link = makeOwned<Threads::DisplayLink>(
+            [native](Threads::FrameTime time) { native->captureFrame(time); });
+
+        return true;
+    }
+
+    bool startScreen(Graphics::View& viewToUse,
+                     const FilePath& path,
+                     const VideoOptions& options)
+    {
+        if (@available(macOS 12.3, *))
+        {
+            auto* nsView = (NSView*) viewToUse.getHandle();
+            auto* nsWindow = nsView.window;
+            if (nsWindow == nil)
+                return false; // not hosted in a window; nothing to screen-capture
+
+            auto windowID = (CGWindowID) nsWindow.windowNumber;
+            auto backingScale =
+                options.scale > 0 ? options.scale : (float) nsWindow.backingScaleFactor;
+
+            auto fps = options.fps > 0 ? options.fps : 60;
+            auto explicitBitrate = options.bitrate;
+            auto outputPath = path;
+
+            auto* sinkObject = [[EacpScreenSink alloc] init];
+            auto* native = this;
+            sinkObject->onFrame = [native](CVPixelBufferRef buffer, CMTime pts)
+            {
+                if (native->recording)
+                    native->encoder.append(buffer, pts);
+            };
+            sink = sinkObject;
+
+            sampleQueue =
+                dispatch_queue_create("eacp.video.screen", DISPATCH_QUEUE_SERIAL);
+            recording = true;
+
+            // Enumerating shareable content is async and also drives the Screen
+            // Recording permission check.
+            [SCShareableContent
+                getShareableContentWithCompletionHandler:^(SCShareableContent* content,
+                                                           NSError* error) {
+                    if (error != nil || content == nil)
+                    {
+                        LOG("VideoRecorder: screen content unavailable (permission?)");
+                        return;
+                    }
+
+                    if (!native->recording)
+                        return; // stopped before setup finished
+
+                    SCWindow* target = nil;
+                    for (SCWindow* candidate in content.windows)
+                        if (candidate.windowID == windowID)
+                        {
+                            target = candidate;
+                            break;
+                        }
+
+                    if (target == nil)
+                    {
+                        LOG("VideoRecorder: host window not shareable (off-screen?)");
+                        return;
+                    }
+
+                    native->width = roundDownToEven(
+                        (int) std::lround(target.frame.size.width * backingScale));
+                    native->height = roundDownToEven(
+                        (int) std::lround(target.frame.size.height * backingScale));
+
+                    auto bitrate = explicitBitrate > 0
+                                       ? explicitBitrate
+                                       : native->width * native->height * 8;
+
+                    if (native->width <= 0 || native->height <= 0
+                        || !native->encoder.begin(
+                            outputPath, native->width, native->height, bitrate))
+                    {
+                        LOG("VideoRecorder: encoder setup failed");
+                        return;
+                    }
+
+                    auto* filter = [[SCContentFilter alloc]
+                        initWithDesktopIndependentWindow:target];
+
+                    auto* config = [[SCStreamConfiguration alloc] init];
+                    config.width = (size_t) native->width;
+                    config.height = (size_t) native->height;
+                    config.pixelFormat = kCVPixelFormatType_32BGRA;
+                    config.minimumFrameInterval = CMTimeMake(1, fps);
+                    config.showsCursor = NO;
+                    config.queueDepth = 6;
+
+                    auto* newStream =
+                        [[SCStream alloc] initWithFilter:filter
+                                           configuration:config
+                                                delegate:native->sink.get()];
+
+                    NSError* addError = nil;
+                    [newStream addStreamOutput:native->sink.get()
+                                          type:SCStreamOutputTypeScreen
+                            sampleHandlerQueue:native->sampleQueue
+                                         error:&addError];
+
+                    [filter release];
+                    [config release];
+
+                    if (addError != nil)
+                    {
+                        LOG("VideoRecorder: addStreamOutput failed");
+                        [newStream release];
+                        return;
+                    }
+
+                    native->stream = newStream;
+
+                    [newStream startCaptureWithCompletionHandler:^(NSError* startError) {
+                        if (startError != nil)
+                            LOG("VideoRecorder: screen capture start failed");
+                        else
+                            LOG("VideoRecorder: screen capture started");
+                    }];
+                }];
+
+            return true;
+        }
+
+        LOG("VideoRecorder: ScreenCaptureKit requires macOS 12.3+");
+        return false;
+    }
+
+    Threads::Async<void> stopScreen()
+    {
+        auto promise = Threads::AsyncPromise<void> {};
+        auto result = promise.get();
+        auto* native = this;
+
+        if (@available(macOS 12.3, *))
+        {
+            if (stream)
+            {
+                [stream.get() stopCaptureWithCompletionHandler:^(NSError*) {
+                    // No more samples arrive after this; finalize on the main thread.
+                    Threads::callAsync([native, promise] {
+                        native->encoder.finish().then([promise] { promise.resolve(); });
+                    });
+                }];
+
+                return result;
+            }
+        }
+
+        // Stream never started (permission/off-screen): finalize whatever exists.
+        return encoder.finish();
     }
 };
 
@@ -147,111 +472,30 @@ bool VideoRecorder::start(Graphics::View& view,
     if (impl->recording)
         return false;
 
-    impl->view = &view;
-    impl->scale = options.scale;
+    impl->mode = options.mode;
 
-    // Probe one frame to size the video; renderToImage resolves the backing
-    // scale itself when options.scale is 0.
-    auto probe = view.renderToImage(options.scale);
-    impl->width = roundDownToEven(probe.width());
-    impl->height = roundDownToEven(probe.height());
+    if (options.mode == CaptureMode::Screen)
+        return impl->startScreen(view, path, options);
 
-    if (impl->width <= 0 || impl->height <= 0)
-        return false;
-
-    auto* url = [NSURL fileURLWithPath:@(path.c_str())];
-    [[NSFileManager defaultManager] removeItemAtURL:url error:nil];
-
-    NSError* error = nil;
-    auto* writer = [[AVAssetWriter alloc] initWithURL:url
-                                             fileType:fileTypeForPath(path)
-                                                error:&error];
-    if (writer == nil)
-        return false;
-
-    auto bitrate = options.bitrate > 0 ? options.bitrate
-                                       : impl->width * impl->height * 8;
-
-    NSDictionary* compression =
-        @{AVVideoAverageBitRateKey : @(bitrate)};
-
-    NSDictionary* settings = @{
-        AVVideoCodecKey : AVVideoCodecTypeH264,
-        AVVideoWidthKey : @(impl->width),
-        AVVideoHeightKey : @(impl->height),
-        AVVideoCompressionPropertiesKey : compression
-    };
-
-    auto* input = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo
-                                                 outputSettings:settings];
-    input.expectsMediaDataInRealTime = YES;
-
-    NSDictionary* pixelAttributes = @{
-        (id) kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
-        (id) kCVPixelBufferWidthKey : @(impl->width),
-        (id) kCVPixelBufferHeightKey : @(impl->height)
-    };
-
-    auto* adaptor = [[AVAssetWriterInputPixelBufferAdaptor alloc]
-        initWithAssetWriterInput:input
-        sourcePixelBufferAttributes:pixelAttributes];
-
-    if (![writer canAddInput:input])
-    {
-        [writer release];
-        [input release];
-        [adaptor release];
-        return false;
-    }
-
-    [writer addInput:input];
-
-    if (![writer startWriting])
-    {
-        [writer release];
-        [input release];
-        [adaptor release];
-        return false;
-    }
-
-    [writer startSessionAtSourceTime:kCMTimeZero];
-
-    impl->writer = writer;
-    impl->input = input;
-    impl->adaptor = adaptor;
-    impl->frameInterval = options.fps > 0 ? 1.0 / options.fps : 0.0;
-    impl->nextCapture = 0.0;
-    impl->recording = true;
-
-    auto* native = impl.get();
-    impl->link = makeOwned<Threads::DisplayLink>(
-        [native](Threads::FrameTime time) { native->captureFrame(time); });
-
-    return true;
+    return impl->startSnapshot(view, path, options);
 }
 
 Threads::Async<void> VideoRecorder::stop()
 {
-    auto promise = Threads::AsyncPromise<void> {};
-    auto result = promise.get();
-
     if (!impl->recording)
     {
+        auto promise = Threads::AsyncPromise<void> {};
         promise.resolve();
-        return result;
+        return promise.get();
     }
 
     impl->recording = false;
-    impl->link = nullptr; // stop capturing
 
-    [impl->input.get() markAsFinished];
+    if (impl->mode == CaptureMode::Screen)
+        return impl->stopScreen();
 
-    [impl->writer.get() finishWritingWithCompletionHandler:^{
-        // Fires on an AVFoundation queue; hop back to the main thread to resolve.
-        Threads::callAsync([promise] { promise.resolve(); });
-    }];
-
-    return result;
+    impl->link = nullptr; // stop the snapshot display link
+    return impl->encoder.finish();
 }
 
 } // namespace eacp::Video

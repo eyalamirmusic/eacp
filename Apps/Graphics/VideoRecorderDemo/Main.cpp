@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <string>
 
 using namespace eacp;
 using namespace Graphics;
@@ -51,15 +52,21 @@ struct App
         view.phase = (float) (std::fmod(time.time, 2.0) / 2.0);
         view.repaint();
 
-        if (!started && time.time > 0.05)
+        if (!started && time.time > 0.3)
         {
             path = outputPath();
-            started = recorder.start(view, path, {});
+
+            auto options = Video::VideoOptions {};
+            const auto* modeEnv = std::getenv("EACP_CAPTURE");
+            auto screen = modeEnv != nullptr && std::string(modeEnv) == "screen";
+            options.mode =
+                screen ? Video::CaptureMode::Screen : Video::CaptureMode::Snapshot;
+
+            started = recorder.start(view, path, options);
             startTime = time.time;
 
-            if (started)
-                LOG("recording to: " + path);
-            else
+            LOG(std::string(screen ? "screen" : "snapshot") + " capture -> " + path);
+            if (!started)
                 LOG("recording start FAILED");
         }
 

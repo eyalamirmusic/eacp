@@ -8,9 +8,12 @@ if (APPLE)
 
     target_link_libraries(eacp-video PRIVATE
             "-framework AVFoundation"
+            "-framework AppKit"
+            "-framework CoreGraphics"
             "-framework CoreMedia"
             "-framework CoreVideo"
-            "-framework Foundation")
+            "-framework Foundation"
+            "-framework ScreenCaptureKit")
 endif ()
 
 set_default_target_setting(eacp-video)
