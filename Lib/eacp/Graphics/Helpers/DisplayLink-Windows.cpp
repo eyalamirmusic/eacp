@@ -25,6 +25,21 @@ struct TickState
     std::atomic<bool> alive {true};
     std::atomic<bool> pending {false};
 };
+
+// DCompositionWaitForCompositorClock ships in dcomp.dll on Windows 10 1803+,
+// but dcomp.h only declares it when targeting the Windows 11 (Cobalt) SDK
+// level, so we resolve it dynamically to keep building — and running — on
+// Windows 10 without it.
+using WaitForCompositorClockFn = DWORD(WINAPI*)(UINT, const HANDLE*, DWORD);
+
+WaitForCompositorClockFn loadCompositorClock(HMODULE dcomp)
+{
+    if (dcomp == nullptr)
+        return nullptr;
+
+    return reinterpret_cast<WaitForCompositorClockFn>(
+        GetProcAddress(dcomp, "DCompositionWaitForCompositorClock"));
+}
 } // namespace
 
 // Waits for the DWM compositor clock on a dedicated thread and posts each
@@ -40,6 +55,8 @@ struct DisplayLink::Native
         assertMainThread();
 
         stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        dcomp = LoadLibraryW(L"dcomp.dll");
+        waitForClock = loadCompositorClock(dcomp);
         thread = std::thread([this] { waitLoop(); });
     }
 
@@ -51,27 +68,37 @@ struct DisplayLink::Native
         SetEvent(stopEvent);
         thread.join();
         CloseHandle(stopEvent);
+
+        if (dcomp != nullptr)
+            FreeLibrary(dcomp);
     }
 
     void waitLoop()
     {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 
-        while (true)
+        while (waitForNextTick())
+            postTick();
+    }
+
+    // Blocks until the next vblank, returning false once the stop event is
+    // signalled so the loop ends.
+    bool waitForNextTick() const
+    {
+        if (waitForClock != nullptr)
         {
-            auto wait = DCompositionWaitForCompositorClock(1, &stopEvent, INFINITE);
+            auto wait = waitForClock(1, &stopEvent, INFINITE);
 
             if (wait == WAIT_OBJECT_0)
-                return;
+                return false;
 
-            // No compositor clock in this session: degrade to a fixed
-            // ~60 Hz cadence, still honouring the stop event.
-            if (wait != WAIT_OBJECT_0 + 1)
-                if (WaitForSingleObject(stopEvent, 16) != WAIT_TIMEOUT)
-                    return;
-
-            postTick();
+            if (wait == WAIT_OBJECT_0 + 1)
+                return true;
         }
+
+        // No compositor clock (older Windows 10, or none in this session):
+        // degrade to a fixed ~60 Hz cadence, still honouring the stop event.
+        return WaitForSingleObject(stopEvent, 16) == WAIT_TIMEOUT;
     }
 
     void postTick() const
@@ -91,6 +118,8 @@ struct DisplayLink::Native
 
     std::shared_ptr<TickState> state;
     HANDLE stopEvent = nullptr;
+    HMODULE dcomp = nullptr;
+    WaitForCompositorClockFn waitForClock = nullptr;
     std::thread thread;
 };
 
