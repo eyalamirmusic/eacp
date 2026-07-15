@@ -162,13 +162,16 @@ public:
         // visualiser) is captured by renderToImageAsync / takeSnapshot instead of
         // freezing on its last on-screen frame.
         //
-        // An off-screen web view has no display link, so the platform never fires
-        // requestAnimationFrame — an rAF loop simply stops. With this set, a
+        // An off-screen WKWebView has no display link, so the platform never
+        // fires requestAnimationFrame — an rAF loop simply stops. With this set, a
         // document-start shim redirects requestAnimationFrame onto a ~60 Hz timer,
         // which does fire off-screen, so the loop keeps running and each snapshot
         // reflects live content. Opt-in and meant for snapshot / test hosts: the
         // timer is not vsync-aligned, and it stays in effect for the view's whole
         // life, so a normal on-screen editor should leave it off and keep true rAF.
+        // On Windows this is effectively a no-op: WebView2 is composition-hosted
+        // and always reports itself visible (so snapshots work), so its rAF keeps
+        // firing off-screen either way.
         bool driveOffscreenAnimation = false;
     };
 

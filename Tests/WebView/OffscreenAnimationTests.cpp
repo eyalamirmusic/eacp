@@ -83,12 +83,23 @@ auto tDrivesAnimationOffscreen = test("OffscreenAnimation/paintsWhenEnabled") = 
     check(near(fix.centre(), 16, 192, 32)); // #10c020, the painted green
 };
 
-// Without it, rAF never fires off-screen: the canvas stays transparent and the
-// red page shows through. (Establishes that the flag is what makes the
-// difference — not something that paints regardless.)
-auto tLeavesAnimationFrozenByDefault =
+// Without the flag, whether an off-screen rAF loop keeps running is left to the
+// platform, and the two desktop backends genuinely differ:
+//   - WKWebView has no display link off-screen, so rAF never fires: the canvas
+//     stays transparent and the red body shows through.
+//   - WebView2 is composition-hosted and always reports itself visible (so that
+//     renderToImageAsync can snapshot it at all), so its rAF keeps firing and
+//     paints the canvas green even off-screen — the flag is redundant there.
+// Either way the default is not "paints regardless": on macOS it establishes
+// that paintsWhenEnabled's green comes from the flag, and on Windows it pins the
+// native-rAF behaviour the flag harmlessly mirrors.
+auto tAnimationDefaultMatchesPlatform =
     test("OffscreenAnimation/frozenByDefault") = []
 {
     auto fix = Fixture {/*driveOffscreen*/ false};
-    check(near(fix.centre(), 224, 16, 16)); // #e01010, the unpainted red body
+
+    if (Platform::isWindows())
+        check(near(fix.centre(), 16, 192, 32)); // #10c020, native rAF paints it
+    else
+        check(near(fix.centre(), 224, 16, 16)); // #e01010, rAF frozen off-screen
 };
