@@ -7,6 +7,7 @@
 
 #include <eacp/Graphics/Image/Image.h>
 
+#include <cmath>
 #include <unordered_set>
 
 namespace eacp::GPU
@@ -604,13 +605,271 @@ void GPUView::renderNow()
     impl->render();
 }
 
-Graphics::Image GPUView::renderNativeContent(float)
+namespace
 {
-    // Not yet implemented on the D3D12 backend: needs an off-screen render
-    // target and the read-back path the Metal implementation has, plus a real
-    // Frame(Device&, OffscreenTarget) (currently a no-op stub). Until then a
-    // View snapshot leaves this view's GPU content blank, mirroring
-    // View::renderToImage on Windows.
-    return {};
+// A committed default-heap texture for the off-screen snapshot, mirroring
+// GPUView-Apple.mm's makeTarget: a colour/MSAA render target or a depth target.
+winrt::com_ptr<ID3D12Resource>
+    makeSnapshotTexture(ID3D12Device* device,
+                        UINT width,
+                        UINT height,
+                        DXGI_FORMAT format,
+                        UINT sampleCount,
+                        D3D12_RESOURCE_FLAGS flags,
+                        D3D12_RESOURCE_STATES initialState,
+                        const D3D12_CLEAR_VALUE* clearValue)
+{
+    D3D12_HEAP_PROPERTIES heap = {};
+    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12_RESOURCE_DESC descriptor = {};
+    descriptor.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    descriptor.Width = width;
+    descriptor.Height = height;
+    descriptor.DepthOrArraySize = 1;
+    descriptor.MipLevels = 1;
+    descriptor.Format = format;
+    descriptor.SampleDesc.Count = sampleCount;
+    descriptor.Flags = flags;
+
+    winrt::com_ptr<ID3D12Resource> resource;
+    if (FAILED(device->CreateCommittedResource(&heap,
+                                               D3D12_HEAP_FLAG_NONE,
+                                               &descriptor,
+                                               initialState,
+                                               clearValue,
+                                               __uuidof(ID3D12Resource),
+                                               resource.put_void())))
+        return {};
+
+    return resource;
+}
+} // namespace
+
+// Off-screen GPU snapshot for View::renderToImage, mirroring GPUView-Apple.mm:
+// render() draws into an app-owned colour texture (resolving from an MSAA target
+// when multisampling) through an off-screen Frame that waits instead of
+// presenting, then the colour texture is copied to a read-back buffer and
+// swizzled from BGRA to the straight RGBA an Image holds.
+Graphics::Image GPUView::renderNativeContent(float scale)
+{
+    auto bounds = getLocalBounds();
+    auto pixelWidth = static_cast<UINT>(std::lround(bounds.w * scale));
+    auto pixelHeight = static_cast<UINT>(std::lround(bounds.h * scale));
+
+    if (pixelWidth == 0 || pixelHeight == 0)
+        return {};
+
+    auto& context = getD3D12Context();
+    if (!context.isValid())
+        return {};
+
+    auto* device = context.getDevice();
+    auto samples = static_cast<UINT>(impl->sampleCount);
+    auto useMsaa = samples > 1;
+    auto useDepth = impl->depthEnabled;
+
+    constexpr auto colorFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+
+    // One RTV heap (colour + optional MSAA target), one DSV heap.
+    winrt::com_ptr<ID3D12DescriptorHeap> rtvHeap;
+    D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
+    rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    rtvHeapDesc.NumDescriptors = 2;
+    if (FAILED(device->CreateDescriptorHeap(
+            &rtvHeapDesc, __uuidof(ID3D12DescriptorHeap), rtvHeap.put_void())))
+        return {};
+
+    auto rtvSize =
+        device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    auto colorRtv = rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    auto msaaRtv = colorRtv;
+    msaaRtv.ptr += rtvSize;
+
+    // The colour texture is single-sampled: the render target when not
+    // multisampling (RENDER_TARGET), or the resolve destination when the pass
+    // renders into the MSAA target (RESOLVE_DEST). The Frame destructor keys off
+    // the same distinction.
+    auto colorInitial = useMsaa ? D3D12_RESOURCE_STATE_RESOLVE_DEST
+                                : D3D12_RESOURCE_STATE_RENDER_TARGET;
+    auto colorTexture = makeSnapshotTexture(device,
+                                            pixelWidth,
+                                            pixelHeight,
+                                            colorFormat,
+                                            1,
+                                            D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,
+                                            colorInitial,
+                                            nullptr);
+    if (!colorTexture)
+        return {};
+
+    device->CreateRenderTargetView(colorTexture.get(), nullptr, colorRtv);
+
+    winrt::com_ptr<ID3D12Resource> msaaTexture;
+    if (useMsaa)
+    {
+        msaaTexture = makeSnapshotTexture(device,
+                                          pixelWidth,
+                                          pixelHeight,
+                                          colorFormat,
+                                          samples,
+                                          D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,
+                                          D3D12_RESOURCE_STATE_RENDER_TARGET,
+                                          nullptr);
+        if (!msaaTexture)
+            return {};
+
+        device->CreateRenderTargetView(msaaTexture.get(), nullptr, msaaRtv);
+    }
+
+    winrt::com_ptr<ID3D12DescriptorHeap> dsvHeap;
+    winrt::com_ptr<ID3D12Resource> depthTexture;
+    D3D12_CPU_DESCRIPTOR_HANDLE depthDsv = {};
+
+    if (useDepth)
+    {
+        D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
+        dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        dsvHeapDesc.NumDescriptors = 1;
+
+        if (SUCCEEDED(device->CreateDescriptorHeap(
+                &dsvHeapDesc, __uuidof(ID3D12DescriptorHeap), dsvHeap.put_void())))
+        {
+            D3D12_CLEAR_VALUE clearValue = {};
+            clearValue.Format = DXGI_FORMAT_D32_FLOAT;
+            clearValue.DepthStencil.Depth = 1.0f;
+
+            depthTexture =
+                makeSnapshotTexture(device,
+                                    pixelWidth,
+                                    pixelHeight,
+                                    DXGI_FORMAT_D32_FLOAT,
+                                    useMsaa ? samples : 1,
+                                    D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,
+                                    D3D12_RESOURCE_STATE_DEPTH_WRITE,
+                                    &clearValue);
+
+            if (depthTexture)
+            {
+                depthDsv = dsvHeap->GetCPUDescriptorHandleForHeapStart();
+                device->CreateDepthStencilView(
+                    depthTexture.get(), nullptr, depthDsv);
+            }
+        }
+    }
+
+    D3D12Drawable colorTarget = {};
+    colorTarget.backBuffer = colorTexture.get();
+    colorTarget.backBufferView = colorRtv;
+    colorTarget.width = pixelWidth;
+    colorTarget.height = pixelHeight;
+
+    D3D12MsaaTarget msaaTarget = {};
+    if (useMsaa)
+    {
+        msaaTarget.texture = msaaTexture.get();
+        msaaTarget.view = msaaRtv;
+        msaaTarget.format = colorFormat;
+    }
+
+    D3D12DepthTarget depthTarget = {};
+    if (depthTexture)
+        depthTarget.view = depthDsv;
+
+    {
+        OffscreenTarget target = {};
+        target.colorTexture = &colorTarget;
+        target.msaaTexture = useMsaa ? &msaaTarget : nullptr;
+        target.depthTexture = depthTexture ? &depthTarget : nullptr;
+
+        auto frame = Frame(Device::shared(), target);
+        render(frame);
+    }
+    // The Frame destructor left the colour texture in COPY_SOURCE and ran the
+    // GPU to completion.
+
+    auto colorDesc = colorTexture->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT64 totalBytes = 0;
+    device->GetCopyableFootprints(
+        &colorDesc, 0, 1, 0, &footprint, nullptr, nullptr, &totalBytes);
+
+    D3D12_HEAP_PROPERTIES readbackHeap = {};
+    readbackHeap.Type = D3D12_HEAP_TYPE_READBACK;
+
+    D3D12_RESOURCE_DESC bufferDesc = {};
+    bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bufferDesc.Width = totalBytes;
+    bufferDesc.Height = 1;
+    bufferDesc.DepthOrArraySize = 1;
+    bufferDesc.MipLevels = 1;
+    bufferDesc.Format = DXGI_FORMAT_UNKNOWN;
+    bufferDesc.SampleDesc.Count = 1;
+    bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    winrt::com_ptr<ID3D12Resource> readback;
+    if (FAILED(device->CreateCommittedResource(&readbackHeap,
+                                               D3D12_HEAP_FLAG_NONE,
+                                               &bufferDesc,
+                                               D3D12_RESOURCE_STATE_COPY_DEST,
+                                               nullptr,
+                                               __uuidof(ID3D12Resource),
+                                               readback.put_void())))
+        return {};
+
+    auto* commands = context.acquire();
+
+    D3D12_TEXTURE_COPY_LOCATION dstLocation = {};
+    dstLocation.pResource = readback.get();
+    dstLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dstLocation.PlacedFootprint = footprint;
+
+    D3D12_TEXTURE_COPY_LOCATION srcLocation = {};
+    srcLocation.pResource = colorTexture.get();
+    srcLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    srcLocation.SubresourceIndex = 0;
+
+    commands->list->CopyTextureRegion(&dstLocation, 0, 0, 0, &srcLocation, nullptr);
+    context.submit(commands);
+    context.waitIdle();
+
+    void* mappedPtr = nullptr;
+    D3D12_RANGE readRange = {0, static_cast<SIZE_T>(totalBytes)};
+    if (FAILED(readback->Map(0, &readRange, &mappedPtr)) || mappedPtr == nullptr)
+        return {};
+
+    auto image = Graphics::Image {};
+    auto* dst = image.prepareForOverwrite(static_cast<int>(pixelWidth),
+                                          static_cast<int>(pixelHeight));
+
+    if (dst == nullptr)
+    {
+        readback->Unmap(0, nullptr);
+        return {};
+    }
+
+    auto rowPitch = footprint.Footprint.RowPitch;
+    auto* base = static_cast<const std::uint8_t*>(mappedPtr);
+
+    // BGRA8 (D3D12) -> straight RGBA (Image), row by row past the 256-byte
+    // read-back pitch alignment.
+    for (auto y = UINT {0}; y < pixelHeight; ++y)
+    {
+        auto* srcRow = base + static_cast<std::size_t>(y) * rowPitch;
+
+        for (auto x = UINT {0}; x < pixelWidth; ++x)
+        {
+            auto* src = srcRow + static_cast<std::size_t>(x) * 4;
+            auto* out = dst + (static_cast<std::size_t>(y) * pixelWidth + x) * 4;
+
+            out[0] = src[2];
+            out[1] = src[1];
+            out[2] = src[0];
+            out[3] = src[3];
+        }
+    }
+
+    readback->Unmap(0, nullptr);
+    return image;
 }
 } // namespace eacp::GPU

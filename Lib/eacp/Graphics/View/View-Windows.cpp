@@ -6,6 +6,8 @@
 
 #include <eacp/Core/Threads/Async.h>
 
+#include <cmath>
+#include <memory>
 #include <unordered_set>
 #include <vector>
 
@@ -42,8 +44,23 @@ class D2DContext final : public Context
 {
 public:
     explicit D2DContext(BackingSurface& targetToUse)
-        : target(targetToUse)
+        : target(&targetToUse)
     {
+    }
+
+    // Off-screen snapshot mode: draw straight into a device context the caller
+    // already opened (BeginDraw) and will close, under `baseToUse` (points ->
+    // device pixels). Unlike the surface path this neither clears (that would
+    // wipe already-composited content) nor calls EndDraw (the caller owns the
+    // target), so paint() from many views can share one context.
+    D2DContext(ID2D1DeviceContext* dcToUse, const D2D1::Matrix3x2F& baseToUse)
+        : dc(dcToUse)
+        , baseTransform(baseToUse)
+        , adopted(true)
+    {
+        dc->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), brush.GetAddressOf());
+        applyColor();
+        drawing = true;
     }
 
     ~D2DContext() override { finish(); }
@@ -58,7 +75,7 @@ public:
         if (failed)
             return false;
 
-        dc = target.beginDraw(baseTransform);
+        dc = target->beginDraw(baseTransform);
 
         if (!dc)
         {
@@ -83,7 +100,9 @@ public:
         if (!drawing)
             return;
 
-        target.endDraw();
+        if (!adopted)
+            target->endDraw();
+
         brush.Reset();
         dc = nullptr;
         drawing = false;
@@ -244,7 +263,7 @@ private:
                 currentColor.r, currentColor.g, currentColor.b, currentColor.a));
     }
 
-    BackingSurface& target;
+    BackingSurface* target = nullptr;
     ID2D1DeviceContext* dc = nullptr;
     ComPtr<ID2D1SolidColorBrush> brush;
 
@@ -257,6 +276,7 @@ private:
     std::vector<SavedState> savedStates;
     bool drawing = false;
     bool failed = false;
+    bool adopted = false;
 };
 
 // Bridges the TU-local dirty set to a view's painter without naming the private
@@ -677,20 +697,385 @@ void* View::getNativeLayer()
     return impl->getVisual();
 }
 
-Image View::renderToImage(float)
+namespace
 {
-    // Not yet implemented on Windows: needs an off-screen WIC/D2D render target
-    // to back D2DContext, mirroring the CGBitmapContext path on Apple.
-    return {};
+// ---- Off-screen View->Image snapshot (Direct2D) -------------------------
+//
+// The Windows counterpart of the CoreGraphics compositor (GraphicsContextImpl.mm):
+// draw a view's paint() chrome, its shape/text layers, its native GPU content and
+// its child views into an app-owned Direct2D bitmap, then read it back as a
+// straight-alpha RGBA Image. Web content is folded in asynchronously by the
+// caller. Direct2D bitmaps share the on-screen surfaces' top-left origin, so --
+// unlike the flipped CGBitmapContext -- no vertical flip is needed. All
+// compositing runs premultiplied; the read-back un-premultiplies to match the
+// straight-alpha Image contract.
+
+struct OffscreenComposite
+{
+    ComPtr<ID2D1DeviceContext> dc;
+    ComPtr<ID2D1Bitmap1> target;
+    int pixelWidth = 0;
+    int pixelHeight = 0;
+
+    bool valid() const { return dc && target; }
+};
+
+// Builds the off-screen device context + render-target bitmap and opens it for
+// drawing (BeginDraw + transparent clear). The caller composites into dc, then
+// hands the whole thing to readbackComposite. Returns an invalid composite for a
+// non-positive size or when the shared D2D device is unavailable.
+OffscreenComposite makeOffscreenComposite(const Rect& bounds, float scale)
+{
+    auto composite = OffscreenComposite {};
+    composite.pixelWidth = static_cast<int>(std::lround(bounds.w * scale));
+    composite.pixelHeight = static_cast<int>(std::lround(bounds.h * scale));
+
+    if (composite.pixelWidth <= 0 || composite.pixelHeight <= 0)
+        return composite;
+
+    auto* device = getD2DDevice();
+    if (!device)
+        return composite;
+
+    if (FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+                                           composite.dc.GetAddressOf())))
+        return {};
+
+    auto properties =
+        D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+                                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                                                  D2D1_ALPHA_MODE_PREMULTIPLIED));
+
+    auto size = D2D1::SizeU(static_cast<UINT>(composite.pixelWidth),
+                            static_cast<UINT>(composite.pixelHeight));
+
+    if (FAILED(composite.dc->CreateBitmap(
+            size, nullptr, 0, &properties, composite.target.GetAddressOf())))
+        return {};
+
+    composite.dc->SetTarget(composite.target.Get());
+    composite.dc->BeginDraw();
+    composite.dc->Clear(D2D1::ColorF(0, 0, 0, 0));
+    return composite;
 }
 
-Threads::Async<Image> View::renderToImageAsync(float)
+// Draws a straight-alpha Image into dc at dest (points), under `transform` and
+// faded by `opacity`. Used for a view's GPU content and for the async web
+// overlay, mirroring drawImageInContext on macOS.
+void drawImageIntoContext(ID2D1DeviceContext* dc,
+                          const Image& image,
+                          const Rect& dest,
+                          const D2D1::Matrix3x2F& transform,
+                          float opacity)
 {
-    // Not yet implemented on Windows (see renderToImage); resolve with an
-    // invalid Image so callers still get a settled Async.
-    auto promise = Threads::AsyncPromise<Image> {};
-    promise.resolve({});
-    return promise.get();
+    if (!image.isValid())
+        return;
+
+    auto width = image.width();
+    auto height = image.height();
+    const auto& pixels = image.pixels();
+
+    // Straight RGBA -> premultiplied BGRA, the byte order a B8G8R8A8 D2D bitmap
+    // composites with.
+    auto bgra = std::vector<std::uint32_t>(static_cast<std::size_t>(width)
+                                           * static_cast<std::size_t>(height));
+
+    for (std::size_t i = 0; i < bgra.size(); ++i)
+    {
+        auto r = pixels[i * 4 + 0];
+        auto g = pixels[i * 4 + 1];
+        auto b = pixels[i * 4 + 2];
+        auto a = pixels[i * 4 + 3];
+
+        auto premul = [&](std::uint8_t c) -> std::uint32_t
+        { return static_cast<std::uint32_t>((c * a + 127) / 255); };
+
+        bgra[i] = (static_cast<std::uint32_t>(a) << 24) | (premul(r) << 16)
+                  | (premul(g) << 8) | premul(b);
+    }
+
+    auto properties = D2D1::BitmapProperties(D2D1::PixelFormat(
+        DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+
+    ComPtr<ID2D1Bitmap> bitmap;
+    if (FAILED(dc->CreateBitmap(
+            D2D1::SizeU(static_cast<UINT>(width), static_cast<UINT>(height)),
+            bgra.data(),
+            static_cast<UINT32>(width) * 4,
+            properties,
+            bitmap.GetAddressOf())))
+        return;
+
+    dc->SetTransform(transform);
+    auto d = D2D1::RectF(dest.x, dest.y, dest.x + dest.w, dest.y + dest.h);
+    dc->DrawBitmap(bitmap.Get(), d, opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+}
+
+// Pushes a device-managed opacity layer, so a subtree (or a single faded layer)
+// flattens and fades as one -- the Direct2D equivalent of the transparency layer
+// macOS uses for group opacity. Balanced by a PopLayer.
+void pushOpacityLayer(ID2D1DeviceContext* dc,
+                      const D2D1::Matrix3x2F& transform,
+                      float opacity)
+{
+    auto params = D2D1::LayerParameters1();
+    params.opacity = opacity;
+    dc->SetTransform(transform);
+    dc->PushLayer(params, nullptr);
+}
+
+// Composites view and its descendants into dc under `transform` (points ->
+// device pixels), stacked front-to-back the way the compositor draws them on
+// screen: paint() backdrop, attached shape/text layers, native GPU content, then
+// child views (each translated and clipped to its frame). Web content is drawn
+// later, asynchronously, by the caller.
+void compositeView(ID2D1DeviceContext* dc,
+                   View& view,
+                   const D2D1::Matrix3x2F& transform,
+                   float scale)
+{
+    auto grouped = view.getOpacity() < 1.0f;
+    if (grouped)
+        pushOpacityLayer(dc, transform, view.getOpacity());
+
+    {
+        auto painter = D2DContext(dc, transform);
+        view.paint(painter);
+        painter.finish();
+    }
+
+    for (auto* layer: view.getLayers())
+    {
+        auto* native = static_cast<NativeLayerBase*>(layer->getNativeLayer());
+        if (native == nullptr || native->hidden)
+            continue;
+
+        auto layerTransform =
+            D2D1::Matrix3x2F::Translation(native->position.x, native->position.y)
+            * transform;
+
+        auto faded = native->opacity < 1.0f;
+        if (faded)
+            pushOpacityLayer(dc, layerTransform, native->opacity);
+
+        native->drawInto(dc, layerTransform, scale);
+
+        if (faded)
+            dc->PopLayer();
+    }
+
+    drawImageIntoContext(
+        dc, view.renderNativeContent(scale), view.getLocalBounds(), transform, 1.0f);
+
+    for (auto* child: view.getSubviews())
+    {
+        auto bounds = child->getBounds();
+        auto childTransform =
+            D2D1::Matrix3x2F::Translation(bounds.x, bounds.y) * transform;
+
+        dc->SetTransform(childTransform);
+        dc->PushAxisAlignedClip(D2D1::RectF(0, 0, bounds.w, bounds.h),
+                                D2D1_ANTIALIAS_MODE_ALIASED);
+        compositeView(dc, *child, childTransform, scale);
+        dc->PopAxisAlignedClip();
+    }
+
+    if (grouped)
+        dc->PopLayer();
+}
+
+// Closes the context and copies the render target into a CPU-readable bitmap,
+// un-premultiplying BGRA back to the straight-alpha RGBA an Image holds.
+Image readbackComposite(OffscreenComposite& composite)
+{
+    if (!composite.valid())
+        return {};
+
+    if (FAILED(composite.dc->EndDraw()))
+        return {};
+
+    auto properties = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                          D2D1_ALPHA_MODE_PREMULTIPLIED));
+
+    auto size = D2D1::SizeU(static_cast<UINT>(composite.pixelWidth),
+                            static_cast<UINT>(composite.pixelHeight));
+
+    ComPtr<ID2D1Bitmap1> readable;
+    if (FAILED(composite.dc->CreateBitmap(
+            size, nullptr, 0, &properties, readable.GetAddressOf())))
+        return {};
+
+    auto dstPoint = D2D1::Point2U(0, 0);
+    auto srcRect = D2D1::RectU(0,
+                               0,
+                               static_cast<UINT>(composite.pixelWidth),
+                               static_cast<UINT>(composite.pixelHeight));
+
+    if (FAILED(
+            readable->CopyFromBitmap(&dstPoint, composite.target.Get(), &srcRect)))
+        return {};
+
+    D2D1_MAPPED_RECT mapped = {};
+    if (FAILED(readable->Map(D2D1_MAP_OPTIONS_READ, &mapped)))
+        return {};
+
+    auto image = Image {};
+    auto* out =
+        image.prepareForOverwrite(composite.pixelWidth, composite.pixelHeight);
+
+    if (out == nullptr)
+    {
+        readable->Unmap();
+        return {};
+    }
+
+    for (auto y = 0; y < composite.pixelHeight; ++y)
+    {
+        auto* row = mapped.bits + static_cast<std::size_t>(y) * mapped.pitch;
+
+        for (auto x = 0; x < composite.pixelWidth; ++x)
+        {
+            auto* src = row + static_cast<std::size_t>(x) * 4;
+            auto b = src[0];
+            auto g = src[1];
+            auto r = src[2];
+            auto a = src[3];
+
+            auto* dst =
+                out + (static_cast<std::size_t>(y) * composite.pixelWidth + x) * 4;
+
+            if (a == 0)
+            {
+                dst[0] = dst[1] = dst[2] = dst[3] = 0;
+            }
+            else
+            {
+                auto straight = [&](std::uint8_t c) -> std::uint8_t
+                { return static_cast<std::uint8_t>((c * 255 + a / 2) / a); };
+
+                dst[0] = straight(r);
+                dst[1] = straight(g);
+                dst[2] = straight(b);
+                dst[3] = a;
+            }
+        }
+    }
+
+    readable->Unmap();
+    return image;
+}
+
+// A descendant view with async (web) content, tagged with its origin in the
+// root's coordinate space and the product of group opacities down to it -- so
+// each snapshot lands where, and as faded as, it sits on screen.
+struct AsyncTarget
+{
+    View* view = nullptr;
+    Point offset;
+    float opacity = 1.0f;
+};
+
+void collectAsyncContent(View& view,
+                         Point offset,
+                         float opacity,
+                         Vector<AsyncTarget>& out)
+{
+    auto effectiveOpacity = opacity * view.getOpacity();
+
+    if (view.hasAsyncContent())
+        out.push_back({&view, offset, effectiveOpacity});
+
+    for (auto* child: view.getSubviews())
+    {
+        auto bounds = child->getBounds();
+        collectAsyncContent(*child,
+                            {offset.x + bounds.x, offset.y + bounds.y},
+                            effectiveOpacity,
+                            out);
+    }
+}
+
+// Shared across the pending web snapshots: owns the open composite and counts
+// completions, resolving the promise once the last snapshot lands.
+struct AsyncComposite
+{
+    OffscreenComposite composite;
+    Threads::AsyncPromise<Image> promise;
+    int remaining = 0;
+};
+} // namespace
+
+Image View::renderToImage(float scale)
+{
+    auto resolvedScale = scale > 0.0f ? scale : impl->hostDpiScale();
+
+    auto composite = makeOffscreenComposite(getLocalBounds(), resolvedScale);
+    if (!composite.valid())
+        return {};
+
+    compositeView(composite.dc.Get(),
+                  *this,
+                  D2D1::Matrix3x2F::Scale(resolvedScale, resolvedScale),
+                  resolvedScale);
+
+    return readbackComposite(composite);
+}
+
+Threads::Async<Image> View::renderToImageAsync(float scale)
+{
+    auto resolvedScale = scale > 0.0f ? scale : impl->hostDpiScale();
+
+    auto state = std::make_shared<AsyncComposite>();
+    auto result = state->promise.get();
+
+    state->composite = makeOffscreenComposite(getLocalBounds(), resolvedScale);
+    if (!state->composite.valid())
+    {
+        state->promise.resolve({});
+        return result;
+    }
+
+    auto rootTransform = D2D1::Matrix3x2F::Scale(resolvedScale, resolvedScale);
+    compositeView(state->composite.dc.Get(), *this, rootTransform, resolvedScale);
+
+    auto targets = Vector<AsyncTarget> {};
+    collectAsyncContent(*this, {0.f, 0.f}, 1.0f, targets);
+
+    if (targets.empty())
+    {
+        state->promise.resolve(readbackComposite(state->composite));
+        return result;
+    }
+
+    state->remaining = targets.size();
+
+    for (auto& target: targets)
+    {
+        auto* webView = target.view;
+        auto dest = Rect {target.offset.x,
+                          target.offset.y,
+                          webView->getBounds().w,
+                          webView->getBounds().h};
+        auto webOpacity = target.opacity;
+
+        webView->captureAsyncContent(
+            resolvedScale,
+            [state, dest, webOpacity, rootTransform](const Image& webImage)
+            {
+                drawImageIntoContext(state->composite.dc.Get(),
+                                     webImage,
+                                     dest,
+                                     rootTransform,
+                                     webOpacity);
+
+                if (--state->remaining == 0)
+                    state->promise.resolve(readbackComposite(state->composite));
+            });
+    }
+
+    return result;
 }
 
 void View::viewAdded(View& view)

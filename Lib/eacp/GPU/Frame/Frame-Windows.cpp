@@ -28,6 +28,21 @@ struct Frame::Native
             commands = getD3D12Context().acquire();
     }
 
+    // Off-screen snapshot target (GPUView::renderNativeContent). The colour
+    // target is passed as a D3D12Drawable with a null swapChain, so beginPass
+    // renders into it exactly like a back buffer but the destructor resolves and
+    // hands it back for read-back instead of presenting.
+    Native(Device& device, const OffscreenTarget& target)
+        : drawable(static_cast<D3D12Drawable*>(target.colorTexture))
+        , msaa(static_cast<D3D12MsaaTarget*>(target.msaaTexture))
+        , depth(static_cast<D3D12DepthTarget*>(target.depthTexture))
+        , offscreen(true)
+    {
+        if (device.isValid() && drawable != nullptr
+            && drawable->backBuffer != nullptr)
+            commands = getD3D12Context().acquire();
+    }
+
     bool useMsaa() const { return msaa != nullptr && msaa->texture != nullptr; }
 
     CommandContext* commands = nullptr;
@@ -35,6 +50,7 @@ struct Frame::Native
     D3D12MsaaTarget* msaa = nullptr;
     D3D12DepthTarget* depth = nullptr;
     bool passBegun = false;
+    bool offscreen = false;
 };
 
 Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture)
@@ -42,11 +58,9 @@ Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTextu
 {
 }
 
-Frame::Frame(Device& device, const OffscreenTarget&)
-    : impl(device, nullptr, nullptr, nullptr)
+Frame::Frame(Device& device, const OffscreenTarget& target)
+    : impl(device, target)
 {
-    // Off-screen snapshot render targets are not yet wired on the D3D12 backend;
-    // this yields an invalid frame (no drawable), so beginPass is a no-op.
 }
 
 Frame::~Frame()
@@ -56,6 +70,41 @@ Frame::~Frame()
 
     auto* list = impl->commands->list.get();
     auto* backBuffer = impl->drawable->backBuffer;
+
+    if (impl->offscreen)
+    {
+        // Off-screen snapshot: resolve any MSAA into the colour texture, leave it
+        // in COPY_SOURCE for GPUView's read-back, then run the GPU to completion
+        // (no swapchain to present). The colour texture was created in
+        // RESOLVE_DEST when multisampling and RENDER_TARGET otherwise.
+        if (impl->useMsaa() && backBuffer != nullptr)
+        {
+            transition(list,
+                       impl->msaa->texture,
+                       D3D12_RESOURCE_STATE_RENDER_TARGET,
+                       D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
+
+            list->ResolveSubresource(
+                backBuffer, 0, impl->msaa->texture, 0, impl->msaa->format);
+
+            transition(list,
+                       backBuffer,
+                       D3D12_RESOURCE_STATE_RESOLVE_DEST,
+                       D3D12_RESOURCE_STATE_COPY_SOURCE);
+        }
+        else if (backBuffer != nullptr)
+        {
+            transition(list,
+                       backBuffer,
+                       D3D12_RESOURCE_STATE_RENDER_TARGET,
+                       D3D12_RESOURCE_STATE_COPY_SOURCE);
+        }
+
+        auto& context = getD3D12Context();
+        context.submit(impl->commands);
+        context.waitIdle();
+        return;
+    }
 
     if (impl->useMsaa() && backBuffer != nullptr)
     {
@@ -113,7 +162,9 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     list->SetDescriptorHeaps(2, heaps);
     list->SetGraphicsRootSignature(context.getRenderRootSignature());
 
-    if (!impl->useMsaa() && !impl->passBegun)
+    // The off-screen colour texture is created already in RENDER_TARGET; only a
+    // swapchain back buffer starts in PRESENT and needs promoting here.
+    if (!impl->useMsaa() && !impl->passBegun && !impl->offscreen)
         transition(list,
                    impl->drawable->backBuffer,
                    D3D12_RESOURCE_STATE_PRESENT,

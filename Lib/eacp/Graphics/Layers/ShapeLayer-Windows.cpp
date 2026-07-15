@@ -43,6 +43,19 @@ struct ShapeLayer::Native : NativeLayerBase
             * D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x),
                                             static_cast<float>(offset.y));
 
+        drawInto(dc.Get(), baseTransform, dpiScale);
+
+        dc->SetTransform(D2D1::Matrix3x2F::Identity());
+        surface->EndDraw();
+    }
+
+    void drawInto(ID2D1DeviceContext* dc,
+                  const D2D1::Matrix3x2F& transform,
+                  float pointScale) override
+    {
+        if (!pathGeometry || (!hasFill && !hasStroke))
+            return;
+
         if (hasFill)
         {
             if (useGradient && !gradient.stops.empty())
@@ -75,7 +88,7 @@ struct ShapeLayer::Native : NativeLayerBase
 
                     if (gradientBrush)
                     {
-                        dc->SetTransform(baseTransform);
+                        dc->SetTransform(transform);
                         dc->FillGeometry(pathGeometry.Get(), gradientBrush.Get());
                     }
                 }
@@ -89,7 +102,7 @@ struct ShapeLayer::Native : NativeLayerBase
 
                 if (brush)
                 {
-                    dc->SetTransform(baseTransform);
+                    dc->SetTransform(transform);
                     dc->FillGeometry(pathGeometry.Get(), brush.Get());
                 }
             }
@@ -105,14 +118,11 @@ struct ShapeLayer::Native : NativeLayerBase
 
             if (strokeBrush)
             {
-                dc->SetTransform(baseTransform);
+                dc->SetTransform(transform);
                 dc->DrawGeometry(
-                    pathGeometry.Get(), strokeBrush.Get(), strokeWidth * dpiScale);
+                    pathGeometry.Get(), strokeBrush.Get(), strokeWidth * pointScale);
             }
         }
-
-        dc->SetTransform(D2D1::Matrix3x2F::Identity());
-        surface->EndDraw();
     }
 
     // Path geometry (owned - AddRef'd to keep alive)

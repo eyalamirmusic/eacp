@@ -7,9 +7,11 @@ set(gpu_test_sources
 # The zero-copy CVPixelBuffer wrap test is Metal-only Objective-C++.
 if (APPLE)
     list(APPEND gpu_test_sources TextureInteropTests.mm)
+endif ()
 
-    # GPU snapshot read-back (View::renderToImage over a GPUView) is wired on the
-    # Metal backend only; the Windows renderToImage is still a stub.
+# GPU snapshot read-back (View::renderToImage over a GPUView): Metal off-screen
+# textures on Apple, D3D12 off-screen render targets on Windows.
+if (APPLE OR WIN32)
     list(APPEND gpu_test_sources GPUSnapshotTests.cpp)
 endif ()
 
