@@ -1,4 +1,5 @@
 #include "Window.h"
+#include "MouseLock-macOS.h"
 #include "../Graphics/Keyboard.h"
 #include "../Helpers/ImageConversion-macOS.h"
 #include "../Primitives/GraphicUtils.h"
@@ -525,8 +526,6 @@ struct Window::Native
             disengageMouseLock();
     }
 
-    // Disassociating first means the warp itself cannot surface as a motion
-    // delta on the next mouse event.
     void engageMouseLock()
     {
         if (mouseLockEngaged)
@@ -560,6 +559,11 @@ struct Window::Native
         auto primaryHeight = NSMaxY([[NSScreen screens] firstObject].frame);
         CGWarpMouseCursorPosition(
             CGPointMake(center.x, primaryHeight - center.y));
+
+        // The warp is not motion, but the next mouse event reports it as
+        // though it were: it carries the whole jump as its delta. Left alone
+        // that arrives as one huge movement and spins a locked camera round.
+        detail::cursorWasWarped = true;
     }
 
     ~Native()

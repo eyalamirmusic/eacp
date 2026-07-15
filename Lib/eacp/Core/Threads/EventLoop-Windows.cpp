@@ -351,6 +351,11 @@ void EventLoop::quit()
         PostThreadMessageW(id, WM_QUIT, 0, 0);
 }
 
+bool isEventLoopRunning()
+{
+    return runForDepth > 0 || getEnvValue("EACP_ROOT_LOOP") == "1";
+}
+
 void stopProcessRootLoop()
 {
     if (getEnvValue("EACP_ROOT_LOOP") != "1")

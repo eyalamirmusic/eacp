@@ -168,6 +168,12 @@ void EventLoop::quit()
     [getApp() postEvent:makeWakeEvent() atStart:YES];
 }
 
+bool isEventLoopRunning()
+{
+    return s_inRootRunLoop || s_nestedDepth > 0
+           || getEnvValue("EACP_ROOT_LOOP") == "1";
+}
+
 void stopProcessRootLoop()
 {
     if (getEnvValue("EACP_ROOT_LOOP") != "1")

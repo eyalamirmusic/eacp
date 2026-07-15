@@ -55,6 +55,17 @@ void Buffer::read(void* dst, std::size_t bytes) const
         std::memcpy(dst, [metalBuffer contents], bytes);
 }
 
+void Buffer::update(const void* data, std::size_t bytes)
+{
+    auto metalBuffer = impl->buffer.get();
+
+    if (metalBuffer == nil || data == nullptr || bytes == 0)
+        return;
+
+    auto count = bytes < impl->length ? bytes : impl->length;
+    std::memcpy([metalBuffer contents], data, count);
+}
+
 void* Buffer::nativeBuffer() const
 {
     return (__bridge void*) impl->buffer.get();

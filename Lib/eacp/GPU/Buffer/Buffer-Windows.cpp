@@ -172,6 +172,34 @@ void Buffer::read(void* dst, std::size_t bytes) const
     }
 }
 
+void Buffer::update(const void* data, std::size_t bytes)
+{
+    auto* resource = impl->bufferData.resource.get();
+
+    if (resource == nullptr || data == nullptr || bytes == 0)
+        return;
+
+    auto& context = getD3D12Context();
+
+    if (!context.isValid())
+        return;
+
+    auto count = bytes < impl->bufferData.size ? bytes : impl->bufferData.size;
+    auto staging = context.makeUploadBuffer(data, count);
+    auto* commands = context.acquire();
+
+    if (staging == nullptr || commands == nullptr)
+    {
+        context.discard(commands);
+        return;
+    }
+
+    transitionForUse(*commands, impl->bufferData, D3D12_RESOURCE_STATE_COPY_DEST);
+    commands->list->CopyBufferRegion(resource, 0, staging.get(), 0, count);
+    commands->transients.add(std::move(staging));
+    context.submit(commands);
+}
+
 void* Buffer::nativeBuffer() const
 {
     return &impl->bufferData;

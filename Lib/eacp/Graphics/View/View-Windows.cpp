@@ -141,7 +141,8 @@ public:
             return;
 
         applyTransform();
-        dc->FillRoundedRectangle(D2D1::RoundedRect(toD2DRect(rect), radius, radius),
+        auto fitted = clampedCornerRadius(rect, radius);
+        dc->FillRoundedRectangle(D2D1::RoundedRect(toD2DRect(rect), fitted, fitted),
                                  brush.Get());
     }
 

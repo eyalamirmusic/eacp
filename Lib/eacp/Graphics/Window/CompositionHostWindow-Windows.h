@@ -102,7 +102,18 @@ private:
     void fillWindowBackground(HDC dc) const;
     void resizeContentViewToClient();
     void ensureMouseLeaveTracking();
-    void dispatchMouseToContentView(const MouseEvent& event) const;
+    void dispatchMouseToContentView(MouseEvent event);
+
+    // The mouse's own movement, which the ordinary pointer messages cannot
+    // report: they carry the pointer's position after the system's acceleration
+    // curve has shaped it, and after it has been rounded to whole pixels and
+    // stopped at the edges of the screen. A camera needs the device's figures —
+    // see MouseEvent::rawDelta — and Raw Input is where Windows keeps them.
+    void ensureRawMouseRegistered();
+    void accumulateRawMouseMovement(LPARAM lParam);
+
+    bool rawMouseRegistered = false;
+    Point rawMouseMovement;
     void ensureAllLayersRendered(const View* view, float dpiScale) const;
     void dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lParam);
     void synthesizeMouseUpOnCaptureLoss();

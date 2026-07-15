@@ -1,4 +1,5 @@
 #include "DynamicLibrary.h"
+#include "DynamicLibraryPlatform.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
@@ -23,60 +24,23 @@ std::wstring toWide(const std::string& text)
 }
 } // namespace
 
-DynamicLibrary::DynamicLibrary(const FilePath& path)
+namespace Detail
 {
-    open(path);
+void* loadImage(const FilePath& path)
+{
+    return LoadLibraryW(toWide(path.str()).c_str());
 }
 
-DynamicLibrary::~DynamicLibrary()
+void unloadImage(void* handle)
 {
-    close();
+    FreeLibrary((HMODULE) handle);
 }
 
-DynamicLibrary::DynamicLibrary(DynamicLibrary&& other) noexcept
-    : handle(std::exchange(other.handle, nullptr))
+void* findImageSymbol(void* handle, const std::string& name)
 {
-}
-
-DynamicLibrary& DynamicLibrary::operator=(DynamicLibrary&& other) noexcept
-{
-    if (this != &other)
-    {
-        close();
-        handle = std::exchange(other.handle, nullptr);
-    }
-
-    return *this;
-}
-
-bool DynamicLibrary::open(const FilePath& path)
-{
-    close();
-    handle = LoadLibraryW(toWide(path.str()).c_str());
-    return handle != nullptr;
-}
-
-void DynamicLibrary::close()
-{
-    if (handle != nullptr)
-    {
-        FreeLibrary((HMODULE) handle);
-        handle = nullptr;
-    }
-}
-
-bool DynamicLibrary::isOpen() const
-{
-    return handle != nullptr;
-}
-
-void* DynamicLibrary::findSymbol(const std::string& name) const
-{
-    if (handle == nullptr)
-        return nullptr;
-
     return (void*) GetProcAddress((HMODULE) handle, name.c_str());
 }
+} // namespace Detail
 
 Vector<std::string> DynamicLibrary::getFunctionNames() const
 {

@@ -171,6 +171,11 @@ void scheduleStartup(const Callback& func)
     callAsync(func);
 }
 
+bool isEventLoopRunning()
+{
+    return getLoop().running.load();
+}
+
 // The Linux loop is per-copy (no process-global pump to reach into yet);
 // wire this up alongside a Linux plugin host when one exists.
 void stopProcessRootLoop() {}

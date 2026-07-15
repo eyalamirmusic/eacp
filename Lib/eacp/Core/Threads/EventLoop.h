@@ -38,6 +38,17 @@ void attachCurrentThreadAsMain();
 // there: that loop is never ours to stop.
 void stopProcessRootLoop();
 
+// True while a loop is running that work handed to callAsync will reach: this
+// copy's root loop or a nested pump (runEventLoopFor), or another eacp copy's
+// root loop — the EACP_ROOT_LOOP marker crosses images, so a plugin sees its
+// host's loop.
+//
+// Ask before deferring anything that must actually run. During app teardown —
+// Apps::run destroys the app once the loop has exited — this is false, and a
+// callAsync there would sit in the queue forever (see Plugins::unload, which
+// unmaps on the spot in that case instead of deferring into the void).
+bool isEventLoopRunning();
+
 // Schedules the app's one-time startup callback (the app/window creation that
 // runEventLoop kicks off). Most platforms post it to the loop immediately; iOS
 // defers it to UIScene connection so the window is created with a live scene

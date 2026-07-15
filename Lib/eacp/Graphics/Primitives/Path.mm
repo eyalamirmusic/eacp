@@ -66,7 +66,8 @@ void Path::addRect(const Rect& r)
 
 void Path::addRoundedRect(const Rect& r, float radius)
 {
-    CGPathAddRoundedRect(impl->handle, nullptr, toCGRect(r), radius, radius);
+    auto fitted = clampedCornerRadius(r, radius);
+    CGPathAddRoundedRect(impl->handle, nullptr, toCGRect(r), fitted, fitted);
 }
 
 void Path::addEllipse(const Rect& r)

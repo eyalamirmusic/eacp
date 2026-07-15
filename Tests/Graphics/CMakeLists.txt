@@ -6,6 +6,10 @@ nano_add_executable(ImageOpsTests
         SOURCES ImageOpsTests.cpp
         TARGETS eacp-graphics)
 
+nano_add_executable(RoundedRectTests
+        SOURCES RoundedRectTests.cpp
+        TARGETS eacp-graphics)
+
 nano_add_executable(WindowTests
         NO_MAIN
         SOURCES

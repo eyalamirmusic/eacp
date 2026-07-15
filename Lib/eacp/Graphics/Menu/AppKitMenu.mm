@@ -87,16 +87,26 @@ NSMenuItem* buildAppKitMenuItem(const MenuItem& item, MenuTargets& targets)
         return submenuItem;
     }
 
-    auto target = makeActionTarget(item.action);
-
     auto* keyEquiv = item.shortcut ? Strings::toNSString(item.shortcut->key) : @"";
     auto* nsItem = [[NSMenuItem alloc] initWithTitle:title
                                               action:@selector(trigger:)
                                        keyEquivalent:keyEquiv];
-    nsItem.target = target.get();
 
     if (item.shortcut)
         nsItem.keyEquivalentModifierMask = toModifierFlags(item.shortcut->modifiers);
+
+    if (! item.responderSelector.empty())
+    {
+        // Leaving the target nil is what makes this work: AppKit then sends the
+        // selector down the responder chain to the focused view, and asks that
+        // same view whether to enable the item.
+        nsItem.action =
+            NSSelectorFromString(Strings::toNSString(item.responderSelector));
+        return nsItem;
+    }
+
+    auto target = makeActionTarget(item.action);
+    nsItem.target = target.get();
 
     targets.add(std::move(target));
     return nsItem;

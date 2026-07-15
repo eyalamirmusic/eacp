@@ -113,6 +113,15 @@ public:
     void setPosition(int node) { positionNode = node; }
     void setFragment(int node) { fragmentNode = node; }
 
+    // The alpha test: a third fragment-stage root, evaluated before the colour
+    // is written. When the node's value falls below the threshold the fragment
+    // is killed outright, writing neither colour nor depth.
+    void setDiscard(int node, float threshold)
+    {
+        discardNode = node;
+        discardValue = threshold;
+    }
+
     const Expr& expr(int node) const { return nodes[node]; }
     int nodeCount() const { return nodes.size(); }
     const Vector<ValueType>& inputs() const { return inputTypes; }
@@ -123,6 +132,8 @@ public:
     int textureCount() const { return textureSlots; }
     int position() const { return positionNode; }
     int fragment() const { return fragmentNode; }
+    int discard() const { return discardNode; }
+    float discardThreshold() const { return discardValue; }
 
     const Vector<BufferAccess>& storageBuffers() const { return storageSlots; }
     const Vector<Store>& stores() const { return storeList; }
@@ -142,5 +153,7 @@ private:
     int textureSlots = 0;
     int positionNode = -1;
     int fragmentNode = -1;
+    int discardNode = -1;
+    float discardValue = 0.0f;
 };
 } // namespace eacp::GPU

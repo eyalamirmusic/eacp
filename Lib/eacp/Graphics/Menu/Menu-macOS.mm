@@ -73,4 +73,27 @@ Menu standardApplicationMenu(std::string applicationName)
     return menu;
 }
 
+Menu standardEditMenu()
+{
+    auto menu = Menu {"Edit"};
+
+    menu.add(MenuItem::withResponderSelector("Undo", "undo:", commandKey("z")));
+    menu.add(
+        MenuItem::withResponderSelector("Redo", "redo:", commandShiftKey("z")));
+
+    menu.addSeparator();
+
+    menu.add(MenuItem::withResponderSelector("Cut", "cut:", commandKey("x")));
+    menu.add(MenuItem::withResponderSelector("Copy", "copy:", commandKey("c")));
+    menu.add(MenuItem::withResponderSelector("Paste", "paste:", commandKey("v")));
+
+    menu.addSeparator();
+
+    menu.add(MenuItem::withResponderSelector("Select All",
+                                             "selectAll:",
+                                             commandKey("a")));
+
+    return menu;
+}
+
 } // namespace eacp::Graphics

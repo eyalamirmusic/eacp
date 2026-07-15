@@ -17,8 +17,15 @@ namespace
 {
 DXGI_FORMAT toDXGIFormat(TextureFormat format)
 {
-    return format == TextureFormat::BGRA8Unorm ? DXGI_FORMAT_B8G8R8A8_UNORM
-                                               : DXGI_FORMAT_R8G8B8A8_UNORM;
+    switch (format)
+    {
+        case TextureFormat::BGRA8Unorm:
+            return DXGI_FORMAT_B8G8R8A8_UNORM;
+        case TextureFormat::R8Unorm:
+            return DXGI_FORMAT_R8_UNORM;
+        default:
+            return DXGI_FORMAT_R8G8B8A8_UNORM;
+    }
 }
 
 D3D12_FILTER toD3DFilter(TextureFilter filter)
@@ -39,6 +46,7 @@ struct Texture::Native
     Native(Device& device, const TextureDescriptor& descriptor, const void* pixels)
         : width(descriptor.width)
         , height(descriptor.height)
+        , pixelStride(bytesPerPixel(descriptor.format))
     {
         auto& context = getD3D12Context();
 
@@ -92,8 +100,8 @@ struct Texture::Native
         context.deferRelease(std::move(data.resource));
     }
 
-    // Maps a staging buffer, copies width*4 bytes from each source row
-    // (advancing the source by sourcePitch to skip any padding) into the
+    // Maps a staging buffer, copies each source row's pixels (advancing the
+    // source by sourcePitch to skip any padding) into the
     // 256-byte-aligned staging rows GetCopyableFootprints reports, then records
     // the copy and the transition back to PIXEL_SHADER_RESOURCE. The resource
     // must already be in COPY_DEST. Returns false on a staging failure, having
@@ -123,7 +131,7 @@ struct Texture::Native
         if (FAILED(staging->Map(0, &noRead, &mapped)))
             return false;
 
-        auto copyBytes = static_cast<std::size_t>(width) * 4;
+        auto copyBytes = static_cast<std::size_t>(rowBytes);
 
         for (auto row = UINT {0}; row < rows; ++row)
             std::memcpy(static_cast<unsigned char*>(mapped)
@@ -165,8 +173,10 @@ struct Texture::Native
 
         // The resource was created in COPY_DEST, so the copy records with no
         // leading barrier.
-        if (!copyPixels(
-                context, commands, pixels, static_cast<std::size_t>(width) * 4))
+        if (!copyPixels(context,
+                        commands,
+                        pixels,
+                        static_cast<std::size_t>(width * pixelStride)))
         {
             context.discard(commands);
             data.resource = nullptr;
@@ -192,8 +202,9 @@ struct Texture::Native
         if (commands == nullptr)
             return;
 
-        auto sourcePitch =
-            bytesPerRow != 0 ? bytesPerRow : static_cast<std::size_t>(width) * 4;
+        auto sourcePitch = bytesPerRow != 0
+                               ? bytesPerRow
+                               : static_cast<std::size_t>(width * pixelStride);
 
         // The resource rests in PIXEL_SHADER_RESOURCE between frames; move it to
         // COPY_DEST for the upload, and put it back if staging fails so the next
@@ -236,6 +247,10 @@ struct Texture::Native
 
     int width = 0;
     int height = 0;
+
+    // Bytes per pixel of the texture's format; the (stubbed) zero-copy wrap
+    // path stays at 4 because those buffers are always 32-bit BGRA/RGBA.
+    int pixelStride = 4;
     D3D12TextureData data;
 };
 

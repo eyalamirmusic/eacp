@@ -44,6 +44,8 @@ struct GPUView::Native
         // than the old drawable being stretched until the next async present.
         metalLayer.get().presentsWithTransaction = YES;
 
+        metalLayer.get().maximumDrawableCount = framesInFlight;
+
         auto base = (__bridge CALayer*) view.getNativeLayer();
         [base addSublayer:metalLayer.get()];
     }
@@ -133,6 +135,11 @@ struct GPUView::Native
 
     GPUView& view;
     int sampleCount = 4;
+
+    // The layer's pool of drawables, not a queue of finished frames: three keeps
+    // a free buffer ready so nextDrawable never blocks. Lowering it costs
+    // latency rather than saving it. See GPUView::setFramesInFlight.
+    int framesInFlight = 3;
     bool continuous = false;
     bool depthEnabled = false;
     ObjC::Ptr<CAMetalLayer> metalLayer;
@@ -182,6 +189,19 @@ void GPUView::setContinuous(bool continuous)
 bool GPUView::isContinuous() const
 {
     return impl->continuous;
+}
+
+void GPUView::setFramesInFlight(int count)
+{
+    // Metal accepts two or three; one would leave the GPU idle waiting on the
+    // display.
+    impl->framesInFlight = count < 2 ? 2 : (count > 3 ? 3 : count);
+    impl->metalLayer.get().maximumDrawableCount = impl->framesInFlight;
+}
+
+int GPUView::framesInFlight() const
+{
+    return impl->framesInFlight;
 }
 
 void GPUView::resized()

@@ -30,6 +30,22 @@ if (APPLE AND NOT IOS)
     add_dependencies(AppTerminationTests AppTerminationHarness)
 endif ()
 
+# The fixture plugin's static initializer counts genuine loads in the
+# process environment, so the tests can observe real unmaps.
+eacp_add_plugin(DynamicLibraryTestPlugin DynamicLibraryTestPlugin.cpp)
+target_link_libraries(DynamicLibraryTestPlugin PRIVATE eacp-core)
+
+nano_add_executable(DynamicLibraryTests
+        SOURCES DynamicLibraryTests.cpp
+        TARGETS eacp-core)
+target_compile_definitions(DynamicLibraryTests PRIVATE
+        EACP_TEST_PLUGIN="$<TARGET_FILE:DynamicLibraryTestPlugin>")
+add_dependencies(DynamicLibraryTests DynamicLibraryTestPlugin)
+
+nano_add_executable(PluginObjectTests
+        SOURCES PluginObjectTests.cpp
+        TARGETS eacp-core)
+
 nano_add_executable(EventLoopTests
         SOURCES EventLoopTests.cpp
         TARGETS eacp-core)
