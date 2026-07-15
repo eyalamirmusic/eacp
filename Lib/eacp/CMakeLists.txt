@@ -16,9 +16,10 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(Sprites)
     add_subdirectory(CameraView)
 
-    # View->video recorder (AVFoundation + ScreenCaptureKit). macOS only for now
-    # (uses AppKit/ScreenCaptureKit; iOS would drop the Screen tier).
-    if (APPLE AND NOT IOS)
+    # View->video recorder. The Snapshot tier is portable (AVFoundation on macOS,
+    # Media Foundation on Windows); the Screen tier is ScreenCaptureKit on macOS
+    # and a stub on Windows until Windows.Graphics.Capture lands.
+    if (NOT IOS)
         add_subdirectory(Video)
     endif ()
 endif ()

@@ -8,7 +8,7 @@ if (NOT IOS)
     add_subdirectory(EmbeddedViewDemo)
     add_subdirectory(TrayApp)
 
-    if (APPLE)
-        add_subdirectory(VideoRecorderDemo)
-    endif ()
+    # Snapshot capture is portable (macOS + Windows); the Screen mode falls back
+    # gracefully where it is not yet available.
+    add_subdirectory(VideoRecorderDemo)
 endif ()

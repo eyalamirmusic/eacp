@@ -1,9 +1,8 @@
+#include <eacp/Core/Utils/Environment.h>
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/Video/VideoRecorder.h>
 
 #include <cmath>
-#include <cstdlib>
-#include <filesystem>
 #include <string>
 
 using namespace eacp;
@@ -11,15 +10,15 @@ using namespace Graphics;
 
 namespace
 {
-// A stable path in ~/Downloads so the clip is easy to find; the recorder deletes
-// any existing file there first, so only one ever accumulates.
-std::string outputPath()
+// A stable path in the user's Downloads folder so the clip is easy to find; the
+// recorder deletes any existing file there first, so only one ever accumulates.
+FilePath outputPath()
 {
-    const auto* home = std::getenv("HOME");
-    auto dir = home != nullptr ? std::filesystem::path(home) / "Downloads"
-                               : std::filesystem::temp_directory_path();
+    auto dir = FilePath::downloadsDirectory();
+    if (dir.empty())
+        dir = FilePath::tempDirectory();
 
-    return (dir / "eacp-recording.mp4").string();
+    return dir / "eacp-recording.mp4";
 }
 } // namespace
 
@@ -54,11 +53,10 @@ struct App
 
         if (!started && time.time > 0.3)
         {
-            path = outputPath();
+            path = outputPath().str();
 
             auto options = Video::VideoOptions {};
-            const auto* modeEnv = std::getenv("EACP_CAPTURE");
-            auto screen = modeEnv != nullptr && std::string(modeEnv) == "screen";
+            auto screen = getEnvValue("EACP_CAPTURE") == "screen";
             options.mode =
                 screen ? Video::CaptureMode::Screen : Video::CaptureMode::Snapshot;
 

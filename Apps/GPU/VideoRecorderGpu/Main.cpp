@@ -1,9 +1,8 @@
+#include <eacp/Core/Utils/Environment.h>
 #include <eacp/GPU/GPU.h>
 #include <eacp/Video/VideoRecorder.h>
 
 #include <cmath>
-#include <cstdlib>
-#include <filesystem>
 #include <string>
 
 using namespace eacp;
@@ -11,13 +10,13 @@ using namespace GPU;
 
 namespace
 {
-std::string outputPath()
+FilePath outputPath()
 {
-    const auto* home = std::getenv("HOME");
-    auto dir = home != nullptr ? std::filesystem::path(home) / "Downloads"
-                               : std::filesystem::temp_directory_path();
+    auto dir = FilePath::downloadsDirectory();
+    if (dir.empty())
+        dir = FilePath::tempDirectory();
 
-    return (dir / "eacp-recording.mp4").string();
+    return dir / "eacp-recording.mp4";
 }
 
 const char* triangleShader = R"(
@@ -89,7 +88,7 @@ struct App
 
         if (!started && time.time > 0.3)
         {
-            path = outputPath();
+            path = outputPath().str();
 
             auto options = Video::VideoOptions {};
             options.mode = Video::CaptureMode::GpuDirect;
