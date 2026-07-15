@@ -71,7 +71,7 @@ static void compositeView(CGContextRef ctx, View& view, float scale)
     }
 
     {
-        auto painter = MacOSContext(ctx);
+        auto painter = MacOSContext(ctx, true);
         view.paint(painter);
     }
 

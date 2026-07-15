@@ -13,6 +13,7 @@
 #include <eacp/Graphics/Layers/ImmediateLayerClass.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace eacp::GPU
@@ -217,8 +218,13 @@ void GPUView::resized()
     renderNow();
 }
 
-void GPUView::paint(Graphics::Context&)
+void GPUView::paint(Graphics::Context& context)
 {
+    // A snapshot captures GPU content via renderNativeContent (off-screen); the
+    // live renderNow() here would present an on-screen frame as a side effect.
+    if (context.isSnapshot())
+        return;
+
     renderNow();
 }
 
@@ -321,15 +327,30 @@ Graphics::Image GPUView::renderNativeContent(float scale)
         if (dst == nullptr)
             return {};
 
-        // BGRA8 (Metal) -> straight RGBA (Image).
+        // BGRA8 premultiplied (how Core Animation composites the Metal layer) ->
+        // straight-alpha RGBA (what Image holds).
         auto* src = (const std::uint8_t*) readback.contents;
         auto count = (std::size_t) pixelWidth * pixelHeight;
         for (std::size_t i = 0; i < count; ++i)
         {
-            dst[i * 4 + 0] = src[i * 4 + 2];
-            dst[i * 4 + 1] = src[i * 4 + 1];
-            dst[i * 4 + 2] = src[i * 4 + 0];
-            dst[i * 4 + 3] = src[i * 4 + 3];
+            auto b = src[i * 4 + 0];
+            auto g = src[i * 4 + 1];
+            auto r = src[i * 4 + 2];
+            auto a = src[i * 4 + 3];
+
+            if (a == 0)
+            {
+                dst[i * 4 + 0] = dst[i * 4 + 1] = dst[i * 4 + 2] = dst[i * 4 + 3] = 0;
+                continue;
+            }
+
+            auto straight = [&](std::uint8_t c) -> std::uint8_t
+            { return (std::uint8_t) std::min(255, (c * 255 + a / 2) / a); };
+
+            dst[i * 4 + 0] = straight(r);
+            dst[i * 4 + 1] = straight(g);
+            dst[i * 4 + 2] = straight(b);
+            dst[i * 4 + 3] = a;
         }
 
         return image;

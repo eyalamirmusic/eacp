@@ -10,6 +10,12 @@ class Context
 public:
     virtual ~Context() = default;
 
+    // True when this context draws an off-screen View snapshot (renderToImage)
+    // rather than a live on-screen frame. Lets paint() skip work that only makes
+    // sense on screen -- a GPUView renders its content via renderNativeContent
+    // and must not present a live frame while being snapshotted.
+    bool isSnapshot() const { return snapshotMode; }
+
     virtual void saveState() = 0;
     virtual void restoreState() = 0;
 
@@ -32,5 +38,8 @@ public:
     virtual void drawText(const std::string& text,
                           const Point& position,
                           const Font& font) = 0;
+
+protected:
+    bool snapshotMode = false;
 };
 } // namespace eacp::Graphics

@@ -7,6 +7,7 @@
 
 #include <eacp/Graphics/Image/Image.h>
 
+#include <algorithm>
 #include <cmath>
 #include <unordered_set>
 
@@ -595,8 +596,13 @@ void GPUView::resized()
     repaint();
 }
 
-void GPUView::paint(Graphics::Context&)
+void GPUView::paint(Graphics::Context& context)
 {
+    // A snapshot captures GPU content via renderNativeContent (off-screen); the
+    // live renderNow() here would present an on-screen frame as a side effect.
+    if (context.isSnapshot())
+        return;
+
     renderNow();
 }
 
@@ -851,8 +857,9 @@ Graphics::Image GPUView::renderNativeContent(float scale)
     auto rowPitch = footprint.Footprint.RowPitch;
     auto* base = static_cast<const std::uint8_t*>(mappedPtr);
 
-    // BGRA8 (D3D12) -> straight RGBA (Image), row by row past the 256-byte
-    // read-back pitch alignment.
+    // BGRA8 premultiplied (how the compositor treats the swapchain) -> straight
+    // RGBA (what Image holds), row by row past the 256-byte read-back pitch
+    // alignment.
     for (auto y = UINT {0}; y < pixelHeight; ++y)
     {
         auto* srcRow = base + static_cast<std::size_t>(y) * rowPitch;
@@ -862,10 +869,27 @@ Graphics::Image GPUView::renderNativeContent(float scale)
             auto* src = srcRow + static_cast<std::size_t>(x) * 4;
             auto* out = dst + (static_cast<std::size_t>(y) * pixelWidth + x) * 4;
 
-            out[0] = src[2];
-            out[1] = src[1];
-            out[2] = src[0];
-            out[3] = src[3];
+            auto b = src[0];
+            auto g = src[1];
+            auto r = src[2];
+            auto a = src[3];
+
+            if (a == 0)
+            {
+                out[0] = out[1] = out[2] = out[3] = 0;
+                continue;
+            }
+
+            auto straight = [&](std::uint8_t c) -> std::uint8_t
+            {
+                return static_cast<std::uint8_t>(
+                    (std::min) (255, (c * 255 + a / 2) / a));
+            };
+
+            out[0] = straight(r);
+            out[1] = straight(g);
+            out[2] = straight(b);
+            out[3] = a;
         }
     }
 

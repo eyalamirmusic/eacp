@@ -58,6 +58,7 @@ public:
         , baseTransform(baseToUse)
         , adopted(true)
     {
+        snapshotMode = true;
         dc->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), brush.GetAddressOf());
         applyColor();
         drawing = true;

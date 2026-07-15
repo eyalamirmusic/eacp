@@ -32,10 +32,11 @@ Threads::Async<Image>
 class MacOSContext final : public Context
 {
 public:
-    explicit MacOSContext(CGContextRef contextToUse)
+    explicit MacOSContext(CGContextRef contextToUse, bool forSnapshot = false)
         : context(contextToUse)
         , currentColor {1.0f, 1.0f, 1.0f, 1.0f}
     {
+        snapshotMode = forSnapshot;
         saveState();
     }
 
