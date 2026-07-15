@@ -11,3 +11,8 @@ add_subdirectory(Maze)
 add_subdirectory(Sprites)
 add_subdirectory(Blending)
 add_subdirectory(Instancing)
+
+# Links eacp-video (macOS-only: AVFoundation + ScreenCaptureKit).
+if (APPLE AND NOT IOS)
+    add_subdirectory(VideoRecorderGpu)
+endif ()

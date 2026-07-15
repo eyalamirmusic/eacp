@@ -87,6 +87,10 @@ private:
     // renderInContext: cannot reach. Runs render() into an app-owned texture.
     Graphics::Image renderNativeContent(float scale) final;
 
+    // Zero-copy render for video capture: runs render() straight into the frame
+    // target's GPU surface (a CVPixelBuffer's IOSurface on Metal), no read-back.
+    bool renderNativeContentToTarget(void* nativeTarget, float scale) final;
+
     void renderNow();
 
     struct Native;

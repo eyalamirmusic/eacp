@@ -896,4 +896,12 @@ Graphics::Image GPUView::renderNativeContent(float scale)
     readback->Unmap(0, nullptr);
     return image;
 }
+
+bool GPUView::renderNativeContentToTarget(void*, float)
+{
+    // Zero-copy video capture (render straight into a shared D3D/DXGI surface)
+    // is not wired on the D3D12 backend yet; callers fall back to the read-back
+    // path (renderNativeContent) or the screen-capture tier.
+    return false;
+}
 } // namespace eacp::GPU

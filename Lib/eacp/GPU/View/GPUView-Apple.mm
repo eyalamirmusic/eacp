@@ -1,3 +1,4 @@
+#import <CoreVideo/CoreVideo.h>
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
@@ -355,5 +356,76 @@ Graphics::Image GPUView::renderNativeContent(float scale)
 
         return image;
     }
+}
+
+bool GPUView::renderNativeContentToTarget(void* nativeTarget, float)
+{
+    auto pixelBuffer = (CVPixelBufferRef) nativeTarget;
+    if (pixelBuffer == nullptr)
+        return false;
+
+    auto surface = CVPixelBufferGetIOSurface(pixelBuffer);
+    if (surface == nullptr)
+        return false; // not an IOSurface-backed (Metal-compatible) buffer
+
+    auto pixelWidth = CVPixelBufferGetWidth(pixelBuffer);
+    auto pixelHeight = CVPixelBufferGetHeight(pixelBuffer);
+    if (pixelWidth == 0 || pixelHeight == 0)
+        return false;
+
+    auto device = (__bridge id<MTLDevice>) Device::shared().nativeDevice();
+    auto samples = (NSUInteger) impl->sampleCount;
+
+    @autoreleasepool
+    {
+        // The colour target aliases the CVPixelBuffer's IOSurface, so render()
+        // writes straight into the buffer the encoder will read -- no read-back.
+        auto colorDescriptor = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                         width:pixelWidth
+                                        height:pixelHeight
+                                     mipmapped:NO];
+        colorDescriptor.usage = MTLTextureUsageRenderTarget;
+        colorDescriptor.storageMode = MTLStorageModeShared;
+
+        auto colorTexture = [device newTextureWithDescriptor:colorDescriptor
+                                                   iosurface:surface
+                                                       plane:0];
+        if (colorTexture == nil)
+            return false;
+
+        auto makeTarget = [&](MTLPixelFormat format, bool multisample)
+        {
+            auto descriptor = [MTLTextureDescriptor
+                texture2DDescriptorWithPixelFormat:format
+                                             width:pixelWidth
+                                            height:pixelHeight
+                                         mipmapped:NO];
+            descriptor.usage = MTLTextureUsageRenderTarget;
+            descriptor.storageMode = MTLStorageModePrivate;
+
+            if (multisample)
+            {
+                descriptor.textureType = MTLTextureType2DMultisample;
+                descriptor.sampleCount = samples;
+            }
+
+            return [device newTextureWithDescriptor:descriptor];
+        };
+
+        auto msaaTexture =
+            samples > 1 ? makeTarget(MTLPixelFormatBGRA8Unorm, true) : nil;
+        auto depthTexture =
+            impl->depthEnabled ? makeTarget(MTLPixelFormatDepth32Float, samples > 1)
+                               : nil;
+
+        auto target = OffscreenTarget {(__bridge void*) colorTexture,
+                                       (__bridge void*) msaaTexture,
+                                       (__bridge void*) depthTexture};
+        auto frame = Frame(Device::shared(), target);
+        render(frame);
+    }
+
+    return true;
 }
 } // namespace eacp::GPU

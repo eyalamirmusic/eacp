@@ -24,6 +24,12 @@ enum class CaptureMode
     // 2D, GPU and WebView together -- delivered GPU-side, in real time. Requires
     // the window to be on-screen, plus Screen Recording permission on macOS.
     Screen,
+
+    // Renders a GPUView straight into an IOSurface-backed CVPixelBuffer (shared
+    // GPU memory) and hands it to the encoder -- no GPU->CPU read-back. Real-time,
+    // off-screen, no permission, but GPU content only (start() fails if the view
+    // has no native GPU content). For a GPUView; not for 2D/paint/WebView.
+    GpuDirect,
 };
 
 struct VideoOptions

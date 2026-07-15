@@ -116,6 +116,14 @@ public:
     // is none (invalid Image). WebView content is async and handled separately.
     virtual Image renderNativeContent(float scale);
 
+    // Zero-copy variant of renderNativeContent for video capture: renders this
+    // view's native GPU content straight into a platform frame target instead of
+    // reading it back to an Image. On Apple `nativeTarget` is a CVPixelBufferRef
+    // whose IOSurface the view renders into; the pixels never leave the GPU.
+    // Returns false when the view has no such content (the default) -- GPUView
+    // overrides it. `scale` matches renderToImage's.
+    virtual bool renderNativeContentToTarget(void* nativeTarget, float scale);
+
     // Async native content (a WebView's page), which the web runtime only yields
     // via a callback. hasAsyncContent() reports whether this view has any;
     // captureAsyncContent() delivers it as a straight-alpha Image sized to the

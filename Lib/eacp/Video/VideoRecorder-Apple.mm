@@ -85,6 +85,25 @@ NSString* fileTypeForPath(const FilePath& path)
     return AVFileTypeQuickTimeMovie;
 }
 
+// A standalone IOSurface-backed, Metal-compatible BGRA buffer (for the GpuDirect
+// support probe, before the encoder's pool exists). Caller releases.
+CVPixelBufferRef makeMetalPixelBuffer(int width, int height)
+{
+    NSDictionary* attributes = @{
+        (id) kCVPixelBufferMetalCompatibilityKey : @YES,
+        (id) kCVPixelBufferIOSurfacePropertiesKey : @ {}
+    };
+
+    CVPixelBufferRef buffer = nullptr;
+    CVPixelBufferCreate(nullptr,
+                        (size_t) width,
+                        (size_t) height,
+                        kCVPixelFormatType_32BGRA,
+                        (CFDictionaryRef) attributes,
+                        &buffer);
+    return buffer;
+}
+
 // Shared H.264 encoder: an AVAssetWriter fed BGRA CVPixelBuffers with PTS. The
 // writer session starts at the first appended frame's timestamp, so both a
 // zero-based snapshot clock and ScreenCaptureKit's host clock work unchanged.
@@ -121,10 +140,14 @@ struct Encoder
                                                   outputSettings:settings];
         in.expectsMediaDataInRealTime = YES;
 
+        // IOSurface + Metal compatibility so the GpuDirect tier can render
+        // straight into pool buffers; harmless for the CPU-filled snapshot tier.
         NSDictionary* pixelAttributes = @{
             (id) kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
             (id) kCVPixelBufferWidthKey : @(width),
-            (id) kCVPixelBufferHeightKey : @(height)
+            (id) kCVPixelBufferHeightKey : @(height),
+            (id) kCVPixelBufferMetalCompatibilityKey : @YES,
+            (id) kCVPixelBufferIOSurfacePropertiesKey : @ {}
         };
 
         auto* ad = [[AVAssetWriterInputPixelBufferAdaptor alloc]
@@ -207,23 +230,50 @@ struct VideoRecorder::Native
     ObjC::Ptr<EacpScreenSink> sink API_AVAILABLE(macos(12.3));
     dispatch_queue_t sampleQueue = nullptr;
 
-    void captureFrame(Threads::FrameTime frameTime)
+    // Holds the target frame rate against a faster display: returns true only
+    // when the next scheduled slot is due, advancing on an ideal grid so it does
+    // not drift. Resyncs if a slow frame put us behind.
+    bool paceAllows(double time)
     {
-        if (!recording)
+        if (frameInterval <= 0.0)
+            return true;
+
+        if (time < nextCapture)
+            return false;
+
+        nextCapture += frameInterval;
+        if (nextCapture <= time)
+            nextCapture = time + frameInterval;
+
+        return true;
+    }
+
+    // GpuDirect: render the GPUView straight into a pool CVPixelBuffer's IOSurface
+    // and append it -- the pixels never touch the CPU.
+    void captureGpuDirectFrame(Threads::FrameTime frameTime)
+    {
+        if (!recording || !paceAllows(frameTime.time))
             return;
 
-        // Hold the target frame rate against a faster display: capture only when
-        // the next scheduled slot is due, advancing on an ideal grid so it does
-        // not drift. Resync if a slow frame put us behind.
-        if (frameInterval > 0.0)
-        {
-            if (frameTime.time < nextCapture)
-                return;
+        auto* pool = encoder.pool();
+        if (pool == nullptr)
+            return;
 
-            nextCapture += frameInterval;
-            if (nextCapture <= frameTime.time)
-                nextCapture = frameTime.time + frameInterval;
-        }
+        CVPixelBufferRef buffer = nullptr;
+        if (CVPixelBufferPoolCreatePixelBuffer(nullptr, pool, &buffer)
+            != kCVReturnSuccess)
+            return;
+
+        if (view->renderNativeContentToTarget(buffer, scale))
+            encoder.append(buffer, CMTimeMakeWithSeconds(frameTime.time, 600));
+
+        CVPixelBufferRelease(buffer);
+    }
+
+    void captureFrame(Threads::FrameTime frameTime)
+    {
+        if (!recording || !paceAllows(frameTime.time))
+            return;
 
         auto image = view->renderToImage(scale);
         if (!image.isValid() || image.width() < width || image.height() < height)
@@ -301,6 +351,47 @@ struct VideoRecorder::Native
         auto* native = this;
         link = makeOwned<Threads::DisplayLink>(
             [native](Threads::FrameTime time) { native->captureFrame(time); });
+
+        return true;
+    }
+
+    bool startGpuDirect(Graphics::View& viewToUse,
+                        const FilePath& path,
+                        const VideoOptions& options)
+    {
+        view = &viewToUse;
+        scale = options.scale;
+
+        // Probe for size (renderToImage resolves the backing scale when scale is
+        // 0). GPU content itself is captured zero-copy below.
+        auto probe = viewToUse.renderToImage(options.scale);
+        width = roundDownToEven(probe.width());
+        height = roundDownToEven(probe.height());
+        if (width <= 0 || height <= 0)
+            return false;
+
+        // Confirm the view actually renders native GPU content before committing;
+        // a plain 2D/WebView view has none, so GpuDirect does not apply.
+        auto probeBuffer = makeMetalPixelBuffer(width, height);
+        auto supported = probeBuffer != nullptr
+                         && viewToUse.renderNativeContentToTarget(probeBuffer, scale);
+        if (probeBuffer != nullptr)
+            CVPixelBufferRelease(probeBuffer);
+
+        if (!supported)
+            return false;
+
+        auto bitrate = options.bitrate > 0 ? options.bitrate : width * height * 8;
+        if (!encoder.begin(path, width, height, bitrate))
+            return false;
+
+        frameInterval = options.fps > 0 ? 1.0 / options.fps : 0.0;
+        nextCapture = 0.0;
+        recording = true;
+
+        auto* native = this;
+        link = makeOwned<Threads::DisplayLink>(
+            [native](Threads::FrameTime time) { native->captureGpuDirectFrame(time); });
 
         return true;
     }
@@ -476,6 +567,9 @@ bool VideoRecorder::start(Graphics::View& view,
 
     if (options.mode == CaptureMode::Screen)
         return impl->startScreen(view, path, options);
+
+    if (options.mode == CaptureMode::GpuDirect)
+        return impl->startGpuDirect(view, path, options);
 
     return impl->startSnapshot(view, path, options);
 }
