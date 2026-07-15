@@ -478,6 +478,24 @@ void WebView::installWindowControlSupport()
                             { performWindowControl(action); });
 }
 
+// Redirects requestAnimationFrame onto a ~60 Hz timer at document-start, so an
+// rAF loop keeps running while the view is off-screen (where the platform fires
+// no animation frames) and each snapshot reflects live content. Gated on
+// Options::driveOffscreenAnimation — see that flag. The script is tiny, so it is
+// inlined rather than carried as an embedded resource.
+void WebView::installOffscreenAnimationSupport()
+{
+    addUserScript(
+        "(function () {\n"
+        "  var frameMs = 16;\n"
+        "  window.requestAnimationFrame = function (cb) {\n"
+        "    return setTimeout(function () { cb(performance.now()); }, frameMs);\n"
+        "  };\n"
+        "  window.cancelAnimationFrame = function (id) { clearTimeout(id); };\n"
+        "})();",
+        true);
+}
+
 namespace detail
 {
 Vector<WebView*>& registeredWebViews()

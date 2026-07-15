@@ -756,6 +756,7 @@ WKWebView* wkWebViewOf(WebView* view)
 void WebView::initNative(Options options)
 {
     auto forwardKeys = options.forwardUnhandledKeys;
+    auto driveOffscreen = options.driveOffscreenAnimation;
 
     impl = std::make_shared<Native>(*this, std::move(options));
     getWebViewDelegateState(impl->delegate.get())->nativeWeak = impl;
@@ -770,6 +771,10 @@ void WebView::initNative(Options options)
         if (forwardKeys)
             installKeyEventSupport();
     }
+
+    // Not chrome — applies on every platform, including iOS.
+    if (driveOffscreen)
+        installOffscreenAnimationSupport();
 }
 
 WebView::WebView(PopupInit init)

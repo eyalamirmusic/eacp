@@ -156,6 +156,20 @@ public:
         // are handled by the page/browser and never forwarded. iOS has no
         // hardware-key chain to feed, so it is a no-op there.
         bool forwardUnhandledKeys = false;
+
+        // Keep requestAnimationFrame-driven content advancing while the view is
+        // off-screen, so an animated canvas (a spectrum analyser, a meter, a
+        // visualiser) is captured by renderToImageAsync / takeSnapshot instead of
+        // freezing on its last on-screen frame.
+        //
+        // An off-screen web view has no display link, so the platform never fires
+        // requestAnimationFrame — an rAF loop simply stops. With this set, a
+        // document-start shim redirects requestAnimationFrame onto a ~60 Hz timer,
+        // which does fire off-screen, so the loop keeps running and each snapshot
+        // reflects live content. Opt-in and meant for snapshot / test hosts: the
+        // timer is not vsync-aligned, and it stays in effect for the view's whole
+        // life, so a normal on-screen editor should leave it off and keep true rAF.
+        bool driveOffscreenAnimation = false;
     };
 
     WebView();
@@ -281,6 +295,11 @@ private:
     void initNative(Options options);
     void installWindowDragSupport();
     void installWindowControlSupport();
+
+    // Redirects requestAnimationFrame onto a timer so rAF-driven content keeps
+    // advancing off-screen. Installed from initNative when
+    // Options::driveOffscreenAnimation is set. See that flag.
+    void installOffscreenAnimationSupport();
     void installKeyEventSupport();
     void performWindowControl(const std::string& action);
     std::shared_ptr<Native> impl;

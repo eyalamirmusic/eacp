@@ -71,6 +71,15 @@ if (TARGET eacp-webview-test-main)
             eacp-webview-test-main)
     nano_discover_tests(RenderToImageAsyncTests)
 
+    # Options::driveOffscreenAnimation keeps an rAF loop advancing off-screen so
+    # animated canvases are captured by a snapshot. Renders a real WebView both
+    # ways and compares the captured pixels.
+    add_executable(OffscreenAnimationTests OffscreenAnimationTests.cpp)
+    target_link_libraries(OffscreenAnimationTests PRIVATE
+            eacp-webview
+            eacp-webview-test-main)
+    nano_discover_tests(OffscreenAnimationTests)
+
     # Drives the unhandled-key forwarding pipeline (key-events.js + the native
     # verdict queue) on a real WKWebView. Synthesizing the key NSEvents is
     # AppKit-specific, so macOS only.

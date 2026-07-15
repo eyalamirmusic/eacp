@@ -1512,6 +1512,9 @@ void WebView::initNative(Options options)
 
     if (impl->options.forwardUnhandledKeys)
         installKeyEventSupport();
+
+    if (impl->options.driveOffscreenAnimation)
+        installOffscreenAnimationSupport();
 }
 
 // Popup constructor (window.open). Builds the Native in popup mode: it adopts
