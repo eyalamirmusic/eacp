@@ -19,6 +19,19 @@ struct Frame::Native
         if (drawableHandle != nullptr)
             drawable.reset((__bridge NSObject<CAMetalDrawable>*) drawableHandle);
 
+        init(device, msaaTextureHandle, depthTextureHandle);
+    }
+
+    Native(Device& device, const OffscreenTarget& target)
+    {
+        if (target.colorTexture != nullptr)
+            colorTexture.reset((__bridge NSObject<MTLTexture>*) target.colorTexture);
+
+        init(device, target.msaaTexture, target.depthTexture);
+    }
+
+    void init(Device& device, void* msaaTextureHandle, void* depthTextureHandle)
+    {
         if (msaaTextureHandle != nullptr)
             msaaTexture.reset((__bridge NSObject<MTLTexture>*) msaaTextureHandle);
 
@@ -29,7 +42,18 @@ struct Frame::Native
             commandBuffer.reset((NSObject<MTLCommandBuffer>*) [queue commandBuffer]);
     }
 
+    // The texture the pass stores into: the drawable's on-screen texture, or the
+    // app-owned off-screen colour texture for a snapshot.
+    id<MTLTexture> storeTexture() const
+    {
+        if (auto d = drawable.get())
+            return ((id<CAMetalDrawable>) d).texture;
+
+        return (id<MTLTexture>) colorTexture.get();
+    }
+
     ObjC::Ptr<NSObject<CAMetalDrawable>> drawable;
+    ObjC::Ptr<NSObject<MTLTexture>> colorTexture;
     ObjC::Ptr<NSObject<MTLTexture>> msaaTexture;
     ObjC::Ptr<NSObject<MTLTexture>> depthTexture;
     ObjC::Ptr<NSObject<MTLCommandBuffer>> commandBuffer;
@@ -37,6 +61,11 @@ struct Frame::Native
 
 Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture)
     : impl(device, drawable, msaaTexture, depthTexture)
+{
+}
+
+Frame::Frame(Device& device, const OffscreenTarget& target)
+    : impl(device, target)
 {
 }
 
@@ -48,20 +77,26 @@ Frame::~Frame()
     if (buffer == nil)
         return;
 
-    // The layer presents with transaction, so commit, wait for the buffer to be
-    // scheduled, then present the drawable as part of the current CATransaction.
-    [buffer commit];
-
     if (target != nil)
     {
+        // The layer presents with transaction, so commit, wait for the buffer to
+        // be scheduled, then present the drawable inside the CATransaction.
+        [buffer commit];
         [buffer waitUntilScheduled];
         [(id<CAMetalDrawable>) target present];
+    }
+    else
+    {
+        // Off-screen: block until the GPU finishes so the colour texture can be
+        // read back on return.
+        [buffer commit];
+        [buffer waitUntilCompleted];
     }
 }
 
 RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
 {
-    auto target = impl->drawable.get();
+    auto target = impl->storeTexture();
     auto buffer = impl->commandBuffer.get();
 
     if (target == nil || buffer == nil)
@@ -73,12 +108,12 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     if (auto msaa = impl->msaaTexture.get())
     {
         colorAttachment.texture = (id<MTLTexture>) msaa;
-        colorAttachment.resolveTexture = ((id<CAMetalDrawable>) target).texture;
+        colorAttachment.resolveTexture = target;
         colorAttachment.storeAction = MTLStoreActionMultisampleResolve;
     }
     else
     {
-        colorAttachment.texture = ((id<CAMetalDrawable>) target).texture;
+        colorAttachment.texture = target;
         colorAttachment.storeAction = MTLStoreActionStore;
     }
 
@@ -104,6 +139,6 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
 
 bool Frame::isValid() const
 {
-    return impl->drawable.get() != nil && impl->commandBuffer.get() != nil;
+    return impl->storeTexture() != nil && impl->commandBuffer.get() != nil;
 }
 } // namespace eacp::GPU

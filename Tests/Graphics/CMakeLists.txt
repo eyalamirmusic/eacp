@@ -17,6 +17,13 @@ nano_add_executable(WindowTests
             TestMain.cpp
         TARGETS eacp-graphics)
 
+nano_add_executable(RenderToImageTests
+        NO_MAIN
+        SOURCES
+            RenderToImageTests.cpp
+            TestMain.cpp
+        TARGETS eacp-graphics)
+
 if(WIN32)
     nano_add_executable(CompositionPixelTests
             NO_MAIN

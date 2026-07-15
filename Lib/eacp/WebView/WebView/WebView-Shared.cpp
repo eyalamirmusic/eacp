@@ -6,8 +6,25 @@
 #include "StreamingRange.h"
 #include "WebViewDetail.h"
 
+#include <eacp/Graphics/Image/Image.h>
+
 namespace eacp::Graphics
 {
+void WebView::captureAsyncContent(float, std::function<void(Image)> done)
+{
+    takeSnapshot(
+        [done = std::move(done)](Bytes pngBytes, const std::string& error)
+        {
+            if (!error.empty() || pngBytes.empty())
+            {
+                done({});
+                return;
+            }
+
+            done(Image::decode(pngBytes));
+        });
+}
+
 std::string mimeForPath(std::string_view path)
 {
     // Match on a lowercased copy so MyClip.WAV maps the same as .wav.

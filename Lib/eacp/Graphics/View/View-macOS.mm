@@ -4,6 +4,8 @@
 #include "../Graphics/GraphicsContextImpl.h"
 #include "../Image/Image.h"
 #include "../Window/MouseLock-macOS.h"
+
+#include <eacp/Core/Threads/Async.h>
 #include "../Graphics/Keyboard-MacOS.h"
 
 #include <eacp/Core/ObjC/RuntimeClass.h>
@@ -320,10 +322,12 @@ struct View::Native
     float backingScale() const
     {
         auto* view = nativeView.get();
-        if (auto* window = view.window)
-            return (float) window.backingScaleFactor;
+        auto scale = view.window != nil ? view.window.backingScaleFactor
+                                        : [NSScreen mainScreen].backingScaleFactor;
 
-        return (float) [NSScreen mainScreen].backingScaleFactor;
+        // No window and no screen (headless) reports 0; fall back to 1:1 so the
+        // default-scale snapshot still produces pixels.
+        return scale > 0.0 ? (float) scale : 1.0f;
     }
 
     void addSubview(View& view)
@@ -387,9 +391,10 @@ void View::repaint()
     impl->repaint();
 }
 
-void View::setOpacity(float opacity)
+void View::setOpacity(float opacityToUse)
 {
-    impl->setOpacity(opacity);
+    opacity = opacityToUse;
+    impl->setOpacity(opacityToUse);
 }
 
 Rect View::getBounds() const
@@ -401,6 +406,12 @@ Image View::renderToImage(float scale)
 {
     auto resolvedScale = scale > 0.0f ? scale : impl->backingScale();
     return renderLayerToImage(*this, getLocalBounds(), resolvedScale);
+}
+
+Threads::Async<Image> View::renderToImageAsync(float scale)
+{
+    auto resolvedScale = scale > 0.0f ? scale : impl->backingScale();
+    return renderViewToImageAsync(*this, getLocalBounds(), resolvedScale);
 }
 
 Point View::getMousePosition() const

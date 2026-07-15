@@ -5,6 +5,12 @@
 #include "../Primitives/Path.h"
 #include "../Primitives/Font.h"
 
+namespace eacp::Threads
+{
+template <typename T>
+class Async;
+}
+
 namespace eacp::Graphics
 {
 class View;
@@ -12,10 +18,16 @@ class Image;
 
 // Composites view and its descendants into an off-screen bitmap sized
 // bounds * scale and returns it as a straight-alpha Image: each view's paint()
-// chrome, then its attached shape/text layers, then its child views. GPU
-// (Metal) and embedded web layers do not draw. scale is pixels per point; a
-// non-positive size yields an invalid Image. Shared by macOS and iOS.
+// chrome, then its attached shape/text layers, its GPU (Metal) content, then its
+// child views. Embedded web content does not draw (it is async). scale is pixels
+// per point; a non-positive size yields an invalid Image. Shared by macOS and iOS.
 Image renderLayerToImage(View& view, const Rect& bounds, float scale);
+
+// As renderLayerToImage, plus embedded WebView content folded in once each
+// descendant's async snapshot lands. Resolves on the main thread. Shared by
+// macOS and iOS.
+Threads::Async<Image>
+    renderViewToImageAsync(View& view, const Rect& bounds, float scale);
 
 class MacOSContext final : public Context
 {
