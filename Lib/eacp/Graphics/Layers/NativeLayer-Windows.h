@@ -151,6 +151,14 @@ struct NativeLayerBase
 
     virtual void renderContent() = 0;
 
+    // Draws this layer's content straight into an arbitrary device context under
+    // `transform` (points -> device pixels), instead of into its own DComp
+    // surface. This is the off-screen View->Image snapshot's analog of macOS
+    // renderInContext:, which cannot reach a DComp visual. `pointScale` is the
+    // point-to-pixel factor baked into `transform`, so stroke widths (specified
+    // in points) match the on-screen surface. Default draws nothing.
+    virtual void drawInto(ID2D1DeviceContext*, const D2D1::Matrix3x2F&, float) {}
+
     void updateVisualPosition()
     {
         if (visual && positionDirty)

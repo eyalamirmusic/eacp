@@ -57,7 +57,21 @@ struct TextLayer::Native : NativeLayerBase
             D2D1::Matrix3x2F::Scale(dpiScale, dpiScale)
             * D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x),
                                             static_cast<float>(offset.y));
-        dc->SetTransform(baseTransform);
+
+        drawInto(dc.Get(), baseTransform, dpiScale);
+
+        dc->SetTransform(D2D1::Matrix3x2F::Identity());
+        surface->EndDraw();
+    }
+
+    void drawInto(ID2D1DeviceContext* dc,
+                  const D2D1::Matrix3x2F& transform,
+                  float) override
+    {
+        if (text.empty() || !textFormat)
+            return;
+
+        dc->SetTransform(transform);
 
         ComPtr<ID2D1SolidColorBrush> brush;
         dc->CreateSolidColorBrush(D2D1::ColorF(color.r, color.g, color.b, color.a),
@@ -73,9 +87,6 @@ struct TextLayer::Native : NativeLayerBase
                          layoutRect,
                          brush.Get());
         }
-
-        dc->SetTransform(D2D1::Matrix3x2F::Identity());
-        surface->EndDraw();
     }
 
     std::wstring text;

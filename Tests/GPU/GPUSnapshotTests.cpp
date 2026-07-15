@@ -3,13 +3,13 @@
 #include <cmath>
 
 // Drives View::renderToImage over a GPUView: the off-screen Frame renders the
-// view's Metal content into an app-owned texture, GPUView reads it back, and the
+// view's GPU content into an app-owned texture, GPUView reads it back, and the
 // compositor folds it into the snapshot. Unlike the smoke tests -- which can
 // only build resources because a real draw needs a frame + drawable -- these
 // exercise an actual GPU render end to end and check the resulting pixels.
 //
-// Metal-only: GPU snapshot read-back is wired on the Apple backend; the Windows
-// renderToImage is still a stub (see View-Windows.cpp).
+// Runs on both backends: Metal off-screen textures on Apple, D3D12 off-screen
+// render targets on Windows, each self-skipping without a GPU device.
 
 using namespace nano;
 using namespace eacp;
@@ -38,7 +38,7 @@ struct ClearView final : GPUView
     Graphics::Color clearColor;
 };
 
-const char* fillShader = R"(
+const char* mslFillShader = R"(
 #include <metal_stdlib>
 using namespace metal;
 
@@ -52,6 +52,28 @@ vertex float4 vertexMain(VertexIn in [[stage_in]])
 fragment float4 fragmentMain() { return float4(0.0, 1.0, 0.0, 1.0); }
 )";
 
+const char* hlslFillShader = R"(
+struct VertexIn { float2 position : TEXCOORD0; };
+struct VertexOut { float4 position : SV_Position; };
+
+VertexOut vertexMain(VertexIn input)
+{
+    VertexOut o;
+    o.position = float4(input.position, 0.0, 1.0);
+    return o;
+}
+
+float4 fragmentMain(VertexOut input) : SV_Target { return float4(0.0, 1.0, 0.0, 1.0); }
+)";
+
+// Both branches name both strings, so neither is an unused-variable warning on
+// the platform whose backend isn't selected.
+ShaderSource fillShaderSource()
+{
+    return Platform::isWindows() ? ShaderSource::hlsl(hlslFillShader)
+                                 : ShaderSource::msl(mslFillShader);
+}
+
 // Draws a single oversized triangle that covers the whole viewport in green,
 // over a red clear -- so a captured green image proves the pipeline draw ran
 // into the off-screen target, not just the clear.
@@ -60,7 +82,7 @@ struct FillView final : GPUView
     FillView()
         : vertexBuffer(Device::shared().makeBuffer(fullScreenTriangle))
         , library(
-              Device::shared().makeShaderLibrary(ShaderSource::msl(fillShader)
+              Device::shared().makeShaderLibrary(fillShaderSource()
                                                      .withVertex("vertexMain")
                                                      .withFragment("fragmentMain")))
         , pipeline(makePipeline())
