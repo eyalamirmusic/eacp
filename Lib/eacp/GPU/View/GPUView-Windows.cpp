@@ -5,6 +5,8 @@
 #include "../Frame/Frame.h"
 #include "../Windows/D3D12Types.h"
 
+#include <eacp/Graphics/Image/Image.h>
+
 #include <unordered_set>
 
 namespace eacp::GPU
@@ -600,5 +602,15 @@ void GPUView::paint(Graphics::Context&)
 void GPUView::renderNow()
 {
     impl->render();
+}
+
+Graphics::Image GPUView::renderNativeContent(float)
+{
+    // Not yet implemented on the D3D12 backend: needs an off-screen render
+    // target and the read-back path the Metal implementation has, plus a real
+    // Frame(Device&, OffscreenTarget) (currently a no-op stub). Until then a
+    // View snapshot leaves this view's GPU content blank, mirroring
+    // View::renderToImage on Windows.
+    return {};
 }
 } // namespace eacp::GPU

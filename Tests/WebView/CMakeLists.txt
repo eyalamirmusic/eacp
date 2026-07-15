@@ -62,12 +62,17 @@ if (TARGET eacp-webview-test-main)
     nano_discover_tests(WebViewAffordanceTests)
 
     # Drives View::renderToImageAsync on a real WebView: the async snapshot folds
-    # the page's pixels into the composited image, awaited with waitFor.
-    add_executable(RenderToImageAsyncTests RenderToImageAsyncTests.cpp)
-    target_link_libraries(RenderToImageAsyncTests PRIVATE
-            eacp-webview
-            eacp-webview-test-main)
-    nano_discover_tests(RenderToImageAsyncTests)
+    # the page's pixels into the composited image, awaited with waitFor. The
+    # snapshot backend is Apple-only for now (Windows renderToImage/Async are
+    # stubbed to an invalid Image -- see View-Windows.cpp), so gate the pixel
+    # assertions on APPLE until the Windows off-screen target is implemented.
+    if (APPLE)
+        add_executable(RenderToImageAsyncTests RenderToImageAsyncTests.cpp)
+        target_link_libraries(RenderToImageAsyncTests PRIVATE
+                eacp-webview
+                eacp-webview-test-main)
+        nano_discover_tests(RenderToImageAsyncTests)
+    endif ()
 
     # Drives the unhandled-key forwarding pipeline (key-events.js + the native
     # verdict queue) on a real WKWebView. Synthesizing the key NSEvents is
