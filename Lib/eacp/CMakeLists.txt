@@ -15,4 +15,9 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(GPUWidgets)
     add_subdirectory(Sprites)
     add_subdirectory(CameraView)
+
+    # View->video recorder (AVFoundation). Apple only for now.
+    if (APPLE)
+        add_subdirectory(Video)
+    endif ()
 endif ()
