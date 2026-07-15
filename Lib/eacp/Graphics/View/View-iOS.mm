@@ -2,6 +2,7 @@
 #import <UIKit/UIKit.h>
 #include "View.h"
 #include "../Graphics/GraphicsContextImpl.h"
+#include "../Image/Image.h"
 
 @interface NativeView : UIView
 {
@@ -169,6 +170,11 @@ struct View::Native
         [nativeView.get() setFrame:frame];
     }
 
+    float backingScale() const
+    {
+        return (float) nativeView.get().contentScaleFactor;
+    }
+
     void addSubview(View& view)
     {
         auto* childNativeView = (NativeView*) view.getHandle();
@@ -228,6 +234,12 @@ void View::setOpacity(float opacity)
 Rect View::getBounds() const
 {
     return impl->getBounds();
+}
+
+Image View::renderToImage(float scale)
+{
+    auto resolvedScale = scale > 0.0f ? scale : impl->backingScale();
+    return renderLayerToImage(*this, getLocalBounds(), resolvedScale);
 }
 
 Point View::getMousePosition() const

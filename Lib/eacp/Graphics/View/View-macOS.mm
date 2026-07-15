@@ -2,6 +2,7 @@
 #import <Cocoa/Cocoa.h>
 #include "View.h"
 #include "../Graphics/GraphicsContextImpl.h"
+#include "../Image/Image.h"
 #include "../Window/MouseLock-macOS.h"
 #include "../Graphics/Keyboard-MacOS.h"
 
@@ -316,6 +317,15 @@ struct View::Native
         [nativeView.get() setFrame:frame];
     }
 
+    float backingScale() const
+    {
+        auto* view = nativeView.get();
+        if (auto* window = view.window)
+            return (float) window.backingScaleFactor;
+
+        return (float) [NSScreen mainScreen].backingScaleFactor;
+    }
+
     void addSubview(View& view)
     {
         auto* childNativeView = (NSView*) view.getHandle();
@@ -385,6 +395,12 @@ void View::setOpacity(float opacity)
 Rect View::getBounds() const
 {
     return impl->getBounds();
+}
+
+Image View::renderToImage(float scale)
+{
+    auto resolvedScale = scale > 0.0f ? scale : impl->backingScale();
+    return renderLayerToImage(*this, getLocalBounds(), resolvedScale);
 }
 
 Point View::getMousePosition() const

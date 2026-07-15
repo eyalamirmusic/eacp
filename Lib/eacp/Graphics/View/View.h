@@ -7,6 +7,8 @@
 namespace eacp::Graphics
 {
 
+class Image;
+
 enum class MouseEventType
 {
     Down,
@@ -73,6 +75,14 @@ public:
     virtual ~View();
 
     void repaint();
+
+    // Renders this view and its child views into an off-screen image, stacked
+    // front-to-back the way the compositor draws them on screen. Captures
+    // paint()-drawn content only: native GPU layers and embedded web content,
+    // which render outside paint(), come out blank. scale is the pixels-per-point
+    // factor (2 on a Retina display); pass 0 to use the view's current backing
+    // scale. Returns an invalid Image for a non-positive size.
+    Image renderToImage(float scale = 0.0f);
 
     // Group opacity for the whole view subtree (chrome, child views and any
     // native GPU/web content), composited over whatever sits behind it. Sibling

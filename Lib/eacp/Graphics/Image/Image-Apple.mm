@@ -4,6 +4,8 @@
 
 #include "ImageCodec.h"
 
+#include "../Primitives/GraphicUtils.h"
+
 #include <eacp/Core/ObjC/CFRef.h>
 
 namespace eacp::Graphics::detail
@@ -125,18 +127,23 @@ Image decodeImageBytes(const std::uint8_t* data, int size, std::string& error)
         return {};
     }
 
+    return imageFromCGImage(image.get(), error);
+}
+
+Image imageFromCGImage(CGImageRef image, std::string& error)
+{
     auto width = static_cast<int>(CGImageGetWidth(image));
     auto height = static_cast<int>(CGImageGetHeight(image));
     if (width <= 0 || height <= 0)
     {
-        error = "decoded image has zero dimensions";
+        error = "image has zero dimensions";
         return {};
     }
 
     constexpr auto maxPixels = std::numeric_limits<int>::max() / 4;
     if (height > maxPixels / width)
     {
-        error = "decoded image is too large";
+        error = "image is too large";
         return {};
     }
 

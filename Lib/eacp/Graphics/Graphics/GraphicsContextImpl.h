@@ -7,13 +7,22 @@
 
 namespace eacp::Graphics
 {
+class View;
+class Image;
+
+// Composites view and its descendants into an off-screen bitmap sized
+// bounds * scale and returns it as a straight-alpha Image: each view's paint()
+// chrome, then its attached shape/text layers, then its child views. GPU
+// (Metal) and embedded web layers do not draw. scale is pixels per point; a
+// non-positive size yields an invalid Image. Shared by macOS and iOS.
+Image renderLayerToImage(View& view, const Rect& bounds, float scale);
+
 class MacOSContext final : public Context
 {
 public:
-
     explicit MacOSContext(CGContextRef contextToUse)
         : context(contextToUse)
-        , currentColor{1.0f, 1.0f, 1.0f, 1.0f}
+        , currentColor {1.0f, 1.0f, 1.0f, 1.0f}
     {
         saveState();
     }
@@ -85,7 +94,9 @@ public:
         strokePath(p);
     }
 
-    void drawText(const std::string& text, const Point& position, const Font& font) override;
+    void drawText(const std::string& text,
+                  const Point& position,
+                  const Font& font) override;
 
 private:
     CGContextRef context;

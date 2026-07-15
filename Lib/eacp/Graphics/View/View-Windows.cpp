@@ -1,6 +1,7 @@
 #include "View.h"
 #include "../Graphics/GraphicsContext.h"
 #include "../Helpers/StringUtils-Windows.h"
+#include "../Image/Image.h"
 #include "../Layers/NativeLayer-Windows.h"
 
 #include <unordered_set>
@@ -671,6 +672,13 @@ bool View::hasFocus() const
 void* View::getNativeLayer()
 {
     return impl->getVisual();
+}
+
+Image View::renderToImage(float)
+{
+    // Not yet implemented on Windows: needs an off-screen WIC/D2D render target
+    // to back D2DContext, mirroring the CGBitmapContext path on Apple.
+    return {};
 }
 
 void View::viewAdded(View& view)
