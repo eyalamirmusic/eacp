@@ -52,4 +52,8 @@ if (NOT IOS)
     nano_add_executable(IpcMessengerTests
             SOURCES IpcMessengerTests.cpp
             TARGETS eacp-network)
+
+    nano_add_executable(IpcRpcTests
+            SOURCES IpcRpcTests.cpp
+            TARGETS eacp-network-rpc)
 endif ()
