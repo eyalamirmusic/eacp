@@ -6,6 +6,7 @@ add_subdirectory(Todo)
 
 if (NOT IOS)
     add_subdirectory(EmbeddedViewDemo)
+    add_subdirectory(IpcDemo)
     add_subdirectory(TrayApp)
 
     # Snapshot capture is portable (macOS + Windows); the Screen mode falls back

@@ -26,8 +26,8 @@ nano_add_executable(HttpRpcTests
         SOURCES HttpRpcTests.cpp
         TARGETS eacp-network-rpc)
 
-# The lock's cross-process cases drive a real second process, which iOS cannot
-# spawn (Process-iOS.cpp is a stub).
+# The lock and channel cross-process cases drive a real second process, which
+# iOS cannot spawn (Process-iOS.cpp is a stub).
 if (NOT IOS)
     add_executable(IpcLockHarness IpcLockHarness.cpp)
     target_link_libraries(IpcLockHarness PRIVATE eacp-network)
@@ -38,4 +38,18 @@ if (NOT IOS)
     target_compile_definitions(IpcLockTests PRIVATE
             EACP_IPC_LOCK_HARNESS="$<TARGET_FILE:IpcLockHarness>")
     add_dependencies(IpcLockTests IpcLockHarness)
+
+    add_executable(IpcChannelHarness IpcChannelHarness.cpp)
+    target_link_libraries(IpcChannelHarness PRIVATE eacp-network)
+
+    nano_add_executable(IpcChannelTests
+            SOURCES IpcChannelTests.cpp
+            TARGETS eacp-network)
+    target_compile_definitions(IpcChannelTests PRIVATE
+            EACP_IPC_CHANNEL_HARNESS="$<TARGET_FILE:IpcChannelHarness>")
+    add_dependencies(IpcChannelTests IpcChannelHarness)
+
+    nano_add_executable(IpcMessengerTests
+            SOURCES IpcMessengerTests.cpp
+            TARGETS eacp-network)
 endif ()
