@@ -1,20 +1,50 @@
 #include <eacp/Graphics/Graphics.h>
-#include <eacp/Network/Network.h>
+#include <eacp/Network/IPC/Rpc.h>
 
-#include <cstdio>
 #include <optional>
 
-// Two windows, two processes, one channel. The first instance claims the
-// name, becomes the server and launches this same executable again; the
-// second instance loses the claim, so it dials in as the client. A click
-// in either window travels as a "dot <x> <y>" message in window-relative
-// coordinates and appears as a dot in the other window.
-//
-// All the transport plumbing - reader thread, framing, main-thread
-// delivery, teardown - lives in IPC::Messenger / IPC::MessageServer. The
-// app only decides its role, wires callbacks and sends messages.
+// Two windows, two processes, one typed RPC bridge. The first instance
+// claims the name, becomes the server and launches this same executable
+// again; the second instance loses the claim, so it dials in as the
+// client. Clicks travel typed: the client invokes the server's "addDot"
+// command and hears back how many dots the server holds; the server
+// pushes its own clicks to the client as "dot" events. Both directions
+// are Miro-serialized structs - no strings are parsed anywhere.
 using namespace eacp;
 using namespace Graphics;
+
+struct Dot
+{
+    float x = 0;
+    float y = 0;
+
+    MIRO_REFLECT(x, y)
+};
+
+struct DotTotal
+{
+    int total = 0;
+
+    MIRO_REFLECT(total)
+};
+
+// The server's API, mounted on the bridge: one typed command in, a typed
+// reply out. Handlers run main-thread-deferred by default, so touching
+// app state from here is safe.
+class DotApi
+{
+public:
+    void reflect(Miro::ApiReflector& r) { r.command(&DotApi::addDot, "addDot"); }
+
+    DotTotal addDot(const Dot& dot)
+    {
+        onDot(dot);
+        return {++total};
+    }
+
+    std::function<void(const Dot&)> onDot = [](const Dot&) {};
+    int total = 0;
+};
 
 namespace
 {
@@ -27,9 +57,12 @@ public:
     // Claiming the name is the role decision: winner serves, loser dials.
     Peer()
     {
+        api.onDot = [this](const Dot& dot) { onDot({dot.x, dot.y}); };
+        bridge.use(api);
+
         try
         {
-            server.emplace(channelName);
+            server.emplace(channelName, bridge);
         }
         catch (const IPC::Error&)
         {
@@ -37,59 +70,46 @@ public:
 
         if (server)
         {
-            server->onClient = [this](IPC::Messenger& session)
-            {
-                active = &session;
-                wire(session);
-                onConnected();
-            };
-
+            server->onClientConnected = [this] { onConnected(); };
+            server->onClientDisconnected = [this] { onPeerLeft(); };
             launchSecondInstance();
         }
         else
         {
             client.emplace(channelName);
             client->onConnected = [this] { onConnected(); };
-            wire(*client);
+            client->onDisconnected = [this] { onPeerLeft(); };
+            client->on<Dot>("dot",
+                            [this](const Dot& dot) { onDot({dot.x, dot.y}); });
         }
     }
 
     bool isServer() const { return server.has_value(); }
 
+    // The two directions showcase the two primitives: a client invokes a
+    // typed command and learns the server's new total from the reply; the
+    // server pushes an event to every connected client.
     void sendDot(Point relative)
     {
-        if (auto* messenger = activeMessenger())
-            messenger->send("dot " + std::to_string(relative.x) + " "
-                            + std::to_string(relative.y));
+        auto dot = Dot {relative.x, relative.y};
+
+        if (server)
+        {
+            bridge.emit("dot", dot);
+            return;
+        }
+
+        client->call<DotTotal>("addDot", dot)
+            .then([this](DotTotal reply) { onTotal(reply.total); },
+                  [](const std::string&) {});
     }
 
     Callback onConnected = [] {};
     std::function<void(Point)> onDot = [](Point) {};
+    std::function<void(int)> onTotal = [](int) {};
     Callback onPeerLeft = [] {};
 
 private:
-    void wire(IPC::Messenger& messenger)
-    {
-        messenger.onMessage = [this](const std::string& message)
-        {
-            auto x = 0.f;
-            auto y = 0.f;
-
-            if (std::sscanf(message.c_str(), "dot %f %f", &x, &y) == 2)
-                onDot({x, y});
-        };
-
-        messenger.onDisconnected = [this] { onPeerLeft(); };
-    }
-
-    IPC::Messenger* activeMessenger()
-    {
-        if (server)
-            return active != nullptr && active->isConnected() ? active : nullptr;
-
-        return client ? &*client : nullptr;
-    }
-
     void launchSecondInstance()
     {
         auto& arguments = Apps::getAppEnvironment().commandLineArgs;
@@ -103,9 +123,10 @@ private:
         child.emplace(std::move(options));
     }
 
-    std::optional<IPC::MessageServer> server;
-    std::optional<IPC::Messenger> client;
-    IPC::Messenger* active = nullptr;
+    DotApi api;
+    Miro::Bridge bridge;
+    std::optional<IPC::RpcServer> server;
+    std::optional<IPC::RpcClient> client;
 
     std::optional<Processes::Process> child;
 };
@@ -218,6 +239,12 @@ struct IpcDemoApp
             view.addDot(relative);
             view.setStatus("Received " + std::to_string(received)
                            + (received == 1 ? " click" : " clicks"));
+        };
+
+        peer.onTotal = [this](int total)
+        {
+            view.setStatus("Server now holds " + std::to_string(total)
+                           + (total == 1 ? " dot" : " dots"));
         };
 
         peer.onPeerLeft = [this]

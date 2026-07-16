@@ -56,7 +56,9 @@ add_library(eacp-network-rpc STATIC)
 
 target_sources(eacp-network-rpc PRIVATE
         HTTPRpc/RpcServer.cpp
-        HTTPRpc/RpcClient.cpp)
+        HTTPRpc/RpcClient.cpp
+        IPC/Rpc.cpp
+        Rpc/AsyncCommand.cpp)
 
 target_link_libraries(eacp-network-rpc PUBLIC eacp-network Miro)
 

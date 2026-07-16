@@ -1,7 +1,7 @@
 project(IpcDemoApp VERSION 1.0.0)
 
 add_executable(IpcDemo Main.cpp)
-target_link_libraries(IpcDemo PRIVATE eacp-graphics eacp-network)
+target_link_libraries(IpcDemo PRIVATE eacp-graphics eacp-network-rpc)
 
 set(BUNDLE_ID "com.eacp.ipcdemo")
 

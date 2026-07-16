@@ -1,11 +1,11 @@
-#include "AsyncBridge.h"
+#include "AsyncCommand.h"
 
 #include <thread>
 
-namespace eacp::Graphics
+namespace eacp::Rpc
 {
 void runOnWorkerThread(Callback work)
 {
     std::thread(std::move(work)).detach();
 }
-} // namespace eacp::Graphics
+} // namespace eacp::Rpc
