@@ -38,4 +38,10 @@ bool isDLL();
 
 std::string_view name();
 
+// The running app's name and version, read from the AppInfo.json that
+// eacp_set_gui_subsystem embeds via ResEmbed. Empty when this binary has no
+// embedded AppInfo (e.g. a console app that never called the CMake helper).
+std::string_view getAppName();
+std::string_view getAppVersion();
+
 } // namespace eacp::Platform

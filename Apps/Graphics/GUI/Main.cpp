@@ -1,4 +1,5 @@
 #include <eacp/Graphics/Graphics.h>
+#include <eacp/Core/Platform/Platform.h>
 #include <algorithm>
 
 using namespace eacp;
@@ -241,7 +242,11 @@ struct ParentView final : View
 
 struct MyApp
 {
-    MyApp() { window.setContentView(parentView); }
+    MyApp()
+    {
+        LOG(Platform::getAppName(), " v", Platform::getAppVersion());
+        window.setContentView(parentView);
+    }
 
     ParentView parentView;
     Window window;

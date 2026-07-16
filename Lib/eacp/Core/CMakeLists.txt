@@ -4,8 +4,13 @@ target_include_directories(eacp-core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../../)
 find_package(EADataStructures REQUIRED)
 target_link_libraries(eacp-core PUBLIC ea_data_structures)
 
+find_package(ResEmbed REQUIRED)
+find_package(Miro REQUIRED)
+target_link_libraries(eacp-core PUBLIC ResEmbed Miro)
+
 target_sources(eacp-core PRIVATE
         App/App.cpp
+        Platform/AppInfo.cpp
         Platform/Platform.cpp
         Plugins/DynamicLibrary.cpp
         Process/Process.cpp

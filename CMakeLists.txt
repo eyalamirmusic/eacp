@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.31)
-project(eacp LANGUAGES C CXX)
+project(eacp VERSION 0.1.0 LANGUAGES C CXX)
 
 if (CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR

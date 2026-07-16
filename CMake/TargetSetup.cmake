@@ -60,9 +60,90 @@ function(eacp_force_optimization target)
     endif ()
 endfunction()
 
+# Stamps an app's name and the enclosing project's version into the binary two
+# ways: the native metadata the OS reads (macOS bundle plist keys / a Windows
+# VERSIONINFO resource), and an AppInfo.json embedded via ResEmbed that
+# Platform::getAppName()/getAppVersion() read back at runtime. The name comes
+# from MACOSX_BUNDLE_BUNDLE_NAME (apps set it before calling us) or the target
+# name; the version from ${PROJECT_VERSION}, defaulting to 0.0.0.
+function(eacp_embed_app_info target)
+    get_target_property(app_name ${target} MACOSX_BUNDLE_BUNDLE_NAME)
+    if (NOT app_name)
+        set(app_name "${target}")
+    endif ()
+
+    set(app_version "${PROJECT_VERSION}")
+    if (NOT app_version)
+        set(app_version "0.0.0")
+    endif ()
+
+    if (APPLE)
+        set_target_properties(${target} PROPERTIES
+                MACOSX_BUNDLE_SHORT_VERSION_STRING "${app_version}"
+                MACOSX_BUNDLE_BUNDLE_VERSION "${app_version}"
+                MACOSX_BUNDLE_LONG_VERSION_STRING "${app_version}")
+    elseif (WIN32)
+        # VERSIONINFO's FILEVERSION/PRODUCTVERSION need four numeric fields; the
+        # project may set fewer, so pad the missing components with 0.
+        set(v_major "${PROJECT_VERSION_MAJOR}")
+        set(v_minor "${PROJECT_VERSION_MINOR}")
+        set(v_patch "${PROJECT_VERSION_PATCH}")
+        set(v_tweak "${PROJECT_VERSION_TWEAK}")
+        foreach (comp v_major v_minor v_patch v_tweak)
+            if (NOT ${comp})
+                set(${comp} 0)
+            endif ()
+        endforeach ()
+
+        # Resource ids are per-type, so id 1 here does not clash with the
+        # id-1 ICON that eacp_set_app_icon emits.
+        set(version_rc "${CMAKE_CURRENT_BINARY_DIR}/${target}-version.rc")
+        file(CONFIGURE OUTPUT "${version_rc}" @ONLY CONTENT [==[
+1 VERSIONINFO
+FILEVERSION @v_major@,@v_minor@,@v_patch@,@v_tweak@
+PRODUCTVERSION @v_major@,@v_minor@,@v_patch@,@v_tweak@
+FILEOS 0x40004L
+FILETYPE 0x1L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "ProductName", "@app_name@"
+            VALUE "FileVersion", "@app_version@"
+            VALUE "ProductVersion", "@app_version@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
+]==])
+        target_sources(${target} PRIVATE "${version_rc}")
+    endif ()
+
+    # The ResEmbed runtime key is the file basename, so the file must be named
+    # exactly AppInfo.json; a per-target subdir keeps sibling targets isolated.
+    set(app_info_json "${CMAKE_CURRENT_BINARY_DIR}/${target}-AppInfo/AppInfo.json")
+    file(CONFIGURE OUTPUT "${app_info_json}" @ONLY CONTENT [==[
+{
+    "name": "@app_name@",
+    "version": "@app_version@"
+}
+]==])
+
+    find_package(ResEmbed REQUIRED)
+    res_embed_add(${target}
+            FILES     "${app_info_json}"
+            NAMESPACE AppInfo
+            CATEGORY  AppInfo)
+endfunction()
+
 # Mark an executable as a windowed GUI app so launching it never pops a console
-# window on Windows — the cross-platform analogue of MACOSX_BUNDLE on Apple. A
-# no-op everywhere but Windows. Call this on any eacp app that owns a window
+# window on Windows — the cross-platform analogue of MACOSX_BUNDLE on Apple. It
+# also stamps the app name and project version into the binary via
+# eacp_embed_app_info. Call this on any eacp app that owns a window
 # (graphics/tray/webview apps) rather than a console.
 function(eacp_set_gui_subsystem target)
     set_target_properties(${target} PROPERTIES WIN32_EXECUTABLE TRUE)
@@ -73,6 +154,8 @@ function(eacp_set_gui_subsystem target)
     if (MSVC)
         target_link_options(${target} PRIVATE "/ENTRY:mainCRTStartup")
     endif ()
+
+    eacp_embed_app_info(${target})
 endfunction()
 
 # Gives an app its at-rest icon — the one Finder, Explorer and a
