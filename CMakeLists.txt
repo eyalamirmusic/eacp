@@ -57,6 +57,15 @@ if (EACP_HIDDEN_VISIBILITY)
     set(CMAKE_VISIBILITY_INLINES_HIDDEN TRUE)
 endif ()
 
+# GCC gives some STL statics STB_GNU_UNIQUE binding, and glibc refuses to unmap
+# any library exporting one. eacp libraries link statically into runtime-loaded
+# plugins, so a unique symbol anywhere in them pins the plugin resident and
+# defeats the unload contract DynamicLibrary is built on (eacp_add_plugin sets
+# the same flag on a plugin's own sources). Clang emits no such symbols.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(-fno-gnu-unique)
+endif ()
+
 
 option(EACP_ENABLE_TESTS "Enable Tests for EACP" ${PROJECT_IS_TOP_LEVEL})
 

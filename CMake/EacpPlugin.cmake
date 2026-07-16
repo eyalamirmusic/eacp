@@ -13,6 +13,13 @@ function(eacp_add_plugin target)
             PREFIX ""
             POSITION_INDEPENDENT_CODE ON)
 
+    # Keep the plugin's own sources free of STB_GNU_UNIQUE symbols so glibc can
+    # unmap it on the last close -- see the eacp-wide flag in the root
+    # CMakeLists that covers the eacp libraries linked in here.
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(${target} PRIVATE -fno-gnu-unique)
+    endif ()
+
     set_default_target_setting(${target})
     eacp_enable_unity_build(${target})
 endfunction()
