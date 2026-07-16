@@ -2,6 +2,7 @@
 
 #include <eacp/Network/Network.h>
 
+#include <Miro/Json.h>
 #include <Miro/Reflect.h>
 
 namespace eacp::HTTP::Json
@@ -43,7 +44,11 @@ RequestHandler makeHandler(Resp (*fn)(const Req&))
         auto input = Req();
         try
         {
-            Miro::fromJSONString(input, req.body);
+            // Miro::fromJSONString swallows malformed input (it never throws),
+            // so parse explicitly — Json::parse still rejects bad JSON — and an
+            // empty body stays an empty request rather than a 400.
+            if (!req.body.empty())
+                Miro::fromJSON(input, Miro::Json::parse(req.body));
         }
         catch (const std::exception& e)
         {

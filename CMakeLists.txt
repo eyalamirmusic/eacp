@@ -13,6 +13,13 @@ endif ()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# eacp builds runtime-loaded plugins and webview helpers as shared libraries,
+# and those link eacp-core together with its static dependencies (ea_data_structures,
+# Miro, ResEmbed). Every such static lib must be position-independent or the
+# shared-object link fails on Linux (ld: "final link failed: bad value"). Force
+# PIC for every target, including the CPM-fetched dependencies configured below.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 if (APPLE)
     enable_language(OBJCXX)
 endif ()
