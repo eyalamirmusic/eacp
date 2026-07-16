@@ -6,6 +6,7 @@ target_sources(eacp-network PRIVATE
         HTTPServer/HttpServer.cpp
         HTTPServer/HttpServerDispatcher.cpp
         HTTPServer/ResponseBuilders.cpp
+        IPC/Lock.cpp
         TCP/Connection.cpp
         TCP/Listener.cpp)
 
@@ -15,6 +16,7 @@ if (APPLE)
     target_sources(eacp-network PRIVATE
             HTTP/Http.mm
             HTTPServer/HttpServer.mm
+            IPC/Lock-Posix.cpp
             TCP/Connection-Posix.cpp)
     target_link_libraries(eacp-network PRIVATE
             "-framework Foundation"
@@ -23,12 +25,14 @@ elseif (WIN32)
     target_sources(eacp-network PRIVATE
             HTTP/Http-Windows.cpp
             HTTPServer/HttpServer-Windows.cpp
+            IPC/Lock-Windows.cpp
             TCP/Connection-Windows.cpp)
     target_link_libraries(eacp-network PRIVATE winhttp ws2_32)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-network PRIVATE
             HTTP/Http-Linux.cpp
             HTTPServer/HttpServer-Linux.cpp
+            IPC/Lock-Posix.cpp
             TCP/Connection-Posix.cpp)
     find_package(CURL REQUIRED)
     target_link_libraries(eacp-network PRIVATE CURL::libcurl)
