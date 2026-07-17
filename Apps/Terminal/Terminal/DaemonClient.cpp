@@ -8,6 +8,8 @@
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
+#elif defined(_WIN32)
+#include <eacp/Core/Utils/WinInclude.h>
 #endif
 
 namespace term
@@ -29,6 +31,14 @@ std::string daemonExecutablePath()
 
     auto path = std::filesystem::path {buffer};
     return (path.parent_path() / "TerminalDaemon").string();
+#elif defined(_WIN32)
+    wchar_t buffer[MAX_PATH] = {};
+
+    if (GetModuleFileNameW(nullptr, buffer, MAX_PATH) == 0)
+        return {};
+
+    auto path = std::filesystem::path {buffer};
+    return (path.parent_path() / "TerminalDaemon.exe").string();
 #else
     return {};
 #endif

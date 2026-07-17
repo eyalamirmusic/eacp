@@ -65,6 +65,7 @@ class SessionManager
 {
 public:
     explicit SessionManager(const AppConfig& configToUse);
+    ~SessionManager();
 
     TermSession* active() { return activeSession; }
     const std::vector<std::unique_ptr<TermSession>>& all() const { return sessions; }
@@ -93,7 +94,7 @@ public:
     std::function<void(TermSession&, TerminalView&)> onPaneWired =
         [](TermSession&, TerminalView&) {};
 
-    void persistNow() { persist(); }
+    void persistNow();
 
 private:
     TermSession& createSession(const std::string& name,
@@ -103,7 +104,12 @@ private:
     void wireSession(TermSession& session);
     void closeIfPresent(TermSession* session);
     std::string uniqueName(const std::string& base) const;
+
+    // Marks the state dirty and schedules a single deferred write, so hot
+    // paths (pane focus, cwd changes) never pay for disk IO. writeState is
+    // the write itself.
     void persist();
+    void writeState();
 
     const AppConfig& config;
     emberstore::Database db;
@@ -112,5 +118,7 @@ private:
     std::vector<std::unique_ptr<TermSession>> sessions;
     TermSession* activeSession = nullptr;
     TermSession* previousSession = nullptr;
+    bool persistPending = false;
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
 };
 } // namespace term

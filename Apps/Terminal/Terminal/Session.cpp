@@ -1,6 +1,7 @@
 #include "Session.h"
 #include "Projects.h"
 
+#include <eacp/Core/Threads/Async.h>
 #include <emberstore/AppDatabase.h>
 
 #include <algorithm>
@@ -9,6 +10,8 @@ namespace term
 {
 namespace
 {
+constexpr auto persistDelay = eacp::Time::MS {500};
+
 std::string normalizedDir(const std::string& dir)
 {
     auto path = expandHome(dir);
@@ -243,7 +246,40 @@ void SessionManager::restoreOrCreateInitial()
     switchTo(*sessions[(std::size_t) index]);
 }
 
+SessionManager::~SessionManager()
+{
+    *alive = false;
+
+    if (persistPending)
+        writeState();
+}
+
 void SessionManager::persist()
+{
+    if (persistPending)
+        return;
+
+    persistPending = true;
+
+    eacp::Threads::delay(persistDelay)
+        .then(
+            [this, guard = std::weak_ptr<bool> {alive}]
+            {
+                if (guard.expired() || !persistPending)
+                    return;
+
+                persistPending = false;
+                writeState();
+            });
+}
+
+void SessionManager::persistNow()
+{
+    persistPending = false;
+    writeState();
+}
+
+void SessionManager::writeState()
 {
     saved.mutate(
         [&](SavedState& state)

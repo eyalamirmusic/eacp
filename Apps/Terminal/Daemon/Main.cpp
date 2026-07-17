@@ -46,7 +46,7 @@ struct Daemon
     {
         client = &messenger;
 
-        messenger.onMessage = [this, &messenger](std::string body)
+        messenger.onMessage = [this, &messenger](const std::string& body)
         {
             if (client == &messenger)
                 handle(term::proto::parse(body));
