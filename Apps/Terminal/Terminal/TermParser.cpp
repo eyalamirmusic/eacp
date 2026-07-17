@@ -11,11 +11,9 @@ namespace
 // DEC special graphics (ESC ( 0): the 0x60..0x7e range becomes line-drawing
 // glyphs. Everything full-screen apps draw borders with on a non-UTF-8 path.
 constexpr std::array<char32_t, 31> decGraphics = {
-    U'◆', U'▒', U'␉', U'␌', U'␍', U'␊', U'°',
-    U'±', U'␤', U'␋', U'┘', U'┐', U'┌', U'└',
-    U'┼', U'⎺', U'⎻', U'─', U'⎼', U'⎽', U'├',
-    U'┤', U'┴', U'┬', U'│', U'≤', U'≥', U'π',
-    U'≠', U'£', U'·'};
+    U'◆', U'▒', U'␉', U'␌', U'␍', U'␊', U'°', U'±', U'␤', U'␋', U'┘',
+    U'┐', U'┌', U'└', U'┼', U'⎺', U'⎻', U'─', U'⎼', U'⎽', U'├', U'┤',
+    U'┴', U'┬', U'│', U'≤', U'≥', U'π', U'≠', U'£', U'·'};
 } // namespace
 
 TermParser::TermParser(TermScreen& screenToUse, const Theme& themeToUse)
@@ -491,8 +489,7 @@ void TermParser::dispatchCsi(std::uint8_t final)
                 cursorStyle = param(0, 0);
             break;
         case 'r':
-            screen.setScrollRegion(param(0, 1) - 1,
-                                   param(1, screen.rows()) - 1);
+            screen.setScrollRegion(param(0, 1) - 1, param(1, screen.rows()) - 1);
             break;
         case 's':
             screen.saveCursor();
@@ -582,8 +579,7 @@ std::size_t
         else if (group[1] == 2 && group.size() >= 5)
         {
             const auto offset = group.size() >= 6 ? 3 : 2;
-            const auto clampByte = [](int v)
-            { return (Rgb) std::clamp(v, 0, 255); };
+            const auto clampByte = [](int v) { return (Rgb) std::clamp(v, 0, 255); };
             color = (clampByte(group[offset]) << 16)
                     | (clampByte(group[offset + 1]) << 8)
                     | clampByte(group[offset + 2]);

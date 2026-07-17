@@ -24,6 +24,11 @@ if (EACP_HAS_TEXT)
         add_subdirectory(Video)
     endif ()
 
+    # PTY backend is POSIX-only so far; Windows (ConPTY) comes next.
+    if (APPLE AND NOT IOS)
+        add_subdirectory(Terminal)
+    endif ()
+
     if (EACP_HAS_WEBVIEW)
         add_subdirectory(WebView)
         add_subdirectory(Camera)

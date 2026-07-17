@@ -129,8 +129,7 @@ void TermScreen::putChar(char32_t cp)
     cell.ch = cp;
     cell.fg = pen.defaultFg ? theme.foreground : pen.fg;
     cell.bg = pen.defaultBg ? theme.background : pen.bg;
-    cell.attrs = (std::uint16_t) (pen.attrs
-                                  | (pen.defaultFg ? Attr::DefaultFg : 0)
+    cell.attrs = (std::uint16_t) (pen.attrs | (pen.defaultFg ? Attr::DefaultFg : 0)
                                   | (pen.defaultBg ? Attr::DefaultBg : 0));
 
     if (width == 2)
@@ -140,8 +139,7 @@ void TermScreen::putChar(char32_t cp)
 
         auto cont = cell;
         cont.ch = U' ';
-        cont.attrs =
-            (std::uint16_t) ((cell.attrs & ~Attr::Wide) | Attr::WideCont);
+        cont.attrs = (std::uint16_t) ((cell.attrs & ~Attr::Wide) | Attr::WideCont);
         writeCell(cursor.x + 1, cursor.y, cont);
     }
     else
@@ -618,8 +616,7 @@ void TermScreen::resize(int newCols, int newRows)
 const Line& TermScreen::lineAt(int visualRow, int scrollOffset) const
 {
     const auto& lines = activeGrid();
-    const auto index =
-        (std::int64_t) scrollback.size() - scrollOffset + visualRow;
+    const auto index = (std::int64_t) scrollback.size() - scrollOffset + visualRow;
 
     if (index < 0)
         return lines[0];
@@ -627,8 +624,8 @@ const Line& TermScreen::lineAt(int visualRow, int scrollOffset) const
     if (index < (std::int64_t) scrollback.size())
         return scrollback[(std::size_t) index];
 
-    const auto gridIndex = std::min((std::size_t) (index - scrollback.size()),
-                                    lines.size() - 1);
+    const auto gridIndex =
+        std::min((std::size_t) (index - scrollback.size()), lines.size() - 1);
     return lines[gridIndex];
 }
 } // namespace term

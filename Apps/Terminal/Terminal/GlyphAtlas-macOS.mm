@@ -6,6 +6,7 @@
 
 #include <eacp/Core/ObjC/CFRef.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <optional>
@@ -21,7 +22,8 @@ namespace
 constexpr int atlasSize = 2048;
 constexpr int slotPadding = 1;
 
-CFRef<CTFontRef> makeVariant(CTFontRef base, bool bold, bool italic)
+// Returns a +1 retained font; callers adopt it into a CFRef with reset().
+CTFontRef makeVariant(CTFontRef base, bool bold, bool italic)
 {
     const auto wanted = (CTFontSymbolicTraits) (
         (bold ? kCTFontTraitBold : 0) | (italic ? kCTFontTraitItalic : 0));
@@ -30,9 +32,9 @@ CFRef<CTFontRef> makeVariant(CTFontRef base, bool bold, bool italic)
         if (auto* derived = CTFontCreateCopyWithSymbolicTraits(
                 base, 0, nullptr, wanted,
                 kCTFontTraitBold | kCTFontTraitItalic))
-            return {derived};
+            return derived;
 
-    return {(CTFontRef) CFRetain(base)};
+    return (CTFontRef) CFRetain(base);
 }
 
 std::uint32_t slotKey(char32_t cp, bool bold, bool italic)
@@ -73,10 +75,10 @@ struct GlyphAtlas::Impl
         CFRef<CTFontRef> base(
             CTFontCreateWithName(name, pointSize * scale, nullptr));
 
-        fonts[0] = makeVariant(base, false, false);
-        fonts[1] = makeVariant(base, true, false);
-        fonts[2] = makeVariant(base, false, true);
-        fonts[3] = makeVariant(base, true, true);
+        fonts[0].reset(makeVariant(base, false, false));
+        fonts[1].reset(makeVariant(base, true, false));
+        fonts[2].reset(makeVariant(base, false, true));
+        fonts[3].reset(makeVariant(base, true, true));
 
         const UniChar reference = 'M';
         auto glyph = CGGlyph {};
@@ -245,7 +247,8 @@ struct GlyphAtlas::Impl
             descriptor.height = atlasSize;
             descriptor.format = GPU::TextureFormat::RGBA8Unorm;
             descriptor.filter = GPU::TextureFilter::Linear;
-            tex = GPU::Device::shared().makeTexture(descriptor, pixels.data());
+            tex.emplace(
+                GPU::Device::shared().makeTexture(descriptor, pixels.data()));
             dirty = false;
         }
         else if (dirty)
