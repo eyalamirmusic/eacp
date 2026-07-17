@@ -445,12 +445,17 @@ struct View::Native
         }
     }
 
+    // Offsets only take effect on the next commit. Views that also paint get
+    // one from the WM_PAINT flow, but a pure container moved by layout (a
+    // split pane hosting a GPU view) would otherwise keep its stale position
+    // until something else happened to commit.
     void updateVisualPosition()
     {
         if (visual)
         {
             visual->SetOffsetX(bounds.x);
             visual->SetOffsetY(bounds.y);
+            commitComposition();
         }
     }
 

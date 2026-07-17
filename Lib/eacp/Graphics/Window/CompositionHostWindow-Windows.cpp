@@ -777,6 +777,28 @@ void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lPa
     if (vk < 256)
         keyState.set(vk, down);
 
+    // Modifier keys update the state above but dispatch no key event,
+    // matching macOS, where modifiers arrive via flagsChanged and never as
+    // keyDown. Without this, a chorded shortcut's own Shift press reaches
+    // the app as an empty keystroke — enough to consume the terminal's
+    // armed Ctrl+A prefix before the real key ("%", '"') arrives.
+    switch (vk)
+    {
+        case VK_SHIFT:
+        case VK_CONTROL:
+        case VK_MENU:
+        case VK_CAPITAL:
+        case VK_LWIN:
+        case VK_RWIN:
+        case VK_LSHIFT:
+        case VK_RSHIFT:
+        case VK_LCONTROL:
+        case VK_RCONTROL:
+        case VK_LMENU:
+        case VK_RMENU:
+            return;
+    }
+
     if (!contentView)
         return;
 
