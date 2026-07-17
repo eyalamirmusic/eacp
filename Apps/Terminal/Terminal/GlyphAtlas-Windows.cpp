@@ -22,6 +22,8 @@ namespace eacp::Graphics
 {
 IDWriteFactory* getDWriteFactory();
 ID2D1Factory1* getD2DFactory();
+void registerInMemoryFont(const void* data, std::size_t bytes);
+IDWriteFontCollection1* getApplicationFontCollection();
 } // namespace eacp::Graphics
 
 namespace term
@@ -51,15 +53,6 @@ int encodeUtf16(char32_t cp, wchar_t* units)
     units[0] = (wchar_t) (0xd800 + (v >> 10));
     units[1] = (wchar_t) (0xdc00 + (v & 0x3ff));
     return 2;
-}
-
-// The embedded JetBrains Mono faces, exposed to DirectWrite as a private
-// in-memory collection so the config's family name resolves without any
-// install step.
-ComPtr<IDWriteFontCollection1>& embeddedCollection()
-{
-    static auto collection = ComPtr<IDWriteFontCollection1> {};
-    return collection;
 }
 
 IWICImagingFactory* wicFactory()
@@ -93,25 +86,6 @@ void registerEmbeddedFonts()
 {
     static const auto once = []
     {
-        auto* base = Graphics::getDWriteFactory();
-        auto factory = ComPtr<IDWriteFactory5> {};
-
-        if (base == nullptr
-            || FAILED(base->QueryInterface(IID_PPV_ARGS(factory.GetAddressOf()))))
-            return true;
-
-        auto loader = ComPtr<IDWriteInMemoryFontFileLoader> {};
-
-        if (FAILED(factory->CreateInMemoryFontFileLoader(loader.GetAddressOf())))
-            return true;
-
-        factory->RegisterFontFileLoader(loader.Get());
-
-        auto builder = ComPtr<IDWriteFontSetBuilder1> {};
-
-        if (FAILED(factory->CreateFontSetBuilder(builder.GetAddressOf())))
-            return true;
-
         for (const auto* name: {"JetBrainsMono-Regular.ttf",
                                 "JetBrainsMono-Bold.ttf",
                                 "JetBrainsMono-Italic.ttf",
@@ -119,25 +93,9 @@ void registerEmbeddedFonts()
         {
             const auto resource = ResEmbed::get(name);
 
-            if (resource.size() == 0)
-                continue;
-
-            auto file = ComPtr<IDWriteFontFile> {};
-
-            if (SUCCEEDED(
-                    loader->CreateInMemoryFontFileReference(factory.Get(),
-                                                            resource.data(),
-                                                            (UINT32) resource.size(),
-                                                            nullptr,
-                                                            file.GetAddressOf())))
-                builder->AddFontFile(file.Get());
+            if (resource.size() > 0)
+                Graphics::registerInMemoryFont(resource.data(), resource.size());
         }
-
-        auto set = ComPtr<IDWriteFontSet> {};
-
-        if (SUCCEEDED(builder->CreateFontSet(set.GetAddressOf())))
-            factory->CreateFontCollectionFromFontSet(
-                set.Get(), embeddedCollection().GetAddressOf());
 
         return true;
     }();
@@ -170,7 +128,7 @@ struct GlyphAtlas::Impl
             return;
 
         familyName = Graphics::toWideString(requested);
-        collection = embeddedCollection();
+        collection = Graphics::getApplicationFontCollection();
 
         if (containsFamily(collection.Get(), familyName))
             return;
