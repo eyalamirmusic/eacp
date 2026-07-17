@@ -37,6 +37,14 @@ void configureDescriptor(int fd)
     auto on = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
 #endif
+
+    // The default AF_UNIX buffers (8KB on macOS) chop a multi-megabyte
+    // message into hundreds of send/recv round trips, a context switch
+    // each; a wider window moves it in a handful. Best effort - the
+    // kernel clamps what it won't grant.
+    auto bufferSize = 1 << 20;
+    ::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &bufferSize, sizeof(bufferSize));
+    ::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &bufferSize, sizeof(bufferSize));
 }
 
 int sendFlags()

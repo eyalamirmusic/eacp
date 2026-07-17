@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <optional>
 
 // One camera, two processes. The first instance claims the channel name,
@@ -42,14 +43,26 @@ std::uint32_t readU32(const char* bytes)
     return value;
 }
 
-std::string encodeFrame(const Cameras::FramePixels& frame)
+std::string encodeFrame(const Cameras::CameraFrame& frame)
 {
-    auto message = std::string {};
-    message.reserve(frameHeaderBytes + (std::size_t) frame.data.size());
+    auto width = (std::size_t) frame.width();
+    auto height = (std::size_t) frame.height();
+    auto rowBytes = width * 4;
 
-    appendU32(message, (std::uint32_t) frame.width);
-    appendU32(message, (std::uint32_t) frame.height);
-    message.append((const char*) frame.data.data(), (std::size_t) frame.data.size());
+    auto message = std::string {};
+    message.reserve(frameHeaderBytes + rowBytes * height);
+
+    appendU32(message, (std::uint32_t) frame.width());
+    appendU32(message, (std::uint32_t) frame.height());
+
+    const auto* pixels = (const char*) frame.data();
+
+    if (frame.bytesPerRow() == rowBytes)
+        message.append(pixels, rowBytes * height);
+    else
+        for (auto row = std::size_t {0}; row < height; ++row)
+            message.append(pixels + row * frame.bytesPerRow(), rowBytes);
+
     return message;
 }
 
@@ -171,13 +184,21 @@ struct IpcCameraApp
     {
         server->onClient = [this](IPC::Messenger& viewer)
         {
-            viewers.add(&viewer);
+            {
+                auto guard = std::lock_guard {viewersMutex};
+                viewers.add(&viewer);
+            }
+
             updateCameraTitle();
 
             viewer.onDisconnected = [this, leaving = &viewer]
             {
-                viewers.eraseIf([leaving](IPC::Messenger* candidate)
-                                { return candidate == leaving; });
+                {
+                    auto guard = std::lock_guard {viewersMutex};
+                    viewers.eraseIf([leaving](IPC::Messenger* candidate)
+                                    { return candidate == leaving; });
+                }
+
                 updateCameraTitle();
             };
         };
@@ -185,6 +206,8 @@ struct IpcCameraApp
         launchSecondInstance();
 
         camera.emplace();
+        camera->setFrameCallback([this](const Cameras::CameraFrame& frame)
+                                 { ship(frame); });
         cameraView.emplace();
         cameraView->setMirrored(true);
         cameraView->attach(*camera);
@@ -193,7 +216,6 @@ struct IpcCameraApp
         window->setContentView(*cameraView);
 
         beginCapture();
-        shipTimer.emplace([this] { ship(); }, 30);
     }
 
     void becomeViewer()
@@ -210,17 +232,23 @@ struct IpcCameraApp
         link->onMessage = [this](const std::string& message) { showFrame(message); };
     }
 
-    // Runs at display-ish rate on the main thread; copyLatestFrame's
-    // sequence check makes it ship each captured frame exactly once.
-    void ship()
+    // Runs on the capture thread the moment a frame lands, so nothing
+    // waits on a poll tick. Messenger::send is safe from any thread; the
+    // mutex only fences the viewer list against arrivals and departures
+    // on the main thread. A viewer that stops draining stalls this thread,
+    // and the camera's discardLateFrames turns the stall into dropped
+    // frames - latest wins.
+    void ship(const Cameras::CameraFrame& frame)
     {
-        if (viewers.size() == 0 || !camera->copyLatestFrame(shipped))
+        if (frame.data() == nullptr || frame.width() <= 0 || frame.height() <= 0)
             return;
 
-        if (shipped.width <= 0 || shipped.data.size() == 0)
+        auto guard = std::lock_guard {viewersMutex};
+
+        if (viewers.size() == 0)
             return;
 
-        auto message = encodeFrame(shipped);
+        auto message = encodeFrame(frame);
 
         for (auto* viewer: viewers)
             viewer->send(message);
@@ -228,8 +256,8 @@ struct IpcCameraApp
         if (++framesSent % 30 == 0)
             std::printf("camera shipped %d frames (%dx%d)\n",
                         framesSent,
-                        shipped.width,
-                        shipped.height);
+                        frame.width(),
+                        frame.height());
     }
 
     void showFrame(const std::string& message)
@@ -318,10 +346,10 @@ struct IpcCameraApp
     }
 
     std::optional<IPC::MessageServer> server;
+    std::mutex viewersMutex;
     Vector<IPC::Messenger*> viewers;
     std::optional<Cameras::Camera> camera;
     std::optional<Cameras::CameraView> cameraView;
-    Cameras::FramePixels shipped;
     int framesSent = 0;
 
     std::optional<IPC::Messenger> link;
@@ -329,7 +357,6 @@ struct IpcCameraApp
 
     std::optional<Window> window;
     std::optional<Processes::Process> child;
-    std::optional<Threads::Timer> shipTimer;
     std::optional<Threads::Timer> quitTimer;
     std::optional<Time::Deadline> quitDeadline;
 };

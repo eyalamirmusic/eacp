@@ -2,6 +2,7 @@
 #include "Names.h"
 
 #include <algorithm>
+#include <cstring>
 
 namespace eacp::IPC
 {
@@ -129,22 +130,25 @@ std::string Channel::receiveLine()
 
 std::string Channel::receive(std::size_t maxBytes)
 {
+    auto chunk = std::string(maxBytes, '\0');
+    chunk.resize(receive(chunk.data(), maxBytes));
+    return chunk;
+}
+
+std::size_t Channel::receive(char* buffer, std::size_t maxBytes)
+{
     if (!isOpen())
         throw Error("receive() on a closed channel");
 
     if (!impl->buffered.empty())
     {
         auto take = std::min(maxBytes, impl->buffered.size());
-        auto out = impl->buffered.substr(0, take);
+        std::memcpy(buffer, impl->buffered.data(), take);
         impl->buffered.erase(0, take);
-        return out;
+        return take;
     }
 
-    auto chunk = std::string(maxBytes, '\0');
-    auto received =
-        detail::channelReceive(impl->channel, chunk.data(), chunk.size());
-    chunk.resize(received);
-    return chunk;
+    return detail::channelReceive(impl->channel, buffer, maxBytes);
 }
 
 // The guard is what makes "one server per name" true: it is taken before

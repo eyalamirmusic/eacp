@@ -68,6 +68,11 @@ public:
     // the peer closed the stream cleanly.
     std::string receive(std::size_t maxBytes = 4096);
 
+    // As above, but into caller-owned storage - no per-read allocation, so
+    // a large message can be assembled directly in its final buffer.
+    // Returns the byte count; zero means the peer closed the stream cleanly.
+    std::size_t receive(char* buffer, std::size_t maxBytes);
+
 private:
     friend class ChannelServer;
 

@@ -10,7 +10,9 @@ namespace eacp::IPC::detail
 {
 namespace
 {
-constexpr auto pipeBufferSize = DWORD {65536};
+// Sized for bulk payloads (video frames run to megabytes): the quota is
+// advisory, but an undersized one forces writer/reader ping-pong.
+constexpr auto pipeBufferSize = DWORD {1} << 20;
 
 std::wstring widen(const std::string& text)
 {

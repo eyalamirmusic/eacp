@@ -48,17 +48,24 @@ std::size_t decodeLength(const std::string& header)
     return size;
 }
 
-// Fills result up to count bytes; false means the stream ended first.
+// Fills result with exactly count bytes, sized once and written in place;
+// false means the stream ended first, leaving what did arrive in result.
 bool receiveExactly(Channel& channel, std::size_t count, std::string& result)
 {
-    while (result.size() < count)
+    result.resize(count);
+    auto received = std::size_t {0};
+
+    while (received < count)
     {
-        auto chunk = channel.receive(count - result.size());
+        auto chunk = channel.receive(result.data() + received, count - received);
 
-        if (chunk.empty())
+        if (chunk == 0)
+        {
+            result.resize(received);
             return false;
+        }
 
-        result += chunk;
+        received += chunk;
     }
 
     return true;
