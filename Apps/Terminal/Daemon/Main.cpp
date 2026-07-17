@@ -1,4 +1,4 @@
-// wim-termd: the session daemon. Owns every PTY so shells survive the GUI —
+// cowtermd: the session daemon. Owns every PTY so shells survive the GUI —
 // quit, crash or update the app and the processes keep running here. The
 // app dials in over eacp IPC (one Messenger conversation), spawns or adopts
 // shells by stable id, and streams input/output through this process.

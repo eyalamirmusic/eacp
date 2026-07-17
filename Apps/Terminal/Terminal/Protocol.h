@@ -7,7 +7,7 @@
 namespace term::proto
 {
 // The IPC name the daemon serves and the app dials.
-constexpr auto serverName = "wim-termd";
+constexpr auto serverName = "cowtermd";
 
 // One Messenger message: a verb line ("verb arg1 arg2..."), then an
 // optional raw payload after the first newline. The payload is untouched

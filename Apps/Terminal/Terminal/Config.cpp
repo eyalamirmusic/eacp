@@ -16,7 +16,7 @@ std::string expandHome(const std::string& path)
 AppConfig loadConfig()
 {
     auto config = AppConfig {};
-    const auto path = eacp::FilePath::homeDirectory() / ".config" / "wim.json";
+    const auto path = eacp::FilePath::homeDirectory() / ".config" / "cowterm.json";
     const auto text = eacp::Files::readFile(path);
 
     if (!text.empty())

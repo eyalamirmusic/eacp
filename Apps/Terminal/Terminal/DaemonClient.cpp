@@ -30,7 +30,7 @@ std::string daemonExecutablePath()
         return {};
 
     auto path = std::filesystem::path {buffer};
-    return (path.parent_path() / "TerminalDaemon").string();
+    return (path.parent_path() / "CowTermDaemon").string();
 #elif defined(_WIN32)
     wchar_t buffer[MAX_PATH] = {};
 
@@ -38,7 +38,7 @@ std::string daemonExecutablePath()
         return {};
 
     auto path = std::filesystem::path {buffer};
-    return (path.parent_path() / "TerminalDaemon.exe").string();
+    return (path.parent_path() / "CowTermDaemon.exe").string();
 #else
     return {};
 #endif

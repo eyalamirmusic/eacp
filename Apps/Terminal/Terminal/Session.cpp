@@ -48,7 +48,7 @@ std::string TermSession::activeWorkingDirectory() const
 SessionManager::SessionManager(const AppConfig& configToUse)
     : config(configToUse)
     , db(emberstore::databaseForApp(
-          "tamber", "wim-terminal", emberstore::Durability::Atomic))
+          "tamber", "cowterm", emberstore::Durability::Atomic))
     , mru(db)
     , saved(db.document<SavedState>("sessions"))
 {

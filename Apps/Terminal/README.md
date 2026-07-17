@@ -1,6 +1,6 @@
-# Terminal
+# CowTerm
 
-A GPU-accelerated terminal emulator and session manager ("wim terminal").
+A GPU-accelerated terminal emulator and session manager.
 Every visible pixel — glyphs, backgrounds, cursor, selection — is composited
 on the GPU from a CoreText glyph atlas. Sessions, the fuzzy palette, MRU
 ordering and ring-back notifications replace the tmux-sessionizer workflow.
@@ -70,7 +70,7 @@ Wire it to Claude Code with a `Stop` hook that prints the sequence, and the
 "Claude finished → notification → click → you're back in that pane" loop is
 closed.
 
-## Config — `~/.config/wim.json`
+## Config — `~/.config/cowterm.json`
 
 ```json
 {
@@ -105,9 +105,9 @@ no config file.
 
 ## The session daemon (real tmux mode)
 
-Shells don't belong to the GUI: a headless `TerminalDaemon` (bundled next to
+Shells don't belong to the GUI: a headless `CowTermDaemon` (bundled next to
 the app binary, launched on demand) owns every PTY and the app attaches over
-eacp IPC (`IPC::Messenger`, name `wim-termd`). Quit, crash, or update the
+eacp IPC (`IPC::Messenger`, name `cowtermd`). Quit, crash, or update the
 app and the shells keep running; the next launch re-adopts each pane by its
 persisted `shellId`, replays the daemon's 256K output buffer through the
 parser, and nudges the winsize so full-screen apps repaint. Killing the app
@@ -131,7 +131,7 @@ Quit, or closing the last shell) tears sessions down.
 
 Open sessions and MRU stamps persist via
 [emberstore](https://github.com/tamber-inc/emberstore) under
-`~/Library/Application Support/tamber/wim-terminal/`. Relaunching restores
+`~/Library/Application Support/tamber/cowterm/`. Relaunching restores
 the workspace: sessions and pane layouts restore, and panes whose shells
 still live in the daemon reconnect to them.
 

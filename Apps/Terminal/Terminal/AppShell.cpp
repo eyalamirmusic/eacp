@@ -246,7 +246,7 @@ bool AppShell::handlePrefixed(const KeyEvent& event)
     if (event.modifiers.control && chars == "a")
         return false;
 
-    // Config bindings first, so ~/.config/wim.json can override built-ins.
+    // Config bindings first, so ~/.config/cowterm.json can override built-ins.
     for (const auto& binding: config.bindings)
     {
         if (binding.key.empty() || chars != binding.key)

@@ -46,7 +46,7 @@ TrayController::TrayController(SessionManager& sessionsToUse)
     : sessions(sessionsToUse)
 {
     icon.setIcon(makeIcon());
-    icon.setTooltip("wim terminal");
+    icon.setTooltip("CowTerm");
     Notifier::attachTray(icon);
     refresh();
 }
@@ -55,7 +55,7 @@ void TrayController::refresh()
 {
     auto menu = Menu {};
 
-    menu.add(MenuItem::withAction("Show wim terminal", [this] { onShowWindow(); }));
+    menu.add(MenuItem::withAction("Show CowTerm", [this] { onShowWindow(); }));
     menu.addSeparator();
 
     for (auto& session: sessions.all())

@@ -22,7 +22,7 @@ struct KeyBinding
     MIRO_REFLECT(key, send, popup)
 };
 
-// User configuration, read from ~/.config/wim.json. Unknown keys are
+// User configuration, read from ~/.config/cowterm.json. Unknown keys are
 // ignored and missing keys keep their defaults, so the file can be shared
 // with other tools and grown over time.
 struct AppConfig

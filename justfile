@@ -25,12 +25,12 @@ configure:
 [macos]
 build:
     @test -f build/CMakeCache.txt || just configure
-    cmake --build build --target Terminal
+    cmake --build build --target CowTerm
 
 [windows]
 build:
     @if not exist build\CMakeCache.txt just configure
-    call {{ vcvars }} arm64 >nul && cmake --build build --target Terminal
+    call {{ vcvars }} arm64 >nul && cmake --build build --target CowTerm
 
 # Build and launch the terminal.
 [macos]
@@ -51,6 +51,6 @@ install: build
 [windows]
 install: build
     if not exist %LOCALAPPDATA%\Programs\wim mkdir %LOCALAPPDATA%\Programs\wim
-    copy /y build\Apps\Terminal\Terminal\Terminal.exe %LOCALAPPDATA%\Programs\wim >nul
-    copy /y build\Apps\Terminal\Terminal\TerminalDaemon.exe %LOCALAPPDATA%\Programs\wim >nul
+    copy /y build\Apps\CowTerm\CowTerm\CowTerm.exe %LOCALAPPDATA%\Programs\wim >nul
+    copy /y build\Apps\CowTerm\CowTerm\CowTermDaemon.exe %LOCALAPPDATA%\Programs\wim >nul
     @echo installed to %LOCALAPPDATA%\Programs\wim

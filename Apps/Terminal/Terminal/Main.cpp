@@ -14,7 +14,7 @@ Graphics::WindowOptions windowOptions()
     options.height = 700;
     options.minWidth = 300;
     options.minHeight = 200;
-    options.title = "wim terminal";
+    options.title = "CowTerm";
     options.backgroundColor =
         term::toColor(term::themeByName(term::loadConfig().theme).background);
 
@@ -30,7 +30,7 @@ struct TerminalApp
     TerminalApp()
     {
         shell.onWindowTitleChanged = [this](const std::string& title)
-        { window.setTitle(title.empty() ? "wim terminal" : title); };
+        { window.setTitle(title.empty() ? "CowTerm" : title); };
 
         shell.onBringToFront = [this]
         {
