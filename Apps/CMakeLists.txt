@@ -9,8 +9,7 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(SVG)
     add_subdirectory(GPU)
 
-    # PTY backend is POSIX-only so far; Windows (ConPTY) comes next.
-    if (APPLE AND NOT IOS)
+    if ((APPLE AND NOT IOS) OR WIN32)
         add_subdirectory(Terminal)
     endif ()
 

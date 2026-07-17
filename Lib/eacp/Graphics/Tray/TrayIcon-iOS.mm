@@ -18,5 +18,7 @@ void TrayIcon::setTooltip(const std::string&) {}
 void TrayIcon::setMenu(const Menu&) {}
 void TrayIcon::setOnClick(Callback) {}
 void TrayIcon::setTemplateRendering(bool) {}
+void TrayIcon::showNotification(const std::string&, const std::string&) {}
+void TrayIcon::setOnNotificationClick(Callback) {}
 
 } // namespace eacp::Graphics

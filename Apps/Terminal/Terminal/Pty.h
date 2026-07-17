@@ -5,6 +5,10 @@
 #include <string_view>
 #include <thread>
 
+#if defined(_WIN32)
+#include <mutex>
+#endif
+
 namespace term
 {
 struct PtySize
@@ -52,8 +56,23 @@ public:
     std::string currentWorkingDirectory() const;
 
 private:
+#if defined(_WIN32)
+    // ConPTY state. The pseudoconsole handle is guarded by consoleLock: the
+    // waiter thread closes it when the shell exits, which must not race
+    // resize() on the UI thread.
+    void closeConsole();
+
+    void* console = nullptr;
+    void* process = nullptr;
+    void* inputWrite = nullptr;
+    void* outputRead = nullptr;
+    std::thread reader;
+    std::thread waiter;
+    mutable std::mutex consoleLock;
+#else
     int fd = -1;
     long pid = -1;
     std::thread reader;
+#endif
 };
 } // namespace term

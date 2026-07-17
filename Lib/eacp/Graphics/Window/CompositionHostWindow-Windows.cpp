@@ -85,6 +85,36 @@ void unregisterContentViewHwnd(View* root)
     contentViewToHwnd().erase(root);
 }
 
+namespace
+{
+std::unordered_map<HWND, View*>& focusedViewByHwnd()
+{
+    static auto map = std::unordered_map<HWND, View*>();
+    return map;
+}
+} // namespace
+
+void setFocusedView(View* view)
+{
+    if (auto* host = findHostHwndForView(view))
+        focusedViewByHwnd()[host] = view;
+}
+
+void clearFocusedView(View* view)
+{
+    auto& map = focusedViewByHwnd();
+
+    for (auto it = map.begin(); it != map.end();)
+        it = it->second == view ? map.erase(it) : std::next(it);
+}
+
+View* findFocusedViewForHwnd(HWND hwnd)
+{
+    auto& map = focusedViewByHwnd();
+    auto found = map.find(hwnd);
+    return found == map.end() ? nullptr : found->second;
+}
+
 HWND findHostHwndForView(View* view)
 {
     auto* root = view;
@@ -413,7 +443,10 @@ void CompositionHostWindow::teardown()
         unregisterContentViewHwnd(contentView);
 
     if (hwnd)
+    {
+        focusedViewByHwnd().erase(hwnd);
         DestroyWindow(hwnd);
+    }
 }
 
 // The DComp visual tree composites above the window's GDI redirection bitmap,
@@ -725,15 +758,20 @@ void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lPa
     event.type = down ? KeyEventType::Down : KeyEventType::Up;
     event.modifiers = getModifiers();
 
+    auto* target = findFocusedViewForHwnd(hwnd);
+
+    if (target == nullptr)
+        target = contentView;
+
     if (down)
     {
         event.characters = takePendingCharacters();
         event.isRepeat = (lParam & 0x40000000) != 0;
-        contentView->keyDown(event);
+        target->keyDown(event);
     }
     else
     {
-        contentView->keyUp(event);
+        target->keyUp(event);
     }
 
     ensureAllLayersRendered(contentView);

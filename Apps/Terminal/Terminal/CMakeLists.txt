@@ -31,6 +31,22 @@ if (APPLE)
             Notifier-macOS.mm)
 
     target_link_libraries(Terminal PRIVATE "-framework UserNotifications")
+elseif (WIN32)
+    target_sources(Terminal PRIVATE
+            Pty-Windows.cpp
+            GlyphAtlas-Windows.cpp
+            Notifier-Windows.cpp)
+
+    # The parser and screen sources hold Unicode literals (box drawing,
+    # powerline glyphs); MSVC assumes the ANSI codepage without this.
+    target_compile_options(Terminal PRIVATE /utf-8)
+
+    target_link_libraries(Terminal PRIVATE
+            d2d1
+            dwrite
+            windowscodecs
+            user32
+            ole32)
 endif ()
 
 target_link_libraries(Terminal PRIVATE eacp-sprites eacp-network emberstore)
