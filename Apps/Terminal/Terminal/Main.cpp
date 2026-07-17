@@ -29,6 +29,9 @@ struct TerminalApp
 
         shell.onBringToFront = [this] { window.toFront(); };
 
+        window.events.onActivationChanged = [this](bool isKey)
+        { shell.setWindowFocused(isKey); };
+
         window.setContentView(shell);
         shell.start();
     }

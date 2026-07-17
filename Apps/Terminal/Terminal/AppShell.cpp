@@ -102,7 +102,8 @@ void AppShell::handleSessionNotify(TermSession& session,
 {
     // The active, focused session is right in front of the user — no need
     // to shout about it.
-    if (manager.active() == &session && session.view.hasFocus())
+    if (windowFocused && manager.active() == &session
+        && session.view.hasFocus())
         return;
 
     Notifier::notify(session.key(), session.name, text);
