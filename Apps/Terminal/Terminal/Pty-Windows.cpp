@@ -4,6 +4,7 @@
 #include <eacp/Graphics/Helpers/StringUtils-Windows.h>
 
 #include <tlhelp32.h>
+#include <winternl.h>
 
 #include <algorithm>
 #include <cctype>
@@ -255,16 +256,24 @@ void Pty::resize(const PtySize& size)
         ResizePseudoConsole((HPCON) console, toCoord(size));
 }
 
-std::string Pty::foregroundProcess() const
+namespace
 {
-    if (process == nullptr)
-        return {};
+struct TreeInfo
+{
+    DWORD youngestPid = 0;
+    std::wstring youngestName;
+    std::wstring rootName;
+};
 
-    const auto rootPid = GetProcessId(process);
+// What the user sees running is the youngest process in the shell's
+// descendant tree; the shell itself is the fallback.
+TreeInfo inspectProcessTree(DWORD rootPid)
+{
+    auto info = TreeInfo {};
     auto* snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 
     if (snapshot == INVALID_HANDLE_VALUE)
-        return {};
+        return info;
 
     struct Candidate
     {
@@ -274,7 +283,6 @@ std::string Pty::foregroundProcess() const
     };
 
     auto candidates = std::vector<Candidate> {};
-    auto shellName = std::wstring {};
 
     auto entry = PROCESSENTRY32W {};
     entry.dwSize = sizeof entry;
@@ -284,7 +292,7 @@ std::string Pty::foregroundProcess() const
         do
         {
             if (entry.th32ProcessID == rootPid)
-                shellName = entry.szExeFile;
+                info.rootName = entry.szExeFile;
             else
                 candidates.push_back({entry.th32ProcessID,
                                       entry.th32ParentProcessID,
@@ -294,10 +302,7 @@ std::string Pty::foregroundProcess() const
 
     CloseHandle(snapshot);
 
-    // What the user sees running is the youngest process in the shell's
-    // descendant tree; the shell itself is the fallback.
     auto tree = std::vector<DWORD> {rootPid};
-    auto best = shellName;
     auto bestTime = ULONGLONG {0};
 
     for (auto index = std::size_t {0}; index < tree.size(); ++index)
@@ -313,12 +318,119 @@ std::string Pty::foregroundProcess() const
             if (const auto time = creationTime(candidate.pid); time >= bestTime)
             {
                 bestTime = time;
-                best = candidate.name;
+                info.youngestPid = candidate.pid;
+                info.youngestName = candidate.name;
             }
         }
     }
 
-    return baseName(best);
+    return info;
+}
+
+// The live working directory of another process, read from its PEB. The
+// layout matches 64-bit Windows (x64 and ARM64): RTL_USER_PROCESS_PARAMETERS
+// keeps CurrentDirectory right after the standard handles.
+std::string processWorkingDirectory(DWORD pid)
+{
+    using NtQueryInformationProcessFn = NTSTATUS(NTAPI*)(
+        HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
+
+    static const auto query = (NtQueryInformationProcessFn) (void*)
+        GetProcAddress(GetModuleHandleW(L"ntdll.dll"),
+                       "NtQueryInformationProcess");
+
+    if (query == nullptr)
+        return {};
+
+    auto* handle =
+        OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+
+    if (handle == nullptr)
+        return {};
+
+    auto result = std::string {};
+    auto info = PROCESS_BASIC_INFORMATION {};
+    auto peb = PEB {};
+
+    struct Curdir
+    {
+        UNICODE_STRING DosPath;
+        HANDLE Handle;
+    };
+
+    struct ParametersPrefix
+    {
+        ULONG MaximumLength;
+        ULONG Length;
+        ULONG Flags;
+        ULONG DebugFlags;
+        HANDLE ConsoleHandle;
+        ULONG ConsoleFlags;
+        HANDLE StandardInput;
+        HANDLE StandardOutput;
+        HANDLE StandardError;
+        Curdir CurrentDirectory;
+    };
+
+    auto parameters = ParametersPrefix {};
+
+    const auto read = [&](const void* address, void* into, std::size_t bytes)
+    {
+        auto copied = SIZE_T {0};
+        return ReadProcessMemory(handle, address, into, bytes, &copied) != 0
+               && copied == bytes;
+    };
+
+    if (query(handle, ProcessBasicInformation, &info, sizeof info, nullptr) == 0
+        && read(info.PebBaseAddress, &peb, sizeof peb)
+        && read(peb.ProcessParameters, &parameters, sizeof parameters)
+        && parameters.CurrentDirectory.DosPath.Buffer != nullptr
+        && parameters.CurrentDirectory.DosPath.Length > 0)
+    {
+        auto path = std::wstring(
+            parameters.CurrentDirectory.DosPath.Length / sizeof(wchar_t), L'\0');
+
+        if (read(parameters.CurrentDirectory.DosPath.Buffer,
+                 path.data(),
+                 parameters.CurrentDirectory.DosPath.Length))
+        {
+            while (path.size() > 3 && path.back() == L'\\')
+                path.pop_back();
+
+            result = fromWideString(path);
+        }
+    }
+
+    CloseHandle(handle);
+    return result;
+}
+} // namespace
+
+std::string Pty::foregroundProcess() const
+{
+    if (process == nullptr)
+        return {};
+
+    const auto info = inspectProcessTree(GetProcessId(process));
+    return baseName(info.youngestName.empty() ? info.rootName
+                                              : info.youngestName);
+}
+
+std::string Pty::currentWorkingDirectory() const
+{
+    if (process == nullptr)
+        return {};
+
+    const auto rootPid = GetProcessId(process);
+    const auto info = inspectProcessTree(rootPid);
+
+    // The youngest descendant has the truthful cwd (PowerShell keeps its
+    // process directory pinned at its start dir); the shell is the fallback.
+    if (info.youngestPid != 0)
+        if (auto dir = processWorkingDirectory(info.youngestPid); !dir.empty())
+            return dir;
+
+    return processWorkingDirectory(rootPid);
 }
 
 bool Pty::isRunning() const

@@ -34,9 +34,12 @@ struct Daemon
 {
     Daemon()
     {
-        // The GUI dying must never take the daemon with it.
+        // The GUI dying must never take the daemon with it. Windows has no
+        // hangup signal; a detached process simply keeps running.
+#if !defined(_WIN32)
         signal(SIGHUP, SIG_IGN);
         signal(SIGPIPE, SIG_IGN);
+#endif
 
         server.onClient = [this](IPC::Messenger& messenger)
         { adoptClient(messenger); };
