@@ -17,7 +17,8 @@ add_executable(Terminal
         Session.cpp
         TermScreen.cpp
         TermParser.cpp
-        TerminalView.cpp)
+        TerminalView.cpp
+        TrayController.cpp)
 
 # Portable core (parser, screen, sessions, palette) + per-platform PTY,
 # glyph raster and notifications.

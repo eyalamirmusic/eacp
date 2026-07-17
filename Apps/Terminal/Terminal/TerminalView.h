@@ -28,8 +28,7 @@ public:
 
     std::function<void(const std::string&)> onTitleChanged =
         [](const std::string&) {};
-    std::function<void(const std::string&)> onCwdChanged =
-        [](const std::string&) {};
+    std::function<void(const std::string&)> onCwdChanged = [](const std::string&) {};
     std::function<void(const std::string&)> onNotify = [](const std::string&) {};
     eacp::Callback onShellExit = [] {};
 

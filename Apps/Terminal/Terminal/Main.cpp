@@ -16,6 +16,10 @@ Graphics::WindowOptions windowOptions()
     options.title = "wim terminal";
     options.backgroundColor =
         term::toColor(term::themeByName(term::loadConfig().theme).background);
+
+    // Closing the window backgrounds the terminal (the tray keeps it
+    // reachable); shells and sessions stay alive until an explicit quit.
+    options.hidesOnClose = true;
     return options;
 }
 } // namespace
@@ -27,7 +31,18 @@ struct TerminalApp
         shell.onWindowTitleChanged = [this](const std::string& title)
         { window.setTitle(title.empty() ? "wim terminal" : title); };
 
-        shell.onBringToFront = [this] { window.toFront(); };
+        shell.onBringToFront = [this]
+        {
+            window.setVisible(true);
+            window.toFront();
+        };
+
+        Apps::setReopenHandler(
+            [this]
+            {
+                window.setVisible(true);
+                window.toFront();
+            });
 
         window.events.onActivationChanged = [this](bool isKey)
         { shell.setWindowFocused(isKey); };

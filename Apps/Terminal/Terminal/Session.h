@@ -40,10 +40,7 @@ public:
                 const std::string& startCwd);
 
     // Stable identity for MRU stamps and notification routing.
-    const std::string& key() const
-    {
-        return projectDir.empty() ? name : projectDir;
-    }
+    const std::string& key() const { return projectDir.empty() ? name : projectDir; }
 
     // True when a Claude Code conversation owns this session's terminal.
     bool isClaude() const;
@@ -64,10 +61,7 @@ public:
     explicit SessionManager(const AppConfig& configToUse);
 
     TermSession* active() { return activeSession; }
-    const std::vector<std::unique_ptr<TermSession>>& all() const
-    {
-        return sessions;
-    }
+    const std::vector<std::unique_ptr<TermSession>>& all() const { return sessions; }
 
     TermSession* find(const std::string& key);
     TermSession& openProject(const std::string& dir);
@@ -80,10 +74,7 @@ public:
     void close(TermSession& session);
     void restoreOrCreateInitial();
 
-    std::int64_t lastUsed(const std::string& key)
-    {
-        return mru.lastUsed(key);
-    }
+    std::int64_t lastUsed(const std::string& key) { return mru.lastUsed(key); }
 
     std::function<void(TermSession&)> onActiveChanged = [](TermSession&) {};
     std::function<void(TermSession&, const std::string&)> onNotify =

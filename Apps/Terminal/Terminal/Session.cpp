@@ -49,9 +49,8 @@ bool TermSession::isClaude() const
 
 SessionManager::SessionManager(const AppConfig& configToUse)
     : config(configToUse)
-    , db(emberstore::databaseForApp("tamber",
-                                    "wim-terminal",
-                                    emberstore::Durability::Atomic))
+    , db(emberstore::databaseForApp(
+          "tamber", "wim-terminal", emberstore::Durability::Atomic))
     , mru(db)
     , saved(db.document<SavedState>("sessions"))
 {
@@ -105,11 +104,8 @@ TermSession& SessionManager::createSession(const std::string& name,
                                            const std::string& projectDir,
                                            const std::string& startCwd)
 {
-    auto& session = *sessions.emplace_back(
-        std::make_unique<TermSession>(config,
-                                      uniqueName(name),
-                                      normalizedDir(projectDir),
-                                      startCwd));
+    auto& session = *sessions.emplace_back(std::make_unique<TermSession>(
+        config, uniqueName(name), normalizedDir(projectDir), startCwd));
     wireSession(session);
     onSessionsChanged();
     return session;
@@ -191,8 +187,8 @@ void SessionManager::close(TermSession& session)
 
     if (activeSession == closing.get())
     {
-        auto* next = previousSession != nullptr ? previousSession
-                                                : sessions.back().get();
+        auto* next =
+            previousSession != nullptr ? previousSession : sessions.back().get();
         previousSession = nullptr;
         activeSession = next;
         onActiveChanged(*next);
@@ -207,15 +203,12 @@ void SessionManager::restoreOrCreateInitial()
     const auto& state = saved.peek();
 
     for (const auto& savedSession: state.sessions)
-        createSession(savedSession.name,
-                      savedSession.projectDir,
-                      savedSession.cwd);
+        createSession(savedSession.name, savedSession.projectDir, savedSession.cwd);
 
     if (sessions.empty())
         createSession("home", eacp::FilePath::homeDirectory().str(), {});
 
-    const auto index =
-        std::clamp(state.activeIndex, 0, (int) sessions.size() - 1);
+    const auto index = std::clamp(state.activeIndex, 0, (int) sessions.size() - 1);
     switchTo(*sessions[(std::size_t) index]);
 }
 

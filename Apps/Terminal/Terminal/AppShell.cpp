@@ -15,14 +15,30 @@ AppShell::AppShell()
     {
         attachActive(session);
         updateTitle();
+        tray.refresh();
     };
 
-    manager.onSessionsChanged = [this] { wireViews(); };
+    manager.onSessionsChanged = [this]
+    {
+        wireViews();
+        tray.refresh();
+    };
+
+    tray.onShowWindow = [this] { onBringToFront(); };
+
+    tray.onPickSession = [this](TermSession& session)
+    {
+        manager.switchTo(session);
+        onBringToFront();
+    };
 
     manager.onAllClosed = [] { Apps::quit(); };
 
     manager.onNotify = [this](TermSession& session, const std::string& text)
-    { handleSessionNotify(session, text); };
+    {
+        handleSessionNotify(session, text);
+        tray.refresh();
+    };
 
     palette.onClosed = [this] { hidePalette(); };
 
@@ -97,13 +113,11 @@ void AppShell::updateTitle()
     onWindowTitleChanged(title);
 }
 
-void AppShell::handleSessionNotify(TermSession& session,
-                                   const std::string& text)
+void AppShell::handleSessionNotify(TermSession& session, const std::string& text)
 {
     // The active, focused session is right in front of the user — no need
     // to shout about it.
-    if (windowFocused && manager.active() == &session
-        && session.view.hasFocus())
+    if (windowFocused && manager.active() == &session && session.view.hasFocus())
         return;
 
     Notifier::notify(session.key(), session.name, text);
@@ -136,8 +150,7 @@ bool AppShell::interceptKey(const KeyEvent& event)
         return handlePrefixed(event);
     }
 
-    if (event.modifiers.control
-        && event.charactersIgnoringModifiers == "a"
+    if (event.modifiers.control && event.charactersIgnoringModifiers == "a"
         && !event.modifiers.command)
     {
         prefixArmed = true;

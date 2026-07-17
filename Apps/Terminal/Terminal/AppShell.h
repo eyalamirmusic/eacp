@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "Palette.h"
 #include "Session.h"
+#include "TrayController.h"
 
 namespace term
 {
@@ -42,6 +43,7 @@ private:
     AppConfig config = loadConfig();
     SessionManager manager {config};
     Palette palette {config, manager};
+    TrayController tray {manager};
     TermSession* attached = nullptr;
     bool prefixArmed = false;
     bool windowFocused = true;

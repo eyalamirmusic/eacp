@@ -649,6 +649,9 @@ bool TerminalView::handleSpecialKey(const KeyEvent& event)
 
 void TerminalView::keyDown(const KeyEvent& event)
 {
+    if (interceptKey(event))
+        return;
+
     if (handleCommandShortcut(event))
         return;
 

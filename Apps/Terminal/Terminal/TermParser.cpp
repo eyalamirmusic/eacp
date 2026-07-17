@@ -809,15 +809,13 @@ void TermParser::dispatchOsc()
         // 777;notify;title;body
         const auto kindEnd = payload.find(';');
 
-        if (kindEnd != std::string::npos
-            && payload.substr(0, kindEnd) == "notify")
+        if (kindEnd != std::string::npos && payload.substr(0, kindEnd) == "notify")
         {
             auto text = payload.substr(kindEnd + 1);
             const auto titleEnd = text.find(';');
 
             if (titleEnd != std::string::npos)
-                text = text.substr(0, titleEnd) + ": "
-                       + text.substr(titleEnd + 1);
+                text = text.substr(0, titleEnd) + ": " + text.substr(titleEnd + 1);
 
             onNotify(text);
         }

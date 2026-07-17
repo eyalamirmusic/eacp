@@ -130,8 +130,7 @@ void Palette::applyQuery()
 
         for (const auto& item: allItems)
         {
-            const auto haystack = item.label + " " + item.detail + " "
-                                  + item.status
+            const auto haystack = item.label + " " + item.detail + " " + item.status
                                   + (item.claude ? " claude" : "");
 
             if (auto score = fuzzyScore(query, haystack))
@@ -175,8 +174,7 @@ void Palette::moveSelection(int delta)
 {
     if (!visible.empty())
     {
-        selected = (selected + delta + (int) visible.size())
-                   % (int) visible.size();
+        selected = (selected + delta + (int) visible.size()) % (int) visible.size();
         repaint();
     }
 }
@@ -196,8 +194,7 @@ void Palette::popQueryChar()
 void Palette::keyDown(const KeyEvent& event)
 {
     if (event.keyCode == KeyCode::Escape
-        || (event.modifiers.command
-            && event.charactersIgnoringModifiers == "k"))
+        || (event.modifiers.command && event.charactersIgnoringModifiers == "k"))
     {
         shown = false;
         onClosed();
@@ -211,16 +208,14 @@ void Palette::keyDown(const KeyEvent& event)
     }
 
     if (event.keyCode == KeyCode::UpArrow
-        || (event.modifiers.control
-            && event.charactersIgnoringModifiers == "p"))
+        || (event.modifiers.control && event.charactersIgnoringModifiers == "p"))
     {
         moveSelection(-1);
         return;
     }
 
     if (event.keyCode == KeyCode::DownArrow
-        || (event.modifiers.control
-            && event.charactersIgnoringModifiers == "n"))
+        || (event.modifiers.control && event.charactersIgnoringModifiers == "n"))
     {
         moveSelection(1);
         return;
@@ -253,13 +248,10 @@ Rect Palette::panelBounds() const
     const auto bounds = getLocalBounds();
     const auto width = std::min(panelWidth, bounds.w - 60.0f);
     const auto rows = std::min((int) visible.size(), maxRows);
-    const auto height = headerHeight + (float) std::max(rows, 1) * rowHeight
-                        + 12.0f;
+    const auto height = headerHeight + (float) std::max(rows, 1) * rowHeight + 12.0f;
 
-    return {(bounds.w - width) / 2.0f,
-            std::max(bounds.h * 0.14f, 20.0f),
-            width,
-            height};
+    return {
+        (bounds.w - width) / 2.0f, std::max(bounds.h * 0.14f, 20.0f), width, height};
 }
 
 int Palette::rowAt(Point pos) const
@@ -318,9 +310,7 @@ void Palette::paint(Context& context)
     // Query line
     const auto queryText = "› " + query + "▏";
     context.setColor(toColor(theme.foreground));
-    context.drawText(queryText,
-                     {panel.x + 18.0f, panel.y + 30.0f},
-                     queryFont);
+    context.drawText(queryText, {panel.x + 18.0f, panel.y + 30.0f}, queryFont);
 
     context.setColor(toColor(theme.selection));
     context.drawLine({panel.x + 12.0f, panel.y + headerHeight - 2.0f},
@@ -347,23 +337,20 @@ void Palette::paint(Context& context)
 
         const auto open = item.kind == PaletteItem::Kind::Session;
         const auto icon = item.claude ? "✳" : (open ? "●" : "▸");
-        const auto iconColor = item.claude
-                                   ? toColor(theme.ansi[5])
-                                   : (open ? toColor(theme.ansi[2])
-                                           : toColor(theme.ansi[8]));
+        const auto iconColor =
+            item.claude ? toColor(theme.ansi[5])
+                        : (open ? toColor(theme.ansi[2]) : toColor(theme.ansi[8]));
         context.setColor(iconColor);
         context.drawText(icon, {x, baseline}, rowFont);
         x += 24.0f;
 
         context.setColor(toColor(theme.foreground));
         context.drawText(truncated(item.label, 32), {x, baseline}, rowFont);
-        x += Graphics::TextMetrics::measureWidth(truncated(item.label, 32),
-                                                 rowFont)
+        x += Graphics::TextMetrics::measureWidth(truncated(item.label, 32), rowFont)
              + 14.0f;
 
-        const auto detail = !item.status.empty()
-                                ? truncated(item.status, 48)
-                                : truncated(item.detail, 48);
+        const auto detail = !item.status.empty() ? truncated(item.status, 48)
+                                                 : truncated(item.detail, 48);
         context.setColor(toColor(theme.ansi[8]));
         context.drawText(detail, {x, baseline}, detailFont);
 
@@ -373,19 +360,18 @@ void Palette::paint(Context& context)
             const auto badgeWidth =
                 Graphics::TextMetrics::measureWidth(badge, detailFont);
             context.setColor(toColor(theme.ansi[5]));
-            context.drawText(badge,
-                             {rowRect.right() - badgeWidth - 12.0f, baseline},
-                             detailFont);
+            context.drawText(
+                badge, {rowRect.right() - badgeWidth - 12.0f, baseline}, detailFont);
         }
     }
 
     if (visible.empty())
     {
         context.setColor(toColor(theme.ansi[8]));
-        context.drawText("no matches",
-                         {panel.x + 18.0f,
-                          panel.y + headerHeight + rowHeight * 0.62f},
-                         rowFont);
+        context.drawText(
+            "no matches",
+            {panel.x + 18.0f, panel.y + headerHeight + rowHeight * 0.62f},
+            rowFont);
     }
 }
 } // namespace term
