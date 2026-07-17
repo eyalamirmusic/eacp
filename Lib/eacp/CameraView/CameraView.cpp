@@ -1,28 +1,44 @@
 #include "CameraView.h"
 
 #include <eacp/GPU/GPU.h>
+#include <eacp/Graphics/Graphics.h>
 
 namespace eacp::Cameras
 {
 CameraView::CameraView()
 {
     // The camera feed is already smooth video, so MSAA buys nothing; keep it at
-    // one sample. Continuous mode redraws every vsync to show new frames as they
-    // arrive, decoupled from the capture rate.
+    // one sample.
     setSampleCount(1);
-    setContinuous(true);
+
+    arrivalTick = Threads::DisplayLink::timedTick(
+        [this](Threads::FrameTime time)
+        {
+            update(time);
+            renderNow();
+        });
 }
 
-CameraView::~CameraView() = default;
+CameraView::~CameraView()
+{
+    *alive = false;
+
+    if (camera != nullptr)
+        camera->setFrameArrivedCallback({});
+}
 
 void CameraView::attach(Camera& cameraToUse)
 {
     camera = &cameraToUse;
+    applyRenderMode();
     repaint();
 }
 
 void CameraView::detach()
 {
+    if (camera != nullptr)
+        camera->setFrameArrivedCallback({});
+
     camera = nullptr;
     repaint();
 }
@@ -40,6 +56,39 @@ void CameraView::setMirrored(bool mirroredToUse)
 void CameraView::setUploadMode(UploadMode mode)
 {
     uploadMode = mode;
+}
+
+void CameraView::setRenderMode(RenderMode mode)
+{
+    renderMode = mode;
+    applyRenderMode();
+}
+
+void CameraView::applyRenderMode()
+{
+    setContinuous(renderMode == RenderMode::Continuous);
+
+    if (camera == nullptr)
+        return;
+
+    if (renderMode != RenderMode::OnFrameArrival)
+    {
+        camera->setFrameArrivedCallback({});
+        return;
+    }
+
+    // Fires on the capture thread; the render is marshalled to the main
+    // thread, where the alive token fences it against a torn-down view.
+    camera->setFrameArrivedCallback(
+        [this, guard = alive]
+        {
+            Threads::callAsync(
+                [this, guard]
+                {
+                    if (*guard)
+                        arrivalTick();
+                });
+        });
 }
 
 Graphics::Rect CameraView::computeImageArea(

@@ -154,6 +154,14 @@ public:
     // Sets the per-frame callback. Set it before start(). Passing {} clears it.
     void setFrameCallback(FrameCallback callback);
 
+    // Sets a lightweight notification invoked on the capture thread after each
+    // captured frame is stored as the latest — no pixel access; pair it with
+    // acquireLatestPixelBuffer or copyLatestFrame. Independent of the frame
+    // callback (which stays free for app code), and unlike it this may be
+    // (re)assigned while the camera runs. One consumer at a time: the display
+    // path (CameraView) claims it while attached. Passing {} clears it.
+    void setFrameArrivedCallback(Callback callback);
+
     // Opens and configures the device, then starts the capture session on a
     // background thread (device warm-up can block). Returns false if the device
     // can't be opened or configured; otherwise frames begin arriving shortly

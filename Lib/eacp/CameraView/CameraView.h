@@ -5,11 +5,14 @@
 
 namespace eacp::Cameras
 {
-// A GPU-backed View that renders a camera's live feed. Each display refresh it
-// pulls the camera's latest frame, wraps it zero-copy as a texture (macOS) and
-// draws it through the sprite renderer, then calls drawOverlay so AI results
-// (landmarks, boxes) can be composited in the same GPU pass. The view does not
-// own the camera; keep the camera alive while it is attached (or detach() it).
+// A GPU-backed View that renders a camera's live feed. By default each
+// captured frame schedules a render the moment it reaches the main thread
+// (RenderMode::OnFrameArrival), so it goes to glass at the next refresh
+// instead of waiting to be noticed by a display link tick. The frame is
+// wrapped zero-copy as a texture (macOS) and drawn through the sprite
+// renderer, then drawOverlay composites AI results (landmarks, boxes) in the
+// same GPU pass. The view does not own the camera; keep the camera alive
+// while it is attached (or detach() it).
 class CameraView : public GPU::GPUView
 {
 public:
@@ -34,12 +37,28 @@ public:
         Copy
     };
 
+    // What drives redraws while a camera is attached.
+    enum class RenderMode
+    {
+        // Render the moment a captured frame lands (the default): the lowest
+        // glass latency, and one render per camera frame rather than per
+        // display refresh. update() and drawOverlay run at the camera's rate,
+        // so overlay animation steps with the frames it annotates.
+        OnFrameArrival,
+
+        // Redraw every display refresh via the display link: overlays animate
+        // at display rate, and each frame waits for the next tick (up to one
+        // refresh) before it is picked up.
+        Continuous
+    };
+
     void attach(Camera& camera);
     void detach();
 
     void setFit(Fit fitToUse);
     void setMirrored(bool mirroredToUse); // horizontal flip, e.g. front cameras
     void setUploadMode(UploadMode mode);
+    void setRenderMode(RenderMode mode);
 
     // Called after the camera image each frame, sharing the same render pass.
     // imageArea is the on-screen rect (logical points) the camera image fills,
@@ -61,6 +80,7 @@ protected:
 
 private:
     void ensureRenderer();
+    void applyRenderMode();
     Graphics::Rect imageAreaFor(int textureWidth, int textureHeight) const;
 
     // Each returns whether a camera image was drawn and, if so, sets imageArea.
@@ -71,6 +91,15 @@ private:
     Fit fit = Fit::Cover;
     bool mirrored = false;
     UploadMode uploadMode = UploadMode::Auto;
+    RenderMode renderMode = RenderMode::OnFrameArrival;
+
+    // The on-arrival render: update() with display-link-style timing, then an
+    // immediate present. State (start/last tick) lives in the callback.
+    Callback arrivalTick = [] {};
+
+    // Arrival renders queued onto the main thread check this before touching
+    // the view, so one queued behind a teardown backs off instead of dangling.
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
 
     std::optional<Sprites::SpriteRenderer> renderer;
     Graphics::Point rendererSize {0.0f, 0.0f};
