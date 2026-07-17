@@ -17,6 +17,11 @@ public:
     // the first session) and focuses it.
     void start();
 
+    // Wire to WindowEvents::onActivationChanged: notifications for the
+    // active session are suppressed only while the user is actually looking
+    // at it, which needs the window's key state.
+    void setWindowFocused(bool focused) { windowFocused = focused; }
+
     std::function<void(const std::string&)> onWindowTitleChanged =
         [](const std::string&) {};
     eacp::Callback onBringToFront = [] {};
@@ -39,5 +44,6 @@ private:
     Palette palette {config, manager};
     TermSession* attached = nullptr;
     bool prefixArmed = false;
+    bool windowFocused = true;
 };
 } // namespace term
