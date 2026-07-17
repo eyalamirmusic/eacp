@@ -11,7 +11,6 @@ namespace eacp::IPC::detail
 namespace
 {
 constexpr auto pipeBufferSize = DWORD {65536};
-constexpr auto acceptPollInterval = Time::MS {25};
 
 std::wstring widen(const std::string& text)
 {
@@ -30,9 +29,60 @@ std::wstring widen(const std::string& text)
     return wide;
 }
 
+[[noreturn]] void fail(const std::string& context, DWORD reason)
+{
+    throw Error(context + ": Windows error " + std::to_string(reason));
+}
+
 [[noreturn]] void fail(const std::string& context)
 {
-    throw Error(context + ": Windows error " + std::to_string(::GetLastError()));
+    fail(context, ::GetLastError());
+}
+
+// Every endpoint here is opened FILE_FLAG_OVERLAPPED, so each operation
+// carries one of these and waits on its own event.
+//
+// The flag is not an optimisation, it is what makes Channel's promise -
+// one thread may send while another receives - true on Windows. A handle
+// without it is synchronous, and the I/O manager serialises every
+// operation on a synchronous handle: a reader parked in ReadFile owns the
+// file object until it completes, so a send from another thread waits
+// behind a read that is itself waiting for the peer. Nothing breaks that
+// cycle, and a Messenger (whose reader is always parked) deadlocks on its
+// first send.
+class Operation
+{
+public:
+    Operation()
+    {
+        overlapped.hEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+
+        if (overlapped.hEvent == nullptr)
+            fail("cannot create a channel I/O event");
+    }
+
+    ~Operation() { ::CloseHandle(overlapped.hEvent); }
+
+    Operation(const Operation&) = delete;
+    Operation& operator=(const Operation&) = delete;
+
+    OVERLAPPED* get() { return &overlapped; }
+    HANDLE event() const { return overlapped.hEvent; }
+
+private:
+    OVERLAPPED overlapped = {};
+};
+
+// Blocks until an operation already handed to the kernel finishes, and
+// reports the bytes it moved. Fails with the reason, leaving the caller to
+// decide which reasons are news and which are just the stream ending.
+bool completed(HANDLE pipe, Operation& operation, DWORD& transferred, DWORD& reason)
+{
+    if (::GetOverlappedResult(pipe, operation.get(), &transferred, TRUE) != 0)
+        return true;
+
+    reason = ::GetLastError();
+    return false;
 }
 
 std::wstring pipePath(const std::string& safeName)
@@ -107,8 +157,8 @@ NativeChannel createInstance(const std::string& safeName, bool first)
 
     // FILE_FLAG_FIRST_PIPE_INSTANCE turns a squatted name into an error on
     // the first instance instead of a confusing split-brain pipe.
-    auto open =
-        (DWORD) (PIPE_ACCESS_DUPLEX | (first ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0));
+    auto open = (DWORD) (PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED
+                         | (first ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0));
 
     auto pipe = ::CreateNamedPipeW(pipePath(safeName).c_str(),
                                    open,
@@ -126,56 +176,76 @@ NativeChannel createInstance(const std::string& safeName, bool first)
     return (NativeChannel) (std::intptr_t) pipe;
 }
 
-void setPipeMode(HANDLE pipe, DWORD mode)
+// A client is on the instance already, so ConnectNamedPipe had no wait to
+// perform and says so by failing. CONNECTED is one that is still there;
+// NO_DATA is one that has already hung up, which is a connection all the
+// same - the instance still holds whatever it wrote, and the stream ends
+// once that is drained. Refusing NO_DATA would lose a short-lived client's
+// bytes and turn the POSIX shape of this - a connection waits in the
+// backlog whether or not its dialer is still around - into an error.
+bool clientArrived(DWORD reason)
 {
-    ::SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
+    return reason == ERROR_PIPE_CONNECTED || reason == ERROR_NO_DATA;
 }
 
-// Waits for a client on the pipe instance. Blocking mode covers the
-// wait-forever case at zero cost; a bounded wait flips the instance to
-// no-wait mode and polls, the same trade ScopedLock makes (a timed
-// ConnectNamedPipe needs overlapped I/O, which would tax every later read
-// and write on the handle).
+// BROKEN_PIPE is the peer closing cleanly, same as a POSIX EOF; NO_DATA is
+// a peer that closed with the connect still unanswered. OPERATION_ABORTED
+// is channelCancel waking a teardown's reader. All mean this stream is
+// over.
+bool endOfStream(DWORD reason)
+{
+    return reason == ERROR_BROKEN_PIPE || reason == ERROR_NO_DATA
+           || reason == ERROR_OPERATION_ABORTED;
+}
+
+// Waits up to timeout for a client on the pipe instance. The wait is the
+// overlapped connect's own event, so a bounded accept costs one wait
+// rather than a polling loop.
 bool waitForClient(HANDLE pipe, Time::MS timeout)
 {
-    if (timeout.count <= 0)
-    {
-        if (::ConnectNamedPipe(pipe, nullptr) != 0
-            || ::GetLastError() == ERROR_PIPE_CONNECTED)
-            return true; // CONNECTED means the client beat us to the wait
+    auto operation = Operation {};
 
-        fail("cannot wait for a channel client");
+    // An overlapped ConnectNamedPipe never succeeds outright: it either
+    // goes pending or reports why it had nothing to wait for.
+    if (::ConnectNamedPipe(pipe, operation.get()) != 0)
+        return true;
+
+    auto reason = ::GetLastError();
+
+    if (clientArrived(reason))
+        return true;
+
+    if (reason != ERROR_IO_PENDING)
+        fail("cannot wait for a channel client", reason);
+
+    auto wait = timeout.count <= 0 ? INFINITE : (DWORD) timeout.count;
+
+    if (::WaitForSingleObject(operation.event(), wait) == WAIT_OBJECT_0)
+    {
+        auto transferred = DWORD {0};
+
+        if (completed(pipe, operation, transferred, reason))
+            return true;
+
+        if (clientArrived(reason))
+            return true;
+
+        fail("cannot wait for a channel client", reason);
     }
 
-    setPipeMode(pipe, PIPE_READMODE_BYTE | PIPE_NOWAIT);
+    // The connect is still in flight and its OVERLAPPED lives on this
+    // stack, so it has to be called off and then reaped - dropping it here
+    // would leave the kernel writing into a dead frame. A client that
+    // landed in that same breath outruns the cancel and is kept, rather
+    // than being dropped for being a moment late.
+    ::CancelIoEx(pipe, operation.get());
 
-    auto deadline = Time::Deadline {timeout};
-    auto connected = false;
+    auto transferred = DWORD {0};
 
-    for (;;)
-    {
-        if (::ConnectNamedPipe(pipe, nullptr) != 0
-            || ::GetLastError() == ERROR_PIPE_CONNECTED)
-        {
-            connected = true;
-            break;
-        }
+    if (completed(pipe, operation, transferred, reason))
+        return true;
 
-        if (::GetLastError() != ERROR_PIPE_LISTENING)
-        {
-            setPipeMode(pipe, PIPE_READMODE_BYTE | PIPE_WAIT);
-            fail("cannot wait for a channel client");
-        }
-
-        if (deadline.expired())
-            break;
-
-        auto remaining = deadline.remaining();
-        Time::sleep(remaining < acceptPollInterval ? remaining : acceptPollInterval);
-    }
-
-    setPipeMode(pipe, PIPE_READMODE_BYTE | PIPE_WAIT);
-    return connected;
+    return clientArrived(reason);
 }
 } // namespace
 
@@ -188,7 +258,8 @@ NativeChannel channelTryConnect(const std::string& safeName)
                                 0,
                                 nullptr,
                                 OPEN_EXISTING,
-                                SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+                                FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT
+                                    | SECURITY_IDENTIFICATION,
                                 nullptr);
 
     if (handle != INVALID_HANDLE_VALUE)
@@ -226,34 +297,44 @@ NativeChannel channelAccept(NativeChannel& listener,
 
 std::size_t channelSend(NativeChannel channel, const char* data, std::size_t length)
 {
+    auto pipe = (HANDLE) channel;
     auto toWrite = (DWORD) std::min<std::size_t>(length, MAXDWORD);
+    auto operation = Operation {};
     auto written = DWORD {0};
 
-    if (::WriteFile((HANDLE) channel, data, toWrite, &written, nullptr) == 0)
-        fail("cannot send on channel");
+    if (::WriteFile(pipe, data, toWrite, &written, operation.get()) != 0)
+        return written;
+
+    auto reason = ::GetLastError();
+
+    if (reason != ERROR_IO_PENDING)
+        fail("cannot send on channel", reason);
+
+    if (!completed(pipe, operation, written, reason))
+        fail("cannot send on channel", reason);
 
     return written;
 }
 
 std::size_t channelReceive(NativeChannel channel, char* buffer, std::size_t length)
 {
+    auto pipe = (HANDLE) channel;
     auto toRead = (DWORD) std::min<std::size_t>(length, MAXDWORD);
+    auto operation = Operation {};
     auto received = DWORD {0};
 
-    if (::ReadFile((HANDLE) channel, buffer, toRead, &received, nullptr) == 0)
-    {
-        auto reason = ::GetLastError();
+    if (::ReadFile(pipe, buffer, toRead, &received, operation.get()) != 0)
+        return received;
 
-        // BROKEN_PIPE is the peer closing cleanly, same as a POSIX EOF;
-        // OPERATION_ABORTED is channelCancel waking a teardown's reader.
-        // Both mean this stream is over.
-        if (reason == ERROR_BROKEN_PIPE || reason == ERROR_OPERATION_ABORTED)
-            return 0;
+    auto reason = ::GetLastError();
 
-        fail("cannot receive on channel");
-    }
+    if (reason == ERROR_IO_PENDING && completed(pipe, operation, received, reason))
+        return received;
 
-    return received;
+    if (endOfStream(reason))
+        return 0;
+
+    fail("cannot receive on channel", reason);
 }
 
 void channelCancel(NativeChannel channel) noexcept

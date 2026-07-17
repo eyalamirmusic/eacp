@@ -1,6 +1,7 @@
 #include "Common.h"
 
-#include <eacp/Network/IPC/Rpc.h>
+#include <eacp/Network/IPCRpc/RpcClient.h>
+#include <eacp/Network/IPCRpc/RpcServer.h>
 
 #include <optional>
 
