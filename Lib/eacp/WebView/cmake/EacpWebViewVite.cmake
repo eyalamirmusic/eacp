@@ -48,7 +48,12 @@ function(eacp_webview_add_vite TARGET)
         find_program(EACP_VITE_NODE node REQUIRED)
         get_filename_component(NODE_DIR "${EACP_VITE_NODE}" DIRECTORY)
         unset(EACP_VITE_NODE CACHE)
-        set(BUILD_DIST_DIR "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}-vite-dist")
+        # Keyed on TARGET + NAMESPACE (the same pair res_embed_add keys its
+        # generated dir on), so one target can embed several vite apps — e.g. an
+        # app shell plus a plugin's editor page — without the dist dirs or
+        # stamps colliding.
+        set(BUILD_DIST_DIR
+                "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}-${ARG_NAMESPACE}-vite-dist")
 
         if (NOT EXISTS "${ARG_SOURCE_DIR}/node_modules")
             message(STATUS
@@ -90,7 +95,8 @@ function(eacp_webview_add_vite TARGET)
         endif ()
         list(APPEND BUILD_CMD --outDir "${BUILD_DIST_DIR}" --emptyOutDir)
 
-        set(VITE_STAMP "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}-vite.stamp")
+        set(VITE_STAMP
+                "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}-${ARG_NAMESPACE}-vite.stamp")
         add_custom_command(
                 OUTPUT "${VITE_STAMP}"
                 COMMAND ${CMAKE_COMMAND} -E env
