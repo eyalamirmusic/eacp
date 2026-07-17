@@ -50,6 +50,8 @@ struct Theme
     Rgb foreground = 0xc0caf5;
     Rgb cursor = 0xc0caf5;
     Rgb selection = 0x33467c;
+    Rgb paneBorder = 0x1f2335;
+    Rgb paneBorderActive = 0x3b4261;
 
     std::array<Rgb, 16> ansi = {0x15161e,
                                 0xf7768e,

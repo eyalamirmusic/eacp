@@ -9,15 +9,6 @@ namespace term
 {
 namespace
 {
-std::string lowered(std::string text)
-{
-    std::transform(text.begin(),
-                   text.end(),
-                   text.begin(),
-                   [](unsigned char c) { return (char) std::tolower(c); });
-    return text;
-}
-
 std::string normalizedDir(const std::string& dir)
 {
     auto path = expandHome(dir);
@@ -39,12 +30,16 @@ TermSession::TermSession(const AppConfig& config,
 {
 }
 
-bool TermSession::isClaude() const
+std::string TermSession::activeTitle() const
 {
-    if (lowered(view.foregroundProcess()).find("claude") != std::string::npos)
-        return true;
+    const auto* pane = view.activePane();
+    return pane != nullptr ? pane->currentTitle() : std::string {};
+}
 
-    return lowered(view.currentTitle()).find("claude") != std::string::npos;
+std::string TermSession::activeWorkingDirectory() const
+{
+    const auto* pane = view.activePane();
+    return pane != nullptr ? pane->workingDirectory() : projectDir;
 }
 
 SessionManager::SessionManager(const AppConfig& configToUse)
@@ -89,24 +84,44 @@ void SessionManager::wireSession(TermSession& session)
 {
     auto* raw = &session;
 
-    session.view.onShellExit = [this, raw] { close(*raw); };
-
-    session.view.onCwdChanged = [this](const std::string&) { persist(); };
-
-    session.view.onNotify = [this, raw](const std::string& text)
+    session.view.onPaneCreated = [this, raw](TerminalView& pane)
     {
-        raw->lastNotify = text;
-        onNotify(*raw, text);
+        pane.onNotify = [this, raw](const std::string& text)
+        {
+            raw->lastNotify = text;
+            onNotify(*raw, text);
+        };
+
+        pane.onCwdChanged = [this](const std::string&) { persist(); };
+
+        onPaneWired(*raw, pane);
+    };
+
+    // The last pane closing ends the session. Deferred: onEmpty fires from
+    // inside the session view, and close() destroys it.
+    session.view.onEmpty = [this, raw]
+    {
+        eacp::Threads::callAsync([this, raw] { closeIfPresent(raw); });
+    };
+
+    session.view.onActivePaneChanged = [this, raw]
+    {
+        if (activeSession == raw)
+            onActiveChanged(*raw);
+
+        persist();
     };
 }
 
 TermSession& SessionManager::createSession(const std::string& name,
                                            const std::string& projectDir,
-                                           const std::string& startCwd)
+                                           const std::string& startCwd,
+                                           const std::vector<SavedPane>& panes)
 {
     auto& session = *sessions.emplace_back(std::make_unique<TermSession>(
         config, uniqueName(name), normalizedDir(projectDir), startCwd));
     wireSession(session);
+    session.view.restore(panes);
     onSessionsChanged();
     return session;
 }
@@ -121,7 +136,7 @@ TermSession& SessionManager::openProject(const std::string& dir)
         return *existing;
     }
 
-    auto& session = createSession(sessionNameFor(path), path, {});
+    auto& session = createSession(sessionNameFor(path), path, {}, {});
     switchTo(session);
     return session;
 }
@@ -129,7 +144,7 @@ TermSession& SessionManager::openProject(const std::string& dir)
 TermSession& SessionManager::newSession(const std::string& dir)
 {
     const auto path = normalizedDir(dir);
-    auto& session = createSession(sessionNameFor(path), path, {});
+    auto& session = createSession(sessionNameFor(path), path, {}, {});
     switchTo(session);
     return session;
 }
@@ -160,6 +175,16 @@ void SessionManager::switchToLast()
                 switchTo(*previousSession);
                 return;
             }
+}
+
+void SessionManager::closeIfPresent(TermSession* session)
+{
+    for (auto& candidate: sessions)
+        if (candidate.get() == session)
+        {
+            close(*candidate);
+            return;
+        }
 }
 
 void SessionManager::close(TermSession& session)
@@ -203,10 +228,13 @@ void SessionManager::restoreOrCreateInitial()
     const auto& state = saved.peek();
 
     for (const auto& savedSession: state.sessions)
-        createSession(savedSession.name, savedSession.projectDir, savedSession.cwd);
+        createSession(savedSession.name,
+                      savedSession.projectDir,
+                      savedSession.cwd,
+                      savedSession.panes);
 
     if (sessions.empty())
-        createSession("home", eacp::FilePath::homeDirectory().str(), {});
+        createSession("home", eacp::FilePath::homeDirectory().str(), {}, {});
 
     const auto index = std::clamp(state.activeIndex, 0, (int) sessions.size() - 1);
     switchTo(*sessions[(std::size_t) index]);
@@ -222,7 +250,8 @@ void SessionManager::persist()
             for (auto& session: sessions)
                 state.sessions.push_back({session->name,
                                           session->projectDir,
-                                          session->view.currentCwd()});
+                                          session->activeWorkingDirectory(),
+                                          session->view.snapshot()});
 
             state.activeIndex = 0;
 

@@ -183,6 +183,27 @@ std::string Pty::foregroundProcess() const
 #endif
 }
 
+std::string Pty::currentWorkingDirectory() const
+{
+    if (pid <= 0)
+        return {};
+
+#if defined(__APPLE__)
+    auto info = proc_vnodepathinfo {};
+
+    if (proc_pidinfo((pid_t) pid, PROC_PIDVNODEPATHINFO, 0, &info, sizeof(info))
+        > 0)
+        return info.pvi_cdir.vip_path;
+
+    return {};
+#else
+    char path[4096] = {};
+    const auto link = "/proc/" + std::to_string(pid) + "/cwd";
+    const auto count = readlink(link.c_str(), path, sizeof(path) - 1);
+    return count > 0 ? std::string {path, (std::size_t) count} : std::string {};
+#endif
+}
+
 bool Pty::isRunning() const
 {
     if (pid < 0)

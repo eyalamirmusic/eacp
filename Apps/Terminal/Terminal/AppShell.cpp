@@ -18,10 +18,20 @@ AppShell::AppShell()
         tray.refresh();
     };
 
-    manager.onSessionsChanged = [this]
+    manager.onSessionsChanged = [this] { tray.refresh(); };
+
+    manager.onPaneWired = [this](TermSession& session, TerminalView& pane)
     {
-        wireViews();
-        tray.refresh();
+        auto* raw = &session;
+
+        pane.interceptKey = [this](const KeyEvent& event)
+        { return interceptKey(event); };
+
+        pane.onTitleChanged = [this, raw](const std::string&)
+        {
+            if (manager.active() == raw)
+                updateTitle();
+        };
     };
 
     tray.onShowWindow = [this] { onBringToFront(); };
@@ -58,34 +68,22 @@ void AppShell::start()
     manager.restoreOrCreateInitial();
 }
 
-void AppShell::wireViews()
-{
-    for (auto& session: manager.all())
-    {
-        auto* raw = session.get();
-
-        session->view.interceptKey = [this](const KeyEvent& event)
-        { return interceptKey(event); };
-
-        session->view.onTitleChanged = [this, raw](const std::string&)
-        {
-            if (manager.active() == raw)
-                updateTitle();
-        };
-    }
-}
 
 void AppShell::attachActive(TermSession& session)
 {
-    if (attached != nullptr)
-        removeSubview(attached->view);
+    if (attached != &session)
+    {
+        if (attached != nullptr)
+            removeSubview(attached->view);
 
-    attached = &session;
-    addSubview(session.view);
+        attached = &session;
+        addSubview(session.view);
+    }
+
     session.view.setBounds(getLocalBounds());
 
     if (!palette.isShown())
-        session.view.focus();
+        session.view.focusActive();
 }
 
 void AppShell::resized()
@@ -107,8 +105,8 @@ void AppShell::updateTitle()
 
     auto title = session->name;
 
-    if (!session->view.currentTitle().empty())
-        title += " — " + session->view.currentTitle();
+    if (!session->activeTitle().empty())
+        title += " — " + session->activeTitle();
 
     onWindowTitleChanged(title);
 }
@@ -117,7 +115,11 @@ void AppShell::handleSessionNotify(TermSession& session, const std::string& text
 {
     // The active, focused session is right in front of the user — no need
     // to shout about it.
-    if (windowFocused && manager.active() == &session && session.view.hasFocus())
+    const auto* pane =
+        const_cast<const SessionView&>(session.view).activePane();
+
+    if (windowFocused && manager.active() == &session && pane != nullptr
+        && pane->hasFocus())
         return;
 
     Notifier::notify(session.key(), session.name, text);
@@ -139,7 +141,7 @@ void AppShell::hidePalette()
     removeSubview(palette);
 
     if (attached != nullptr)
-        attached->view.focus();
+        attached->view.focusActive();
 }
 
 bool AppShell::interceptKey(const KeyEvent& event)
@@ -166,10 +168,49 @@ bool AppShell::interceptKey(const KeyEvent& event)
 bool AppShell::handlePrefixed(const KeyEvent& event)
 {
     const auto& chars = event.charactersIgnoringModifiers;
+    auto* active = manager.active();
+    auto* paneTree = active != nullptr ? &active->view : nullptr;
 
     // Prefix twice sends a literal Ctrl+A through to the shell.
     if (event.modifiers.control && chars == "a")
         return false;
+
+    // Ctrl+h/j/k/l: resize the active pane by one cell (tmux C-a C-h...).
+    if (event.modifiers.control && chars.size() == 1
+        && (chars == "h" || chars == "j" || chars == "k" || chars == "l"))
+    {
+        if (paneTree != nullptr)
+            paneTree->resizeActive(chars[0], 1.0f);
+
+        return true;
+    }
+
+    // Arrow keys resize too: Alt = 5 cells, Ctrl (or plain) = 1.
+    const auto arrowDirection = [&]() -> char
+    {
+        switch (event.keyCode)
+        {
+            case KeyCode::LeftArrow:
+                return 'h';
+            case KeyCode::DownArrow:
+                return 'j';
+            case KeyCode::UpArrow:
+                return 'k';
+            case KeyCode::RightArrow:
+                return 'l';
+            default:
+                return 0;
+        }
+    }();
+
+    if (arrowDirection != 0)
+    {
+        if (paneTree != nullptr)
+            paneTree->resizeActive(arrowDirection,
+                                   event.modifiers.alt ? 5.0f : 1.0f);
+
+        return true;
+    }
 
     if (chars == "f" || chars == "w" || chars == "p")
     {
@@ -177,18 +218,60 @@ bool AppShell::handlePrefixed(const KeyEvent& event)
         return true;
     }
 
-    if (chars == "c")
+    // Pane splits, in the pane's current directory: " below, % beside.
+    if (chars == "\"")
     {
-        if (auto* active = manager.active())
-            manager.newSession(active->view.currentCwd());
+        if (paneTree != nullptr)
+            paneTree->splitActive(false);
 
         return true;
     }
 
+    if (chars == "%")
+    {
+        if (paneTree != nullptr)
+            paneTree->splitActive(true);
+
+        return true;
+    }
+
+    if (chars == "h" || chars == "j" || chars == "k" || chars == "l")
+    {
+        if (paneTree != nullptr)
+            paneTree->focusDirection(chars[0]);
+
+        return true;
+    }
+
+    if (chars == "z")
+    {
+        if (paneTree != nullptr)
+            paneTree->toggleZoom();
+
+        return true;
+    }
+
+    if (chars == "o")
+    {
+        if (paneTree != nullptr)
+            paneTree->cycleFocus();
+
+        return true;
+    }
+
+    if (chars == "c")
+    {
+        if (active != nullptr)
+            manager.newSession(active->activeWorkingDirectory());
+
+        return true;
+    }
+
+    // Kill the active pane; the session ends with its last pane.
     if (chars == "x")
     {
-        if (auto* active = manager.active())
-            manager.close(*active);
+        if (paneTree != nullptr)
+            paneTree->closeActivePane();
 
         return true;
     }
@@ -221,7 +304,7 @@ bool AppShell::handleCommand(const KeyEvent& event)
     if (chars == "w")
     {
         if (auto* active = manager.active())
-            manager.close(*active);
+            active->view.closeActivePane();
 
         return true;
     }
@@ -229,7 +312,15 @@ bool AppShell::handleCommand(const KeyEvent& event)
     if (chars == "n")
     {
         if (auto* active = manager.active())
-            manager.newSession(active->view.currentCwd());
+            manager.newSession(active->activeWorkingDirectory());
+
+        return true;
+    }
+
+    if (chars == "d")
+    {
+        if (auto* active = manager.active())
+            active->view.splitActive(true);
 
         return true;
     }

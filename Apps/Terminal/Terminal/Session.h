@@ -2,7 +2,7 @@
 
 #include "Config.h"
 #include "MruStore.h"
-#include "TerminalView.h"
+#include "SessionView.h"
 
 #include <Miro/Reflect.h>
 #include <emberstore/Emberstore.h>
@@ -18,8 +18,9 @@ struct SavedSession
     std::string name;
     std::string projectDir;
     std::string cwd;
+    std::vector<SavedPane> panes;
 
-    MIRO_REFLECT(name, projectDir, cwd)
+    MIRO_REFLECT(name, projectDir, cwd, panes)
 };
 
 struct SavedState
@@ -30,7 +31,7 @@ struct SavedState
     MIRO_REFLECT(sessions, activeIndex)
 };
 
-// One named shell bound to a project directory.
+// One named pane tree bound to a project directory.
 class TermSession
 {
 public:
@@ -42,13 +43,18 @@ public:
     // Stable identity for MRU stamps and notification routing.
     const std::string& key() const { return projectDir.empty() ? name : projectDir; }
 
-    // True when a Claude Code conversation owns this session's terminal.
-    bool isClaude() const;
+    // True when a Claude Code conversation owns any pane of this session.
+    bool isClaude() const { return view.isClaudeAnywhere(); }
+
+    // The active pane's title / directory; empty when the session has no
+    // panes (mid-teardown).
+    std::string activeTitle() const;
+    std::string activeWorkingDirectory() const;
 
     std::string name;
     std::string projectDir;
     std::string lastNotify;
-    TerminalView view;
+    SessionView view;
 };
 
 // Owns every open session plus the recency store, and persists the open set
@@ -82,11 +88,20 @@ public:
     eacp::Callback onSessionsChanged = [] {};
     eacp::Callback onAllClosed = [] {};
 
+    // Fired for every pane the session creates, so the app shell installs
+    // per-pane hooks (interceptKey, title tracking).
+    std::function<void(TermSession&, TerminalView&)> onPaneWired =
+        [](TermSession&, TerminalView&) {};
+
+    void persistNow() { persist(); }
+
 private:
     TermSession& createSession(const std::string& name,
                                const std::string& projectDir,
-                               const std::string& startCwd);
+                               const std::string& startCwd,
+                               const std::vector<SavedPane>& panes);
     void wireSession(TermSession& session);
+    void closeIfPresent(TermSession* session);
     std::string uniqueName(const std::string& base) const;
     void persist();
 

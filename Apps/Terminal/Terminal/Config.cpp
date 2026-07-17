@@ -34,6 +34,8 @@ Theme themeByName(const std::string& name)
         theme.foreground = 0xe0def4;
         theme.cursor = 0xe0def4;
         theme.selection = 0x403d52;
+        theme.paneBorder = 0x26233a;
+        theme.paneBorderActive = 0x56526e;
         theme.ansi = {0x26233a,
                       0xeb6f92,
                       0x31748f,

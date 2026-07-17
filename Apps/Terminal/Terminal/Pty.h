@@ -47,6 +47,10 @@ public:
     // sees running: zsh, claude, nvim, ...). Empty when unknown.
     std::string foregroundProcess() const;
 
+    // The shell's live working directory, read from the kernel — no shell
+    // integration needed. Empty when unknown.
+    std::string currentWorkingDirectory() const;
+
 private:
     int fd = -1;
     long pid = -1;

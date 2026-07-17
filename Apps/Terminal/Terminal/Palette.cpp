@@ -80,10 +80,13 @@ void Palette::rebuild()
         item.claude = session->isClaude();
         item.lastUsed = sessions.lastUsed(item.key);
 
-        const auto& title = session->view.currentTitle();
+        const auto title = session->activeTitle();
         item.detail = item.claude && !title.empty()
                           ? title
-                          : compactPath(session->view.currentCwd());
+                          : compactPath(session->activeWorkingDirectory());
+
+        if (const auto panes = session->view.paneCount(); panes > 1)
+            item.detail += "  ·  " + std::to_string(panes) + " panes";
 
         if (!session->lastNotify.empty())
             item.status = session->lastNotify;

@@ -87,7 +87,6 @@ TerminalView::TerminalView(const AppConfig& config,
     , fontName(config.font)
     , screen(80, 24, theme)
     , parser(screen, theme)
-    , cwd(workingDirectory)
     , fontSize(config.fontSize)
     , blinkTimer(
           [this]
@@ -813,6 +812,8 @@ void TerminalView::sendMouseReport(const MouseEvent& event,
 
 void TerminalView::mouseDown(const MouseEvent& event)
 {
+    onFocused();
+
     if (mouseReportingActive() && !event.modifiers.shift)
     {
         sendMouseReport(event, (int) event.button, true, false);
