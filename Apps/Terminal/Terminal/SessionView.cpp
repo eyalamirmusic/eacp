@@ -31,11 +31,12 @@ SessionView::~SessionView()
     *alive = false;
 }
 
-std::unique_ptr<SessionView::Node> SessionView::makeLeaf(const std::string& dir)
+std::unique_ptr<SessionView::Node>
+    SessionView::makeLeaf(const std::string& dir, const std::string& shellId)
 {
     auto node = std::make_unique<Node>();
-    node->view =
-        std::make_unique<TerminalView>(config, dir.empty() ? fallbackDir : dir);
+    node->view = std::make_unique<TerminalView>(
+        config, dir.empty() ? fallbackDir : dir, shellId);
 
     // Tree surgery (split, sibling promotion) moves views between nodes, so
     // the callbacks resolve their node by view at fire time, never by a
@@ -85,7 +86,7 @@ std::unique_ptr<SessionView::Node> SessionView::buildFromSaved(
     const auto& savedNode = saved[(std::size_t) index];
 
     if (!savedNode.split)
-        return makeLeaf(savedNode.cwd);
+        return makeLeaf(savedNode.cwd, savedNode.shellId);
 
     auto first = buildFromSaved(saved, savedNode.first, depth + 1);
     auto second = buildFromSaved(saved, savedNode.second, depth + 1);
@@ -111,6 +112,7 @@ void SessionView::appendSnapshot(const Node& node, std::vector<SavedPane>& out) 
     if (node.isLeaf())
     {
         out[index].cwd = node.view->workingDirectory();
+        out[index].shellId = node.view->shellId();
         return;
     }
 
@@ -306,7 +308,19 @@ void SessionView::removeLeaf(Node* leaf)
 
 void SessionView::closeActivePane()
 {
+    if (active != nullptr && active->isLeaf())
+        active->view->terminateShell();
+
     removeLeaf(active);
+}
+
+void SessionView::terminateAll()
+{
+    auto leaves = std::vector<Node*> {};
+    collectLeaves(root.get(), leaves);
+
+    for (auto* leaf: leaves)
+        leaf->view->terminateShell();
 }
 
 void SessionView::focusDirection(char direction)

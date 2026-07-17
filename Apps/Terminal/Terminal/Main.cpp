@@ -1,4 +1,5 @@
 #include "AppShell.h"
+#include "DaemonClient.h"
 
 #include <eacp/Core/App/App.h>
 
@@ -48,7 +49,10 @@ struct TerminalApp
         { shell.setWindowFocused(isKey); };
 
         window.setContentView(shell);
-        shell.start();
+
+        // Sessions restore once the daemon dial resolves, so panes with
+        // still-running shells re-adopt them instead of spawning fresh.
+        term::DaemonClient::initialize([this] { shell.start(); });
     }
 
     term::AppShell shell;

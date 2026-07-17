@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <random>
 
 namespace term
 {
@@ -81,13 +82,29 @@ void appendUtf8(std::string& out, char32_t cp)
 }
 } // namespace
 
+namespace
+{
+std::string generateShellId()
+{
+    auto device = std::random_device {};
+    auto engine = std::mt19937_64 {device()};
+    char buffer[24];
+    std::snprintf(buffer, sizeof(buffer), "%016llx",
+                  (unsigned long long) engine());
+    return buffer;
+}
+} // namespace
+
 TerminalView::TerminalView(const AppConfig& config,
-                           const std::string& workingDirectory)
+                           const std::string& workingDirectory,
+                           const std::string& shellIdToUse)
     : theme(themeByName(config.theme))
     , fontName(config.font)
     , screen(80, 24, theme)
     , parser(screen, theme)
     , fontSize(config.fontSize)
+    , paneShellId(shellIdToUse.empty() ? generateShellId() : shellIdToUse)
+    , shell(makeShell(paneShellId))
     , blinkTimer(
           [this]
           {
@@ -120,7 +137,7 @@ TerminalView::TerminalView(const AppConfig& config,
 
     auto guard = std::weak_ptr<bool> {alive};
 
-    pty.start(
+    shell->start(
         {{screen.columns(), screen.rows()}, workingDirectory},
         [this, guard](const std::string& data)
         {
@@ -151,7 +168,12 @@ TerminalView::~TerminalView()
 {
     *alive = false;
     alive.reset();
-    pty.shutdown();
+    shell->detach();
+}
+
+void TerminalView::terminateShell()
+{
+    shell->terminate();
 }
 
 void TerminalView::flushOutput()
@@ -177,7 +199,7 @@ void TerminalView::flushOutput()
 
 void TerminalView::send(std::string_view bytes)
 {
-    pty.write(bytes);
+    shell->write(bytes);
 }
 
 void TerminalView::sendAndScrollToBottom(std::string_view bytes)
@@ -217,7 +239,7 @@ void TerminalView::applyGridSize()
         return;
 
     screen.resize(cols, rows);
-    pty.resize({cols, rows});
+    shell->resize({cols, rows});
     scrollOffset = std::min(scrollOffset, screen.scrollbackSize());
 }
 

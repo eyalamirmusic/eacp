@@ -2,7 +2,7 @@
 
 #include "Config.h"
 #include "GlyphAtlas.h"
-#include "Pty.h"
+#include "Shell.h"
 #include "TermParser.h"
 #include "TermScreen.h"
 
@@ -23,8 +23,19 @@ namespace term
 class TerminalView final : public eacp::GPU::GPUView
 {
 public:
-    TerminalView(const AppConfig& config, const std::string& workingDirectory);
+    // shellId names this pane's shell in the session daemon; panes restored
+    // from a snapshot pass their saved id so a still-running shell is
+    // adopted. Empty generates a fresh one.
+    TerminalView(const AppConfig& config,
+                 const std::string& workingDirectory,
+                 const std::string& shellIdToUse = {});
     ~TerminalView() override;
+
+    const std::string& shellId() const { return paneShellId; }
+
+    // Ends the shell process on purpose (pane closed). The destructor only
+    // detaches, so shells held by the daemon survive teardown.
+    void terminateShell();
 
     std::function<void(const std::string&)> onTitleChanged =
         [](const std::string&) {};
@@ -44,7 +55,10 @@ public:
 
     const std::string& currentCwd() const { return cwd; }
     const std::string& currentTitle() const { return title; }
-    std::string foregroundProcess() const { return pty.foregroundProcess(); }
+    std::string foregroundProcess() const
+    {
+        return shell->foregroundProcess();
+    }
 
     // Best known working directory: OSC 7 when the shell reports it, else
     // the kernel's answer for the shell process.
@@ -53,7 +67,7 @@ public:
         if (!cwd.empty())
             return cwd;
 
-        return pty.currentWorkingDirectory();
+        return shell->currentWorkingDirectory();
     }
 
     void render(eacp::GPU::Frame& frame) override;
@@ -122,7 +136,8 @@ private:
     float fontSize = 13.0f;
     std::optional<GlyphAtlas> atlas;
     std::optional<eacp::Sprites::SpriteRenderer> sprites;
-    Pty pty;
+    std::string paneShellId;
+    std::unique_ptr<Shell> shell;
 
     std::mutex outputLock;
     std::string pendingOutput;

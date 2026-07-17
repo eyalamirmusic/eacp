@@ -1,4 +1,5 @@
 #include "TrayController.h"
+#include "DaemonClient.h"
 #include "Notifier.h"
 
 #include <eacp/Core/App/App.h>
@@ -77,7 +78,24 @@ void TrayController::refresh()
     }
 
     menu.addSeparator();
-    menu.add(MenuItem::withAction("Quit", [] { Apps::quit(); }));
+
+    const auto haveDaemon = DaemonClient::get() != nullptr
+                            && DaemonClient::get()->isConnected();
+
+    menu.add(MenuItem::withAction(haveDaemon ? "Quit (shells keep running)"
+                                             : "Quit",
+                                  [] { Apps::quit(); }));
+
+    if (haveDaemon)
+        menu.add(MenuItem::withAction("Kill everything & quit",
+                                      []
+                                      {
+                                          if (auto* client =
+                                                  DaemonClient::get())
+                                              client->killServer();
+
+                                          Apps::quit();
+                                      }));
 
     icon.setMenu(menu);
 }

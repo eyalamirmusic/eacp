@@ -194,6 +194,11 @@ void SessionManager::close(TermSession& session)
     if (index == sessions.end())
         return;
 
+    // An explicit session close kills its shells; app teardown, which
+    // never comes through here, only detaches so they survive in the
+    // daemon.
+    session.view.terminateAll();
+
     auto closing = std::move(*index);
     sessions.erase(index);
 

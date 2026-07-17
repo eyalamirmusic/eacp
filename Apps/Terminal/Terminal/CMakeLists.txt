@@ -19,7 +19,8 @@ add_executable(Terminal
         TermScreen.cpp
         TermParser.cpp
         TerminalView.cpp
-        TrayController.cpp)
+        TrayController.cpp
+        DaemonClient.cpp)
 
 # Portable core (parser, screen, sessions, palette) + per-platform PTY,
 # glyph raster and notifications.
@@ -48,7 +49,14 @@ elseif (WIN32)
             ole32)
 endif ()
 
-target_link_libraries(Terminal PRIVATE eacp-sprites emberstore)
+target_link_libraries(Terminal PRIVATE eacp-sprites eacp-network emberstore)
+
+# The session daemon rides inside the bundle, next to the app binary, so
+# the client can launch it with no install step.
+add_dependencies(Terminal TerminalDaemon)
+add_custom_command(TARGET Terminal POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:TerminalDaemon> $<TARGET_FILE_DIR:Terminal>)
 
 # JetBrains Mono (OFL) rides inside the binary; registered with the platform
 # font system at startup, so the default font needs no install step.

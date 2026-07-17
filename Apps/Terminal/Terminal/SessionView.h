@@ -18,10 +18,14 @@ struct SavedPane
     bool horizontal = false;
     float ratio = 0.5f;
     std::string cwd;
+
+    // Names the pane's shell in the session daemon, so a restore adopts
+    // the still-running process instead of spawning a new one.
+    std::string shellId;
     int first = -1;
     int second = -1;
 
-    MIRO_REFLECT(split, horizontal, ratio, cwd, first, second)
+    MIRO_REFLECT(split, horizontal, ratio, cwd, shellId, first, second)
 };
 
 // One session's pane tree: every leaf is a live GPU terminal, splits carry
@@ -47,6 +51,10 @@ public:
 
     void splitActive(bool horizontal);
     void closeActivePane();
+
+    // Kills every pane's shell — closing a whole session on purpose, as
+    // opposed to detaching at app teardown.
+    void terminateAll();
     void focusDirection(char direction);
     void resizeActive(char direction, float cells);
     void toggleZoom();
@@ -80,7 +88,8 @@ private:
         eacp::Graphics::Rect bounds;
     };
 
-    std::unique_ptr<Node> makeLeaf(const std::string& dir);
+    std::unique_ptr<Node> makeLeaf(const std::string& dir,
+                                   const std::string& shellId = {});
     std::unique_ptr<Node>
         buildFromSaved(const std::vector<SavedPane>& saved, int index, int depth);
     void appendSnapshot(const Node& node, std::vector<SavedPane>& out) const;
