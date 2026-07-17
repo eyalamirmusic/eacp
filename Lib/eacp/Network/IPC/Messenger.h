@@ -51,8 +51,9 @@ public:
     // arrives in onClient already connected, and this never fires there).
     Callback onConnected = [] {};
 
-    // A whole message from the peer.
-    std::function<void(const std::string&)> onMessage = [](const std::string&) {};
+    // A whole message from the peer, handed over by value: a receiver that
+    // wants to keep the bytes moves them out instead of copying.
+    std::function<void(std::string)> onMessage = [](std::string) {};
 
     // The conversation is over and cannot resume: the peer left, the
     // stream broke, or the dial never landed. Fires at most once.

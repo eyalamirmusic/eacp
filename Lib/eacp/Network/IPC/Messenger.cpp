@@ -1,5 +1,6 @@
 #include "Messenger.h"
 
+#include <array>
 #include <cstdint>
 #include <mutex>
 #include <thread>
@@ -24,18 +25,14 @@ constexpr auto headerSize = std::size_t {4};
 // an error instead of a gigabyte allocation.
 constexpr auto maxMessageSize = std::size_t {1} << 30;
 
-std::string encodeFrame(const std::string& message)
+std::array<char, headerSize> encodeHeader(std::size_t size)
 {
-    auto size = (std::uint32_t) message.size();
+    auto header = std::array<char, headerSize> {};
 
-    auto frame = std::string {};
-    frame.reserve(headerSize + message.size());
+    for (auto index = std::size_t {0}; index < headerSize; ++index)
+        header[index] = (char) ((size >> (index * 8)) & 0xff);
 
-    for (auto shift = 0; shift < 32; shift += 8)
-        frame += (char) ((size >> shift) & 0xff);
-
-    frame += message;
-    return frame;
+    return header;
 }
 
 std::size_t decodeLength(const std::string& header)
@@ -182,7 +179,11 @@ void Messenger::send(const std::string& message)
 
     try
     {
-        impl->channel->send(encodeFrame(message));
+        // Header and payload go out as two writes so framing never copies
+        // the payload - the mutex keeps them adjacent on the stream.
+        auto header = encodeHeader(message.size());
+        impl->channel->send({header.data(), header.size()});
+        impl->channel->send(message);
     }
     catch (const Error&)
     {
@@ -253,8 +254,8 @@ void Messenger::readUntilGone()
             if (!message)
                 break;
 
-            notifyMain([this, delivered = std::move(*message)]
-                       { onMessage(delivered); });
+            notifyMain([this, delivered = std::move(*message)]() mutable
+                       { onMessage(std::move(delivered)); });
         }
     }
     catch (const Error&)
