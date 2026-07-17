@@ -89,11 +89,11 @@ struct RemoteFrameView final : GPU::GPUView
         setContinuous(true);
     }
 
-    void showFrame(int frameWidth, int frameHeight, std::string pixelsToUse)
+    void showFrame(int frameWidth, int frameHeight, std::string framedToUse)
     {
         width = frameWidth;
         height = frameHeight;
-        pixels = std::move(pixelsToUse);
+        framed = std::move(framedToUse);
         fresh = true;
 
         if (++framesShown % 30 == 0)
@@ -130,7 +130,7 @@ struct RemoteFrameView final : GPU::GPUView
                 texture.emplace(GPU::Device::shared().makeTexture(descriptor));
             }
 
-            texture->update((const std::uint8_t*) pixels.data());
+            texture->update((const std::uint8_t*) framed.data() + frameHeaderBytes);
             fresh = false;
         }
 
@@ -144,7 +144,10 @@ struct RemoteFrameView final : GPU::GPUView
 
     int width = 0;
     int height = 0;
-    std::string pixels;
+
+    // The whole framed message, kept as it arrived - taking it uncut is
+    // what makes the handoff copy-free. Pixels start frameHeaderBytes in.
+    std::string framed;
     bool fresh = false;
     int framesShown = 0;
 
@@ -229,7 +232,8 @@ struct IpcCameraApp
         { window->setTitle("IPC Camera - Viewer (live)"); };
         link->onDisconnected = [this]
         { window->setTitle("IPC Camera - Viewer (feed ended)"); };
-        link->onMessage = [this](const std::string& message) { showFrame(message); };
+        link->onMessage = [this](std::string message)
+        { showFrame(std::move(message)); };
     }
 
     // Runs on the capture thread the moment a frame lands, so nothing
@@ -260,7 +264,7 @@ struct IpcCameraApp
                         frame.height());
     }
 
-    void showFrame(const std::string& message)
+    void showFrame(std::string message)
     {
         if (message.size() < frameHeaderBytes)
             return;
@@ -273,7 +277,7 @@ struct IpcCameraApp
             || message.size() - frameHeaderBytes != expected)
             return;
 
-        remoteView->showFrame(width, height, message.substr(frameHeaderBytes));
+        remoteView->showFrame(width, height, std::move(message));
     }
 
     void beginCapture()
