@@ -31,8 +31,8 @@ SessionView::~SessionView()
     *alive = false;
 }
 
-std::unique_ptr<SessionView::Node>
-    SessionView::makeLeaf(const std::string& dir, const std::string& shellId)
+std::unique_ptr<SessionView::Node> SessionView::makeLeaf(const std::string& dir,
+                                                         const std::string& shellId)
 {
     auto node = std::make_unique<Node>();
     node->view = std::make_unique<TerminalView>(

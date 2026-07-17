@@ -72,6 +72,21 @@ Unknown keys are ignored; missing keys keep defaults. Themes: `rosepine`,
 `tokyonight`. JetBrains Mono ships embedded in the binary (ResEmbed) and is
 registered with CoreText at startup — no font install needed.
 
+## The session daemon (real tmux mode)
+
+Shells don't belong to the GUI: a headless `TerminalDaemon` (bundled next to
+the app binary, launched on demand) owns every PTY and the app attaches over
+eacp IPC (`IPC::Messenger`, name `wim-termd`). Quit, crash, or update the
+app and the shells keep running; the next launch re-adopts each pane by its
+persisted `shellId`, replays the daemon's 256K output buffer through the
+parser, and nudges the winsize so full-screen apps repaint. Killing the app
+with SIGKILL loses nothing.
+
+Tray → "Quit (shells keep running)" (or `Cmd+Q`) detaches; "Kill everything
+& quit" tears the server down. If the daemon can't be reached the app falls
+back to in-process shells transparently. The daemon retires itself after a
+minute with no shells and no client.
+
 ## Background mode
 
 Closing the window does not quit: the app keeps running with every shell
@@ -86,12 +101,11 @@ Quit, or closing the last shell) tears sessions down.
 Open sessions and MRU stamps persist via
 [emberstore](https://github.com/tamber-inc/emberstore) under
 `~/Library/Application Support/tamber/wim-terminal/`. Relaunching restores
-the workspace: same sessions, shells respawned in their last directory
-(running processes don't survive a quit — a detachable session daemon is the
-planned fix).
+the workspace: sessions and pane layouts restore, and panes whose shells
+still live in the daemon reconnect to them.
 
 ## Not yet
 
-The native PR dashboard (worktree-per-PR stitching), scrollback search, the
-detachable session daemon (shells surviving app quit), and the Windows
-backends (ConPTY + DirectWrite) are next.
+The native PR dashboard (worktree-per-PR stitching), scrollback search, a
+single-instance guard (two GUIs racing the same saved state can duplicate
+session names), and finishing the Windows backends are next.

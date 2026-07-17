@@ -55,10 +55,7 @@ public:
 
     const std::string& currentCwd() const { return cwd; }
     const std::string& currentTitle() const { return title; }
-    std::string foregroundProcess() const
-    {
-        return shell->foregroundProcess();
-    }
+    std::string foregroundProcess() const { return shell->foregroundProcess(); }
 
     // Best known working directory: OSC 7 when the shell reports it, else
     // the kernel's answer for the shell process.

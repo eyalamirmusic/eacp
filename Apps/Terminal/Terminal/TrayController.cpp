@@ -79,19 +79,17 @@ void TrayController::refresh()
 
     menu.addSeparator();
 
-    const auto haveDaemon = DaemonClient::get() != nullptr
-                            && DaemonClient::get()->isConnected();
+    const auto haveDaemon =
+        DaemonClient::get() != nullptr && DaemonClient::get()->isConnected();
 
-    menu.add(MenuItem::withAction(haveDaemon ? "Quit (shells keep running)"
-                                             : "Quit",
+    menu.add(MenuItem::withAction(haveDaemon ? "Quit (shells keep running)" : "Quit",
                                   [] { Apps::quit(); }));
 
     if (haveDaemon)
         menu.add(MenuItem::withAction("Kill everything & quit",
                                       []
                                       {
-                                          if (auto* client =
-                                                  DaemonClient::get())
+                                          if (auto* client = DaemonClient::get())
                                               client->killServer();
 
                                           Apps::quit();

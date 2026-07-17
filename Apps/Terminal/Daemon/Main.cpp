@@ -110,10 +110,7 @@ struct Daemon
                 Threads::callAsync([this, id, data = std::move(data)]
                                    { deliverOutput(id, data); });
             },
-            [this, id]
-            {
-                Threads::callAsync([this, id] { shellExited(id); });
-            });
+            [this, id] { Threads::callAsync([this, id] { shellExited(id); }); });
 
         pane.alive = started;
 
@@ -171,10 +168,7 @@ struct Daemon
         }
     }
 
-    void kill(const std::string& id)
-    {
-        panes.erase(id);
-    }
+    void kill(const std::string& id) { panes.erase(id); }
 
     void sendInfo()
     {

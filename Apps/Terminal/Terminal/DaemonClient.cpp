@@ -59,9 +59,7 @@ std::string toString(int value)
 void DaemonClient::initialize(const Callback& whenReady)
 {
     auto adopt = [](std::unique_ptr<IPC::Messenger> messenger)
-    {
-        instance.reset(new DaemonClient {std::move(messenger)});
-    };
+    { instance.reset(new DaemonClient {std::move(messenger)}); };
 
     // First dial is short: the daemon is either already there or not
     // installed at all. The second, after launching it, allows startup time.
@@ -79,8 +77,7 @@ void DaemonClient::initialize(const Callback& whenReady)
         launchDaemon();
 
         auto second = std::make_shared<std::unique_ptr<IPC::Messenger>>(
-            std::make_unique<IPC::Messenger>(proto::serverName,
-                                             Time::MS {4000}));
+            std::make_unique<IPC::Messenger>(proto::serverName, Time::MS {4000}));
 
         (*second)->onConnected = [second, adopt, whenReady]
         {
@@ -112,8 +109,7 @@ void DaemonClient::teardown()
 DaemonClient::DaemonClient(std::unique_ptr<IPC::Messenger> messengerToUse)
     : messenger(std::move(messengerToUse))
 {
-    messenger->onMessage = [this](const std::string& body)
-    { handleMessage(body); };
+    messenger->onMessage = [this](const std::string& body) { handleMessage(body); };
 
     messenger->onDisconnected = [this]
     {
@@ -166,16 +162,14 @@ void DaemonClient::handleMessage(const std::string& body)
         while (start < message.payload.size())
         {
             const auto end =
-                std::min(message.payload.find('\n', start),
-                         message.payload.size());
+                std::min(message.payload.find('\n', start), message.payload.size());
             const auto line = message.payload.substr(start, end - start);
             start = end + 1;
 
             const auto firstTab = line.find('\t');
             const auto secondTab = line.find('\t', firstTab + 1);
 
-            if (firstTab == std::string::npos
-                || secondTab == std::string::npos)
+            if (firstTab == std::string::npos || secondTab == std::string::npos)
                 continue;
 
             auto& entry = info[line.substr(0, firstTab)];
@@ -198,9 +192,8 @@ void DaemonClient::spawn(const std::string& id,
                          Routes routesToUse)
 {
     routes[id] = std::move(routesToUse);
-    messenger->send(proto::make("spawn",
-                                {id, toString(size.cols), toString(size.rows)},
-                                cwd));
+    messenger->send(
+        proto::make("spawn", {id, toString(size.cols), toString(size.rows)}, cwd));
 }
 
 void DaemonClient::write(const std::string& id, std::string_view data)
@@ -253,10 +246,7 @@ public:
     {
     }
 
-    ~RemoteShell() override
-    {
-        detach();
-    }
+    ~RemoteShell() override { detach(); }
 
     bool start(const PtyOptions& options,
                std::function<void(std::string)> onOutput,
@@ -271,8 +261,7 @@ public:
         routes.onOutput = std::move(onOutput);
         routes.onExit = std::move(onExit);
 
-        client->spawn(id, options.size, options.workingDirectory,
-                      std::move(routes));
+        client->spawn(id, options.size, options.workingDirectory, std::move(routes));
         attached = true;
         return true;
     }

@@ -89,8 +89,7 @@ std::string generateShellId()
     auto device = std::random_device {};
     auto engine = std::mt19937_64 {device()};
     char buffer[24];
-    std::snprintf(buffer, sizeof(buffer), "%016llx",
-                  (unsigned long long) engine());
+    std::snprintf(buffer, sizeof(buffer), "%016llx", (unsigned long long) engine());
     return buffer;
 }
 } // namespace
