@@ -114,8 +114,32 @@ struct LatestFrame
 // reads it.
 struct CaptureContext
 {
+    void setFrameArrived(Callback callbackToUse)
+    {
+        std::lock_guard<std::mutex> lock(arrivedMutex);
+        frameArrived = std::move(callbackToUse);
+    }
+
+    void notifyFrameArrived()
+    {
+        auto arrived = Callback {};
+
+        {
+            std::lock_guard<std::mutex> lock(arrivedMutex);
+            arrived = frameArrived;
+        }
+
+        arrived();
+    }
+
     FrameCallback callback;
     LatestFrame latest;
+
+    // Unlike `callback` this may be rewired while capture runs (CameraView
+    // attaching and detaching), so access is fenced; it is copied out before
+    // invoking so it never runs under the lock.
+    std::mutex arrivedMutex;
+    Callback frameArrived = [] {};
 };
 
 namespace
@@ -141,6 +165,7 @@ void cameraDelegateCaptureOutput(id self,
     // The display path only needs the buffer (it wraps the IOSurface on the GPU),
     // so stash it before the CPU-side lock the raw callback needs.
     context->latest.set(pixelBuffer);
+    context->notifyFrameArrived();
 
     if (!context->callback)
         return;
@@ -565,6 +590,14 @@ void Camera::requestPermission(std::function<void(bool)> onResult)
 void Camera::setFrameCallback(FrameCallback callback)
 {
     impl->setFrameCallback(std::move(callback));
+}
+
+void Camera::setFrameArrivedCallback(Callback callback)
+{
+    if (!callback)
+        callback = [] {};
+
+    impl->context.setFrameArrived(std::move(callback));
 }
 
 bool Camera::start(const CameraConfig& config)

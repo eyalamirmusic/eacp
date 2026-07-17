@@ -13,6 +13,13 @@ endif ()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# eacp builds runtime-loaded plugins and webview helpers as shared libraries,
+# and those link eacp-core together with its static dependencies (ea_data_structures,
+# Miro, ResEmbed). Every such static lib must be position-independent or the
+# shared-object link fails on Linux (ld: "final link failed: bad value"). Force
+# PIC for every target, including the CPM-fetched dependencies configured below.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 if (APPLE)
     enable_language(OBJCXX)
 endif ()
@@ -48,6 +55,15 @@ if (EACP_HIDDEN_VISIBILITY)
     set(CMAKE_OBJC_VISIBILITY_PRESET hidden)
     set(CMAKE_OBJCXX_VISIBILITY_PRESET hidden)
     set(CMAKE_VISIBILITY_INLINES_HIDDEN TRUE)
+endif ()
+
+# GCC gives some STL statics STB_GNU_UNIQUE binding, and glibc refuses to unmap
+# any library exporting one. eacp libraries link statically into runtime-loaded
+# plugins, so a unique symbol anywhere in them pins the plugin resident and
+# defeats the unload contract DynamicLibrary is built on (eacp_add_plugin sets
+# the same flag on a plugin's own sources). Clang emits no such symbols.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(-fno-gnu-unique)
 endif ()
 
 

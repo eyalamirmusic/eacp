@@ -32,6 +32,10 @@ public:
     std::function<void(const std::string&)> onNotify = [](const std::string&) {};
     eacp::Callback onShellExit = [] {};
 
+    // Fired when the user clicks into this pane; the session view moves its
+    // active-pane marker here.
+    eacp::Callback onFocused = [] {};
+
     // Runs before any terminal key handling; return true to consume the
     // event. The app shell hangs its leader-key table and global shortcuts
     // here.
@@ -41,6 +45,16 @@ public:
     const std::string& currentCwd() const { return cwd; }
     const std::string& currentTitle() const { return title; }
     std::string foregroundProcess() const { return pty.foregroundProcess(); }
+
+    // Best known working directory: OSC 7 when the shell reports it, else
+    // the kernel's answer for the shell process.
+    std::string workingDirectory() const
+    {
+        if (!cwd.empty())
+            return cwd;
+
+        return pty.currentWorkingDirectory();
+    }
 
     void render(eacp::GPU::Frame& frame) override;
     void resized() override;

@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 
 using namespace eacp;
 
@@ -61,30 +62,17 @@ struct DemoCameraView final : Cameras::CameraView
             std::printf("render tick %d  (frames with camera image: %d)\n",
                         overlayTicks,
                         framesWithImage);
-
-        if (autoQuitSeconds > 0.0 && elapsed >= autoQuitSeconds)
-        {
-            std::printf("auto-quit after %.1fs: %d ticks, %d with image\n",
-                        elapsed,
-                        overlayTicks,
-                        framesWithImage);
-            Apps::quit();
-        }
     }
 
     double elapsed = 0.0;
     int overlayTicks = 0;
     int framesWithImage = 0;
-    double autoQuitSeconds = 0.0;
 };
 
 struct CameraApp
 {
     CameraApp()
     {
-        view.autoQuitSeconds =
-            std::atof(getEnvValue("EACP_DEMO_AUTOQUIT_SECONDS").c_str());
-
         // Force the CPU-upload display path (Windows uses it) for verification.
         if (getEnvValue("EACP_DEMO_UPLOAD_MODE") == "copy")
             view.setUploadMode(Cameras::CameraView::UploadMode::Copy);
@@ -93,6 +81,7 @@ struct CameraApp
         view.attach(camera);
         window.setContentView(view);
         beginCapture();
+        armAutoQuit();
     }
 
     ~CameraApp() { camera.stop(); }
@@ -103,6 +92,14 @@ struct CameraApp
         config.width = 1280;
         config.height = 720;
         camera.start(config);
+    }
+
+    // Without frames the default on-arrival mode never renders; fall back to
+    // the display link so the overlay still animates.
+    void showOverlayOnly()
+    {
+        std::printf("Camera access not granted; showing overlay only.\n");
+        view.setRenderMode(Cameras::CameraView::RenderMode::Continuous);
     }
 
     void beginCapture()
@@ -118,17 +115,45 @@ struct CameraApp
                     {
                         if (granted)
                             startCamera();
+                        else
+                            showOverlayOnly();
                     });
                 break;
             default:
-                std::printf("Camera access not granted; showing overlay only.\n");
+                showOverlayOnly();
                 break;
         }
+    }
+
+    // Timer-driven, not render-driven, so it fires even when no camera ever
+    // delivers a frame.
+    void armAutoQuit()
+    {
+        auto seconds = std::atof(getEnvValue("EACP_DEMO_AUTOQUIT_SECONDS").c_str());
+
+        if (seconds <= 0.0)
+            return;
+
+        quitDeadline.emplace(Time::MS {(std::int64_t) (seconds * 1000.0)});
+        quitTimer.emplace(
+            [this]
+            {
+                if (!quitDeadline->expired())
+                    return;
+
+                std::printf("auto-quit: %d ticks, %d with image\n",
+                            view.overlayTicks,
+                            view.framesWithImage);
+                Apps::quit();
+            },
+            100);
     }
 
     Cameras::Camera camera;
     DemoCameraView view;
     Graphics::Window window {makeOptions()};
+    std::optional<Threads::Timer> quitTimer;
+    std::optional<Time::Deadline> quitDeadline;
 };
 } // namespace
 

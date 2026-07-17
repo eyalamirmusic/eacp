@@ -144,8 +144,32 @@ struct LatestFrame
 
 struct CaptureContext
 {
+    void setFrameArrived(Callback callbackToUse)
+    {
+        std::lock_guard<std::mutex> lock(arrivedMutex);
+        frameArrived = std::move(callbackToUse);
+    }
+
+    void notifyFrameArrived()
+    {
+        auto arrived = Callback {};
+
+        {
+            std::lock_guard<std::mutex> lock(arrivedMutex);
+            arrived = frameArrived;
+        }
+
+        arrived();
+    }
+
     FrameCallback callback;
     LatestFrame latest;
+
+    // Unlike `callback` this may be rewired while capture runs (CameraView
+    // attaching and detaching), so access is fenced; it is copied out before
+    // invoking so it never runs under the lock.
+    std::mutex arrivedMutex;
+    Callback frameArrived = [] {};
 };
 
 struct Camera::Native
@@ -300,6 +324,7 @@ struct Camera::Native
                     .count();
 
         context.latest.set(base, width, height, stride);
+        context.notifyFrameArrived();
 
         if (context.callback)
         {
@@ -401,6 +426,14 @@ void Camera::requestPermission(std::function<void(bool)> onResult)
 void Camera::setFrameCallback(FrameCallback callback)
 {
     impl->setFrameCallback(std::move(callback));
+}
+
+void Camera::setFrameArrivedCallback(Callback callback)
+{
+    if (!callback)
+        callback = [] {};
+
+    impl->context.setFrameArrived(std::move(callback));
 }
 
 bool Camera::start(const CameraConfig& config)

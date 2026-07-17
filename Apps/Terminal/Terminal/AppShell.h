@@ -36,7 +36,6 @@ private:
     void showPalette();
     void hidePalette();
     void attachActive(TermSession& session);
-    void wireViews();
     void updateTitle();
     void handleSessionNotify(TermSession& session, const std::string& text);
 

@@ -78,6 +78,14 @@ public:
     // resources created on the lost device no longer render.
     std::function<void()> onDeviceRestored = [] {};
 
+protected:
+    // Renders and presents one frame right now, on the caller's (main)
+    // thread. For subclasses whose content is driven by an external source
+    // (a camera frame arriving): rendering at the moment the content
+    // changes puts it on glass at the next refresh, where waiting to be
+    // noticed by a display link tick adds up to a full one.
+    void renderNow();
+
 private:
     // Internal: drives the GPU render from the View draw cycle. Subclasses
     // override render(), not this.
@@ -90,8 +98,6 @@ private:
     // Zero-copy render for video capture: runs render() straight into the frame
     // target's GPU surface (a CVPixelBuffer's IOSurface on Metal), no read-back.
     bool renderNativeContentToTarget(void* nativeTarget, float scale) final;
-
-    void renderNow();
 
     struct Native;
     Pimpl<Native> impl;

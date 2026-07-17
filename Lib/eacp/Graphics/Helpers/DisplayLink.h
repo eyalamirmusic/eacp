@@ -31,9 +31,13 @@ public:
     using FrameCallback = std::function<void(FrameTime)>;
     explicit DisplayLink(const FrameCallback& cb);
 
-private:
+    // Wraps a FrameCallback in a plain Callback that stamps each invocation
+    // with a FrameTime (the timing state lives inside the returned
+    // callback). For callers that drive frames from their own trigger — a
+    // camera frame arriving — with the link's timing semantics.
     static Callback timedTick(const FrameCallback& cb);
 
+private:
     Callback callback;
 
     struct Native;

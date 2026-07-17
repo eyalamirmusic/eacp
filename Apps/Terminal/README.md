@@ -10,14 +10,25 @@ ordering and ring-back notifications replace the tmux-sessionizer workflow.
 | Key | Action |
 | --- | --- |
 | `Ctrl+A f` / `w` / `p` (or `Cmd+K` / `Cmd+T`) | Open the palette |
-| `Ctrl+A c` (or `Cmd+N`) | New session in the active session's directory |
-| `Ctrl+A x` (or `Cmd+W`) | Close the active session |
+| `Ctrl+A "` | Split pane below (in the pane's directory) |
+| `Ctrl+A %` (or `Cmd+D`) | Split pane right (in the pane's directory) |
+| `Ctrl+A h/j/k/l` | Focus pane in direction |
+| `Ctrl+A Ctrl+h/j/k/l` | Resize pane by one cell |
+| `Ctrl+A Alt+arrows` / `Ctrl+arrows` | Resize pane by 5 / 1 cells |
+| `Ctrl+A x` (or `Cmd+W`) | Close the active pane (last pane ends the session) |
+| `Ctrl+A z` | Zoom / unzoom the active pane |
+| `Ctrl+A o` | Cycle pane focus |
+| `Ctrl+A c` (or `Cmd+N`) | New session in the active pane's directory |
 | `Ctrl+A 1..9` (or `Cmd+1..9`) | Switch to session by index |
 | `Ctrl+A ^` | Toggle to the previous session |
 | `Ctrl+A Ctrl+A` | Send a literal `Ctrl+A` to the shell |
 | `Cmd+C` / `Cmd+V` | Copy selection / paste (bracketed) |
 | `Cmd++` / `Cmd+-` / `Cmd+0` | Font size |
 | `Shift+PageUp/PageDown/Home/End` | Scrollback |
+
+Pane layouts (splits, ratios, per-pane directories) persist and restore with
+the session. Splits open in the pane's live working directory, read from the
+kernel — no shell integration required.
 
 ## The palette
 
@@ -81,6 +92,6 @@ planned fix).
 
 ## Not yet
 
-Pane splits inside a session, the native PR dashboard (worktree-per-PR
-stitching), scrollback search, and the Windows backends (ConPTY +
-DirectWrite) are next.
+The native PR dashboard (worktree-per-PR stitching), scrollback search, the
+detachable session daemon (shells surviving app quit), and the Windows
+backends (ConPTY + DirectWrite) are next.

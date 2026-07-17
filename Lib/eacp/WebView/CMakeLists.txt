@@ -11,7 +11,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewTest.cmake)
 
 add_library(eacp-webview STATIC)
 
-target_link_libraries(eacp-webview PUBLIC eacp-graphics ResEmbed Miro)
+target_link_libraries(eacp-webview PUBLIC eacp-graphics eacp-network-rpc ResEmbed Miro)
 
 # WKUIDelegate's public camera/mic permission selector is macOS 12+. When the
 # macOS deployment target is older, opt into WebKit's private _WK SPI so
@@ -26,7 +26,6 @@ endif ()
 target_sources(eacp-webview PRIVATE
         WebView/WebView-Shared.cpp
         WebView/DevServerProbe.cpp
-        WebView/AsyncBridge.cpp
         WebView/Bridge.cpp
         WebView/StateBridge.cpp
         WebView/MenuHelpers.cpp)

@@ -15,6 +15,7 @@ add_executable(Terminal
         Palette.cpp
         Projects.cpp
         Session.cpp
+        SessionView.cpp
         TermScreen.cpp
         TermParser.cpp
         TerminalView.cpp

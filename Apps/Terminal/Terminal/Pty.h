@@ -51,6 +51,10 @@ public:
     // sees running: zsh, claude, nvim, ...). Empty when unknown.
     std::string foregroundProcess() const;
 
+    // The shell's live working directory, read from the kernel — no shell
+    // integration needed. Empty when unknown.
+    std::string currentWorkingDirectory() const;
+
 private:
 #if defined(_WIN32)
     // ConPTY state. The pseudoconsole handle is guarded by consoleLock: the
