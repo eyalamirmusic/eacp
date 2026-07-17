@@ -39,6 +39,70 @@ void repositionTrafficLights(NSWindow* window, NSPoint inset)
         buttons[i].frame = frame;
     }
 }
+
+void requestCooperativeActivation()
+{
+    if (@available(macOS 14.0, *))
+        [NSApp activate];
+    else
+        [NSApp activateIgnoringOtherApps:YES];
+}
+
+// Ask LaunchServices to "open" this app. An open of an already-running app is
+// a user-level activation the system honours even while another app is
+// receiving input — unlike the cooperative requests below, which measurably
+// stay denied for our apps once refused at launch. Bundled apps only:
+// "opening" a bare dev executable would misfire.
+void reopenSelfViaLaunchServices()
+{
+    auto* bundle = [NSBundle mainBundle];
+    if (! [bundle.bundlePath.pathExtension isEqualToString:@"app"])
+        return;
+
+    auto* configuration = [NSWorkspaceOpenConfiguration configuration];
+    configuration.activates = YES;
+    [[NSWorkspace sharedWorkspace] openApplicationAtURL:bundle.bundleURL
+                                          configuration:configuration
+                                      completionHandler:nil];
+}
+
+// Bring the app to the foreground. Activation is COOPERATIVE since macOS 14:
+// activateIgnoringOtherApps: is deprecated and demoted to a plain -activate,
+// which the system declines while the user is actively working in another
+// app — exactly the launched-from-a-terminal / IDE case. The cooperative
+// request wins instantly when the user is idle, so try it first; if it is
+// still being denied a second in, escalate to the LaunchServices re-open,
+// which restores the pre-macOS-14 launch-to-front behaviour. One shared
+// poller — toFront() is called once per window at startup, and overlapping
+// retry chains would just spam the denial.
+void ensureAppBecomesActive()
+{
+    static auto polling = false;
+    if (polling || NSApp.active)
+        return;
+
+    requestCooperativeActivation();
+    polling = true;
+
+    __block auto attempt = 0;
+    [NSTimer scheduledTimerWithTimeInterval:0.25
+                                    repeats:YES
+                                      block:^(NSTimer* timer)
+                                      {
+                                          ++attempt;
+                                          if (NSApp.active || attempt > 12)
+                                          {
+                                              polling = false;
+                                              [timer invalidate];
+                                              return;
+                                          }
+
+                                          if (attempt == 4)
+                                              reopenSelfViaLaunchServices();
+                                          else
+                                              requestCooperativeActivation();
+                                      }];
+}
 } // namespace
 
 namespace eacp::Graphics
@@ -393,7 +457,15 @@ struct Window::Native
             return;
 
         [getWindow() makeKeyAndOrderFront:nil];
-        [NSApp activateIgnoringOtherApps:YES];
+
+        // While activation is pending (see ensureAppBecomesActive), still
+        // show the window above other apps' windows — visible immediately,
+        // and a click into it completes the activation. Raised once, not on
+        // the retries: re-raising would fight the user's window arrangement.
+        if (! NSApp.active)
+            [getWindow() orderFrontRegardless];
+
+        ensureAppBecomesActive();
     }
 
     void setTitle(const std::string& title)
