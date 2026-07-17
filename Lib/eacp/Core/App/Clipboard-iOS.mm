@@ -17,4 +17,9 @@ bool copyFiles(const Vector<std::string>&)
 {
     return false;
 }
+
+std::string getText()
+{
+    return Strings::toStdString([UIPasteboard generalPasteboard].string);
+}
 } // namespace eacp::Clipboard
