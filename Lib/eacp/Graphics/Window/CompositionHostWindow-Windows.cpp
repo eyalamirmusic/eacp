@@ -85,6 +85,36 @@ void unregisterContentViewHwnd(View* root)
     contentViewToHwnd().erase(root);
 }
 
+namespace
+{
+std::unordered_map<HWND, View*>& focusedViewByHwnd()
+{
+    static auto map = std::unordered_map<HWND, View*>();
+    return map;
+}
+} // namespace
+
+void setFocusedView(View* view)
+{
+    if (auto* host = findHostHwndForView(view))
+        focusedViewByHwnd()[host] = view;
+}
+
+void clearFocusedView(View* view)
+{
+    auto& map = focusedViewByHwnd();
+
+    for (auto it = map.begin(); it != map.end();)
+        it = it->second == view ? map.erase(it) : std::next(it);
+}
+
+View* findFocusedViewForHwnd(HWND hwnd)
+{
+    auto& map = focusedViewByHwnd();
+    auto found = map.find(hwnd);
+    return found == map.end() ? nullptr : found->second;
+}
+
 HWND findHostHwndForView(View* view)
 {
     auto* root = view;
@@ -413,7 +443,10 @@ void CompositionHostWindow::teardown()
         unregisterContentViewHwnd(contentView);
 
     if (hwnd)
+    {
+        focusedViewByHwnd().erase(hwnd);
         DestroyWindow(hwnd);
+    }
 }
 
 // The DComp visual tree composites above the window's GDI redirection bitmap,
@@ -709,6 +742,33 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
     return std::nullopt;
 }
 
+namespace
+{
+// The key's layout-aware text with Control and Alt stripped — Shift and Caps
+// Lock still apply — mirroring NSEvent.charactersIgnoringModifiers, which
+// shortcut matching keys off (Cmd+C, the terminal's Ctrl+A prefix: with
+// Control held, WM_CHAR only carries the control byte, never the "a").
+// ToUnicode's bit-2 flag keeps the call from disturbing the kernel's
+// dead-key state.
+std::string charactersIgnoringModifiers(WPARAM wParam, LPARAM lParam)
+{
+    BYTE state[256] = {};
+    state[VK_SHIFT] =
+        static_cast<BYTE>((GetKeyState(VK_SHIFT) & 0x8000) != 0 ? 0x80 : 0);
+    state[VK_CAPITAL] = static_cast<BYTE>(GetKeyState(VK_CAPITAL) & 1);
+
+    wchar_t buffer[8] = {};
+    const auto scanCode = static_cast<UINT>((lParam >> 16) & 0xff);
+    const auto count =
+        ToUnicode(static_cast<UINT>(wParam), scanCode, state, buffer, 8, 0x4);
+
+    if (count <= 0)
+        return {};
+
+    return fromWideString(std::wstring {buffer, static_cast<std::size_t>(count)});
+}
+} // namespace
+
 void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lParam)
 {
     auto down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
@@ -717,6 +777,28 @@ void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lPa
     if (vk < 256)
         keyState.set(vk, down);
 
+    // Modifier keys update the state above but dispatch no key event,
+    // matching macOS, where modifiers arrive via flagsChanged and never as
+    // keyDown. Without this, a chorded shortcut's own Shift press reaches
+    // the app as an empty keystroke — enough to consume the terminal's
+    // armed Ctrl+A prefix before the real key ("%", '"') arrives.
+    switch (vk)
+    {
+        case VK_SHIFT:
+        case VK_CONTROL:
+        case VK_MENU:
+        case VK_CAPITAL:
+        case VK_LWIN:
+        case VK_RWIN:
+        case VK_LSHIFT:
+        case VK_RSHIFT:
+        case VK_LCONTROL:
+        case VK_RCONTROL:
+        case VK_LMENU:
+        case VK_RMENU:
+            return;
+    }
+
     if (!contentView)
         return;
 
@@ -724,16 +806,22 @@ void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lPa
     event.keyCode = keyCodeFromVirtualKey(vk);
     event.type = down ? KeyEventType::Down : KeyEventType::Up;
     event.modifiers = getModifiers();
+    event.charactersIgnoringModifiers = charactersIgnoringModifiers(wParam, lParam);
+
+    auto* target = findFocusedViewForHwnd(hwnd);
+
+    if (target == nullptr)
+        target = contentView;
 
     if (down)
     {
         event.characters = takePendingCharacters();
         event.isRepeat = (lParam & 0x40000000) != 0;
-        contentView->keyDown(event);
+        target->keyDown(event);
     }
     else
     {
-        contentView->keyUp(event);
+        target->keyUp(event);
     }
 
     ensureAllLayersRendered(contentView);

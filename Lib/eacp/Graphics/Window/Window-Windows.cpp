@@ -52,6 +52,7 @@ struct Window::Native
         , events(&eventsToUse)
         , minWidth(options.minWidth)
         , minHeight(options.minHeight)
+        , hidesOnClose(options.hidesOnClose)
     {
         // Process-wide DPI awareness (per-monitor v2) is established by
         // initLoopThread() before any app code runs. In a hosted plugin no
@@ -422,6 +423,7 @@ struct Window::Native
     WindowEvents* events = nullptr;
     int minWidth = 0;
     int minHeight = 0;
+    bool hidesOnClose = false;
     bool showWithoutActivating = false;
     bool ignoresMouseEvents = false;
     bool framelessRounded = false;
@@ -482,6 +484,14 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             break;
 
         case WM_CLOSE:
+            // See WindowOptions::hidesOnClose: hide instead of destroy, the
+            // app keeps running and setVisible(true) brings it back.
+            if (self->hidesOnClose)
+            {
+                ShowWindow(hwnd, SW_HIDE);
+                return 0;
+            }
+
             self->quitCallback();
             return 0;
 

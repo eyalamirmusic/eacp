@@ -17,6 +17,14 @@ void registerContentViewHwnd(View* root, HWND hwnd);
 void unregisterContentViewHwnd(View* root);
 HWND findHostHwndForView(View* view);
 
+// Keyboard focus within a host window — the first-responder equivalent:
+// View::focus() registers the view as its window's key target and
+// dispatchKeyEvent routes key events there, falling back to the content view
+// when nothing claimed focus. Main-thread only.
+void setFocusedView(View* view);
+void clearFocusedView(View* view);
+View* findFocusedViewForHwnd(HWND hwnd);
+
 // Marks `view` and all its subviews for repaint, e.g. after a DPI change or a
 // rendering-device replacement invalidates every backing surface.
 void repaintViewTree(View* view);

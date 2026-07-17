@@ -59,6 +59,16 @@ void openExternalURL(const std::string& url);
 // runtime. No-op on Windows, Linux and iOS.
 void setDockIconVisible(bool visible);
 
+// macOS: called when the user reactivates the app (Dock icon click) while
+// it has no visible windows — applicationShouldHandleReopen:. A window
+// hidden via WindowOptions::hidesOnClose uses this to come back:
+// setReopenHandler([&] { window.setVisible(true); }). Unset, reopen falls
+// through to the system default. Never fires on other platforms.
+void setReopenHandler(const Callback& handler);
+
+// Internal: the handler above, invoked by the platform's app delegate.
+const Callback& getReopenHandler();
+
 // True when this process's executable carries a distribution code signature:
 // Developer ID or Apple-issued (App Store / system) on macOS, an embedded
 // Authenticode signature on Windows, no development provisioning profile on

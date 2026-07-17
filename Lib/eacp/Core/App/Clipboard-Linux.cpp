@@ -11,4 +11,9 @@ bool copyFiles(const Vector<std::string>&)
 {
     return false;
 }
+
+std::string getText()
+{
+    return {};
+}
 } // namespace eacp::Clipboard

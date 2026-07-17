@@ -22,7 +22,7 @@
 namespace eacp::GPU
 {
 // One recording in flight: an allocator/list pair plus the transient upload
-// resources (per-draw constant buffers, staging copies) the recorded commands
+// resources (staging copies, outgrown constant arenas) the recorded commands
 // reference. Everything is released together once fenceValue has passed.
 struct CommandContext
 {
@@ -30,6 +30,18 @@ struct CommandContext
     winrt::com_ptr<ID3D12GraphicsCommandList> list;
     Vector<winrt::com_ptr<ID3D12Resource>> transients;
     std::uint64_t fenceValue = 0;
+
+    // The recording's constant arena: one persistently mapped upload buffer
+    // that uploadConstants bump-allocates 256-byte slices from, rewound when
+    // the context is recycled. Recycling waits for the fence, so the GPU is
+    // done with every slice before it is reused. Without this, each per-draw
+    // uniform set would be its own CreateCommittedResource — a driver heap
+    // allocation per sprite, which made dense scenes (a terminal grid)
+    // hundreds of times slower than the Metal backend's inline bytes.
+    winrt::com_ptr<ID3D12Resource> constants;
+    std::byte* constantsMapped = nullptr;
+    std::size_t constantsCapacity = 0;
+    std::size_t constantsUsed = 0;
 
     // Identifies the recording for buffer state tracking: a buffer first
     // touched under a new id was implicitly promoted from COMMON, so no
@@ -90,9 +102,8 @@ public:
     void waitFor(std::uint64_t value);
     void waitIdle();
 
-    // Copies bytes into a fresh upload-heap buffer parked on the recording
-    // (so it outlives GPU execution) and returns its address for a root CBV.
-    // Returns 0 on failure.
+    // Copies bytes into the recording's constant arena and returns the
+    // slice's address for a root CBV. Returns 0 on failure.
     D3D12_GPU_VIRTUAL_ADDRESS uploadConstants(CommandContext& commands,
                                               const void* data,
                                               std::size_t bytes);
@@ -138,6 +149,7 @@ private:
     void freeFrom(DescriptorAllocator& allocator, const DescriptorSlot& slot);
     std::uint64_t signal();
     void purgeRetired();
+    bool ensureConstantCapacity(CommandContext& commands, std::size_t bytes);
 
     winrt::com_ptr<ID3D12Device> device;
     winrt::com_ptr<ID3D12CommandQueue> queue;

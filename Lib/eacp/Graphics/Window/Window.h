@@ -59,6 +59,13 @@ struct WindowOptions
     // terminate the app when onQuit is unset.
     bool isPrimary = true;
 
+    // Closing the window (red button / Alt+F4) hides it instead of
+    // destroying it — onQuit never fires and the app keeps running with the
+    // window's state alive. Bring it back with setVisible(true), e.g. from
+    // a tray icon, a Dock reopen (Apps::setReopenHandler) or a notification
+    // click. Quitting the app still tears the window down normally.
+    bool hidesOnClose = false;
+
     // Called after the window has been resized. Sizes are in points and refer
     // to the content view, not the outer frame.
     ResizeCallback onResize {};

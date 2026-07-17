@@ -14,8 +14,12 @@
 namespace eacp::Graphics
 {
 
-// Defined in Window-Windows.cpp: the HWND hosting `view`'s root.
+// Defined in CompositionHostWindow-Windows.cpp: the HWND hosting `view`'s
+// root, and the per-window keyboard-focus registry backing View::focus().
 HWND findHostHwndForView(View* view);
+void setFocusedView(View* view);
+void clearFocusedView(View* view);
+View* findFocusedViewForHwnd(HWND hwnd);
 
 namespace
 {
@@ -441,12 +445,17 @@ struct View::Native
         }
     }
 
+    // Offsets only take effect on the next commit. Views that also paint get
+    // one from the WM_PAINT flow, but a pure container moved by layout (a
+    // split pane hosting a GPU view) would otherwise keep its stale position
+    // until something else happened to commit.
     void updateVisualPosition()
     {
         if (visual)
         {
             visual->SetOffsetX(bounds.x);
             visual->SetOffsetY(bounds.y);
+            commitComposition();
         }
     }
 
@@ -646,6 +655,8 @@ View::View()
 
 View::~View()
 {
+    clearFocusedView(this);
+
     for (auto* layer: getLayers())
         layer->detachFromLayer();
 
@@ -686,10 +697,16 @@ Point View::getMousePosition() const
 void View::focus()
 {
     impl->focus();
+    setFocusedView(this);
 }
 
 bool View::hasFocus() const
 {
+    auto* self = const_cast<View*>(this);
+
+    if (auto* host = findHostHwndForView(self))
+        return findFocusedViewForHwnd(host) == self;
+
     return impl->hasFocus();
 }
 
@@ -1086,6 +1103,24 @@ void View::viewAdded(View& view)
 
 void View::viewRemoved(View& view)
 {
+    // If keyboard focus lives inside the departing subtree, drop it before the
+    // parent chain is severed — keys then fall back to the content view
+    // instead of routing to a detached view.
+    if (auto* host = findHostHwndForView(this))
+    {
+        auto* focused = findFocusedViewForHwnd(host);
+
+        for (auto* candidate = focused; candidate != nullptr;
+             candidate = candidate->getParent())
+        {
+            if (candidate == &view)
+            {
+                clearFocusedView(focused);
+                break;
+            }
+        }
+    }
+
     impl->removeSubview(view);
 }
 } // namespace eacp::Graphics

@@ -325,6 +325,7 @@ CommandContext* D3D12Context::acquire()
         commands = *recycled;
         available.erase(recycled);
         commands->transients.clear();
+        commands->constantsUsed = 0;
         commands->allocator->Reset();
         commands->list->Reset(commands->allocator.get(), nullptr);
     }
@@ -425,23 +426,51 @@ D3D12_GPU_VIRTUAL_ADDRESS D3D12Context::uploadConstants(CommandContext& commands
                                                         std::size_t bytes)
 {
     auto aligned = (bytes + constantAlignment - 1) & ~(constantAlignment - 1);
-    auto buffer = makeUploadBuffer(nullptr, aligned);
+
+    if (!ensureConstantCapacity(commands, aligned))
+        return 0;
+
+    std::memcpy(commands.constantsMapped + commands.constantsUsed, data, bytes);
+
+    auto address =
+        commands.constants->GetGPUVirtualAddress() + commands.constantsUsed;
+    commands.constantsUsed += aligned;
+    return address;
+}
+
+bool D3D12Context::ensureConstantCapacity(CommandContext& commands,
+                                          std::size_t bytes)
+{
+    if (commands.constants != nullptr
+        && commands.constantsUsed + bytes <= commands.constantsCapacity)
+        return true;
+
+    // Doubles from a megabyte, so a dense scene settles on one buffer after
+    // its first frame. The outgrown buffer is parked on the recording: draws
+    // already recorded still read from it until the fence passes.
+    constexpr std::size_t initialArenaBytes = 1 << 20;
+    const auto capacity =
+        std::max({initialArenaBytes, commands.constantsCapacity * 2, bytes});
+
+    auto buffer = makeUploadBuffer(nullptr, capacity);
 
     if (buffer == nullptr)
-        return 0;
+        return false;
 
     void* mapped = nullptr;
     const D3D12_RANGE noRead = {0, 0};
 
     if (FAILED(buffer->Map(0, &noRead, &mapped)))
-        return 0;
+        return false;
 
-    std::memcpy(mapped, data, bytes);
-    buffer->Unmap(0, nullptr);
+    if (commands.constants != nullptr)
+        commands.transients.add(std::move(commands.constants));
 
-    auto address = buffer->GetGPUVirtualAddress();
-    commands.transients.add(std::move(buffer));
-    return address;
+    commands.constants = std::move(buffer);
+    commands.constantsMapped = static_cast<std::byte*>(mapped);
+    commands.constantsCapacity = capacity;
+    commands.constantsUsed = 0;
+    return true;
 }
 
 winrt::com_ptr<ID3D12Resource> D3D12Context::makeUploadBuffer(const void* data,

@@ -156,4 +156,40 @@ bool copyFiles(const Vector<std::string>& paths)
 
     return ok;
 }
+
+std::string getText()
+{
+    if (!openClipboardWithRetry(nullptr))
+        return {};
+
+    auto result = std::string {};
+
+    if (auto handle = GetClipboardData(CF_UNICODETEXT))
+    {
+        if (const auto* wide = static_cast<const wchar_t*>(GlobalLock(handle)))
+        {
+            auto length = static_cast<int>(wcslen(wide));
+            auto required = WideCharToMultiByte(
+                CP_UTF8, 0, wide, length, nullptr, 0, nullptr, nullptr);
+
+            if (required > 0)
+            {
+                result.assign(static_cast<std::size_t>(required), '\0');
+                WideCharToMultiByte(CP_UTF8,
+                                    0,
+                                    wide,
+                                    length,
+                                    result.data(),
+                                    required,
+                                    nullptr,
+                                    nullptr);
+            }
+
+            GlobalUnlock(handle);
+        }
+    }
+
+    CloseClipboard();
+    return result;
+}
 } // namespace eacp::Clipboard

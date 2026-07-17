@@ -127,4 +127,9 @@ void TrayIcon::setTemplateRendering(bool shouldRenderAsTemplate)
     impl->setTemplateRendering(shouldRenderAsTemplate);
 }
 
+// Notifications are a Windows tray affordance; macOS apps post through the
+// notification center instead.
+void TrayIcon::showNotification(const std::string&, const std::string&) {}
+void TrayIcon::setOnNotificationClick(Callback) {}
+
 } // namespace eacp::Graphics

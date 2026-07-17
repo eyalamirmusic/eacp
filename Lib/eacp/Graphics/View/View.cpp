@@ -73,15 +73,35 @@ void View::addSubview(View& view)
     viewAdded(view);
 }
 
+namespace
+{
+bool isInSubtree(const View* candidate, const View& subtreeRoot)
+{
+    for (const auto* view = candidate; view != nullptr; view = view->getParent())
+        if (view == &subtreeRoot)
+            return true;
+
+    return false;
+}
+} // namespace
+
 void View::removeSubview(View& view)
 {
     if (subviews.removeAllMatches(&view) > 0)
     {
-        if (hoveredView == &view)
-            hoveredView = nullptr;
+        // Hover and mouse-capture caches live on whichever ancestor
+        // dispatched the event — usually the window's content view — and may
+        // point anywhere inside the subtree leaving here. Sweep the whole
+        // ancestor chain so no cache outlives the views it points into.
+        for (auto* ancestor = this; ancestor != nullptr;
+             ancestor = ancestor->getParent())
+        {
+            if (isInSubtree(ancestor->hoveredView, view))
+                ancestor->hoveredView = nullptr;
 
-        if (mouseDownTarget == &view)
-            mouseDownTarget = nullptr;
+            if (isInSubtree(ancestor->mouseDownTarget, view))
+                ancestor->mouseDownTarget = nullptr;
+        }
 
         viewRemoved(view);
     }

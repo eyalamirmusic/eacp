@@ -41,4 +41,10 @@ bool copyFiles(const Vector<std::string>& paths)
 
     return [pasteboard writeObjects:urls];
 }
+
+std::string getText()
+{
+    auto* pasteboard = [NSPasteboard generalPasteboard];
+    return Strings::toStdString([pasteboard stringForType:NSPasteboardTypeString]);
+}
 } // namespace eacp::Clipboard
