@@ -151,6 +151,14 @@ bool Pty::start(const PtyOptions& options,
     auto info = PROCESS_INFORMATION {};
     const auto shell = findShell();
     auto commandLine = L"\"" + shell + L"\"";
+
+    if (!options.command.empty())
+    {
+        const auto isCmd = shell.find(L"cmd.exe") != std::wstring::npos;
+        const auto wide = toWideString(options.command);
+        commandLine +=
+            isCmd ? L" /c " + wide : L" -NoLogo -Command \"" + wide + L"\"";
+    }
     const auto directory = startDirectory(options.workingDirectory);
 
     const auto launched =

@@ -10,6 +10,7 @@ ordering and ring-back notifications replace the tmux-sessionizer workflow.
 | Key | Action |
 | --- | --- |
 | `Ctrl+A f` / `w` / `p` (or `Cmd+K` / `Cmd+T`) | Open the palette |
+| `Ctrl+A i` | Lazygit popup in the active pane's directory |
 | `Ctrl+A "` | Split pane below (in the pane's directory) |
 | `Ctrl+A %` (or `Cmd+D`) | Split pane right (in the pane's directory) |
 | `Ctrl+A h/j/k/l` | Focus pane in direction |
@@ -41,6 +42,16 @@ One overlay, everything fuzzy-searchable (Wim-style scoring + MRU):
   session there (or switches if one exists).
 
 Type to rank; `Enter` opens, `Esc` closes, arrows or `Ctrl+P/N` move.
+
+## The lazygit popup
+
+`Ctrl+A i` opens lazygit full-window over the current session, in the active
+pane's directory — tmux's `display-popup -E -w 100% -h 100% lazygit`. Quit
+lazygit (`q`) and the popup is gone with focus back where it was;
+`Ctrl+A i` again force-dismisses. The command runs through your login shell
+(`$SHELL -c`), so PATH and `$EDITOR` apply: lazygit's `e` opens nvim inside
+the popup's own PTY, edit, `:q`, and you're back in lazygit. The popup's
+shell is in-process and ephemeral — it never goes to the session daemon.
 
 ## Ring-back notifications
 

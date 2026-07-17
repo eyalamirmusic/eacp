@@ -3,6 +3,8 @@
 
 #include <eacp/Core/App/App.h>
 
+#include <cctype>
+
 namespace term
 {
 using namespace eacp;
@@ -52,6 +54,10 @@ AppShell::AppShell()
 
     palette.onClosed = [this] { hidePalette(); };
 
+    popup.onClosed = [this] { hidePopup(); };
+
+    popup.interceptKey = [this](const KeyEvent& event) { return popupKey(event); };
+
     Notifier::initialize(
         [this](const std::string& sessionKey)
         {
@@ -93,6 +99,7 @@ void AppShell::resized()
         attached->view.setBounds(bounds);
 
     palette.setBounds(bounds);
+    popup.setBounds(bounds);
 }
 
 void AppShell::updateTitle()
@@ -142,6 +149,60 @@ void AppShell::hidePalette()
         attached->view.focusActive();
 }
 
+void AppShell::showPopup(const std::string& command)
+{
+    if (popup.isShown())
+        return;
+
+    auto* active = manager.active();
+
+    const auto dir =
+        active != nullptr ? active->activeWorkingDirectory() : std::string {};
+
+    popupPrefixArmed = false;
+    addSubview(popup);
+    popup.setBounds(getLocalBounds());
+    popup.show(command, dir);
+}
+
+void AppShell::hidePopup()
+{
+    removeSubview(popup);
+
+    if (attached != nullptr)
+        attached->view.focusActive();
+}
+
+bool AppShell::popupKey(const KeyEvent& event)
+{
+    if (popupPrefixArmed)
+    {
+        popupPrefixArmed = false;
+
+        if (event.modifiers.control && event.charactersIgnoringModifiers == "a")
+            return false;
+
+        if (event.charactersIgnoringModifiers == "i")
+        {
+            popup.dismiss();
+            return true;
+        }
+
+        // The rest of the leader table targets panes hidden behind the
+        // popup; swallow rather than mutate what the user can't see.
+        return true;
+    }
+
+    if (event.modifiers.control && event.charactersIgnoringModifiers == "a"
+        && !event.modifiers.command)
+    {
+        popupPrefixArmed = true;
+        return true;
+    }
+
+    return false;
+}
+
 bool AppShell::interceptKey(const KeyEvent& event)
 {
     if (prefixArmed)
@@ -173,17 +234,20 @@ bool AppShell::handlePrefixed(const KeyEvent& event)
     if (event.modifiers.control && chars == "a")
         return false;
 
-    // Ctrl+h/j/k/l: resize the active pane by one cell (tmux C-a C-h...).
-    if (event.modifiers.control && chars.size() == 1
-        && (chars == "h" || chars == "j" || chars == "k" || chars == "l"))
+    // Shift+H/J/K/L: resize the active pane by one cell. Ctrl is left out
+    // of resize on purpose: rolling the prefix leaves it held, so Ctrl+h
+    // must mean "move focus", never resize.
+    if (chars == "H" || chars == "J" || chars == "K" || chars == "L")
     {
         if (paneTree != nullptr)
-            paneTree->resizeActive(chars[0], 1.0f);
+            paneTree->resizeActive((char) std::tolower((unsigned char) chars[0]),
+                                   1.0f);
 
         return true;
     }
 
-    // Arrow keys resize too: Alt = 5 cells, Ctrl (or plain) = 1.
+    // Arrows: plain moves focus (tmux select-pane); Ctrl resizes by one
+    // cell, Alt by five.
     const auto arrowDirection = [&]() -> char
     {
         switch (event.keyCode)
@@ -204,8 +268,13 @@ bool AppShell::handlePrefixed(const KeyEvent& event)
     if (arrowDirection != 0)
     {
         if (paneTree != nullptr)
-            paneTree->resizeActive(arrowDirection,
-                                   event.modifiers.alt ? 5.0f : 1.0f);
+        {
+            if (event.modifiers.control || event.modifiers.alt)
+                paneTree->resizeActive(arrowDirection,
+                                       event.modifiers.alt ? 5.0f : 1.0f);
+            else
+                paneTree->focusDirection(arrowDirection);
+        }
 
         return true;
     }
@@ -213,6 +282,14 @@ bool AppShell::handlePrefixed(const KeyEvent& event)
     if (chars == "f" || chars == "w" || chars == "p")
     {
         showPalette();
+        return true;
+    }
+
+    // Lazygit over the active pane's directory, tmux display-popup style;
+    // quitting lazygit (or Ctrl+A i again) dismisses it.
+    if (chars == "i")
+    {
+        showPopup("lazygit");
         return true;
     }
 
@@ -233,6 +310,7 @@ bool AppShell::handlePrefixed(const KeyEvent& event)
         return true;
     }
 
+    // Focus moves whether or not Ctrl is still down from the prefix roll.
     if (chars == "h" || chars == "j" || chars == "k" || chars == "l")
     {
         if (paneTree != nullptr)

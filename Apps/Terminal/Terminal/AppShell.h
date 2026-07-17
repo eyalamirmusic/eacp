@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "Palette.h"
+#include "Popup.h"
 #include "Session.h"
 #include "TrayController.h"
 
@@ -33,8 +34,11 @@ private:
     bool interceptKey(const eacp::Graphics::KeyEvent& event);
     bool handlePrefixed(const eacp::Graphics::KeyEvent& event);
     bool handleCommand(const eacp::Graphics::KeyEvent& event);
+    bool popupKey(const eacp::Graphics::KeyEvent& event);
     void showPalette();
     void hidePalette();
+    void showPopup(const std::string& command);
+    void hidePopup();
     void attachActive(TermSession& session);
     void updateTitle();
     void handleSessionNotify(TermSession& session, const std::string& text);
@@ -42,9 +46,11 @@ private:
     AppConfig config = loadConfig();
     SessionManager manager {config};
     Palette palette {config, manager};
+    Popup popup {config};
     TrayController tray {manager};
     TermSession* attached = nullptr;
     bool prefixArmed = false;
+    bool popupPrefixArmed = false;
     bool windowFocused = true;
 };
 } // namespace term

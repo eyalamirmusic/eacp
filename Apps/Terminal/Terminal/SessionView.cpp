@@ -210,10 +210,20 @@ SessionView::Node* SessionView::leafFor(const TerminalView* view) const
 
 void SessionView::setActive(Node* leaf)
 {
+    auto* previous = active;
     active = leaf;
 
+    // Repaint both panes so the cursor swaps solid/hollow immediately
+    // instead of on the next blink tick. A split moves the previous node's
+    // view into a child, so it can be gone.
+    if (previous != nullptr && previous != leaf && previous->view != nullptr)
+        previous->view->refreshCursor();
+
     if (active != nullptr)
+    {
         active->view->focus();
+        active->view->refreshCursor();
+    }
 
     onActivePaneChanged();
     repaint();

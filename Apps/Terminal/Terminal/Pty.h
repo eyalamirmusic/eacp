@@ -23,6 +23,11 @@ struct PtyOptions
 
     // Where the shell starts; empty means the user's home directory.
     std::string workingDirectory;
+
+    // Run this command (through the shell, so the login environment and
+    // PATH apply) instead of an interactive shell; the PTY ends when it
+    // exits. Empty runs the user's shell.
+    std::string command;
 };
 
 // A pseudo-terminal running the user's login shell. Output is delivered on a

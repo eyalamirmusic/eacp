@@ -19,7 +19,8 @@ namespace term
 {
 namespace
 {
-[[noreturn]] void execShell(const std::string& workingDirectory)
+[[noreturn]] void execShell(const std::string& workingDirectory,
+                            const std::string& command)
 {
     for (auto sig: {SIGINT, SIGQUIT, SIGTSTP, SIGPIPE, SIGCHLD})
         signal(sig, SIG_DFL);
@@ -47,7 +48,11 @@ namespace
     const auto loginName =
         "-" + (slash == std::string::npos ? shellPath : shellPath.substr(slash + 1));
 
-    execl(shell, loginName.c_str(), (char*) nullptr);
+    if (command.empty())
+        execl(shell, loginName.c_str(), (char*) nullptr);
+    else
+        execl(shell, loginName.c_str(), "-c", command.c_str(), (char*) nullptr);
+
     _exit(127);
 }
 
@@ -80,7 +85,7 @@ bool Pty::start(const PtyOptions& options,
         return false;
 
     if (child == 0)
-        execShell(options.workingDirectory);
+        execShell(options.workingDirectory, options.command);
 
     fd = masterFd;
     pid = child;
