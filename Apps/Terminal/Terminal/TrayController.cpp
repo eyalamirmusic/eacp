@@ -1,4 +1,5 @@
 #include "TrayController.h"
+#include "Notifier.h"
 
 #include <eacp/Core/App/App.h>
 
@@ -45,6 +46,7 @@ TrayController::TrayController(SessionManager& sessionsToUse)
 {
     icon.setIcon(makeIcon());
     icon.setTooltip("wim terminal");
+    Notifier::attachTray(icon);
     refresh();
 }
 
