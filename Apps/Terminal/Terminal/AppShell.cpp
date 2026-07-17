@@ -182,7 +182,19 @@ bool AppShell::popupKey(const KeyEvent& event)
         if (event.modifiers.control && event.charactersIgnoringModifiers == "a")
             return false;
 
-        if (event.charactersIgnoringModifiers == "i")
+        const auto togglesPopup = [&](const std::string& chars)
+        {
+            if (chars == "i")
+                return true;
+
+            for (const auto& binding: config.bindings)
+                if (!binding.popup.empty() && chars == binding.key)
+                    return true;
+
+            return false;
+        };
+
+        if (togglesPopup(event.charactersIgnoringModifiers))
         {
             popup.dismiss();
             return true;
@@ -233,6 +245,26 @@ bool AppShell::handlePrefixed(const KeyEvent& event)
     // Prefix twice sends a literal Ctrl+A through to the shell.
     if (event.modifiers.control && chars == "a")
         return false;
+
+    // Config bindings first, so ~/.config/wim.json can override built-ins.
+    for (const auto& binding: config.bindings)
+    {
+        if (binding.key.empty() || chars != binding.key)
+            continue;
+
+        if (!binding.send.empty())
+        {
+            if (paneTree != nullptr)
+                if (auto* pane = paneTree->activePane())
+                    pane->sendText(binding.send);
+        }
+        else if (!binding.popup.empty())
+        {
+            showPopup(binding.popup);
+        }
+
+        return true;
+    }
 
     // Shift+H/J/K/L: resize the active pane by one cell. Ctrl is left out
     // of resize on purpose: rolling the prefix leaves it held, so Ctrl+h

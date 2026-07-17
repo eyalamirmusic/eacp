@@ -41,6 +41,10 @@ public:
     // detaches, so shells held by the daemon survive teardown.
     void terminateShell();
 
+    // Types text into the shell as if the user had; "\n" presses Enter.
+    // Backs the config file's send-keys bindings.
+    void sendText(std::string_view text);
+
     // Focus moved into or out of this pane: redraw the cursor in its new
     // state now instead of waiting for the next blink tick.
     void refreshCursor();

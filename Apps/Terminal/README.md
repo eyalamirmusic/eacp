@@ -22,6 +22,8 @@ ordering and ring-back notifications replace the tmux-sessionizer workflow.
 | `Ctrl+A c` (or `Cmd+N`) | New session in the active pane's directory |
 | `Ctrl+A 1..9` (or `Cmd+1..9`) | Switch to session by index |
 | `Ctrl+A ^` | Toggle to the previous session |
+| `Ctrl+A u` | Send `cd ..` + Enter (config binding) |
+| `Ctrl+A n` | Send `nvim .` + Enter (config binding) |
 | `Ctrl+A Ctrl+A` | Send a literal `Ctrl+A` to the shell |
 | `Cmd+C` / `Cmd+V` | Copy selection / paste (bracketed) |
 | `Cmd++` / `Cmd+-` / `Cmd+0` | Font size |
@@ -75,13 +77,31 @@ closed.
     "searchDirs": ["~/projects", "~/projects/mayk-it", "~"],
     "font": "JetBrains Mono",
     "fontSize": 13,
-    "theme": "rosepine"
+    "theme": "rosepine",
+    "bindings": [
+        { "key": "u", "send": "cd ..\n" },
+        { "key": "n", "send": "nvim .\n" },
+        { "key": "g", "popup": "gh dash" }
+    ]
 }
 ```
 
 Unknown keys are ignored; missing keys keep defaults. Themes: `rosepine`,
 `tokyonight`. JetBrains Mono ships embedded in the binary (ResEmbed) and is
 registered with CoreText at startup — no font install needed.
+
+`bindings` extends the `Ctrl+A` leader table, tmux-style, and runs before
+the built-ins so a binding can also re-purpose a built-in key. `key` is the
+character typed after the prefix; the action is one of:
+
+- `send` — type text into the active pane (`bind u send-keys 'cd ..' Enter`);
+  `\n` presses Enter.
+- `popup` — run a command full-window over the session
+  (`display-popup -E`); the same leader key (or quitting the command)
+  dismisses it.
+
+`Ctrl+A u` (`cd ..`) and `Ctrl+A n` (`nvim .`) ship as defaults even with
+no config file.
 
 ## The session daemon (real tmux mode)
 

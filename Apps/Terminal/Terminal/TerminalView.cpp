@@ -225,6 +225,13 @@ void TerminalView::sendAndScrollToBottom(std::string_view bytes)
     repaint();
 }
 
+void TerminalView::sendText(std::string_view text)
+{
+    auto bytes = std::string {text};
+    std::replace(bytes.begin(), bytes.end(), '\n', '\r');
+    sendAndScrollToBottom(bytes);
+}
+
 void TerminalView::resized()
 {
     GPUView::resized();
