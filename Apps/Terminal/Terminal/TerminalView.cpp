@@ -92,18 +92,28 @@ std::string generateShellId()
     std::snprintf(buffer, sizeof(buffer), "%016llx", (unsigned long long) engine());
     return buffer;
 }
+
+std::unique_ptr<Shell> shellFor(const std::string& shellId,
+                                const std::string& command)
+{
+    if (command.empty())
+        return makeShell(shellId);
+
+    return std::make_unique<LocalShell>();
+}
 } // namespace
 
 TerminalView::TerminalView(const AppConfig& config,
                            const std::string& workingDirectory,
-                           const std::string& shellIdToUse)
+                           const std::string& shellIdToUse,
+                           const std::string& commandToRun)
     : theme(themeByName(config.theme))
     , fontName(config.font)
     , screen(80, 24, theme)
     , parser(screen, theme)
     , fontSize(config.fontSize)
     , paneShellId(shellIdToUse.empty() ? generateShellId() : shellIdToUse)
-    , shell(makeShell(paneShellId))
+    , shell(shellFor(paneShellId, commandToRun))
     , blinkTimer(
           [this]
           {
@@ -137,7 +147,7 @@ TerminalView::TerminalView(const AppConfig& config,
     auto guard = std::weak_ptr<bool> {alive};
 
     shell->start(
-        {{screen.columns(), screen.rows()}, workingDirectory},
+        {{screen.columns(), screen.rows()}, workingDirectory, commandToRun},
         [this, guard](const std::string& data)
         {
             {
@@ -173,6 +183,12 @@ TerminalView::~TerminalView()
 void TerminalView::terminateShell()
 {
     shell->terminate();
+}
+
+void TerminalView::refreshCursor()
+{
+    blinkOn = true;
+    repaint();
 }
 
 void TerminalView::flushOutput()

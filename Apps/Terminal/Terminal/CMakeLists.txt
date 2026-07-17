@@ -13,6 +13,7 @@ add_executable(Terminal
         Config.cpp
         MruStore.cpp
         Palette.cpp
+        Popup.cpp
         Projects.cpp
         Session.cpp
         SessionView.cpp

@@ -25,10 +25,14 @@ class TerminalView final : public eacp::GPU::GPUView
 public:
     // shellId names this pane's shell in the session daemon; panes restored
     // from a snapshot pass their saved id so a still-running shell is
-    // adopted. Empty generates a fresh one.
+    // adopted. Empty generates a fresh one. A non-empty command runs that
+    // command instead of an interactive shell, in an in-process PTY the
+    // daemon never sees — the terminal is ephemeral by construction and
+    // ends with the command (the lazygit popup).
     TerminalView(const AppConfig& config,
                  const std::string& workingDirectory,
-                 const std::string& shellIdToUse = {});
+                 const std::string& shellIdToUse = {},
+                 const std::string& commandToRun = {});
     ~TerminalView() override;
 
     const std::string& shellId() const { return paneShellId; }
@@ -36,6 +40,10 @@ public:
     // Ends the shell process on purpose (pane closed). The destructor only
     // detaches, so shells held by the daemon survive teardown.
     void terminateShell();
+
+    // Focus moved into or out of this pane: redraw the cursor in its new
+    // state now instead of waiting for the next blink tick.
+    void refreshCursor();
 
     std::function<void(const std::string&)> onTitleChanged =
         [](const std::string&) {};
