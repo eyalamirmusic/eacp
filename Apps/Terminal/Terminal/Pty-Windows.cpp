@@ -332,12 +332,11 @@ TreeInfo inspectProcessTree(DWORD rootPid)
 // keeps CurrentDirectory right after the standard handles.
 std::string processWorkingDirectory(DWORD pid)
 {
-    using NtQueryInformationProcessFn = NTSTATUS(NTAPI*)(
-        HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
+    using NtQueryInformationProcessFn =
+        NTSTATUS(NTAPI*)(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
 
-    static const auto query = (NtQueryInformationProcessFn) (void*)
-        GetProcAddress(GetModuleHandleW(L"ntdll.dll"),
-                       "NtQueryInformationProcess");
+    static const auto query = (NtQueryInformationProcessFn) (void*) GetProcAddress(
+        GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess");
 
     if (query == nullptr)
         return {};
@@ -412,8 +411,7 @@ std::string Pty::foregroundProcess() const
         return {};
 
     const auto info = inspectProcessTree(GetProcessId(process));
-    return baseName(info.youngestName.empty() ? info.rootName
-                                              : info.youngestName);
+    return baseName(info.youngestName.empty() ? info.rootName : info.youngestName);
 }
 
 std::string Pty::currentWorkingDirectory() const

@@ -866,6 +866,33 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
     return std::nullopt;
 }
 
+namespace
+{
+// The key's layout-aware text with Control and Alt stripped — Shift and Caps
+// Lock still apply — mirroring NSEvent.charactersIgnoringModifiers, which
+// shortcut matching keys off (Cmd+C, the terminal's Ctrl+A prefix: with
+// Control held, WM_CHAR only carries the control byte, never the "a").
+// ToUnicode's bit-2 flag keeps the call from disturbing the kernel's
+// dead-key state.
+std::string charactersIgnoringModifiers(WPARAM wParam, LPARAM lParam)
+{
+    BYTE state[256] = {};
+    state[VK_SHIFT] =
+        static_cast<BYTE>((GetKeyState(VK_SHIFT) & 0x8000) != 0 ? 0x80 : 0);
+    state[VK_CAPITAL] = static_cast<BYTE>(GetKeyState(VK_CAPITAL) & 1);
+
+    wchar_t buffer[8] = {};
+    const auto scanCode = static_cast<UINT>((lParam >> 16) & 0xff);
+    const auto count =
+        ToUnicode(static_cast<UINT>(wParam), scanCode, state, buffer, 8, 0x4);
+
+    if (count <= 0)
+        return {};
+
+    return fromWideString(std::wstring {buffer, static_cast<std::size_t>(count)});
+}
+} // namespace
+
 void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lParam)
 {
     auto down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
@@ -881,6 +908,7 @@ void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lPa
     event.keyCode = keyCodeFromVirtualKey(vk);
     event.type = down ? KeyEventType::Down : KeyEventType::Up;
     event.modifiers = getModifiers();
+    event.charactersIgnoringModifiers = charactersIgnoringModifiers(wParam, lParam);
 
     auto* target = findFocusedViewForHwnd(hwnd);
 
