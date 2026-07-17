@@ -1,4 +1,4 @@
-# Build, run and install the wim terminal.
+# Build, run and install the CowTerm terminal.
 #
 # Windows recipes run under cmd with the MSVC environment chained in via
 # vcvarsall. The 8.3 short path keeps every recipe line quote-free — just's
@@ -21,7 +21,7 @@ configure:
 configure:
     call {{ vcvars }} arm64 >nul && cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
 
-# Build the terminal (and its daemon).
+# Build CowTerm (and its daemon).
 [macos]
 build:
     @test -f build/CMakeCache.txt || just configure
@@ -32,25 +32,25 @@ build:
     @if not exist build\CMakeCache.txt just configure
     call {{ vcvars }} arm64 >nul && cmake --build build --target CowTerm
 
-# Build and launch the terminal.
+# Build and launch CowTerm.
 [macos]
 run: build
-    open "build/Apps/Terminal/Terminal/Terminal.app"
+    open "build/Apps/Terminal/Terminal/CowTerm.app"
 
 [windows]
 run: build
-    start build\Apps\Terminal\Terminal\Terminal.exe
+    start build\Apps\Terminal\Terminal\CowTerm.exe
 
-# Build and install: /Applications/wim.app (macOS),
-# %LOCALAPPDATA%\Programs\wim (Windows).
+# Build and install: /Applications/CowTerm.app (macOS),
+# %LOCALAPPDATA%\Programs\CowTerm (Windows).
 [macos]
 install: build
-    ditto "build/Apps/Terminal/Terminal/Terminal.app" "/Applications/wim.app"
-    @echo "installed /Applications/wim.app"
+    ditto "build/Apps/Terminal/Terminal/CowTerm.app" "/Applications/CowTerm.app"
+    @echo "installed /Applications/CowTerm.app"
 
 [windows]
 install: build
-    if not exist %LOCALAPPDATA%\Programs\wim mkdir %LOCALAPPDATA%\Programs\wim
-    copy /y build\Apps\CowTerm\CowTerm\CowTerm.exe %LOCALAPPDATA%\Programs\wim >nul
-    copy /y build\Apps\CowTerm\CowTerm\CowTermDaemon.exe %LOCALAPPDATA%\Programs\wim >nul
-    @echo installed to %LOCALAPPDATA%\Programs\wim
+    if not exist %LOCALAPPDATA%\Programs\CowTerm mkdir %LOCALAPPDATA%\Programs\CowTerm
+    copy /y build\Apps\Terminal\Terminal\CowTerm.exe %LOCALAPPDATA%\Programs\CowTerm >nul
+    copy /y build\Apps\Terminal\Daemon\CowTermDaemon.exe %LOCALAPPDATA%\Programs\CowTerm >nul
+    @echo installed to %LOCALAPPDATA%\Programs\CowTerm
