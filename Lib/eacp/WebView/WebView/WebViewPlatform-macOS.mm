@@ -227,9 +227,31 @@ void dragWebViewMouseUp(id self, SEL, NSEvent* event)
     ObjC::sendSuper<void>(self, [WKWebView class], @selector(mouseUp:), event);
 }
 
+// The same NSEvent can hit the keyDown: override twice: when the page leaves
+// a key unhandled, WebKit re-sends the original event through the responder
+// chain (_resendKeyDownEvent), and the re-send lands back on this view first.
+// The page shim only reports ONE verdict per event, so stashing the re-send
+// would leave a stale entry that desyncs every later verdict — key-downs then
+// pop the wrong stashed event, while key-ups (never re-sent) stay aligned.
+bool isAlreadyStashed(NSEvent* event, const Vector<ObjC::Ptr<NSEvent>>& queue)
+{
+    for (auto& stashed: queue)
+    {
+        if (stashed.get() == event
+            || (stashed.get().timestamp == event.timestamp
+                && stashed.get().keyCode == event.keyCode))
+            return true;
+    }
+
+    return false;
+}
+
 void stashKeyEvent(NSEvent* event, Vector<ObjC::Ptr<NSEvent>>& queue)
 {
     dropExpiredKeyEvents(queue);
+
+    if (isAlreadyStashed(event, queue))
+        return;
 
     if (queue.size() >= maxPendingKeyEvents)
         queue.removeAt(0);
