@@ -191,8 +191,7 @@ std::string Pty::currentWorkingDirectory() const
 #if defined(__APPLE__)
     auto info = proc_vnodepathinfo {};
 
-    if (proc_pidinfo((pid_t) pid, PROC_PIDVNODEPATHINFO, 0, &info, sizeof(info))
-        > 0)
+    if (proc_pidinfo((pid_t) pid, PROC_PIDVNODEPATHINFO, 0, &info, sizeof(info)) > 0)
         return info.pvi_cdir.vip_path;
 
     return {};

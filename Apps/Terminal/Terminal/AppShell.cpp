@@ -68,7 +68,6 @@ void AppShell::start()
     manager.restoreOrCreateInitial();
 }
 
-
 void AppShell::attachActive(TermSession& session)
 {
     if (attached != &session)
@@ -115,8 +114,7 @@ void AppShell::handleSessionNotify(TermSession& session, const std::string& text
 {
     // The active, focused session is right in front of the user — no need
     // to shout about it.
-    const auto* pane =
-        const_cast<const SessionView&>(session.view).activePane();
+    const auto* pane = const_cast<const SessionView&>(session.view).activePane();
 
     if (windowFocused && manager.active() == &session && pane != nullptr
         && pane->hasFocus())

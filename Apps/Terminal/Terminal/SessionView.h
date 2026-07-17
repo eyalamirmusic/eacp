@@ -81,9 +81,8 @@ private:
     };
 
     std::unique_ptr<Node> makeLeaf(const std::string& dir);
-    std::unique_ptr<Node> buildFromSaved(const std::vector<SavedPane>& saved,
-                                         int index,
-                                         int depth);
+    std::unique_ptr<Node>
+        buildFromSaved(const std::vector<SavedPane>& saved, int index, int depth);
     void appendSnapshot(const Node& node, std::vector<SavedPane>& out) const;
 
     void layout();

@@ -18,8 +18,7 @@ bool overlaps(float aStart, float aEnd, float bStart, float bEnd)
 }
 } // namespace
 
-SessionView::SessionView(const AppConfig& configToUse,
-                         std::string fallbackDirToUse)
+SessionView::SessionView(const AppConfig& configToUse, std::string fallbackDirToUse)
     : config(configToUse)
     , fallbackDir(std::move(fallbackDirToUse))
     , theme(themeByName(configToUse.theme))
@@ -35,8 +34,8 @@ SessionView::~SessionView()
 std::unique_ptr<SessionView::Node> SessionView::makeLeaf(const std::string& dir)
 {
     auto node = std::make_unique<Node>();
-    node->view = std::make_unique<TerminalView>(
-        config, dir.empty() ? fallbackDir : dir);
+    node->view =
+        std::make_unique<TerminalView>(config, dir.empty() ? fallbackDir : dir);
 
     // Tree surgery (split, sibling promotion) moves views between nodes, so
     // the callbacks resolve their node by view at fire time, never by a
@@ -77,10 +76,8 @@ void SessionView::restore(const std::vector<SavedPane>& saved)
     layout();
 }
 
-std::unique_ptr<SessionView::Node>
-    SessionView::buildFromSaved(const std::vector<SavedPane>& saved,
-                                int index,
-                                int depth)
+std::unique_ptr<SessionView::Node> SessionView::buildFromSaved(
+    const std::vector<SavedPane>& saved, int index, int depth)
 {
     if (index < 0 || index >= (int) saved.size() || depth > maxTreeDepth)
         return nullptr;
@@ -106,8 +103,7 @@ std::unique_ptr<SessionView::Node>
     return node;
 }
 
-void SessionView::appendSnapshot(const Node& node,
-                                 std::vector<SavedPane>& out) const
+void SessionView::appendSnapshot(const Node& node, std::vector<SavedPane>& out) const
 {
     const auto index = out.size();
     out.emplace_back();
@@ -277,8 +273,8 @@ void SessionView::removeLeaf(Node* leaf)
         active = nullptr;
 
     auto* parent = leaf->parent;
-    auto sibling = std::move(parent->first.get() == leaf ? parent->second
-                                                         : parent->first);
+    auto sibling =
+        std::move(parent->first.get() == leaf ? parent->second : parent->first);
 
     // The parent split collapses into the surviving subtree. The old
     // children (including `leaf`) are destroyed by the reassignments.
@@ -479,8 +475,7 @@ void SessionView::paint(eacp::Graphics::Context& context)
     {
         context.setColor(toColor(theme.paneBorderActive));
         const auto b = active->bounds;
-        context.fillRect(
-            {b.x - 1.5f, b.y - 1.5f, b.w + 3.0f, b.h + 3.0f});
+        context.fillRect({b.x - 1.5f, b.y - 1.5f, b.w + 3.0f, b.h + 3.0f});
     }
 }
 } // namespace term

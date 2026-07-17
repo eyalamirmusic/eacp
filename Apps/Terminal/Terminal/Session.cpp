@@ -100,9 +100,7 @@ void SessionManager::wireSession(TermSession& session)
     // The last pane closing ends the session. Deferred: onEmpty fires from
     // inside the session view, and close() destroys it.
     session.view.onEmpty = [this, raw]
-    {
-        eacp::Threads::callAsync([this, raw] { closeIfPresent(raw); });
-    };
+    { eacp::Threads::callAsync([this, raw] { closeIfPresent(raw); }); };
 
     session.view.onActivePaneChanged = [this, raw]
     {
