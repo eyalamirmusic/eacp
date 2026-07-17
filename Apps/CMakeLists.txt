@@ -5,6 +5,11 @@ add_subdirectory(Network)
 
 if (EACP_HAS_GPU)
     add_subdirectory(GPU)
+
+    # PTY backend is POSIX-only so far; Windows (ConPTY) comes next.
+    if (APPLE AND NOT IOS)
+        add_subdirectory(Terminal)
+    endif ()
 endif ()
 
 # All three paint through the platform's own 2D stack.

@@ -43,8 +43,7 @@ namespace
     auto shellPath = std::string {shell};
     const auto slash = shellPath.find_last_of('/');
     const auto loginName =
-        "-" + (slash == std::string::npos ? shellPath
-                                          : shellPath.substr(slash + 1));
+        "-" + (slash == std::string::npos ? shellPath : shellPath.substr(slash + 1));
 
     execl(shell, loginName.c_str(), (char*) nullptr);
     _exit(127);
@@ -85,9 +84,7 @@ bool Pty::start(const PtySize& size,
     pid = child;
 
     reader = std::thread(
-        [masterFd,
-         output = std::move(onOutput),
-         exit = std::move(onExit)]
+        [masterFd, output = std::move(onOutput), exit = std::move(onExit)]
         {
             char buffer[65536];
 
