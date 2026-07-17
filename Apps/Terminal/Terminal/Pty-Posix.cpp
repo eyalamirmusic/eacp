@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #if defined(__APPLE__)
+#include <libproc.h>
 #include <util.h>
 #else
 #include <pty.h>
@@ -18,7 +19,7 @@ namespace term
 {
 namespace
 {
-[[noreturn]] void execShell()
+[[noreturn]] void execShell(const std::string& workingDirectory)
 {
     for (auto sig: {SIGINT, SIGQUIT, SIGTSTP, SIGPIPE, SIGCHLD})
         signal(sig, SIG_DFL);
@@ -30,8 +31,9 @@ namespace
     if (getenv("LANG") == nullptr)
         setenv("LANG", "en_US.UTF-8", 1);
 
-    if (const auto* home = getenv("HOME"))
-        chdir(home);
+    if (workingDirectory.empty() || chdir(workingDirectory.c_str()) != 0)
+        if (const auto* home = getenv("HOME"))
+            chdir(home);
 
     const auto* shell = getenv("SHELL");
 
@@ -63,14 +65,14 @@ Pty::~Pty()
     shutdown();
 }
 
-bool Pty::start(const PtySize& size,
+bool Pty::start(const PtyOptions& options,
                 std::function<void(std::string)> onOutput,
                 std::function<void()> onExit)
 {
     if (fd >= 0)
         return false;
 
-    auto ws = toWinsize(size);
+    auto ws = toWinsize(options.size);
     auto masterFd = -1;
     const auto child = forkpty(&masterFd, nullptr, nullptr, &ws);
 
@@ -78,7 +80,7 @@ bool Pty::start(const PtySize& size,
         return false;
 
     if (child == 0)
-        execShell();
+        execShell(options.workingDirectory);
 
     fd = masterFd;
     pid = child;
@@ -138,6 +140,47 @@ void Pty::resize(const PtySize& size)
 
     auto ws = toWinsize(size);
     ioctl(fd, TIOCSWINSZ, &ws);
+}
+
+std::string Pty::foregroundProcess() const
+{
+    if (fd < 0)
+        return {};
+
+    const auto pgid = tcgetpgrp(fd);
+
+    if (pgid <= 0)
+        return {};
+
+#if defined(__APPLE__)
+    char name[2 * MAXCOMLEN] = {};
+
+    if (proc_name(pgid, name, sizeof(name)) > 0)
+        return name;
+
+    return {};
+#else
+    auto comm = std::string {"/proc/"} + std::to_string(pgid) + "/comm";
+
+    if (auto* file = fopen(comm.c_str(), "r"))
+    {
+        char name[256] = {};
+        const auto* result = fgets(name, sizeof(name), file);
+        fclose(file);
+
+        if (result != nullptr)
+        {
+            auto text = std::string {name};
+
+            if (!text.empty() && text.back() == '\n')
+                text.pop_back();
+
+            return text;
+        }
+    }
+
+    return {};
+#endif
 }
 
 bool Pty::isRunning() const

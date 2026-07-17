@@ -1,17 +1,40 @@
+# Local persistence (MRU stamps, session restore). Fetched here rather than
+# at the top level because only the Terminal app uses it; emberstore reuses
+# the eacp/Miro targets already in this build.
+CPMAddPackage(
+        NAME emberstore
+        GITHUB_REPOSITORY tamber-inc/emberstore
+        GIT_TAG main
+)
+
 add_executable(Terminal
         Main.cpp
+        AppShell.cpp
+        Config.cpp
+        MruStore.cpp
+        Palette.cpp
+        Projects.cpp
+        Session.cpp
         TermScreen.cpp
         TermParser.cpp
         TerminalView.cpp)
 
-# Portable core (parser, screen, view) + per-platform PTY and glyph raster.
+# Portable core (parser, screen, sessions, palette) + per-platform PTY,
+# glyph raster and notifications.
 if (APPLE)
     target_sources(Terminal PRIVATE
             Pty-Posix.cpp
-            GlyphAtlas-macOS.mm)
+            GlyphAtlas-macOS.mm
+            Notifier-macOS.mm)
+
+    target_link_libraries(Terminal PRIVATE "-framework UserNotifications")
 endif ()
 
-target_link_libraries(Terminal PRIVATE eacp-sprites)
+target_link_libraries(Terminal PRIVATE eacp-sprites emberstore)
+
+# JetBrains Mono (OFL) rides inside the binary; registered with the platform
+# font system at startup, so the default font needs no install step.
+res_embed_add(Terminal DIRECTORY Resources)
 
 set(BUNDLE_ID "com.eacp.terminal")
 

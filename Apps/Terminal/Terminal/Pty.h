@@ -13,6 +13,14 @@ struct PtySize
     int rows = 24;
 };
 
+struct PtyOptions
+{
+    PtySize size;
+
+    // Where the shell starts; empty means the user's home directory.
+    std::string workingDirectory;
+};
+
 // A pseudo-terminal running the user's login shell. Output is delivered on a
 // background reader thread via onOutput — marshal to the UI thread before
 // touching any view state. onExit fires (also on the reader thread) when the
@@ -26,7 +34,7 @@ public:
     Pty(const Pty&) = delete;
     Pty& operator=(const Pty&) = delete;
 
-    bool start(const PtySize& size,
+    bool start(const PtyOptions& options,
                std::function<void(std::string)> onOutput,
                std::function<void()> onExit);
 
@@ -34,6 +42,10 @@ public:
     void resize(const PtySize& size);
     bool isRunning() const;
     void shutdown();
+
+    // Name of the process group currently owning the terminal (what the user
+    // sees running: zsh, claude, nvim, ...). Empty when unknown.
+    std::string foregroundProcess() const;
 
 private:
     int fd = -1;

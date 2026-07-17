@@ -14,8 +14,6 @@ using Graphics::MouseEvent;
 
 namespace
 {
-constexpr auto fontName = "Menlo";
-
 namespace MacKey
 {
 constexpr std::uint16_t Home = 0x73;
@@ -83,9 +81,14 @@ void appendUtf8(std::string& out, char32_t cp)
 }
 } // namespace
 
-TerminalView::TerminalView()
-    : screen(80, 24, theme)
+TerminalView::TerminalView(const AppConfig& config,
+                           const std::string& workingDirectory)
+    : theme(themeByName(config.theme))
+    , fontName(config.font)
+    , screen(80, 24, theme)
     , parser(screen, theme)
+    , cwd(workingDirectory)
+    , fontSize(config.fontSize)
     , blinkTimer(
           [this]
           {
@@ -101,13 +104,25 @@ TerminalView::TerminalView()
     atlas.emplace(fontName, fontSize);
 
     parser.respond = [this](std::string_view bytes) { send(bytes); };
-    parser.onTitleChanged = [this](const std::string& title)
-    { onTitleChanged(title); };
+
+    parser.onTitleChanged = [this](const std::string& newTitle)
+    {
+        title = newTitle;
+        onTitleChanged(newTitle);
+    };
+
+    parser.onCwdChanged = [this](const std::string& newCwd)
+    {
+        cwd = newCwd;
+        onCwdChanged(newCwd);
+    };
+
+    parser.onNotify = [this](const std::string& text) { onNotify(text); };
 
     auto guard = std::weak_ptr<bool> {alive};
 
     pty.start(
-        {screen.columns(), screen.rows()},
+        {{screen.columns(), screen.rows()}, workingDirectory},
         [this, guard](const std::string& data)
         {
             {

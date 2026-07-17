@@ -26,6 +26,14 @@ public:
         [](const std::string&) {};
     std::function<void()> onBell = [] {};
 
+    // OSC 7: the shell reporting its working directory (file:// URL).
+    std::function<void(const std::string&)> onCwdChanged =
+        [](const std::string&) {};
+
+    // OSC 9 (or OSC 777;notify;title;body): a program inside the terminal
+    // requesting a desktop notification.
+    std::function<void(const std::string&)> onNotify = [](const std::string&) {};
+
     // DECSCUSR shape: 0/1 blinking block, 2 block, 3/4 underline, 5/6 bar.
     int cursorShape() const { return cursorStyle; }
 

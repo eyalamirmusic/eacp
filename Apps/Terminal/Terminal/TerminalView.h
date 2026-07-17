@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Config.h"
 #include "GlyphAtlas.h"
 #include "Pty.h"
 #include "TermParser.h"
@@ -22,12 +23,25 @@ namespace term
 class TerminalView final : public eacp::GPU::GPUView
 {
 public:
-    TerminalView();
+    TerminalView(const AppConfig& config, const std::string& workingDirectory);
     ~TerminalView() override;
 
     std::function<void(const std::string&)> onTitleChanged =
         [](const std::string&) {};
+    std::function<void(const std::string&)> onCwdChanged =
+        [](const std::string&) {};
+    std::function<void(const std::string&)> onNotify = [](const std::string&) {};
     eacp::Callback onShellExit = [] {};
+
+    // Runs before any terminal key handling; return true to consume the
+    // event. The app shell hangs its leader-key table and global shortcuts
+    // here.
+    std::function<bool(const eacp::Graphics::KeyEvent&)> interceptKey =
+        [](const eacp::Graphics::KeyEvent&) { return false; };
+
+    const std::string& currentCwd() const { return cwd; }
+    const std::string& currentTitle() const { return title; }
+    std::string foregroundProcess() const { return pty.foregroundProcess(); }
 
     void render(eacp::GPU::Frame& frame) override;
     void resized() override;
@@ -87,8 +101,12 @@ private:
         effectiveColors(const Cell& cell, long absoluteRow, int col) const;
 
     Theme theme;
+    std::string fontName;
     TermScreen screen;
     TermParser parser;
+    std::string cwd;
+    std::string title;
+    float fontSize = 13.0f;
     std::optional<GlyphAtlas> atlas;
     std::optional<eacp::Sprites::SpriteRenderer> sprites;
     Pty pty;
@@ -101,7 +119,6 @@ private:
     bool blinkOn = true;
 
     int scrollOffset = 0;
-    float fontSize = 13.0f;
     float wheelRemainder = 0;
 
     bool selecting = false;

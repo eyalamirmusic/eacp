@@ -7,6 +7,11 @@
 
 namespace term
 {
+// Registers the embedded fonts (JetBrains Mono) with the platform font
+// system so name lookups resolve them. Idempotent; call before any Font or
+// GlyphAtlas is created.
+void registerEmbeddedFonts();
+
 struct GlyphSlot
 {
     eacp::Graphics::Rect src;

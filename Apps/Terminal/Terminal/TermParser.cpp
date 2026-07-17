@@ -744,6 +744,36 @@ void TermParser::dispatchSgr()
     }
 }
 
+namespace
+{
+// file://host/percent%20encoded/path -> /percent encoded/path
+std::string pathFromFileUrl(const std::string& url)
+{
+    if (!url.starts_with("file://"))
+        return {};
+
+    auto path = url.substr(url.find('/', 7));
+    auto decoded = std::string {};
+    decoded.reserve(path.size());
+
+    for (std::size_t i = 0; i < path.size(); ++i)
+    {
+        if (path[i] == '%' && i + 2 < path.size())
+        {
+            const auto hex = path.substr(i + 1, 2);
+            decoded.push_back((char) std::strtol(hex.c_str(), nullptr, 16));
+            i += 2;
+        }
+        else
+        {
+            decoded.push_back(path[i]);
+        }
+    }
+
+    return decoded;
+}
+} // namespace
+
 void TermParser::dispatchOsc()
 {
     const auto separator = oscBuffer.find(';');
@@ -757,6 +787,41 @@ void TermParser::dispatchOsc()
     if (code == "0" || code == "2")
     {
         onTitleChanged(payload);
+        return;
+    }
+
+    if (code == "7")
+    {
+        if (auto path = pathFromFileUrl(payload); !path.empty())
+            onCwdChanged(path);
+
+        return;
+    }
+
+    if (code == "9")
+    {
+        onNotify(payload);
+        return;
+    }
+
+    if (code == "777")
+    {
+        // 777;notify;title;body
+        const auto kindEnd = payload.find(';');
+
+        if (kindEnd != std::string::npos
+            && payload.substr(0, kindEnd) == "notify")
+        {
+            auto text = payload.substr(kindEnd + 1);
+            const auto titleEnd = text.find(';');
+
+            if (titleEnd != std::string::npos)
+                text = text.substr(0, titleEnd) + ": "
+                       + text.substr(titleEnd + 1);
+
+            onNotify(text);
+        }
+
         return;
     }
 

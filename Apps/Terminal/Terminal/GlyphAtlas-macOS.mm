@@ -6,6 +6,8 @@
 
 #include <eacp/Core/ObjC/CFRef.h>
 
+#include <ResEmbed/ResEmbed.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -57,6 +59,46 @@ int encodeUtf16(char32_t cp, UniChar* units)
     return 2;
 }
 } // namespace
+
+void registerEmbeddedFonts()
+{
+    static const auto once = []
+    {
+        for (const auto* name: {"JetBrainsMono-Regular.ttf",
+                                "JetBrainsMono-Bold.ttf",
+                                "JetBrainsMono-Italic.ttf",
+                                "JetBrainsMono-BoldItalic.ttf"})
+        {
+            const auto resource = ResEmbed::get(name);
+
+            if (resource.size() == 0)
+                continue;
+
+            CFRef<CFDataRef> data(
+                CFDataCreateWithBytesNoCopy(nullptr,
+                                            resource.data(),
+                                            (CFIndex) resource.size(),
+                                            kCFAllocatorNull));
+            CFRef<CGDataProviderRef> provider(
+                CGDataProviderCreateWithCFData(data));
+            CFRef<CGFontRef> font(CGFontCreateWithDataProvider(provider));
+
+            // Deprecated, but it is the only API that registers an
+            // in-memory font for process-wide name lookup — the suggested
+            // replacements want file URLs, and spilling the embedded font
+            // to disk just to load it back defeats the point.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            if (font)
+                CTFontManagerRegisterGraphicsFont(font, nullptr);
+#pragma clang diagnostic pop
+        }
+
+        return true;
+    }();
+
+    (void) once;
+}
 
 struct GlyphAtlas::Impl
 {
