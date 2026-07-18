@@ -10,6 +10,12 @@ nano_add_executable(RoundedRectTests
         SOURCES RoundedRectTests.cpp
         TARGETS eacp-graphics)
 
+# Color's constexpr contract: the static_asserts in here fail the build if a
+# definition moves back out of line.
+nano_add_executable(ColorTests
+        SOURCES ColorTests.cpp
+        TARGETS eacp-graphics)
+
 nano_add_executable(WindowTests
         NO_MAIN
         SOURCES
@@ -25,6 +31,27 @@ nano_add_executable(RenderToImageTests
             RenderToImageTests.cpp
             TestMain.cpp
         TARGETS eacp-graphics)
+
+# Wheel-event delivery. The portable half covers the event shape and routing;
+# the macOS file additionally checks the backing NSView really implements
+# scrollWheel:, since inheriting NSResponder's no-op version drops every event
+# without failing anything else.
+set(scroll_wheel_sources ScrollWheelTests.cpp TestMain.cpp)
+
+if (APPLE)
+    list(APPEND scroll_wheel_sources ScrollWheelTests-macOS.mm)
+endif ()
+
+nano_add_executable(ScrollWheelTests
+        NO_MAIN
+        SOURCES
+            ${scroll_wheel_sources}
+        TARGETS eacp-graphics)
+
+if (APPLE)
+    set_target_properties(ScrollWheelTests PROPERTIES OBJCXX_STANDARD 20)
+    target_link_libraries(ScrollWheelTests PRIVATE "-framework AppKit")
+endif ()
 
 if(WIN32)
     nano_add_executable(CompositionPixelTests

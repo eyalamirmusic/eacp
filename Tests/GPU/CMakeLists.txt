@@ -10,9 +10,15 @@ if (APPLE)
 endif ()
 
 # GPU snapshot read-back (View::renderToImage over a GPUView): Metal off-screen
-# textures on Apple, D3D12 off-screen render targets on Windows.
+# textures on Apple, D3D12 off-screen render targets on Windows. The scissor
+# tests ride the same off-screen path — a scissor rect has no CPU-side
+# observable, so the only way to check one is to draw through it and read the
+# pixels back.
 if (APPLE OR WIN32)
-    list(APPEND gpu_test_sources GPUSnapshotTests.cpp)
+    list(APPEND gpu_test_sources
+            GPUSnapshotTests.cpp
+            ScissorTests.cpp
+            BackingScaleTests.cpp)
 endif ()
 
 nano_add_executable(GPUTests
