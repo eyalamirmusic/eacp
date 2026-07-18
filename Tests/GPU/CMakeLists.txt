@@ -18,7 +18,8 @@ if (APPLE OR WIN32)
     list(APPEND gpu_test_sources
             GPUSnapshotTests.cpp
             ScissorTests.cpp
-            BackingScaleTests.cpp)
+            BackingScaleTests.cpp
+            TextureRegionTests.cpp)
 endif ()
 
 nano_add_executable(GPUTests

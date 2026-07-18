@@ -8,6 +8,8 @@
 #include <eacp/Core/ObjC/CFRef.h>
 #include <eacp/Core/ObjC/ObjC.h>
 
+#include <cmath>
+
 namespace eacp::GPU
 {
 namespace
@@ -144,16 +146,37 @@ struct Texture::Native
 
     void update(const void* pixels, std::size_t bytesPerRow)
     {
+        updateRegion(0, 0, width, height, pixels, bytesPerRow);
+    }
+
+    // Both update() overloads land here; the whole-texture one is just the full
+    // rect, so there is a single replaceRegion call to reason about.
+    void updateRegion(int x,
+                      int y,
+                      int regionWidth,
+                      int regionHeight,
+                      const void* pixels,
+                      std::size_t bytesPerRow)
+    {
         if (texture.get() == nil || pixels == nullptr || width <= 0 || height <= 0)
             return;
 
-        auto stride =
-            bytesPerRow != 0 ? bytesPerRow : (std::size_t) (width * pixelStride);
+        if (regionWidth <= 0 || regionHeight <= 0)
+            return;
 
-        [texture.get() replaceRegion:MTLRegionMake2D(0,
-                                                     0,
-                                                     (NSUInteger) width,
-                                                     (NSUInteger) height)
+        // Metal raises on a region that leaves the texture, so an out-of-bounds
+        // request is dropped rather than clamped — see the header for why
+        // clamping would be worse than doing nothing.
+        if (x < 0 || y < 0 || x + regionWidth > width || y + regionHeight > height)
+            return;
+
+        auto stride = bytesPerRow != 0 ? bytesPerRow
+                                       : (std::size_t) (regionWidth * pixelStride);
+
+        [texture.get() replaceRegion:MTLRegionMake2D((NSUInteger) x,
+                                                     (NSUInteger) y,
+                                                     (NSUInteger) regionWidth,
+                                                     (NSUInteger) regionHeight)
                          mipmapLevel:0
                            withBytes:pixels
                          bytesPerRow:(NSUInteger) stride];
@@ -188,6 +211,20 @@ Texture::Texture(Device& device,
 void Texture::update(const void* pixels, std::size_t bytesPerRow)
 {
     impl->update(pixels, bytesPerRow);
+}
+
+void Texture::update(const Graphics::Rect& region,
+                     const void* pixels,
+                     std::size_t bytesPerRow)
+{
+    // Texels are whole; round rather than truncate so a rect built from
+    // accumulated float arithmetic lands on the texel it is nearest to.
+    impl->updateRegion((int) std::lround(region.x),
+                       (int) std::lround(region.y),
+                       (int) std::lround(region.w),
+                       (int) std::lround(region.h),
+                       pixels,
+                       bytesPerRow);
 }
 
 int Texture::width() const

@@ -5,6 +5,8 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 
+#include <cmath>
+
 // Windows/D3D12 backend. A texture is a default-heap resource plus an SRV and
 // a sampler descriptor living in the context's shader-visible heaps for the
 // texture's whole lifetime, so binding is a single root-table update. Pixels
@@ -109,16 +111,27 @@ struct Texture::Native
     bool copyPixels(D3D12Context& context,
                     CommandContext* commands,
                     const void* pixels,
-                    std::size_t sourcePitch)
+                    std::size_t sourcePitch,
+                    int destX,
+                    int destY,
+                    int regionWidth,
+                    int regionHeight)
     {
         auto desc = data.resource->GetDesc();
+
+        // Footprints are asked for at the *region's* size, not the texture's, so
+        // the staging buffer and its row pitch describe only what is being
+        // uploaded. The copy is then placed at destX/destY in the destination.
+        auto regionDesc = desc;
+        regionDesc.Width = static_cast<UINT64>(regionWidth);
+        regionDesc.Height = static_cast<UINT>(regionHeight);
 
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
         UINT rows = 0;
         UINT64 rowBytes = 0;
         UINT64 totalBytes = 0;
         context.getDevice()->GetCopyableFootprints(
-            &desc, 0, 1, 0, &footprint, &rows, &rowBytes, &totalBytes);
+            &regionDesc, 0, 1, 0, &footprint, &rows, &rowBytes, &totalBytes);
 
         auto staging = context.makeUploadBuffer(nullptr, totalBytes);
 
@@ -151,7 +164,12 @@ struct Texture::Native
         source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
         source.PlacedFootprint = footprint;
 
-        commands->list->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+        commands->list->CopyTextureRegion(&destination,
+                                          static_cast<UINT>(destX),
+                                          static_cast<UINT>(destY),
+                                          0,
+                                          &source,
+                                          nullptr);
         transition(commands->list.get(),
                    data.resource.get(),
                    D3D12_RESOURCE_STATE_COPY_DEST,
@@ -176,7 +194,11 @@ struct Texture::Native
         if (!copyPixels(context,
                         commands,
                         pixels,
-                        static_cast<std::size_t>(width * pixelStride)))
+                        static_cast<std::size_t>(width * pixelStride),
+                        0,
+                        0,
+                        width,
+                        height))
         {
             context.discard(commands);
             data.resource = nullptr;
@@ -188,8 +210,28 @@ struct Texture::Native
 
     void update(const void* pixels, std::size_t bytesPerRow)
     {
+        updateRegion(0, 0, width, height, pixels, bytesPerRow);
+    }
+
+    // Both update() overloads land here; the whole-texture one is just the full
+    // rect, so there is a single upload path to reason about.
+    void updateRegion(int x,
+                      int y,
+                      int regionWidth,
+                      int regionHeight,
+                      const void* pixels,
+                      std::size_t bytesPerRow)
+    {
         if (data.resource == nullptr || pixels == nullptr || width <= 0
             || height <= 0)
+            return;
+
+        if (regionWidth <= 0 || regionHeight <= 0)
+            return;
+
+        // Out-of-bounds is dropped rather than clamped — see the header for why
+        // clamping would silently upload skewed pixels.
+        if (x < 0 || y < 0 || x + regionWidth > width || y + regionHeight > height)
             return;
 
         auto& context = getD3D12Context();
@@ -202,9 +244,9 @@ struct Texture::Native
         if (commands == nullptr)
             return;
 
-        auto sourcePitch = bytesPerRow != 0
-                               ? bytesPerRow
-                               : static_cast<std::size_t>(width * pixelStride);
+        auto sourcePitch =
+            bytesPerRow != 0 ? bytesPerRow
+                             : static_cast<std::size_t>(regionWidth * pixelStride);
 
         // The resource rests in PIXEL_SHADER_RESOURCE between frames; move it to
         // COPY_DEST for the upload, and put it back if staging fails so the next
@@ -214,7 +256,8 @@ struct Texture::Native
                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
                    D3D12_RESOURCE_STATE_COPY_DEST);
 
-        if (!copyPixels(context, commands, pixels, sourcePitch))
+        if (!copyPixels(
+                context, commands, pixels, sourcePitch, x, y, regionWidth, regionHeight))
             transition(commands->list.get(),
                        data.resource.get(),
                        D3D12_RESOURCE_STATE_COPY_DEST,
@@ -272,6 +315,20 @@ Texture::Texture(Device& device,
 void Texture::update(const void* pixels, std::size_t bytesPerRow)
 {
     impl->update(pixels, bytesPerRow);
+}
+
+void Texture::update(const Graphics::Rect& region,
+                     const void* pixels,
+                     std::size_t bytesPerRow)
+{
+    // Texels are whole; round rather than truncate so a rect built from
+    // accumulated float arithmetic lands on the texel it is nearest to.
+    impl->updateRegion(static_cast<int>(std::lround(region.x)),
+                       static_cast<int>(std::lround(region.y)),
+                       static_cast<int>(std::lround(region.w)),
+                       static_cast<int>(std::lround(region.h)),
+                       pixels,
+                       bytesPerRow);
 }
 
 int Texture::width() const

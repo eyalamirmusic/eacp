@@ -78,6 +78,27 @@ public:
     // no-op on a wrapped or invalid texture, or when pixels is null.
     void update(const void* pixels, std::size_t bytesPerRow = 0);
 
+    // Re-uploads one sub-rectangle, leaving the rest of the texture untouched.
+    //
+    // The reason this exists: a glyph atlas grows one glyph at a time, and
+    // whole-texture update() makes each new glyph cost an upload of the entire
+    // atlas — megabytes to move a few hundred bytes. Here the transfer is the
+    // size of the region.
+    //
+    // region is in texels with the origin at the top-left. pixels points at the
+    // region's own top-left, and its rows are tightly packed to the *region's*
+    // width unless bytesPerRow gives a larger stride — so a glyph can be
+    // uploaded straight out of a larger rasterization buffer by passing that
+    // buffer's stride.
+    //
+    // A region that is empty, or that is not wholly inside the texture, is a
+    // no-op. Deliberately not clamped: a clamped region would keep consuming
+    // source rows at the original width and silently upload skewed pixels,
+    // which is far harder to spot than nothing appearing.
+    void update(const Graphics::Rect& region,
+                const void* pixels,
+                std::size_t bytesPerRow = 0);
+
     // Opaque native handles for cross-translation-unit use by the render pass.
     void* nativeTexture() const;
     void* nativeSampler() const;

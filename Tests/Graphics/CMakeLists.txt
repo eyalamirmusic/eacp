@@ -36,9 +36,11 @@ nano_add_executable(RenderToImageTests
 # the macOS file additionally checks the backing NSView really implements
 # scrollWheel:, since inheriting NSResponder's no-op version drops every event
 # without failing anything else.
+# APPLE covers iOS, which has no AppKit and no pointing device to scroll with,
+# so the native half is macOS-only. The portable half still builds everywhere.
 set(scroll_wheel_sources ScrollWheelTests.cpp TestMain.cpp)
 
-if (APPLE)
+if (APPLE AND NOT IOS)
     list(APPEND scroll_wheel_sources ScrollWheelTests-macOS.mm)
 endif ()
 
@@ -48,7 +50,7 @@ nano_add_executable(ScrollWheelTests
             ${scroll_wheel_sources}
         TARGETS eacp-graphics)
 
-if (APPLE)
+if (APPLE AND NOT IOS)
     set_target_properties(ScrollWheelTests PROPERTIES OBJCXX_STANDARD 20)
     target_link_libraries(ScrollWheelTests PRIVATE "-framework AppKit")
 endif ()
