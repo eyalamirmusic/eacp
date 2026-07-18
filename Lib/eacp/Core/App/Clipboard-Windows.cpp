@@ -6,6 +6,7 @@
 #include <shlobj.h>
 
 #include <cstring>
+#include <cwchar>
 #include <limits>
 #include <vector>
 
@@ -54,7 +55,70 @@ bool openClipboardWithRetry(HWND owner)
 
     return false;
 }
+
+// UTF-16 -> UTF-8, the reverse of toWideString. Bounded by the caller's
+// wcslen, so an unterminated handle cannot run away.
+std::string toUtf8(const wchar_t* text, int length)
+{
+    if (text == nullptr || length <= 0)
+        return {};
+
+    auto required = WideCharToMultiByte(
+        CP_UTF8, 0, text, length, nullptr, 0, nullptr, nullptr);
+
+    if (required <= 0)
+        return {};
+
+    auto result = std::string(static_cast<std::size_t>(required), '\0');
+
+    if (WideCharToMultiByte(CP_UTF8,
+                            0,
+                            text,
+                            length,
+                            result.data(),
+                            required,
+                            nullptr,
+                            nullptr)
+        != required)
+        return {};
+
+    return result;
+}
 } // namespace
+
+std::string readText()
+{
+    // IsClipboardFormatAvailable first: opening the clipboard takes a global
+    // lock that blocks every other application, so it is not worth taking when
+    // there is no text to read.
+    if (!IsClipboardFormatAvailable(CF_UNICODETEXT))
+        return {};
+
+    if (!openClipboardWithRetry(nullptr))
+        return {};
+
+    auto result = std::string {};
+    auto handle = GetClipboardData(CF_UNICODETEXT);
+
+    if (handle != nullptr)
+    {
+        // The handle belongs to the clipboard, not to us: lock to read, unlock
+        // when done, and never free it.
+        if (const auto* data = static_cast<const wchar_t*>(GlobalLock(handle)))
+        {
+            result = toUtf8(data, static_cast<int>(std::wcslen(data)));
+            GlobalUnlock(handle);
+        }
+    }
+
+    CloseClipboard();
+    return result;
+}
+
+bool hasText()
+{
+    return IsClipboardFormatAvailable(CF_UNICODETEXT) != 0;
+}
 
 bool copyText(std::string_view text)
 {

@@ -18,6 +18,11 @@ nano_add_executable(AppAffordanceTests
         SOURCES AppAffordanceTests.cpp
         TARGETS eacp-core)
 
+# Touches the real system clipboard, and restores whatever was there.
+nano_add_executable(ClipboardTests
+        SOURCES ClipboardTests.cpp
+        TARGETS eacp-core)
+
 if (APPLE AND NOT IOS)
     add_executable(AppTerminationHarness AppTerminationHarness.mm)
     target_link_libraries(AppTerminationHarness PRIVATE eacp-core)
