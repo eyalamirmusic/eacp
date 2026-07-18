@@ -80,6 +80,50 @@ constexpr KeyMapping keyMappings[] = {
     {KeyCode::F10, VK_F10},
     {KeyCode::F11, VK_F11},
     {KeyCode::F12, VK_F12},
+
+    // Punctuation. The OEM_* codes are positional on a US layout, which is the
+    // same convention the macOS virtual key codes follow, so a shortcut bound
+    // to a physical key means the same thing on both platforms.
+    {KeyCode::Minus, VK_OEM_MINUS},
+    {KeyCode::Equals, VK_OEM_PLUS},
+    {KeyCode::LeftBracket, VK_OEM_4},
+    {KeyCode::RightBracket, VK_OEM_6},
+    {KeyCode::Backslash, VK_OEM_5},
+    {KeyCode::Semicolon, VK_OEM_1},
+    {KeyCode::Quote, VK_OEM_7},
+    {KeyCode::Comma, VK_OEM_COMMA},
+    {KeyCode::Period, VK_OEM_PERIOD},
+    {KeyCode::Slash, VK_OEM_2},
+    {KeyCode::Grave, VK_OEM_3},
+
+    {KeyCode::Home, VK_HOME},
+    {KeyCode::End, VK_END},
+    {KeyCode::PageUp, VK_PRIOR},
+    {KeyCode::PageDown, VK_NEXT},
+    {KeyCode::ForwardDelete, VK_DELETE},
+    {KeyCode::CapsLock, VK_CAPITAL},
+
+    // Windows has no separate keypad Enter virtual key -- both Return keys
+    // report VK_RETURN and are told apart only by the extended-key flag in the
+    // message's lParam, which is not available here. Mapping it to VK_RETURN
+    // keeps isKeyPressed(KeypadEnter) meaningful rather than always false.
+    {KeyCode::KeypadEnter, VK_RETURN},
+    {KeyCode::Keypad0, VK_NUMPAD0},
+    {KeyCode::Keypad1, VK_NUMPAD1},
+    {KeyCode::Keypad2, VK_NUMPAD2},
+    {KeyCode::Keypad3, VK_NUMPAD3},
+    {KeyCode::Keypad4, VK_NUMPAD4},
+    {KeyCode::Keypad5, VK_NUMPAD5},
+    {KeyCode::Keypad6, VK_NUMPAD6},
+    {KeyCode::Keypad7, VK_NUMPAD7},
+    {KeyCode::Keypad8, VK_NUMPAD8},
+    {KeyCode::Keypad9, VK_NUMPAD9},
+    {KeyCode::KeypadDecimal, VK_DECIMAL},
+    {KeyCode::KeypadPlus, VK_ADD},
+    {KeyCode::KeypadMinus, VK_SUBTRACT},
+    {KeyCode::KeypadMultiply, VK_MULTIPLY},
+    {KeyCode::KeypadDivide, VK_DIVIDE},
+    {KeyCode::KeypadClear, VK_CLEAR},
 };
 
 int toVirtualKey(uint16_t keyCode)

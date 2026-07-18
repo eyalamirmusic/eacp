@@ -13,3 +13,6 @@ if (NOT IOS)
     # gracefully where it is not yet available.
     add_subdirectory(VideoRecorderDemo)
 endif ()
+
+# Key events and the clipboard, shown live.
+add_subdirectory(KeyInspector)

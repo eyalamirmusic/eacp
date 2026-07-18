@@ -16,6 +16,12 @@ nano_add_executable(ColorTests
         SOURCES ColorTests.cpp
         TARGETS eacp-graphics)
 
+# Uniqueness and coverage of the KeyCode table, which is hand-transcribed
+# platform virtual key codes and therefore easy to typo.
+nano_add_executable(KeyCodeTests
+        SOURCES KeyCodeTests.cpp
+        TARGETS eacp-graphics)
+
 nano_add_executable(WindowTests
         NO_MAIN
         SOURCES
