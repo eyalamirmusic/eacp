@@ -134,7 +134,12 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     }
 
     auto encoder = [buffer renderCommandEncoderWithDescriptor:passDescriptor];
-    return RenderPass((__bridge void*) encoder);
+
+    // The pass carries the target's pixel size so it can clamp scissor rects;
+    // the MSAA texture, when there is one, matches the resolve target's size.
+    return RenderPass((__bridge void*) encoder,
+                      (int) target.width,
+                      (int) target.height);
 }
 
 bool Frame::isValid() const

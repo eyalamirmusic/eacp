@@ -159,50 +159,6 @@ float clampedCornerRadius(const Rect& rect, float radius)
     return std::clamp(radius, 0.f, largestFittingRadius);
 }
 
-Color::Color(float rToUse, float gToUse, float bToUse, float aToUse)
-    : r(rToUse)
-    , g(gToUse)
-    , b(bToUse)
-    , a(aToUse)
-{
-}
-
-Color Color::withAlpha(float alpha) const
-{
-    return {r, g, b, alpha};
-}
-
-Color Color::gray(float value, float alpha)
-{
-    return {value, value, value, alpha};
-}
-
-Color Color::white(float alpha)
-{
-    return {1.f, 1.f, 1.f, alpha};
-}
-
-Color Color::black(float alpha)
-{
-    return {0.f, 0.f, 0.f, alpha};
-}
-
-Color Color::brighter(float amount) const
-{
-    return {std::min(r + amount, 1.f),
-            std::min(g + amount, 1.f),
-            std::min(b + amount, 1.f),
-            a};
-}
-
-Color Color::darker(float amount) const
-{
-    return {std::max(r - amount, 0.f),
-            std::max(g - amount, 0.f),
-            std::max(b - amount, 0.f),
-            a};
-}
-
 Point operator+(const Point& a, const Point& b)
 {
     return {a.x + b.x, a.y + b.y};

@@ -7,6 +7,9 @@
 #include "../Texture/Texture.h"
 #include "../Windows/D3D12Types.h"
 
+#include <algorithm>
+#include <cmath>
+
 // Windows/D3D12 backend. Records draw commands onto the frame's recording via
 // the D3D12Encoder. The encoder is owned here so it is freed when the pass
 // goes out of scope; the CommandContext it points at stays owned by the Frame,
@@ -16,12 +19,18 @@ namespace eacp::GPU
 {
 struct RenderPass::Native
 {
-    explicit Native(void* encoderHandle)
+    Native(void* encoderHandle, int width, int height)
         : encoder(static_cast<D3D12Encoder*>(encoderHandle))
+        , targetWidth(width)
+        , targetHeight(height)
     {
     }
 
     std::unique_ptr<D3D12Encoder> encoder;
+
+    // Render target size in pixels, for clamping scissor rects.
+    int targetWidth = 0;
+    int targetHeight = 0;
 
     // Whether a valid pipeline state is currently bound. A pipeline whose
     // compilation failed has a null state; drawing without one is flagged by the
@@ -29,14 +38,51 @@ struct RenderPass::Native
     bool pipelineBound = false;
 };
 
-RenderPass::RenderPass(void* encoder)
-    : impl(encoder)
+RenderPass::RenderPass(void* encoder, int targetWidth, int targetHeight)
+    : impl(encoder, targetWidth, targetHeight)
 {
 }
 
 RenderPass::~RenderPass()
 {
     end();
+}
+
+void RenderPass::setScissorRect(const Graphics::Rect& rect)
+{
+    if (!impl->encoder || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+        return;
+
+    // Round outward before clamping: rounding a scrolled region's edge inward
+    // would shave a column of glyph coverage off the boundary.
+    const auto left = std::clamp(
+        static_cast<int>(std::floor(rect.x)), 0, impl->targetWidth);
+    const auto top = std::clamp(
+        static_cast<int>(std::floor(rect.y)), 0, impl->targetHeight);
+    const auto right = std::clamp(
+        static_cast<int>(std::ceil(rect.x + rect.w)), left, impl->targetWidth);
+    const auto bottom = std::clamp(
+        static_cast<int>(std::ceil(rect.y + rect.h)), top, impl->targetHeight);
+
+    const D3D12_RECT scissor {static_cast<LONG>(left),
+                              static_cast<LONG>(top),
+                              static_cast<LONG>(right),
+                              static_cast<LONG>(bottom)};
+
+    impl->encoder->commands->list->RSSetScissorRects(1, &scissor);
+}
+
+void RenderPass::clearScissorRect()
+{
+    if (!impl->encoder || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+        return;
+
+    const D3D12_RECT scissor {0,
+                              0,
+                              static_cast<LONG>(impl->targetWidth),
+                              static_cast<LONG>(impl->targetHeight)};
+
+    impl->encoder->commands->list->RSSetScissorRects(1, &scissor);
 }
 
 void RenderPass::setPipeline(const RenderPipeline& pipeline)

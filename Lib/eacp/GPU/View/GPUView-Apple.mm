@@ -71,6 +71,22 @@ struct GPUView::Native
 
         updateMultisampleTexture(pixelWidth, pixelHeight);
         updateDepthTexture(pixelWidth, pixelHeight);
+
+        // Notify after the layer is consistent at the new scale, so a handler
+        // rebuilding pixel-sized resources sees the size it will draw into.
+        // Skipped on the first pass: there is no previous scale to differ from,
+        // and backingScale() already reports the initial value.
+        const auto newScale = (float) scale;
+
+        if (backingScale > 0.f && newScale != backingScale)
+        {
+            backingScale = newScale;
+            view.onBackingScaleChanged(newScale);
+        }
+        else
+        {
+            backingScale = newScale;
+        }
     }
 
     void updateMultisampleTexture(NSUInteger width, NSUInteger height)
@@ -147,6 +163,11 @@ struct GPUView::Native
     int framesInFlight = 3;
     bool continuous = false;
     bool depthEnabled = false;
+
+    // Device pixels per logical point, refreshed by updateSize(). Zero until the
+    // first update, which is how the initial scale is told apart from a change.
+    float backingScale = 0.f;
+
     ObjC::Ptr<CAMetalLayer> metalLayer;
     ObjC::Ptr<NSObject<MTLTexture>> msaaTexture;
     ObjC::Ptr<NSObject<MTLTexture>> depthTexture;
@@ -217,6 +238,27 @@ void GPUView::resized()
     // Draw at the new size now, synchronously within the layout/resize pass,
     // instead of waiting for the async display link a frame or more later.
     renderNow();
+}
+
+void GPUView::backingScaleChanged()
+{
+    Graphics::View::backingScaleChanged();
+
+    // Resize the drawable to the new scale (same logical bounds, different pixel
+    // count) and fire onBackingScaleChanged, then redraw: the presented frame
+    // was rasterized for the old scale.
+    impl->updateSize();
+    renderNow();
+}
+
+float GPUView::backingScale() const
+{
+    // updateSize() has not run before the view is first laid out, so fall back to
+    // asking the platform rather than reporting a nonsense zero.
+    if (impl->backingScale > 0.f)
+        return impl->backingScale;
+
+    return (float) platformBackingScale(const_cast<GPUView&>(*this));
 }
 
 void GPUView::paint(Graphics::Context& context)

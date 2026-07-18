@@ -205,7 +205,10 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
         list->ClearDepthStencilView(
             impl->depth->view, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
-    return RenderPass(new D3D12Encoder {impl->commands, {}});
+    // The pass carries the target's pixel size so it can clamp scissor rects.
+    return RenderPass(new D3D12Encoder {impl->commands, {}},
+                      static_cast<int>(impl->drawable->width),
+                      static_cast<int>(impl->drawable->height));
 }
 
 bool Frame::isValid() const

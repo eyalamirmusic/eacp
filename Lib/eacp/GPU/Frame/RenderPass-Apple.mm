@@ -8,6 +8,9 @@
 
 #include <eacp/Core/ObjC/ObjC.h>
 
+#include <algorithm>
+#include <cmath>
+
 namespace eacp::GPU
 {
 namespace
@@ -34,13 +37,19 @@ MTLPrimitiveType toMetalPrimitiveType(PrimitiveTopology topology)
 
 struct RenderPass::Native
 {
-    explicit Native(void* encoderHandle)
+    Native(void* encoderHandle, int width, int height)
+        : targetWidth(width)
+        , targetHeight(height)
     {
         if (encoderHandle != nullptr)
             encoder.reset((__bridge NSObject<MTLRenderCommandEncoder>*) encoderHandle);
     }
 
     ObjC::Ptr<NSObject<MTLRenderCommandEncoder>> encoder;
+
+    // Render target size in pixels, for clamping scissor rects.
+    int targetWidth = 0;
+    int targetHeight = 0;
 
     // Metal takes the primitive type per draw call, so the pass remembers the
     // bound pipeline's topology.
@@ -53,14 +62,51 @@ struct RenderPass::Native
     bool pipelineBound = false;
 };
 
-RenderPass::RenderPass(void* encoder)
-    : impl(encoder)
+RenderPass::RenderPass(void* encoder, int targetWidth, int targetHeight)
+    : impl(encoder, targetWidth, targetHeight)
 {
 }
 
 RenderPass::~RenderPass()
 {
     end();
+}
+
+void RenderPass::setScissorRect(const Graphics::Rect& rect)
+{
+    auto activeEncoder = impl->encoder.get();
+
+    if (activeEncoder == nil || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+        return;
+
+    // Round outward before clamping: rounding a scrolled region's edge inward
+    // would shave a column of glyph coverage off the boundary.
+    const auto left = std::clamp((int) std::floor(rect.x), 0, impl->targetWidth);
+    const auto top = std::clamp((int) std::floor(rect.y), 0, impl->targetHeight);
+    const auto right =
+        std::clamp((int) std::ceil(rect.x + rect.w), left, impl->targetWidth);
+    const auto bottom =
+        std::clamp((int) std::ceil(rect.y + rect.h), top, impl->targetHeight);
+
+    const MTLScissorRect scissor {(NSUInteger) left,
+                                  (NSUInteger) top,
+                                  (NSUInteger) (right - left),
+                                  (NSUInteger) (bottom - top)};
+
+    [activeEncoder setScissorRect:scissor];
+}
+
+void RenderPass::clearScissorRect()
+{
+    auto activeEncoder = impl->encoder.get();
+
+    if (activeEncoder == nil || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+        return;
+
+    const MTLScissorRect scissor {
+        0, 0, (NSUInteger) impl->targetWidth, (NSUInteger) impl->targetHeight};
+
+    [activeEncoder setScissorRect:scissor];
 }
 
 void RenderPass::setPipeline(const RenderPipeline& pipeline)

@@ -596,6 +596,22 @@ void GPUView::resized()
     repaint();
 }
 
+void GPUView::backingScaleChanged()
+{
+    Graphics::View::backingScaleChanged();
+
+    // Resize the swapchain to the new scale (same logical bounds, different
+    // pixel count), then redraw: the presented frame was built for the old one.
+    impl->updateSize();
+    onBackingScaleChanged(backingScale());
+    repaint();
+}
+
+float GPUView::backingScale() const
+{
+    return Native::dpiScale();
+}
+
 void GPUView::paint(Graphics::Context& context)
 {
     // A snapshot captures GPU content via renderNativeContent (off-screen); the

@@ -105,6 +105,68 @@ void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
         view->dispatchMouseEvent(e);
 }
 
+ScrollPhase scrollPhaseFromEvent(NSEvent* event)
+{
+    // Momentum is reported on its own phase mask; it is checked first because an
+    // event coasting after lift-off carries momentumPhase set and phase empty.
+    switch (event.momentumPhase)
+    {
+        case NSEventPhaseBegan:
+        case NSEventPhaseChanged:
+            return ScrollPhase::Momentum;
+        case NSEventPhaseEnded:
+        case NSEventPhaseCancelled:
+            return ScrollPhase::MomentumEnded;
+        default:
+            break;
+    }
+
+    switch (event.phase)
+    {
+        case NSEventPhaseBegan:
+        case NSEventPhaseMayBegin:
+            return ScrollPhase::Began;
+        case NSEventPhaseChanged:
+            return ScrollPhase::Changed;
+        case NSEventPhaseEnded:
+        case NSEventPhaseCancelled:
+            return ScrollPhase::Ended;
+        default:
+            break;
+    }
+
+    // A notched wheel reports no phase at all.
+    return ScrollPhase::None;
+}
+
+void scrollWheel(id self, SEL, NSEvent* event)
+{
+    auto* root = getRootView(self);
+    auto windowPos = [event locationInWindow];
+    auto localPos = [root convertPoint:windowPos fromView:nil];
+
+    auto e = MouseEvent();
+
+    e.pos = {(float) localPos.x, (float) localPos.y};
+    e.type = MouseEventType::Wheel;
+    e.button = MouseButton::Other;
+    e.modifiers = modifierKeysFromEvent(event);
+    e.timestamp = event.timestamp;
+    e.preciseScrolling = event.hasPreciseScrollingDeltas == YES;
+    e.scrollPhase = scrollPhaseFromEvent(event);
+
+    // scrollingDelta*, not delta*: the scrolling pair carries the precise
+    // per-point figure on a trackpad, where deltaY has already been quantised
+    // back into whole lines and the smoothness is gone.
+    e.delta = {(float) event.scrollingDeltaX, (float) event.scrollingDeltaY};
+    e.rawDelta = e.delta;
+
+    e.downPos = e.pos;
+
+    if (auto* view = getView(root))
+        view->dispatchMouseEvent(e);
+}
+
 void drawRect(id, SEL, NSRect)
 {
 }
@@ -148,6 +210,12 @@ void viewDidChangeBackingProperties(id self, SEL)
 
     auto* view = (NSView*) self;
     view.layer.contentsScale = view.window.backingScaleFactor;
+
+    // The base layer follows the new scale by itself, but anything the C++ side
+    // sized in device pixels (a CAMetalLayer's drawableSize, a glyph atlas) does
+    // not, so tell the view.
+    if (auto* eacpView = getView(self))
+        eacpView->backingScaleChanged();
 }
 
 void setFrame(id self, SEL, NSRect newFrame)
@@ -258,6 +326,7 @@ Class getNativeViewClass()
         builder->addMethod(@selector(mouseMoved:), mouseMoved);
         builder->addMethod(@selector(mouseEntered:), mouseEntered);
         builder->addMethod(@selector(mouseExited:), mouseExited);
+        builder->addMethod(@selector(scrollWheel:), scrollWheel);
         builder->addMethod(@selector(rightMouseDown:), mouseDown);
         builder->addMethod(@selector(rightMouseUp:), mouseUp);
         builder->addMethod(@selector(rightMouseDragged:), mouseDragged);

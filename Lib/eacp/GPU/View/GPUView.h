@@ -30,6 +30,7 @@ public:
     virtual void update(Threads::FrameTime) {}
 
     void resized() override;
+    void backingScaleChanged() override;
 
     // Multisample (MSAA) count used for rendering; defaults to 4 for smooth
     // edges. Feed this into your RenderPipelineDescriptor::sampleCount so the
@@ -71,6 +72,21 @@ public:
     // Set before the first frame is drawn.
     void setFramesInFlight(int count);
     int framesInFlight() const;
+
+    // Device pixels per logical point for the display this view is on: 2 on a
+    // Retina screen, 1 on a conventional one, and fractional under a Windows
+    // display scale. The public geometry (Rect, Point, the view's bounds) is all
+    // in logical points, but anything sized in real pixels needs this: a glyph
+    // atlas has to rasterize at the device scale to land 1:1 on the panel, and
+    // RenderPass::setScissorRect takes pixels.
+    float backingScale() const;
+
+    // Fired when the view moves to a display with a different backing scale, or
+    // that display's scale changes. Pixel-sized resources built for the old
+    // scale are now wrong — a glyph atlas rasterized at 2x is blurry at 1x — so
+    // rebuild them here. Not called for the initial scale; read backingScale()
+    // for that.
+    std::function<void(float)> onBackingScaleChanged = [](float) {};
 
     // Fired after the GPU device was lost and replaced (driver update, GPU
     // reset — Windows only). The view's swapchain and MSAA/depth targets are

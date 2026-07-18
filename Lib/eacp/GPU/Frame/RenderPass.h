@@ -13,11 +13,34 @@ class Texture;
 class RenderPass
 {
 public:
-    explicit RenderPass(void* encoder);
+    // targetWidth/targetHeight are the render target's size in *pixels*. The
+    // pass needs them to clamp scissor rects: both backends reject a scissor
+    // that leaves the render target (Metal API validation aborts), so a caller
+    // scrolling a region partly off-screen would otherwise have to clamp by
+    // hand at every call site.
+    explicit RenderPass(void* encoder, int targetWidth = 0, int targetHeight = 0);
     ~RenderPass();
 
     RenderPass(const RenderPass&) = delete;
     RenderPass& operator=(const RenderPass&) = delete;
+
+    // Restricts rasterization to rect, in render-target *pixels* with the origin
+    // at the top-left - the same orientation Metal's MTLScissorRect and D3D12's
+    // D3D12_RECT use, and the same y-down sense as Graphics::Rect. Callers
+    // working in logical points multiply by GPUView::backingScale() first.
+    //
+    // The rect is clamped to the render target, so a partly off-screen region
+    // clips correctly instead of aborting. An empty or fully off-screen rect
+    // discards every subsequent fragment, which is the useful behaviour for a
+    // scrolled-away pane.
+    //
+    // Scissor state persists for the rest of the pass; call clearScissorRect to
+    // go back to the full target. Nesting is the caller's job - the GPU has one
+    // scissor rect, so a widget tree intersects rects on the way down.
+    void setScissorRect(const Graphics::Rect& rect);
+
+    // Restores rasterization to the whole render target.
+    void clearScissorRect();
 
     void setPipeline(const RenderPipeline& pipeline);
     void setVertexBuffer(const Buffer& buffer, int index = 0);

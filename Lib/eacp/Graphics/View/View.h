@@ -36,6 +36,24 @@ enum class MouseButton
     Other = 3
 };
 
+// Where a wheel event sits in a scroll gesture. A notched wheel has no gesture
+// to speak of and always reports None; a trackpad runs Began -> Changed -> Ended
+// while the fingers are down, and the system then keeps sending Momentum events
+// as the motion coasts to a stop.
+//
+// Worth distinguishing because momentum is not intent: a view should stop an
+// in-flight animation when a gesture Begins, and may let a scroll rubber-band
+// past its limit during Momentum where a direct drag would clamp.
+enum class ScrollPhase
+{
+    None,
+    Began,
+    Changed,
+    Ended,
+    Momentum,
+    MomentumEnded
+};
+
 struct MouseEvent
 {
     Point pos;
@@ -66,6 +84,24 @@ struct MouseEvent
     int clickCount = 1;
     float pressure = 1.0f;
     double timestamp = 0.0;
+
+    // Wheel events only: what `delta` is measured in.
+    //
+    // A trackpad or a Magic Mouse reports a precise delta already in points, so
+    // it can be applied as-is and the content tracks the fingers exactly. A
+    // notched wheel instead reports *lines* — usually +/-1 per detent — and the
+    // view has to multiply by whatever a line means to it. There is no single
+    // right conversion for the framework to pick, because only the view knows
+    // its line height, so both forms are passed through and this flag says which
+    // arrived.
+    //
+    // Positive y means the content should move down, i.e. toward the start of
+    // the document. The platform has already applied the user's natural-scroll
+    // preference, so this is intent, not raw device motion — do not invert it.
+    bool preciseScrolling = false;
+
+    // Wheel events only. See ScrollPhase.
+    ScrollPhase scrollPhase = ScrollPhase::None;
 };
 
 struct ViewProperties
@@ -145,6 +181,12 @@ public:
     virtual void keyDown(const KeyEvent&) {}
     virtual void keyUp(const KeyEvent&) {}
     virtual void resized();
+
+    // The view moved to a display with a different backing scale (a window
+    // dragged between a Retina and a non-Retina screen), or that display's scale
+    // changed. Anything sized in device pixels rather than logical points is now
+    // wrong and must be rebuilt — a glyph atlas rasterized at 2x is blurry at 1x.
+    virtual void backingScaleChanged() {}
 
     Rect getBounds() const;
     Rect getLocalBounds() const;
