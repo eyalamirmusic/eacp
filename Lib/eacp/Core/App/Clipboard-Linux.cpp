@@ -11,7 +11,7 @@ bool copyText(std::string_view)
 // an X11 or Wayland connection, and the clipboard requires one. Empty is the
 // documented answer for a platform without a clipboard, so callers need no
 // special case.
-std::string readText()
+std::string getText()
 {
     return {};
 }

@@ -149,7 +149,7 @@ struct InspectorView final : Graphics::View
                 return;
             }
 
-            const auto text = Clipboard::readText();
+            const auto text = Clipboard::getText();
             add("-- pasted " + std::to_string(text.size()) + " bytes: \""
                 + printable(text.substr(0, 40)) + "\"");
             return;

@@ -14,9 +14,13 @@ bool copyFiles(const Vector<std::string>& paths);
 // Reads the system clipboard on every call rather than caching. Another
 // application may have written to it since, and a stale paste is a worse
 // failure than a slow one.
-std::string readText();
+//
+// Named to match the same function on jamierpond/eacp, which arrived first and
+// already has callers; keeping two spellings of one idea in a young API is not
+// worth the consistency with copyText.
+std::string getText();
 
-// Whether readText would return anything. Lets a Paste menu item be enabled
+// Whether getText would return anything. Lets a Paste menu item be enabled
 // without pulling the payload across, which for a large clipboard is not free.
 bool hasText();
 } // namespace eacp::Clipboard

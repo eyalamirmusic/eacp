@@ -15,7 +15,7 @@ bool copyText(std::string_view text)
                          forType:NSPasteboardTypeString];
 }
 
-std::string readText()
+std::string getText()
 {
     auto* pasteboard = [NSPasteboard generalPasteboard];
     auto* text = [pasteboard stringForType:NSPasteboardTypeString];

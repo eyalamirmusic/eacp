@@ -9,6 +9,7 @@ nano_add_executable(TextTests
             GlyphAtlasTests.cpp
             GlyphRasterizerTests.cpp
             TextRenderingTests.cpp
+            GlyphRendererTests.cpp
             TestMain.cpp
         TARGETS eacp-text)
 

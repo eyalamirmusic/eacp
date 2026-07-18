@@ -9,7 +9,7 @@
 // test suite that silently ate the user's clipboard would be a poor trade for
 // the coverage.
 //
-// On a platform with no clipboard backend (Linux, for now) readText returns
+// On a platform with no clipboard backend (Linux, for now) getText returns
 // empty and these self-skip rather than fail — empty is the documented answer
 // there, not a defect.
 
@@ -22,7 +22,7 @@ namespace
 struct ClipboardGuard
 {
     ClipboardGuard()
-        : previous(Clipboard::readText())
+        : previous(Clipboard::getText())
     {
     }
 
@@ -42,7 +42,7 @@ bool clipboardWorks()
     if (!Clipboard::copyText("eacp-clipboard-probe"))
         return false;
 
-    return Clipboard::readText() == "eacp-clipboard-probe";
+    return Clipboard::getText() == "eacp-clipboard-probe";
 }
 } // namespace
 
@@ -54,7 +54,7 @@ auto tRoundTripsText = test("Clipboard/textSurvivesARoundTrip") = []
         return;
 
     check(Clipboard::copyText("hello clipboard"));
-    check(Clipboard::readText() == "hello clipboard");
+    check(Clipboard::getText() == "hello clipboard");
 };
 
 // The whole point of the addition: what comes back is what a *different*
@@ -67,10 +67,10 @@ auto tReadsWhatWasWritten = test("Clipboard/readReflectsTheLatestWrite") = []
         return;
 
     Clipboard::copyText("first");
-    check(Clipboard::readText() == "first");
+    check(Clipboard::getText() == "first");
 
     Clipboard::copyText("second");
-    check(Clipboard::readText() == "second");
+    check(Clipboard::getText() == "second");
 };
 
 auto tHasTextTracksContent = test("Clipboard/hasTextAgreesWithReadText") = []
@@ -83,7 +83,7 @@ auto tHasTextTracksContent = test("Clipboard/hasTextAgreesWithReadText") = []
     Clipboard::copyText("something");
 
     check(Clipboard::hasText());
-    check(!Clipboard::readText().empty());
+    check(!Clipboard::getText().empty());
 };
 
 // Multi-byte text has to survive the UTF-8/UTF-16 conversion each platform does
@@ -99,7 +99,7 @@ auto tRoundTripsUnicode = test("Clipboard/unicodeSurvivesTheRoundTrip") = []
     const auto text = std::string {"héllo → 世界 🌍"};
 
     check(Clipboard::copyText(text));
-    check(Clipboard::readText() == text);
+    check(Clipboard::getText() == text);
 };
 
 auto tRoundTripsNewlines = test("Clipboard/multiLineTextSurvives") = []
@@ -112,7 +112,7 @@ auto tRoundTripsNewlines = test("Clipboard/multiLineTextSurvives") = []
     const auto text = std::string {"one\ntwo\nthree"};
 
     check(Clipboard::copyText(text));
-    check(Clipboard::readText() == text);
+    check(Clipboard::getText() == text);
 };
 
 // A paste of a large selection must not truncate. Big enough to cross the
@@ -130,7 +130,7 @@ auto tRoundTripsLargeText = test("Clipboard/largeTextIsNotTruncated") = []
         text += "a line of text that is not especially short\n";
 
     check(Clipboard::copyText(text));
-    check(Clipboard::readText().size() == text.size());
+    check(Clipboard::getText().size() == text.size());
 };
 
 // Reading repeatedly must be stable — the read must not consume the clipboard,
@@ -144,16 +144,16 @@ auto tReadIsRepeatable = test("Clipboard/readingDoesNotConsume") = []
 
     Clipboard::copyText("stable");
 
-    check(Clipboard::readText() == "stable");
-    check(Clipboard::readText() == "stable");
-    check(Clipboard::readText() == "stable");
+    check(Clipboard::getText() == "stable");
+    check(Clipboard::getText() == "stable");
+    check(Clipboard::getText() == "stable");
 };
 
 // Never crashes and never returns garbage, whatever the clipboard holds. The
 // contract that lets a caller paste without checking anything first.
 auto tReadIsAlwaysSafe = test("Clipboard/readIsSafeOnAnyPlatform") = []
 {
-    const auto text = Clipboard::readText();
+    const auto text = Clipboard::getText();
     const auto has = Clipboard::hasText();
 
     // Empty and hasText() disagreeing would mean a caller enabling Paste from

@@ -13,7 +13,7 @@ bool copyText(std::string_view text)
     return true;
 }
 
-std::string readText()
+std::string getText()
 {
     auto* text = [UIPasteboard generalPasteboard].string;
 

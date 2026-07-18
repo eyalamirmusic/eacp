@@ -86,7 +86,7 @@ std::string toUtf8(const wchar_t* text, int length)
 }
 } // namespace
 
-std::string readText()
+std::string getText()
 {
     // IsClipboardFormatAvailable first: opening the clipboard takes a global
     // lock that blocks every other application, so it is not worth taking when

@@ -4,6 +4,7 @@
 # a stub glyph source instead of against installed fonts.
 add_library(eacp-text STATIC
         GlyphAtlas.cpp
+        GlyphRenderer.cpp
         ShelfPacker.cpp)
 
 if (APPLE)
