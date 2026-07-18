@@ -45,7 +45,18 @@ namespace
 {
 bool s_runningAsPlugin = false;
 std::atomic<int> s_returnValue {0};
+Callback s_reopenHandler = [] {};
 } // namespace
+
+void setReopenHandler(const Callback& handler)
+{
+    s_reopenHandler = handler ? handler : Callback {[] {}};
+}
+
+const Callback& getReopenHandler()
+{
+    return s_reopenHandler;
+}
 
 void setReturnValue(int returnValue)
 {

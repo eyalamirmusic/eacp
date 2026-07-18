@@ -139,6 +139,7 @@ struct WindowDelegateState
     Callback cb = [] {};
     ResizeCallback onResize;
     WillResizeCallback onWillResize;
+    bool hidesOnClose = false;
     WindowEvents* events = nullptr;
     // Internal key-focus listener (mouse lock suspend/resume), invoked
     // alongside the user-facing events->onActivationChanged.
@@ -155,6 +156,17 @@ WindowDelegateState* getDelegateState(id self)
 void windowWillClose(id self, SEL, NSNotification*)
 {
     getDelegateState(self)->cb();
+}
+
+// hidesOnClose intercepts the close before it happens: the window orders
+// out (state intact, willClose never fires) and the app keeps running.
+BOOL windowShouldClose(id self, SEL, NSWindow* sender)
+{
+    if (!getDelegateState(self)->hidesOnClose)
+        return YES;
+
+    [sender orderOut:nil];
+    return NO;
 }
 
 NSSize windowWillResize(id self, SEL, NSWindow* sender, NSSize frameSize)
@@ -226,6 +238,7 @@ Class getWindowDelegateClass()
         builder->addProtocol(@protocol(NSWindowDelegate));
 
         builder->addMethod(@selector(windowWillClose:), windowWillClose);
+        builder->addMethod(@selector(windowShouldClose:), windowShouldClose);
         builder->addMethod(@selector(windowWillResize:toSize:),
                            windowWillResize);
         builder->addMethod(@selector(windowDidResize:), windowDidResize);
@@ -247,6 +260,7 @@ NSObject* createWindowDelegate(const WindowOptions& options)
 
     auto* state = new WindowDelegateState();
     state->cb = options.effectiveOnQuit();
+    state->hidesOnClose = options.hidesOnClose;
     state->onResize = options.onResize;
     state->onWillResize = options.onWillResize;
     state->keepTrafficLightsPositioned =

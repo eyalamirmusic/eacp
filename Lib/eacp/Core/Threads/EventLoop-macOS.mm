@@ -1,4 +1,5 @@
 #include "EventLoop.h"
+#include "../App/App.h"
 #include "../ObjC/ObjC.h"
 #include "../ObjC/RuntimeClass.h"
 #include "../Utils/Environment.h"
@@ -21,6 +22,15 @@ NSApplicationTerminateReply applicationShouldTerminate(id, SEL, NSApplication*)
     return NSTerminateCancel;
 }
 
+// Dock-icon click while no window is visible. The app decides what "come
+// back" means (Apps::setReopenHandler); returning NO suppresses AppKit's
+// default un-miniaturize pass.
+BOOL applicationShouldHandleReopen(id, SEL, NSApplication*, BOOL)
+{
+    Apps::getReopenHandler()();
+    return NO;
+}
+
 id createAppTerminationBridge()
 {
     static auto cls = []
@@ -30,6 +40,9 @@ id createAppTerminationBridge()
         builder->addProtocol(@protocol(NSApplicationDelegate));
         builder->addMethod(@selector(applicationShouldTerminate:),
                            applicationShouldTerminate);
+        builder->addMethod(
+            @selector(applicationShouldHandleReopen:hasVisibleWindows:),
+            applicationShouldHandleReopen);
         builder->registerClass();
         return builder->get();
     }();
