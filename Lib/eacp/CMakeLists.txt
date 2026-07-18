@@ -13,6 +13,9 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(Camera)
     add_subdirectory(GPU)
     add_subdirectory(GPUWidgets)
+
+    # Glyph rasterization + atlas caching, on top of the GPU module.
+    add_subdirectory(Text)
     add_subdirectory(Sprites)
     add_subdirectory(CameraView)
 

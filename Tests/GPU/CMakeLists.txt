@@ -19,7 +19,8 @@ if (APPLE OR WIN32)
             GPUSnapshotTests.cpp
             ScissorTests.cpp
             BackingScaleTests.cpp
-            TextureRegionTests.cpp)
+            TextureRegionTests.cpp
+            ShaderBlendTests.cpp)
 endif ()
 
 nano_add_executable(GPUTests

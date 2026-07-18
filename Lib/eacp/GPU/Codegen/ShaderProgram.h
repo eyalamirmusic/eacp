@@ -491,9 +491,17 @@ public:
     // Builds the shader library and render pipeline. sampleCount must match the
     // render target (GPUView::sampleCount()); set depth when the view has a depth
     // buffer (GPUView::setDepth(true)).
+    //
+    // blendMode defaults to None, which writes fragments straight through. A
+    // program drawing anything translucent — glyph coverage, a fade, a scrim —
+    // needs AlphaBlend, or its antialiased edges punch holes in what is behind
+    // them instead of blending with it. Without this, such a program had to
+    // build its pipeline by hand and give up draw(program) entirely, which is
+    // what Sprites::SpriteRenderer still does.
     void prepare(int sampleCount,
                  bool depth = false,
-                 PrimitiveTopology topology = PrimitiveTopology::Triangles)
+                 PrimitiveTopology topology = PrimitiveTopology::Triangles,
+                 BlendMode blendMode = BlendMode::None)
     {
         shaderLibrary.emplace(Device::shared(), generated.source);
 
@@ -503,6 +511,7 @@ public:
         descriptor.vertexLayout = generated.vertexLayout;
         descriptor.depth = depth;
         descriptor.topology = topology;
+        descriptor.blendMode = blendMode;
 
         pipelineState.emplace(Device::shared(), descriptor);
     }
