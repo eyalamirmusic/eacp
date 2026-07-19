@@ -29,6 +29,16 @@ public:
     // Size in bytes, or 0 if the file is missing or not a regular file.
     std::uint64_t size() const;
 
+    // Last-modified time, for noticing that a file changed underneath you.
+    // Comparison is the only meaningful operation: std::filesystem's clock has
+    // an unspecified epoch, so this is not a wall-clock time and is not
+    // comparable across runs or machines. 0 when the file is missing.
+    //
+    // Pair it with size(). Filesystem timestamp granularity varies — a second
+    // on some ext4 configurations — so an edit-save-edit-save cycle can produce
+    // two writes that share a stamp, and the size usually differs when they do.
+    std::int64_t modificationTime() const;
+
     // Opens the file for binary reading. Returns false if it can't be
     // opened. A no-op once already open.
     bool openForRead();

@@ -6,6 +6,10 @@ nano_add_executable(FileTests
         SOURCES FileTests.cpp
         TARGETS eacp-core)
 
+nano_add_executable(FilesTests
+        SOURCES FilesTests.cpp
+        TARGETS eacp-core)
+
 nano_add_executable(FilePathTests
         SOURCES FilePathTests.cpp
         TARGETS eacp-core)

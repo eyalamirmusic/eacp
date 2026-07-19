@@ -59,6 +59,14 @@ std::uint64_t File::size() const
     return ec ? 0 : static_cast<std::uint64_t>(bytes);
 }
 
+std::int64_t File::modificationTime() const
+{
+    auto ec = std::error_code {};
+    auto written = std::filesystem::last_write_time(impl->fsPath, ec);
+
+    return ec ? 0 : static_cast<std::int64_t>(written.time_since_epoch().count());
+}
+
 bool File::openForRead()
 {
     if (impl->stream.is_open())
