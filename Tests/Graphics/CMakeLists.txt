@@ -68,6 +68,28 @@ if (APPLE AND NOT IOS)
     target_link_libraries(ScrollWheelTests PRIVATE "-framework AppKit")
 endif ()
 
+# Menu enablement. The portable half covers the model; the macOS file
+# additionally checks the forwarding target answers validateMenuItem:, since a
+# target that does not leaves every item enabled without failing anything else.
+# APPLE covers iOS, which has no menu bar at all, so the native half is
+# macOS-only. The portable half still builds everywhere.
+set(menu_sources MenuTests.cpp TestMain.cpp)
+
+if (APPLE AND NOT IOS)
+    list(APPEND menu_sources MenuTests-macOS.mm)
+endif ()
+
+nano_add_executable(MenuTests
+        NO_MAIN
+        SOURCES
+            ${menu_sources}
+        TARGETS eacp-graphics)
+
+if (APPLE AND NOT IOS)
+    set_target_properties(MenuTests PROPERTIES OBJCXX_STANDARD 20)
+    target_link_libraries(MenuTests PRIVATE "-framework AppKit")
+endif ()
+
 if(WIN32)
     nano_add_executable(CompositionPixelTests
             NO_MAIN
