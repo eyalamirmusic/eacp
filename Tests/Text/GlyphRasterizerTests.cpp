@@ -16,12 +16,13 @@ using namespace eacp::Text;
 
 namespace
 {
-// Present on macOS, iOS and (as a metric-compatible substitute) most systems
-// eacp targets. A monospace face keeps the advance assertions meaningful.
+// Whichever fixed-pitch face the platform ships — Menlo on Apple, Consolas on
+// Windows. A monospace face keeps the advance assertions meaningful, and naming
+// one platform's family here would make the other skip every test below.
 FontRequest monospaceRequest(float pointSize = 16.f, float scale = 1.f)
 {
     auto request = FontRequest {};
-    request.family = "Menlo";
+    request.family = defaultMonospaceFamily();
     request.pointSize = pointSize;
     request.scale = scale;
 
@@ -215,6 +216,67 @@ auto tUnassignedCodepointIsSelfConsistent =
               == (std::size_t) bitmap.width * bitmap.height
                      * bytesPerPixel(bitmap.format));
     }
+};
+
+// A Latin monospace family has no CJK glyphs, so these can only come from the
+// system falling back to another face. Without that, half the world's text
+// silently disappears rather than rendering from a substitute.
+auto tFallsBackForMissingGlyphs =
+    test("GlyphRasterizer/fallsBackToAnotherFaceForMissingGlyphs") = []
+{
+    const auto rasterizer = GlyphRasterizer {monospaceRequest(24.f)};
+
+    if (!rasterizer.isValid())
+        return;
+
+    // Han, Hiragana, Cyrillic — none of them in Menlo or Consolas. Spelled as
+    // escapes because the build does not force a UTF-8 source encoding.
+    for (const auto codepoint: {U'\u6f22', U'\u3042', U'\u0416'})
+    {
+        const auto bitmap = rasterizer.rasterize(codepoint, FontStyle::Regular);
+
+        check(bitmap.valid);
+        check(!bitmap.isEmpty());
+        check(bitmap.advance > 0.f);
+        check(bitmap.pixels.size()
+              == (std::size_t) bitmap.width * bitmap.height
+                     * bytesPerPixel(bitmap.format));
+    }
+};
+
+// Emoji come from a colour font, which the atlas keeps in a separate RGBA page.
+// The format has to be reported honestly or the atlas blits 4-byte pixels into
+// a 1-byte page. Not every system resolves emoji to a colour face, so this
+// asserts the contract rather than demanding colour.
+auto tColorGlyphsReportFourBytesPerPixel =
+    test("GlyphRasterizer/colorGlyphsAreSelfConsistent") = []
+{
+    const auto rasterizer = GlyphRasterizer {monospaceRequest(24.f)};
+
+    if (!rasterizer.isValid())
+        return;
+
+    const auto bitmap = rasterizer.rasterize(U'\U0001F600', FontStyle::Regular);
+
+    if (!bitmap.valid || bitmap.isEmpty())
+        return;
+
+    check(bitmap.pixels.size()
+          == (std::size_t) bitmap.width * bitmap.height
+                 * bytesPerPixel(bitmap.format));
+
+    if (bitmap.format != GlyphFormat::Color)
+        return;
+
+    // A colour glyph that came out fully transparent would draw nothing, which
+    // is the failure a premultiply/compositing mistake produces.
+    auto opaque = 0;
+
+    for (std::size_t i = 3; i < bitmap.pixels.size(); i += 4)
+        if (bitmap.pixels[i] > 128)
+            ++opaque;
+
+    check(opaque > 0);
 };
 
 // The same codepoints must survive the atlas without corrupting it, which is

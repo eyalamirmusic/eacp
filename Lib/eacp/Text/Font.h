@@ -33,6 +33,19 @@ constexpr bool isItalic(FontStyle style)
     return (static_cast<std::uint8_t>(style) & 2) != 0;
 }
 
+// The platform's stock fixed-pitch face. No family name ships on both systems,
+// so asking for a literal one gets you a substitute on the other platform —
+// a proportional substitute, which quietly loses the property most callers of a
+// monospace family wanted in the first place.
+constexpr const char* defaultMonospaceFamily()
+{
+#if defined(_WIN32)
+    return "Consolas";
+#else
+    return "Menlo";
+#endif
+}
+
 // What to rasterize with.
 //
 // pointSize is in logical points and scale is device pixels per point, so the
@@ -41,7 +54,7 @@ constexpr bool isItalic(FontStyle style)
 // of being magnified from a 1x bitmap.
 struct FontRequest
 {
-    std::string family = "Menlo";
+    std::string family = defaultMonospaceFamily();
     float pointSize = 13.f;
     float scale = 1.f;
 

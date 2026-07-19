@@ -34,7 +34,7 @@ struct GlyphView final : GPU::GPUView
     bool build()
     {
         auto request = FontRequest {};
-        request.family = "Menlo";
+        request.family = defaultMonospaceFamily();
         request.pointSize = 48.f;
         request.scale = 1.f;
 
