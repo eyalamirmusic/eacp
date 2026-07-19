@@ -96,7 +96,7 @@ struct AtlasTextView final : GPU::GPUView
             return;
 
         auto request = Text::FontRequest {};
-        request.family = "Menlo";
+        request.family = Text::defaultMonospaceFamily();
         request.pointSize = 22.f;
         request.scale = scale;
 
@@ -119,7 +119,14 @@ struct AtlasTextView final : GPU::GPUView
         const auto bounds = getLocalBounds();
 
         if (bounds.w > 0 && bounds.h > 0)
+        {
             sprites.emplace(Graphics::Point {bounds.w, bounds.h}, sampleCount());
+
+            if (!glyphs)
+                glyphs.emplace();
+
+            glyphs->setViewportSize({bounds.w, bounds.h});
+        }
 
         repaint();
     }
@@ -184,14 +191,13 @@ struct AtlasTextView final : GPU::GPUView
                                                          glyph.src.h / builtAtScale};
 
                 // Masks carry coverage only and take the line's colour; colour
-                // glyphs carry their own and are drawn untinted.
+                // glyphs carry their own and are drawn untinted. GlyphRenderer
+                // keeps the two in separate queues and shades each correctly —
+                // a general sprite shader would multiply the mask's coverage
+                // into RGB and draw opaque red boxes instead of text.
                 const auto colored = glyph.format == Text::GlyphFormat::Color;
 
-                sprites->drawTexture(colored ? atlas->colorTexture()
-                                             : atlas->maskTexture(),
-                                     glyph.src,
-                                     destination,
-                                     colored ? Graphics::Color::white() : line.color);
+                glyphs->add(destination, glyph.src, line.color, colored);
             }
 
             pen += glyph.advance;
@@ -206,7 +212,7 @@ struct AtlasTextView final : GPU::GPUView
 
         auto pass = frame.beginPass({background});
 
-        if (!sprites || !atlas)
+        if (!sprites || !glyphs || !atlas)
             return;
 
         const auto metrics = atlas->metrics();
@@ -223,6 +229,7 @@ struct AtlasTextView final : GPU::GPUView
         atlas->commit();
 
         sprites->begin(pass);
+        glyphs->begin();
 
         for (const auto& line: lines)
         {
@@ -232,9 +239,14 @@ struct AtlasTextView final : GPU::GPUView
             layOutLine(line, left, baseline, false);
             baseline += lineHeight;
         }
+
+        // Every glyph in one or two draw calls, issued after the gutter fills so
+        // the text lands on top of them.
+        glyphs->flush(pass, *atlas);
     }
 
     std::optional<Sprites::SpriteRenderer> sprites;
+    std::optional<Text::GlyphRenderer> glyphs;
     OwningPointer<Text::GlyphAtlas> atlas;
     float builtAtScale = 0.f;
 
