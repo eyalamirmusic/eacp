@@ -9,6 +9,7 @@
 
 #include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/ObjC/Strings.h>
+#include <eacp/Core/Threads/ThreadUtils.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
 #if !TARGET_OS_IPHONE
 #include <eacp/Graphics/Graphics/Keyboard-MacOS.h>
@@ -897,6 +898,8 @@ bool WebView::isRuntimeAvailable()
 
 void WebView::evaluateJavaScript(const std::string& script, const JSCallback& callback)
 {
+    Threads::assertMainThread();
+
     auto* nsScript = [NSString stringWithUTF8String:script.c_str()];
 
     if (callback == nullptr)
