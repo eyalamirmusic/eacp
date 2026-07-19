@@ -683,6 +683,21 @@ Point View::getMousePosition() const
     return impl->getMousePosition();
 }
 
+// Stored but not yet applied. Windows re-asks for the pointer on every
+// WM_SETCURSOR, so a bare SetCursor here would be overwritten by the default on
+// the very next mouse move; doing it properly means handling WM_SETCURSOR in the
+// host window and resolving the view under the pointer there, which is a change
+// to CompositionHostWindow rather than to this file.
+//
+// Left undone deliberately rather than written blind: there is no Windows
+// machine in the loop to see the result on, and a cursor that flickers between
+// two shapes is worse than one that never changes. getMouseCursor() still
+// answers, so everything portable about the feature is testable here.
+void View::setMouseCursor(MouseCursor cursor)
+{
+    currentCursor = cursor;
+}
+
 void View::focus()
 {
     impl->focus();

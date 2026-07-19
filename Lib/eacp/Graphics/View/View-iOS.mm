@@ -256,6 +256,14 @@ Point View::getMousePosition() const
     return impl->getMousePosition();
 }
 
+// Stored and never shown: iOS draws no pointer for a touch. Kept rather than
+// ignored so portable code can set a shape unconditionally, and so an iPad with
+// a trackpad has one obvious place to grow a real implementation.
+void View::setMouseCursor(MouseCursor cursor)
+{
+    currentCursor = cursor;
+}
+
 void View::focus()
 {
     impl->focus();

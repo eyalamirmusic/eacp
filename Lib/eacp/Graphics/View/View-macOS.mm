@@ -276,6 +276,38 @@ void keyUp(id self, SEL, NSEvent* event)
         view->keyUp(keyEventFrom(event, KeyEventType::Up));
 }
 
+NSCursor* toNSCursor(MouseCursor cursor)
+{
+    switch (cursor)
+    {
+        case MouseCursor::IBeam:
+            return [NSCursor IBeamCursor];
+        case MouseCursor::PointingHand:
+            return [NSCursor pointingHandCursor];
+        case MouseCursor::ResizeLeftRight:
+            return [NSCursor resizeLeftRightCursor];
+        case MouseCursor::ResizeUpDown:
+            return [NSCursor resizeUpDownCursor];
+        case MouseCursor::Crosshair:
+            return [NSCursor crosshairCursor];
+        case MouseCursor::Default:
+            break;
+    }
+
+    return [NSCursor arrowCursor];
+}
+
+// AppKit asks this whenever the pointer enters the tracking area, and after
+// anything else has had a go at setting the cursor. Without it, a shape set
+// from a mouseMoved handler survives only until the pointer crosses a boundary
+// and AppKit resets it — which reads as the cursor flickering back at random
+// rather than as a missing method.
+void cursorUpdate(id self, SEL, id)
+{
+    if (auto* view = getView(self))
+        [toNSCursor(view->getMouseCursor()) set];
+}
+
 void updateTrackingAreas(id self, SEL)
 {
     ObjC::sendSuper<void>(self, [NSView class], @selector(updateTrackingAreas));
@@ -287,7 +319,8 @@ void updateTrackingAreas(id self, SEL)
 
     NSTrackingAreaOptions options =
         NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved
-        | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect;
+        | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
+        | NSTrackingCursorUpdate;
 
     NSTrackingArea* trackingArea =
         [[NSTrackingArea alloc] initWithRect:view.bounds
@@ -336,6 +369,7 @@ Class getNativeViewClass()
 
         builder->addMethod(@selector(keyDown:), keyDown);
         builder->addMethod(@selector(keyUp:), keyUp);
+        builder->addMethod(@selector(cursorUpdate:), cursorUpdate);
         builder->addMethod(@selector(updateTrackingAreas),
                            updateTrackingAreas);
 
@@ -486,6 +520,24 @@ Threads::Async<Image> View::renderToImageAsync(float scale)
 Point View::getMousePosition() const
 {
     return impl->getMousePosition();
+}
+
+void View::setMouseCursor(MouseCursor cursor)
+{
+    if (currentCursor == cursor)
+        return;
+
+    currentCursor = cursor;
+
+    // Applied here as well as from cursorUpdate:, because the call that changes
+    // it almost always comes *from* a mouseMoved handler — the pointer is
+    // already inside, and inside is the only time the shape is visible. Waiting
+    // for the next cursorUpdate: would leave the old shape under a pointer that
+    // has already crossed onto the splitter.
+    auto* native = (NSView*) impl->nativeView.get();
+
+    if (native != nil && native.window != nil)
+        [toNSCursor(cursor) set];
 }
 
 void View::focus()

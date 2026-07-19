@@ -36,6 +36,33 @@ enum class MouseButton
     Other = 3
 };
 
+// The shape the pointer takes over a view.
+//
+// Deliberately a small set of the shapes every platform names the same way. An
+// app wanting something else is asking for a custom image, which is a different
+// feature with a different lifetime problem — and none of these needs it: the
+// point of a cursor shape is that it is a convention the person already knows.
+enum class MouseCursor
+{
+    // The arrow. What a view has until it says otherwise.
+    Default,
+
+    // Over text that can be selected.
+    IBeam,
+
+    // Over something clickable that is not a control — a link.
+    PointingHand,
+
+    // Over a vertical splitter, so a draggable divider reads as draggable
+    // before anyone tries dragging it. This is the one an IDE cannot do without.
+    ResizeLeftRight,
+
+    // Over a horizontal splitter.
+    ResizeUpDown,
+
+    Crosshair
+};
+
 // Where a wheel event sits in a scroll gesture. A notched wheel has no gesture
 // to speak of and always reports None; a trackpad runs Began -> Changed -> Ended
 // while the fingers are down, and the system then keeps sending Momentum events
@@ -214,6 +241,19 @@ public:
 
     Point getMousePosition() const;
 
+    // The pointer's shape while it is over this view.
+    //
+    // Settable at any time, including from inside a mouseMoved handler, and
+    // that is the case it is designed for rather than an afterthought: an app
+    // that draws its own widgets into one view — which is what any GPU-drawn UI
+    // is — has one view and many regions, so the shape has to follow the
+    // pointer. A cursor fixed per view would be useless to it.
+    //
+    // Setting the same shape twice is free, so a handler can call this on every
+    // move without checking first.
+    void setMouseCursor(MouseCursor cursor);
+    MouseCursor getMouseCursor() const { return currentCursor; }
+
     virtual View* hitTest(const Point& point);
 
     void dispatchMouseEvent(const MouseEvent& event);
@@ -260,6 +300,8 @@ private:
     View* mouseDownTarget = nullptr;
 
     ViewProperties properties;
+
+    MouseCursor currentCursor = MouseCursor::Default;
 
     struct Native;
     Pimpl<Native> impl;

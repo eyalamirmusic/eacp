@@ -68,6 +68,27 @@ if (APPLE AND NOT IOS)
     target_link_libraries(ScrollWheelTests PRIVATE "-framework AppKit")
 endif ()
 
+# Cursor shapes. The portable half covers the per-view state; the macOS file
+# additionally checks the backing view implements cursorUpdate: itself and that
+# its tracking area asks for cursor updates — miss either and the shape is
+# remembered perfectly and never drawn.
+set(cursor_sources CursorTests.cpp TestMain.cpp)
+
+if (APPLE AND NOT IOS)
+    list(APPEND cursor_sources CursorTests-macOS.mm)
+endif ()
+
+nano_add_executable(CursorTests
+        NO_MAIN
+        SOURCES
+            ${cursor_sources}
+        TARGETS eacp-graphics)
+
+if (APPLE AND NOT IOS)
+    set_target_properties(CursorTests PROPERTIES OBJCXX_STANDARD 20)
+    target_link_libraries(CursorTests PRIVATE "-framework AppKit")
+endif ()
+
 # Menu enablement. The portable half covers the model; the macOS file
 # additionally checks the forwarding target answers validateMenuItem:, since a
 # target that does not leaves every item enabled without failing anything else.

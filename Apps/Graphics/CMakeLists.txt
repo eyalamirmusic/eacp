@@ -13,6 +13,10 @@ if (NOT IOS)
     # once. iOS has no menu bar, so this is desktop-only.
     add_subdirectory(MenuBarApp)
 
+    # The pointer changing shape per region of one view, which is what a
+    # GPU-drawn UI needs and a per-view cursor cannot do. No pointer on iOS.
+    add_subdirectory(CursorShapes)
+
     # Snapshot capture is portable (macOS + Windows); the Screen mode falls back
     # gracefully where it is not yet available.
     add_subdirectory(VideoRecorderDemo)
