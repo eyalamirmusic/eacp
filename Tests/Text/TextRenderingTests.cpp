@@ -2,6 +2,7 @@
 
 #include <eacp/Sprites/Sprites.h>
 
+#include <optional>
 #include <string>
 
 // The whole path, end to end: rasterize -> pack -> upload -> sample -> pixels.
@@ -36,7 +37,7 @@ struct TextView final : GPU::GPUView
     bool build()
     {
         auto request = FontRequest {};
-        request.family = "Menlo";
+        request.family = defaultMonospaceFamily();
         request.pointSize = 24.f;
         request.scale = 1.f;
 
@@ -53,12 +54,13 @@ struct TextView final : GPU::GPUView
 
     void render(GPU::Frame& frame) override
     {
+        if (!sprites)
+            sprites.emplace(Graphics::Point {viewWidth, viewHeight}, sampleCount());
+
         auto pass = frame.beginPass({{0.f, 0.f, 0.f, 1.f}});
 
         if (!atlas)
             return;
-
-        auto renderer = Sprites::SpriteRenderer {{viewWidth, viewHeight}, sampleCount()};
 
         // Rasterize everything first, then upload once, then draw — uploading
         // mid-pass would mutate a texture the earlier draws already bound.
@@ -66,7 +68,7 @@ struct TextView final : GPU::GPUView
             atlas->glyph((char32_t) character, FontStyle::Regular);
 
         atlas->commit();
-        renderer.begin(pass);
+        sprites->begin(pass);
 
         const auto metrics = atlas->metrics();
         auto pen = penX;
@@ -79,7 +81,7 @@ struct TextView final : GPU::GPUView
                 continue;
 
             if (!glyph.empty)
-                renderer.drawTexture(glyph.format == GlyphFormat::Color
+                sprites->drawTexture(glyph.format == GlyphFormat::Color
                                          ? atlas->colorTexture()
                                          : atlas->maskTexture(),
                                      glyph.src,
@@ -99,6 +101,11 @@ struct TextView final : GPU::GPUView
     float penX = 4.f;
     float lastPen = 0.f;
     OwningPointer<GlyphAtlas> atlas;
+
+    // Must outlive render(): a renderer built as a local there releases its
+    // vertex buffer and pipeline while the command list recording the draws is
+    // still waiting to be submitted, and on D3D12 the frame then draws nothing.
+    std::optional<Sprites::SpriteRenderer> sprites;
 };
 
 int inkPixels(const Graphics::Image& image)
