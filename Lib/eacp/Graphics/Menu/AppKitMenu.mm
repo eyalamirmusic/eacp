@@ -15,6 +15,7 @@ namespace
 struct MenuTargetState
 {
     MenuAction action;
+    MenuEnabled isEnabled;
 };
 
 MenuTargetState* getMenuTargetState(id self)
@@ -28,6 +29,17 @@ void menuTargetTrigger(id self, SEL, id)
 
     if (action)
         action();
+}
+
+// NSMenuValidation. An NSMenu autoenables its items by default, which means it
+// asks each item's target this question every time the menu is about to be
+// drawn — so the predicate is read from live state rather than sampled when the
+// bar was built, and an app never has to rebuild a menu to grey something out.
+BOOL menuTargetValidate(id self, SEL, id)
+{
+    auto& isEnabled = getMenuTargetState(self)->isEnabled;
+
+    return isEnabled ? isEnabled() : YES;
 }
 
 void menuTargetDealloc(id self, SEL)
@@ -44,6 +56,7 @@ Class getMenuTargetClass()
 
         builder->addIvar<void*>("state");
         builder->addMethod(@selector(trigger:), menuTargetTrigger);
+        builder->addMethod(@selector(validateMenuItem:), menuTargetValidate);
         builder->addMethod(@selector(dealloc), menuTargetDealloc);
 
         builder->registerClass();
@@ -105,7 +118,7 @@ NSMenuItem* buildAppKitMenuItem(const MenuItem& item, MenuTargets& targets)
         return nsItem;
     }
 
-    auto target = makeActionTarget(item.action);
+    auto target = makeActionTarget(item.action, item.isEnabled);
     nsItem.target = target.get();
 
     targets.add(std::move(target));
@@ -123,11 +136,16 @@ NSMenu* buildAppKitMenu(const Menu& menu, MenuTargets& targets)
     return nsMenu;
 }
 
-ObjC::Ptr<NSObject> makeActionTarget(const MenuAction& action)
+ObjC::Ptr<NSObject> makeActionTarget(const MenuAction& action,
+                                     const MenuEnabled& isEnabled)
 {
     auto target = ObjC::Ptr<NSObject> {[[getMenuTargetClass() alloc] init]};
     ObjC::getIvar<void*>(target.get(), "state") = new MenuTargetState();
-    getMenuTargetState(target.get())->action = action;
+
+    auto* state = getMenuTargetState(target.get());
+    state->action = action;
+    state->isEnabled = isEnabled;
+
     return target;
 }
 

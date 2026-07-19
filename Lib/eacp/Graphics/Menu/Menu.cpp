@@ -11,6 +11,14 @@ MenuAction safeAction(MenuAction action)
 
     return [] {};
 }
+
+MenuEnabled safeEnabled(MenuEnabled isEnabled)
+{
+    if (isEnabled)
+        return isEnabled;
+
+    return [] { return true; };
+}
 } // namespace
 
 KeyEquivalent commandKey(std::string key)
@@ -44,11 +52,13 @@ MenuItem MenuItem::separator()
 
 MenuItem MenuItem::withAction(std::string title,
                               MenuAction action,
-                              std::optional<KeyEquivalent> shortcut)
+                              std::optional<KeyEquivalent> shortcut,
+                              MenuEnabled isEnabled)
 {
     auto item = MenuItem {};
     item.title = std::move(title);
     item.action = safeAction(std::move(action));
+    item.isEnabled = safeEnabled(std::move(isEnabled));
     item.shortcut = std::move(shortcut);
     return item;
 }
@@ -80,6 +90,7 @@ Menu::Menu(std::string titleToUse)
 Menu& Menu::add(MenuItem item)
 {
     item.action = safeAction(std::move(item.action));
+    item.isEnabled = safeEnabled(std::move(item.isEnabled));
     items.add(std::move(item));
     return *this;
 }
