@@ -213,7 +213,8 @@ public:
     {
     }
 
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void** object) override
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,
+                                             void** object) noexcept override
     {
         if (id == __uuidof(IUnknown) || id == __uuidof(IDWriteTextAnalysisSource))
         {
@@ -225,12 +226,12 @@ public:
         return E_NOINTERFACE;
     }
 
-    ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
-    ULONG STDMETHODCALLTYPE Release() override { return 1; }
+    ULONG STDMETHODCALLTYPE AddRef() noexcept override { return 1; }
+    ULONG STDMETHODCALLTYPE Release() noexcept override { return 1; }
 
     HRESULT STDMETHODCALLTYPE GetTextAtPosition(UINT32 position,
                                                 const WCHAR** textOut,
-                                                UINT32* lengthOut) override
+                                                UINT32* lengthOut) noexcept override
     {
         const auto inside = position < length;
 
@@ -240,9 +241,8 @@ public:
         return S_OK;
     }
 
-    HRESULT STDMETHODCALLTYPE GetTextBeforePosition(UINT32 position,
-                                                    const WCHAR** textOut,
-                                                    UINT32* lengthOut) override
+    HRESULT STDMETHODCALLTYPE GetTextBeforePosition(
+        UINT32 position, const WCHAR** textOut, UINT32* lengthOut) noexcept override
     {
         const auto inside = position > 0 && position <= length;
 
@@ -253,14 +253,14 @@ public:
     }
 
     DWRITE_READING_DIRECTION STDMETHODCALLTYPE
-        GetParagraphReadingDirection() override
+        GetParagraphReadingDirection() noexcept override
     {
         return DWRITE_READING_DIRECTION_LEFT_TO_RIGHT;
     }
 
     HRESULT STDMETHODCALLTYPE GetLocaleName(UINT32 position,
                                             UINT32* lengthOut,
-                                            const WCHAR** nameOut) override
+                                            const WCHAR** nameOut) noexcept override
     {
         *lengthOut = length - std::min(position, length);
         *nameOut = nullptr;
@@ -268,10 +268,10 @@ public:
         return S_OK;
     }
 
-    HRESULT STDMETHODCALLTYPE
-        GetNumberSubstitution(UINT32 position,
-                              UINT32* lengthOut,
-                              IDWriteNumberSubstitution** substitution) override
+    HRESULT STDMETHODCALLTYPE GetNumberSubstitution(
+        UINT32 position,
+        UINT32* lengthOut,
+        IDWriteNumberSubstitution** substitution) noexcept override
     {
         *lengthOut = length - std::min(position, length);
         *substitution = nullptr;
