@@ -26,7 +26,12 @@ NSMenuItem* installAndFind(const MenuBar& bar, NSString* menuTitle, NSString* it
 {
     [NSApplication sharedApplication];
 
-    setApplicationMenuBar(bar);
+    // The menu bar is installed per window now, so the platforms that own menus
+    // per window have one to attach to. macOS ignores it — the bar belongs to
+    // the application — but the argument still has to be a real window.
+    auto window = Window {};
+
+    setApplicationMenuBar(bar, window);
 
     auto* mainMenu = [NSApp mainMenu];
 

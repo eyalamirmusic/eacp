@@ -14,7 +14,7 @@ struct MyApp
         // published snapshot over the WebView wire.
         transport.getBridge().use(clock);
 
-        setApplicationMenuBar(buildDefaultWebViewMenuBar());
+        setApplicationMenuBar(buildDefaultWebViewMenuBar(), window);
         window.setContentView(webView);
     }
 

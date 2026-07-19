@@ -6,6 +6,7 @@
 #include "../Helpers/DarkMode-Windows.h"
 #include "../Helpers/ImageConversion-Windows.h"
 #include "../Helpers/SystemAppearance.h"
+#include "../Menu/Win32Menu.h"
 
 // DwmSetWindowAttribute, used for Win11 rounded corners.
 #include <dwmapi.h>
@@ -37,7 +38,7 @@ NonClientInsets nonClientInsets(HWND hwnd)
     auto exStyle = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_EXSTYLE));
 
     RECT rect = {0, 0, 0, 0};
-    AdjustWindowRectExForDpi(&rect, style, FALSE, exStyle, dpi);
+    AdjustWindowRectExForDpi(&rect, style, GetMenu(hwnd) != nullptr, exStyle, dpi);
     return {rect.right - rect.left, rect.bottom - rect.top};
 }
 
@@ -67,6 +68,11 @@ struct Window::Native
 
     ~Native()
     {
+        // Before teardown, while the handle is still valid — and it must happen
+        // at all, or a later window landing on the same HWND address would
+        // inherit this one's menu commands.
+        detail::removeWin32MenuBar(host.hwnd);
+
         host.teardown();
 
         if (applicationIcon)
@@ -550,6 +556,25 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             return 0;
         }
     }
+
+    // The menu bar reports through the owning window's message loop, so its two
+    // messages are routed here rather than in handleCommonMessage — an embedded
+    // view shares that handler and never carries a menu.
+    // lParam == 0 is the documented test for "this came from a menu". HIWORD
+    // alone is not: for a control notification it is the notification code, and
+    // BN_CLICKED is also 0 — with lParam carrying the control's HWND. eacp does
+    // host child windows (EmbeddedView, WebView2), so an id collision is a live
+    // hazard rather than a theoretical one. HIWORD == 1 is an accelerator
+    // table, which eacp has none of.
+    if (msg == WM_COMMAND && HIWORD(wParam) == 0 && lParam == 0)
+        if (detail::handleWin32MenuCommand(hwnd, LOWORD(wParam)))
+            return 0;
+
+    // Asked just before a popup is drawn. This is where Win32 puts the question
+    // NSMenuValidation answers with validateMenuItem:, and doing it here is what
+    // lets an app install its bar once and still grey items from live state.
+    if (msg == WM_INITMENUPOPUP && HIWORD(lParam) == FALSE)
+        detail::updateWin32MenuEnabledState(hwnd);
 
     if (auto result = self->host.handleCommonMessage(msg, wParam, lParam))
         return *result;

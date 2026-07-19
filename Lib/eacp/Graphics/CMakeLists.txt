@@ -9,6 +9,7 @@ target_sources(eacp-graphics PRIVATE
         Layers/ShapeLayer.cpp
         Layers/TextLayer.cpp
         Menu/Menu.cpp
+        Menu/MenuCommands.cpp
         Primitives/Primitives.cpp
         View/View.cpp
         Widgets/TextInput.cpp)

@@ -21,7 +21,11 @@ InstalledMenuBar& installedBar()
 }
 } // namespace
 
-void setApplicationMenuBar(const MenuBar& bar)
+// The window is ignored here, and that is the whole difference between the two
+// platforms: a macOS menu bar belongs to the application and is shown for
+// whichever window is active, so there is nothing per-window to attach it to.
+// Windows owns its menus per HWND and has to be told which one.
+void setApplicationMenuBar(const MenuBar& bar, Window&)
 {
     auto& store = installedBar();
     store.targets.clear();

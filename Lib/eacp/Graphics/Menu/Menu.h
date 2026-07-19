@@ -80,7 +80,19 @@ public:
     Vector<Menu> menus;
 };
 
-void setApplicationMenuBar(const MenuBar& bar);
+class Window;
+
+// Installs `bar` as the menu bar for `window`.
+//
+// The window argument is what makes this implementable at all off macOS. A
+// macOS menu bar belongs to the *application* and is shown for whichever window
+// is active, so the argument is ignored there. Windows has no application menu
+// bar: a menu is owned by an HWND and drawn inside that window's frame, so it
+// has to be told which one. An app with several windows calls this per window
+// on Windows and once on macOS — passing any of them.
+//
+// Ignored entirely on iOS, which has no menu bar of either kind.
+void setApplicationMenuBar(const MenuBar& bar, Window& window);
 
 Menu standardApplicationMenu(std::string applicationName);
 

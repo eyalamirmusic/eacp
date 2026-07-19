@@ -68,6 +68,14 @@ if (APPLE AND NOT IOS)
     target_link_libraries(ScrollWheelTests PRIVATE "-framework AppKit")
 endif ()
 
+# The portable half of a command-id menu bar: ids, labels, accelerator text and
+# the id-to-action lookup. Runs everywhere on purpose — the Win32 calls it
+# supports cannot be tested from a Mac, but they are a thin shell around this,
+# and the ordering agreement between the two walks is where the real risk is.
+nano_add_executable(MenuCommandsTests
+        SOURCES MenuCommandsTests.cpp
+        TARGETS eacp-graphics)
+
 # Cursor shapes. The portable half covers the per-view state; the macOS file
 # additionally checks the backing view implements cursorUpdate: itself and that
 # its tracking area asks for cursor updates — miss either and the shape is

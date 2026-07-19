@@ -130,7 +130,7 @@ struct MenuBarApp
         bar.add(standardApplicationMenu("MenuBarApp"));
         bar.add(std::move(demo));
 
-        setApplicationMenuBar(bar);
+        setApplicationMenuBar(bar, window);
     }
 
     void toggleDocument()
