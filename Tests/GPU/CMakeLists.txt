@@ -20,14 +20,18 @@ if (APPLE OR WIN32)
             ScissorTests.cpp
             BackingScaleTests.cpp
             TextureRegionTests.cpp
-            ShaderBlendTests.cpp)
+            ShaderBlendTests.cpp
+            CoordinateSpaceTests.cpp)
 endif ()
 
+# eacp-sprites is linked because CoordinateSpaceTests draws real rects through
+# SpriteRenderer: the y-axis contract it pins is between Rect and the things
+# that draw it, so it cannot be checked without one of them.
 nano_add_executable(GPUTests
         NO_MAIN
         SOURCES
             ${gpu_test_sources}
-        TARGETS eacp-gpu)
+        TARGETS eacp-gpu eacp-sprites)
 
 if (APPLE)
     target_link_libraries(GPUTests PRIVATE "-framework CoreVideo")

@@ -50,6 +50,30 @@ bool Rect::contains(const Point& point) const
     return point.x >= x && point.x < x + w && point.y >= y && point.y < y + h;
 }
 
+bool Rect::isEmpty() const
+{
+    return w <= 0.f || h <= 0.f;
+}
+
+bool Rect::intersects(const Rect& other) const
+{
+    return !isEmpty() && !other.isEmpty() && x < other.right() && other.x < right()
+           && y < other.bottom() && other.y < bottom();
+}
+
+Rect Rect::intersection(const Rect& other) const
+{
+    const auto newX = std::max(x, other.x);
+    const auto newY = std::max(y, other.y);
+    const auto newRight = std::min(right(), other.right());
+    const auto newBottom = std::min(bottom(), other.bottom());
+
+    // Disjoint rects give a negative extent here. Collapsed to zero so the
+    // result is an ordinary empty rect rather than one that draws inside out.
+    return {
+        newX, newY, std::max(newRight - newX, 0.f), std::max(newBottom - newY, 0.f)};
+}
+
 Rect Rect::inset(float amount) const
 {
     return {x + amount, y + amount, w - amount * 2, h - amount * 2};
@@ -102,12 +126,12 @@ Rect Rect::fromRight(float width, float margin) const
 
 Rect Rect::fromTop(float height, float margin) const
 {
-    return {x, y + h - height - margin, w, height};
+    return {x, y + margin, w, height};
 }
 
 Rect Rect::fromBottom(float height, float margin) const
 {
-    return {x, y + margin, w, height};
+    return {x, y + h - height - margin, w, height};
 }
 
 Rect Rect::removeFromLeft(float amount)
@@ -126,21 +150,26 @@ Rect Rect::removeFromRight(float amount)
 
 Rect Rect::removeFromTop(float amount)
 {
-    h -= amount;
-    return {x, y + h, w, amount};
-}
-
-Rect Rect::removeFromBottom(float amount)
-{
     auto removed = Rect {x, y, w, amount};
     y += amount;
     h -= amount;
     return removed;
 }
 
+Rect Rect::removeFromBottom(float amount)
+{
+    h -= amount;
+    return {x, y + h, w, amount};
+}
+
 Point Rect::center() const
 {
     return {x + w / 2.f, y + h / 2.f};
+}
+
+float Rect::left() const
+{
+    return x;
 }
 
 float Rect::right() const
@@ -149,6 +178,11 @@ float Rect::right() const
 }
 
 float Rect::top() const
+{
+    return y;
+}
+
+float Rect::bottom() const
 {
     return y + h;
 }

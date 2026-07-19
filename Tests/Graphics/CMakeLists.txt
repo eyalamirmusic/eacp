@@ -6,6 +6,13 @@ nano_add_executable(ImageOpsTests
         SOURCES ImageOpsTests.cpp
         TARGETS eacp-graphics)
 
+# Rect's y-axis contract. The splitters were y-up in a y-down framework, so
+# removeFromTop returned the bottom slice; nothing caught it because the result
+# is still a correctly sized rect that still draws.
+nano_add_executable(RectTests
+        SOURCES RectTests.cpp
+        TARGETS eacp-graphics)
+
 nano_add_executable(RoundedRectTests
         SOURCES RoundedRectTests.cpp
         TARGETS eacp-graphics)

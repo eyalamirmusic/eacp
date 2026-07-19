@@ -24,6 +24,16 @@ Point operator+(const Point& a, const Point& b);
 
 Point operator-(const Point& a, const Point& b);
 
+// An axis-aligned rectangle in a **y-down** space: y grows downward, so y = 0
+// is the top edge and `fromTop` returns the slice against it.
+//
+// That is what the rest of eacp means by y. The backing views set isFlipped, so
+// View::setBounds and MouseEvent::pos are both measured from the top, and the
+// sprite, glyph and scissor paths all map y = 0 to the top of their target. The
+// splitters below came from JUCE, where views really are y-up, and keeping that
+// sense here meant `removeFromTop` handed you the bottom slice — a header laid
+// out with it landed along the bottom edge of its window, which is silent
+// because it still compiles and still draws something.
 struct Rect
 {
     Rect() = default;
@@ -33,6 +43,19 @@ struct Rect
     Point getRelativePoint(const Point& point) const;
 
     bool contains(const Point& point) const;
+
+    // A rect with no area. Both an explicitly empty rect and one whose width or
+    // height has gone negative — which is what oversized insets and splitters
+    // produce — count, so callers can test the result of either.
+    bool isEmpty() const;
+
+    bool intersects(const Rect& other) const;
+
+    // The overlap, or an empty rect when there is none. Nesting clip regions is
+    // the reason this exists: the GPU has exactly one scissor rect and no stack,
+    // so a child's clip has to be intersected with its parent's on the way down
+    // rather than replacing it.
+    Rect intersection(const Rect& other) const;
 
     Rect inset(float amount) const;
     Rect inset(float horizontal, float vertical) const;
@@ -55,8 +78,13 @@ struct Rect
     Rect removeFromBottom(float amount);
 
     Point center() const;
+
+    // Edge coordinates. `top` is the smaller y and `bottom` the larger, so
+    // top <= bottom for any rect with a non-negative height.
+    float left() const;
     float right() const;
     float top() const;
+    float bottom() const;
 
     float x = 0.f;
     float y = 0.f;
@@ -88,8 +116,14 @@ struct Color
         return {value, value, value, alpha};
     }
 
-    static constexpr Color white(float alpha = 1.f) { return {1.f, 1.f, 1.f, alpha}; }
-    static constexpr Color black(float alpha = 1.f) { return {0.f, 0.f, 0.f, alpha}; }
+    static constexpr Color white(float alpha = 1.f)
+    {
+        return {1.f, 1.f, 1.f, alpha};
+    }
+    static constexpr Color black(float alpha = 1.f)
+    {
+        return {0.f, 0.f, 0.f, alpha};
+    }
 
     constexpr Color withAlpha(float alpha) const { return {r, g, b, alpha}; }
 

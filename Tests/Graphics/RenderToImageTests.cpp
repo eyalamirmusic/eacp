@@ -152,3 +152,31 @@ auto tZeroSizeIsInvalid = test("RenderToImage/zeroSizeIsInvalid") = []
 
     check(!view.renderToImage(1.f).isValid());
 };
+
+// A layer's path space is y-down, like everything else. Worth pinning because
+// it is the one place the convention is decided by AppKit rather than by code
+// here: geometryFlipped is never set, so the answer comes from the backing
+// layer of an isFlipped view and cannot be read off any line in this repo.
+//
+// An asymmetric path is the whole point -- the existing full-bounds cases above
+// are orientation-symmetric and pass either way up.
+auto tLayerPathSpaceIsYDown = test("RenderToImage/layerPathSpaceIsYDown") = []
+{
+    auto shape = ShapeLayerView {};
+    shape.setBounds({0.f, 0.f, 40.f, 40.f});
+    shape.resized();
+
+    shape->setFillColor({0.f, 0.f, 1.f});
+    auto path = Path {};
+    path.addRect({0.f, 0.f, 40.f, 10.f});
+    shape->setPath(path);
+
+    auto image = shape.renderToImage(1.f);
+
+    if (!image.isValid())
+        return;
+
+    // A band at y = 0..10 belongs against the top edge.
+    check(near(image.at(20, 5), 0, 0, 255));
+    check(!near(image.at(20, 35), 0, 0, 255));
+};
