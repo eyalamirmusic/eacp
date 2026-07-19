@@ -6,6 +6,7 @@
 #include "WebViewDetail.h"
 #include <eacp/Graphics/DComp-Windows.h>
 #include <eacp/Graphics/Helpers/StringUtils-Windows.h>
+#include <eacp/Core/Threads/ThreadUtils.h>
 
 #include <cstdlib>
 #include <queue>
@@ -1679,6 +1680,8 @@ std::string WebView::getTitle() const
 void WebView::evaluateJavaScript(const std::string& script,
                                  const JSCallback& callback)
 {
+    Threads::assertMainThread();
+
     impl->ensureInitialized();
     impl->queueOperation([this, script, callback]()
                          { impl->evaluateScript(script, callback); });
