@@ -2,6 +2,8 @@
 
 #include <eacp/Sprites/Sprites.h>
 
+#include <optional>
+
 // The contract between Graphics::Rect and the things that draw it: a rect taken
 // from the top of an area must appear at the top of the image.
 //
@@ -44,10 +46,11 @@ struct ChromeView final : GPUView
 
     void render(Frame& frame) override
     {
-        auto pass = frame.beginPass({Graphics::Color::black()});
+        if (!sprites)
+            sprites.emplace(Graphics::Point {viewW, viewH}, sampleCount());
 
-        auto sprites = Sprites::SpriteRenderer {{viewW, viewH}, sampleCount()};
-        sprites.begin(pass);
+        auto pass = frame.beginPass({Graphics::Color::black()});
+        sprites->begin(pass);
 
         auto area = Graphics::Rect {0.f, 0.f, viewW, viewH};
 
@@ -55,10 +58,16 @@ struct ChromeView final : GPUView
         const auto bottom = area.removeFromBottom(16.f);
         const auto left = area.removeFromLeft(24.f);
 
-        sprites.fillRect(top, topColor);
-        sprites.fillRect(bottom, bottomColor);
-        sprites.fillRect(left, leftColor);
+        sprites->fillRect(top, topColor);
+        sprites->fillRect(bottom, bottomColor);
+        sprites->fillRect(left, leftColor);
     }
+
+    // Outlives render(), like every app that draws with one. A renderer built as
+    // a local here would release its vertex buffer and pipeline at the end of
+    // render(), while the command list recording those draws is still waiting to
+    // be submitted -- on D3D12 the frame then draws nothing at all.
+    std::optional<Sprites::SpriteRenderer> sprites;
 };
 
 bool isRed(const Graphics::Color& c)
@@ -135,10 +144,11 @@ auto tScissorSharesTheConvention =
 
         void render(Frame& frame) override
         {
-            auto pass = frame.beginPass({Graphics::Color::black()});
+            if (!sprites)
+                sprites.emplace(Graphics::Point {viewW, viewH}, sampleCount());
 
-            auto sprites = Sprites::SpriteRenderer {{viewW, viewH}, sampleCount()};
-            sprites.begin(pass);
+            auto pass = frame.beginPass({Graphics::Color::black()});
+            sprites->begin(pass);
 
             auto area = Graphics::Rect {0.f, 0.f, viewW, viewH};
             const auto top = area.removeFromTop(16.f);
@@ -146,9 +156,11 @@ auto tScissorSharesTheConvention =
             // Clip to the top slice, then fill the whole view. Only the top
             // slice should survive.
             pass.setScissorRect({top.x, top.y, top.w, top.h});
-            sprites.fillRect({0.f, 0.f, viewW, viewH}, topColor);
+            sprites->fillRect({0.f, 0.f, viewW, viewH}, topColor);
             pass.clearScissorRect();
         }
+
+        std::optional<Sprites::SpriteRenderer> sprites;
     };
 
     auto view = ClippedView {};
