@@ -51,21 +51,41 @@ export function expose<Req = unknown, Res = unknown>(
     window.eacp!.expose(name, fn);
 }
 
+// Command / event namespace prefix. Empty by default: a page that owns the
+// whole bridge invokes 'group.getParams' directly.
+//
+// It is non-empty when this client is mounted as a SUB-API of a larger one. A
+// host that reflects this API under a member name receives its commands as
+// '<member>.group.getParams' and publishes its events as
+// '<member>.group.values', so the host page calls configureBridge once before
+// render and every generated command, event and hook routes through it.
+//
+// Read at call time rather than captured, so it also applies to the
+// subscriptions the generated hooks set up after configureBridge runs.
+let namespacePrefix = '';
+
+export function configureBridge(options: { prefix?: string }): void
+{
+    namespacePrefix = options.prefix ?? '';
+}
+
 const webViewTransport: Transport<Events> = {
     invoke: async (command, payload) =>
     {
+        const name = namespacePrefix + command;
         if (! isBackendAvailable())
         {
             return Promise.reject(new Error(
-                `eacp backend unavailable (cannot invoke '${command}')`));
+                `eacp backend unavailable (cannot invoke '${name}')`));
         }
-        return window.eacp!.invoke(command, payload);
+        return window.eacp!.invoke(name, payload);
     },
     on: (event, handler) =>
     {
         if (! isBackendAvailable())
             return () => {};
-        return window.eacp!.on(event, handler as (payload: unknown) => void);
+        return window.eacp!.on(namespacePrefix + event,
+                               handler as (payload: unknown) => void);
     },
 };
 
