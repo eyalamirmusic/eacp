@@ -71,6 +71,18 @@ struct Buffer::Native
             upload(context, data, bytes);
     }
 
+    // Handed to the context rather than released here, the same way a Texture
+    // is. A buffer is routinely replaced mid-frame — every ShaderProgram
+    // setInstances/setVertices makes a new one — and the command list still
+    // recording holds references to the old resource. Releasing it now makes
+    // Close() fail with OBJECT_DELETED_WHILE_STILL_IN_USE, which invalidates
+    // the whole list: not just the draw that used the buffer, but every draw
+    // recorded after it silently disappears.
+    ~Native()
+    {
+        getD3D12Context().deferRelease(std::move(bufferData.resource));
+    }
+
     void upload(D3D12Context& context, const void* data, std::size_t bytes)
     {
         auto staging = context.makeUploadBuffer(data, bytes);

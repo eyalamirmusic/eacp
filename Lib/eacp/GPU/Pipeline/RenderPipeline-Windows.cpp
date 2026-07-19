@@ -241,6 +241,12 @@ struct RenderPipeline::Native
             &desc, __uuidof(ID3D12PipelineState), pipeline.state.put_void());
     }
 
+    // A command list holds a reference to every pipeline state it binds, so a
+    // PSO built and dropped inside one frame — which is what constructing a
+    // SpriteRenderer in render() does — has to outlive the recording rather
+    // than release here. See D3D12Context::deferRelease.
+    ~Native() { getD3D12Context().deferRelease(std::move(pipeline.state)); }
+
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
     D3D12Pipeline pipeline;
 };

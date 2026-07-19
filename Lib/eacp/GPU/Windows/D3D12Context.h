@@ -74,6 +74,18 @@ public:
         return samplerDescriptors.heap.get();
     }
 
+    // Permanently valid descriptors for the table slots a shader leaves unused,
+    // which Tier 1 hardware still requires to be bound. See
+    // createNullDescriptors.
+    D3D12_GPU_DESCRIPTOR_HANDLE getNullTextureDescriptor() const
+    {
+        return nullTexture.gpu;
+    }
+    D3D12_GPU_DESCRIPTOR_HANDLE getNullSamplerDescriptor() const
+    {
+        return nullSampler.gpu;
+    }
+
     // An open command list ready for recording. Owned by the caller until it
     // is handed back through submit() or discard().
     CommandContext* acquire();
@@ -107,11 +119,22 @@ public:
     DescriptorSlot allocateSamplerDescriptor();
     void freeSamplerDescriptor(const DescriptorSlot& slot);
 
-    // Keeps a resource alive until the GPU finished all work submitted so far
-    // (plus the recording currently open, which signals next). D3D11's bind
-    // ref-counting did this implicitly; buffer and texture destructors route
-    // their resources through here instead of releasing in-flight memory.
-    void deferRelease(winrt::com_ptr<ID3D12Resource> resource);
+    // Keeps an object alive until the GPU finished all work submitted so far
+    // and no recording is still open. D3D11's bind ref-counting did this
+    // implicitly; buffer, texture and pipeline destructors route their objects
+    // through here instead of releasing something still in flight.
+    //
+    // Templated rather than fixed to ID3D12Resource because a command list
+    // references a pipeline state exactly as it does a resource, and a renderer
+    // constructed inside render() destroys its PSO while that list is open.
+    template <typename T>
+    void deferRelease(winrt::com_ptr<T> object)
+    {
+        if (object == nullptr)
+            return;
+
+        deferReleaseUnknown(object.template as<IUnknown>());
+    }
 
     // Tears everything down and rebuilds on a fresh device after device
     // removal. Resources created on the old device (app buffers, textures,
@@ -132,12 +155,14 @@ private:
     void createAll();
     void createDevice();
     void createRootSignatures();
+    void createNullDescriptors();
     DescriptorAllocator makeDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE type,
                                                 UINT capacity);
     DescriptorSlot allocateFrom(DescriptorAllocator& allocator);
     void freeFrom(DescriptorAllocator& allocator, const DescriptorSlot& slot);
     std::uint64_t signal();
     void purgeRetired();
+    void deferReleaseUnknown(winrt::com_ptr<IUnknown> object);
 
     winrt::com_ptr<ID3D12Device> device;
     winrt::com_ptr<ID3D12CommandQueue> queue;
@@ -154,12 +179,16 @@ private:
     DescriptorAllocator textureDescriptors;
     DescriptorAllocator samplerDescriptors;
 
+    // Allocated once in createNullDescriptors and deliberately never freed.
+    DescriptorSlot nullTexture;
+    DescriptorSlot nullSampler;
+
     OwnedVector<CommandContext> pool;
     Vector<CommandContext*> available;
 
     struct Retired
     {
-        winrt::com_ptr<ID3D12Resource> resource;
+        winrt::com_ptr<IUnknown> object;
         std::uint64_t fenceValue = 0;
     };
 

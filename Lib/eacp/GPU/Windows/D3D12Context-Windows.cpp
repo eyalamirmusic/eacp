@@ -145,6 +145,51 @@ void D3D12Context::createAll()
         D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, textureHeapCapacity);
     samplerDescriptors = makeDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER,
                                                  samplerHeapCapacity);
+
+    createNullDescriptors();
+}
+
+// Tier 1 hardware requires every descriptor table the root signature declares
+// to be populated, so the slots a shader does not use still need something
+// bound. It has to be something permanently valid: the obvious candidate — the
+// heap's first descriptor — belongs to whichever texture allocated it, and
+// descriptor slots are recycled through a free list, so that descriptor can
+// come to describe a destroyed resource. Binding it then points the GPU at
+// freed memory, which hangs the device rather than failing cleanly.
+//
+// A null SRV is the case D3D12 provides for exactly this: reads return zero
+// and nothing is dereferenced. These two slots are allocated once and never
+// freed.
+void D3D12Context::createNullDescriptors()
+{
+    if (device == nullptr)
+        return;
+
+    nullTexture = allocateFrom(textureDescriptors);
+    nullSampler = allocateFrom(samplerDescriptors);
+
+    if (nullTexture.cpu.ptr != 0)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
+        srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srv.Texture2D.MipLevels = 1;
+
+        device->CreateShaderResourceView(nullptr, &srv, nullTexture.cpu);
+    }
+
+    if (nullSampler.cpu.ptr != 0)
+    {
+        D3D12_SAMPLER_DESC sampler = {};
+        sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+        sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler.MaxLOD = D3D12_FLOAT32_MAX;
+
+        device->CreateSampler(&sampler, nullSampler.cpu);
+    }
 }
 
 void D3D12Context::createDevice()
@@ -289,21 +334,41 @@ void D3D12Context::freeSamplerDescriptor(const DescriptorSlot& slot)
     freeFrom(samplerDescriptors, slot);
 }
 
-void D3D12Context::deferRelease(winrt::com_ptr<ID3D12Resource> resource)
+void D3D12Context::deferReleaseUnknown(winrt::com_ptr<IUnknown> object)
 {
-    if (resource == nullptr)
+    if (object == nullptr)
         return;
 
     // Stamped with the value the next signal will carry: by the time that
     // value completes, everything submitted before this call — and the open
-    // recording that submits next — has finished with the resource.
-    retired.add({std::move(resource), nextFenceValue});
+    // recording that submits next — has finished with the object. purgeRetired
+    // additionally waits for every recording to close; see the note there.
+    retired.add({std::move(object), nextFenceValue});
 }
 
 void D3D12Context::purgeRetired()
 {
-    retired.eraseIf([this](const Retired& entry)
-                    { return hasCompleted(entry.fenceValue); });
+    // Freed only when the GPU has gone completely idle: nothing left recording,
+    // and the fence past everything ever submitted.
+    //
+    // The per-entry fence value cannot answer this on its own. A retired object
+    // is stamped with the value the *next* signal will carry, which assumes the
+    // recording that references it submits next — but a frame issues uploads of
+    // its own (every setInstances makes a buffer), and each acquires a second
+    // list that signals *ahead* of the frame. The frame's list then submits with
+    // a higher value than the stamp, so the stamp completes while the list still
+    // referencing the object is either open or still executing. Releasing there
+    // is a use-after-free the debug layer raises on, and it crashed the editor
+    // a few keystrokes in — every keystroke rebuilds the glyph instance buffer,
+    // so this path runs constantly once text is on screen.
+    //
+    // Draining is coarse but provably safe, and costs nothing here: the retired
+    // list holds a frame's worth of buffers, and the GPU goes idle between
+    // frames in an editor that only redraws on input.
+    if (available.size() != pool.size() || !hasCompleted(lastSubmittedValue))
+        return;
+
+    retired.clear();
 }
 
 CommandContext* D3D12Context::acquire()

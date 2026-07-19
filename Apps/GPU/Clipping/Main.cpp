@@ -26,8 +26,8 @@ namespace
 {
 struct Pane
 {
-    Graphics::Rect bounds;
-    Graphics::Color rowColor;
+    Graphics::Rect bounds {};
+    Graphics::Color rowColor {};
     float scroll = 0.f;
     int rowCount = 0;
 };

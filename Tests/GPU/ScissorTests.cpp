@@ -75,13 +75,18 @@ struct ScissorView final : GPUView
         , vertexBuffer(Device::shared().makeBuffer(fullScreenTriangle))
         , pipeline(makePipeline())
     {
-        // MSAA would feather the scissor boundary across a pixel and make the
-        // edge assertions ambiguous.
-        setSampleCount(1);
     }
 
     RenderPipeline makePipeline()
     {
+        // MSAA would feather the scissor boundary across a pixel and make the
+        // edge assertions ambiguous. It has to be set here rather than in the
+        // constructor body: the pipeline is built in the member initialiser
+        // list, which runs first, so a body call would leave the pipeline
+        // multisampled while the target is not -- a mismatch D3D12 answers by
+        // dropping the draw, with no error and nothing rendered at all.
+        setSampleCount(1);
+
         auto descriptor = RenderPipelineDescriptor {};
         descriptor.library = &library;
         descriptor.sampleCount = sampleCount();

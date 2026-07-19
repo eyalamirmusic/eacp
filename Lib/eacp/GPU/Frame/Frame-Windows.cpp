@@ -162,6 +162,31 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     list->SetDescriptorHeaps(2, heaps);
     list->SetGraphicsRootSignature(context.getRenderRootSignature());
 
+    // Resource Binding Tier 1 hardware requires *every* descriptor table the
+    // root signature declares to be populated before a draw, even the ones the
+    // shader never reads — an unset table drops the draw entirely rather than
+    // failing loudly. The signature is shared and declares maxTextureSlots of
+    // them, while a typical shader binds one, so the rest are seeded with the
+    // null descriptors here; setFragmentTexture overwrites the slots that carry
+    // a real texture.
+    //
+    // Tier 2+ hardware ignores unset tables, which is why this only ever showed
+    // up on an Arm laptop: no text drew, and nothing was logged without the
+    // D3D12 validation layer installed.
+    const auto nullTexture = context.getNullTextureDescriptor();
+    const auto nullSampler = context.getNullSamplerDescriptor();
+
+    if (nullTexture.ptr != 0 && nullSampler.ptr != 0)
+    {
+        for (auto slot = 0; slot < maxTextureSlots; ++slot)
+        {
+            list->SetGraphicsRootDescriptorTable(renderTextureParam(slot),
+                                                 nullTexture);
+            list->SetGraphicsRootDescriptorTable(renderSamplerParam(slot),
+                                                 nullSampler);
+        }
+    }
+
     // The off-screen colour texture is created already in RENDER_TARGET; only a
     // swapchain back buffer starts in PRESENT and needs promoting here.
     if (!impl->useMsaa() && !impl->passBegun && !impl->offscreen)
