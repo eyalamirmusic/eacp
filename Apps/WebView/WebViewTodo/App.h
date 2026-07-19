@@ -9,7 +9,7 @@ struct MyApp
 {
     MyApp()
     {
-        Graphics::setApplicationMenuBar(Graphics::buildDefaultWebViewMenuBar());
+        Graphics::setApplicationMenuBar(Graphics::buildDefaultWebViewMenuBar(), window);
         window.setContentView(webView);
     }
 

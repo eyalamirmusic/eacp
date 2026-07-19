@@ -139,7 +139,7 @@ struct MyApp
 {
     MyApp()
     {
-        setApplicationMenuBar(buildDefaultWebViewMenuBar());
+        setApplicationMenuBar(buildDefaultWebViewMenuBar(), window);
         window.setContentView(webView);
     }
 

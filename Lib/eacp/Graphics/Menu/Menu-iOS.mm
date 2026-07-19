@@ -2,7 +2,9 @@
 
 namespace eacp::Graphics
 {
-void setApplicationMenuBar(const MenuBar&)
+// iOS has no menu bar of either kind, so the model is accepted and discarded —
+// portable code can build one unconditionally.
+void setApplicationMenuBar(const MenuBar&, Window&)
 {
 }
 

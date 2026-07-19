@@ -11,7 +11,7 @@ struct MyApp
     {
         transport.getBridge().use(params);
 
-        setApplicationMenuBar(buildDefaultWebViewMenuBar());
+        setApplicationMenuBar(buildDefaultWebViewMenuBar(), window);
         window.setContentView(webView);
     }
 
