@@ -126,20 +126,22 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
     commands.list->IASetVertexBuffers(static_cast<UINT>(index), 1, &view);
 }
 
-void RenderPass::setFragmentTexture(const Texture& texture, int slot)
+void RenderPass::setFragmentTexture(const Texture& texture,
+                                    int slot,
+                                    TextureSampling)
 {
     if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
         return;
 
     auto* data = static_cast<D3D12TextureData*>(texture.nativeTexture());
 
-    if (data == nullptr || data->srv.gpu.ptr == 0 || data->sampler.gpu.ptr == 0)
+    if (data == nullptr || data->srv.gpu.ptr == 0)
         return;
 
+    // Only the SRV: the sampler is a static sampler in the root signature, chosen
+    // by the register the shader's sampler was emitted at. See TextureSampling.
     auto* list = impl->encoder->commands->list.get();
     list->SetGraphicsRootDescriptorTable(renderTextureParam(slot), data->srv.gpu);
-    list->SetGraphicsRootDescriptorTable(renderSamplerParam(slot),
-                                         data->sampler.gpu);
 }
 
 void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)

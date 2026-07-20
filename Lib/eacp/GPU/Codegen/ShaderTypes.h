@@ -1,7 +1,14 @@
 #pragma once
 
+#include "../Texture/Texture.h"
+
 namespace eacp::GPU
 {
+// TextureSampling, samplingConfigurations and samplingIndex live in Texture.h,
+// alongside the filter and address-mode enums they are built from: both
+// backends and the shader layer need them, and Texture.h is what they all
+// already include.
+
 // The value types the shader EDSL understands. Inputs, varyings and expression
 // results are all described with these, and they spell identically in MSL and
 // HLSL ("float2" etc.), so the emitters share one type vocabulary. UInt exists

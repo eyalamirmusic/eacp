@@ -7,9 +7,9 @@
 
 #include <cmath>
 
-// Windows/D3D12 backend. A texture is a default-heap resource plus an SRV and
-// a sampler descriptor living in the context's shader-visible heaps for the
-// texture's whole lifetime, so binding is a single root-table update. Pixels
+// Windows/D3D12 backend. A texture is a default-heap resource plus an SRV
+// descriptor living in the context's shader-visible heap for the texture's
+// whole lifetime, so binding is a single root-table update. Pixels
 // upload through a transient row-pitch-aligned staging buffer; the resource
 // then stays in PIXEL_SHADER_RESOURCE state forever (it is only ever sampled).
 
@@ -30,17 +30,9 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
     }
 }
 
-D3D12_FILTER toD3DFilter(TextureFilter filter)
-{
-    return filter == TextureFilter::Nearest ? D3D12_FILTER_MIN_MAG_MIP_POINT
-                                            : D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-}
-
-D3D12_TEXTURE_ADDRESS_MODE toD3DAddressMode(TextureAddressMode mode)
-{
-    return mode == TextureAddressMode::Repeat ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
-                                              : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-}
+// The filter/address translations that used to live here are gone with the
+// sampler descriptors they filled in; the equivalent mapping is now in
+// D3D12Context::createRootSignatures, which builds the static samplers.
 } // namespace
 
 struct Texture::Native
@@ -92,13 +84,12 @@ struct Texture::Native
     // is a planned optimisation; until then the camera/video path uploads via
     // update(). A null resource yields an invalid texture, which the higher
     // layer detects and falls back from.
-    Native(Device&, void*, TextureFilter, TextureAddressMode) {}
+    Native(Device&, void*) {}
 
     ~Native()
     {
         auto& context = getD3D12Context();
         context.freeTextureDescriptor(data.srv);
-        context.freeSamplerDescriptor(data.sampler);
         context.deferRelease(std::move(data.resource));
     }
 
@@ -266,26 +257,22 @@ struct Texture::Native
         context.submit(commands);
     }
 
-    void createDescriptors(D3D12Context& context,
-                           const TextureDescriptor& descriptor)
+    void createDescriptors(D3D12Context& context, const TextureDescriptor&)
     {
         data.srv = context.allocateTextureDescriptor();
-        data.sampler = context.allocateSamplerDescriptor();
 
-        if (data.srv.cpu.ptr == 0 || data.sampler.cpu.ptr == 0)
+        if (data.srv.cpu.ptr == 0)
             return;
 
         context.getDevice()->CreateShaderResourceView(
             data.resource.get(), nullptr, data.srv.cpu);
 
-        D3D12_SAMPLER_DESC samplerDesc = {};
-        samplerDesc.Filter = toD3DFilter(descriptor.filter);
-        samplerDesc.AddressU = toD3DAddressMode(descriptor.addressMode);
-        samplerDesc.AddressV = toD3DAddressMode(descriptor.addressMode);
-        samplerDesc.AddressW = toD3DAddressMode(descriptor.addressMode);
-        samplerDesc.MaxLOD = D3D12_FLOAT32_MAX;
-
-        context.getDevice()->CreateSampler(&samplerDesc, data.sampler.cpu);
+        // No sampler descriptor is created, and TextureDescriptor::filter and
+        // ::addressMode are unused on this backend: the sampler comes from the
+        // root signature's static samplers, picked by the shader's declared
+        // TextureSampling. A sampler descriptor table cannot be relied on here -
+        // see D3D12Context::createRootSignatures. Allocating one anyway would
+        // also let the 256-entry sampler heap fail texture creation for nothing.
     }
 
     int width = 0;
@@ -304,11 +291,8 @@ Texture::Texture(Device& device,
 {
 }
 
-Texture::Texture(Device& device,
-                 void* nativePixelBuffer,
-                 TextureFilter filter,
-                 TextureAddressMode addressMode)
-    : impl(device, nativePixelBuffer, filter, addressMode)
+Texture::Texture(Device& device, void* nativePixelBuffer)
+    : impl(device, nativePixelBuffer)
 {
 }
 
@@ -343,16 +327,10 @@ int Texture::height() const
 
 bool Texture::isValid() const
 {
-    return impl->data.resource != nullptr && impl->data.srv.cpu.ptr != 0
-           && impl->data.sampler.cpu.ptr != 0;
+    return impl->data.resource != nullptr && impl->data.srv.cpu.ptr != 0;
 }
 
 void* Texture::nativeTexture() const
-{
-    return const_cast<D3D12TextureData*>(&impl->data);
-}
-
-void* Texture::nativeSampler() const
 {
     return const_cast<D3D12TextureData*>(&impl->data);
 }

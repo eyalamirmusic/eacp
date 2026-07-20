@@ -7,16 +7,12 @@
 
 namespace eacp::GPU
 {
-Texture Device::makeTexture(const Graphics::Image& image,
-                            TextureFilter filter,
-                            TextureAddressMode addressMode)
+Texture Device::makeTexture(const Graphics::Image& image)
 {
     auto descriptor = TextureDescriptor {};
     descriptor.width = image.width();
     descriptor.height = image.height();
     descriptor.format = TextureFormat::RGBA8Unorm;
-    descriptor.filter = filter;
-    descriptor.addressMode = addressMode;
 
     return makeTexture(descriptor, image.pixels().data());
 }

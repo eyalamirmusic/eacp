@@ -238,10 +238,6 @@ void GlyphAtlas::uploadPage(Page& page, GPU::TextureFormat format, int stride)
         descriptor.height = atlasSize;
         descriptor.format = format;
 
-        // Linear so a glyph drawn at a fractional position or a non-integer
-        // zoom resamples smoothly rather than shimmering.
-        descriptor.filter = GPU::TextureFilter::Linear;
-
         page.texture.emplace(
             GPU::Device::shared().makeTexture(descriptor, page.pixels.data()));
 

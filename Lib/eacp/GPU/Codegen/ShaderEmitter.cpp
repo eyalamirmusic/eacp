@@ -536,11 +536,21 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     // share an index, matching RenderPass::setFragmentTexture.
     if (backend == Backend::DirectX)
     {
+        // The texture lands on t<slot>, but its sampler lands on a register
+        // chosen by how the shader declared the texture should be sampled: the
+        // root signature declares a static sampler for every (slot,
+        // configuration) pair, so picking the register picks the sampler. See
+        // TextureSampling for why samplers cannot come from a descriptor table.
         for (auto i = 0; i < graph.textureCount(); ++i)
+        {
+            auto samplerRegister =
+                i * samplingConfigurations + samplingIndex(graph.textureSampling(i));
+
             source += "Texture2D texture" + std::to_string(i) + " : register(t"
                       + std::to_string(i) + ");\nSamplerState sampler"
-                      + std::to_string(i) + " : register(s" + std::to_string(i)
-                      + ");\n";
+                      + std::to_string(i) + " : register(s"
+                      + std::to_string(samplerRegister) + ");\n";
+        }
 
         if (graph.textureCount() > 0)
             source += "\n";

@@ -98,8 +98,9 @@ public:
     int addMul(ValueType type, int matrix, int vector);
 
     // Registers a 2D texture slot (always a float-returning texture2d, so only
-    // the slot index is stored), and a sample of it at a float2 coordinate.
-    int addTexture();
+    // the slot index and how it is sampled are stored), and a sample of it at a
+    // float2 coordinate.
+    int addTexture(TextureSampling sampling = {});
     int addSample(int textureSlot, int uv);
 
     // Compute kernel pieces: the 1D work-item id, a storage-buffer slot (float
@@ -129,7 +130,15 @@ public:
     const Vector<int>& inputBufferIndices() const { return inputSlots; }
     const Vector<VaryingSlot>& varyings() const { return varyingSlots; }
     const Vector<ValueType>& uniforms() const { return uniformTypes; }
-    int textureCount() const { return textureSlots; }
+    int textureCount() const { return textureSamplings.size(); }
+
+    // How texture `slot` is to be sampled, as its shader declared it.
+    TextureSampling textureSampling(int slot) const
+    {
+        return slot >= 0 && slot < textureSamplings.size() ? textureSamplings[slot]
+                                                           : TextureSampling {};
+    }
+
     int position() const { return positionNode; }
     int fragment() const { return fragmentNode; }
     int discard() const { return discardNode; }
@@ -150,7 +159,7 @@ private:
     Vector<ValueType> uniformTypes;
     Vector<BufferAccess> storageSlots;
     Vector<Store> storeList;
-    int textureSlots = 0;
+    Vector<TextureSampling> textureSamplings;
     int positionNode = -1;
     int fragmentNode = -1;
     int discardNode = -1;

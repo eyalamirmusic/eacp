@@ -21,7 +21,6 @@ auto tTextureUpdates = test("GPU/textureUpdates") = []
     auto descriptor = TextureDescriptor {};
     descriptor.width = 2;
     descriptor.height = 2;
-    descriptor.filter = TextureFilter::Nearest;
 
     auto texture = device.makeTexture(descriptor, initial);
     check(texture.isValid());

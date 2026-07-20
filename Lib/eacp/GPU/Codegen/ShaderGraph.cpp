@@ -145,9 +145,10 @@ int ShaderGraph::addMul(ValueType type, int matrix, int vector)
     return add(std::move(node));
 }
 
-int ShaderGraph::addTexture()
+int ShaderGraph::addTexture(TextureSampling sampling)
 {
-    return textureSlots++;
+    textureSamplings.add(sampling);
+    return textureSamplings.size() - 1;
 }
 
 int ShaderGraph::addSample(int textureSlot, int uv)

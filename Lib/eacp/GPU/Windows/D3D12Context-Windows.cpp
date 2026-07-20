@@ -200,8 +200,7 @@ void D3D12Context::createDevice()
 void D3D12Context::createRootSignatures()
 {
     D3D12_DESCRIPTOR_RANGE srvRanges[maxTextureSlots] = {};
-    D3D12_DESCRIPTOR_RANGE samplerRanges[maxTextureSlots] = {};
-    D3D12_ROOT_PARAMETER renderParams[2 * maxUniformSlots + 2 * maxTextureSlots];
+    D3D12_ROOT_PARAMETER renderParams[2 * maxUniformSlots + maxTextureSlots];
 
     for (auto slot = 0; slot < maxUniformSlots; ++slot)
     {
@@ -217,17 +216,58 @@ void D3D12Context::createRootSignatures()
         srvRanges[slot].NumDescriptors = 1;
         srvRanges[slot].BaseShaderRegister = static_cast<UINT>(slot);
 
-        samplerRanges[slot].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
-        samplerRanges[slot].NumDescriptors = 1;
-        samplerRanges[slot].BaseShaderRegister = static_cast<UINT>(slot);
-
         renderParams[renderTextureParam(slot)] = rootTable(&srvRanges[slot]);
-        renderParams[renderSamplerParam(slot)] = rootTable(&samplerRanges[slot]);
+    }
+
+    // A static sampler for every (texture slot, sampling configuration) pair, at
+    // register s(slot * samplingConfigurations + configuration) - the register
+    // ShaderEmitter points each texture's sampler at.
+    //
+    // Samplers are declared here rather than bound per draw from a descriptor
+    // heap because a sampler descriptor table cannot be relied on: a
+    // Windows-on-Arm driver ignores the table's offset and resolves every sampler
+    // to descriptor 0 of the bound heap, so all textures in the process sample
+    // through whichever sampler happens to be first. Static samplers never reach
+    // a heap and are unaffected. See TextureSampling.
+    D3D12_STATIC_SAMPLER_DESC staticSamplers[maxTextureSlots
+                                             * samplingConfigurations] = {};
+
+    for (auto slot = 0; slot < maxTextureSlots; ++slot)
+    {
+        for (auto configuration = 0; configuration < samplingConfigurations;
+             ++configuration)
+        {
+            const auto linear = (configuration & 2) != 0;
+            const auto repeat = (configuration & 1) != 0;
+            const auto address = repeat ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
+                                        : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+
+            auto& sampler = staticSamplers[slot * samplingConfigurations
+                                           + configuration];
+
+            sampler.Filter = linear ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
+                                    : D3D12_FILTER_MIN_MAG_MIP_POINT;
+            sampler.AddressU = address;
+            sampler.AddressV = address;
+            sampler.AddressW = address;
+            sampler.MaxLOD = D3D12_FLOAT32_MAX;
+
+            // Not left at 0: zero is not a legal D3D12_COMPARISON_FUNC (they run
+            // 1..8), and a static sampler is validated when the root signature is
+            // serialised rather than quietly ignored.
+            sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+            sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+            sampler.ShaderRegister =
+                static_cast<UINT>(slot * samplingConfigurations + configuration);
+            sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        }
     }
 
     D3D12_ROOT_SIGNATURE_DESC renderDesc = {};
     renderDesc.NumParameters = static_cast<UINT>(std::size(renderParams));
     renderDesc.pParameters = renderParams;
+    renderDesc.NumStaticSamplers = static_cast<UINT>(std::size(staticSamplers));
+    renderDesc.pStaticSamplers = staticSamplers;
     renderDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
     renderRootSignature = makeRootSignature(device.get(), renderDesc);

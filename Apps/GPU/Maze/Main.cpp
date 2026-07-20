@@ -166,7 +166,6 @@ Texture makeAtlas(Device& device)
     auto descriptor = TextureDescriptor {};
     descriptor.width = tileSize * tileCount;
     descriptor.height = tileSize;
-    descriptor.filter = TextureFilter::Nearest;
 
     return device.makeTexture(descriptor, pixels);
 }
