@@ -20,6 +20,14 @@ NSView* nativeViewOf(View& view)
 {
     return (__bridge NSView*) view.nativeFocusTarget();
 }
+
+// eacp's cursorUpdate: ignores its event, so there is nothing to synthesise —
+// but the selector is declared nonnull, and a literal nil is a warning.
+void sendCursorUpdate(NSView* view)
+{
+    NSEvent* unusedEvent = nil;
+    [view cursorUpdate:unusedEvent];
+}
 } // namespace
 
 // The backing view implements cursorUpdate: rather than inheriting it.
@@ -96,19 +104,19 @@ auto tCursorUpdateAppliesTheShape = test("Cursor/cursorUpdateAppliesTheShape") =
     check(native != nil);
 
     view.setMouseCursor(MouseCursor::IBeam);
-    [native cursorUpdate:nil];
+    sendCursorUpdate(native);
 
     check([NSCursor currentCursor] == [NSCursor IBeamCursor]);
 
     view.setMouseCursor(MouseCursor::ResizeLeftRight);
-    [native cursorUpdate:nil];
+    sendCursorUpdate(native);
 
     check([NSCursor currentCursor] == [NSCursor resizeLeftRightCursor]);
 
     // And back to the arrow, so Default is a real shape rather than "leave
     // whatever was there".
     view.setMouseCursor(MouseCursor::Default);
-    [native cursorUpdate:nil];
+    sendCursorUpdate(native);
 
     check([NSCursor currentCursor] == [NSCursor arrowCursor]);
 };
@@ -135,7 +143,7 @@ auto tShapesMapToDistinctCursors = test("Cursor/shapesMapToDistinctCursors") = [
     for (auto shape: shapes)
     {
         view.setMouseCursor(shape);
-        [native cursorUpdate:nil];
+        sendCursorUpdate(native);
 
         auto* current = [NSCursor currentCursor];
 

@@ -31,7 +31,7 @@ nano_add_executable(GPUTests
         NO_MAIN
         SOURCES
             ${gpu_test_sources}
-        TARGETS eacp-gpu eacp-sprites)
+        TARGETS eacp-sprites eacp-gpu)
 
 if (APPLE)
     target_link_libraries(GPUTests PRIVATE "-framework CoreVideo")
