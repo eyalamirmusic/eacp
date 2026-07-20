@@ -33,21 +33,58 @@ enum class TextureAddressMode
     Repeat
 };
 
-// How the texture is created and sampled. The sampler state (filter, address
-// mode) is baked into the texture for now, so binding a texture binds its
-// sampler with it; standalone sampler objects can come later if mixing
-// filters per draw becomes necessary.
+// How a shader wants one of its textures sampled.
+//
+// This belongs to the *shader*, not to the Texture, and that is a deliberate
+// break from the obvious design. D3D12 offers two ways to give a draw its
+// samplers: a descriptor table, which can vary per draw and would let the
+// Texture carry its own state, or a static sampler baked into the root
+// signature, which cannot. eacp used the descriptor table until a Windows-on-Arm
+// driver turned out to ignore the table's offset outright and resolve every
+// sampler to descriptor 0 of the heap - so every texture in the process sampled
+// through whichever sampler happened to be first, and no per-texture state had
+// any effect. Static samplers are unaffected, being nowhere near a heap.
+//
+// Since the configuration space is tiny, the root signature simply declares one
+// static sampler for every (texture slot, configuration) pair and the emitter
+// points each texture's sampler at the matching register. Metal has no such
+// bug, but reads the same declaration so the two backends cannot drift apart.
+//
+// The cost is that the sampling is fixed when the shader is compiled rather
+// than when a texture is bound: one shader samples one slot exactly one way.
+// A renderer that must do both - Sprites::SpriteRenderer draws smoothly scaled
+// camera frames and crisp pixel art through the same code - compiles one
+// program per configuration and picks between them.
+struct TextureSampling
+{
+    TextureFilter filter = TextureFilter::Nearest;
+    TextureAddressMode addressMode = TextureAddressMode::Clamp;
+};
+
+// The number of distinct sampling configurations, and the index of one. The
+// D3D12 root signature reserves this many static samplers per texture slot, and
+// the register a texture's sampler lands on is slot * this + index; the Metal
+// backend caches this many MTLSamplerStates on the Device.
+constexpr int samplingConfigurations = 4;
+
+constexpr int samplingIndex(const TextureSampling& sampling)
+{
+    return (sampling.filter == TextureFilter::Linear ? 2 : 0)
+           + (sampling.addressMode == TextureAddressMode::Repeat ? 1 : 0);
+}
+
+// How the texture is created. Sampler state is deliberately absent: it comes
+// from the shader that samples the texture, as a TextureSampling declared on
+// its texture member.
 struct TextureDescriptor
 {
     int width = 0;
     int height = 0;
     TextureFormat format = TextureFormat::RGBA8Unorm;
-    TextureFilter filter = TextureFilter::Linear;
-    TextureAddressMode addressMode = TextureAddressMode::Clamp;
 };
 
 // A 2D texture sampled by the fragment stage (MTLTexture on Metal, a D3D12
-// resource with its SRV and sampler descriptors on Windows). Create via
+// resource with its SRV descriptor on Windows). Create via
 // Device::makeTexture with tightly packed pixels (the format's
 // bytesPerPixel each), row 0 at the top, or null pixels for an
 // uninitialised texture. Bind with RenderPass::setFragmentTexture.
@@ -61,10 +98,7 @@ public:
     // camera and video frames. The buffer must outlive the texture. Yields an
     // invalid texture on backends without zero-copy support (Windows for now),
     // where update() is the per-frame upload path instead.
-    Texture(Device& device,
-            void* nativePixelBuffer,
-            TextureFilter filter,
-            TextureAddressMode addressMode);
+    Texture(Device& device, void* nativePixelBuffer);
 
     int width() const;
     int height() const;
@@ -100,8 +134,9 @@ public:
                 std::size_t bytesPerRow = 0);
 
     // Opaque native handles for cross-translation-unit use by the render pass.
+    // There is no sampler handle: the render pass gets that from the sampling
+    // the shader declared, not from the texture.
     void* nativeTexture() const;
-    void* nativeSampler() const;
 
     // The read view the fragment stage binds on D3D12 (the same handle as
     // nativeTexture). Null on Metal, where the texture is bound directly.

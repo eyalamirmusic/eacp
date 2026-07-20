@@ -44,35 +44,57 @@ GPU::RenderPipelineDescriptor
 }
 
 // A 1x1 opaque-white texture so untextured fills reuse the textured path: the
-// fill colour is the tint, multiplied by white.
+// fill colour is the tint, multiplied by white. Its sampling is immaterial -
+// one clamped texel reads the same through any filter - so the untextured
+// entry points draw it through whichever program is already bound.
 GPU::Texture makeWhiteTexture()
 {
     auto descriptor = GPU::TextureDescriptor {};
     descriptor.width = 1;
     descriptor.height = 1;
     descriptor.format = GPU::TextureFormat::RGBA8Unorm;
-    descriptor.filter = GPU::TextureFilter::Nearest;
-    descriptor.addressMode = GPU::TextureAddressMode::Clamp;
 
     return GPU::Device::shared().makeTexture(descriptor, whitePixel);
 }
 } // namespace
 
-SpriteRenderer::SpriteRenderer(Graphics::Point logicalSize, int sampleCount)
-    : library(GPU::Device::shared(), shader.source())
+SpriteProgram::SpriteProgram(GPU::TextureSampling sampling,
+                             Graphics::Point logicalSize,
+                             int sampleCount)
+    : shader(sampling)
+    , library(GPU::Device::shared(), shader.source())
     , pipeline(GPU::Device::shared(),
                blendedDescriptor(library, shader.vertexLayout(), sampleCount))
-    , white(makeWhiteTexture())
 {
     shader.setVertices(unitQuad);
     shader.screenSize = std::array {logicalSize.x, logicalSize.y};
 }
 
+SpriteRenderer::SpriteRenderer(Graphics::Point logicalSizeToUse,
+                               int sampleCountToUse)
+    : logicalSize(logicalSizeToUse)
+    , sampleCount(sampleCountToUse)
+    , white(makeWhiteTexture())
+{
+}
+
+SpriteProgram& SpriteRenderer::programFor(GPU::TextureSampling sampling)
+{
+    auto& slot = programs[GPU::samplingIndex(sampling)];
+
+    if (!slot.has_value())
+        slot.emplace(sampling, logicalSize, sampleCount);
+
+    return *slot;
+}
+
 void SpriteRenderer::begin(GPU::RenderPass& passToUse)
 {
     pass = &passToUse;
-    pass->setPipeline(pipeline);
-    pass->setVertexBuffer(shader.vertices());
+
+    // The pipeline is bound by the first draw instead of here, because which
+    // one it should be depends on how that draw samples.
+    boundProgram = -1;
 }
 
 void SpriteRenderer::drawQuad(const GPU::Texture& texture,
@@ -83,8 +105,20 @@ void SpriteRenderer::drawQuad(const GPU::Texture& texture,
                               float v0,
                               float u1,
                               float v1,
-                              const Graphics::Color& tint)
+                              const Graphics::Color& tint,
+                              GPU::TextureSampling sampling)
 {
+    const auto index = GPU::samplingIndex(sampling);
+    auto& program = programFor(sampling);
+    auto& shader = program.shader;
+
+    if (index != boundProgram)
+    {
+        pass->setPipeline(program.pipeline);
+        pass->setVertexBuffer(shader.vertices());
+        boundProgram = index;
+    }
+
     shader.origin = std::array {origin.x, origin.y};
     shader.edgeX = std::array {edgeX.x, edgeX.y};
     shader.edgeY = std::array {edgeY.x, edgeY.y};
@@ -103,7 +137,8 @@ void SpriteRenderer::drawTexture(const GPU::Texture& texture,
                                  const Graphics::Rect& dst,
                                  bool flipX,
                                  bool flipY,
-                                 const Graphics::Color& tint)
+                                 const Graphics::Color& tint,
+                                 GPU::TextureSampling sampling)
 {
     drawQuad(texture,
              {dst.x, dst.y},
@@ -113,13 +148,15 @@ void SpriteRenderer::drawTexture(const GPU::Texture& texture,
              flipY ? 1.0f : 0.0f,
              flipX ? 0.0f : 1.0f,
              flipY ? 0.0f : 1.0f,
-             tint);
+             tint,
+             sampling);
 }
 
 void SpriteRenderer::drawTexture(const GPU::Texture& texture,
                                  const Graphics::Rect& src,
                                  const Graphics::Rect& dst,
-                                 const Graphics::Color& tint)
+                                 const Graphics::Color& tint,
+                                 GPU::TextureSampling sampling)
 {
     const auto width = (float) texture.width();
     const auto height = (float) texture.height();
@@ -132,7 +169,8 @@ void SpriteRenderer::drawTexture(const GPU::Texture& texture,
              src.y / height,
              (src.x + src.w) / width,
              (src.y + src.h) / height,
-             tint);
+             tint,
+             sampling);
 }
 
 void SpriteRenderer::fillRect(const Graphics::Rect& rect,
@@ -146,7 +184,8 @@ void SpriteRenderer::fillRect(const Graphics::Rect& rect,
              0.0f,
              1.0f,
              1.0f,
-             color);
+             color,
+             {});
 }
 
 void SpriteRenderer::drawRect(const Graphics::Rect& rect,
@@ -189,6 +228,7 @@ void SpriteRenderer::drawLine(Graphics::Point a,
              0.0f,
              1.0f,
              1.0f,
-             color);
+             color,
+             {});
 }
 } // namespace eacp::Sprites

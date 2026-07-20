@@ -3,6 +3,7 @@
 #include "RenderPass.h"
 
 #include "../Buffer/Buffer.h"
+#include "../Device/Device.h"
 #include "../Pipeline/RenderPipeline.h"
 #include "../Texture/Texture.h"
 
@@ -137,11 +138,18 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
                                atIndex:(NSUInteger) index];
 }
 
-void RenderPass::setFragmentTexture(const Texture& texture, int slot)
+void RenderPass::setFragmentTexture(const Texture& texture,
+                                    int slot,
+                                    TextureSampling sampling)
 {
     auto activeEncoder = impl->encoder.get();
     auto metalTexture = (__bridge id<MTLTexture>) texture.nativeTexture();
-    auto metalSampler = (__bridge id<MTLSamplerState>) texture.nativeSampler();
+
+    // The state for the sampling the shader declared, not one the texture
+    // carries — that is what keeps this backend agreeing with D3D12, where the
+    // declaration is the only thing that can pick a sampler at all.
+    auto metalSampler =
+        (__bridge id<MTLSamplerState>) Device::shared().nativeSampler(sampling);
 
     if (activeEncoder == nil || metalTexture == nil || metalSampler == nil)
         return;
