@@ -80,7 +80,10 @@ public:
 
     // A 2D texture sampled by the fragment expression. Returns the slot-indexed
     // handle sample() reads; bind the matching GPU::Texture at the same slot.
-    Texture2D texture() { return {&graphData, graphData.addTexture()}; }
+    Texture2D texture(TextureSampling sampling = {})
+    {
+        return {&graphData, graphData.addTexture(sampling)};
+    }
 
     // Compute kernel authoring. Declaring buffers assigns slots in call order
     // (inputs and outputs share one slot space, matching Metal's flat buffer

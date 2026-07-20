@@ -30,17 +30,9 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
     }
 }
 
-D3D12_FILTER toD3DFilter(TextureFilter filter)
-{
-    return filter == TextureFilter::Nearest ? D3D12_FILTER_MIN_MAG_MIP_POINT
-                                            : D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-}
-
-D3D12_TEXTURE_ADDRESS_MODE toD3DAddressMode(TextureAddressMode mode)
-{
-    return mode == TextureAddressMode::Repeat ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
-                                              : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-}
+// The filter/address translations that used to live here are gone with the
+// sampler descriptors they filled in; the equivalent mapping is now in
+// D3D12Context::createRootSignatures, which builds the static samplers.
 } // namespace
 
 struct Texture::Native
@@ -266,26 +258,22 @@ struct Texture::Native
         context.submit(commands);
     }
 
-    void createDescriptors(D3D12Context& context,
-                           const TextureDescriptor& descriptor)
+    void createDescriptors(D3D12Context& context, const TextureDescriptor&)
     {
         data.srv = context.allocateTextureDescriptor();
-        data.sampler = context.allocateSamplerDescriptor();
 
-        if (data.srv.cpu.ptr == 0 || data.sampler.cpu.ptr == 0)
+        if (data.srv.cpu.ptr == 0)
             return;
 
         context.getDevice()->CreateShaderResourceView(
             data.resource.get(), nullptr, data.srv.cpu);
 
-        D3D12_SAMPLER_DESC samplerDesc = {};
-        samplerDesc.Filter = toD3DFilter(descriptor.filter);
-        samplerDesc.AddressU = toD3DAddressMode(descriptor.addressMode);
-        samplerDesc.AddressV = toD3DAddressMode(descriptor.addressMode);
-        samplerDesc.AddressW = toD3DAddressMode(descriptor.addressMode);
-        samplerDesc.MaxLOD = D3D12_FLOAT32_MAX;
-
-        context.getDevice()->CreateSampler(&samplerDesc, data.sampler.cpu);
+        // No sampler descriptor is created, and TextureDescriptor::filter and
+        // ::addressMode are unused on this backend: the sampler comes from the
+        // root signature's static samplers, picked by the shader's declared
+        // TextureSampling. A sampler descriptor table cannot be relied on here -
+        // see D3D12Context::createRootSignatures. Allocating one anyway would
+        // also let the 256-entry sampler heap fail texture creation for nothing.
     }
 
     int width = 0;

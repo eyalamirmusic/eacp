@@ -2,6 +2,9 @@
 
 #include "D3D12Context.h"
 
+#include "../Codegen/ShaderTypes.h"
+
+
 // Internal shared types for the Windows/D3D12 GPU backend. The public GPU
 // classes expose opaque void* handles (nativeBuffer/nativeLibrary/nativeState/
 // ...); these structs are what those handles point to, so the separate
@@ -11,6 +14,7 @@
 
 namespace eacp::GPU
 {
+
 // The binding model both root signatures implement. Slots map straight onto
 // shader registers: uniform slot n = b<n>, input buffer slot n = t<n>, output
 // buffer slot n = u<n>, texture slot n = t<n>/s<n> — the same registers the
@@ -35,10 +39,9 @@ constexpr UINT renderTextureParam(int slot)
 {
     return static_cast<UINT>(2 * maxUniformSlots + slot);
 }
-constexpr UINT renderSamplerParam(int slot)
-{
-    return static_cast<UINT>(2 * maxUniformSlots + maxTextureSlots + slot);
-}
+
+// There is deliberately no renderSamplerParam: samplers are static samplers in
+// the root signature, not descriptor tables. See TextureSampling.
 
 // Compute root signature parameter layout: root CBVs, then root SRVs and root
 // UAVs. Root descriptors bind structured buffers by GPU address, so compute

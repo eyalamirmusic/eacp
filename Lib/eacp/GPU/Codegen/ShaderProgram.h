@@ -216,6 +216,12 @@ struct Uniform<Texture2D> : Texture2D
     }
 
     const Texture* value = nullptr;
+
+    // How this texture is sampled. Set it before compile() runs - the build walk
+    // reads it to place the sampler - so a shader assigns it in its constructor
+    // ahead of the compile() call. See TextureSampling for why the shader owns
+    // this rather than the Texture.
+    TextureSampling sampling {};
 };
 
 // Storage-buffer members of a compute program, following the texture pattern:
@@ -281,7 +287,7 @@ public:
 
     void operator()(const char* name, Uniform<Texture2D>& member)
     {
-        onTexture(name, member, member.value);
+        onTexture(name, member, member.value, member.sampling);
     }
 
     void operator()(const char* name, Uniform<InputBuffer>& member)
@@ -302,7 +308,9 @@ protected:
 
     // Texture and storage-buffer members are not packed into the uniform block,
     // so only the walks that care (build, resource bind) override these.
-    virtual void onTexture(const char*, Texture2D&, const Texture*) {}
+    virtual void onTexture(const char*, Texture2D&, const Texture*, TextureSampling)
+    {
+    }
     virtual void onInputBuffer(const char*, InputBuffer&, const Buffer*) {}
     virtual void onOutputBuffer(const char*, OutputBuffer&, const Buffer*) {}
 };
@@ -325,9 +333,12 @@ public:
         handle = builder.addUniform(type);
     }
 
-    void onTexture(const char*, Texture2D& handle, const Texture*) override
+    void onTexture(const char*,
+                   Texture2D& handle,
+                   const Texture*,
+                   TextureSampling sampling) override
     {
-        handle = builder.texture();
+        handle = builder.texture(sampling);
     }
 
     void onInputBuffer(const char*, InputBuffer& handle, const Buffer*) override
@@ -359,7 +370,10 @@ public:
     {
     }
 
-    void onTexture(const char*, Texture2D& handle, const Texture* texture) override
+    void onTexture(const char*,
+                   Texture2D& handle,
+                   const Texture* texture,
+                   TextureSampling) override
     {
         if (texture != nullptr)
             pass.setFragmentTexture(*texture, handle.slot);
