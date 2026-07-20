@@ -36,7 +36,6 @@ Texture makeCheckerboard(Device& device)
     auto descriptor = TextureDescriptor {};
     descriptor.width = size;
     descriptor.height = size;
-    descriptor.filter = TextureFilter::Nearest;
 
     return device.makeTexture(descriptor, pixels);
 }

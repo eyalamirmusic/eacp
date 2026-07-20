@@ -126,7 +126,9 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
     commands.list->IASetVertexBuffers(static_cast<UINT>(index), 1, &view);
 }
 
-void RenderPass::setFragmentTexture(const Texture& texture, int slot)
+void RenderPass::setFragmentTexture(const Texture& texture,
+                                    int slot,
+                                    TextureSampling)
 {
     if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
         return;

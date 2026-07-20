@@ -96,8 +96,7 @@ struct SpritesView final : GPU::GPUView
     }
 
     std::optional<Sprites::SpriteRenderer> sprites;
-    GPU::Texture sprite = GPU::Device::shared().makeTexture(
-        makeSpriteImage(), GPU::TextureFilter::Nearest);
+    GPU::Texture sprite = GPU::Device::shared().makeTexture(makeSpriteImage());
 };
 
 struct SpritesApp

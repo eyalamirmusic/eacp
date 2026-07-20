@@ -77,4 +77,12 @@ void* Device::nativeTextureCache() const
     // path uploads frames through Texture::update instead.
     return nullptr;
 }
+
+void* Device::nativeSampler(TextureSampling) const
+{
+    // D3D12 never binds a sampler: every configuration is a static sampler in
+    // the root signature, and the shader picks one by the register it declares
+    // its SamplerState on. See TextureSampling.
+    return nullptr;
+}
 } // namespace eacp::GPU

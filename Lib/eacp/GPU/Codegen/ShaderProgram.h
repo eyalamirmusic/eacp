@@ -373,10 +373,10 @@ public:
     void onTexture(const char*,
                    Texture2D& handle,
                    const Texture* texture,
-                   TextureSampling) override
+                   TextureSampling sampling) override
     {
         if (texture != nullptr)
-            pass.setFragmentTexture(*texture, handle.slot);
+            pass.setFragmentTexture(*texture, handle.slot, sampling);
     }
 
 private:

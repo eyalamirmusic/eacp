@@ -28,6 +28,11 @@ struct GlyphRenderer::Program final : ShaderProgram
     explicit Program(bool coloredToUse)
         : colored(coloredToUse)
     {
+        // Linear so a glyph drawn at a fractional position or a non-integer
+        // zoom resamples smoothly rather than shimmering. Declared here rather
+        // than on the atlas texture because the shader is what decides how it
+        // samples - see GPU::TextureSampling.
+        atlas.sampling = {TextureFilter::Linear, TextureAddressMode::Clamp};
         compile();
     }
 

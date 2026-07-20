@@ -139,7 +139,15 @@ struct RemoteFrameView final : GPU::GPUView
 
         auto imageArea = Cameras::CameraView::computeImageArea(
             bounds.w, bounds.h, width, height, Cameras::CameraView::Fit::Contain);
-        renderer->drawTexture(*texture, imageArea, false, false);
+        // Linear: the frame is fitted to the window by an arbitrary factor, so
+        // the default Nearest would alias it.
+        renderer->drawTexture(
+            *texture,
+            imageArea,
+            false,
+            false,
+            Graphics::Color::white(),
+            {GPU::TextureFilter::Linear, GPU::TextureAddressMode::Clamp});
     }
 
     int width = 0;

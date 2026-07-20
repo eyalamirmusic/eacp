@@ -4,7 +4,6 @@
 
 #include "../Codegen/ShaderTypes.h"
 
-
 // Internal shared types for the Windows/D3D12 GPU backend. The public GPU
 // classes expose opaque void* handles (nativeBuffer/nativeLibrary/nativeState/
 // ...); these structs are what those handles point to, so the separate
@@ -110,14 +109,14 @@ struct D3D12BufferData
     std::uint64_t recordingId = 0;
 };
 
-// What Texture::nativeTexture()/nativeReadView()/nativeSampler() point to.
-// The descriptor slots live in the context's shader-visible heaps for the
-// texture's whole lifetime; binding is just a root-table pointer update.
+// What Texture::nativeTexture()/nativeReadView() point to. The SRV slot lives
+// in the context's shader-visible heap for the texture's whole lifetime;
+// binding is just a root-table pointer update. There is no sampler slot: every
+// sampler is static in the root signature. See TextureSampling.
 struct D3D12TextureData
 {
     winrt::com_ptr<ID3D12Resource> resource;
     DescriptorSlot srv;
-    DescriptorSlot sampler;
 };
 
 // The frame's color target. All members are owned by GPUView and stay valid

@@ -7,9 +7,9 @@
 
 #include <cmath>
 
-// Windows/D3D12 backend. A texture is a default-heap resource plus an SRV and
-// a sampler descriptor living in the context's shader-visible heaps for the
-// texture's whole lifetime, so binding is a single root-table update. Pixels
+// Windows/D3D12 backend. A texture is a default-heap resource plus an SRV
+// descriptor living in the context's shader-visible heap for the texture's
+// whole lifetime, so binding is a single root-table update. Pixels
 // upload through a transient row-pitch-aligned staging buffer; the resource
 // then stays in PIXEL_SHADER_RESOURCE state forever (it is only ever sampled).
 
@@ -84,13 +84,12 @@ struct Texture::Native
     // is a planned optimisation; until then the camera/video path uploads via
     // update(). A null resource yields an invalid texture, which the higher
     // layer detects and falls back from.
-    Native(Device&, void*, TextureFilter, TextureAddressMode) {}
+    Native(Device&, void*) {}
 
     ~Native()
     {
         auto& context = getD3D12Context();
         context.freeTextureDescriptor(data.srv);
-        context.freeSamplerDescriptor(data.sampler);
         context.deferRelease(std::move(data.resource));
     }
 
@@ -292,11 +291,8 @@ Texture::Texture(Device& device,
 {
 }
 
-Texture::Texture(Device& device,
-                 void* nativePixelBuffer,
-                 TextureFilter filter,
-                 TextureAddressMode addressMode)
-    : impl(device, nativePixelBuffer, filter, addressMode)
+Texture::Texture(Device& device, void* nativePixelBuffer)
+    : impl(device, nativePixelBuffer)
 {
 }
 
@@ -331,16 +327,10 @@ int Texture::height() const
 
 bool Texture::isValid() const
 {
-    return impl->data.resource != nullptr && impl->data.srv.cpu.ptr != 0
-           && impl->data.sampler.cpu.ptr != 0;
+    return impl->data.resource != nullptr && impl->data.srv.cpu.ptr != 0;
 }
 
 void* Texture::nativeTexture() const
-{
-    return const_cast<D3D12TextureData*>(&impl->data);
-}
-
-void* Texture::nativeSampler() const
 {
     return const_cast<D3D12TextureData*>(&impl->data);
 }

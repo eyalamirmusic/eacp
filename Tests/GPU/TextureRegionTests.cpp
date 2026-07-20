@@ -99,7 +99,6 @@ Texture makeBlackTexture()
     descriptor.width = textureSize;
     descriptor.height = textureSize;
     descriptor.format = TextureFormat::RGBA8Unorm;
-    descriptor.filter = TextureFilter::Nearest;
 
     return Device::shared().makeTexture(descriptor, pixels);
 }

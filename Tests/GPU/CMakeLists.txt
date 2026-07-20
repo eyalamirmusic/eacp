@@ -20,6 +20,7 @@ if (APPLE OR WIN32)
             ScissorTests.cpp
             BackingScaleTests.cpp
             TextureRegionTests.cpp
+            TextureSamplingTests.cpp
             ShaderBlendTests.cpp
             CoordinateSpaceTests.cpp)
 endif ()

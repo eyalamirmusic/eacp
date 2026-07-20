@@ -74,10 +74,6 @@ GPU::Texture makeEmptyAtlas()
     descriptor.height = atlasSize;
     descriptor.format = GPU::TextureFormat::RGBA8Unorm;
 
-    // Nearest keeps the texel grid crisp under magnification, so an upload is
-    // visible as a hard-edged block rather than a smear.
-    descriptor.filter = GPU::TextureFilter::Nearest;
-
     return GPU::Device::shared().makeTexture(descriptor, pixels.data());
 }
 
@@ -163,6 +159,8 @@ struct AtlasView final : GPU::GPUView
                                                side,
                                                side};
 
+        // The default Nearest keeps the texel grid crisp under magnification, so
+        // an upload is visible as a hard-edged block rather than a smear.
         sprites->drawTexture(atlas, atlasRect);
 
         const auto barRect = Graphics::Rect {atlasRect.x,
