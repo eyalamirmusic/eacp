@@ -384,7 +384,11 @@ private:
 };
 
 // Upload walk: copy each uniform's current value into the block at its aligned
-// offset.
+// offset. The caller runs finish() once the walk (and any appended tail, like
+// the compute count) is done: MSL pads sizeof(Uniforms) up to the widest
+// member's alignment, and Metal's validation layer checks the bound length
+// against that padded size - a block that stops at the last member's end binds
+// short and aborts the first draw whenever the members end off that boundary.
 class ShaderUploadVisitor final : public ShaderVisitor
 {
 public:
@@ -398,7 +402,8 @@ public:
                    detail::ValueHandle&,
                    const void* data) override
     {
-        auto offset = alignUp(cursor, uniformAlignment(type));
+        auto alignment = uniformAlignment(type);
+        auto offset = alignUp(cursor, alignment);
         auto next = offset + uniformSlotStride(type);
 
         if (bytes.size() < next)
@@ -406,11 +411,17 @@ public:
 
         std::memcpy(bytes.data() + offset, data, (std::size_t) byteSize(type));
         cursor = next;
+
+        if (alignment > blockAlignment)
+            blockAlignment = alignment;
     }
+
+    void finish() { bytes.resize(alignUp(bytes.size(), blockAlignment)); }
 
 private:
     Vector<std::byte>& bytes;
     int cursor = 0;
+    int blockAlignment = 1;
 };
 
 // Base for struct-authored shaders. Derive, declare uniform members, list them
@@ -765,6 +776,7 @@ private:
         uniformBytes.clear();
         auto uploadVisitor = ShaderUploadVisitor {uniformBytes};
         reflectMembers(uploadVisitor);
+        uploadVisitor.finish();
     }
 
     void uploadIndices(const void* data,

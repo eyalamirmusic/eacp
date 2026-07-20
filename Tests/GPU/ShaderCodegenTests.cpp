@@ -106,6 +106,31 @@ struct InstancedProgram final : ShaderProgram
     }
 };
 
+// A uniform block whose members stop 4 bytes short of its 8-byte alignment -
+// the shape that bound short on Metal before the upload walk padded the total.
+// (Found by the PureDOOM port: its world shader packed 36 bytes against the
+// 40-byte struct the emitter declared, and the validation layer - on by
+// default under Xcode - aborted the first draw.)
+struct OffBoundaryProgram final : ShaderProgram
+{
+    Uniform<Float2> scale;
+    Uniform<Float2> shift;
+    Uniform<Float> fade;
+
+    EACP_SHADER(scale, shift, fade)
+
+    OffBoundaryProgram() { compile(); }
+
+    void define() override
+    {
+        auto position = vertexInput(&ProgVertex::position);
+        auto x = position.x() * scale.x() + shift.x();
+        auto y = position.y() * scale.y() + shift.y();
+        setPosition(float4(x, y, 0.0f, 1.0f));
+        setFragment(float4(fade, fade, fade, 1.0f));
+    }
+};
+
 bool contains(const std::string& haystack, const std::string& needle)
 {
     return haystack.find(needle) != std::string::npos;
@@ -211,6 +236,18 @@ auto tShaderProgramInstancedLayout = test("GPU/shaderProgramInstancedLayout") = 
 
     program.prepare(1);
     check(program.pipeline().isValid());
+};
+
+// The packed block ends where MSL says the struct does. Two Float2s and a
+// Float stop at 20 bytes; sizeof(Uniforms) pads to the widest member's 8-byte
+// alignment, and Metal validates the bound length against that - binding the
+// unpadded 20 aborts the first draw. Pure logic, no GPU device required.
+auto tShaderProgramPadsUniformBlock =
+    test("GPU/shaderProgramPadsUniformBlock") = []
+{
+    auto program = OffBoundaryProgram {};
+
+    check(program.uniformByteSize() == 24);
 };
 
 // One IR emits both backends; assert each carries its backend-specific binding

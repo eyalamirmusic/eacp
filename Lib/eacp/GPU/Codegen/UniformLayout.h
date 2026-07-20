@@ -9,7 +9,10 @@ namespace eacp::GPU
 // Uniform-block layout follows the native MSL struct rules: a vec2 aligns to 8,
 // a vec3/vec4/matrix to 16, and a vec3 still occupies a full 16-byte slot. The
 // CPU upload walk and both shader emitters derive their offsets from these
-// helpers, so the packed bytes and the generated source cannot disagree.
+// helpers, so the packed bytes and the generated source cannot disagree. The
+// block's total size follows the same rules - sizeof(Uniforms) is padded up to
+// the widest member's alignment, which ShaderUploadVisitor::finish applies to
+// the packed block, Metal's validation layer holding the bound length to it.
 inline int uniformAlignment(ValueType type)
 {
     switch (type)

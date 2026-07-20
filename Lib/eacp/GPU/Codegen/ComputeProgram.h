@@ -112,6 +112,10 @@ public:
 
         auto value = (std::uint32_t) count;
         std::memcpy(uniformBytes.data() + offset, &value, sizeof(value));
+
+        // After the count, so the pad lands at the struct's end where MSL puts
+        // it, not between the last member and the count.
+        uploadVisitor.finish();
         return uniformBytes.data();
     }
 
