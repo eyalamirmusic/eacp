@@ -21,8 +21,10 @@ NSMenu* buildAppKitMenu(const Menu& menu, MenuTargets& targets);
 // returned target must be kept alive for as long as the button references it.
 //
 // The target also answers validateMenuItem:, so a menu item built on one greys
-// itself out from `isEnabled`. A null predicate means always enabled, which is
-// what a plain button wants.
+// itself out from `isEnabled` and refreshes its checkmark from `isChecked`. A
+// null enabled predicate means always enabled and a null checked predicate
+// means no checkmark management — which is what a plain button wants.
 ObjC::Ptr<NSObject> makeActionTarget(const MenuAction& action,
-                                     const MenuEnabled& isEnabled = {});
+                                     const MenuEnabled& isEnabled = {},
+                                     const MenuChecked& isChecked = {});
 } // namespace eacp::Graphics

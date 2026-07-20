@@ -28,6 +28,7 @@ void collect(const Menu& menu, Vector<MenuCommand>& out, unsigned& nextId)
         command.id = nextId++;
         command.action = item.action;
         command.isEnabled = item.isEnabled;
+        command.isChecked = item.isChecked;
 
         out.add(std::move(command));
     }

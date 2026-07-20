@@ -225,6 +225,16 @@ void updateWin32MenuEnabledState(HWND hwnd)
 
         EnableMenuItem(
             menu, command.id, MF_BYCOMMAND | (enabled ? MF_ENABLED : MF_GRAYED));
+
+        // Same moment macOS refreshes the checkmark (validateMenuItem:). A
+        // command with no predicate is left alone rather than force-unchecked,
+        // so this stays "not checkable", not "unchecked".
+        if (command.isChecked)
+            CheckMenuItem(menu,
+                          command.id,
+                          MF_BYCOMMAND
+                              | (command.isChecked() ? MF_CHECKED
+                                                     : MF_UNCHECKED));
     }
 }
 

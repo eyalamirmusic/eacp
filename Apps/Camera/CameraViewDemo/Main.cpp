@@ -1,9 +1,11 @@
 #include <eacp/CameraView/CameraView.h>
+#include <eacp/Graphics/Menu/Menu.h>
 #include <algorithm>
 
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
+#include <string>
 
 using namespace eacp;
 
@@ -80,17 +82,69 @@ struct CameraApp
         view.setMirrored(true); // front-camera-style preview
         view.attach(camera);
         window.setContentView(view);
+        installMenuBar();
         beginCapture();
         armAutoQuit();
     }
 
     ~CameraApp() { camera.stop(); }
 
+    // The Camera menu: every device the system reports, checkable, with the
+    // mark following selectedDeviceId live (no rebuild on switch). Exercises
+    // MenuItem::withCheckableAction against real hardware.
+    void installMenuBar()
+    {
+        auto cameraMenu = Graphics::Menu {"Camera"};
+
+        cameraMenu.add(Graphics::MenuItem::withCheckableAction(
+            "System Default",
+            [this] { selectDevice({}); },
+            [this] { return !selectedDeviceId.has_value(); }));
+
+        cameraMenu.addSeparator();
+
+        for (const auto& device: Cameras::Camera::devices())
+            cameraMenu.add(Graphics::MenuItem::withCheckableAction(
+                device.name,
+                [this, id = device.id] { selectDevice(id); },
+                [this, id = device.id] { return selectedDeviceId == id; }));
+
+        auto bar = Graphics::MenuBar {};
+        bar.add(Graphics::standardApplicationMenu("eacp Camera"));
+        bar.add(std::move(cameraMenu));
+
+        Graphics::setApplicationMenuBar(bar, window);
+    }
+
+    void selectDevice(std::optional<std::string> deviceId)
+    {
+        if (selectedDeviceId == deviceId)
+            return;
+
+        selectedDeviceId = std::move(deviceId);
+        std::printf("switching camera to %s\n",
+                    selectedDeviceId ? selectedDeviceId->c_str()
+                                     : "system default");
+
+        // The view stays attached across the restart: it follows the Camera
+        // object, not the capture session.
+        if (camera.isRunning())
+        {
+            camera.stop();
+            startCamera();
+        }
+        else
+        {
+            beginCapture();
+        }
+    }
+
     void startCamera()
     {
         auto config = Cameras::CameraConfig {};
         config.width = 1280;
         config.height = 720;
+        config.deviceId = selectedDeviceId;
         camera.start(config);
     }
 
@@ -152,6 +206,8 @@ struct CameraApp
     Cameras::Camera camera;
     DemoCameraView view;
     Graphics::Window window {makeOptions()};
+    // nullopt = system default. What the Camera menu's checkmarks read.
+    std::optional<std::string> selectedDeviceId;
     std::optional<Threads::Timer> quitTimer;
     std::optional<Time::Deadline> quitDeadline;
 };

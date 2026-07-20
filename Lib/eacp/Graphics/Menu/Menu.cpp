@@ -63,6 +63,20 @@ MenuItem MenuItem::withAction(std::string title,
     return item;
 }
 
+MenuItem MenuItem::withCheckableAction(std::string title,
+                                       MenuAction action,
+                                       MenuChecked isChecked,
+                                       std::optional<KeyEquivalent> shortcut,
+                                       MenuEnabled isEnabled)
+{
+    auto item = withAction(std::move(title),
+                           std::move(action),
+                           std::move(shortcut),
+                           std::move(isEnabled));
+    item.isChecked = std::move(isChecked);
+    return item;
+}
+
 MenuItem MenuItem::withResponderSelector(std::string title,
                                          std::string selector,
                                          std::optional<KeyEquivalent> shortcut)

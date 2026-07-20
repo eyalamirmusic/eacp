@@ -130,6 +130,48 @@ auto tValidationIsReadLive = test("Menu/validationIsReadLive") = []
     check([item.target validateMenuItem:item]);
 };
 
+// Validation is also when the checkmark is refreshed — the same read-live
+// property as greying, for the same reason: a device picker whose selection
+// changes must not need a rebuild for the mark to move.
+auto tValidationRefreshesTheCheckmark =
+    test("Menu/validationRefreshesTheCheckmark") = []
+{
+    auto selected = false;
+
+    const auto bar = barWith(MenuItem::withCheckableAction(
+        "FaceTime HD Camera", [] {}, [&selected] { return selected; }));
+
+    auto* item = installAndFind(bar, @"Edit", @"FaceTime HD Camera");
+
+    check(item != nil);
+
+    [item.target validateMenuItem:item];
+    check(item.state == NSControlStateValueOff);
+
+    selected = true;
+
+    [item.target validateMenuItem:item];
+    check(item.state == NSControlStateValueOn);
+};
+
+// An item that said nothing about checking is left alone: its state is not
+// forced off by validation, so "not checkable" and "unchecked" stay distinct
+// at the AppKit boundary too.
+auto tUncheckableItemStateIsUntouched =
+    test("Menu/uncheckableItemStateIsUntouched") = []
+{
+    const auto bar = barWith(MenuItem::withAction("Paste"));
+
+    auto* item = installAndFind(bar, @"Edit", @"Paste");
+
+    check(item != nil);
+
+    item.state = NSControlStateValueOn;
+    [item.target validateMenuItem:item];
+
+    check(item.state == NSControlStateValueOn);
+};
+
 // A responder-selector item keeps its nil target, so validation goes down the
 // responder chain to the focused view instead. Enablement must not have
 // captured these — the focused view is the only thing that knows whether it can

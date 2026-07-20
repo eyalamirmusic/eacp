@@ -53,6 +53,9 @@ struct MenuCommand
     unsigned id = 0;
     MenuAction action = [] {};
     MenuEnabled isEnabled = [] { return true; };
+
+    // Null when the item is not checkable — see MenuChecked.
+    MenuChecked isChecked;
 };
 
 // Every actionable item in the bar, depth-first, ids assigned from `firstId`.

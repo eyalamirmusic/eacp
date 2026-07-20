@@ -262,6 +262,34 @@ auto tPredicateTravelsWithTheCommand =
     check(commands[0].isEnabled());
 };
 
+// The checked predicate travels the same way, so WM_INITMENUPOPUP can refresh
+// the mark live. And a command that never mentioned checking must arrive with
+// a null predicate — null is "not checkable", which the backend must be able
+// to distinguish from "unchecked" to leave the item's mark alone.
+auto tCheckedPredicateTravelsWithTheCommand =
+    test("MenuCommands/checkedPredicateTravelsWithTheCommand") = []
+{
+    auto selected = false;
+
+    auto view = Menu {"View"};
+    view.add(MenuItem::withCheckableAction(
+        "FaceTime HD Camera", [] {}, [&selected] { return selected; }));
+    view.add(MenuItem::withAction("Refresh"));
+
+    auto bar = MenuBar {};
+    bar.add(std::move(view));
+
+    const auto commands = flattenCommands(bar);
+
+    check(commands[0].isChecked != nullptr);
+    check(!commands[0].isChecked());
+
+    selected = true;
+    check(commands[0].isChecked());
+
+    check(commands[1].isChecked == nullptr);
+};
+
 auto tEmptyBarHasNoCommands = test("MenuCommands/emptyBarHasNoCommands") = []
 { check(flattenCommands(MenuBar {}).size() == 0); };
 
