@@ -22,6 +22,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if (APPLE)
     enable_language(OBJCXX)
+
+    # CMake already puts -lobjc on the link line of everything that pulls in
+    # Objective-C. Xcode adds -fobjc-link-runtime on top for any target with its
+    # own .mm sources, and ld warns about the duplicate.
+    set(CMAKE_XCODE_ATTRIBUTE_CLANG_LINK_OBJC_RUNTIME NO)
 endif ()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
