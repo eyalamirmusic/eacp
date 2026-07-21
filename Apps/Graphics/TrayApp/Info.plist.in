@@ -32,10 +32,9 @@
 	<string>${MACOSX_BUNDLE_COPYRIGHT}</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<!-- Launch as an accessory app: no Dock icon, menu bar only. The
-	     framework reads this and starts in NSApplicationActivationPolicyAccessory,
-	     so there is no Dock-icon flash before setDockIconVisible(false) runs. -->
-	<key>LSUIElement</key>
-	<true/>
+	<!-- Deliberately a REGULAR dock app (no LSUIElement): this demo exists to
+	     prove a NonactivatingPanel takes the keyboard over another app's
+	     full-screen Space WITHOUT the owning app activating — the hard case an
+	     accessory app would sidestep. -->
 </dict>
 </plist>

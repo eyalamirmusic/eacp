@@ -131,6 +131,38 @@ Class getKeyableBorderlessWindowClass()
     return instance->get();
 }
 
+// A non-activating panel is the ONLY window that can take keyboard focus over
+// another app's full-screen Space without activating this app — the style-mask
+// bit alone is inert on a plain NSWindow, it must be an NSPanel. Borderless
+// panels also refuse key by default, so keep the same canBecomeKeyWindow
+// override.
+Class getKeyableNonactivatingPanelClass()
+{
+    static auto instance = []
+    {
+        auto builder =
+            new ObjC::RuntimeClass<NSPanel>("EacpNonactivatingPanel");
+        builder->addMethod(@selector(canBecomeKeyWindow), canBecomeKeyWindow);
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+
+Class pickWindowClass(NSWindowStyleMask style)
+{
+    if ((style & NSWindowStyleMaskNonactivatingPanel) != 0)
+        return getKeyableNonactivatingPanelClass();
+
+    // Borderless (untitled) windows refuse key by default; the keyable
+    // subclass keeps a frameless overlay's inputs typeable.
+    if ((style & NSWindowStyleMaskTitled) != 0)
+        return [NSWindow class];
+
+    return getKeyableBorderlessWindowClass();
+}
+
 // Runtime classes get no automatic C++ ivar construction, so the delegate's
 // C++ state lives behind one raw pointer, created with the delegate and
 // deleted in its dealloc.
@@ -325,16 +357,17 @@ struct Window::Native
         auto style = getStyle(options);
         auto contentRect = NSMakeRect(0, 0, options.width, options.height);
 
-        // NSWindowStyleMaskBorderless is 0 — "borderless" is the absence of
-        // the Titled bit, so that's what selects the keyable subclass.
-        auto windowClass = (style & NSWindowStyleMaskTitled) != 0
-                               ? [NSWindow class]
-                               : getKeyableBorderlessWindowClass();
+        auto windowClass = pickWindowClass(style);
 
         handle = [[windowClass alloc] initWithContentRect:contentRect
                                                 styleMask:style
                                                   backing:NSBackingStoreBuffered
                                                     defer:NO];
+
+        // NSPanel defaults hidesOnDeactivate to YES; a non-activating panel is
+        // never the active app's window, so it would vanish the instant it
+        // appeared. Keep it up like an ordinary window.
+        [getWindow() setHidesOnDeactivate:NO];
 
         delegate = createWindowDelegate(options);
         getDelegateState(delegate.get())->events = &eventsToUse;
@@ -480,6 +513,30 @@ struct Window::Native
             [getWindow() orderFrontRegardless];
 
         ensureAppBecomesActive();
+    }
+
+    void focusWithoutActivating()
+    {
+        if (eacp::Apps::getAppEnvironment().headless)
+            return;
+
+        getWindow().contentView.hidden = NO;
+
+        if (opts.alwaysOnTop)
+            [getWindow() setLevel:NSFloatingWindowLevel];
+
+        if (opts.visibleOnAllWorkspaces)
+            [getWindow()
+                setCollectionBehavior:
+                    NSWindowCollectionBehaviorCanJoinAllSpaces
+                    | NSWindowCollectionBehaviorFullScreenAuxiliary];
+
+        // On a NonactivatingPanel this takes key — and thus the keyboard —
+        // WITHOUT activating the app, so it works over another app's
+        // full-screen Space and never switches Spaces. For an ordinary window
+        // makeKeyAndOrderFront pulls the app forward; use toFront() there.
+        [getWindow() makeKeyAndOrderFront:nil];
+        focusContentView();
     }
 
     void setTitle(const std::string& title)
@@ -691,6 +748,11 @@ void Window::setContentView(View& view)
 void Window::toFront()
 {
     impl->toFront();
+}
+
+void Window::focusWithoutActivating()
+{
+    impl->focusWithoutActivating();
 }
 
 void Window::setVisible(bool visible)

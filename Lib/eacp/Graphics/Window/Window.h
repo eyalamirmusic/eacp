@@ -179,6 +179,15 @@ public:
     // other applications. No-op under headless and on iOS.
     void toFront();
 
+    // Brings the window to the front and gives it the keyboard WITHOUT
+    // activating the app. Intended for a NonactivatingPanel window: it takes
+    // key focus even over another application's full-screen Space, without
+    // switching Spaces or pulling this app's other windows forward — the
+    // behaviour a Spotlight-style launcher panel needs. For ordinary windows
+    // prefer toFront(); the OS may withhold keys from an inactive app's plain
+    // window. No-op under headless and on iOS.
+    void focusWithoutActivating();
+
     // Shows or hides the window WITHOUT destroying it (macOS orderOut /
     // orderFront, Windows ShowWindow) — the content view and any WebView
     // state stay alive, unlike closing and recreating, and the window keeps

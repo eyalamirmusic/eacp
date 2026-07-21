@@ -328,6 +328,15 @@ struct Window::Native
         forceForeground(host.hwnd);
     }
 
+    void focusWithoutActivating() const
+    {
+        if (!host.hwnd || eacp::Apps::getAppEnvironment().headless)
+            return;
+
+        // Show without stealing foreground activation from the current app.
+        ShowWindow(host.hwnd, SW_SHOWNOACTIVATE);
+    }
+
     static void forceForeground(HWND hwnd)
     {
         auto foreground = GetForegroundWindow();
@@ -613,6 +622,11 @@ void Window::setContentView(View& view)
 void Window::toFront()
 {
     impl->toFront();
+}
+
+void Window::focusWithoutActivating()
+{
+    impl->focusWithoutActivating();
 }
 
 void Window::setVisible(bool visible)

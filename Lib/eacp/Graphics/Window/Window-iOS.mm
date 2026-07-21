@@ -97,6 +97,11 @@ void Window::toFront()
     // iOS apps are single-window; there's nothing to bring to the front.
 }
 
+void Window::focusWithoutActivating()
+{
+    // iOS apps are single-window; there's nothing to focus without activating.
+}
+
 void Window::setVisible(bool)
 {
     // iOS apps are single-window; there's nothing to hide or show.
