@@ -3,6 +3,8 @@
 #include "GlobalHotKey.h"
 
 #include <map>
+#include <memory>
+#include <utility>
 
 namespace eacp::Graphics
 {
@@ -26,9 +28,11 @@ OSType hotKeySignature()
     return signature;
 }
 
-std::map<UInt32, Callback*>& registry()
+using Registry = std::map<UInt32, Callback*>;
+
+std::shared_ptr<Registry> registry()
 {
-    static auto hotKeys = std::map<UInt32, Callback*> {};
+    static auto hotKeys = std::make_shared<Registry>();
     return hotKeys;
 }
 
@@ -69,8 +73,9 @@ OSStatus hotKeyHandler(EventHandlerCallRef, EventRef event, void*)
     if (status != noErr || hotKeyID.signature != hotKeySignature())
         return eventNotHandledErr;
 
-    auto found = registry().find(hotKeyID.id);
-    if (found == registry().end() || found->second == nullptr
+    auto hotKeys = registry();
+    auto found = hotKeys->find(hotKeyID.id);
+    if (found == hotKeys->end() || found->second == nullptr
         || !(*found->second))
         return eventNotHandledErr;
 
@@ -125,7 +130,7 @@ struct GlobalHotKey::Native
 
         if (status == noErr)
         {
-            registry()[id] = &onPressed;
+            (*hotKeys)[id] = &onPressed;
         }
         else
         {
@@ -138,12 +143,13 @@ struct GlobalHotKey::Native
     ~Native()
     {
         if (id != 0)
-            registry().erase(id);
+            hotKeys->erase(id);
 
         if (hotKeyRef != nullptr)
             UnregisterEventHotKey(hotKeyRef);
     }
 
+    std::shared_ptr<Registry> hotKeys = registry();
     EventHotKeyRef hotKeyRef = nullptr;
     UInt32 id = 0;
     Callback onPressed;
