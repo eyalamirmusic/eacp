@@ -283,6 +283,9 @@ private:
     MouseEvent
         createLocalEvent(const MouseEvent& event, View* target, MouseEventType type);
 
+    static bool isInSubtreeOf(View* candidate, View& subtreeRoot);
+    void clearMouseTargetsIn(View& view);
+
     void forwardDragOrUpToCapturedTarget(const MouseEvent& event);
     void updateHoverTracking(View* target, const MouseEvent& event);
     void dispatchHoverEvent(View* target, const MouseEvent& event);
