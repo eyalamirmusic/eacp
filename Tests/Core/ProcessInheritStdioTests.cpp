@@ -90,7 +90,11 @@ auto tStreamsWhileRunning = test("Process/inheritStdio/streamsWhileRunning") = [
             }
             std::this_thread::sleep_for(std::chrono::milliseconds {10});
         }
+
+        // Kill is asynchronous on Windows; reap before the file cleanup
+        // below, or the child's inherited handle still blocks the delete.
         process.kill();
+        process.wait();
     }
 
     check(sawItLive);
