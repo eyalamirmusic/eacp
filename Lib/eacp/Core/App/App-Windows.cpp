@@ -94,6 +94,16 @@ std::optional<std::string> chooseWithDialog(bool pickFolders,
 
     return shellResultToPath(picked->c_str());
 }
+
+std::optional<std::string> chooseSaveWithDialog(const FileSaveOptions& options,
+                                                const ShellSaveDialog& dialog)
+{
+    const auto picked = dialog(options);
+    if (!picked)
+        return std::nullopt;
+
+    return shellResultToPath(picked->c_str());
+}
 } // namespace detail
 
 namespace
@@ -160,11 +170,90 @@ std::optional<std::wstring> showShellOpenDialog(bool pickFolders,
 
     return result;
 }
+// Real IFileSaveDialog behind the detail:: seam; tests substitute a fake.
+// FOS_OVERWRITEPROMPT is the dialog's own confirmation — the caller writes the
+// returned path unconditionally.
+std::optional<std::wstring> showShellSaveDialog(const FileSaveOptions& options)
+{
+    const auto coInit =
+        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const bool shouldUninitialize = SUCCEEDED(coInit);
+
+    // COM objects must release before CoUninitialize, so the dialog lives in
+    // this lambda — its com_ptrs unwind before the uninit below.
+    const auto result = [&]() -> std::optional<std::wstring>
+    {
+        auto dialog = winrt::com_ptr<IFileSaveDialog> {};
+        if (FAILED(CoCreateInstance(CLSID_FileSaveDialog,
+                                    nullptr,
+                                    CLSCTX_INPROC_SERVER,
+                                    IID_PPV_ARGS(dialog.put()))))
+            return std::nullopt;
+
+        auto flags = FILEOPENDIALOGOPTIONS {};
+        if (SUCCEEDED(dialog->GetOptions(&flags)))
+        {
+            flags = static_cast<FILEOPENDIALOGOPTIONS>(
+                flags | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST
+                | FOS_OVERWRITEPROMPT);
+            dialog->SetOptions(flags);
+        }
+
+        if (!options.allowedExtensions.empty())
+        {
+            const auto pattern =
+                detail::buildFilterPattern(options.allowedExtensions);
+            const COMDLG_FILTERSPEC specs[] = {
+                {L"Supported files", pattern.c_str()},
+                {L"All files", L"*.*"},
+            };
+            dialog->SetFileTypes(2, specs);
+            dialog->SetFileTypeIndex(1);
+
+            // So a name typed without one still lands on the right extension.
+            const auto defaultExtension =
+                std::wstring(winrt::to_hstring(options.allowedExtensions[0]));
+            dialog->SetDefaultExtension(defaultExtension.c_str());
+        }
+
+        if (!options.suggestedName.empty())
+        {
+            const auto name = std::wstring(winrt::to_hstring(options.suggestedName));
+            dialog->SetFileName(name.c_str());
+        }
+
+        if (FAILED(dialog->Show(nullptr)))
+            return std::nullopt;
+
+        auto item = winrt::com_ptr<IShellItem> {};
+        if (FAILED(dialog->GetResult(item.put())) || !item)
+            return std::nullopt;
+
+        PWSTR rawPath = nullptr;
+        if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &rawPath))
+            || rawPath == nullptr)
+            return std::nullopt;
+
+        auto path = std::wstring {rawPath};
+        CoTaskMemFree(rawPath);
+        return path;
+    }();
+
+    if (shouldUninitialize)
+        CoUninitialize();
+
+    return result;
+}
 } // namespace
 
 std::optional<std::string> chooseFile(const FilePickerOptions& options)
 {
     return detail::chooseWithDialog(false, options, showShellOpenDialog);
+}
+
+std::optional<std::string> chooseSaveFile(const FileSaveOptions& options)
+{
+    return detail::chooseSaveWithDialog(options, showShellSaveDialog);
 }
 
 std::optional<std::string> chooseDirectory()

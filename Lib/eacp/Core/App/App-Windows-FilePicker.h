@@ -21,4 +21,12 @@ using ShellOpenDialog = std::function<std::optional<std::wstring>(
 std::optional<std::string> chooseWithDialog(bool pickFolders,
                                             const FilePickerOptions& options,
                                             const ShellOpenDialog& dialog);
+
+// The save modal's seam, same idea as ShellOpenDialog above.
+using ShellSaveDialog =
+    std::function<std::optional<std::wstring>(const FileSaveOptions& options)>;
+
+// Shared core of chooseSaveFile().
+std::optional<std::string> chooseSaveWithDialog(const FileSaveOptions& options,
+                                                const ShellSaveDialog& dialog);
 } // namespace eacp::Apps::detail
