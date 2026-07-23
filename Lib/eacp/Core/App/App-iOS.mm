@@ -42,6 +42,13 @@ std::optional<std::string> chooseFile(const FilePickerOptions&)
     return std::nullopt;
 }
 
+// iOS has no synchronous save panel (UIDocumentPickerViewController is
+// async + delegate-based); not supported under this blocking API.
+std::optional<std::string> chooseSaveFile(const FileSaveOptions&)
+{
+    return std::nullopt;
+}
+
 // iOS has no synchronous folder picker (UIDocumentPickerViewController is
 // async + delegate-based); not supported under this blocking API.
 std::optional<std::string> chooseDirectory()

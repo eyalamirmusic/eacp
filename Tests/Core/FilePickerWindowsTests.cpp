@@ -3,7 +3,9 @@
 
 using namespace nano;
 using eacp::Apps::FilePickerOptions;
+using eacp::Apps::FileSaveOptions;
 using eacp::Apps::detail::buildFilterPattern;
+using eacp::Apps::detail::chooseSaveWithDialog;
 using eacp::Apps::detail::chooseWithDialog;
 using eacp::Apps::detail::shellResultToPath;
 
@@ -81,4 +83,41 @@ auto tForwardsPickFoldersFlag =
 
     check(sawPickFolders.has_value());
     check(*sawPickFolders == true);
+};
+
+auto tSaveReturnsNamedPath = test("FilePicker/Windows/saveReturnsTheNamedPath") = []
+{
+    const auto picked = chooseSaveWithDialog(
+        {},
+        [](const FileSaveOptions&) -> std::optional<std::wstring>
+        { return L"C:\\Users\\me\\Set.gestures"; });
+
+    check(picked.has_value());
+    check(*picked == std::string("C:\\Users\\me\\Set.gestures"));
+};
+
+auto tSaveCancelYieldsNullopt = test("FilePicker/Windows/saveCancelReturnsNullopt") =
+    []
+{
+    const auto picked = chooseSaveWithDialog(
+        {},
+        [](const FileSaveOptions&) -> std::optional<std::wstring>
+        { return std::nullopt; });
+
+    check(!picked.has_value());
+};
+
+auto tSaveForwardsOptions =
+    test("FilePicker/Windows/forwardsTheSuggestedNameToDialog") = []
+{
+    auto sawName = std::string {};
+    chooseSaveWithDialog({{"gestures"}, "Set.gestures"},
+                         [&](const FileSaveOptions& options)
+                             -> std::optional<std::wstring>
+                         {
+                             sawName = options.suggestedName;
+                             return std::nullopt;
+                         });
+
+    check(sawName == std::string("Set.gestures"));
 };

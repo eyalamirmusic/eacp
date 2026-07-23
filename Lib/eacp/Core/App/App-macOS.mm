@@ -94,6 +94,27 @@ void openExternalURL(const std::string& url)
     [[NSWorkspace sharedWorkspace] openURL:nsUrl];
 }
 
+// Extensions ("wav", "gestures") as the content types both panels filter by.
+// An extension the system knows no type for is skipped rather than dropping
+// the whole filter.
+static NSArray<UTType*>* contentTypesFor(const Vector<std::string>& extensions)
+{
+    auto* types = [NSMutableArray<UTType*> array];
+
+    for (const auto& extension : extensions)
+    {
+        auto* ext = [NSString stringWithUTF8String:extension.c_str()];
+        if (ext == nil)
+            continue;
+
+        auto* type = [UTType typeWithFilenameExtension:ext];
+        if (type != nil)
+            [types addObject:type];
+    }
+
+    return types;
+}
+
 std::optional<std::string> chooseFile(const FilePickerOptions& options)
 {
     auto* panel = [NSOpenPanel openPanel];
@@ -103,25 +124,41 @@ std::optional<std::string> chooseFile(const FilePickerOptions& options)
     panel.resolvesAliases = YES;
 
     if (! options.allowedExtensions.empty())
-    {
-        auto* types = [NSMutableArray<UTType*> array];
-        for (const auto& extension : options.allowedExtensions)
-        {
-            auto* ext = [NSString stringWithUTF8String:extension.c_str()];
-            if (ext == nil)
-                continue;
-
-            auto* type = [UTType typeWithFilenameExtension:ext];
-            if (type != nil)
-                [types addObject:type];
-        }
-        panel.allowedContentTypes = types;
-    }
+        panel.allowedContentTypes = contentTypesFor(options.allowedExtensions);
 
     if ([panel runModal] != NSModalResponseOK)
         return std::nullopt;
 
     auto* url = panel.URLs.firstObject;
+
+    if (url == nil)
+        return std::nullopt;
+
+    return std::string(url.fileSystemRepresentation);
+}
+
+std::optional<std::string> chooseSaveFile(const FileSaveOptions& options)
+{
+    auto* panel = [NSSavePanel savePanel];
+    panel.canCreateDirectories = YES;
+    // The panel's own overwrite confirmation is the only one there is — the
+    // caller writes the returned path unconditionally.
+    panel.extensionHidden = NO;
+
+    if (! options.allowedExtensions.empty())
+        panel.allowedContentTypes = contentTypesFor(options.allowedExtensions);
+
+    if (! options.suggestedName.empty())
+    {
+        auto* name = [NSString stringWithUTF8String:options.suggestedName.c_str()];
+        if (name != nil)
+            panel.nameFieldStringValue = name;
+    }
+
+    if ([panel runModal] != NSModalResponseOK)
+        return std::nullopt;
+
+    auto* url = panel.URL;
 
     if (url == nil)
         return std::nullopt;

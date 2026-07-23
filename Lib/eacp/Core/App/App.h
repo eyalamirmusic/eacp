@@ -91,6 +91,22 @@ struct FilePickerOptions
 // returns std::nullopt for now.
 std::optional<std::string> chooseFile(const FilePickerOptions& options = {});
 
+// The save panel's options: the same extension filter, plus the file name the
+// panel opens with (the user is free to change it).
+struct FileSaveOptions
+{
+    Vector<std::string> allowedExtensions;
+    std::string suggestedName;
+};
+
+// Shows the OS's native save panel, blocking until the user names a file or
+// cancels. Returns the chosen absolute path — which need NOT exist yet, and
+// whose overwrite the panel has already confirmed with the user — or
+// std::nullopt on cancel. Writing the file is the caller's job. Must be called
+// on the UI thread. Implemented on macOS and Windows; Linux returns
+// std::nullopt for now.
+std::optional<std::string> chooseSaveFile(const FileSaveOptions& options = {});
+
 // Shows the OS's native folder chooser, blocking until the user picks a
 // directory or cancels. Returns the chosen absolute path, or std::nullopt
 // on cancel. Must be called on the UI thread. Implemented on macOS and
