@@ -118,6 +118,8 @@ struct GPUView::Native : DeviceResourceHolder
         if (spriteVisual)
             spriteVisual->SetContent(nullptr);
 
+        contentAttached = false;
+
         // The DComp device is replaced along with the rendering device, so
         // re-acquire it and rebuild the visual before the swapchain reattaches.
         compositionDevice = Graphics::getCompositionDevice();
@@ -153,14 +155,27 @@ struct GPUView::Native : DeviceResourceHolder
         auto newWidth = static_cast<UINT>(bounds.w * scale);
         auto newHeight = static_cast<UINT>(bounds.h * scale);
 
+        // A view hidden by zero-sizing (e.g. a pane behind a zoom) must stop
+        // compositing: the swapchain still holds its last presented frame and
+        // DComp would keep showing it as a frozen block over whatever now
+        // occupies the space. Detaching mirrors the 2D layer's createSurface,
+        // which drops its content at zero size for the same reason.
         if (newWidth == 0 || newHeight == 0)
+        {
+            detachContent();
             return;
+        }
 
         // A same-size pass must not touch the swapchain: layout runs more
         // than once per structural change, and a ResizeBuffers immediately
-        // after the creation commit orphans the visual's content.
+        // after the creation commit orphans the visual's content. Reattach
+        // in case a prior zero-size pass had detached us (un-zoom restores
+        // the pane at its original size, so nothing else would).
         if (swapChain && newWidth == width && newHeight == height)
+        {
+            reattachContent();
             return;
+        }
 
         width = newWidth;
         height = newHeight;
@@ -170,10 +185,35 @@ struct GPUView::Native : DeviceResourceHolder
         else
             resizeSwapChain();
 
+        reattachContent();
         applyContentScale();
 
         updateMultisampleTexture();
         updateDepthTexture();
+    }
+
+    // Drops the swapchain from the visual so a hidden view stops compositing
+    // its last frame; reattachContent restores it. attachSwapChainToVisual
+    // owns the initial attach and sets contentAttached true.
+    void detachContent()
+    {
+        if (spriteVisual && contentAttached)
+        {
+            spriteVisual->SetContent(nullptr);
+            Graphics::commitComposition();
+            contentAttached = false;
+        }
+    }
+
+    void reattachContent()
+    {
+        if (spriteVisual && swapChain && !contentAttached)
+        {
+            spriteVisual->SetContent(swapChain.get());
+            applyContentScale();
+            Graphics::commitComposition();
+            contentAttached = true;
+        }
     }
 
     void createSwapChain()
@@ -236,6 +276,7 @@ struct GPUView::Native : DeviceResourceHolder
         spriteVisual->SetContent(swapChain.get());
         applyContentScale();
         Graphics::commitComposition();
+        contentAttached = true;
     }
 
     void applyContentScale()
@@ -523,6 +564,11 @@ struct GPUView::Native : DeviceResourceHolder
 
     bool continuous = false;
     bool depthEnabled = false;
+
+    // Whether spriteVisual currently holds the swapchain. Cleared when a
+    // zero-sized (hidden) view detaches it, so it is not composited as a
+    // frozen last frame; restored when the view regains size.
+    bool contentAttached = false;
     UINT width = 0;
     UINT height = 0;
 
