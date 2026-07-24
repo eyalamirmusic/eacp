@@ -8,6 +8,7 @@ namespace eacp
 template <typename T>
 concept FilesystemPathLike = requires(const T& path) {
     typename T::value_type;
+    { path.native() };
     { path.generic_u8string() };
 };
 
@@ -25,12 +26,19 @@ public:
 
     // Accepts std::filesystem::path without this header naming it: the
     // template only instantiates at call sites that already include
-    // <filesystem>. generic_u8string() keeps non-ASCII intact on Windows.
+    // <filesystem>. Not generic_u8string(), which throws on names that are
+    // not valid UTF-16 (NTFS permits unpaired surrogates): this conversion
+    // never throws, mapping invalid units to U+FFFD, and keeps non-ASCII
+    // intact on Windows.
     template <FilesystemPathLike P>
     FilePath(const P& path)
     {
-        auto u8 = path.generic_u8string();
-        text.assign(u8.begin(), u8.end());
+        const auto& native = path.native();
+
+        if constexpr (sizeof(typename P::value_type) == sizeof(char))
+            text.assign(native.begin(), native.end());
+        else
+            assignFromWide({native.data(), native.size()});
     }
 
     // Well-known user directories, resolved through the native platform API
@@ -55,6 +63,10 @@ public:
     const char* c_str() const;
     bool empty() const;
 
+    // The path as a wide string, for native APIs and std::filesystem on
+    // Windows. Never throws: bytes that are not valid UTF-8 decode to U+FFFD.
+    std::wstring wide() const;
+
     // ".png" for "dir/image.png"; empty for dotfiles and extension-less
     // names, mirroring std::filesystem::path::extension().
     std::string extension() const;
@@ -68,6 +80,10 @@ public:
     bool operator==(const FilePath& other) const = default;
 
 private:
+    // UTF-16 or UTF-32 (by wchar_t width) to UTF-8, with '\' normalized to
+    // '/' and invalid units mapped to U+FFFD — never throws.
+    void assignFromWide(std::wstring_view wide);
+
     std::string text;
 };
 } // namespace eacp
