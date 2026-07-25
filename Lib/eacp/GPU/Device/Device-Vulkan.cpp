@@ -41,9 +41,9 @@ void* Device::nativeQueue() const
 
 void* Device::nativeTextureCache() const
 {
-    // No zero-copy pixel-buffer import on this backend: that needs dma-buf or
-    // IOSurface external-memory plumbing. Camera and video frames go through
-    // Texture::update instead, as they do on D3D12.
+    // Never bound: zero-copy import here goes straight from the platform surface
+    // to a VkImage (see TextureImport-Vulkan.h), so there is no cache object
+    // standing between them the way Metal has CVMetalTextureCache.
     return nullptr;
 }
 

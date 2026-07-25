@@ -3,6 +3,7 @@
 #include "../Device/Device.h"
 #include "../Vulkan/VulkanContext.h"
 #include "../Vulkan/VulkanTypes.h"
+#include "TextureImport-Vulkan.h"
 
 #include <cstring>
 
@@ -147,17 +148,7 @@ struct Texture::Native
 
         texture.memory = allocation.memory;
 
-        auto viewInfo = VkImageViewCreateInfo {
-            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        viewInfo.image = texture.image;
-        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = texture.format;
-        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        viewInfo.subresourceRange.levelCount = 1;
-        viewInfo.subresourceRange.layerCount = 1;
-
-        if (vkCreateImageView(device, &viewInfo, nullptr, &texture.view)
-            != VK_SUCCESS)
+        if (!createView())
             return;
 
         if (pixels != nullptr)
@@ -171,11 +162,41 @@ struct Texture::Native
             moveToShaderRead();
     }
 
+    // The zero-copy path. The image arrives already backed by the platform's
+    // shared surface and already in the layout a sample expects, so there is no
+    // allocation, nothing to upload and - importantly for the camera, which
+    // wraps a fresh buffer every frame - no transition submit to block on.
+    explicit Native(void* pixelBuffer)
+    {
+        texture = detail::importPixelBuffer(pixelBuffer);
+
+        if (texture.image != VK_NULL_HANDLE)
+            createView();
+    }
+
     ~Native()
     {
+        // memory is null for an imported image - the platform surface is the
+        // allocation, and the driver releases it with the image.
         if (texture.image != VK_NULL_HANDLE)
             getVulkanContext().deferDestroy(
                 texture.image, texture.view, texture.memory);
+    }
+
+    bool createView()
+    {
+        auto info = VkImageViewCreateInfo {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        info.image = texture.image;
+        info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        info.format = texture.format;
+        info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        info.subresourceRange.levelCount = 1;
+        info.subresourceRange.layerCount = 1;
+
+        return vkCreateImageView(
+                   getVulkanContext().getDevice(), &info, nullptr, &texture.view)
+               == VK_SUCCESS;
     }
 
     // An empty texture still has to reach shader-read layout, or the first draw
@@ -264,11 +285,9 @@ Texture::Texture(Device&, const TextureDescriptor& descriptor, const void* pixel
 {
 }
 
-Texture::Texture(Device&, void*)
-    : impl(TextureDescriptor {}, nullptr)
+Texture::Texture(Device&, void* pixelBuffer)
+    : impl(pixelBuffer)
 {
-    // No zero-copy pixel-buffer import on this backend yet; see
-    // Device::nativeTextureCache. Yields an invalid texture, as on D3D12.
 }
 
 int Texture::width() const

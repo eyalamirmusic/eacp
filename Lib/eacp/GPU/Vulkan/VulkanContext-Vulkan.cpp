@@ -176,6 +176,16 @@ bool VulkanContext::createDevice()
         presentationSupported = true;
     }
 
+    // What lets a VkImage be backed by memory the platform already shares with
+    // other processes and frameworks -- an IOSurface here -- so a camera or video
+    // frame is sampled where it was captured instead of copied. See
+    // TextureImport-Vulkan.h.
+    if (hasExtension(available, "VK_EXT_metal_objects"))
+    {
+        names.add("VK_EXT_metal_objects");
+        surfaceImportSupported = true;
+    }
+
     if (!hasExtension(available, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME))
     {
         LOG("Vulkan: device lacks VK_KHR_dynamic_rendering");

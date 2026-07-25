@@ -4,11 +4,11 @@ set(gpu_test_sources
         TestMain.cpp
         TextureUpdateTests.cpp)
 
-# The zero-copy CVPixelBuffer wrap test is Metal-only Objective-C++: importing
-# an IOSurface would need external-memory plumbing the Vulkan backend does not
-# have, so on that backend camera and video frames go through Texture::update
-# instead, as they do on D3D12.
-if (APPLE AND NOT EACP_GPU_BACKEND STREQUAL "Vulkan")
+# The zero-copy CVPixelBuffer wrap test is Apple-only Objective-C++, and runs on
+# both backends there: Metal maps the buffer's IOSurface through a
+# CVMetalTextureCache, Vulkan makes the same IOSurface the backing store of a
+# VkImage.
+if (APPLE)
     list(APPEND gpu_test_sources TextureInteropTests.mm)
 endif ()
 

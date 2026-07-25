@@ -103,6 +103,11 @@ public:
     // where a GPUView renders off-screen and never presents.
     bool canPresent() const { return presentationSupported; }
 
+    // Whether a VkImage can be backed by a surface the platform already shares
+    // -- an IOSurface behind a CVPixelBuffer. False leaves wrapPixelBuffer
+    // returning an invalid texture, so callers fall back to Texture::update.
+    bool canImportSurfaces() const { return surfaceImportSupported; }
+
     // Recycles a recording that should never reach the GPU.
     void discard(CommandContext* commands);
 
@@ -176,6 +181,7 @@ private:
     VkPhysicalDeviceMemoryProperties memoryProperties = {};
     std::uint32_t pushConstantLimit = 128;
     bool presentationSupported = false;
+    bool surfaceImportSupported = false;
 
     VkCommandPool commandPool = VK_NULL_HANDLE;
     VkSemaphore timeline = VK_NULL_HANDLE;

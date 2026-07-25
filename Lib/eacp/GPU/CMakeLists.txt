@@ -40,15 +40,19 @@ if (EACP_GPU_BACKEND STREQUAL "Vulkan")
             Vulkan/VulkanContext-Vulkan.cpp)
     target_link_libraries(eacp-gpu PRIVATE Vulkan::Vulkan)
 
-    # Presentation is the one part that cannot be portable: a surface comes from
-    # a CAMetalLayer here, an HWND on Win32, a wl_surface or X11 window on Linux.
-    # Confined to this file behind the GPUViewSurface-Vulkan.h seam.
+    # Presentation and zero-copy frame import are the two parts that cannot be
+    # portable: a surface comes from a CAMetalLayer here, an HWND on Win32, a
+    # wl_surface or X11 window on Linux, and a shareable frame is an IOSurface
+    # here and a dma-buf on Linux. Confined to these files behind the
+    # GPUViewSurface-Vulkan.h and TextureImport-Vulkan.h seams.
     if (APPLE)
         target_sources(eacp-gpu PRIVATE
+                Texture/TextureImport-VulkanApple.mm
                 View/GPUView-VulkanApple.mm
                 View/GPUView-macOS.mm)
         target_link_libraries(eacp-gpu PRIVATE
                 "-framework Cocoa"
+                "-framework CoreVideo"
                 "-framework Foundation"
                 "-framework Metal"
                 "-framework QuartzCore")
