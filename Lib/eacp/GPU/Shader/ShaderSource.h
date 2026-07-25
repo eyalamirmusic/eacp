@@ -11,6 +11,14 @@ enum class ShaderBackend
     Vulkan
 };
 
+// The dialect this build's device compiles. Fixed at build time by which
+// backend was selected, so it is defined alongside the codegen that picks the
+// same one (Codegen/ShaderBuilder-*.cpp) rather than inferred from the platform:
+// an Apple host builds either Metal or Vulkan. Hand-written native shader
+// sources - the generated ones need no help - ask this before choosing which
+// spelling to hand makeShaderLibrary.
+ShaderBackend nativeShaderBackend();
+
 enum class ShaderStage
 {
     Vertex,

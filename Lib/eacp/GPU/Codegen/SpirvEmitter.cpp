@@ -1,5 +1,6 @@
 #include "ShaderEmitter.h"
 
+#include "../Frame/ComputePass.h"
 #include "ShaderGraph.h"
 #include "UniformLayout.h"
 
@@ -35,6 +36,7 @@ enum Op : std::uint32_t
     OpTypeMatrix = 24,
     OpTypeImage = 25,
     OpTypeSampledImage = 27,
+    OpTypeRuntimeArray = 29,
     OpTypeStruct = 30,
     OpTypePointer = 32,
     OpTypeFunction = 33,
@@ -52,16 +54,24 @@ enum Op : std::uint32_t
     OpCompositeExtract = 81,
     OpSampledImage = 86,
     OpImageSampleImplicitLod = 87,
+    OpConvertUToF = 112,
     OpFNegate = 127,
+    OpIAdd = 128,
     OpFAdd = 129,
+    OpISub = 130,
     OpFSub = 131,
+    OpIMul = 132,
     OpFMul = 133,
+    OpUDiv = 134,
     OpFDiv = 136,
+    OpUMod = 137,
     OpMatrixTimesVector = 145,
     OpDot = 148,
+    OpUGreaterThanEqual = 174,
     OpFOrdLessThan = 184,
     OpSelectionMerge = 247,
     OpLabel = 248,
+    OpBranch = 249,
     OpBranchConditional = 250,
     OpKill = 252,
     OpReturn = 253
@@ -70,9 +80,12 @@ enum Op : std::uint32_t
 enum Decoration : std::uint32_t
 {
     DecorationBlock = 2,
+    DecorationBufferBlock = 3,
     DecorationColMajor = 5,
+    DecorationArrayStride = 6,
     DecorationMatrixStride = 7,
     DecorationBuiltIn = 11,
+    DecorationNonWritable = 24,
     DecorationLocation = 30,
     DecorationBinding = 33,
     DecorationDescriptorSet = 34,
@@ -83,9 +96,29 @@ enum StorageClass : std::uint32_t
 {
     StorageUniformConstant = 0,
     StorageInput = 1,
+    StorageUniform = 2,
     StorageOutput = 3,
     StorageFunction = 7,
     StoragePushConstant = 9
+};
+
+enum BuiltIn : std::uint32_t
+{
+    BuiltInPosition = 0,
+    BuiltInGlobalInvocationId = 28
+};
+
+enum ExecutionModel : std::uint32_t
+{
+    ModelVertex = 0,
+    ModelFragment = 4,
+    ModelGLCompute = 5
+};
+
+enum ExecutionMode : std::uint32_t
+{
+    ModeOriginUpperLeft = 7,
+    ModeLocalSize = 17
 };
 
 // GLSL.std.450 extended instruction numbers.
@@ -105,8 +138,11 @@ enum Glsl : std::uint32_t
     GlslSqrt = 31,
     GlslInverseSqrt = 32,
     GlslFMin = 37,
+    GlslUMin = 38,
     GlslFMax = 40,
+    GlslUMax = 41,
     GlslFClamp = 43,
+    GlslUClamp = 44,
     GlslFMix = 46,
     GlslStep = 48,
     GlslSmoothStep = 49,
@@ -252,6 +288,36 @@ struct Module
         return slot;
     }
 
+    // uvec3, the shape of the GlobalInvocationId builtin. Separate from
+    // typeVector() because that one builds float vectors, the only kind the
+    // render stages need.
+    std::uint32_t typeUintVector3()
+    {
+        if (uintVectorType == 0)
+        {
+            uintVectorType = id();
+            writeInstruction(
+                declarations, OpTypeVector, {uintVectorType, typeUint(), 3});
+        }
+
+        return uintVectorType;
+    }
+
+    // float[], the element type of a storage buffer. One array type is shared by
+    // every buffer, so the stride decoration is written once with it.
+    std::uint32_t typeFloatArray()
+    {
+        if (floatArrayType == 0)
+        {
+            floatArrayType = id();
+            writeInstruction(
+                declarations, OpTypeRuntimeArray, {floatArrayType, typeFloat()});
+            decorate(floatArrayType, DecorationArrayStride, 4);
+        }
+
+        return floatArrayType;
+    }
+
     std::uint32_t typeMatrix()
     {
         if (matrixType == 0)
@@ -382,14 +448,28 @@ private:
     std::uint32_t floatType = 0;
     std::uint32_t uintType = 0;
     std::uint32_t matrixType = 0;
+    std::uint32_t uintVectorType = 0;
+    std::uint32_t floatArrayType = 0;
     std::uint32_t vectorTypes[5] = {};
     std::vector<PointerType> pointerTypes;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> floatConstants;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> uintConstants;
 };
 
-std::uint32_t glslOpcode(const std::string& name)
+// min/max/clamp are one name over two instruction families; the rest are
+// float-only, so the result type is enough to pick between them.
+std::uint32_t glslOpcode(const std::string& name, ValueType type)
 {
+    if (type == ValueType::UInt)
+    {
+        if (name == "min")
+            return GlslUMin;
+        if (name == "max")
+            return GlslUMax;
+        if (name == "clamp")
+            return GlslUClamp;
+    }
+
     if (name == "abs")
         return GlslFAbs;
     if (name == "sign")
@@ -438,6 +518,28 @@ std::uint32_t glslOpcode(const std::string& name)
         return GlslReflect;
 
     return 0;
+}
+
+// Arithmetic splits by operand type the way it does not in MSL or HLSL, where
+// one operator covers both: index maths on the compute thread id is unsigned,
+// everything else is floating point. Modulo only ever appears on uint.
+std::uint32_t binaryOpcode(char op, ValueType type)
+{
+    auto integer = type == ValueType::UInt;
+
+    switch (op)
+    {
+        case '-':
+            return integer ? OpISub : OpFSub;
+        case '*':
+            return integer ? OpIMul : OpFMul;
+        case '/':
+            return integer ? OpUDiv : OpFDiv;
+        case '%':
+            return OpUMod;
+        default:
+            return integer ? OpIAdd : OpFAdd;
+    }
 }
 
 int swizzleIndex(char component)
@@ -599,8 +701,18 @@ struct StageEmitter
                     return result;
                 }
 
+                // toFloat() spells as a constructor-style cast in MSL and HLSL,
+                // so it arrives as a call rather than its own node kind.
+                if (expr.text == "float")
+                {
+                    writeInstruction(module.code,
+                                     OpConvertUToF,
+                                     {type, result, emit(expr.args[0])});
+                    return result;
+                }
+
                 auto operands = std::vector<std::uint32_t> {
-                    type, result, module.glslSet, glslOpcode(expr.text)};
+                    type, result, module.glslSet, glslOpcode(expr.text, expr.type)};
 
                 for (auto argument: expr.args)
                     operands.push_back(emit(argument));
@@ -624,17 +736,10 @@ struct StageEmitter
                 auto rhs = splat(
                     emit(expr.args[1]), graph.expr(expr.args[1]).type, expr.type);
 
-                auto opcode = std::uint32_t {OpFAdd};
-
-                if (expr.op == '-')
-                    opcode = OpFSub;
-                else if (expr.op == '*')
-                    opcode = OpFMul;
-                else if (expr.op == '/')
-                    opcode = OpFDiv;
-
                 auto result = module.id();
-                writeInstruction(module.code, opcode, {type, result, lhs, rhs});
+                writeInstruction(module.code,
+                                 binaryOpcode(expr.op, expr.type),
+                                 {type, result, lhs, rhs});
                 return result;
             }
 
@@ -667,13 +772,35 @@ struct StageEmitter
             }
 
             case ExprKind::ThreadId:
+                // Extracted from the builtin once by the kernel prologue, so
+                // every read of it is the same id.
+                return threadId;
+
             case ExprKind::BufferRead:
-                // Compute is not part of the Vulkan backend yet; a graph with
-                // these nodes never reaches here (emitSpirv refuses it).
-                return 0;
+                return load(bufferElement(expr.index, emit(expr.args[0])),
+                            module.typeFloat());
         }
 
         return 0;
+    }
+
+    // A pointer to buffer[index]: through member 0 (the runtime array) of the
+    // storage block, then the element. The pointer type is the same for a read
+    // and a write, so both roots come through here.
+    std::uint32_t bufferElement(int slot, std::uint32_t index)
+    {
+        auto pointerType = module.typePointer(StorageUniform, module.typeFloat());
+        auto chain = module.id();
+
+        writeInstruction(module.code,
+                         OpAccessChain,
+                         {pointerType,
+                          chain,
+                          buffers[static_cast<std::size_t>(slot)],
+                          module.constantUint(0),
+                          index});
+
+        return chain;
     }
 
     const ShaderGraph& graph;
@@ -682,15 +809,201 @@ struct StageEmitter
     std::vector<std::uint32_t> inputs;
     std::vector<std::uint32_t> varyings;
     std::vector<std::uint32_t> textures;
+    std::vector<std::uint32_t> buffers;
     std::uint32_t uniformBlock = 0;
     std::uint32_t sampledImageType = 0;
+    std::uint32_t threadId = 0;
 };
+
+// The push-constant block, offset exactly as UniformLayout packs it on the CPU.
+// Returns the variable; the struct type is only needed to build it.
+std::uint32_t emitUniformBlock(Module& module,
+                               const Vector<ValueType>& types,
+                               std::uint32_t stages)
+{
+    auto structType = module.id();
+    auto members = std::vector<std::uint32_t> {structType};
+
+    for (auto type: types)
+        members.push_back(module.typeOf(type));
+
+    writeInstruction(module.declarations, OpTypeStruct, members);
+    module.decorate(structType, DecorationBlock);
+
+    auto offsets = uniformOffsets(types);
+
+    for (auto i = 0; i < types.size(); ++i)
+    {
+        module.memberDecorate(structType,
+                              static_cast<std::uint32_t>(i),
+                              DecorationOffset,
+                              static_cast<std::uint32_t>(offsets[i]));
+
+        if (types[i] == ValueType::Float4x4)
+        {
+            module.memberDecorate(
+                structType, static_cast<std::uint32_t>(i), DecorationColMajor);
+            module.memberDecorate(structType,
+                                  static_cast<std::uint32_t>(i),
+                                  DecorationMatrixStride,
+                                  16);
+        }
+    }
+
+    return module.variable(module.typePointer(stages, structType), stages);
+}
+
+// A compute kernel. Storage buffers are BufferBlock-decorated runtime arrays of
+// float at set 0, binding = slot -- the flat slot space ComputePass binds with
+// on every backend -- and the 1D work-item id comes off the GlobalInvocationId
+// builtin. The uniform block carries the implicit element count last, and the
+// kernel opens with the bounds guard the rounded-up dispatch needs, matching
+// what the text emitter writes for MSL and HLSL.
+Vector<std::uint32_t> emitComputeSpirv(const ShaderGraph& graph)
+{
+    auto module = Module {};
+
+    writeInstruction(module.capabilities, OpCapability, {1}); // Shader
+
+    module.glslSet = module.id();
+    {
+        auto operands = std::vector<std::uint32_t> {module.glslSet};
+        append(operands, literalString("GLSL.std.450"));
+        writeInstruction(module.extensions, OpExtInstImport, operands);
+    }
+
+    writeInstruction(module.extensions, OpMemoryModel, {0, 1}); // Logical, GLSL450
+
+    auto kernel = module.id();
+
+    auto voidType = module.typeVoid();
+    auto functionType = module.id();
+    writeInstruction(module.declarations, OpTypeFunction, {functionType, voidType});
+
+    auto uniformTypes = graph.uniforms();
+    uniformTypes.add(ValueType::UInt); // the implicit element count
+    auto countMember = static_cast<std::uint32_t>(uniformTypes.size() - 1);
+
+    auto uniformVariable =
+        emitUniformBlock(module, uniformTypes, StoragePushConstant);
+
+    // One struct type per access kind rather than one shared by every buffer: a
+    // read-only buffer says so with NonWritable -- the Vulkan spelling of MSL's
+    // `device const` -- and a decoration belongs to the type, so sharing one
+    // would forbid the writes the output buffer exists for. SPIR-V allows two
+    // structurally identical struct types precisely so they can differ here.
+    auto readStruct = std::uint32_t {};
+    auto writeStruct = std::uint32_t {};
+
+    auto storageStruct = [&](BufferAccess access) -> std::uint32_t
+    {
+        auto& slot = access == BufferAccess::Read ? readStruct : writeStruct;
+
+        if (slot == 0)
+        {
+            slot = module.id();
+            writeInstruction(
+                module.declarations, OpTypeStruct, {slot, module.typeFloatArray()});
+            module.decorate(slot, DecorationBufferBlock);
+            module.memberDecorate(slot, 0, DecorationOffset, 0);
+
+            if (access == BufferAccess::Read)
+                module.memberDecorate(slot, 0, DecorationNonWritable);
+        }
+
+        return slot;
+    };
+
+    auto bufferVariables = std::vector<std::uint32_t> {};
+
+    for (auto i = 0; i < graph.storageBuffers().size(); ++i)
+    {
+        auto structType = storageStruct(graph.storageBuffers()[i]);
+
+        auto variable = module.variable(
+            module.typePointer(StorageUniform, structType), StorageUniform);
+
+        module.decorate(variable, DecorationDescriptorSet, 0);
+        module.decorate(variable, DecorationBinding, static_cast<std::uint32_t>(i));
+
+        bufferVariables.push_back(variable);
+    }
+
+    auto invocationVariable = module.variable(
+        module.typePointer(StorageInput, module.typeUintVector3()), StorageInput);
+    module.decorate(
+        invocationVariable, DecorationBuiltIn, BuiltInGlobalInvocationId);
+
+    {
+        auto operands = std::vector<std::uint32_t> {ModelGLCompute, kernel};
+        append(operands, literalString("computeMain"));
+        operands.push_back(invocationVariable);
+
+        writeInstruction(module.entryPoints, OpEntryPoint, operands);
+    }
+
+    writeInstruction(module.executionModes,
+                     OpExecutionMode,
+                     {kernel, ModeLocalSize, ComputePass::threadGroupWidth, 1, 1});
+
+    writeInstruction(module.code, OpFunction, {voidType, kernel, 0, functionType});
+    writeInstruction(module.code, OpLabel, {module.id()});
+
+    auto stage = StageEmitter {graph, module, graph.nodeCount()};
+    stage.uniformBlock = uniformVariable;
+    stage.buffers = bufferVariables;
+
+    auto invocation = stage.load(invocationVariable, module.typeUintVector3());
+    stage.threadId = module.id();
+    writeInstruction(module.code,
+                     OpCompositeExtract,
+                     {module.typeUint(), stage.threadId, invocation, 0});
+
+    auto countPointer = module.id();
+    writeInstruction(module.code,
+                     OpAccessChain,
+                     {module.typePointer(StoragePushConstant, module.typeUint()),
+                      countPointer,
+                      uniformVariable,
+                      module.constantUint(countMember)});
+
+    auto past = module.id();
+    writeInstruction(module.code,
+                     OpUGreaterThanEqual,
+                     {module.typeBool(),
+                      past,
+                      stage.threadId,
+                      stage.load(countPointer, module.typeUint())});
+
+    auto returnLabel = module.id();
+    auto bodyLabel = module.id();
+
+    writeInstruction(module.code, OpSelectionMerge, {bodyLabel, 0});
+    writeInstruction(
+        module.code, OpBranchConditional, {past, returnLabel, bodyLabel});
+    writeInstruction(module.code, OpLabel, {returnLabel});
+    writeInstruction(module.code, OpReturn, {});
+    writeInstruction(module.code, OpLabel, {bodyLabel});
+
+    for (const auto& store: graph.stores())
+    {
+        auto value = stage.emit(store.value);
+        auto element = stage.bufferElement(store.slot, stage.emit(store.index));
+
+        writeInstruction(module.code, OpStore, {element, value});
+    }
+
+    writeInstruction(module.code, OpReturn, {});
+    writeInstruction(module.code, OpFunctionEnd, {});
+
+    return module.finish();
+}
 } // namespace
 
 Vector<std::uint32_t> emitSpirv(const ShaderGraph& graph)
 {
     if (graph.isCompute())
-        return {};
+        return emitComputeSpirv(graph);
 
     auto module = Module {};
 
@@ -722,40 +1035,8 @@ Vector<std::uint32_t> emitSpirv(const ShaderGraph& graph)
     auto uniformVariable = std::uint32_t {};
 
     if (hasUniforms)
-    {
-        auto structType = module.id();
-        auto members = std::vector<std::uint32_t> {structType};
-
-        for (auto type: uniformTypes)
-            members.push_back(module.typeOf(type));
-
-        writeInstruction(module.declarations, OpTypeStruct, members);
-        module.decorate(structType, DecorationBlock);
-
-        auto offsets = uniformOffsets(uniformTypes);
-
-        for (auto i = 0; i < uniformTypes.size(); ++i)
-        {
-            module.memberDecorate(structType,
-                                  static_cast<std::uint32_t>(i),
-                                  DecorationOffset,
-                                  static_cast<std::uint32_t>(offsets[i]));
-
-            if (uniformTypes[i] == ValueType::Float4x4)
-            {
-                module.memberDecorate(
-                    structType, static_cast<std::uint32_t>(i), DecorationColMajor);
-                module.memberDecorate(structType,
-                                      static_cast<std::uint32_t>(i),
-                                      DecorationMatrixStride,
-                                      16);
-            }
-        }
-
         uniformVariable =
-            module.variable(module.typePointer(StoragePushConstant, structType),
-                            StoragePushConstant);
-    }
+            emitUniformBlock(module, uniformTypes, StoragePushConstant);
 
     auto inputVariables = std::vector<std::uint32_t> {};
 
@@ -770,7 +1051,7 @@ Vector<std::uint32_t> emitSpirv(const ShaderGraph& graph)
 
     auto positionVariable =
         module.variable(module.typePointer(StorageOutput, vec4), StorageOutput);
-    module.decorate(positionVariable, DecorationBuiltIn, 0); // Position
+    module.decorate(positionVariable, DecorationBuiltIn, BuiltInPosition);
 
     auto varyingOutputs = std::vector<std::uint32_t> {};
     auto varyingInputs = std::vector<std::uint32_t> {};
@@ -833,7 +1114,7 @@ Vector<std::uint32_t> emitSpirv(const ShaderGraph& graph)
     }
 
     {
-        auto operands = std::vector<std::uint32_t> {0, vertexFunction}; // Vertex
+        auto operands = std::vector<std::uint32_t> {ModelVertex, vertexFunction};
         append(operands, literalString("vertexMain"));
 
         for (auto variable: inputVariables)
@@ -848,7 +1129,7 @@ Vector<std::uint32_t> emitSpirv(const ShaderGraph& graph)
     }
 
     {
-        auto operands = std::vector<std::uint32_t> {4, fragmentFunction}; // Fragment
+        auto operands = std::vector<std::uint32_t> {ModelFragment, fragmentFunction};
         append(operands, literalString("fragmentMain"));
 
         for (auto variable: varyingInputs)
@@ -859,7 +1140,9 @@ Vector<std::uint32_t> emitSpirv(const ShaderGraph& graph)
         writeInstruction(module.entryPoints, OpEntryPoint, operands);
     }
 
-    writeInstruction(module.executionModes, OpExecutionMode, {fragmentFunction, 7});
+    writeInstruction(module.executionModes,
+                     OpExecutionMode,
+                     {fragmentFunction, ModeOriginUpperLeft});
 
     {
         writeInstruction(

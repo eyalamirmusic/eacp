@@ -20,9 +20,10 @@ std::string emitHlsl(const ShaderGraph& graph);
 // translate an intermediate GLSL would cost megabytes to reach the same words.
 //
 // Feasible because the graph is a small, closed language: no loops, no branching
-// beyond discardBelow, and already in SSA shape, which is exactly what SPIR-V
-// wants. Both stages land in one module, entry points named as the ShaderSource
-// says. Pure word generation with no Vulkan API calls, so it can be produced and
-// tested on any host, like its two siblings above.
+// beyond discardBelow and a kernel's bounds guard, and already in SSA shape,
+// which is exactly what SPIR-V wants. A render graph lands both stages in one
+// module; a compute graph emits a GLCompute kernel instead. Entry points named
+// as the ShaderSource says. Pure word generation with no Vulkan API calls, so it
+// can be produced and tested on any host, like its two siblings above.
 Vector<std::uint32_t> emitSpirv(const ShaderGraph& graph);
 } // namespace eacp::GPU

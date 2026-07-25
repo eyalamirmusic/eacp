@@ -52,6 +52,10 @@ struct Allocation
 // D3D12 reaches with static samplers in its root signature. See TextureSampling.
 constexpr int maxTextureSlots = 4;
 
+// How many storage buffers one kernel may bind. Inputs and outputs share the
+// slot space (Metal binds both as a device buffer), so this is the total.
+constexpr int maxStorageBuffers = 8;
+
 class VulkanContext
 {
 public:
@@ -137,9 +141,19 @@ public:
     // bound across a pipeline change instead of being invalidated by it.
     VkPipelineLayout getRenderPipelineLayout() const { return renderPipelineLayout; }
 
+    // The compute sibling: one set of storage buffers plus the same push-constant
+    // range, shared by every compute pipeline for the same reason.
+    VkPipelineLayout getComputePipelineLayout() const
+    {
+        return computePipelineLayout;
+    }
+
     // A texture descriptor set for one draw, freed with the recording it was
     // allocated against. Returns null when the pool is exhausted.
     VkDescriptorSet acquireTextureSet(CommandContext& commands);
+
+    // The storage-buffer sibling, for one dispatch.
+    VkDescriptorSet acquireStorageSet(CommandContext& commands);
 
 private:
     bool createInstance();
@@ -149,6 +163,8 @@ private:
     bool createTimeline();
     bool createSamplers();
     bool createDescriptorLayout();
+    VkDescriptorSet acquireSet(CommandContext& commands,
+                               VkDescriptorSetLayout layout);
     void purgeRetired();
     void destroyAll();
 
@@ -168,7 +184,9 @@ private:
     // layout so a binding carries its sampler and a draw never picks one.
     VkSampler samplers[samplingConfigurations] = {};
     VkDescriptorSetLayout textureSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout storageSetLayout = VK_NULL_HANDLE;
     VkPipelineLayout renderPipelineLayout = VK_NULL_HANDLE;
+    VkPipelineLayout computePipelineLayout = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
     std::uint64_t nextTimelineValue = 1;
     std::uint64_t lastSubmittedValue = 0;

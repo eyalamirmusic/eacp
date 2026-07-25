@@ -27,12 +27,35 @@ vertex float4 vertexMain(VertexIn in [[stage_in]]) { return in.position; }
 fragment float4 fragmentMain() { return float4(1.0, 1.0, 1.0, 1.0); }
 )";
 
-// Both branches name both strings, so neither is an unused-variable warning on
-// the platform whose backend isn't selected.
+// Vulkan takes SPIR-V and nothing else, so its "hand-written" source is the
+// emitter's - the same shader, spelled the only way that backend accepts.
+ShaderSource spirvSmokeShader()
+{
+    auto builder = ShaderBuilder {};
+    auto position = builder.vertexInput<Float4>();
+    auto one = builder.constant(1.f);
+
+    builder.position(position);
+    builder.fragment(float4(one, one, one, one));
+
+    return builder.build().source;
+}
+
+// Every branch names every string, so none is an unused-variable warning on the
+// platform whose backend isn't selected.
 ShaderSource smokeShaderSource()
 {
-    return Platform::isWindows() ? ShaderSource::hlsl(hlslSmokeShader)
-                                 : ShaderSource::msl(mslSmokeShader);
+    switch (nativeShaderBackend())
+    {
+        case ShaderBackend::DirectX:
+            return ShaderSource::hlsl(hlslSmokeShader);
+        case ShaderBackend::Vulkan:
+            return spirvSmokeShader();
+        case ShaderBackend::Metal:
+            break;
+    }
+
+    return ShaderSource::msl(mslSmokeShader);
 }
 
 // A compute kernel writing output[i] = input[i] * scale, exercising a storage
@@ -66,11 +89,34 @@ kernel void computeMain(device const float* input [[buffer(0)]],
 }
 )";
 
+// The same kernel through the emitter: one uniform followed by the implicit
+// element count, which is exactly the ComputeParams block below.
+ShaderSource spirvComputeShader()
+{
+    auto builder = ShaderBuilder {};
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto scale = builder.uniform<Float>();
+    auto gid = builder.threadId();
+
+    builder.write(output, gid, input[gid] * scale);
+
+    return builder.build().source;
+}
+
 ShaderSource computeShaderSource()
 {
-    auto source = Platform::isWindows() ? ShaderSource::hlsl(hlslComputeShader)
-                                        : ShaderSource::msl(mslComputeShader);
-    return source.withCompute("computeMain");
+    switch (nativeShaderBackend())
+    {
+        case ShaderBackend::DirectX:
+            return ShaderSource::hlsl(hlslComputeShader).withCompute("computeMain");
+        case ShaderBackend::Vulkan:
+            return spirvComputeShader();
+        case ShaderBackend::Metal:
+            break;
+    }
+
+    return ShaderSource::msl(mslComputeShader).withCompute("computeMain");
 }
 
 struct ComputeParams

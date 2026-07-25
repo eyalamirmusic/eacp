@@ -321,22 +321,53 @@ bool VulkanContext::createDescriptorLayout()
         != VK_SUCCESS)
         return false;
 
-    auto size = VkDescriptorPoolSize {};
-    size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    size.descriptorCount = bindingCount * 256;
+    // Storage buffers are the compute side of the same story: a kernel binds
+    // them by slot, so the set layout has one binding per slot a kernel may
+    // declare, and the SPIR-V emitter decorates buffer i as binding i.
+    auto storageBindings = Vector<VkDescriptorSetLayoutBinding> {};
+
+    for (auto i = 0; i < maxStorageBuffers; ++i)
+    {
+        auto binding = VkDescriptorSetLayoutBinding {};
+        binding.binding = static_cast<std::uint32_t>(i);
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        binding.descriptorCount = 1;
+        binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        storageBindings.add(binding);
+    }
+
+    layoutInfo.bindingCount = maxStorageBuffers;
+    layoutInfo.pBindings = &storageBindings[0];
+
+    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &storageSetLayout)
+        != VK_SUCCESS)
+        return false;
+
+    range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pipelineInfo.pSetLayouts = &storageSetLayout;
+
+    if (vkCreatePipelineLayout(
+            device, &pipelineInfo, nullptr, &computePipelineLayout)
+        != VK_SUCCESS)
+        return false;
+
+    auto sizes = Vector<VkDescriptorPoolSize> {};
+    sizes.add({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, bindingCount * 256});
+    sizes.add({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, maxStorageBuffers * 256});
 
     auto poolInfo = VkDescriptorPoolCreateInfo {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-    poolInfo.maxSets = 256;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &size;
+    poolInfo.maxSets = 512;
+    poolInfo.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
+    poolInfo.pPoolSizes = &sizes[0];
 
     return vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool)
            == VK_SUCCESS;
 }
 
-VkDescriptorSet VulkanContext::acquireTextureSet(CommandContext& commands)
+VkDescriptorSet VulkanContext::acquireSet(CommandContext& commands,
+                                          VkDescriptorSetLayout layout)
 {
     if (!isValid())
         return VK_NULL_HANDLE;
@@ -345,7 +376,7 @@ VkDescriptorSet VulkanContext::acquireTextureSet(CommandContext& commands)
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     info.descriptorPool = descriptorPool;
     info.descriptorSetCount = 1;
-    info.pSetLayouts = &textureSetLayout;
+    info.pSetLayouts = &layout;
 
     auto set = VkDescriptorSet {VK_NULL_HANDLE};
 
@@ -355,6 +386,16 @@ VkDescriptorSet VulkanContext::acquireTextureSet(CommandContext& commands)
     commands.descriptorSets.add(set);
 
     return set;
+}
+
+VkDescriptorSet VulkanContext::acquireTextureSet(CommandContext& commands)
+{
+    return acquireSet(commands, textureSetLayout);
+}
+
+VkDescriptorSet VulkanContext::acquireStorageSet(CommandContext& commands)
+{
+    return acquireSet(commands, storageSetLayout);
 }
 
 CommandContext* VulkanContext::acquire()
@@ -773,8 +814,14 @@ void VulkanContext::destroyAll()
         if (renderPipelineLayout != VK_NULL_HANDLE)
             vkDestroyPipelineLayout(device, renderPipelineLayout, nullptr);
 
+        if (computePipelineLayout != VK_NULL_HANDLE)
+            vkDestroyPipelineLayout(device, computePipelineLayout, nullptr);
+
         if (textureSetLayout != VK_NULL_HANDLE)
             vkDestroyDescriptorSetLayout(device, textureSetLayout, nullptr);
+
+        if (storageSetLayout != VK_NULL_HANDLE)
+            vkDestroyDescriptorSetLayout(device, storageSetLayout, nullptr);
 
         for (auto& sampler: samplers)
             if (sampler != VK_NULL_HANDLE)
@@ -796,7 +843,9 @@ void VulkanContext::destroyAll()
     timeline = VK_NULL_HANDLE;
     descriptorPool = VK_NULL_HANDLE;
     renderPipelineLayout = VK_NULL_HANDLE;
+    computePipelineLayout = VK_NULL_HANDLE;
     textureSetLayout = VK_NULL_HANDLE;
+    storageSetLayout = VK_NULL_HANDLE;
 
     for (auto& sampler: samplers)
         sampler = VK_NULL_HANDLE;

@@ -21,8 +21,8 @@ if (EACP_GPU_BACKEND STREQUAL "Vulkan")
     find_package(Vulkan REQUIRED)
 
     # Every source is portable C++ against the loader: nothing in the Vulkan
-    # backend touches Metal, Cocoa or Win32. GPUView renders off-screen and hands
-    # back a Graphics::Image, which is the same seam the native backends use for
+    # backend touches Metal, Cocoa or Win32. Off-screen rendering hands back a
+    # Graphics::Image, which is the same seam the native backends use for
     # View::renderToImage, so the platform's own 2D layer composites it unchanged.
     target_sources(eacp-gpu PRIVATE
             Buffer/Buffer-Vulkan.cpp

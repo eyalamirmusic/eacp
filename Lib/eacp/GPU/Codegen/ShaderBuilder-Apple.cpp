@@ -4,10 +4,18 @@
 
 // Apple backend selection: the native shader source is Metal Shading Language.
 
-namespace eacp::GPU::detail
+namespace eacp::GPU
+{
+ShaderBackend nativeShaderBackend()
+{
+    return ShaderBackend::Metal;
+}
+
+namespace detail
 {
 ShaderSource nativeShaderSource(const ShaderGraph& graph)
 {
     return ShaderSource::msl(emitMetal(graph));
 }
-} // namespace eacp::GPU::detail
+} // namespace detail
+} // namespace eacp::GPU

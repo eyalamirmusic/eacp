@@ -4,8 +4,8 @@
 
 // Vulkan backend. The GPU device is the process-wide logical device and graphics
 // queue owned by getVulkanContext(). On Apple this runs over MoltenVK while the
-// 2D layer keeps its own Metal device; the two never meet, because the Vulkan
-// backend only ever renders off-screen and hands back CPU pixels.
+// 2D layer keeps its own Metal device; the two meet only at the CAMetalLayer a
+// presenting view hands the swapchain, never as shared Metal objects.
 
 namespace eacp::GPU
 {

@@ -105,18 +105,54 @@ VertexOut vertexMain(VertexIn input)
 float4 fragmentMain(VertexOut input) : SV_Target { return float4(0.25, 0.0, 0.0, 0.5); }
 )";
 
-// Both branches name every string, so none is an unused-variable warning on the
+// Vulkan takes SPIR-V and nothing else, so its "hand-written" source is the
+// emitter's: a float2 position passed straight through, and a constant colour.
+ShaderSource spirvTriangleShader(float red, float green, float alpha)
+{
+    auto builder = ShaderBuilder {};
+    auto position = builder.vertexInput<Float2>();
+    auto zero = builder.constant(0.f);
+    auto one = builder.constant(1.f);
+
+    builder.position(float4(position, zero, one));
+    builder.fragment(float4(builder.constant(red),
+                            builder.constant(green),
+                            zero,
+                            builder.constant(alpha)));
+
+    return builder.build().source;
+}
+
+// Every branch names every string, so none is an unused-variable warning on the
 // platform whose backend isn't selected.
 ShaderSource fillShaderSource()
 {
-    return Platform::isWindows() ? ShaderSource::hlsl(hlslFillShader)
-                                 : ShaderSource::msl(mslFillShader);
+    switch (nativeShaderBackend())
+    {
+        case ShaderBackend::DirectX:
+            return ShaderSource::hlsl(hlslFillShader);
+        case ShaderBackend::Vulkan:
+            return spirvTriangleShader(0.f, 1.f, 1.f);
+        case ShaderBackend::Metal:
+            break;
+    }
+
+    return ShaderSource::msl(mslFillShader);
 }
 
 ShaderSource premulShaderSource()
 {
-    return Platform::isWindows() ? ShaderSource::hlsl(hlslPremulShader)
-                                 : ShaderSource::msl(mslPremulShader);
+    switch (nativeShaderBackend())
+    {
+        case ShaderBackend::DirectX:
+            return ShaderSource::hlsl(hlslPremulShader);
+        case ShaderBackend::Vulkan:
+            return spirvTriangleShader(0.25f, 0.f, 0.5f);
+        case ShaderBackend::Metal:
+            break;
+    }
+
+    return ShaderSource::msl(mslPremulShader);
 }
 
 // Draws a single oversized triangle covering the whole viewport with the given

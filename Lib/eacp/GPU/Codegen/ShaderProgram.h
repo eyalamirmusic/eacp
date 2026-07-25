@@ -442,6 +442,12 @@ public:
     const ShaderSource& source() const { return generated.source; }
     const VertexLayout& vertexLayout() const { return generated.vertexLayout; }
 
+    // The backend-agnostic IR the source was emitted from. source() is whatever
+    // this build's device compiles - and is words rather than text on Vulkan -
+    // so anything asking what the shader *says* goes through an emitter on this
+    // instead of reading source().source.
+    const ShaderGraph& graph() const { return builder.graph(); }
+
     // Uploads the typed vertex data and owns the resulting buffer. The element
     // type's size must match the layout pulled from it in define().
     template <typename V, std::size_t N>

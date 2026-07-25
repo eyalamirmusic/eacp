@@ -274,12 +274,13 @@ auto tFillLayout = test("GPUWidgets/fillShaderLayout") = []
 
 // The generated source carries the viewport + colour uniform block, and the
 // colour is read directly by the fragment stage - no varying needed now that
-// the uniform block binds to both stages. Backend-agnostic substring checks.
+// the uniform block binds to both stages. Emitted from the shader's graph
+// rather than read off source(), which is SPIR-V words on the Vulkan backend.
 // Pure string generation.
 auto tFillCodegen = test("GPUWidgets/fillShaderCodegen") = []
 {
     auto shader = PathFillShader {};
-    const auto& source = shader.source().source;
+    auto source = GPU::emitMetal(shader.graph());
 
     check(contains(source, "struct Uniforms"));
     check(contains(source, "float2 u0")); // viewport

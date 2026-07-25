@@ -4,10 +4,18 @@
 
 // Vulkan backend selection: the native shader source is SPIR-V.
 
-namespace eacp::GPU::detail
+namespace eacp::GPU
+{
+ShaderBackend nativeShaderBackend()
+{
+    return ShaderBackend::Vulkan;
+}
+
+namespace detail
 {
 ShaderSource nativeShaderSource(const ShaderGraph& graph)
 {
     return ShaderSource::spirv(emitSpirv(graph));
 }
-} // namespace eacp::GPU::detail
+} // namespace detail
+} // namespace eacp::GPU

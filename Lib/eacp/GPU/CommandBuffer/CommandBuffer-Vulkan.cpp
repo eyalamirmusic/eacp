@@ -3,9 +3,9 @@
 #include "../Device/Device.h"
 #include "../Vulkan/VulkanContext.h"
 
-// The headless sibling of Frame. Its only consumer today is compute, which this
-// backend does not implement yet, so it records and submits an empty recording:
-// commit() still orders correctly, and beginCompute yields an inert pass.
+// The headless sibling of Frame: it owns a recording off the shared context but
+// no swapchain, hands it to the compute pass to fill, and blocks on the timeline
+// in commit() so a Storage buffer written by the pass is safe to read after.
 
 namespace eacp::GPU
 {
@@ -29,7 +29,7 @@ CommandBuffer::CommandBuffer(Device&)
 
 ComputePass CommandBuffer::beginCompute()
 {
-    return ComputePass {nullptr};
+    return ComputePass {impl->commands};
 }
 
 void CommandBuffer::commit()
