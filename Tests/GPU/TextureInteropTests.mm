@@ -130,6 +130,39 @@ Graphics::Image drawWrapped(Texture& texture)
 
     return view.renderToImage(1.f);
 }
+
+// Clears to a fixed colour and nothing else: enough to tell whether the render
+// landed in the buffer handed to renderNativeContentToTarget.
+struct ClearView final : GPUView
+{
+    explicit ClearView(const Graphics::Color& colorToUse)
+        : clearColor(colorToUse)
+    {
+        setSampleCount(1);
+    }
+
+    void render(Frame& frame) override
+    {
+        auto pass = frame.beginPass({clearColor});
+    }
+
+    Graphics::Color clearColor;
+};
+
+// The buffer's own memory, read back through its base address.
+std::uint32_t pixelBufferTexel(CVPixelBufferRef pixelBuffer, int x, int y)
+{
+    CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
+
+    auto* base = (const std::uint8_t*) CVPixelBufferGetBaseAddress(pixelBuffer);
+    auto stride = CVPixelBufferGetBytesPerRow(pixelBuffer);
+    auto texel = *(const std::uint32_t*) (base + (size_t) y * stride
+                                          + (size_t) x * sizeof(std::uint32_t));
+
+    CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
+
+    return texel;
+}
 } // namespace
 
 auto tWrapsPixelBuffer = test("GPU/wrapsPixelBuffer") = []
@@ -194,6 +227,38 @@ auto tWrappedBufferIsZeroCopy = test("GPU/wrappedPixelBufferSharesMemory") = []
     check(second.isValid());
     check(second.at(4, 4).g > 0.9f);
     check(second.at(4, 4).r < 0.1f);
+
+    CVPixelBufferRelease(pixelBuffer);
+};
+
+// The write direction of the same trick: renderNativeContentToTarget renders
+// the view straight into an IOSurface-backed CVPixelBuffer, which is the
+// real-time tier VideoRecorder uses instead of snapshotting and copying. Checked
+// by reading the buffer's own memory afterwards — nothing copies it there.
+auto tRendersIntoPixelBuffer = test("GPU/rendersIntoPixelBufferTarget") = []
+{
+    ObjC::AutoReleasePool pool;
+
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto* pixelBuffer = makeSharedPixelBuffer(16, 16);
+
+    if (pixelBuffer == nullptr)
+        return;
+
+    auto view = ClearView {{0.f, 0.f, 1.f, 1.f}};
+    view.setBounds({0.f, 0.f, 16.f, 16.f});
+
+    // Through the base class, which is how AppleEncoder reaches it: GPUView
+    // overrides it privately.
+    auto& capturable = static_cast<Graphics::View&>(view);
+    check(capturable.renderNativeContentToTarget(pixelBuffer, 1.f));
+
+    // Opaque blue, as BGRA bytes: B=255, G=0, R=0, A=255.
+    check(pixelBufferTexel(pixelBuffer, 8, 8) == 0xff0000ff);
 
     CVPixelBufferRelease(pixelBuffer);
 };

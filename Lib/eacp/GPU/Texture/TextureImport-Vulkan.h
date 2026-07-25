@@ -15,15 +15,19 @@ struct VulkanTexture;
 
 namespace detail
 {
-// Creates a VkImage that samples the pixel buffer's shared memory directly, with
-// no copy: the camera and video path. Fills in the image, format and extent and
-// leaves the view, layout and memory to the caller - an imported image owns no
+// Creates a VkImage over the pixel buffer's shared memory, with no copy. Both
+// directions go through here and differ only in usage: SAMPLED reads a camera
+// frame where it was captured, COLOR_ATTACHMENT renders a recorded frame
+// straight into the buffer the encoder will read.
+//
+// Fills in the image, format, extent and the layout the usage implies, and
+// leaves the view and memory to the caller - an imported image owns no
 // VkDeviceMemory, because the platform surface is the allocation.
 //
 // Returns an image-less texture when the platform, the driver or the buffer
 // cannot do it (not IOSurface-backed, a pixel format with no Vulkan equivalent,
-// a driver without the import extension), which leaves the caller holding an
-// invalid Texture - the same answer D3D12 gives.
-VulkanTexture importPixelBuffer(void* pixelBuffer);
+// a driver without the import extension), which leaves the caller to fall back -
+// to Texture::update for a read, or to the read-back capture tier for a write.
+VulkanTexture importPixelBuffer(void* pixelBuffer, VkImageUsageFlags usage);
 } // namespace detail
 } // namespace eacp::GPU

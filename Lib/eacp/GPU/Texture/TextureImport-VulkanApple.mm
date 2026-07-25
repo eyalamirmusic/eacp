@@ -41,7 +41,7 @@ bool toVulkanFormat(OSType pixelFormat, VkFormat& format)
 }
 } // namespace
 
-VulkanTexture importPixelBuffer(void* pixelBufferHandle)
+VulkanTexture importPixelBuffer(void* pixelBufferHandle, VkImageUsageFlags usage)
 {
     auto& context = getVulkanContext();
     auto pixelBuffer = (CVPixelBufferRef) pixelBufferHandle;
@@ -69,9 +69,8 @@ VulkanTexture importPixelBuffer(void* pixelBufferHandle)
         .sType = VK_STRUCTURE_TYPE_IMPORT_METAL_IO_SURFACE_INFO_EXT};
     import.ioSurface = surface;
 
-    // Usage matches a normally created texture so update() keeps working on a
-    // wrapped buffer, as it does on Metal. The driver retains the surface for
-    // the image's lifetime, so the pixels outlive the CVPixelBuffer handle.
+    // The driver retains the surface for the image's lifetime, so the pixels
+    // outlive the CVPixelBuffer handle the caller passed in.
     auto info = VkImageCreateInfo {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     info.pNext = &import;
     info.imageType = VK_IMAGE_TYPE_2D;
@@ -81,8 +80,7 @@ VulkanTexture importPixelBuffer(void* pixelBufferHandle)
     info.arrayLayers = 1;
     info.samples = VK_SAMPLE_COUNT_1_BIT;
     info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
-                 | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    info.usage = usage;
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -90,13 +88,16 @@ VulkanTexture importPixelBuffer(void* pixelBufferHandle)
         != VK_SUCCESS)
         return {};
 
-    // Reported as shader-readable rather than transitioned into it. Metal has no
-    // image layouts at all, so on this driver a barrier would be bookkeeping;
-    // worse, a transition out of UNDEFINED is licensed to discard contents, and
-    // the contents are the entire point of an import. A driver that does track
-    // layouts wants an acquire from VK_QUEUE_FAMILY_FOREIGN_EXT here instead,
-    // which is a dma-buf concern and belongs with the code that adds one.
-    texture.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    // Reported as already in the layout the usage implies, rather than
+    // transitioned into it. Metal has no image layouts at all, so on this driver
+    // a barrier would be bookkeeping; worse, a transition out of UNDEFINED is
+    // licensed to discard contents, and for a sampled import the contents are
+    // the entire point. A driver that does track layouts wants an acquire from
+    // VK_QUEUE_FAMILY_FOREIGN_EXT here instead, which is a dma-buf concern and
+    // belongs with the code that adds one.
+    texture.layout = (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) != 0
+                         ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                         : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     return texture;
 }

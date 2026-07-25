@@ -168,7 +168,12 @@ struct Texture::Native
     // wraps a fresh buffer every frame - no transition submit to block on.
     explicit Native(void* pixelBuffer)
     {
-        texture = detail::importPixelBuffer(pixelBuffer);
+        // Transfer usage alongside sampled so update() keeps working on a
+        // wrapped buffer, as it does on Metal.
+        texture = detail::importPixelBuffer(pixelBuffer,
+                                            VK_IMAGE_USAGE_SAMPLED_BIT
+                                                | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                                                | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
 
         if (texture.image != VK_NULL_HANDLE)
             createView();

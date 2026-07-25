@@ -18,7 +18,8 @@ target_sources(eacp-gpu PRIVATE
         Codegen/ShaderBuilder.cpp)
 
 if (EACP_GPU_BACKEND STREQUAL "Vulkan")
-    find_package(Vulkan REQUIRED)
+    set(EACP_MOLTENVK_XCFRAMEWORK "" CACHE PATH
+            "MoltenVK.xcframework carrying iOS slices; required for iOS Vulkan builds")
 
     # Every source is portable C++ against the loader: nothing in the Vulkan
     # backend touches Metal, Cocoa or Win32. Off-screen rendering hands back a
@@ -38,24 +39,53 @@ if (EACP_GPU_BACKEND STREQUAL "Vulkan")
             Texture/Texture-Vulkan.cpp
             View/GPUView-Vulkan.cpp
             Vulkan/VulkanContext-Vulkan.cpp)
-    target_link_libraries(eacp-gpu PRIVATE Vulkan::Vulkan)
 
-    # Presentation and zero-copy frame import are the two parts that cannot be
-    # portable: a surface comes from a CAMetalLayer here, an HWND on Win32, a
-    # wl_surface or X11 window on Linux, and a shareable frame is an IOSurface
-    # here and a dma-buf on Linux. Confined to these files behind the
-    # GPUViewSurface-Vulkan.h and TextureImport-Vulkan.h seams.
+    # iOS has no loader, so find_package(Vulkan) cannot succeed there: it requires
+    # a library named "vulkan", and MoltenVK is the implementation itself.
+    if (IOS)
+        if (NOT EACP_MOLTENVK_XCFRAMEWORK)
+            message(FATAL_ERROR
+                    "iOS Vulkan builds need -DEACP_MOLTENVK_XCFRAMEWORK=<path to a "
+                    "MoltenVK.xcframework carrying iOS slices>. Homebrew's molten-vk "
+                    "ships a macOS slice only; the LunarG SDK ships iOS ones.")
+        endif ()
+
+        # Headers are platform-independent, so a host copy serves the iOS build.
+        find_path(EACP_VULKAN_INCLUDE_DIR NAMES vulkan/vulkan.h REQUIRED
+                NO_CMAKE_FIND_ROOT_PATH)
+
+        target_include_directories(eacp-gpu SYSTEM PRIVATE
+                ${EACP_VULKAN_INCLUDE_DIR})
+        target_link_libraries(eacp-gpu PRIVATE "${EACP_MOLTENVK_XCFRAMEWORK}")
+    else ()
+        find_package(Vulkan REQUIRED)
+        target_link_libraries(eacp-gpu PRIVATE Vulkan::Vulkan)
+    endif ()
+
+    # Presentation and zero-copy frame import are the parts that cannot be
+    # portable, behind the GPUViewSurface-Vulkan.h and TextureImport-Vulkan.h seams.
     if (APPLE)
         target_sources(eacp-gpu PRIVATE
                 Texture/TextureImport-VulkanApple.mm
-                View/GPUView-VulkanApple.mm
-                View/GPUView-macOS.mm)
+                View/GPUView-VulkanApple.mm)
         target_link_libraries(eacp-gpu PRIVATE
-                "-framework Cocoa"
                 "-framework CoreVideo"
                 "-framework Foundation"
                 "-framework Metal"
                 "-framework QuartzCore")
+
+        # Only the backing-scale lookup differs, as in the Metal branch below.
+        if (IOS)
+            # MoltenVK is linked in rather than loaded, so its own dependencies
+            # land here.
+            target_sources(eacp-gpu PRIVATE View/GPUView-iOS.mm)
+            target_link_libraries(eacp-gpu PRIVATE
+                    "-framework IOSurface"
+                    "-framework UIKit")
+        else ()
+            target_sources(eacp-gpu PRIVATE View/GPUView-macOS.mm)
+            target_link_libraries(eacp-gpu PRIVATE "-framework Cocoa")
+        endif ()
     endif ()
 elseif (APPLE)
     # The Metal backend is shared across macOS and iOS (the -Apple files); only

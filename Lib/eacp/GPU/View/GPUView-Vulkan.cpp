@@ -4,6 +4,7 @@
 #include "../Frame/Frame.h"
 #include "../Vulkan/VulkanContext.h"
 #include "../Vulkan/VulkanTypes.h"
+#include "../Texture/TextureImport-Vulkan.h"
 #include "GPUViewSurface-Vulkan.h"
 
 #include <eacp/Graphics/Helpers/DisplayLink.h>
@@ -29,6 +30,26 @@ namespace
 {
 constexpr auto swapchainFormat = VK_FORMAT_B8G8R8A8_UNORM;
 constexpr auto depthFormat = VK_FORMAT_D32_SFLOAT;
+
+// Shared by the images this file allocates and the imported one it renders
+// into, which brings its own memory but still needs a view to attach.
+bool makeView(VulkanTexture& texture)
+{
+    auto info =
+        VkImageViewCreateInfo {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    info.image = texture.image;
+    info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    info.format = texture.format;
+    info.subresourceRange.aspectMask = texture.format == depthFormat
+                                           ? VK_IMAGE_ASPECT_DEPTH_BIT
+                                           : VK_IMAGE_ASPECT_COLOR_BIT;
+    info.subresourceRange.levelCount = 1;
+    info.subresourceRange.layerCount = 1;
+
+    return vkCreateImageView(
+               getVulkanContext().getDevice(), &info, nullptr, &texture.view)
+           == VK_SUCCESS;
+}
 
 // A render-target image, unlike the sampled ones Texture creates: it carries
 // attachment usage and stays in whatever layout the frame leaves it.
@@ -72,18 +93,7 @@ VulkanTexture makeTarget(int width, int height, VkFormat format, int samples)
     }
 
     texture.memory = allocation.memory;
-
-    auto viewInfo =
-        VkImageViewCreateInfo {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    viewInfo.image = texture.image;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = format;
-    viewInfo.subresourceRange.aspectMask =
-        isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-    viewInfo.subresourceRange.levelCount = 1;
-    viewInfo.subresourceRange.layerCount = 1;
-
-    vkCreateImageView(device, &viewInfo, nullptr, &texture.view);
+    makeView(texture);
 
     return texture;
 }
@@ -640,10 +650,57 @@ Graphics::Image GPUView::renderNativeContent(float scale)
     return image;
 }
 
-bool GPUView::renderNativeContentToTarget(void*, float)
+bool GPUView::renderNativeContentToTarget(void* nativeTarget, float)
 {
-    // Zero-copy capture needs external-memory import of the platform's own
-    // surface; the read-back path above is the only one here.
-    return false;
+    // The colour attachment aliases the target buffer's shared surface, so
+    // render() writes straight into what the video encoder will read -- the
+    // real-time capture tier, with none of the read-back above. Sized by the
+    // buffer rather than by scale, like the Metal path.
+    auto colorTexture = detail::importPixelBuffer(
+        nativeTarget,
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+
+    if (colorTexture.image == VK_NULL_HANDLE || !makeView(colorTexture))
+    {
+        destroyTarget(colorTexture);
+        return false;
+    }
+
+    auto samples = impl->sampleCount;
+    auto width = colorTexture.width;
+    auto height = colorTexture.height;
+
+    auto msaaTexture = samples > 1
+                           ? makeTarget(width, height, colorTexture.format, samples)
+                           : VulkanTexture {};
+
+    auto depthTexture = impl->depthEnabled
+                            ? makeTarget(width, height, depthFormat, samples)
+                            : VulkanTexture {};
+
+    {
+        auto target = OffscreenTarget {
+            &colorTexture,
+            msaaTexture.image != VK_NULL_HANDLE ? &msaaTexture : nullptr,
+            depthTexture.image != VK_NULL_HANDLE ? &depthTexture : nullptr};
+
+        auto frame = Frame(Device::shared(), target);
+
+        if (!frame.isValid())
+        {
+            destroyTarget(colorTexture);
+            destroyTarget(msaaTexture);
+            destroyTarget(depthTexture);
+            return false;
+        }
+
+        render(frame);
+    }
+
+    destroyTarget(colorTexture);
+    destroyTarget(msaaTexture);
+    destroyTarget(depthTexture);
+
+    return true;
 }
 } // namespace eacp::GPU
