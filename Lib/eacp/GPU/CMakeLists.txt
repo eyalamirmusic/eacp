@@ -14,9 +14,32 @@ target_sources(eacp-gpu PRIVATE
         Device/Device.cpp
         Codegen/ShaderGraph.cpp
         Codegen/ShaderEmitter.cpp
+        Codegen/SpirvEmitter.cpp
         Codegen/ShaderBuilder.cpp)
 
-if (APPLE)
+if (EACP_GPU_BACKEND STREQUAL "Vulkan")
+    find_package(Vulkan REQUIRED)
+
+    # Every source is portable C++ against the loader: nothing in the Vulkan
+    # backend touches Metal, Cocoa or Win32. GPUView renders off-screen and hands
+    # back a Graphics::Image, which is the same seam the native backends use for
+    # View::renderToImage, so the platform's own 2D layer composites it unchanged.
+    target_sources(eacp-gpu PRIVATE
+            Buffer/Buffer-Vulkan.cpp
+            Codegen/ShaderBuilder-Vulkan.cpp
+            CommandBuffer/CommandBuffer-Vulkan.cpp
+            Device/Device-Vulkan.cpp
+            Frame/ComputePass-Vulkan.cpp
+            Frame/Frame-Vulkan.cpp
+            Frame/RenderPass-Vulkan.cpp
+            Pipeline/ComputePipeline-Vulkan.cpp
+            Pipeline/RenderPipeline-Vulkan.cpp
+            Shader/ShaderLibrary-Vulkan.cpp
+            Texture/Texture-Vulkan.cpp
+            View/GPUView-Vulkan.cpp
+            Vulkan/VulkanContext-Vulkan.cpp)
+    target_link_libraries(eacp-gpu PRIVATE Vulkan::Vulkan)
+elseif (APPLE)
     # The Metal backend is shared across macOS and iOS (the -Apple files); only
     # GPUView's backing-scale lookup is platform-specific.
     target_sources(eacp-gpu PRIVATE

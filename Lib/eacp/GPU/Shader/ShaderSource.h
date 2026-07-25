@@ -7,7 +7,8 @@ namespace eacp::GPU
 enum class ShaderBackend
 {
     Metal,
-    DirectX
+    DirectX,
+    Vulkan
 };
 
 enum class ShaderStage
@@ -56,6 +57,18 @@ struct ShaderSource
         return result;
     }
 
+    // Vulkan consumes SPIR-V and nothing else -- there is no in-driver compiler
+    // for a text dialect the way Metal takes MSL and D3D takes HLSL -- so the
+    // Vulkan backend's sources are words, not characters. Both stages live in
+    // one module, entry points named as usual.
+    static ShaderSource spirv(Vector<std::uint32_t> wordsToUse)
+    {
+        auto result = ShaderSource {};
+        result.backend = ShaderBackend::Vulkan;
+        result.words = std::move(wordsToUse);
+        return result;
+    }
+
     ShaderSource& withVertex(std::string entry)
     {
         vertexEntry = std::move(entry);
@@ -87,6 +100,7 @@ struct ShaderSource
 
     ShaderBackend backend = ShaderBackend::Metal;
     std::string source;
+    Vector<std::uint32_t> words; // SPIR-V; empty unless backend is Vulkan
     std::string vertexEntry = "vertexMain";
     std::string fragmentEntry = "fragmentMain";
     std::string computeEntry; // empty unless this is a compute source

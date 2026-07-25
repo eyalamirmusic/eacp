@@ -36,6 +36,16 @@ option(EACP_BUILD_GRAPHICS "Build the Graphics, SVG and WebView modules" ON)
 option(EACP_BUILD_WEBVIEW "Build the WebView module" ON)
 option(EACP_CI_BUILD "Mirror the exact flag set used by CI builds" OFF)
 
+# Which API the GPU module renders through. Native is the platform's own -- Metal
+# on Apple, D3D12 on Windows -- and is what ships. Vulkan is a third backend that
+# selects the -Vulkan sources instead; on Apple it runs over MoltenVK, which is a
+# translation layer and so strictly slower than Metal, but it is the cheapest
+# host to develop the backend on because the 2D layer, windowing and the whole
+# off-screen snapshot test suite keep working unchanged underneath it.
+set(EACP_GPU_BACKEND "Native" CACHE STRING
+        "GPU backend for eacp-gpu: Native or Vulkan")
+set_property(CACHE EACP_GPU_BACKEND PROPERTY STRINGS Native Vulkan)
+
 if (EACP_CI_BUILD)
     set(EACP_UNITY_BUILD ON CACHE BOOL
             "Compile eacp libraries as CMake unity builds" FORCE)
