@@ -35,8 +35,8 @@ constexpr auto depthFormat = VK_FORMAT_D32_SFLOAT;
 // into, which brings its own memory but still needs a view to attach.
 bool makeView(VulkanTexture& texture)
 {
-    auto info =
-        VkImageViewCreateInfo {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    auto info = makeVulkanInfo<VkImageViewCreateInfo>(
+        VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
     info.image = texture.image;
     info.viewType = VK_IMAGE_VIEW_TYPE_2D;
     info.format = texture.format;
@@ -65,7 +65,8 @@ VulkanTexture makeTarget(int width, int height, VkFormat format, int samples)
 
     auto isDepth = format == depthFormat;
 
-    auto info = VkImageCreateInfo {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    auto info =
+        makeVulkanInfo<VkImageCreateInfo>(VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO);
     info.imageType = VK_IMAGE_TYPE_2D;
     info.format = format;
     info.extent = {
@@ -249,8 +250,8 @@ struct GPUView::Native
         if (extent.width == 0 || extent.height == 0)
             return;
 
-        auto info = VkSwapchainCreateInfoKHR {
-            .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
+        auto info = makeVulkanInfo<VkSwapchainCreateInfoKHR>(
+            VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR);
         info.surface = host.surface;
         info.minImageCount = imageCount;
         info.imageFormat = swapchainFormat;
@@ -294,8 +295,8 @@ struct GPUView::Native
             backBuffer.height = pixelHeight;
             backBuffer.layout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-            auto viewInfo = VkImageViewCreateInfo {
-                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            auto viewInfo = makeVulkanInfo<VkImageViewCreateInfo>(
+                VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
             viewInfo.image = backBuffer.image;
             viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
             viewInfo.format = swapchainFormat;
@@ -547,7 +548,7 @@ Graphics::Image GPUView::renderNativeContent(float scale)
     auto total = rowBytes * static_cast<std::size_t>(pixelHeight);
 
     auto bufferInfo =
-        VkBufferCreateInfo {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        makeVulkanInfo<VkBufferCreateInfo>(VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
     bufferInfo.size = total;
     bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;

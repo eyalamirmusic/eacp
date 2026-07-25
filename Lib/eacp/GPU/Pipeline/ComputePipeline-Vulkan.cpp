@@ -25,14 +25,14 @@ struct ComputePipeline::Native
         pipeline.layout = context.getComputePipelineLayout();
         pipeline.pushConstantBytes = context.maxUniformBytes();
 
-        auto stage = VkPipelineShaderStageCreateInfo {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        auto stage = makeVulkanInfo<VkPipelineShaderStageCreateInfo>(
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO);
         stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
         stage.module = program->module;
         stage.pName = library.computeEntry().c_str();
 
-        auto info = VkComputePipelineCreateInfo {
-            .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        auto info = makeVulkanInfo<VkComputePipelineCreateInfo>(
+            VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO);
         info.stage = stage;
         info.layout = pipeline.layout;
 

@@ -94,11 +94,13 @@ struct RenderPipeline::Native
         pipeline.pushConstantBytes = context.maxUniformBytes();
 
         auto stages = Array<VkPipelineShaderStageCreateInfo, 2> {};
-        stages[0] = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        stages[0] = makeVulkanInfo<VkPipelineShaderStageCreateInfo>(
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO);
         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
         stages[0].module = program->module;
         stages[0].pName = descriptor.library->vertexEntry().c_str();
-        stages[1] = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        stages[1] = makeVulkanInfo<VkPipelineShaderStageCreateInfo>(
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO);
         stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
         stages[1].module = program->module;
         stages[1].pName = descriptor.library->fragmentEntry().c_str();
@@ -143,8 +145,8 @@ struct RenderPipeline::Native
             attributes.add(attribute);
         }
 
-        auto vertexInput = VkPipelineVertexInputStateCreateInfo {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        auto vertexInput = makeVulkanInfo<VkPipelineVertexInputStateCreateInfo>(
+            VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
         vertexInput.vertexBindingDescriptionCount =
             static_cast<std::uint32_t>(bindings.size());
         vertexInput.pVertexBindingDescriptions =
@@ -154,29 +156,29 @@ struct RenderPipeline::Native
         vertexInput.pVertexAttributeDescriptions =
             attributes.size() > 0 ? &attributes[0] : nullptr;
 
-        auto assembly = VkPipelineInputAssemblyStateCreateInfo {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        auto assembly = makeVulkanInfo<VkPipelineInputAssemblyStateCreateInfo>(
+            VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
         assembly.topology = toVulkan(descriptor.topology);
 
-        auto viewport = VkPipelineViewportStateCreateInfo {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        auto viewport = makeVulkanInfo<VkPipelineViewportStateCreateInfo>(
+            VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO);
         viewport.viewportCount = 1;
         viewport.scissorCount = 1;
 
-        auto raster = VkPipelineRasterizationStateCreateInfo {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        auto raster = makeVulkanInfo<VkPipelineRasterizationStateCreateInfo>(
+            VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO);
         raster.polygonMode = VK_POLYGON_MODE_FILL;
         raster.cullMode = VK_CULL_MODE_NONE;
         raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         raster.lineWidth = 1.f;
 
-        auto multisample = VkPipelineMultisampleStateCreateInfo {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        auto multisample = makeVulkanInfo<VkPipelineMultisampleStateCreateInfo>(
+            VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO);
         multisample.rasterizationSamples =
             static_cast<VkSampleCountFlagBits>(descriptor.sampleCount);
 
-        auto depthStencil = VkPipelineDepthStencilStateCreateInfo {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        auto depthStencil = makeVulkanInfo<VkPipelineDepthStencilStateCreateInfo>(
+            VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO);
         depthStencil.depthTestEnable = descriptor.depth ? VK_TRUE : VK_FALSE;
         depthStencil.depthWriteEnable = descriptor.depth ? VK_TRUE : VK_FALSE;
         depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
@@ -184,31 +186,31 @@ struct RenderPipeline::Native
         auto blendAttachment = VkPipelineColorBlendAttachmentState {};
         applyBlend(blendAttachment, descriptor.blendMode);
 
-        auto blend = VkPipelineColorBlendStateCreateInfo {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        auto blend = makeVulkanInfo<VkPipelineColorBlendStateCreateInfo>(
+            VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO);
         blend.attachmentCount = 1;
         blend.pAttachments = &blendAttachment;
 
         auto dynamicStates = Array<VkDynamicState, 2> {VK_DYNAMIC_STATE_VIEWPORT,
                                                        VK_DYNAMIC_STATE_SCISSOR};
 
-        auto dynamic = VkPipelineDynamicStateCreateInfo {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        auto dynamic = makeVulkanInfo<VkPipelineDynamicStateCreateInfo>(
+            VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO);
         dynamic.dynamicStateCount = 2;
         dynamic.pDynamicStates = dynamicStates.data();
 
         auto colorFormat = VkFormat {VK_FORMAT_B8G8R8A8_UNORM};
 
-        auto rendering = VkPipelineRenderingCreateInfoKHR {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
+        auto rendering = makeVulkanInfo<VkPipelineRenderingCreateInfoKHR>(
+            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR);
         rendering.colorAttachmentCount = 1;
         rendering.pColorAttachmentFormats = &colorFormat;
 
         if (descriptor.depth)
             rendering.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
 
-        auto info = VkGraphicsPipelineCreateInfo {
-            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        auto info = makeVulkanInfo<VkGraphicsPipelineCreateInfo>(
+            VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
         info.pNext = &rendering;
         info.stageCount = 2;
         info.pStages = stages.data();

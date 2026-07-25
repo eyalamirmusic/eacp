@@ -68,7 +68,8 @@ struct Frame::Native
         transitionImage(commands->list, *color, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         context.submit(commands, drawable->acquired, drawable->rendered);
 
-        auto info = VkPresentInfoKHR {.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+        auto info =
+            makeVulkanInfo<VkPresentInfoKHR>(VK_STRUCTURE_TYPE_PRESENT_INFO_KHR);
         info.waitSemaphoreCount = 1;
         info.pWaitSemaphores = &drawable->rendered;
         info.swapchainCount = 1;
@@ -113,8 +114,8 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     auto* resolveInto = impl->msaa != nullptr ? impl->color : nullptr;
     auto* attachment = impl->msaa != nullptr ? impl->msaa : impl->color;
 
-    auto color = VkRenderingAttachmentInfoKHR {
-        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR};
+    auto color = makeVulkanInfo<VkRenderingAttachmentInfoKHR>(
+        VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR);
     color.imageView = attachment->view;
     color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     color.loadOp =
@@ -132,8 +133,8 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
         color.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
 
-    auto depth = VkRenderingAttachmentInfoKHR {
-        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR};
+    auto depth = makeVulkanInfo<VkRenderingAttachmentInfoKHR>(
+        VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR);
 
     if (impl->depth != nullptr)
     {
@@ -144,7 +145,8 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
         depth.clearValue.depthStencil = {1.f, 0};
     }
 
-    auto info = VkRenderingInfoKHR {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR};
+    auto info =
+        makeVulkanInfo<VkRenderingInfoKHR>(VK_STRUCTURE_TYPE_RENDERING_INFO_KHR);
     info.renderArea.extent = {static_cast<std::uint32_t>(impl->renderTarget.width),
                               static_cast<std::uint32_t>(impl->renderTarget.height)};
     info.layerCount = 1;

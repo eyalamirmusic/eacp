@@ -1,6 +1,6 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include "../Vulkan/VulkanLoader.h"
 
 // Internal seam between the portable Vulkan GPUView (GPUView-Vulkan.cpp) and the
 // per-platform piece that owns a presentable surface. Vulkan itself is portable

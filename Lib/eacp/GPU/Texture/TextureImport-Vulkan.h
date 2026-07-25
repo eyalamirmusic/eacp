@@ -1,6 +1,6 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include "../Vulkan/VulkanLoader.h"
 
 // Internal seam between the portable Vulkan Texture (Texture-Vulkan.cpp) and the
 // per-platform piece that knows what a "platform pixel buffer" is and how the

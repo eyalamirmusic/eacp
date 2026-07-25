@@ -49,6 +49,15 @@ Vector<VkExtensionProperties> deviceExtensions(VkPhysicalDevice physicalDevice)
 
 VulkanContext::VulkanContext()
 {
+    // Nothing below can be called before this: every entry point is resolved
+    // through the loader, and a machine without one has none of them.
+    if (!loadVulkanGlobals())
+    {
+        LOG("Vulkan: no loader on this machine; the GPU module will report "
+            "invalid");
+        return;
+    }
+
     if (!createInstance() || !pickPhysicalDevice() || !createDevice()
         || !createTimeline() || !createCommandPool() || !createSamplers()
         || !createDescriptorLayout())
@@ -80,19 +89,22 @@ bool VulkanContext::createInstance()
         names.add("VK_KHR_get_physical_device_properties2");
     }
 
-    // Presentation. Absent on a headless driver, where the off-screen path is
-    // all there is and a GPUView simply never builds a swapchain.
-    for (const auto* surfaceExtension: {"VK_KHR_surface", "VK_EXT_metal_surface"})
+    // Presentation: the portable half plus every platform's own, of which only
+    // the host's is ever present. All of them are absent on a headless driver,
+    // where the off-screen path is all there is and a GPUView simply never
+    // builds a swapchain.
+    for (const auto* surfaceExtension:
+         {"VK_KHR_surface", "VK_EXT_metal_surface", "VK_KHR_win32_surface"})
         if (hasExtension(available, surfaceExtension))
             names.add(surfaceExtension);
 
     auto application =
-        VkApplicationInfo {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO};
+        makeVulkanInfo<VkApplicationInfo>(VK_STRUCTURE_TYPE_APPLICATION_INFO);
     application.pApplicationName = "eacp";
     application.apiVersion = VK_API_VERSION_1_2;
 
     auto info =
-        VkInstanceCreateInfo {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+        makeVulkanInfo<VkInstanceCreateInfo>(VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO);
     info.pApplicationInfo = &application;
     info.enabledExtensionCount = static_cast<std::uint32_t>(names.size());
     info.ppEnabledExtensionNames = names.size() > 0 ? &names[0] : nullptr;
@@ -100,7 +112,12 @@ bool VulkanContext::createInstance()
     if (portable)
         info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 
-    return vkCreateInstance(&info, nullptr, &instance) == VK_SUCCESS;
+    if (vkCreateInstance(&info, nullptr, &instance) != VK_SUCCESS)
+        return false;
+
+    loadVulkanInstance(instance);
+
+    return true;
 }
 
 bool VulkanContext::pickPhysicalDevice()
@@ -193,26 +210,28 @@ bool VulkanContext::createDevice()
     }
 
     auto priority = 1.0f;
-    auto queueInfo = VkDeviceQueueCreateInfo {
-        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+    auto queueInfo = makeVulkanInfo<VkDeviceQueueCreateInfo>(
+        VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO);
     queueInfo.queueFamilyIndex = queueFamily;
     queueInfo.queueCount = 1;
     queueInfo.pQueuePriorities = &priority;
 
-    auto dynamicRendering = VkPhysicalDeviceDynamicRenderingFeaturesKHR {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR};
+    auto dynamicRendering =
+        makeVulkanInfo<VkPhysicalDeviceDynamicRenderingFeaturesKHR>(
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR);
     dynamicRendering.dynamicRendering = VK_TRUE;
 
-    auto vulkan12 = VkPhysicalDeviceVulkan12Features {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    auto vulkan12 = makeVulkanInfo<VkPhysicalDeviceVulkan12Features>(
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES);
     vulkan12.timelineSemaphore = VK_TRUE;
     vulkan12.pNext = &dynamicRendering;
 
-    auto features = VkPhysicalDeviceFeatures2 {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    auto features = makeVulkanInfo<VkPhysicalDeviceFeatures2>(
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2);
     features.pNext = &vulkan12;
 
-    auto info = VkDeviceCreateInfo {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+    auto info =
+        makeVulkanInfo<VkDeviceCreateInfo>(VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO);
     info.pNext = &features;
     info.queueCreateInfoCount = 1;
     info.pQueueCreateInfos = &queueInfo;
@@ -221,6 +240,8 @@ bool VulkanContext::createDevice()
 
     if (vkCreateDevice(physicalDevice, &info, nullptr, &device) != VK_SUCCESS)
         return false;
+
+    loadVulkanDevice(device);
 
     vkGetDeviceQueue(device, queueFamily, 0, &queue);
 
@@ -234,13 +255,13 @@ bool VulkanContext::createDevice()
 
 bool VulkanContext::createTimeline()
 {
-    auto type = VkSemaphoreTypeCreateInfo {
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+    auto type = makeVulkanInfo<VkSemaphoreTypeCreateInfo>(
+        VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO);
     type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
     type.initialValue = 0;
 
-    auto info =
-        VkSemaphoreCreateInfo {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    auto info = makeVulkanInfo<VkSemaphoreCreateInfo>(
+        VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO);
     info.pNext = &type;
 
     return vkCreateSemaphore(device, &info, nullptr, &timeline) == VK_SUCCESS;
@@ -248,8 +269,8 @@ bool VulkanContext::createTimeline()
 
 bool VulkanContext::createCommandPool()
 {
-    auto info = VkCommandPoolCreateInfo {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    auto info = makeVulkanInfo<VkCommandPoolCreateInfo>(
+        VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO);
     info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     info.queueFamilyIndex = queueFamily;
 
@@ -270,8 +291,8 @@ bool VulkanContext::createSamplers()
         auto address = repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT
                               : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 
-        auto info =
-            VkSamplerCreateInfo {.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        auto info = makeVulkanInfo<VkSamplerCreateInfo>(
+            VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO);
         info.magFilter = linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
         info.minFilter = info.magFilter;
         info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
@@ -306,8 +327,8 @@ bool VulkanContext::createDescriptorLayout()
         bindings.add(binding);
     }
 
-    auto layoutInfo = VkDescriptorSetLayoutCreateInfo {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    auto layoutInfo = makeVulkanInfo<VkDescriptorSetLayoutCreateInfo>(
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
     layoutInfo.bindingCount = bindingCount;
     layoutInfo.pBindings = &bindings[0];
 
@@ -320,8 +341,8 @@ bool VulkanContext::createDescriptorLayout()
     range.offset = 0;
     range.size = pushConstantLimit;
 
-    auto pipelineInfo = VkPipelineLayoutCreateInfo {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    auto pipelineInfo = makeVulkanInfo<VkPipelineLayoutCreateInfo>(
+        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
     pipelineInfo.setLayoutCount = 1;
     pipelineInfo.pSetLayouts = &textureSetLayout;
     pipelineInfo.pushConstantRangeCount = 1;
@@ -365,8 +386,8 @@ bool VulkanContext::createDescriptorLayout()
     sizes.add({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, bindingCount * 256});
     sizes.add({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, maxStorageBuffers * 256});
 
-    auto poolInfo = VkDescriptorPoolCreateInfo {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    auto poolInfo = makeVulkanInfo<VkDescriptorPoolCreateInfo>(
+        VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
     poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     poolInfo.maxSets = 512;
     poolInfo.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
@@ -382,8 +403,8 @@ VkDescriptorSet VulkanContext::acquireSet(CommandContext& commands,
     if (!isValid())
         return VK_NULL_HANDLE;
 
-    auto info = VkDescriptorSetAllocateInfo {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    auto info = makeVulkanInfo<VkDescriptorSetAllocateInfo>(
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO);
     info.descriptorPool = descriptorPool;
     info.descriptorSetCount = 1;
     info.pSetLayouts = &layout;
@@ -431,8 +452,8 @@ CommandContext* VulkanContext::acquire()
     {
         auto fresh = makeOwned<CommandContext>();
 
-        auto info = VkCommandBufferAllocateInfo {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        auto info = makeVulkanInfo<VkCommandBufferAllocateInfo>(
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO);
         info.commandPool = commandPool;
         info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         info.commandBufferCount = 1;
@@ -464,8 +485,8 @@ CommandContext* VulkanContext::acquire()
 
     vkResetCommandBuffer(commands->list, 0);
 
-    auto begin = VkCommandBufferBeginInfo {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    auto begin = makeVulkanInfo<VkCommandBufferBeginInfo>(
+        VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(commands->list, &begin);
 
@@ -498,13 +519,13 @@ std::uint64_t VulkanContext::submit(CommandContext* commands,
     auto waitStage =
         VkPipelineStageFlags {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
-    auto timelineInfo = VkTimelineSemaphoreSubmitInfo {
-        .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
+    auto timelineInfo = makeVulkanInfo<VkTimelineSemaphoreSubmitInfo>(
+        VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO);
     timelineInfo.signalSemaphoreValueCount =
         signalWhenDone != VK_NULL_HANDLE ? 2u : 1u;
     timelineInfo.pSignalSemaphoreValues = signalValues.data();
 
-    auto info = VkSubmitInfo {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    auto info = makeVulkanInfo<VkSubmitInfo>(VK_STRUCTURE_TYPE_SUBMIT_INFO);
     info.pNext = &timelineInfo;
     info.commandBufferCount = 1;
     info.pCommandBuffers = &commands->list;
@@ -535,8 +556,8 @@ std::uint64_t VulkanContext::submit(CommandContext* commands,
 
 VkSemaphore VulkanContext::makeSemaphore()
 {
-    auto info =
-        VkSemaphoreCreateInfo {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    auto info = makeVulkanInfo<VkSemaphoreCreateInfo>(
+        VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO);
 
     auto semaphore = VkSemaphore {VK_NULL_HANDLE};
     vkCreateSemaphore(device, &info, nullptr, &semaphore);
@@ -573,7 +594,8 @@ void VulkanContext::waitFor(std::uint64_t value)
     if (value == 0 || !isValid() || hasCompleted(value))
         return;
 
-    auto info = VkSemaphoreWaitInfo {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+    auto info =
+        makeVulkanInfo<VkSemaphoreWaitInfo>(VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO);
     info.semaphoreCount = 1;
     info.pSemaphores = &timeline;
     info.pValues = &value;
@@ -616,7 +638,7 @@ Allocation VulkanContext::allocateFor(VkBuffer buffer,
         return {};
 
     auto info =
-        VkMemoryAllocateInfo {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        makeVulkanInfo<VkMemoryAllocateInfo>(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
     info.allocationSize = requirements.size;
     info.memoryTypeIndex = type;
 
@@ -643,7 +665,7 @@ Allocation VulkanContext::allocateFor(VkImage image,
         return {};
 
     auto info =
-        VkMemoryAllocateInfo {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        makeVulkanInfo<VkMemoryAllocateInfo>(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
     info.allocationSize = requirements.size;
     info.memoryTypeIndex = type;
 
@@ -665,7 +687,8 @@ VkBuffer VulkanContext::makeStagingBuffer(CommandContext& commands,
     if (bytes == 0)
         return VK_NULL_HANDLE;
 
-    auto info = VkBufferCreateInfo {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    auto info =
+        makeVulkanInfo<VkBufferCreateInfo>(VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
     info.size = bytes;
     info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;

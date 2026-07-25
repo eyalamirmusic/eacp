@@ -4,7 +4,7 @@
 
 #include "../Texture/Texture.h"
 
-#include <vulkan/vulkan.h>
+#include "VulkanLoader.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -55,6 +55,20 @@ constexpr int maxTextureSlots = 4;
 // How many storage buffers one kernel may bind. Inputs and outputs share the
 // slot space (Metal binds both as a device buffer), so this is the total.
 constexpr int maxStorageBuffers = 8;
+
+// Every Vulkan struct opens with an sType the caller has to stamp. Designating
+// it in place -- VkFooCreateInfo {.sType = ...} -- says the rest are defaulted,
+// which clang reports as a missing initializer for each field in turn; spelling
+// all of them out would be worse than the diagnostic. This zeroes the struct and
+// stamps sType, which is all the designated form ever meant.
+template <typename T>
+T makeVulkanInfo(VkStructureType type)
+{
+    auto info = T {};
+    info.sType = type;
+
+    return info;
+}
 
 class VulkanContext
 {

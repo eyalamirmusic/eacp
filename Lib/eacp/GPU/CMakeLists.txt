@@ -38,36 +38,26 @@ if (EACP_GPU_BACKEND STREQUAL "Vulkan")
             Shader/ShaderLibrary-Vulkan.cpp
             Texture/Texture-Vulkan.cpp
             View/GPUView-Vulkan.cpp
-            Vulkan/VulkanContext-Vulkan.cpp)
+            Vulkan/VulkanContext-Vulkan.cpp
+            Vulkan/VulkanLoader-Vulkan.cpp)
 
-    # iOS has no loader, so find_package(Vulkan) cannot succeed there: it requires
-    # a library named "vulkan", and MoltenVK is the implementation itself.
-    if (IOS)
-        if (NOT EACP_MOLTENVK_XCFRAMEWORK)
-            message(FATAL_ERROR
-                    "iOS Vulkan builds need -DEACP_MOLTENVK_XCFRAMEWORK=<path to a "
-                    "MoltenVK.xcframework carrying iOS slices>. Homebrew's molten-vk "
-                    "ships a macOS slice only; the LunarG SDK ships iOS ones.")
-        endif ()
-
-        # Headers are platform-independent, so a host copy serves the iOS build.
-        find_path(EACP_VULKAN_INCLUDE_DIR NAMES vulkan/vulkan.h REQUIRED
-                NO_CMAKE_FIND_ROOT_PATH)
-
-        target_include_directories(eacp-gpu SYSTEM PRIVATE
-                ${EACP_VULKAN_INCLUDE_DIR})
-        target_link_libraries(eacp-gpu PRIVATE "${EACP_MOLTENVK_XCFRAMEWORK}")
-    else ()
-        find_package(Vulkan REQUIRED)
-        target_link_libraries(eacp-gpu PRIVATE Vulkan::Vulkan)
-    endif ()
+    # Headers, and no import library on any platform: every entry point is
+    # resolved at runtime through Vulkan/VulkanLoader.h, so there is no SDK to
+    # install and an app still starts where there is no driver. VK_NO_PROTOTYPES
+    # belongs on the target rather than in a header, because it only works if it
+    # is set before *every* translation unit reaches vulkan.h.
+    find_package(VulkanHeaders REQUIRED)
+    target_link_libraries(eacp-gpu PRIVATE Vulkan::Headers)
+    target_compile_definitions(eacp-gpu PRIVATE VK_NO_PROTOTYPES)
 
     # Presentation and zero-copy frame import are the parts that cannot be
-    # portable, behind the GPUViewSurface-Vulkan.h and TextureImport-Vulkan.h seams.
+    # portable, behind the GPUViewSurface-Vulkan.h and TextureImport-Vulkan.h
+    # seams, and so is opening the loader itself (VulkanLoader.h).
     if (APPLE)
         target_sources(eacp-gpu PRIVATE
                 Texture/TextureImport-VulkanApple.mm
-                View/GPUView-VulkanApple.mm)
+                View/GPUView-VulkanApple.mm
+                Vulkan/VulkanEntryPoint-VulkanPosix.cpp)
         target_link_libraries(eacp-gpu PRIVATE
                 "-framework CoreVideo"
                 "-framework Foundation"
@@ -76,16 +66,38 @@ if (EACP_GPU_BACKEND STREQUAL "Vulkan")
 
         # Only the backing-scale lookup differs, as in the Metal branch below.
         if (IOS)
-            # MoltenVK is linked in rather than loaded, so its own dependencies
-            # land here.
+            # iOS has no loader to dlopen: MoltenVK is linked into the executable
+            # and the entry point is resolved out of the running image, so its
+            # own dependencies land here.
+            if (NOT EACP_MOLTENVK_XCFRAMEWORK)
+                message(FATAL_ERROR
+                        "iOS Vulkan builds need -DEACP_MOLTENVK_XCFRAMEWORK=<path "
+                        "to a MoltenVK.xcframework carrying iOS slices>. "
+                        "Homebrew's molten-vk ships a macOS slice only; the "
+                        "LunarG SDK ships iOS ones.")
+            endif ()
+
             target_sources(eacp-gpu PRIVATE View/GPUView-iOS.mm)
             target_link_libraries(eacp-gpu PRIVATE
+                    "${EACP_MOLTENVK_XCFRAMEWORK}"
                     "-framework IOSurface"
                     "-framework UIKit")
         else ()
             target_sources(eacp-gpu PRIVATE View/GPUView-macOS.mm)
             target_link_libraries(eacp-gpu PRIVATE "-framework Cocoa")
         endif ()
+    elseif (WIN32)
+        # Presentation and pixel-buffer import are both off-screen-only stubs for
+        # now; the files say why. Everything else -- pipelines, textures, compute
+        # and the whole View::renderToImage path -- is the portable code above.
+        target_sources(eacp-gpu PRIVATE
+                Texture/TextureImport-VulkanWindows.cpp
+                View/GPUView-VulkanWindows.cpp
+                Vulkan/VulkanEntryPoint-VulkanWindows.cpp)
+    else ()
+        target_sources(eacp-gpu PRIVATE
+                Vulkan/VulkanEntryPoint-VulkanPosix.cpp)
+        target_link_libraries(eacp-gpu PRIVATE ${CMAKE_DL_LIBS})
     endif ()
 elseif (APPLE)
     # The Metal backend is shared across macOS and iOS (the -Apple files); only

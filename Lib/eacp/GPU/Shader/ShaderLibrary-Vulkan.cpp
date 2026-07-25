@@ -21,8 +21,8 @@ struct ShaderLibrary::Native
         if (!context.isValid() || source.words.size() == 0)
             return;
 
-        auto info = VkShaderModuleCreateInfo {
-            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        auto info = makeVulkanInfo<VkShaderModuleCreateInfo>(
+            VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO);
         info.codeSize =
             static_cast<std::size_t>(source.words.size()) * sizeof(std::uint32_t);
         info.pCode = &source.words[0];

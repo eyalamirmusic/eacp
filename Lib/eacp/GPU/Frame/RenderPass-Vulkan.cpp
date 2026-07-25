@@ -93,8 +93,8 @@ struct RenderPass::Native
             if (boundViews[i] == VK_NULL_HANDLE)
                 continue;
 
-            auto write = VkWriteDescriptorSet {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            auto write = makeVulkanInfo<VkWriteDescriptorSet>(
+                VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
             write.dstSet = set;
             write.dstBinding = static_cast<std::uint32_t>(i);
             write.descriptorCount = 1;

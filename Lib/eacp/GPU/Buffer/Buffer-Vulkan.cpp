@@ -40,7 +40,7 @@ struct Buffer::Native
             return;
 
         auto info =
-            VkBufferCreateInfo {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            makeVulkanInfo<VkBufferCreateInfo>(VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
         info.size = bytes;
         info.usage = usageFlags(usage);
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;

@@ -67,8 +67,8 @@ struct ComputePass::Native
             if (boundBuffers[i] == VK_NULL_HANDLE)
                 continue;
 
-            auto write = VkWriteDescriptorSet {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            auto write = makeVulkanInfo<VkWriteDescriptorSet>(
+                VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
             write.dstSet = set;
             write.dstBinding = static_cast<std::uint32_t>(i);
             write.descriptorCount = 1;
@@ -177,7 +177,7 @@ void ComputePass::end()
     // Storage buffers are host-visible and read back through their mapping the
     // moment commit() returns, which needs the writes made visible to the host
     // domain -- coherent memory alone does not order them.
-    auto barrier = VkMemoryBarrier {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    auto barrier = makeVulkanInfo<VkMemoryBarrier>(VK_STRUCTURE_TYPE_MEMORY_BARRIER);
     barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
 
