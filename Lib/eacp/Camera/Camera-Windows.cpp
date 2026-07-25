@@ -372,30 +372,57 @@ Camera::Camera()
 
 Camera::~Camera() = default;
 
+// Enumerating means blocking on a WinRT async operation, and a blocking wait
+// is only safe in the multi-threaded apartment: an STA does not pump while
+// blocked, so the completion can never be delivered and the wait never ends.
+//
+// Unlike the capture path (runCapture, which only ever runs on the worker
+// thread above), this is public API called from wherever the caller happens to
+// be — and that is usually the main thread, which eacp deliberately puts in an
+// STA (see EventLoop-Windows: CoInitializeEx(COINIT_APARTMENTTHREADED), as
+// WebView2 and DirectComposition require). A UI building a camera menu, or an
+// IPC handler the Messenger marshalled onto the main thread, would otherwise
+// hang forever, with no error and no way back.
+//
+// So the enumeration runs on a scratch thread: it starts with no apartment, so
+// ensureApartment() lands it in the MTA, where the wait works. Enumeration is
+// quick and every caller wants the answer inline, so this joins rather than
+// going asynchronous. The hop is unconditional — cheap next to the enumeration
+// itself, and it keeps correctness from depending on the caller's apartment.
 Vector<CameraDevice> Camera::devices()
 {
-    ensureApartment();
-
     auto result = Vector<CameraDevice> {};
 
-    try
-    {
-        auto found = enumeration::DeviceInformation::FindAllAsync(
-                         enumeration::DeviceClass::VideoCapture)
-                         .get();
-
-        for (auto const& device: found)
+    auto worker = std::thread(
+        [&result]
         {
-            auto info = CameraDevice {};
-            info.id = winrt::to_string(device.Id());
-            info.name = winrt::to_string(device.Name());
-            info.isFrontFacing = false;
-            result.push_back(std::move(info));
-        }
-    }
-    catch (const winrt::hresult_error&)
-    {
-    }
+            ensureApartment();
+
+            try
+            {
+                auto found = enumeration::DeviceInformation::FindAllAsync(
+                                 enumeration::DeviceClass::VideoCapture)
+                                 .get();
+
+                for (auto const& device: found)
+                {
+                    auto info = CameraDevice {};
+                    info.id = winrt::to_string(device.Id());
+                    info.name = winrt::to_string(device.Name());
+                    info.isFrontFacing = false;
+                    result.push_back(std::move(info));
+                }
+            }
+            // Nothing may escape a thread body — an uncaught exception here
+            // would terminate the process instead of reaching the caller, and
+            // an empty list is already this function's answer for "could not
+            // enumerate".
+            catch (...)
+            {
+            }
+        });
+
+    worker.join();
 
     return result;
 }
