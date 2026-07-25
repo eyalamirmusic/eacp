@@ -53,10 +53,31 @@ struct VulkanPipeline
     std::uint32_t pushConstantBytes = 0;
 };
 
+// One acquired swapchain image, ready to render into and then present. The
+// Vulkan analogue of a CAMetalDrawable, except that the present is an explicit
+// queue operation gated on a semaphore rather than a method on the image.
+struct VulkanDrawable
+{
+    VulkanTexture* image = nullptr;
+    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+    std::uint32_t imageIndex = 0;
+
+    // Rendering waits on `acquired` before writing colour, and signals
+    // `rendered` so the present does not run ahead of the draw.
+    VkSemaphore acquired = VK_NULL_HANDLE;
+    VkSemaphore rendered = VK_NULL_HANDLE;
+};
+
+struct CommandContext;
+
 // What Frame hands a RenderPass so the pass can record into the right target.
+// The recording travels with it because a textured draw allocates a descriptor
+// set, and that set has to be freed on the same schedule as the recording that
+// references it.
 struct VulkanRenderTarget
 {
     VkCommandBuffer list = VK_NULL_HANDLE;
+    CommandContext* commands = nullptr;
     int width = 0;
     int height = 0;
 };

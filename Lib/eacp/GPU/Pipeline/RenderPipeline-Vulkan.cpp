@@ -85,24 +85,13 @@ struct RenderPipeline::Native
         auto* program =
             static_cast<VulkanShaderProgram*>(descriptor.library->nativeLibrary());
 
-        // Uniforms travel as push constants, bound to both stages so one block
-        // works wherever the generated shader reads it -- matching how
-        // RenderPass::draw binds the same block to vertex and fragment.
-        auto range = VkPushConstantRange {};
-        range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        range.offset = 0;
-        range.size = context.maxUniformBytes();
-
-        auto layoutInfo = VkPipelineLayoutCreateInfo {
-            VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        layoutInfo.pushConstantRangeCount = 1;
-        layoutInfo.pPushConstantRanges = &range;
-
-        if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &pipeline.layout)
-            != VK_SUCCESS)
-            return;
-
-        pipeline.pushConstantBytes = range.size;
+        // Every render pipeline shares one layout: uniforms as push constants
+        // bound to both stages (matching how RenderPass::draw binds the same
+        // block to vertex and fragment), plus the texture descriptor set. Shared
+        // rather than per-pipeline so a bound descriptor set survives a pipeline
+        // change instead of being invalidated by it.
+        pipeline.layout = context.getRenderPipelineLayout();
+        pipeline.pushConstantBytes = context.maxUniformBytes();
 
         auto stages = Array<VkPipelineShaderStageCreateInfo, 2> {};
         stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
@@ -247,8 +236,7 @@ struct RenderPipeline::Native
         if (pipeline.pipeline != VK_NULL_HANDLE)
             context.deferDestroy(pipeline.pipeline);
 
-        if (pipeline.layout != VK_NULL_HANDLE)
-            vkDestroyPipelineLayout(context.getDevice(), pipeline.layout, nullptr);
+        // The layout belongs to the context and outlives every pipeline.
     }
 
     VulkanPipeline pipeline;

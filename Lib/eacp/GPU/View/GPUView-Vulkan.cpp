@@ -4,15 +4,19 @@
 #include "../Frame/Frame.h"
 #include "../Vulkan/VulkanContext.h"
 #include "../Vulkan/VulkanTypes.h"
+#include "GPUViewSurface-Vulkan.h"
+
+#include <eacp/Graphics/Helpers/DisplayLink.h>
+#include <eacp/Graphics/Image/Image.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
-// Vulkan backend. Off-screen only: render() runs into images this view owns and
-// the pixels come back as a Graphics::Image, which is exactly the seam
-// View::renderToImage already uses, so the platform's own 2D layer composites
-// the result unchanged. Nothing here presents -- see Frame-Vulkan.cpp.
+// Vulkan backend. The view owns a swapchain over a platform surface (see
+// GPUViewSurface-Vulkan.h for where the platform enters) and presents from it,
+// plus the off-screen read-back path View::renderToImage uses. Everything here
+// is portable; nothing in this file knows which window system it is on.
 
 namespace eacp::GPU
 {
@@ -23,8 +27,11 @@ void transitionImage(VkCommandBuffer list,
 
 namespace
 {
+constexpr auto swapchainFormat = VK_FORMAT_B8G8R8A8_UNORM;
+constexpr auto depthFormat = VK_FORMAT_D32_SFLOAT;
+
 // A render-target image, unlike the sampled ones Texture creates: it carries
-// colour-attachment usage and stays in whatever layout the frame leaves it.
+// attachment usage and stays in whatever layout the frame leaves it.
 VulkanTexture makeTarget(int width, int height, VkFormat format, int samples)
 {
     auto& context = getVulkanContext();
@@ -35,7 +42,7 @@ VulkanTexture makeTarget(int width, int height, VkFormat format, int samples)
     texture.width = width;
     texture.height = height;
 
-    auto isDepth = format == VK_FORMAT_D32_SFLOAT;
+    auto isDepth = format == depthFormat;
 
     auto info = VkImageCreateInfo {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     info.imageType = VK_IMAGE_TYPE_2D;
@@ -91,14 +98,308 @@ void destroyTarget(VulkanTexture& texture)
 
 struct GPUView::Native
 {
+    explicit Native(GPUView& viewToUse)
+        : view(viewToUse)
+    {
+        auto& context = getVulkanContext();
+
+        if (!context.isValid() || !context.canPresent())
+            return;
+
+        host = detail::createSurfaceHost(view, context.getInstance());
+    }
+
+    ~Native()
+    {
+        auto& context = getVulkanContext();
+
+        if (context.isValid())
+        {
+            context.waitIdle();
+            releaseSwapchain();
+            releaseSync();
+        }
+
+        detail::destroySurfaceHost(host, context.getInstance());
+    }
+
+    bool canPresent() const { return host.surface != VK_NULL_HANDLE; }
+
+    void releaseSync()
+    {
+        auto* device = getVulkanContext().getDevice();
+
+        for (auto i = 0; i < acquireSemaphores.size(); ++i)
+            vkDestroySemaphore(device, acquireSemaphores[i], nullptr);
+
+        for (auto i = 0; i < renderSemaphores.size(); ++i)
+            vkDestroySemaphore(device, renderSemaphores[i], nullptr);
+
+        acquireSemaphores.clear();
+        renderSemaphores.clear();
+        frameValues.clear();
+    }
+
+    void buildSync()
+    {
+        if (acquireSemaphores.size() == framesInFlight)
+            return;
+
+        releaseSync();
+
+        auto& context = getVulkanContext();
+
+        for (auto i = 0; i < framesInFlight; ++i)
+        {
+            acquireSemaphores.add(context.makeSemaphore());
+            renderSemaphores.add(context.makeSemaphore());
+            frameValues.add(0);
+        }
+    }
+
+    // The swapchain owns its images, so only the views this created are
+    // destroyed here -- freeing a swapchain image would be a double free.
+    void releaseSwapchain()
+    {
+        auto& context = getVulkanContext();
+        auto* device = context.getDevice();
+
+        for (auto i = 0; i < backBuffers.size(); ++i)
+            if (backBuffers[i].view != VK_NULL_HANDLE)
+                vkDestroyImageView(device, backBuffers[i].view, nullptr);
+
+        backBuffers.clear();
+
+        if (swapchain != VK_NULL_HANDLE)
+        {
+            vkDestroySwapchainKHR(device, swapchain, nullptr);
+            swapchain = VK_NULL_HANDLE;
+        }
+
+        destroyTarget(msaaTarget);
+        destroyTarget(depthTarget);
+    }
+
+    void updateSize()
+    {
+        auto scale = detail::surfaceBackingScale(view);
+        auto bounds = view.getLocalBounds();
+
+        auto newWidth = static_cast<int>(std::lround(bounds.w * scale));
+        auto newHeight = static_cast<int>(std::lround(bounds.h * scale));
+
+        detail::resizeSurfaceHost(host, view, scale);
+
+        auto scaleChanged = backingScale > 0.f && scale != backingScale;
+        auto previousScale = backingScale;
+        backingScale = scale;
+
+        if (newWidth != pixelWidth || newHeight != pixelHeight
+            || swapchain == VK_NULL_HANDLE)
+        {
+            pixelWidth = newWidth;
+            pixelHeight = newHeight;
+            rebuildSwapchain();
+        }
+
+        // Notified after the swapchain is consistent at the new scale, so a
+        // handler rebuilding pixel-sized resources sees what it will draw into.
+        if (scaleChanged && previousScale != scale)
+            view.onBackingScaleChanged(scale);
+    }
+
+    void rebuildSwapchain()
+    {
+        auto& context = getVulkanContext();
+
+        if (!canPresent() || pixelWidth <= 0 || pixelHeight <= 0)
+            return;
+
+        context.waitIdle();
+        releaseSwapchain();
+        buildSync();
+
+        auto capabilities = VkSurfaceCapabilitiesKHR {};
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+            context.getPhysicalDevice(), host.surface, &capabilities);
+
+        auto imageCount = std::max(static_cast<std::uint32_t>(framesInFlight),
+                                   capabilities.minImageCount);
+
+        if (capabilities.maxImageCount > 0)
+            imageCount = std::min(imageCount, capabilities.maxImageCount);
+
+        auto extent = VkExtent2D {static_cast<std::uint32_t>(pixelWidth),
+                                  static_cast<std::uint32_t>(pixelHeight)};
+
+        if (capabilities.currentExtent.width != UINT32_MAX)
+            extent = capabilities.currentExtent;
+
+        if (extent.width == 0 || extent.height == 0)
+            return;
+
+        auto info =
+            VkSwapchainCreateInfoKHR {VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
+        info.surface = host.surface;
+        info.minImageCount = imageCount;
+        info.imageFormat = swapchainFormat;
+        info.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+        info.imageExtent = extent;
+        info.imageArrayLayers = 1;
+        info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        info.preTransform = capabilities.currentTransform;
+        info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+
+        // FIFO is the only mode every implementation must offer, and it is the
+        // vsync-paced one a display-link-driven view wants anyway.
+        info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        info.clipped = VK_TRUE;
+
+        auto* device = context.getDevice();
+
+        if (vkCreateSwapchainKHR(device, &info, nullptr, &swapchain) != VK_SUCCESS)
+        {
+            swapchain = VK_NULL_HANDLE;
+            return;
+        }
+
+        pixelWidth = static_cast<int>(extent.width);
+        pixelHeight = static_cast<int>(extent.height);
+
+        auto count = std::uint32_t {};
+        vkGetSwapchainImagesKHR(device, swapchain, &count, nullptr);
+
+        auto images = Vector<VkImage> {};
+        images.resize(static_cast<int>(count));
+        vkGetSwapchainImagesKHR(device, swapchain, &count, &images[0]);
+
+        for (auto i = 0; i < images.size(); ++i)
+        {
+            auto backBuffer = VulkanTexture {};
+            backBuffer.image = images[i];
+            backBuffer.format = swapchainFormat;
+            backBuffer.width = pixelWidth;
+            backBuffer.height = pixelHeight;
+            backBuffer.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+            auto viewInfo =
+                VkImageViewCreateInfo {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            viewInfo.image = backBuffer.image;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = swapchainFormat;
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.layerCount = 1;
+
+            vkCreateImageView(device, &viewInfo, nullptr, &backBuffer.view);
+            backBuffers.add(backBuffer);
+        }
+
+        if (sampleCount > 1)
+            msaaTarget =
+                makeTarget(pixelWidth, pixelHeight, swapchainFormat, sampleCount);
+
+        if (depthEnabled)
+            depthTarget =
+                makeTarget(pixelWidth, pixelHeight, depthFormat, sampleCount);
+    }
+
+    void present()
+    {
+        auto& context = getVulkanContext();
+
+        if (!canPresent() || !context.isValid())
+            return;
+
+        if (swapchain == VK_NULL_HANDLE)
+        {
+            updateSize();
+
+            if (swapchain == VK_NULL_HANDLE)
+                return;
+        }
+
+        // A semaphore slot cannot be reused while the frame that last signalled
+        // it is still on the GPU.
+        context.waitFor(frameValues[frameSlot]);
+
+        auto imageIndex = std::uint32_t {};
+        auto acquired = vkAcquireNextImageKHR(context.getDevice(),
+                                              swapchain,
+                                              UINT64_MAX,
+                                              acquireSemaphores[frameSlot],
+                                              VK_NULL_HANDLE,
+                                              &imageIndex);
+
+        if (acquired == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            rebuildSwapchain();
+            return;
+        }
+
+        if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
+            return;
+
+        auto drawable = VulkanDrawable {};
+        drawable.image = &backBuffers[static_cast<int>(imageIndex)];
+        drawable.swapchain = swapchain;
+        drawable.imageIndex = imageIndex;
+        drawable.acquired = acquireSemaphores[frameSlot];
+        drawable.rendered = renderSemaphores[frameSlot];
+
+        {
+            auto frame =
+                Frame(Device::shared(),
+                      &drawable,
+                      msaaTarget.image != VK_NULL_HANDLE ? &msaaTarget : nullptr,
+                      depthTarget.image != VK_NULL_HANDLE ? &depthTarget : nullptr);
+            view.render(frame);
+        }
+
+        frameValues[frameSlot] = context.lastSubmitted();
+        frameSlot = (frameSlot + 1) % framesInFlight;
+    }
+
+    void startContinuous()
+    {
+        if (displayLink == nullptr)
+            displayLink = makeOwned<Threads::DisplayLink>(
+                [this](Threads::FrameTime time)
+                {
+                    view.update(time);
+                    view.renderNow();
+                });
+    }
+
+    void stopContinuous() { displayLink = nullptr; }
+
+    GPUView& view;
+    detail::SurfaceHost host;
+
+    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+    Vector<VulkanTexture> backBuffers;
+    VulkanTexture msaaTarget;
+    VulkanTexture depthTarget;
+
+    Vector<VkSemaphore> acquireSemaphores;
+    Vector<VkSemaphore> renderSemaphores;
+    Vector<std::uint64_t> frameValues;
+    int frameSlot = 0;
+
     int sampleCount = 4;
-    bool depthEnabled = false;
-    bool continuous = false;
     int framesInFlight = 3;
+    bool continuous = false;
+    bool depthEnabled = false;
+    float backingScale = 0.f;
+    int pixelWidth = 0;
+    int pixelHeight = 0;
+
+    OwningPointer<Threads::DisplayLink> displayLink;
 };
 
 GPUView::GPUView()
-    : impl()
+    : impl(*this)
 {
 }
 
@@ -117,6 +418,7 @@ void GPUView::setSampleCount(int count)
 void GPUView::setDepth(bool enabled)
 {
     impl->depthEnabled = enabled;
+    impl->updateSize();
 }
 
 bool GPUView::hasDepth() const
@@ -126,10 +428,12 @@ bool GPUView::hasDepth() const
 
 void GPUView::setContinuous(bool continuous)
 {
-    // Recorded but inert: continuous mode is driven by a display link against a
-    // swapchain, and this backend has neither. Off-screen rendering is on
-    // demand by definition.
     impl->continuous = continuous;
+
+    if (continuous)
+        impl->startContinuous();
+    else
+        impl->stopContinuous();
 }
 
 bool GPUView::isContinuous() const
@@ -139,7 +443,8 @@ bool GPUView::isContinuous() const
 
 void GPUView::setFramesInFlight(int count)
 {
-    impl->framesInFlight = std::max(1, count);
+    // Two is the floor: one would leave the GPU idle waiting on the display.
+    impl->framesInFlight = std::clamp(count, 2, 3);
 }
 
 int GPUView::framesInFlight() const
@@ -149,18 +454,43 @@ int GPUView::framesInFlight() const
 
 float GPUView::backingScale() const
 {
-    // No layer or swapchain to ask. Callers wanting a real snapshot scale pass
-    // it to renderToImage explicitly, which is what the tests do.
-    return 1.f;
+    if (impl->backingScale > 0.f)
+        return impl->backingScale;
+
+    return detail::surfaceBackingScale(const_cast<GPUView&>(*this));
 }
 
-void GPUView::resized() {}
+void GPUView::resized()
+{
+    Graphics::View::resized();
+    impl->updateSize();
 
-void GPUView::backingScaleChanged() {}
+    // Draw at the new size within the layout pass rather than waiting for the
+    // display link, so a live resize does not lag behind the window.
+    renderNow();
+}
 
-void GPUView::paint(Graphics::Context&) {}
+void GPUView::backingScaleChanged()
+{
+    Graphics::View::backingScaleChanged();
+    impl->updateSize();
+    renderNow();
+}
 
-void GPUView::renderNow() {}
+void GPUView::paint(Graphics::Context& context)
+{
+    // A snapshot captures GPU content via renderNativeContent; presenting a live
+    // frame here would be a side effect of taking a picture.
+    if (context.isSnapshot())
+        return;
+
+    renderNow();
+}
+
+void GPUView::renderNow()
+{
+    impl->present();
+}
 
 Graphics::Image GPUView::renderNativeContent(float scale)
 {
@@ -178,20 +508,18 @@ Graphics::Image GPUView::renderNativeContent(float scale)
 
     auto samples = impl->sampleCount;
 
-    auto colorTexture =
-        makeTarget(pixelWidth, pixelHeight, VK_FORMAT_B8G8R8A8_UNORM, 1);
+    auto colorTexture = makeTarget(pixelWidth, pixelHeight, swapchainFormat, 1);
 
     if (colorTexture.image == VK_NULL_HANDLE)
         return {};
 
     auto msaaTexture =
-        samples > 1
-            ? makeTarget(pixelWidth, pixelHeight, VK_FORMAT_B8G8R8A8_UNORM, samples)
-            : VulkanTexture {};
+        samples > 1 ? makeTarget(pixelWidth, pixelHeight, swapchainFormat, samples)
+                    : VulkanTexture {};
 
     auto depthTexture =
         impl->depthEnabled
-            ? makeTarget(pixelWidth, pixelHeight, VK_FORMAT_D32_SFLOAT, samples)
+            ? makeTarget(pixelWidth, pixelHeight, depthFormat, samples)
             : VulkanTexture {};
 
     {

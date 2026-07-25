@@ -39,6 +39,20 @@ if (EACP_GPU_BACKEND STREQUAL "Vulkan")
             View/GPUView-Vulkan.cpp
             Vulkan/VulkanContext-Vulkan.cpp)
     target_link_libraries(eacp-gpu PRIVATE Vulkan::Vulkan)
+
+    # Presentation is the one part that cannot be portable: a surface comes from
+    # a CAMetalLayer here, an HWND on Win32, a wl_surface or X11 window on Linux.
+    # Confined to this file behind the GPUViewSurface-Vulkan.h seam.
+    if (APPLE)
+        target_sources(eacp-gpu PRIVATE
+                View/GPUView-VulkanApple.mm
+                View/GPUView-macOS.mm)
+        target_link_libraries(eacp-gpu PRIVATE
+                "-framework Cocoa"
+                "-framework Foundation"
+                "-framework Metal"
+                "-framework QuartzCore")
+    endif ()
 elseif (APPLE)
     # The Metal backend is shared across macOS and iOS (the -Apple files); only
     # GPUView's backing-scale lookup is platform-specific.

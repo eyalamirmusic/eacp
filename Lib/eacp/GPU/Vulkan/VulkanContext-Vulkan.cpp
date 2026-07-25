@@ -50,7 +50,8 @@ Vector<VkExtensionProperties> deviceExtensions(VkPhysicalDevice physicalDevice)
 VulkanContext::VulkanContext()
 {
     if (!createInstance() || !pickPhysicalDevice() || !createDevice()
-        || !createTimeline() || !createCommandPool())
+        || !createTimeline() || !createCommandPool() || !createSamplers()
+        || !createDescriptorLayout())
     {
         destroyAll();
         LOG("Vulkan: no usable device; the GPU module will report invalid");
@@ -78,6 +79,12 @@ bool VulkanContext::createInstance()
         names.add("VK_KHR_portability_enumeration");
         names.add("VK_KHR_get_physical_device_properties2");
     }
+
+    // Presentation. Absent on a headless driver, where the off-screen path is
+    // all there is and a GPUView simply never builds a swapchain.
+    for (const auto* surfaceExtension: {"VK_KHR_surface", "VK_EXT_metal_surface"})
+        if (hasExtension(available, surfaceExtension))
+            names.add(surfaceExtension);
 
     auto application = VkApplicationInfo {VK_STRUCTURE_TYPE_APPLICATION_INFO};
     application.pApplicationName = "eacp";
@@ -161,6 +168,12 @@ bool VulkanContext::createDevice()
     if (hasExtension(available, "VK_KHR_portability_subset"))
         names.add("VK_KHR_portability_subset");
 
+    if (hasExtension(available, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
+    {
+        names.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+        presentationSupported = true;
+    }
+
     if (!hasExtension(available, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME))
     {
         LOG("Vulkan: device lacks VK_KHR_dynamic_rendering");
@@ -229,6 +242,116 @@ bool VulkanContext::createCommandPool()
     return vkCreateCommandPool(device, &info, nullptr, &commandPool) == VK_SUCCESS;
 }
 
+bool VulkanContext::createSamplers()
+{
+    for (auto configuration = 0; configuration < samplingConfigurations;
+         ++configuration)
+    {
+        // samplingIndex() packs the filter into bit 1 and the address mode into
+        // bit 0; this unpacks the same encoding, so a shader's declared
+        // sampling and the sampler it lands on cannot drift apart.
+        auto linear = (configuration & 2) != 0;
+        auto repeat = (configuration & 1) != 0;
+
+        auto address = repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT
+                              : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+
+        auto info = VkSamplerCreateInfo {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        info.magFilter = linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+        info.minFilter = info.magFilter;
+        info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        info.addressModeU = address;
+        info.addressModeV = address;
+        info.addressModeW = address;
+        info.maxLod = VK_LOD_CLAMP_NONE;
+        info.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+
+        if (vkCreateSampler(device, &info, nullptr, &samplers[configuration])
+            != VK_SUCCESS)
+            return false;
+    }
+
+    return true;
+}
+
+bool VulkanContext::createDescriptorLayout()
+{
+    constexpr auto bindingCount = maxTextureSlots * samplingConfigurations;
+
+    auto bindings = Vector<VkDescriptorSetLayoutBinding> {};
+
+    for (auto i = 0; i < bindingCount; ++i)
+    {
+        auto binding = VkDescriptorSetLayoutBinding {};
+        binding.binding = static_cast<std::uint32_t>(i);
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        binding.descriptorCount = 1;
+        binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        binding.pImmutableSamplers = &samplers[i % samplingConfigurations];
+        bindings.add(binding);
+    }
+
+    auto layoutInfo = VkDescriptorSetLayoutCreateInfo {
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    layoutInfo.bindingCount = bindingCount;
+    layoutInfo.pBindings = &bindings[0];
+
+    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &textureSetLayout)
+        != VK_SUCCESS)
+        return false;
+
+    auto range = VkPushConstantRange {};
+    range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    range.offset = 0;
+    range.size = pushConstantLimit;
+
+    auto pipelineInfo =
+        VkPipelineLayoutCreateInfo {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pipelineInfo.setLayoutCount = 1;
+    pipelineInfo.pSetLayouts = &textureSetLayout;
+    pipelineInfo.pushConstantRangeCount = 1;
+    pipelineInfo.pPushConstantRanges = &range;
+
+    if (vkCreatePipelineLayout(device, &pipelineInfo, nullptr, &renderPipelineLayout)
+        != VK_SUCCESS)
+        return false;
+
+    auto size = VkDescriptorPoolSize {};
+    size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    size.descriptorCount = bindingCount * 256;
+
+    auto poolInfo =
+        VkDescriptorPoolCreateInfo {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    poolInfo.maxSets = 256;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &size;
+
+    return vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool)
+           == VK_SUCCESS;
+}
+
+VkDescriptorSet VulkanContext::acquireTextureSet(CommandContext& commands)
+{
+    if (!isValid())
+        return VK_NULL_HANDLE;
+
+    auto info =
+        VkDescriptorSetAllocateInfo {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    info.descriptorPool = descriptorPool;
+    info.descriptorSetCount = 1;
+    info.pSetLayouts = &textureSetLayout;
+
+    auto set = VkDescriptorSet {VK_NULL_HANDLE};
+
+    if (vkAllocateDescriptorSets(device, &info, &set) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+
+    commands.descriptorSets.add(set);
+
+    return set;
+}
+
 CommandContext* VulkanContext::acquire()
 {
     if (!isValid())
@@ -271,8 +394,16 @@ CommandContext* VulkanContext::acquire()
         vkFreeMemory(device, commands->transientMemory[i], nullptr);
     }
 
+    if (commands->descriptorSets.size() > 0)
+        vkFreeDescriptorSets(
+            device,
+            descriptorPool,
+            static_cast<std::uint32_t>(commands->descriptorSets.size()),
+            &commands->descriptorSets[0]);
+
     commands->transientBuffers.clear();
     commands->transientMemory.clear();
+    commands->descriptorSets.clear();
     commands->recordingId = ++recordingCounter;
 
     vkResetCommandBuffer(commands->list, 0);
@@ -287,6 +418,13 @@ CommandContext* VulkanContext::acquire()
 
 std::uint64_t VulkanContext::submit(CommandContext* commands)
 {
+    return submit(commands, VK_NULL_HANDLE, VK_NULL_HANDLE);
+}
+
+std::uint64_t VulkanContext::submit(CommandContext* commands,
+                                    VkSemaphore waitFirst,
+                                    VkSemaphore signalWhenDone)
+{
     if (commands == nullptr || !isValid())
         return 0;
 
@@ -294,17 +432,37 @@ std::uint64_t VulkanContext::submit(CommandContext* commands)
 
     auto signalValue = nextTimelineValue++;
 
+    // The timeline always signals, so resource lifetime tracking works the same
+    // whether or not a swapchain is involved; a presenting submit adds a binary
+    // semaphore beside it for the present to wait on. Binary semaphores ignore
+    // their value entry, but the two arrays must still line up.
+    auto signalSemaphores = Array<VkSemaphore, 2> {timeline, signalWhenDone};
+    auto signalValues = Array<std::uint64_t, 2> {signalValue, 0};
+    auto waitValue = std::uint64_t {0};
+    auto waitStage =
+        VkPipelineStageFlags {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+
     auto timelineInfo = VkTimelineSemaphoreSubmitInfo {
         VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
-    timelineInfo.signalSemaphoreValueCount = 1;
-    timelineInfo.pSignalSemaphoreValues = &signalValue;
+    timelineInfo.signalSemaphoreValueCount =
+        signalWhenDone != VK_NULL_HANDLE ? 2u : 1u;
+    timelineInfo.pSignalSemaphoreValues = signalValues.data();
 
     auto info = VkSubmitInfo {VK_STRUCTURE_TYPE_SUBMIT_INFO};
     info.pNext = &timelineInfo;
     info.commandBufferCount = 1;
     info.pCommandBuffers = &commands->list;
-    info.signalSemaphoreCount = 1;
-    info.pSignalSemaphores = &timeline;
+    info.signalSemaphoreCount = timelineInfo.signalSemaphoreValueCount;
+    info.pSignalSemaphores = signalSemaphores.data();
+
+    if (waitFirst != VK_NULL_HANDLE)
+    {
+        timelineInfo.waitSemaphoreValueCount = 1;
+        timelineInfo.pWaitSemaphoreValues = &waitValue;
+        info.waitSemaphoreCount = 1;
+        info.pWaitSemaphores = &waitFirst;
+        info.pWaitDstStageMask = &waitStage;
+    }
 
     if (vkQueueSubmit(queue, 1, &info, VK_NULL_HANDLE) != VK_SUCCESS)
     {
@@ -317,6 +475,16 @@ std::uint64_t VulkanContext::submit(CommandContext* commands)
     available.add(commands);
 
     return signalValue;
+}
+
+VkSemaphore VulkanContext::makeSemaphore()
+{
+    auto info = VkSemaphoreCreateInfo {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+
+    auto semaphore = VkSemaphore {VK_NULL_HANDLE};
+    vkCreateSemaphore(device, &info, nullptr, &semaphore);
+
+    return semaphore;
 }
 
 void VulkanContext::discard(CommandContext* commands)
@@ -591,6 +759,19 @@ void VulkanContext::destroyAll()
         pool.clear();
         available.clear();
 
+        if (descriptorPool != VK_NULL_HANDLE)
+            vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+
+        if (renderPipelineLayout != VK_NULL_HANDLE)
+            vkDestroyPipelineLayout(device, renderPipelineLayout, nullptr);
+
+        if (textureSetLayout != VK_NULL_HANDLE)
+            vkDestroyDescriptorSetLayout(device, textureSetLayout, nullptr);
+
+        for (auto& sampler: samplers)
+            if (sampler != VK_NULL_HANDLE)
+                vkDestroySampler(device, sampler, nullptr);
+
         if (commandPool != VK_NULL_HANDLE)
             vkDestroyCommandPool(device, commandPool, nullptr);
 
@@ -605,6 +786,13 @@ void VulkanContext::destroyAll()
 
     commandPool = VK_NULL_HANDLE;
     timeline = VK_NULL_HANDLE;
+    descriptorPool = VK_NULL_HANDLE;
+    renderPipelineLayout = VK_NULL_HANDLE;
+    textureSetLayout = VK_NULL_HANDLE;
+
+    for (auto& sampler: samplers)
+        sampler = VK_NULL_HANDLE;
+
     device = VK_NULL_HANDLE;
     physicalDevice = VK_NULL_HANDLE;
     queue = VK_NULL_HANDLE;

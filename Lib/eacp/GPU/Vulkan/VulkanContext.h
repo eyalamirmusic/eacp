@@ -2,6 +2,8 @@
 
 #include <eacp/Core/Utils/Containers.h>
 
+#include "../Texture/Texture.h"
+
 #include <vulkan/vulkan.h>
 
 #include <cstddef>
@@ -32,6 +34,7 @@ struct CommandContext
 
     Vector<VkBuffer> transientBuffers;
     Vector<VkDeviceMemory> transientMemory;
+    Vector<VkDescriptorSet> descriptorSets;
 };
 
 // A device allocation paired with the object it backs. Vulkan has no committed-
@@ -42,6 +45,12 @@ struct Allocation
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkDeviceSize bytes = 0;
 };
+
+// How many texture slots a shader may declare. Each one occupies
+// samplingConfigurations consecutive bindings, so that the sampling a shader
+// declared picks a binding rather than being bound per draw -- the arrangement
+// D3D12 reaches with static samplers in its root signature. See TextureSampling.
+constexpr int maxTextureSlots = 4;
 
 class VulkanContext
 {
@@ -75,6 +84,20 @@ public:
     // Ends and submits the recording, signals the timeline and recycles the
     // context. Returns the value that completes when the GPU finishes.
     std::uint64_t submit(CommandContext* commands);
+
+    // Presenting sibling: waits on the swapchain's acquire semaphore before the
+    // colour attachment stage, and signals one the present can wait on.
+    std::uint64_t submit(CommandContext* commands,
+                         VkSemaphore waitFirst,
+                         VkSemaphore signalWhenDone);
+
+    // A binary semaphore for swapchain acquire/present handoff. Owned by the
+    // caller, which is the view that built the swapchain.
+    VkSemaphore makeSemaphore();
+
+    // Whether the device offers VK_KHR_swapchain. False on a headless driver,
+    // where a GPUView renders off-screen and never presents.
+    bool canPresent() const { return presentationSupported; }
 
     // Recycles a recording that should never reach the GPU.
     void discard(CommandContext* commands);
@@ -110,12 +133,22 @@ public:
     void beginRendering(VkCommandBuffer list, const VkRenderingInfoKHR& info) const;
     void endRendering(VkCommandBuffer list) const;
 
+    // One layout shared by every render pipeline, so a descriptor set stays
+    // bound across a pipeline change instead of being invalidated by it.
+    VkPipelineLayout getRenderPipelineLayout() const { return renderPipelineLayout; }
+
+    // A texture descriptor set for one draw, freed with the recording it was
+    // allocated against. Returns null when the pool is exhausted.
+    VkDescriptorSet acquireTextureSet(CommandContext& commands);
+
 private:
     bool createInstance();
     bool pickPhysicalDevice();
     bool createDevice();
     bool createCommandPool();
     bool createTimeline();
+    bool createSamplers();
+    bool createDescriptorLayout();
     void purgeRetired();
     void destroyAll();
 
@@ -126,9 +159,17 @@ private:
     std::uint32_t queueFamily = 0;
     VkPhysicalDeviceMemoryProperties memoryProperties = {};
     std::uint32_t pushConstantLimit = 128;
+    bool presentationSupported = false;
 
     VkCommandPool commandPool = VK_NULL_HANDLE;
     VkSemaphore timeline = VK_NULL_HANDLE;
+
+    // One immutable sampler per sampling configuration, baked into the set
+    // layout so a binding carries its sampler and a draw never picks one.
+    VkSampler samplers[samplingConfigurations] = {};
+    VkDescriptorSetLayout textureSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout renderPipelineLayout = VK_NULL_HANDLE;
+    VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
     std::uint64_t nextTimelineValue = 1;
     std::uint64_t lastSubmittedValue = 0;
     std::uint64_t recordingCounter = 0;

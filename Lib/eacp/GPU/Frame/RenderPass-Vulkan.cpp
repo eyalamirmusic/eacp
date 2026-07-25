@@ -55,6 +55,73 @@ struct RenderPass::Native
         vkCmdSetScissor(target->list, 0, 1, &scissor);
     }
 
+    // Writes the textures bound since the last draw into a fresh descriptor set
+    // and binds it. Only the bindings actually used are written: Vulkan requires
+    // a valid descriptor for what the shader statically reads, and a shader
+    // reads exactly the (slot, sampling) binding its declaration named.
+    void flushTextures()
+    {
+        if (target == nullptr || !texturesDirty)
+            return;
+
+        texturesDirty = false;
+
+        auto& context = getVulkanContext();
+        auto set = context.acquireTextureSet(*target->commands);
+
+        if (set == VK_NULL_HANDLE)
+            return;
+
+        auto images = Vector<VkDescriptorImageInfo> {};
+        auto writes = Vector<VkWriteDescriptorSet> {};
+
+        for (auto i = 0; i < bindingCount; ++i)
+        {
+            if (boundViews[i] == VK_NULL_HANDLE)
+                continue;
+
+            auto image = VkDescriptorImageInfo {};
+            image.imageView = boundViews[i];
+            image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            images.add(image);
+        }
+
+        auto cursor = 0;
+
+        for (auto i = 0; i < bindingCount; ++i)
+        {
+            if (boundViews[i] == VK_NULL_HANDLE)
+                continue;
+
+            auto write =
+                VkWriteDescriptorSet {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = set;
+            write.dstBinding = static_cast<std::uint32_t>(i);
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.pImageInfo = &images[cursor++];
+            writes.add(write);
+        }
+
+        if (writes.size() == 0)
+            return;
+
+        vkUpdateDescriptorSets(context.getDevice(),
+                               static_cast<std::uint32_t>(writes.size()),
+                               &writes[0],
+                               0,
+                               nullptr);
+
+        vkCmdBindDescriptorSets(target->list,
+                                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                context.getRenderPipelineLayout(),
+                                0,
+                                1,
+                                &set,
+                                0,
+                                nullptr);
+    }
+
     void push(const void* data, std::size_t bytes)
     {
         if (target == nullptr || bound == nullptr || data == nullptr)
@@ -71,8 +138,12 @@ struct RenderPass::Native
                            data);
     }
 
+    static constexpr int bindingCount = maxTextureSlots * samplingConfigurations;
+
     VulkanRenderTarget* target = nullptr;
     VulkanPipeline* bound = nullptr;
+    VkImageView boundViews[bindingCount] = {};
+    bool texturesDirty = false;
     int width = 0;
     int height = 0;
     bool ended = false;
@@ -127,12 +198,22 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
                            &offset);
 }
 
-void RenderPass::setFragmentTexture(const Texture&, int, TextureSampling)
+void RenderPass::setFragmentTexture(const Texture& texture,
+                                    int slot,
+                                    TextureSampling sampling)
 {
-    // Not wired yet: this backend has no descriptor-set plumbing, so a sampled
-    // texture cannot be bound. Deliberately left as a visible gap rather than a
-    // silent no-op that would make texture tests fail as wrong colours instead
-    // of as missing work.
+    if (impl->target == nullptr || !texture.isValid() || slot < 0
+        || slot >= maxTextureSlots)
+        return;
+
+    // The binding encodes the sampling, so the shader's declaration decides
+    // which sampler the texture is read through. Mirrors the register the HLSL
+    // emitter picks for the same shader. See TextureSampling.
+    auto binding = slot * samplingConfigurations + samplingIndex(sampling);
+    auto* native = static_cast<VulkanTexture*>(texture.nativeTexture());
+
+    impl->boundViews[binding] = native->view;
+    impl->texturesDirty = true;
 }
 
 void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
@@ -164,6 +245,8 @@ void RenderPass::drawInstanced(int vertexCount,
     if (impl->target == nullptr || impl->bound == nullptr)
         return;
 
+    impl->flushTextures();
+
     vkCmdDraw(impl->target->list,
               static_cast<std::uint32_t>(vertexCount),
               static_cast<std::uint32_t>(instanceCount),
@@ -188,6 +271,8 @@ void RenderPass::drawIndexedInstanced(const Buffer& indices,
 {
     if (impl->target == nullptr || impl->bound == nullptr || !indices.isValid())
         return;
+
+    impl->flushTextures();
 
     auto* native = static_cast<VulkanBuffer*>(indices.nativeBuffer());
 

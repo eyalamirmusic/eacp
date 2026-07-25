@@ -13,10 +13,14 @@ void transitionImage(VkCommandBuffer list,
 
 struct Frame::Native
 {
-    explicit Native(const OffscreenTarget& target)
-        : color(static_cast<VulkanTexture*>(target.colorTexture))
-        , msaa(static_cast<VulkanTexture*>(target.msaaTexture))
-        , depth(static_cast<VulkanTexture*>(target.depthTexture))
+    Native(VulkanDrawable* drawableToUse,
+           VulkanTexture* colorToUse,
+           VulkanTexture* msaaToUse,
+           VulkanTexture* depthToUse)
+        : drawable(drawableToUse)
+        , color(colorToUse)
+        , msaa(msaaToUse)
+        , depth(depthToUse)
     {
         auto& context = getVulkanContext();
 
@@ -29,6 +33,7 @@ struct Frame::Native
             return;
 
         renderTarget.list = commands->list;
+        renderTarget.commands = commands;
         renderTarget.width = color->width;
         renderTarget.height = color->height;
 
@@ -47,14 +52,33 @@ struct Frame::Native
         if (commands == nullptr || !context.isValid())
             return;
 
-        // Off-screen frames never present: they leave the colour image ready to
-        // be copied out and block until the GPU is done, so the caller can read
-        // the pixels back straight away.
-        transitionImage(
-            commands->list, *color, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-        context.waitFor(context.submit(commands));
+        if (drawable == nullptr)
+        {
+            // Off-screen frames never present: they leave the colour image ready
+            // to be copied out and block until the GPU is done, so the caller can
+            // read the pixels back straight away.
+            transitionImage(
+                commands->list, *color, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            context.waitFor(context.submit(commands));
+            return;
+        }
+
+        // On-screen: hand the image to the presentation engine, and gate the
+        // present on the render finishing rather than blocking the CPU on it.
+        transitionImage(commands->list, *color, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        context.submit(commands, drawable->acquired, drawable->rendered);
+
+        auto info = VkPresentInfoKHR {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+        info.waitSemaphoreCount = 1;
+        info.pWaitSemaphores = &drawable->rendered;
+        info.swapchainCount = 1;
+        info.pSwapchains = &drawable->swapchain;
+        info.pImageIndices = &drawable->imageIndex;
+
+        vkQueuePresentKHR(context.getQueue(), &info);
     }
 
+    VulkanDrawable* drawable = nullptr;
     VulkanTexture* color = nullptr;
     VulkanTexture* msaa = nullptr;
     VulkanTexture* depth = nullptr;
@@ -62,17 +86,20 @@ struct Frame::Native
     VulkanRenderTarget renderTarget;
 };
 
-Frame::Frame(Device&, void*, void*, void*)
-    : impl(OffscreenTarget {})
+Frame::Frame(Device&, void* drawable, void* msaaTexture, void* depthTexture)
+    : impl(static_cast<VulkanDrawable*>(drawable),
+           drawable != nullptr ? static_cast<VulkanDrawable*>(drawable)->image
+                               : nullptr,
+           static_cast<VulkanTexture*>(msaaTexture),
+           static_cast<VulkanTexture*>(depthTexture))
 {
-    // The on-screen path needs a swapchain, which this backend does not build
-    // yet: presentation on Apple means a VK_EXT_metal_surface over the view's
-    // CAMetalLayer, and on Windows an external-memory hop into a composition
-    // swapchain. Off-screen rendering (View::renderToImage) is unaffected.
 }
 
 Frame::Frame(Device&, const OffscreenTarget& target)
-    : impl(target)
+    : impl(nullptr,
+           static_cast<VulkanTexture*>(target.colorTexture),
+           static_cast<VulkanTexture*>(target.msaaTexture),
+           static_cast<VulkanTexture*>(target.depthTexture))
 {
 }
 
