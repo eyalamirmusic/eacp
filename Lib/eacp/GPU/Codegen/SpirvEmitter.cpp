@@ -462,6 +462,13 @@ int swizzleIndex(char component)
 // which is the SSA equivalent of the text emitter's tN locals.
 struct StageEmitter
 {
+    StageEmitter(const ShaderGraph& graphToUse, Module& moduleToUse, int nodeCount)
+        : graph(graphToUse)
+        , module(moduleToUse)
+        , ids(static_cast<std::size_t>(nodeCount), 0)
+    {
+    }
+
     std::uint32_t emit(int node)
     {
         if (node < 0)
@@ -854,15 +861,12 @@ Vector<std::uint32_t> emitSpirv(const ShaderGraph& graph)
 
     writeInstruction(module.executionModes, OpExecutionMode, {fragmentFunction, 7});
 
-    auto nodeCount = static_cast<std::size_t>(graph.nodeCount());
-
     {
         writeInstruction(
             module.code, OpFunction, {voidType, vertexFunction, 0, functionType});
         writeInstruction(module.code, OpLabel, {module.id()});
 
-        auto stage =
-            StageEmitter {graph, module, std::vector<std::uint32_t>(nodeCount, 0)};
+        auto stage = StageEmitter {graph, module, graph.nodeCount()};
         stage.inputs = inputVariables;
         stage.uniformBlock = uniformVariable;
         stage.sampledImageType = sampledImageType;
@@ -885,8 +889,7 @@ Vector<std::uint32_t> emitSpirv(const ShaderGraph& graph)
             module.code, OpFunction, {voidType, fragmentFunction, 0, functionType});
         writeInstruction(module.code, OpLabel, {module.id()});
 
-        auto stage =
-            StageEmitter {graph, module, std::vector<std::uint32_t>(nodeCount, 0)};
+        auto stage = StageEmitter {graph, module, graph.nodeCount()};
         stage.varyings = varyingInputs;
         stage.textures = textureVariables;
         stage.uniformBlock = uniformVariable;

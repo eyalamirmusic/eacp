@@ -59,8 +59,7 @@ SurfaceHost createSurfaceHost(GPUView& view, VkInstance instance)
 
     [base addSublayer:layer];
 
-    auto info = VkMetalSurfaceCreateInfoEXT {
-        VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT};
+    auto info = VkMetalSurfaceCreateInfoEXT {.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT};
     info.pLayer = layer;
 
     auto host = SurfaceHost {};

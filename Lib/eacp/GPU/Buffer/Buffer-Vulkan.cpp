@@ -39,7 +39,8 @@ struct Buffer::Native
         if (!context.isValid() || bytes == 0)
             return;
 
-        auto info = VkBufferCreateInfo {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        auto info =
+            VkBufferCreateInfo {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         info.size = bytes;
         info.usage = usageFlags(usage);
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;

@@ -37,7 +37,8 @@ void transitionImage(VkCommandBuffer list,
     if (texture.layout == target)
         return;
 
-    auto barrier = VkImageMemoryBarrier {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    auto barrier =
+        VkImageMemoryBarrier {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.oldLayout = texture.layout;
     barrier.newLayout = target;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -114,7 +115,7 @@ struct Texture::Native
         texture.height = descriptor.height;
         bytesPerPixelValue = bytesPerPixel(descriptor.format);
 
-        auto info = VkImageCreateInfo {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        auto info = VkImageCreateInfo {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         info.imageType = VK_IMAGE_TYPE_2D;
         info.format = texture.format;
         info.extent = {static_cast<std::uint32_t>(descriptor.width),
@@ -146,8 +147,8 @@ struct Texture::Native
 
         texture.memory = allocation.memory;
 
-        auto viewInfo =
-            VkImageViewCreateInfo {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        auto viewInfo = VkImageViewCreateInfo {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         viewInfo.image = texture.image;
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.format = texture.format;
