@@ -578,6 +578,157 @@ auto tCodegenIntrinsicNames = test("GPU/codegenIntrinsicNames") = []
     check(!contains(hlsl, "mix("));
 };
 
+// The transcendental, rounding and geometric intrinsics all spell identically
+// in both backends; only the screen-space derivatives differ, dfdx/dfdy against
+// HLSL's ddx/ddy. Pure string generation.
+auto tCodegenTranscendentalNames = test("GPU/codegenTranscendentalNames") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto normal = builder.vertexInput<Float3>();
+    auto carried = builder.varying(normal);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto angle = atan2(carried.y(), carried.x());
+    auto swept = tan(asin(acos(atan(angle))));
+    auto falloff = exp(-log(exp2(log2(swept))) * rsqrt(sign(swept) + 2.0f));
+    auto edged = ceil(trunc(round(falloff))) + fwidth(falloff) + dfdx(falloff)
+                 + dfdy(falloff);
+    auto bounced = reflect(carried, normalize(carried))
+                   + refract(carried, normalize(carried), 0.5f)
+                   + faceforward(carried, carried, carried);
+
+    builder.fragment(float4(bounced * edged, distance(carried, bounced)));
+
+    auto metal = emitMetal(builder.graph());
+
+    for (const auto* name:
+         {"atan2(",   "tan(",     "asin(",        "acos(",   "exp(",
+          "exp2(",    "log(",     "log2(",        "rsqrt(",  "sign(",
+          "ceil(",    "trunc(",   "round(",       "fwidth(", "distance(",
+          "reflect(", "refract(", "faceforward(", "dfdx(",   "dfdy("})
+        check(contains(metal, name));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "ddx("));
+    check(contains(hlsl, "ddy("));
+    check(!contains(hlsl, "dfdx("));
+    check(!contains(hlsl, "dfdy("));
+};
+
+// mod() is the floored modulus, recorded as x - y * floor(x / y) rather than as
+// a call: the only modulus either backend offers is fmod(), which truncates, so
+// every tile left of the origin would come out mirrored. Pure string
+// generation.
+auto tCodegenFlooredModulus = test("GPU/codegenFlooredModulus") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto scale = builder.uniform<Float>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(float4(mod(carried, 2.0f), mod(carried.x(), scale), 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+
+    check(contains(metal, "floor("));
+    check(!contains(metal, "mod("));
+
+    // The divisor scales the floored quotient before it is subtracted, and the
+    // operand order is kept: neither half of this commutes.
+    check(contains(metal, " - (2.0 * floor("));
+    check(contains(metal, " / 2.0)"));
+};
+
+// Every ordering of two and three components has an accessor, so a coordinate
+// swap is one Swizzle node rather than a constructor over rebuilt parts. Both
+// backends spell the components identically. Pure string generation.
+auto tCodegenSwizzleOrderings = test("GPU/codegenSwizzleOrderings") = []
+{
+    // An accessor is constrained to the widths that can name its components:
+    // .zw belongs to a Float4 and is no part of a Float2, while .xxy widens a
+    // Float2 the way the shading languages do. The rule is asserted rather than
+    // probed with requires() - an unsatisfied constraint on a plain member
+    // function is a hard error at the call, which is the diagnostic wanted, but
+    // it leaves nothing for a requires-expression to fold to false.
+    static_assert(detail::spellableAt(4, "zw"));
+    static_assert(detail::spellableAt(2, "yx"));
+    static_assert(detail::spellableAt(2, "xxy"));
+    static_assert(detail::spellableAt(4, "zyxw"));
+    static_assert(!detail::spellableAt(2, "zw"));
+    static_assert(!detail::spellableAt(2, "xyz"));
+    static_assert(!detail::spellableAt(3, "xyw"));
+
+    static_assert(requires(Float4 value) { value.zw(); });
+    static_assert(requires(Float2 value) { value.yx(); });
+    static_assert(requires(Float2 value) { value.xxy(); });
+    static_assert(requires(Float4 value) { value.zyxw(); });
+
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto color = builder.vertexInput<Float4>();
+    auto carried = builder.varying(color);
+
+    builder.position(float4(position.yx(), 0.0f, 1.0f));
+    builder.fragment(float4(carried.zyx() + carried.wzy(), carried.zw().y())
+                     + carried.zyxw());
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, ").yx"));
+    check(contains(metal, ").zyx"));
+    check(contains(metal, ").wzy"));
+    check(contains(metal, ").zw"));
+    check(contains(metal, ").zyxw"));
+
+    // A four-component swizzle is one node: the source is read once, not
+    // rebuilt from four extracted components.
+    check(countOccurrences(metal, "input.v0") == 4);
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, ").zyx"));
+    check(contains(hlsl, ").zyxw"));
+};
+
+// The 2x2 and 3x3 matrices follow the 4x4 in every respect that matters: built
+// from columns, multiplied with the * operator on MSL and mul() on HLSL, and
+// transposed at construction on HLSL, which fills a matrix from rows. Pure
+// string generation.
+auto tCodegenSmallMatrices = test("GPU/codegenSmallMatrices") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto normal = builder.vertexInput<Float3>();
+    auto angle = builder.uniform<Float>();
+
+    auto rotation =
+        float2x2(float2(cos(angle), sin(angle)), float2(-sin(angle), cos(angle)));
+
+    builder.position(float4(rotation * position, 0.0f, 1.0f));
+
+    auto basis = float3x3(builder.varying(normal),
+                          float3(0.0f, 1.0f, builder.constant(0.0f)),
+                          float3(0.0f, builder.constant(0.0f), 1.0f));
+
+    builder.fragment(float4(basis * (basis * builder.varying(normal)), 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "float2x2("));
+    check(contains(metal, "float3x3("));
+    check(!contains(metal, "transpose("));
+    check(!contains(metal, "mul("));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "transpose(float2x2("));
+    check(contains(hlsl, "transpose(float3x3("));
+    check(contains(hlsl, "mul("));
+};
+
 // Runs the whole vocabulary through the real platform shader compiler, so
 // every intrinsic spelling and broadcast form is validated against the actual
 // language. Self-skips without a GPU device.
@@ -610,6 +761,54 @@ auto tCodegenIntrinsicsCompile = test("GPU/codegenIntrinsicsCompile") = []
     auto grey = max(min(sqrt(length(unit) * soft) * stepped, 1.0f), 0.0f);
     auto biased = unit * 0.5f + 0.5f;
     builder.fragment(float4(biased * grey, 1.0f));
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
+};
+
+// The same for the transcendental, geometric, derivative and swizzle
+// vocabulary. Names alone prove nothing here: an intrinsic this backend spells
+// differently, or a swizzle it will not take, only shows up when the platform
+// compiler reads the source. Self-skips without a GPU device.
+auto tCodegenTranscendentalsCompile = test("GPU/codegenTranscendentalsCompile") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto normal = builder.vertexInput<Float3>();
+    auto eta = builder.uniform<Float>();
+
+    builder.position(float4(position.yx(), 0.0f, 1.0f));
+
+    auto unit = normalize(builder.varying(normal));
+    auto angle = atan2(unit.y(), unit.x());
+    auto swept =
+        tan(clamp(asin(unit.z()) + acos(unit.x()) + atan(angle), -1.0f, 1.0f));
+    auto tiled =
+        mod(swept, 2.0f) + mod(unit, 0.5f).x() + mod(unit.zyx(), unit.xzy()).y();
+    auto curve = exp(-log(exp2(log2(abs(swept) + 1.0f)))) * rsqrt(abs(tiled) + 1.0f);
+    auto edged = fwidth(curve) + dfdx(curve) + dfdy(curve);
+    auto quantised = ceil(curve) + trunc(curve) + round(curve) + sign(curve);
+
+    auto bounced = reflect(unit, unit) + refract(unit, unit, eta)
+                   + faceforward(unit, unit, unit);
+
+    auto grey = clamp(distance(unit, bounced) + edged + quantised, 0.0f, 1.0f);
+    builder.fragment(float4(bounced.zyx() * grey, 1.0f));
 
     auto shader = builder.build();
 

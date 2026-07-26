@@ -55,8 +55,7 @@ public:
     {
         auto value = T {};
         value.graph = &graphData;
-        value.node =
-            graphData.addInstanceInput(ValueTypeOf<T>::value, bufferIndex);
+        value.node = graphData.addInstanceInput(ValueTypeOf<T>::value, bufferIndex);
         return value;
     }
 
@@ -69,9 +68,20 @@ public:
         return value;
     }
 
+    // A per-frame constant. Every value type crosses from the CPU except a
+    // Float2x2 or a Float3x3: MSL and HLSL pack those to different sizes inside
+    // the value itself, so one block of bytes would read back as two different
+    // matrices on the two backends (see UniformLayout.h). Send a Float4x4, or
+    // send the columns as vectors and assemble the matrix in the shader.
     template <typename T>
     T uniform()
     {
+        static_assert(!isMatrix(ValueTypeOf<T>::value)
+                          || ValueTypeOf<T>::value == ValueType::Float4x4,
+                      "Float2x2/Float3x3 cannot be uniforms: MSL and HLSL pack "
+                      "them to different sizes. Use a Float4x4, or pass the "
+                      "columns as vectors and build the matrix in the shader.");
+
         auto value = T {};
         value.graph = &graphData;
         value.node = graphData.addUniform(ValueTypeOf<T>::value);

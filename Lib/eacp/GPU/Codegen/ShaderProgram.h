@@ -263,6 +263,8 @@ inline VertexFormat toVertexFormat(ValueType type)
         case ValueType::Float3:
             return VertexFormat::Float3;
         case ValueType::Float4:
+        case ValueType::Float2x2:
+        case ValueType::Float3x3:
         case ValueType::Float4x4:
         case ValueType::UInt:
             return VertexFormat::Float4; // matrix/uint are never vertex attributes
