@@ -543,6 +543,117 @@ auto tThreadPoolModeAssignsDistinctRemotePorts =
     check(std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end());
 };
 
+namespace
+{
+eacp::TCP::Connection connectRaw(int port)
+{
+    return eacp::TCP::Connection::connect({"127.0.0.1", (std::uint16_t) port});
+}
+
+// Runs stop() on a helper thread and waits for it with a deadline, closing
+// the client socket afterwards so a server wedged in recv() unblocks and the
+// test fails instead of hanging.
+bool stopCompletesWithin(Server& server,
+                         eacp::TCP::Connection& client,
+                         eacp::Time::MS timeout)
+{
+    auto stopFinished = std::atomic<bool> {false};
+    auto stopper = std::thread(
+        [&]
+        {
+            server.stop();
+            stopFinished = true;
+        });
+
+    auto deadline = eacp::Time::Deadline {timeout};
+    while (!stopFinished.load() && !deadline.expired())
+        eacp::Time::sleepMS(10);
+
+    auto completed = stopFinished.load();
+    client.close();
+    stopper.join();
+    return completed;
+}
+} // namespace
+
+auto tStopNotBlockedByIdleConnection =
+    test("HttpServer/stopReturnsPromptlyWithIdleConnectionOpen") = []
+{
+    auto server = Server();
+    check(server.listen(0, [](const Request&) { return Response(); }));
+
+    auto idle = connectRaw(server.boundPort());
+    eacp::Threads::runEventLoopFor(eacp::Time::MS {200}, [] {});
+
+    check(stopCompletesWithin(server, idle, eacp::Time::MS {3000}));
+};
+
+auto tStopNotBlockedByPartialRequest =
+    test("HttpServer/stopReturnsPromptlyWithPartialRequestPending") = []
+{
+    auto server = Server();
+    check(server.listen(0, [](const Request&) { return Response(); }));
+
+    auto client = connectRaw(server.boundPort());
+    client.send("GET /pending HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+    eacp::Threads::runEventLoopFor(eacp::Time::MS {200}, [] {});
+
+    check(stopCompletesWithin(server, client, eacp::Time::MS {3000}));
+};
+
+auto tSlowClientNotDroppedByRecvTimeout =
+    test("HttpServer/slowClientPausingBetweenChunksStillGetsServed") = []
+{
+    auto server = Server();
+    check(server.listen(0,
+                        [](const Request&)
+                        {
+                            auto res = Response();
+                            res.statusCode = 200;
+                            res.content = "slow-ok";
+                            return res;
+                        }));
+    auto port = server.boundPort();
+
+    auto response = std::string();
+    auto worker = std::thread();
+
+    auto stopped = eacp::Threads::runEventLoopFor(
+        eacp::Time::MS {5000},
+        [&]
+        {
+            worker = std::thread(
+                [&]
+                {
+                    try
+                    {
+                        auto client = connectRaw(port);
+                        client.send("GET /slow HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+                        eacp::Time::sleepMS(600);
+                        client.send("Connection: close\r\n\r\n");
+
+                        while (true)
+                        {
+                            auto chunk = client.receive();
+                            if (chunk.empty())
+                                break;
+                            response += chunk;
+                        }
+                    }
+                    catch (const eacp::TCP::Error&)
+                    {
+                    }
+                    callAsync([] { stopEventLoop(); });
+                });
+        });
+
+    worker.join();
+    check(stopped);
+    check(response.rfind("HTTP/1.1 200", 0) == 0);
+    check(response.find("slow-ok") != std::string::npos);
+    server.stop();
+};
+
 using eacp::HTTP::Error;
 using eacp::HTTP::throwError;
 

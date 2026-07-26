@@ -229,11 +229,21 @@ void Server::Impl::handleConnection(int fd,
     auto parser = RequestParser();
     char buf[4096];
 
+    // Receive with a timeout instead of blocking forever: browsers hold idle
+    // speculative connections open, and stop() joins this thread — an
+    // indefinite recv would hang the joiner until the peer gives up.
+    auto timeout = timeval {};
+    timeout.tv_usec = 250 * 1000;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
     while (true)
     {
         auto n = ::recv(fd, buf, sizeof(buf), 0);
         if (n <= 0)
         {
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && running)
+                continue;
+
             ::close(fd);
             return;
         }
