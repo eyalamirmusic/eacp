@@ -11,7 +11,8 @@ target_sources(eacp-video PRIVATE
         SyntheticClip.cpp
         Decode/FrameImage.cpp
         Decode/FrameStream.cpp
-        Decode/Player.cpp)
+        Decode/Player.cpp
+        Demux/Mp4Demuxer.cpp)
 
 if (APPLE)
     target_sources(eacp-video PRIVATE
