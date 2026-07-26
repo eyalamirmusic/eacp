@@ -25,6 +25,10 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
             return DXGI_FORMAT_B8G8R8A8_UNORM;
         case TextureFormat::R8Unorm:
             return DXGI_FORMAT_R8_UNORM;
+        case TextureFormat::RGBA16Float:
+            return DXGI_FORMAT_R16G16B16A16_FLOAT;
+        case TextureFormat::RGBA32Float:
+            return DXGI_FORMAT_R32G32B32A32_FLOAT;
         default:
             return DXGI_FORMAT_R8G8B8A8_UNORM;
     }
@@ -59,9 +63,14 @@ struct Texture::Native
         desc.Format = toDXGIFormat(descriptor.format);
         desc.SampleDesc.Count = 1;
 
+        if (descriptor.renderTarget)
+            desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
         auto initialState = pixels != nullptr
                                 ? D3D12_RESOURCE_STATE_COPY_DEST
                                 : D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+        data.state = initialState;
 
         if (FAILED(context.getDevice()->CreateCommittedResource(
                 &heap,
@@ -90,6 +99,7 @@ struct Texture::Native
     {
         auto& context = getD3D12Context();
         context.freeTextureDescriptor(data.srv);
+        context.deferRelease(std::move(data.rtvHeap));
         context.deferRelease(std::move(data.resource));
     }
 
@@ -161,10 +171,8 @@ struct Texture::Native
                                           0,
                                           &source,
                                           nullptr);
-        transition(commands->list.get(),
-                   data.resource.get(),
-                   D3D12_RESOURCE_STATE_COPY_DEST,
-                   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        transitionTextureForUse(
+            commands->list.get(), data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
         commands->transients.add(std::move(staging));
         return true;
@@ -235,30 +243,65 @@ struct Texture::Native
         if (commands == nullptr)
             return;
 
-        auto sourcePitch =
-            bytesPerRow != 0 ? bytesPerRow
-                             : static_cast<std::size_t>(regionWidth * pixelStride);
+        auto sourcePitch = bytesPerRow != 0
+                               ? bytesPerRow
+                               : static_cast<std::size_t>(regionWidth * pixelStride);
 
-        // The resource rests in PIXEL_SHADER_RESOURCE between frames; move it to
-        // COPY_DEST for the upload, and put it back if staging fails so the next
-        // bind still sees a sampleable resource.
-        transition(commands->list.get(),
-                   data.resource.get(),
-                   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-                   D3D12_RESOURCE_STATE_COPY_DEST);
+        // The resource rests in PIXEL_SHADER_RESOURCE between frames - or in
+        // RENDER_TARGET, if it is one a pass last drew into - so the move to
+        // COPY_DEST goes through the tracked state rather than assuming which.
+        // Staging failing puts it back, so the next bind still sees a sampleable
+        // resource.
+        transitionTextureForUse(
+            commands->list.get(), data, D3D12_RESOURCE_STATE_COPY_DEST);
 
-        if (!copyPixels(
-                context, commands, pixels, sourcePitch, x, y, regionWidth, regionHeight))
-            transition(commands->list.get(),
-                       data.resource.get(),
-                       D3D12_RESOURCE_STATE_COPY_DEST,
-                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        if (!copyPixels(context,
+                        commands,
+                        pixels,
+                        sourcePitch,
+                        x,
+                        y,
+                        regionWidth,
+                        regionHeight))
+            transitionTextureForUse(commands->list.get(),
+                                    data,
+                                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
         context.submit(commands);
     }
 
-    void createDescriptors(D3D12Context& context, const TextureDescriptor&)
+    // A render target's own one-descriptor RTV heap. RTV descriptors are not
+    // shader-visible, so there is no shared heap to take one from the way the
+    // SRV does - and a heap per target is what keeps a texture's descriptor
+    // alive for exactly as long as the texture is.
+    void createRenderTargetView(D3D12Context& context,
+                                const TextureDescriptor& descriptor)
     {
+        D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+        heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        heapDesc.NumDescriptors = 1;
+
+        if (FAILED(context.getDevice()->CreateDescriptorHeap(
+                &heapDesc, __uuidof(ID3D12DescriptorHeap), data.rtvHeap.put_void())))
+            return;
+
+        D3D12_RENDER_TARGET_VIEW_DESC viewDesc = {};
+        viewDesc.Format = toDXGIFormat(descriptor.format);
+        viewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+
+        auto handle = data.rtvHeap->GetCPUDescriptorHandleForHeapStart();
+        context.getDevice()->CreateRenderTargetView(
+            data.resource.get(), &viewDesc, handle);
+
+        data.rtv = handle;
+    }
+
+    void createDescriptors(D3D12Context& context,
+                           const TextureDescriptor& descriptor)
+    {
+        if (descriptor.renderTarget)
+            createRenderTargetView(context, descriptor);
+
         data.srv = context.allocateTextureDescriptor();
 
         if (data.srv.cpu.ptr == 0)
@@ -328,6 +371,11 @@ int Texture::height() const
 bool Texture::isValid() const
 {
     return impl->data.resource != nullptr && impl->data.srv.cpu.ptr != 0;
+}
+
+bool Texture::isRenderTarget() const
+{
+    return isValid() && impl->data.isRenderTarget();
 }
 
 void* Texture::nativeTexture() const

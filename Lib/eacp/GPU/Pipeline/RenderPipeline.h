@@ -2,6 +2,7 @@
 
 #include "../Common.h"
 
+#include "../Texture/Texture.h"
 #include "VertexLayout.h"
 
 namespace eacp::GPU
@@ -9,10 +10,32 @@ namespace eacp::GPU
 class Device;
 class ShaderLibrary;
 
+// The colour attachment a pipeline writes. Separate from TextureFormat because
+// a pipeline usually targets a swapchain drawable, which no Texture stands for
+// - but one that renders into a texture has to agree with it, which is what
+// pixelFormatFor is for.
 enum class PixelFormat
 {
-    BGRA8Unorm
+    BGRA8Unorm,
+    RGBA8Unorm,
+    RGBA16Float,
+    RGBA32Float
 };
+
+constexpr PixelFormat pixelFormatFor(TextureFormat format)
+{
+    switch (format)
+    {
+        case TextureFormat::BGRA8Unorm:
+            return PixelFormat::BGRA8Unorm;
+        case TextureFormat::RGBA16Float:
+            return PixelFormat::RGBA16Float;
+        case TextureFormat::RGBA32Float:
+            return PixelFormat::RGBA32Float;
+        default:
+            return PixelFormat::RGBA8Unorm;
+    }
+}
 
 // How the vertex stream assembles into primitives. Fixed on the pipeline
 // (D3D-style); the Metal backend reads it off the pipeline at draw time.

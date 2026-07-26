@@ -55,10 +55,10 @@ void RenderPass::setScissorRect(const Graphics::Rect& rect)
 
     // Round outward before clamping: rounding a scrolled region's edge inward
     // would shave a column of glyph coverage off the boundary.
-    const auto left = std::clamp(
-        static_cast<int>(std::floor(rect.x)), 0, impl->targetWidth);
-    const auto top = std::clamp(
-        static_cast<int>(std::floor(rect.y)), 0, impl->targetHeight);
+    const auto left =
+        std::clamp(static_cast<int>(std::floor(rect.x)), 0, impl->targetWidth);
+    const auto top =
+        std::clamp(static_cast<int>(std::floor(rect.y)), 0, impl->targetHeight);
     const auto right = std::clamp(
         static_cast<int>(std::ceil(rect.x + rect.w)), left, impl->targetWidth);
     const auto bottom = std::clamp(
@@ -138,9 +138,15 @@ void RenderPass::setFragmentTexture(const Texture& texture,
     if (data == nullptr || data->srv.gpu.ptr == 0)
         return;
 
+    auto* list = impl->encoder->commands->list.get();
+
+    // A render target an earlier pass on this frame drew into is still in
+    // RENDER_TARGET, and this is where it goes back. A plain texture is already
+    // in the state this asks for and the helper records nothing.
+    transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
     // Only the SRV: the sampler is a static sampler in the root signature, chosen
     // by the register the shader's sampler was emitted at. See TextureSampling.
-    auto* list = impl->encoder->commands->list.get();
     list->SetGraphicsRootDescriptorTable(renderTextureParam(slot), data->srv.gpu);
 }
 
