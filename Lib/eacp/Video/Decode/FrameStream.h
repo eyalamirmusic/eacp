@@ -17,6 +17,16 @@ struct StreamOptions
     // absorbs more decode jitter at the cost of that many frames of memory —
     // roughly width * height * 4 bytes each.
     int queueDepth = 4;
+
+    // A ceiling on what those queued frames may cost, which is what actually
+    // matters once the resolution stops being 1080p. A frame is width * height
+    // * 4 bytes: 8 MB at 1080p, 33 MB at 4K, 133 MB at 8K — so a fixed depth of
+    // four means 33 MB of lookahead on one file and 530 MB on another.
+    //
+    // open() lowers the depth until the queue fits in this, to a floor of one
+    // frame. Budget for one more than the depth: the frame being shown is held
+    // outside the queue.
+    std::size_t maxQueueBytes = 192u * 1024u * 1024u;
 };
 
 // A decoded-frame stream: a Decoder, the thread that runs it ahead of the
@@ -106,6 +116,13 @@ public:
     };
 
     Stats stats() const;
+
+    // The queue depth `options` actually yields for a stream of this size:
+    // the requested depth, lowered until maxQueueBytes covers that many frames,
+    // never below one. Pure arithmetic, exposed so the policy can be tested
+    // without decoding an 8K file to find out. open() applies it.
+    static int depthWithinBudget(const VideoInfo& info,
+                                 const StreamOptions& options);
 
     // Fired on the decode thread each time a frame lands in the queue — the
     // hook a view uses to render the moment new content exists rather than

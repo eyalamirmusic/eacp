@@ -11,8 +11,11 @@ using namespace VideoDemo;
 
 namespace
 {
-constexpr auto windowWidth = 900;
-constexpr auto windowHeight = 620;
+constexpr auto windowWidth = 980;
+
+// Tall enough for the whole catalogue: the rows are laid out from the top with
+// no scrolling, so this has to keep up as clips are added to Clips.json.
+constexpr auto windowHeight = 700;
 
 constexpr auto margin = 24.0f;
 constexpr auto rowHeight = 62.0f;
