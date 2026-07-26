@@ -119,6 +119,15 @@ if (APPLE AND NOT IOS)
     target_link_libraries(MenuTests PRIVATE "-framework AppKit")
 endif ()
 
+# Hover/capture pointer lifetime: a removed subtree must stop receiving mouse
+# events from the views that recorded its members as hover/drag targets.
+nano_add_executable(MouseTrackingLifetimeTests
+        NO_MAIN
+        SOURCES
+            MouseTrackingLifetimeTests.cpp
+            TestMain.cpp
+        TARGETS eacp-graphics)
+
 if(WIN32)
     nano_add_executable(CompositionPixelTests
             NO_MAIN

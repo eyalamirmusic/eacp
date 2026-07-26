@@ -77,13 +77,35 @@ void View::removeSubview(View& view)
 {
     if (subviews.removeAllMatches(&view) > 0)
     {
-        if (hoveredView == &view)
-            hoveredView = nullptr;
-
-        if (mouseDownTarget == &view)
-            mouseDownTarget = nullptr;
-
+        clearMouseTargetsIn(view);
         viewRemoved(view);
+    }
+}
+
+bool View::isInSubtreeOf(View* candidate, View& subtreeRoot)
+{
+    for (auto* current = candidate; current != nullptr; current = current->parent)
+    {
+        if (current == &subtreeRoot)
+            return true;
+    }
+
+    return false;
+}
+
+// hoveredView/mouseDownTarget are recorded on whichever view the platform
+// event arrived at -- usually the window root -- and can point anywhere below
+// it. Clearing them on the whole ancestor chain keeps them from dangling when
+// the removed subtree is destroyed.
+void View::clearMouseTargetsIn(View& view)
+{
+    for (auto* ancestor = this; ancestor != nullptr; ancestor = ancestor->parent)
+    {
+        if (isInSubtreeOf(ancestor->hoveredView, view))
+            ancestor->hoveredView = nullptr;
+
+        if (isInSubtreeOf(ancestor->mouseDownTarget, view))
+            ancestor->mouseDownTarget = nullptr;
     }
 }
 
