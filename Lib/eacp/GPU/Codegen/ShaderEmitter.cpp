@@ -113,9 +113,13 @@ struct ExprPrinter
                 return "uniforms.u" + std::to_string(expr.index);
 
             case ExprKind::Constant:
-                // The uint spelling is shared by MSL and HLSL, like floatN.
+                // The uint and bool spellings are shared by MSL and HLSL, like
+                // floatN.
                 if (expr.type == ValueType::UInt)
                     return std::to_string(expr.index) + "u";
+
+                if (expr.type == ValueType::Bool)
+                    return expr.index != 0 ? "true" : "false";
 
                 return floatLiteral(expr.value);
 
@@ -172,6 +176,19 @@ struct ExprPrinter
             case ExprKind::Binary:
                 return "(" + ref(expr.args[0]) + " " + std::string(1, expr.op) + " "
                        + ref(expr.args[1]) + ")";
+
+            case ExprKind::Compare:
+                return "(" + ref(expr.args[0]) + " " + expr.text + " "
+                       + ref(expr.args[1]) + ")";
+
+            case ExprKind::Select:
+                // Both languages spell the conditional operator the same way,
+                // and both evaluate it without branching for scalar operands.
+                return "(" + ref(expr.args[0]) + " ? " + ref(expr.args[1]) + " : "
+                       + ref(expr.args[2]) + ")";
+
+            case ExprKind::VarRead:
+                return "v" + std::to_string(expr.index);
 
             case ExprKind::Mul:
             {
@@ -260,6 +277,8 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Call:
         case ExprKind::Unary:
         case ExprKind::Binary:
+        case ExprKind::Compare:
+        case ExprKind::Select:
         case ExprKind::Mul:
         case ExprKind::Sample:
         case ExprKind::Fetch:
@@ -271,6 +290,7 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Uniform:
         case ExprKind::Constant:
         case ExprKind::Swizzle:
+        case ExprKind::VarRead:
         case ExprKind::ThreadId:
             return false;
     }
@@ -299,70 +319,307 @@ void countUses(const ShaderGraph& graph,
         countUses(graph, argument, uses, seen);
 }
 
-// Which nodes a stage emits as named locals, in dependency (post) order so
-// every definition precedes its uses.
-struct StagePlan
-{
-    std::vector<int> order;
-    std::vector<int> locals; // node id -> local index, -1 = inline
-};
-
+// Which nodes a run of expressions evaluates more than once, in dependency
+// (post) order so every definition precedes its uses. A node that already holds
+// a name is left alone, and so is everything under it: it is already computed.
 void orderLocals(const ShaderGraph& graph,
                  int node,
                  const std::vector<int>& uses,
+                 const std::vector<int>& locals,
                  std::vector<char>& seen,
-                 StagePlan& plan)
+                 std::vector<int>& order)
 {
-    if (node < 0 || seen[node])
+    if (node < 0 || seen[node] || locals[node] >= 0)
         return;
 
     seen[node] = 1;
 
     for (auto argument: graph.expr(node).args)
-        orderLocals(graph, argument, uses, seen, plan);
+        orderLocals(graph, argument, uses, locals, seen, order);
 
     if (uses[node] > 1 && wantsLocal(graph.expr(node).kind))
+        order.push_back(node);
+}
+
+// Which variables running a statement can leave holding something else -
+// following the bodies of an if or a loop, since what they write is written
+// just the same.
+void collectWrites(const ShaderGraph& graph, int block, std::vector<char>& written);
+
+void collectWrites(const ShaderGraph& graph,
+                   const Statement& statement,
+                   std::vector<char>& written)
+{
+    switch (statement.kind)
     {
-        plan.locals[node] = (int) plan.order.size();
-        plan.order.push_back(node);
+        case StatementKind::Declare:
+        case StatementKind::Assign:
+            written[statement.slot] = 1;
+            return;
+
+        case StatementKind::If:
+            collectWrites(graph, statement.body, written);
+
+            if (statement.elseBody >= 0)
+                collectWrites(graph, statement.elseBody, written);
+
+            return;
+
+        case StatementKind::Loop:
+            collectWrites(graph, statement.body, written);
+            return;
+
+        case StatementKind::Break:
+        case StatementKind::Continue:
+            return;
     }
 }
 
-// Plans one stage: any operation the stage would evaluate more than once
-// becomes a tN local, so shared subtrees are computed - and printed - once
-// instead of being inlined at every use.
-StagePlan planStage(const ShaderGraph& graph, const std::vector<int>& roots)
+void collectWrites(const ShaderGraph& graph, int block, std::vector<char>& written)
 {
-    auto count = (std::size_t) graph.nodeCount();
-
-    auto plan = StagePlan {};
-    plan.locals.assign(count, -1);
-
-    auto uses = std::vector<int>(count, 0);
-    auto seen = std::vector<char>(count, 0);
-
-    for (auto root: roots)
-        countUses(graph, root, uses, seen);
-
-    auto ordered = std::vector<char>(count, 0);
-
-    for (auto root: roots)
-        orderLocals(graph, root, uses, ordered, plan);
-
-    return plan;
+    for (auto index: graph.block(block).statements)
+        collectWrites(graph, graph.statement(index), written);
 }
 
-std::string emitLocals(const ExprPrinter& printer, const StagePlan& plan)
+bool readsAny(const ShaderGraph& graph,
+              int node,
+              const std::vector<char>& written,
+              std::vector<char>& seen)
 {
-    auto source = std::string {};
+    if (node < 0 || seen[node])
+        return false;
 
-    for (auto node: plan.order)
-        source += "    " + std::string(typeName(printer.graph.expr(node).type))
-                  + " t" + std::to_string(plan.locals[node]) + " = "
-                  + printer.print(node) + ";\n";
+    seen[node] = 1;
 
-    return source;
+    const auto& expr = graph.expr(node);
+
+    if (expr.kind == ExprKind::VarRead && written[expr.index] != 0)
+        return true;
+
+    for (auto argument: expr.args)
+        if (readsAny(graph, argument, written, seen))
+            return true;
+
+    return false;
 }
+
+// Emits one stage: its statements, then the expressions its outputs are.
+//
+// Any operation evaluated more than once becomes a tN local, so a shared
+// subtree is computed - and printed - once instead of being inlined at every
+// use. Control flow is what bounds that sharing, and the two rules it imposes
+// are the whole of what makes this different from printing an expression tree:
+//
+// A name is given up the moment a statement writes a variable the value behind
+// it read - which is what stops `d` computed before an `if` from standing for
+// the same thing after a body that moved what it was computed from.
+//
+// A loop condition takes no name at all. It is printed into the while header,
+// so binding it to a local ahead of the loop would test a value that never
+// changes again; every name open in the enclosing block is given up there too,
+// since the header is re-evaluated after the body has run.
+struct StageEmitter
+{
+    StageEmitter(const ShaderGraph& graphToUse, Backend backend)
+        : locals((std::size_t) graphToUse.nodeCount(), -1)
+        , printer {graphToUse, backend, locals}
+    {
+    }
+
+    const ShaderGraph& graph() const { return printer.graph; }
+
+    // The locals a standalone run of expressions needs - a stage's outputs,
+    // which no statement follows - counted over just those expressions.
+    std::string defineFor(const std::vector<int>& roots, const std::string& indent)
+    {
+        auto open = std::vector<int> {};
+        return define(roots, indent, countUsesOver(roots), open);
+    }
+
+    std::string emitBlock(int block, const std::string& indent)
+    {
+        auto uses = blockUses(block);
+        auto open = std::vector<int> {};
+        auto source = std::string {};
+
+        for (auto index: graph().block(block).statements)
+            source += emitStatement(graph().statement(index), indent, uses, open);
+
+        retire(open);
+        return source;
+    }
+
+    std::string emitStatement(const Statement& statement,
+                              const std::string& indent,
+                              const std::vector<int>& uses,
+                              std::vector<int>& open)
+    {
+        auto inner = indent + "    ";
+
+        if (statement.kind == StatementKind::Loop)
+        {
+            retire(open);
+
+            return indent + "while (" + printer.ref(statement.value) + ")\n" + indent
+                   + "{\n" + emitBlock(statement.body, inner) + indent + "}\n";
+        }
+
+        // An if is emitted only after the names its bodies invalidate are given
+        // up, so nothing inside stands for a value one of them has moved on
+        // from. An assignment needs no such pass first: its right-hand side is
+        // what the variable held before it, which is exactly what the open
+        // names still stand for.
+        if (statement.kind == StatementKind::If)
+            dropStale(statement, open);
+
+        auto source = std::string {};
+
+        switch (statement.kind)
+        {
+            case StatementKind::Declare:
+            case StatementKind::Assign:
+            {
+                auto declares = statement.kind == StatementKind::Declare;
+                auto type =
+                    declares
+                        ? std::string(typeName(graph().variables()[statement.slot]))
+                              + " "
+                        : std::string {};
+
+                source = define({statement.value}, indent, uses, open);
+                source += indent + type + "v" + std::to_string(statement.slot)
+                          + " = " + printer.ref(statement.value) + ";\n";
+                break;
+            }
+
+            case StatementKind::If:
+            {
+                source = define({statement.value}, indent, uses, open);
+                source += indent + "if (" + printer.ref(statement.value) + ")\n"
+                          + indent + "{\n" + emitBlock(statement.body, inner)
+                          + indent + "}\n";
+
+                if (statement.elseBody >= 0)
+                    source += indent + "else\n" + indent + "{\n"
+                              + emitBlock(statement.elseBody, inner) + indent
+                              + "}\n";
+
+                break;
+            }
+
+            case StatementKind::Break:
+                source = indent + "break;\n";
+                break;
+
+            case StatementKind::Continue:
+                source = indent + "continue;\n";
+                break;
+
+            case StatementKind::Loop:
+                break;
+        }
+
+        // Afterwards either way, for the names this statement's own expressions
+        // introduced: a value read out of the variable it then wrote.
+        dropStale(statement, open);
+        return source;
+    }
+
+private:
+    std::vector<int> countUsesOver(const std::vector<int>& roots) const
+    {
+        auto count = (std::size_t) graph().nodeCount();
+        auto uses = std::vector<int>(count, 0);
+        auto seen = std::vector<char>(count, 0);
+
+        for (auto root: roots)
+            countUses(graph(), root, uses, seen);
+
+        return uses;
+    }
+
+    // How often the statements of one block reach each node - the block's own
+    // statements only, since a nested body counts its own when it is emitted.
+    // A loop's condition is left out deliberately: see the note above.
+    std::vector<int> blockUses(int block) const
+    {
+        auto roots = std::vector<int> {};
+
+        for (auto index: graph().block(block).statements)
+        {
+            const auto& statement = graph().statement(index);
+
+            if (statement.kind != StatementKind::Loop)
+                roots.push_back(statement.value);
+        }
+
+        return countUsesOver(roots);
+    }
+
+    std::string define(const std::vector<int>& roots,
+                       const std::string& indent,
+                       const std::vector<int>& uses,
+                       std::vector<int>& open)
+    {
+        auto count = (std::size_t) graph().nodeCount();
+        auto ordered = std::vector<char>(count, 0);
+        auto order = std::vector<int> {};
+
+        for (auto root: roots)
+            orderLocals(graph(), root, uses, locals, ordered, order);
+
+        auto source = std::string {};
+
+        for (auto node: order)
+        {
+            locals[node] = localCount++;
+            open.push_back(node);
+
+            source += indent + std::string(typeName(graph().expr(node).type)) + " t"
+                      + std::to_string(locals[node]) + " = " + printer.print(node)
+                      + ";\n";
+        }
+
+        return source;
+    }
+
+    void retire(std::vector<int>& open)
+    {
+        for (auto node: open)
+            locals[node] = -1;
+
+        open.clear();
+    }
+
+    void dropStale(const Statement& statement, std::vector<int>& open)
+    {
+        if (open.empty() || graph().variables().empty())
+            return;
+
+        auto written =
+            std::vector<char>((std::size_t) graph().variables().size(), 0);
+        collectWrites(graph(), statement, written);
+
+        auto kept = std::vector<int> {};
+
+        for (auto node: open)
+        {
+            auto seen = std::vector<char>((std::size_t) graph().nodeCount(), 0);
+
+            if (readsAny(graph(), node, written, seen))
+                locals[node] = -1;
+            else
+                kept.push_back(node);
+        }
+
+        open = std::move(kept);
+    }
+
+public:
+    std::vector<int> locals; // node id -> local index, -1 = inline
+    ExprPrinter printer;
+    int localCount = 0;
+};
 
 // Whether the expression tree under node reads a uniform. A Varying read is the
 // fragment-stage boundary: its vertex-stage source tree is walked separately as
@@ -385,6 +642,27 @@ bool referencesUniform(const ShaderGraph& graph, int node)
             return true;
 
     return false;
+}
+
+// Every expression a block's statements evaluate, gathered so a stage sees what
+// its statements read and not only what its output expression does. Without
+// this a uniform read only from inside a loop would go undeclared: the
+// expression walk starts at the fragment colour and never reaches it.
+void collectStatementRoots(const ShaderGraph& graph,
+                           int block,
+                           std::vector<int>& roots)
+{
+    for (auto index: graph.block(block).statements)
+    {
+        const auto& statement = graph.statement(index);
+        roots.push_back(statement.value);
+
+        if (statement.body >= 0)
+            collectStatementRoots(graph, statement.body, roots);
+
+        if (statement.elseBody >= 0)
+            collectStatementRoots(graph, statement.elseBody, roots);
+    }
 }
 
 bool vertexUsesUniforms(const ShaderGraph& graph)
@@ -519,15 +797,15 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         roots.push_back(store.value);
     }
 
-    auto plan = planStage(graph, roots);
-    auto printer = ExprPrinter {graph, backend, plan.locals};
+    auto stage = StageEmitter {graph, backend};
 
-    source += emitLocals(printer, plan);
+    source += stage.emitBlock(ShaderGraph::rootBlock, "    ");
+    source += stage.defineFor(roots, "    ");
 
     for (const auto& store: graph.stores())
         source += "    buffer" + std::to_string(store.slot) + "["
-                  + printer.ref(store.index) + "] = " + printer.ref(store.value)
-                  + ";\n";
+                  + stage.printer.ref(store.index)
+                  + "] = " + stage.printer.ref(store.value) + ";\n";
 
     source += "}\n";
     return source;
@@ -625,16 +903,19 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     for (auto i = 0; i < graph.varyings().size(); ++i)
         vertexRoots.push_back(graph.varyings()[i].sourceNode);
 
-    auto vertexPlan = planStage(graph, vertexRoots);
-    auto vertexPrinter = ExprPrinter {graph, backend, vertexPlan.locals};
+    // The vertex stage takes no statements: a mutable local and the control flow
+    // driving it belong to the fragment expression, the way sampling does. See
+    // ShaderBuilder::var.
+    auto vertexStage = StageEmitter {graph, backend};
 
-    source += emitLocals(vertexPrinter, vertexPlan);
+    source += vertexStage.defineFor(vertexRoots, "    ");
     source += "    VertexOut output;\n";
-    source += "    output.position = " + vertexPrinter.ref(graph.position()) + ";\n";
+    source +=
+        "    output.position = " + vertexStage.printer.ref(graph.position()) + ";\n";
 
     for (auto i = 0; i < graph.varyings().size(); ++i)
         source += "    output.v" + std::to_string(i) + " = "
-                  + vertexPrinter.ref(graph.varyings()[i].sourceNode) + ";\n";
+                  + vertexStage.printer.ref(graph.varyings()[i].sourceNode) + ";\n";
 
     source += "    return output;\n}\n\n";
 
@@ -646,9 +927,15 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     if (graph.discard() >= 0)
         fragmentRoots.push_back(graph.discard());
 
+    // What the statements read counts towards the stage's uniform declaration,
+    // but not towards the colour's locals: a statement's own expressions are
+    // named where that statement is emitted, above.
+    auto stageRoots = fragmentRoots;
+    collectStatementRoots(graph, ShaderGraph::rootBlock, stageRoots);
+
     auto fragmentReadsUniform = false;
 
-    for (auto root: fragmentRoots)
+    for (auto root: stageRoots)
         fragmentReadsUniform |= referencesUniform(graph, root);
 
     if (backend == Backend::Metal)
@@ -672,21 +959,23 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         source += "float4 fragmentMain(VertexOut input) : SV_Target\n{\n";
     }
 
-    auto fragmentPlan = planStage(graph, fragmentRoots);
-    auto fragmentPrinter = ExprPrinter {graph, backend, fragmentPlan.locals};
+    // The shader's statements run first - they are what the fragment expression
+    // then reads a mutable local out of - and the colour is planned after them.
+    auto fragmentStage = StageEmitter {graph, backend};
 
-    source += emitLocals(fragmentPrinter, fragmentPlan);
+    source += fragmentStage.emitBlock(ShaderGraph::rootBlock, "    ");
+    source += fragmentStage.defineFor(fragmentRoots, "    ");
 
     if (graph.discard() >= 0)
     {
         auto kill = backend == Backend::Metal ? "discard_fragment();" : "discard;";
 
-        source += "    if (" + fragmentPrinter.ref(graph.discard()) + " < "
+        source += "    if (" + fragmentStage.printer.ref(graph.discard()) + " < "
                   + floatLiteral(graph.discardThreshold()) + ")\n        " + kill
                   + "\n";
     }
 
-    source += "    return " + fragmentPrinter.ref(graph.fragment()) + ";\n}\n";
+    source += "    return " + fragmentStage.printer.ref(graph.fragment()) + ";\n}\n";
 
     return source;
 }

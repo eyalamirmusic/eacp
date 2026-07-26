@@ -729,6 +729,313 @@ auto tCodegenSmallMatrices = test("GPU/codegenSmallMatrices") = []
     check(contains(hlsl, "mul("));
 };
 
+// Comparisons yield a Bool, the connectives combine them, and select picks
+// between two values without branching. Both backends spell all of it the same
+// way, which is why none of these needs a per-backend form. Pure string
+// generation.
+auto tCodegenComparisons = test("GPU/codegenComparisons") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto threshold = builder.uniform<Float>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto inside = carried.x() < threshold && carried.y() >= 0.0f;
+    auto edge = !(carried.x() == threshold);
+
+    builder.fragment(float4(select(inside, 1.0f, 0.0f),
+                            select(edge, carried.y(), threshold),
+                            select(inside, carried.xy(), carried.yx())));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, " < uniforms.u0)"));
+    check(contains(metal, " >= 0.0)"));
+    check(contains(metal, " && "));
+    check(contains(metal, "(!("));
+    check(contains(metal, " == uniforms.u0)"));
+    check(contains(metal, " ? 1.0 : 0.0)"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, " && "));
+    check(contains(hlsl, " ? 1.0 : 0.0)"));
+};
+
+// A mutable local is a statement, not an expression: it is declared where it is
+// created and every read after an assignment sees the assigned value. Pure
+// string generation.
+auto tCodegenMutableLocal = test("GPU/codegenMutableLocal") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto total = builder.var(0.0f);
+    total += carried.x();
+    total = total.get() * 2.0f;
+
+    builder.fragment(float4(total, total, total, 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "float v0 = 0.0;"));
+    check(contains(metal, "v0 = (v0 + (input.v0).x);"));
+    check(contains(metal, "v0 = (v0 * 2.0);"));
+    check(contains(metal, "return float4(v0, v0, v0, 1.0);"));
+
+    // The declaration comes before the assignments, which come before the
+    // colour that reads them: statement order is recording order.
+    check(metal.find("float v0 = 0.0;") < metal.find("v0 = (v0 + "));
+    check(metal.find("v0 = (v0 * 2.0);") < metal.find("return float4(v0"));
+};
+
+// if / else, with each body scoped to its own braces. Pure string generation.
+auto tCodegenBranches = test("GPU/codegenBranches") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto shade = builder.var(0.0f);
+
+    builder.ifThen(
+        carried.x() < 0.0f,
+        [&] { shade = carried.y(); },
+        [&]
+        {
+            auto inner = builder.var(1.0f);
+            inner *= carried.y();
+            shade = inner.get();
+        });
+
+    builder.fragment(float4(shade, shade, shade, 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "if (((input.v0).x < 0.0))"));
+    check(contains(metal, "\n    else\n"));
+
+    // The else body declares a variable of its own, indented inside the block
+    // that owns it.
+    check(contains(metal, "\n        float v1 = 1.0;"));
+    check(contains(emitHlsl(builder.graph()), "\n        float v1 = 1.0;"));
+};
+
+// A while loop, its two jumps, and the one rule the emitter cannot get wrong:
+// the condition is printed into the header rather than bound to a local before
+// it, or the loop would test a value that never changes. Pure string
+// generation.
+auto tCodegenLoop = test("GPU/codegenLoop") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto limit = builder.uniform<Float>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto travelled = builder.var(0.0f);
+    auto steps = builder.var(0.0f);
+
+    builder.loop(steps < 64.0f,
+                 [&]
+                 {
+                     steps += 1.0f;
+
+                     auto step = abs(carried.x()) + 0.01f;
+
+                     builder.ifThen(step < 0.001f, [&] { builder.breakLoop(); });
+                     builder.ifThen(travelled > limit,
+                                    [&] { builder.continueLoop(); });
+
+                     travelled += step;
+                 });
+
+    builder.fragment(float4(travelled, travelled, travelled, 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "while ((v1 < 64.0))"));
+    check(contains(metal, "            break;"));
+    check(contains(metal, "            continue;"));
+
+    // The condition reads the variable the body writes, so it must not have
+    // been hoisted: no bool local is bound ahead of the loop.
+    check(metal.find("while (") < metal.find("v1 = (v1 + 1.0);"));
+    check(!contains(metal, "bool t"));
+
+    check(contains(emitHlsl(builder.graph()), "while ((v1 < 64.0))"));
+};
+
+// A shared subtree inside a loop body is named there, not before the loop: a
+// local defined outside would hold the value the first iteration computed for
+// every one after it. Pure string generation.
+auto tCodegenLoopLocalsStayInside = test("GPU/codegenLoopLocalsStayInside") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto total = builder.var(0.0f);
+
+    builder.loop(total < 8.0f,
+                 [&]
+                 {
+                     auto shared = sin(total.get() * carried.x());
+                     total += shared * shared;
+                 });
+
+    builder.fragment(float4(total, total, total, 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+
+    auto loopAt = metal.find("while (");
+    auto localAt = metal.find("float t0 = sin(");
+
+    check(localAt != std::string::npos);
+    check(loopAt < localAt);
+    check(countOccurrences(metal, "sin(") == 1);
+};
+
+// A value a body tests and then uses is computed once. The name spans the two
+// statements, which is the shape every raymarcher has: measure the distance,
+// stop if it is small enough, otherwise step by it. Pure string generation.
+auto tCodegenSharedAcrossStatements = test("GPU/codegenSharedAcrossStatements") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto travelled = builder.var(0.0f);
+
+    builder.loop(travelled < 10.0f,
+                 [&]
+                 {
+                     auto distance =
+                         length(float3(carried, 1.0f) * travelled.get()) - 1.0f;
+
+                     builder.ifThen(distance < 0.001f, [&] { builder.breakLoop(); });
+
+                     travelled += distance;
+                 });
+
+    builder.fragment(float4(travelled, travelled, travelled, 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+    check(countOccurrences(metal, "length(") == 1);
+    check(contains(metal, "if ((t0 < 0.001))"));
+    check(contains(metal, "v0 = (v0 + t0);"));
+};
+
+// ...and a name is given up the moment a statement writes a variable the value
+// behind it was computed from, which is the one thing sharing across statements
+// can get wrong. Pure string generation.
+auto tCodegenStaleLocalsAreDropped = test("GPU/codegenStaleLocalsAreDropped") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto total = builder.var(carried.x());
+    auto shade = builder.var(0.0f);
+
+    auto scaled = sin(total.get());
+
+    shade = scaled + scaled;
+    total = total.get() + 1.0f;
+    shade = scaled * 2.0f + scaled;
+
+    builder.fragment(float4(shade, shade, shade, 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+
+    // Two names for the one expression: what stands for sin(v0) before v0 moves
+    // cannot stand for it afterwards.
+    check(countOccurrences(metal, "sin(v0)") == 2);
+    check(contains(metal, "float t0 = sin(v0);"));
+    check(contains(metal, "float t1 = sin(v0);"));
+    check(metal.find("v0 = (v0 + 1.0);") < metal.find("float t1 = sin(v0);"));
+};
+
+// Control flow through the real platform shader compiler, shaped like what
+// asks for it: a sphere raymarch with a mutable distance, a data-dependent
+// break and a select on the result. Emitted text says the statements are there;
+// only the compiler says the language will take them. Self-skips without a GPU
+// device.
+auto tCodegenControlFlowCompiles = test("GPU/codegenControlFlowCompiles") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto time = builder.uniform<Float>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto origin = float3(builder.constant(0.0f), 0.0f, -3.0f);
+    auto direction = normalize(float3(carried, 1.0f));
+
+    auto travelled = builder.var(0.0f);
+    auto steps = builder.var(0.0f);
+    auto hit = builder.var(false);
+
+    builder.loop(steps < 64.0f,
+                 [&]
+                 {
+                     steps += 1.0f;
+
+                     auto distance = length(origin + direction * travelled.get())
+                                     - (1.0f + sin(time) * 0.1f);
+
+                     builder.ifThen(distance < 0.001f,
+                                    [&]
+                                    {
+                                        hit = builder.boolean(true);
+                                        builder.breakLoop();
+                                    });
+
+                     travelled += distance;
+                 });
+
+    auto shade = exp(-travelled.get() * 0.3f);
+    builder.fragment(float4(select(hit, shade, 0.0f),
+                            shade,
+                            select(steps > 32.0f, shade, 1.0f - shade),
+                            1.0f));
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
+};
+
 // Runs the whole vocabulary through the real platform shader compiler, so
 // every intrinsic spelling and broadcast form is validated against the actual
 // language. Self-skips without a GPU device.

@@ -267,7 +267,8 @@ inline VertexFormat toVertexFormat(ValueType type)
         case ValueType::Float3x3:
         case ValueType::Float4x4:
         case ValueType::UInt:
-            return VertexFormat::Float4; // matrix/uint are never vertex attributes
+        case ValueType::Bool:
+            return VertexFormat::Float4; // matrix/uint/bool are never attributes
     }
 
     return VertexFormat::Float;
@@ -682,6 +683,43 @@ protected:
     }
 
     Float constant(float value) { return builder.constant(value); }
+    Bool boolean(bool value) { return builder.boolean(value); }
+
+    // Control flow, forwarded from the builder: a mutable local, the two
+    // branching statements, the loop and its two jumps. See ShaderBuilder for
+    // what each records and why a loop condition is re-tested rather than
+    // hoisted.
+    template <ShaderValueLike T>
+    Var<ShaderBase<T>> var(const T& initialValue)
+    {
+        return builder.var(initialValue);
+    }
+
+    Var<Float> var(float initialValue) { return builder.var(initialValue); }
+    Var<Bool> var(bool initialValue) { return builder.var(initialValue); }
+    Var<Bool> var(const Bool& initialValue) { return builder.var(initialValue); }
+
+    template <typename Body>
+    void ifThen(const Bool& condition, Body&& body)
+    {
+        builder.ifThen(condition, std::forward<Body>(body));
+    }
+
+    template <typename Then, typename Else>
+    void ifThen(const Bool& condition, Then&& whenTrue, Else&& whenFalse)
+    {
+        builder.ifThen(
+            condition, std::forward<Then>(whenTrue), std::forward<Else>(whenFalse));
+    }
+
+    template <typename Body>
+    void loop(const Bool& condition, Body&& body)
+    {
+        builder.loop(condition, std::forward<Body>(body));
+    }
+
+    void breakLoop() { builder.breakLoop(); }
+    void continueLoop() { builder.continueLoop(); }
 
     // In-shader transform builders, matching column-major / right-handed [0,1]
     // depth conventions. Build the model/view/projection inside define() from

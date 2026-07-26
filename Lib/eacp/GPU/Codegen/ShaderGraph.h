@@ -18,8 +18,17 @@ enum class ExprKind
     Swizzle, // child.<components>; args[0] = child
     Call, // builtin call text(args...); e.g. sin/cos. The emitter translates
     // the canonical (MSL) name where HLSL spells it differently.
-    Unary, // (op child); args = {child}; op. Currently only negation.
+    Unary, // (op child); args = {child}; op. Negation, and logical not.
     Binary, // (lhs op rhs); args = {lhs, rhs}
+    Compare, // (lhs op rhs) yielding a Bool; args = {lhs, rhs}, op text in `text`.
+    // Separate from Binary for two reasons: <=, == and && do not fit in a char,
+    // and the result is a Bool whatever shape the operands are.
+    Select, // (condition ? whenTrue : whenFalse); args = {condition, a, b}. Both
+    // languages spell the conditional operator the same way.
+    VarRead, // the current value of a mutable local; index = variable slot.
+    // Unlike every other node this is not a pure expression: what it evaluates
+    // to depends on which statements have run, so the emitter never hoists one
+    // past an assignment (see the per-statement local planning in the emitter).
     Mul, // matrix * vector; args = {matrix, vector}. Emits per-backend (MSL uses
     // the * operator, HLSL uses mul()), so it is not a plain Binary.
     Sample, // texture sample; index = texture slot, args = {uv} or {uv, level}.
@@ -36,6 +45,40 @@ enum class BufferAccess
 {
     Read,
     Write
+};
+
+// What a statement does. Statements are what the expression store on its own
+// cannot say: that one value is computed before another, that a value changes,
+// and that a run of them repeats or is skipped. Both shading languages spell
+// all six identically, so unlike the expression kinds none of these needs a
+// per-backend form.
+enum class StatementKind
+{
+    Declare, // <type> vN = value; slot = variable, value = its initial value
+    Assign, // vN = value; slot = variable, value = the expression assigned
+    If, // if (value) { body } else { elseBody }
+    Loop, // while (value) { body }
+    Break,
+    Continue
+};
+
+// One statement. Which fields carry meaning depends on the kind above; the
+// bodies are block indices so a statement stays plain data of a fixed size and
+// the graph owns every block, exactly as it owns every expression node.
+struct Statement
+{
+    StatementKind kind = StatementKind::Assign;
+    int slot = -1; // Declare / Assign: the variable written
+    int value = -1; // Declare / Assign: the value; If / Loop: the condition
+    int body = -1; // If / Loop: the block that runs
+    int elseBody = -1; // If: the block that runs when the condition is false
+};
+
+// A run of statements, held by index so a nested body is an int on the
+// statement that owns it.
+struct Block
+{
+    Vector<int> statements; // indices into the graph's statement store
 };
 
 // One node in the shader expression tree. Plain data referenced by integer id so
@@ -59,6 +102,12 @@ struct Expr
 class ShaderGraph
 {
 public:
+    ShaderGraph()
+    {
+        blocks.add(Block {});
+        openBlocks.add(rootBlock);
+    }
+
     struct VaryingSlot
     {
         ValueType type = ValueType::Float;
@@ -91,13 +140,36 @@ public:
     int addUniform(ValueType type);
     int addConstant(float value);
     int addUIntConstant(unsigned value);
+    int addBoolConstant(bool value);
     int addConstruct(ValueType type, Vector<int> args);
     int addSwizzle(ValueType type, int child, std::string components);
     int addCall(ValueType type, std::string name, int argument);
     int addCall(ValueType type, std::string name, Vector<int> args);
     int addUnary(ValueType type, char op, int child);
     int addBinary(ValueType type, char op, int lhs, int rhs);
+    int addCompare(std::string op, int lhs, int rhs);
+    int addSelect(ValueType type, int condition, int whenTrue, int whenFalse);
     int addMul(ValueType type, int matrix, int vector);
+
+    // Mutable locals and the statements that drive them. A variable is declared
+    // where it is created, so the statement stream is also its scope: creating
+    // one inside a loop body declares it there, and the C++ handle that names it
+    // goes out of scope at the same brace.
+    //
+    // Statements append to the block on top of the stack. pushBlock/popBlock
+    // bracket the body of an if or a loop; the block they leave behind is what
+    // addIf/addLoop then names.
+    int addVariable(ValueType type, int initialValue);
+    int addVarRead(int slot);
+    void assign(int slot, int value);
+
+    int pushBlock();
+    void popBlock();
+
+    void addIf(int condition, int body, int elseBody);
+    void addLoop(int condition, int body);
+    void addBreak();
+    void addContinue();
 
     // Registers a 2D texture slot (always a float-returning texture2d, so only
     // the slot index and how it is sampled are stored), and a sample of it at a
@@ -156,8 +228,20 @@ public:
     const Vector<Store>& stores() const { return storeList; }
     bool isCompute() const { return storeList.size() > 0; }
 
+    // The body every recorded statement ends up in, directly or inside a nested
+    // block. It runs before the fragment (or the kernel's stores) is evaluated,
+    // which is what makes a mutable local visible to the expression that reads
+    // it afterwards.
+    static constexpr int rootBlock = 0;
+
+    const Statement& statement(int index) const { return statementList[index]; }
+    const Block& block(int index) const { return blocks[index]; }
+    const Vector<ValueType>& variables() const { return variableTypes; }
+    bool hasStatements() const { return !blocks[rootBlock].statements.empty(); }
+
 private:
     int add(Expr node);
+    int addStatement(Statement newStatement);
 
     Vector<Expr> nodes;
     Vector<ValueType> inputTypes;
@@ -168,6 +252,11 @@ private:
     Vector<BufferAccess> storageSlots;
     Vector<Store> storeList;
     Vector<TextureSampling> textureSamplings;
+
+    Vector<ValueType> variableTypes;
+    Vector<Statement> statementList;
+    Vector<Block> blocks; // blocks[rootBlock] is the shader's body
+    Vector<int> openBlocks; // innermost last; blocks[back()] takes new statements
     int positionNode = -1;
     int fragmentNode = -1;
     int discardNode = -1;
