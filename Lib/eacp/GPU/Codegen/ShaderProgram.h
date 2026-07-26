@@ -738,8 +738,20 @@ protected:
     // branching statements, the loop and its two jumps. See ShaderBuilder for
     // what each records and why a loop condition is re-tested rather than
     // hoisted.
-    template <ShaderValueLike T>
-    Var<ShaderBase<T>> var(const T& initialValue)
+    // Constrained on the handle rather than on the float vocabulary, the way
+    // the builder's own is: the cell a shader walks a grid with is a variable
+    // on the same terms a colour is, and so is the orientation it builds up
+    // over several steps - which is the matrix overload beside it, outside all
+    // three families for the reason a matrix is outside them everywhere here.
+    template <ShaderHandleLike T>
+    Var<ShaderHandle<T>> var(const T& initialValue)
+    {
+        return builder.var(initialValue);
+    }
+
+    template <typename T>
+        requires(isMatrix(ValueTypeOf<T>::value))
+    Var<T> var(const T& initialValue)
     {
         return builder.var(initialValue);
     }
@@ -747,8 +759,6 @@ protected:
     Var<Float> var(float initialValue) { return builder.var(initialValue); }
     Var<Bool> var(bool initialValue) { return builder.var(initialValue); }
     Var<Int> var(int initialValue) { return builder.var(initialValue); }
-    Var<Bool> var(const Bool& initialValue) { return builder.var(initialValue); }
-    Var<Int> var(const Int& initialValue) { return builder.var(initialValue); }
 
     template <typename Body>
     void ifThen(const Bool& condition, Body&& body)

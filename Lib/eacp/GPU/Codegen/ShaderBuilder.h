@@ -236,6 +236,17 @@ public:
         return {graphData, ValueType::Int, graphData.addIntConstant(initialValue)};
     }
 
+    // A matrix is a mutable local on the same terms - the orientation a shader
+    // builds up over several steps before it goes through it - and it needs an
+    // overload of its own for the reason it needs one everywhere here: it is
+    // outside all three handle families, none of whose operators it has.
+    template <typename T>
+        requires(isMatrix(ValueTypeOf<T>::value))
+    Var<T> var(const T& initialValue)
+    {
+        return {graphData, ValueTypeOf<T>::value, initialValue.node};
+    }
+
     // The statements. Each body is a callable recording into a block of its
     // own, so what it declares is scoped to it in the emitted source exactly as
     // it is in the C++ lambda that wrote it.

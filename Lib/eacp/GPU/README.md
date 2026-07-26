@@ -67,19 +67,27 @@ that, `prepare(sampleCount)` builds the library and the pipeline, and
 ### What the EDSL has
 
 - `Float`, `Float2/3/4`, `Float2x2`, `Float3x3`, `Float4x4` — built from their
-  columns, multiplied, transposed, and their determinant taken. There is no
-  `inverse`, and that is the languages rather than this: GLSL has one, MSL and
-  HLSL do not
+  columns, transposed, and their determinant taken; multiplied by a vector on
+  either side, which is a different product each way, and scaled by a scalar,
+  which is neither. There is no `inverse`, and that is the languages rather
+  than this: GLSL has one, MSL and HLSL do not
 - `Int` and `Int2/3/4` — signed, with `%`, the bitwise set, the shifts, the
   comparisons, and the explicit crossings `toInt` / `toFloat`
 - `Bool` and `Bool2/3/4` — what a comparison yields, collapsed by `any()` /
-  `all()`. Comparing two vectors is the operator itself, componentwise, because
-  that is what both shading languages give a pair of vectors
+  `all()`, compared with each other, and crossed into a number with `toInt` /
+  `toFloat`. Comparing two vectors is the operator itself, componentwise,
+  because that is what both shading languages give a pair of vectors
 - `UInt` for the compute thread id
 - Every swizzle of up to four components, on all three families, as one node
 - The intrinsic set, spelled the way the languages underneath spell it —
-  `rsqrt`, `atan2`, `mix` — rather than the way GLSL does
-- Statements: `var`, `select`, `ifThen`, `loop`, `breakLoop`, `continueLoop`
+  `rsqrt`, `atan2`, `mix` — rather than the way GLSL does, and taking a float
+  literal in any argument position: `smoothstep(0.0, w, d)` mixes a literal edge
+  with a computed one, `min(0.0, g)` puts the literal first, `step(d, 0.0)`
+  second. A literal is anchored on the graph whichever argument is a handle
+  brought, so which positions accept one is not a question the EDSL has an
+  opinion about
+- Statements: `var`, `select`, `ifThen`, `loop`, `breakLoop`, `continueLoop`.
+  A `var` takes any handle and any matrix
 - `Array<T, N>` with a subscript, at a literal or a computed index
 - Texture reads: `sample`, `sample` at a chosen level, and `fetch` at texel
   coordinates

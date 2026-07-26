@@ -578,6 +578,52 @@ auto tCodegenIntrinsicNames = test("GPU/codegenIntrinsicNames") = []
     check(!contains(hlsl, "mix("));
 };
 
+// A literal wherever the language takes one. Every intrinsic used to come in
+// two shapes - one where every argument is a handle, and one where the scalar
+// arguments are all literals - and a shader mixes them freely: smoothstep(0.0,
+// w, d) has one edge of each, min(0.0, g) puts the literal first, step(d, 0.0)
+// puts it second, and mix(0.5, 1.0, h) interpolates between two constants by
+// something computed. All of them are legal GLSL and all of them have a
+// spelling in both languages under this, so which positions take a literal is
+// not something the EDSL should have an opinion about.
+//
+// What this pins is the position: an anchored literal has to record where it
+// was written, since every one of these means something else if it moves.
+auto tCodegenLiteralArguments = test("GPU/codegenLiteralArguments") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto width = builder.uniform<Float>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto carried = builder.varying(position);
+
+    auto edge = smoothstep(0.0f, width, length(carried));
+    auto lowest = min(0.0f, carried.x());
+    auto gate = step(carried.y(), 0.0f);
+    auto curve = pow(2.0f, width);
+    auto blend = mix(0.5f, 1.0f, edge);
+    auto held = clamp(carried.x() + carried.y(), 0.0f, width);
+    auto raised = max(-1.0f, carried.y());
+
+    builder.fragment(float4(lowest + gate, curve * blend, held, raised));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "smoothstep(0.0, uniforms.u0, "));
+    check(contains(metal, "min(0.0, "));
+    check(contains(metal, "step((input.v0).y, 0.0)"));
+    check(contains(metal, "pow(2.0, uniforms.u0)"));
+    check(contains(metal, "mix(0.5, 1.0, "));
+    check(contains(metal, ", 0.0, uniforms.u0)"));
+    check(contains(metal, "max(-1.0, "));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "lerp(0.5, 1.0, "));
+    check(contains(hlsl, "step((input.v0).y, 0.0)"));
+};
+
 // The transcendental, rounding and geometric intrinsics all spell identically
 // in both backends; only the screen-space derivatives differ, dfdx/dfdy against
 // HLSL's ddx/ddy. Pure string generation.
@@ -1047,6 +1093,88 @@ auto tCodegenMatrixTransposeCompiles =
     auto lit = transpose(basis) * float3(carried, 1.0f);
 
     builder.fragment(float4(turned, determinant(basis) * lit.z(), 1.0f));
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    check(device.makeRenderPipeline(descriptor).isValid());
+};
+
+// A vector times a matrix, which is the same product read against the matrix's
+// rows rather than against its columns - what a shader writes to go back
+// through an orientation rather than into one. Neither backend needs a form of
+// its own for it: MSL's operator and HLSL's mul() both read whichever operand
+// is on the left as a row vector, so the order the two are written in is the
+// whole of what tells the three products apart. That order is what this pins,
+// because the other one is a different value and compiles just as happily.
+auto tCodegenVectorTimesMatrix = test("GPU/codegenVectorTimesMatrix") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto angle = builder.uniform<Float>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto carried = builder.varying(position);
+
+    // Two matrices rather than one used twice, so neither construction is
+    // promoted to a shared local and each product still has one under it.
+    auto into =
+        float2x2(float2(cos(angle), sin(angle)), float2(-sin(angle), cos(angle)));
+
+    auto back =
+        float2x2(float2(cos(angle), -sin(angle)), float2(sin(angle), cos(angle)));
+
+    builder.fragment(float4(into * carried, carried * back));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "(float2x2("));
+    check(contains(metal, " * float2x2("));
+
+    // On HLSL the construction is transposed and the product is a call, so the
+    // matrix is mul()'s first argument in one and its second in the other.
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "mul(transpose(float2x2("));
+    check(contains(hlsl, ", transpose(float2x2("));
+};
+
+// The two above through the real platform shader compiler, which is the only
+// thing that answers whether the languages take a literal where the emitter put
+// one and a vector on the left of a product. Self-skips without a GPU device.
+auto tCodegenLiteralArgumentsCompile =
+    test("GPU/codegenLiteralArgumentsCompile") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto width = builder.uniform<Float>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto carried = builder.varying(position);
+
+    auto rotation =
+        float2x2(float2(cos(width), sin(width)), float2(-sin(width), cos(width)));
+
+    auto turned = carried * rotation;
+
+    auto edge = smoothstep(0.0f, width, length(turned));
+    auto band = mix(0.5f, 1.0f, edge) * step(turned.x(), 0.0f);
+    auto held = clamp(min(0.0f, turned.y()) + max(-1.0f, band), 0.0f, width);
+
+    builder.fragment(float4(edge, band, held, pow(2.0f, width)));
 
     auto shader = builder.build();
 

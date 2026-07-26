@@ -791,7 +791,67 @@ ShaderBase<T> componentCall2(const T& a, float b, const char* name)
     return call2<ShaderBase<T>>(
         a, constantOn(a, b), ValueTypeOf<ShaderBase<T>>::value, name);
 }
+
+// An intrinsic argument: a value handle, or the float literal GLSL writes
+// wherever a scalar is allowed. A literal has no graph of its own, so it
+// becomes a constant on the graph the handles bring with them - which is why at
+// least one argument has to be a handle, and why nothing below takes a call
+// made of literals only.
+template <typename T>
+concept LiteralArgument = std::same_as<T, float>;
+
+template <typename T>
+concept IntrinsicArgument = ShaderValueLike<T> || LiteralArgument<T>;
+
+inline void anchorAt(const ValueHandle*&, float) {}
+
+template <ShaderValueLike T>
+void anchorAt(const ValueHandle*& anchor, const T& value)
+{
+    if (anchor == nullptr)
+        anchor = &value;
+}
+
+inline int argumentNode(const ValueHandle& anchor, float literal)
+{
+    return anchor.graph->addConstant(literal);
+}
+
+template <ShaderValueLike T>
+int argumentNode(const ValueHandle&, const T& value)
+{
+    return value.node;
+}
+
+// One call node out of arguments that may be handles or literals in any mix.
+// This is the whole of what "a literal in any argument position" means: GLSL
+// mixes the two freely - smoothstep(0.0, w, d), min(0.0, g), step(d, 0.0),
+// mix(0.5, 1.0, h) - and every one of those has a spelling in both languages
+// this emits into, so which positions take a literal is not a question the EDSL
+// should have an opinion about.
+template <typename Result, IntrinsicArgument... Args>
+Result intrinsic(const char* name, const Args&... arguments)
+{
+    const ValueHandle* anchor = nullptr;
+    (anchorAt(anchor, arguments), ...);
+
+    auto nodes = Vector<int> {};
+    (nodes.add(argumentNode(*anchor, arguments)), ...);
+
+    auto result = Result {};
+    result.graph = anchor->graph;
+    result.node =
+        anchor->graph->addCall(ValueTypeOf<Result>::value, name, std::move(nodes));
+    return result;
+}
 } // namespace detail
+
+// An argument written beside a value of a given shape: the same shape, a scalar
+// broadcast across it, or a float literal. It is what GLSL takes wherever it
+// takes a genType, and what both languages under this take as well.
+template <typename T, typename Shape>
+concept ShapedBeside =
+    detail::LiteralArgument<T> || SameShaderShape<T, Shape> || ShaderScalarLike<T>;
 
 // The thread id as a float, e.g. a value computed from the element index. The
 // constructor-style cast spells identically in MSL and HLSL.
@@ -873,10 +933,16 @@ ShaderBase<T> atan(const T& value)
 // atan2(y, x): the quadrant-aware arctangent, the form polar coordinates want.
 // Both backends spell it atan2; GLSL overloads atan for it, which is why a
 // ported shader picks this one by argument count.
-template <typename L, SameShaderShape<L> R>
+template <ShaderValueLike L, ShapedBeside<L> R>
 ShaderBase<L> atan2(const L& y, const R& x)
 {
-    return detail::componentCall2(y, x, "atan2");
+    return detail::intrinsic<ShaderBase<L>>("atan2", y, x);
+}
+
+template <ShaderValueLike R>
+ShaderBase<R> atan2(float y, const R& x)
+{
+    return detail::intrinsic<ShaderBase<R>>("atan2", y, x);
 }
 
 template <ShaderValueLike T>
@@ -954,58 +1020,60 @@ ShaderBase<T> fwidth(const T& value)
     return detail::componentCall(value, "fwidth");
 }
 
-template <typename L, SameShaderShape<L> R>
+// min/max, and every intrinsic from here down, take a float literal in any
+// argument position - see ShapedBeside above. What decides the result is the
+// argument the shape is taken from, which is why each of these has a second
+// form for the case where that argument is itself the literal.
+template <ShaderValueLike L, ShapedBeside<L> R>
 ShaderBase<L> min(const L& a, const R& b)
 {
-    return detail::componentCall2(a, b, "min");
+    return detail::intrinsic<ShaderBase<L>>("min", a, b);
 }
 
-template <ShaderValueLike T>
-ShaderBase<T> min(const T& a, float b)
+template <ShaderValueLike R>
+ShaderBase<R> min(float a, const R& b)
 {
-    return detail::componentCall2(a, b, "min");
+    return detail::intrinsic<ShaderBase<R>>("min", a, b);
 }
 
-template <typename L, SameShaderShape<L> R>
+template <ShaderValueLike L, ShapedBeside<L> R>
 ShaderBase<L> max(const L& a, const R& b)
 {
-    return detail::componentCall2(a, b, "max");
+    return detail::intrinsic<ShaderBase<L>>("max", a, b);
 }
 
-template <ShaderValueLike T>
-ShaderBase<T> max(const T& a, float b)
+template <ShaderValueLike R>
+ShaderBase<R> max(float a, const R& b)
 {
-    return detail::componentCall2(a, b, "max");
+    return detail::intrinsic<ShaderBase<R>>("max", a, b);
 }
 
-template <typename L, SameShaderShape<L> R>
+template <ShaderValueLike L, ShapedBeside<L> R>
 ShaderBase<L> pow(const L& base, const R& exponent)
 {
-    return detail::componentCall2(base, exponent, "pow");
+    return detail::intrinsic<ShaderBase<L>>("pow", base, exponent);
 }
 
-template <ShaderScalarLike T>
-Float pow(const T& base, float exponent)
+template <ShaderValueLike R>
+ShaderBase<R> pow(float base, const R& exponent)
 {
-    return detail::componentCall2(base, exponent, "pow");
+    return detail::intrinsic<ShaderBase<R>>("pow", base, exponent);
 }
 
 // step(edge, x): 0 where x < edge, 1 elsewhere - the branchless building block
-// until comparisons and select arrive.
-template <typename L, SameShaderShape<L> R>
-ShaderBase<R> step(const L& edge, const R& value)
+// until comparisons and select arrive. The shape is x's, since that is what a
+// step is taken across.
+template <typename E, ShaderValueLike T>
+    requires ShapedBeside<E, T>
+ShaderBase<T> step(const E& edge, const T& value)
 {
-    return detail::call2<ShaderBase<R>>(
-        edge, value, ValueTypeOf<ShaderBase<R>>::value, "step");
+    return detail::intrinsic<ShaderBase<T>>("step", edge, value);
 }
 
-template <ShaderValueLike T>
-ShaderBase<T> step(float edge, const T& value)
+template <ShaderValueLike E>
+ShaderBase<E> step(const E& edge, float value)
 {
-    return detail::call2<ShaderBase<T>>(detail::constantOn(value, edge),
-                                        value,
-                                        ValueTypeOf<ShaderBase<T>>::value,
-                                        "step");
+    return detail::intrinsic<ShaderBase<E>>("step", edge, value);
 }
 
 template <ShaderVectorLike T>
@@ -1078,64 +1146,42 @@ ShaderBase<N> faceforward(const N& normal, const I& incident, const R& reference
                                         "faceforward");
 }
 
-template <typename T, SameShaderShape<T> Low, SameShaderShape<T> High>
+template <ShaderValueLike T, ShapedBeside<T> Low, ShapedBeside<T> High>
 ShaderBase<T> clamp(const T& value, const Low& low, const High& high)
 {
-    return detail::call3<ShaderBase<T>>(
-        value, low, high, ValueTypeOf<ShaderBase<T>>::value, "clamp");
-}
-
-template <ShaderValueLike T>
-ShaderBase<T> clamp(const T& value, float low, float high)
-{
-    return detail::call3<ShaderBase<T>>(value,
-                                        detail::constantOn(value, low),
-                                        detail::constantOn(value, high),
-                                        ValueTypeOf<ShaderBase<T>>::value,
-                                        "clamp");
+    return detail::intrinsic<ShaderBase<T>>("clamp", value, low, high);
 }
 
 // mix(from, to, amount): linear interpolation (HLSL lerp). The amount is a
-// value of the same shape, a scalar broadcast across a vector, or a literal.
-template <typename A, SameShaderShape<A> B, SameShaderShape<A> T>
+// value of the same shape, a scalar broadcast across a vector, or a literal -
+// and so are the two endpoints, which is what a shader fading between two
+// constants writes: mix(0.5, 1.0, h).
+template <ShaderValueLike A, ShapedBeside<A> B, ShapedBeside<A> T>
 ShaderBase<A> mix(const A& from, const B& to, const T& amount)
 {
-    return detail::call3<ShaderBase<A>>(
-        from, to, amount, ValueTypeOf<ShaderBase<A>>::value, "mix");
+    return detail::intrinsic<ShaderBase<A>>("mix", from, to, amount);
 }
 
-template <ShaderVectorLike A, SameShaderShape<A> B, ShaderScalarLike S>
-ShaderBase<A> mix(const A& from, const B& to, const S& amount)
+template <ShaderValueLike B, ShapedBeside<B> T>
+ShaderBase<B> mix(float from, const B& to, const T& amount)
 {
-    return detail::call3<ShaderBase<A>>(
-        from, to, amount, ValueTypeOf<ShaderBase<A>>::value, "mix");
-}
-
-template <typename A, SameShaderShape<A> B>
-ShaderBase<A> mix(const A& from, const B& to, float amount)
-{
-    return detail::call3<ShaderBase<A>>(from,
-                                        to,
-                                        detail::constantOn(from, amount),
-                                        ValueTypeOf<ShaderBase<A>>::value,
-                                        "mix");
-}
-
-template <typename T, SameShaderShape<T> E0, SameShaderShape<T> E1>
-ShaderBase<T> smoothstep(const E0& edge0, const E1& edge1, const T& value)
-{
-    return detail::call3<ShaderBase<T>>(
-        edge0, edge1, value, ValueTypeOf<ShaderBase<T>>::value, "smoothstep");
+    return detail::intrinsic<ShaderBase<B>>("mix", from, to, amount);
 }
 
 template <ShaderValueLike T>
-ShaderBase<T> smoothstep(float edge0, float edge1, const T& value)
+ShaderBase<T> mix(float from, float to, const T& amount)
 {
-    return detail::call3<ShaderBase<T>>(detail::constantOn(value, edge0),
-                                        detail::constantOn(value, edge1),
-                                        value,
-                                        ValueTypeOf<ShaderBase<T>>::value,
-                                        "smoothstep");
+    return detail::intrinsic<ShaderBase<T>>("mix", from, to, amount);
+}
+
+// smoothstep(edge0, edge1, x): the shape is x's, and either edge is a literal
+// or a value independently of the other - smoothstep(0.0, zo * zi, -d) is what
+// an antialiased edge whose width the shader computes looks like.
+template <typename E0, typename E1, ShaderValueLike T>
+    requires ShapedBeside<E0, T> && ShapedBeside<E1, T>
+ShaderBase<T> smoothstep(const E0& edge0, const E1& edge1, const T& value)
+{
+    return detail::intrinsic<ShaderBase<T>>("smoothstep", edge0, edge1, value);
 }
 
 // Componentwise arithmetic between two values of the same shape.
@@ -1410,6 +1456,19 @@ inline Bool operator||(const Bool& lhs, const Bool& rhs)
 inline Bool operator!(const Bool& value)
 {
     return detail::unaryOp<Bool>('!', value);
+}
+
+// Two conditions compared rather than combined, which is what a shader asking
+// whether two tests agreed writes. GLSL has it, both languages under this have
+// it, and it is not the connectives: `a == b` is true when both are false.
+inline Bool operator==(const Bool& lhs, const Bool& rhs)
+{
+    return detail::compare("==", lhs, rhs);
+}
+
+inline Bool operator!=(const Bool& lhs, const Bool& rhs)
+{
+    return detail::compare("!=", lhs, rhs);
 }
 
 // What collapses a mask into something a branch or a select can test: true when
@@ -1848,6 +1907,13 @@ inline Int min(const Int& a, int b)
     return detail::call2<Int>(a, detail::intConstantOn(a, b), ValueType::Int, "min");
 }
 
+// The literal on the left as well, for the same reason the float intrinsics
+// take one in any position: a shader writes max(0, -i) as readily as max(i, 0).
+inline Int min(int a, const Int& b)
+{
+    return detail::call2<Int>(detail::intConstantOn(b, a), b, ValueType::Int, "min");
+}
+
 inline Int max(const Int& a, const Int& b)
 {
     return detail::call2<Int>(a, b, ValueType::Int, "max");
@@ -1856,6 +1922,11 @@ inline Int max(const Int& a, const Int& b)
 inline Int max(const Int& a, int b)
 {
     return detail::call2<Int>(a, detail::intConstantOn(a, b), ValueType::Int, "max");
+}
+
+inline Int max(int a, const Int& b)
+{
+    return detail::call2<Int>(detail::intConstantOn(b, a), b, ValueType::Int, "max");
 }
 
 inline Int abs(const Int& value)
@@ -1879,6 +1950,20 @@ Result convertTo(const T& value)
 } // namespace detail
 
 inline Float toFloat(const Int& value)
+{
+    return detail::convertTo<Float>(value);
+}
+
+// And out of a condition, which is the other crossing GLSL spells with a
+// constructor: int(a > b) is 1 or 0, and both languages under this cast a bool
+// the same way. It is not a select - there is nothing to choose between - and
+// it is what a shader counting how many of its tests passed adds up.
+inline Int toInt(const Bool& value)
+{
+    return detail::convertTo<Int>(value);
+}
+
+inline Float toFloat(const Bool& value)
 {
     return detail::convertTo<Float>(value);
 }
@@ -2019,6 +2104,27 @@ inline Float4 operator*(const Float4x4& matrix, const Float4& vector)
     return detail::matrixMul<Float4>(matrix, vector);
 }
 
+// Vector * matrix, which is the same product against the matrix's rows rather
+// than its columns - what a shader writes to go back through an orientation
+// instead of into one, and how half the Shadertoys that rotate a coordinate
+// spell it. It needs no per-backend form of its own beyond the one the product
+// already has: MSL's * and HLSL's mul() both read the left operand as a row
+// vector when it is the one on the left.
+inline Float2 operator*(const Float2& vector, const Float2x2& matrix)
+{
+    return detail::matrixMul<Float2>(vector, matrix);
+}
+
+inline Float3 operator*(const Float3& vector, const Float3x3& matrix)
+{
+    return detail::matrixMul<Float3>(vector, matrix);
+}
+
+inline Float4 operator*(const Float4& vector, const Float4x4& matrix)
+{
+    return detail::matrixMul<Float4>(vector, matrix);
+}
+
 // Matrix * matrix, e.g. composing two rotations, or model/view/projection.
 inline Float2x2 operator*(const Float2x2& a, const Float2x2& b)
 {
@@ -2034,6 +2140,51 @@ inline Float4x4 operator*(const Float4x4& a, const Float4x4& b)
 {
     return detail::matrixMul<Float4x4>(a, b);
 }
+
+// A matrix scaled by a scalar, on either side and by a handle or a literal.
+// This is not one of the products above and is deliberately not a Mul node: it
+// multiplies every element, which both languages spell with the operator, and
+// which a transpose leaves alone - so HLSL needs nothing extra for it even
+// though it is holding the matrix the other way up.
+#define EACP_MATRIX_SCALE(Matrix)                                                   \
+    template <ShaderScalarLike S>                                                   \
+    Matrix operator*(const Matrix& matrix, const S& scalar)                         \
+    {                                                                               \
+        return detail::binaryOp<Matrix>('*', matrix, scalar);                       \
+    }                                                                               \
+                                                                                    \
+    template <ShaderScalarLike S>                                                   \
+    Matrix operator*(const S& scalar, const Matrix& matrix)                         \
+    {                                                                               \
+        return detail::binaryOp<Matrix>('*', scalar, matrix);                       \
+    }                                                                               \
+                                                                                    \
+    inline Matrix operator*(const Matrix& matrix, float scalar)                     \
+    {                                                                               \
+        return detail::scalarOp<Matrix>('*', matrix, scalar);                       \
+    }                                                                               \
+                                                                                    \
+    inline Matrix operator*(float scalar, const Matrix& matrix)                     \
+    {                                                                               \
+        return detail::scalarOpLeft<Matrix>('*', scalar, matrix);                   \
+    }                                                                               \
+                                                                                    \
+    template <ShaderScalarLike S>                                                   \
+    Matrix operator/(const Matrix& matrix, const S& scalar)                         \
+    {                                                                               \
+        return detail::binaryOp<Matrix>('/', matrix, scalar);                       \
+    }                                                                               \
+                                                                                    \
+    inline Matrix operator/(const Matrix& matrix, float scalar)                     \
+    {                                                                               \
+        return detail::scalarOp<Matrix>('/', matrix, scalar);                       \
+    }
+
+EACP_MATRIX_SCALE(Float2x2)
+EACP_MATRIX_SCALE(Float3x3)
+EACP_MATRIX_SCALE(Float4x4)
+
+#undef EACP_MATRIX_SCALE
 
 // Builds a matrix from its columns. Column-major, matching Metal's
 // float4x4(c0, c1, c2, c3); the HLSL emitter transposes this construction, since

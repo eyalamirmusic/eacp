@@ -202,16 +202,18 @@ struct ExprPrinter
 
             case ExprKind::Mul:
             {
-                // Matrix * vector. MSL spells it with the * operator
-                // (column-major); HLSL multiplies a matrix and vector with
-                // mul().
-                auto matrix = ref(expr.args[0]);
-                auto vector = ref(expr.args[1]);
+                // A matrix product, in the order it was written. MSL spells it
+                // with the * operator; HLSL multiplies a matrix by anything
+                // with mul(). Both read a vector on the left of one as a row
+                // and one on the right as a column, so the order is the whole
+                // of what tells the three products apart.
+                auto left = ref(expr.args[0]);
+                auto right = ref(expr.args[1]);
 
                 if (backend == Backend::Metal)
-                    return "(" + matrix + " * " + vector + ")";
+                    return "(" + left + " * " + right + ")";
 
-                return "mul(" + matrix + ", " + vector + ")";
+                return "mul(" + left + ", " + right + ")";
             }
 
             case ExprKind::Sample:

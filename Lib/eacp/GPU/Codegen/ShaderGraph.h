@@ -30,8 +30,11 @@ enum class ExprKind
     // Unlike every other node this is not a pure expression: what it evaluates
     // to depends on which statements have run, so the emitter never hoists one
     // past an assignment (see the per-statement local planning in the emitter).
-    Mul, // matrix * vector; args = {matrix, vector}. Emits per-backend (MSL uses
-    // the * operator, HLSL uses mul()), so it is not a plain Binary.
+    Mul, // a matrix product: args = {left, right} in the order written, which
+    // is matrix * vector, vector * matrix or matrix * matrix. Emits per-backend
+    // (MSL uses the * operator, HLSL uses mul()), so it is not a plain Binary -
+    // and both languages read whichever operand is on the left the same way, so
+    // the order is the whole of what distinguishes the three.
     Sample, // texture sample; index = texture slot, args = {uv} or {uv, level}.
     // Emits per-backend (MSL t.sample(s, uv), HLSL t.Sample(s, uv)).
     Fetch, // texel read at integer coordinates, no sampler; index = texture slot,
@@ -176,7 +179,7 @@ public:
     // so the node prints the same way the scalar one does.
     int addCompare(ValueType type, std::string op, int lhs, int rhs);
     int addSelect(ValueType type, int condition, int whenTrue, int whenFalse);
-    int addMul(ValueType type, int matrix, int vector);
+    int addMul(ValueType type, int left, int right);
 
     // Mutable locals and the statements that drive them. A variable is declared
     // where it is created, so the statement stream is also its scope: creating

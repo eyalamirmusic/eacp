@@ -194,13 +194,13 @@ int ShaderGraph::addSelect(ValueType type,
     return add(std::move(node));
 }
 
-int ShaderGraph::addMul(ValueType type, int matrix, int vector)
+int ShaderGraph::addMul(ValueType type, int left, int right)
 {
     auto node = Expr {};
     node.kind = ExprKind::Mul;
     node.type = type;
-    node.args.add(matrix);
-    node.args.add(vector);
+    node.args.add(left);
+    node.args.add(right);
     return add(std::move(node));
 }
 
