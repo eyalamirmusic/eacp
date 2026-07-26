@@ -20,9 +20,36 @@ enum class ValueType
     Float2,
     Float3,
     Float4,
+    Float2x2,
+    Float3x3,
     Float4x4,
     UInt
 };
+
+// Whether a type is one of the square matrices. They share every rule that
+// separates a matrix from a vector: built from columns, multiplied with mul()
+// on HLSL, and transposed at construction there.
+constexpr bool isMatrix(ValueType type)
+{
+    return type == ValueType::Float2x2 || type == ValueType::Float3x3
+           || type == ValueType::Float4x4;
+}
+
+// The width of a square matrix's columns, and the number of them.
+constexpr int matrixOrder(ValueType type)
+{
+    switch (type)
+    {
+        case ValueType::Float2x2:
+            return 2;
+        case ValueType::Float3x3:
+            return 3;
+        case ValueType::Float4x4:
+            return 4;
+        default:
+            return 0;
+    }
+}
 
 constexpr int componentCount(ValueType type)
 {
@@ -37,6 +64,10 @@ constexpr int componentCount(ValueType type)
             return 3;
         case ValueType::Float4:
             return 4;
+        case ValueType::Float2x2:
+            return 4;
+        case ValueType::Float3x3:
+            return 9;
         case ValueType::Float4x4:
             return 16;
     }
@@ -61,6 +92,10 @@ inline const char* typeName(ValueType type)
             return "float3";
         case ValueType::Float4:
             return "float4";
+        case ValueType::Float2x2:
+            return "float2x2";
+        case ValueType::Float3x3:
+            return "float3x3";
         case ValueType::Float4x4:
             return "float4x4";
         case ValueType::UInt:

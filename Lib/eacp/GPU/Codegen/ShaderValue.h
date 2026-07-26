@@ -12,6 +12,11 @@
 
 namespace eacp::GPU
 {
+struct Float;
+struct Float2;
+struct Float3;
+struct Float4;
+
 namespace detail
 {
 struct ValueHandle
@@ -28,6 +33,120 @@ struct ValueHandle
     ShaderGraph* graph = nullptr;
     int node = -1;
 };
+
+constexpr int componentIndex(char component)
+{
+    switch (component)
+    {
+        case 'x':
+            return 0;
+        case 'y':
+            return 1;
+        case 'z':
+            return 2;
+        default:
+            return 3;
+    }
+}
+
+// Whether a vector of the given width can name these components at all: .zw
+// belongs to a Float4 and means nothing on a Float2. Constraining each accessor
+// on this is what keeps the wrong ones off a narrow type rather than letting
+// them through to the shader compiler.
+constexpr bool spellableAt(int width, const char* components)
+{
+    for (const auto* at = components; *at != '\0'; ++at)
+        if (componentIndex(*at) >= width)
+            return false;
+
+    return true;
+}
+
+// The cross product of the component set with itself, once per swizzle width.
+// The action macro passed in is what makes one accessor out of a set of
+// components - declaring it inside Swizzles below, or defining it once the
+// vector types it returns are complete.
+#define EACP_SWIZZLE_PAIR_ROW(PAIR, a) PAIR(a, x) PAIR(a, y) PAIR(a, z) PAIR(a, w)
+
+#define EACP_SWIZZLE_TRIPLE_COLUMN(TRIPLE, a, b)                                    \
+    TRIPLE(a, b, x) TRIPLE(a, b, y) TRIPLE(a, b, z) TRIPLE(a, b, w)
+
+#define EACP_SWIZZLE_TRIPLE_ROW(TRIPLE, a)                                          \
+    EACP_SWIZZLE_TRIPLE_COLUMN(TRIPLE, a, x)                                        \
+    EACP_SWIZZLE_TRIPLE_COLUMN(TRIPLE, a, y)                                        \
+    EACP_SWIZZLE_TRIPLE_COLUMN(TRIPLE, a, z)                                        \
+    EACP_SWIZZLE_TRIPLE_COLUMN(TRIPLE, a, w)
+
+#define EACP_SWIZZLE_QUAD_ELEMENT(QUAD, a, b, c)                                    \
+    QUAD(a, b, c, x) QUAD(a, b, c, y) QUAD(a, b, c, z) QUAD(a, b, c, w)
+
+#define EACP_SWIZZLE_QUAD_COLUMN(QUAD, a, b)                                        \
+    EACP_SWIZZLE_QUAD_ELEMENT(QUAD, a, b, x)                                        \
+    EACP_SWIZZLE_QUAD_ELEMENT(QUAD, a, b, y)                                        \
+    EACP_SWIZZLE_QUAD_ELEMENT(QUAD, a, b, z)                                        \
+    EACP_SWIZZLE_QUAD_ELEMENT(QUAD, a, b, w)
+
+#define EACP_SWIZZLE_QUAD_ROW(QUAD, a)                                              \
+    EACP_SWIZZLE_QUAD_COLUMN(QUAD, a, x)                                            \
+    EACP_SWIZZLE_QUAD_COLUMN(QUAD, a, y)                                            \
+    EACP_SWIZZLE_QUAD_COLUMN(QUAD, a, z)                                            \
+    EACP_SWIZZLE_QUAD_COLUMN(QUAD, a, w)
+
+// clang-format off
+#define EACP_SWIZZLES(ONE, PAIR, TRIPLE, QUAD)                                      \
+    ONE(x) ONE(y) ONE(z) ONE(w)                                                     \
+    EACP_SWIZZLE_PAIR_ROW(PAIR, x)                                                  \
+    EACP_SWIZZLE_PAIR_ROW(PAIR, y)                                                  \
+    EACP_SWIZZLE_PAIR_ROW(PAIR, z)                                                  \
+    EACP_SWIZZLE_PAIR_ROW(PAIR, w)                                                  \
+    EACP_SWIZZLE_TRIPLE_ROW(TRIPLE, x)                                              \
+    EACP_SWIZZLE_TRIPLE_ROW(TRIPLE, y)                                              \
+    EACP_SWIZZLE_TRIPLE_ROW(TRIPLE, z)                                              \
+    EACP_SWIZZLE_TRIPLE_ROW(TRIPLE, w)                                              \
+    EACP_SWIZZLE_QUAD_ROW(QUAD, x)                                                  \
+    EACP_SWIZZLE_QUAD_ROW(QUAD, y)                                                  \
+    EACP_SWIZZLE_QUAD_ROW(QUAD, z)                                                  \
+    EACP_SWIZZLE_QUAD_ROW(QUAD, w)
+// clang-format on
+
+#define EACP_DECLARE_SWIZZLE_1(a)                                                   \
+    Float a() const                                                                 \
+        requires(spellableAt(Width, #a));
+
+#define EACP_DECLARE_SWIZZLE_2(a, b)                                                \
+    Float2 a##b() const                                                             \
+        requires(spellableAt(Width, #a #b));
+
+#define EACP_DECLARE_SWIZZLE_3(a, b, c)                                             \
+    Float3 a##b##c() const                                                          \
+        requires(spellableAt(Width, #a #b #c));
+
+#define EACP_DECLARE_SWIZZLE_4(a, b, c, d)                                          \
+    Float4 a##b##c##d() const                                                       \
+        requires(spellableAt(Width, #a #b #c #d));
+
+// Every ordering of one to four components, constrained to the widths that can
+// spell it - 340 accessors on a Float4, which is what it takes for a swizzle to
+// stay one node however it is written. Rebuilding .bgra as a constructor over
+// four extracted components would instead record the source subtree four times.
+//
+// Declared here and defined below, once the vector types are complete: a Float3
+// that returns a Float2 and a Float2 that returns a Float3 cannot both be
+// defined first, and a definition - unlike a declaration - needs its return
+// type complete the moment the class is instantiated.
+template <int Width>
+struct Swizzles : ValueHandle
+{
+    EACP_SWIZZLES(EACP_DECLARE_SWIZZLE_1,
+                  EACP_DECLARE_SWIZZLE_2,
+                  EACP_DECLARE_SWIZZLE_3,
+                  EACP_DECLARE_SWIZZLE_4)
+};
+
+#undef EACP_DECLARE_SWIZZLE_1
+#undef EACP_DECLARE_SWIZZLE_2
+#undef EACP_DECLARE_SWIZZLE_3
+#undef EACP_DECLARE_SWIZZLE_4
 } // namespace detail
 
 struct Float : detail::ValueHandle
@@ -42,32 +161,88 @@ struct UInt : detail::ValueHandle
 {
 };
 
-struct Float2 : detail::ValueHandle
+struct Float2 : detail::Swizzles<2>
 {
-    Float x() const { return swizzle<Float>(ValueType::Float, "x"); }
-    Float y() const { return swizzle<Float>(ValueType::Float, "y"); }
 };
 
-struct Float3 : detail::ValueHandle
+struct Float3 : detail::Swizzles<3>
 {
-    Float x() const { return swizzle<Float>(ValueType::Float, "x"); }
-    Float y() const { return swizzle<Float>(ValueType::Float, "y"); }
-    Float z() const { return swizzle<Float>(ValueType::Float, "z"); }
-    Float2 xy() const { return swizzle<Float2>(ValueType::Float2, "xy"); }
 };
 
-struct Float4 : detail::ValueHandle
+struct Float4 : detail::Swizzles<4>
 {
-    Float x() const { return swizzle<Float>(ValueType::Float, "x"); }
-    Float y() const { return swizzle<Float>(ValueType::Float, "y"); }
-    Float z() const { return swizzle<Float>(ValueType::Float, "z"); }
-    Float w() const { return swizzle<Float>(ValueType::Float, "w"); }
-    Float2 xy() const { return swizzle<Float2>(ValueType::Float2, "xy"); }
-    Float3 xyz() const { return swizzle<Float3>(ValueType::Float3, "xyz"); }
 };
 
-// A 4x4 matrix value. No swizzles; its one operation is matrix * vector, which
-// records a Mul node so the emitter can spell it per-backend.
+namespace detail
+{
+#define EACP_DEFINE_SWIZZLE_1(a)                                                    \
+    template <int Width>                                                            \
+    Float Swizzles<Width>::a() const                                                \
+        requires(spellableAt(Width, #a))                                            \
+    {                                                                               \
+        return swizzle<Float>(ValueType::Float, #a);                                \
+    }
+
+#define EACP_DEFINE_SWIZZLE_2(a, b)                                                 \
+    template <int Width>                                                            \
+    Float2 Swizzles<Width>::a##b() const                                            \
+        requires(spellableAt(Width, #a #b))                                         \
+    {                                                                               \
+        return swizzle<Float2>(ValueType::Float2, #a #b);                           \
+    }
+
+#define EACP_DEFINE_SWIZZLE_3(a, b, c)                                              \
+    template <int Width>                                                            \
+    Float3 Swizzles<Width>::a##b##c() const                                         \
+        requires(spellableAt(Width, #a #b #c))                                      \
+    {                                                                               \
+        return swizzle<Float3>(ValueType::Float3, #a #b #c);                        \
+    }
+
+#define EACP_DEFINE_SWIZZLE_4(a, b, c, d)                                           \
+    template <int Width>                                                            \
+    Float4 Swizzles<Width>::a##b##c##d() const                                      \
+        requires(spellableAt(Width, #a #b #c #d))                                   \
+    {                                                                               \
+        return swizzle<Float4>(ValueType::Float4, #a #b #c #d);                     \
+    }
+
+EACP_SWIZZLES(EACP_DEFINE_SWIZZLE_1,
+              EACP_DEFINE_SWIZZLE_2,
+              EACP_DEFINE_SWIZZLE_3,
+              EACP_DEFINE_SWIZZLE_4)
+
+#undef EACP_DEFINE_SWIZZLE_1
+#undef EACP_DEFINE_SWIZZLE_2
+#undef EACP_DEFINE_SWIZZLE_3
+#undef EACP_DEFINE_SWIZZLE_4
+#undef EACP_SWIZZLES
+#undef EACP_SWIZZLE_PAIR_ROW
+#undef EACP_SWIZZLE_TRIPLE_COLUMN
+#undef EACP_SWIZZLE_TRIPLE_ROW
+#undef EACP_SWIZZLE_QUAD_ELEMENT
+#undef EACP_SWIZZLE_QUAD_COLUMN
+#undef EACP_SWIZZLE_QUAD_ROW
+} // namespace detail
+
+// The square matrix values. No swizzles; their operations are matrix * vector
+// and matrix * matrix, which record a Mul node so the emitter can spell it
+// per-backend.
+//
+// Float2x2 and Float3x3 are shader-local values only - the 2D rotation a
+// procedural shader builds inline, the tangent basis a lighting term assembles
+// - and ShaderBuilder refuses them as uniforms: MSL and HLSL pack them to
+// different sizes inside the value itself, which the uniform block's padding
+// cannot bridge. See UniformLayout.h. A Float4x4, which both languages agree
+// on, is the matrix to send from the CPU.
+struct Float2x2 : detail::ValueHandle
+{
+};
+
+struct Float3x3 : detail::ValueHandle
+{
+};
+
 struct Float4x4 : detail::ValueHandle
 {
 };
@@ -141,6 +316,18 @@ template <>
 struct ValueTypeOf<Float4>
 {
     static constexpr ValueType value = ValueType::Float4;
+};
+
+template <>
+struct ValueTypeOf<Float2x2>
+{
+    static constexpr ValueType value = ValueType::Float2x2;
+};
+
+template <>
+struct ValueTypeOf<Float3x3>
+{
+    static constexpr ValueType value = ValueType::Float3x3;
 };
 
 template <>
@@ -361,6 +548,122 @@ ShaderBase<T> sqrt(const T& value)
     return detail::componentCall(value, "sqrt");
 }
 
+// The reciprocal square root, spelled rsqrt in both backends (GLSL calls it
+// inversesqrt).
+template <ShaderValueLike T>
+ShaderBase<T> rsqrt(const T& value)
+{
+    return detail::componentCall(value, "rsqrt");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> tan(const T& value)
+{
+    return detail::componentCall(value, "tan");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> asin(const T& value)
+{
+    return detail::componentCall(value, "asin");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> acos(const T& value)
+{
+    return detail::componentCall(value, "acos");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> atan(const T& value)
+{
+    return detail::componentCall(value, "atan");
+}
+
+// atan2(y, x): the quadrant-aware arctangent, the form polar coordinates want.
+// Both backends spell it atan2; GLSL overloads atan for it, which is why a
+// ported shader picks this one by argument count.
+template <typename L, SameShaderShape<L> R>
+ShaderBase<L> atan2(const L& y, const R& x)
+{
+    return detail::componentCall2(y, x, "atan2");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> exp(const T& value)
+{
+    return detail::componentCall(value, "exp");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> exp2(const T& value)
+{
+    return detail::componentCall(value, "exp2");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> log(const T& value)
+{
+    return detail::componentCall(value, "log");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> log2(const T& value)
+{
+    return detail::componentCall(value, "log2");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> sign(const T& value)
+{
+    return detail::componentCall(value, "sign");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> ceil(const T& value)
+{
+    return detail::componentCall(value, "ceil");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> trunc(const T& value)
+{
+    return detail::componentCall(value, "trunc");
+}
+
+// Rounds to the nearest integer. The two backends disagree on exact halves -
+// Metal rounds them away from zero, HLSL to even - so a value landing on .5 is
+// the one case this is not bit-identical across them. GLSL leaves the same case
+// implementation-defined; floor(x + 0.5) is the way to pin it down.
+template <ShaderValueLike T>
+ShaderBase<T> round(const T& value)
+{
+    return detail::componentCall(value, "round");
+}
+
+// Screen-space partial derivatives and their sum of magnitudes, the width of
+// one pixel in whatever the argument measures - the usual way to antialias a
+// procedural edge. Fragment-stage only, like sample(): the rasteriser supplies
+// them from the neighbouring pixels in the quad, so they must never feed the
+// position expression.
+template <ShaderValueLike T>
+ShaderBase<T> dfdx(const T& value)
+{
+    return detail::componentCall(value, "dfdx");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> dfdy(const T& value)
+{
+    return detail::componentCall(value, "dfdy");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> fwidth(const T& value)
+{
+    return detail::componentCall(value, "fwidth");
+}
+
 template <typename L, SameShaderShape<L> R>
 ShaderBase<L> min(const L& a, const R& b)
 {
@@ -437,6 +740,52 @@ template <ShaderShape<Float3> L, SameShaderShape<L> R>
 Float3 cross(const L& a, const R& b)
 {
     return detail::call2<Float3>(a, b, ValueType::Float3, "cross");
+}
+
+template <ShaderVectorLike L, SameShaderShape<L> R>
+Float distance(const L& a, const R& b)
+{
+    return detail::call2<Float>(a, b, ValueType::Float, "distance");
+}
+
+// reflect(incident, normal): the incident direction mirrored in the surface,
+// with the normal taken as already unit length.
+template <ShaderVectorLike I, SameShaderShape<I> N>
+ShaderBase<I> reflect(const I& incident, const N& normal)
+{
+    return detail::componentCall2(incident, normal, "reflect");
+}
+
+// refract(incident, normal, eta): the incident direction bent by the ratio of
+// refractive indices, or zero under total internal reflection. Both arguments
+// are taken as unit length.
+template <ShaderVectorLike I, SameShaderShape<I> N, ShaderScalarLike E>
+ShaderBase<I> refract(const I& incident, const N& normal, const E& eta)
+{
+    return detail::call3<ShaderBase<I>>(
+        incident, normal, eta, ValueTypeOf<ShaderBase<I>>::value, "refract");
+}
+
+template <ShaderVectorLike I, SameShaderShape<I> N>
+ShaderBase<I> refract(const I& incident, const N& normal, float eta)
+{
+    return detail::call3<ShaderBase<I>>(incident,
+                                        normal,
+                                        detail::constantOn(incident, eta),
+                                        ValueTypeOf<ShaderBase<I>>::value,
+                                        "refract");
+}
+
+// faceforward(normal, incident, reference): the normal flipped, if needed, to
+// face away from the incident direction.
+template <ShaderVectorLike N, SameShaderShape<N> I, SameShaderShape<N> R>
+ShaderBase<N> faceforward(const N& normal, const I& incident, const R& reference)
+{
+    return detail::call3<ShaderBase<N>>(normal,
+                                        incident,
+                                        reference,
+                                        ValueTypeOf<ShaderBase<N>>::value,
+                                        "faceforward");
 }
 
 template <typename T, SameShaderShape<T> Low, SameShaderShape<T> High>
@@ -631,6 +980,33 @@ ShaderBase<T> operator/(const S& scalar, const T& vector)
     return detail::binaryOp<ShaderBase<T>>('/', scalar, vector);
 }
 
+// mod(x, y): the floored modulus, x - y * floor(x / y), whose result takes the
+// sign of the divisor - so mod(-0.25, 1.0) is 0.75 and a tiling pattern is
+// continuous across the origin.
+//
+// Recorded as that expression rather than as a call, which is the whole point:
+// the only modulus either backend offers is fmod(), and fmod() truncates
+// instead, so it returns -0.25 there and every tile left of the origin comes
+// out mirrored. Building it from nodes both languages already agree on is what
+// makes the two backends bit-identical here.
+template <typename L, SameShaderShape<L> R>
+ShaderBase<L> mod(const L& x, const R& y)
+{
+    return x - y * floor(x / y);
+}
+
+template <ShaderVectorLike T, ShaderScalarLike S>
+ShaderBase<T> mod(const T& x, const S& y)
+{
+    return x - y * floor(x / y);
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> mod(const T& x, float y)
+{
+    return x - y * floor(x / y);
+}
+
 // Index arithmetic on uint values: against another uint (a Uniform<UInt>
 // binds here too) or an integer literal, which records a uint constant node.
 // Deliberately separate from the float operator vocabulary - there are no
@@ -735,33 +1111,71 @@ inline UInt max(const UInt& a, unsigned b)
         a, detail::uintConstantOn(a, b), ValueType::UInt, "max");
 }
 
-// Matrix * vector, e.g. an MVP transform applied to a clip-space position.
+namespace detail
+{
+template <typename Result, typename A, typename B>
+Result matrixMul(const A& a, const B& b)
+{
+    auto result = Result {};
+    result.graph = a.graph;
+    result.node = a.graph->addMul(ValueTypeOf<Result>::value, a.node, b.node);
+    return result;
+}
+} // namespace detail
+
+// Matrix * vector, e.g. a 2D rotation applied to a texture coordinate or an MVP
+// transform applied to a clip-space position.
+inline Float2 operator*(const Float2x2& matrix, const Float2& vector)
+{
+    return detail::matrixMul<Float2>(matrix, vector);
+}
+
+inline Float3 operator*(const Float3x3& matrix, const Float3& vector)
+{
+    return detail::matrixMul<Float3>(matrix, vector);
+}
+
 inline Float4 operator*(const Float4x4& matrix, const Float4& vector)
 {
-    auto result = Float4 {};
-    result.graph = matrix.graph;
-    result.node = matrix.graph->addMul(ValueType::Float4, matrix.node, vector.node);
-    return result;
+    return detail::matrixMul<Float4>(matrix, vector);
 }
 
-// Matrix * matrix, e.g. composing model/view/projection in the shader.
+// Matrix * matrix, e.g. composing two rotations, or model/view/projection.
+inline Float2x2 operator*(const Float2x2& a, const Float2x2& b)
+{
+    return detail::matrixMul<Float2x2>(a, b);
+}
+
+inline Float3x3 operator*(const Float3x3& a, const Float3x3& b)
+{
+    return detail::matrixMul<Float3x3>(a, b);
+}
+
 inline Float4x4 operator*(const Float4x4& a, const Float4x4& b)
 {
-    auto result = Float4x4 {};
-    result.graph = a.graph;
-    result.node = a.graph->addMul(ValueType::Float4x4, a.node, b.node);
-    return result;
+    return detail::matrixMul<Float4x4>(a, b);
 }
 
-// Builds a matrix from its four columns. Column-major, matching Metal's
+// Builds a matrix from its columns. Column-major, matching Metal's
 // float4x4(c0, c1, c2, c3); the HLSL emitter transposes this construction, since
 // HLSL fills a matrix from rows rather than columns.
+inline Float2x2 float2x2(const Float2& c0, const Float2& c1)
+{
+    return detail::construct<Float2x2>(
+        *c0.graph, ValueType::Float2x2, {c0.node, c1.node});
+}
+
+inline Float3x3 float3x3(const Float3& c0, const Float3& c1, const Float3& c2)
+{
+    return detail::construct<Float3x3>(
+        *c0.graph, ValueType::Float3x3, {c0.node, c1.node, c2.node});
+}
+
 inline Float4x4
     float4x4(const Float4& c0, const Float4& c1, const Float4& c2, const Float4& c3)
 {
-    auto& graph = *c0.graph;
     return detail::construct<Float4x4>(
-        graph, ValueType::Float4x4, {c0.node, c1.node, c2.node, c3.node});
+        *c0.graph, ValueType::Float4x4, {c0.node, c1.node, c2.node, c3.node});
 }
 
 // A vector-constructor argument: any value handle (or derived member), or a

@@ -13,6 +13,14 @@ namespace eacp::GPU
 // block's total size follows the same rules - sizeof(Uniforms) is padded up to
 // the widest member's alignment, which ShaderUploadVisitor::finish applies to
 // the packed block, Metal's validation layer holding the bound length to it.
+//
+// Float2x2 and Float3x3 appear here for completeness only: ShaderBuilder
+// refuses them as uniforms, because this is the one place the two backends
+// cannot be reconciled by padding. MSL packs a float2x2 as two float2 columns,
+// 16 bytes in all, while an HLSL cbuffer gives every matrix row a register of
+// its own and takes 32 - a disagreement inside the value, which no pad scalar
+// between fields can correct. Both agree on a float4x4, which is why that one
+// crosses the boundary and these two stay shader-local values.
 inline int uniformAlignment(ValueType type)
 {
     switch (type)
@@ -21,9 +29,11 @@ inline int uniformAlignment(ValueType type)
         case ValueType::UInt:
             return 4;
         case ValueType::Float2:
+        case ValueType::Float2x2:
             return 8;
         case ValueType::Float3:
         case ValueType::Float4:
+        case ValueType::Float3x3:
         case ValueType::Float4x4:
             return 16;
     }
@@ -33,7 +43,15 @@ inline int uniformAlignment(ValueType type)
 
 inline int uniformSlotStride(ValueType type)
 {
-    return type == ValueType::Float3 ? 16 : byteSize(type);
+    if (type == ValueType::Float3)
+        return 16;
+
+    // A float3x3 is three float3 columns, and a column occupies a full 16 bytes
+    // just as a standalone float3 does: 48, not the 36 its components add to.
+    if (type == ValueType::Float3x3)
+        return 48;
+
+    return byteSize(type);
 }
 
 inline int alignUp(int value, int alignment)
@@ -63,7 +81,7 @@ inline Vector<int> uniformOffsets(const Vector<ValueType>& types)
 // inserts explicit pad scalars so both backends read the same packed bytes.
 inline int hlslPackedOffset(int cursor, ValueType type)
 {
-    if (type == ValueType::Float4x4)
+    if (isMatrix(type))
         return alignUp(cursor, 16);
 
     auto size = byteSize(type);

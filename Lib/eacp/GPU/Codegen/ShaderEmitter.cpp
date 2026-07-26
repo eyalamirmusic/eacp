@@ -72,6 +72,12 @@ std::string callName(Backend backend, const std::string& name)
 
         if (name == "mix")
             return "lerp";
+
+        if (name == "dfdx")
+            return "ddx";
+
+        if (name == "dfdy")
+            return "ddy";
     }
 
     return name;
@@ -127,12 +133,12 @@ struct ExprPrinter
 
                 text += ")";
 
-                // float4x4(c0..c3) passes the four columns. MSL fills a matrix
-                // from columns, but HLSL fills it from rows, so the same call
-                // yields the transpose there; transpose() restores the
+                // float2x2/float3x3/float4x4(c0..) pass the columns. MSL fills a
+                // matrix from columns, but HLSL fills it from rows, so the same
+                // call yields the transpose there; transpose() restores the
                 // column-major value, so the mul() paths stay identical across
                 // both backends.
-                if (backend == Backend::DirectX && expr.type == ValueType::Float4x4)
+                if (backend == Backend::DirectX && isMatrix(expr.type))
                     return "transpose(" + text + ")";
 
                 return text;
