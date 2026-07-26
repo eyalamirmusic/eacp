@@ -165,6 +165,12 @@ struct GPUView::Native : DeviceResourceHolder
 
         updateMultisampleTexture();
         updateDepthTexture();
+
+        // The corrected transform must reach the compositor NOW: presents
+        // flow to the screen without commits, so without this the screen
+        // keeps a drag's last stretch applied to the rebuilt buffers — wrong
+        // content until some unrelated repaint happens to commit.
+        Graphics::commitComposition();
     }
 
     void createSwapChain()
@@ -453,9 +459,12 @@ struct GPUView::Native : DeviceResourceHolder
         // rebuild lands on the first frame after the drag ends. Outside a
         // drag (maximise, restore, programmatic sizes) it runs at most once
         // per frame, at the latest size.
+        auto resizedThisFrame = false;
+
         if (sizeDirty && !Graphics::isInsideSizeMoveLoop())
         {
             sizeDirty = false;
+            resizedThisFrame = true;
             updateSize();
         }
 
@@ -463,8 +472,12 @@ struct GPUView::Native : DeviceResourceHolder
             return;
 
         // Blocks until the swapchain is ready for another frame, so the CPU
-        // runs no further ahead of the display than it was told it may.
-        if (frameLatencyWaitable != nullptr)
+        // runs no further ahead of the display than it was told it may. NOT
+        // after a rebuild: ResizeBuffers empties the present queue and can
+        // leave the waitable unsignalled until a present retires, so waiting
+        // would show the freshly cleared (grey) buffers for the full timeout.
+        // With nothing queued there is nothing to pace against — present now.
+        if (frameLatencyWaitable != nullptr && !resizedThisFrame)
             WaitForSingleObjectEx(frameLatencyWaitable, 1000, TRUE);
 
         auto index = swapChain->GetCurrentBackBufferIndex();
