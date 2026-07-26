@@ -5,7 +5,8 @@
 add_library(eacp-text STATIC
         GlyphAtlas.cpp
         GlyphRenderer.cpp
-        ShelfPacker.cpp)
+        ShelfPacker.cpp
+        TextRenderer.cpp)
 
 if (APPLE)
     target_sources(eacp-text PRIVATE GlyphRasterizer-Apple.mm)

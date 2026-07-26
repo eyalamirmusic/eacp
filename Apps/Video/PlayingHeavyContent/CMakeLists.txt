@@ -1,5 +1,5 @@
 add_executable(PlayingHeavyContent Main.cpp)
-target_link_libraries(PlayingHeavyContent PRIVATE eacp-video-view)
+target_link_libraries(PlayingHeavyContent PRIVATE eacp-video-view eacp-text)
 
 set(BUNDLE_ID "com.eacp.playingheavycontent")
 

@@ -19,33 +19,76 @@ VideoView::VideoView()
     setSampleCount(1);
 }
 
-VideoView::~VideoView() = default;
+VideoView::~VideoView()
+{
+    // Deliberately does not touch `stream`, and this is not an oversight: a
+    // subclass that holds its FrameStream as a member has already had that
+    // member destroyed by the time this base destructor runs, so the pointer is
+    // dangling here. Reaching through it to clear the callback aborts the
+    // process on a destroyed mutex.
+    //
+    // Clearing the token instead is enough. The stored callback only touches
+    // `alive` before hopping to the main thread, and the queued hop finds the
+    // token false and backs off; a stream outliving the view keeps a callback
+    // that does nothing until the next attach replaces it.
+    *alive = false;
+}
 
 void VideoView::attach(Player& playerToUse)
 {
+    detach();
+
     player = &playerToUse;
     stream = &playerToUse.stream();
 
+    // The player advances every refresh anyway, so the arrival hook would only
+    // add redundant repaints.
     setContinuous(true);
     repaint();
 }
 
 void VideoView::attach(FrameStream& streamToUse)
 {
-    player = nullptr;
+    detach();
+
     stream = &streamToUse;
 
     setContinuous(false);
+    applyFrameReadyCallback();
     repaint();
 }
 
 void VideoView::detach()
 {
+    if (stream != nullptr)
+        stream->setFrameReadyCallback({});
+
     player = nullptr;
     stream = nullptr;
 
     setContinuous(false);
     repaint();
+}
+
+void VideoView::applyFrameReadyCallback()
+{
+    if (stream == nullptr)
+        return;
+
+    // Caller-driven mode renders on demand, so without this a frame that lands
+    // after setTime() was already served — the common case right after a seek,
+    // where the decoder has to go and fetch it — would sit in the queue with
+    // nothing to trigger the redraw that shows it.
+    stream->setFrameReadyCallback(
+        [this, guard = alive]
+        {
+            Threads::callAsync(
+                [this, guard]
+                {
+                    if (*guard)
+                        repaint();
+                });
+        });
 }
 
 void VideoView::setTime(double seconds)
@@ -93,10 +136,79 @@ void VideoView::ensureRenderer()
     }
 }
 
+Graphics::Point
+    VideoView::displaySize(int textureWidth, int textureHeight, int rotationDegrees)
+{
+    auto quarterTurn = rotationDegrees == 90 || rotationDegrees == 270;
+
+    return quarterTurn
+               ? Graphics::Point {(float) textureHeight, (float) textureWidth}
+               : Graphics::Point {(float) textureWidth, (float) textureHeight};
+}
+
+VideoView::Placement VideoView::computePlacement(const Graphics::Rect& area,
+                                                 int rotationDegrees,
+                                                 bool mirrored)
+{
+    auto left = area.x;
+    auto top = area.y;
+    auto right = area.x + area.w;
+    auto bottom = area.y + area.h;
+
+    auto placement = Placement {};
+
+    // Where the texture's top-left corner goes, and where its +u (rightwards in
+    // the texture) and +v (downwards in the texture) axes point on screen.
+    switch (((rotationDegrees % 360) + 360) % 360)
+    {
+        case 90:
+            placement = {{right, top}, {0.0f, area.h}, {-area.w, 0.0f}};
+            break;
+        case 180:
+            placement = {{right, bottom}, {-area.w, 0.0f}, {0.0f, -area.h}};
+            break;
+        case 270:
+            placement = {{left, bottom}, {0.0f, -area.h}, {area.w, 0.0f}};
+            break;
+        default:
+            placement = {{left, top}, {area.w, 0.0f}, {0.0f, area.h}};
+            break;
+    }
+
+    // Mirroring runs the u axis the other way, from the far corner. Applied
+    // after the rotation so it stays a horizontal flip of the *displayed*
+    // image, which is what a caller asking for a mirror means.
+    if (mirrored)
+    {
+        placement.origin = {placement.origin.x + placement.edgeX.x,
+                            placement.origin.y + placement.edgeX.y};
+        placement.edgeX = {-placement.edgeX.x, -placement.edgeX.y};
+    }
+
+    return placement;
+}
+
 Graphics::Rect VideoView::imageAreaFor(int textureWidth, int textureHeight) const
 {
     auto bounds = getLocalBounds();
-    return Sprites::fitRect(bounds.w, bounds.h, textureWidth, textureHeight, fit);
+    auto shown = displaySize(textureWidth, textureHeight, rotation);
+
+    return Sprites::fitRect(bounds.w, bounds.h, (int) shown.x, (int) shown.y, fit);
+}
+
+void VideoView::drawFrameTexture(const GPU::Texture& texture,
+                                 Graphics::Rect& imageArea)
+{
+    imageArea = imageAreaFor(texture.width(), texture.height());
+
+    auto placement = computePlacement(imageArea, rotation, mirrored);
+
+    renderer->drawTextureQuad(texture,
+                              placement.origin,
+                              placement.edgeX,
+                              placement.edgeY,
+                              Graphics::Color::white(),
+                              frameSampling);
 }
 
 bool VideoView::drawZeroCopy(const VideoFrame& frame, Graphics::Rect& imageArea)
@@ -113,13 +225,7 @@ bool VideoView::drawZeroCopy(const VideoFrame& frame, Graphics::Rect& imageArea)
     if (!texture.isValid())
         return false;
 
-    imageArea = imageAreaFor(texture.width(), texture.height());
-    renderer->drawTexture(texture,
-                          imageArea,
-                          mirrored,
-                          false,
-                          Graphics::Color::white(),
-                          frameSampling);
+    drawFrameTexture(texture, imageArea);
     return true;
 }
 
@@ -155,13 +261,7 @@ bool VideoView::drawUpload(const VideoFrame& frame, Graphics::Rect& imageArea)
         uploadedPixels = pixels;
     }
 
-    imageArea = imageAreaFor(frame.width(), frame.height());
-    renderer->drawTexture(*uploadTexture,
-                          imageArea,
-                          mirrored,
-                          false,
-                          Graphics::Color::white(),
-                          frameSampling);
+    drawFrameTexture(*uploadTexture, imageArea);
     return true;
 }
 
@@ -176,6 +276,11 @@ void VideoView::render(GPU::Frame& frame)
 
     if (stream != nullptr)
     {
+        // The track's display rotation. Read per frame rather than cached at
+        // attach time, because a stream can be reopened on a different file
+        // under a view that is already attached.
+        rotation = stream->info().rotationDegrees;
+
         // Held for the whole pass: it owns the pixels the GPU is about to read,
         // and the decode thread is free to keep filling the queue meanwhile.
         auto videoFrame =
@@ -188,13 +293,19 @@ void VideoView::render(GPU::Frame& frame)
             if (uploadMode != UploadMode::Copy)
                 drew = drawZeroCopy(videoFrame, imageArea);
 
+            zeroCopyLastFrame = drew;
+
             if (!drew && uploadMode != UploadMode::ZeroCopy)
                 drawUpload(videoFrame, imageArea);
         }
     }
 
-    drawOverlay(*renderer, imageArea);
+    drawOverlay(pass, *renderer, imageArea);
 }
 
-void VideoView::drawOverlay(Sprites::SpriteRenderer&, const Graphics::Rect&) {}
+void VideoView::drawOverlay(GPU::RenderPass&,
+                            Sprites::SpriteRenderer&,
+                            const Graphics::Rect&)
+{
+}
 } // namespace eacp::Video

@@ -48,6 +48,8 @@ void FrameStream::close()
     queue.clear();
     endOfStream = false;
     pendingSeek.reset();
+    framesDecoded = 0;
+    framesSkipped = 0;
 }
 
 bool FrameStream::isOpen() const
@@ -135,9 +137,14 @@ void FrameStream::decodeLoop()
                 continue;
 
             if (decoded)
+            {
                 queue.push_back(std::move(frame));
+                ++framesDecoded;
+            }
             else
+            {
                 endOfStream = true;
+            }
         }
 
         frameAvailable.notify_all();
@@ -162,6 +169,12 @@ void FrameStream::advanceTo(double seconds)
 
     while (!queue.empty() && queue.front().seconds() <= seconds)
     {
+        // Every frame this loop passes over except the last is one that was
+        // decoded and then never shown. `dropped` being set means the frame
+        // about to be replaced was itself taken by this same call.
+        if (dropped)
+            ++framesSkipped;
+
         current = std::move(queue.front());
         queue.pop_front();
         dropped = true;
@@ -225,5 +238,12 @@ bool FrameStream::hasReachedEnd() const
 {
     auto lock = std::lock_guard {mutex};
     return atEnd();
+}
+
+FrameStream::Stats FrameStream::stats() const
+{
+    auto lock = std::lock_guard {mutex};
+
+    return {framesDecoded, framesSkipped, (int) queue.size(), queueDepth};
 }
 } // namespace eacp::Video
