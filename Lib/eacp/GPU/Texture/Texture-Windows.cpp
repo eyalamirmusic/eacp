@@ -91,6 +91,31 @@ struct Texture::Native
         auto& context = getD3D12Context();
         context.freeTextureDescriptor(data.srv);
         context.deferRelease(std::move(data.resource));
+        context.deferRelease(std::move(staging));
+    }
+
+    // The staging buffer is reused across updates: a video or camera texture
+    // uploads every frame, and a fresh committed resource per upload is a
+    // measurable slice of frame time. Recreated only when the upload outgrows
+    // it or the GPU is still reading the previous one.
+    ID3D12Resource* acquireStaging(D3D12Context& context,
+                                   CommandContext* commands,
+                                   std::size_t bytes)
+    {
+        if (staging != nullptr
+            && (stagingCapacity < bytes || !context.hasCompleted(stagingFence)))
+        {
+            commands->transients.add(std::move(staging));
+            stagingCapacity = 0;
+        }
+
+        if (staging == nullptr)
+        {
+            staging = context.makeUploadBuffer(nullptr, bytes);
+            stagingCapacity = staging != nullptr ? bytes : 0;
+        }
+
+        return staging.get();
     }
 
     // Maps a staging buffer, copies each source row's pixels (advancing the
@@ -124,15 +149,15 @@ struct Texture::Native
         context.getDevice()->GetCopyableFootprints(
             &regionDesc, 0, 1, 0, &footprint, &rows, &rowBytes, &totalBytes);
 
-        auto staging = context.makeUploadBuffer(nullptr, totalBytes);
+        auto* upload = acquireStaging(context, commands, totalBytes);
 
-        if (staging == nullptr)
+        if (upload == nullptr)
             return false;
 
         void* mapped = nullptr;
         const D3D12_RANGE noRead = {0, 0};
 
-        if (FAILED(staging->Map(0, &noRead, &mapped)))
+        if (FAILED(upload->Map(0, &noRead, &mapped)))
             return false;
 
         auto copyBytes = static_cast<std::size_t>(rowBytes);
@@ -144,14 +169,14 @@ struct Texture::Native
                             + row * sourcePitch,
                         copyBytes);
 
-        staging->Unmap(0, nullptr);
+        upload->Unmap(0, nullptr);
 
         D3D12_TEXTURE_COPY_LOCATION destination = {};
         destination.pResource = data.resource.get();
         destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
 
         D3D12_TEXTURE_COPY_LOCATION source = {};
-        source.pResource = staging.get();
+        source.pResource = upload;
         source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
         source.PlacedFootprint = footprint;
 
@@ -166,7 +191,6 @@ struct Texture::Native
                    D3D12_RESOURCE_STATE_COPY_DEST,
                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-        commands->transients.add(std::move(staging));
         return true;
     }
 
@@ -196,7 +220,7 @@ struct Texture::Native
             return;
         }
 
-        context.submit(commands);
+        stagingFence = context.submit(commands);
     }
 
     void update(const void* pixels, std::size_t bytesPerRow)
@@ -235,9 +259,9 @@ struct Texture::Native
         if (commands == nullptr)
             return;
 
-        auto sourcePitch =
-            bytesPerRow != 0 ? bytesPerRow
-                             : static_cast<std::size_t>(regionWidth * pixelStride);
+        auto sourcePitch = bytesPerRow != 0
+                               ? bytesPerRow
+                               : static_cast<std::size_t>(regionWidth * pixelStride);
 
         // The resource rests in PIXEL_SHADER_RESOURCE between frames; move it to
         // COPY_DEST for the upload, and put it back if staging fails so the next
@@ -247,14 +271,20 @@ struct Texture::Native
                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
                    D3D12_RESOURCE_STATE_COPY_DEST);
 
-        if (!copyPixels(
-                context, commands, pixels, sourcePitch, x, y, regionWidth, regionHeight))
+        if (!copyPixels(context,
+                        commands,
+                        pixels,
+                        sourcePitch,
+                        x,
+                        y,
+                        regionWidth,
+                        regionHeight))
             transition(commands->list.get(),
                        data.resource.get(),
                        D3D12_RESOURCE_STATE_COPY_DEST,
                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-        context.submit(commands);
+        stagingFence = context.submit(commands);
     }
 
     void createDescriptors(D3D12Context& context, const TextureDescriptor&)
@@ -282,6 +312,11 @@ struct Texture::Native
     // path stays at 4 because those buffers are always 32-bit BGRA/RGBA.
     int pixelStride = 4;
     D3D12TextureData data;
+
+    // See acquireStaging.
+    winrt::com_ptr<ID3D12Resource> staging;
+    std::size_t stagingCapacity = 0;
+    std::uint64_t stagingFence = 0;
 };
 
 Texture::Texture(Device& device,

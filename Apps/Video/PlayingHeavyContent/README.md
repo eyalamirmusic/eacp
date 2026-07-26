@@ -112,7 +112,30 @@ cannot otherwise see.
 
 `Player-Windows.cpp` is a Media Foundation `IMFSourceReader` backend: RGB32 out,
 a decode thread paced by sample timestamps, latest-frame store, loop by
-`SetCurrentPosition(0)`. Two caveats against macOS:
+`SetCurrentPosition(0)`. Three details keep it smooth:
+
+- **Hardware-friendly decode.** The reader is created with
+  `MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING` — the basic
+  `ENABLE_VIDEO_PROCESSING` flag would switch hardware-accelerated decoding
+  off as a side effect of enabling the RGB32 conversion.
+- **Sub-millisecond pacing.** Frames are timed against a high-resolution
+  waitable timer; a plain sleep quantises to the ~15.6 ms scheduler tick and
+  lands every frame up to a whole refresh late.
+- **O(1) frame hand-off.** The decode thread converts each frame outside any
+  lock and publishes it by pointer swap, so the render thread's
+  `frameSequence()`/`copyLatestFrame()` never wait behind a frame's worth of
+  conversion — with four decoders running, `Tests/Video` measures the pull
+  path at p95 well under a millisecond.
+- **Input never queues behind frames.** GetMessage hands out posted messages
+  before hardware input, and a continuous render stream is posted messages —
+  so `GPUView`'s tick dispatches queued input itself before each frame
+  (standing down inside the OS's modal loops, which own their input). Hover
+  reaches the stage in single-digit milliseconds under full render load.
+- **Live resize stretches, then sharpens.** A swapchain rebuild drains the
+  GPU, so mid-drag frames stretch the existing buffers through the visual
+  transform at full frame rate; the rebuild runs when the drag pauses.
+
+Two caveats against macOS remain:
 
 - **CPU upload, not zero-copy** — there is no shared pixel buffer to wrap yet,
   so frames go through `copyLatestFrame()` and an upload texture.
@@ -121,12 +144,24 @@ a decode thread paced by sample timestamps, latest-frame store, loop by
 The clips are copied next to the executable into `media/` rather than bundled,
 and the app falls back to that path when there is no bundle resource.
 
-**Untested on Windows** — it was written on macOS. Build the target there and
-confirm the same checklist reads `ALL CHECKS PASSED`.
+The demo prints its own presented-frame cadence next to the checks, so the
+render path's health is a measured fact rather than a feeling:
+
+```
+render cadence: median 8.4 ms (119 fps), p95 10.5 ms, worst 36.9 ms over 339 frames
+```
+
+Verified on Windows 11 (ARM64): the checklist reads `ALL CHECKS PASSED`, the
+cadence holds the display's native 120 Hz with all four clips decoding, and
+the snapshot shows all four live. `Tests/Video` covers the backend directly —
+open/metadata, frame delivery, pause/seek/loop/close, four-clip concurrency,
+and perf gates on decode throughput, pull latency and frame cadence — against
+the same four clips.
 
 ## Files
 
 - `Main.cpp` — the whole demo: one `GPUView`, four players, four presenters,
   the HUD, and the check machine.
-- `media/*.mp4` — the clips, **fetched by CMake at configure time**
-  (hash-pinned, git-ignored). Not committed.
+- `media/*.mp4` — the clips, **fetched by CMake at configure time** via
+  `CMake/EacpFetchHeavyClips.cmake` (hash-pinned, git-ignored, shared with
+  `Tests/Video`). Not committed.

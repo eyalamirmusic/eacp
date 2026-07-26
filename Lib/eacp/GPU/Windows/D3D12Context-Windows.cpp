@@ -229,8 +229,8 @@ void D3D12Context::createRootSignatures()
     // to descriptor 0 of the bound heap, so all textures in the process sample
     // through whichever sampler happens to be first. Static samplers never reach
     // a heap and are unaffected. See TextureSampling.
-    D3D12_STATIC_SAMPLER_DESC staticSamplers[maxTextureSlots
-                                             * samplingConfigurations] = {};
+    D3D12_STATIC_SAMPLER_DESC
+    staticSamplers[maxTextureSlots * samplingConfigurations] = {};
 
     for (auto slot = 0; slot < maxTextureSlots; ++slot)
     {
@@ -242,8 +242,8 @@ void D3D12Context::createRootSignatures()
             const auto address = repeat ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
                                         : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
 
-            auto& sampler = staticSamplers[slot * samplingConfigurations
-                                           + configuration];
+            auto& sampler =
+                staticSamplers[slot * samplingConfigurations + configuration];
 
             sampler.Filter = linear ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
                                     : D3D12_FILTER_MIN_MAG_MIP_POINT;
@@ -432,6 +432,10 @@ CommandContext* D3D12Context::acquire()
         commands->transients.clear();
         commands->allocator->Reset();
         commands->list->Reset(commands->allocator.get(), nullptr);
+
+        // The fence check above proved the GPU is done reading the arena, so
+        // the new recording reuses it from the top.
+        commands->uploadArenaOffset = 0;
     }
     else
     {
@@ -530,23 +534,57 @@ D3D12_GPU_VIRTUAL_ADDRESS D3D12Context::uploadConstants(CommandContext& commands
                                                         std::size_t bytes)
 {
     auto aligned = (bytes + constantAlignment - 1) & ~(constantAlignment - 1);
-    auto buffer = makeUploadBuffer(nullptr, aligned);
+
+    if (commands.uploadArenaMapped == nullptr
+        || commands.uploadArenaOffset + aligned > commands.uploadArenaCapacity)
+        if (!growUploadArena(commands, aligned))
+            return 0;
+
+    std::memcpy(
+        commands.uploadArenaMapped + commands.uploadArenaOffset, data, bytes);
+
+    auto address =
+        commands.uploadArena->GetGPUVirtualAddress() + commands.uploadArenaOffset;
+    commands.uploadArenaOffset += aligned;
+    return address;
+}
+
+bool D3D12Context::growUploadArena(CommandContext& commands, std::size_t atLeast)
+{
+    // Big enough that a busy frame's worth of uniform blocks never grows it
+    // in the steady state, small enough to be irrelevant per pooled context.
+    constexpr auto minimumCapacity = std::size_t {256 * 1024};
+
+    auto capacity =
+        std::max({minimumCapacity, commands.uploadArenaCapacity * 2, atLeast});
+
+    // The outgoing arena may still feed this recording's earlier draws; it
+    // rides the transients until the fence retires it.
+    if (commands.uploadArena != nullptr)
+    {
+        commands.uploadArena->Unmap(0, nullptr);
+        commands.transients.add(std::move(commands.uploadArena));
+    }
+
+    commands.uploadArenaMapped = nullptr;
+    commands.uploadArenaCapacity = 0;
+    commands.uploadArenaOffset = 0;
+
+    auto buffer = makeUploadBuffer(nullptr, capacity);
 
     if (buffer == nullptr)
-        return 0;
+        return false;
 
     void* mapped = nullptr;
     const D3D12_RANGE noRead = {0, 0};
 
     if (FAILED(buffer->Map(0, &noRead, &mapped)))
-        return 0;
+        return false;
 
-    std::memcpy(mapped, data, bytes);
-    buffer->Unmap(0, nullptr);
-
-    auto address = buffer->GetGPUVirtualAddress();
-    commands.transients.add(std::move(buffer));
-    return address;
+    commands.uploadArena = std::move(buffer);
+    commands.uploadArenaMapped = static_cast<std::uint8_t*>(mapped);
+    commands.uploadArenaCapacity = capacity;
+    return true;
 }
 
 winrt::com_ptr<ID3D12Resource> D3D12Context::makeUploadBuffer(const void* data,

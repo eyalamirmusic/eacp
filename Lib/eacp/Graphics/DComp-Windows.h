@@ -65,6 +65,15 @@ inline HRESULT insertVisualAtBottom(IDCompositionVisual2* parent,
 // mismatch — see the device-loss note above.
 uint64_t getCompositionGeneration();
 
+// The OS runs size/move drags and menus in a modal message loop of its own,
+// and that loop owns the thread's input queue while it is live. Continuous
+// renderers that pump queued input for themselves (see GPUView's tick) must
+// stand down inside one — removing a drag's mouse moves from under the modal
+// loop breaks the drag itself. Main thread only; nesting-counted, since a
+// menu can open during a size loop.
+bool isInsideNativeModalLoop();
+void noteNativeModalLoop(bool entered);
+
 // Recovers the shared D3D/D2D/DComp devices when `hr` is a device-loss HRESULT
 // (DXGI_ERROR_DEVICE_REMOVED/RESET, D2DERR_RECREATE_TARGET). Returns true if
 // recovery ran; the caller should drop the current frame — every host rebuilds

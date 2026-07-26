@@ -193,12 +193,13 @@ void VideoView::ensureRenderer()
     auto bounds = getLocalBounds();
     auto size = Graphics::Point {bounds.w, bounds.h};
 
-    if (!renderer.has_value() || size.x != rendererSize.x
-        || size.y != rendererSize.y)
-    {
+    // Constructed once; a resize only retargets the logical space. Rebuilding
+    // the renderer would recompile its pipelines on every tick of a live
+    // resize.
+    if (!renderer.has_value())
         renderer.emplace(size, sampleCount());
-        rendererSize = size;
-    }
+    else
+        renderer->setLogicalSize(size);
 }
 
 void VideoView::render(GPU::Frame& frame)

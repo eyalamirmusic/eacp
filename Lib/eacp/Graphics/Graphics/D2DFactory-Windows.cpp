@@ -291,4 +291,23 @@ bool handleDeviceLossIfNeeded(HRESULT hr)
     return DCompCompositor::instance().recoverFromDeviceLoss(hr);
 }
 
+namespace
+{
+// Main-thread only; see the header note.
+int nativeModalLoopDepth = 0;
+} // namespace
+
+bool isInsideNativeModalLoop()
+{
+    return nativeModalLoopDepth > 0;
+}
+
+void noteNativeModalLoop(bool entered)
+{
+    nativeModalLoopDepth += entered ? 1 : -1;
+
+    if (nativeModalLoopDepth < 0)
+        nativeModalLoopDepth = 0;
+}
+
 } // namespace eacp::Graphics

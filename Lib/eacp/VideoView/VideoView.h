@@ -106,6 +106,5 @@ private:
     FramePresenter presenter;
 
     std::optional<Sprites::SpriteRenderer> renderer;
-    Graphics::Point rendererSize {0.0f, 0.0f};
 };
 } // namespace eacp::Video

@@ -8,10 +8,12 @@
 #include <mfreadwrite.h>
 #include <wrl/client.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstring>
+#include <cstdint>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -77,8 +79,7 @@ struct Player::Native
         videoHeight = 0;
         videoDuration = 0.0;
 
-        std::lock_guard<std::mutex> lock(frameMutex);
-        frame = {};
+        resetFrames();
     }
 
     // Marshals a notification to the main thread, fenced by the alive token
@@ -98,6 +99,18 @@ struct Player::Native
         // MF needs COM up on this thread; the worker is ours alone.
         auto comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         auto comInitialized = SUCCEEDED(comResult);
+
+        // Sleep on Windows quantises to the ~15.6 ms scheduler tick, which
+        // would push every frame up to a whole refresh late; a high-resolution
+        // waitable timer paces to sub-millisecond. The plain timer is the
+        // pre-1803 fallback.
+        pacingTimer = CreateWaitableTimerExW(nullptr,
+                                             nullptr,
+                                             CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                             TIMER_ALL_ACCESS);
+
+        if (pacingTimer == nullptr)
+            pacingTimer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
 
         auto mfStarted = SUCCEEDED(MFStartup(MF_VERSION));
         auto reader = ComPtr<IMFSourceReader> {};
@@ -119,6 +132,12 @@ struct Player::Native
         if (mfStarted)
             MFShutdown();
 
+        if (pacingTimer != nullptr)
+        {
+            CloseHandle(pacingTimer);
+            pacingTimer = nullptr;
+        }
+
         if (comInitialized)
             CoUninitialize();
     }
@@ -127,20 +146,32 @@ struct Player::Native
     {
         auto url = file.wide();
 
-        // Without this attribute the reader hands back the decoder's own output
-        // (NV12 for H.264) and rejects the RGB32 request with
+        // Without a processing attribute the reader hands back the decoder's
+        // own output (NV12 for H.264) and rejects the RGB32 request with
         // MF_E_INVALIDMEDIATYPE — it only inserts the video processor that can
-        // convert when asked to up front.
+        // convert when asked to up front. ADVANCED is the one to ask for: the
+        // basic ENABLE_VIDEO_PROCESSING flag turns hardware-accelerated
+        // decoding off as a side effect, ADVANCED does not.
         ComPtr<IMFAttributes> attributes;
 
         if (FAILED(MFCreateAttributes(&attributes, 1)))
             return false;
 
-        attributes->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+        attributes->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
+                              TRUE);
 
         if (FAILED(
                 MFCreateSourceReaderFromURL(url.c_str(), attributes.Get(), &reader)))
-            return false;
+        {
+            // Pre-Win8 media stacks only know the basic flag.
+            attributes->DeleteItem(
+                MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING);
+            attributes->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+
+            if (FAILED(MFCreateSourceReaderFromURL(
+                    url.c_str(), attributes.Get(), &reader)))
+                return false;
+        }
 
         reader->SetStreamSelection((DWORD) MF_SOURCE_READER_ALL_STREAMS, FALSE);
         reader->SetStreamSelection((DWORD) MF_SOURCE_READER_FIRST_VIDEO_STREAM,
@@ -304,11 +335,31 @@ struct Player::Native
             if (remaining <= 0.0)
                 return true;
 
-            std::this_thread::sleep_for(
-                std::chrono::duration<double>(std::min(remaining, 0.01)));
+            // Capped so pause/seek/quit are still noticed promptly.
+            sleepFor(std::min(remaining, 0.01));
         }
     }
 
+    void sleepFor(double seconds)
+    {
+        if (pacingTimer != nullptr)
+        {
+            auto due = LARGE_INTEGER {};
+            due.QuadPart = -(LONGLONG) (seconds * ticksPerSecond);
+
+            if (SetWaitableTimer(pacingTimer, &due, 0, nullptr, nullptr, FALSE))
+            {
+                WaitForSingleObject(pacingTimer, INFINITE);
+                return;
+            }
+        }
+
+        std::this_thread::sleep_for(std::chrono::duration<double>(seconds));
+    }
+
+    // The conversion runs with no lock held: the buffer being written is
+    // exclusively the decode thread's until the O(1) publish at the end, so
+    // the render thread's frame pulls never wait behind a frame conversion.
     void store(IMFSample* sample)
     {
         ComPtr<IMFMediaBuffer> buffer;
@@ -322,39 +373,72 @@ struct Player::Native
         if (FAILED(buffer->Lock(&data, &length, nullptr)))
             return;
 
-        auto rowBytes = (std::size_t) videoWidth * 4;
-        auto bottomUp = stride < 0;
-        auto absStride = (std::size_t) (bottomUp ? -stride : stride);
+        auto next = acquireFreeBuffer();
+        convertFrame(*next, data);
+
+        buffer->Unlock();
+
+        next->sequence = ++nextSequence;
 
         {
             std::lock_guard<std::mutex> lock(frameMutex);
+            latest = next;
+            publishedSequence.store(next->sequence, std::memory_order_release);
+        }
+    }
 
-            frame.width = videoWidth;
-            frame.height = videoHeight;
-            frame.data.resize(rowBytes * (std::size_t) videoHeight);
+    // A small pool the decode thread recycles: a slot whose only reference is
+    // the pool's own is free — readers holding a snapshot keep their slot
+    // alive and it is simply skipped. Three slots cover the steady state (one
+    // published, one being read, one being written); a fresh allocation
+    // replacing the round-robin slot is the overload escape, not the norm.
+    std::shared_ptr<PlayerFramePixels> acquireFreeBuffer()
+    {
+        for (auto& slot: pool)
+        {
+            if (slot == nullptr)
+                slot = std::make_shared<PlayerFramePixels>();
 
-            for (auto y = 0; y < videoHeight; ++y)
-            {
-                auto sourceRow = bottomUp ? videoHeight - 1 - y : y;
-                const auto* src = data + (std::size_t) sourceRow * absStride;
-                auto* dst = frame.data.data() + (std::size_t) y * rowBytes;
-                std::memcpy(dst, src, rowBytes);
-
-                // RGB32's X channel is undefined; the blended sprite pipeline
-                // needs opaque alpha.
-                for (std::size_t x = 3; x < rowBytes; x += 4)
-                    dst[x] = 0xff;
-            }
-
-            ++frame.sequence;
+            if (slot.use_count() == 1)
+                return slot;
         }
 
-        buffer->Unlock();
+        auto& slot = pool[(std::size_t) (poolCursor++ % (int) pool.size())];
+        slot = std::make_shared<PlayerFramePixels>();
+        return slot;
+    }
+
+    void convertFrame(PlayerFramePixels& out, const BYTE* data)
+    {
+        auto rowPixels = (std::size_t) videoWidth;
+        auto rowBytes = rowPixels * 4;
+        auto bottomUp = stride < 0;
+        auto absStride = (std::size_t) (bottomUp ? -stride : stride);
+
+        out.width = videoWidth;
+        out.height = videoHeight;
+        out.data.resize(rowBytes * (std::size_t) videoHeight);
+
+        for (auto y = 0; y < videoHeight; ++y)
+        {
+            auto sourceRow = bottomUp ? videoHeight - 1 - y : y;
+            const auto* src = reinterpret_cast<const std::uint32_t*>(
+                data + (std::size_t) sourceRow * absStride);
+            auto* dst = reinterpret_cast<std::uint32_t*>(
+                out.data.data() + (std::size_t) y * rowBytes);
+
+            // RGB32's X channel is undefined and the blended sprite pipeline
+            // needs opaque alpha, so copy and force it in one vectorisable
+            // pass instead of memcpy plus a byte-strided fix-up.
+            for (std::size_t x = 0; x < rowPixels; ++x)
+                dst[x] = src[x] | 0xff000000u;
+        }
     }
 
     Player& owner;
 
     std::thread worker;
+    HANDLE pacingTimer = nullptr; // worker thread only
     std::mutex mutex;
     std::condition_variable wake;
     bool quit = false;
@@ -373,20 +457,50 @@ struct Player::Native
     int stride = 0;
     double videoDuration = 0.0;
 
-    // Mutable so the const frameSequence() query can take the lock through
-    // the const Pimpl.
+    // frameMutex guards only the `latest` pointer — every critical section on
+    // it is O(1), so the render thread and four decode threads never queue
+    // behind a frame's worth of work.
     mutable std::mutex frameMutex;
-    PlayerFramePixels frame; // latest decoded frame, BGRA top-down
+    std::shared_ptr<PlayerFramePixels> latest; // BGRA top-down
+    std::array<std::shared_ptr<PlayerFramePixels>, 3> pool; // decode thread only
+    int poolCursor = 0; // decode thread only
+    std::uint64_t nextSequence = 0; // decode thread only
+    std::atomic<std::uint64_t> publishedSequence {0};
 
     bool copyLatestFrame(PlayerFramePixels& out)
     {
-        std::lock_guard<std::mutex> lock(frameMutex);
+        auto snap = std::shared_ptr<PlayerFramePixels> {};
 
-        if (frame.sequence == 0 || frame.sequence == out.sequence)
+        {
+            std::lock_guard<std::mutex> lock(frameMutex);
+            snap = latest;
+        }
+
+        if (snap == nullptr || snap->sequence == out.sequence)
             return false;
 
-        out = frame;
+        // The copy runs outside the lock: the snapshot keeps its buffer alive
+        // and the decode thread only ever writes into free pool slots.
+        out.width = snap->width;
+        out.height = snap->height;
+        out.sequence = snap->sequence;
+        out.data = snap->data;
         return true;
+    }
+
+    void resetFrames()
+    {
+        {
+            std::lock_guard<std::mutex> lock(frameMutex);
+            latest = nullptr;
+            publishedSequence.store(0, std::memory_order_release);
+        }
+
+        for (auto& slot: pool)
+            slot = nullptr;
+
+        poolCursor = 0;
+        nextSequence = 0;
     }
 };
 
@@ -505,7 +619,6 @@ bool Player::copyLatestFrame(PlayerFramePixels& out)
 
 std::uint64_t Player::frameSequence() const
 {
-    std::lock_guard<std::mutex> lock(impl->frameMutex);
-    return impl->frame.sequence;
+    return impl->publishedSequence.load(std::memory_order_acquire);
 }
 } // namespace eacp::Video

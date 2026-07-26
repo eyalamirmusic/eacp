@@ -6,6 +6,9 @@
 #import <Foundation/Foundation.h>
 #import <Cocoa/Cocoa.h>
 
+#include <string>
+#include <unistd.h>
+
 namespace eacp::Threads
 {
 namespace
@@ -104,10 +107,14 @@ void enterRootRunLoop()
 
     // Loop ownership is advertised through the process environment so it
     // crosses eacp copies: a plugin-hosted app's quit reads it to know the
-    // running loop is eacp's to stop (see stopProcessRootLoop).
-    setEnv("EACP_ROOT_LOOP", "1");
+    // running loop is eacp's to stop (see stopProcessRootLoop). The marker
+    // holds the process id, not a flag: children inherit the parent's
+    // environment, so a bare flag would make any eacp process spawned from a
+    // running app (or from a shell that inherited the marker) wrongly believe
+    // a loop was already running.
+    setEnv("EACP_ROOT_LOOP", std::to_string(getpid()));
     [getApp() run];
-    setEnv("EACP_ROOT_LOOP", "0");
+    setEnv("EACP_ROOT_LOOP", "");
 
     s_inRootRunLoop = false;
 }
@@ -181,15 +188,21 @@ void EventLoop::quit()
     [getApp() postEvent:makeWakeEvent() atStart:YES];
 }
 
+// The marker only counts when it names THIS process: an inherited copy from a
+// parent process describes the parent's loop, not ours.
+static bool rootLoopMarkerIsOurs()
+{
+    return getEnvValue("EACP_ROOT_LOOP") == std::to_string(getpid());
+}
+
 bool isEventLoopRunning()
 {
-    return s_inRootRunLoop || s_nestedDepth > 0
-           || getEnvValue("EACP_ROOT_LOOP") == "1";
+    return s_inRootRunLoop || s_nestedDepth > 0 || rootLoopMarkerIsOurs();
 }
 
 void stopProcessRootLoop()
 {
-    if (getEnvValue("EACP_ROOT_LOOP") != "1")
+    if (!rootLoopMarkerIsOurs())
         return;
 
     // NSApp is shared by every copy in the process, so stopping it from

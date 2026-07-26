@@ -35,6 +35,14 @@ struct CommandContext
     // touched under a new id was implicitly promoted from COMMON, so no
     // barrier is needed (buffers decay back to COMMON after every execute).
     std::uint64_t recordingId = 0;
+
+    // Persistently mapped linear arena the recording's uniform blocks
+    // sub-allocate from (see D3D12Context::uploadConstants). The offset
+    // rewinds when the context is recycled; the buffer itself lives on.
+    winrt::com_ptr<ID3D12Resource> uploadArena;
+    std::uint8_t* uploadArenaMapped = nullptr;
+    std::size_t uploadArenaCapacity = 0;
+    std::size_t uploadArenaOffset = 0;
 };
 
 // A slot in one of the shader-visible heaps. The generation guards frees that
@@ -102,9 +110,11 @@ public:
     void waitFor(std::uint64_t value);
     void waitIdle();
 
-    // Copies bytes into a fresh upload-heap buffer parked on the recording
-    // (so it outlives GPU execution) and returns its address for a root CBV.
-    // Returns 0 on failure.
+    // Copies bytes into the recording's upload arena and returns their
+    // address for a root CBV. Sub-allocation, not allocation: one committed
+    // resource per uniform block was the single largest CPU cost of a busy
+    // frame, so blocks bump-allocate from a persistently mapped arena that
+    // rewinds when the recording is recycled. Returns 0 on failure.
     D3D12_GPU_VIRTUAL_ADDRESS uploadConstants(CommandContext& commands,
                                               const void* data,
                                               std::size_t bytes);
@@ -155,6 +165,7 @@ private:
     void createAll();
     void createDevice();
     void createRootSignatures();
+    bool growUploadArena(CommandContext& commands, std::size_t atLeast);
     void createNullDescriptors();
     DescriptorAllocator makeDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE type,
                                                 UINT capacity);

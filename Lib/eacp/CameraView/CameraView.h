@@ -102,7 +102,6 @@ private:
     std::shared_ptr<bool> alive = std::make_shared<bool>(true);
 
     std::optional<Sprites::SpriteRenderer> renderer;
-    Graphics::Point rendererSize {0.0f, 0.0f};
 
     // CPU-upload path: a frame reused across calls and the texture it feeds.
     FramePixels scratch;

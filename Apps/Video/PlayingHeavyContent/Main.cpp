@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
 #include <string>
+#include <vector>
 
 using namespace eacp;
 
@@ -29,6 +31,12 @@ constexpr auto freezeTicks = pollHz / 2;
 
 const std::array<const char*, clipCount> clipNames {
     "heavy.mp4", "jellyfish.mp4", "sintel.mp4", "bunny720.mp4"};
+
+double nowSeconds()
+{
+    using namespace std::chrono;
+    return duration<double>(steady_clock::now().time_since_epoch()).count();
+}
 
 // Bundled on macOS, copied next to the executable on Windows.
 FilePath resolveClip(const std::string& name)
@@ -141,12 +149,12 @@ struct HeavyContentView final : GPU::GPUView
         auto bounds = getLocalBounds();
         auto size = Graphics::Point {bounds.w, bounds.h};
 
-        if (!renderer.has_value() || size.x != rendererSize.x
-            || size.y != rendererSize.y)
-        {
+        // Constructed once; a resize only retargets the logical space, so a
+        // live resize never recompiles the sprite pipelines.
+        if (!renderer.has_value())
             renderer.emplace(size, sampleCount());
-            rendererSize = size;
-        }
+        else
+            renderer->setLogicalSize(size);
     }
 
     void render(GPU::Frame& frame) override
@@ -159,14 +167,28 @@ struct HeavyContentView final : GPU::GPUView
         auto bounds = getLocalBounds();
         auto activeIndex = (std::size_t) active;
 
-        auto stageArea = stagePresenters[activeIndex].draw(
+        auto stageArea = presenters[activeIndex].draw(
             players[activeIndex], *renderer, bounds, Video::Fit::Cover);
 
         if (countingStalls && isReady(active) && stageArea.isEmpty())
             ++stalls;
 
         drawTiles(bounds);
+        trackRenderCadence();
         ++renderTicks;
+    }
+
+    // The presented frame rate as actually achieved, not assumed: the render
+    // path's whole job is holding the compositor's cadence while four clips
+    // decode, so the report prints what it measured.
+    void trackRenderCadence()
+    {
+        auto time = nowSeconds();
+
+        if (lastRenderTime > 0.0 && renderIntervals.size() < 20000)
+            renderIntervals.push_back(time - lastRenderTime);
+
+        lastRenderTime = time;
     }
 
     void drawTiles(const Graphics::Rect& bounds)
@@ -177,7 +199,7 @@ struct HeavyContentView final : GPU::GPUView
             auto tile = tileRect(bounds, index);
 
             renderer->fillRect(tile, {0.05f, 0.05f, 0.07f, 0.85f});
-            tilePresenters[slot].draw(
+            presenters[slot].draw(
                 players[slot], *renderer, tile.inset(2.0f), Video::Fit::Cover);
 
             auto ready = isReady(index);
@@ -443,6 +465,8 @@ struct HeavyContentView final : GPU::GPUView
             if (!check.passed)
                 allPassed = false;
 
+        reportRenderCadence();
+
         if (allPassed)
             std::printf("ALL CHECKS PASSED — %d hover switches, %d stalls\n",
                         switches,
@@ -453,6 +477,27 @@ struct HeavyContentView final : GPU::GPUView
 
         std::fflush(stdout);
         finished = true;
+    }
+
+    void reportRenderCadence()
+    {
+        if (renderIntervals.size() < 30)
+            return;
+
+        auto sorted = renderIntervals;
+        std::sort(sorted.begin(), sorted.end());
+
+        auto median = sorted[sorted.size() / 2];
+        auto p95 = sorted[(std::size_t) ((double) sorted.size() * 0.95)];
+        auto worst = sorted.back();
+
+        std::printf("render cadence: median %.1f ms (%.0f fps), p95 %.1f ms, "
+                    "worst %.1f ms over %zu frames\n",
+                    median * 1000.0,
+                    median > 0.0 ? 1.0 / median : 0.0,
+                    p95 * 1000.0,
+                    worst * 1000.0,
+                    sorted.size());
     }
 
     // The checks measure the display path through the player and the presenter;
@@ -477,14 +522,14 @@ struct HeavyContentView final : GPU::GPUView
 
     std::array<Video::Player, clipCount> players;
 
-    // A presenter is bound to one player: its CPU-upload scratch is gated on
-    // that player's frame sequence, so sharing one across players would read a
-    // stale frame after a switch on the upload path.
-    std::array<Video::FramePresenter, clipCount> stagePresenters;
-    std::array<Video::FramePresenter, clipCount> tilePresenters;
+    // One presenter per player, drawn twice when its clip is on the stage:
+    // the second draw reuses the frame the first one uploaded (the copy is
+    // gated on the player's frame sequence), so the active clip costs one
+    // upload, not two. Sharing a presenter across *players* would be wrong —
+    // sequence numbers from different players are unrelated.
+    std::array<Video::FramePresenter, clipCount> presenters;
 
     std::optional<Sprites::SpriteRenderer> renderer;
-    Graphics::Point rendererSize {0.0f, 0.0f};
 
     std::array<Check, 5> checks {
         Check {"All clips reach a playable state"},
@@ -492,6 +537,9 @@ struct HeavyContentView final : GPU::GPUView
         Check {"Every clip advances while playing simultaneously"},
         Check {"Fast sweep (24 switches @ 60 ms) with no stalls"},
         Check {"A looping clip wraps"}};
+
+    std::vector<double> renderIntervals;
+    double lastRenderTime = 0.0;
 
     Phase phase = Phase::WaitReady;
     int phaseTicks = 0;
@@ -547,6 +595,10 @@ struct HeavyContentApp
         // for a run that never gets there.
         if (view.finished || deadline->expired())
         {
+            // The quit drains asynchronously; without this the poll keeps
+            // firing and re-runs the snapshot until the loop actually exits.
+            poll.stop();
+
             auto snapshotPath = getEnvValue("EACP_DEMO_SNAPSHOT_PATH");
 
             if (!snapshotPath.empty())

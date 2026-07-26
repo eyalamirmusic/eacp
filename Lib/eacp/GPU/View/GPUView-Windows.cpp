@@ -8,6 +8,7 @@
 #include <eacp/Graphics/Image/Image.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <unordered_set>
 
@@ -143,6 +144,12 @@ struct GPUView::Native : DeviceResourceHolder
 
     static float dpiScale() { return static_cast<float>(GetDpiForSystem()) / 96.f; }
 
+    static double steadyNow()
+    {
+        using namespace std::chrono;
+        return duration<double>(steady_clock::now().time_since_epoch()).count();
+    }
+
     void updateSize()
     {
         if (!compositionDevice || device == nullptr)
@@ -229,13 +236,24 @@ struct GPUView::Native : DeviceResourceHolder
         Graphics::commitComposition();
     }
 
+    // Maps the swapchain's pixels onto the view's current bounds. At rest the
+    // two agree and this is the plain 1/dpi counter-scale; mid-resize (see the
+    // stretch note in render()) it scales the old buffers to the new bounds so
+    // the picture tracks the drag at full frame rate.
     void applyContentScale()
     {
         auto scale = dpiScale();
 
-        if (spriteVisual && scale > 0.f)
-            spriteVisual->SetTransform(
-                D2D1::Matrix3x2F::Scale(1.f / scale, 1.f / scale));
+        if (!spriteVisual || scale <= 0.f || width == 0 || height == 0)
+            return;
+
+        auto bounds = view.getLocalBounds();
+        auto targetWidth = bounds.w * scale;
+        auto targetHeight = bounds.h * scale;
+
+        spriteVisual->SetTransform(
+            D2D1::Matrix3x2F::Scale(targetWidth / (float) width / scale,
+                                    targetHeight / (float) height / scale));
     }
 
     void createDescriptorHeaps()
@@ -413,6 +431,35 @@ struct GPUView::Native : DeviceResourceHolder
     {
         auto& context = getD3D12Context();
 
+        // Deferred from resized(): a live resize delivers WM_SIZE faster than
+        // frames, and a swapchain rebuild drains the GPU (20-50 ms at 1440p) —
+        // rebuilding per message made dragging a window edge unusable. While
+        // the size is still changing, the old buffers stretch to the new
+        // bounds through the visual transform instead, so the picture tracks
+        // the drag at full frame rate; the rebuild runs once the drag pauses
+        // (or at a staleness bound, so a marathon drag cannot drift
+        // arbitrarily far from native resolution).
+        if (sizeDirty)
+        {
+            auto time = steadyNow();
+            auto dragPaused = time - lastResizeRequest >= 0.1;
+            auto stale = time - lastSwapChainResize >= 0.5;
+
+            if (!swapChain || dragPaused || stale)
+            {
+                sizeDirty = false;
+                lastSwapChainResize = time;
+                updateSize();
+            }
+            else
+            {
+                // No commit of our own: the host window commits on every
+                // WM_SIZE of the drag, and committing here too would stack a
+                // second commit per frame onto a compositor already straining.
+                applyContentScale();
+            }
+        }
+
         if (!swapChain || !context.isValid() || width == 0 || height == 0)
             return;
 
@@ -476,13 +523,43 @@ struct GPUView::Native : DeviceResourceHolder
             [] { Graphics::handleDeviceLossIfNeeded(DXGI_ERROR_DEVICE_REMOVED); });
     }
 
-    // The tick only advances animation state and invalidates; the render
-    // itself runs from the WM_PAINT this schedules. WM_PAINT is delivered
-    // only when the message queue is otherwise empty, so the heavy work
-    // (rendering, and a Present that can block on the compositor) can never
-    // starve input or other queued work, no matter how slow frames get —
-    // modal size/move loops included, where paints keep flowing between
-    // mouse moves and the animation keeps running during a live resize.
+    // GetMessage hands out posted messages before hardware input, and a
+    // continuous render stream arrives as posted messages — so whenever a few
+    // frames run long, the mouse can sit in the queue for the whole busy
+    // stretch (measured at ~800 ms during a hover). Each tick therefore
+    // dispatches the queued input itself before the next frame. Inside the
+    // OS's own modal loops it stands down: those loops own the input, and
+    // removing a drag's mouse moves from under one breaks the drag itself.
+    static void dispatchPendingInput()
+    {
+        if (Graphics::isInsideNativeModalLoop())
+            return;
+
+        auto msg = MSG {};
+        auto budget = 32; // bound what an input flood can pull into one tick
+
+        while (
+            budget-- > 0
+            && (PeekMessageW(&msg, nullptr, WM_MOUSEFIRST, WM_MOUSELAST, PM_REMOVE)
+                || PeekMessageW(&msg, nullptr, WM_KEYFIRST, WM_KEYLAST, PM_REMOVE)))
+        {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
+    // The tick advances animation state and renders on the spot. It must NOT
+    // go through repaint()/WM_PAINT: paint messages are the queue's lowest
+    // priority, delivered only when nothing else is pending, so a mouse-move
+    // storm (hovering a video wall) or the modal size/move loop starves an
+    // invalidation-driven render into visible frame drops. The tick arrives
+    // as a posted message — dispatched ahead of input and inside foreign
+    // modal loops — so rendering here holds the compositor's cadence exactly
+    // when the queue is busiest. Pacing is preserved by the swapchain's
+    // frame-latency waitable in render(); one tick renders at most one frame.
+    //
+    // Input is pumped last: a handler may close the window and destroy this
+    // view, so nothing may touch `this` afterwards.
     void startContinuous()
     {
         if (displayLink == nullptr)
@@ -490,7 +567,8 @@ struct GPUView::Native : DeviceResourceHolder
             auto func = [this](Threads::FrameTime time)
             {
                 view.update(time);
-                view.repaint();
+                view.renderNow();
+                dispatchPendingInput();
             };
 
             displayLink.create(func);
@@ -509,6 +587,9 @@ struct GPUView::Native : DeviceResourceHolder
 
     bool continuous = false;
     bool depthEnabled = false;
+    bool sizeDirty = false;
+    double lastSwapChainResize = 0.0;
+    double lastResizeRequest = 0.0;
     UINT width = 0;
     UINT height = 0;
 
@@ -592,7 +673,10 @@ int GPUView::framesInFlight() const
 void GPUView::resized()
 {
     Graphics::View::resized();
-    impl->updateSize();
+
+    // The swapchain rebuild is deferred to the next render — see render().
+    impl->sizeDirty = true;
+    impl->lastResizeRequest = Native::steadyNow();
     repaint();
 }
 
@@ -602,7 +686,7 @@ void GPUView::backingScaleChanged()
 
     // Resize the swapchain to the new scale (same logical bounds, different
     // pixel count), then redraw: the presented frame was built for the old one.
-    impl->updateSize();
+    impl->sizeDirty = true;
     onBackingScaleChanged(backingScale());
     repaint();
 }
@@ -617,6 +701,13 @@ void GPUView::paint(Graphics::Context& context)
     // A snapshot captures GPU content via renderNativeContent (off-screen); the
     // live renderNow() here would present an on-screen frame as a side effect.
     if (context.isSnapshot())
+        return;
+
+    // A continuous view presents from its display tick; rendering here too
+    // would present twice per refresh and leave every other render blocked in
+    // the swapchain's latency wait (WM_SIZE invalidates while resizing, so a
+    // live resize hits this constantly).
+    if (impl->continuous)
         return;
 
     renderNow();
