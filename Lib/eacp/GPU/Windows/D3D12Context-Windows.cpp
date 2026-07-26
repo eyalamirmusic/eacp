@@ -108,11 +108,127 @@ D3D12Context::D3D12Context()
 
 D3D12Context::~D3D12Context()
 {
+    stopAsyncThread();
+
     if (isValid())
         waitIdle();
 
     if (fenceEvent != nullptr)
         CloseHandle(fenceEvent);
+}
+
+void D3D12Context::ensureAsyncThread()
+{
+    if (asyncThread.joinable())
+        return;
+
+    asyncQuit = false;
+    asyncBusy = false;
+    asyncThread = std::thread([this] { asyncSubmitLoop(); });
+}
+
+void D3D12Context::stopAsyncThread()
+{
+    if (!asyncThread.joinable())
+        return;
+
+    {
+        auto lock = std::lock_guard<std::mutex> {asyncMutex};
+        asyncQuit = true;
+    }
+
+    asyncWake.notify_all();
+    asyncThread.join();
+    drainAsyncSubmit();
+}
+
+void D3D12Context::asyncSubmitLoop()
+{
+    while (true)
+    {
+        auto job = AsyncSubmit {};
+
+        {
+            auto lock = std::unique_lock<std::mutex> {asyncMutex};
+            asyncWake.wait(lock, [this] { return asyncQuit || asyncBusy; });
+
+            if (asyncQuit)
+                return;
+
+            job = asyncJob;
+        }
+
+        // Queue and fence calls are free-threaded; everything that is NOT
+        // (the command-context pools) stays on the main thread, which reaps
+        // the finished recording in drainAsyncSubmit.
+        ID3D12CommandList* lists[] = {job.commands->list.get()};
+        queue->ExecuteCommandLists(1, lists);
+        queue->Signal(fence.get(), job.fenceValue);
+
+        if (job.present != nullptr)
+            job.present->Present(1, 0);
+
+        {
+            auto lock = std::lock_guard<std::mutex> {asyncMutex};
+            asyncReap = job.commands;
+            asyncBusy = false;
+        }
+
+        asyncDone.notify_all();
+    }
+}
+
+std::uint64_t D3D12Context::submitAsync(CommandContext* commands,
+                                        IDXGISwapChain3* presentTarget)
+{
+    if (commands == nullptr || !isValid())
+        return 0;
+
+    if (FAILED(commands->list->Close()))
+    {
+        commands->transients.clear();
+        available.push_back(commands);
+        return 0;
+    }
+
+    // The fence value is claimed here, in call order on the main thread, so
+    // signals stay monotonic no matter when the worker gets to them; every
+    // synchronous path drains the worker first.
+    auto value = nextFenceValue++;
+    commands->fenceValue = value;
+    lastSubmittedValue = value;
+
+    ensureAsyncThread();
+
+    {
+        auto lock = std::lock_guard<std::mutex> {asyncMutex};
+        asyncJob = {commands, presentTarget, value};
+        asyncBusy = true;
+    }
+
+    asyncWake.notify_one();
+    return value;
+}
+
+bool D3D12Context::isAsyncSubmitPending()
+{
+    auto lock = std::lock_guard<std::mutex> {asyncMutex};
+    return asyncBusy;
+}
+
+void D3D12Context::drainAsyncSubmit()
+{
+    auto reap = static_cast<CommandContext*>(nullptr);
+
+    {
+        auto lock = std::unique_lock<std::mutex> {asyncMutex};
+        asyncDone.wait(lock, [this] { return !asyncBusy; });
+        reap = asyncReap;
+        asyncReap = nullptr;
+    }
+
+    if (reap != nullptr)
+        available.push_back(reap);
 }
 
 void D3D12Context::createAll()
@@ -229,8 +345,8 @@ void D3D12Context::createRootSignatures()
     // to descriptor 0 of the bound heap, so all textures in the process sample
     // through whichever sampler happens to be first. Static samplers never reach
     // a heap and are unaffected. See TextureSampling.
-    D3D12_STATIC_SAMPLER_DESC staticSamplers[maxTextureSlots
-                                             * samplingConfigurations] = {};
+    D3D12_STATIC_SAMPLER_DESC
+        staticSamplers[maxTextureSlots * samplingConfigurations] = {};
 
     for (auto slot = 0; slot < maxTextureSlots; ++slot)
     {
@@ -242,8 +358,8 @@ void D3D12Context::createRootSignatures()
             const auto address = repeat ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
                                         : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
 
-            auto& sampler = staticSamplers[slot * samplingConfigurations
-                                           + configuration];
+            auto& sampler =
+                staticSamplers[slot * samplingConfigurations + configuration];
 
             sampler.Filter = linear ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
                                     : D3D12_FILTER_MIN_MAG_MIP_POINT;
@@ -416,6 +532,9 @@ CommandContext* D3D12Context::acquire()
     if (!isValid())
         return nullptr;
 
+    // The worker may still hold a recording; the pools below are
+    // main-thread structures, so settle it (and reap its context) first.
+    drainAsyncSubmit();
     purgeRetired();
 
     auto recycled = std::find_if(available.begin(),
@@ -432,6 +551,10 @@ CommandContext* D3D12Context::acquire()
         commands->transients.clear();
         commands->allocator->Reset();
         commands->list->Reset(commands->allocator.get(), nullptr);
+
+        // The fence check above proved the GPU is done reading the arena, so
+        // the new recording reuses it from the top.
+        commands->uploadArenaOffset = 0;
     }
     else
     {
@@ -461,6 +584,10 @@ std::uint64_t D3D12Context::submit(CommandContext* commands)
 {
     if (commands == nullptr || !isValid())
         return 0;
+
+    // Keep queue submissions and fence signals in fence-value order: an
+    // async job claimed its value first, so it must reach the queue first.
+    drainAsyncSubmit();
 
     if (FAILED(commands->list->Close()))
     {
@@ -510,7 +637,14 @@ bool D3D12Context::hasCompleted(std::uint64_t value) const
 
 void D3D12Context::waitFor(std::uint64_t value)
 {
-    if (fence == nullptr || fenceEvent == nullptr || hasCompleted(value))
+    if (fence == nullptr || fenceEvent == nullptr)
+        return;
+
+    // The value may belong to a job the worker has not executed yet.
+    if (!hasCompleted(value))
+        drainAsyncSubmit();
+
+    if (hasCompleted(value))
         return;
 
     if (SUCCEEDED(fence->SetEventOnCompletion(value, fenceEvent)))
@@ -525,28 +659,66 @@ void D3D12Context::waitIdle()
     waitFor(signal());
 }
 
+// Sub-allocation, not allocation: one committed resource per uniform block
+// was the single largest CPU cost of a busy frame (dozens of draws, two
+// blocks each), so blocks bump-allocate from a persistently mapped arena
+// that rewinds when the recording is recycled.
 D3D12_GPU_VIRTUAL_ADDRESS D3D12Context::uploadConstants(CommandContext& commands,
                                                         const void* data,
                                                         std::size_t bytes)
 {
     auto aligned = (bytes + constantAlignment - 1) & ~(constantAlignment - 1);
-    auto buffer = makeUploadBuffer(nullptr, aligned);
+
+    if (commands.uploadArenaMapped == nullptr
+        || commands.uploadArenaOffset + aligned > commands.uploadArenaCapacity)
+        if (!growUploadArena(commands, aligned))
+            return 0;
+
+    std::memcpy(
+        commands.uploadArenaMapped + commands.uploadArenaOffset, data, bytes);
+
+    auto address =
+        commands.uploadArena->GetGPUVirtualAddress() + commands.uploadArenaOffset;
+    commands.uploadArenaOffset += aligned;
+    return address;
+}
+
+bool D3D12Context::growUploadArena(CommandContext& commands, std::size_t atLeast)
+{
+    // Big enough that a busy frame's worth of uniform blocks never grows it
+    // in the steady state, small enough to be irrelevant per pooled context.
+    constexpr auto minimumCapacity = std::size_t {256 * 1024};
+
+    auto capacity =
+        std::max({minimumCapacity, commands.uploadArenaCapacity * 2, atLeast});
+
+    // The outgoing arena may still feed this recording's earlier draws; it
+    // rides the transients until the fence retires it.
+    if (commands.uploadArena != nullptr)
+    {
+        commands.uploadArena->Unmap(0, nullptr);
+        commands.transients.add(std::move(commands.uploadArena));
+    }
+
+    commands.uploadArenaMapped = nullptr;
+    commands.uploadArenaCapacity = 0;
+    commands.uploadArenaOffset = 0;
+
+    auto buffer = makeUploadBuffer(nullptr, capacity);
 
     if (buffer == nullptr)
-        return 0;
+        return false;
 
     void* mapped = nullptr;
     const D3D12_RANGE noRead = {0, 0};
 
     if (FAILED(buffer->Map(0, &noRead, &mapped)))
-        return 0;
+        return false;
 
-    std::memcpy(mapped, data, bytes);
-    buffer->Unmap(0, nullptr);
-
-    auto address = buffer->GetGPUVirtualAddress();
-    commands.transients.add(std::move(buffer));
-    return address;
+    commands.uploadArena = std::move(buffer);
+    commands.uploadArenaMapped = static_cast<std::uint8_t*>(mapped);
+    commands.uploadArenaCapacity = capacity;
+    return true;
 }
 
 winrt::com_ptr<ID3D12Resource> D3D12Context::makeUploadBuffer(const void* data,
@@ -595,6 +767,10 @@ winrt::com_ptr<ID3D12Resource> D3D12Context::makeUploadBuffer(const void* data,
 
 void D3D12Context::recreateAfterDeviceLoss()
 {
+    // The worker must not touch the dying queue; it restarts lazily on the
+    // replacement device's first async submit.
+    stopAsyncThread();
+
     retired.clear();
     pool.clear();
     available.clear();

@@ -2,6 +2,7 @@
 
 #include "Window.h"
 #include "CompositionHostWindow-Windows.h"
+#include "../DComp-Windows.h"
 #include "../Helpers/StringUtils-Windows.h"
 #include "../Helpers/DarkMode-Windows.h"
 #include "../Helpers/ImageConversion-Windows.h"
@@ -524,6 +525,28 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
                 self->dispatchWillResize(reinterpret_cast<RECT*>(lParam), wParam);
                 return TRUE;
             }
+            break;
+
+        // The OS's modal loops own the input queue while they run; continuous
+        // renderers ask isInsideNativeModalLoop() before pumping input for
+        // themselves, and defer swapchain rebuilds for the size/move drag
+        // specifically (see isInsideSizeMoveLoop).
+        case WM_ENTERSIZEMOVE:
+            noteNativeModalLoop(true);
+            noteSizeMoveLoop(true);
+            break;
+
+        case WM_EXITSIZEMOVE:
+            noteNativeModalLoop(false);
+            noteSizeMoveLoop(false);
+            break;
+
+        case WM_ENTERMENULOOP:
+            noteNativeModalLoop(true);
+            break;
+
+        case WM_EXITMENULOOP:
+            noteNativeModalLoop(false);
             break;
 
         // The user toggled the OS light/dark setting while we are running;

@@ -5,6 +5,7 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 
+#include <array>
 #include <cmath>
 
 // Windows/D3D12 backend. A texture is a default-heap resource plus an SRV
@@ -91,6 +92,61 @@ struct Texture::Native
         auto& context = getD3D12Context();
         context.freeTextureDescriptor(data.srv);
         context.deferRelease(std::move(data.resource));
+
+        for (auto& slot: stagings)
+            context.deferRelease(std::move(slot.buffer));
+    }
+
+    // Staging buffers are reused across updates: a video or camera texture
+    // uploads every frame, and a fresh committed resource per upload is a
+    // measurable slice of frame time. A small ring rather than one buffer,
+    // because an upload recorded into the frame's command list has no fence
+    // value until that frame submits — a slot is stamped at the NEXT update
+    // (by which time its carrying recording has certainly submitted, so the
+    // queue's last submitted value bounds it) and reused once that stamp has
+    // completed.
+    struct StagingSlot
+    {
+        winrt::com_ptr<ID3D12Resource> buffer;
+        std::size_t capacity = 0;
+        std::uint64_t fence = 0;
+        std::uint64_t recordingId = 0;
+        bool pending = false;
+    };
+
+    ID3D12Resource* acquireStaging(D3D12Context& context,
+                                   CommandContext* commands,
+                                   std::size_t bytes)
+    {
+        for (auto& slot: stagings)
+            if (slot.pending && slot.recordingId != commands->recordingId)
+            {
+                slot.fence = context.lastSubmitted();
+                slot.pending = false;
+            }
+
+        auto& slot =
+            stagings[(std::size_t) (stagingCursor++ % (int) stagings.size())];
+
+        // Busy (same open recording, still executing, or too small): retire
+        // the buffer onto the recording and start fresh.
+        if (slot.buffer != nullptr
+            && (slot.pending || slot.capacity < bytes
+                || !context.hasCompleted(slot.fence)))
+        {
+            commands->transients.add(std::move(slot.buffer));
+            slot.capacity = 0;
+        }
+
+        if (slot.buffer == nullptr)
+        {
+            slot.buffer = context.makeUploadBuffer(nullptr, bytes);
+            slot.capacity = slot.buffer != nullptr ? bytes : 0;
+        }
+
+        slot.pending = true;
+        slot.recordingId = commands->recordingId;
+        return slot.buffer.get();
     }
 
     // Maps a staging buffer, copies each source row's pixels (advancing the
@@ -124,7 +180,7 @@ struct Texture::Native
         context.getDevice()->GetCopyableFootprints(
             &regionDesc, 0, 1, 0, &footprint, &rows, &rowBytes, &totalBytes);
 
-        auto staging = context.makeUploadBuffer(nullptr, totalBytes);
+        auto* staging = acquireStaging(context, commands, totalBytes);
 
         if (staging == nullptr)
             return false;
@@ -151,7 +207,7 @@ struct Texture::Native
         destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
 
         D3D12_TEXTURE_COPY_LOCATION source = {};
-        source.pResource = staging.get();
+        source.pResource = staging;
         source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
         source.PlacedFootprint = footprint;
 
@@ -166,13 +222,18 @@ struct Texture::Native
                    D3D12_RESOURCE_STATE_COPY_DEST,
                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-        commands->transients.add(std::move(staging));
         return true;
     }
 
     void upload(D3D12Context& context, const void* pixels)
     {
-        auto* commands = context.acquire();
+        // Join the frame being recorded when there is one — one submission
+        // per frame, not one per upload (see D3D12Context::activeRecording).
+        auto* commands = context.activeRecording();
+        auto ownRecording = commands == nullptr;
+
+        if (ownRecording)
+            commands = context.acquire();
 
         if (commands == nullptr)
         {
@@ -191,12 +252,15 @@ struct Texture::Native
                         width,
                         height))
         {
-            context.discard(commands);
+            if (ownRecording)
+                context.discard(commands);
+
             data.resource = nullptr;
             return;
         }
 
-        context.submit(commands);
+        if (ownRecording)
+            context.submit(commands);
     }
 
     void update(const void* pixels, std::size_t bytesPerRow)
@@ -230,14 +294,21 @@ struct Texture::Native
         if (!context.isValid())
             return;
 
-        auto* commands = context.acquire();
+        // Join the frame being recorded when there is one — one submission
+        // per frame, not one per upload. The copy records ahead of the draws
+        // that sample it, and commands execute in order.
+        auto* commands = context.activeRecording();
+        auto ownRecording = commands == nullptr;
+
+        if (ownRecording)
+            commands = context.acquire();
 
         if (commands == nullptr)
             return;
 
-        auto sourcePitch =
-            bytesPerRow != 0 ? bytesPerRow
-                             : static_cast<std::size_t>(regionWidth * pixelStride);
+        auto sourcePitch = bytesPerRow != 0
+                               ? bytesPerRow
+                               : static_cast<std::size_t>(regionWidth * pixelStride);
 
         // The resource rests in PIXEL_SHADER_RESOURCE between frames; move it to
         // COPY_DEST for the upload, and put it back if staging fails so the next
@@ -247,14 +318,21 @@ struct Texture::Native
                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
                    D3D12_RESOURCE_STATE_COPY_DEST);
 
-        if (!copyPixels(
-                context, commands, pixels, sourcePitch, x, y, regionWidth, regionHeight))
+        if (!copyPixels(context,
+                        commands,
+                        pixels,
+                        sourcePitch,
+                        x,
+                        y,
+                        regionWidth,
+                        regionHeight))
             transition(commands->list.get(),
                        data.resource.get(),
                        D3D12_RESOURCE_STATE_COPY_DEST,
                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-        context.submit(commands);
+        if (ownRecording)
+            context.submit(commands);
     }
 
     void createDescriptors(D3D12Context& context, const TextureDescriptor&)
@@ -282,6 +360,10 @@ struct Texture::Native
     // path stays at 4 because those buffers are always 32-bit BGRA/RGBA.
     int pixelStride = 4;
     D3D12TextureData data;
+
+    // See acquireStaging.
+    std::array<StagingSlot, 3> stagings;
+    int stagingCursor = 0;
 };
 
 Texture::Texture(Device& device,
