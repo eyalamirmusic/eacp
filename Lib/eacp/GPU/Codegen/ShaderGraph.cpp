@@ -166,9 +166,14 @@ int ShaderGraph::addBinary(ValueType type, std::string op, int lhs, int rhs)
 
 int ShaderGraph::addCompare(std::string op, int lhs, int rhs)
 {
+    return addCompare(ValueType::Bool, std::move(op), lhs, rhs);
+}
+
+int ShaderGraph::addCompare(ValueType type, std::string op, int lhs, int rhs)
+{
     auto node = Expr {};
     node.kind = ExprKind::Compare;
-    node.type = ValueType::Bool;
+    node.type = type;
     node.text = std::move(op);
     node.args.add(lhs);
     node.args.add(rhs);

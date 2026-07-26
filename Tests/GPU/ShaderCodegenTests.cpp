@@ -1663,6 +1663,178 @@ auto tCodegenIntegersCompile = test("GPU/codegenIntegersCompile") = []
     check(pipeline.isValid());
 };
 
+// The integer vectors: built out of a coordinate, taken apart by component, put
+// back together, and carrying the operators only an integer has - all of it
+// componentwise. Both languages spell the type and every operation on it the
+// same way, so both backends are checked against the same text. Pure string
+// generation.
+auto tCodegenIntegerVectors = test("GPU/codegenIntegerVectors") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    // The whole vector crosses in one cast, not a component at a time.
+    auto cell = toInt(carried * 16.0f);
+
+    // Componentwise against another vector, against a broadcast literal, and
+    // the shift no float has.
+    auto wrapped = (cell & 7) + int2(cell.y(), cell.x());
+    auto shifted = wrapped << 1;
+
+    auto shade = toFloat(shifted.x() + shifted.y()) * 0.01f;
+    auto tint = toFloat(-cell) * 0.001f;
+
+    builder.fragment(float4(shade + tint.x(), shade, shade, 1.0f));
+
+    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        // The whole vector crosses in one cast rather than a component at a
+        // time, which is what keeps the coordinate behind it recorded once.
+        check(contains(source, "int2 t0 = int2((input.v0 * 16.0));"));
+
+        // The mask broadcasts the literal, the constructor takes two integer
+        // components, and the shift is the operator no float has.
+        check(
+            contains(source, "int2 t1 = (((t0 & 7) + int2((t0).y, (t0).x)) << 1);"));
+
+        // A component of an integer vector is an integer, so the crossing back
+        // into float arithmetic is still spelled out.
+        check(contains(source, "float(((t1).x + (t1).y))"));
+
+        // And the whole vector crosses back in one piece too.
+        check(contains(source, "float2((-(t0)))"));
+    }
+};
+
+// The componentwise comparison and what collapses it. This is the pair that
+// makes the boolean vector worth having: `<` on two vectors is a mask in both
+// languages, and all()/any() is the only thing that turns one into a condition
+// a branch or a select can take. Pure string generation.
+auto tCodegenVectorComparison = test("GPU/codegenVectorComparison") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto limit = builder.uniform<Float2>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto inside = carried < limit;
+    auto outside = !inside;
+
+    auto lit = select(all(inside), 1.0f, 0.25f);
+    auto edge = select(any(outside), 0.5f, 0.0f);
+
+    builder.fragment(float4(lit, edge, lit, 1.0f));
+
+    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        // The comparison is the operator itself, and its result is a mask of
+        // the operands' width rather than a scalar.
+        check(contains(source, "bool2 t0 = (input.v0 < uniforms.u0);"));
+
+        // The negation is the operator too, which is what GLSL spells not().
+        check(contains(source, "any((!(t0)))"));
+
+        // And the mask reaches a select only through a collapse - the whole
+        // reason for having the type at all.
+        check(contains(source, "all(t0) ?"));
+    }
+};
+
+// An Int2 crosses from the CPU where a Bool2 does not, and packs exactly where
+// a Float2 does - so the block needs no padding to reconcile the two backends,
+// and a shader can be handed a grid cell rather than a pair of floats to
+// truncate. Pure string generation.
+auto tCodegenIntegerVectorUniform = test("GPU/codegenIntegerVectorUniform") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto origin = builder.uniform<Int2>();
+    auto scale = builder.uniform<Float>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto cell = toInt(carried * 16.0f) - origin;
+    auto shade = toFloat(cell.x() + cell.y()) * scale;
+
+    builder.fragment(float4(shade, shade, shade, 1.0f));
+
+    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        check(contains(source, "int2 u0;"));
+        check(contains(source, "float u1;"));
+        check(contains(source, "- uniforms.u0)"));
+
+        // An eight-byte value followed by a four-byte one: the two rule sets
+        // agree on where the second lands, so nothing is padded between them.
+        check(!contains(source, "pad"));
+    }
+
+    auto types = Vector<ValueType> {};
+    types.add(ValueType::Int2);
+    types.add(ValueType::Float);
+
+    auto offsets = uniformOffsets(types);
+    check(offsets[0] == 0);
+    check(offsets[1] == 8);
+};
+
+// The vector halves of both families through the real platform shader compiler,
+// shaped like what asks for them: a grid cell counted in integers and a box test
+// that compares two coordinates componentwise. The emitted text says the
+// vocabulary is there; only the compiler says the language will take it.
+// Self-skips without a GPU device.
+auto tCodegenVectorTypesCompile = test("GPU/codegenVectorTypesCompile") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto origin = builder.uniform<Int2>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto cell =
+        min(max(toInt(carried * 32.0f) - origin, int2(builder.integer(0), 0)),
+            int2(builder.integer(7), 7));
+
+    auto checker = toFloat((cell.x() + cell.y()) % 2);
+
+    auto inside = all(carried < float2(builder.constant(0.75f), 0.75f));
+    auto touching = any(abs(cell) == int2(builder.integer(3), 3));
+
+    auto shade = builder.var(checker);
+
+    builder.ifThen(inside && !touching, [&] { shade = shade() * 0.5f; });
+
+    builder.fragment(float4(shade(), shade(), shade(), 1.0f));
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
+};
+
 // Compiles the rotating shader (with its uniform block) through the real
 // platform shader compiler. Self-skips without a GPU device.
 auto tCodegenUniformCompiles = test("GPU/codegenUniformCompiles") = []

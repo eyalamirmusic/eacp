@@ -76,7 +76,9 @@ public:
     //
     // A Bool is refused for the same reason at a smaller scale: MSL packs one
     // into a byte and an HLSL cbuffer gives it four. Send the flag as a float
-    // and compare it, which is what the block already knows how to carry.
+    // and compare it, which is what the block already knows how to carry. The
+    // boolean vectors go with it; the integer ones do not, since both languages
+    // pack an intN exactly where they pack a floatN.
     template <typename T>
     T uniform()
     {
@@ -86,7 +88,7 @@ public:
                       "them to different sizes. Use a Float4x4, or pass the "
                       "columns as vectors and build the matrix in the shader.");
 
-        static_assert(ValueTypeOf<T>::value != ValueType::Bool,
+        static_assert(!isBoolean(ValueTypeOf<T>::value),
                       "Bool cannot be a uniform: MSL packs it into one byte and "
                       "an HLSL cbuffer into four. Send a Float and compare it.");
 
@@ -188,16 +190,16 @@ public:
     // and all of them are evaluated once at the top of the shader body, which
     // is why a mutable local cannot be one. See Array for what a subscript of
     // one costs and what bounds it.
-    template <ShaderValueLike T, SameShaderShape<T>... Rest>
-    Array<ShaderBase<T>, 1 + (int) sizeof...(Rest)> array(const T& first,
-                                                          const Rest&... rest)
+    template <ShaderHandleLike T, SameShaderHandle<T>... Rest>
+    Array<ShaderHandle<T>, 1 + (int) sizeof...(Rest)> array(const T& first,
+                                                            const Rest&... rest)
     {
         auto elements = Vector<int> {};
-        elements.add(ShaderBase<T>(first).node);
-        (elements.add(ShaderBase<T>(rest).node), ...);
+        elements.add(ShaderHandle<T>(first).node);
+        (elements.add(ShaderHandle<T>(rest).node), ...);
 
         return {&graphData,
-                graphData.addArray(ValueTypeOf<ShaderBase<T>>::value,
+                graphData.addArray(ValueTypeOf<ShaderHandle<T>>::value,
                                    std::move(elements))};
     }
 
@@ -208,12 +210,15 @@ public:
     // Control flow is a fragment-stage (or kernel) facility, like sampling: the
     // statements a shader records are emitted into the fragment function, so a
     // variable must not feed the position expression or a varying.
-    template <ShaderValueLike T>
-    Var<ShaderBase<T>> var(const T& initialValue)
+    // Constrained on the handle rather than on the float vocabulary, so the
+    // flag a shader sets and later tests and the cell it walks a grid with are
+    // variables on the same terms a colour is.
+    template <ShaderHandleLike T>
+    Var<ShaderHandle<T>> var(const T& initialValue)
     {
         return {graphData,
-                ValueTypeOf<ShaderBase<T>>::value,
-                ShaderBase<T>(initialValue).node};
+                ValueTypeOf<ShaderHandle<T>>::value,
+                ShaderHandle<T>(initialValue).node};
     }
 
     Var<Float> var(float initialValue)
@@ -229,19 +234,6 @@ public:
     Var<Int> var(int initialValue)
     {
         return {graphData, ValueType::Int, graphData.addIntConstant(initialValue)};
-    }
-
-    // A Bool and an Int are outside the arithmetic vocabulary the templated
-    // form is constrained on, so the flag a shader sets and later tests, and
-    // the index it walks, each have an overload of their own.
-    Var<Bool> var(const Bool& initialValue)
-    {
-        return {graphData, ValueType::Bool, initialValue.node};
-    }
-
-    Var<Int> var(const Int& initialValue)
-    {
-        return {graphData, ValueType::Int, initialValue.node};
     }
 
     // The statements. Each body is a callable recording into a block of its

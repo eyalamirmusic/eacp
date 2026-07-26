@@ -20,7 +20,11 @@ namespace eacp::GPU
 // 16 bytes in all, while an HLSL cbuffer gives every matrix row a register of
 // its own and takes 32 - a disagreement inside the value, which no pad scalar
 // between fields can correct. Both agree on a float4x4, which is why that one
-// crosses the boundary and these two stay shader-local values.
+// crosses the boundary and these two stay shader-local values. The boolean
+// vectors appear here for the same reason and are refused for the same one the
+// scalar Bool is: the two languages disagree on what a bool occupies. The
+// integer vectors are not in that position - both pack an int2 exactly where
+// they pack a float2 - so those cross like the scalar Int does.
 inline int uniformAlignment(ValueType type)
 {
     switch (type)
@@ -31,10 +35,16 @@ inline int uniformAlignment(ValueType type)
         case ValueType::Bool:
             return 4;
         case ValueType::Float2:
+        case ValueType::Int2:
+        case ValueType::Bool2:
         case ValueType::Float2x2:
             return 8;
         case ValueType::Float3:
         case ValueType::Float4:
+        case ValueType::Int3:
+        case ValueType::Int4:
+        case ValueType::Bool3:
+        case ValueType::Bool4:
         case ValueType::Float3x3:
         case ValueType::Float4x4:
             return 16;
@@ -45,7 +55,8 @@ inline int uniformAlignment(ValueType type)
 
 inline int uniformSlotStride(ValueType type)
 {
-    if (type == ValueType::Float3)
+    if (type == ValueType::Float3 || type == ValueType::Int3
+        || type == ValueType::Bool3)
         return 16;
 
     // A float3x3 is three float3 columns, and a column occupies a full 16 bytes
