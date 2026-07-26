@@ -108,11 +108,127 @@ D3D12Context::D3D12Context()
 
 D3D12Context::~D3D12Context()
 {
+    stopAsyncThread();
+
     if (isValid())
         waitIdle();
 
     if (fenceEvent != nullptr)
         CloseHandle(fenceEvent);
+}
+
+void D3D12Context::ensureAsyncThread()
+{
+    if (asyncThread.joinable())
+        return;
+
+    asyncQuit = false;
+    asyncBusy = false;
+    asyncThread = std::thread([this] { asyncSubmitLoop(); });
+}
+
+void D3D12Context::stopAsyncThread()
+{
+    if (!asyncThread.joinable())
+        return;
+
+    {
+        auto lock = std::lock_guard<std::mutex> {asyncMutex};
+        asyncQuit = true;
+    }
+
+    asyncWake.notify_all();
+    asyncThread.join();
+    drainAsyncSubmit();
+}
+
+void D3D12Context::asyncSubmitLoop()
+{
+    while (true)
+    {
+        auto job = AsyncSubmit {};
+
+        {
+            auto lock = std::unique_lock<std::mutex> {asyncMutex};
+            asyncWake.wait(lock, [this] { return asyncQuit || asyncBusy; });
+
+            if (asyncQuit)
+                return;
+
+            job = asyncJob;
+        }
+
+        // Queue and fence calls are free-threaded; everything that is NOT
+        // (the command-context pools) stays on the main thread, which reaps
+        // the finished recording in drainAsyncSubmit.
+        ID3D12CommandList* lists[] = {job.commands->list.get()};
+        queue->ExecuteCommandLists(1, lists);
+        queue->Signal(fence.get(), job.fenceValue);
+
+        if (job.present != nullptr)
+            job.present->Present(1, 0);
+
+        {
+            auto lock = std::lock_guard<std::mutex> {asyncMutex};
+            asyncReap = job.commands;
+            asyncBusy = false;
+        }
+
+        asyncDone.notify_all();
+    }
+}
+
+std::uint64_t D3D12Context::submitAsync(CommandContext* commands,
+                                        IDXGISwapChain3* presentTarget)
+{
+    if (commands == nullptr || !isValid())
+        return 0;
+
+    if (FAILED(commands->list->Close()))
+    {
+        commands->transients.clear();
+        available.push_back(commands);
+        return 0;
+    }
+
+    // The fence value is claimed here, in call order on the main thread, so
+    // signals stay monotonic no matter when the worker gets to them; every
+    // synchronous path drains the worker first.
+    auto value = nextFenceValue++;
+    commands->fenceValue = value;
+    lastSubmittedValue = value;
+
+    ensureAsyncThread();
+
+    {
+        auto lock = std::lock_guard<std::mutex> {asyncMutex};
+        asyncJob = {commands, presentTarget, value};
+        asyncBusy = true;
+    }
+
+    asyncWake.notify_one();
+    return value;
+}
+
+bool D3D12Context::isAsyncSubmitPending()
+{
+    auto lock = std::lock_guard<std::mutex> {asyncMutex};
+    return asyncBusy;
+}
+
+void D3D12Context::drainAsyncSubmit()
+{
+    auto reap = static_cast<CommandContext*>(nullptr);
+
+    {
+        auto lock = std::unique_lock<std::mutex> {asyncMutex};
+        asyncDone.wait(lock, [this] { return !asyncBusy; });
+        reap = asyncReap;
+        asyncReap = nullptr;
+    }
+
+    if (reap != nullptr)
+        available.push_back(reap);
 }
 
 void D3D12Context::createAll()
@@ -416,6 +532,9 @@ CommandContext* D3D12Context::acquire()
     if (!isValid())
         return nullptr;
 
+    // The worker may still hold a recording; the pools below are
+    // main-thread structures, so settle it (and reap its context) first.
+    drainAsyncSubmit();
     purgeRetired();
 
     auto recycled = std::find_if(available.begin(),
@@ -466,6 +585,10 @@ std::uint64_t D3D12Context::submit(CommandContext* commands)
     if (commands == nullptr || !isValid())
         return 0;
 
+    // Keep queue submissions and fence signals in fence-value order: an
+    // async job claimed its value first, so it must reach the queue first.
+    drainAsyncSubmit();
+
     if (FAILED(commands->list->Close()))
     {
         // An invalid recording (or removed device) must not execute; recycle
@@ -514,7 +637,14 @@ bool D3D12Context::hasCompleted(std::uint64_t value) const
 
 void D3D12Context::waitFor(std::uint64_t value)
 {
-    if (fence == nullptr || fenceEvent == nullptr || hasCompleted(value))
+    if (fence == nullptr || fenceEvent == nullptr)
+        return;
+
+    // The value may belong to a job the worker has not executed yet.
+    if (!hasCompleted(value))
+        drainAsyncSubmit();
+
+    if (hasCompleted(value))
         return;
 
     if (SUCCEEDED(fence->SetEventOnCompletion(value, fenceEvent)))
@@ -633,6 +763,10 @@ winrt::com_ptr<ID3D12Resource> D3D12Context::makeUploadBuffer(const void* data,
 
 void D3D12Context::recreateAfterDeviceLoss()
 {
+    // The worker must not touch the dying queue; it restarts lazily on the
+    // replacement device's first async submit.
+    stopAsyncThread();
+
     retired.clear();
     pool.clear();
     available.clear();

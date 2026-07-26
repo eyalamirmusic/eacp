@@ -5,6 +5,7 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 
+#include <array>
 #include <cmath>
 
 // Windows/D3D12 backend. A texture is a default-heap resource plus an SRV
@@ -91,31 +92,61 @@ struct Texture::Native
         auto& context = getD3D12Context();
         context.freeTextureDescriptor(data.srv);
         context.deferRelease(std::move(data.resource));
-        context.deferRelease(std::move(staging));
+
+        for (auto& slot: stagings)
+            context.deferRelease(std::move(slot.buffer));
     }
 
-    // The staging buffer is reused across updates: a video or camera texture
+    // Staging buffers are reused across updates: a video or camera texture
     // uploads every frame, and a fresh committed resource per upload is a
-    // measurable slice of frame time. Recreated only when the upload outgrows
-    // it or the GPU is still reading the previous one.
+    // measurable slice of frame time. A small ring rather than one buffer,
+    // because an upload recorded into the frame's command list has no fence
+    // value until that frame submits — a slot is stamped at the NEXT update
+    // (by which time its carrying recording has certainly submitted, so the
+    // queue's last submitted value bounds it) and reused once that stamp has
+    // completed.
+    struct StagingSlot
+    {
+        winrt::com_ptr<ID3D12Resource> buffer;
+        std::size_t capacity = 0;
+        std::uint64_t fence = 0;
+        std::uint64_t recordingId = 0;
+        bool pending = false;
+    };
+
     ID3D12Resource* acquireStaging(D3D12Context& context,
                                    CommandContext* commands,
                                    std::size_t bytes)
     {
-        if (staging != nullptr
-            && (stagingCapacity < bytes || !context.hasCompleted(stagingFence)))
+        for (auto& slot: stagings)
+            if (slot.pending && slot.recordingId != commands->recordingId)
+            {
+                slot.fence = context.lastSubmitted();
+                slot.pending = false;
+            }
+
+        auto& slot =
+            stagings[(std::size_t) (stagingCursor++ % (int) stagings.size())];
+
+        // Busy (same open recording, still executing, or too small): retire
+        // the buffer onto the recording and start fresh.
+        if (slot.buffer != nullptr
+            && (slot.pending || slot.capacity < bytes
+                || !context.hasCompleted(slot.fence)))
         {
-            commands->transients.add(std::move(staging));
-            stagingCapacity = 0;
+            commands->transients.add(std::move(slot.buffer));
+            slot.capacity = 0;
         }
 
-        if (staging == nullptr)
+        if (slot.buffer == nullptr)
         {
-            staging = context.makeUploadBuffer(nullptr, bytes);
-            stagingCapacity = staging != nullptr ? bytes : 0;
+            slot.buffer = context.makeUploadBuffer(nullptr, bytes);
+            slot.capacity = slot.buffer != nullptr ? bytes : 0;
         }
 
-        return staging.get();
+        slot.pending = true;
+        slot.recordingId = commands->recordingId;
+        return slot.buffer.get();
     }
 
     // Maps a staging buffer, copies each source row's pixels (advancing the
@@ -196,7 +227,13 @@ struct Texture::Native
 
     void upload(D3D12Context& context, const void* pixels)
     {
-        auto* commands = context.acquire();
+        // Join the frame being recorded when there is one — one submission
+        // per frame, not one per upload (see D3D12Context::activeRecording).
+        auto* commands = context.activeRecording();
+        auto ownRecording = commands == nullptr;
+
+        if (ownRecording)
+            commands = context.acquire();
 
         if (commands == nullptr)
         {
@@ -215,12 +252,15 @@ struct Texture::Native
                         width,
                         height))
         {
-            context.discard(commands);
+            if (ownRecording)
+                context.discard(commands);
+
             data.resource = nullptr;
             return;
         }
 
-        stagingFence = context.submit(commands);
+        if (ownRecording)
+            context.submit(commands);
     }
 
     void update(const void* pixels, std::size_t bytesPerRow)
@@ -254,7 +294,14 @@ struct Texture::Native
         if (!context.isValid())
             return;
 
-        auto* commands = context.acquire();
+        // Join the frame being recorded when there is one — one submission
+        // per frame, not one per upload. The copy records ahead of the draws
+        // that sample it, and commands execute in order.
+        auto* commands = context.activeRecording();
+        auto ownRecording = commands == nullptr;
+
+        if (ownRecording)
+            commands = context.acquire();
 
         if (commands == nullptr)
             return;
@@ -284,7 +331,8 @@ struct Texture::Native
                        D3D12_RESOURCE_STATE_COPY_DEST,
                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-        stagingFence = context.submit(commands);
+        if (ownRecording)
+            context.submit(commands);
     }
 
     void createDescriptors(D3D12Context& context, const TextureDescriptor&)
@@ -314,9 +362,8 @@ struct Texture::Native
     D3D12TextureData data;
 
     // See acquireStaging.
-    winrt::com_ptr<ID3D12Resource> staging;
-    std::size_t stagingCapacity = 0;
-    std::uint64_t stagingFence = 0;
+    std::array<StagingSlot, 3> stagings;
+    int stagingCursor = 0;
 };
 
 Texture::Texture(Device& device,

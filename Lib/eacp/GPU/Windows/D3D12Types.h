@@ -130,6 +130,12 @@ struct D3D12Drawable
     D3D12_CPU_DESCRIPTOR_HANDLE backBufferView = {};
     UINT width = 0;
     UINT height = 0;
+
+    // The frame's owner presents the swapchain itself (GPUView hands the
+    // present to a worker thread — Present can block for tens of
+    // milliseconds while DWM processes a live resize, and the frame is
+    // destroyed on the thread the OS drag loop runs on).
+    bool deferPresent = false;
 };
 
 // Optional multisample target, kept in RENDER_TARGET state between frames.

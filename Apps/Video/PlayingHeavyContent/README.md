@@ -131,13 +131,15 @@ a decode thread paced by sample timestamps, latest-frame store, loop by
   so `GPUView`'s tick dispatches queued input itself before each frame
   (standing down inside the OS's modal loops, which own their input). Hover
   reaches the stage in single-digit milliseconds under full render load.
-- **Live resize without fighting the drag loop.** Mid-drag frames render
-  into the existing buffers, which the composition transform (committed
-  inside the WM_SIZE itself) stretches onto the moving bounds — so playback
-  continues while the edge tracks the hand. The render never *blocks* there:
-  no free present slot this instant means the compositor is behind, and the
-  frame is skipped rather than stalling the OS loop chasing the mouse. The
-  swapchain rebuild (a full GPU drain) is deferred to release.
+- **Live resize without fighting the drag loop.** During a drag the kernel
+  can block *any* queue submission or present for tens of milliseconds while
+  DWM processes the resize transaction — so the main thread only records.
+  Texture uploads join the frame's command list (one submission per frame,
+  not six), and execute/signal/present run on the D3D12 context's worker
+  thread; frames coalesce to whatever rate the compositor absorbs. Playback
+  continues, the composition transform (committed inside the WM_SIZE itself)
+  stretches frames onto the moving bounds, and the swapchain rebuild — a
+  full GPU drain — is deferred to release.
 
 Two caveats against macOS remain:
 

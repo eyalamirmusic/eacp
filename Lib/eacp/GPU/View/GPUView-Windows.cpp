@@ -83,7 +83,7 @@ struct GPUView::Native : DeviceResourceHolder
         stopContinuous();
 
         // The last frames may still reference the back buffers and targets
-        // about to be released.
+        // about to be released (waitIdle also settles the async submit).
         getD3D12Context().waitIdle();
 
         if (spriteVisual)
@@ -311,7 +311,9 @@ struct GPUView::Native : DeviceResourceHolder
     void resizeSwapChain()
     {
         // The buffers being replaced may still be referenced by an in-flight
-        // frame, and ResizeBuffers requires every outstanding reference gone.
+        // frame, and ResizeBuffers requires every outstanding reference gone —
+        // including a present the context's worker is still inside (waitIdle
+        // settles that too).
         getD3D12Context().waitIdle();
 
         for (auto& buffer: backBuffers)
@@ -473,6 +475,13 @@ struct GPUView::Native : DeviceResourceHolder
         if (!swapChain || !context.isValid() || width == 0 || height == 0)
             return;
 
+        // One frame in the async pipeline at a time: skipping while the
+        // context's worker still holds the previous frame keeps the
+        // back-buffer index read below valid, and coalesces frames to
+        // whatever rate the compositor actually absorbs.
+        if (context.isAsyncSubmitPending())
+            return;
+
         // Blocks until the swapchain is ready for another frame, so the CPU
         // runs no further ahead of the display than it was told it may. Two
         // exceptions:
@@ -510,6 +519,7 @@ struct GPUView::Native : DeviceResourceHolder
         drawable.backBufferView = rtvHandles[index];
         drawable.width = width;
         drawable.height = height;
+        drawable.deferPresent = true;
 
         auto useMsaa = sampleCount > 1 && msaaTexture != nullptr;
 
@@ -526,6 +536,9 @@ struct GPUView::Native : DeviceResourceHolder
         if (useDepth)
             depth.view = depthViewHandle;
 
+        // The Frame destructor hands execute/signal/present to the context's
+        // worker (deferPresent above); the fence value is claimed before it
+        // returns, so lastSubmitted() below is this frame's.
         {
             auto frame = Frame(Device::shared(),
                                &drawable,
