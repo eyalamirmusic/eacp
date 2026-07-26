@@ -958,6 +958,105 @@ auto tCodegenTextureCompiles = test("GPU/codegenTextureCompiles") = []
     check(pipeline.isValid());
 };
 
+// Choosing the mip level is where the two backends stop agreeing on the call:
+// Metal passes it to the same sample(), HLSL has a method of its own for it.
+// One graph node, so a shader says it once. Pure string generation.
+auto tCodegenSampleLevelEmits = test("GPU/codegenSampleLevelEmits") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto uv = builder.vertexInput<Float2>();
+    auto image = builder.texture();
+    auto varyingUv = builder.varying(uv);
+    auto level = builder.uniform<Float>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(sample(image, varyingUv, level));
+
+    auto metal = emitMetal(builder.graph());
+    check(
+        contains(metal, "texture0.sample(sampler0, input.v0, level(uniforms.u0))"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "texture0.SampleLevel(sampler0, input.v0, uniforms.u0)"));
+};
+
+// A level given as a plain float needs no anchoring by the caller: the texture
+// already carries the graph the constant records into. Reading the top of the
+// pyramid is what most shaders that pick a level at all are asking for, so it
+// would otherwise be the one call that needs a ShaderBuilder in scope.
+auto tCodegenLiteralSampleLevel = test("GPU/codegenLiteralSampleLevel") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto uv = builder.vertexInput<Float2>();
+    auto image = builder.texture();
+    auto varyingUv = builder.varying(uv);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(sample(image, varyingUv, 0.0f));
+
+    check(contains(emitMetal(builder.graph()),
+                   "texture0.sample(sampler0, input.v0, level(0.0))"));
+
+    check(contains(emitHlsl(builder.graph()),
+                   "texture0.SampleLevel(sampler0, input.v0, 0.0)"));
+};
+
+// A texel read takes no sampler at all, and the coordinate goes through int2 on
+// both backends: Metal reads unsigned, so a negative coordinate has to become a
+// large one there rather than an undefined conversion, which is what makes it
+// read as zero on both. Pure string generation.
+auto tCodegenFetchEmits = test("GPU/codegenFetchEmits") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto uv = builder.vertexInput<Float2>();
+    auto image = builder.texture();
+    auto varyingUv = builder.varying(uv);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(fetch(image, varyingUv));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "texture0.read(uint2(int2(input.v0)))"));
+    check(!contains(metal, "texture0.sample"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "texture0.Load(int3(int2(input.v0), 0))"));
+    check(!contains(hlsl, "texture0.Sample"));
+};
+
+// Both reach the real shader compiler: an unsampled level and a texel read are
+// each one method call the backend either has or does not. Self-skips without a
+// GPU device.
+auto tCodegenSampleLevelAndFetchCompile =
+    test("GPU/codegenSampleLevelAndFetchCompile") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto uv = builder.vertexInput<Float2>();
+    auto image = builder.texture();
+    auto varyingUv = builder.varying(uv);
+    auto level = builder.uniform<Float>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(sample(image, varyingUv, level) + fetch(image, varyingUv));
+
+    auto shader = builder.build();
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+};
+
 // A compute kernel authored via the EDSL: storage buffers, the thread id, a
 // uniform and a store. The kernel scaffolding differs per backend (function
 // parameters on Metal, globals + numthreads on D3D); the body and the implicit

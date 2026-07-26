@@ -161,6 +161,27 @@ int ShaderGraph::addSample(int textureSlot, int uv)
     return add(std::move(node));
 }
 
+int ShaderGraph::addSample(int textureSlot, int uv, int level)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Sample;
+    node.type = ValueType::Float4;
+    node.index = textureSlot;
+    node.args.add(uv);
+    node.args.add(level);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addFetch(int textureSlot, int coordinates)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Fetch;
+    node.type = ValueType::Float4;
+    node.index = textureSlot;
+    node.args.add(coordinates);
+    return add(std::move(node));
+}
+
 int ShaderGraph::addThreadId()
 {
     auto node = Expr {};
