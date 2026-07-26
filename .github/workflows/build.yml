@@ -64,6 +64,59 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # The Vulkan backend replaces the native one wholesale (EACP_GPU_BACKEND), so
+  # it needs its own configuration rather than a flag on the matrix above.
+  #
+  # Only macOS and Windows are here because Lib/eacp/CMakeLists.txt builds the
+  # GPU library on APPLE OR WIN32 only -- a Linux entry would compile no Vulkan
+  # code at all. Wiring Linux up is what turns that branch on.
+  #
+  # These jobs compile, link and run the suite; they do not exercise a driver.
+  # No hosted runner ships a Vulkan ICD, and every entry point is resolved at
+  # runtime through VulkanLoader.h, so the context comes back invalid and the GPU
+  # tests self-skip. What this pins is that the portable Vulkan sources keep
+  # building on both toolchains -- MSVC in particular, which is the half most
+  # likely to rot -- and that the driverless paths stay crash-free.
+  build-vulkan:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Vulkan
+            os: macos-latest
+            cmake-flags: ''
+          - name: Windows MSVC Vulkan
+            os: windows-latest
+            msvc-arch: x64
+            cmake-flags: ''
+          - name: Windows Clang Vulkan
+            os: windows-latest
+            msvc-arch: x64
+            cmake-flags: '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl'
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: egor-tensin/vs-shell@54e4148eac794e4580591c2e0b7750f14b7891fc # v2
+        with:
+          arch: ${{ matrix.msvc-arch }}
+
+      - name: Configure
+        run: >
+          cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON
+          -DEACP_GPU_BACKEND=Vulkan ${{ matrix.cmake-flags }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   build-ios:
     name: iOS Simulator
     runs-on: macos-latest

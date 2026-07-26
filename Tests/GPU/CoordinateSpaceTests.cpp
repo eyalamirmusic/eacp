@@ -19,7 +19,12 @@
 // which is what this does -- fill the slices with telltale colours, read the
 // pixels back, assert on where they came out.
 //
-// Self-skips without a GPU device.
+// Self-skips without a GPU device, on Device::shared() like every other suite
+// here. An empty image is not the signal to skip on: renderToImage falls back to
+// the 2D compositor when a GPUView contributes nothing, so a driverless machine
+// still gets a correctly sized, entirely black image back -- which reads as "the
+// slices came out in the wrong place" rather than "there was nothing to draw
+// with", and fails every colour check here while the rest of the suite skips.
 
 using namespace nano;
 using namespace eacp;
@@ -94,11 +99,13 @@ bool isBlack(const Graphics::Color& c)
 auto tRemoveFromTopDrawsAtTheTop =
     test("CoordinateSpace/removeFromTopDrawsAtTheTop") = []
 {
+    if (!Device::shared().isValid())
+        return;
+
     auto view = ChromeView {};
     auto image = view.renderToImage(1.f);
 
-    if (image.width() == 0)
-        return;
+    check(image.isValid());
 
     const auto middle = image.width() / 2;
 
@@ -110,11 +117,13 @@ auto tRemoveFromTopDrawsAtTheTop =
 
 auto tSlicesTileTheImage = test("CoordinateSpace/slicesTileWithoutOverlap") = []
 {
+    if (!Device::shared().isValid())
+        return;
+
     auto view = ChromeView {};
     auto image = view.renderToImage(1.f);
 
-    if (image.width() == 0)
-        return;
+    check(image.isValid());
 
     const auto middle = image.width() / 2;
 
@@ -132,6 +141,9 @@ auto tSlicesTileTheImage = test("CoordinateSpace/slicesTileWithoutOverlap") = []
 auto tScissorSharesTheConvention =
     test("CoordinateSpace/scissorClipsTheSameWayUp") = []
 {
+    if (!Device::shared().isValid())
+        return;
+
     // setScissorRect is documented as top-left origin in pixels. If it and Rect
     // disagreed, clipping a widget to its own bounds would clip the wrong end.
     struct ClippedView final : GPUView
@@ -166,8 +178,7 @@ auto tScissorSharesTheConvention =
     auto view = ClippedView {};
     auto image = view.renderToImage(1.f);
 
-    if (image.width() == 0)
-        return;
+    check(image.isValid());
 
     const auto middle = image.width() / 2;
 

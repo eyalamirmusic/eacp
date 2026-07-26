@@ -74,14 +74,15 @@ VulkanContext::~VulkanContext()
 
 bool VulkanContext::createInstance()
 {
-    auto available = instanceExtensions();
+    auto availableExtensions = instanceExtensions();
 
     auto names = Vector<const char*> {};
 
     // MoltenVK is a portability driver and the loader hides it unless the
     // instance opts in. Both are absent on a native driver, where the plain
     // enumeration already returns everything.
-    auto portable = hasExtension(available, "VK_KHR_portability_enumeration");
+    auto portable =
+        hasExtension(availableExtensions, "VK_KHR_portability_enumeration");
 
     if (portable)
     {
@@ -95,7 +96,7 @@ bool VulkanContext::createInstance()
     // builds a swapchain.
     for (const auto* surfaceExtension:
          {"VK_KHR_surface", "VK_EXT_metal_surface", "VK_KHR_win32_surface"})
-        if (hasExtension(available, surfaceExtension))
+        if (hasExtension(availableExtensions, surfaceExtension))
             names.add(surfaceExtension);
 
     auto application =
@@ -177,17 +178,17 @@ bool VulkanContext::pickPhysicalDevice()
 
 bool VulkanContext::createDevice()
 {
-    auto available = deviceExtensions(physicalDevice);
+    auto availableExtensions = deviceExtensions(physicalDevice);
 
     auto names = Vector<const char*> {};
     names.add(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
 
     // Required by the spec whenever the device advertises it, which is how a
     // portability driver like MoltenVK identifies itself.
-    if (hasExtension(available, "VK_KHR_portability_subset"))
+    if (hasExtension(availableExtensions, "VK_KHR_portability_subset"))
         names.add("VK_KHR_portability_subset");
 
-    if (hasExtension(available, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
+    if (hasExtension(availableExtensions, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
     {
         names.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
         presentationSupported = true;
@@ -197,13 +198,13 @@ bool VulkanContext::createDevice()
     // other processes and frameworks -- an IOSurface here -- so a camera or video
     // frame is sampled where it was captured instead of copied. See
     // TextureImport-Vulkan.h.
-    if (hasExtension(available, "VK_EXT_metal_objects"))
+    if (hasExtension(availableExtensions, "VK_EXT_metal_objects"))
     {
         names.add("VK_EXT_metal_objects");
         surfaceImportSupported = true;
     }
 
-    if (!hasExtension(available, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME))
+    if (!hasExtension(availableExtensions, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME))
     {
         LOG("Vulkan: device lacks VK_KHR_dynamic_rendering");
         return false;
