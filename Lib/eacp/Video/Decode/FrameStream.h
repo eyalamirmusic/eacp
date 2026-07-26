@@ -85,6 +85,28 @@ public:
     // i.e. the last frame of the file is the one now being shown.
     bool hasReachedEnd() const;
 
+    // What the stream has actually been doing, for a HUD or a benchmark.
+    struct Stats
+    {
+        // Frames the decoder produced since the stream was opened. Seeking does
+        // not reset it: it is a measure of decode work done, not of position.
+        std::uint64_t decoded = 0;
+
+        // Frames the playhead passed without them ever being drawn. A steadily
+        // rising count means decode is keeping up but presentation is not —
+        // the renderer is behind, or the playhead is moving faster than real
+        // time. Frames thrown away by a seek are not counted; they were never
+        // going to be shown.
+        std::uint64_t skipped = 0;
+
+        // How full the queue is right now, against the depth it was given.
+        // Sitting at zero means the decoder is the bottleneck.
+        int queued = 0;
+        int depth = 0;
+    };
+
+    Stats stats() const;
+
     // Fired on the decode thread each time a frame lands in the queue — the
     // hook a view uses to render the moment new content exists rather than
     // waiting to be noticed at the next display tick (see
@@ -117,6 +139,9 @@ private:
     mutable std::mutex mutex;
     std::condition_variable spaceAvailable; // decode thread waits on this
     std::condition_variable frameAvailable; // waitForFrameAt waits on this
+
+    std::uint64_t framesDecoded = 0;
+    std::uint64_t framesSkipped = 0;
 
     bool stopping = false;
     bool endOfStream = false;

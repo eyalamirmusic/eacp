@@ -173,6 +173,16 @@ void SpriteRenderer::drawTexture(const GPU::Texture& texture,
              sampling);
 }
 
+void SpriteRenderer::drawTextureQuad(const GPU::Texture& texture,
+                                     Graphics::Point origin,
+                                     Graphics::Point edgeX,
+                                     Graphics::Point edgeY,
+                                     const Graphics::Color& tint,
+                                     GPU::TextureSampling sampling)
+{
+    drawQuad(texture, origin, edgeX, edgeY, 0.0f, 0.0f, 1.0f, 1.0f, tint, sampling);
+}
+
 void SpriteRenderer::fillRect(const Graphics::Rect& rect,
                               const Graphics::Color& color)
 {

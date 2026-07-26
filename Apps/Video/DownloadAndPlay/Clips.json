@@ -1,0 +1,28 @@
+{
+    "clips": [
+        {
+            "name": "Big Buck Bunny",
+            "detail": "1080p  10s  ~30 MB  ~24 Mbit/s   (CC-BY Blender Foundation)",
+            "url": "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_30MB.mp4",
+            "fileName": "bbb-1080p-30mb.mp4"
+        },
+        {
+            "name": "Jellyfish",
+            "detail": "1080p  10s  ~30 MB  ~24 Mbit/s   (a decode stress clip)",
+            "url": "https://test-videos.co.uk/vids/jellyfish/mp4/h264/1080/Jellyfish_1080_10s_30MB.mp4",
+            "fileName": "jellyfish-1080p-30mb.mp4"
+        },
+        {
+            "name": "Sintel",
+            "detail": "1080p  10s  ~30 MB  ~24 Mbit/s   (CC-BY Blender Foundation)",
+            "url": "https://test-videos.co.uk/vids/sintel/mp4/h264/1080/Sintel_1080_10s_30MB.mp4",
+            "fileName": "sintel-1080p-30mb.mp4"
+        },
+        {
+            "name": "Sintel trailer",
+            "detail": "854x480  52s  ~4 MB   (small, quick to fetch)",
+            "url": "https://media.w3.org/2010/05/sintel/trailer.mp4",
+            "fileName": "sintel-trailer-480p.mp4"
+        }
+    ]
+}

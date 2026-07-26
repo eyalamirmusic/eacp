@@ -6,3 +6,4 @@
 #include "GlyphRenderer.h"
 #include "GlyphRasterizer.h"
 #include "ShelfPacker.h"
+#include "TextRenderer.h"

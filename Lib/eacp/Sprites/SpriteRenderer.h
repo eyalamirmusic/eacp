@@ -96,6 +96,21 @@ public:
                      const Graphics::Color& tint = Graphics::Color::white(),
                      GPU::TextureSampling sampling = {});
 
+    // The whole texture mapped onto an arbitrary parallelogram: `origin` is
+    // where the texture's top-left lands, and the two edge vectors are where
+    // its +u and +v axes go, in logical units.
+    //
+    // Every other draw here is a special case of this. It is public because
+    // orientation is not always expressible as a flip: a video track carrying a
+    // 90-degree display rotation needs the u axis to run down the screen, which
+    // no combination of flipX/flipY can produce.
+    void drawTextureQuad(const GPU::Texture& texture,
+                         Graphics::Point origin,
+                         Graphics::Point edgeX,
+                         Graphics::Point edgeY,
+                         const Graphics::Color& tint = Graphics::Color::white(),
+                         GPU::TextureSampling sampling = {});
+
     void fillRect(const Graphics::Rect& rect, const Graphics::Color& color);
 
     // An outline drawn inside the rect's edges, `thickness` logical units wide.
