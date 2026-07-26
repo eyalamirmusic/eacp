@@ -101,6 +101,41 @@ auto tQueueDepthBounds = test("FrameStream/queueDepthBoundsDecodeAhead") = []
     check(fake.decoder->framesDecoded.load() <= 4);
 };
 
+// The queue is bounded by bytes, not just by frame count: a fixed depth means
+// wildly different memory at different resolutions, so the depth comes down as
+// the frames get bigger.
+auto tDepthBudget = test("FrameStream/queueDepthFitsMemoryBudget") = []
+{
+    auto options = Video::StreamOptions {};
+    options.queueDepth = 4;
+    options.maxQueueBytes = 192u * 1024u * 1024u;
+
+    auto sized = [](int width, int height)
+    {
+        auto info = Video::VideoInfo {};
+        info.width = width;
+        info.height = height;
+        return info;
+    };
+
+    // 1080p is 8 MB a frame, so all four fit with room to spare.
+    check(Video::FrameStream::depthWithinBudget(sized(1920, 1080), options) == 4);
+
+    // 4K is 33 MB; four still fit inside 192 MB.
+    check(Video::FrameStream::depthWithinBudget(sized(3840, 2160), options) == 4);
+
+    // 8K is 133 MB a frame — only one fits, and that is the floor.
+    check(Video::FrameStream::depthWithinBudget(sized(7680, 4320), options) == 1);
+
+    // The floor holds even when a single frame busts the budget outright.
+    options.maxQueueBytes = 1024;
+    check(Video::FrameStream::depthWithinBudget(sized(7680, 4320), options) == 1);
+
+    // A stream whose size is unknown keeps what was asked for.
+    options.maxQueueBytes = 192u * 1024u * 1024u;
+    check(Video::FrameStream::depthWithinBudget(sized(0, 0), options) == 4);
+};
+
 // A closed stream stops its decode thread and reports itself closed; reopening
 // starts over from the beginning.
 auto tReopen = test("FrameStream/closeThenReopen") = []

@@ -32,10 +32,24 @@ bool FrameStream::open(OwningPointer<Decoder> decoderToUse,
 
     decoder = std::move(decoderToUse);
     videoInfo = decoder->info();
-    queueDepth = std::max(1, options.queueDepth);
+    queueDepth = depthWithinBudget(videoInfo, options);
 
     startDecodeThread();
     return true;
+}
+
+int FrameStream::depthWithinBudget(const VideoInfo& info,
+                                   const StreamOptions& options)
+{
+    auto requested = std::max(1, options.queueDepth);
+    auto frameBytes = (std::size_t) std::max(0, info.width)
+                      * (std::size_t) std::max(0, info.height) * 4u;
+
+    if (frameBytes == 0 || options.maxQueueBytes == 0)
+        return requested;
+
+    auto affordable = (int) (options.maxQueueBytes / frameBytes);
+    return std::clamp(affordable, 1, requested);
 }
 
 void FrameStream::close()
