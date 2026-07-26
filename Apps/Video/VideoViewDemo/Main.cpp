@@ -149,12 +149,23 @@ struct VideoApp
         quitTimer.emplace(
             [this]
             {
-                if (!quitDeadline->expired())
+                // The quit drains asynchronously, so the timer keeps firing
+                // until the loop actually exits; report and quit exactly once.
+                if (quitting || !quitDeadline->expired())
                     return;
 
-                std::printf("auto-quit: %d renders, %d with a video frame\n",
+                quitting = true;
+
+                std::printf("auto-quit: %d renders, %d with a video frame, "
+                            "%llu frames decoded\n",
                             view.overlayTicks,
-                            view.framesWithImage);
+                            view.framesWithImage,
+                            (unsigned long long) player.frameSequence());
+
+                // Detach + close before the quit drains: frames arriving into
+                // a window mid-teardown would keep scheduling renders.
+                view.detach();
+                player.close();
                 Apps::quit();
             },
             100);
@@ -164,6 +175,7 @@ struct VideoApp
     DemoVideoView view;
     Graphics::Window window {makeOptions()};
     int selected = -1;
+    bool quitting = false;
     std::optional<Threads::Timer> quitTimer;
     std::optional<Time::Deadline> quitDeadline;
 };

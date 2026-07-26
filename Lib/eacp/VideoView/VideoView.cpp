@@ -86,12 +86,15 @@ Graphics::Rect FramePresenter::drawZeroCopy(Player& player,
                                             Fit fit,
                                             const Graphics::Color& tint)
 {
+    // Sequence first, buffer second: a frame published between the two reads
+    // then costs one redundant re-wrap on the next render. The other order
+    // stamps the older buffer with the newer number, and serves the STALE
+    // wrap when that frame comes due.
+    auto sequence = player.frameSequence();
     auto* buffer = player.acquireLatestPixelBuffer();
 
     if (buffer == nullptr)
         return {};
-
-    auto sequence = player.frameSequence();
 
     if (!wrappedTexture.has_value() || sequence != wrappedSequence)
     {

@@ -279,9 +279,9 @@ struct Player::Native
 
     // AVPlayerItem's status has no completion callback without KVO
     // machinery; a light main-thread poll keeps this file free of observer
-    // classes. It stops itself once loading resolves — the stop comes before
-    // the owner callbacks, so an open() from inside onReady gets a fresh poll
-    // that is not immediately stopped underneath it.
+    // classes. It retires itself once loading resolves; an open() from inside
+    // onReady is safe, because its close() invalidates the token the pending
+    // retirement rides on, so the fresh poll is not stopped underneath it.
     void pollStatus()
     {
         ObjC::AutoReleasePool pool;
@@ -480,6 +480,15 @@ struct Player::Native
 
     void wakePacer()
     {
+        // The lock is taken (and immediately dropped) so this serialises with
+        // the wait's predicate check: the flags it gates on are set outside
+        // the mutex, and a bare notify can land in the window between the
+        // predicate reading them false and the wait blocking — lost, with
+        // nothing left to wake the pacer again.
+        {
+            std::lock_guard<std::mutex> lock(pacerMutex);
+        }
+
         pacerWake.notify_all();
     }
 
