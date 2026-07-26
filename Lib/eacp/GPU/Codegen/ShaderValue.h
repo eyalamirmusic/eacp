@@ -161,6 +161,14 @@ struct UInt : detail::ValueHandle
 {
 };
 
+// What a comparison yields: the condition an if, a while or a select tests.
+// Like UInt it stays outside the float operator vocabulary - it is produced by
+// the comparison operators, combined with && || !, and consumed by control
+// flow, and there is no arithmetic on it.
+struct Bool : detail::ValueHandle
+{
+};
+
 struct Float2 : detail::Swizzles<2>
 {
 };
@@ -384,6 +392,12 @@ template <>
 struct ValueTypeOf<UInt>
 {
     static constexpr ValueType value = ValueType::UInt;
+};
+
+template <>
+struct ValueTypeOf<Bool>
+{
+    static constexpr ValueType value = ValueType::Bool;
 };
 
 namespace detail
@@ -1051,6 +1065,217 @@ ShaderBase<T> mod(const T& x, float y)
     return x - y * floor(x / y);
 }
 
+namespace detail
+{
+inline Bool compare(const char* op, const ValueHandle& lhs, const ValueHandle& rhs)
+{
+    auto result = Bool {};
+    result.graph = lhs.graph;
+    result.node = lhs.graph->addCompare(op, lhs.node, rhs.node);
+    return result;
+}
+} // namespace detail
+
+// Comparisons, on scalars and against scalar literals on either side. Two
+// values of the same shape or a value and a float, the way every other binary
+// operator here takes them.
+//
+// Scalars only, deliberately: both shading languages give `<` on two vectors a
+// componentwise bool vector, and there is nothing in the EDSL to do with one -
+// no bool vector type, and no any()/all() to collapse it. A shader comparing
+// vectors compares their components.
+#define EACP_COMPARISON(name, spelling)                                             \
+    template <ShaderScalarLike L, ShaderScalarLike R>                               \
+    Bool name(const L& lhs, const R& rhs)                                           \
+    {                                                                               \
+        return detail::compare(spelling, lhs, rhs);                                 \
+    }                                                                               \
+                                                                                    \
+    template <ShaderScalarLike L>                                                   \
+    Bool name(const L& lhs, float rhs)                                              \
+    {                                                                               \
+        return detail::compare(spelling, lhs, detail::constantOn(lhs, rhs));        \
+    }                                                                               \
+                                                                                    \
+    template <ShaderScalarLike R>                                                   \
+    Bool name(float lhs, const R& rhs)                                              \
+    {                                                                               \
+        return detail::compare(spelling, detail::constantOn(rhs, lhs), rhs);        \
+    }
+
+EACP_COMPARISON(operator<, "<")
+EACP_COMPARISON(operator<=, "<=")
+EACP_COMPARISON(operator>, ">")
+EACP_COMPARISON(operator>=, ">=")
+EACP_COMPARISON(operator==, "==")
+EACP_COMPARISON(operator!=, "!=")
+
+#undef EACP_COMPARISON
+
+// The logical connectives. Overloading && and || gives up C++'s short-circuit -
+// both operands are recorded either way - but the emitted operator is the
+// language's own, so the shader itself still skips the right-hand side. That
+// only matters for what it costs, never for what it computes: a recorded node
+// has no side effects to skip.
+inline Bool operator&&(const Bool& lhs, const Bool& rhs)
+{
+    return detail::compare("&&", lhs, rhs);
+}
+
+inline Bool operator||(const Bool& lhs, const Bool& rhs)
+{
+    return detail::compare("||", lhs, rhs);
+}
+
+inline Bool operator!(const Bool& value)
+{
+    return detail::unaryOp<Bool>('!', value);
+}
+
+namespace detail
+{
+template <typename Result>
+Result selectOp(const ValueHandle& condition,
+                const ValueHandle& whenTrue,
+                const ValueHandle& whenFalse)
+{
+    auto result = Result {};
+    result.graph = condition.graph;
+    result.node = condition.graph->addSelect(
+        ValueTypeOf<Result>::value, condition.node, whenTrue.node, whenFalse.node);
+    return result;
+}
+} // namespace detail
+
+// select(condition, whenTrue, whenFalse): GLSL's ternary, and the branchless
+// half of control flow - both branches are values already computed, so this
+// picks between them rather than skipping one. Where the two sides are
+// expensive, or where one of them must not run at all, an if is what to reach
+// for instead.
+template <typename T, SameShaderShape<T> U>
+ShaderBase<T> select(const Bool& condition, const T& whenTrue, const U& whenFalse)
+{
+    return detail::selectOp<ShaderBase<T>>(condition, whenTrue, whenFalse);
+}
+
+template <ShaderScalarLike T>
+Float select(const Bool& condition, const T& whenTrue, float whenFalse)
+{
+    return detail::selectOp<Float>(
+        condition, whenTrue, detail::constantOn(condition, whenFalse));
+}
+
+template <ShaderScalarLike T>
+Float select(const Bool& condition, float whenTrue, const T& whenFalse)
+{
+    return detail::selectOp<Float>(
+        condition, detail::constantOn(condition, whenTrue), whenFalse);
+}
+
+inline Float select(const Bool& condition, float whenTrue, float whenFalse)
+{
+    return detail::selectOp<Float>(condition,
+                                   detail::constantOn(condition, whenTrue),
+                                   detail::constantOn(condition, whenFalse));
+}
+
+// A mutable shader local: the one handle in the EDSL that names a place rather
+// than a value. Reading it records a node at the point of the read, so what it
+// evaluates to is whatever the statements before it left there - which is the
+// whole point of it, and why it is the only handle whose meaning is not fixed
+// the moment it is built.
+//
+// It is declared where it is created, so one made inside a loop body is a local
+// of that body and the C++ handle leaves scope at the same brace the emitted
+// one does. Non-copyable, so `auto b = a` cannot quietly alias a's slot: take
+// the value with a.get(), or assign it to a Var of its own.
+template <typename T>
+struct Var
+{
+    Var(ShaderGraph& graphToUse, ValueType type, int initialValue)
+        : graph(&graphToUse)
+        , slot(graphToUse.addVariable(type, initialValue))
+    {
+    }
+
+    Var(const Var&) = delete;
+    Var(Var&&) = delete;
+
+    // The value the variable holds where the read appears. get() and the
+    // implicit conversion are the same thing; the explicit one is what a
+    // generated port spells, so a read is visible in the source it produces.
+    T get() const
+    {
+        auto value = T {};
+        value.graph = graph;
+        value.node = graph->addVarRead(slot);
+        return value;
+    }
+
+    operator T() const { return get(); }
+    T operator()() const { return get(); }
+
+    Var& operator=(const T& value)
+    {
+        graph->assign(slot, value.node);
+        return *this;
+    }
+
+    template <ShaderShape<T> R>
+    Var& operator=(const R& value)
+    {
+        graph->assign(slot, T(value).node);
+        return *this;
+    }
+
+    Var& operator=(const Var& other) { return *this = other.get(); }
+
+    Var& operator=(float value)
+        requires std::same_as<T, Float>
+    {
+        graph->assign(slot, graph->addConstant(value));
+        return *this;
+    }
+
+    Var& operator=(bool value)
+        requires std::same_as<T, Bool>
+    {
+        graph->assign(slot, graph->addBoolConstant(value));
+        return *this;
+    }
+
+    // The compound operators, over whatever the free operators above accept:
+    // another value of the same shape, a scalar broadcast across a vector, or a
+    // literal. A combination they reject fails here rather than silently
+    // assigning something of the wrong shape.
+    template <typename R>
+    Var& operator+=(const R& value)
+    {
+        return *this = get() + value;
+    }
+
+    template <typename R>
+    Var& operator-=(const R& value)
+    {
+        return *this = get() - value;
+    }
+
+    template <typename R>
+    Var& operator*=(const R& value)
+    {
+        return *this = get() * value;
+    }
+
+    template <typename R>
+    Var& operator/=(const R& value)
+    {
+        return *this = get() / value;
+    }
+
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
 // Index arithmetic on uint values: against another uint (a Uniform<UInt>
 // binds here too) or an integer literal, which records a uint constant node.
 // Deliberately separate from the float operator vocabulary - there are no
@@ -1254,13 +1479,16 @@ ShaderGraph* graphOf(const First& first, const Rest&... rest)
         return first.graph;
 }
 
+// The node an argument contributes. Going through the base handle rather than
+// reading .node directly is what lets a derived handle - a Uniform<Float3>, or
+// a Var<Float3> whose read is a node of its own - fill a component.
 template <typename T>
 int nodeOf(ShaderGraph& graph, const T& value)
 {
     if constexpr (std::is_arithmetic_v<T>)
         return graph.addConstant((float) value);
     else
-        return value.node;
+        return ShaderBase<T>(value).node;
 }
 
 template <typename Result, typename... Args>

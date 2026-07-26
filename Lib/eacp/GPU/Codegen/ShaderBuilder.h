@@ -73,6 +73,10 @@ public:
     // the value itself, so one block of bytes would read back as two different
     // matrices on the two backends (see UniformLayout.h). Send a Float4x4, or
     // send the columns as vectors and assemble the matrix in the shader.
+    //
+    // A Bool is refused for the same reason at a smaller scale: MSL packs one
+    // into a byte and an HLSL cbuffer gives it four. Send the flag as a float
+    // and compare it, which is what the block already knows how to carry.
     template <typename T>
     T uniform()
     {
@@ -81,6 +85,10 @@ public:
                       "Float2x2/Float3x3 cannot be uniforms: MSL and HLSL pack "
                       "them to different sizes. Use a Float4x4, or pass the "
                       "columns as vectors and build the matrix in the shader.");
+
+        static_assert(ValueTypeOf<T>::value != ValueType::Bool,
+                      "Bool cannot be a uniform: MSL packs it into one byte and "
+                      "an HLSL cbuffer into four. Send a Float and compare it.");
 
         auto value = T {};
         value.graph = &graphData;
@@ -152,6 +160,96 @@ public:
         result.node = graphData.addConstant(value);
         return result;
     }
+
+    // Its boolean sibling, for a flag a shader sets and later tests. Spelled
+    // apart from constant() rather than overloaded on it: an integer literal
+    // converts to both float and bool, so one name would make constant(1)
+    // ambiguous.
+    Bool boolean(bool value)
+    {
+        auto result = Bool {};
+        result.graph = &graphData;
+        result.node = graphData.addBoolConstant(value);
+        return result;
+    }
+
+    // A mutable local, initialised from a value or from a literal. This is what
+    // makes a loop worth having: something the body can write that the code
+    // after it reads. Its type follows the initialiser.
+    //
+    // Control flow is a fragment-stage (or kernel) facility, like sampling: the
+    // statements a shader records are emitted into the fragment function, so a
+    // variable must not feed the position expression or a varying.
+    template <ShaderValueLike T>
+    Var<ShaderBase<T>> var(const T& initialValue)
+    {
+        return {graphData,
+                ValueTypeOf<ShaderBase<T>>::value,
+                ShaderBase<T>(initialValue).node};
+    }
+
+    Var<Float> var(float initialValue)
+    {
+        return {graphData, ValueType::Float, graphData.addConstant(initialValue)};
+    }
+
+    Var<Bool> var(bool initialValue)
+    {
+        return {graphData, ValueType::Bool, graphData.addBoolConstant(initialValue)};
+    }
+
+    // A Bool is outside the arithmetic vocabulary the templated form is
+    // constrained on, so the flag a shader sets and later tests has an
+    // overload of its own.
+    Var<Bool> var(const Bool& initialValue)
+    {
+        return {graphData, ValueType::Bool, initialValue.node};
+    }
+
+    // The statements. Each body is a callable recording into a block of its
+    // own, so what it declares is scoped to it in the emitted source exactly as
+    // it is in the C++ lambda that wrote it.
+    template <typename Body>
+    void ifThen(const Bool& condition, Body&& body)
+    {
+        auto block = graphData.pushBlock();
+        body();
+        graphData.popBlock();
+
+        graphData.addIf(condition.node, block, -1);
+    }
+
+    template <typename Then, typename Else>
+    void ifThen(const Bool& condition, Then&& whenTrue, Else&& whenFalse)
+    {
+        auto thenBlock = graphData.pushBlock();
+        whenTrue();
+        graphData.popBlock();
+
+        auto elseBlock = graphData.pushBlock();
+        whenFalse();
+        graphData.popBlock();
+
+        graphData.addIf(condition.node, thenBlock, elseBlock);
+    }
+
+    // The condition is a value built before the loop, and it is still re-tested
+    // every iteration: what the emitter writes into the while header is the
+    // expression, printed in place, not a name bound to it beforehand. That is
+    // why a condition never becomes one of the emitter's shared locals - a loop
+    // testing a value computed once before it started would never end.
+    template <typename Body>
+    void loop(const Bool& condition, Body&& body)
+    {
+        auto block = graphData.pushBlock();
+        body();
+        graphData.popBlock();
+
+        graphData.addLoop(condition.node, block);
+    }
+
+    void breakLoop() { graphData.addBreak(); }
+    void continueLoop() { graphData.addContinue(); }
 
     void position(const Float4& clipPosition);
     void fragment(const Float4& color);

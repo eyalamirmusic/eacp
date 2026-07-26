@@ -75,6 +75,15 @@ int ShaderGraph::addUIntConstant(unsigned value)
     return add(std::move(node));
 }
 
+int ShaderGraph::addBoolConstant(bool value)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Constant;
+    node.type = ValueType::Bool;
+    node.index = value ? 1 : 0;
+    return add(std::move(node));
+}
+
 int ShaderGraph::addConstruct(ValueType type, Vector<int> args)
 {
     auto node = Expr {};
@@ -132,6 +141,31 @@ int ShaderGraph::addBinary(ValueType type, char op, int lhs, int rhs)
     node.op = op;
     node.args.add(lhs);
     node.args.add(rhs);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addCompare(std::string op, int lhs, int rhs)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Compare;
+    node.type = ValueType::Bool;
+    node.text = std::move(op);
+    node.args.add(lhs);
+    node.args.add(rhs);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addSelect(ValueType type,
+                           int condition,
+                           int whenTrue,
+                           int whenFalse)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Select;
+    node.type = type;
+    node.args.add(condition);
+    node.args.add(whenTrue);
+    node.args.add(whenFalse);
     return add(std::move(node));
 }
 
@@ -209,5 +243,83 @@ int ShaderGraph::addBufferRead(int slot, int index)
 void ShaderGraph::addStore(int slot, int index, int value)
 {
     storeList.add({slot, index, value});
+}
+
+int ShaderGraph::addStatement(Statement newStatement)
+{
+    statementList.add(newStatement);
+    auto index = statementList.size() - 1;
+    blocks[openBlocks.back()].statements.add(index);
+    return index;
+}
+
+int ShaderGraph::addVariable(ValueType type, int initialValue)
+{
+    auto slot = variableTypes.size();
+    variableTypes.add(type);
+
+    auto declaration = Statement {StatementKind::Declare};
+    declaration.slot = slot;
+    declaration.value = initialValue;
+    addStatement(declaration);
+
+    return slot;
+}
+
+int ShaderGraph::addVarRead(int slot)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::VarRead;
+    node.type = variableTypes[slot];
+    node.index = slot;
+    return add(std::move(node));
+}
+
+void ShaderGraph::assign(int slot, int value)
+{
+    auto assignment = Statement {StatementKind::Assign};
+    assignment.slot = slot;
+    assignment.value = value;
+    addStatement(assignment);
+}
+
+int ShaderGraph::pushBlock()
+{
+    blocks.add(Block {});
+    auto index = blocks.size() - 1;
+    openBlocks.add(index);
+    return index;
+}
+
+void ShaderGraph::popBlock()
+{
+    openBlocks.pop_back();
+}
+
+void ShaderGraph::addIf(int condition, int body, int elseBody)
+{
+    auto branch = Statement {StatementKind::If};
+    branch.value = condition;
+    branch.body = body;
+    branch.elseBody = elseBody;
+    addStatement(branch);
+}
+
+void ShaderGraph::addLoop(int condition, int body)
+{
+    auto loop = Statement {StatementKind::Loop};
+    loop.value = condition;
+    loop.body = body;
+    addStatement(loop);
+}
+
+void ShaderGraph::addBreak()
+{
+    addStatement(Statement {StatementKind::Break});
+}
+
+void ShaderGraph::addContinue()
+{
+    addStatement(Statement {StatementKind::Continue});
 }
 } // namespace eacp::GPU

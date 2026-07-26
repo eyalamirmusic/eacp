@@ -13,7 +13,8 @@ namespace eacp::GPU
 // results are all described with these, and they spell identically in MSL and
 // HLSL ("float2" etc.), so the emitters share one type vocabulary. UInt exists
 // for the compute thread id and the element count it is checked against; it is
-// never a vertex attribute.
+// never a vertex attribute. Bool is what a comparison yields and what a branch
+// or a select tests; like UInt it never crosses from the CPU.
 enum class ValueType
 {
     Float,
@@ -23,7 +24,8 @@ enum class ValueType
     Float2x2,
     Float3x3,
     Float4x4,
-    UInt
+    UInt,
+    Bool
 };
 
 // Whether a type is one of the square matrices. They share every rule that
@@ -57,6 +59,7 @@ constexpr int componentCount(ValueType type)
     {
         case ValueType::Float:
         case ValueType::UInt:
+        case ValueType::Bool:
             return 1;
         case ValueType::Float2:
             return 2;
@@ -100,6 +103,8 @@ inline const char* typeName(ValueType type)
             return "float4x4";
         case ValueType::UInt:
             return "uint";
+        case ValueType::Bool:
+            return "bool";
     }
 
     return "float";
