@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <system_error>
 
@@ -52,6 +53,26 @@ int sendFlags()
     return MSG_NOSIGNAL;
 #else
     return 0;
+#endif
+}
+
+FilePath channelRoot()
+{
+#if defined(__APPLE__)
+    // The per-user temporary directory, not appDataDirectory: sun_path caps
+    // a socket path at 104 bytes here, and the lock's no-reaper concern
+    // doesn't apply - a swept endpoint is reclaimed on the next bind.
+    return FilePath::tempDirectory() / "eacp.channels";
+#else
+    // The XDG runtime directory is the canonical per-user socket home on
+    // Linux. The /tmp fallback is shared between users, so the directory
+    // name carries the uid and ownership is verified below.
+    if (auto* runtime = std::getenv("XDG_RUNTIME_DIR");
+        runtime != nullptr && runtime[0] != '\0')
+        return FilePath {runtime} / "eacp.channels";
+
+    return FilePath::tempDirectory()
+           / ("eacp.channels-" + std::to_string(::getuid()));
 #endif
 }
 

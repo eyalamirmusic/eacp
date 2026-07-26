@@ -72,6 +72,12 @@ public:
     // match the render pass's MSAA sample count.
     SpriteRenderer(Graphics::Point logicalSize, int sampleCount);
 
+    // Retargets the logical space, keeping every compiled program. Call this
+    // when the view resizes rather than constructing a new renderer:
+    // construction compiles shaders and builds pipelines, which is far too
+    // heavy to repeat on every tick of a live resize.
+    void setLogicalSize(Graphics::Point size);
+
     // Call once per frame with the pass, before any draw call.
     void begin(GPU::RenderPass& passToUse);
 

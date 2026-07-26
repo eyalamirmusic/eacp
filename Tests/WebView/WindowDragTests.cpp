@@ -48,14 +48,14 @@ struct Fixture
             "ready", [this](const std::string&) { ready = true; });
         webView.loadHTML(pageHtml);
         check(Threads::runEventLoopUntil([this] { return ready; },
-                                         firstNavigationTimeout));
+                                         eacp::Time::MS {10000}));
     }
 
     std::string regionOf(const std::string& selector)
     {
         auto script = "window.__eacpResolveAppRegion(document.querySelector('"
                       + selector + "'))";
-        return webView.callJS(script).waitFor(webViewResultTimeout);
+        return webView.callJS(script).waitFor(eacp::Time::MS {10000});
     }
 };
 } // namespace
@@ -109,7 +109,7 @@ struct NumberMessageProbe
                          "window.webkit.messageHandlers.numberProbe.postMessage(1);"
                          "</script></body></html>");
         check(Threads::runEventLoopUntil([this] { return called; },
-                                         firstNavigationTimeout));
+                                         eacp::Time::MS {10000}));
     }
 };
 
@@ -145,7 +145,7 @@ struct MarkerProbe
             "<script>window.webkit.messageHandlers.ready.postMessage('r');</script>"
             "</body></html>");
         check(Threads::runEventLoopUntil([this] { return ready; },
-                                         firstNavigationTimeout));
+                                         eacp::Time::MS {10000}));
     }
 
     std::string computed(const std::string& prop)
@@ -154,7 +154,7 @@ struct MarkerProbe
             .callJS("getComputedStyle(document.getElementById('m'))"
                     ".getPropertyValue('"
                     + prop + "').trim()")
-            .waitFor(webViewResultTimeout);
+            .waitFor(eacp::Time::MS {10000});
     }
 };
 

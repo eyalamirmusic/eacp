@@ -46,7 +46,7 @@ struct Fixture
             "ready", [this](const std::string&) { ready = true; });
         webView.loadHTML(pageHtml);
         check(Threads::runEventLoopUntil([this] { return ready; },
-                                         firstNavigationTimeout));
+                                         eacp::Time::MS {10000}));
     }
 };
 } // namespace
@@ -58,7 +58,7 @@ auto tAsyncSnapshotCapturesWebContent =
 {
     auto fix = Fixture {};
 
-    auto image = fix.webView.renderToImageAsync(1.f).waitFor(webViewResultTimeout);
+    auto image = fix.webView.renderToImageAsync(1.f).waitFor(eacp::Time::MS {10000});
 
     check(image.isValid());
     check(image.width() == 120);
@@ -83,7 +83,7 @@ auto tAsyncResolvesWithoutWebContent =
     };
 
     auto view = Solid {};
-    auto image = view.renderToImageAsync(1.f).waitFor(webViewResultTimeout);
+    auto image = view.renderToImageAsync(1.f).waitFor(eacp::Time::MS {10000});
 
     check(image.isValid());
     check(image.width() == 20);

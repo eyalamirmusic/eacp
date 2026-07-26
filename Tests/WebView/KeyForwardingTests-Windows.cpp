@@ -60,7 +60,7 @@ struct Fixture
         };
         webView.loadHTML(pageHtml);
         check(Threads::runEventLoopUntil([this] { return ready; },
-                                         firstNavigationTimeout));
+                                         eacp::Time::MS {10000}));
     }
 
     // Dispatches a genuine DOM KeyboardEvent so the injected key-events.js runs
@@ -77,14 +77,14 @@ struct Fixture
         auto script = target + ".dispatchEvent(new KeyboardEvent('" + type
                       + "', {key: '" + key + "', keyCode: " + std::to_string(keyCode)
                       + ", bubbles: true, cancelable: true}))";
-        webView.callJS(script + "; 'ok'").waitFor(webViewResultTimeout);
+        webView.callJS(script + "; 'ok'").waitFor(eacp::Time::MS {10000});
     }
 
     bool waitForReceivedCount(int count)
     {
         return Threads::runEventLoopUntil([this, count]
                                           { return received.size() >= count; },
-                                          webViewResultTimeout);
+                                          eacp::Time::MS {10000});
     }
 };
 } // namespace

@@ -32,3 +32,5 @@ xcschememanagement.plist
 
 workspace.xml
 xcuserdata
+Apps/Video/VideoViewDemo/media
+Apps/Video/PlayingHeavyContent/media

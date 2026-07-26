@@ -18,7 +18,6 @@ if (APPLE)
     target_sources(eacp-network PRIVATE
             HTTP/Http.mm
             HTTPServer/HttpServer.mm
-            IPC/Channel-Apple.cpp
             IPC/Channel-Posix.cpp
             IPC/Lock-Posix.cpp
             TCP/Connection-Posix.cpp)
@@ -37,7 +36,6 @@ elseif (UNIX AND NOT APPLE)
     target_sources(eacp-network PRIVATE
             HTTP/Http-Linux.cpp
             HTTPServer/HttpServer-Linux.cpp
-            IPC/Channel-Linux.cpp
             IPC/Channel-Posix.cpp
             IPC/Lock-Posix.cpp
             TCP/Connection-Posix.cpp)

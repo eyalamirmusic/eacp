@@ -78,6 +78,18 @@ SpriteRenderer::SpriteRenderer(Graphics::Point logicalSizeToUse,
 {
 }
 
+void SpriteRenderer::setLogicalSize(Graphics::Point size)
+{
+    if (size.x == logicalSize.x && size.y == logicalSize.y)
+        return;
+
+    logicalSize = size;
+
+    for (auto& slot: programs)
+        if (slot.has_value())
+            slot->shader.screenSize = std::array {size.x, size.y};
+}
+
 SpriteProgram& SpriteRenderer::programFor(GPU::TextureSampling sampling)
 {
     auto& slot = programs[GPU::samplingIndex(sampling)];

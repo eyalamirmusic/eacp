@@ -20,6 +20,7 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND NOT IOS)
     add_subdirectory(Text)
     add_subdirectory(GPUWidgets)
     add_subdirectory(Camera)
+    add_subdirectory(Video)
 endif ()
 
 # Codegen tests exercise eacp's WebView events/hooks format registrations,
