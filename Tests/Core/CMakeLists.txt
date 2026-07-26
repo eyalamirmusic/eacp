@@ -75,6 +75,19 @@ if (NOT WIN32)
             TARGETS eacp-core)
 endif ()
 
+# Cross-platform proof for captureOutput=false: redirect the test's own
+# stdout to a file and assert a non-capturing child writes through to it,
+# live, while a capturing child still doesn't.
+if (WIN32)
+    set(stdioCaptureSource StdioCapture-Windows.cpp)
+else ()
+    set(stdioCaptureSource StdioCapture-Posix.cpp)
+endif ()
+
+nano_add_executable(ProcessInheritStdioTests
+        SOURCES ProcessInheritStdioTests.cpp ${stdioCaptureSource}
+        TARGETS eacp-core)
+
 # The file/folder picker seam is Windows-only (App-Windows-FilePicker.h).
 if (WIN32)
     nano_add_executable(FilePickerWindowsTests
