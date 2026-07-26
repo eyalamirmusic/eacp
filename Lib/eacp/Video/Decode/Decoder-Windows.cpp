@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
 
 // Windows decode backend (Media Foundation IMFSourceReader). The reader's
 // advanced video processing converts whatever the file holds into RGB32, which
@@ -276,6 +277,23 @@ private:
         return videoInfo.width > 0 && videoInfo.height > 0;
     }
 
+    // A buffer no live frame is still reading, or a new one. Recycling these
+    // rather than allocating per frame saves an allocation, a page fault per
+    // page and a full zero-fill of the buffer on every frame: resize() on a
+    // buffer that is already the right size does nothing, where a fresh Vector
+    // value-initialises all of it before the decoder overwrites every byte. At
+    // 8K that is 133 MB of pointless writes per frame.
+    std::shared_ptr<Vector<std::uint8_t>> acquirePixelBuffer()
+    {
+        for (auto& candidate: pixelBuffers)
+            if (candidate.use_count() == 1)
+                return candidate;
+
+        auto fresh = std::make_shared<Vector<std::uint8_t>>();
+        pixelBuffers.add(fresh);
+        return fresh;
+    }
+
     bool buildFrame(IMFSample* sample,
                     double seconds,
                     double duration,
@@ -285,7 +303,7 @@ private:
         if (FAILED(sample->ConvertToContiguousBuffer(&buffer)))
             return false;
 
-        auto pixels = Vector<std::uint8_t> {};
+        auto pixels = acquirePixelBuffer();
         auto copied = false;
 
         // Lock2D reports the real stride, including the sign that says whether
@@ -301,7 +319,7 @@ private:
             if (SUCCEEDED(buffer2D->Lock2D(&scanline0, &pitch)))
             {
                 copyRows(
-                    scanline0, pitch, videoInfo.width, videoInfo.height, pixels);
+                    scanline0, pitch, videoInfo.width, videoInfo.height, *pixels);
                 buffer2D->Unlock2D();
                 copied = true;
             }
@@ -328,7 +346,7 @@ private:
 
             if (currentLength
                 >= static_cast<DWORD>(absoluteStride * videoInfo.height))
-                copyRows(first, stride, videoInfo.width, videoInfo.height, pixels);
+                copyRows(first, stride, videoInfo.width, videoInfo.height, *pixels);
             else
                 rowBytes = 0;
 
@@ -345,13 +363,17 @@ private:
         frameInfo.seconds = seconds;
         frameInfo.duration = duration;
 
-        out = VideoFrame::fromPixels(std::move(pixels), frameInfo);
+        out = VideoFrame::fromPixelBuffer(std::move(pixels), frameInfo);
         return true;
     }
 
     ComPtr<IMFSourceReader> reader;
     VideoInfo videoInfo;
     LONG stride = 0;
+
+    // Grows to the number of frames alive at once — the stream's queue depth
+    // plus the one on screen — and then stops.
+    Vector<std::shared_ptr<Vector<std::uint8_t>>> pixelBuffers;
 
     // Set by an accurate seek: frames ending before this are decoded and
     // dropped so the first frame handed out is the one covering the target.

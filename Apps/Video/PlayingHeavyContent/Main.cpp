@@ -74,9 +74,8 @@ Graphics::WindowOptions windowOptions()
 // exactly as an editing timeline would.
 //
 // The HUD is there because "does this keep up" is not a question you can answer
-// by looking at the picture. Skipped frames rising while the queue sits empty
-// means decode is the bottleneck; skipped rising with a full queue means
-// presentation is.
+// by looking at the picture. Skipped rising with a full queue means presentation
+// is the bottleneck; starved rising with an empty queue means decode is.
 struct PlaybackView final : Video::VideoView
 {
     PlaybackView() { setHandlesMouseEvents(true); }
@@ -145,9 +144,10 @@ struct PlaybackView final : Video::VideoView
                           ? formatted("  rot %d", info.rotationDegrees).c_str()
                           : ""),
             formatted("render  %.1f fps", smoothedFps),
-            formatted("decoded %llu   skipped %llu",
+            formatted("decoded %llu   skipped %llu   starved %llu",
                       (unsigned long long) stats.decoded,
-                      (unsigned long long) stats.skipped),
+                      (unsigned long long) stats.skipped,
+                      (unsigned long long) stats.starved),
             formatted("queue   %d/%d", stats.queued, stats.depth),
             formatted("upload  %s",
                       lastFrameWasZeroCopy() ? "zero-copy" : "cpu copy"),

@@ -31,6 +31,11 @@ struct CommandContext
     Vector<winrt::com_ptr<ID3D12Resource>> transients;
     std::uint64_t fenceValue = 0;
 
+    // Staging-pool slots this recording is copying out of. Unlike transients
+    // these are not released when the recording is recycled — they go back to
+    // the pool, stamped at submit with the fence that frees them again.
+    Vector<int> stagingTaken;
+
     // Identifies the recording for buffer state tracking: a buffer first
     // touched under a new id was implicitly promoted from COMMON, so no
     // barrier is needed (buffers decay back to COMMON after every execute).
@@ -114,6 +119,17 @@ public:
     winrt::com_ptr<ID3D12Resource> makeUploadBuffer(const void* data,
                                                     std::size_t bytes);
 
+    // An upload-heap buffer of at least `bytes`, borrowed from a pool and
+    // returned once `commands` completes on the GPU. Null on failure.
+    //
+    // For staging that repeats every frame at a size worth pooling — a video
+    // frame is a 33 MB upload at 4K and 133 MB at 8K — where creating and
+    // destroying a committed resource that large per frame costs considerably
+    // more than the copy it exists for. The caller must not park the result in
+    // transients; the pool owns it.
+    ID3D12Resource* acquireStagingBuffer(CommandContext& commands,
+                                         std::size_t bytes);
+
     DescriptorSlot allocateTextureDescriptor();
     void freeTextureDescriptor(const DescriptorSlot& slot);
     DescriptorSlot allocateSamplerDescriptor();
@@ -164,6 +180,11 @@ private:
     void purgeRetired();
     void deferReleaseUnknown(winrt::com_ptr<IUnknown> object);
 
+    // Hands a recording's staging slots back to the pool. `freeAt` is the fence
+    // value that must pass before they can be lent out again — 0 for a
+    // recording that never reached the GPU, so its slots are free at once.
+    void returnStaging(CommandContext& commands, std::uint64_t freeAt);
+
     winrt::com_ptr<ID3D12Device> device;
     winrt::com_ptr<ID3D12CommandQueue> queue;
     winrt::com_ptr<ID3D12Fence> fence;
@@ -193,6 +214,20 @@ private:
     };
 
     Vector<Retired> retired;
+
+    // Upload-heap buffers kept for reuse. `freeAt` is the fence value that must
+    // pass before a slot can be lent out again; `lent` marks the window between
+    // acquireStagingBuffer and the submit that stamps the real fence, during
+    // which the slot must not be handed to a second recording.
+    struct StagingBuffer
+    {
+        winrt::com_ptr<ID3D12Resource> resource;
+        std::size_t bytes = 0;
+        std::uint64_t freeAt = 0;
+        bool lent = false;
+    };
+
+    Vector<StagingBuffer> staging;
 };
 
 // The process-wide context, created on first use. Main-thread only, like the

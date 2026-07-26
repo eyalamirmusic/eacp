@@ -26,7 +26,14 @@ struct StreamOptions
     // open() lowers the depth until the queue fits in this, to a floor of one
     // frame. Budget for one more than the depth: the frame being shown is held
     // outside the queue.
-    std::size_t maxQueueBytes = 192u * 1024u * 1024u;
+    //
+    // The default is sized to keep the full depth at 8K, where a frame is 128 MB
+    // and a smaller ceiling quietly collapses the queue to a single frame — no
+    // lookahead at all, so every wobble in decode time becomes a late frame.
+    // That costs around 630 MB while an 8K file is open and proportionally
+    // nothing below it: 1080p reaches the requested depth on 40 MB either way.
+    // Lower it if a soft memory ceiling matters more than smoothness.
+    std::size_t maxQueueBytes = 512u * 1024u * 1024u;
 };
 
 // A decoded-frame stream: a Decoder, the thread that runs it ahead of the
@@ -109,6 +116,17 @@ public:
         // going to be shown.
         std::uint64_t skipped = 0;
 
+        // Times frameAt() was asked for a moment the stream had not decoded
+        // yet and handed back the previous frame again. Rising means the
+        // opposite of `skipped`: decode is the bottleneck and the picture is
+        // holding still or juddering.
+        //
+        // This is the one to watch at high resolutions. `skipped` only counts
+        // frames that were decoded and then passed over, so it cannot see a
+        // frame that was never decoded at all — and at 8K the memory budget
+        // leaves room for a queue of one, where `skipped` can never fire.
+        std::uint64_t starved = 0;
+
         // How full the queue is right now, against the depth it was given.
         // Sitting at zero means the decoder is the bottleneck.
         int queued = 0;
@@ -159,6 +177,7 @@ private:
 
     std::uint64_t framesDecoded = 0;
     std::uint64_t framesSkipped = 0;
+    std::uint64_t framesStarved = 0;
 
     bool stopping = false;
     bool endOfStream = false;

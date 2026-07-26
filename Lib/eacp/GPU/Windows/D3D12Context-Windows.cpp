@@ -229,8 +229,8 @@ void D3D12Context::createRootSignatures()
     // to descriptor 0 of the bound heap, so all textures in the process sample
     // through whichever sampler happens to be first. Static samplers never reach
     // a heap and are unaffected. See TextureSampling.
-    D3D12_STATIC_SAMPLER_DESC staticSamplers[maxTextureSlots
-                                             * samplingConfigurations] = {};
+    D3D12_STATIC_SAMPLER_DESC
+        staticSamplers[maxTextureSlots * samplingConfigurations] = {};
 
     for (auto slot = 0; slot < maxTextureSlots; ++slot)
     {
@@ -242,8 +242,8 @@ void D3D12Context::createRootSignatures()
             const auto address = repeat ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
                                         : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
 
-            auto& sampler = staticSamplers[slot * samplingConfigurations
-                                           + configuration];
+            auto& sampler =
+                staticSamplers[slot * samplingConfigurations + configuration];
 
             sampler.Filter = linear ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
                                     : D3D12_FILTER_MIN_MAG_MIP_POINT;
@@ -465,8 +465,10 @@ std::uint64_t D3D12Context::submit(CommandContext* commands)
     if (FAILED(commands->list->Close()))
     {
         // An invalid recording (or removed device) must not execute; recycle
-        // the context with its transients released.
+        // the context with its transients released. Nothing reached the GPU, so
+        // its staging slots are free at once rather than behind a fence.
         commands->transients.clear();
+        returnStaging(*commands, 0);
         available.push_back(commands);
         return 0;
     }
@@ -476,6 +478,7 @@ std::uint64_t D3D12Context::submit(CommandContext* commands)
 
     commands->fenceValue = signal();
     lastSubmittedValue = commands->fenceValue;
+    returnStaging(*commands, commands->fenceValue);
     available.push_back(commands);
     return commands->fenceValue;
 }
@@ -487,6 +490,7 @@ void D3D12Context::discard(CommandContext* commands)
 
     commands->list->Close();
     commands->transients.clear();
+    returnStaging(*commands, 0);
     commands->fenceValue = 0;
     available.push_back(commands);
 }
@@ -549,6 +553,81 @@ D3D12_GPU_VIRTUAL_ADDRESS D3D12Context::uploadConstants(CommandContext& commands
     return address;
 }
 
+ID3D12Resource* D3D12Context::acquireStagingBuffer(CommandContext& commands,
+                                                   std::size_t bytes)
+{
+    if (!isValid() || bytes == 0)
+        return nullptr;
+
+    auto isFree = [this](const StagingBuffer& slot)
+    { return !slot.lent && hasCompleted(slot.freeAt); };
+
+    // A free slot already big enough is the common case once playback settles:
+    // every frame of a given clip stages exactly the same number of bytes.
+    for (auto index = 0; index < staging.size(); ++index)
+    {
+        auto& slot = staging[index];
+
+        if (isFree(slot) && slot.bytes >= bytes)
+        {
+            slot.lent = true;
+            commands.stagingTaken.add(index);
+            return slot.resource.get();
+        }
+    }
+
+    // Otherwise grow a free slot rather than adding one, so a stream that
+    // switches to a larger frame size does not strand the old buffers.
+    for (auto index = 0; index < staging.size(); ++index)
+    {
+        auto& slot = staging[index];
+
+        if (!isFree(slot))
+            continue;
+
+        auto grown = makeUploadBuffer(nullptr, bytes);
+
+        if (grown == nullptr)
+            return nullptr;
+
+        deferRelease(std::move(slot.resource));
+        slot.resource = std::move(grown);
+        slot.bytes = bytes;
+        slot.lent = true;
+        commands.stagingTaken.add(index);
+        return slot.resource.get();
+    }
+
+    auto fresh = makeUploadBuffer(nullptr, bytes);
+
+    if (fresh == nullptr)
+        return nullptr;
+
+    auto slot = StagingBuffer {};
+    slot.resource = std::move(fresh);
+    slot.bytes = bytes;
+    slot.lent = true;
+
+    auto* resource = slot.resource.get();
+    staging.add(std::move(slot));
+    commands.stagingTaken.add(staging.size() - 1);
+    return resource;
+}
+
+void D3D12Context::returnStaging(CommandContext& commands, std::uint64_t freeAt)
+{
+    for (auto index: commands.stagingTaken)
+    {
+        if (index < 0 || index >= staging.size())
+            continue;
+
+        staging[index].lent = false;
+        staging[index].freeAt = freeAt;
+    }
+
+    commands.stagingTaken.clear();
+}
+
 winrt::com_ptr<ID3D12Resource> D3D12Context::makeUploadBuffer(const void* data,
                                                               std::size_t bytes)
 {
@@ -596,6 +675,7 @@ winrt::com_ptr<ID3D12Resource> D3D12Context::makeUploadBuffer(const void* data,
 void D3D12Context::recreateAfterDeviceLoss()
 {
     retired.clear();
+    staging.clear();
     pool.clear();
     available.clear();
     renderRootSignature = nullptr;
