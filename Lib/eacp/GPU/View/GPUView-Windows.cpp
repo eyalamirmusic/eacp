@@ -454,14 +454,16 @@ struct GPUView::Native : DeviceResourceHolder
         // (or at a staleness bound, so a marathon drag cannot drift
         // arbitrarily far from native resolution).
         // Deferred from resized(): the rebuild drains the GPU (20-50 ms at
-        // 1440p), so it never runs inside a size/move drag — the view is
-        // frozen there anyway (see the tick in startContinuous) and the
-        // rebuild lands on the first frame after the drag ends. Outside a
-        // drag (maximise, restore, programmatic sizes) it runs at most once
-        // per frame, at the latest size.
+        // 1440p), so it never runs inside a size/move drag — mid-drag frames
+        // render into the old buffers, which the transform resized() commits
+        // stretches onto the moving bounds, and the rebuild lands on the
+        // first frame after the drag ends. Outside a drag (maximise,
+        // restore, programmatic sizes) it runs at most once per frame, at
+        // the latest size.
+        auto insideDrag = Graphics::isInsideSizeMoveLoop();
         auto resizedThisFrame = false;
 
-        if (sizeDirty && !Graphics::isInsideSizeMoveLoop())
+        if (sizeDirty && !insideDrag)
         {
             sizeDirty = false;
             resizedThisFrame = true;
@@ -472,13 +474,26 @@ struct GPUView::Native : DeviceResourceHolder
             return;
 
         // Blocks until the swapchain is ready for another frame, so the CPU
-        // runs no further ahead of the display than it was told it may. NOT
-        // after a rebuild: ResizeBuffers empties the present queue and can
-        // leave the waitable unsignalled until a present retires, so waiting
-        // would show the freshly cleared (grey) buffers for the full timeout.
-        // With nothing queued there is nothing to pace against — present now.
+        // runs no further ahead of the display than it was told it may. Two
+        // exceptions:
+        //
+        //  - Not after a rebuild: ResizeBuffers empties the present queue and
+        //    can leave the waitable unsignalled until a present retires, so
+        //    waiting would show the freshly cleared buffers for the full
+        //    timeout. With nothing queued there is nothing to pace against.
+        //
+        //  - Never BLOCKING inside a size/move drag: this tick runs on the
+        //    thread the OS drag loop is tracking the mouse with, and playback
+        //    is not worth the edge lagging the hand. No free slot right now
+        //    means the compositor is behind — skip the frame instead.
         if (frameLatencyWaitable != nullptr && !resizedThisFrame)
-            WaitForSingleObjectEx(frameLatencyWaitable, 1000, TRUE);
+        {
+            auto wait = WaitForSingleObjectEx(
+                frameLatencyWaitable, insideDrag ? 0 : 1000, TRUE);
+
+            if (insideDrag && wait != WAIT_OBJECT_0)
+                return;
+        }
 
         auto index = swapChain->GetCurrentBackBufferIndex();
 
@@ -578,15 +593,6 @@ struct GPUView::Native : DeviceResourceHolder
         {
             auto func = [this](Threads::FrameTime time)
             {
-                // Frozen for the whole size/move drag: the last presented
-                // frame holds (scaled to the moving bounds by the transform
-                // resized() commits), no present can queue behind a pending
-                // rebuild, and the thread stays wholly available to the OS
-                // loop chasing the mouse. Animation resumes — and the
-                // deferred rebuild lands — on the first tick after release.
-                if (Graphics::isInsideSizeMoveLoop())
-                    return;
-
                 view.update(time);
                 view.renderNow();
                 dispatchPendingInput();
