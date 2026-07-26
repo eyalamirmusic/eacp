@@ -86,13 +86,19 @@ Graphics::Rect FramePresenter::drawZeroCopy(Player& player,
     if (buffer == nullptr)
         return {};
 
-    auto texture = GPU::Device::shared().wrapPixelBuffer(buffer);
-    auto imageArea = drawFitted(renderer, texture, dst, fit, tint);
+    auto sequence = player.frameSequence();
+
+    if (!wrappedTexture.has_value() || sequence != wrappedSequence)
+    {
+        wrappedTexture.emplace(GPU::Device::shared().wrapPixelBuffer(buffer));
+        wrappedSequence = sequence;
+    }
 
     // The wrapped texture holds its own reference to the frame's surface, so the
     // buffer can be released now.
     Player::releasePixelBuffer(buffer);
-    return imageArea;
+
+    return drawFitted(renderer, *wrappedTexture, dst, fit, tint);
 }
 
 Graphics::Rect FramePresenter::drawCpuUpload(Player& player,
@@ -125,12 +131,29 @@ Graphics::Rect FramePresenter::drawCpuUpload(Player& player,
     return drawFitted(renderer, *uploadTexture, dst, fit, tint);
 }
 
+// Frame gating is per player — sequence numbers from different players are
+// unrelated — so a presenter handed a new player drops everything it cached
+// from the old one rather than serving a stale frame.
+void FramePresenter::resetForPlayer(const Player& player)
+{
+    if (boundPlayer == &player)
+        return;
+
+    boundPlayer = &player;
+    wrappedTexture.reset();
+    wrappedSequence = 0;
+    uploadTexture.reset();
+    scratch = {};
+}
+
 Graphics::Rect FramePresenter::draw(Player& player,
                                     Sprites::SpriteRenderer& renderer,
                                     const Graphics::Rect& dst,
                                     Fit fit,
                                     const Graphics::Color& tint)
 {
+    resetForPlayer(player);
+
     auto imageArea = drawZeroCopy(player, renderer, dst, fit, tint);
 
     if (imageArea.isEmpty())

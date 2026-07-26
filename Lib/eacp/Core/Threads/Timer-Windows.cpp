@@ -33,7 +33,11 @@ struct Timer::Native
             liveTimers()[id] = this;
     }
 
-    ~Native()
+    ~Native() { stop(); }
+
+    // Safe from inside tick(): the callback dispatch looks the entry up
+    // before invoking and never touches the map afterwards.
+    void stop()
     {
         assertMainThread();
 
@@ -72,6 +76,11 @@ Timer::Timer(const Callback& cbToUse, int intervalHz)
     : callback(cbToUse)
     , impl(cbToUse, intervalHz)
 {
+}
+
+void Timer::stop()
+{
+    impl->stop();
 }
 
 } // namespace eacp::Threads

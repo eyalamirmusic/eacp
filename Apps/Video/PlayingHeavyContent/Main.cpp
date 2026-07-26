@@ -532,7 +532,15 @@ struct HeavyContentApp
         view.tick();
 
         if (autoQuitSeconds <= 0.0)
+        {
+            // Interactive run: once the checks have reported, the poll has
+            // nothing left to measure — hovering and rendering are driven by
+            // events and the display link, not this timer.
+            if (view.finished)
+                poll.stop();
+
             return;
+        }
 
         // Quit as soon as the checks have reported, so a headless verification
         // run does not idle out its whole budget; the deadline is the backstop

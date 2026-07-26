@@ -61,6 +61,16 @@ private:
                               Fit fit,
                               const Graphics::Color& tint);
 
+    void resetForPlayer(const Player& player);
+
+    // The zero-copy wrap is cached per frame: re-wrapping the same pixel
+    // buffer every render costs a texture-cache lookup and an allocation per
+    // draw, at display rate, per presenter — for frames that only change at
+    // the clip's own frame rate.
+    const Player* boundPlayer = nullptr;
+    std::optional<GPU::Texture> wrappedTexture;
+    std::uint64_t wrappedSequence = 0;
+
     PlayerFramePixels scratch;
     std::optional<GPU::Texture> uploadTexture;
 };

@@ -23,7 +23,12 @@ struct Timer::Native
         worker = std::thread([this] { tick(); });
     }
 
-    ~Native()
+    ~Native() { stop(); }
+
+    // The callback runs on the main thread via callAsync, never on the
+    // worker, so joining here cannot deadlock — including when stop() is
+    // called from inside the callback itself.
+    void stop()
     {
         assertMainThread();
         {
@@ -60,6 +65,11 @@ Timer::Timer(const Callback& cbToUse, int intervalHz)
     : callback(cbToUse)
     , impl(cbToUse, intervalHz)
 {
+}
+
+void Timer::stop()
+{
+    impl->stop();
 }
 
 } // namespace eacp::Threads

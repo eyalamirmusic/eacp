@@ -229,8 +229,9 @@ struct Player::Native
 
     // AVPlayerItem's status has no completion callback without KVO
     // machinery; a light main-thread poll keeps this file free of observer
-    // classes. It goes quiet (early return) once loading resolves and is
-    // destroyed on close().
+    // classes. It stops itself once loading resolves — the stop comes before
+    // the owner callbacks, so an open() from inside onReady gets a fresh poll
+    // that is not immediately stopped underneath it.
     void pollStatus()
     {
         ObjC::AutoReleasePool pool;
@@ -251,11 +252,14 @@ struct Player::Native
                                                      : 0.0;
 
             state = PlayerState::Ready;
+            statusPoll->stop();
             owner.onReady();
         }
         else if (status == AVPlayerItemStatusFailed)
         {
             state = PlayerState::Failed;
+            statusPoll->stop();
+
             auto* message = item.get().error.localizedDescription;
             owner.onError(message != nil ? message.UTF8String
                                          : "failed to load video");
