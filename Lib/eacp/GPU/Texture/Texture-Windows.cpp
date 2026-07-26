@@ -124,7 +124,7 @@ struct Texture::Native
         context.getDevice()->GetCopyableFootprints(
             &regionDesc, 0, 1, 0, &footprint, &rows, &rowBytes, &totalBytes);
 
-        auto staging = context.makeUploadBuffer(nullptr, totalBytes);
+        auto* staging = context.acquireStagingBuffer(*commands, totalBytes);
 
         if (staging == nullptr)
             return false;
@@ -151,7 +151,7 @@ struct Texture::Native
         destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
 
         D3D12_TEXTURE_COPY_LOCATION source = {};
-        source.pResource = staging.get();
+        source.pResource = staging;
         source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
         source.PlacedFootprint = footprint;
 
@@ -166,7 +166,8 @@ struct Texture::Native
                    D3D12_RESOURCE_STATE_COPY_DEST,
                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-        commands->transients.add(std::move(staging));
+        // Not parked in transients: the staging pool owns the buffer and takes
+        // it back once this recording's fence passes.
         return true;
     }
 
@@ -235,9 +236,9 @@ struct Texture::Native
         if (commands == nullptr)
             return;
 
-        auto sourcePitch =
-            bytesPerRow != 0 ? bytesPerRow
-                             : static_cast<std::size_t>(regionWidth * pixelStride);
+        auto sourcePitch = bytesPerRow != 0
+                               ? bytesPerRow
+                               : static_cast<std::size_t>(regionWidth * pixelStride);
 
         // The resource rests in PIXEL_SHADER_RESOURCE between frames; move it to
         // COPY_DEST for the upload, and put it back if staging fails so the next
@@ -247,8 +248,14 @@ struct Texture::Native
                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
                    D3D12_RESOURCE_STATE_COPY_DEST);
 
-        if (!copyPixels(
-                context, commands, pixels, sourcePitch, x, y, regionWidth, regionHeight))
+        if (!copyPixels(context,
+                        commands,
+                        pixels,
+                        sourcePitch,
+                        x,
+                        y,
+                        regionWidth,
+                        regionHeight))
             transition(commands->list.get(),
                        data.resource.get(),
                        D3D12_RESOURCE_STATE_COPY_DEST,

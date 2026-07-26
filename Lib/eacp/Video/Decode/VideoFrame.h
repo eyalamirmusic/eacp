@@ -69,6 +69,21 @@ public:
     // GPU-wrappable buffer (Media Foundation today).
     static VideoFrame fromPixels(Vector<std::uint8_t> pixels, const FrameInfo& info)
     {
+        return fromPixelBuffer(
+            std::make_shared<Vector<std::uint8_t>>(std::move(pixels)), info);
+    }
+
+    // Shares an existing pixel buffer rather than handing over a fresh one, so a
+    // backend can recycle buffers across frames instead of allocating one per
+    // frame. At 4K that allocation is 33 MB and at 8K 133 MB, and a fresh one
+    // costs a page fault and a kernel zero-fill for every page before the decoder
+    // even starts copying into it.
+    //
+    // The buffer must not be written again until every VideoFrame sharing it is
+    // gone; a backend checks that with use_count() before reusing one.
+    static VideoFrame fromPixelBuffer(std::shared_ptr<Vector<std::uint8_t>> pixels,
+                                      const FrameInfo& info)
+    {
         auto frame = VideoFrame {};
         frame.payload = std::make_shared<Payload>(std::move(pixels), info);
         return frame;
@@ -111,10 +126,11 @@ public:
     // The CPU-side BGRA8 pixels, or null on the zero-copy path.
     const std::uint8_t* pixels() const
     {
-        if (payload == nullptr || payload->pixels.size() == 0)
+        if (payload == nullptr || payload->pixels == nullptr
+            || payload->pixels->size() == 0)
             return nullptr;
 
-        return payload->pixels.data();
+        return payload->pixels->data();
     }
 
 private:
@@ -127,7 +143,8 @@ private:
         {
         }
 
-        Payload(Vector<std::uint8_t> pixelsToUse, const FrameInfo& infoToUse)
+        Payload(std::shared_ptr<Vector<std::uint8_t>> pixelsToUse,
+                const FrameInfo& infoToUse)
             : info(infoToUse)
             , pixels(std::move(pixelsToUse))
         {
@@ -145,7 +162,7 @@ private:
         FrameInfo info;
         void* buffer = nullptr;
         Releaser release = [](void*) {};
-        Vector<std::uint8_t> pixels;
+        std::shared_ptr<Vector<std::uint8_t>> pixels;
     };
 
     std::shared_ptr<const Payload> payload;

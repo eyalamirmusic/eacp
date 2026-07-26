@@ -64,6 +64,7 @@ void FrameStream::close()
     pendingSeek.reset();
     framesDecoded = 0;
     framesSkipped = 0;
+    framesStarved = 0;
 }
 
 bool FrameStream::isOpen() const
@@ -206,6 +207,13 @@ VideoFrame FrameStream::frameAt(double seconds)
 {
     auto lock = std::lock_guard {mutex};
     advanceTo(seconds);
+
+    // Nothing covering this moment, and the file has not ended: the caller is
+    // about to redraw a frame it has already drawn because the decoder has not
+    // produced the next one yet.
+    if (!atEnd() && !current.covers(seconds))
+        ++framesStarved;
+
     return current;
 }
 
@@ -258,6 +266,7 @@ FrameStream::Stats FrameStream::stats() const
 {
     auto lock = std::lock_guard {mutex};
 
-    return {framesDecoded, framesSkipped, (int) queue.size(), queueDepth};
+    return {
+        framesDecoded, framesSkipped, framesStarved, (int) queue.size(), queueDepth};
 }
 } // namespace eacp::Video

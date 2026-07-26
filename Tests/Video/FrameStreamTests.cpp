@@ -136,6 +136,28 @@ auto tDepthBudget = test("FrameStream/queueDepthFitsMemoryBudget") = []
     check(Video::FrameStream::depthWithinBudget(sized(0, 0), options) == 4);
 };
 
+// The shipped default has to clear 8K, because a queue of one frame is no
+// lookahead at all: the decode thread refills only after the renderer has taken
+// the frame, so every wobble in decode time lands as a late frame on screen.
+auto tDefaultBudgetCoversEightK = test("FrameStream/defaultBudgetCoversEightK") = []
+{
+    auto options = Video::StreamOptions {};
+
+    auto sized = [](int width, int height)
+    {
+        auto info = Video::VideoInfo {};
+        info.width = width;
+        info.height = height;
+        return info;
+    };
+
+    // The two shapes 8K comes in: 16:9 at 133 MB a frame and DCI at 128 MB.
+    check(Video::FrameStream::depthWithinBudget(sized(7680, 4320), options)
+          == options.queueDepth);
+    check(Video::FrameStream::depthWithinBudget(sized(8192, 4096), options)
+          == options.queueDepth);
+};
+
 // A closed stream stops its decode thread and reports itself closed; reopening
 // starts over from the beginning.
 auto tReopen = test("FrameStream/closeThenReopen") = []
