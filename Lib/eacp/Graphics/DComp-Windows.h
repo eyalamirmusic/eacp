@@ -74,6 +74,14 @@ uint64_t getCompositionGeneration();
 bool isInsideNativeModalLoop();
 void noteNativeModalLoop(bool entered);
 
+// The size/move drag specifically (a subset of the above): continuous GPU
+// content freezes its last frame for the duration — the frozen picture
+// tracks the window edge through the visual transform, and the thread stays
+// wholly available to the loop chasing the mouse. Menus deliberately do NOT
+// count: video should keep playing under an open menu.
+bool isInsideSizeMoveLoop();
+void noteSizeMoveLoop(bool entered);
+
 // Recovers the shared D3D/D2D/DComp devices when `hr` is a device-loss HRESULT
 // (DXGI_ERROR_DEVICE_REMOVED/RESET, D2DERR_RECREATE_TARGET). Returns true if
 // recovery ran; the caller should drop the current frame — every host rebuilds

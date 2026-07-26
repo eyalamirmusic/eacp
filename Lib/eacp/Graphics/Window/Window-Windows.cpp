@@ -529,13 +529,22 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
 
         // The OS's modal loops own the input queue while they run; continuous
         // renderers ask isInsideNativeModalLoop() before pumping input for
-        // themselves.
+        // themselves, and freeze their last frame for the size/move drag
+        // specifically (see isInsideSizeMoveLoop).
         case WM_ENTERSIZEMOVE:
+            noteNativeModalLoop(true);
+            noteSizeMoveLoop(true);
+            break;
+
+        case WM_EXITSIZEMOVE:
+            noteNativeModalLoop(false);
+            noteSizeMoveLoop(false);
+            break;
+
         case WM_ENTERMENULOOP:
             noteNativeModalLoop(true);
             break;
 
-        case WM_EXITSIZEMOVE:
         case WM_EXITMENULOOP:
             noteNativeModalLoop(false);
             break;

@@ -131,9 +131,11 @@ a decode thread paced by sample timestamps, latest-frame store, loop by
   so `GPUView`'s tick dispatches queued input itself before each frame
   (standing down inside the OS's modal loops, which own their input). Hover
   reaches the stage in single-digit milliseconds under full render load.
-- **Live resize stretches, then sharpens.** A swapchain rebuild drains the
-  GPU, so mid-drag frames stretch the existing buffers through the visual
-  transform at full frame rate; the rebuild runs when the drag pauses.
+- **A size/move drag freezes the last frame.** The frozen picture scales with
+  the window through the composition transform (committed inside the WM_SIZE
+  itself), and nothing else runs on the thread the OS drag loop is chasing
+  the mouse with — the classic Windows trade of liveness for a drag that
+  tracks the hand. Playback and the swapchain rebuild resume on release.
 
 Two caveats against macOS remain:
 

@@ -295,6 +295,7 @@ namespace
 {
 // Main-thread only; see the header note.
 int nativeModalLoopDepth = 0;
+int sizeMoveLoopDepth = 0;
 } // namespace
 
 bool isInsideNativeModalLoop()
@@ -308,6 +309,19 @@ void noteNativeModalLoop(bool entered)
 
     if (nativeModalLoopDepth < 0)
         nativeModalLoopDepth = 0;
+}
+
+bool isInsideSizeMoveLoop()
+{
+    return sizeMoveLoopDepth > 0;
+}
+
+void noteSizeMoveLoop(bool entered)
+{
+    sizeMoveLoopDepth += entered ? 1 : -1;
+
+    if (sizeMoveLoopDepth < 0)
+        sizeMoveLoopDepth = 0;
 }
 
 } // namespace eacp::Graphics

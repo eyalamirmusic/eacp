@@ -8,7 +8,6 @@
 #include <eacp/Graphics/Image/Image.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <unordered_set>
 
@@ -143,12 +142,6 @@ struct GPUView::Native : DeviceResourceHolder
     }
 
     static float dpiScale() { return static_cast<float>(GetDpiForSystem()) / 96.f; }
-
-    static double steadyNow()
-    {
-        using namespace std::chrono;
-        return duration<double>(steady_clock::now().time_since_epoch()).count();
-    }
 
     void updateSize()
     {
@@ -427,6 +420,21 @@ struct GPUView::Native : DeviceResourceHolder
             swapChain->SetMaximumFrameLatency(static_cast<UINT>(framesInFlight));
     }
 
+    // Applies and commits the stretch for the size change being processed
+    // right now, inside the same WM_SIZE that changed the bounds. During a
+    // size/move drag this is the ONLY thing that runs per size change: the
+    // frozen last frame scales with the window through this transform, so
+    // the picture tracks the edge with nothing else contending for the
+    // thread the drag loop runs on.
+    void applyImmediateStretch()
+    {
+        if (!swapChain)
+            return;
+
+        applyContentScale();
+        Graphics::commitComposition();
+    }
+
     void render()
     {
         auto& context = getD3D12Context();
@@ -439,25 +447,16 @@ struct GPUView::Native : DeviceResourceHolder
         // the drag at full frame rate; the rebuild runs once the drag pauses
         // (or at a staleness bound, so a marathon drag cannot drift
         // arbitrarily far from native resolution).
-        if (sizeDirty)
+        // Deferred from resized(): the rebuild drains the GPU (20-50 ms at
+        // 1440p), so it never runs inside a size/move drag — the view is
+        // frozen there anyway (see the tick in startContinuous) and the
+        // rebuild lands on the first frame after the drag ends. Outside a
+        // drag (maximise, restore, programmatic sizes) it runs at most once
+        // per frame, at the latest size.
+        if (sizeDirty && !Graphics::isInsideSizeMoveLoop())
         {
-            auto time = steadyNow();
-            auto dragPaused = time - lastResizeRequest >= 0.1;
-            auto stale = time - lastSwapChainResize >= 0.5;
-
-            if (!swapChain || dragPaused || stale)
-            {
-                sizeDirty = false;
-                lastSwapChainResize = time;
-                updateSize();
-            }
-            else
-            {
-                // No commit of our own: the host window commits on every
-                // WM_SIZE of the drag, and committing here too would stack a
-                // second commit per frame onto a compositor already straining.
-                applyContentScale();
-            }
+            sizeDirty = false;
+            updateSize();
         }
 
         if (!swapChain || !context.isValid() || width == 0 || height == 0)
@@ -566,6 +565,15 @@ struct GPUView::Native : DeviceResourceHolder
         {
             auto func = [this](Threads::FrameTime time)
             {
+                // Frozen for the whole size/move drag: the last presented
+                // frame holds (scaled to the moving bounds by the transform
+                // resized() commits), no present can queue behind a pending
+                // rebuild, and the thread stays wholly available to the OS
+                // loop chasing the mouse. Animation resumes — and the
+                // deferred rebuild lands — on the first tick after release.
+                if (Graphics::isInsideSizeMoveLoop())
+                    return;
+
                 view.update(time);
                 view.renderNow();
                 dispatchPendingInput();
@@ -588,8 +596,6 @@ struct GPUView::Native : DeviceResourceHolder
     bool continuous = false;
     bool depthEnabled = false;
     bool sizeDirty = false;
-    double lastSwapChainResize = 0.0;
-    double lastResizeRequest = 0.0;
     UINT width = 0;
     UINT height = 0;
 
@@ -674,9 +680,11 @@ void GPUView::resized()
 {
     Graphics::View::resized();
 
-    // The swapchain rebuild is deferred to the next render — see render().
+    // The swapchain rebuild is deferred to the next render — see render() —
+    // but the stretch that keeps the picture tracking the drag is applied and
+    // committed immediately, inside this very WM_SIZE.
     impl->sizeDirty = true;
-    impl->lastResizeRequest = Native::steadyNow();
+    impl->applyImmediateStretch();
     repaint();
 }
 
