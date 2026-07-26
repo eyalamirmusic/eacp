@@ -579,7 +579,34 @@ ShaderBase<T> operator/(float lhs, const T& rhs)
     return detail::scalarOpLeft<ShaderBase<T>>('/', lhs, rhs);
 }
 
-// vector op scalar handle broadcasts, e.g. a colour scaled by a lighting term.
+// vector op scalar handle broadcasts, e.g. a colour scaled by a lighting term
+// or a coordinate offset by a time uniform. All four operators, on both sides,
+// the way the shading languages themselves broadcast: a scalar that happens to
+// live in a uniform behaves like the literal it stands in for.
+template <ShaderVectorLike T, ShaderScalarLike S>
+ShaderBase<T> operator+(const T& vector, const S& scalar)
+{
+    return detail::binaryOp<ShaderBase<T>>('+', vector, scalar);
+}
+
+template <ShaderScalarLike S, ShaderVectorLike T>
+ShaderBase<T> operator+(const S& scalar, const T& vector)
+{
+    return detail::binaryOp<ShaderBase<T>>('+', scalar, vector);
+}
+
+template <ShaderVectorLike T, ShaderScalarLike S>
+ShaderBase<T> operator-(const T& vector, const S& scalar)
+{
+    return detail::binaryOp<ShaderBase<T>>('-', vector, scalar);
+}
+
+template <ShaderScalarLike S, ShaderVectorLike T>
+ShaderBase<T> operator-(const S& scalar, const T& vector)
+{
+    return detail::binaryOp<ShaderBase<T>>('-', scalar, vector);
+}
+
 template <ShaderVectorLike T, ShaderScalarLike S>
 ShaderBase<T> operator*(const T& vector, const S& scalar)
 {
@@ -589,13 +616,19 @@ ShaderBase<T> operator*(const T& vector, const S& scalar)
 template <ShaderScalarLike S, ShaderVectorLike T>
 ShaderBase<T> operator*(const S& scalar, const T& vector)
 {
-    return detail::binaryOp<ShaderBase<T>>('*', vector, scalar);
+    return detail::binaryOp<ShaderBase<T>>('*', scalar, vector);
 }
 
 template <ShaderVectorLike T, ShaderScalarLike S>
 ShaderBase<T> operator/(const T& vector, const S& scalar)
 {
     return detail::binaryOp<ShaderBase<T>>('/', vector, scalar);
+}
+
+template <ShaderScalarLike S, ShaderVectorLike T>
+ShaderBase<T> operator/(const S& scalar, const T& vector)
+{
+    return detail::binaryOp<ShaderBase<T>>('/', scalar, vector);
 }
 
 // Index arithmetic on uint values: against another uint (a Uniform<UInt>

@@ -242,8 +242,7 @@ auto tShaderProgramInstancedLayout = test("GPU/shaderProgramInstancedLayout") = 
 // Float stop at 20 bytes; sizeof(Uniforms) pads to the widest member's 8-byte
 // alignment, and Metal validates the bound length against that - binding the
 // unpadded 20 aborts the first draw. Pure logic, no GPU device required.
-auto tShaderProgramPadsUniformBlock =
-    test("GPU/shaderProgramPadsUniformBlock") = []
+auto tShaderProgramPadsUniformBlock = test("GPU/shaderProgramPadsUniformBlock") = []
 {
     auto program = OffBoundaryProgram {};
 
@@ -412,6 +411,39 @@ auto tCodegenOperatorSugar = test("GPU/codegenOperatorSugar") = []
     check(contains(metal, "(-((input.a0).x))"));
     check(contains(metal, " * 2.0)"));
     check(contains(metal, "(1.0 - (input.a0).x)"));
+};
+
+// A scalar handle broadcasts across a vector for all four operators, on either
+// side, the way MSL and HLSL broadcast a scalar themselves. Only * and / had it
+// before, so `uv + time` - one of the most ordinary lines a shader can hold -
+// did not compile while `uv * time` did.
+auto tCodegenScalarBroadcast = test("GPU/codegenScalarHandleBroadcast") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto amount = builder.uniform<Float>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position + amount, 0.0f, 1.0f));
+    builder.fragment(
+        float4((carried - amount) * amount, (amount / carried).x(), 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+
+    // Order is kept as written, which matters for the two that do not commute.
+    check(contains(metal, "(input.a0 + uniforms.u0)"));
+    check(contains(metal, "- uniforms.u0)"));
+    check(contains(metal, "* uniforms.u0)"));
+    check(contains(metal, "(uniforms.u0 / "));
+
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto library = device.makeShaderLibrary(builder.build().source);
+    check(library.isValid());
 };
 
 // Negating a negative constant emits nested parentheses, not a pre-decrement:
