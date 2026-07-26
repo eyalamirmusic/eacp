@@ -3,6 +3,7 @@
 #include "ShaderGraph.h"
 #include "ShaderTypes.h"
 
+#include <cassert>
 #include <initializer_list>
 
 // The string-free EDSL surface. Float/Float2/Float3/Float4 are lightweight value
@@ -158,6 +159,19 @@ struct Float : detail::ValueHandle
 // vocabulary; it indexes storage buffers and crosses into float arithmetic via
 // toFloat().
 struct UInt : detail::ValueHandle
+{
+};
+
+// The signed integer: what subscripts an array, and what the operators no float
+// has are defined on - the remainder, the bitwise set and the two shifts. Like
+// UInt it stays outside the float operator vocabulary and crosses into it
+// explicitly, with toInt() and toFloat().
+//
+// Signed rather than unsigned because that is what an index computed from a
+// coordinate needs: int(uv.x * 4.0) is negative left of the origin, and a
+// negative index has to survive as one long enough to be masked or clamped
+// rather than wrapping to a huge number on the way in.
+struct Int : detail::ValueHandle
 {
 };
 
@@ -395,6 +409,12 @@ struct ValueTypeOf<UInt>
 };
 
 template <>
+struct ValueTypeOf<Int>
+{
+    static constexpr ValueType value = ValueType::Int;
+};
+
+template <>
 struct ValueTypeOf<Bool>
 {
     static constexpr ValueType value = ValueType::Bool;
@@ -450,6 +470,17 @@ T binaryOp(char op, const ValueHandle& lhs, const ValueHandle& rhs)
     return result;
 }
 
+// The same, for an operator no char holds - which is the two shifts.
+template <typename T>
+T binaryOp(const char* op, const ValueHandle& lhs, const ValueHandle& rhs)
+{
+    auto result = T {};
+    result.graph = lhs.graph;
+    result.node =
+        lhs.graph->addBinary(ValueTypeOf<T>::value, op, lhs.node, rhs.node);
+    return result;
+}
+
 template <typename T>
 T scalarOp(char op, const ValueHandle& lhs, float rhs)
 {
@@ -486,10 +517,15 @@ inline ValueHandle constantOn(const ValueHandle& value, float literal)
     return {value.graph, value.graph->addConstant(literal)};
 }
 
-// Its integer sibling, for uint index arithmetic.
+// Its integer siblings, for uint and int index arithmetic.
 inline ValueHandle uintConstantOn(const ValueHandle& value, unsigned literal)
 {
     return {value.graph, value.graph->addUIntConstant(literal)};
+}
+
+inline ValueHandle intConstantOn(const ValueHandle& value, int literal)
+{
+    return {value.graph, value.graph->addIntConstant(literal)};
 }
 
 template <typename T>
@@ -1244,6 +1280,13 @@ struct Var
         return *this;
     }
 
+    Var& operator=(int value)
+        requires std::same_as<T, Int>
+    {
+        graph->assign(slot, graph->addIntConstant(value));
+        return *this;
+    }
+
     // The compound operators, over whatever the free operators above accept:
     // another value of the same shape, a scalar broadcast across a vector, or a
     // literal. A combination they reject fails here rather than silently
@@ -1356,6 +1399,165 @@ inline UInt operator%(unsigned lhs, const UInt& rhs)
 {
     return detail::binaryOp<UInt>('%', detail::uintConstantOn(rhs, lhs), rhs);
 }
+
+// Signed integer arithmetic, and the operators only an integer has: the
+// remainder, the bitwise set and the two shifts. Against another Int (a
+// Uniform<Int> binds here too) or an integer literal, which records an int
+// constant node. Deliberately separate from the float operator vocabulary -
+// there are no implicit conversions between the two; cross over with toInt()
+// and toFloat().
+//
+// Division and the remainder truncate towards zero on a negative operand, as
+// they do in GLSL and in both languages this emits into. That is not what
+// floor-based tiling wants: mod() is the floored one, and is spelled for floats.
+#define EACP_INT_OPERATOR(name, spelling)                                           \
+    inline Int name(const Int& lhs, const Int& rhs)                                 \
+    {                                                                               \
+        return detail::binaryOp<Int>(spelling, lhs, rhs);                           \
+    }                                                                               \
+                                                                                    \
+    inline Int name(const Int& lhs, int rhs)                                        \
+    {                                                                               \
+        return detail::binaryOp<Int>(                                               \
+            spelling, lhs, detail::intConstantOn(lhs, rhs));                        \
+    }                                                                               \
+                                                                                    \
+    inline Int name(int lhs, const Int& rhs)                                        \
+    {                                                                               \
+        return detail::binaryOp<Int>(                                               \
+            spelling, detail::intConstantOn(rhs, lhs), rhs);                        \
+    }
+
+EACP_INT_OPERATOR(operator+, '+')
+EACP_INT_OPERATOR(operator-, '-')
+EACP_INT_OPERATOR(operator*, '*')
+EACP_INT_OPERATOR(operator/, '/')
+EACP_INT_OPERATOR(operator%, '%')
+EACP_INT_OPERATOR(operator&, '&')
+EACP_INT_OPERATOR(operator|, '|')
+EACP_INT_OPERATOR(operator^, '^')
+EACP_INT_OPERATOR(operator<<, "<<")
+EACP_INT_OPERATOR(operator>>, ">>")
+
+#undef EACP_INT_OPERATOR
+
+inline Int operator-(const Int& value)
+{
+    return detail::unaryOp<Int>('-', value);
+}
+
+// The bitwise complement, the one unary operator no float has.
+inline Int operator~(const Int& value)
+{
+    return detail::unaryOp<Int>('~', value);
+}
+
+// Integer comparisons, which the float ones cannot cover: those are constrained
+// on the float scalar shape, and an Int is deliberately not one.
+#define EACP_INT_COMPARISON(name, spelling)                                         \
+    inline Bool name(const Int& lhs, const Int& rhs)                                \
+    {                                                                               \
+        return detail::compare(spelling, lhs, rhs);                                 \
+    }                                                                               \
+                                                                                    \
+    inline Bool name(const Int& lhs, int rhs)                                       \
+    {                                                                               \
+        return detail::compare(spelling, lhs, detail::intConstantOn(lhs, rhs));     \
+    }                                                                               \
+                                                                                    \
+    inline Bool name(int lhs, const Int& rhs)                                       \
+    {                                                                               \
+        return detail::compare(spelling, detail::intConstantOn(rhs, lhs), rhs);     \
+    }
+
+EACP_INT_COMPARISON(operator<, "<")
+EACP_INT_COMPARISON(operator<=, "<=")
+EACP_INT_COMPARISON(operator>, ">")
+EACP_INT_COMPARISON(operator>=, ">=")
+EACP_INT_COMPARISON(operator==, "==")
+EACP_INT_COMPARISON(operator!=, "!=")
+
+#undef EACP_INT_COMPARISON
+
+// int min/max/abs: the branchless way to hold an index inside an array, for the
+// shader that would rather clamp than mask.
+inline Int min(const Int& a, const Int& b)
+{
+    return detail::call2<Int>(a, b, ValueType::Int, "min");
+}
+
+inline Int min(const Int& a, int b)
+{
+    return detail::call2<Int>(a, detail::intConstantOn(a, b), ValueType::Int, "min");
+}
+
+inline Int max(const Int& a, const Int& b)
+{
+    return detail::call2<Int>(a, b, ValueType::Int, "max");
+}
+
+inline Int max(const Int& a, int b)
+{
+    return detail::call2<Int>(a, detail::intConstantOn(a, b), ValueType::Int, "max");
+}
+
+inline Int abs(const Int& value)
+{
+    return detail::call<Int>(value, ValueType::Int, "abs");
+}
+
+// Crossing between the integer and the float vocabularies, explicit in both
+// directions. The constructor-style cast spells identically in MSL and HLSL,
+// and truncates towards zero on the way to an int exactly as GLSL's int() does.
+inline Float toFloat(const Int& value)
+{
+    return detail::call<Float>(value, ValueType::Float, "float");
+}
+
+template <ShaderScalarLike T>
+Int toInt(const T& value)
+{
+    return detail::call<Int>(value, ValueType::Int, "int");
+}
+
+// A constant array the shader subscripts: a palette, a set of offsets, any small
+// lookup table a shader would otherwise spell out as a chain of selects. Like
+// Texture2D it is slot-identified rather than an expression node - it is a
+// declaration and not a value, and its one operation is the subscript.
+//
+// Its elements are evaluated once where the array is declared, at the top of the
+// shader body, so one may read a uniform or a varying but not a mutable local:
+// no local exists yet at that point.
+//
+// The size is part of the type, so a literal index is checked here. An Int index
+// is the shader's own business, exactly as it is in GLSL - reading past the end
+// is undefined in both languages - so mask it (`i & 3`) or clamp it
+// (`min(max(i, 0), 3)`) unless it is already in range.
+template <typename T, int Size>
+struct Array
+{
+    T operator[](const Int& index) const
+    {
+        auto result = T {};
+        result.graph = graph;
+        result.node = graph->addArrayRead(slot, index.node);
+        return result;
+    }
+
+    T operator[](int index) const
+    {
+        assert(index >= 0 && index < Size
+               && "eacp: constant-array index out of range");
+
+        auto result = T {};
+        result.graph = graph;
+        result.node = graph->addArrayRead(slot, graph->addIntConstant(index));
+        return result;
+    }
+
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
 
 // uint min/max, the branchless way to clamp an index to a valid range.
 inline UInt min(const UInt& a, const UInt& b)

@@ -91,6 +91,12 @@ struct CpuValueOf<UInt>
     using type = std::uint32_t;
 };
 
+template <>
+struct CpuValueOf<Int>
+{
+    using type = std::int32_t;
+};
+
 // The shader value a CPU type maps to. Built in for float / float[N] / array; a
 // user type opts in either intrusively (a `using ShaderValue = Float3;` member,
 // like MIRO_REFLECT) or non-intrusively via EACP_SHADER_VALUE (like
@@ -267,8 +273,9 @@ inline VertexFormat toVertexFormat(ValueType type)
         case ValueType::Float3x3:
         case ValueType::Float4x4:
         case ValueType::UInt:
+        case ValueType::Int:
         case ValueType::Bool:
-            return VertexFormat::Float4; // matrix/uint/bool are never attributes
+            return VertexFormat::Float4; // matrix/integer/bool are never attributes
     }
 
     return VertexFormat::Float;
@@ -684,6 +691,14 @@ protected:
 
     Float constant(float value) { return builder.constant(value); }
     Bool boolean(bool value) { return builder.boolean(value); }
+    Int integer(int value) { return builder.integer(value); }
+
+    template <ShaderValueLike T, SameShaderShape<T>... Rest>
+    Array<ShaderBase<T>, 1 + (int) sizeof...(Rest)> array(const T& first,
+                                                          const Rest&... rest)
+    {
+        return builder.array(first, rest...);
+    }
 
     // Control flow, forwarded from the builder: a mutable local, the two
     // branching statements, the loop and its two jumps. See ShaderBuilder for
@@ -697,7 +712,9 @@ protected:
 
     Var<Float> var(float initialValue) { return builder.var(initialValue); }
     Var<Bool> var(bool initialValue) { return builder.var(initialValue); }
+    Var<Int> var(int initialValue) { return builder.var(initialValue); }
     Var<Bool> var(const Bool& initialValue) { return builder.var(initialValue); }
+    Var<Int> var(const Int& initialValue) { return builder.var(initialValue); }
 
     template <typename Body>
     void ifThen(const Bool& condition, Body&& body)

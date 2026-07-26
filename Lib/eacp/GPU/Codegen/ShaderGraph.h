@@ -18,8 +18,9 @@ enum class ExprKind
     Swizzle, // child.<components>; args[0] = child
     Call, // builtin call text(args...); e.g. sin/cos. The emitter translates
     // the canonical (MSL) name where HLSL spells it differently.
-    Unary, // (op child); args = {child}; op. Negation, and logical not.
-    Binary, // (lhs op rhs); args = {lhs, rhs}
+    Unary, // (op child); args = {child}; op. Negation, logical and bitwise not.
+    Binary, // (lhs op rhs); args = {lhs, rhs}. The operator is `op` when it fits
+    // in a char and `text` when it does not - which is only the two shifts.
     Compare, // (lhs op rhs) yielding a Bool; args = {lhs, rhs}, op text in `text`.
     // Separate from Binary for two reasons: <=, == and && do not fit in a char,
     // and the result is a Bool whatever shape the operands are.
@@ -36,7 +37,8 @@ enum class ExprKind
     Fetch, // texel read at integer coordinates, no sampler; index = texture slot,
     // args = {coordinates}. Emits per-backend (MSL t.read(), HLSL t.Load()).
     ThreadId, // compute work-item id; emitted as the kernel's gid parameter
-    BufferRead // storage-buffer element read; index = buffer slot, args = {index}
+    BufferRead, // storage-buffer element read; index = buffer slot, args = {index}
+    ArrayRead // constant-array element read; index = array slot, args = {index}
 };
 
 // How a kernel accesses a storage buffer: a read-only input (Metal device
@@ -79,6 +81,19 @@ struct Statement
 struct Block
 {
     Vector<int> statements; // indices into the graph's statement store
+};
+
+// A constant array the shader subscripts: the palette a procedural shader picks
+// a colour out of, the offsets a sampling kernel walks. It lives beside the
+// expression store rather than in it because an array is a declaration and not
+// a value - the one thing a shader names that no single node stands for. Its
+// elements are ordinary expressions, evaluated once where the array is declared
+// at the top of the shader body, so they may read uniforms and varyings but not
+// a mutable local, which does not exist yet at that point.
+struct ArrayConstant
+{
+    ValueType elementType = ValueType::Float;
+    Vector<int> elements; // expression nodes, one per element
 };
 
 // One node in the shader expression tree. Plain data referenced by integer id so
@@ -140,6 +155,7 @@ public:
     int addUniform(ValueType type);
     int addConstant(float value);
     int addUIntConstant(unsigned value);
+    int addIntConstant(int value);
     int addBoolConstant(bool value);
     int addConstruct(ValueType type, Vector<int> args);
     int addSwizzle(ValueType type, int child, std::string components);
@@ -147,6 +163,12 @@ public:
     int addCall(ValueType type, std::string name, Vector<int> args);
     int addUnary(ValueType type, char op, int child);
     int addBinary(ValueType type, char op, int lhs, int rhs);
+
+    // The same node for an operator a char cannot hold, which is the two shifts
+    // and nothing else. Kept off addCompare, whose result is a Bool whatever it
+    // was given: a shift is shaped like the value being shifted.
+    int addBinary(ValueType type, std::string op, int lhs, int rhs);
+
     int addCompare(std::string op, int lhs, int rhs);
     int addSelect(ValueType type, int condition, int whenTrue, int whenFalse);
     int addMul(ValueType type, int matrix, int vector);
@@ -182,6 +204,12 @@ public:
     // One texel read straight out of the texture at integer coordinates: no
     // sampler, so no filtering, no addressing and no interpolation.
     int addFetch(int textureSlot, int coordinates);
+
+    // A constant array and a subscript of one. Reading past the end is
+    // undefined in both shading languages exactly as it is in GLSL, so an index
+    // a shader has not already bounded is worth masking or clamping.
+    int addArray(ValueType elementType, Vector<int> elements);
+    int addArrayRead(int slot, int index);
 
     // Compute kernel pieces: the 1D work-item id, a storage-buffer slot (float
     // elements; inputs and outputs share one slot space, so every buffer gets a
@@ -225,6 +253,7 @@ public:
     float discardThreshold() const { return discardValue; }
 
     const Vector<BufferAccess>& storageBuffers() const { return storageSlots; }
+    const Vector<ArrayConstant>& arrays() const { return arrayConstants; }
     const Vector<Store>& stores() const { return storeList; }
     bool isCompute() const { return storeList.size() > 0; }
 
@@ -252,6 +281,7 @@ private:
     Vector<BufferAccess> storageSlots;
     Vector<Store> storeList;
     Vector<TextureSampling> textureSamplings;
+    Vector<ArrayConstant> arrayConstants;
 
     Vector<ValueType> variableTypes;
     Vector<Statement> statementList;

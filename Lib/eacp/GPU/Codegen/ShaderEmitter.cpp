@@ -113,10 +113,14 @@ struct ExprPrinter
                 return "uniforms.u" + std::to_string(expr.index);
 
             case ExprKind::Constant:
-                // The uint and bool spellings are shared by MSL and HLSL, like
-                // floatN.
+                // The uint, int and bool spellings are shared by MSL and HLSL,
+                // like floatN. A signed literal needs no suffix at all: an
+                // integer literal is already an int in both languages.
                 if (expr.type == ValueType::UInt)
                     return std::to_string(expr.index) + "u";
+
+                if (expr.type == ValueType::Int)
+                    return std::to_string(expr.index);
 
                 if (expr.type == ValueType::Bool)
                     return expr.index != 0 ? "true" : "false";
@@ -174,8 +178,14 @@ struct ExprPrinter
                        + "))";
 
             case ExprKind::Binary:
-                return "(" + ref(expr.args[0]) + " " + std::string(1, expr.op) + " "
-                       + ref(expr.args[1]) + ")";
+            {
+                // The operator is a char unless it did not fit in one, which is
+                // only the two shifts.
+                auto op = expr.text.empty() ? std::string(1, expr.op) : expr.text;
+
+                return "(" + ref(expr.args[0]) + " " + op + " " + ref(expr.args[1])
+                       + ")";
+            }
 
             case ExprKind::Compare:
                 return "(" + ref(expr.args[0]) + " " + expr.text + " "
@@ -257,6 +267,10 @@ struct ExprPrinter
             case ExprKind::BufferRead:
                 return "buffer" + std::to_string(expr.index) + "["
                        + ref(expr.args[0]) + "]";
+
+            case ExprKind::ArrayRead:
+                return "a" + std::to_string(expr.index) + "[" + ref(expr.args[0])
+                       + "]";
         }
 
         return {};
@@ -283,6 +297,7 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Sample:
         case ExprKind::Fetch:
         case ExprKind::BufferRead:
+        case ExprKind::ArrayRead:
             return true;
 
         case ExprKind::Input:
@@ -339,6 +354,32 @@ void orderLocals(const ShaderGraph& graph,
 
     if (uses[node] > 1 && wantsLocal(graph.expr(node).kind))
         order.push_back(node);
+}
+
+// Which constant arrays a run of expressions subscripts, following the elements
+// of one that is used in case an element subscripts another.
+void collectArrays(const ShaderGraph& graph,
+                   int node,
+                   std::vector<char>& used,
+                   std::vector<char>& seen)
+{
+    if (node < 0 || seen[node])
+        return;
+
+    seen[node] = 1;
+
+    const auto& expr = graph.expr(node);
+
+    if (expr.kind == ExprKind::ArrayRead && used[expr.index] == 0)
+    {
+        used[expr.index] = 1;
+
+        for (auto element: graph.arrays()[expr.index].elements)
+            collectArrays(graph, element, used, seen);
+    }
+
+    for (auto argument: expr.args)
+        collectArrays(graph, argument, used, seen);
 }
 
 // Which variables running a statement can leave holding something else -
@@ -434,6 +475,56 @@ struct StageEmitter
     {
         auto open = std::vector<int> {};
         return define(roots, indent, countUsesOver(roots), open);
+    }
+
+    // The constant arrays a stage subscripts, declared at the top of its
+    // function. Both languages spell a const array of a floatN the same way, so
+    // this needs no per-backend form; what it does need is to run before any
+    // name has been handed out, which is why it is the first thing a stage
+    // emits. That is also why an element may read a uniform or a varying but
+    // not a mutable local: no local has been declared yet at that point.
+    //
+    // Emitted in slot order, so an array whose elements read another one finds
+    // it already there.
+    std::string declareArrays(const std::vector<int>& roots,
+                              const std::string& indent)
+    {
+        const auto& arrays = graph().arrays();
+
+        if (arrays.empty())
+            return {};
+
+        auto used = std::vector<char>((std::size_t) arrays.size(), 0);
+        auto seen = std::vector<char>((std::size_t) graph().nodeCount(), 0);
+
+        for (auto root: roots)
+            collectArrays(graph(), root, used, seen);
+
+        auto source = std::string {};
+
+        for (auto slot = 0; slot < arrays.size(); ++slot)
+        {
+            if (used[(std::size_t) slot] == 0)
+                continue;
+
+            const auto& array = arrays[slot];
+
+            source += indent + "const " + typeName(array.elementType) + " a"
+                      + std::to_string(slot) + "["
+                      + std::to_string(array.elements.size()) + "] = {";
+
+            for (auto i = 0; i < array.elements.size(); ++i)
+            {
+                if (i > 0)
+                    source += ", ";
+
+                source += printer.ref(array.elements[i]);
+            }
+
+            source += "};\n";
+        }
+
+        return source;
     }
 
     std::string emitBlock(int block, const std::string& indent)
@@ -797,8 +888,12 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         roots.push_back(store.value);
     }
 
+    auto stageRoots = roots;
+    collectStatementRoots(graph, ShaderGraph::rootBlock, stageRoots);
+
     auto stage = StageEmitter {graph, backend};
 
+    source += stage.declareArrays(stageRoots, "    ");
     source += stage.emitBlock(ShaderGraph::rootBlock, "    ");
     source += stage.defineFor(roots, "    ");
 
@@ -908,6 +1003,7 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     // ShaderBuilder::var.
     auto vertexStage = StageEmitter {graph, backend};
 
+    source += vertexStage.declareArrays(vertexRoots, "    ");
     source += vertexStage.defineFor(vertexRoots, "    ");
     source += "    VertexOut output;\n";
     source +=
@@ -963,6 +1059,7 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     // then reads a mutable local out of - and the colour is planned after them.
     auto fragmentStage = StageEmitter {graph, backend};
 
+    source += fragmentStage.declareArrays(stageRoots, "    ");
     source += fragmentStage.emitBlock(ShaderGraph::rootBlock, "    ");
     source += fragmentStage.defineFor(fragmentRoots, "    ");
 

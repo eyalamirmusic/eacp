@@ -27,6 +27,7 @@ inline int uniformAlignment(ValueType type)
     {
         case ValueType::Float:
         case ValueType::UInt:
+        case ValueType::Int:
         case ValueType::Bool:
             return 4;
         case ValueType::Float2:
