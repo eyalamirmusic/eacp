@@ -55,7 +55,7 @@ struct Fixture
             "ready", [this](const std::string&) { ready = true; });
         webView.loadHTML(pageHtml);
         check(Threads::runEventLoopUntil([this] { return ready; },
-                                         eacp::Time::MS {10000}));
+                                         firstNavigationTimeout));
         // Give the rAF loop a few ticks to paint (when it is running at all).
         Threads::runEventLoopFor(eacp::Time::MS {200});
     }
@@ -69,7 +69,7 @@ struct Fixture
 
     Color centre()
     {
-        auto image = webView.renderToImageAsync(1.f).waitFor(eacp::Time::MS {10000});
+        auto image = webView.renderToImageAsync(1.f).waitFor(webViewResultTimeout);
         check(image.isValid());
         return image.at(30, 20);
     }
