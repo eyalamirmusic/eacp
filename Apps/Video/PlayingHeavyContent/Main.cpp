@@ -2,6 +2,7 @@
 #include <eacp/Video/SyntheticClip.h>
 #include <eacp/VideoView/VideoView.h>
 
+#include <cstdarg>
 #include <cstdio>
 
 using namespace eacp;

@@ -23,10 +23,6 @@
 // Zero-copy needs the reader bound to a D3D11 device and its NV12 textures
 // shared into the D3D12 device, which is the same later phase the camera
 // backend is waiting on.
-//
-// NOTE: authored to the documented IMFSourceReader pattern and this repo's
-// Media Foundation conventions, but not yet compiled or run on Windows —
-// expect a round of fixes on the first Windows/CI build.
 
 namespace eacp::Video
 {
