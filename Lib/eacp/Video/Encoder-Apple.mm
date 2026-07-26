@@ -124,6 +124,21 @@ void AppleEncoder::append(CVPixelBufferRef buffer, CMTime pts)
         [adaptor.get() appendPixelBuffer:buffer withPresentationTime:pts];
 }
 
+void AppleEncoder::waitUntilReady(Time::MS timeout)
+{
+    if (!input)
+        return;
+
+    // AVAssetWriterInput has no blocking form, so this polls. The wait is short
+    // in practice — the H.264 encoder drains a frame in well under a
+    // millisecond — and the deadline keeps a stalled writer from hanging the
+    // caller outright.
+    auto deadline = Time::Deadline {timeout};
+
+    while (![input.get() isReadyForMoreMediaData] && !deadline.expired())
+        Time::sleepMS(1);
+}
+
 void AppleEncoder::appendImage(const Graphics::Image& image, double ptsSeconds)
 {
     auto* bufferPool = pool();
