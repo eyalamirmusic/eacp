@@ -266,6 +266,50 @@ inline Float4 sample(const Texture2D& texture, const Float2& coordinates)
     return result;
 }
 
+// Sampling at a mip level the shader chooses rather than the one the hardware
+// derives from the neighbouring fragments. Two things need this: a sample taken
+// where the derivatives are meaningless - of a coordinate that jumps between
+// fragments - and a deliberate blur, which walks up the pyramid on purpose.
+//
+// A texture with one level ignores the level, since there is nothing else to
+// read; GPU::Texture has no mips yet, so that is every texture today.
+inline Float4
+    sample(const Texture2D& texture, const Float2& coordinates, const Float& level)
+{
+    auto result = Float4 {};
+    result.graph = texture.graph;
+    result.node =
+        texture.graph->addSample(texture.slot, coordinates.node, level.node);
+    return result;
+}
+
+// The level is a literal far more often than not - a shader reaching for this
+// usually wants the top of the pyramid and nothing else - and a plain float has
+// no graph to record itself into. The texture carries one, so this spells what
+// the caller would otherwise need a ShaderBuilder in scope to anchor.
+inline Float4
+    sample(const Texture2D& texture, const Float2& coordinates, float level)
+{
+    auto result = Float4 {};
+    result.graph = texture.graph;
+    result.node = texture.graph->addSample(
+        texture.slot, coordinates.node, texture.graph->addConstant(level));
+    return result;
+}
+
+// One texel, addressed in texels rather than in the [0, 1] the sampler works
+// in, and read without it: no filtering, no wrap, no interpolation. The
+// coordinates arrive as a Float2 because the EDSL has no integer vector; they
+// truncate towards zero, exactly as GLSL's ivec2 conversion does, and a
+// coordinate outside the texture reads as zero on both backends.
+inline Float4 fetch(const Texture2D& texture, const Float2& coordinates)
+{
+    auto result = Float4 {};
+    result.graph = texture.graph;
+    result.node = texture.graph->addFetch(texture.slot, coordinates.node);
+    return result;
+}
+
 // Storage buffers of float elements, declared by a compute kernel. Like
 // Texture2D they are slot-identified rather than expression nodes: an input's
 // one operation is the indexed read, an output's is the store recorded via

@@ -22,8 +22,10 @@ enum class ExprKind
     Binary, // (lhs op rhs); args = {lhs, rhs}
     Mul, // matrix * vector; args = {matrix, vector}. Emits per-backend (MSL uses
     // the * operator, HLSL uses mul()), so it is not a plain Binary.
-    Sample, // texture sample; index = texture slot, args = {uv}. Emits
-    // per-backend (MSL t.sample(s, uv), HLSL t.Sample(s, uv)).
+    Sample, // texture sample; index = texture slot, args = {uv} or {uv, level}.
+    // Emits per-backend (MSL t.sample(s, uv), HLSL t.Sample(s, uv)).
+    Fetch, // texel read at integer coordinates, no sampler; index = texture slot,
+    // args = {coordinates}. Emits per-backend (MSL t.read(), HLSL t.Load()).
     ThreadId, // compute work-item id; emitted as the kernel's gid parameter
     BufferRead // storage-buffer element read; index = buffer slot, args = {index}
 };
@@ -99,9 +101,15 @@ public:
 
     // Registers a 2D texture slot (always a float-returning texture2d, so only
     // the slot index and how it is sampled are stored), and a sample of it at a
-    // float2 coordinate.
+    // float2 coordinate - with the mip level the hardware picks from the
+    // derivatives, or with one the shader chooses.
     int addTexture(TextureSampling sampling = {});
     int addSample(int textureSlot, int uv);
+    int addSample(int textureSlot, int uv, int level);
+
+    // One texel read straight out of the texture at integer coordinates: no
+    // sampler, so no filtering, no addressing and no interpolation.
+    int addFetch(int textureSlot, int coordinates);
 
     // Compute kernel pieces: the 1D work-item id, a storage-buffer slot (float
     // elements; inputs and outputs share one slot space, so every buffer gets a

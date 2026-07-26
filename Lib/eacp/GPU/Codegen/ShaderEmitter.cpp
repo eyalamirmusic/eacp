@@ -190,12 +190,47 @@ struct ExprPrinter
             case ExprKind::Sample:
             {
                 // Texture sample at a float2 coordinate, through the sampler
-                // declared at the same index as the texture.
+                // declared at the same index as the texture. A second argument
+                // is the mip level the shader picked, which each backend spells
+                // its own way: Metal as an extra argument to the same call,
+                // HLSL as a different method.
                 auto name = "texture" + std::to_string(expr.index);
                 auto sampler = "sampler" + std::to_string(expr.index);
-                auto method = backend == Backend::Metal ? ".sample(" : ".Sample(";
+                auto uv = ref(expr.args[0]);
 
-                return name + method + sampler + ", " + ref(expr.args[0]) + ")";
+                if (expr.args.size() < 2)
+                {
+                    auto method =
+                        backend == Backend::Metal ? ".sample(" : ".Sample(";
+
+                    return name + method + sampler + ", " + uv + ")";
+                }
+
+                auto level = ref(expr.args[1]);
+
+                if (backend == Backend::Metal)
+                    return name + ".sample(" + sampler + ", " + uv + ", level("
+                           + level + "))";
+
+                return name + ".SampleLevel(" + sampler + ", " + uv + ", " + level
+                       + ")";
+            }
+
+            case ExprKind::Fetch:
+            {
+                // A texel read at integer coordinates. Metal takes them
+                // unsigned, so the float2 goes through int2 first: a negative
+                // coordinate then wraps to a large unsigned one and reads as
+                // zero, which is what HLSL's Load does with it directly. The
+                // level is 0 - GPU::Texture has no mips - and D3D carries it in
+                // the coordinate's third component.
+                auto name = "texture" + std::to_string(expr.index);
+                auto coordinates = "int2(" + ref(expr.args[0]) + ")";
+
+                if (backend == Backend::Metal)
+                    return name + ".read(uint2(" + coordinates + "))";
+
+                return name + ".Load(int3(" + coordinates + ", 0))";
             }
 
             case ExprKind::ThreadId:
@@ -227,6 +262,7 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Binary:
         case ExprKind::Mul:
         case ExprKind::Sample:
+        case ExprKind::Fetch:
         case ExprKind::BufferRead:
             return true;
 
