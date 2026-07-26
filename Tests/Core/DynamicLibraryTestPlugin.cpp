@@ -3,22 +3,21 @@
 // re-run on a genuine load, so the counter observes real unmaps — a resident
 // image reopened does not re-initialize.
 #include <eacp/Core/Plugins/PluginExport.h>
+#include <eacp/Core/Utils/Environment.h>
 
-#include <cstdlib>
 #include <string>
 
 namespace
 {
+int currentLoadCount()
+{
+    auto value = eacp::getEnvValue("EACP_TEST_PLUGIN_LOADS");
+    return value.empty() ? 0 : std::stoi(value);
+}
+
 int bumpLoadCount()
 {
-    auto* existing = std::getenv("EACP_TEST_PLUGIN_LOADS");
-    auto next = std::to_string((existing != nullptr ? std::atoi(existing) : 0) + 1);
-
-#ifdef _WIN32
-    _putenv_s("EACP_TEST_PLUGIN_LOADS", next.c_str());
-#else
-    setenv("EACP_TEST_PLUGIN_LOADS", next.c_str(), 1);
-#endif
+    eacp::setEnv("EACP_TEST_PLUGIN_LOADS", std::to_string(currentLoadCount() + 1));
 
     return 0;
 }
