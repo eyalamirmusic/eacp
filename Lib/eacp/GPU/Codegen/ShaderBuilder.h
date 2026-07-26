@@ -173,6 +173,34 @@ public:
         return result;
     }
 
+    // And its integer one, for an index a shader starts from. Spelled apart for
+    // the same reason: constant(1) would otherwise be ambiguous.
+    Int integer(int value)
+    {
+        auto result = Int {};
+        result.graph = &graphData;
+        result.node = graphData.addIntConstant(value);
+        return result;
+    }
+
+    // A constant array, its size taken from the pack. Every element is an
+    // ordinary value - a literal vector, or something built from a uniform -
+    // and all of them are evaluated once at the top of the shader body, which
+    // is why a mutable local cannot be one. See Array for what a subscript of
+    // one costs and what bounds it.
+    template <ShaderValueLike T, SameShaderShape<T>... Rest>
+    Array<ShaderBase<T>, 1 + (int) sizeof...(Rest)> array(const T& first,
+                                                          const Rest&... rest)
+    {
+        auto elements = Vector<int> {};
+        elements.add(ShaderBase<T>(first).node);
+        (elements.add(ShaderBase<T>(rest).node), ...);
+
+        return {&graphData,
+                graphData.addArray(ValueTypeOf<ShaderBase<T>>::value,
+                                   std::move(elements))};
+    }
+
     // A mutable local, initialised from a value or from a literal. This is what
     // makes a loop worth having: something the body can write that the code
     // after it reads. Its type follows the initialiser.
@@ -198,12 +226,22 @@ public:
         return {graphData, ValueType::Bool, graphData.addBoolConstant(initialValue)};
     }
 
-    // A Bool is outside the arithmetic vocabulary the templated form is
-    // constrained on, so the flag a shader sets and later tests has an
-    // overload of its own.
+    Var<Int> var(int initialValue)
+    {
+        return {graphData, ValueType::Int, graphData.addIntConstant(initialValue)};
+    }
+
+    // A Bool and an Int are outside the arithmetic vocabulary the templated
+    // form is constrained on, so the flag a shader sets and later tests, and
+    // the index it walks, each have an overload of their own.
     Var<Bool> var(const Bool& initialValue)
     {
         return {graphData, ValueType::Bool, initialValue.node};
+    }
+
+    Var<Int> var(const Int& initialValue)
+    {
+        return {graphData, ValueType::Int, initialValue.node};
     }
 
     // The statements. Each body is a callable recording into a block of its

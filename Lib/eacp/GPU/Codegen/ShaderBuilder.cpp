@@ -21,8 +21,9 @@ VertexFormat toVertexFormat(ValueType type)
         case ValueType::Float3x3:
         case ValueType::Float4x4:
         case ValueType::UInt:
+        case ValueType::Int:
         case ValueType::Bool:
-            return VertexFormat::Float4; // matrix/uint/bool are never attributes
+            return VertexFormat::Float4; // matrix/integer/bool are never attributes
     }
 
     return VertexFormat::Float;

@@ -1484,6 +1484,185 @@ auto tCodegenComputeCompiles = test("GPU/codegenComputeCompiles") = []
     check(pipeline.isValid());
 };
 
+// The integer vocabulary: the literal, the operators no float has, and the two
+// explicit crossings between int and float arithmetic. All of it spells
+// identically in MSL and HLSL, so both backends are checked against the same
+// text. Pure string generation.
+auto tCodegenIntegerOperators = test("GPU/codegenIntegerOperators") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto index = toInt(carried.x() * 4.0f) & 3;
+    auto scrambled = ((index << 2) | (index >> 1)) ^ ~index;
+    auto shade = toFloat(scrambled % 5) * 0.2f;
+
+    builder.fragment(float4(shade, shade, shade, 1.0f));
+
+    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        // An int literal carries no suffix - unlike a uint's - and the
+        // truncating cast is a constructor-style one in both languages.
+        check(contains(source, "int t0 = (int(((input.v0).x * 4.0)) & 3);"));
+
+        // The two shifts, which are the only operators here that do not fit in
+        // the char the graph carries an operator in.
+        check(contains(source, "(t0 << 2)"));
+        check(contains(source, "(t0 >> 1)"));
+
+        check(contains(source, "(~(t0))"));
+        check(contains(source, "% 5)"));
+        check(contains(source, "float("));
+    }
+};
+
+// An Int crosses from the CPU, which is what separates it from a Bool and from
+// the small matrices: MSL and HLSL both give a signed integer four bytes and
+// pack it exactly where they pack a float, so the block needs no padding to
+// reconcile them and a shader can be handed an index rather than a float to
+// truncate. Pure string generation.
+auto tCodegenIntegerUniform = test("GPU/codegenIntegerUniform") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto first = builder.uniform<Int>();
+    auto scale = builder.uniform<Float>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto shade = toFloat(first + 1) * scale * carried.x();
+    builder.fragment(float4(shade, shade, shade, 1.0f));
+
+    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        check(contains(source, "int u0;"));
+        check(contains(source, "float u1;"));
+        check(contains(source, "float((uniforms.u0 + 1))"));
+
+        // Two four-byte scalars in a row: the two rule sets agree on where the
+        // second one lands, so nothing is padded between them.
+        check(!contains(source, "pad"));
+    }
+
+    // And the CPU block is what the two of them add up to.
+    auto types = Vector<ValueType> {};
+    types.add(ValueType::Int);
+    types.add(ValueType::Float);
+
+    auto offsets = uniformOffsets(types);
+    check(offsets[0] == 0);
+    check(offsets[1] == 4);
+};
+
+// A constant array is declared once at the top of the stage that subscripts it,
+// and nowhere else: not in the vertex function, which never reads it. Pure
+// string generation.
+auto tCodegenConstantArray = test("GPU/codegenConstantArray") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto palette = builder.array(float3(builder.constant(0.1f), 0.1f, 0.2f),
+                                 float3(builder.constant(0.9f), 0.4f, 0.2f),
+                                 float3(builder.constant(0.2f), 0.8f, 0.6f),
+                                 float3(builder.constant(1.0f), 0.9f, 0.7f));
+
+    auto index = toInt(carried.x() * 4.0f) & 3;
+    auto picked = palette[index];
+
+    builder.fragment(float4(picked * 0.5f + picked * 0.5f + palette[0], 1.0f));
+
+    auto declaration = std::string {
+        "const float3 a0[4] = {float3(0.1, 0.1, 0.2), float3(0.9, 0.4, 0.2), "
+        "float3(0.2, 0.8, 0.6), float3(1.0, 0.9, 0.7)};"};
+
+    auto read = std::string {"float3 t0 = a0[(int(((input.v0).x * 4.0)) & 3)];"};
+
+    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        check(countOccurrences(source, declaration) == 1);
+
+        // A subscript read twice is named, like any other shared operation, so
+        // the array is indexed once rather than at every use.
+        check(countOccurrences(source, read) == 1);
+        check(countOccurrences(source, "t0") == 3);
+
+        // The literal subscript, and the declaration before either read.
+        check(contains(source, "a0[0]"));
+        check(source.find(declaration) < source.find(read));
+
+        // The array lives in the fragment function, which is the only stage
+        // that reads it.
+        check(source.find("fragmentMain") < source.find(declaration));
+    }
+};
+
+// Integers and an array through the real platform shader compiler, shaped like
+// what asks for them: a palette picked by an index the shader truncates out of
+// a coordinate and masks into range. The emitted text says the vocabulary is
+// there; only the compiler says the language will take it. Self-skips without a
+// GPU device.
+auto tCodegenIntegersCompile = test("GPU/codegenIntegersCompile") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto time = builder.uniform<Float>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto palette = builder.array(float3(builder.constant(0.1f), 0.1f, 0.2f),
+                                 float3(builder.constant(0.9f), 0.4f, 0.2f),
+                                 float3(builder.constant(0.2f), 0.8f, 0.6f),
+                                 float3(builder.constant(1.0f), 0.9f, 0.7f));
+
+    // A signed index that a negative coordinate really does make negative, held
+    // in range two different ways: the mask, and the clamp.
+    auto raw = toInt(carried.x() * 4.0f);
+    auto masked = raw & 3;
+    auto clamped = min(max(raw, 0), 3);
+
+    auto step = builder.var(0);
+
+    builder.loop(
+        step < 4,
+        [&]
+        { builder.ifThen(step % 2 == 0, [&] { step += 2; }, [&] { step += 1; }); });
+
+    auto shade = toFloat(step.get() + (masked << 1) - (clamped >> 1)) * 0.05f;
+    auto color = palette[masked] + palette[clamped] * shade + sin(time) * 0.0f;
+
+    builder.fragment(float4(color, 1.0f));
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    auto pipeline = device.makeRenderPipeline(descriptor);
+    check(pipeline.isValid());
+};
+
 // Compiles the rotating shader (with its uniform block) through the real
 // platform shader compiler. Self-skips without a GPU device.
 auto tCodegenUniformCompiles = test("GPU/codegenUniformCompiles") = []

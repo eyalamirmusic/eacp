@@ -75,6 +75,15 @@ int ShaderGraph::addUIntConstant(unsigned value)
     return add(std::move(node));
 }
 
+int ShaderGraph::addIntConstant(int value)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Constant;
+    node.type = ValueType::Int;
+    node.index = value;
+    return add(std::move(node));
+}
+
 int ShaderGraph::addBoolConstant(bool value)
 {
     auto node = Expr {};
@@ -139,6 +148,17 @@ int ShaderGraph::addBinary(ValueType type, char op, int lhs, int rhs)
     node.kind = ExprKind::Binary;
     node.type = type;
     node.op = op;
+    node.args.add(lhs);
+    node.args.add(rhs);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addBinary(ValueType type, std::string op, int lhs, int rhs)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Binary;
+    node.type = type;
+    node.text = std::move(op);
     node.args.add(lhs);
     node.args.add(rhs);
     return add(std::move(node));
@@ -213,6 +233,22 @@ int ShaderGraph::addFetch(int textureSlot, int coordinates)
     node.type = ValueType::Float4;
     node.index = textureSlot;
     node.args.add(coordinates);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addArray(ValueType elementType, Vector<int> elements)
+{
+    arrayConstants.add({elementType, std::move(elements)});
+    return arrayConstants.size() - 1;
+}
+
+int ShaderGraph::addArrayRead(int slot, int index)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::ArrayRead;
+    node.type = arrayConstants[slot].elementType;
+    node.index = slot;
+    node.args.add(index);
     return add(std::move(node));
 }
 
