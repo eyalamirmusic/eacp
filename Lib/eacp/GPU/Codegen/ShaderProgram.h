@@ -97,6 +97,27 @@ struct CpuValueOf<Int>
     using type = std::int32_t;
 };
 
+// The integer vectors cross from the CPU exactly as the float ones do, and read
+// as the packed data they are. There is deliberately no CpuValueOf for a Bool
+// or a boolean vector: ShaderBuilder refuses those as uniforms.
+template <>
+struct CpuValueOf<Int2>
+{
+    using type = std::array<std::int32_t, 2>;
+};
+
+template <>
+struct CpuValueOf<Int3>
+{
+    using type = std::array<std::int32_t, 3>;
+};
+
+template <>
+struct CpuValueOf<Int4>
+{
+    using type = std::array<std::int32_t, 4>;
+};
+
 // The shader value a CPU type maps to. Built in for float / float[N] / array; a
 // user type opts in either intrusively (a `using ShaderValue = Float3;` member,
 // like MIRO_REFLECT) or non-intrusively via EACP_SHADER_VALUE (like
@@ -274,7 +295,13 @@ inline VertexFormat toVertexFormat(ValueType type)
         case ValueType::Float4x4:
         case ValueType::UInt:
         case ValueType::Int:
+        case ValueType::Int2:
+        case ValueType::Int3:
+        case ValueType::Int4:
         case ValueType::Bool:
+        case ValueType::Bool2:
+        case ValueType::Bool3:
+        case ValueType::Bool4:
             return VertexFormat::Float4; // matrix/integer/bool are never attributes
     }
 

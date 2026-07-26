@@ -17,6 +17,14 @@ struct Float;
 struct Float2;
 struct Float3;
 struct Float4;
+struct Int;
+struct Int2;
+struct Int3;
+struct Int4;
+struct Bool;
+struct Bool2;
+struct Bool3;
+struct Bool4;
 
 namespace detail
 {
@@ -110,20 +118,73 @@ constexpr bool spellableAt(int width, const char* components)
     EACP_SWIZZLE_QUAD_ROW(QUAD, w)
 // clang-format on
 
+// One vector family: the four widths a swizzle can land in and the graph types
+// that go with them. Naming the family is what lets one set of accessors serve
+// all three - a swizzle of a Float2 is a Float, of an Int2 an Int, of a Bool4 a
+// Bool - rather than three copies of the same 340 declarations differing only
+// in what they return.
+template <typename One,
+          typename Two,
+          typename Three,
+          typename Four,
+          ValueType OneType,
+          ValueType TwoType,
+          ValueType ThreeType,
+          ValueType FourType>
+struct Family
+{
+    using Component = One;
+    using Pair = Two;
+    using Triple = Three;
+    using Quad = Four;
+
+    static constexpr ValueType componentType = OneType;
+    static constexpr ValueType pairType = TwoType;
+    static constexpr ValueType tripleType = ThreeType;
+    static constexpr ValueType quadType = FourType;
+};
+
+using Floats = Family<Float,
+                      Float2,
+                      Float3,
+                      Float4,
+                      ValueType::Float,
+                      ValueType::Float2,
+                      ValueType::Float3,
+                      ValueType::Float4>;
+
+using Ints = Family<Int,
+                    Int2,
+                    Int3,
+                    Int4,
+                    ValueType::Int,
+                    ValueType::Int2,
+                    ValueType::Int3,
+                    ValueType::Int4>;
+
+using Bools = Family<Bool,
+                     Bool2,
+                     Bool3,
+                     Bool4,
+                     ValueType::Bool,
+                     ValueType::Bool2,
+                     ValueType::Bool3,
+                     ValueType::Bool4>;
+
 #define EACP_DECLARE_SWIZZLE_1(a)                                                   \
-    Float a() const                                                                 \
+    typename Group::Component a() const                                             \
         requires(spellableAt(Width, #a));
 
 #define EACP_DECLARE_SWIZZLE_2(a, b)                                                \
-    Float2 a##b() const                                                             \
+    typename Group::Pair a##b() const                                               \
         requires(spellableAt(Width, #a #b));
 
 #define EACP_DECLARE_SWIZZLE_3(a, b, c)                                             \
-    Float3 a##b##c() const                                                          \
+    typename Group::Triple a##b##c() const                                          \
         requires(spellableAt(Width, #a #b #c));
 
 #define EACP_DECLARE_SWIZZLE_4(a, b, c, d)                                          \
-    Float4 a##b##c##d() const                                                       \
+    typename Group::Quad a##b##c##d() const                                         \
         requires(spellableAt(Width, #a #b #c #d));
 
 // Every ordering of one to four components, constrained to the widths that can
@@ -135,7 +196,7 @@ constexpr bool spellableAt(int width, const char* components)
 // that returns a Float2 and a Float2 that returns a Float3 cannot both be
 // defined first, and a definition - unlike a declaration - needs its return
 // type complete the moment the class is instantiated.
-template <int Width>
+template <typename Group, int Width>
 struct Swizzles : ValueHandle
 {
     EACP_SWIZZLES(EACP_DECLARE_SWIZZLE_1,
@@ -183,50 +244,82 @@ struct Bool : detail::ValueHandle
 {
 };
 
-struct Float2 : detail::Swizzles<2>
+struct Float2 : detail::Swizzles<detail::Floats, 2>
 {
 };
 
-struct Float3 : detail::Swizzles<3>
+struct Float3 : detail::Swizzles<detail::Floats, 3>
 {
 };
 
-struct Float4 : detail::Swizzles<4>
+struct Float4 : detail::Swizzles<detail::Floats, 4>
+{
+};
+
+// The integer vectors: the cell a shader working on a grid counts, the texel
+// coordinate it addresses, the pair of counters it walks a neighbourhood with.
+// They carry the whole integer operator set componentwise, and cross into float
+// arithmetic explicitly with toInt() and toFloat(), exactly as the scalar does.
+struct Int2 : detail::Swizzles<detail::Ints, 2>
+{
+};
+
+struct Int3 : detail::Swizzles<detail::Ints, 3>
+{
+};
+
+struct Int4 : detail::Swizzles<detail::Ints, 4>
+{
+};
+
+// The boolean vectors: what comparing two vectors yields, one component at a
+// time. There is no arithmetic on one and nothing tests one directly - a branch
+// and a select take a scalar condition - so what a shader does with one is
+// collapse it with any() or all(), which is what makes the comparison useful.
+struct Bool2 : detail::Swizzles<detail::Bools, 2>
+{
+};
+
+struct Bool3 : detail::Swizzles<detail::Bools, 3>
+{
+};
+
+struct Bool4 : detail::Swizzles<detail::Bools, 4>
 {
 };
 
 namespace detail
 {
 #define EACP_DEFINE_SWIZZLE_1(a)                                                    \
-    template <int Width>                                                            \
-    Float Swizzles<Width>::a() const                                                \
+    template <typename Group, int Width>                                            \
+    typename Group::Component Swizzles<Group, Width>::a() const                     \
         requires(spellableAt(Width, #a))                                            \
     {                                                                               \
-        return swizzle<Float>(ValueType::Float, #a);                                \
+        return swizzle<typename Group::Component>(Group::componentType, #a);        \
     }
 
 #define EACP_DEFINE_SWIZZLE_2(a, b)                                                 \
-    template <int Width>                                                            \
-    Float2 Swizzles<Width>::a##b() const                                            \
+    template <typename Group, int Width>                                            \
+    typename Group::Pair Swizzles<Group, Width>::a##b() const                       \
         requires(spellableAt(Width, #a #b))                                         \
     {                                                                               \
-        return swizzle<Float2>(ValueType::Float2, #a #b);                           \
+        return swizzle<typename Group::Pair>(Group::pairType, #a #b);               \
     }
 
 #define EACP_DEFINE_SWIZZLE_3(a, b, c)                                              \
-    template <int Width>                                                            \
-    Float3 Swizzles<Width>::a##b##c() const                                         \
+    template <typename Group, int Width>                                            \
+    typename Group::Triple Swizzles<Group, Width>::a##b##c() const                  \
         requires(spellableAt(Width, #a #b #c))                                      \
     {                                                                               \
-        return swizzle<Float3>(ValueType::Float3, #a #b #c);                        \
+        return swizzle<typename Group::Triple>(Group::tripleType, #a #b #c);        \
     }
 
 #define EACP_DEFINE_SWIZZLE_4(a, b, c, d)                                           \
-    template <int Width>                                                            \
-    Float4 Swizzles<Width>::a##b##c##d() const                                      \
+    template <typename Group, int Width>                                            \
+    typename Group::Quad Swizzles<Group, Width>::a##b##c##d() const                 \
         requires(spellableAt(Width, #a #b #c #d))                                   \
     {                                                                               \
-        return swizzle<Float4>(ValueType::Float4, #a #b #c #d);                     \
+        return swizzle<typename Group::Quad>(Group::quadType, #a #b #c #d);         \
     }
 
 EACP_SWIZZLES(EACP_DEFINE_SWIZZLE_1,
@@ -320,10 +413,20 @@ inline Float4
 }
 
 // One texel, addressed in texels rather than in the [0, 1] the sampler works
-// in, and read without it: no filtering, no wrap, no interpolation. The
-// coordinates arrive as a Float2 because the EDSL has no integer vector; they
-// truncate towards zero, exactly as GLSL's ivec2 conversion does, and a
+// in, and read without it: no filtering, no wrap, no interpolation. A
 // coordinate outside the texture reads as zero on both backends.
+//
+// An Int2 is what a texel index is, and what GLSL's texelFetch takes. The
+// Float2 form stays because a shader usually has the coordinate in hand as one:
+// it truncates towards zero, exactly as GLSL's ivec2 conversion does.
+inline Float4 fetch(const Texture2D& texture, const Int2& coordinates)
+{
+    auto result = Float4 {};
+    result.graph = texture.graph;
+    result.node = texture.graph->addFetch(texture.slot, coordinates.node);
+    return result;
+}
+
 inline Float4 fetch(const Texture2D& texture, const Float2& coordinates)
 {
     auto result = Float4 {};
@@ -415,9 +518,45 @@ struct ValueTypeOf<Int>
 };
 
 template <>
+struct ValueTypeOf<Int2>
+{
+    static constexpr ValueType value = ValueType::Int2;
+};
+
+template <>
+struct ValueTypeOf<Int3>
+{
+    static constexpr ValueType value = ValueType::Int3;
+};
+
+template <>
+struct ValueTypeOf<Int4>
+{
+    static constexpr ValueType value = ValueType::Int4;
+};
+
+template <>
 struct ValueTypeOf<Bool>
 {
     static constexpr ValueType value = ValueType::Bool;
+};
+
+template <>
+struct ValueTypeOf<Bool2>
+{
+    static constexpr ValueType value = ValueType::Bool2;
+};
+
+template <>
+struct ValueTypeOf<Bool3>
+{
+    static constexpr ValueType value = ValueType::Bool3;
+};
+
+template <>
+struct ValueTypeOf<Bool4>
+{
+    static constexpr ValueType value = ValueType::Bool4;
 };
 
 namespace detail
@@ -425,11 +564,68 @@ namespace detail
 // The plain handle type a possibly-derived handle maps back to: a
 // Uniform<Float3> member is a Float3 to every operator and intrinsic below.
 // Declared, never defined - overload resolution does the mapping.
+//
+// Float handles only, which is what makes ShaderValueLike below mean "in the
+// float vocabulary": sin() and mix() must not quietly accept an Int2. The
+// integer and boolean families answer the same question through handleOf().
 Float baseOf(const Float&);
 Float2 baseOf(const Float2&);
 Float3 baseOf(const Float3&);
 Float4 baseOf(const Float4&);
+
+// The same mapping over every family, for the places that genuinely take any of
+// them: a vector constructor's arguments, and the width its components add up
+// to. Split from baseOf so that widening the one does not widen the other.
+Float handleOf(const Float&);
+Float2 handleOf(const Float2&);
+Float3 handleOf(const Float3&);
+Float4 handleOf(const Float4&);
+Int handleOf(const Int&);
+Int2 handleOf(const Int2&);
+Int3 handleOf(const Int3&);
+Int4 handleOf(const Int4&);
+Bool handleOf(const Bool&);
+Bool2 handleOf(const Bool2&);
+Bool3 handleOf(const Bool3&);
+Bool4 handleOf(const Bool4&);
 } // namespace detail
+
+// The handle type T stands in for, in whichever family it belongs to.
+template <typename T>
+using ShaderHandle = decltype(detail::handleOf(std::declval<const T&>()));
+
+// T is a handle (or a Uniform<> of one) in the given family.
+template <typename T>
+concept ShaderHandleLike = requires(const T& value) { detail::handleOf(value); };
+
+template <typename T>
+concept IntValueLike =
+    ShaderHandleLike<T> && isSignedInteger(ValueTypeOf<ShaderHandle<T>>::value);
+
+template <typename T>
+concept BoolValueLike =
+    ShaderHandleLike<T> && isBoolean(ValueTypeOf<ShaderHandle<T>>::value);
+
+// An integer or boolean *vector* specifically - what a componentwise operator
+// takes and what any()/all() collapses.
+template <typename T>
+concept IntVectorLike =
+    IntValueLike<T> && ValueTypeOf<ShaderHandle<T>>::value != ValueType::Int;
+
+template <typename T>
+concept BoolVectorLike =
+    BoolValueLike<T> && ValueTypeOf<ShaderHandle<T>>::value != ValueType::Bool;
+
+template <typename T>
+concept IntScalarLike =
+    IntValueLike<T> && ValueTypeOf<ShaderHandle<T>>::value == ValueType::Int;
+
+// Two handles of exactly the same type, whichever family they are in - the
+// integer and boolean counterpart of SameShaderShape, so that an Int2 and a
+// Uniform<Int2> count as the same operand shape.
+template <typename T, typename Other>
+concept SameShaderHandle =
+    ShaderHandleLike<Other> && std::same_as<ShaderHandle<T>, ShaderHandle<Other>>;
 
 // Any value handle, or a type derived from one (e.g. a Uniform<> member), so
 // uniforms and vertex inputs work directly in expressions.
@@ -1110,16 +1306,23 @@ inline Bool compare(const char* op, const ValueHandle& lhs, const ValueHandle& r
     result.node = lhs.graph->addCompare(op, lhs.node, rhs.node);
     return result;
 }
+
+// The componentwise form: same node, same spelling, a mask of the operands'
+// width for a result.
+template <typename Mask>
+Mask compareWide(const char* op, const ValueHandle& lhs, const ValueHandle& rhs)
+{
+    auto result = Mask {};
+    result.graph = lhs.graph;
+    result.node =
+        lhs.graph->addCompare(ValueTypeOf<Mask>::value, op, lhs.node, rhs.node);
+    return result;
+}
 } // namespace detail
 
 // Comparisons, on scalars and against scalar literals on either side. Two
 // values of the same shape or a value and a float, the way every other binary
 // operator here takes them.
-//
-// Scalars only, deliberately: both shading languages give `<` on two vectors a
-// componentwise bool vector, and there is nothing in the EDSL to do with one -
-// no bool vector type, and no any()/all() to collapse it. A shader comparing
-// vectors compares their components.
 #define EACP_COMPARISON(name, spelling)                                             \
     template <ShaderScalarLike L, ShaderScalarLike R>                               \
     Bool name(const L& lhs, const R& rhs)                                           \
@@ -1148,6 +1351,47 @@ EACP_COMPARISON(operator!=, "!=")
 
 #undef EACP_COMPARISON
 
+// The componentwise comparisons, on two vectors of the same shape. GLSL spells
+// these lessThan(), greaterThanEqual() and so on because it reserves the
+// operators for scalars; both languages this emits into give the operator
+// itself to a vector pair and yield a boolean of the same width, so that is
+// what the EDSL spells - and a ported shader's lessThan(a, b) becomes a < b.
+//
+// The result is a mask, not a condition: nothing branches on one directly, so
+// collapse it with any() or all() to get something ifThen() or select() takes.
+#define EACP_VECTOR_COMPARISON_AT(name, spelling, Vector, Mask)                     \
+    template <ShaderShape<Vector> L, SameShaderShape<L> R>                          \
+    Mask name(const L& lhs, const R& rhs)                                           \
+    {                                                                               \
+        return detail::compareWide<Mask>(spelling, lhs, rhs);                       \
+    }
+
+#define EACP_INT_VECTOR_COMPARISON_AT(name, spelling, Vector, Mask)                 \
+    template <SameShaderHandle<Vector> L, SameShaderHandle<L> R>                    \
+    Mask name(const L& lhs, const R& rhs)                                           \
+    {                                                                               \
+        return detail::compareWide<Mask>(spelling, lhs, rhs);                       \
+    }
+
+#define EACP_VECTOR_COMPARISON(name, spelling)                                      \
+    EACP_VECTOR_COMPARISON_AT(name, spelling, Float2, Bool2)                        \
+    EACP_VECTOR_COMPARISON_AT(name, spelling, Float3, Bool3)                        \
+    EACP_VECTOR_COMPARISON_AT(name, spelling, Float4, Bool4)                        \
+    EACP_INT_VECTOR_COMPARISON_AT(name, spelling, Int2, Bool2)                      \
+    EACP_INT_VECTOR_COMPARISON_AT(name, spelling, Int3, Bool3)                      \
+    EACP_INT_VECTOR_COMPARISON_AT(name, spelling, Int4, Bool4)
+
+EACP_VECTOR_COMPARISON(operator<, "<")
+EACP_VECTOR_COMPARISON(operator<=, "<=")
+EACP_VECTOR_COMPARISON(operator>, ">")
+EACP_VECTOR_COMPARISON(operator>=, ">=")
+EACP_VECTOR_COMPARISON(operator==, "==")
+EACP_VECTOR_COMPARISON(operator!=, "!=")
+
+#undef EACP_VECTOR_COMPARISON
+#undef EACP_VECTOR_COMPARISON_AT
+#undef EACP_INT_VECTOR_COMPARISON_AT
+
 // The logical connectives. Overloading && and || gives up C++'s short-circuit -
 // both operands are recorded either way - but the emitted operator is the
 // language's own, so the shader itself still skips the right-hand side. That
@@ -1166,6 +1410,33 @@ inline Bool operator||(const Bool& lhs, const Bool& rhs)
 inline Bool operator!(const Bool& value)
 {
     return detail::unaryOp<Bool>('!', value);
+}
+
+// What collapses a mask into something a branch or a select can test: true when
+// every component is, and when any one is. Both languages spell them the same,
+// and both take the scalar Bool too, where they are the identity - so a shader
+// that widens a comparison later does not have to unpick them.
+//
+// This is the half that makes a componentwise comparison worth having. GLSL
+// needs them for exactly the same reason, under exactly these names.
+template <BoolValueLike T>
+Bool all(const T& mask)
+{
+    return detail::call<Bool>(mask, ValueType::Bool, "all");
+}
+
+template <BoolValueLike T>
+Bool any(const T& mask)
+{
+    return detail::call<Bool>(mask, ValueType::Bool, "any");
+}
+
+// The componentwise negation, which GLSL spells not() because it cannot
+// overload the operator. Both backends take the operator itself on a mask.
+template <BoolVectorLike T>
+ShaderHandle<T> operator!(const T& mask)
+{
+    return detail::unaryOp<ShaderHandle<T>>('!', mask);
 }
 
 namespace detail
@@ -1452,6 +1723,92 @@ inline Int operator~(const Int& value)
     return detail::unaryOp<Int>('~', value);
 }
 
+// The same set componentwise, on the integer vectors: against another vector of
+// the same width, against a scalar Int or an integer literal broadcast across
+// it, both ways round. Every one of them is what the two shading languages
+// already do with a vector and a scalar, so none of these is spelled out as a
+// constructor.
+#define EACP_INT_VECTOR_OPERATOR(name, spelling)                                    \
+    template <IntVectorLike L, SameShaderHandle<L> R>                               \
+    ShaderHandle<L> name(const L& lhs, const R& rhs)                                \
+    {                                                                               \
+        return detail::binaryOp<ShaderHandle<L>>(spelling, lhs, rhs);               \
+    }                                                                               \
+                                                                                    \
+    template <IntVectorLike L, IntScalarLike R>                                     \
+    ShaderHandle<L> name(const L& lhs, const R& rhs)                                \
+    {                                                                               \
+        return detail::binaryOp<ShaderHandle<L>>(spelling, lhs, rhs);               \
+    }                                                                               \
+                                                                                    \
+    template <IntScalarLike L, IntVectorLike R>                                     \
+    ShaderHandle<R> name(const L& lhs, const R& rhs)                                \
+    {                                                                               \
+        return detail::binaryOp<ShaderHandle<R>>(spelling, lhs, rhs);               \
+    }                                                                               \
+                                                                                    \
+    template <IntVectorLike L>                                                      \
+    ShaderHandle<L> name(const L& lhs, int rhs)                                     \
+    {                                                                               \
+        return detail::binaryOp<ShaderHandle<L>>(                                   \
+            spelling, lhs, detail::intConstantOn(lhs, rhs));                        \
+    }                                                                               \
+                                                                                    \
+    template <IntVectorLike R>                                                      \
+    ShaderHandle<R> name(int lhs, const R& rhs)                                     \
+    {                                                                               \
+        return detail::binaryOp<ShaderHandle<R>>(                                   \
+            spelling, detail::intConstantOn(rhs, lhs), rhs);                        \
+    }
+
+EACP_INT_VECTOR_OPERATOR(operator+, '+')
+EACP_INT_VECTOR_OPERATOR(operator-, '-')
+EACP_INT_VECTOR_OPERATOR(operator*, '*')
+EACP_INT_VECTOR_OPERATOR(operator/, '/')
+EACP_INT_VECTOR_OPERATOR(operator%, '%')
+EACP_INT_VECTOR_OPERATOR(operator&, '&')
+EACP_INT_VECTOR_OPERATOR(operator|, '|')
+EACP_INT_VECTOR_OPERATOR(operator^, '^')
+EACP_INT_VECTOR_OPERATOR(operator<<, "<<")
+EACP_INT_VECTOR_OPERATOR(operator>>, ">>")
+
+#undef EACP_INT_VECTOR_OPERATOR
+
+template <IntVectorLike T>
+ShaderHandle<T> operator-(const T& value)
+{
+    return detail::unaryOp<ShaderHandle<T>>('-', value);
+}
+
+template <IntVectorLike T>
+ShaderHandle<T> operator~(const T& value)
+{
+    return detail::unaryOp<ShaderHandle<T>>('~', value);
+}
+
+// min/max/abs componentwise, the vector half of what holds a scalar index in
+// range - here it is a cell held inside a grid.
+template <IntVectorLike L, SameShaderHandle<L> R>
+ShaderHandle<L> min(const L& a, const R& b)
+{
+    return detail::call2<ShaderHandle<L>>(
+        a, b, ValueTypeOf<ShaderHandle<L>>::value, "min");
+}
+
+template <IntVectorLike L, SameShaderHandle<L> R>
+ShaderHandle<L> max(const L& a, const R& b)
+{
+    return detail::call2<ShaderHandle<L>>(
+        a, b, ValueTypeOf<ShaderHandle<L>>::value, "max");
+}
+
+template <IntVectorLike T>
+ShaderHandle<T> abs(const T& value)
+{
+    return detail::call<ShaderHandle<T>>(
+        value, ValueTypeOf<ShaderHandle<T>>::value, "abs");
+}
+
 // Integer comparisons, which the float ones cannot cover: those are constrained
 // on the float scalar shape, and an Int is deliberately not one.
 #define EACP_INT_COMPARISON(name, spelling)                                         \
@@ -1509,15 +1866,66 @@ inline Int abs(const Int& value)
 // Crossing between the integer and the float vocabularies, explicit in both
 // directions. The constructor-style cast spells identically in MSL and HLSL,
 // and truncates towards zero on the way to an int exactly as GLSL's int() does.
+namespace detail
+{
+// The cast is spelled with the target's own type name, so the two can never
+// drift apart: int2(v) on the way in, float2(v) on the way back.
+template <typename Result, typename T>
+Result convertTo(const T& value)
+{
+    constexpr auto type = ValueTypeOf<Result>::value;
+    return call<Result>(value, type, typeName(type));
+}
+} // namespace detail
+
 inline Float toFloat(const Int& value)
 {
-    return detail::call<Float>(value, ValueType::Float, "float");
+    return detail::convertTo<Float>(value);
 }
 
 template <ShaderScalarLike T>
 Int toInt(const T& value)
 {
-    return detail::call<Int>(value, ValueType::Int, "int");
+    return detail::convertTo<Int>(value);
+}
+
+// And the same crossing a whole vector at a time, which is what a shader
+// counting a grid cell out of a coordinate writes: every component truncates
+// towards zero, exactly as the scalar does.
+template <ShaderShape<Float2> T>
+Int2 toInt(const T& value)
+{
+    return detail::convertTo<Int2>(value);
+}
+
+template <ShaderShape<Float3> T>
+Int3 toInt(const T& value)
+{
+    return detail::convertTo<Int3>(value);
+}
+
+template <ShaderShape<Float4> T>
+Int4 toInt(const T& value)
+{
+    return detail::convertTo<Int4>(value);
+}
+
+template <SameShaderHandle<Int2> T>
+Float2 toFloat(const T& value)
+{
+    return detail::convertTo<Float2>(value);
+}
+
+template <SameShaderHandle<Int3> T>
+Float3 toFloat(const T& value)
+{
+    return detail::convertTo<Float3>(value);
+}
+
+template <SameShaderHandle<Int4> T>
+Float4 toFloat(const T& value)
+{
+    return detail::convertTo<Float4>(value);
 }
 
 // A constant array the shader subscripts: a palette, a set of offsets, any small
@@ -1738,5 +2146,129 @@ template <typename... Args>
 Float4 float4(const Args&... args)
 {
     return detail::constructFrom<Float4>(ValueType::Float4, args...);
+}
+
+namespace detail
+{
+// The same machinery for the integer and boolean families. It is separate from
+// the float one because a literal has to become a constant of the right kind -
+// int2(cell.x, 1) records an integer 1, not a float one - and because the
+// concepts are what keep the three families from mixing: an Int in a float2()
+// is a type error in GLSL, and stays one here.
+template <typename T>
+constexpr int handleComponentsOf()
+{
+    if constexpr (std::is_arithmetic_v<T>)
+        return 1;
+    else
+        return componentCount(ValueTypeOf<ShaderHandle<T>>::value);
+}
+
+inline ShaderGraph* handleGraphOf()
+{
+    return nullptr;
+}
+
+template <typename First, typename... Rest>
+ShaderGraph* handleGraphOf(const First& first, const Rest&... rest)
+{
+    if constexpr (std::is_arithmetic_v<First>)
+        return handleGraphOf(rest...);
+    else
+        return first.graph;
+}
+
+template <typename T>
+int intNodeOf(ShaderGraph& graph, const T& value)
+{
+    if constexpr (std::is_arithmetic_v<T>)
+        return graph.addIntConstant((int) value);
+    else
+        return ShaderHandle<T>(value).node;
+}
+
+template <typename T>
+int boolNodeOf(ShaderGraph& graph, const T& value)
+{
+    if constexpr (std::is_arithmetic_v<T>)
+        return graph.addBoolConstant(value != 0);
+    else
+        return ShaderHandle<T>(value).node;
+}
+
+template <typename Result, bool Integer, typename... Args>
+Result buildFrom(const Args&... args)
+{
+    auto& graph = *handleGraphOf(args...);
+
+    auto nodes = Vector<int> {};
+
+    if constexpr (Integer)
+        (nodes.add(intNodeOf(graph, args)), ...);
+    else
+        (nodes.add(boolNodeOf(graph, args)), ...);
+
+    auto result = Result {};
+    result.graph = &graph;
+    result.node = graph.addConstruct(ValueTypeOf<Result>::value, std::move(nodes));
+    return result;
+}
+} // namespace detail
+
+// A pack filling an integer or a boolean vector of the given width: handles of
+// that family and literals of the matching kind, with at least one handle to
+// supply the graph a wholly literal vector lacks - the same rule the float
+// constructors carry, for the same reason.
+template <int Width, typename... Args>
+concept IntComponentsFor = ((IntValueLike<Args> || std::is_integral_v<Args>) && ...)
+                           && (detail::handleComponentsOf<Args>() + ... + 0) == Width
+                           && (IntValueLike<Args> || ...);
+
+template <int Width, typename... Args>
+concept BoolComponentsFor =
+    ((BoolValueLike<Args> || std::is_same_v<Args, bool>) && ...)
+    && (detail::handleComponentsOf<Args>() + ... + 0) == Width
+    && (BoolValueLike<Args> || ...);
+
+template <typename... Args>
+    requires IntComponentsFor<2, Args...>
+Int2 int2(const Args&... args)
+{
+    return detail::buildFrom<Int2, true>(args...);
+}
+
+template <typename... Args>
+    requires IntComponentsFor<3, Args...>
+Int3 int3(const Args&... args)
+{
+    return detail::buildFrom<Int3, true>(args...);
+}
+
+template <typename... Args>
+    requires IntComponentsFor<4, Args...>
+Int4 int4(const Args&... args)
+{
+    return detail::buildFrom<Int4, true>(args...);
+}
+
+template <typename... Args>
+    requires BoolComponentsFor<2, Args...>
+Bool2 bool2(const Args&... args)
+{
+    return detail::buildFrom<Bool2, false>(args...);
+}
+
+template <typename... Args>
+    requires BoolComponentsFor<3, Args...>
+Bool3 bool3(const Args&... args)
+{
+    return detail::buildFrom<Bool3, false>(args...);
+}
+
+template <typename... Args>
+    requires BoolComponentsFor<4, Args...>
+Bool4 bool4(const Args&... args)
+{
+    return detail::buildFrom<Bool4, false>(args...);
 }
 } // namespace eacp::GPU

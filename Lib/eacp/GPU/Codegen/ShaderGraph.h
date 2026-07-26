@@ -170,6 +170,11 @@ public:
     int addBinary(ValueType type, std::string op, int lhs, int rhs);
 
     int addCompare(std::string op, int lhs, int rhs);
+
+    // The componentwise form, whose result is a boolean of the operands' width
+    // rather than a scalar. Both languages give `<` on two vectors exactly this,
+    // so the node prints the same way the scalar one does.
+    int addCompare(ValueType type, std::string op, int lhs, int rhs);
     int addSelect(ValueType type, int condition, int whenTrue, int whenFalse);
     int addMul(ValueType type, int matrix, int vector);
 

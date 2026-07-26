@@ -246,13 +246,16 @@ struct ExprPrinter
             case ExprKind::Fetch:
             {
                 // A texel read at integer coordinates. Metal takes them
-                // unsigned, so the float2 goes through int2 first: a negative
-                // coordinate then wraps to a large unsigned one and reads as
-                // zero, which is what HLSL's Load does with it directly. The
-                // level is 0 - GPU::Texture has no mips - and D3D carries it in
-                // the coordinate's third component.
+                // unsigned, so anything not already signed-integer goes through
+                // int2 first: a negative coordinate then wraps to a large
+                // unsigned one and reads as zero, which is what HLSL's Load does
+                // with it directly. The level is 0 - GPU::Texture has no mips -
+                // and D3D carries it in the coordinate's third component.
                 auto name = "texture" + std::to_string(expr.index);
-                auto coordinates = "int2(" + ref(expr.args[0]) + ")";
+                auto given = ref(expr.args[0]);
+                auto coordinates = graph.expr(expr.args[0]).type == ValueType::Int2
+                                       ? given
+                                       : "int2(" + given + ")";
 
                 if (backend == Backend::Metal)
                     return name + ".read(uint2(" + coordinates + "))";
