@@ -96,7 +96,7 @@ auto tFramePullLatency = test("VideoPerf/framePullsStayCheapUnderLoad") = []
     // frame's worth of conversion. Gated on p95 rather than the worst sample:
     // the absolute worst is the scheduler's to ruin (ctest runs suites in
     // parallel), while a contended lock would drag the whole distribution.
-    auto scratch = std::array<PlayerFramePixels, 4> {};
+    auto scratch = std::array<FramePixels, 4> {};
     auto polls = std::vector<double> {};
     auto copies = std::vector<double> {};
 

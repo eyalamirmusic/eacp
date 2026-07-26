@@ -75,13 +75,18 @@ Graphics::Rect FramePresenter::drawFitted(Sprites::SpriteRenderer& renderer,
     return imageArea;
 }
 
+void FramePresenter::setUploadMode(UploadMode mode)
+{
+    uploadMode = mode;
+}
+
 Graphics::Rect FramePresenter::drawZeroCopy(Player& player,
                                             Sprites::SpriteRenderer& renderer,
                                             const Graphics::Rect& dst,
                                             Fit fit,
                                             const Graphics::Color& tint)
 {
-    auto* buffer = player.acquireFramePixelBuffer();
+    auto* buffer = player.acquireLatestPixelBuffer();
 
     if (buffer == nullptr)
         return {};
@@ -154,9 +159,12 @@ Graphics::Rect FramePresenter::draw(Player& player,
 {
     resetForPlayer(player);
 
-    auto imageArea = drawZeroCopy(player, renderer, dst, fit, tint);
+    auto imageArea = Graphics::Rect {};
 
-    if (imageArea.isEmpty())
+    if (uploadMode != UploadMode::Copy)
+        imageArea = drawZeroCopy(player, renderer, dst, fit, tint);
+
+    if (imageArea.isEmpty() && uploadMode != UploadMode::ZeroCopy)
         imageArea = drawCpuUpload(player, renderer, dst, fit, tint);
 
     return imageArea;
@@ -167,17 +175,35 @@ VideoView::VideoView()
     // Video is already smooth continuous-tone content, so MSAA buys nothing;
     // keep it at one sample.
     setSampleCount(1);
+
+    arrivalTick = Threads::DisplayLink::timedTick(
+        [this](Threads::FrameTime time)
+        {
+            update(time);
+            renderNow();
+        });
+}
+
+VideoView::~VideoView()
+{
+    *alive = false;
+
+    if (player != nullptr)
+        player->setFrameArrivedCallback({});
 }
 
 void VideoView::attach(Player& playerToUse)
 {
     player = &playerToUse;
-    setContinuous(true);
+    applyRenderMode();
     repaint();
 }
 
 void VideoView::detach()
 {
+    if (player != nullptr)
+        player->setFrameArrivedCallback({});
+
     player = nullptr;
     setContinuous(false);
     repaint();
@@ -186,6 +212,44 @@ void VideoView::detach()
 void VideoView::setFit(Fit fitToUse)
 {
     fit = fitToUse;
+}
+
+void VideoView::setUploadMode(UploadMode mode)
+{
+    presenter.setUploadMode(mode);
+}
+
+void VideoView::setRenderMode(RenderMode mode)
+{
+    renderMode = mode;
+    applyRenderMode();
+}
+
+void VideoView::applyRenderMode()
+{
+    setContinuous(renderMode == RenderMode::Continuous);
+
+    if (player == nullptr)
+        return;
+
+    if (renderMode != RenderMode::OnFrameArrival)
+    {
+        player->setFrameArrivedCallback({});
+        return;
+    }
+
+    // Fires on the player's decode thread; the render is marshalled to the
+    // main thread, where the alive token fences it against a torn-down view.
+    player->setFrameArrivedCallback(
+        [this, guard = alive]
+        {
+            Threads::callAsync(
+                [this, guard]
+                {
+                    if (*guard)
+                        arrivalTick();
+                });
+        });
 }
 
 void VideoView::ensureRenderer()

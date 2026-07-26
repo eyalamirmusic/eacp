@@ -16,7 +16,8 @@ enum class PlayerState
 // (stride == width * 4). Used by the display path on backends without a
 // zero-copy native buffer (Windows) and by pull-based consumers. sequence
 // bumps once per new frame so a consumer can skip work when nothing changed.
-struct PlayerFramePixels
+// The Cameras::FramePixels of the playback path.
+struct FramePixels
 {
     int width = 0;
     int height = 0;
@@ -28,14 +29,17 @@ struct PlayerFramePixels
 // .mp4/.mov and friends — AVFoundation on macOS, Media Foundation on Windows).
 // Deliberately not a codec zoo: normal files play, exotic ones don't.
 //
-// The playback clock, audio and A/V sync are the platform engine's
-// (AVPlayer); frames are pulled on the render thread via
-// acquireFramePixelBuffer() (zero-copy, macOS) or copyLatestFrame() (CPU
-// path), mirroring Cameras::Camera. Drive the calls from the main thread;
-// the frame pulls are safe from the render path.
+// Frame delivery mirrors Cameras::Camera, so the display path is the same
+// shape for both: the player decodes on a thread of its own and publishes each
+// frame as the latest, announcing it through setFrameArrivedCallback; the
+// render path then takes it with acquireLatestPixelBuffer (zero-copy, macOS)
+// or copyLatestFrame (CPU path). Nothing decodes on the render thread, and a
+// view driven by arrivals redraws at the clip's frame rate rather than the
+// display's.
 //
+// The playback clock, audio and A/V sync are the platform engine's (AVPlayer).
 // Windows plays video only for now (no audio track output); playback is paced
-// by sample timestamps on a decode thread.
+// by sample timestamps on its decode thread.
 class Player
 {
 public:
@@ -80,23 +84,31 @@ public:
     std::function<void()> onEnded = [] {};
     std::function<void(const std::string&)> onError = [](const std::string&) {};
 
+    // Sets a lightweight notification invoked on the player's decode thread
+    // after each decoded frame is stored as the latest — no pixel access; pair
+    // it with acquireLatestPixelBuffer or copyLatestFrame. This may be
+    // (re)assigned while the player runs. One consumer at a time: the display
+    // path (VideoView) claims it while attached. Passing {} clears it.
+    void setFrameArrivedCallback(Callback callback);
+
     // The most recent frame's native pixel buffer (CVPixelBufferRef on macOS),
     // retained — the caller owns the reference and must hand it back to
     // releasePixelBuffer. Null when no frame is available or the backend has
     // no zero-copy buffer (Windows), where copyLatestFrame is the path.
-    // Pulling also advances the internal frame clock, so call once per render.
-    void* acquireFramePixelBuffer();
+    // Thread-safe; the display path calls this on the render thread.
+    void* acquireLatestPixelBuffer();
 
-    // Releases a buffer returned by acquireFramePixelBuffer.
+    // Releases a buffer returned by acquireLatestPixelBuffer.
     static void releasePixelBuffer(void* buffer);
 
     // Copies the latest frame into `out` when it is newer than out.sequence,
     // reusing out's storage; returns true if a new frame was copied.
-    bool copyLatestFrame(PlayerFramePixels& out);
+    // Thread-safe.
+    bool copyLatestFrame(FramePixels& out);
 
-    // Bumps once per decoded frame that reached the display path. On macOS
-    // frames are pulled, so this advances when acquireFramePixelBuffer /
-    // copyLatestFrame run — poll it from a continuous render loop.
+    // Bumps once per decoded frame published as the latest — driven by the
+    // decode thread, not by the reader, so a consumer can compare it against
+    // what it last drew and skip work when nothing changed.
     std::uint64_t frameSequence() const;
 
 private:

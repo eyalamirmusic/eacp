@@ -1,1 +1,1 @@
-add_subdirectory(PlayingHeavyContent)
+add_subdirectory(VideoViewDemo)

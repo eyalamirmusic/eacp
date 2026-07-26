@@ -6,15 +6,28 @@
 #include <eacp/Core/ObjC/AutoReleasePool.h>
 #include <eacp/Core/ObjC/ObjC.h>
 
+#include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <cstring>
 #include <mutex>
 #include <optional>
+#include <thread>
 
 // macOS/iOS playback backend (AVFoundation). AVPlayer owns the clock, audio
-// and A/V sync; an AVPlayerItemVideoOutput hands the display path BGRA
-// CVPixelBuffers, pulled at render time (itemTimeForHostTime) and stashed as
-// the latest frame exactly like the camera capture path. MRC throughout —
-// every alloc/init is owned by an ObjC::Ptr.
+// and A/V sync; an AVPlayerItemVideoOutput hands out BGRA CVPixelBuffers.
+//
+// The pull those buffers need is driven by a pacing thread this backend owns,
+// not by whoever happens to be rendering. That makes playback the same shape
+// as capture: Camera has AVFoundation's capture queue publishing each frame as
+// the latest and announcing it, and here the pacing thread does exactly that,
+// as Player-Windows' decode thread already did. Two things follow. Decoding
+// never happens on the render thread, so a slow frame cannot stall the
+// compositor. And a view driven by the announcement redraws at the clip's
+// frame rate — a 24fps clip on a 120Hz display renders 24 times a second, not
+// 120, with the other 96 no longer re-drawing a frame that never changed.
+//
+// MRC throughout — every alloc/init is owned by an ObjC::Ptr.
 
 namespace eacp::Video
 {
@@ -35,6 +48,10 @@ struct LatestFrame
             CFRelease(current);
 
         current = nullptr;
+
+        // Reset too, or a reopened player reports frames a consumer has
+        // already seen and its first real frame is skipped as stale.
+        sequence = 0;
     }
 
     void set(CVPixelBufferRef buffer)
@@ -72,7 +89,7 @@ struct LatestFrame
 
     // Copies the current frame into `out` as tightly packed BGRA when it is
     // newer than out.sequence.
-    bool copyInto(PlayerFramePixels& out)
+    bool copyInto(FramePixels& out)
     {
         CVPixelBufferRef buffer = nullptr;
         std::uint64_t copiedSequence = 0;
@@ -163,12 +180,18 @@ struct Player::Native
 
         state = PlayerState::Loading;
         statusPoll.emplace([this] { pollStatus(); }, statusPollHz);
+        startPacer();
         return true;
     }
 
     void close()
     {
         ObjC::AutoReleasePool pool;
+
+        // Joined before anything it touches is released: the pacer messages
+        // `output` every tick, so tearing that down underneath it would be a
+        // use-after-free.
+        stopPacer();
 
         statusPoll.reset();
         removeEndObserver();
@@ -221,10 +244,31 @@ struct Player::Native
             [player.get() seekToTime:kCMTimeZero
                      toleranceBefore:kCMTimeZero
                       toleranceAfter:kCMTimeZero];
-            [player.get() setRate:(float) rate];
+            [player.get() setRate:(float) rate.load()];
+        }
+        else
+        {
+            // actionAtItemEnd is Pause, so the clock has stopped — the pacer
+            // must stop looking too, or a finished clip keeps it awake for good.
+            playing = false;
         }
 
         owner.onEnded();
+    }
+
+    // Once loading resolves the poll has nothing left to watch, and a timer
+    // left ticking at statusPollHz for the life of every player is pure waste.
+    // It cannot be destroyed from inside its own callback — that frees the
+    // block currently running — so the reset is deferred to the next main-thread
+    // turn, with the token covering a player closed before it lands.
+    void retireStatusPoll()
+    {
+        Threads::callAsync(
+            [this, guard = alive]
+            {
+                if (*guard)
+                    statusPoll.reset();
+            });
     }
 
     // AVPlayerItem's status has no completion callback without KVO
@@ -251,14 +295,16 @@ struct Player::Native
             videoDuration = CMTIME_IS_NUMERIC(total) ? CMTimeGetSeconds(total)
                                                      : 0.0;
 
+            nominalFps = readNominalFrameRate();
+
             state = PlayerState::Ready;
-            statusPoll->stop();
+            retireStatusPoll();
             owner.onReady();
         }
         else if (status == AVPlayerItemStatusFailed)
         {
             state = PlayerState::Failed;
-            statusPoll->stop();
+            retireStatusPoll();
 
             auto* message = item.get().error.localizedDescription;
             owner.onError(message != nil ? message.UTF8String
@@ -266,28 +312,150 @@ struct Player::Native
         }
     }
 
+    // The video track's own frame rate, which the pacer's cadence follows.
+    // Taken off AVPlayerItem's tracks rather than the asset's, so there is no
+    // deprecated -tracksWithMediaType: and no synchronous asset load.
+    double readNominalFrameRate() const
+    {
+        if (!item)
+            return 0.0;
+
+        for (AVPlayerItemTrack* track in item.get().tracks)
+        {
+            auto* assetTrack = track.assetTrack;
+
+            if (assetTrack != nil &&
+                [assetTrack.mediaType isEqualToString:AVMediaTypeVideo])
+                return assetTrack.nominalFrameRate;
+        }
+
+        return 0.0;
+    }
+
     // Pulls the frame due now (by the player's own clock) into `latest`.
-    void refreshLatest()
+    // Returns whether a new frame was actually published. Pacing thread only.
+    bool refreshLatest()
     {
         ObjC::AutoReleasePool pool;
 
         if (!output)
-            return;
+            return false;
 
-        auto itemTime =
-            [output.get() itemTimeForHostTime:CACurrentMediaTime()];
+        auto itemTime = [output.get() itemTimeForHostTime:CACurrentMediaTime()];
 
         if (![output.get() hasNewPixelBufferForItemTime:itemTime])
-            return;
+            return false;
 
         auto buffer = [output.get() copyPixelBufferForItemTime:itemTime
-                                            itemTimeForDisplay:nil];
+                                           itemTimeForDisplay:nil];
 
-        if (buffer != nullptr)
+        if (buffer == nullptr)
+            return false;
+
+        latest.set(buffer);
+        CVBufferRelease(buffer);
+        return true;
+    }
+
+    void setFrameArrived(Callback callbackToUse)
+    {
+        std::lock_guard<std::mutex> lock(arrivedMutex);
+        frameArrived = std::move(callbackToUse);
+    }
+
+    // Copied out before invoking so the callback never runs under the lock —
+    // it hops to the main thread and may re-enter this player.
+    void notifyFrameArrived()
+    {
+        auto arrived = Callback {};
+
         {
-            latest.set(buffer);
-            CVBufferRelease(buffer);
+            std::lock_guard<std::mutex> lock(arrivedMutex);
+            arrived = frameArrived;
         }
+
+        arrived();
+    }
+
+    // How often the pacer looks for a new frame. Twice the rate frames are
+    // actually due at: the check is a timestamp comparison and costs nothing
+    // when nothing is due, and oversampling means a frame is picked up within
+    // half its interval instead of landing up to a whole one late.
+    //
+    // Scaled by the playback rate, because the pull cadence is the ceiling on
+    // delivered frames — a fixed one would turn fast-forward into a slideshow,
+    // dropping seven of every eight frames at 8x however fast the decoder ran.
+    double pollInterval() const
+    {
+        auto tracked = nominalFps.load();
+        auto fps = tracked > 0.0 ? tracked : 30.0;
+        auto due = fps * std::max(0.25, std::abs(rate.load()));
+        return 1.0 / std::clamp(due * 2.0, 30.0, 240.0);
+    }
+
+    void startPacer()
+    {
+        pacerQuit = false;
+        pacer = std::thread([this] { runPacer(); });
+    }
+
+    void stopPacer()
+    {
+        if (!pacer.joinable())
+            return;
+
+        {
+            std::lock_guard<std::mutex> lock(pacerMutex);
+            pacerQuit = true;
+        }
+
+        pacerWake.notify_all();
+        pacer.join();
+    }
+
+    // The analogue of the camera's capture queue: it owns the pull, publishes
+    // each frame as the latest, and announces it. It sleeps outright while
+    // paused, so a paused player costs nothing at all.
+    void runPacer()
+    {
+        while (true)
+        {
+            {
+                std::unique_lock<std::mutex> lock(pacerMutex);
+                pacerWake.wait(lock,
+                               [this]
+                               { return pacerQuit || playing || pullAttempts > 0; });
+
+                if (pacerQuit)
+                    return;
+            }
+
+            auto published = refreshLatest();
+
+            // A seek while paused still has to repaint the picture, so it asks
+            // for a bounded run of attempts rather than leaving the view on the
+            // pre-seek frame; the seek resolves asynchronously, so the frame is
+            // not ready on the first try.
+            if (!playing && pullAttempts > 0)
+                pullAttempts = published ? 0 : pullAttempts - 1;
+
+            if (published)
+                notifyFrameArrived();
+
+            std::this_thread::sleep_for(
+                std::chrono::duration<double>(pollInterval()));
+        }
+    }
+
+    void wakePacer()
+    {
+        pacerWake.notify_all();
+    }
+
+    void requestPull()
+    {
+        pullAttempts = pullAttemptsPerSeek;
+        wakePacer();
     }
 
     Player& owner;
@@ -303,11 +471,39 @@ struct Player::Native
     std::optional<Threads::Timer> statusPoll;
     static constexpr int statusPollHz = 30;
 
+    // Fences work queued onto the main thread against a player torn down
+    // before it runs. Replaced on close, so anything still queued backs off.
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
+
+    // Unlike the owner's callbacks this is rewired while the player runs (a
+    // VideoView attaching and detaching), so access is fenced.
+    std::mutex arrivedMutex;
+    Callback frameArrived = [] {};
+
+    // The pacing thread and its wake-up state. `playing` is the pacer's gate,
+    // so it is separate from the AVPlayer's own rate.
+    std::thread pacer;
+    std::mutex pacerMutex;
+    std::condition_variable pacerWake;
+    bool pacerQuit = false;
+    std::atomic<bool> playing {false};
+
+    // Bounded run of pulls after a seek while paused — see runPacer.
+    static constexpr int pullAttemptsPerSeek = 30;
+    std::atomic<int> pullAttempts {0};
+
+    // The clip's own frame rate, which sets the pull cadence. Read once the
+    // item is ready; 0 until then, where pollInterval falls back to 30.
+    std::atomic<double> nominalFps {0.0};
+
+    // Read by the pacing thread to scale its cadence, written from the main
+    // thread by setRate.
+    std::atomic<double> rate {1.0};
+
     PlayerState state = PlayerState::Idle;
     bool looping = false;
     bool muted = false;
     float volume = 1.0f;
-    double rate = 1.0;
     int videoWidth = 0;
     int videoHeight = 0;
     double videoDuration = 0.0;
@@ -332,14 +528,21 @@ void Player::close()
 
 void Player::play()
 {
-    if (impl->player)
-        [impl->player.get() setRate:(float) impl->rate];
+    if (!impl->player)
+        return;
+
+    [impl->player.get() setRate:(float) impl->rate.load()];
+    impl->playing = true;
+    impl->wakePacer();
 }
 
 void Player::pause()
 {
-    if (impl->player)
-        [impl->player.get() pause];
+    if (!impl->player)
+        return;
+
+    [impl->player.get() pause];
+    impl->playing = false;
 }
 
 bool Player::isPlaying() const
@@ -383,10 +586,16 @@ void Player::setRate(double rate)
 
 void Player::seek(double seconds)
 {
-    if (impl->player)
-        [impl->player.get() seekToTime:CMTimeMakeWithSeconds(seconds, 600)
-                       toleranceBefore:kCMTimeZero
-                        toleranceAfter:kCMTimeZero];
+    if (!impl->player)
+        return;
+
+    [impl->player.get() seekToTime:CMTimeMakeWithSeconds(seconds, 600)
+                   toleranceBefore:kCMTimeZero
+                    toleranceAfter:kCMTimeZero];
+
+    // A seek while paused still has to repaint: nothing else would pull the
+    // frame at the new position, leaving the view on the pre-seek picture.
+    impl->requestPull();
 }
 
 PlayerState Player::state() const
@@ -418,9 +627,19 @@ double Player::currentTime() const
     return CMTIME_IS_NUMERIC(time) ? CMTimeGetSeconds(time) : 0.0;
 }
 
-void* Player::acquireFramePixelBuffer()
+void Player::setFrameArrivedCallback(Callback callback)
 {
-    impl->refreshLatest();
+    if (!callback)
+        callback = [] {};
+
+    impl->setFrameArrived(std::move(callback));
+}
+
+// The pull that used to sit here now belongs to the pacing thread, so these
+// are pure reads of whatever it last published — the render path does no
+// decoding.
+void* Player::acquireLatestPixelBuffer()
+{
     return impl->latest.acquire();
 }
 
@@ -430,9 +649,8 @@ void Player::releasePixelBuffer(void* buffer)
         CFRelease(buffer);
 }
 
-bool Player::copyLatestFrame(PlayerFramePixels& out)
+bool Player::copyLatestFrame(FramePixels& out)
 {
-    impl->refreshLatest();
     return impl->latest.copyInto(out);
 }
 

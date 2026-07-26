@@ -1,6 +1,7 @@
 #include "Common.h"
 
 #include <array>
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -58,7 +59,7 @@ auto tFramesArrive = test("Video/playbackDeliversFrames") = []
     player.pause();
     pumpFor(150);
 
-    auto frame = PlayerFramePixels {};
+    auto frame = FramePixels {};
     check(player.copyLatestFrame(frame));
     check(frame.width == player.width());
     check(frame.height == player.height());
@@ -230,4 +231,91 @@ auto tConcurrent = test("Video/fourClipsDecodeSimultaneously") = []
             return true;
         },
         30000));
+};
+
+// The push half of the display path: the decode thread announces each frame,
+// which is what lets a view redraw at the clip's rate instead of the display's.
+auto tFrameArrived = test("Video/frameArrivedAnnouncesEveryNewFrame") = []
+{
+    auto player = Player {};
+    std::atomic<int> arrivals {0};
+
+    check(player.open(clip("bunny720.mp4")));
+    check(waitFor([&] { return player.state() == PlayerState::Ready; }));
+
+    player.setFrameArrivedCallback([&arrivals] { ++arrivals; });
+    player.play();
+
+    check(waitFor([&] { return arrivals.load() >= 5; }));
+
+    // One announcement per published frame, not per pull: the two counters
+    // track each other.
+    auto announced = arrivals.load();
+    check(announced <= (int) player.frameSequence());
+
+    // Clearing it stops delivery, and nothing keeps firing into a dead
+    // consumer — the case a detaching view relies on.
+    player.setFrameArrivedCallback({});
+    auto settled = arrivals.load();
+    pumpFor(300);
+    check(arrivals.load() == settled);
+
+    // A paused player announces nothing at all.
+    player.setFrameArrivedCallback([&arrivals] { ++arrivals; });
+    player.pause();
+    pumpFor(150);
+    auto paused = arrivals.load();
+    pumpFor(300);
+    check(arrivals.load() == paused);
+};
+
+// The hover-switching stress the demo used to assert: whichever clip is on
+// stage changes constantly, and none of them may stall while it happens.
+auto tRapidSwitching = test("Video/rapidSwitchingNeverStallsAClip") = []
+{
+    const std::array<const char*, 4> names {
+        "heavy.mp4", "jellyfish.mp4", "sintel.mp4", "bunny720.mp4"};
+
+    auto players = std::array<Player, 4> {};
+
+    for (auto index = std::size_t {0}; index < players.size(); ++index)
+    {
+        players[index].setLooping(true);
+        check(players[index].open(clip(names[index])));
+    }
+
+    check(waitFor(
+        [&]
+        {
+            for (auto& player: players)
+                if (player.state() != PlayerState::Ready)
+                    return false;
+
+            return true;
+        }));
+
+    for (auto& player: players)
+        player.play();
+
+    check(waitFor([&] { return players[0].frameSequence() >= 2; }));
+
+    auto before = std::array<std::uint64_t, 4> {};
+
+    for (auto index = std::size_t {0}; index < players.size(); ++index)
+        before[index] = players[index].frameSequence();
+
+    // 24 switches at 60ms, the demo's old sweep. Switching only changes which
+    // player is drawn, so it must not perturb decoding at all.
+    for (auto switches = 0; switches < 24; ++switches)
+    {
+        auto active = (std::size_t) (switches % 4);
+        auto frame = FramePixels {};
+        players[active].copyLatestFrame(frame);
+        pumpFor(60);
+    }
+
+    // Every clip advanced across the sweep, including the three that were
+    // never the active one.
+    for (auto index = std::size_t {0}; index < players.size(); ++index)
+        check(players[index].frameSequence() > before[index]);
 };

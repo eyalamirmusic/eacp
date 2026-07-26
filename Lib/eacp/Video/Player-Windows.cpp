@@ -385,6 +385,30 @@ struct Player::Native
             latest = next;
             publishedSequence.store(next->sequence, std::memory_order_release);
         }
+
+        // Announced outside the lock, so a listener that renders cannot hold
+        // the frame hand-off shut while it does.
+        notifyFrameArrived();
+    }
+
+    void setFrameArrived(Callback callbackToUse)
+    {
+        std::lock_guard<std::mutex> lock(arrivedMutex);
+        frameArrived = std::move(callbackToUse);
+    }
+
+    // Copied out before invoking so the callback never runs under the lock —
+    // it hops to the main thread and may re-enter this player.
+    void notifyFrameArrived()
+    {
+        auto arrived = Callback {};
+
+        {
+            std::lock_guard<std::mutex> lock(arrivedMutex);
+            arrived = frameArrived;
+        }
+
+        arrived();
     }
 
     // A small pool the decode thread recycles: a slot whose only reference is
@@ -392,23 +416,23 @@ struct Player::Native
     // alive and it is simply skipped. Three slots cover the steady state (one
     // published, one being read, one being written); a fresh allocation
     // replacing the round-robin slot is the overload escape, not the norm.
-    std::shared_ptr<PlayerFramePixels> acquireFreeBuffer()
+    std::shared_ptr<FramePixels> acquireFreeBuffer()
     {
         for (auto& slot: pool)
         {
             if (slot == nullptr)
-                slot = std::make_shared<PlayerFramePixels>();
+                slot = std::make_shared<FramePixels>();
 
             if (slot.use_count() == 1)
                 return slot;
         }
 
         auto& slot = pool[(std::size_t) (poolCursor++ % (int) pool.size())];
-        slot = std::make_shared<PlayerFramePixels>();
+        slot = std::make_shared<FramePixels>();
         return slot;
     }
 
-    void convertFrame(PlayerFramePixels& out, const BYTE* data)
+    void convertFrame(FramePixels& out, const BYTE* data)
     {
         auto rowPixels = (std::size_t) videoWidth;
         auto rowBytes = rowPixels * 4;
@@ -447,6 +471,11 @@ struct Player::Native
 
     std::shared_ptr<bool> alive = std::make_shared<bool>(true);
 
+    // Unlike the owner's callbacks this is rewired while the player runs (a
+    // VideoView attaching and detaching), so access is fenced.
+    std::mutex arrivedMutex;
+    Callback frameArrived = [] {};
+
     std::atomic<PlayerState> state {PlayerState::Idle};
     std::atomic<bool> looping {false};
     std::atomic<double> rate {1.0};
@@ -461,15 +490,15 @@ struct Player::Native
     // it is O(1), so the render thread and four decode threads never queue
     // behind a frame's worth of work.
     mutable std::mutex frameMutex;
-    std::shared_ptr<PlayerFramePixels> latest; // BGRA top-down
-    std::array<std::shared_ptr<PlayerFramePixels>, 3> pool; // decode thread only
+    std::shared_ptr<FramePixels> latest; // BGRA top-down
+    std::array<std::shared_ptr<FramePixels>, 3> pool; // decode thread only
     int poolCursor = 0; // decode thread only
     std::uint64_t nextSequence = 0; // decode thread only
     std::atomic<std::uint64_t> publishedSequence {0};
 
-    bool copyLatestFrame(PlayerFramePixels& out)
+    bool copyLatestFrame(FramePixels& out)
     {
-        auto snap = std::shared_ptr<PlayerFramePixels> {};
+        auto snap = std::shared_ptr<FramePixels> {};
 
         {
             std::lock_guard<std::mutex> lock(frameMutex);
@@ -605,14 +634,24 @@ double Player::currentTime() const
     return impl->lastPts;
 }
 
-void* Player::acquireFramePixelBuffer()
+void Player::setFrameArrivedCallback(Callback callback)
+{
+    if (!callback)
+        callback = [] {};
+
+    impl->setFrameArrived(std::move(callback));
+}
+
+// No shared pixel buffer on this backend yet, so the display path falls
+// through to copyLatestFrame and its upload texture.
+void* Player::acquireLatestPixelBuffer()
 {
     return nullptr;
 }
 
 void Player::releasePixelBuffer(void*) {}
 
-bool Player::copyLatestFrame(PlayerFramePixels& out)
+bool Player::copyLatestFrame(FramePixels& out)
 {
     return impl->copyLatestFrame(out);
 }
