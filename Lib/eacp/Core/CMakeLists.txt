@@ -22,6 +22,7 @@ target_sources(eacp-core PRIVATE
         Utils/FilePath.cpp
         Utils/Files.cpp
         Utils/Logging.cpp
+        Utils/MemoryMappedFile.cpp
         Utils/Random.cpp
         Utils/Strings.cpp
         Utils/Time.cpp)
@@ -42,7 +43,8 @@ if (APPLE)
             Utils/Environment-Posix.cpp
             Utils/FilePath-Apple.mm
             Utils/Files.mm
-            Utils/Logging-Posix.cpp)
+            Utils/Logging-Posix.cpp
+            Utils/MemoryMappedFile-Posix.cpp)
     target_link_libraries(eacp-core PRIVATE
             "-framework Foundation")
     if (IOS)
@@ -81,7 +83,8 @@ elseif (WIN32)
             Utils/Environment-Windows.cpp
             Utils/FilePath-Windows.cpp
             Utils/Files-Windows.cpp
-            Utils/Logging-Windows.cpp)
+            Utils/Logging-Windows.cpp
+            Utils/MemoryMappedFile-Windows.cpp)
     target_link_libraries(eacp-core PRIVATE
             windowsapp crypt32 user32 advapi32 shell32 ole32 uuid)
 elseif (UNIX AND NOT APPLE)
@@ -102,7 +105,8 @@ elseif (UNIX AND NOT APPLE)
             Utils/Environment-Posix.cpp
             Utils/FilePath-Linux.cpp
             Utils/Files-Linux.cpp
-            Utils/Logging-Posix.cpp)
+            Utils/Logging-Posix.cpp
+            Utils/MemoryMappedFile-Posix.cpp)
     find_package(Threads REQUIRED)
     target_link_libraries(eacp-core PRIVATE Threads::Threads)
 endif ()
