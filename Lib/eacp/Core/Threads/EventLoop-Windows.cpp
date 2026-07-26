@@ -241,13 +241,9 @@ void EventLoop::run()
 
     // Loop ownership is advertised through the process environment so it
     // crosses eacp copies: a plugin-hosted app's quit reads it to know the
-    // running loop is eacp's to stop (see stopProcessRootLoop). The marker
-    // holds the process id, not a flag: children inherit the parent's
-    // environment, so a bare flag would make any eacp process spawned from a
-    // running app (or from a shell that inherited the marker) wrongly believe
-    // a loop was already running. The thread id rides along because WM_QUIT
-    // must target the pumping thread.
-    setEnv("EACP_ROOT_LOOP", std::to_string(GetCurrentProcessId()));
+    // running loop is eacp's to stop (see stopProcessRootLoop). The thread
+    // id rides along because WM_QUIT must target the pumping thread.
+    setEnv("EACP_ROOT_LOOP", "1");
     setEnv("EACP_ROOT_LOOP_THREAD", std::to_string(GetCurrentThreadId()));
 
     // Outer run exits only on WM_QUIT — never on WM_EACP_STOP_LOOP, so
@@ -274,7 +270,7 @@ void EventLoop::run()
         DispatchMessage(&msg);
     }
 
-    setEnv("EACP_ROOT_LOOP", "");
+    setEnv("EACP_ROOT_LOOP", "0");
     getEventLoopState().loopThreadId = 0;
     destroyMessageWindow();
 
@@ -355,21 +351,14 @@ void EventLoop::quit()
         PostThreadMessageW(id, WM_QUIT, 0, 0);
 }
 
-// The marker only counts when it names THIS process: an inherited copy from a
-// parent process describes the parent's loop, not ours.
-static bool rootLoopMarkerIsOurs()
-{
-    return getEnvValue("EACP_ROOT_LOOP") == std::to_string(GetCurrentProcessId());
-}
-
 bool isEventLoopRunning()
 {
-    return runForDepth > 0 || rootLoopMarkerIsOurs();
+    return runForDepth > 0 || getEnvValue("EACP_ROOT_LOOP") == "1";
 }
 
 void stopProcessRootLoop()
 {
-    if (!rootLoopMarkerIsOurs())
+    if (getEnvValue("EACP_ROOT_LOOP") != "1")
         return;
 
     auto thread = getEnvValue("EACP_ROOT_LOOP_THREAD");

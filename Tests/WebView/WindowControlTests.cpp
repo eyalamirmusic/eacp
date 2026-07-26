@@ -11,6 +11,8 @@ using namespace eacp::Graphics;
 
 namespace
 {
+constexpr auto firstNavigationTimeout = eacp::Time::MS {30000};
+
 // One button per role, a glyph child inside one of them (the custom property
 // inherits, so a click landing on the glyph still resolves), and an unmarked
 // sibling. `ready` gates queries until document-start injection has run.
@@ -57,7 +59,7 @@ struct Fixture
     {
         auto script = "window.__eacpResolveWindowButton(document.querySelector('"
                       + selector + "'))";
-        return webView.callJS(script).waitFor(webViewResultTimeout);
+        return webView.callJS(script).waitFor(eacp::Time::MS {10000});
     }
 };
 } // namespace
@@ -89,7 +91,7 @@ auto tPlatformAttribute = test("WindowControl/platformAttributeMirrorsNative") =
     auto attribute =
         fix.webView
             .callJS("document.documentElement.getAttribute('data-eacp-platform')")
-            .waitFor(webViewResultTimeout);
+            .waitFor(eacp::Time::MS {10000});
     check(attribute == (Platform::isWindows() ? "windows" : "mac"));
 };
 
@@ -104,16 +106,16 @@ auto tMaximizedAttribute = test("WindowControl/maximizedAttributeTracksNative") 
         return fix.webView
             .callJS("document.documentElement.hasAttribute('data-eacp-maximized')"
                     " ? 'yes' : 'no'")
-            .waitFor(webViewResultTimeout);
+            .waitFor(eacp::Time::MS {10000});
     };
 
     check(hasAttribute() == "no");
 
     fix.webView.callJS("window.__eacpSetMaximized(true)")
-        .waitFor(webViewResultTimeout);
+        .waitFor(eacp::Time::MS {10000});
     check(hasAttribute() == "yes");
 
     fix.webView.callJS("window.__eacpSetMaximized(false)")
-        .waitFor(webViewResultTimeout);
+        .waitFor(eacp::Time::MS {10000});
     check(hasAttribute() == "no");
 };

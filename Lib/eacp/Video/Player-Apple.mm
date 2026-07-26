@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
@@ -192,6 +193,11 @@ struct Player::Native
         // `output` every tick, so tearing that down underneath it would be a
         // use-after-free.
         stopPacer();
+
+        // Anything already queued for the main thread describes the player
+        // being torn down here, not the one a following open() builds.
+        *alive = false;
+        alive = std::make_shared<bool>(true);
 
         statusPoll.reset();
         removeEndObserver();
@@ -418,13 +424,23 @@ struct Player::Native
     // paused, so a paused player costs nothing at all.
     void runPacer()
     {
+        auto nextPoll = std::chrono::steady_clock::now();
+
         while (true)
         {
             {
                 std::unique_lock<std::mutex> lock(pacerMutex);
-                pacerWake.wait(lock,
-                               [this]
-                               { return pacerQuit || playing || pullAttempts > 0; });
+                auto gate = [this]
+                { return pacerQuit || playing || pullAttempts > 0; };
+
+                if (!gate())
+                {
+                    pacerWake.wait(lock, gate);
+
+                    // The schedule restarts from here: the one it was keeping
+                    // describes a stretch this player spent paused.
+                    nextPoll = std::chrono::steady_clock::now();
+                }
 
                 if (pacerQuit)
                     return;
@@ -442,8 +458,23 @@ struct Player::Native
             if (published)
                 notifyFrameArrived();
 
-            std::this_thread::sleep_for(
+            // Stepped on an absolute schedule rather than slept for a fixed
+            // interval: sleeping AFTER the work adds its cost to every period,
+            // and the error accumulates — a 30fps clip drifted out to a
+            // measured 37.7ms cadence instead of 33.3.
+            auto interval = std::chrono::duration_cast<
+                std::chrono::steady_clock::duration>(
                 std::chrono::duration<double>(pollInterval()));
+
+            nextPoll += interval;
+            auto now = std::chrono::steady_clock::now();
+
+            // A stall longer than a period restarts the cadence rather than
+            // bursting through a backlog of missed polls to catch up.
+            if (nextPoll <= now)
+                nextPoll = now + interval;
+
+            std::this_thread::sleep_until(nextPoll);
         }
     }
 

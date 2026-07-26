@@ -25,14 +25,7 @@ struct Frame::Native
         , depth(static_cast<D3D12DepthTarget*>(depthTextureHandle))
     {
         if (device.isValid() && drawable != nullptr)
-        {
             commands = getD3D12Context().acquire();
-
-            // Advertised so texture uploads issued while this frame records
-            // join its command list instead of submitting their own — one
-            // ExecuteCommandLists per frame, not one per upload.
-            getD3D12Context().setActiveRecording(commands);
-        }
     }
 
     // Off-screen snapshot target (GPUView::renderNativeContent). The colour
@@ -47,10 +40,7 @@ struct Frame::Native
     {
         if (device.isValid() && drawable != nullptr
             && drawable->backBuffer != nullptr)
-        {
             commands = getD3D12Context().acquire();
-            getD3D12Context().setActiveRecording(commands);
-        }
     }
 
     bool useMsaa() const { return msaa != nullptr && msaa->texture != nullptr; }
@@ -75,9 +65,6 @@ Frame::Frame(Device& device, const OffscreenTarget& target)
 
 Frame::~Frame()
 {
-    if (impl->commands != nullptr)
-        getD3D12Context().setActiveRecording(nullptr);
-
     if (impl->commands == nullptr || impl->drawable == nullptr)
         return;
 
@@ -151,16 +138,6 @@ Frame::~Frame()
                    backBuffer,
                    D3D12_RESOURCE_STATE_RENDER_TARGET,
                    D3D12_RESOURCE_STATE_PRESENT);
-    }
-
-    // Async: execute, signal and present all run on the context's worker —
-    // during a live resize any of them can block for tens of milliseconds,
-    // and this destructor runs on the thread the OS drag loop is tracking
-    // the mouse with. See D3D12Context::submitAsync.
-    if (impl->drawable->deferPresent)
-    {
-        getD3D12Context().submitAsync(impl->commands, impl->drawable->swapChain);
-        return;
     }
 
     getD3D12Context().submit(impl->commands);

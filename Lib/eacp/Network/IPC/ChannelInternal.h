@@ -2,8 +2,6 @@
 
 #include "Channel.h"
 
-#include <eacp/Core/Utils/FilePath.h>
-
 // The platform-specific endpoint backend, kept behind this header so the
 // naming, retry and buffering logic in Channel.cpp stays platform-free.
 // POSIX (macOS, iOS and Linux, AF_UNIX sockets) and Win32 (named pipes)
@@ -18,12 +16,6 @@ namespace eacp::IPC::detail
 // intptr_t, so a single sentinel covers every platform.
 using NativeChannel = std::intptr_t;
 inline constexpr NativeChannel invalidChannel = -1;
-
-// The per-user directory AF_UNIX endpoints live in — POSIX only, Windows
-// names its pipes globally. Per-OS (Channel-Apple.cpp / Channel-Linux.cpp)
-// because the right home differs, but the contract is one: short enough for
-// sun_path, owned by this user, and stable across process contexts.
-FilePath channelRoot();
 
 // Makes one connection attempt. invalidChannel means nobody is serving the
 // name right now - the caller owns the retry loop. Throws IPC::Error when

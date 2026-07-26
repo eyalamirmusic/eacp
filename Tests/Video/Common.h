@@ -8,7 +8,7 @@
 
 namespace VideoTests
 {
-// The same four clips the PlayingHeavyContent demo plays, fetched by CMake
+// The same four clips the VideoViewDemo app plays, fetched by CMake
 // into the shared media cache this macro points at.
 inline eacp::FilePath clip(const std::string& name)
 {

@@ -128,13 +128,12 @@ void CameraView::ensureRenderer()
     auto bounds = getLocalBounds();
     auto size = Graphics::Point {bounds.w, bounds.h};
 
-    // Constructed once; a resize only retargets the logical space. Rebuilding
-    // the renderer would recompile its pipelines on every tick of a live
-    // resize.
-    if (!renderer.has_value())
+    if (!renderer.has_value() || size.x != rendererSize.x
+        || size.y != rendererSize.y)
+    {
         renderer.emplace(size, sampleCount());
-    else
-        renderer->setLogicalSize(size);
+        rendererSize = size;
+    }
 }
 
 Graphics::Rect CameraView::imageAreaFor(int textureWidth, int textureHeight) const

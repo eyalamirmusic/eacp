@@ -58,8 +58,7 @@ struct Fixture
             return true;
         };
         webView.loadHTML(pageHtml);
-        check(Threads::runEventLoopUntil([this] { return ready; },
-                                         firstNavigationTimeout));
+        check(Threads::runEventLoopUntil([this] { return ready; }, eacp::Time::MS {10000}));
         webView.focusContent();
     }
 
@@ -115,12 +114,12 @@ struct Fixture
     bool waitForReceivedCount(int count)
     {
         return Threads::runEventLoopUntil(
-            [this, count] { return received.size() >= count; }, webViewResultTimeout);
+            [this, count] { return received.size() >= count; }, eacp::Time::MS {10000});
     }
 
     void runJS(const std::string& script)
     {
-        webView.callJS(script + "; 'ok'").waitFor(webViewResultTimeout);
+        webView.callJS(script + "; 'ok'").waitFor(eacp::Time::MS {10000});
     }
 };
 } // namespace

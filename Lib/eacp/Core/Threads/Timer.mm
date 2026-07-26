@@ -31,14 +31,6 @@ struct Timer::Native
         [nsTimer.get() invalidate];
     }
 
-    // NSTimer documents invalidate as safe from inside its own fire callback,
-    // and repeating it is harmless.
-    void stop()
-    {
-        assertMainThread();
-        [nsTimer.get() invalidate];
-    }
-
     Callback cb;
     ObjC::Ptr<NSTimer> nsTimer;
 };
@@ -47,11 +39,6 @@ Timer::Timer(const Callback& cbToUse, int intervalHz)
     : callback(cbToUse)
     , impl(cbToUse, intervalHz)
 {
-}
-
-void Timer::stop()
-{
-    impl->stop();
 }
 
 } // namespace eacp::Threads
