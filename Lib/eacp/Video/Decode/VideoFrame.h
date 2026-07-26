@@ -4,14 +4,97 @@
 
 namespace eacp::Video
 {
-// The pixel layout a decoded frame arrives in. Every backend is asked for BGRA8
-// today, which is what GPU::TextureFormat::BGRA8Unorm and the zero-copy
-// CVPixelBuffer wrap already understand; NV12 lands once the GPU module grows a
-// two-channel format and a YUV sampling program.
+// The pixel layout a decoded frame arrives in. The Windows backend hands back
+// NV12, straight from the decoder; the Apple zero-copy path still wraps a BGRA
+// CVPixelBuffer.
 enum class FramePixelFormat
 {
-    BGRA8
+    BGRA8,
+
+    // Two planes in one buffer: `height` rows of 8-bit luma, then `height / 2`
+    // rows of interleaved Cb/Cr at half resolution on both axes. Both planes
+    // share `bytesPerRow`, so the chroma plane starts at bytesPerRow * height.
+    //
+    // What every video decoder produces natively. Taking it as-is rather than
+    // asking the platform for BGRA skips a colour-conversion pass over every
+    // frame and carries 1.5 bytes per pixel instead of 4 — at 8K that is 50 MB
+    // a frame rather than 133 MB, through both the copy and the upload. The
+    // conversion happens in the shader, where it is free.
+    NV12
 };
+
+// Bytes one frame of this size and format occupies, tightly packed.
+constexpr std::size_t framePixelBytes(FramePixelFormat format, int width, int height)
+{
+    auto pixels = (std::size_t) width * (std::size_t) height;
+    return format == FramePixelFormat::NV12 ? pixels + pixels / 2 : pixels * 4;
+}
+
+// Which YCbCr matrix a track's chroma was coded with. Not a detail that can be
+// assumed: BT.601 was defined for standard definition and BT.709 for high, and
+// decoding one as the other is a visible error — a saturated green comes back
+// about 15% dark, which is enough to fail a round-trip comparison.
+enum class YuvMatrix
+{
+    BT601,
+    BT709
+};
+
+// The constants that turn NV12 samples into RGB. Derived from the matrix rather
+// than written out, so the CPU path in toImage and the shader in SpriteRenderer
+// are provably the same arithmetic.
+//
+//     R = y + redV * v
+//     G = y - greenU * u - greenV * v
+//     B = y + blueU * u
+//
+// where y, u and v are the raw 0-1 samples with the offsets subtracted and the
+// scales applied.
+struct YuvTransform
+{
+    float lumaOffset = 0.0f;
+    float lumaScale = 1.0f;
+    float chromaOffset = 0.0f;
+    float chromaScale = 1.0f;
+
+    float redV = 0.0f;
+    float greenU = 0.0f;
+    float greenV = 0.0f;
+    float blueU = 0.0f;
+};
+
+// `fullRange` selects between video levels (luma 16-235, chroma 16-240) and the
+// full 0-255 that JPEG-style and some camera sources use.
+constexpr YuvTransform yuvTransformFor(YuvMatrix matrix, bool fullRange)
+{
+    // The red and blue luma weights each matrix is defined by; everything else
+    // follows from them.
+    auto kr = matrix == YuvMatrix::BT709 ? 0.2126f : 0.299f;
+    auto kb = matrix == YuvMatrix::BT709 ? 0.0722f : 0.114f;
+    auto kg = 1.0f - kr - kb;
+
+    auto transform = YuvTransform {};
+
+    transform.lumaOffset = fullRange ? 0.0f : 16.0f / 255.0f;
+    transform.lumaScale = fullRange ? 1.0f : 255.0f / 219.0f;
+    transform.chromaOffset = 128.0f / 255.0f;
+    transform.chromaScale = fullRange ? 1.0f : 255.0f / 224.0f;
+
+    transform.redV = 2.0f * (1.0f - kr);
+    transform.greenU = 2.0f * kb * (1.0f - kb) / kg;
+    transform.greenV = 2.0f * kr * (1.0f - kr) / kg;
+    transform.blueU = 2.0f * (1.0f - kb);
+
+    return transform;
+}
+
+// What to assume when a track does not signal its matrix, which is the common
+// case: the definition each standard was written for. 576 is the tallest
+// standard-definition frame.
+constexpr YuvMatrix yuvMatrixForHeight(int height)
+{
+    return height > 576 ? YuvMatrix::BT709 : YuvMatrix::BT601;
+}
 
 // Everything about a decoded frame except its pixels.
 struct FrameInfo
@@ -31,6 +114,10 @@ struct FrameInfo
     std::size_t bytesPerRow = 0;
 
     FramePixelFormat format = FramePixelFormat::BGRA8;
+
+    // How to read this frame's chroma. Only meaningful for NV12.
+    YuvMatrix yuvMatrix = YuvMatrix::BT709;
+    bool fullRangeYuv = false;
 };
 
 // One decoded frame: a timestamp plus pixels, either as a platform buffer the
@@ -104,6 +191,11 @@ public:
     std::size_t bytesPerRow() const { return info().bytesPerRow; }
     FramePixelFormat format() const { return info().format; }
 
+    YuvTransform yuvTransform() const
+    {
+        return yuvTransformFor(info().yuvMatrix, info().fullRangeYuv);
+    }
+
     // Whether `time` falls in this frame's presentation interval. A frame with
     // no duration covers everything from its own timestamp on, so the last
     // frame of a stream keeps being shown rather than blinking out.
@@ -131,6 +223,22 @@ public:
             return nullptr;
 
         return payload->pixels->data();
+    }
+
+    // The interleaved Cb/Cr plane of an NV12 frame, or null for any other
+    // format. It shares bytesPerRow() with the luma plane and has half as many
+    // rows, each covering two pixels' worth of chroma.
+    const std::uint8_t* chromaPlane() const
+    {
+        if (format() != FramePixelFormat::NV12)
+            return nullptr;
+
+        const auto* base = pixels();
+
+        if (base == nullptr)
+            return nullptr;
+
+        return base + bytesPerRow() * (std::size_t) height();
     }
 
 private:

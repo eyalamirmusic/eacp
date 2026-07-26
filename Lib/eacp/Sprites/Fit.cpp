@@ -2,7 +2,7 @@
 
 namespace eacp::Sprites
 {
-Graphics::Rect fitRect(
+Rect fitRect(
     float areaWidth, float areaHeight, int imageWidth, int imageHeight, Fit fit)
 {
     if (fit == Fit::Stretch || imageWidth <= 0 || imageHeight <= 0

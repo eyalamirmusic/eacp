@@ -126,7 +126,7 @@ void VideoView::update(Threads::FrameTime frameTime)
 void VideoView::ensureRenderer()
 {
     auto bounds = getLocalBounds();
-    auto size = Graphics::Point {bounds.w, bounds.h};
+    auto size = Point {bounds.w, bounds.h};
 
     if (!renderer.has_value() || size.x != rendererSize.x
         || size.y != rendererSize.y)
@@ -136,19 +136,18 @@ void VideoView::ensureRenderer()
     }
 }
 
-Graphics::Point
-    VideoView::displaySize(int textureWidth, int textureHeight, int rotationDegrees)
+Point VideoView::displaySize(int textureWidth,
+                             int textureHeight,
+                             int rotationDegrees)
 {
     auto quarterTurn = rotationDegrees == 90 || rotationDegrees == 270;
 
-    return quarterTurn
-               ? Graphics::Point {(float) textureHeight, (float) textureWidth}
-               : Graphics::Point {(float) textureWidth, (float) textureHeight};
+    return quarterTurn ? Point {(float) textureHeight, (float) textureWidth}
+                       : Point {(float) textureWidth, (float) textureHeight};
 }
 
-VideoView::Placement VideoView::computePlacement(const Graphics::Rect& area,
-                                                 int rotationDegrees,
-                                                 bool mirrored)
+VideoView::Placement
+    VideoView::computePlacement(const Rect& area, int rotationDegrees, bool mirrored)
 {
     auto left = area.x;
     auto top = area.y;
@@ -188,7 +187,7 @@ VideoView::Placement VideoView::computePlacement(const Graphics::Rect& area,
     return placement;
 }
 
-Graphics::Rect VideoView::imageAreaFor(int textureWidth, int textureHeight) const
+Rect VideoView::imageAreaFor(int textureWidth, int textureHeight) const
 {
     auto bounds = getLocalBounds();
     auto shown = displaySize(textureWidth, textureHeight, rotation);
@@ -196,8 +195,7 @@ Graphics::Rect VideoView::imageAreaFor(int textureWidth, int textureHeight) cons
     return Sprites::fitRect(bounds.w, bounds.h, (int) shown.x, (int) shown.y, fit);
 }
 
-void VideoView::drawFrameTexture(const GPU::Texture& texture,
-                                 Graphics::Rect& imageArea)
+void VideoView::drawFrameTexture(const GPU::Texture& texture, Rect& imageArea)
 {
     imageArea = imageAreaFor(texture.width(), texture.height());
 
@@ -207,11 +205,11 @@ void VideoView::drawFrameTexture(const GPU::Texture& texture,
                               placement.origin,
                               placement.edgeX,
                               placement.edgeY,
-                              Graphics::Color::white(),
+                              Color::white(),
                               frameSampling);
 }
 
-bool VideoView::drawZeroCopy(const VideoFrame& frame, Graphics::Rect& imageArea)
+bool VideoView::drawZeroCopy(const VideoFrame& frame, Rect& imageArea)
 {
     auto* buffer = frame.nativeBuffer();
 
@@ -229,28 +227,49 @@ bool VideoView::drawZeroCopy(const VideoFrame& frame, Graphics::Rect& imageArea)
     return true;
 }
 
-bool VideoView::drawUpload(const VideoFrame& frame, Graphics::Rect& imageArea)
+bool VideoView::drawUpload(const VideoFrame& frame, Rect& imageArea)
 {
     const auto* pixels = frame.pixels();
 
     if (pixels == nullptr || frame.width() <= 0 || frame.height() <= 0)
         return false;
 
-    auto sizeChanged = !uploadTexture.has_value()
-                       || uploadTexture->width() != frame.width()
-                       || uploadTexture->height() != frame.height();
+    auto isNv12 = frame.format() == FramePixelFormat::NV12;
 
-    if (sizeChanged)
+    auto rebuild = !uploadTexture.has_value()
+                   || uploadTexture->width() != frame.width()
+                   || uploadTexture->height() != frame.height()
+                   || uploadedFormat != frame.format();
+
+    if (rebuild)
     {
         auto descriptor = GPU::TextureDescriptor {};
         descriptor.width = frame.width();
         descriptor.height = frame.height();
-        descriptor.format = GPU::TextureFormat::BGRA8Unorm;
+        descriptor.format =
+            isNv12 ? GPU::TextureFormat::R8Unorm : GPU::TextureFormat::BGRA8Unorm;
         uploadTexture.emplace(GPU::Device::shared().makeTexture(descriptor));
+
+        if (isNv12)
+        {
+            // Half resolution on both axes, two bytes a texel: one Cb/Cr pair
+            // per 2x2 block of luma.
+            descriptor.width = frame.width() / 2;
+            descriptor.height = frame.height() / 2;
+            descriptor.format = GPU::TextureFormat::RG8Unorm;
+            chromaTexture.emplace(GPU::Device::shared().makeTexture(descriptor));
+        }
+        else
+        {
+            chromaTexture.reset();
+        }
+
+        uploadedFormat = frame.format();
         uploadedPixels = nullptr;
     }
 
-    if (!uploadTexture->isValid())
+    if (!uploadTexture->isValid()
+        || (isNv12 && !(chromaTexture.has_value() && chromaTexture->isValid())))
         return false;
 
     // Redrawing the same frame — a resize, an overlay change — should not pay
@@ -258,10 +277,39 @@ bool VideoView::drawUpload(const VideoFrame& frame, Graphics::Rect& imageArea)
     if (uploadedPixels != pixels)
     {
         uploadTexture->update(pixels, frame.bytesPerRow());
+
+        if (isNv12)
+            chromaTexture->update(frame.chromaPlane(), frame.bytesPerRow());
+
         uploadedPixels = pixels;
     }
 
-    drawFrameTexture(*uploadTexture, imageArea);
+    if (!isNv12)
+    {
+        drawFrameTexture(*uploadTexture, imageArea);
+        return true;
+    }
+
+    imageArea = imageAreaFor(uploadTexture->width(), uploadTexture->height());
+    auto placement = computePlacement(imageArea, rotation, mirrored);
+
+    auto yuv = frame.yuvTransform();
+
+    renderer->drawNv12Quad(*uploadTexture,
+                           *chromaTexture,
+                           {yuv.lumaOffset,
+                            yuv.lumaScale,
+                            yuv.chromaOffset,
+                            yuv.chromaScale,
+                            yuv.redV,
+                            yuv.greenU,
+                            yuv.greenV,
+                            yuv.blueU},
+                           placement.origin,
+                           placement.edgeX,
+                           placement.edgeY,
+                           Color::white(),
+                           frameSampling);
     return true;
 }
 
@@ -269,10 +317,10 @@ void VideoView::render(GPU::Frame& frame)
 {
     ensureRenderer();
 
-    auto pass = frame.beginPass({Graphics::Color::black()});
+    auto pass = frame.beginPass({Color::black()});
     renderer->begin(pass);
 
-    auto imageArea = Graphics::Rect {};
+    auto imageArea = Rect {};
 
     if (stream != nullptr)
     {
@@ -303,9 +351,7 @@ void VideoView::render(GPU::Frame& frame)
     drawOverlay(pass, *renderer, imageArea);
 }
 
-void VideoView::drawOverlay(GPU::RenderPass&,
-                            Sprites::SpriteRenderer&,
-                            const Graphics::Rect&)
+void VideoView::drawOverlay(GPU::RenderPass&, Sprites::SpriteRenderer&, const Rect&)
 {
 }
 } // namespace eacp::Video
