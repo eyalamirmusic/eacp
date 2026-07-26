@@ -560,10 +560,16 @@ public:
     // them instead of blending with it. Without this, such a program had to
     // build its pipeline by hand and give up draw(program) entirely, which is
     // what Sprites::SpriteRenderer still does.
+    // colorFormat is the attachment the pipeline writes, and it has to be the
+    // format of whatever the draw ends up in: the default is a view's drawable,
+    // and a program rendering into a texture passes pixelFormatFor(its format)
+    // instead. Neither backend will take a draw whose pipeline disagrees with
+    // its attachment.
     void prepare(int sampleCount,
                  bool depth = false,
                  PrimitiveTopology topology = PrimitiveTopology::Triangles,
-                 BlendMode blendMode = BlendMode::None)
+                 BlendMode blendMode = BlendMode::None,
+                 PixelFormat colorFormat = PixelFormat::BGRA8Unorm)
     {
         shaderLibrary.emplace(Device::shared(), generated.source);
 
@@ -574,6 +580,7 @@ public:
         descriptor.depth = depth;
         descriptor.topology = topology;
         descriptor.blendMode = blendMode;
+        descriptor.colorFormat = colorFormat;
 
         pipelineState.emplace(Device::shared(), descriptor);
     }

@@ -117,6 +117,22 @@ struct D3D12TextureData
 {
     winrt::com_ptr<ID3D12Resource> resource;
     DescriptorSlot srv;
+
+    // A render-target texture also owns one RTV, in a heap of its own: RTV
+    // descriptors are not shader-visible, so there is no shared heap to take one
+    // from the way the SRV does, and one descriptor per target is cheap.
+    winrt::com_ptr<ID3D12DescriptorHeap> rtvHeap;
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = {};
+
+    // A plain texture rests in PIXEL_SHADER_RESOURCE forever - it is only ever
+    // sampled - and a render target moves between that and RENDER_TARGET as the
+    // passes go by. Unlike a buffer this does not decay to COMMON at
+    // ExecuteCommandLists, so the state is tracked for the resource's lifetime
+    // rather than per recording, and both sites that use one go through the
+    // helper below rather than reasoning about it locally.
+    D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+    bool isRenderTarget() const { return rtv.ptr != 0; }
 };
 
 // The frame's color target. All members are owned by GPUView and stay valid
@@ -193,6 +209,32 @@ inline void transitionForUse(CommandContext& commands,
     commands.list->ResourceBarrier(1, &barrier);
 
     buffer.state = target;
+}
+
+// The texture sibling of transitionForUse: records the barrier a texture needs
+// before being used in the target state, and remembers what it is now in.
+//
+// There is no first-use-is-free case here, because a texture does not decay to
+// COMMON when a recording executes the way a buffer does - what it was left in
+// by the previous frame's last pass is what it is still in. Getting that wrong
+// is a barrier the debug layer rejects rather than anything visible, which is
+// exactly why the tracking lives here and not at the two call sites.
+inline void transitionTextureForUse(ID3D12GraphicsCommandList* list,
+                                    D3D12TextureData& texture,
+                                    D3D12_RESOURCE_STATES target)
+{
+    if (texture.resource == nullptr || texture.state == target)
+        return;
+
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = texture.resource.get();
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barrier.Transition.StateBefore = texture.state;
+    barrier.Transition.StateAfter = target;
+    list->ResourceBarrier(1, &barrier);
+
+    texture.state = target;
 }
 
 // A plain transition barrier for resources with externally known states (back

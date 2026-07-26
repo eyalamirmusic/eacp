@@ -22,6 +22,10 @@ MTLPixelFormat toMetalFormat(TextureFormat format)
             return MTLPixelFormatBGRA8Unorm;
         case TextureFormat::R8Unorm:
             return MTLPixelFormatR8Unorm;
+        case TextureFormat::RGBA16Float:
+            return MTLPixelFormatRGBA16Float;
+        case TextureFormat::RGBA32Float:
+            return MTLPixelFormatRGBA32Float;
         default:
             return MTLPixelFormatRGBA8Unorm;
     }
@@ -51,6 +55,7 @@ struct Texture::Native
         : width(descriptor.width)
         , height(descriptor.height)
         , pixelStride(bytesPerPixel(descriptor.format))
+        , renderTarget(descriptor.renderTarget)
     {
         auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
 
@@ -63,6 +68,15 @@ struct Texture::Native
                                         height:(NSUInteger) height
                                      mipmapped:NO];
         textureDescriptor.usage = MTLTextureUsageShaderRead;
+
+        // A render target is written by the GPU and read by it, so it goes in
+        // private storage and keeps the default (managed/shared) mode otherwise
+        // - which is what makes replaceRegion valid on every Mac generation.
+        if (renderTarget)
+        {
+            textureDescriptor.usage |= MTLTextureUsageRenderTarget;
+            textureDescriptor.storageMode = MTLStorageModePrivate;
+        }
 
         texture = [metalDevice newTextureWithDescriptor:textureDescriptor];
 
@@ -157,6 +171,7 @@ struct Texture::Native
     // Bytes per pixel of the texture's format; the CV-wrapped path stays at 4
     // because those buffers are always 32-bit BGRA/RGBA.
     int pixelStride = 4;
+    bool renderTarget = false;
     ObjC::Ptr<NSObject<MTLTexture>> texture;
     CFRef<CVMetalTextureRef> cvTexture;
 };
@@ -205,6 +220,11 @@ int Texture::height() const
 bool Texture::isValid() const
 {
     return impl->texture.get() != nil;
+}
+
+bool Texture::isRenderTarget() const
+{
+    return impl->renderTarget && impl->texture.get() != nil;
 }
 
 void* Texture::nativeTexture() const

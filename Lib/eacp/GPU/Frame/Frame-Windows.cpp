@@ -45,6 +45,44 @@ struct Frame::Native
 
     bool useMsaa() const { return msaa != nullptr && msaa->texture != nullptr; }
 
+    // The state every render pass needs bound before it can draw, whether it
+    // targets the back buffer or an app-owned texture. Shared so the two paths
+    // cannot drift apart on the platform I cannot test.
+    void bindRootState(D3D12Context& context, ID3D12GraphicsCommandList* list)
+    {
+        // The root signature and heaps are fixed for every render pipeline, so
+        // binding them here frees the pass from caring about call ordering.
+        ID3D12DescriptorHeap* heaps[] = {context.getTextureHeap(),
+                                         context.getSamplerHeap()};
+        list->SetDescriptorHeaps(2, heaps);
+        list->SetGraphicsRootSignature(context.getRenderRootSignature());
+
+        // Resource Binding Tier 1 hardware requires *every* descriptor table the
+        // root signature declares to be populated before a draw, even the ones
+        // the shader never reads — an unset table drops the draw entirely rather
+        // than failing loudly. The signature is shared and declares
+        // maxTextureSlots of them, while a typical shader binds one, so the rest
+        // are seeded with the null descriptor here; setFragmentTexture
+        // overwrites the slots that carry a real texture.
+        //
+        // Tier 2+ hardware ignores unset tables, which is why this only ever
+        // showed up on an Arm laptop: no text drew, and nothing was logged
+        // without the D3D12 validation layer installed.
+        //
+        // Only the SRV tables need this. The root signature declares no sampler
+        // tables at all any more - samplers are static samplers baked into it,
+        // picked by the register the shader emitted its sampler at. See
+        // TextureSampling.
+        const auto nullTexture = context.getNullTextureDescriptor();
+
+        if (nullTexture.ptr == 0)
+            return;
+
+        for (auto slot = 0; slot < maxTextureSlots; ++slot)
+            list->SetGraphicsRootDescriptorTable(renderTextureParam(slot),
+                                                 nullTexture);
+    }
+
     CommandContext* commands = nullptr;
     D3D12Drawable* drawable = nullptr;
     D3D12MsaaTarget* msaa = nullptr;
@@ -155,34 +193,7 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     auto& context = getD3D12Context();
     auto* list = impl->commands->list.get();
 
-    // The root signature and heaps are fixed for every render pipeline, so
-    // binding them here frees the pass from caring about call ordering.
-    ID3D12DescriptorHeap* heaps[] = {context.getTextureHeap(),
-                                     context.getSamplerHeap()};
-    list->SetDescriptorHeaps(2, heaps);
-    list->SetGraphicsRootSignature(context.getRenderRootSignature());
-
-    // Resource Binding Tier 1 hardware requires *every* descriptor table the
-    // root signature declares to be populated before a draw, even the ones the
-    // shader never reads — an unset table drops the draw entirely rather than
-    // failing loudly. The signature is shared and declares maxTextureSlots of
-    // them, while a typical shader binds one, so the rest are seeded with the
-    // null descriptor here; setFragmentTexture overwrites the slots that carry
-    // a real texture.
-    //
-    // Tier 2+ hardware ignores unset tables, which is why this only ever showed
-    // up on an Arm laptop: no text drew, and nothing was logged without the
-    // D3D12 validation layer installed.
-    //
-    // Only the SRV tables need this. The root signature declares no sampler
-    // tables at all any more - samplers are static samplers baked into it, picked
-    // by the register the shader emitted its sampler at. See TextureSampling.
-    const auto nullTexture = context.getNullTextureDescriptor();
-
-    if (nullTexture.ptr != 0)
-        for (auto slot = 0; slot < maxTextureSlots; ++slot)
-            list->SetGraphicsRootDescriptorTable(renderTextureParam(slot),
-                                                 nullTexture);
+    impl->bindRootState(context, list);
 
     // The off-screen colour texture is created already in RENDER_TARGET; only a
     // swapchain back buffer starts in PRESENT and needs promoting here.
@@ -231,6 +242,54 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     return RenderPass(new D3D12Encoder {impl->commands, {}},
                       static_cast<int>(impl->drawable->width),
                       static_cast<int>(impl->drawable->height));
+}
+
+// Rendering into an app-owned texture: one attachment, no resolve and no depth.
+// Deliberately does not touch passBegun, which records whether the *back
+// buffer* was moved out of PRESENT - a frame whose only passes were into
+// textures must not have one transitioned back on the way out.
+//
+// The texture is moved into RENDER_TARGET here and moved back the moment
+// something samples it, in RenderPass::setFragmentTexture, rather than at the
+// end of the pass: a target written by one pass and read by the next then costs
+// exactly the two barriers it needs, and one written and never read costs one.
+RenderPass Frame::beginPass(const Texture& target,
+                            const RenderPassDescriptor& descriptor)
+{
+    auto* data = static_cast<D3D12TextureData*>(target.nativeTexture());
+
+    if (impl->commands == nullptr || data == nullptr || !target.isRenderTarget())
+        return RenderPass(nullptr);
+
+    auto& context = getD3D12Context();
+    auto* list = impl->commands->list.get();
+
+    impl->bindRootState(context, list);
+    transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+    list->OMSetRenderTargets(1, &data->rtv, FALSE, nullptr);
+
+    auto width = target.width();
+    auto height = target.height();
+
+    D3D12_VIEWPORT viewport = {};
+    viewport.Width = static_cast<float>(width);
+    viewport.Height = static_cast<float>(height);
+    viewport.MaxDepth = 1.0f;
+    list->RSSetViewports(1, &viewport);
+
+    // D3D12 has no default scissor; an unset one clips everything away.
+    D3D12_RECT scissor = {0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+    list->RSSetScissorRects(1, &scissor);
+
+    if (descriptor.clear)
+    {
+        const auto& color = descriptor.clearColor;
+        const float clearColor[4] = {color.r, color.g, color.b, color.a};
+        list->ClearRenderTargetView(data->rtv, clearColor, 0, nullptr);
+    }
+
+    return RenderPass(new D3D12Encoder {impl->commands, {}}, width, height);
 }
 
 bool Frame::isValid() const

@@ -142,6 +142,37 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
                       (int) target.height);
 }
 
+// Rendering into an app-owned texture: one attachment, stored, no resolve and
+// no depth. Passes on one command buffer are ordered by the queue, so nothing
+// here has to say that a later pass may sample what this one wrote.
+RenderPass Frame::beginPass(const Texture& target,
+                            const RenderPassDescriptor& descriptor)
+{
+    auto buffer = impl->commandBuffer.get();
+    auto texture = (__bridge id<MTLTexture>) target.nativeTexture();
+
+    if (buffer == nil || texture == nil || !target.isRenderTarget())
+        return RenderPass(nullptr);
+
+    auto passDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
+    auto colorAttachment = passDescriptor.colorAttachments[0];
+
+    colorAttachment.texture = texture;
+    colorAttachment.storeAction = MTLStoreActionStore;
+    colorAttachment.loadAction =
+        descriptor.clear ? MTLLoadActionClear : MTLLoadActionLoad;
+
+    const auto& color = descriptor.clearColor;
+    colorAttachment.clearColor =
+        MTLClearColorMake(color.r, color.g, color.b, color.a);
+
+    auto encoder = [buffer renderCommandEncoderWithDescriptor:passDescriptor];
+
+    return RenderPass((__bridge void*) encoder,
+                      (int) texture.width,
+                      (int) texture.height);
+}
+
 bool Frame::isValid() const
 {
     return impl->storeTexture() != nil && impl->commandBuffer.get() != nil;

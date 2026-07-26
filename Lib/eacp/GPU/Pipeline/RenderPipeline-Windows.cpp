@@ -70,6 +70,26 @@ DXGI_FORMAT toDXGIFormat(VertexFormat format)
     return DXGI_FORMAT_R32G32B32_FLOAT;
 }
 
+// The attachment the pipeline writes. It has to match whatever the pass binds
+// as its render target - the swapchain back buffer, or a texture created with
+// TextureDescriptor::renderTarget.
+DXGI_FORMAT toDXGIFormat(PixelFormat format)
+{
+    switch (format)
+    {
+        case PixelFormat::RGBA8Unorm:
+            return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case PixelFormat::RGBA16Float:
+            return DXGI_FORMAT_R16G16B16A16_FLOAT;
+        case PixelFormat::RGBA32Float:
+            return DXGI_FORMAT_R32G32B32A32_FLOAT;
+        case PixelFormat::BGRA8Unorm:
+            break;
+    }
+
+    return DXGI_FORMAT_B8G8R8A8_UNORM;
+}
+
 // Vertex attributes are matched to the HLSL input by a TEXCOORD semantic
 // indexed by attribute position, mirroring Metal's [[attribute(n)]] binding.
 // Reads the step rate for a given slot from the layout. Multi-buffer layouts
@@ -231,7 +251,7 @@ struct RenderPipeline::Native
         desc.InputLayout.NumElements = static_cast<UINT>(inputLayout.size());
         desc.PrimitiveTopologyType = toTopologyType(descriptor.topology);
         desc.NumRenderTargets = 1;
-        desc.RTVFormats[0] = DXGI_FORMAT_B8G8R8A8_UNORM;
+        desc.RTVFormats[0] = toDXGIFormat(descriptor.colorFormat);
         desc.DSVFormat =
             descriptor.depth ? DXGI_FORMAT_D32_FLOAT : DXGI_FORMAT_UNKNOWN;
         desc.SampleDesc.Count = static_cast<UINT>(

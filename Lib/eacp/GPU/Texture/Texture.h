@@ -13,12 +13,42 @@ enum class TextureFormat
 
     // Single 8-bit channel, sampled as (r, 0, 0, 1). The natural format for
     // palette indices, masks and other one-byte-per-pixel data.
-    R8Unorm
+    R8Unorm,
+
+    // Floating point, for a texture a shader writes as well as reads. Eight bits
+    // per channel are enough to show a colour and not nearly enough to keep one:
+    // a pass that feeds back into itself quantises every frame, so a value it
+    // accumulates over hundreds of them - a trail, a simulation state, a running
+    // average - drifts to a flat colour it can no longer leave.
+    //
+    // RGBA16Float is the one to reach for. Both backends can filter it on every
+    // device eacp runs on, it holds well over the range a colour needs, and it
+    // costs half of what the full float does. RGBA32Float is there for the
+    // simulation that really needs the mantissa; filtering one is *not*
+    // guaranteed, so sample it Nearest unless the device is known to allow more.
+    RGBA16Float,
+    RGBA32Float
 };
 
 constexpr int bytesPerPixel(TextureFormat format)
 {
-    return format == TextureFormat::R8Unorm ? 1 : 4;
+    switch (format)
+    {
+        case TextureFormat::R8Unorm:
+            return 1;
+        case TextureFormat::RGBA16Float:
+            return 8;
+        case TextureFormat::RGBA32Float:
+            return 16;
+        default:
+            return 4;
+    }
+}
+
+constexpr bool isFloatFormat(TextureFormat format)
+{
+    return format == TextureFormat::RGBA16Float
+           || format == TextureFormat::RGBA32Float;
 }
 
 enum class TextureFilter
@@ -81,6 +111,16 @@ struct TextureDescriptor
     int width = 0;
     int height = 0;
     TextureFormat format = TextureFormat::RGBA8Unorm;
+
+    // Whether a Frame can render into this texture as well as sample it -
+    // Frame::beginPass(texture). Off by default because it is not free: the
+    // resource has to be created able to be an attachment, which on D3D12 also
+    // costs a render-target descriptor, and a texture that is only ever
+    // uploaded to and sampled should not pay for either.
+    //
+    // A render target's pixels come from the GPU, so update() is not the way to
+    // fill one and a null `pixels` is the only thing to create one with.
+    bool renderTarget = false;
 };
 
 // A 2D texture sampled by the fragment stage (MTLTexture on Metal, a D3D12
@@ -103,6 +143,11 @@ public:
     int width() const;
     int height() const;
     bool isValid() const;
+
+    // Whether this texture was created able to be rendered into, which is what
+    // Frame::beginPass(texture) needs and what makes an ordinary one a no-op
+    // there rather than undefined behaviour.
+    bool isRenderTarget() const;
 
     // Re-uploads pixels into a texture created by Device::makeTexture, reusing
     // the GPU resource instead of allocating a new one — the per-frame path for
