@@ -46,6 +46,25 @@ compositor.
 `RenderMode::Continuous` is still there for overlays that need to animate at
 display rate independently of the video.
 
+### Where the 4% goes
+
+The steady state was profiled to the microsecond (xctrace Time Profiler, every
+on-CPU sample attributed). There is no polling, no timer ticking, and no
+redundant render left in it:
+
+| consumer | of one core | note |
+| --- | --- | --- |
+| AVFoundation decode + CoreMedia | ~2.7% | the decoder's own threads; inherent |
+| frame acquisition (pacing thread) | ~0.45% | almost all `copyPixelBufferForItemTime` itself |
+| render + present, 30/s | ~1.25% | ~410 µs/frame: pass encode, CA commit, drawable |
+
+For scale, measured on the same machine: QuickTime Player playing this same
+file used 22.6% CPU, and a browser playing YouTube totalled ~27% across its
+helper processes and the out-of-process decoder (`VTDecoderXPCService`) — the
+familiar ~1% Activity Monitor row is only the browser's shell process. An app
+that composites video inside its own GPU pass pays for decode, one pass encode
+and one present per video frame; that floor is where this sits.
+
 ### Headless verification
 
 ```bash
