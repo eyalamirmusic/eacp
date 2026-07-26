@@ -14,6 +14,10 @@ nano_add_executable(FilePathTests
         SOURCES FilePathTests.cpp
         TARGETS eacp-core)
 
+nano_add_executable(MemoryMappedFileTests
+        SOURCES MemoryMappedFileTests.cpp
+        TARGETS eacp-core)
+
 nano_add_executable(AppTests
         SOURCES AppTests.cpp
         TARGETS eacp-core)

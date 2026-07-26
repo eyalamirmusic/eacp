@@ -11,6 +11,7 @@
 #include "Utils/Broadcaster.h"
 #include "Utils/File.h"
 #include "Utils/Files.h"
+#include "Utils/MemoryMappedFile.h"
 #include "Utils/Random.h"
 #include "Utils/Range.h"
 #include "Utils/Singleton.h"
