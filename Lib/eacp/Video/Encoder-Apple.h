@@ -21,6 +21,7 @@ struct AppleEncoder final : Encoder
 {
     bool begin(const FilePath& path, int w, int h, int bitrate, int fps) override;
     void appendImage(const Graphics::Image& image, double ptsSeconds) override;
+    void waitUntilReady(Time::MS timeout) override;
     bool canCaptureNativeContent(Graphics::View& view,
                                  float scale,
                                  int probeWidth,

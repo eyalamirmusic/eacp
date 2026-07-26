@@ -19,10 +19,13 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(Sprites)
     add_subdirectory(CameraView)
 
-    # View->video recorder. The Snapshot tier is portable (AVFoundation on macOS,
-    # Media Foundation on Windows); the Screen tier is ScreenCaptureKit on macOS
-    # and a stub on Windows until Windows.Graphics.Capture lands.
+    # View->video recorder, and video decode/playback. The Snapshot tier is
+    # portable (AVFoundation on macOS, Media Foundation on Windows); the Screen
+    # tier is ScreenCaptureKit on macOS and a stub on Windows until
+    # Windows.Graphics.Capture lands. VideoView draws a decoded stream through
+    # the sprite renderer, the way CameraView draws a live camera.
     if (NOT IOS)
         add_subdirectory(Video)
+        add_subdirectory(VideoView)
     endif ()
 endif ()

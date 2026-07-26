@@ -1,0 +1,177 @@
+#include <eacp/Video/SyntheticClip.h>
+#include <eacp/VideoView/VideoView.h>
+
+#include <cstdlib>
+
+using namespace eacp;
+
+namespace
+{
+constexpr auto windowWidth = 960;
+constexpr auto windowHeight = 600;
+
+// The scrub bar's strip along the bottom of the view, in logical points.
+constexpr auto scrubHeight = 28.0f;
+constexpr auto scrubInset = 16.0f;
+
+// Ten seconds of 1080p30, which is a real decode load rather than a token one.
+Video::SyntheticClipOptions clipOptions()
+{
+    auto options = Video::SyntheticClipOptions {};
+    options.width = 1920;
+    options.height = 1080;
+    options.fps = 30;
+    options.duration = 10.0;
+    return options;
+}
+
+// A path on the command line if given — that is how to point the sample at real
+// heavy content — otherwise a generated clip, encoded once into the user's
+// cache directory and reused from then on. Nothing is read from the source
+// tree, so no media has to be committed to run this.
+FilePath resolveVideoPath()
+{
+    const auto& args = Apps::getAppEnvironment().commandLineArgs;
+
+    if (args.size() > 1)
+        return FilePath {args[1]};
+
+    logMessage("No file given — generating a synthetic 1080p clip (first run "
+               "only; cached afterwards).");
+
+    return Video::cachedSyntheticClip(clipOptions());
+}
+
+Graphics::WindowOptions windowOptions()
+{
+    auto options = Graphics::WindowOptions {};
+    options.width = windowWidth;
+    options.height = windowHeight;
+    options.title = "eacp Video Playback";
+    return options;
+}
+} // namespace
+
+// A player view with a scrub bar, which is the point of the sample: the same
+// stream is driven two ways. Normally the attached Player runs the clock off
+// the display link; while the bar is being dragged the app takes the playhead
+// over with setPosition, exactly as an editing timeline would.
+struct PlaybackView final : Video::VideoView
+{
+    PlaybackView() { setHandlesMouseEvents(true); }
+
+    Graphics::Rect scrubArea() const
+    {
+        auto bounds = getLocalBounds();
+        return {scrubInset,
+                bounds.h - scrubHeight - scrubInset,
+                bounds.w - scrubInset * 2.0f,
+                scrubHeight};
+    }
+
+    void drawOverlay(Sprites::SpriteRenderer& renderer,
+                     const Graphics::Rect&) override
+    {
+        auto area = scrubArea();
+        auto duration = player.stream().info().duration;
+        auto progress =
+            duration > 0.0 ? (float) (player.position() / duration) : 0.0f;
+
+        renderer.fillRect(area, {0.0f, 0.0f, 0.0f, 0.45f});
+
+        auto played = area;
+        played.w = area.w * progress;
+        renderer.fillRect(played, {0.25f, 0.7f, 1.0f, 0.9f});
+
+        renderer.drawRect(area, {1.0f, 1.0f, 1.0f, 0.35f}, 1.0f);
+
+        // A dot on the playhead, so the position is readable even when the
+        // played portion is too short to see.
+        auto dot = Graphics::Rect {
+            area.x + area.w * progress - 3.0f, area.y - 2.0f, 6.0f, area.h + 4.0f};
+        renderer.fillRect(dot, {1.0f, 1.0f, 1.0f, 0.95f});
+    }
+
+    void mouseDown(const Graphics::MouseEvent& event) override
+    {
+        if (scrubArea().contains(event.pos))
+        {
+            scrubbing = true;
+            wasPlaying = player.isPlaying();
+            player.pause();
+            scrubTo(event.pos.x);
+            return;
+        }
+
+        if (player.isPlaying())
+            player.pause();
+        else
+            player.play();
+    }
+
+    void mouseDragged(const Graphics::MouseEvent& event) override
+    {
+        if (scrubbing)
+            scrubTo(event.pos.x);
+    }
+
+    void mouseUp(const Graphics::MouseEvent&) override
+    {
+        if (!scrubbing)
+            return;
+
+        scrubbing = false;
+
+        if (wasPlaying)
+            player.play();
+    }
+
+    void scrubTo(float x)
+    {
+        auto area = scrubArea();
+        auto duration = player.stream().info().duration;
+
+        if (area.w <= 0.0f || duration <= 0.0)
+            return;
+
+        auto fraction = std::clamp((x - area.x) / area.w, 0.0f, 1.0f);
+        player.setPosition(duration * fraction);
+        repaint();
+    }
+
+    Video::FrameStream stream;
+    Video::Player player {stream};
+
+    bool scrubbing = false;
+    bool wasPlaying = false;
+};
+
+struct PlaybackApp
+{
+    PlaybackApp()
+    {
+        auto path = resolveVideoPath();
+
+        if (path.empty() || !view.stream.open(path))
+        {
+            logMessage("Could not open video: " + path.str());
+            Apps::quit(1);
+            return;
+        }
+
+        view.setFit(Video::VideoView::Fit::Contain);
+        view.attach(view.player);
+        view.player.setLooping(true);
+        view.player.play();
+
+        window.setContentView(view);
+    }
+
+    PlaybackView view;
+    Graphics::Window window {windowOptions()};
+};
+
+int main(int argc, char* argv[])
+{
+    return eacp::Apps::run<PlaybackApp>(argc, argv);
+}

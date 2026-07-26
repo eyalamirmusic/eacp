@@ -69,7 +69,19 @@ struct Encoder
 
     // Appends one straight-RGBA frame, composited over black, at ptsSeconds.
     // The image must be at least the size passed to begin().
+    //
+    // A frame offered while the encoder is still busy is DROPPED, not queued.
+    // That is deliberate for the recorder, whose alternative is stalling the
+    // display link, but it means an offline producer that needs every frame in
+    // the file must call waitUntilReady() first.
     virtual void appendImage(const Graphics::Image& image, double ptsSeconds) = 0;
+
+    // Blocks until the encoder can accept another frame, or the timeout
+    // expires. The recorder never calls this — dropping late frames is the
+    // behaviour it wants — but a writer producing a file offline has no frames
+    // to spare and waits here instead. Defaults to returning at once, for
+    // backends that queue rather than drop.
+    virtual void waitUntilReady(Time::MS) {}
 
     // GpuDirect tier: whether `view` has native GPU content this encoder can
     // capture zero-copy at the given (already even-rounded) pixel size, and
