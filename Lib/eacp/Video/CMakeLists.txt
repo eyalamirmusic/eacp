@@ -9,6 +9,7 @@ target_sources(eacp-video PRIVATE
 if (APPLE)
     target_sources(eacp-video PRIVATE
             Encoder-Apple.mm
+            Player-Apple.mm
             ScreenCapture-Apple.mm)
 
     target_link_libraries(eacp-video PRIVATE
@@ -18,13 +19,15 @@ if (APPLE)
             "-framework CoreMedia"
             "-framework CoreVideo"
             "-framework Foundation"
+            "-framework QuartzCore"
             "-framework ScreenCaptureKit")
 elseif (WIN32)
     target_sources(eacp-video PRIVATE
             Encoder-Windows.cpp
+            Player-Windows.cpp
             ScreenCapture-Windows.cpp)
 
-    # Media Foundation sink writer (H.264) + its GUIDs.
+    # Media Foundation sink writer (H.264) + source reader (Player) + GUIDs.
     target_link_libraries(eacp-video PRIVATE
             mfplat
             mfreadwrite

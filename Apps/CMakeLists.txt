@@ -9,6 +9,10 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(SVG)
     add_subdirectory(GPU)
 
+    if (NOT IOS)
+        add_subdirectory(Video)
+    endif ()
+
     if (EACP_BUILD_WEBVIEW)
         add_subdirectory(WebView)
         add_subdirectory(Camera)

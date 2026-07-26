@@ -24,5 +24,6 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     # and a stub on Windows until Windows.Graphics.Capture lands.
     if (NOT IOS)
         add_subdirectory(Video)
+        add_subdirectory(VideoView)
     endif ()
 endif ()
