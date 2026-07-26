@@ -24,6 +24,10 @@ them, so apps inherit the look, feel, and performance of the host OS:
 - **Graphics** — `Window`, `View`, `Path`, `Font`, and a `Context` drawing
   abstraction backed by Core Graphics / CoreText on Apple platforms and the
   native Windows graphics stack.
+- **GPU** — `GPUView`, frames, passes, buffers, textures and pipelines over
+  Metal and D3D12, plus compute — and a shader EDSL that makes a shader a C++
+  struct rather than a string literal per backend. See
+  [`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md).
 - **Widgets & menus** — native text inputs, menus, and embedded views.
 - **WebView** — embed a system web view (WKWebView on Apple, WebView2 on
   Windows) with support for popups and new-window requests.
@@ -144,6 +148,14 @@ cmake --build build --target Console   # build/Apps/Console/Console
 Lib/eacp/
   Core/       App lifecycle, threading, ObjC/CF interop, utils
   Graphics/   Windows, views, widgets, menus, drawing primitives
+  GPU/        Metal / D3D12: device, buffers, textures, pipelines, passes, and
+              the shader EDSL — see GPU/README.md
+  GPUWidgets/ Views drawn on the GPU (gradients, paths)
+  Sprites/    Batched textured-quad renderer
+  Text/       Font metrics, glyph rasterization and a GPU glyph atlas
+  SIMD/       Portable SIMD kernels with runtime backend dispatch
+  Camera/     Capture devices and frames, plus CameraView/ to show them
+  Video/      Screen capture and video encoding
   Network/    HTTP client and minimal HTTP server
   WebView/    System web view embedding
   SVG/        SVG parsing and rendering
