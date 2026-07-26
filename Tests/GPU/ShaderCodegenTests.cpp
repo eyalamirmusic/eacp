@@ -729,6 +729,47 @@ auto tCodegenSmallMatrices = test("GPU/codegenSmallMatrices") = []
     check(contains(hlsl, "mul("));
 };
 
+// transpose() and determinant() are where the small matrices stop being
+// write-only. Both backends spell both the same way, and both are right on both
+// for the same reason: HLSL holds transposed what MSL holds, so transposing
+// each leaves each holding the transpose of the same logical matrix, and a
+// determinant is equal for a matrix and its transpose either way.
+//
+// The check that matters is the HLSL one, where the construction already
+// emitted a transpose of its own: the two have to nest rather than cancel.
+// Pure string generation.
+auto tCodegenMatrixTranspose = test("GPU/codegenMatrixTranspose") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto normal = builder.vertexInput<Float3>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto carried = builder.varying(normal);
+
+    // Two matrices rather than one used twice, so neither construction is
+    // promoted to a shared local and each call still has one under it to read.
+    auto basis = float3x3(carried,
+                          float3(0.0f, 1.0f, builder.constant(0.0f)),
+                          float3(0.0f, builder.constant(0.0f), 1.0f));
+
+    auto other = float3x3(float3(1.0f, builder.constant(0.0f), 0.0f),
+                          carried,
+                          float3(0.0f, builder.constant(0.0f), 1.0f));
+
+    builder.fragment(float4(transpose(basis) * carried, determinant(other)));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "transpose(float3x3("));
+    check(contains(metal, "determinant(float3x3("));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "transpose(transpose(float3x3("));
+    check(contains(hlsl, "determinant(transpose(float3x3("));
+};
+
 // Comparisons yield a Bool, the connectives combine them, and select picks
 // between two values without branching. Both backends spell all of it the same
 // way, which is why none of these needs a per-backend form. Pure string
@@ -970,6 +1011,53 @@ auto tCodegenStaleLocalsAreDropped = test("GPU/codegenStaleLocalsAreDropped") = 
     check(contains(metal, "float t0 = sin(v0);"));
     check(contains(metal, "float t1 = sin(v0);"));
     check(metal.find("v0 = (v0 + 1.0);") < metal.find("float t1 = sin(v0);"));
+};
+
+// transpose() and determinant() through the real platform shader compiler,
+// which is the only thing that answers the question the string check above
+// cannot: whether the language actually has the builtin the emitter named. GLSL
+// has all three of transpose, determinant and inverse; MSL and HLSL have the
+// first two and neither has the third, which is why only two are here.
+// Self-skips without a GPU device.
+auto tCodegenMatrixTransposeCompiles =
+    test("GPU/codegenMatrixTransposeCompiles") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto angle = builder.uniform<Float>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto carried = builder.varying(position);
+
+    auto rotation =
+        float2x2(float2(cos(angle), sin(angle)), float2(-sin(angle), cos(angle)));
+
+    auto basis = float3x3(float3(carried, 1.0f),
+                          float3(0.0f, 1.0f, builder.constant(0.0f)),
+                          float3(0.0f, builder.constant(0.0f), 1.0f));
+
+    auto turned = transpose(rotation) * carried;
+    auto lit = transpose(basis) * float3(carried, 1.0f);
+
+    builder.fragment(float4(turned, determinant(basis) * lit.z(), 1.0f));
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+
+    auto descriptor = RenderPipelineDescriptor {};
+    descriptor.library = &library;
+    descriptor.vertexLayout = shader.vertexLayout;
+
+    check(device.makeRenderPipeline(descriptor).isValid());
 };
 
 // Control flow through the real platform shader compiler, shaped like what

@@ -66,7 +66,10 @@ that, `prepare(sampleCount)` builds the library and the pipeline, and
 
 ### What the EDSL has
 
-- `Float`, `Float2/3/4`, `Float2x2`, `Float3x3`, `Float4x4`
+- `Float`, `Float2/3/4`, `Float2x2`, `Float3x3`, `Float4x4` — built from their
+  columns, multiplied, transposed, and their determinant taken. There is no
+  `inverse`, and that is the languages rather than this: GLSL has one, MSL and
+  HLSL do not
 - `Int` and `Int2/3/4` — signed, with `%`, the bitwise set, the shifts, the
   comparisons, and the explicit crossings `toInt` / `toFloat`
 - `Bool` and `Bool2/3/4` — what a comparison yields, collapsed by `any()` /
