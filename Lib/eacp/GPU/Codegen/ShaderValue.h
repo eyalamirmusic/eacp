@@ -2057,6 +2057,47 @@ inline Float4x4
         *c0.graph, ValueType::Float4x4, {c0.node, c1.node, c2.node, c3.node});
 }
 
+// The transpose of a matrix, spelled the same in both backends and right in
+// both for the same reason the construction above is: HLSL holds transposed
+// what MSL holds, so transposing what each holds leaves each holding the
+// transpose of the same logical value.
+//
+// There is no inverse() beside these, and that is a property of the languages
+// rather than an omission here: neither MSL nor HLSL has one, so it would have
+// to be built out of a cofactor expansion per order - which is a function a
+// caller can write out of the nodes below, and not a node the graph is missing.
+inline Float2x2 transpose(const Float2x2& matrix)
+{
+    return detail::call<Float2x2>(matrix, ValueType::Float2x2, "transpose");
+}
+
+inline Float3x3 transpose(const Float3x3& matrix)
+{
+    return detail::call<Float3x3>(matrix, ValueType::Float3x3, "transpose");
+}
+
+inline Float4x4 transpose(const Float4x4& matrix)
+{
+    return detail::call<Float4x4>(matrix, ValueType::Float4x4, "transpose");
+}
+
+// The determinant, which needs no such argument at all: a matrix and its
+// transpose have the same one, so the backends agree whatever each is holding.
+inline Float determinant(const Float2x2& matrix)
+{
+    return detail::call<Float>(matrix, ValueType::Float, "determinant");
+}
+
+inline Float determinant(const Float3x3& matrix)
+{
+    return detail::call<Float>(matrix, ValueType::Float, "determinant");
+}
+
+inline Float determinant(const Float4x4& matrix)
+{
+    return detail::call<Float>(matrix, ValueType::Float, "determinant");
+}
+
 // A vector-constructor argument: any value handle (or derived member), or a
 // numeric literal that becomes a constant node.
 template <typename T>
