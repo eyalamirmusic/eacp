@@ -113,7 +113,7 @@ struct GPUView::Native : DeviceResourceHolder
         }
 
         swapChain = nullptr;
-        frameFences = {};
+        frameFences.fill(0);
 
         if (spriteVisual)
             spriteVisual->SetContent(nullptr);
@@ -300,7 +300,7 @@ struct GPUView::Native : DeviceResourceHolder
         for (auto& buffer: backBuffers)
             buffer = nullptr;
 
-        frameFences = {};
+        frameFences.fill(0);
 
         if (FAILED(swapChain->ResizeBuffers(
                 bufferCount,
@@ -517,9 +517,9 @@ struct GPUView::Native : DeviceResourceHolder
     ID3D12Device* device = nullptr;
 
     winrt::com_ptr<IDXGISwapChain3> swapChain;
-    std::array<winrt::com_ptr<ID3D12Resource>, bufferCount> backBuffers;
-    std::array<D3D12_CPU_DESCRIPTOR_HANDLE, bufferCount> rtvHandles = {};
-    std::array<std::uint64_t, bufferCount> frameFences = {};
+    Array<winrt::com_ptr<ID3D12Resource>, bufferCount> backBuffers;
+    Array<D3D12_CPU_DESCRIPTOR_HANDLE, bufferCount> rtvHandles = {};
+    Array<std::uint64_t, bufferCount> frameFences = {};
 
     winrt::com_ptr<ID3D12DescriptorHeap> rtvHeap;
     winrt::com_ptr<ID3D12DescriptorHeap> dsvHeap;

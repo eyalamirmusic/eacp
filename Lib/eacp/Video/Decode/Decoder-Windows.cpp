@@ -15,9 +15,11 @@
 #include <cstring>
 #include <memory>
 
-// Windows decode backend (Media Foundation IMFSourceReader). The reader's
-// advanced video processing converts whatever the file holds into RGB32, which
-// is BGRA in memory order and so matches GPU::TextureFormat::BGRA8Unorm.
+// Windows decode backend (Media Foundation IMFSourceReader). Frames are taken
+// in NV12 — what the H.264/HEVC decoders produce natively — so no colour
+// conversion happens on the way out; VideoView uploads the two planes and the
+// shader converts. That is 1.5 bytes per pixel through the copy and the upload
+// instead of 4.
 //
 // Frames arrive as CPU buffers and are copied out tightly packed, the same
 // upload path Cameras::Camera takes on this platform (Texture::update).
@@ -63,24 +65,34 @@ int rotationFromAttribute(UINT32 rotation)
     }
 }
 
-// Copies one locked BGRA plane into `out`, tightly packed and top-down. A
-// negative stride means Media Foundation handed back a bottom-up image, so the
-// rows are read in reverse from the last one.
-void copyRows(const std::uint8_t* source,
-              LONG stride,
-              int width,
-              int height,
-              Vector<std::uint8_t>& out)
+// Copies both planes of a locked NV12 buffer into `out`, tightly packed. The
+// planes are contiguous in the source too — `height` luma rows followed by
+// `height / 2` chroma rows, all at the same stride — so this is two runs of the
+// same row copy, and the destination keeps the layout VideoFrame documents.
+void copyPlanes(const std::uint8_t* source,
+                LONG stride,
+                int width,
+                int height,
+                Vector<std::uint8_t>& out)
 {
-    auto rowBytes = static_cast<std::size_t>(width) * 4;
-    out.resize(height * width * 4);
+    auto rowBytes = static_cast<std::size_t>(width);
+    auto chromaRows = height / 2;
 
-    for (auto y = 0; y < height; ++y)
+    out.resize((int) framePixelBytes(FramePixelFormat::NV12, width, height));
+
+    auto copyRows = [&](std::ptrdiff_t sourceRow, std::size_t destRow, int rows)
     {
-        const auto* row = source + static_cast<std::ptrdiff_t>(y) * stride;
-        std::memcpy(
-            out.data() + static_cast<std::size_t>(y) * rowBytes, row, rowBytes);
-    }
+        for (auto y = 0; y < rows; ++y)
+        {
+            const auto* from =
+                source + (sourceRow + y) * static_cast<std::ptrdiff_t>(stride);
+            std::memcpy(
+                out.data() + (destRow + (std::size_t) y) * rowBytes, from, rowBytes);
+        }
+    };
+
+    copyRows(0, 0, height);
+    copyRows(height, (std::size_t) height, chromaRows);
 }
 } // namespace
 
@@ -110,8 +122,10 @@ struct WindowsDecoder final : Decoder
         if (FAILED(MFCreateAttributes(&attributes, 1)))
             return false;
 
-        // Lets the reader insert the video processor that gives us RGB32 out of
-        // whatever the decoder natively produces (NV12, almost always).
+        // Only a safety net now that NV12 is what is asked for: the decoders
+        // produce it natively, so no processor is inserted in the common case.
+        // It stays for the odd source that decodes to something else, which
+        // would otherwise fail to open rather than cost a conversion.
         attributes->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
                               TRUE);
 
@@ -128,7 +142,13 @@ struct WindowsDecoder final : Decoder
             return false;
 
         outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-        outputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+
+        // NV12 is what the H.264/HEVC decoders produce natively, so asking for
+        // it means no video processor is inserted at all — the frames come
+        // straight out of the decoder. Asking for RGB32 instead costs a
+        // full-frame colour conversion on the CPU for every frame, which at 8K
+        // is the single most expensive thing in the decode path.
+        outputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
 
         if (FAILED(reader->SetCurrentMediaType(
                 MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, outputType.Get())))
@@ -252,14 +272,31 @@ private:
         if (SUCCEEDED(currentType->GetUINT32(MF_MT_VIDEO_ROTATION, &rotation)))
             videoInfo.rotationDegrees = rotationFromAttribute(rotation);
 
-        // A negative default stride is Media Foundation's way of saying the
-        // image is bottom-up; buildFrame flips those rows on the way out.
+        // Tracks below high definition are usually BT.601 and above it BT.709,
+        // but only the file can say for sure, so the height rule is the
+        // fallback rather than the answer.
+        yuvMatrix = yuvMatrixForHeight(videoInfo.height);
+
+        UINT32 signalledMatrix = 0;
+        if (SUCCEEDED(currentType->GetUINT32(MF_MT_YUV_MATRIX, &signalledMatrix)))
+            yuvMatrix = signalledMatrix == MFVideoTransferMatrix_BT601
+                            ? YuvMatrix::BT601
+                            : YuvMatrix::BT709;
+
+        UINT32 nominalRange = 0;
+        if (SUCCEEDED(
+                currentType->GetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, &nominalRange)))
+            fullRangeYuv = nominalRange == MFNominalRange_0_255;
+
+        // Only consulted by the plain-Lock fallback; Lock2D reports the real
+        // pitch itself. One luma sample per byte, so an unpadded NV12 row is
+        // just the width.
         LONG defaultStride = 0;
         if (SUCCEEDED(currentType->GetUINT32(
                 MF_MT_DEFAULT_STRIDE, reinterpret_cast<UINT32*>(&defaultStride))))
             stride = defaultStride;
         else
-            stride = static_cast<LONG>(width) * 4;
+            stride = static_cast<LONG>(width);
 
         PROPVARIANT durationValue;
         PropVariantInit(&durationValue);
@@ -306,9 +343,9 @@ private:
         auto pixels = acquirePixelBuffer();
         auto copied = false;
 
-        // Lock2D reports the real stride, including the sign that says whether
-        // the image is bottom-up. Not every buffer implements it, hence the
-        // plain Lock fallback onto the media type's default stride.
+        // Lock2D reports the real stride. Not every buffer implements it, hence
+        // the plain Lock fallback onto the media type's default stride. Unlike
+        // RGB there is no bottom-up case to handle: NV12 is always top-down.
         ComPtr<IMF2DBuffer> buffer2D;
 
         if (SUCCEEDED(buffer.As(&buffer2D)))
@@ -316,9 +353,9 @@ private:
             BYTE* scanline0 = nullptr;
             LONG pitch = 0;
 
-            if (SUCCEEDED(buffer2D->Lock2D(&scanline0, &pitch)))
+            if (SUCCEEDED(buffer2D->Lock2D(&scanline0, &pitch)) && pitch > 0)
             {
-                copyRows(
+                copyPlanes(
                     scanline0, pitch, videoInfo.width, videoInfo.height, *pixels);
                 buffer2D->Unlock2D();
                 copied = true;
@@ -334,32 +371,27 @@ private:
             if (FAILED(buffer->Lock(&data, &maxLength, &currentLength)))
                 return false;
 
-            // A bottom-up default stride points the first row at the last
-            // scanline, which is what copyRows walks backwards from.
-            auto rowBytes = static_cast<std::size_t>(videoInfo.width) * 4;
-            auto absoluteStride = std::abs(stride);
-            const auto* first =
-                stride < 0 ? data
-                                 + static_cast<std::ptrdiff_t>(videoInfo.height - 1)
-                                       * absoluteStride
-                           : data;
+            // Both planes have to be there: luma rows plus half as many chroma
+            // rows, all at the same stride.
+            auto planeBytes = static_cast<DWORD>(stride * videoInfo.height);
+            auto enough = stride > 0 && currentLength >= planeBytes + planeBytes / 2;
 
-            if (currentLength
-                >= static_cast<DWORD>(absoluteStride * videoInfo.height))
-                copyRows(first, stride, videoInfo.width, videoInfo.height, *pixels);
-            else
-                rowBytes = 0;
+            if (enough)
+                copyPlanes(data, stride, videoInfo.width, videoInfo.height, *pixels);
 
             buffer->Unlock();
 
-            if (rowBytes == 0)
+            if (!enough)
                 return false;
         }
 
         auto frameInfo = FrameInfo {};
         frameInfo.width = videoInfo.width;
         frameInfo.height = videoInfo.height;
-        frameInfo.bytesPerRow = static_cast<std::size_t>(videoInfo.width) * 4;
+        frameInfo.format = FramePixelFormat::NV12;
+        frameInfo.bytesPerRow = static_cast<std::size_t>(videoInfo.width);
+        frameInfo.yuvMatrix = yuvMatrix;
+        frameInfo.fullRangeYuv = fullRangeYuv;
         frameInfo.seconds = seconds;
         frameInfo.duration = duration;
 
@@ -370,6 +402,11 @@ private:
     ComPtr<IMFSourceReader> reader;
     VideoInfo videoInfo;
     LONG stride = 0;
+
+    // The track's colour coding, read from the media type when it says and
+    // inferred from the frame height when it does not.
+    YuvMatrix yuvMatrix = YuvMatrix::BT709;
+    bool fullRangeYuv = false;
 
     // Grows to the number of frames alive at once — the stream's queue depth
     // plus the one on screen — and then stops.
