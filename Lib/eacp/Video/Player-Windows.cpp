@@ -111,8 +111,7 @@ struct Player::Native
         else
         {
             state = PlayerState::Failed;
-            notify([](Player& player)
-                   { player.onError("failed to open video"); });
+            notify([](Player& player) { player.onError("failed to open video"); });
         }
 
         reader.Reset();
@@ -128,12 +127,24 @@ struct Player::Native
     {
         auto url = file.wide();
 
-        if (FAILED(MFCreateSourceReaderFromURL(url.c_str(), nullptr, &reader)))
+        // Without this attribute the reader hands back the decoder's own output
+        // (NV12 for H.264) and rejects the RGB32 request with
+        // MF_E_INVALIDMEDIATYPE — it only inserts the video processor that can
+        // convert when asked to up front.
+        ComPtr<IMFAttributes> attributes;
+
+        if (FAILED(MFCreateAttributes(&attributes, 1)))
+            return false;
+
+        attributes->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+
+        if (FAILED(
+                MFCreateSourceReaderFromURL(url.c_str(), attributes.Get(), &reader)))
             return false;
 
         reader->SetStreamSelection((DWORD) MF_SOURCE_READER_ALL_STREAMS, FALSE);
-        reader->SetStreamSelection(
-            (DWORD) MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);
+        reader->SetStreamSelection((DWORD) MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                                   TRUE);
 
         ComPtr<IMFMediaType> requested;
         if (FAILED(MFCreateMediaType(&requested)))
@@ -148,7 +159,26 @@ struct Player::Native
                 requested.Get())))
             return false;
 
+        if (!readOutputFormat(reader))
+            return false;
+
+        PROPVARIANT duration;
+        PropVariantInit(&duration);
+
+        if (SUCCEEDED(reader->GetPresentationAttribute(
+                (DWORD) MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &duration)))
+            videoDuration = (double) duration.uhVal.QuadPart / ticksPerSecond;
+
+        PropVariantClear(&duration);
+        return videoWidth > 0 && videoHeight > 0;
+    }
+
+    // The reader renegotiates its output as it starts decoding, so the geometry
+    // is re-read here rather than trusted from configure() alone.
+    bool readOutputFormat(ComPtr<IMFSourceReader>& reader)
+    {
         ComPtr<IMFMediaType> actual;
+
         if (FAILED(reader->GetCurrentMediaType(
                 (DWORD) MF_SOURCE_READER_FIRST_VIDEO_STREAM, &actual)))
             return false;
@@ -165,14 +195,6 @@ struct Player::Native
         else
             stride = videoWidth * 4;
 
-        PROPVARIANT duration;
-        PropVariantInit(&duration);
-
-        if (SUCCEEDED(reader->GetPresentationAttribute(
-                (DWORD) MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &duration)))
-            videoDuration = (double) duration.uhVal.QuadPart / ticksPerSecond;
-
-        PropVariantClear(&duration);
         return videoWidth > 0 && videoHeight > 0;
     }
 
@@ -183,8 +205,7 @@ struct Player::Native
             {
                 std::unique_lock<std::mutex> lock(mutex);
                 wake.wait(lock,
-                          [this]
-                          { return quit || playing || pendingSeek >= 0.0; });
+                          [this] { return quit || playing || pendingSeek >= 0.0; });
 
                 if (quit)
                     return;
@@ -203,19 +224,22 @@ struct Player::Native
             LONGLONG timestamp = 0;
             ComPtr<IMFSample> sample;
 
-            if (FAILED(reader->ReadSample(
-                    (DWORD) MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                    0,
-                    &streamIndex,
-                    &flags,
-                    &timestamp,
-                    &sample)))
+            if (FAILED(
+                    reader->ReadSample((DWORD) MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                                       0,
+                                       &streamIndex,
+                                       &flags,
+                                       &timestamp,
+                                       &sample)))
             {
                 playing = false;
                 notify([](Player& player)
                        { player.onError("video decode failed"); });
                 continue;
             }
+
+            if ((flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) != 0)
+                readOutputFormat(reader);
 
             if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0)
             {
@@ -280,8 +304,8 @@ struct Player::Native
             if (remaining <= 0.0)
                 return true;
 
-            std::this_thread::sleep_for(std::chrono::duration<double>(
-                std::min(remaining, 0.01)));
+            std::this_thread::sleep_for(
+                std::chrono::duration<double>(std::min(remaining, 0.01)));
         }
     }
 
