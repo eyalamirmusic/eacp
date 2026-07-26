@@ -134,15 +134,19 @@ would be written blind. **Do not start here without a machine that can run it.**
 | Layer | Runs on a machine with no decoder? |
 | --- | --- |
 | NV12 through the renderer | Yes — **done** |
-| MP4 demux (sample tables → byte ranges) | Yes — pure parsing |
+| MP4 demux (sample tables → byte ranges) | Yes — **done** (`Video::Mp4Demuxer`, `Lib/eacp/Video/Demux`) |
 | Bitstream → DXVA picture params, DPB | No |
 | `ID3D12VideoDecoder` submission | No |
 | Route A's D3D11↔D3D12 interop | No (needs a real decoder to produce textures) |
 
-The demuxer is worth building on any machine: it is ordinary parsing, fully
-unit-testable against a checked-in clip, and both routes need it eventually
-(Route A does not strictly need it, but a demuxer is what frees the stack from
-Media Foundation's container support).
+The demuxer is now built: `Video::Mp4Demuxer` (`Lib/eacp/Video/Demux`) parses
+one video track's sample tables — per-sample byte range, DTS/PTS, duration,
+keyframe flag, plus the avcC/hvcC record — over a `MemoryMappedFile`, tested in
+`Tests/Video/Mp4DemuxerTests.cpp` against both the encoder-written synthetic
+clip and hand-built box structures (including every-prefix truncation). Edit
+lists and fragmented MP4 are out of scope; both routes need what it produces
+eventually (Route A does not strictly need it, but a demuxer is what frees the
+stack from Media Foundation's container support).
 
 ## Where MemoryMappedFile fits
 
