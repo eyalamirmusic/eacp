@@ -1,42 +1,56 @@
-nano_add_executable(RangeTests
-        SOURCES RangeTests.cpp
-        TARGETS eacp-core)
+set(core_test_sources
+        AllocationCount.cpp
+        AppAffordanceTests.cpp
+        AppTests.cpp
+        AsyncCoroutineTests.cpp
+        AsyncTests.cpp
+        # Touches the real system clipboard, and restores whatever was there.
+        ClipboardTests.cpp
+        DynamicLibraryTests.cpp
+        EventLoopTests.cpp
+        FilePathTests.cpp
+        FileTests.cpp
+        FilesTests.cpp
+        MemoryMappedFileTests.cpp
+        PluginObjectTests.cpp
+        ProcessInheritStdioTests.cpp
+        RangeTests.cpp)
 
-nano_add_executable(FileTests
-        SOURCES FileTests.cpp
-        TARGETS eacp-core)
+# Cross-platform proof for captureOutput=false: redirect the test's own
+# stdout to a file and assert a non-capturing child writes through to it,
+# live, while a capturing child still doesn't.
+if (WIN32)
+    list(APPEND core_test_sources StdioCapture-Windows.cpp)
+else ()
+    list(APPEND core_test_sources StdioCapture-Posix.cpp)
+endif ()
 
-nano_add_executable(FilesTests
-        SOURCES FilesTests.cpp
-        TARGETS eacp-core)
+# ProcessTests drive real POSIX commands (/bin/echo, /bin/cat, ...), so they
+# only run on macOS and Linux.
+if (NOT WIN32)
+    list(APPEND core_test_sources ProcessTests.cpp)
+endif ()
 
-nano_add_executable(FilePathTests
-        SOURCES FilePathTests.cpp
-        TARGETS eacp-core)
+# The file/folder picker seam is Windows-only (App-Windows-FilePicker.h).
+if (WIN32)
+    list(APPEND core_test_sources FilePickerWindowsTests.cpp)
+endif ()
 
-nano_add_executable(AppTests
-        SOURCES AppTests.cpp
-        TARGETS eacp-core)
+if (APPLE AND NOT IOS)
+    list(APPEND core_test_sources AppTerminationTests.cpp)
+endif ()
 
-nano_add_executable(AppAffordanceTests
-        SOURCES AppAffordanceTests.cpp
-        TARGETS eacp-core)
-
-# Touches the real system clipboard, and restores whatever was there.
-nano_add_executable(ClipboardTests
-        SOURCES ClipboardTests.cpp
+nano_add_executable(CoreTests
+        SOURCES ${core_test_sources}
         TARGETS eacp-core)
 
 if (APPLE AND NOT IOS)
     add_executable(AppTerminationHarness AppTerminationHarness.mm)
     target_link_libraries(AppTerminationHarness PRIVATE eacp-core)
 
-    nano_add_executable(AppTerminationTests
-            SOURCES AppTerminationTests.cpp
-            TARGETS eacp-core)
-    target_compile_definitions(AppTerminationTests PRIVATE
+    target_compile_definitions(CoreTests PRIVATE
             EACP_TERMINATION_HARNESS="$<TARGET_FILE:AppTerminationHarness>")
-    add_dependencies(AppTerminationTests AppTerminationHarness)
+    add_dependencies(CoreTests AppTerminationHarness)
 endif ()
 
 # The fixture plugin's static initializer counts genuine loads in the
@@ -44,40 +58,6 @@ endif ()
 eacp_add_plugin(DynamicLibraryTestPlugin DynamicLibraryTestPlugin.cpp)
 target_link_libraries(DynamicLibraryTestPlugin PRIVATE eacp-core)
 
-nano_add_executable(DynamicLibraryTests
-        SOURCES DynamicLibraryTests.cpp
-        TARGETS eacp-core)
-target_compile_definitions(DynamicLibraryTests PRIVATE
+target_compile_definitions(CoreTests PRIVATE
         EACP_TEST_PLUGIN="$<TARGET_FILE:DynamicLibraryTestPlugin>")
-add_dependencies(DynamicLibraryTests DynamicLibraryTestPlugin)
-
-nano_add_executable(PluginObjectTests
-        SOURCES PluginObjectTests.cpp
-        TARGETS eacp-core)
-
-nano_add_executable(EventLoopTests
-        SOURCES EventLoopTests.cpp
-        TARGETS eacp-core)
-
-nano_add_executable(AsyncTests
-        SOURCES AsyncTests.cpp
-        TARGETS eacp-core)
-
-nano_add_executable(AsyncCoroutineTests
-        SOURCES AsyncCoroutineTests.cpp
-        TARGETS eacp-core)
-
-# ProcessTests drive real POSIX commands (/bin/echo, /bin/cat, ...), so they
-# only run on macOS and Linux.
-if (NOT WIN32)
-    nano_add_executable(ProcessTests
-            SOURCES ProcessTests.cpp
-            TARGETS eacp-core)
-endif ()
-
-# The file/folder picker seam is Windows-only (App-Windows-FilePicker.h).
-if (WIN32)
-    nano_add_executable(FilePickerWindowsTests
-            SOURCES FilePickerWindowsTests.cpp
-            TARGETS eacp-core)
-endif ()
+add_dependencies(CoreTests DynamicLibraryTestPlugin)

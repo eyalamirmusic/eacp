@@ -238,11 +238,21 @@ void Server::Impl::handleConnection(SOCKET fd,
     auto parser = RequestParser();
     char buf[4096];
 
+    // Receive with a timeout instead of blocking forever: browsers hold idle
+    // speculative connections open, and stop() joins this thread — an
+    // indefinite recv would hang the joiner until the peer gives up.
+    auto timeoutMs = DWORD {250};
+    setsockopt(
+        fd, SOL_SOCKET, SO_RCVTIMEO, (const char*) &timeoutMs, sizeof(timeoutMs));
+
     while (true)
     {
         auto n = recv(fd, buf, sizeof(buf), 0);
         if (n <= 0)
         {
+            if (n == SOCKET_ERROR && WSAGetLastError() == WSAETIMEDOUT && running)
+                continue;
+
             closesocket(fd);
             return;
         }

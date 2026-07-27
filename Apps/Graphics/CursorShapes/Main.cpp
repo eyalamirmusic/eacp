@@ -90,8 +90,8 @@ struct CursorBandsView final : View
          {MouseCursor::ResizeLeftRight, "Resize L/R", {0.28f, 0.36f, 0.52f}},
          {MouseCursor::Crosshair, "Crosshair", {0.32f, 0.42f, 0.62f}}}};
 
-    std::array<ShapeLayerView, bandCount> fills;
-    std::array<TextLayerView, bandCount> labels;
+    Array<ShapeLayerView, bandCount> fills;
+    Array<TextLayerView, bandCount> labels;
 };
 
 struct CursorShapesApp

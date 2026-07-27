@@ -2042,7 +2042,7 @@ Float4 toFloat(const T& value)
 // is undefined in both languages - so mask it (`i & 3`) or clamp it
 // (`min(max(i, 0), 3)`) unless it is already in range.
 template <typename T, int Size>
-struct Array
+struct ConstantArray
 {
     T operator[](const Int& index) const
     {

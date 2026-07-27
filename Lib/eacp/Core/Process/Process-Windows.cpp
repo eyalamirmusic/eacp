@@ -247,6 +247,12 @@ private:
             return;
         }
 
+        if (!options.captureOutput)
+        {
+            launchInheritingStdio(options);
+            return;
+        }
+
         SECURITY_ATTRIBUTES inherit {};
         inherit.nLength = sizeof inherit;
         inherit.bInheritHandle = TRUE;
@@ -324,6 +330,68 @@ private:
 
         outReader = std::thread([this, outRead] { drain(outRead, outBuffer); });
         errReader = std::thread([this, errRead] { drain(errRead, errBuffer); });
+    }
+
+    // No pipes: the child writes straight to the launcher's stdio, so a
+    // long-running child's output streams instead of buffering unbounded.
+    // The launcher's std handles are duplicated inheritable first — the
+    // ones a harness hands us (pipes, files) often aren't.
+    void launchInheritingStdio(const ProcessOptions& options)
+    {
+        HANDLE handles[3] = {};
+        const DWORD channels[3] = {
+            STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+
+        for (auto i = 0; i < 3; ++i)
+        {
+            auto original = GetStdHandle(channels[i]);
+
+            if (original != nullptr && original != INVALID_HANDLE_VALUE)
+                DuplicateHandle(GetCurrentProcess(),
+                                original,
+                                GetCurrentProcess(),
+                                &handles[i],
+                                0,
+                                TRUE,
+                                DUPLICATE_SAME_ACCESS);
+        }
+
+        STARTUPINFOW startup {};
+        startup.cb = sizeof startup;
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = handles[0];
+        startup.hStdOutput = handles[1];
+        startup.hStdError = handles[2];
+
+        auto commandLine = buildCommandLine(options.executable, options.arguments);
+        commandLine.push_back(L'\0');
+
+        auto workingDir = toWide(options.workingDirectory);
+        auto environment = buildEnvironmentBlock(options.environment);
+
+        PROCESS_INFORMATION info {};
+        auto created = CreateProcessW(
+            nullptr,
+            commandLine.data(),
+            nullptr,
+            nullptr,
+            TRUE,
+            environment.empty() ? 0 : CREATE_UNICODE_ENVIRONMENT,
+            environment.empty() ? nullptr : (LPVOID) environment.data(),
+            workingDir.empty() ? nullptr : workingDir.c_str(),
+            &startup,
+            &info);
+
+        for (auto handle: handles)
+            if (handle != nullptr)
+                CloseHandle(handle);
+
+        if (!created)
+            return;
+
+        processHandle = info.hProcess;
+        threadHandle = info.hThread;
+        processId = info.dwProcessId;
     }
 
     void launchDetached(const ProcessOptions& options)

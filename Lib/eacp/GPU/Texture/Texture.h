@@ -15,6 +15,11 @@ enum class TextureFormat
     // palette indices, masks and other one-byte-per-pixel data.
     R8Unorm,
 
+    // Two 8-bit channels, sampled as (r, g, 0, 1). Carries the interleaved
+    // Cb/Cr plane of an NV12 video frame, whose luma plane is an R8Unorm of
+    // twice the width and height.
+    RG8Unorm,
+
     // Floating point, for a texture a shader writes as well as reads. Eight bits
     // per channel are enough to show a colour and not nearly enough to keep one:
     // a pass that feeds back into itself quantises every frame, so a value it
@@ -36,6 +41,8 @@ constexpr int bytesPerPixel(TextureFormat format)
     {
         case TextureFormat::R8Unorm:
             return 1;
+        case TextureFormat::RG8Unorm:
+            return 2;
         case TextureFormat::RGBA16Float:
             return 8;
         case TextureFormat::RGBA32Float:

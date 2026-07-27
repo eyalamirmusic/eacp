@@ -22,6 +22,8 @@ MTLPixelFormat toMetalFormat(TextureFormat format)
             return MTLPixelFormatBGRA8Unorm;
         case TextureFormat::R8Unorm:
             return MTLPixelFormatR8Unorm;
+        case TextureFormat::RG8Unorm:
+            return MTLPixelFormatRG8Unorm;
         case TextureFormat::RGBA16Float:
             return MTLPixelFormatRGBA16Float;
         case TextureFormat::RGBA32Float:

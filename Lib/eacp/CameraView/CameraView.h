@@ -20,12 +20,9 @@ public:
     ~CameraView() override;
 
     // How the frame is fitted when its aspect ratio differs from the view's.
-    enum class Fit
-    {
-        Stretch, // fill the view, ignoring aspect (may distort)
-        Contain, // fit entirely inside, letterboxing the remainder
-        Cover // fill the view, cropping the overflow (default)
-    };
+    // Shared with the other views that draw a video-shaped texture, so the
+    // geometry is written once (Sprites::fitRect).
+    using Fit = Sprites::Fit;
 
     // How the frame reaches the GPU. Auto prefers the zero-copy native-buffer
     // path (macOS) and falls back to a CPU upload (the only path on Windows for
@@ -73,7 +70,11 @@ public:
                                            float viewHeight,
                                            int textureWidth,
                                            int textureHeight,
-                                           Fit fit);
+                                           Fit fit)
+    {
+        return Sprites::fitRect(
+            viewWidth, viewHeight, textureWidth, textureHeight, fit);
+    }
 
 protected:
     void render(GPU::Frame& frame) override;

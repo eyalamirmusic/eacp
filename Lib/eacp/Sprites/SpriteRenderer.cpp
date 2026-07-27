@@ -15,6 +15,36 @@ void SpriteShader::define()
     setFragment(sample(image, varying(uv)) * tint);
 }
 
+void Nv12Shader::define()
+{
+    auto corner = vertexInput(&SpriteVertex::corner);
+
+    auto game = origin + corner.x() * edgeX + corner.y() * edgeY;
+    auto ndcX = game.x() / screenSize.x() * 2.0f - 1.0f;
+    auto ndcY = 1.0f - game.y() / screenSize.y() * 2.0f;
+    setPosition(float4(ndcX, ndcY, 0.0f, 1.0f));
+
+    auto uv = varying(corner);
+
+    // Undo the coding range, then apply the track's matrix. Video::toImage runs
+    // the same arithmetic from the same constants, so a frame looks identical
+    // whether it reached the screen or an Image.
+    auto y = (sample(luma, uv).x() - yuvRange.x()) * yuvRange.y();
+    auto cbcr = sample(chroma, uv);
+    auto u = (cbcr.x() - yuvRange.z()) * yuvRange.w();
+    auto v = (cbcr.y() - yuvRange.z()) * yuvRange.w();
+
+    auto red = y + yuvMatrix.x() * v;
+    auto green = y - yuvMatrix.y() * u - yuvMatrix.z() * v;
+    auto blue = y + yuvMatrix.w() * u;
+
+    // Coding ranges overshoot 0-1 slightly at the extremes, and a colour
+    // outside it would blend wrong rather than simply clip.
+    auto rgb = clamp(float3(red, green, blue), 0.0f, 1.0f);
+
+    setFragment(float4(rgb.x(), rgb.y(), rgb.z(), 1.0f) * tint);
+}
+
 namespace
 {
 constexpr SpriteVertex unitQuad[] = {
@@ -59,7 +89,7 @@ GPU::Texture makeWhiteTexture()
 } // namespace
 
 SpriteProgram::SpriteProgram(GPU::TextureSampling sampling,
-                             Graphics::Point logicalSize,
+                             Point logicalSize,
                              int sampleCount)
     : shader(sampling)
     , library(GPU::Device::shared(), shader.source())
@@ -67,11 +97,22 @@ SpriteProgram::SpriteProgram(GPU::TextureSampling sampling,
                blendedDescriptor(library, shader.vertexLayout(), sampleCount))
 {
     shader.setVertices(unitQuad);
-    shader.screenSize = std::array {logicalSize.x, logicalSize.y};
+    shader.screenSize = Array {logicalSize.x, logicalSize.y};
 }
 
-SpriteRenderer::SpriteRenderer(Graphics::Point logicalSizeToUse,
-                               int sampleCountToUse)
+Nv12Program::Nv12Program(GPU::TextureSampling sampling,
+                         Point logicalSize,
+                         int sampleCount)
+    : shader(sampling)
+    , library(GPU::Device::shared(), shader.source())
+    , pipeline(GPU::Device::shared(),
+               blendedDescriptor(library, shader.vertexLayout(), sampleCount))
+{
+    shader.setVertices(unitQuad);
+    shader.screenSize = Array {logicalSize.x, logicalSize.y};
+}
+
+SpriteRenderer::SpriteRenderer(Point logicalSizeToUse, int sampleCountToUse)
     : logicalSize(logicalSizeToUse)
     , sampleCount(sampleCountToUse)
     , white(makeWhiteTexture())
@@ -81,6 +122,16 @@ SpriteRenderer::SpriteRenderer(Graphics::Point logicalSizeToUse,
 SpriteProgram& SpriteRenderer::programFor(GPU::TextureSampling sampling)
 {
     auto& slot = programs[GPU::samplingIndex(sampling)];
+
+    if (!slot.has_value())
+        slot.emplace(sampling, logicalSize, sampleCount);
+
+    return *slot;
+}
+
+Nv12Program& SpriteRenderer::nv12ProgramFor(GPU::TextureSampling sampling)
+{
+    auto& slot = nv12Programs[GPU::samplingIndex(sampling)];
 
     if (!slot.has_value())
         slot.emplace(sampling, logicalSize, sampleCount);
@@ -98,14 +149,14 @@ void SpriteRenderer::begin(GPU::RenderPass& passToUse)
 }
 
 void SpriteRenderer::drawQuad(const GPU::Texture& texture,
-                              Graphics::Point origin,
-                              Graphics::Point edgeX,
-                              Graphics::Point edgeY,
+                              Point origin,
+                              Point edgeX,
+                              Point edgeY,
                               float u0,
                               float v0,
                               float u1,
                               float v1,
-                              const Graphics::Color& tint,
+                              const Color& tint,
                               GPU::TextureSampling sampling)
 {
     const auto index = GPU::samplingIndex(sampling);
@@ -119,12 +170,12 @@ void SpriteRenderer::drawQuad(const GPU::Texture& texture,
         boundProgram = index;
     }
 
-    shader.origin = std::array {origin.x, origin.y};
-    shader.edgeX = std::array {edgeX.x, edgeX.y};
-    shader.edgeY = std::array {edgeY.x, edgeY.y};
-    shader.uv0 = std::array {u0, v0};
-    shader.uv1 = std::array {u1, v1};
-    shader.tint = std::array {tint.r, tint.g, tint.b, tint.a};
+    shader.origin = Array {origin.x, origin.y};
+    shader.edgeX = Array {edgeX.x, edgeX.y};
+    shader.edgeY = Array {edgeY.x, edgeY.y};
+    shader.uv0 = Array {u0, v0};
+    shader.uv1 = Array {u1, v1};
+    shader.tint = Array {tint.r, tint.g, tint.b, tint.a};
     shader.image = texture;
 
     pass->setVertexUniforms(shader);
@@ -134,10 +185,10 @@ void SpriteRenderer::drawQuad(const GPU::Texture& texture,
 }
 
 void SpriteRenderer::drawTexture(const GPU::Texture& texture,
-                                 const Graphics::Rect& dst,
+                                 const Rect& dst,
                                  bool flipX,
                                  bool flipY,
-                                 const Graphics::Color& tint,
+                                 const Color& tint,
                                  GPU::TextureSampling sampling)
 {
     drawQuad(texture,
@@ -153,9 +204,9 @@ void SpriteRenderer::drawTexture(const GPU::Texture& texture,
 }
 
 void SpriteRenderer::drawTexture(const GPU::Texture& texture,
-                                 const Graphics::Rect& src,
-                                 const Graphics::Rect& dst,
-                                 const Graphics::Color& tint,
+                                 const Rect& src,
+                                 const Rect& dst,
+                                 const Color& tint,
                                  GPU::TextureSampling sampling)
 {
     const auto width = (float) texture.width();
@@ -173,8 +224,58 @@ void SpriteRenderer::drawTexture(const GPU::Texture& texture,
              sampling);
 }
 
-void SpriteRenderer::fillRect(const Graphics::Rect& rect,
-                              const Graphics::Color& color)
+void SpriteRenderer::drawTextureQuad(const GPU::Texture& texture,
+                                     Point origin,
+                                     Point edgeX,
+                                     Point edgeY,
+                                     const Color& tint,
+                                     GPU::TextureSampling sampling)
+{
+    drawQuad(texture, origin, edgeX, edgeY, 0.0f, 0.0f, 1.0f, 1.0f, tint, sampling);
+}
+
+void SpriteRenderer::drawNv12Quad(const GPU::Texture& luma,
+                                  const GPU::Texture& chroma,
+                                  const YuvTransform& transform,
+                                  Point origin,
+                                  Point edgeX,
+                                  Point edgeY,
+                                  const Color& tint,
+                                  GPU::TextureSampling sampling)
+{
+    // Above the sprite programs in the same numbering, so switching between a
+    // video quad and an overlay rebinds exactly once either way.
+    const auto index = GPU::samplingConfigurations + GPU::samplingIndex(sampling);
+    auto& program = nv12ProgramFor(sampling);
+    auto& shader = program.shader;
+
+    if (index != boundProgram)
+    {
+        pass->setPipeline(program.pipeline);
+        pass->setVertexBuffer(shader.vertices());
+        boundProgram = index;
+    }
+
+    shader.origin = Array {origin.x, origin.y};
+    shader.edgeX = Array {edgeX.x, edgeX.y};
+    shader.edgeY = Array {edgeY.x, edgeY.y};
+    shader.tint = Array {tint.r, tint.g, tint.b, tint.a};
+    shader.yuvRange = Array {transform.lumaOffset,
+                             transform.lumaScale,
+                             transform.chromaOffset,
+                             transform.chromaScale};
+    shader.yuvMatrix =
+        Array {transform.redV, transform.greenU, transform.greenV, transform.blueU};
+    shader.luma = luma;
+    shader.chroma = chroma;
+
+    pass->setVertexUniforms(shader);
+    pass->setFragmentUniforms(shader);
+    shader.bindTextures(*pass);
+    pass->draw(6);
+}
+
+void SpriteRenderer::fillRect(const Rect& rect, const Color& color)
 {
     drawQuad(white,
              {rect.x, rect.y},
@@ -188,9 +289,7 @@ void SpriteRenderer::fillRect(const Graphics::Rect& rect,
              {});
 }
 
-void SpriteRenderer::drawRect(const Graphics::Rect& rect,
-                              const Graphics::Color& color,
-                              float thickness)
+void SpriteRenderer::drawRect(const Rect& rect, const Color& color, float thickness)
 {
     const auto t = thickness;
 
@@ -202,10 +301,7 @@ void SpriteRenderer::drawRect(const Graphics::Rect& rect,
     fillRect({rect.x + rect.w - t, rect.y + t, t, rect.h - 2.0f * t}, color);
 }
 
-void SpriteRenderer::drawLine(Graphics::Point a,
-                              Graphics::Point b,
-                              const Graphics::Color& color,
-                              float thickness)
+void SpriteRenderer::drawLine(Point a, Point b, const Color& color, float thickness)
 {
     const auto delta = b - a;
     const auto length = delta.length();

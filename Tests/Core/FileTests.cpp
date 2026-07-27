@@ -39,7 +39,7 @@ auto tMissingFile = test("File/missing") = []
     check(file.size() == 0);
     check(!file.openForRead());
 
-    auto buffer = std::array<std::uint8_t, 4> {};
+    auto buffer = eacp::Array<std::uint8_t, 4> {};
     check(file.read(0, buffer) == 0);
 };
 
@@ -51,7 +51,7 @@ auto tSequentialRead = test("File/sequentialRead") = []
     // delete a file that still has an open handle, unlike POSIX.
     {
         auto file = File {path};
-        auto buffer = std::array<std::uint8_t, 3> {};
+        auto buffer = eacp::Array<std::uint8_t, 3> {};
 
         check(file.read(0, buffer) == 3);
         check(buffer[0] == 'a' && buffer[1] == 'b' && buffer[2] == 'c');
@@ -69,7 +69,7 @@ auto tSeekBackAndForth = test("File/seekBackAndForth") = []
 
     {
         auto file = File {path};
-        auto buffer = std::array<std::uint8_t, 4> {};
+        auto buffer = eacp::Array<std::uint8_t, 4> {};
 
         check(file.read(6, buffer) == 4);
         check(buffer[0] == '6' && buffer[3] == '9');
@@ -87,7 +87,7 @@ auto tReadPastEnd = test("File/readPastEnd") = []
 
     {
         auto file = File {path};
-        auto buffer = std::array<std::uint8_t, 8> {};
+        auto buffer = eacp::Array<std::uint8_t, 8> {};
 
         check(file.read(0, buffer) == 3);
         check(file.read(3, buffer) == 0);

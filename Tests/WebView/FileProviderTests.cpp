@@ -78,7 +78,7 @@ auto tServesWithinRoot = test("FileProvider/servesFileWithinRoot") = []
     check(resource->size == 10);
     check(resource->mimeType == "audio/wav");
 
-    auto buffer = std::array<std::uint8_t, 4> {};
+    auto buffer = eacp::Array<std::uint8_t, 4> {};
     check(resource->read(2, buffer) == 4);
     check(buffer[0] == '2' && buffer[3] == '5');
 

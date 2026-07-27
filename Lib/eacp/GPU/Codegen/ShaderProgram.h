@@ -1,5 +1,7 @@
 #pragma once
 
+#include <eacp/Core/Utils/Containers.h>
+
 #include "../Device/Device.h"
 #include "../Frame/RenderPass.h"
 #include "GeneratedShader.h"
@@ -51,7 +53,10 @@
 namespace eacp::GPU
 {
 // The CPU-side storage type mirroring each shader value type. A scalar is a
-// float; a vector is a packed std::array, so a uniform reads like the data it is.
+// float; a vector is a packed Array, so a uniform reads like the data it is.
+// Array wraps std::array with no added state, so the packed layout the upload
+// walk memcpys is the same either way — and a plain std::array still assigns,
+// through the sub-type overload below.
 template <typename T>
 struct CpuValueOf;
 
@@ -64,25 +69,25 @@ struct CpuValueOf<Float>
 template <>
 struct CpuValueOf<Float2>
 {
-    using type = std::array<float, 2>;
+    using type = Array<float, 2>;
 };
 
 template <>
 struct CpuValueOf<Float3>
 {
-    using type = std::array<float, 3>;
+    using type = Array<float, 3>;
 };
 
 template <>
 struct CpuValueOf<Float4>
 {
-    using type = std::array<float, 4>;
+    using type = Array<float, 4>;
 };
 
 template <>
 struct CpuValueOf<Float4x4>
 {
-    using type = std::array<float, 16>;
+    using type = Array<float, 16>;
 };
 
 template <>
@@ -182,6 +187,30 @@ struct ShaderValueOf<std::array<float, 4>>
 
 template <>
 struct ShaderValueOf<std::array<float, 16>>
+{
+    using type = Float4x4;
+};
+
+template <>
+struct ShaderValueOf<Array<float, 2>>
+{
+    using type = Float2;
+};
+
+template <>
+struct ShaderValueOf<Array<float, 3>>
+{
+    using type = Float3;
+};
+
+template <>
+struct ShaderValueOf<Array<float, 4>>
+{
+    using type = Float4;
+};
+
+template <>
+struct ShaderValueOf<Array<float, 16>>
 {
     using type = Float4x4;
 };
@@ -728,8 +757,8 @@ protected:
     Int integer(int value) { return builder.integer(value); }
 
     template <ShaderValueLike T, SameShaderShape<T>... Rest>
-    Array<ShaderBase<T>, 1 + (int) sizeof...(Rest)> array(const T& first,
-                                                          const Rest&... rest)
+    ConstantArray<ShaderBase<T>, 1 + (int) sizeof...(Rest)>
+        array(const T& first, const Rest&... rest)
     {
         return builder.array(first, rest...);
     }
