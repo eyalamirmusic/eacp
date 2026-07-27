@@ -1152,6 +1152,21 @@ ShaderBase<T> clamp(const T& value, const Low& low, const High& high)
     return detail::intrinsic<ShaderBase<T>>("clamp", value, low, high);
 }
 
+// And the same two forms the rest of them have, for the shader that clamps a
+// literal between two values it computed: what decides the result is the first
+// argument that is not itself a literal.
+template <ShaderValueLike Low, ShapedBeside<Low> High>
+ShaderBase<Low> clamp(float value, const Low& low, const High& high)
+{
+    return detail::intrinsic<ShaderBase<Low>>("clamp", value, low, high);
+}
+
+template <ShaderValueLike High>
+ShaderBase<High> clamp(float value, float low, const High& high)
+{
+    return detail::intrinsic<ShaderBase<High>>("clamp", value, low, high);
+}
+
 // mix(from, to, amount): linear interpolation (HLSL lerp). The amount is a
 // value of the same shape, a scalar broadcast across a vector, or a literal -
 // and so are the two endpoints, which is what a shader fading between two
