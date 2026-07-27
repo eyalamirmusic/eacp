@@ -160,6 +160,23 @@ is a full-screen pass over a whole texture, and neither has a meaning there.
 A kernel is a `ComputeProgram`: storage buffers and uniforms as members, the
 body in `define()`, dispatched over one index per element. Two places take one.
 
+The grid comes from what the body asks for. `threadId()` gives a single index
+and is dispatched with `dispatch(count)`; `threadPosition()` gives an `x` and a
+`y` and is dispatched with `dispatch(width, height)`, in 8×8 groups. A kernel
+takes one or the other — the generated entry point has one shape — and the two
+extents are bounds-checked for you, so a grid that is not a multiple of the
+group is safe to dispatch.
+
+```cpp
+void define() override
+{
+    auto p = threadPosition();
+    write(output, p.y * stride + p.x, toFloat(p.x));
+}
+
+pass.dispatch(kernel, width, height);
+```
+
 `Device::makeCommandBuffer()` is the off-screen path — compute with no frame
 around it. `commit()` submits and waits; `commitAsync()` submits and returns a
 `Threads::Async<void>` that resolves once the GPU is done:
@@ -209,10 +226,9 @@ beginning the one that reads what it wrote. `Apps/GPU/ComputeParticles` is the
 worked example, and `Apps/GPU/AsyncCompute` times the two commits against each
 other.
 
-What compute does **not** have yet: dispatches are 1D (`dispatch(count)`, one
-index per element), outputs are float buffers — there is no image-shaped
-dispatch and no texture a kernel can write, so a kernel cannot yet produce
-something a fragment shader samples.
+What compute does **not** have yet: outputs are float buffers — there is no
+texture a kernel can write, so a kernel cannot yet produce something a fragment
+shader samples.
 
 ## Texture formats
 

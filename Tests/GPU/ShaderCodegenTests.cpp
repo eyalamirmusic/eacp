@@ -1683,6 +1683,61 @@ auto tCodegenComputeIndexArithmetic = test("GPU/codegenComputeIndexArithmetic") 
     check(contains(hlsl, "buffer1[(gid * 2u)] = "));
 };
 
+// A 2D kernel: threadPosition() gives a pair of indices, which changes the
+// entry signature, the threadgroup shape and the implicit extents the guard
+// reads. Asserting the emitted signature rather than only the runtime result is
+// the point - a rank that reached the dispatch but not the emitter would leave
+// the kernel reading a thread id of the wrong shape and say nothing about it.
+auto tCodegenCompute2D = test("GPU/codegenCompute2D") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto output = builder.outputBuffer();
+    auto position = builder.threadPosition();
+
+    builder.write(output, position.y * 16u + position.x, toFloat(position.x));
+
+    auto shader = builder.build();
+    check(shader.dispatchRank == DispatchRank::TwoD);
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "uint2 gid [[thread_position_in_grid]]"));
+    check(contains(metal, "uint width;"));
+    check(contains(metal, "uint height;"));
+    check(!contains(metal, "uint count;"));
+    check(
+        contains(metal, "if (gid.x >= uniforms.width || gid.y >= uniforms.height)"));
+    check(contains(metal, "buffer0[((gid.y * 16u) + gid.x)] = float(gid.x);"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "[numthreads(8, 8, 1)]"));
+    check(contains(hlsl, "uint3 threadId : SV_DispatchThreadID"));
+    check(contains(hlsl, "uint2 gid = threadId.xy;"));
+    check(
+        contains(hlsl, "if (gid.x >= uniforms.width || gid.y >= uniforms.height)"));
+    check(contains(hlsl, "buffer0[((gid.y * 16u) + gid.x)] = float(gid.x);"));
+};
+
+// The 1D kernel keeps its scalar signature and its single count: the rank is a
+// property of what the body asked for, not a new default.
+auto tCodegenCompute1DUnchanged = test("GPU/codegenCompute1DKeepsScalarId") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto output = builder.outputBuffer();
+    auto gid = builder.threadId();
+
+    builder.write(output, gid, toFloat(gid));
+
+    auto shader = builder.build();
+    check(shader.dispatchRank == DispatchRank::OneD);
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "uint gid [[thread_position_in_grid]]"));
+    check(!contains(metal, "uint2 gid"));
+    check(contains(metal, "if (gid >= uniforms.count)"));
+};
+
 // Feeds an EDSL compute kernel (including the toFloat(threadId) cast) through
 // the real platform shader compiler and builds a compute pipeline. Self-skips
 // without a GPU device.

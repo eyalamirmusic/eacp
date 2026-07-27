@@ -163,6 +163,31 @@ struct ScaleKernel final : ComputeProgram
 constexpr float kernelInput[] = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f};
 constexpr auto kernelCount = (int) (sizeof(kernelInput) / sizeof(kernelInput[0]));
 constexpr auto kernelScale = 3.f;
+
+// A kernel over a grid rather than a flat count. Each cell writes a value that
+// says which cell it was, so a result read back at the wrong stride - or a
+// width and a height packed the wrong way round - shows up as a wrong number
+// rather than as a missing one.
+struct GridKernel final : ComputeProgram
+{
+    GridKernel() { compile(); }
+
+    void define() override
+    {
+        auto p = threadPosition();
+        write(output, p.y * stride + p.x, toFloat(p.x) + toFloat(p.y) * 100.f);
+    }
+
+    Uniform<OutputBuffer> output;
+    Uniform<UInt> stride;
+
+    EACP_SHADER(output, stride)
+};
+
+// Deliberately not multiples of the 8x8 threadgroup: what the guard drops is
+// what would otherwise write past the end of a row.
+constexpr auto gridWidth = 5;
+constexpr auto gridHeight = 3;
 } // namespace
 
 // A kernel's output drawn by the next pass on the same frame. The pixel is the
@@ -249,6 +274,45 @@ auto tCommitAsyncMatchesCommit = test("FrameCompute/commitAsyncMatchesCommit") =
         check(fromBlocking[i] == kernelInput[i] * kernelScale);
         check(fromAsync[i] == fromBlocking[i]);
     }
+};
+
+// A 2D dispatch: every cell of the grid runs exactly once, and no thread
+// outside it writes anything. The buffer starts at zero and the value each cell
+// writes is a function of both its coordinates, so an off-by-one grid, a
+// swapped pair of extents and a guard that never fired are all distinguishable
+// from the numbers that come back.
+auto tGridDispatchCoversTheGrid = test("FrameCompute/gridDispatchCoversTheGrid") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto cells = gridWidth * gridHeight;
+    auto output = device.makeBuffer(sizeof(float) * cells, BufferUsage::Storage);
+
+    auto kernel = GridKernel {};
+    kernel.output = output;
+    kernel.stride = (std::uint32_t) gridWidth;
+    kernel.prepare();
+
+    {
+        auto commands = device.makeCommandBuffer();
+
+        {
+            auto pass = commands.beginCompute();
+            pass.dispatch(kernel, gridWidth, gridHeight);
+        }
+
+        commands.commit();
+    }
+
+    float result[cells] = {};
+    output.read(result, sizeof(result));
+
+    for (auto y = 0; y < gridHeight; ++y)
+        for (auto x = 0; x < gridWidth; ++x)
+            check(result[y * gridWidth + x] == (float) x + (float) y * 100.f);
 };
 
 // The read that does not wait. commitAsync returns before the GPU has run, so a

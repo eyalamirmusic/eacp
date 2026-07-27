@@ -257,12 +257,30 @@ int ShaderGraph::addArrayRead(int slot, int index)
     return add(std::move(node));
 }
 
-int ShaderGraph::addThreadId()
+int ShaderGraph::addThreadIndex(DispatchRank forRank, int component)
 {
+    assert((!rankFixed || rank == forRank)
+           && "eacp: a kernel takes either threadId() or threadPosition(), not "
+              "both - the dispatch has one grid shape");
+
+    rank = forRank;
+    rankFixed = true;
+
     auto node = Expr {};
     node.kind = ExprKind::ThreadId;
     node.type = ValueType::UInt;
+    node.index = component;
     return add(std::move(node));
+}
+
+int ShaderGraph::addThreadId()
+{
+    return addThreadIndex(DispatchRank::OneD, 0);
+}
+
+int ShaderGraph::addThreadPosition(int component)
+{
+    return addThreadIndex(DispatchRank::TwoD, component);
 }
 
 int ShaderGraph::addStorageBuffer(BufferAccess access)

@@ -39,7 +39,9 @@ enum class ExprKind
     // Emits per-backend (MSL t.sample(s, uv), HLSL t.Sample(s, uv)).
     Fetch, // texel read at integer coordinates, no sampler; index = texture slot,
     // args = {coordinates}. Emits per-backend (MSL t.read(), HLSL t.Load()).
-    ThreadId, // compute work-item id; emitted as the kernel's gid parameter
+    ThreadId, // compute work-item id; emitted as the kernel's gid parameter.
+    // index is the component: a 1D kernel has only 0 and prints the whole gid,
+    // a 2D one prints gid.x or gid.y.
     BufferRead, // storage-buffer element read; index = buffer slot, args = {index}
     ArrayRead // constant-array element read; index = array slot, args = {index}
 };
@@ -50,6 +52,18 @@ enum class BufferAccess
 {
     Read,
     Write
+};
+
+// The shape of the grid a kernel is dispatched over, decided by which thread
+// index its body asked for: threadId() gives one index over a flat count,
+// threadPosition() gives a pair over a width and a height. The emitter takes
+// the entry signature and the bounds guard from this, and the dispatch takes
+// the grid from the matching ComputePass::dispatch overload - which is why a
+// kernel cannot ask for both.
+enum class DispatchRank
+{
+    OneD,
+    TwoD
 };
 
 // What a statement does. Statements are what the expression store on its own
@@ -219,10 +233,14 @@ public:
     int addArray(ValueType elementType, Vector<int> elements);
     int addArrayRead(int slot, int index);
 
-    // Compute kernel pieces: the 1D work-item id, a storage-buffer slot (float
-    // elements; inputs and outputs share one slot space, so every buffer gets a
-    // distinct index), an element read, and an element write.
+    // Compute kernel pieces: the 1D work-item id, one component of the 2D one,
+    // a storage-buffer slot (float elements; inputs and outputs share one slot
+    // space, so every buffer gets a distinct index), an element read, and an
+    // element write. The first thread index a kernel asks for fixes its
+    // dispatch rank, and asking for the other one afterwards is a contradiction
+    // the emitted kernel could not express.
     int addThreadId();
+    int addThreadPosition(int component);
     int addStorageBuffer(BufferAccess access);
     int addBufferRead(int slot, int index);
     void addStore(int slot, int index, int value);
@@ -264,6 +282,7 @@ public:
     const Vector<ArrayConstant>& arrays() const { return arrayConstants; }
     const Vector<Store>& stores() const { return storeList; }
     bool isCompute() const { return storeList.size() > 0; }
+    DispatchRank dispatchRank() const { return rank; }
 
     // The body every recorded statement ends up in, directly or inside a nested
     // block. It runs before the fragment (or the kernel's stores) is evaluated,
@@ -279,6 +298,7 @@ public:
 private:
     int add(Expr node);
     int addStatement(Statement newStatement);
+    int addThreadIndex(DispatchRank forRank, int component);
 
     Vector<Expr> nodes;
     Vector<ValueType> inputTypes;
@@ -295,6 +315,8 @@ private:
     Vector<Statement> statementList;
     Vector<Block> blocks; // blocks[rootBlock] is the shader's body
     Vector<int> openBlocks; // innermost last; blocks[back()] takes new statements
+    DispatchRank rank = DispatchRank::OneD;
+    bool rankFixed = false;
     int positionNode = -1;
     int fragmentNode = -1;
     int discardNode = -1;

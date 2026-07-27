@@ -435,6 +435,16 @@ inline Float4 fetch(const Texture2D& texture, const Float2& coordinates)
     return result;
 }
 
+// Where a 2D kernel's work item sits in the grid. A struct of handles rather
+// than a uint2 value type, following the idiom the GPU README states: the two
+// components are what a kernel indexes with, and neither shading language has
+// an operation on the pair that the components do not already have.
+struct ThreadPosition
+{
+    UInt x;
+    UInt y;
+};
+
 // Storage buffers of float elements, declared by a compute kernel. Like
 // Texture2D they are slot-identified rather than expression nodes: an input's
 // one operation is the indexed read, an output's is the store recorded via

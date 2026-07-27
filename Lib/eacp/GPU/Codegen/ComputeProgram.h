@@ -8,9 +8,11 @@
 // A compute kernel authored as a struct, the compute sibling of ShaderProgram.
 // Uniforms are named, typed members set by name; storage buffers are members
 // assigned the GPU::Buffer to bind, with slots taken from declaration order.
-// define() writes the kernel body: read inputs at threadId(), write the result
-// with write(). The generated kernel guards against the rounded-up dispatch
-// with an implicit element count, supplied automatically at dispatch.
+// define() writes the kernel body: read inputs at threadId() (or, over a grid,
+// at threadPosition()), write the result with write(). The generated kernel
+// guards against the rounded-up dispatch with implicit extents, supplied
+// automatically at dispatch - one count for a 1D kernel, a width and a height
+// for a 2D one.
 //
 //   struct ScaleKernel final : ComputeProgram
 //   {
@@ -103,21 +105,30 @@ public:
     // ComputePass::setBytes.
     const void* packedUniforms(int count)
     {
-        uniformBytes.clear();
-        auto uploadVisitor = ShaderUploadVisitor {uniformBytes};
-        reflectMembers(uploadVisitor);
+        assert(dispatchRank() == DispatchRank::OneD
+               && "eacp: a kernel written against threadPosition() is "
+                  "dispatched with dispatch(width, height)");
 
-        auto offset = alignUp(uniformBytes.size(), 4);
-        uniformBytes.resize(offset + (int) sizeof(std::uint32_t));
-
-        auto value = (std::uint32_t) count;
-        std::memcpy(uniformBytes.data() + offset, &value, sizeof(value));
-
-        // After the count, so the pad lands at the struct's end where MSL puts
-        // it, not between the last member and the count.
-        uploadVisitor.finish();
-        return uniformBytes.data();
+        const std::uint32_t extents[] = {(std::uint32_t) count};
+        return packWithExtents(extents, 1);
     }
+
+    // The 2D sibling: the grid extents the two-dimensional guard reads, in the
+    // order the emitted block declares them.
+    const void* packedUniforms(int width, int height)
+    {
+        assert(dispatchRank() == DispatchRank::TwoD
+               && "eacp: a kernel written against threadId() is dispatched "
+                  "with dispatch(count)");
+
+        const std::uint32_t extents[] = {(std::uint32_t) width,
+                                         (std::uint32_t) height};
+        return packWithExtents(extents, 2);
+    }
+
+    // The grid shape this kernel's body asked for, which decides which dispatch
+    // it takes.
+    DispatchRank dispatchRank() const { return generated.dispatchRank; }
 
     int uniformByteSize() const { return uniformBytes.size(); }
 
@@ -142,6 +153,7 @@ protected:
     }
 
     UInt threadId() { return builder.threadId(); }
+    ThreadPosition threadPosition() { return builder.threadPosition(); }
     Float constant(float value) { return builder.constant(value); }
 
     void write(const OutputBuffer& buffer, const UInt& index, const Float& value)
@@ -156,6 +168,26 @@ protected:
     virtual void define() = 0;
 
 private:
+    const void* packWithExtents(const std::uint32_t* extents, int count)
+    {
+        uniformBytes.clear();
+        auto uploadVisitor = ShaderUploadVisitor {uniformBytes};
+        reflectMembers(uploadVisitor);
+
+        for (auto i = 0; i < count; ++i)
+        {
+            auto offset = alignUp(uniformBytes.size(), 4);
+            uniformBytes.resize(offset + (int) sizeof(std::uint32_t));
+            std::memcpy(
+                uniformBytes.data() + offset, &extents[i], sizeof(extents[i]));
+        }
+
+        // After the extents, so the pad lands at the struct's end where MSL
+        // puts it, not between the last member and them.
+        uploadVisitor.finish();
+        return uniformBytes.data();
+    }
+
     ShaderBuilder builder;
     GeneratedShader generated;
     Vector<std::byte> uniformBytes;

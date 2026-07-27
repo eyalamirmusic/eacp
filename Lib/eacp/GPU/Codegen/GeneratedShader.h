@@ -2,6 +2,7 @@
 
 #include "../Pipeline/VertexLayout.h"
 #include "../Shader/ShaderSource.h"
+#include "ShaderGraph.h"
 
 namespace eacp::GPU
 {
@@ -13,5 +14,10 @@ struct GeneratedShader
 {
     ShaderSource source;
     VertexLayout vertexLayout;
+
+    // The grid shape a kernel's body asked for, carried so the dispatch cannot
+    // disagree with the entry point that was emitted for it. Meaningless for a
+    // render shader.
+    DispatchRank dispatchRank = DispatchRank::OneD;
 };
 } // namespace eacp::GPU
