@@ -1,5 +1,16 @@
+#include "AllocationCount.h"
 #include "Common.h"
+#include <atomic>
 #include <chrono>
+#include <cstdlib>
+#include <new>
+#include <thread>
+
+#if !defined(_WIN32)
+#include <csignal>
+#include <sys/stat.h>
+#endif
+
 #include <filesystem>
 #include <fstream>
 #include <span>
@@ -228,3 +239,120 @@ auto tModificationTimeMissing = test("File/modificationTimeMissing") = []
 
     std::filesystem::remove_all(dir);
 };
+
+// --- reading ----------------------------------------------------------------
+//
+// Everything above uses readFile as a helper for checking what a write produced,
+// so none of it asserts anything about the read.
+
+// A doubling buffer plus a copy out measured 4.00x the file; reading into one
+// sized allocation is 1.0x. Anything under 2x separates them with room to spare.
+auto tReadAllocatesAboutTheFileSize =
+    test("Files/readAllocatesAboutTheFileSize") = []
+{
+    const auto dir = scratchDirectory("read-cost");
+    const auto path = dir / "big.txt";
+
+    // Large enough that a doubling buffer reallocates many times, so the
+    // difference is structural rather than a fixed overhead.
+    const auto size = std::size_t {2 * 1024 * 1024};
+    write(path, std::string(size, 'x'));
+
+    auto counter = AllocationCount {};
+    const auto contents = read(path);
+    const auto bytes = counter.bytes();
+
+    check(contents.size() == size);
+    check(bytes < size * 2);
+};
+
+auto tReadsAnEmptyFile = test("Files/readsAnEmptyFile") = []
+{
+    const auto dir = scratchDirectory("read-empty");
+    const auto path = dir / "empty.txt";
+
+    write(path, "");
+
+    check(read(path).empty());
+};
+
+auto tReadsAMissingFileAsEmpty = test("Files/readsAMissingFileAsEmpty") = []
+{
+    const auto dir = scratchDirectory("read-missing");
+
+    check(read(dir / "does-not-exist.txt").empty());
+};
+
+auto tReadsWithoutATrailingNewline =
+    test("Files/readsAFileWithNoTrailingNewline") = []
+{
+    const auto dir = scratchDirectory("read-no-newline");
+    const auto path = dir / "text.txt";
+
+    write(path, "one\ntwo");
+
+    check(read(path) == "one\ntwo");
+};
+
+// A file is a length and some bytes, not a C string.
+auto tReadsEmbeddedNulBytes = test("Files/readsEmbeddedNulBytes") = []
+{
+    const auto dir = scratchDirectory("read-nuls");
+    const auto path = dir / "binary.bin";
+
+    const auto contents = std::string {"before\0after\0\0end", 17};
+    write(path, contents);
+
+    check(read(path) == contents);
+    check(read(path).size() == 17);
+};
+
+#if !defined(_WIN32)
+// A FIFO has no size to report in advance, so a reader that asks for one and
+// reads exactly that many bytes returns nothing at all. On macOS file_size
+// throws here rather than answering zero.
+auto tReadsAStreamWithNoKnownSize = test("Files/readsAStreamWhoseSizeIsUnknown") = []
+{
+    const auto dir = scratchDirectory("read-fifo");
+    const auto path = dir / "pipe";
+
+    if (::mkfifo(path.c_str(), 0600) != 0)
+        return;
+
+    auto sizeError = std::error_code {};
+    const auto reported = std::filesystem::file_size(path, sizeError);
+
+    check(sizeError || reported == 0);
+
+    // Inside a pipe's buffer, so the writer never waits on the reader.
+    const auto contents = std::string(16 * 1024, 'p');
+
+    // A reader that gives up without draining closes its end, and the write
+    // below then raises SIGPIPE — killing the binary before any test can
+    // report, so a broken readFile looks like the suite vanishing rather than
+    // like one assertion failing.
+    struct IgnoreSigPipe
+    {
+        IgnoreSigPipe() { previous = std::signal(SIGPIPE, SIG_IGN); }
+        ~IgnoreSigPipe() { std::signal(SIGPIPE, previous); }
+
+        void (*previous)(int) = nullptr;
+    } ignoreSigPipe;
+
+    // Another thread, because opening either end of a FIFO blocks until the
+    // other is open. jthread so that a readFile which throws does not destroy it
+    // while joinable and terminate the whole suite.
+    auto writer =
+        std::jthread {[&]
+                      {
+                          auto out = std::ofstream {path, std::ios::binary};
+                          out.write(contents.data(),
+                                    static_cast<std::streamsize>(contents.size()));
+                      }};
+
+    const auto read = eacp::Files::readFile(FilePath {path});
+
+    check(read.size() == contents.size());
+    check(read == contents);
+};
+#endif

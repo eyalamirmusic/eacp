@@ -25,6 +25,8 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
             return DXGI_FORMAT_B8G8R8A8_UNORM;
         case TextureFormat::R8Unorm:
             return DXGI_FORMAT_R8_UNORM;
+        case TextureFormat::RG8Unorm:
+            return DXGI_FORMAT_R8G8_UNORM;
         case TextureFormat::RGBA16Float:
             return DXGI_FORMAT_R16G16B16A16_FLOAT;
         case TextureFormat::RGBA32Float:
@@ -134,7 +136,7 @@ struct Texture::Native
         context.getDevice()->GetCopyableFootprints(
             &regionDesc, 0, 1, 0, &footprint, &rows, &rowBytes, &totalBytes);
 
-        auto staging = context.makeUploadBuffer(nullptr, totalBytes);
+        auto* staging = context.acquireStagingBuffer(*commands, totalBytes);
 
         if (staging == nullptr)
             return false;
@@ -161,7 +163,7 @@ struct Texture::Native
         destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
 
         D3D12_TEXTURE_COPY_LOCATION source = {};
-        source.pResource = staging.get();
+        source.pResource = staging;
         source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
         source.PlacedFootprint = footprint;
 
@@ -174,7 +176,8 @@ struct Texture::Native
         transitionTextureForUse(
             commands->list.get(), data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-        commands->transients.add(std::move(staging));
+        // Not parked in transients: the staging pool owns the buffer and takes
+        // it back once this recording's fence passes.
         return true;
     }
 

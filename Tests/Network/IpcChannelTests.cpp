@@ -160,7 +160,7 @@ auto tPeerCloseEndsTheStream = test("Ipc/Channel/peerCloseEndsTheStream") = []
     check(sawEnd);
 };
 
-auto tLargePayload = test("Ipc/Channel/carriesAPayloadPastTheBuffers") = []
+auto tChannelLargePayload = test("Ipc/Channel/carriesAPayloadPastTheBuffers") = []
 {
     auto server = ChannelServer {"eacp.tests.ch.large"};
     auto payload = std::string(1 << 20, 'x');
@@ -183,7 +183,7 @@ auto tLargePayload = test("Ipc/Channel/carriesAPayloadPastTheBuffers") = []
 // A name is folded into a filename, so a separator must not survive to steer
 // the endpoint out of its directory. Both spellings land on one endpoint,
 // which is what proves the folding happened.
-auto tFoldsSeparators = test("Ipc/Channel/foldsPathSeparatorsInNames") = []
+auto tChannelFoldsSeparators = test("Ipc/Channel/foldsPathSeparatorsInNames") = []
 {
     auto server = ChannelServer {"../eacp.tests.ch.escape"};
 
@@ -234,7 +234,7 @@ auto tInterruptWakesABlockedReceive =
     check(received.empty());
 };
 
-auto tEmptyNameThrows = test("Ipc/Channel/emptyNameThrows") = []
+auto tChannelEmptyNameThrows = test("Ipc/Channel/emptyNameThrows") = []
 {
     auto threw = false;
 

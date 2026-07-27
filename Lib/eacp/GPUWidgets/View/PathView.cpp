@@ -177,10 +177,10 @@ void PathView::render(GPU::Frame& frame)
     auto bounds = getLocalBounds();
     auto width = state.spaceWidth > 0.0f ? state.spaceWidth : bounds.w;
     auto height = state.spaceHeight > 0.0f ? state.spaceHeight : bounds.h;
-    auto viewport = std::array {std::max(width, 1.0f), std::max(height, 1.0f)};
+    auto viewport = Array {std::max(width, 1.0f), std::max(height, 1.0f)};
 
     auto solidColor = [](const Graphics::Color& c)
-    { return std::array {c.r, c.g, c.b, c.a}; };
+    { return Array {c.r, c.g, c.b, c.a}; };
 
     auto pass = frame.beginPass({state.backgroundColor});
 

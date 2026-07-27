@@ -20,7 +20,7 @@ struct ProcessOptions
 
     // When false the child inherits the launcher's stdio rather than having it
     // captured into output()/errorOutput(). Suits long-running children whose
-    // output would otherwise buffer unbounded. POSIX only for now.
+    // output would otherwise buffer unbounded.
     bool captureOutput = true;
 
     // When true the child is launched detached: destroying the Process never

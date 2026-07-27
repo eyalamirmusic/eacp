@@ -1,0 +1,46 @@
+{
+    "clips": [
+        {
+            "name": "Sintel trailer",
+            "detail": "854x480  H.264  52s  ~4 MB   (small, quick to fetch)",
+            "url": "https://media.w3.org/2010/05/sintel/trailer.mp4",
+            "fileName": "sintel-trailer-480p.mp4"
+        },
+        {
+            "name": "Big Buck Bunny",
+            "detail": "1920x1080  H.264 30fps  10s  ~30 MB  ~24 Mbit/s   (CC-BY Blender Foundation)",
+            "url": "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_30MB.mp4",
+            "fileName": "bbb-1080p-30mb.mp4"
+        },
+        {
+            "name": "Jellyfish",
+            "detail": "1920x1080  H.264 30fps  10s  ~30 MB  ~24 Mbit/s   (a decode stress clip)",
+            "url": "https://test-videos.co.uk/vids/jellyfish/mp4/h264/1080/Jellyfish_1080_10s_30MB.mp4",
+            "fileName": "jellyfish-1080p-30mb.mp4"
+        },
+        {
+            "name": "Sintel",
+            "detail": "1920x1080  H.264 24fps  10s  ~30 MB   (CC-BY Blender Foundation)",
+            "url": "https://test-videos.co.uk/vids/sintel/mp4/h264/1080/Sintel_1080_10s_30MB.mp4",
+            "fileName": "sintel-1080p-30mb.mp4"
+        },
+        {
+            "name": "Big Buck Bunny 4K",
+            "detail": "3840x2160  H.264 60fps  10m35s  ~673 MB   (CC-BY Blender Foundation)",
+            "url": "https://archive.org/download/bbb_sunflower_2160p_60fps_normal/bbb_sunflower_2160p_60fps_normal.mp4",
+            "fileName": "bbb-2160p60.mp4"
+        },
+        {
+            "name": "Moving Water in Space 8K",
+            "detail": "8192x4096  HEVC 24fps  1m29s  ~159 MB   (NASA, public domain)",
+            "url": "https://images-assets.nasa.gov/video/Moving_Water_in_Space-8K/Moving_Water_in_Space-8K~orig.mp4",
+            "fileName": "nasa-moving-water-8k.mp4"
+        },
+        {
+            "name": "Psyche launch B-roll 8K60",
+            "detail": "7680x4320  HEVC 60fps  3m55s  ~237 MB   (NASA, public domain — the heaviest here)",
+            "url": "https://images-assets.nasa.gov/video/KSC-20231013-VP-MMS01-0001-SpaceX_Psyche_Helicopter_BRoll_8K-WON_M1708/KSC-20231013-VP-MMS01-0001-SpaceX_Psyche_Helicopter_BRoll_8K-WON_M1708~orig.mp4",
+            "fileName": "nasa-psyche-8k60.mp4"
+        }
+    ]
+}

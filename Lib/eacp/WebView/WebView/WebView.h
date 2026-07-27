@@ -262,7 +262,24 @@ public:
     std::function<bool(OwningPointer<WebView> popup, const std::string& url)>
         onNewWindowRequested = [](auto&&, auto&&) { return false; };
 
+    // Cursor during a native file drag-out, in the page's own client CSS pixels
+    // (top-left origin — the same space as clientX/clientY). `inside` is false
+    // once the pointer leaves the window, so the drop belongs to whatever it
+    // lands on outside.
+    struct FileDragPoint
+    {
+        double x = 0;
+        double y = 0;
+        bool inside = false;
+    };
+
     std::function<void()> onFileDragStarted = [] {};
+    // Windows only: the OS file drag is a blocking modal loop (SHDoDragDrop), so
+    // eacp streams the cursor (onFileDragMoved) and reports the release
+    // (onFileDragEnded) from a custom drop source. On macOS the drag is async
+    // and the host polls the cursor itself, so these stay unused there.
+    std::function<void(FileDragPoint)> onFileDragMoved = [](auto&&) {};
+    std::function<void(FileDragPoint)> onFileDragEnded = [](auto&&) {};
     std::function<void()> onClose = [] {};
 
     // Fired (with Options::forwardUnhandledKeys) for every key event the page

@@ -99,30 +99,6 @@ void CameraView::applyRenderMode()
         });
 }
 
-Graphics::Rect CameraView::computeImageArea(
-    float viewWidth, float viewHeight, int textureWidth, int textureHeight, Fit fit)
-{
-    if (fit == Fit::Stretch || textureWidth <= 0 || textureHeight <= 0
-        || viewWidth <= 0.0f || viewHeight <= 0.0f)
-        return {0.0f, 0.0f, viewWidth, viewHeight};
-
-    auto imageAspect = (float) textureWidth / (float) textureHeight;
-    auto viewAspect = viewWidth / viewHeight;
-    auto imageWider = imageAspect > viewAspect;
-
-    // Contain fits inside, so the wider dimension becomes the limit; Cover fills,
-    // so the narrower one does and the other overflows.
-    auto widthLimited = fit == Fit::Contain ? imageWider : !imageWider;
-
-    auto width = widthLimited ? viewWidth : viewHeight * imageAspect;
-    auto height = widthLimited ? viewWidth / imageAspect : viewHeight;
-
-    auto x = (viewWidth - width) * 0.5f;
-    auto y = (viewHeight - height) * 0.5f;
-
-    return {x, y, width, height};
-}
-
 void CameraView::ensureRenderer()
 {
     auto bounds = getLocalBounds();

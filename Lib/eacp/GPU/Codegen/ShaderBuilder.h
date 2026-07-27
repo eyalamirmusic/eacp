@@ -188,11 +188,11 @@ public:
     // A constant array, its size taken from the pack. Every element is an
     // ordinary value - a literal vector, or something built from a uniform -
     // and all of them are evaluated once at the top of the shader body, which
-    // is why a mutable local cannot be one. See Array for what a subscript of
-    // one costs and what bounds it.
+    // is why a mutable local cannot be one. See ConstantArray for what a
+    // subscript of one costs and what bounds it.
     template <ShaderHandleLike T, SameShaderHandle<T>... Rest>
-    Array<ShaderHandle<T>, 1 + (int) sizeof...(Rest)> array(const T& first,
-                                                            const Rest&... rest)
+    ConstantArray<ShaderHandle<T>, 1 + (int) sizeof...(Rest)>
+        array(const T& first, const Rest&... rest)
     {
         auto elements = Vector<int> {};
         elements.add(ShaderHandle<T>(first).node);

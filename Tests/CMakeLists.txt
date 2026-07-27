@@ -20,6 +20,11 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND NOT IOS)
     add_subdirectory(Text)
     add_subdirectory(GPUWidgets)
     add_subdirectory(Camera)
+
+    # The video playback stack above the Decoder interface — frame queueing,
+    # playhead-to-frame selection, the clock — is portable C++, so these run
+    # against a synthetic decoder with no media file and no codec involved.
+    add_subdirectory(Video)
 endif ()
 
 # Codegen tests exercise eacp's WebView events/hooks format registrations,
