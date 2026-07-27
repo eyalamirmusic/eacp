@@ -73,14 +73,18 @@ struct AtlasTextView final : GPU::GPUView
         setHandlesMouseEvents(true);
 
         lines = {
-            {"The quick brown fox jumps over the lazy dog", Text::FontStyle::Regular},
+            {"The quick brown fox jumps over the lazy dog",
+             Text::FontStyle::Regular},
             {"Bold text puts down more ink", Text::FontStyle::Bold},
             {"Italic leans, and shares the same atlas", Text::FontStyle::Italic},
-            {"if (glyph.valid) { draw(glyph); }", Text::FontStyle::Regular,
+            {"if (glyph.valid) { draw(glyph); }",
+             Text::FontStyle::Regular,
              Graphics::Color {0.55f, 0.80f, 0.60f}},
-            {"iiiii WWWWW .... — proportional advances", Text::FontStyle::Regular,
+            {"iiiii WWWWW .... — proportional advances",
+             Text::FontStyle::Regular,
              Graphics::Color {0.85f, 0.65f, 0.45f}},
-            {"Type to add glyphs: ", Text::FontStyle::Bold,
+            {"Type to add glyphs: ",
+             Text::FontStyle::Bold,
              Graphics::Color {0.55f, 0.70f, 0.95f}},
         };
     }
@@ -120,7 +124,12 @@ struct AtlasTextView final : GPU::GPUView
 
         if (bounds.w > 0 && bounds.h > 0)
         {
-            sprites.emplace(Graphics::Point {bounds.w, bounds.h}, sampleCount());
+            // Both renderers take the new size the same cheap way: it is a
+            // uniform on each, not anything either of them compiled.
+            if (sprites)
+                sprites->setLogicalSize({bounds.w, bounds.h});
+            else
+                sprites.emplace(Graphics::Point {bounds.w, bounds.h}, sampleCount());
 
             if (!glyphs)
                 glyphs.emplace();
@@ -233,12 +242,19 @@ struct AtlasTextView final : GPU::GPUView
 
         for (const auto& line: lines)
         {
-            sprites->fillRect({0.f, baseline - metrics.ascent, getLocalBounds().w, lineHeight},
-                              &line == &lines.back() ? gutter : Graphics::Color {0, 0, 0, 0});
+            sprites->fillRect(
+                {0.f, baseline - metrics.ascent, getLocalBounds().w, lineHeight},
+                &line == &lines.back() ? gutter : Graphics::Color {0, 0, 0, 0});
 
             layOutLine(line, left, baseline, false);
             baseline += lineHeight;
         }
+
+        // The gutter fills are queued rather than drawn, and the pass would not
+        // collect them until it ends - by which time the glyphs below would
+        // already be under them. This is the one thing batching still asks of a
+        // caller: say when, if the order matters before the pass is over.
+        sprites->flush();
 
         // Every glyph in one or two draw calls, issued after the gutter fills so
         // the text lands on top of them.

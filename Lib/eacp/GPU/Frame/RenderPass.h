@@ -3,6 +3,8 @@
 #include "../Buffer/Buffer.h"
 #include "../Texture/Texture.h"
 
+#include <eacp/Core/Utils/Containers.h>
+
 namespace eacp::GPU
 {
 class RenderPipeline;
@@ -13,6 +15,35 @@ class RenderPipeline;
 class RenderPass
 {
 public:
+    // Something holding drawing back that the pass has to collect before it
+    // closes.
+    //
+    // A batching renderer does not draw when it is told to; it queues, so that
+    // quads sharing a texture can go out as one draw. That leaves a queue only
+    // it knows about, and the encoder closing is the deadline for it. Making
+    // that the pass's business rather than the caller's is the difference
+    // between an app forgetting a flush call and there being no call to forget:
+    // the alternative fails by drawing nothing at all, silently, which is the
+    // worst way for a renderer to fail.
+    //
+    // A participant must outlive the pass it joins - which is already the rule
+    // for anything drawing into one, since its pipelines and buffers have to
+    // survive until the command list is submitted.
+    struct Participant
+    {
+        virtual ~Participant() = default;
+
+        // Draw whatever is still queued. Called once, as the pass ends, and
+        // before the encoder closes - so drawing from here is still legal.
+        virtual void flushInto(RenderPass& pass) = 0;
+    };
+
+    // Joins this pass, to be flushed when it ends. Leaving is only needed by a
+    // participant that stops drawing before the pass is over; one that simply
+    // outlives it has already been dropped by then.
+    void addParticipant(Participant& participant);
+    void removeParticipant(Participant& participant);
+
     // targetWidth/targetHeight are the render target's size in *pixels*. The
     // pass needs them to clamp scissor rects: both backends reject a scissor
     // that leaves the render target (Metal API validation aborts), so a caller
@@ -197,6 +228,16 @@ public:
     static constexpr int uniformBase = 16;
 
 private:
+    // Flushes every participant, once. Called by end() on both backends before
+    // the encoder closes, so a participant's draws still land on this pass.
+    void drainParticipants();
+
+    // Held here rather than in Native so both backends inherit one
+    // implementation of this, and neither can drift from the other on when a
+    // participant gets its last chance to draw.
+    Vector<Participant*> participants;
+    bool drained = false;
+
     struct Native;
     Pimpl<Native> impl;
 };

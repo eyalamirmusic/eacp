@@ -260,6 +260,10 @@ void RenderPass::drawIndexedInstanced(const Buffer& indices,
 
 void RenderPass::end()
 {
+    // Before the encoder goes, so a batching renderer's queued draws still get
+    // recorded. See RenderPass::Participant.
+    drainParticipants();
+
     // Commands are recorded onto the frame's list, which submits when the
     // frame is destroyed; releasing the encoder marks the pass finished.
     impl->encoder.reset();

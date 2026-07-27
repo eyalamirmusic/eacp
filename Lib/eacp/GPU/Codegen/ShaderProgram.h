@@ -608,8 +608,8 @@ public:
     // program drawing anything translucent — glyph coverage, a fade, a scrim —
     // needs AlphaBlend, or its antialiased edges punch holes in what is behind
     // them instead of blending with it. Without this, such a program had to
-    // build its pipeline by hand and give up draw(program) entirely, which is
-    // what Sprites::SpriteRenderer still does.
+    // build its pipeline by hand and give up draw(program) entirely.
+    //
     // colorFormat is the attachment the pipeline writes, and it has to be the
     // format of whatever the draw ends up in: the default is a view's drawable,
     // and a program rendering into a texture passes pixelFormatFor(its format)
