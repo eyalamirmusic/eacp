@@ -5,6 +5,8 @@
 #include "MenuCommands.h"
 #include "Win32Menu.h"
 
+#include <eacp/Core/Utils/Singleton.h>
+
 #include <unordered_map>
 
 namespace eacp::Graphics
@@ -22,14 +24,11 @@ struct InstalledBar
     Vector<MenuCommand> commands;
 };
 
-// Deliberately leaked. A Window at namespace scope is constructed before this
-// static and so destroyed after it, and ~Native() reaches in here to remove its
-// bar — which would touch a destroyed map. Leaking one hash table at exit is
-// the cheaper end of that trade.
+// Immortal because ~Native() reaches in here to remove its bar, and a Window at
+// namespace scope is constructed before this registry and so destroyed after it.
 std::unordered_map<HWND, InstalledBar>& installedBars()
 {
-    static auto* bars = new std::unordered_map<HWND, InstalledBar>();
-    return *bars;
+    return Singleton::getImmortal<std::unordered_map<HWND, InstalledBar>>();
 }
 
 void appendItem(HMENU parent, const MenuItem& item, unsigned& nextId);
@@ -233,8 +232,7 @@ void updateWin32MenuEnabledState(HWND hwnd)
             CheckMenuItem(menu,
                           command.id,
                           MF_BYCOMMAND
-                              | (command.isChecked() ? MF_CHECKED
-                                                     : MF_UNCHECKED));
+                              | (command.isChecked() ? MF_CHECKED : MF_UNCHECKED));
     }
 }
 
