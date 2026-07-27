@@ -280,6 +280,45 @@ texture index space — so a kernel reading one and writing another gives them
 distinct indices. `Apps/GPU/ComputeImage` is the worked example: a kernel paints
 a 512×512 texture every frame and the next pass samples it full-screen.
 
+### Buffers a shader stage reads
+
+The third way a kernel's output reaches a draw. `setInstanceBuffer` hands the
+vertex stage one record per instance and a written texture hands the fragment
+stage an image; a `Uniform<InputBuffer>` on a `ShaderProgram` hands either stage
+the *whole* buffer, to subscript at an index it worked out:
+
+```cpp
+struct DrawFromPalette final : ShaderProgram
+{
+    void define() override
+    {
+        auto position = vertexInput(&Vertex::position);
+
+        setPosition(float4(position, 0.f, 1.f));
+        setFragment(float4(palette.read3(record), 1.f));
+    }
+
+    Uniform<InputBuffer> palette;   // bound whole, read by index
+    Uniform<UInt> record;
+    EACP_SHADER(palette, record)
+};
+
+draw.palette = computed;            // the buffer a kernel filled
+draw.record = 3;
+pass.draw(draw);                    // binds it to both stages
+```
+
+The same `InputBuffer` a kernel declares, and the same `read2`/`read3`/`read4`
+record reads — what differs is only that no store makes the graph a kernel, so
+it emits a vertex/fragment pair. Read-only here: writing stays the compute path's
+job. Each stage declares only the buffers its own expressions read, and the
+program binds to both, so a buffer works wherever `define()` reaches for it.
+
+Reach for this when the thing being read is not an image and does not line up one
+record per instance — a lookup table, a record picked by an id the shader
+computed. When it *is* one record per instance, `instanceInput` is still the
+idiomatic path.
+
 ## Texture formats
 
 | Format | Notes |

@@ -850,6 +850,57 @@ bool vertexUsesUniforms(const ShaderGraph& graph)
     return anyReferencesUniform(graph, roots);
 }
 
+// Which storage-buffer slots a run of expressions subscripts. A render stage
+// declares only the buffers it reads - unlike a kernel, where every slot is a
+// parameter of the one entry point - so the vertex and fragment functions each
+// need their own answer.
+void collectBufferSlots(const ShaderGraph& graph,
+                        int node,
+                        Vector<char>& used,
+                        VisitSet& seen)
+{
+    if (node < 0 || !seen.visit(node))
+        return;
+
+    const auto& expr = graph.expr(node);
+
+    if (expr.kind == ExprKind::BufferRead && expr.index < used.size())
+        used[expr.index] = 1;
+
+    for (auto argument: expr.args)
+        collectBufferSlots(graph, argument, used, seen);
+}
+
+Vector<char> bufferSlotsUsedBy(const ShaderGraph& graph, const Vector<int>& roots)
+{
+    auto used = Vector<char> {};
+    used.resize(graph.storageBuffers().size(), 0);
+
+    auto seen = VisitSet {graph.nodeCount()};
+
+    for (auto root: roots)
+        collectBufferSlots(graph, root, used, seen);
+
+    return used;
+}
+
+// The MSL parameters for the storage buffers a render stage reads, always read
+// only: a vertex or fragment function has no writable buffer here, which is the
+// whole of what separates this from the kernel signature above.
+std::string bufferParameters(const ShaderGraph& graph, const Vector<int>& roots)
+{
+    auto used = bufferSlotsUsedBy(graph, roots);
+    auto source = std::string {};
+
+    for (auto i = 0; i < used.size(); ++i)
+        if (used[i] != 0)
+            source += ",\n    device const float* buffer" + std::to_string(i)
+                      + " [[buffer(" + std::to_string(RenderPass::bufferBase + i)
+                      + ")]]";
+
+    return source;
+}
+
 // The Uniforms struct shared by both stages (and the HLSL cbuffer wrapping it).
 // The CPU block is packed with MSL struct alignment (UniformLayout.h); HLSL
 // cbuffer packing only forbids straddling a 16-byte register, so a vector after
@@ -1142,6 +1193,18 @@ std::string emit(const ShaderGraph& graph, Backend backend)
 
         if (graph.textureCount() > 0)
             source += "\n";
+
+        // Storage buffers are globals here like the textures, at registers
+        // above every texture slot - the render signature's mirror of the way
+        // a kernel's textures sit above its buffers. See
+        // RenderPass::bufferRegisterBase.
+        for (auto i = 0; i < graph.storageBuffers().size(); ++i)
+            source += "StructuredBuffer<float> buffer" + std::to_string(i)
+                      + " : register(t"
+                      + std::to_string(RenderPass::bufferRegisterBase + i) + ");\n";
+
+        if (graph.storageBuffers().size() > 0)
+            source += "\n";
     }
 
     // On Metal each stage declares the uniform block as a function parameter,
@@ -1151,6 +1214,11 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     // setFragmentBytes bind. Uniforms live at buffer(uniformBase..) so a
     // vertex layout with multiple per-instance slots (0..N) never collides
     // with them.
+    auto vertexRoots = Vector<int> {graph.position()};
+
+    for (auto i = 0; i < graph.varyings().size(); ++i)
+        vertexRoots.add(graph.varyings()[i].sourceNode);
+
     if (backend == Backend::Metal)
     {
         source += "vertex VertexOut vertexMain(VertexIn input [[stage_in]]";
@@ -1159,17 +1227,13 @@ std::string emit(const ShaderGraph& graph, Backend backend)
             source += ", constant Uniforms& uniforms [[buffer("
                       + std::to_string(RenderPass::uniformBase) + ")]]";
 
+        source += bufferParameters(graph, vertexRoots);
         source += ")\n{\n";
     }
     else
     {
         source += "VertexOut vertexMain(VertexIn input)\n{\n";
     }
-
-    auto vertexRoots = Vector<int> {graph.position()};
-
-    for (auto i = 0; i < graph.varyings().size(); ++i)
-        vertexRoots.add(graph.varyings()[i].sourceNode);
 
     // The vertex stage takes no statements: a mutable local and the control flow
     // driving it belong to the fragment expression, the way sampling does. See
@@ -1218,6 +1282,7 @@ std::string emit(const ShaderGraph& graph, Backend backend)
                       + ")]],\n    sampler sampler" + std::to_string(i)
                       + " [[sampler(" + std::to_string(i) + ")]]";
 
+        source += bufferParameters(graph, stageRoots);
         source += ")\n{\n";
     }
     else

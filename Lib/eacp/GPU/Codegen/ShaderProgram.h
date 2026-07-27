@@ -483,6 +483,54 @@ private:
     RenderPass& pass;
 };
 
+// Storage-buffer bind walk: hand each assigned input-buffer member to the
+// render pass at the slot its handle was declared with.
+//
+// Bound to both stages, for the reason the uniform block is: which stage reads
+// the buffer is a property of define(), not of the member, and a stage whose
+// generated function never declares it ignores the bind.
+class ShaderBufferBindVisitor final : public ShaderVisitor
+{
+public:
+    explicit ShaderBufferBindVisitor(RenderPass& passToUse)
+        : pass(passToUse)
+    {
+    }
+
+    void
+        onUniform(const char*, ValueType, detail::ValueHandle&, const void*) override
+    {
+    }
+
+    void onInputBuffer(const char*,
+                       InputBuffer& handle,
+                       const Buffer* buffer) override
+    {
+        if (buffer == nullptr)
+            return;
+
+        pass.setVertexStorageBuffer(*buffer, handle.slot);
+        pass.setFragmentStorageBuffer(*buffer, handle.slot);
+    }
+
+    void onOutputBuffer(const char*, OutputBuffer&, const Buffer*) override
+    {
+        assert(false
+               && "eacp: a render program cannot write a buffer - "
+                  "Uniform<OutputBuffer> belongs to a ComputeProgram");
+    }
+
+    void onWritableTexture(const char*, WritableTexture2D&, const Texture*) override
+    {
+        assert(false
+               && "eacp: a render program cannot write a texture - "
+                  "Uniform<WritableTexture2D> belongs to a ComputeProgram");
+    }
+
+private:
+    RenderPass& pass;
+};
+
 // Upload walk: copy each uniform's current value into the block at its aligned
 // offset. The caller runs finish() once the walk (and any appended tail, like
 // the compute count) is done: MSL pads sizeof(Uniforms) up to the widest
@@ -692,6 +740,16 @@ public:
     void bindTextures(RenderPass& pass)
     {
         auto bindVisitor = ShaderTextureBindVisitor {pass};
+        reflectMembers(bindVisitor);
+    }
+
+    // Its storage-buffer sibling: binds every assigned Uniform<InputBuffer> so
+    // define() can subscript it at an index the shader computed - reading a
+    // record a kernel produced, rather than receiving it as an attribute. A
+    // no-op for programs without buffers. RenderPass::draw(program) calls this.
+    void bindBuffers(RenderPass& pass)
+    {
+        auto bindVisitor = ShaderBufferBindVisitor {pass};
         reflectMembers(bindVisitor);
     }
 

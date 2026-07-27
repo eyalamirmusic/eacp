@@ -4,6 +4,7 @@
 
 #include "../Codegen/ShaderTypes.h"
 #include "../Frame/ComputePass.h"
+#include "../Frame/RenderPass.h"
 
 // Internal shared types for the Windows/D3D12 GPU backend. The public GPU
 // classes expose opaque void* handles (nativeBuffer/nativeLibrary/nativeState/
@@ -25,8 +26,9 @@ constexpr int maxTextureSlots = 4;
 
 // Render root signature parameter layout: root CBVs per stage, then one
 // single-descriptor table per texture slot (SRV, then sampler — tables cannot
-// mix heap types). Single-descriptor tables let each texture bind its
-// persistent heap slot directly, with no per-frame descriptor copying.
+// mix heap types), then per-stage root SRVs for the storage buffers a shader
+// subscripts. Single-descriptor tables let each texture bind its persistent
+// heap slot directly, with no per-frame descriptor copying.
 constexpr UINT renderVertexCBVParam(int slot)
 {
     return static_cast<UINT>(slot);
@@ -38,6 +40,32 @@ constexpr UINT renderPixelCBVParam(int slot)
 constexpr UINT renderTextureParam(int slot)
 {
     return static_cast<UINT>(2 * maxUniformSlots + slot);
+}
+
+// A storage buffer read by a shader stage is a root descriptor, not a table:
+// unlike a texture, a buffer SRV *is* a buffer view, so it binds by GPU address
+// and needs no heap. Per stage, like the CBVs and for the same reason - one
+// HLSL global is visible to both functions, so each stage names its own root
+// parameter at the same register.
+constexpr UINT renderVertexSRVParam(int slot)
+{
+    return static_cast<UINT>(2 * maxUniformSlots + maxTextureSlots + slot);
+}
+constexpr UINT renderPixelSRVParam(int slot)
+{
+    return static_cast<UINT>(2 * maxUniformSlots + maxTextureSlots + maxBufferSlots
+                             + slot);
+}
+
+// The render signature's mirror of computeTextureRegister: a shader's textures
+// hold the low t registers, so its storage buffers start above every texture
+// slot. The emitter writes these from RenderPass::bufferRegisterBase.
+static_assert(maxTextureSlots <= RenderPass::bufferRegisterBase,
+              "render buffer registers must start above every texture slot");
+
+constexpr UINT renderBufferRegister(int slot)
+{
+    return static_cast<UINT>(RenderPass::bufferRegisterBase + slot);
 }
 
 // There is deliberately no renderSamplerParam: samplers are static samplers in
