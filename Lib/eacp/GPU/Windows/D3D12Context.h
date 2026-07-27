@@ -88,6 +88,14 @@ public:
     {
         return nullTexture.gpu;
     }
+
+    // Its write-side sibling, for the compute signature's UAV tables. A table
+    // declared as a UAV range will not take an SRV descriptor, so the two
+    // cannot share one.
+    D3D12_GPU_DESCRIPTOR_HANDLE getNullTextureUAVDescriptor() const
+    {
+        return nullTextureUAV.gpu;
+    }
     D3D12_GPU_DESCRIPTOR_HANDLE getNullSamplerDescriptor() const
     {
         return nullSampler.gpu;
@@ -216,6 +224,7 @@ private:
 
     // Allocated once in createNullDescriptors and deliberately never freed.
     DescriptorSlot nullTexture;
+    DescriptorSlot nullTextureUAV;
     DescriptorSlot nullSampler;
 
     OwnedVector<CommandContext> pool;

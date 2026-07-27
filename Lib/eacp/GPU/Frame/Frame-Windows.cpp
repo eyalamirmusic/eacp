@@ -305,8 +305,7 @@ ComputePass Frame::beginCompute()
     if (impl->commands == nullptr)
         return ComputePass(nullptr);
 
-    impl->commands->list->SetComputeRootSignature(
-        getD3D12Context().getComputeRootSignature());
+    bindComputeRootState(getD3D12Context(), impl->commands->list.get());
 
     return ComputePass(new D3D12ComputeEncoder {impl->commands});
 }

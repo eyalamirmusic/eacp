@@ -26,8 +26,8 @@ namespace
 {
 constexpr int particleCount = 40000;
 
-// The one layout the two stages agree on. The kernel writes it as a flat run of
-// floats at floatsPerParticle * index; the vertex shader reads the same memory
+// The one layout the two stages agree on. The kernel reads and writes it as a
+// four-float record with read4/write; the vertex shader reads the same memory
 // as a per-instance stream with this struct's stride. Nothing converts between
 // the two views - there is only ever one copy.
 struct Particle
@@ -37,7 +37,7 @@ struct Particle
 };
 
 constexpr int floatsPerParticle = (int) (sizeof(Particle) / sizeof(float));
-static_assert(floatsPerParticle == 4, "the kernel indexes state in fours");
+static_assert(floatsPerParticle == 4, "the kernel reads state with read4");
 
 constexpr auto stateBytes = sizeof(Particle) * (std::size_t) particleCount;
 
@@ -103,12 +103,16 @@ struct IntegrateParticles final : ComputeProgram
     void define() override
     {
         auto index = threadId();
-        auto base = index * 4u;
 
-        auto px = state[base];
-        auto py = state[base + 1u];
-        auto vx = state[base + 2u];
-        auto vy = state[base + 3u];
+        // One Particle, read and written as the record it is: the index is in
+        // particles rather than in floats, so the struct's four-float stride
+        // lives in read4/write and nowhere in the body.
+        auto particle = state.read4(index);
+
+        auto px = particle.x();
+        auto py = particle.y();
+        auto vx = particle.z();
+        auto vy = particle.w();
 
         // A per-particle stiffness, spread by the golden ratio so neighbouring
         // indices land far apart rather than in bands. Without it every
@@ -124,10 +128,8 @@ struct IntegrateParticles final : ComputeProgram
         auto nvx = (vx + (attractorX - px) * stiffness * timeStep) * damping;
         auto nvy = (vy + (attractorY - py) * stiffness * timeStep) * damping;
 
-        write(next, base, px + nvx * timeStep);
-        write(next, base + 1u, py + nvy * timeStep);
-        write(next, base + 2u, nvx);
-        write(next, base + 3u, nvy);
+        write(
+            next, index, float4(px + nvx * timeStep, py + nvy * timeStep, nvx, nvy));
     }
 
     Uniform<InputBuffer> state;

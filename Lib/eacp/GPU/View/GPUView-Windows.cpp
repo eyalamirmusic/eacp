@@ -5,6 +5,7 @@
 #include "../Frame/Frame.h"
 #include "../Windows/D3D12Types.h"
 
+#include <eacp/Core/Utils/Singleton.h>
 #include <eacp/Graphics/Image/Image.h>
 
 #include <algorithm>
@@ -31,11 +32,12 @@ struct DeviceResourceHolder
     virtual void recreateDeviceResources() = 0;
 };
 
-// Main-thread only, so no locking is needed.
+// Main-thread only, so no locking is needed. Immortal because ~Native erases
+// itself here, and a GPUView at namespace scope outlives a registry that first
+// use constructed after it.
 std::unordered_set<DeviceResourceHolder*>& liveGPUViews()
 {
-    static auto views = std::unordered_set<DeviceResourceHolder*> {};
-    return views;
+    return Singleton::getImmortal<std::unordered_set<DeviceResourceHolder*>>();
 }
 } // namespace
 

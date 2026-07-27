@@ -58,6 +58,20 @@ constexpr bool isFloatFormat(TextureFormat format)
            || format == TextureFormat::RGBA32Float;
 }
 
+// Whether a kernel may write this format. The restriction is D3D12's: a typed
+// UAV store is only guaranteed for a small set of formats, and everything
+// outside it depends on the device. BGRA8Unorm - the drawable's own format - is
+// not in the guaranteed set, which is exactly the trap this exists to close.
+//
+// A texture asked for computeWrite in another format fails to create rather
+// than binding as a kernel output that quietly does nothing.
+constexpr bool supportsComputeWrite(TextureFormat format)
+{
+    return format == TextureFormat::RGBA8Unorm
+           || format == TextureFormat::RGBA16Float
+           || format == TextureFormat::RGBA32Float;
+}
+
 enum class TextureFilter
 {
     Linear,
@@ -128,6 +142,19 @@ struct TextureDescriptor
     // A render target's pixels come from the GPU, so update() is not the way to
     // fill one and a null `pixels` is the only thing to create one with.
     bool renderTarget = false;
+
+    // Whether a compute kernel can write into this texture - the other way its
+    // pixels come from the GPU, and the one that lets a kernel produce
+    // something a later pass samples. Off by default for the same reason
+    // renderTarget is: the resource has to be created able to be one, which on
+    // D3D12 also costs a UAV descriptor.
+    //
+    // Only the formats supportsComputeWrite() allows may ask for this, and only
+    // on a device whose driver reports a typed UAV store for the format; a
+    // texture that asks for it anywhere else is invalid rather than silently
+    // unwritable. Unlike a render target this leaves update() alone, so a
+    // kernel that accumulates can still be seeded from the CPU.
+    bool computeWrite = false;
 };
 
 // A 2D texture sampled by the fragment stage (MTLTexture on Metal, a D3D12
@@ -155,6 +182,11 @@ public:
     // Frame::beginPass(texture) needs and what makes an ordinary one a no-op
     // there rather than undefined behaviour.
     bool isRenderTarget() const;
+
+    // Whether a kernel can write into this texture - what
+    // ComputePass::setOutputTexture needs, and false on a texture whose format
+    // or device refused the request.
+    bool isComputeWritable() const;
 
     // Re-uploads pixels into a texture created by Device::makeTexture, reusing
     // the GPU resource instead of allocating a new one — the per-frame path for

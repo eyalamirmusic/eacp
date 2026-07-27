@@ -10,6 +10,10 @@ add_subdirectory(Compute)
 # the CPU never reads back.
 add_subdirectory(ComputeParticles)
 
+# A kernel painting a texture the next pass samples full-screen: 2D dispatch
+# via threadPosition() and TextureDescriptor::computeWrite.
+add_subdirectory(ComputeImage)
+
 # Non-blocking submission: CommandBuffer::commitAsync overlapping GPU work with
 # the CPU, measured against the blocking commit.
 add_subdirectory(AsyncCompute)

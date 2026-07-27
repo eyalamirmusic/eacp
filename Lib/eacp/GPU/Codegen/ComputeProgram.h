@@ -8,9 +8,11 @@
 // A compute kernel authored as a struct, the compute sibling of ShaderProgram.
 // Uniforms are named, typed members set by name; storage buffers are members
 // assigned the GPU::Buffer to bind, with slots taken from declaration order.
-// define() writes the kernel body: read inputs at threadId(), write the result
-// with write(). The generated kernel guards against the rounded-up dispatch
-// with an implicit element count, supplied automatically at dispatch.
+// define() writes the kernel body: read inputs at threadId() (or, over a grid,
+// at threadPosition()), write the result with write(). The generated kernel
+// guards against the rounded-up dispatch with implicit extents, supplied
+// automatically at dispatch - one count for a 1D kernel, a width and a height
+// for a 2D one.
 //
 //   struct ScaleKernel final : ComputeProgram
 //   {
@@ -38,12 +40,14 @@
 
 namespace eacp::GPU
 {
-// Buffer bind walk: hand each assigned storage-buffer member to the compute
-// pass at the slot its handle was declared with.
-class ComputeBufferBindVisitor final : public ShaderVisitor
+// Resource bind walk: hand each assigned buffer and texture member to the
+// compute pass at the slot its handle was declared with. One walk rather than
+// one per resource kind - the members are visited in declaration order either
+// way, and the slots are already carried by the handles.
+class ComputeBindVisitor final : public ShaderVisitor
 {
 public:
-    explicit ComputeBufferBindVisitor(ComputePass& passToUse)
+    explicit ComputeBindVisitor(ComputePass& passToUse)
         : pass(passToUse)
     {
     }
@@ -67,6 +71,23 @@ public:
     {
         if (buffer != nullptr)
             pass.setOutputBuffer(*buffer, handle.slot);
+    }
+
+    void onTexture(const char*,
+                   Texture2D& handle,
+                   const Texture* texture,
+                   TextureSampling sampling) override
+    {
+        if (texture != nullptr)
+            pass.setInputTexture(*texture, handle.slot, sampling);
+    }
+
+    void onWritableTexture(const char*,
+                           WritableTexture2D& handle,
+                           const Texture* texture) override
+    {
+        if (texture != nullptr)
+            pass.setOutputTexture(*texture, handle.slot);
     }
 
 private:
@@ -103,29 +124,38 @@ public:
     // ComputePass::setBytes.
     const void* packedUniforms(int count)
     {
-        uniformBytes.clear();
-        auto uploadVisitor = ShaderUploadVisitor {uniformBytes};
-        reflectMembers(uploadVisitor);
+        assert(dispatchRank() == DispatchRank::OneD
+               && "eacp: a kernel written against threadPosition() is "
+                  "dispatched with dispatch(width, height)");
 
-        auto offset = alignUp(uniformBytes.size(), 4);
-        uniformBytes.resize(offset + (int) sizeof(std::uint32_t));
-
-        auto value = (std::uint32_t) count;
-        std::memcpy(uniformBytes.data() + offset, &value, sizeof(value));
-
-        // After the count, so the pad lands at the struct's end where MSL puts
-        // it, not between the last member and the count.
-        uploadVisitor.finish();
-        return uniformBytes.data();
+        const std::uint32_t extents[] = {(std::uint32_t) count};
+        return packWithExtents(extents, 1);
     }
+
+    // The 2D sibling: the grid extents the two-dimensional guard reads, in the
+    // order the emitted block declares them.
+    const void* packedUniforms(int width, int height)
+    {
+        assert(dispatchRank() == DispatchRank::TwoD
+               && "eacp: a kernel written against threadId() is dispatched "
+                  "with dispatch(count)");
+
+        const std::uint32_t extents[] = {(std::uint32_t) width,
+                                         (std::uint32_t) height};
+        return packWithExtents(extents, 2);
+    }
+
+    // The grid shape this kernel's body asked for, which decides which dispatch
+    // it takes.
+    DispatchRank dispatchRank() const { return generated.dispatchRank; }
 
     int uniformByteSize() const { return uniformBytes.size(); }
 
-    // Binds every assigned buffer member to the pass at its declared slot.
-    // ComputePass::dispatch(program, count) calls this.
-    void bindBuffers(ComputePass& pass)
+    // Binds every assigned buffer and texture member to the pass at its
+    // declared slot. ComputePass::dispatch(program, ...) calls this.
+    void bindResources(ComputePass& pass)
     {
-        auto bindVisitor = ComputeBufferBindVisitor {pass};
+        auto bindVisitor = ComputeBindVisitor {pass};
         reflectMembers(bindVisitor);
     }
 
@@ -142,11 +172,40 @@ protected:
     }
 
     UInt threadId() { return builder.threadId(); }
+    ThreadPosition threadPosition() { return builder.threadPosition(); }
     Float constant(float value) { return builder.constant(value); }
 
     void write(const OutputBuffer& buffer, const UInt& index, const Float& value)
     {
         builder.write(buffer, index, value);
+    }
+
+    // The vector writes, for a buffer whose elements are records of N floats.
+    // The index is in records, so it pairs with InputBuffer::read2/3/4 and a
+    // kernel never spells the stride itself.
+    void write(const OutputBuffer& buffer, const UInt& index, const Float2& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const OutputBuffer& buffer, const UInt& index, const Float3& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const OutputBuffer& buffer, const UInt& index, const Float4& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    // One texel of a kernel's output image, at the coordinates a 2D kernel
+    // already has in hand from threadPosition().
+    void write(const WritableTexture2D& texture,
+               const UInt& x,
+               const UInt& y,
+               const Float4& color)
+    {
+        builder.write(texture, x, y, color);
     }
 
     // Generated by EACP_SHADER: visits each declared member in order.
@@ -156,6 +215,26 @@ protected:
     virtual void define() = 0;
 
 private:
+    const void* packWithExtents(const std::uint32_t* extents, int count)
+    {
+        uniformBytes.clear();
+        auto uploadVisitor = ShaderUploadVisitor {uniformBytes};
+        reflectMembers(uploadVisitor);
+
+        for (auto i = 0; i < count; ++i)
+        {
+            auto offset = alignUp(uniformBytes.size(), 4);
+            uniformBytes.resize(offset + (int) sizeof(std::uint32_t));
+            std::memcpy(
+                uniformBytes.data() + offset, &extents[i], sizeof(extents[i]));
+        }
+
+        // After the extents, so the pad lands at the struct's end where MSL
+        // puts it, not between the last member and them.
+        uploadVisitor.finish();
+        return uniformBytes.data();
+    }
+
     ShaderBuilder builder;
     GeneratedShader generated;
     Vector<std::byte> uniformBytes;

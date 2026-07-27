@@ -3,6 +3,8 @@
 #include "../Helpers/SystemAppearance.h"
 #include "../Layers/NativeLayer-Windows.h"
 
+#include <eacp/Core/Utils/Singleton.h>
+
 #include <unordered_map>
 
 namespace eacp::Graphics
@@ -21,10 +23,11 @@ uint16_t keyCodeFromVirtualKey(int vk);
 
 namespace
 {
+// Immortal because ~CompositionHostWindow unregisters here, and a Window at
+// namespace scope outlives a registry that first use constructed after it.
 std::unordered_map<View*, HWND>& contentViewToHwnd()
 {
-    static auto map = std::unordered_map<View*, HWND>();
-    return map;
+    return Singleton::getImmortal<std::unordered_map<View*, HWND>>();
 }
 
 // Virtual key codes - defined manually to reduce Windows.h dependency.
@@ -126,11 +129,10 @@ void markViewTreeLayersDirty(const View* view)
 }
 
 // Every live host, so a device loss can rebuild each one's target and root.
-// Main-thread only, like the view/HWND registry above.
+// Main-thread only and immortal, like the view/HWND registry above.
 Vector<CompositionHostWindow*>& compositionHosts()
 {
-    static auto hosts = Vector<CompositionHostWindow*>();
-    return hosts;
+    return Singleton::getImmortal<Vector<CompositionHostWindow*>>();
 }
 } // namespace
 

@@ -310,6 +310,23 @@ struct Uniform<OutputBuffer> : OutputBuffer
     const Buffer* value = nullptr;
 };
 
+// A kernel's output image, following the Uniform<Texture2D> pattern: the
+// slot-indexed handle define() writes through, and the slot the assigned
+// GPU::Texture is bound at when dispatched. It carries no sampling - nothing
+// samples a written texture - and the texture must have been created with
+// TextureDescriptor::computeWrite.
+template <>
+struct Uniform<WritableTexture2D> : WritableTexture2D
+{
+    Uniform& operator=(const Texture& newTexture)
+    {
+        value = &newTexture;
+        return *this;
+    }
+
+    const Texture* value = nullptr;
+};
+
 inline VertexFormat toVertexFormat(ValueType type)
 {
     switch (type)
@@ -368,6 +385,11 @@ public:
         onOutputBuffer(name, member, member.value);
     }
 
+    void operator()(const char* name, Uniform<WritableTexture2D>& member)
+    {
+        onWritableTexture(name, member, member.value);
+    }
+
 protected:
     virtual void onUniform(const char* name,
                            ValueType type,
@@ -381,6 +403,9 @@ protected:
     }
     virtual void onInputBuffer(const char*, InputBuffer&, const Buffer*) {}
     virtual void onOutputBuffer(const char*, OutputBuffer&, const Buffer*) {}
+    virtual void onWritableTexture(const char*, WritableTexture2D&, const Texture*)
+    {
+    }
 };
 
 // Build walk: each uniform member adopts a freshly added graph slot, so define()
@@ -419,6 +444,13 @@ public:
         handle = builder.outputBuffer();
     }
 
+    void onWritableTexture(const char*,
+                           WritableTexture2D& handle,
+                           const Texture*) override
+    {
+        handle = builder.writableTexture();
+    }
+
 private:
     ShaderBuilder& builder;
 };
@@ -445,6 +477,54 @@ public:
     {
         if (texture != nullptr)
             pass.setFragmentTexture(*texture, handle.slot, sampling);
+    }
+
+private:
+    RenderPass& pass;
+};
+
+// Storage-buffer bind walk: hand each assigned input-buffer member to the
+// render pass at the slot its handle was declared with.
+//
+// Bound to both stages, for the reason the uniform block is: which stage reads
+// the buffer is a property of define(), not of the member, and a stage whose
+// generated function never declares it ignores the bind.
+class ShaderBufferBindVisitor final : public ShaderVisitor
+{
+public:
+    explicit ShaderBufferBindVisitor(RenderPass& passToUse)
+        : pass(passToUse)
+    {
+    }
+
+    void
+        onUniform(const char*, ValueType, detail::ValueHandle&, const void*) override
+    {
+    }
+
+    void onInputBuffer(const char*,
+                       InputBuffer& handle,
+                       const Buffer* buffer) override
+    {
+        if (buffer == nullptr)
+            return;
+
+        pass.setVertexStorageBuffer(*buffer, handle.slot);
+        pass.setFragmentStorageBuffer(*buffer, handle.slot);
+    }
+
+    void onOutputBuffer(const char*, OutputBuffer&, const Buffer*) override
+    {
+        assert(false
+               && "eacp: a render program cannot write a buffer - "
+                  "Uniform<OutputBuffer> belongs to a ComputeProgram");
+    }
+
+    void onWritableTexture(const char*, WritableTexture2D&, const Texture*) override
+    {
+        assert(false
+               && "eacp: a render program cannot write a texture - "
+                  "Uniform<WritableTexture2D> belongs to a ComputeProgram");
     }
 
 private:
@@ -660,6 +740,16 @@ public:
     void bindTextures(RenderPass& pass)
     {
         auto bindVisitor = ShaderTextureBindVisitor {pass};
+        reflectMembers(bindVisitor);
+    }
+
+    // Its storage-buffer sibling: binds every assigned Uniform<InputBuffer> so
+    // define() can subscript it at an index the shader computed - reading a
+    // record a kernel produced, rather than receiving it as an attribute. A
+    // no-op for programs without buffers. RenderPass::draw(program) calls this.
+    void bindBuffers(RenderPass& pass)
+    {
+        auto bindVisitor = ShaderBufferBindVisitor {pass};
         reflectMembers(bindVisitor);
     }
 

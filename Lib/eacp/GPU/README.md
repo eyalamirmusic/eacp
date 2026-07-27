@@ -160,6 +160,23 @@ is a full-screen pass over a whole texture, and neither has a meaning there.
 A kernel is a `ComputeProgram`: storage buffers and uniforms as members, the
 body in `define()`, dispatched over one index per element. Two places take one.
 
+The grid comes from what the body asks for. `threadId()` gives a single index
+and is dispatched with `dispatch(count)`; `threadPosition()` gives an `x` and a
+`y` and is dispatched with `dispatch(width, height)`, in 8×8 groups. A kernel
+takes one or the other — the generated entry point has one shape — and the two
+extents are bounds-checked for you, so a grid that is not a multiple of the
+group is safe to dispatch.
+
+```cpp
+void define() override
+{
+    auto p = threadPosition();
+    write(output, p.y * stride + p.x, toFloat(p.x));
+}
+
+pass.dispatch(kernel, width, height);
+```
+
 `Device::makeCommandBuffer()` is the off-screen path — compute with no frame
 around it. `commit()` submits and waits; `commitAsync()` submits and returns a
 `Threads::Async<void>` that resolves once the GPU is done:
@@ -204,15 +221,103 @@ own: the bytes a kernel wrote as a flat float array are read by the vertex stage
 at the per-instance stride `instanceInput()` declared. One buffer, two views of
 it, no copy.
 
+A buffer whose elements are records rather than single floats is read and
+written a record at a time. `read2`/`read3`/`read4` take N consecutive floats
+starting at `index * N`, and `write` has the matching `Float2`/`Float3`/`Float4`
+overloads — the index is in records on both sides, so a kernel over a struct of
+four floats never spells the stride:
+
+```cpp
+auto particle = state.read4(index);           // position.xy, velocity.xy
+write(next, index, float4(newPosition, newVelocity));
+```
+
+Underneath it is still N scalar accesses over a run of floats, deliberately: a
+retyped `float4` binding would buy one wide store and cost the CPU-side element
+size that makes those same bytes bindable as a per-instance vertex stream.
+
 A command buffer has one open encoder at a time, so let a pass end before
 beginning the one that reads what it wrote. `Apps/GPU/ComputeParticles` is the
 worked example, and `Apps/GPU/AsyncCompute` times the two commits against each
 other.
 
-What compute does **not** have yet: dispatches are 1D (`dispatch(count)`, one
-index per element), outputs are float buffers — there is no image-shaped
-dispatch and no texture a kernel can write, so a kernel cannot yet produce
-something a fragment shader samples.
+### Textures a kernel writes
+
+The other thing a kernel produces is an image, and it reaches the fragment stage
+with no new machinery at all: once a `Texture` is written by a kernel, the
+`setFragmentTexture` that was always there samples it in a later pass on the
+same frame.
+
+A texture opts in the way a render target does, and only in a format a typed
+store is guaranteed for — `RGBA8Unorm`, `RGBA16Float`, `RGBA32Float`. Notably
+**not** `BGRA8Unorm`, the drawable's own format and the first one most people
+reach for; asking for it yields an invalid texture rather than a kernel whose
+writes go nowhere.
+
+```cpp
+auto descriptor = TextureDescriptor {};
+descriptor.width = 512;
+descriptor.height = 512;
+descriptor.format = TextureFormat::RGBA8Unorm;
+descriptor.computeWrite = true;
+
+struct PaintPlasma final : ComputeProgram
+{
+    void define() override
+    {
+        auto p = threadPosition();
+        write(target, p.x, p.y, float4(colourAt(p), 1.f));
+    }
+
+    Uniform<WritableTexture2D> target;      // bound as the kernel's output
+    Uniform<Texture2D> source;              // sampled or fetched, if it needs one
+    EACP_SHADER(target, source)
+};
+```
+
+Read and written textures take slots from one counter — Metal binds both to one
+texture index space — so a kernel reading one and writing another gives them
+distinct indices. `Apps/GPU/ComputeImage` is the worked example: a kernel paints
+a 512×512 texture every frame and the next pass samples it full-screen.
+
+### Buffers a shader stage reads
+
+The third way a kernel's output reaches a draw. `setInstanceBuffer` hands the
+vertex stage one record per instance and a written texture hands the fragment
+stage an image; a `Uniform<InputBuffer>` on a `ShaderProgram` hands either stage
+the *whole* buffer, to subscript at an index it worked out:
+
+```cpp
+struct DrawFromPalette final : ShaderProgram
+{
+    void define() override
+    {
+        auto position = vertexInput(&Vertex::position);
+
+        setPosition(float4(position, 0.f, 1.f));
+        setFragment(float4(palette.read3(record), 1.f));
+    }
+
+    Uniform<InputBuffer> palette;   // bound whole, read by index
+    Uniform<UInt> record;
+    EACP_SHADER(palette, record)
+};
+
+draw.palette = computed;            // the buffer a kernel filled
+draw.record = 3;
+pass.draw(draw);                    // binds it to both stages
+```
+
+The same `InputBuffer` a kernel declares, and the same `read2`/`read3`/`read4`
+record reads — what differs is only that no store makes the graph a kernel, so
+it emits a vertex/fragment pair. Read-only here: writing stays the compute path's
+job. Each stage declares only the buffers its own expressions read, and the
+program binds to both, so a buffer works wherever `define()` reaches for it.
+
+Reach for this when the thing being read is not an image and does not line up one
+record per instance — a lookup table, a record picked by an id the shader
+computed. When it *is* one record per instance, `instanceInput` is still the
+idiomatic path.
 
 ## Texture formats
 

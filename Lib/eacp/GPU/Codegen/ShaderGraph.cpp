@@ -1,11 +1,121 @@
 #include "ShaderGraph.h"
 
+#include <bit>
+
 namespace eacp::GPU
 {
+namespace
+{
+// Whether a node evaluates to something other than a function of its arguments:
+// a mutable local, or a resource the kernel may have written since. Two such
+// nodes spelled identically are not the same value, so neither they nor
+// anything built over them may be shared.
+bool dependsOnMutableState(ExprKind kind)
+{
+    switch (kind)
+    {
+        case ExprKind::VarRead:
+        case ExprKind::BufferRead:
+        case ExprKind::Sample:
+        case ExprKind::Fetch:
+            return true;
+
+        case ExprKind::Input:
+        case ExprKind::Varying:
+        case ExprKind::Uniform:
+        case ExprKind::Constant:
+        case ExprKind::Construct:
+        case ExprKind::Swizzle:
+        case ExprKind::Call:
+        case ExprKind::Unary:
+        case ExprKind::Binary:
+        case ExprKind::Compare:
+        case ExprKind::Select:
+        case ExprKind::Mul:
+        case ExprKind::ThreadId:
+        case ExprKind::ArrayRead:
+            return false;
+    }
+
+    return false;
+}
+} // namespace
+
+bool ShaderGraph::isPure(int node) const
+{
+    return node >= 0 && node < pureFlags.size() && pureFlags[node] != 0;
+}
+
+bool ShaderGraph::purityOf(const Expr& node) const
+{
+    if (dependsOnMutableState(node.kind))
+        return false;
+
+    for (auto argument: node.args)
+        if (!isPure(argument))
+            return false;
+
+    return true;
+}
+
+// Constants and pure binaries are shared by structure rather than by the call
+// that built them, so a base index two separate calls arrive at - the write's
+// `gid * 4u` and the read's - is one node and prints under one name. Only these
+// two kinds: every other add() registers a slot in a parallel vector before it
+// gets here, and returning an existing node would leave that registration
+// stranded.
+int ShaderGraph::findShared(const Expr& node) const
+{
+    if (node.kind == ExprKind::Constant)
+    {
+        auto found = constantCache.find(constantKeyFor(node));
+        return found != constantCache.end() ? found->second : -1;
+    }
+
+    if (node.kind == ExprKind::Binary)
+    {
+        auto found = binaryCache.find(binaryKeyFor(node));
+        return found != binaryCache.end() ? found->second : -1;
+    }
+
+    return -1;
+}
+
+ShaderGraph::ConstantKey ShaderGraph::constantKeyFor(const Expr& node)
+{
+    return {node.type, node.index, std::bit_cast<std::uint32_t>(node.value)};
+}
+
+ShaderGraph::BinaryKey ShaderGraph::binaryKeyFor(const Expr& node)
+{
+    return {node.type, node.op, node.text, node.args[0], node.args[1]};
+}
+
 int ShaderGraph::add(Expr node)
 {
+    auto pure = purityOf(node);
+
+    if (pure)
+    {
+        auto shared = findShared(node);
+
+        if (shared >= 0)
+            return shared;
+    }
+
+    auto id = nodes.size();
+
+    if (pure)
+    {
+        if (node.kind == ExprKind::Constant)
+            constantCache.emplace(constantKeyFor(node), id);
+        else if (node.kind == ExprKind::Binary)
+            binaryCache.emplace(binaryKeyFor(node), id);
+    }
+
+    pureFlags.add(pure ? (char) 1 : (char) 0);
     nodes.add(std::move(node));
-    return nodes.size() - 1;
+    return id;
 }
 
 int ShaderGraph::addInput(ValueType type)
@@ -207,7 +317,24 @@ int ShaderGraph::addMul(ValueType type, int left, int right)
 int ShaderGraph::addTexture(TextureSampling sampling)
 {
     textureSamplings.add(sampling);
+    textureAccesses.add(TextureAccess::Sample);
     return textureSamplings.size() - 1;
+}
+
+int ShaderGraph::addWritableTexture()
+{
+    // The sampling is recorded to keep the two lists parallel and is never
+    // read: a written texture has no sampler on either backend. Spelled out
+    // rather than braced - `add({})` is Vector's initializer-list overload with
+    // an empty list, which adds nothing at all.
+    textureSamplings.add(TextureSampling {});
+    textureAccesses.add(TextureAccess::Write);
+    return textureSamplings.size() - 1;
+}
+
+void ShaderGraph::addTextureStore(int slot, int x, int y, int value)
+{
+    textureStoreList.add({slot, x, y, value});
 }
 
 int ShaderGraph::addSample(int textureSlot, int uv)
@@ -257,12 +384,30 @@ int ShaderGraph::addArrayRead(int slot, int index)
     return add(std::move(node));
 }
 
-int ShaderGraph::addThreadId()
+int ShaderGraph::addThreadIndex(DispatchRank forRank, int component)
 {
+    assert((!rankFixed || rank == forRank)
+           && "eacp: a kernel takes either threadId() or threadPosition(), not "
+              "both - the dispatch has one grid shape");
+
+    rank = forRank;
+    rankFixed = true;
+
     auto node = Expr {};
     node.kind = ExprKind::ThreadId;
     node.type = ValueType::UInt;
+    node.index = component;
     return add(std::move(node));
+}
+
+int ShaderGraph::addThreadId()
+{
+    return addThreadIndex(DispatchRank::OneD, 0);
+}
+
+int ShaderGraph::addThreadPosition(int component)
+{
+    return addThreadIndex(DispatchRank::TwoD, component);
 }
 
 int ShaderGraph::addStorageBuffer(BufferAccess access)
