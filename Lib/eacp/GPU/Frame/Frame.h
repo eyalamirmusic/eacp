@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ComputePass.h"
 #include "RenderPass.h"
 
 namespace eacp::GPU
@@ -61,6 +62,25 @@ public:
     // buffer needs.
     RenderPass beginPass(const Texture& target,
                          const RenderPassDescriptor& descriptor = {});
+
+    // Records a compute pass onto this frame's command buffer, in order with
+    // its render passes and with nothing waiting in between.
+    //
+    // This is what lets a kernel's output feed the very draw that consumes it,
+    // in the same frame, without the result ever reaching the CPU: a particle
+    // integrator writing the buffer the next pass draws as per-instance data, a
+    // histogram a fragment shader then reads. The alternative —
+    // Device::makeCommandBuffer — is a separate submission whose commit() has to
+    // finish before the frame can use a byte of what it wrote.
+    //
+    // Ordering is the queue's, exactly as it is for two render passes on one
+    // frame (see beginPass above), so a buffer written here is legal to bind in
+    // a later pass and neither backend needs a fence to say so.
+    //
+    // A command buffer has one open encoder at a time: let the returned pass end
+    // (drop it out of scope, or call end()) before beginning the pass that reads
+    // what it wrote.
+    ComputePass beginCompute();
 
     bool isValid() const;
 

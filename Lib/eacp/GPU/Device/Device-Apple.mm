@@ -73,6 +73,10 @@ struct Device::Native
     ObjC::Ptr<NSObject<MTLCommandQueue>> queue;
     CFRef<CVMetalTextureCacheRef> textureCache;
     Array<ObjC::Ptr<NSObject<MTLSamplerState>>, samplingConfigurations> samplers;
+
+    // Retained rather than held weakly: the command buffer is autoreleased, and
+    // the pool it came from may well have drained by the time a read waits.
+    ObjC::Ptr<NSObject<MTLCommandBuffer>> lastSubmitted;
 };
 
 Device::Device()
@@ -109,5 +113,19 @@ void* Device::nativeTextureCache() const
 void* Device::nativeSampler(TextureSampling sampling) const
 {
     return (__bridge void*) impl->samplers[samplingIndex(sampling)].get();
+}
+
+void Device::trackSubmittedWork(void* nativeCommandBuffer)
+{
+    impl->lastSubmitted.reset(
+        (__bridge NSObject<MTLCommandBuffer>*) nativeCommandBuffer);
+}
+
+void Device::waitForSubmittedWork()
+{
+    // waitUntilCompleted on a command buffer that already finished returns at
+    // once, so this costs nothing when there is nothing outstanding.
+    if (auto buffer = impl->lastSubmitted.get())
+        [(id<MTLCommandBuffer>) buffer waitUntilCompleted];
 }
 } // namespace eacp::GPU

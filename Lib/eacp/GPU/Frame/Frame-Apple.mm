@@ -11,23 +11,25 @@ namespace eacp::GPU
 {
 struct Frame::Native
 {
-    Native(Device& device,
+    Native(Device& deviceToUse,
            void* drawableHandle,
            void* msaaTextureHandle,
            void* depthTextureHandle)
+        : device(&deviceToUse)
     {
         if (drawableHandle != nullptr)
             drawable.reset((__bridge NSObject<CAMetalDrawable>*) drawableHandle);
 
-        init(device, msaaTextureHandle, depthTextureHandle);
+        init(deviceToUse, msaaTextureHandle, depthTextureHandle);
     }
 
-    Native(Device& device, const OffscreenTarget& target)
+    Native(Device& deviceToUse, const OffscreenTarget& target)
+        : device(&deviceToUse)
     {
         if (target.colorTexture != nullptr)
             colorTexture.reset((__bridge NSObject<MTLTexture>*) target.colorTexture);
 
-        init(device, target.msaaTexture, target.depthTexture);
+        init(deviceToUse, target.msaaTexture, target.depthTexture);
     }
 
     void init(Device& device, void* msaaTextureHandle, void* depthTextureHandle)
@@ -57,6 +59,7 @@ struct Frame::Native
     ObjC::Ptr<NSObject<MTLTexture>> msaaTexture;
     ObjC::Ptr<NSObject<MTLTexture>> depthTexture;
     ObjC::Ptr<NSObject<MTLCommandBuffer>> commandBuffer;
+    Device* device = nullptr;
 };
 
 Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture)
@@ -76,6 +79,12 @@ Frame::~Frame()
 
     if (buffer == nil)
         return;
+
+    // Recorded before the commit, so a Buffer::read that follows this frame
+    // waits for it. A presented frame only waits to be *scheduled*, which says
+    // nothing about a compute pass on it having run.
+    if (impl->device != nullptr)
+        impl->device->trackSubmittedWork((__bridge void*) buffer);
 
     if (target != nil)
     {
@@ -171,6 +180,15 @@ RenderPass Frame::beginPass(const Texture& target,
     return RenderPass((__bridge void*) encoder,
                       (int) texture.width,
                       (int) texture.height);
+}
+
+ComputePass Frame::beginCompute()
+{
+    if (auto buffer = impl->commandBuffer.get())
+        return ComputePass((__bridge void*) [(id<MTLCommandBuffer>) buffer
+                               computeCommandEncoder]);
+
+    return ComputePass(nullptr);
 }
 
 bool Frame::isValid() const

@@ -58,6 +58,27 @@ void CommandBuffer::commit()
     getD3D12Context().submit(impl->commands);
 }
 
+Threads::Async<void> CommandBuffer::commitAsync()
+{
+    auto promise = Threads::AsyncPromise<void> {};
+
+    if (impl->commands == nullptr || impl->committed)
+    {
+        promise.resolve();
+        return promise.get();
+    }
+
+    impl->committed = true;
+
+    // submit() already returns without waiting here - what the fence adds is
+    // the moment to say so.
+    auto& context = getD3D12Context();
+    context.notifyWhenCompleted(context.submit(impl->commands),
+                                [promise] { promise.resolve(); });
+
+    return promise.get();
+}
+
 bool CommandBuffer::isValid() const
 {
     return impl->commands != nullptr;

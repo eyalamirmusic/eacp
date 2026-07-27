@@ -85,4 +85,16 @@ void* Device::nativeSampler(TextureSampling) const
     // its SamplerState on. See TextureSampling.
     return nullptr;
 }
+
+void Device::trackSubmittedWork(void*)
+{
+    // Nothing to record: every submit already stamps the queue's fence, and
+    // lastSubmitted() is the value the wait below needs.
+}
+
+void Device::waitForSubmittedWork()
+{
+    auto& context = getD3D12Context();
+    context.waitFor(context.lastSubmitted());
+}
 } // namespace eacp::GPU
