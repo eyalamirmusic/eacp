@@ -78,6 +78,21 @@ void ComputePass::dispatch(int count)
                   threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
 }
 
+void ComputePass::dispatch(int width, int height)
+{
+    auto activeEncoder = impl->encoder.get();
+
+    if (activeEncoder == nil || width <= 0 || height <= 0)
+        return;
+
+    auto size = (NSUInteger) threadGroupSize2D;
+    auto groupsX = ((NSUInteger) width + size - 1) / size;
+    auto groupsY = ((NSUInteger) height + size - 1) / size;
+
+    [activeEncoder dispatchThreadgroups:MTLSizeMake(groupsX, groupsY, 1)
+                  threadsPerThreadgroup:MTLSizeMake(size, size, 1)];
+}
+
 void ComputePass::end()
 {
     if (impl->ended)

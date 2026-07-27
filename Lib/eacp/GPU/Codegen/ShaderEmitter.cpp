@@ -265,8 +265,14 @@ struct ExprPrinter
             }
 
             case ExprKind::ThreadId:
-                // Both kernel scaffoldings declare the 1D work-item id as gid.
-                return "gid";
+                // Both kernel scaffoldings declare the work-item id as gid: a
+                // uint over the flat count in a 1D kernel, a uint2 over the
+                // grid in a 2D one, where the node carries which component it
+                // asked for.
+                if (graph.dispatchRank() == DispatchRank::OneD)
+                    return "gid";
+
+                return expr.index == 0 ? "gid.x" : "gid.y";
 
             case ExprKind::BufferRead:
                 return "buffer" + std::to_string(expr.index) + "["
@@ -888,13 +894,16 @@ std::string uniformBlock(Backend backend,
 
 // Compute kernel emission. The expression printer is the render one; only the
 // scaffolding differs: storage buffers and the uniform block are MSL kernel
-// parameters but HLSL globals, and the 1D work-item id arrives as a uint on
-// Metal and as SV_DispatchThreadID.x on D3D. The block always ends with an
-// implicit uint element count, and the kernel opens with the bounds guard the
-// rounded-up dispatch needs; ComputeProgram appends the matching CPU value.
+// parameters but HLSL globals, and the work-item id arrives as a builtin
+// parameter on Metal and as SV_DispatchThreadID on D3D. The block always ends
+// with the implicit grid extents the bounds guard reads - one count for a 1D
+// kernel, a width and a height for a 2D one - and the kernel opens with the
+// guard the rounded-up dispatch needs; ComputeProgram appends the matching CPU
+// values.
 std::string emitCompute(const ShaderGraph& graph, Backend backend)
 {
     auto source = std::string {};
+    auto is2D = graph.dispatchRank() == DispatchRank::TwoD;
 
     if (backend == Backend::Metal)
         source += "#include <metal_stdlib>\nusing namespace metal;\n\n";
@@ -905,8 +914,18 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
     for (auto i = 0; i < uniformTypes.size(); ++i)
         uniformNames.add("u" + std::to_string(i));
 
-    uniformTypes.add(ValueType::UInt);
-    uniformNames.add("count");
+    if (is2D)
+    {
+        uniformTypes.add(ValueType::UInt);
+        uniformNames.add("width");
+        uniformTypes.add(ValueType::UInt);
+        uniformNames.add("height");
+    }
+    else
+    {
+        uniformTypes.add(ValueType::UInt);
+        uniformNames.add("count");
+    }
 
     source += uniformBlock(backend, uniformTypes, uniformNames);
 
@@ -927,7 +946,8 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 
         source += "constant Uniforms& uniforms [[buffer("
                   + std::to_string(ComputePass::uniformBase) + ")]],\n    ";
-        source += "uint gid [[thread_position_in_grid]])\n{\n";
+        source += std::string(is2D ? "uint2" : "uint")
+                  + " gid [[thread_position_in_grid]])\n{\n";
     }
     else
     {
@@ -948,13 +968,20 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         if (buffers.size() > 0)
             source += "\n";
 
-        source += "[numthreads(" + std::to_string(ComputePass::threadGroupWidth)
-                  + ", 1, 1)]\n";
+        auto groupWidth =
+            is2D ? ComputePass::threadGroupSize2D : ComputePass::threadGroupWidth;
+        auto groupHeight = is2D ? ComputePass::threadGroupSize2D : 1;
+
+        source += "[numthreads(" + std::to_string(groupWidth) + ", "
+                  + std::to_string(groupHeight) + ", 1)]\n";
         source += "void computeMain(uint3 threadId : SV_DispatchThreadID)\n{\n";
-        source += "    uint gid = threadId.x;\n";
+        source +=
+            is2D ? "    uint2 gid = threadId.xy;\n" : "    uint gid = threadId.x;\n";
     }
 
-    source += "    if (gid >= uniforms.count)\n        return;\n";
+    source += is2D ? "    if (gid.x >= uniforms.width || gid.y >= "
+                     "uniforms.height)\n        return;\n"
+                   : "    if (gid >= uniforms.count)\n        return;\n";
 
     auto roots = Vector<int> {};
 

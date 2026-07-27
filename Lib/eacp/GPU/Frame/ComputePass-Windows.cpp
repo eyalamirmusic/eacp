@@ -88,6 +88,18 @@ void ComputePass::setBytes(const void* data, std::size_t bytes, int slot)
                                                         address);
 }
 
+namespace
+{
+// Orders a dispatch's UAV writes against any later read or write of the same
+// resources in this recording (chained kernels, readback copies).
+void barrierAfterDispatch(ID3D12GraphicsCommandList* list)
+{
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    list->ResourceBarrier(1, &barrier);
+}
+} // namespace
+
 void ComputePass::dispatch(int count)
 {
     if (!impl->encoder || count <= 0)
@@ -98,12 +110,21 @@ void ComputePass::dispatch(int count)
 
     auto* list = impl->encoder->commands->list.get();
     list->Dispatch(groups, 1, 1);
+    barrierAfterDispatch(list);
+}
 
-    // Orders this dispatch's UAV writes against any later read or write of
-    // the same buffers in this recording (chained kernels, readback copies).
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    list->ResourceBarrier(1, &barrier);
+void ComputePass::dispatch(int width, int height)
+{
+    if (!impl->encoder || width <= 0 || height <= 0)
+        return;
+
+    auto size = static_cast<UINT>(threadGroupSize2D);
+    auto groupsX = (static_cast<UINT>(width) + size - 1) / size;
+    auto groupsY = (static_cast<UINT>(height) + size - 1) / size;
+
+    auto* list = impl->encoder->commands->list.get();
+    list->Dispatch(groupsX, groupsY, 1);
+    barrierAfterDispatch(list);
 }
 
 void ComputePass::end()

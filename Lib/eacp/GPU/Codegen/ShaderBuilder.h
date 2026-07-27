@@ -117,6 +117,22 @@ public:
         return value;
     }
 
+    // The 2D work item, for a kernel over a grid rather than a flat count -
+    // which is what anything image-shaped is. Asking for this is what makes the
+    // kernel a 2D one, and it is dispatched with ComputePass::dispatch(width,
+    // height) accordingly; a kernel takes this or threadId(), never both.
+    ThreadPosition threadPosition()
+    {
+        auto position = ThreadPosition {};
+
+        position.x.graph = &graphData;
+        position.x.node = graphData.addThreadPosition(0);
+        position.y.graph = &graphData;
+        position.y.node = graphData.addThreadPosition(1);
+
+        return position;
+    }
+
     InputBuffer inputBuffer()
     {
         return {&graphData, graphData.addStorageBuffer(BufferAccess::Read)};

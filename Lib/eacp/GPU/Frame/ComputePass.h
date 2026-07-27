@@ -47,6 +47,11 @@ public:
     // Runs the kernel over count work items, in groups of threadGroupWidth.
     void dispatch(int count);
 
+    // The 2D sibling, over a width × height grid in groups of threadGroupSize2D
+    // squared. What anything image-shaped is dispatched with, and what a kernel
+    // authored against threadPosition() needs.
+    void dispatch(int width, int height);
+
     // Binds and dispatches a prepared ComputeProgram in one call: its pipeline,
     // storage buffers and uniform block (including the implicit element count
     // its generated bounds guard reads), then a dispatch over count work items.
@@ -64,6 +69,19 @@ public:
         dispatch(count);
     }
 
+    // The 2D form: the same binding, with the grid extents its guard reads in
+    // place of the element count.
+    template <typename Program>
+    void dispatch(Program& program, int width, int height)
+    {
+        setPipeline(program.pipeline());
+        program.bindBuffers(*this);
+
+        const auto* uniforms = program.packedUniforms(width, height);
+        setBytes(uniforms, (std::size_t) program.uniformByteSize());
+        dispatch(width, height);
+    }
+
     void end();
 
     // The Metal buffer index the first uniform block binds to. Storage buffers
@@ -73,6 +91,11 @@ public:
     // Threadgroup width the 1D dispatch uses; the example kernels declare a
     // matching [numthreads(64,1,1)] on D3D.
     static constexpr int threadGroupWidth = 64;
+
+    // The 2D dispatch's group is this squared, which is the same 64 threads the
+    // 1D path already budgets for - and square, so a group covers a tile rather
+    // than a strip, which is what a kernel reading its neighbours wants.
+    static constexpr int threadGroupSize2D = 8;
 
 private:
     struct Native;
