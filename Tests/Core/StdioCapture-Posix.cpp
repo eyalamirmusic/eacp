@@ -30,6 +30,7 @@ eacp::Processes::ProcessOptions echoCommand(const std::string& text)
 
 eacp::Processes::ProcessOptions echoThenLinger(const std::string& text)
 {
-    return {"/bin/sh", {"-c", "echo " + text + "; sleep 5"}};
+    return {"/bin/sh",
+            {"-c", "echo " + text + "; sleep " + std::to_string(lingerSeconds)}};
 }
 } // namespace StdioCapture

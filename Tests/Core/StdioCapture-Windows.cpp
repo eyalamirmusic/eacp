@@ -51,6 +51,7 @@ eacp::Processes::ProcessOptions echoThenLinger(const std::string& text)
     return {"powershell.exe",
             {"-NoProfile",
              "-Command",
-             "Write-Output '" + text + "'; Start-Sleep -Seconds 5"}};
+             "Write-Output '" + text + "'; Start-Sleep -Seconds "
+                 + std::to_string(lingerSeconds)}};
 }
 } // namespace StdioCapture
