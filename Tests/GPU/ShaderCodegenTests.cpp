@@ -1824,22 +1824,27 @@ auto tCodegenComputeVectorElements = test("GPU/codegenComputeVectorElements") = 
     // whole body is one string checked twice.
     for (const auto& text: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
     {
-        // Each side's base index is named once and shared by its four
-        // accesses. The read's and the write's are separate nodes built by
-        // separate calls, so they are two names for the same product - one
-        // integer multiply either shader compiler folds.
+        // The base index is computed once for the whole kernel. The read and
+        // the write build it through separate calls, but the product is the
+        // same pure expression, so the graph hands both the one node.
         check(contains(text, "uint t0 = (gid * 4u);"));
-        check(contains(text, "uint t1 = (gid * 4u);"));
+        check(countOccurrences(text, "(gid * 4u)") == 1);
+
+        // The three offsets off that base are shared the same way - each is
+        // addressed by the read and by the write, so each is named once.
+        check(contains(text, "uint t1 = (t0 + 1u);"));
+        check(contains(text, "uint t2 = (t0 + 2u);"));
+        check(contains(text, "uint t3 = (t0 + 3u);"));
 
         check(contains(text,
-                       "float4 t2 = (float4(buffer0[t1], buffer0[(t1 + 1u)], "
-                       "buffer0[(t1 + 2u)], buffer0[(t1 + 3u)]) * 2.0);"));
+                       "float4 t4 = (float4(buffer0[t0], buffer0[t1], "
+                       "buffer0[t2], buffer0[t3]) * 2.0);"));
 
         // One store per component, at the record's own offsets.
-        check(contains(text, "buffer1[t0] = (t2).x;"));
-        check(contains(text, "buffer1[(t0 + 1u)] = (t2).y;"));
-        check(contains(text, "buffer1[(t0 + 2u)] = (t2).z;"));
-        check(contains(text, "buffer1[(t0 + 3u)] = (t2).w;"));
+        check(contains(text, "buffer1[t0] = (t4).x;"));
+        check(contains(text, "buffer1[t1] = (t4).y;"));
+        check(contains(text, "buffer1[t2] = (t4).z;"));
+        check(contains(text, "buffer1[t3] = (t4).w;"));
     }
 };
 
@@ -1858,8 +1863,8 @@ auto tCodegenComputeVectorStrides = test("GPU/codegenComputeVectorStrides") = []
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "uint t0 = (gid * 2u);"));
-    check(contains(metal, "float2(buffer0[t1], buffer0[(t1 + 1u)])"));
-    check(contains(metal, "buffer1[(t0 + 1u)] = (t2).y;"));
+    check(contains(metal, "float2 t2 = float2(buffer0[t0], buffer0[t1]);"));
+    check(contains(metal, "buffer1[t1] = (t2).y;"));
     check(!contains(metal, "t0 + 2u"));
 
     auto triples = ShaderBuilder {};
@@ -1870,8 +1875,8 @@ auto tCodegenComputeVectorStrides = test("GPU/codegenComputeVectorStrides") = []
     auto hlsl = emitHlsl(triples.graph());
     check(contains(hlsl, "uint t0 = (gid * 3u);"));
     check(contains(hlsl,
-                   "float3(buffer0[t1], buffer0[(t1 + 1u)], buffer0[(t1 + 2u)])"));
-    check(contains(hlsl, "buffer1[(t0 + 2u)] = (t2).z;"));
+                   "float3 t3 = float3(buffer0[t0], buffer0[t1], buffer0[t2]);"));
+    check(contains(hlsl, "buffer1[t2] = (t3).z;"));
     check(!contains(hlsl, "t0 + 3u"));
 };
 
@@ -2005,14 +2010,16 @@ auto tCodegenConstantArray = test("GPU/codegenConstantArray") = []
         "const float3 a0[4] = {float3(0.1, 0.1, 0.2), float3(0.9, 0.4, 0.2), "
         "float3(0.2, 0.8, 0.6), float3(1.0, 0.9, 0.7)};"};
 
-    auto read = std::string {"float3 t0 = a0[(int(((input.v0).x * 4.0)) & 3)];"};
+    auto read =
+        std::string {"float3 t0 = (a0[(int(((input.v0).x * 4.0)) & 3)] * 0.5);"};
 
     for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
     {
         check(countOccurrences(source, declaration) == 1);
 
-        // A subscript read twice is named, like any other shared operation, so
-        // the array is indexed once rather than at every use.
+        // The subscript and the scale above it are one pure expression written
+        // twice, so they collapse to a single name: the array is indexed once
+        // and the multiply runs once, whatever the shader spelled.
         check(countOccurrences(source, read) == 1);
         check(countOccurrences(source, "t0") == 3);
 

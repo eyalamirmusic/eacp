@@ -6,6 +6,11 @@
 
 #include "../Pipeline/VertexLayout.h"
 
+#include <cstdint>
+#include <map>
+#include <string>
+#include <tuple>
+
 namespace eacp::GPU
 {
 enum class ExprKind
@@ -343,6 +348,24 @@ private:
     int add(Expr node);
     int addStatement(Statement newStatement);
     int addThreadIndex(DispatchRank forRank, int component);
+
+    // Structural sharing for the two kinds that can take it. A key holds
+    // everything add() would have to compare to call two nodes the same value;
+    // a binary's operands are node ids, which is enough because the nodes they
+    // name were themselves shared on the way in.
+    using ConstantKey = std::tuple<ValueType, int, std::uint32_t>;
+    using BinaryKey = std::tuple<ValueType, char, std::string, int, int>;
+
+    static ConstantKey constantKeyFor(const Expr& node);
+    static BinaryKey binaryKeyFor(const Expr& node);
+
+    bool isPure(int node) const;
+    bool purityOf(const Expr& node) const;
+    int findShared(const Expr& node) const;
+
+    std::map<ConstantKey, int> constantCache;
+    std::map<BinaryKey, int> binaryCache;
+    Vector<char> pureFlags; // parallel to nodes
 
     Vector<Expr> nodes;
     Vector<ValueType> inputTypes;
