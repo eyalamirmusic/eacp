@@ -2,6 +2,8 @@
 
 #include <eacp/Core/Utils/Containers.h>
 
+#include <algorithm>
+
 #include "../Device/Device.h"
 #include "../Frame/RenderPass.h"
 #include "GeneratedShader.h"
@@ -577,6 +579,25 @@ public:
         instanceBuffers[bufferIndex].emplace(
             Device::shared(), data, sizeof(I) * (std::size_t) count);
         instanceCountValue = count;
+        setExternalInstanceBuffer(bufferIndex, nullptr);
+    }
+
+    // Points an instance slot at a buffer the program does not own — the
+    // compute path's counterpart to setInstances, whose data comes from the CPU.
+    //
+    // A kernel writing per-particle state into a Storage buffer and a draw
+    // reading that same buffer as its per-instance stream is what
+    // Frame::beginCompute exists for: the data is produced and consumed on the
+    // GPU, and the CPU never sees a byte of it. The buffer must outlive the
+    // draw, and its elements must match the per-instance stride that
+    // instanceInput() declared for this slot.
+    void setInstanceBuffer(int bufferIndex, const Buffer& buffer, int count)
+    {
+        assert(bufferIndex >= 0 && bufferIndex < vertexLayout().buffers.size()
+               && "instance buffer slot was not declared via instanceInput");
+
+        setExternalInstanceBuffer(bufferIndex, &buffer);
+        instanceCountValue = count;
     }
 
     // Builds the shader library and render pipeline. sampleCount must match the
@@ -650,14 +671,20 @@ public:
     // instances the owned per-instance buffers hold.
     int instanceCount() const { return instanceCountValue; }
 
-    // Binds every owned per-instance buffer at the slot it was uploaded to.
-    // RenderPass::drawInstanced(program, ...) calls this after binding the
-    // per-vertex buffer at slot 0.
+    // Binds every per-instance buffer at the slot it was given to, whether the
+    // program uploaded it or a kernel filled it. RenderPass::drawInstanced(
+    // program, ...) calls this after binding the per-vertex buffer at slot 0.
     void bindInstances(RenderPass& pass)
     {
-        for (auto slot = 0; slot < instanceBuffers.size(); ++slot)
-            if (instanceBuffers[slot].has_value())
-                pass.setVertexBuffer(*instanceBuffers[slot], slot);
+        // Over both lists: a program fed only by kernels has no owned uploads
+        // at all, so bounding this by instanceBuffers alone would bind nothing
+        // and leave the draw missing its per-instance stream.
+        auto slots =
+            std::max(instanceBuffers.size(), externalInstanceBuffers.size());
+
+        for (auto slot = 0; slot < slots; ++slot)
+            if (const auto* buffer = instanceBufferAt(slot))
+                pass.setVertexBuffer(*buffer, slot);
     }
 
 protected:
@@ -909,6 +936,28 @@ private:
         uploadVisitor.finish();
     }
 
+    void setExternalInstanceBuffer(int bufferIndex, const Buffer* buffer)
+    {
+        if (externalInstanceBuffers.size() <= bufferIndex)
+            externalInstanceBuffers.resize(bufferIndex + 1);
+
+        externalInstanceBuffers[bufferIndex] = buffer;
+    }
+
+    // A slot carries either an owned upload or a borrowed buffer; the last call
+    // for that slot wins, so a program can be re-pointed between the two.
+    const Buffer* instanceBufferAt(int slot) const
+    {
+        if (slot < externalInstanceBuffers.size()
+            && externalInstanceBuffers[slot] != nullptr)
+            return externalInstanceBuffers[slot];
+
+        if (slot < instanceBuffers.size() && instanceBuffers[slot].has_value())
+            return &*instanceBuffers[slot];
+
+        return nullptr;
+    }
+
     void uploadIndices(const void* data,
                        std::size_t elementSize,
                        int count,
@@ -937,6 +986,11 @@ private:
     // bindInstances. usesInstancing gates the multi-slot layout in compile().
     bool usesInstancing = false;
     Vector<std::optional<Buffer>> instanceBuffers;
+
+    // Slots pointed at a buffer someone else owns (setInstanceBuffer), which is
+    // how a compute kernel's output is drawn. Parallel to instanceBuffers so a
+    // slot can be moved between an upload and a kernel's output.
+    Vector<const Buffer*> externalInstanceBuffers;
     int instanceCountValue = 0;
 
     int vertexCountValue = 0;

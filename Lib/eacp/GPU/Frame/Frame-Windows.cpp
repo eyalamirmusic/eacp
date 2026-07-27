@@ -292,6 +292,25 @@ RenderPass Frame::beginPass(const Texture& target,
     return RenderPass(new D3D12Encoder {impl->commands, {}}, width, height);
 }
 
+// A compute pass on the frame's own recording. The graphics and compute root
+// signatures occupy separate slots on a command list, so binding one here does
+// not disturb the render state beginPass set - the two kinds of pass interleave
+// on one list without either having to restore anything.
+//
+// A buffer this pass writes as a UAV and a later pass binds as vertex data is
+// transitioned by RenderPass::setVertexBuffer: same recording, so the per-
+// recording state tracking sees the UAV state and emits the barrier.
+ComputePass Frame::beginCompute()
+{
+    if (impl->commands == nullptr)
+        return ComputePass(nullptr);
+
+    impl->commands->list->SetComputeRootSignature(
+        getD3D12Context().getComputeRootSignature());
+
+    return ComputePass(new D3D12ComputeEncoder {impl->commands});
+}
+
 bool Frame::isValid() const
 {
     return impl->commands != nullptr && impl->drawable != nullptr

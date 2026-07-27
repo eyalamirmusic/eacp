@@ -99,6 +99,20 @@ public:
     // sampler is static in the root signature and never bound at all.
     void* nativeSampler(TextureSampling sampling) const;
 
+    // Remembers the newest submission, and blocks until it has finished.
+    //
+    // The queue is FIFO, so waiting for the newest submission waits for every
+    // earlier one too. That is what keeps Buffer::read correct now that
+    // CommandBuffer::commitAsync returns without waiting: the read blocks for
+    // exactly as long as the work it depends on still needs, and not at all
+    // once that work is done.
+    //
+    // Called by whatever commits — CommandBuffer and Frame. On D3D12 the queue's
+    // fence already records this, so tracking is a no-op there and the wait goes
+    // to the fence.
+    void trackSubmittedWork(void* nativeCommandBuffer);
+    void waitForSubmittedWork();
+
 private:
     struct Native;
     Pimpl<Native> impl;

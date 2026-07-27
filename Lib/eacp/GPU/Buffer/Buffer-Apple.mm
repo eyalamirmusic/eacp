@@ -10,10 +10,11 @@ namespace eacp::GPU
 {
 struct Buffer::Native
 {
-    Native(Device& device, const void* data, std::size_t bytes, BufferUsage)
-        : length(bytes)
+    Native(Device& deviceToUse, const void* data, std::size_t bytes, BufferUsage)
+        : device(&deviceToUse)
+        , length(bytes)
     {
-        auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
+        auto metalDevice = (__bridge id<MTLDevice>) device->nativeDevice();
 
         if (metalDevice == nil || bytes == 0)
             return;
@@ -31,6 +32,7 @@ struct Buffer::Native
     }
 
     ObjC::Ptr<NSObject<MTLBuffer>> buffer;
+    Device* device = nullptr;
     std::size_t length = 0;
 };
 
@@ -51,6 +53,14 @@ bool Buffer::isValid() const
 
 void Buffer::read(void* dst, std::size_t bytes) const
 {
+    // Shared storage makes the copy itself a memcpy, but the kernel that filled
+    // the buffer may still be running: commitAsync returns before the GPU has
+    // done anything at all. Waiting for the newest submission waits for every
+    // earlier one too, which is the same ordering the D3D12 read gets from the
+    // queue's fence — and costs nothing once the work has landed.
+    if (impl->device != nullptr)
+        impl->device->waitForSubmittedWork();
+
     if (auto metalBuffer = impl->buffer.get())
         std::memcpy(dst, [metalBuffer contents], bytes);
 }

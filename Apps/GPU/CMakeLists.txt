@@ -5,6 +5,14 @@ add_subdirectory(TriangleGen)
 add_subdirectory(RotatingTriangle)
 add_subdirectory(Teapot)
 add_subdirectory(Compute)
+
+# Compute feeding a draw on one frame: Frame::beginCompute, and a state buffer
+# the CPU never reads back.
+add_subdirectory(ComputeParticles)
+
+# Non-blocking submission: CommandBuffer::commitAsync overlapping GPU work with
+# the CPU, measured against the blocking commit.
+add_subdirectory(AsyncCompute)
 add_subdirectory(Paths)
 add_subdirectory(Texture)
 add_subdirectory(Maze)

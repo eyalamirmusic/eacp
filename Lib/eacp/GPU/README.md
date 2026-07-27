@@ -18,7 +18,7 @@ header an app includes.
 | `Buffer` | Vertex, index and storage buffers |
 | `Texture` | 2D textures: uploaded, wrapped zero-copy from a camera buffer, or rendered into |
 | `RenderPipeline` | A compiled pipeline state |
-| `CommandBuffer` / `ComputePass` | The compute path |
+| `CommandBuffer` / `ComputePass` | The compute path — off-screen, blocking or not; `Frame::beginCompute` puts one on a frame |
 | `Codegen/` | The shader EDSL and the MSL / HLSL emitters |
 
 ## A shader
@@ -154,6 +154,65 @@ disagrees with its attachment.
 
 Render targets are single-sampled and have no depth attachment. What this is for
 is a full-screen pass over a whole texture, and neither has a meaning there.
+
+## Compute
+
+A kernel is a `ComputeProgram`: storage buffers and uniforms as members, the
+body in `define()`, dispatched over one index per element. Two places take one.
+
+`Device::makeCommandBuffer()` is the off-screen path — compute with no frame
+around it. `commit()` submits and waits; `commitAsync()` submits and returns a
+`Threads::Async<void>` that resolves once the GPU is done:
+
+```cpp
+auto commands = device.makeCommandBuffer();
+
+{
+    auto pass = commands.beginCompute();
+    pass.dispatch(kernel, count);
+}
+
+commands.commitAsync().then([&] { /* output is ready */ });
+// ...the CPU carries on here, while the kernel runs
+```
+
+Nothing about correctness changes between the two. `Buffer::read()` orders
+behind the submission itself, so a read before the `Async` resolves is still
+right — it just waits by hand for what the overlap was there to avoid.
+
+`Frame::beginCompute()` is the other one: a compute pass on the frame's own
+command buffer, ordered with its render passes the way two render passes are.
+That is what lets a kernel's output feed the draw that consumes it, with the
+data never reaching the CPU:
+
+```cpp
+void render(Frame& frame) override
+{
+    {
+        auto compute = frame.beginCompute();
+        compute.dispatch(integrate, particleCount);   // writes `state`
+    }
+
+    auto pass = frame.beginPass();
+    draw.setInstanceBuffer(1, state, particleCount);  // reads the same buffer
+    pass.drawInstanced(draw, particleCount);
+}
+```
+
+`setInstanceBuffer` is `setInstances`' counterpart for data the program does not
+own: the bytes a kernel wrote as a flat float array are read by the vertex stage
+at the per-instance stride `instanceInput()` declared. One buffer, two views of
+it, no copy.
+
+A command buffer has one open encoder at a time, so let a pass end before
+beginning the one that reads what it wrote. `Apps/GPU/ComputeParticles` is the
+worked example, and `Apps/GPU/AsyncCompute` times the two commits against each
+other.
+
+What compute does **not** have yet: dispatches are 1D (`dispatch(count)`, one
+index per element), outputs are float buffers — there is no image-shaped
+dispatch and no texture a kernel can write, so a kernel cannot yet produce
+something a fragment shader samples.
 
 ## Texture formats
 

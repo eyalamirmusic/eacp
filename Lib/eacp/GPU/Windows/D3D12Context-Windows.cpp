@@ -230,7 +230,7 @@ void D3D12Context::createRootSignatures()
     // through whichever sampler happens to be first. Static samplers never reach
     // a heap and are unaffected. See TextureSampling.
     D3D12_STATIC_SAMPLER_DESC
-        staticSamplers[maxTextureSlots * samplingConfigurations] = {};
+    staticSamplers[maxTextureSlots * samplingConfigurations] = {};
 
     for (auto slot = 0; slot < maxTextureSlots; ++slot)
     {
@@ -527,6 +527,45 @@ void D3D12Context::waitIdle()
         return;
 
     waitFor(signal());
+}
+
+void D3D12Context::notifyWhenCompleted(std::uint64_t value, Callback done)
+{
+    if (hasCompleted(value))
+    {
+        done();
+        return;
+    }
+
+    pendingCompletions.add({value, std::move(done)});
+
+    if (!completionPoll.has_value())
+        completionPoll.emplace([this] { pollCompletions(); }, completionPollHz);
+}
+
+void D3D12Context::pollCompletions()
+{
+    // The callbacks fire after the pending list has been rebuilt rather than
+    // during the walk: one of them is free to commit more work, which appends
+    // to the very vector being walked.
+    auto ready = Vector<Callback> {};
+    auto stillPending = Vector<PendingCompletion> {};
+
+    for (auto& pending: pendingCompletions)
+    {
+        if (hasCompleted(pending.fenceValue))
+            ready.add(std::move(pending.done));
+        else
+            stillPending.add(std::move(pending));
+    }
+
+    pendingCompletions = std::move(stillPending);
+
+    if (pendingCompletions.empty())
+        completionPoll.reset();
+
+    for (auto& done: ready)
+        done();
 }
 
 D3D12_GPU_VIRTUAL_ADDRESS D3D12Context::uploadConstants(CommandContext& commands,

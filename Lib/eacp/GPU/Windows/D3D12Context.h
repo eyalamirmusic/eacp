@@ -1,5 +1,6 @@
 #pragma once
 
+#include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/WinInclude.h>
 
@@ -10,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 // Process-wide D3D12 plumbing shared by every Windows GPU translation unit:
 // the device and direct queue, the fence that orders CPU/GPU work, a pool of
@@ -107,6 +109,17 @@ public:
     void waitFor(std::uint64_t value);
     void waitIdle();
 
+    // Calls `done` once `value` has passed on the GPU, without blocking — the
+    // non-blocking sibling of waitFor, and what CommandBuffer::commitAsync is
+    // built on. Fires inline when the value has already passed; otherwise from
+    // a poll on the event loop, so `done` always runs on the main thread.
+    //
+    // A poll rather than a waiter thread because the whole backend is
+    // main-thread only: a fence event would need a thread whose only job is to
+    // hand the result straight back here. The cost is a completion latency of
+    // up to one poll interval, against a dispatch measured in milliseconds.
+    void notifyWhenCompleted(std::uint64_t value, Callback done);
+
     // Copies bytes into a fresh upload-heap buffer parked on the recording
     // (so it outlives GPU execution) and returns its address for a root CBV.
     // Returns 0 on failure.
@@ -178,6 +191,7 @@ private:
     void freeFrom(DescriptorAllocator& allocator, const DescriptorSlot& slot);
     std::uint64_t signal();
     void purgeRetired();
+    void pollCompletions();
     void deferReleaseUnknown(winrt::com_ptr<IUnknown> object);
 
     // Hands a recording's staging slots back to the pool. `freeAt` is the fence
@@ -228,6 +242,20 @@ private:
     };
 
     Vector<StagingBuffer> staging;
+
+    // Callbacks owed to submissions still running, and the poll that settles
+    // them. The timer only exists while something is pending, so an app that
+    // never calls commitAsync never pays for it.
+    struct PendingCompletion
+    {
+        std::uint64_t fenceValue = 0;
+        Callback done;
+    };
+
+    static constexpr int completionPollHz = 240;
+
+    Vector<PendingCompletion> pendingCompletions;
+    std::optional<Threads::Timer> completionPoll;
 };
 
 // The process-wide context, created on first use. Main-thread only, like the
