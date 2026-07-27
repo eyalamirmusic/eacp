@@ -256,6 +256,27 @@ constexpr float kernelInput[] = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f};
 constexpr auto kernelCount = (int) (sizeof(kernelInput) / sizeof(kernelInput[0]));
 constexpr auto kernelScale = 3.f;
 
+// A kernel over records of four floats rather than single ones. The components
+// come back rotated, so a stride the read and the write disagreed on shows up
+// as the wrong number in the wrong place instead of as the input handed back.
+struct RotateRecords final : ComputeProgram
+{
+    RotateRecords() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto record = input.read4(i);
+
+        write(output, i, float4(record.w(), record.x(), record.y(), record.z()));
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(input, output)
+};
+
 // A kernel over a grid rather than a flat count. Each cell writes a value that
 // says which cell it was, so a result read back at the wrong stride - or a
 // width and a height packed the wrong way round - shows up as a wrong number
@@ -344,6 +365,53 @@ auto tKernelImageFeedsTheDraw = test("FrameCompute/kernelImageFeedsTheDraw") = [
     auto top = image.at(viewWidth / 2, 0);
     auto bottom = image.at(viewWidth / 2, viewHeight - 1);
     check(std::abs(top.g - bottom.g) > 0.3f);
+};
+
+// read4 and the Float4 write address the same record: the index is in records
+// on both sides, so the kernel never spells the stride and the bytes that come
+// back are the ones the rotation predicts.
+auto tVectorElementsRoundTrip = test("FrameCompute/vectorElementsRoundTrip") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto floatsPerRecord = 4;
+    constexpr auto records = kernelCount / floatsPerRecord;
+
+    auto source = device.makeBuffer(kernelInput, BufferUsage::Storage);
+    auto output = device.makeBuffer(sizeof(kernelInput), BufferUsage::Storage);
+
+    auto kernel = RotateRecords {};
+    kernel.input = source;
+    kernel.output = output;
+    kernel.prepare();
+
+    {
+        auto commands = device.makeCommandBuffer();
+
+        {
+            auto pass = commands.beginCompute();
+            pass.dispatch(kernel, records);
+        }
+
+        commands.commit();
+    }
+
+    float result[kernelCount] = {};
+    output.read(result, sizeof(result));
+
+    for (auto record = 0; record < records; ++record)
+    {
+        const auto* in = kernelInput + record * floatsPerRecord;
+        const auto* out = result + record * floatsPerRecord;
+
+        check(out[0] == in[3]);
+        check(out[1] == in[0]);
+        check(out[2] == in[1]);
+        check(out[3] == in[2]);
+    }
 };
 
 // A format outside the guaranteed set is refused at creation rather than
