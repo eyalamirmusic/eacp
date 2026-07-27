@@ -10,6 +10,16 @@ nano_add_executable(AsyncBridgeTests
         SOURCES AsyncBridgeTests.cpp
         TARGETS eacp-webview)
 
+# The drag-out drop source/target that stream onFileDragMoved / onFileDragEnded
+# through SHDoDragDrop's modal loop (FileDrag-Windows.h). The cursor reader is
+# injected, so the COM verdict logic and the physical->CSS pixel mapping test
+# without a live drag or window.
+if (WIN32)
+    nano_add_executable(FileDragTestsWindows
+            SOURCES FileDragTests-Windows.cpp
+            TARGETS eacp-webview)
+endif ()
+
 # Drives the live streaming pump on a real WebView, so it needs the
 # NSApplication / runloop bootstrap from eacp-webview-test-main rather than
 # nano_add_executable's bare main(). That target only exists on the platforms
