@@ -110,9 +110,9 @@ void GlyphRenderer::begin()
 }
 
 void GlyphRenderer::add(const Graphics::Rect& destination,
-                     const Graphics::Rect& source,
-                     const Graphics::Color& color,
-                     bool colored)
+                        const Graphics::Rect& source,
+                        const Graphics::Color& color,
+                        bool colored)
 {
     if (destination.w <= 0.f || destination.h <= 0.f)
         return;
@@ -138,18 +138,18 @@ void GlyphRenderer::add(const Graphics::Rect& destination,
 }
 
 void GlyphRenderer::drawQueue(RenderPass& pass,
-                           std::vector<GlyphInstance>& queue,
-                           Texture& texture,
-                           bool colored)
+                              std::vector<GlyphInstance>& queue,
+                              Texture& texture,
+                              bool colored)
 {
     if (queue.empty())
         return;
 
     auto& program = colored ? *colorProgram : *maskProgram;
 
-    program.screenSize = std::array {viewport.x, viewport.y};
-    program.atlasSize = std::array {static_cast<float>(texture.width()),
-                                    static_cast<float>(texture.height())};
+    program.screenSize = Array {viewport.x, viewport.y};
+    program.atlasSize = Array {static_cast<float>(texture.width()),
+                               static_cast<float>(texture.height())};
     program.atlas = texture;
 
     program.setVertices(unitQuad);

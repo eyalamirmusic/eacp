@@ -223,8 +223,8 @@ struct TeapotView final : GPUView
         // The CPU uploads only scalars now; the shader builds every matrix.
         shader.angle = spin;
         shader.aspect = bounds.h > 0.0f ? bounds.w / bounds.h : 1.0f;
-        shader.lightDir = std::array {0.4f, 0.5f, 0.8f};
-        shader.baseColor = std::array {0.85f, 0.5f, 0.32f};
+        shader.lightDir = Array {0.4f, 0.5f, 0.8f};
+        shader.baseColor = Array {0.85f, 0.5f, 0.32f};
 
         auto pass = frame.beginPass({Graphics::Color {0.09f, 0.10f, 0.13f}});
         pass.draw(shader);
