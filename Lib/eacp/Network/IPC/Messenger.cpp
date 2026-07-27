@@ -25,11 +25,11 @@ constexpr auto headerSize = std::size_t {4};
 // an error instead of a gigabyte allocation.
 constexpr auto maxMessageSize = std::size_t {1} << 30;
 
-std::array<char, headerSize> encodeHeader(std::size_t size)
+Array<char, headerSize> encodeHeader(std::size_t size)
 {
-    auto header = std::array<char, headerSize> {};
+    auto header = Array<char, headerSize> {};
 
-    for (auto index = std::size_t {0}; index < headerSize; ++index)
+    for (auto index = 0; index < (int) headerSize; ++index)
         header[index] = (char) ((size >> (index * 8)) & 0xff);
 
     return header;
@@ -182,7 +182,7 @@ void Messenger::send(const std::string& message)
         // Header and payload go out as two writes so framing never copies
         // the payload - the mutex keeps them adjacent on the stream.
         auto header = encodeHeader(message.size());
-        impl->channel->send({header.data(), header.size()});
+        impl->channel->send({header.data(), headerSize});
         impl->channel->send(message);
     }
     catch (const Error&)

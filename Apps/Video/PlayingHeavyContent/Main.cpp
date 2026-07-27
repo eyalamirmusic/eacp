@@ -2,8 +2,11 @@
 #include <eacp/Video/SyntheticClip.h>
 #include <eacp/VideoView/VideoView.h>
 
+#include <algorithm>
 #include <cstdarg>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 
 using namespace eacp;
 
@@ -42,6 +45,20 @@ FilePath resolveVideoPath()
                "only; cached afterwards).");
 
     return Video::cachedSyntheticClip(clipOptions());
+}
+
+// `PlayingHeavyContent <clip> <seconds>` plays for that long, logs one summary
+// line and quits. That is how comparable decode numbers are taken across a
+// change: reading them off the HUD by eye is neither repeatable nor loggable,
+// and this is a GUI-subsystem binary with no console to print to.
+double benchmarkSeconds()
+{
+    const auto& args = Apps::getAppEnvironment().commandLineArgs;
+
+    if (args.size() <= 2)
+        return 0.0;
+
+    return std::max(0.0, std::atof(args[2].c_str()));
 }
 
 std::string formatted(const char* format, ...)
@@ -105,6 +122,49 @@ struct PlaybackView final : Video::VideoView
             smoothedFps =
                 smoothedFps > 0.0 ? smoothedFps * 0.9 + instant * 0.1 : instant;
         }
+
+        runBenchmark(frameTime.time);
+    }
+
+    // Reports only what happened inside the measurement window. The stream's
+    // counters run from open(), so the frames decoded while the window was
+    // still being created belong to no rate at all and are subtracted out.
+    void runBenchmark(double now)
+    {
+        if (benchmarkLimit <= 0.0)
+            return;
+
+        if (windowStart < 0.0)
+        {
+            windowStart = now;
+            atWindowStart = player.stream().stats();
+            return;
+        }
+
+        ++renderedFrames;
+
+        auto elapsed = now - windowStart;
+
+        if (elapsed < benchmarkLimit)
+            return;
+
+        auto stats = player.stream().stats();
+        const auto& info = player.stream().info();
+
+        logMessage(formatted(
+            "benchmark %dx%d %.0f fps | %.1f s | decode %.1f fps | render %.1f "
+            "fps | skipped %llu | starved %llu | %s",
+            info.width,
+            info.height,
+            info.frameRate,
+            elapsed,
+            (double) (stats.decoded - atWindowStart.decoded) / elapsed,
+            (double) renderedFrames / elapsed,
+            (unsigned long long) (stats.skipped - atWindowStart.skipped),
+            (unsigned long long) (stats.starved - atWindowStart.starved),
+            lastFrameWasZeroCopy() ? "zero-copy" : "cpu copy"));
+
+        Apps::quit();
     }
 
     void drawScrubBar(Sprites::SpriteRenderer& renderer)
@@ -251,6 +311,11 @@ struct PlaybackView final : Video::VideoView
     double smoothedFps = 0.0;
     bool scrubbing = false;
     bool wasPlaying = false;
+
+    const double benchmarkLimit = benchmarkSeconds();
+    double windowStart = -1.0;
+    std::uint64_t renderedFrames = 0;
+    Video::FrameStream::Stats atWindowStart;
 };
 
 struct PlaybackApp
