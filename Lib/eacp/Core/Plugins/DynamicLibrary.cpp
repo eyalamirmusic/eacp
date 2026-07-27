@@ -2,6 +2,7 @@
 #include "DynamicLibraryPlatform.h"
 #include "../Platform/ScopedAutoReleasePool.h"
 #include "../Threads/EventLoop.h"
+#include "../Utils/Singleton.h"
 
 #include <map>
 #include <memory>
@@ -27,10 +28,12 @@ struct ImageRegistry
     std::map<std::string, LoadedImage> images;
 };
 
+// Immortal because ~DynamicLibrary closes into this, and keeping an instance
+// alive for the whole process is the documented way to pin a module resident —
+// one opened after first use constructed the registry is destroyed after it.
 ImageRegistry& registry()
 {
-    static auto instance = ImageRegistry {};
-    return instance;
+    return Singleton::getImmortal<ImageRegistry>();
 }
 } // namespace
 
