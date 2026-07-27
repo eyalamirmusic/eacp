@@ -107,6 +107,22 @@ struct WindowOptions
     int minWidth = 0;
     int minHeight = 0;
 
+    // Locks the content's proportions: the user can resize the window, but only
+    // into shapes of this width-to-height ratio. Only the ratio is read, so
+    // {16, 9} and {1920, 1080} mean the same thing.
+    //
+    // What it is for is content that fills its window and has a shape of its
+    // own — a game's pixel grid, a video, a fixed-aspect canvas. Such a view
+    // otherwise has to letterbox itself against every window the user drags out,
+    // and letterboxing is drawing the bars *and* mapping input past them. A
+    // window that cannot take the wrong shape removes the problem rather than
+    // handling it.
+    //
+    // Give the window an initial width/height already in this ratio: the
+    // constraint governs resizing, and neither platform retro-fits it to a size
+    // that was already asked for. Unset lets the window take any shape.
+    std::optional<Point> aspectRatio;
+
     // Keeps the window above normal windows (macOS NSFloatingWindowLevel,
     // Windows WS_EX_TOPMOST). Mirrors Electron's alwaysOnTop.
     bool alwaysOnTop = false;

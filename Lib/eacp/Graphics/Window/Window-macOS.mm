@@ -392,6 +392,16 @@ struct Window::Native
             [getWindow() setContentMinSize:NSMakeSize(options.minWidth,
                                                       options.minHeight)];
 
+        // AppKit enforces this itself on every resize path there is - the edge
+        // drag, the corner drag, zoom and the green button - so there is no
+        // callback to write, and no moment where the window holds a shape the
+        // constraint forbids.
+        if (options.aspectRatio && options.aspectRatio->x > 0.f
+            && options.aspectRatio->y > 0.f)
+            [getWindow()
+                setContentAspectRatio:NSMakeSize(options.aspectRatio->x,
+                                                 options.aspectRatio->y)];
+
         if (options.alwaysOnTop)
             [getWindow() setLevel:NSFloatingWindowLevel];
 

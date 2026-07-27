@@ -12,6 +12,9 @@
 #include <dwmapi.h>
 #pragma comment(lib, "Dwmapi.lib")
 
+// std::lround, for snapping a dragged size to a locked aspect ratio.
+#include <cmath>
+
 namespace eacp::Graphics
 {
 
@@ -53,6 +56,7 @@ struct Window::Native
         , events(&eventsToUse)
         , minWidth(options.minWidth)
         , minHeight(options.minHeight)
+        , aspectRatio(options.aspectRatio)
         , hidesOnClose(options.hidesOnClose)
     {
         // Process-wide DPI awareness (per-monitor v2) is established by
@@ -363,9 +367,35 @@ struct Window::Native
             showWindow();
     }
 
-    // Honour WindowOptions::onWillResize by clamping the dragged window rect
-    // (WM_SIZING gives a frame rect; convert to content points, let the callback
-    // mutate, convert back, then re-anchor the edge the user is not dragging).
+    // Snaps a content size to WindowOptions::aspectRatio.
+    //
+    // Which side gives way follows the edge under the cursor: dragging a
+    // vertical edge sets the width and the height follows, a horizontal edge
+    // the reverse, and a corner is driven by its width. That is what every
+    // fixed-aspect window does, and it matters — deriving the width from the
+    // height while the user drags the right edge makes the window appear to
+    // resist the cursor.
+    //
+    // Unlike macOS, where AppKit owns this (setContentAspectRatio), Win32 has
+    // no such attribute: WM_SIZING is the only place a resize can be
+    // constrained, so the constraint has to be applied by hand here.
+    void applyAspectRatio(int& widthInPoints, int& heightInPoints, WPARAM edge) const
+    {
+        if (!aspectRatio || aspectRatio->x <= 0.f || aspectRatio->y <= 0.f)
+            return;
+
+        const auto ratio = aspectRatio->x / aspectRatio->y;
+
+        if (edge == WMSZ_TOP || edge == WMSZ_BOTTOM)
+            widthInPoints = static_cast<int>(std::lround(heightInPoints * ratio));
+        else
+            heightInPoints = static_cast<int>(std::lround(widthInPoints / ratio));
+    }
+
+    // Honour WindowOptions::onWillResize and ::aspectRatio by clamping the
+    // dragged window rect (WM_SIZING gives a frame rect; convert to content
+    // points, constrain, convert back, then re-anchor the edge the user is not
+    // dragging).
     void dispatchWillResize(RECT* windowRect, WPARAM edge) const
     {
         auto insets = nonClientInsets(host.hwnd);
@@ -376,7 +406,13 @@ struct Window::Native
 
         auto widthInPoints = static_cast<int>(clientWidth / scale);
         auto heightInPoints = static_cast<int>(clientHeight / scale);
-        onWillResize(widthInPoints, heightInPoints);
+
+        if (onWillResize)
+            onWillResize(widthInPoints, heightInPoints);
+
+        // Last, so the shape the window ends up with is the locked one however
+        // the callback moved the size around.
+        applyAspectRatio(widthInPoints, heightInPoints, edge);
 
         auto newWindowWidth = static_cast<int>(widthInPoints * scale) + insets.width;
         auto newWindowHeight =
@@ -429,6 +465,7 @@ struct Window::Native
     WindowEvents* events = nullptr;
     int minWidth = 0;
     int minHeight = 0;
+    std::optional<Point> aspectRatio;
     bool hidesOnClose = false;
     bool showWithoutActivating = false;
     bool ignoresMouseEvents = false;
@@ -519,7 +556,7 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             break;
 
         case WM_SIZING:
-            if (self->onWillResize)
+            if (self->onWillResize || self->aspectRatio)
             {
                 self->dispatchWillResize(reinterpret_cast<RECT*>(lParam), wParam);
                 return TRUE;
