@@ -69,8 +69,9 @@ auto tCaptureStaysCaptured = test("Process/inheritStdio/captureStaysCaptured") =
 };
 
 // Streaming, not buffering: the marker must be visible while the child is
-// still alive — it lingers ~5s after echoing, and the test kills it as soon
-// as the marker shows up.
+// still alive — it lingers after echoing, and the test kills it as soon as
+// the marker shows up. The wait is bounded well short of that linger, so a
+// slow-to-start child still gets seen alive rather than timing out.
 auto tStreamsWhileRunning = test("Process/inheritStdio/streamsWhileRunning") = []
 {
     const auto file = tempPath("eacp-inherit-live.txt");
@@ -81,7 +82,11 @@ auto tStreamsWhileRunning = test("Process/inheritStdio/streamsWhileRunning") = [
         options.captureOutput = false;
         auto process = Proc::Process {std::move(options)};
 
-        for (auto i = 0; i < 300 && process.isRunning(); ++i)
+        const auto giveUpAt =
+            std::chrono::steady_clock::now()
+            + std::chrono::seconds {StdioCapture::lingerSeconds / 2};
+
+        while (process.isRunning() && std::chrono::steady_clock::now() < giveUpAt)
         {
             if (contains(contentsOf(file), "live-proof"))
             {
