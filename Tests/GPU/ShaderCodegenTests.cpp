@@ -1683,6 +1683,322 @@ auto tCodegenComputeIndexArithmetic = test("GPU/codegenComputeIndexArithmetic") 
     check(contains(hlsl, "buffer1[(gid * 2u)] = "));
 };
 
+// A 2D kernel: threadPosition() gives a pair of indices, which changes the
+// entry signature, the threadgroup shape and the implicit extents the guard
+// reads. Asserting the emitted signature rather than only the runtime result is
+// the point - a rank that reached the dispatch but not the emitter would leave
+// the kernel reading a thread id of the wrong shape and say nothing about it.
+auto tCodegenCompute2D = test("GPU/codegenCompute2D") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto output = builder.outputBuffer();
+    auto position = builder.threadPosition();
+
+    builder.write(output, position.y * 16u + position.x, toFloat(position.x));
+
+    auto shader = builder.build();
+    check(shader.dispatchRank == DispatchRank::TwoD);
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "uint2 gid [[thread_position_in_grid]]"));
+    check(contains(metal, "uint width;"));
+    check(contains(metal, "uint height;"));
+    check(!contains(metal, "uint count;"));
+    check(
+        contains(metal, "if (gid.x >= uniforms.width || gid.y >= uniforms.height)"));
+    check(contains(metal, "buffer0[((gid.y * 16u) + gid.x)] = float(gid.x);"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "[numthreads(8, 8, 1)]"));
+    check(contains(hlsl, "uint3 threadId : SV_DispatchThreadID"));
+    check(contains(hlsl, "uint2 gid = threadId.xy;"));
+    check(
+        contains(hlsl, "if (gid.x >= uniforms.width || gid.y >= uniforms.height)"));
+    check(contains(hlsl, "buffer0[((gid.y * 16u) + gid.x)] = float(gid.x);"));
+};
+
+// A kernel that reads one texture and writes another. Read and written
+// textures take slots from one counter, because Metal binds both to one texture
+// index space; on D3D they land in the t and u spaces they share with the
+// storage buffers, above every buffer slot. Pure string generation.
+auto tCodegenComputeTextureWrite = test("GPU/codegenComputeTextureWrite") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto source = builder.texture();
+    auto target = builder.writableTexture();
+    auto p = builder.threadPosition();
+
+    builder.write(
+        target, p.x, p.y, sample(source, float2(toFloat(p.x), toFloat(p.y))));
+
+    auto shader = builder.build();
+    check(shader.source.isCompute());
+    check(shader.source.computeEntry == "computeMain");
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "texture2d<float> texture0 [[texture(0)]]"));
+    check(contains(metal, "sampler sampler0 [[sampler(0)]]"));
+    check(
+        contains(metal, "texture2d<float, access::write> texture1 [[texture(1)]]"));
+
+    // A written texture has no sampler on either backend: there is nothing to
+    // sample it with and nothing to read out of it.
+    check(!contains(metal, "sampler sampler1"));
+    check(contains(metal,
+                   "texture1.write(texture0.sample(sampler0, float2(float(gid.x), "
+                   "float(gid.y))), uint2(gid.x, gid.y));"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "Texture2D texture0 : register(t4);"));
+    check(contains(hlsl, "SamplerState sampler0 : register(s0);"));
+    check(contains(hlsl, "RWTexture2D<float4> texture1 : register(u5);"));
+    check(!contains(hlsl, "SamplerState sampler1"));
+    check(contains(hlsl,
+                   "texture1[uint2(gid.x, gid.y)] = texture0.Sample(sampler0, "
+                   "float2(float(gid.x), float(gid.y)));"));
+};
+
+// A kernel whose only output is a texture is still a kernel: recording any
+// store is what marks the graph as one, and a graph with no storage buffer at
+// all emits none.
+auto tCodegenComputeTextureOnly = test("GPU/codegenComputeTextureOnly") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto target = builder.writableTexture();
+    auto p = builder.threadPosition();
+    auto shade = toFloat(p.x) * 0.25f;
+
+    builder.write(target, p.x, p.y, float4(shade, shade, shade, 1.0f));
+
+    auto shader = builder.build();
+    check(shader.source.isCompute());
+
+    for (const auto& text: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        check(!contains(text, "buffer0"));
+        check(contains(text, "uniforms.width"));
+        check(contains(text, "float t0 = (float(gid.x) * 0.25);"));
+    }
+};
+
+// The 1D kernel keeps its scalar signature and its single count: the rank is a
+// property of what the body asked for, not a new default.
+auto tCodegenCompute1DUnchanged = test("GPU/codegenCompute1DKeepsScalarId") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto output = builder.outputBuffer();
+    auto gid = builder.threadId();
+
+    builder.write(output, gid, toFloat(gid));
+
+    auto shader = builder.build();
+    check(shader.dispatchRank == DispatchRank::OneD);
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "uint gid [[thread_position_in_grid]]"));
+    check(!contains(metal, "uint2 gid"));
+    check(contains(metal, "if (gid >= uniforms.count)"));
+};
+
+// Vector reads and writes over a buffer of records: read4(i) is elements
+// 4i..4i+3 and write(out, i, Float4) puts four back at the same place, so a
+// kernel over a struct of four floats never spells the stride. The buffer is
+// still a run of floats underneath - N scalar accesses, one index expression -
+// which is what keeps its bytes bindable as a per-instance stream.
+auto tCodegenComputeVectorElements = test("GPU/codegenComputeVectorElements") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    auto record = input.read4(i);
+    builder.write(output, i, record * 2.0f);
+
+    // Identical on both backends: nothing here is spelled per-language, so the
+    // whole body is one string checked twice.
+    for (const auto& text: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        // The base index is computed once for the whole kernel. The read and
+        // the write build it through separate calls, but the product is the
+        // same pure expression, so the graph hands both the one node.
+        check(contains(text, "uint t0 = (gid * 4u);"));
+        check(countOccurrences(text, "(gid * 4u)") == 1);
+
+        // The three offsets off that base are shared the same way - each is
+        // addressed by the read and by the write, so each is named once.
+        check(contains(text, "uint t1 = (t0 + 1u);"));
+        check(contains(text, "uint t2 = (t0 + 2u);"));
+        check(contains(text, "uint t3 = (t0 + 3u);"));
+
+        check(contains(text,
+                       "float4 t4 = (float4(buffer0[t0], buffer0[t1], "
+                       "buffer0[t2], buffer0[t3]) * 2.0);"));
+
+        // One store per component, at the record's own offsets.
+        check(contains(text, "buffer1[t0] = (t4).x;"));
+        check(contains(text, "buffer1[t1] = (t4).y;"));
+        check(contains(text, "buffer1[t2] = (t4).z;"));
+        check(contains(text, "buffer1[t3] = (t4).w;"));
+    }
+};
+
+// The narrower widths address their own records: read2 strides by two and
+// read3 by three, so a buffer of pairs and one of triples each index in their
+// own units.
+auto tCodegenComputeVectorStrides = test("GPU/codegenComputeVectorStrides") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    builder.write(output, i, input.read2(i));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "uint t0 = (gid * 2u);"));
+    check(contains(metal, "float2 t2 = float2(buffer0[t0], buffer0[t1]);"));
+    check(contains(metal, "buffer1[t1] = (t2).y;"));
+    check(!contains(metal, "t0 + 2u"));
+
+    auto triples = ShaderBuilder {};
+    auto source = triples.inputBuffer();
+    auto index = triples.threadId();
+    triples.write(triples.outputBuffer(), index, source.read3(index));
+
+    auto hlsl = emitHlsl(triples.graph());
+    check(contains(hlsl, "uint t0 = (gid * 3u);"));
+    check(contains(hlsl,
+                   "float3 t3 = float3(buffer0[t0], buffer0[t1], buffer0[t2]);"));
+    check(contains(hlsl, "buffer1[t2] = (t3).z;"));
+    check(!contains(hlsl, "t0 + 3u"));
+};
+
+// A storage buffer read from a render stage: the same InputBuffer a kernel
+// subscripts, declared by a graph with no stores at all, so the shader is a
+// vertex/fragment pair rather than a kernel. What it buys is the indexed read a
+// vertex attribute cannot do - the shader picks the element, instead of the
+// input assembler handing it one.
+auto tCodegenFragmentBufferRead = test("GPU/codegenFragmentBufferRead") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto palette = builder.inputBuffer();
+    auto record = builder.uniform<UInt>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(float4(palette.read3(record), 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+
+    // Declared on the stage that reads it and nowhere else: the vertex function
+    // only builds a position, so a buffer parameter there would be dead weight
+    // the caller still has to bind.
+    check(contains(metal,
+                   "device const float* buffer0 [[buffer("
+                       + std::to_string(RenderPass::bufferBase) + ")]]"));
+    check(countOccurrences(metal, "device const float* buffer0") == 1);
+    check(metal.find("fragmentMain") < metal.find("device const float* buffer0"));
+
+    // Read-only in a render stage, whatever a kernel would have got: there is
+    // no writable buffer on this side.
+    check(!contains(metal, "device float* buffer0"));
+
+    // An HLSL global is visible to both functions, so it is declared once
+    // outside either - above every texture register, which is what the render
+    // root signature's buffer SRVs are declared at.
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl,
+                   "StructuredBuffer<float> buffer0 : register(t"
+                       + std::to_string(RenderPass::bufferRegisterBase) + ");"));
+    check(!contains(hlsl, "RWStructuredBuffer"));
+
+    // The record index reaches the read on both backends: read3 strides by
+    // three, so an index the shader computed addresses its own record.
+    for (const auto& source: {metal, hlsl})
+    {
+        check(contains(source, "uint t0 = (uniforms.u0 * 3u);"));
+        check(contains(source,
+                       "float3(buffer0[t0], buffer0[(t0 + 1u)], "
+                       "buffer0[(t0 + 2u)])"));
+    }
+};
+
+// The vertex stage reads one too, and gets its own parameter. Nothing about the
+// binding is fragment-specific - which is what lets a vertex shader place a
+// per-instance record it looked up rather than one it was handed.
+auto tCodegenVertexBufferRead = test("GPU/codegenVertexBufferRead") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto offsets = builder.inputBuffer();
+    auto record = builder.uniform<UInt>();
+
+    builder.position(float4(position + offsets.read2(record), 0.0f, 1.0f));
+    builder.fragment(float4(builder.constant(1.0f), 1.0f, 1.0f, 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+
+    check(contains(metal,
+                   "device const float* buffer0 [[buffer("
+                       + std::to_string(RenderPass::bufferBase) + ")]]"));
+    check(countOccurrences(metal, "device const float* buffer0") == 1);
+    check(metal.find("device const float* buffer0") < metal.find("fragmentMain"));
+};
+
+// Both stages reading one buffer declare it once each, and the fragment stage's
+// parameter list keeps textures and buffers in their own index spaces.
+auto tCodegenBothStagesReadBuffer = test("GPU/codegenBothStagesReadBuffer") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto data = builder.inputBuffer();
+    auto record = builder.uniform<UInt>();
+
+    builder.position(float4(position * data[record], 0.0f, 1.0f));
+    builder.fragment(float4(data[record + 1u], 0.0f, 0.0f, 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+    check(countOccurrences(metal, "device const float* buffer0") == 2);
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(countOccurrences(hlsl, "StructuredBuffer<float> buffer0") == 1);
+};
+
+// Feeds a render shader that subscripts a storage buffer through the real
+// platform shader compiler, which is what says the registers and buffer indices
+// the emitter picked are ones the backend accepts. Self-skips without a GPU.
+auto tCodegenBufferReadCompiles = test("GPU/codegenBufferReadCompiles") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto palette = builder.inputBuffer();
+    auto record = builder.uniform<UInt>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(float4(palette.read3(record), 1.0f));
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+};
+
 // Feeds an EDSL compute kernel (including the toFloat(threadId) cast) through
 // the real platform shader compiler and builds a compute pipeline. Self-skips
 // without a GPU device.
@@ -1813,14 +2129,16 @@ auto tCodegenConstantArray = test("GPU/codegenConstantArray") = []
         "const float3 a0[4] = {float3(0.1, 0.1, 0.2), float3(0.9, 0.4, 0.2), "
         "float3(0.2, 0.8, 0.6), float3(1.0, 0.9, 0.7)};"};
 
-    auto read = std::string {"float3 t0 = a0[(int(((input.v0).x * 4.0)) & 3)];"};
+    auto read =
+        std::string {"float3 t0 = (a0[(int(((input.v0).x * 4.0)) & 3)] * 0.5);"};
 
     for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
     {
         check(countOccurrences(source, declaration) == 1);
 
-        // A subscript read twice is named, like any other shared operation, so
-        // the array is indexed once rather than at every use.
+        // The subscript and the scale above it are one pure expression written
+        // twice, so they collapse to a single name: the array is indexed once
+        // and the multiply runs once, whatever the shader spelled.
         check(countOccurrences(source, read) == 1);
         check(countOccurrences(source, "t0") == 3);
 

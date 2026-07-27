@@ -2,6 +2,8 @@
 
 #include "GlobalHotKey.h"
 
+#include <eacp/Core/Utils/Singleton.h>
+
 #include <map>
 
 namespace eacp::Graphics
@@ -26,10 +28,11 @@ OSType hotKeySignature()
     return signature;
 }
 
+// Immortal because ~Native erases itself here, and a GlobalHotKey at namespace
+// scope outlives a registry that first use constructed after it.
 std::map<UInt32, Callback*>& registry()
 {
-    static auto hotKeys = std::map<UInt32, Callback*> {};
-    return hotKeys;
+    return Singleton::getImmortal<std::map<UInt32, Callback*>>();
 }
 
 UInt32 nextHotKeyID()

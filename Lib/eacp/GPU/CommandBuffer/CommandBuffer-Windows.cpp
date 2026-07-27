@@ -41,10 +41,10 @@ ComputePass CommandBuffer::beginCompute()
     if (impl->commands == nullptr || impl->committed)
         return ComputePass(nullptr);
 
-    // The root signature is fixed for every compute pipeline, so binding it
-    // here frees the pass from caring about setPipeline/set*Buffer ordering.
-    impl->commands->list->SetComputeRootSignature(
-        getD3D12Context().getComputeRootSignature());
+    // The root signature and heaps are fixed for every compute pipeline, so
+    // binding them here frees the pass from caring about setPipeline/set*
+    // ordering.
+    bindComputeRootState(getD3D12Context(), impl->commands->list.get());
 
     return ComputePass(new D3D12ComputeEncoder {impl->commands});
 }

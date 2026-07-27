@@ -158,6 +158,28 @@ void RenderPass::setFragmentTexture(const Texture& texture,
     [activeEncoder setFragmentSamplerState:metalSampler atIndex:(NSUInteger) slot];
 }
 
+void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)
+{
+    auto activeEncoder = impl->encoder.get();
+    auto metalBuffer = (__bridge id<MTLBuffer>) buffer.nativeBuffer();
+
+    if (activeEncoder != nil && metalBuffer != nil)
+        [activeEncoder setVertexBuffer:metalBuffer
+                                offset:0
+                               atIndex:(NSUInteger) (bufferBase + slot)];
+}
+
+void RenderPass::setFragmentStorageBuffer(const Buffer& buffer, int slot)
+{
+    auto activeEncoder = impl->encoder.get();
+    auto metalBuffer = (__bridge id<MTLBuffer>) buffer.nativeBuffer();
+
+    if (activeEncoder != nil && metalBuffer != nil)
+        [activeEncoder setFragmentBuffer:metalBuffer
+                                  offset:0
+                                 atIndex:(NSUInteger) (bufferBase + slot)];
+}
+
 void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
 {
     // Uniforms live at buffer(uniformBase + slot) so multi-slot vertex

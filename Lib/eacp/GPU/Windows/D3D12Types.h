@@ -3,6 +3,8 @@
 #include "D3D12Context.h"
 
 #include "../Codegen/ShaderTypes.h"
+#include "../Frame/ComputePass.h"
+#include "../Frame/RenderPass.h"
 
 // Internal shared types for the Windows/D3D12 GPU backend. The public GPU
 // classes expose opaque void* handles (nativeBuffer/nativeLibrary/nativeState/
@@ -24,8 +26,9 @@ constexpr int maxTextureSlots = 4;
 
 // Render root signature parameter layout: root CBVs per stage, then one
 // single-descriptor table per texture slot (SRV, then sampler — tables cannot
-// mix heap types). Single-descriptor tables let each texture bind its
-// persistent heap slot directly, with no per-frame descriptor copying.
+// mix heap types), then per-stage root SRVs for the storage buffers a shader
+// subscripts. Single-descriptor tables let each texture bind its persistent
+// heap slot directly, with no per-frame descriptor copying.
 constexpr UINT renderVertexCBVParam(int slot)
 {
     return static_cast<UINT>(slot);
@@ -39,12 +42,43 @@ constexpr UINT renderTextureParam(int slot)
     return static_cast<UINT>(2 * maxUniformSlots + slot);
 }
 
+// A storage buffer read by a shader stage is a root descriptor, not a table:
+// unlike a texture, a buffer SRV *is* a buffer view, so it binds by GPU address
+// and needs no heap. Per stage, like the CBVs and for the same reason - one
+// HLSL global is visible to both functions, so each stage names its own root
+// parameter at the same register.
+constexpr UINT renderVertexSRVParam(int slot)
+{
+    return static_cast<UINT>(2 * maxUniformSlots + maxTextureSlots + slot);
+}
+constexpr UINT renderPixelSRVParam(int slot)
+{
+    return static_cast<UINT>(2 * maxUniformSlots + maxTextureSlots + maxBufferSlots
+                             + slot);
+}
+
+// The render signature's mirror of computeTextureRegister: a shader's textures
+// hold the low t registers, so its storage buffers start above every texture
+// slot. The emitter writes these from RenderPass::bufferRegisterBase.
+static_assert(maxTextureSlots <= RenderPass::bufferRegisterBase,
+              "render buffer registers must start above every texture slot");
+
+constexpr UINT renderBufferRegister(int slot)
+{
+    return static_cast<UINT>(RenderPass::bufferRegisterBase + slot);
+}
+
 // There is deliberately no renderSamplerParam: samplers are static samplers in
 // the root signature, not descriptor tables. See TextureSampling.
 
 // Compute root signature parameter layout: root CBVs, then root SRVs and root
-// UAVs. Root descriptors bind structured buffers by GPU address, so compute
-// needs no descriptor heap at all.
+// UAVs for the storage buffers, then one single-descriptor table per texture
+// slot for reads and another for writes.
+//
+// Buffers are root descriptors, which bind by GPU address and need no heap at
+// all. Textures cannot be: a root descriptor is a buffer view and nothing else,
+// so a texture - read or written - goes through a table, which is why the
+// compute path binds descriptor heaps the way the render path does.
 constexpr UINT computeCBVParam(int slot)
 {
     return static_cast<UINT>(slot);
@@ -56,6 +90,27 @@ constexpr UINT computeSRVParam(int slot)
 constexpr UINT computeUAVParam(int slot)
 {
     return static_cast<UINT>(maxUniformSlots + maxBufferSlots + slot);
+}
+constexpr UINT computeTextureSRVParam(int slot)
+{
+    return static_cast<UINT>(maxUniformSlots + 2 * maxBufferSlots + slot);
+}
+constexpr UINT computeTextureUAVParam(int slot)
+{
+    return static_cast<UINT>(maxUniformSlots + 2 * maxBufferSlots + maxTextureSlots
+                             + slot);
+}
+
+// A kernel's textures share the t/u register spaces with its storage buffers,
+// and the two slot spaces are counted separately, so a texture's registers
+// start above every buffer slot's. The emitter writes the same registers from
+// ComputePass::textureRegisterBase, which this holds it to.
+static_assert(maxBufferSlots <= ComputePass::textureRegisterBase,
+              "compute texture registers must start above every buffer slot");
+
+constexpr UINT computeTextureRegister(int slot)
+{
+    return static_cast<UINT>(ComputePass::textureRegisterBase + slot);
 }
 
 // Result of compiling a ShaderSource. D3D12 consumes raw bytecode at pipeline
@@ -118,6 +173,12 @@ struct D3D12TextureData
     winrt::com_ptr<ID3D12Resource> resource;
     DescriptorSlot srv;
 
+    // A compute-writable texture also owns a UAV, from the same heap the SRV
+    // came from (the allocator is CBV_SRV_UAV). A texture UAV cannot be a root
+    // descriptor the way a buffer UAV is - root descriptors are buffers only -
+    // so this is what the compute descriptor table points at.
+    DescriptorSlot uav;
+
     // A render-target texture also owns one RTV, in a heap of its own: RTV
     // descriptors are not shader-visible, so there is no shared heap to take one
     // from the way the SRV does, and one descriptor per target is cheap.
@@ -133,6 +194,7 @@ struct D3D12TextureData
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 
     bool isRenderTarget() const { return rtv.ptr != 0; }
+    bool isComputeWritable() const { return uav.cpu.ptr != 0; }
 };
 
 // The frame's color target. All members are owned by GPUView and stay valid
@@ -235,6 +297,45 @@ inline void transitionTextureForUse(ID3D12GraphicsCommandList* list,
     list->ResourceBarrier(1, &barrier);
 
     texture.state = target;
+}
+
+// The state every compute pass needs bound before it can dispatch. Shared by
+// Frame::beginCompute and CommandBuffer::beginCompute so the two cannot drift
+// apart on the platform I cannot test - the compute sibling of
+// Frame::Native::bindRootState.
+//
+// The heaps are here because a kernel's textures bind through descriptor
+// tables: buffers are root descriptors and need no heap, which is why the
+// compute path bound none until textures arrived. The same two the render path
+// binds, so whichever pass ran last leaves the same set behind - the compute
+// signature declares no sampler table (every sampler in it is a static sampler,
+// see TextureSampling), but binding one heap here and two there would make the
+// bound heaps depend on the order the passes happened to run in.
+inline void bindComputeRootState(D3D12Context& context,
+                                 ID3D12GraphicsCommandList* list)
+{
+    ID3D12DescriptorHeap* heaps[] = {context.getTextureHeap(),
+                                     context.getSamplerHeap()};
+    list->SetDescriptorHeaps(2, heaps);
+    list->SetComputeRootSignature(context.getComputeRootSignature());
+
+    // Resource Binding Tier 1 hardware requires every descriptor table the root
+    // signature declares to be populated before a dispatch, even the ones the
+    // kernel never touches - an unset table drops the dispatch rather than
+    // failing loudly. The signature is shared and declares maxTextureSlots of
+    // each; setInputTexture / setOutputTexture overwrite the slots that carry a
+    // real texture. Same rule, and the same fix, as the render path's.
+    const auto nullSrv = context.getNullTextureDescriptor();
+    const auto nullUav = context.getNullTextureUAVDescriptor();
+
+    if (nullSrv.ptr == 0 || nullUav.ptr == 0)
+        return;
+
+    for (auto slot = 0; slot < maxTextureSlots; ++slot)
+    {
+        list->SetComputeRootDescriptorTable(computeTextureSRVParam(slot), nullSrv);
+        list->SetComputeRootDescriptorTable(computeTextureUAVParam(slot), nullUav);
+    }
 }
 
 // A plain transition barrier for resources with externally known states (back

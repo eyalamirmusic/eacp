@@ -1,6 +1,7 @@
 #include "../Utils/WinInclude.h"
 
 #include "Timer.h"
+#include "../Utils/Singleton.h"
 #include "ThreadUtils-Windows.h"
 
 #include <cassert>
@@ -49,11 +50,15 @@ struct Timer::Native
     Native& operator=(const Native&) = delete;
 
 private:
-    static std::unordered_map<UINT_PTR, Native*>& liveTimers()
-    {
-        static auto timers = std::unordered_map<UINT_PTR, Native*>();
-        return timers;
-    }
+    // SetTimer with a null HWND leaves WM_TIMER carrying nothing but the id, so
+    // the id is the only way back to the Native that owns the callback.
+    using Registry = std::unordered_map<UINT_PTR, Native*>;
+
+    // Immortal because a Timer owned by a singleton — the D3D12 backend's
+    // fence-completion poll is one — is destroyed during static destruction,
+    // by which point an ordinary registry constructed after that singleton is
+    // already gone and ~Native() would erase from a destroyed map.
+    static Registry& liveTimers() { return Singleton::getImmortal<Registry>(); }
 
     static void CALLBACK tick(HWND, UINT, UINT_PTR timerId, DWORD)
     {

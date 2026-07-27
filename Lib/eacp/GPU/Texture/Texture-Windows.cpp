@@ -39,6 +39,23 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
 // The filter/address translations that used to live here are gone with the
 // sampler descriptors they filled in; the equivalent mapping is now in
 // D3D12Context::createRootSignatures, which builds the static samplers.
+
+// Whether this device can take a typed UAV store to the format. The formats
+// supportsComputeWrite() allows are the ones the specification guarantees, but
+// a guarantee is not a driver, so it is asked rather than assumed - a kernel
+// whose stores are silently dropped is a great deal harder to find than a
+// texture that refused to be created.
+bool supportsTypedUAVStore(ID3D12Device* device, DXGI_FORMAT format)
+{
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT support = {};
+    support.Format = format;
+
+    if (FAILED(device->CheckFeatureSupport(
+            D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support))))
+        return false;
+
+    return (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE) != 0;
+}
 } // namespace
 
 struct Texture::Native
@@ -67,6 +84,19 @@ struct Texture::Native
 
         if (descriptor.renderTarget)
             desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+        // Refused before the resource exists, so a kernel output the device
+        // cannot actually store to is an invalid texture rather than a dispatch
+        // that writes nothing.
+        if (descriptor.computeWrite)
+        {
+            if (!supportsComputeWrite(descriptor.format)
+                || !supportsTypedUAVStore(context.getDevice(), desc.Format))
+                return;
+
+            desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+            computeWrite = true;
+        }
 
         auto initialState = pixels != nullptr
                                 ? D3D12_RESOURCE_STATE_COPY_DEST
@@ -101,6 +131,7 @@ struct Texture::Native
     {
         auto& context = getD3D12Context();
         context.freeTextureDescriptor(data.srv);
+        context.freeTextureDescriptor(data.uav);
         context.deferRelease(std::move(data.rtvHeap));
         context.deferRelease(std::move(data.resource));
     }
@@ -299,11 +330,36 @@ struct Texture::Native
         data.rtv = handle;
     }
 
+    // The view a kernel writes through. It comes out of the same shader-visible
+    // heap as the SRV - the allocator is CBV_SRV_UAV - so a writable texture
+    // costs one more descriptor and no new heap.
+    void createUnorderedAccessView(D3D12Context& context,
+                                   const TextureDescriptor& descriptor)
+    {
+        data.uav = context.allocateTextureDescriptor();
+
+        if (data.uav.cpu.ptr == 0)
+        {
+            computeWrite = false;
+            return;
+        }
+
+        D3D12_UNORDERED_ACCESS_VIEW_DESC viewDesc = {};
+        viewDesc.Format = toDXGIFormat(descriptor.format);
+        viewDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+
+        context.getDevice()->CreateUnorderedAccessView(
+            data.resource.get(), nullptr, &viewDesc, data.uav.cpu);
+    }
+
     void createDescriptors(D3D12Context& context,
                            const TextureDescriptor& descriptor)
     {
         if (descriptor.renderTarget)
             createRenderTargetView(context, descriptor);
+
+        if (computeWrite)
+            createUnorderedAccessView(context, descriptor);
 
         data.srv = context.allocateTextureDescriptor();
 
@@ -327,6 +383,7 @@ struct Texture::Native
     // Bytes per pixel of the texture's format; the (stubbed) zero-copy wrap
     // path stays at 4 because those buffers are always 32-bit BGRA/RGBA.
     int pixelStride = 4;
+    bool computeWrite = false;
     D3D12TextureData data;
 };
 
@@ -379,6 +436,11 @@ bool Texture::isValid() const
 bool Texture::isRenderTarget() const
 {
     return isValid() && impl->data.isRenderTarget();
+}
+
+bool Texture::isComputeWritable() const
+{
+    return isValid() && impl->data.isComputeWritable();
 }
 
 void* Texture::nativeTexture() const

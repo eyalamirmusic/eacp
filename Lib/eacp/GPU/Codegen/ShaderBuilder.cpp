@@ -124,6 +124,7 @@ GeneratedShader ShaderBuilder::build() const
     {
         source.withCompute("computeMain");
         result.source = std::move(source);
+        result.dispatchRank = graphData.dispatchRank();
         return result;
     }
 

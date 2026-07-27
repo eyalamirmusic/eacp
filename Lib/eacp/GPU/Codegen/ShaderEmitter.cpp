@@ -265,8 +265,14 @@ struct ExprPrinter
             }
 
             case ExprKind::ThreadId:
-                // Both kernel scaffoldings declare the 1D work-item id as gid.
-                return "gid";
+                // Both kernel scaffoldings declare the work-item id as gid: a
+                // uint over the flat count in a 1D kernel, a uint2 over the
+                // grid in a 2D one, where the node carries which component it
+                // asked for.
+                if (graph.dispatchRank() == DispatchRank::OneD)
+                    return "gid";
+
+                return expr.index == 0 ? "gid.x" : "gid.y";
 
             case ExprKind::BufferRead:
                 return "buffer" + std::to_string(expr.index) + "["
@@ -844,6 +850,57 @@ bool vertexUsesUniforms(const ShaderGraph& graph)
     return anyReferencesUniform(graph, roots);
 }
 
+// Which storage-buffer slots a run of expressions subscripts. A render stage
+// declares only the buffers it reads - unlike a kernel, where every slot is a
+// parameter of the one entry point - so the vertex and fragment functions each
+// need their own answer.
+void collectBufferSlots(const ShaderGraph& graph,
+                        int node,
+                        Vector<char>& used,
+                        VisitSet& seen)
+{
+    if (node < 0 || !seen.visit(node))
+        return;
+
+    const auto& expr = graph.expr(node);
+
+    if (expr.kind == ExprKind::BufferRead && expr.index < used.size())
+        used[expr.index] = 1;
+
+    for (auto argument: expr.args)
+        collectBufferSlots(graph, argument, used, seen);
+}
+
+Vector<char> bufferSlotsUsedBy(const ShaderGraph& graph, const Vector<int>& roots)
+{
+    auto used = Vector<char> {};
+    used.resize(graph.storageBuffers().size(), 0);
+
+    auto seen = VisitSet {graph.nodeCount()};
+
+    for (auto root: roots)
+        collectBufferSlots(graph, root, used, seen);
+
+    return used;
+}
+
+// The MSL parameters for the storage buffers a render stage reads, always read
+// only: a vertex or fragment function has no writable buffer here, which is the
+// whole of what separates this from the kernel signature above.
+std::string bufferParameters(const ShaderGraph& graph, const Vector<int>& roots)
+{
+    auto used = bufferSlotsUsedBy(graph, roots);
+    auto source = std::string {};
+
+    for (auto i = 0; i < used.size(); ++i)
+        if (used[i] != 0)
+            source += ",\n    device const float* buffer" + std::to_string(i)
+                      + " [[buffer(" + std::to_string(RenderPass::bufferBase + i)
+                      + ")]]";
+
+    return source;
+}
+
 // The Uniforms struct shared by both stages (and the HLSL cbuffer wrapping it).
 // The CPU block is packed with MSL struct alignment (UniformLayout.h); HLSL
 // cbuffer packing only forbids straddling a 16-byte register, so a vector after
@@ -888,13 +945,16 @@ std::string uniformBlock(Backend backend,
 
 // Compute kernel emission. The expression printer is the render one; only the
 // scaffolding differs: storage buffers and the uniform block are MSL kernel
-// parameters but HLSL globals, and the 1D work-item id arrives as a uint on
-// Metal and as SV_DispatchThreadID.x on D3D. The block always ends with an
-// implicit uint element count, and the kernel opens with the bounds guard the
-// rounded-up dispatch needs; ComputeProgram appends the matching CPU value.
+// parameters but HLSL globals, and the work-item id arrives as a builtin
+// parameter on Metal and as SV_DispatchThreadID on D3D. The block always ends
+// with the implicit grid extents the bounds guard reads - one count for a 1D
+// kernel, a width and a height for a 2D one - and the kernel opens with the
+// guard the rounded-up dispatch needs; ComputeProgram appends the matching CPU
+// values.
 std::string emitCompute(const ShaderGraph& graph, Backend backend)
 {
     auto source = std::string {};
+    auto is2D = graph.dispatchRank() == DispatchRank::TwoD;
 
     if (backend == Backend::Metal)
         source += "#include <metal_stdlib>\nusing namespace metal;\n\n";
@@ -905,8 +965,18 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
     for (auto i = 0; i < uniformTypes.size(); ++i)
         uniformNames.add("u" + std::to_string(i));
 
-    uniformTypes.add(ValueType::UInt);
-    uniformNames.add("count");
+    if (is2D)
+    {
+        uniformTypes.add(ValueType::UInt);
+        uniformNames.add("width");
+        uniformTypes.add(ValueType::UInt);
+        uniformNames.add("height");
+    }
+    else
+    {
+        uniformTypes.add(ValueType::UInt);
+        uniformNames.add("count");
+    }
 
     source += uniformBlock(backend, uniformTypes, uniformNames);
 
@@ -925,9 +995,29 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                       + ")]],\n    ";
         }
 
+        // Textures are kernel parameters like the buffers, on an index space of
+        // their own. A written one takes the write access qualifier and no
+        // sampler: there is nothing to sample it with and nothing to read.
+        for (auto i = 0; i < graph.textureCount(); ++i)
+        {
+            auto slot = std::to_string(i);
+
+            if (graph.textureAccess(i) == TextureAccess::Write)
+            {
+                source += "texture2d<float, access::write> texture" + slot
+                          + " [[texture(" + slot + ")]],\n    ";
+                continue;
+            }
+
+            source += "texture2d<float> texture" + slot + " [[texture(" + slot
+                      + ")]],\n    sampler sampler" + slot + " [[sampler(" + slot
+                      + ")]],\n    ";
+        }
+
         source += "constant Uniforms& uniforms [[buffer("
                   + std::to_string(ComputePass::uniformBase) + ")]],\n    ";
-        source += "uint gid [[thread_position_in_grid]])\n{\n";
+        source += std::string(is2D ? "uint2" : "uint")
+                  + " gid [[thread_position_in_grid]])\n{\n";
     }
     else
     {
@@ -948,19 +1038,60 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         if (buffers.size() > 0)
             source += "\n";
 
-        source += "[numthreads(" + std::to_string(ComputePass::threadGroupWidth)
-                  + ", 1, 1)]\n";
+        // Textures are globals here, and their registers start above every
+        // buffer slot's: a texture and a storage buffer share the t and u
+        // spaces on this backend, while their slots are counted separately. See
+        // ComputePass::textureRegisterBase.
+        for (auto i = 0; i < graph.textureCount(); ++i)
+        {
+            auto slot = std::to_string(i);
+            auto reg = std::to_string(ComputePass::textureRegisterBase + i);
+
+            if (graph.textureAccess(i) == TextureAccess::Write)
+            {
+                source += "RWTexture2D<float4> texture" + slot + " : register(u"
+                          + reg + ");\n";
+                continue;
+            }
+
+            auto samplerRegister =
+                i * samplingConfigurations + samplingIndex(graph.textureSampling(i));
+
+            source += "Texture2D texture" + slot + " : register(t" + reg
+                      + ");\nSamplerState sampler" + slot + " : register(s"
+                      + std::to_string(samplerRegister) + ");\n";
+        }
+
+        if (graph.textureCount() > 0)
+            source += "\n";
+
+        auto groupWidth =
+            is2D ? ComputePass::threadGroupSize2D : ComputePass::threadGroupWidth;
+        auto groupHeight = is2D ? ComputePass::threadGroupSize2D : 1;
+
+        source += "[numthreads(" + std::to_string(groupWidth) + ", "
+                  + std::to_string(groupHeight) + ", 1)]\n";
         source += "void computeMain(uint3 threadId : SV_DispatchThreadID)\n{\n";
-        source += "    uint gid = threadId.x;\n";
+        source +=
+            is2D ? "    uint2 gid = threadId.xy;\n" : "    uint gid = threadId.x;\n";
     }
 
-    source += "    if (gid >= uniforms.count)\n        return;\n";
+    source += is2D ? "    if (gid.x >= uniforms.width || gid.y >= "
+                     "uniforms.height)\n        return;\n"
+                   : "    if (gid >= uniforms.count)\n        return;\n";
 
     auto roots = Vector<int> {};
 
     for (const auto& store: graph.stores())
     {
         roots.add(store.index);
+        roots.add(store.value);
+    }
+
+    for (const auto& store: graph.textureStores())
+    {
+        roots.add(store.x);
+        roots.add(store.y);
         roots.add(store.value);
     }
 
@@ -977,6 +1108,23 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         source += "    buffer" + std::to_string(store.slot) + "["
                   + stage.printer.ref(store.index)
                   + "] = " + stage.printer.ref(store.value) + ";\n";
+
+    // The one place the two languages spell a texture write differently: MSL
+    // takes the colour first and the coordinate second, HLSL subscripts the
+    // texture like an array.
+    for (const auto& store: graph.textureStores())
+    {
+        auto name = "texture" + std::to_string(store.slot);
+        auto coordinates = "uint2(" + stage.printer.ref(store.x) + ", "
+                           + stage.printer.ref(store.y) + ")";
+        auto color = stage.printer.ref(store.value);
+
+        if (backend == Backend::Metal)
+            source +=
+                "    " + name + ".write(" + color + ", " + coordinates + ");\n";
+        else
+            source += "    " + name + "[" + coordinates + "] = " + color + ";\n";
+    }
 
     source += "}\n";
     return source;
@@ -1045,6 +1193,18 @@ std::string emit(const ShaderGraph& graph, Backend backend)
 
         if (graph.textureCount() > 0)
             source += "\n";
+
+        // Storage buffers are globals here like the textures, at registers
+        // above every texture slot - the render signature's mirror of the way
+        // a kernel's textures sit above its buffers. See
+        // RenderPass::bufferRegisterBase.
+        for (auto i = 0; i < graph.storageBuffers().size(); ++i)
+            source += "StructuredBuffer<float> buffer" + std::to_string(i)
+                      + " : register(t"
+                      + std::to_string(RenderPass::bufferRegisterBase + i) + ");\n";
+
+        if (graph.storageBuffers().size() > 0)
+            source += "\n";
     }
 
     // On Metal each stage declares the uniform block as a function parameter,
@@ -1054,6 +1214,11 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     // setFragmentBytes bind. Uniforms live at buffer(uniformBase..) so a
     // vertex layout with multiple per-instance slots (0..N) never collides
     // with them.
+    auto vertexRoots = Vector<int> {graph.position()};
+
+    for (auto i = 0; i < graph.varyings().size(); ++i)
+        vertexRoots.add(graph.varyings()[i].sourceNode);
+
     if (backend == Backend::Metal)
     {
         source += "vertex VertexOut vertexMain(VertexIn input [[stage_in]]";
@@ -1062,17 +1227,13 @@ std::string emit(const ShaderGraph& graph, Backend backend)
             source += ", constant Uniforms& uniforms [[buffer("
                       + std::to_string(RenderPass::uniformBase) + ")]]";
 
+        source += bufferParameters(graph, vertexRoots);
         source += ")\n{\n";
     }
     else
     {
         source += "VertexOut vertexMain(VertexIn input)\n{\n";
     }
-
-    auto vertexRoots = Vector<int> {graph.position()};
-
-    for (auto i = 0; i < graph.varyings().size(); ++i)
-        vertexRoots.add(graph.varyings()[i].sourceNode);
 
     // The vertex stage takes no statements: a mutable local and the control flow
     // driving it belong to the fragment expression, the way sampling does. See
@@ -1121,6 +1282,7 @@ std::string emit(const ShaderGraph& graph, Backend backend)
                       + ")]],\n    sampler sampler" + std::to_string(i)
                       + " [[sampler(" + std::to_string(i) + ")]]";
 
+        source += bufferParameters(graph, stageRoots);
         source += ")\n{\n";
     }
     else

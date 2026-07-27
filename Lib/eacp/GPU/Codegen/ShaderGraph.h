@@ -6,6 +6,11 @@
 
 #include "../Pipeline/VertexLayout.h"
 
+#include <cstdint>
+#include <map>
+#include <string>
+#include <tuple>
+
 namespace eacp::GPU
 {
 enum class ExprKind
@@ -39,7 +44,9 @@ enum class ExprKind
     // Emits per-backend (MSL t.sample(s, uv), HLSL t.Sample(s, uv)).
     Fetch, // texel read at integer coordinates, no sampler; index = texture slot,
     // args = {coordinates}. Emits per-backend (MSL t.read(), HLSL t.Load()).
-    ThreadId, // compute work-item id; emitted as the kernel's gid parameter
+    ThreadId, // compute work-item id; emitted as the kernel's gid parameter.
+    // index is the component: a 1D kernel has only 0 and prints the whole gid,
+    // a 2D one prints gid.x or gid.y.
     BufferRead, // storage-buffer element read; index = buffer slot, args = {index}
     ArrayRead // constant-array element read; index = array slot, args = {index}
 };
@@ -50,6 +57,28 @@ enum class BufferAccess
 {
     Read,
     Write
+};
+
+// How a shader accesses a texture: sampled and fetched (Metal
+// texture2d<float>, D3D Texture2D through an SRV) or written by a kernel
+// (Metal access::write, D3D RWTexture2D through a UAV). Both kinds take slots
+// from one counter, because Metal binds them to one texture index space.
+enum class TextureAccess
+{
+    Sample,
+    Write
+};
+
+// The shape of the grid a kernel is dispatched over, decided by which thread
+// index its body asked for: threadId() gives one index over a flat count,
+// threadPosition() gives a pair over a width and a height. The emitter takes
+// the entry signature and the bounds guard from this, and the dispatch takes
+// the grid from the matching ComputePass::dispatch overload - which is why a
+// kernel cannot ask for both.
+enum class DispatchRank
+{
+    OneD,
+    TwoD
 };
 
 // What a statement does. Statements are what the expression store on its own
@@ -142,6 +171,17 @@ public:
         int value = -1;
     };
 
+    // Its texture sibling: texture[x, y] = colour. A compute root exactly as a
+    // buffer store is, and what makes a kernel able to produce something a
+    // later render pass samples.
+    struct TextureStore
+    {
+        int slot = -1;
+        int x = -1;
+        int y = -1;
+        int value = -1;
+    };
+
     int addInput(ValueType type);
 
     // A per-instance input. Emitted shader source is identical to a per-vertex
@@ -209,6 +249,13 @@ public:
     int addSample(int textureSlot, int uv);
     int addSample(int textureSlot, int uv, int level);
 
+    // A texture slot a kernel writes rather than reads, and one such write. It
+    // takes a slot from the same counter addTexture does, so a kernel that
+    // reads one texture and writes another binds them at distinct indices -
+    // which is what Metal's single texture index space requires.
+    int addWritableTexture();
+    void addTextureStore(int slot, int x, int y, int value);
+
     // One texel read straight out of the texture at integer coordinates: no
     // sampler, so no filtering, no addressing and no interpolation.
     int addFetch(int textureSlot, int coordinates);
@@ -219,10 +266,14 @@ public:
     int addArray(ValueType elementType, Vector<int> elements);
     int addArrayRead(int slot, int index);
 
-    // Compute kernel pieces: the 1D work-item id, a storage-buffer slot (float
-    // elements; inputs and outputs share one slot space, so every buffer gets a
-    // distinct index), an element read, and an element write.
+    // Compute kernel pieces: the 1D work-item id, one component of the 2D one,
+    // a storage-buffer slot (float elements; inputs and outputs share one slot
+    // space, so every buffer gets a distinct index), an element read, and an
+    // element write. The first thread index a kernel asks for fixes its
+    // dispatch rank, and asking for the other one afterwards is a contradiction
+    // the emitted kernel could not express.
     int addThreadId();
+    int addThreadPosition(int component);
     int addStorageBuffer(BufferAccess access);
     int addBufferRead(int slot, int index);
     void addStore(int slot, int index, int value);
@@ -255,6 +306,14 @@ public:
                                                            : TextureSampling {};
     }
 
+    // Whether the shader reads texture `slot` or writes it, which is what
+    // decides the declaration each backend emits for it.
+    TextureAccess textureAccess(int slot) const
+    {
+        return slot >= 0 && slot < textureAccesses.size() ? textureAccesses[slot]
+                                                          : TextureAccess::Sample;
+    }
+
     int position() const { return positionNode; }
     int fragment() const { return fragmentNode; }
     int discard() const { return discardNode; }
@@ -263,7 +322,16 @@ public:
     const Vector<BufferAccess>& storageBuffers() const { return storageSlots; }
     const Vector<ArrayConstant>& arrays() const { return arrayConstants; }
     const Vector<Store>& stores() const { return storeList; }
-    bool isCompute() const { return storeList.size() > 0; }
+    const Vector<TextureStore>& textureStores() const { return textureStoreList; }
+
+    // Recording any store - to a buffer or to a texture - is what marks the
+    // graph as a kernel.
+    bool isCompute() const
+    {
+        return storeList.size() > 0 || textureStoreList.size() > 0;
+    }
+
+    DispatchRank dispatchRank() const { return rank; }
 
     // The body every recorded statement ends up in, directly or inside a nested
     // block. It runs before the fragment (or the kernel's stores) is evaluated,
@@ -279,6 +347,25 @@ public:
 private:
     int add(Expr node);
     int addStatement(Statement newStatement);
+    int addThreadIndex(DispatchRank forRank, int component);
+
+    // Structural sharing for the two kinds that can take it. A key holds
+    // everything add() would have to compare to call two nodes the same value;
+    // a binary's operands are node ids, which is enough because the nodes they
+    // name were themselves shared on the way in.
+    using ConstantKey = std::tuple<ValueType, int, std::uint32_t>;
+    using BinaryKey = std::tuple<ValueType, char, std::string, int, int>;
+
+    static ConstantKey constantKeyFor(const Expr& node);
+    static BinaryKey binaryKeyFor(const Expr& node);
+
+    bool isPure(int node) const;
+    bool purityOf(const Expr& node) const;
+    int findShared(const Expr& node) const;
+
+    std::map<ConstantKey, int> constantCache;
+    std::map<BinaryKey, int> binaryCache;
+    Vector<char> pureFlags; // parallel to nodes
 
     Vector<Expr> nodes;
     Vector<ValueType> inputTypes;
@@ -288,13 +375,17 @@ private:
     Vector<ValueType> uniformTypes;
     Vector<BufferAccess> storageSlots;
     Vector<Store> storeList;
+    Vector<TextureStore> textureStoreList;
     Vector<TextureSampling> textureSamplings;
+    Vector<TextureAccess> textureAccesses; // parallel to textureSamplings
     Vector<ArrayConstant> arrayConstants;
 
     Vector<ValueType> variableTypes;
     Vector<Statement> statementList;
     Vector<Block> blocks; // blocks[rootBlock] is the shader's body
     Vector<int> openBlocks; // innermost last; blocks[back()] takes new statements
+    DispatchRank rank = DispatchRank::OneD;
+    bool rankFixed = false;
     int positionNode = -1;
     int fragmentNode = -1;
     int discardNode = -1;

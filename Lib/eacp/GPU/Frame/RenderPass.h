@@ -89,6 +89,19 @@ public:
                             int slot = 0,
                             TextureSampling sampling = {});
 
+    // Binds a Storage buffer for indexed reads in a shader stage - the thing a
+    // vertex attribute stream is not. setVertexBuffer feeds the input assembler,
+    // one element per vertex or per instance; this binds the whole buffer so the
+    // shader can subscript it at an index it computed, which is what reading a
+    // record a kernel produced by an id the shader worked out needs.
+    //
+    // slot maps to Metal buffer(bufferBase + slot) and to D3D
+    // t(bufferRegisterBase + slot), above the texture registers the same way a
+    // kernel's textures sit above its buffers. Read-only in both stages: a
+    // render stage has no UAV here, so writing stays the compute path's job.
+    void setVertexStorageBuffer(const Buffer& buffer, int slot = 0);
+    void setFragmentStorageBuffer(const Buffer& buffer, int slot = 0);
+
     // Uploads small per-draw constant data to the vertex stage without a buffer
     // object (Metal setVertexBytes; a transient constant buffer on D3D12). slot
     // is the
@@ -176,6 +189,7 @@ public:
         }
 
         program.bindTextures(*this);
+        program.bindBuffers(*this);
 
         if (program.hasIndices())
             drawIndexed(
@@ -205,6 +219,7 @@ public:
         }
 
         program.bindTextures(*this);
+        program.bindBuffers(*this);
 
         if (program.hasIndices())
             drawIndexedInstanced(program.indices(),
@@ -226,6 +241,19 @@ public:
     // per-vertex slot + N per-instance slots) coexist with uniforms without
     // the two paths clobbering each other's buffer(N).
     static constexpr int uniformBase = 16;
+
+    // The Metal buffer index the first storage buffer binds to, above the
+    // uniform blocks for the same reason those sit above the vertex buffers:
+    // three kinds of binding share one index space, so each gets a range wide
+    // enough that no layout can push one into the next.
+    static constexpr int bufferBase = 24;
+
+    // The D3D shader register a storage buffer takes. Textures hold t0.. on the
+    // render signature, so buffers start above every texture slot - the mirror
+    // of ComputePass::textureRegisterBase, where a kernel's buffers hold the low
+    // registers and its textures start above them. D3D12Types.h holds the
+    // emitter and the root signature to this number.
+    static constexpr int bufferRegisterBase = 4;
 
 private:
     // Flushes every participant, once. Called by end() on both backends before

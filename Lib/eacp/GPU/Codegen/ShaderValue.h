@@ -435,6 +435,63 @@ inline Float4 fetch(const Texture2D& texture, const Float2& coordinates)
     return result;
 }
 
+// A 2D texture a kernel writes. Like Texture2D it is slot-identified rather
+// than an expression node, and like an OutputBuffer its one operation is the
+// store recorded via ShaderBuilder::write - there is nothing to read back from
+// one, on either backend. Bind the matching GPU::Texture, created with
+// TextureDescriptor::computeWrite, at the same slot
+// (ComputePass::setOutputTexture).
+struct WritableTexture2D
+{
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
+// Where a 2D kernel's work item sits in the grid. A struct of handles rather
+// than a uint2 value type, following the idiom the GPU README states: the two
+// components are what a kernel indexes with, and neither shading language has
+// an operation on the pair that the components do not already have.
+struct ThreadPosition
+{
+    UInt x;
+    UInt y;
+};
+
+namespace detail
+{
+// count consecutive elements starting at index * count, assembled into a
+// vector. A buffer stays a run of floats on both backends - this is arithmetic
+// over the binding that already works, not a retyped one - so what it costs is
+// count scalar loads rather than one wide load. See ShaderBuilder::write for
+// the store that lays the same layout down.
+template <typename T>
+T readBufferVector(
+    ShaderGraph* graph, int slot, const UInt& index, ValueType type, int count)
+{
+    auto base = graph->addBinary(
+        ValueType::UInt, '*', index.node, graph->addUIntConstant((unsigned) count));
+
+    auto components = Vector<int> {};
+
+    for (auto i = 0; i < count; ++i)
+    {
+        auto element = i == 0
+                           ? base
+                           : graph->addBinary(ValueType::UInt,
+                                              '+',
+                                              base,
+                                              graph->addUIntConstant((unsigned) i));
+
+        components.add(graph->addBufferRead(slot, element));
+    }
+
+    auto result = T {};
+    result.graph = graph;
+    result.node = graph->addConstruct(type, std::move(components));
+    return result;
+}
+} // namespace detail
+
 // Storage buffers of float elements, declared by a compute kernel. Like
 // Texture2D they are slot-identified rather than expression nodes: an input's
 // one operation is the indexed read, an output's is the store recorded via
@@ -448,6 +505,32 @@ struct InputBuffer
         result.graph = graph;
         result.node = graph->addBufferRead(slot, index.node);
         return result;
+    }
+
+    // The vector reads, for a buffer whose elements are records rather than
+    // single floats: read4(i) is elements 4i..4i+3 as a Float4, which is what a
+    // kernel walking a struct of four floats wants instead of four subscripts
+    // and the index arithmetic to go with them.
+    //
+    // The index is in records, not in floats - read4(i) and the matching
+    // write(output, i, Float4) address the same record - so a kernel never
+    // spells the stride itself.
+    Float2 read2(const UInt& index) const
+    {
+        return detail::readBufferVector<Float2>(
+            graph, slot, index, ValueType::Float2, 2);
+    }
+
+    Float3 read3(const UInt& index) const
+    {
+        return detail::readBufferVector<Float3>(
+            graph, slot, index, ValueType::Float3, 3);
+    }
+
+    Float4 read4(const UInt& index) const
+    {
+        return detail::readBufferVector<Float4>(
+            graph, slot, index, ValueType::Float4, 4);
     }
 
     ShaderGraph* graph = nullptr;
