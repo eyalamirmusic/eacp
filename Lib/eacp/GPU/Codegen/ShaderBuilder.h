@@ -143,9 +143,28 @@ public:
         return {&graphData, graphData.addStorageBuffer(BufferAccess::Write)};
     }
 
+    // A texture a kernel writes. It takes a slot from the same counter
+    // texture() does, so a kernel reading one texture and writing another
+    // binds them at distinct indices.
+    WritableTexture2D writableTexture()
+    {
+        return {&graphData, graphData.addWritableTexture()};
+    }
+
     void write(const OutputBuffer& buffer, const UInt& index, const Float& value)
     {
         graphData.addStore(buffer.slot, index.node, value.node);
+    }
+
+    // One texel of a kernel's output image. The coordinates are the pair a 2D
+    // kernel already has in hand from threadPosition(), and the colour is the
+    // four channels both backends store in one go.
+    void write(const WritableTexture2D& texture,
+               const UInt& x,
+               const UInt& y,
+               const Float4& color)
+    {
+        graphData.addTextureStore(texture.slot, x.node, y.node, color.node);
     }
 
     // Non-templated siblings of vertexInput()/uniform() keyed on a runtime

@@ -435,6 +435,18 @@ inline Float4 fetch(const Texture2D& texture, const Float2& coordinates)
     return result;
 }
 
+// A 2D texture a kernel writes. Like Texture2D it is slot-identified rather
+// than an expression node, and like an OutputBuffer its one operation is the
+// store recorded via ShaderBuilder::write - there is nothing to read back from
+// one, on either backend. Bind the matching GPU::Texture, created with
+// TextureDescriptor::computeWrite, at the same slot
+// (ComputePass::setOutputTexture).
+struct WritableTexture2D
+{
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
 // Where a 2D kernel's work item sits in the grid. A struct of handles rather
 // than a uint2 value type, following the idiom the GPU README states: the two
 // components are what a kernel indexes with, and neither shading language has

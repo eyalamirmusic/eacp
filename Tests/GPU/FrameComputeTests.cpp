@@ -135,11 +135,103 @@ struct ComputeThenDrawView final : GPUView
     ColorFromBuffer draw;
 };
 
-Graphics::Image readBack(ComputeThenDrawView& view)
+template <typename View>
+Graphics::Image readBack(View& view)
 {
     view.setBounds({0.f, 0.f, (float) viewWidth, (float) viewHeight});
     return view.renderToImage(1.f);
 }
+
+// The image a kernel paints, one texel per work item. Red rises across the
+// width and blue falls with it, so a texel that came from the wrong column is
+// a different colour rather than a missing one; green rises down the height, so
+// the second coordinate is checked too - whichever way up the sampled image
+// ends on screen.
+struct ImageKernel final : ComputeProgram
+{
+    ImageKernel() { compile(); }
+
+    void define() override
+    {
+        auto p = threadPosition();
+        auto across = toFloat(p.x) * (1.f / (float) (viewWidth - 1));
+        auto down = toFloat(p.y) * (1.f / (float) (viewHeight - 1));
+
+        write(target, p.x, p.y, float4(across, down, 1.f - across, 1.f));
+    }
+
+    Uniform<WritableTexture2D> target;
+
+    EACP_SHADER(target)
+};
+
+// Fills the drawable with that image, sampled a texel at a time so what comes
+// back is what the kernel wrote rather than a blend of it.
+struct DrawImage final : ShaderProgram
+{
+    DrawImage()
+    {
+        image.sampling = {TextureFilter::Nearest, TextureAddressMode::Clamp};
+        compile();
+    }
+
+    void define() override
+    {
+        auto position = vertexInput(&QuadVertex::position);
+        auto uv = varying(position * 0.5f + 0.5f);
+
+        setPosition(float4(position, 0.f, 1.f));
+        setFragment(sample(image, uv));
+    }
+
+    Uniform<Texture2D> image;
+
+    EACP_SHADER(image)
+};
+
+TextureDescriptor computeTarget()
+{
+    auto descriptor = TextureDescriptor {};
+    descriptor.width = viewWidth;
+    descriptor.height = viewHeight;
+    descriptor.format = TextureFormat::RGBA8Unorm;
+    descriptor.computeWrite = true;
+    return descriptor;
+}
+
+// A kernel's image drawn by the next pass on the same frame - the whole point
+// of a texture a kernel can write. The texture is never touched by the CPU and
+// the clear is black, so every colour on screen came through the kernel.
+struct ComputeImageThenDrawView final : GPUView
+{
+    ComputeImageThenDrawView()
+        : target(Device::shared().makeTexture(computeTarget()))
+    {
+        setSampleCount(1);
+
+        kernel.target = target;
+        kernel.prepare();
+
+        draw.setVertices(fullQuad, 6);
+        draw.image = target;
+        draw.prepare(sampleCount());
+    }
+
+    void render(Frame& frame) override
+    {
+        {
+            auto compute = frame.beginCompute();
+            compute.dispatch(kernel, viewWidth, viewHeight);
+        }
+
+        auto pass = frame.beginPass({{0.f, 0.f, 0.f, 1.f}});
+        pass.draw(draw);
+    }
+
+    Texture target;
+    ImageKernel kernel;
+    DrawImage draw;
+};
 
 // The kernel both commit paths run, kept apart from the frame test's so each
 // says one thing.
@@ -214,6 +306,82 @@ auto tKernelOutputFeedsDraw = test("FrameCompute/kernelOutputFeedsTheDraw") = []
     // through the compositor leaves.
     check(std::abs(pixel.r - channelBase) < 0.1f);
     check(std::abs(pixel.b - (channelBase + 2.f * channelStep)) < 0.1f);
+};
+
+// The compute-to-fragment path: a kernel writes a texture and the next pass on
+// the same frame samples it. Nothing here could have come from anywhere else -
+// the texture is created empty, the CPU never writes it, and the clear is
+// black.
+auto tKernelImageFeedsTheDraw = test("FrameCompute/kernelImageFeedsTheDraw") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    auto view = ComputeImageThenDrawView {};
+    check(view.target.isComputeWritable());
+
+    auto image = readBack(view);
+    check(image.isValid());
+
+    auto left = image.at(1, viewHeight / 2);
+    auto right = image.at(viewWidth - 2, viewHeight / 2);
+
+    // Not the clear, and running the way the kernel painted it across the
+    // width - which is also what says the x coordinate reached the write.
+    check(right.r > left.r + 0.3f);
+    check(left.b > right.b + 0.3f);
+
+    // And close to the ramp itself: screen column 1 samples texel 1 and column
+    // width-2 samples texel width-2, within what the read-back's transfer
+    // through the compositor leaves.
+    constexpr auto lastColumn = (float) (viewWidth - 1);
+    check(std::abs(left.r - 1.f / lastColumn) < 0.15f);
+    check(std::abs(right.r - (lastColumn - 1.f) / lastColumn) < 0.15f);
+
+    // And down the height. Whichever way up the sampled image lands on screen,
+    // two rows apart must differ, which they cannot if the y coordinate never
+    // reached the write.
+    auto top = image.at(viewWidth / 2, 0);
+    auto bottom = image.at(viewWidth / 2, viewHeight - 1);
+    check(std::abs(top.g - bottom.g) > 0.3f);
+};
+
+// A format outside the guaranteed set is refused at creation rather than
+// binding as an output that silently writes nothing. BGRA8Unorm is the one
+// worth naming: it is the drawable's own format, so it is exactly what someone
+// reaches for first.
+auto tComputeWriteRefusesUnsupportedFormat =
+    test("FrameCompute/computeWriteRefusesBGRA") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    auto descriptor = computeTarget();
+    descriptor.format = TextureFormat::BGRA8Unorm;
+
+    auto texture = Device::shared().makeTexture(descriptor);
+
+    // Nothing was created, so this is as loud as it gets short of throwing:
+    // the texture does not work at all rather than working everywhere except
+    // in the kernel that was the reason for asking.
+    check(!texture.isValid());
+    check(!texture.isComputeWritable());
+};
+
+// And a plain texture is not one either, so setOutputTexture has something to
+// refuse rather than binding a resource with no view to bind through.
+auto tPlainTextureIsNotComputeWritable =
+    test("FrameCompute/plainTextureIsNotComputeWritable") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    auto descriptor = computeTarget();
+    descriptor.computeWrite = false;
+
+    auto texture = Device::shared().makeTexture(descriptor);
+    check(texture.isValid());
+    check(!texture.isComputeWritable());
 };
 
 // commitAsync submits without waiting and resolves once the GPU is done, with

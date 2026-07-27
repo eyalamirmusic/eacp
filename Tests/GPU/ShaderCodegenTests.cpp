@@ -1718,6 +1718,72 @@ auto tCodegenCompute2D = test("GPU/codegenCompute2D") = []
     check(contains(hlsl, "buffer0[((gid.y * 16u) + gid.x)] = float(gid.x);"));
 };
 
+// A kernel that reads one texture and writes another. Read and written
+// textures take slots from one counter, because Metal binds both to one texture
+// index space; on D3D they land in the t and u spaces they share with the
+// storage buffers, above every buffer slot. Pure string generation.
+auto tCodegenComputeTextureWrite = test("GPU/codegenComputeTextureWrite") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto source = builder.texture();
+    auto target = builder.writableTexture();
+    auto p = builder.threadPosition();
+
+    builder.write(
+        target, p.x, p.y, sample(source, float2(toFloat(p.x), toFloat(p.y))));
+
+    auto shader = builder.build();
+    check(shader.source.isCompute());
+    check(shader.source.computeEntry == "computeMain");
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "texture2d<float> texture0 [[texture(0)]]"));
+    check(contains(metal, "sampler sampler0 [[sampler(0)]]"));
+    check(
+        contains(metal, "texture2d<float, access::write> texture1 [[texture(1)]]"));
+
+    // A written texture has no sampler on either backend: there is nothing to
+    // sample it with and nothing to read out of it.
+    check(!contains(metal, "sampler sampler1"));
+    check(contains(metal,
+                   "texture1.write(texture0.sample(sampler0, float2(float(gid.x), "
+                   "float(gid.y))), uint2(gid.x, gid.y));"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "Texture2D texture0 : register(t4);"));
+    check(contains(hlsl, "SamplerState sampler0 : register(s0);"));
+    check(contains(hlsl, "RWTexture2D<float4> texture1 : register(u5);"));
+    check(!contains(hlsl, "SamplerState sampler1"));
+    check(contains(hlsl,
+                   "texture1[uint2(gid.x, gid.y)] = texture0.Sample(sampler0, "
+                   "float2(float(gid.x), float(gid.y)));"));
+};
+
+// A kernel whose only output is a texture is still a kernel: recording any
+// store is what marks the graph as one, and a graph with no storage buffer at
+// all emits none.
+auto tCodegenComputeTextureOnly = test("GPU/codegenComputeTextureOnly") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto target = builder.writableTexture();
+    auto p = builder.threadPosition();
+    auto shade = toFloat(p.x) * 0.25f;
+
+    builder.write(target, p.x, p.y, float4(shade, shade, shade, 1.0f));
+
+    auto shader = builder.build();
+    check(shader.source.isCompute());
+
+    for (const auto& text: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        check(!contains(text, "buffer0"));
+        check(contains(text, "uniforms.width"));
+        check(contains(text, "float t0 = (float(gid.x) * 0.25);"));
+    }
+};
+
 // The 1D kernel keeps its scalar signature and its single count: the rank is a
 // property of what the body asked for, not a new default.
 auto tCodegenCompute1DUnchanged = test("GPU/codegenCompute1DKeepsScalarId") = []

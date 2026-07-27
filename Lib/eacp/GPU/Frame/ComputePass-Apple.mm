@@ -3,6 +3,7 @@
 #include "ComputePass.h"
 
 #include "../Buffer/Buffer.h"
+#include "../Device/Device.h"
 #include "../Pipeline/ComputePipeline.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
@@ -54,6 +55,40 @@ void ComputePass::setOutputBuffer(const Buffer& buffer, int slot)
     // Metal binds a device buffer the same way whether the kernel reads or
     // writes it; the read/write distinction only matters to D3D's view types.
     setInputBuffer(buffer, slot);
+}
+
+void ComputePass::setInputTexture(const Texture& texture,
+                                  int slot,
+                                  TextureSampling sampling)
+{
+    auto activeEncoder = impl->encoder.get();
+    auto metalTexture = (__bridge id<MTLTexture>) texture.nativeTexture();
+
+    // The state for the sampling the shader declared, not one the texture
+    // carries - the same rule the render pass follows, and the one D3D12's
+    // static samplers leave no alternative to.
+    auto metalSampler =
+        (__bridge id<MTLSamplerState>) Device::shared().nativeSampler(sampling);
+
+    if (activeEncoder == nil || metalTexture == nil || metalSampler == nil)
+        return;
+
+    [activeEncoder setTexture:metalTexture atIndex:(NSUInteger) slot];
+    [activeEncoder setSamplerState:metalSampler atIndex:(NSUInteger) slot];
+}
+
+void ComputePass::setOutputTexture(const Texture& texture, int slot)
+{
+    auto activeEncoder = impl->encoder.get();
+    auto metalTexture = (__bridge id<MTLTexture>) texture.nativeTexture();
+
+    if (activeEncoder == nil || metalTexture == nil || !texture.isComputeWritable())
+        return;
+
+    // Metal binds a texture the same way whether the kernel reads or writes it;
+    // what separates the two is the usage it was created with and the access
+    // qualifier the kernel declared. No sampler: a written texture has none.
+    [activeEncoder setTexture:metalTexture atIndex:(NSUInteger) slot];
 }
 
 void ComputePass::setBytes(const void* data, std::size_t bytes, int slot)
