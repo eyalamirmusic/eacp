@@ -310,6 +310,23 @@ struct Uniform<OutputBuffer> : OutputBuffer
     const Buffer* value = nullptr;
 };
 
+// A kernel's output image, following the Uniform<Texture2D> pattern: the
+// slot-indexed handle define() writes through, and the slot the assigned
+// GPU::Texture is bound at when dispatched. It carries no sampling - nothing
+// samples a written texture - and the texture must have been created with
+// TextureDescriptor::computeWrite.
+template <>
+struct Uniform<WritableTexture2D> : WritableTexture2D
+{
+    Uniform& operator=(const Texture& newTexture)
+    {
+        value = &newTexture;
+        return *this;
+    }
+
+    const Texture* value = nullptr;
+};
+
 inline VertexFormat toVertexFormat(ValueType type)
 {
     switch (type)
@@ -368,6 +385,11 @@ public:
         onOutputBuffer(name, member, member.value);
     }
 
+    void operator()(const char* name, Uniform<WritableTexture2D>& member)
+    {
+        onWritableTexture(name, member, member.value);
+    }
+
 protected:
     virtual void onUniform(const char* name,
                            ValueType type,
@@ -381,6 +403,9 @@ protected:
     }
     virtual void onInputBuffer(const char*, InputBuffer&, const Buffer*) {}
     virtual void onOutputBuffer(const char*, OutputBuffer&, const Buffer*) {}
+    virtual void onWritableTexture(const char*, WritableTexture2D&, const Texture*)
+    {
+    }
 };
 
 // Build walk: each uniform member adopts a freshly added graph slot, so define()
@@ -417,6 +442,13 @@ public:
     void onOutputBuffer(const char*, OutputBuffer& handle, const Buffer*) override
     {
         handle = builder.outputBuffer();
+    }
+
+    void onWritableTexture(const char*,
+                           WritableTexture2D& handle,
+                           const Texture*) override
+    {
+        handle = builder.writableTexture();
     }
 
 private:

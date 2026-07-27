@@ -226,9 +226,44 @@ beginning the one that reads what it wrote. `Apps/GPU/ComputeParticles` is the
 worked example, and `Apps/GPU/AsyncCompute` times the two commits against each
 other.
 
-What compute does **not** have yet: outputs are float buffers — there is no
-texture a kernel can write, so a kernel cannot yet produce something a fragment
-shader samples.
+### Textures a kernel writes
+
+The other thing a kernel produces is an image, and it reaches the fragment stage
+with no new machinery at all: once a `Texture` is written by a kernel, the
+`setFragmentTexture` that was always there samples it in a later pass on the
+same frame.
+
+A texture opts in the way a render target does, and only in a format a typed
+store is guaranteed for — `RGBA8Unorm`, `RGBA16Float`, `RGBA32Float`. Notably
+**not** `BGRA8Unorm`, the drawable's own format and the first one most people
+reach for; asking for it yields an invalid texture rather than a kernel whose
+writes go nowhere.
+
+```cpp
+auto descriptor = TextureDescriptor {};
+descriptor.width = 512;
+descriptor.height = 512;
+descriptor.format = TextureFormat::RGBA8Unorm;
+descriptor.computeWrite = true;
+
+struct PaintPlasma final : ComputeProgram
+{
+    void define() override
+    {
+        auto p = threadPosition();
+        write(target, p.x, p.y, float4(colourAt(p), 1.f));
+    }
+
+    Uniform<WritableTexture2D> target;      // bound as the kernel's output
+    Uniform<Texture2D> source;              // sampled or fetched, if it needs one
+    EACP_SHADER(target, source)
+};
+```
+
+Read and written textures take slots from one counter — Metal binds both to one
+texture index space — so a kernel reading one and writing another gives them
+distinct indices. `Apps/GPU/ComputeImage` is the worked example: a kernel paints
+a 512×512 texture every frame and the next pass samples it full-screen.
 
 ## Texture formats
 

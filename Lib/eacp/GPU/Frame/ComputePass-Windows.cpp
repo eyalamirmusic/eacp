@@ -8,8 +8,12 @@
 
 // Windows/D3D12 backend. Records onto the command buffer's recording via the
 // D3D12ComputeEncoder. Buffers bind as root descriptors by GPU address (no
-// descriptor heap involved); uniforms upload into a transient buffer bound as
-// a root CBV. A UAV barrier after every dispatch orders chained kernels.
+// descriptor heap involved); textures cannot - a root descriptor is a buffer
+// view and nothing else - so those bind through single-descriptor tables, out
+// of the heaps beginCompute bound. Uniforms upload into a transient buffer
+// bound as a root CBV. A UAV barrier after every dispatch orders chained
+// kernels, and covers a texture written by one and read by the next exactly as
+// it covers a buffer.
 
 namespace eacp::GPU
 {
@@ -73,6 +77,43 @@ void ComputePass::setOutputBuffer(const Buffer& buffer, int slot)
     transitionForUse(commands, *data, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     commands.list->SetComputeRootUnorderedAccessView(
         computeUAVParam(slot), data->resource->GetGPUVirtualAddress());
+}
+
+void ComputePass::setInputTexture(const Texture& texture, int slot, TextureSampling)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    auto* data = static_cast<D3D12TextureData*>(texture.nativeTexture());
+
+    if (data == nullptr || data->srv.gpu.ptr == 0)
+        return;
+
+    auto* list = impl->encoder->commands->list.get();
+
+    // A texture an earlier kernel wrote is still in UNORDERED_ACCESS, and this
+    // is where it comes back from. Only the SRV is bound: the sampler is a
+    // static sampler in the compute root signature, picked by the register the
+    // shader's sampler was emitted at. See TextureSampling.
+    transitionTextureForUse(
+        list, *data, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    list->SetComputeRootDescriptorTable(computeTextureSRVParam(slot), data->srv.gpu);
+}
+
+void ComputePass::setOutputTexture(const Texture& texture, int slot)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    auto* data = static_cast<D3D12TextureData*>(texture.nativeTexture());
+
+    if (data == nullptr || !data->isComputeWritable() || data->uav.gpu.ptr == 0)
+        return;
+
+    auto* list = impl->encoder->commands->list.get();
+
+    transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    list->SetComputeRootDescriptorTable(computeTextureUAVParam(slot), data->uav.gpu);
 }
 
 void ComputePass::setBytes(const void* data, std::size_t bytes, int slot)

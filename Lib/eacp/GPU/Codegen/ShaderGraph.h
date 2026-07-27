@@ -54,6 +54,16 @@ enum class BufferAccess
     Write
 };
 
+// How a shader accesses a texture: sampled and fetched (Metal
+// texture2d<float>, D3D Texture2D through an SRV) or written by a kernel
+// (Metal access::write, D3D RWTexture2D through a UAV). Both kinds take slots
+// from one counter, because Metal binds them to one texture index space.
+enum class TextureAccess
+{
+    Sample,
+    Write
+};
+
 // The shape of the grid a kernel is dispatched over, decided by which thread
 // index its body asked for: threadId() gives one index over a flat count,
 // threadPosition() gives a pair over a width and a height. The emitter takes
@@ -156,6 +166,17 @@ public:
         int value = -1;
     };
 
+    // Its texture sibling: texture[x, y] = colour. A compute root exactly as a
+    // buffer store is, and what makes a kernel able to produce something a
+    // later render pass samples.
+    struct TextureStore
+    {
+        int slot = -1;
+        int x = -1;
+        int y = -1;
+        int value = -1;
+    };
+
     int addInput(ValueType type);
 
     // A per-instance input. Emitted shader source is identical to a per-vertex
@@ -223,6 +244,13 @@ public:
     int addSample(int textureSlot, int uv);
     int addSample(int textureSlot, int uv, int level);
 
+    // A texture slot a kernel writes rather than reads, and one such write. It
+    // takes a slot from the same counter addTexture does, so a kernel that
+    // reads one texture and writes another binds them at distinct indices -
+    // which is what Metal's single texture index space requires.
+    int addWritableTexture();
+    void addTextureStore(int slot, int x, int y, int value);
+
     // One texel read straight out of the texture at integer coordinates: no
     // sampler, so no filtering, no addressing and no interpolation.
     int addFetch(int textureSlot, int coordinates);
@@ -273,6 +301,14 @@ public:
                                                            : TextureSampling {};
     }
 
+    // Whether the shader reads texture `slot` or writes it, which is what
+    // decides the declaration each backend emits for it.
+    TextureAccess textureAccess(int slot) const
+    {
+        return slot >= 0 && slot < textureAccesses.size() ? textureAccesses[slot]
+                                                          : TextureAccess::Sample;
+    }
+
     int position() const { return positionNode; }
     int fragment() const { return fragmentNode; }
     int discard() const { return discardNode; }
@@ -281,7 +317,15 @@ public:
     const Vector<BufferAccess>& storageBuffers() const { return storageSlots; }
     const Vector<ArrayConstant>& arrays() const { return arrayConstants; }
     const Vector<Store>& stores() const { return storeList; }
-    bool isCompute() const { return storeList.size() > 0; }
+    const Vector<TextureStore>& textureStores() const { return textureStoreList; }
+
+    // Recording any store - to a buffer or to a texture - is what marks the
+    // graph as a kernel.
+    bool isCompute() const
+    {
+        return storeList.size() > 0 || textureStoreList.size() > 0;
+    }
+
     DispatchRank dispatchRank() const { return rank; }
 
     // The body every recorded statement ends up in, directly or inside a nested
@@ -308,7 +352,9 @@ private:
     Vector<ValueType> uniformTypes;
     Vector<BufferAccess> storageSlots;
     Vector<Store> storeList;
+    Vector<TextureStore> textureStoreList;
     Vector<TextureSampling> textureSamplings;
+    Vector<TextureAccess> textureAccesses; // parallel to textureSamplings
     Vector<ArrayConstant> arrayConstants;
 
     Vector<ValueType> variableTypes;

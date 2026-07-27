@@ -70,13 +70,18 @@ D3D12_ROOT_PARAMETER rootBufferView(D3D12_ROOT_PARAMETER_TYPE type,
     return parameter;
 }
 
-D3D12_ROOT_PARAMETER rootTable(const D3D12_DESCRIPTOR_RANGE* range)
+// The visibility is a parameter rather than baked in because a compute root
+// signature takes only ALL: naming a stage in one is not a narrowing, it is a
+// serialisation failure, and the whole signature is refused.
+D3D12_ROOT_PARAMETER
+rootTable(const D3D12_DESCRIPTOR_RANGE* range,
+          D3D12_SHADER_VISIBILITY visibility = D3D12_SHADER_VISIBILITY_PIXEL)
 {
     D3D12_ROOT_PARAMETER parameter = {};
     parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     parameter.DescriptorTable.NumDescriptorRanges = 1;
     parameter.DescriptorTable.pDescriptorRanges = range;
-    parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    parameter.ShaderVisibility = visibility;
     return parameter;
 }
 
@@ -166,6 +171,7 @@ void D3D12Context::createNullDescriptors()
         return;
 
     nullTexture = allocateFrom(textureDescriptors);
+    nullTextureUAV = allocateFrom(textureDescriptors);
     nullSampler = allocateFrom(samplerDescriptors);
 
     if (nullTexture.cpu.ptr != 0)
@@ -177,6 +183,19 @@ void D3D12Context::createNullDescriptors()
         srv.Texture2D.MipLevels = 1;
 
         device->CreateShaderResourceView(nullptr, &srv, nullTexture.cpu);
+    }
+
+    // The compute signature's UAV tables need their own: a range declared UAV
+    // will not take the SRV descriptor above, so the two are separate slots
+    // even though both describe nothing.
+    if (nullTextureUAV.cpu.ptr != 0)
+    {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
+        uav.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+
+        device->CreateUnorderedAccessView(
+            nullptr, nullptr, &uav, nullTextureUAV.cpu);
     }
 
     if (nullSampler.cpu.ptr != 0)
@@ -272,7 +291,10 @@ void D3D12Context::createRootSignatures()
 
     renderRootSignature = makeRootSignature(device.get(), renderDesc);
 
-    D3D12_ROOT_PARAMETER computeParams[maxUniformSlots + 2 * maxBufferSlots];
+    D3D12_DESCRIPTOR_RANGE computeSrvRanges[maxTextureSlots] = {};
+    D3D12_DESCRIPTOR_RANGE computeUavRanges[maxTextureSlots] = {};
+    D3D12_ROOT_PARAMETER
+    computeParams[maxUniformSlots + 2 * maxBufferSlots + 2 * maxTextureSlots];
 
     for (auto slot = 0; slot < maxUniformSlots; ++slot)
         computeParams[computeCBVParam(slot)] =
@@ -286,9 +308,45 @@ void D3D12Context::createRootSignatures()
             rootBufferView(D3D12_ROOT_PARAMETER_TYPE_UAV, static_cast<UINT>(slot));
     }
 
+    // A texture is not a root descriptor on either side of the read/write
+    // split: root descriptors are buffer views, so both go through
+    // single-descriptor tables. Their registers start above the buffers' — the
+    // two slot spaces share t and u. See computeTextureRegister.
+    for (auto slot = 0; slot < maxTextureSlots; ++slot)
+    {
+        computeSrvRanges[slot].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        computeSrvRanges[slot].NumDescriptors = 1;
+        computeSrvRanges[slot].BaseShaderRegister = computeTextureRegister(slot);
+
+        computeUavRanges[slot].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+        computeUavRanges[slot].NumDescriptors = 1;
+        computeUavRanges[slot].BaseShaderRegister = computeTextureRegister(slot);
+
+        computeParams[computeTextureSRVParam(slot)] =
+            rootTable(&computeSrvRanges[slot], D3D12_SHADER_VISIBILITY_ALL);
+        computeParams[computeTextureUAVParam(slot)] =
+            rootTable(&computeUavRanges[slot], D3D12_SHADER_VISIBILITY_ALL);
+    }
+
+    // The same static samplers the render signature declares, at the same
+    // registers, so a kernel sampling a texture and a fragment shader sampling
+    // one read the identical emitted source. Only the visibility differs, for
+    // the reason rootTable takes one: a compute root signature accepts nothing
+    // but ALL.
+    constexpr auto samplerCount = maxTextureSlots * samplingConfigurations;
+    D3D12_STATIC_SAMPLER_DESC computeSamplers[samplerCount] = {};
+
+    for (auto i = 0; i < samplerCount; ++i)
+    {
+        computeSamplers[i] = staticSamplers[i];
+        computeSamplers[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    }
+
     D3D12_ROOT_SIGNATURE_DESC computeDesc = {};
     computeDesc.NumParameters = static_cast<UINT>(std::size(computeParams));
     computeDesc.pParameters = computeParams;
+    computeDesc.NumStaticSamplers = static_cast<UINT>(std::size(computeSamplers));
+    computeDesc.pStaticSamplers = computeSamplers;
 
     computeRootSignature = makeRootSignature(device.get(), computeDesc);
 }

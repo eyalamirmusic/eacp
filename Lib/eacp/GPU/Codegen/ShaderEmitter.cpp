@@ -944,6 +944,25 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                       + ")]],\n    ";
         }
 
+        // Textures are kernel parameters like the buffers, on an index space of
+        // their own. A written one takes the write access qualifier and no
+        // sampler: there is nothing to sample it with and nothing to read.
+        for (auto i = 0; i < graph.textureCount(); ++i)
+        {
+            auto slot = std::to_string(i);
+
+            if (graph.textureAccess(i) == TextureAccess::Write)
+            {
+                source += "texture2d<float, access::write> texture" + slot
+                          + " [[texture(" + slot + ")]],\n    ";
+                continue;
+            }
+
+            source += "texture2d<float> texture" + slot + " [[texture(" + slot
+                      + ")]],\n    sampler sampler" + slot + " [[sampler(" + slot
+                      + ")]],\n    ";
+        }
+
         source += "constant Uniforms& uniforms [[buffer("
                   + std::to_string(ComputePass::uniformBase) + ")]],\n    ";
         source += std::string(is2D ? "uint2" : "uint")
@@ -966,6 +985,33 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         }
 
         if (buffers.size() > 0)
+            source += "\n";
+
+        // Textures are globals here, and their registers start above every
+        // buffer slot's: a texture and a storage buffer share the t and u
+        // spaces on this backend, while their slots are counted separately. See
+        // ComputePass::textureRegisterBase.
+        for (auto i = 0; i < graph.textureCount(); ++i)
+        {
+            auto slot = std::to_string(i);
+            auto reg = std::to_string(ComputePass::textureRegisterBase + i);
+
+            if (graph.textureAccess(i) == TextureAccess::Write)
+            {
+                source += "RWTexture2D<float4> texture" + slot + " : register(u"
+                          + reg + ");\n";
+                continue;
+            }
+
+            auto samplerRegister =
+                i * samplingConfigurations + samplingIndex(graph.textureSampling(i));
+
+            source += "Texture2D texture" + slot + " : register(t" + reg
+                      + ");\nSamplerState sampler" + slot + " : register(s"
+                      + std::to_string(samplerRegister) + ");\n";
+        }
+
+        if (graph.textureCount() > 0)
             source += "\n";
 
         auto groupWidth =
@@ -991,6 +1037,13 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         roots.add(store.value);
     }
 
+    for (const auto& store: graph.textureStores())
+    {
+        roots.add(store.x);
+        roots.add(store.y);
+        roots.add(store.value);
+    }
+
     auto stageRoots = roots;
     collectStatementRoots(graph, ShaderGraph::rootBlock, stageRoots);
 
@@ -1004,6 +1057,23 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         source += "    buffer" + std::to_string(store.slot) + "["
                   + stage.printer.ref(store.index)
                   + "] = " + stage.printer.ref(store.value) + ";\n";
+
+    // The one place the two languages spell a texture write differently: MSL
+    // takes the colour first and the coordinate second, HLSL subscripts the
+    // texture like an array.
+    for (const auto& store: graph.textureStores())
+    {
+        auto name = "texture" + std::to_string(store.slot);
+        auto coordinates = "uint2(" + stage.printer.ref(store.x) + ", "
+                           + stage.printer.ref(store.y) + ")";
+        auto color = stage.printer.ref(store.value);
+
+        if (backend == Backend::Metal)
+            source +=
+                "    " + name + ".write(" + color + ", " + coordinates + ");\n";
+        else
+            source += "    " + name + "[" + coordinates + "] = " + color + ";\n";
+    }
 
     source += "}\n";
     return source;

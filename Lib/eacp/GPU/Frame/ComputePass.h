@@ -2,6 +2,8 @@
 
 #include "../Common.h"
 
+#include "../Texture/Texture.h"
+
 namespace eacp::GPU
 {
 class ComputePipeline;
@@ -34,6 +36,18 @@ public:
     void setInputBuffer(const Buffer& buffer, int slot);
     void setOutputBuffer(const Buffer& buffer, int slot);
 
+    // The texture siblings, on a slot space of their own: a texture the kernel
+    // samples or fetches, and one it writes. sampling is the configuration the
+    // shader declared, exactly as in RenderPass::setFragmentTexture.
+    //
+    // An output texture must have been created with
+    // TextureDescriptor::computeWrite; one that was not is dropped rather than
+    // bound, since the resource has no view to bind through.
+    void setInputTexture(const Texture& texture,
+                         int slot,
+                         TextureSampling sampling = {});
+    void setOutputTexture(const Texture& texture, int slot);
+
     // Uploads a small uniform block without a buffer object, like the render
     // pass's setVertexBytes. slot is the uniform-block slot (0 = first block).
     void setBytes(const void* data, std::size_t bytes, int slot = 0);
@@ -60,7 +74,7 @@ public:
     void dispatch(Program& program, int count)
     {
         setPipeline(program.pipeline());
-        program.bindBuffers(*this);
+        program.bindResources(*this);
 
         // Sequenced separately: packing must happen before the size is read,
         // and argument evaluation order would not guarantee that.
@@ -75,7 +89,7 @@ public:
     void dispatch(Program& program, int width, int height)
     {
         setPipeline(program.pipeline());
-        program.bindBuffers(*this);
+        program.bindResources(*this);
 
         const auto* uniforms = program.packedUniforms(width, height);
         setBytes(uniforms, (std::size_t) program.uniformByteSize());
@@ -96,6 +110,14 @@ public:
     // 1D path already budgets for - and square, so a group covers a tile rather
     // than a strip, which is what a kernel reading its neighbours wants.
     static constexpr int threadGroupSize2D = 8;
+
+    // The D3D shader register a kernel's first texture takes. A texture shares
+    // the t/u register spaces with the storage buffers there, and the two slot
+    // spaces are counted separately, so textures start above every buffer slot
+    // - the emitter writes these registers and the root signature declares
+    // them, and D3D12Types.h holds the two to the same number. Metal is
+    // unaffected: its texture indices are a space of their own.
+    static constexpr int textureRegisterBase = 4;
 
 private:
     struct Native;

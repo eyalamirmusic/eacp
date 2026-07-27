@@ -58,10 +58,19 @@ struct Texture::Native
         , height(descriptor.height)
         , pixelStride(bytesPerPixel(descriptor.format))
         , renderTarget(descriptor.renderTarget)
+        , computeWrite(descriptor.computeWrite)
     {
         auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
 
         if (metalDevice == nil || width <= 0 || height <= 0)
+            return;
+
+        // Refused here rather than at the bind, so a format D3D12 cannot take a
+        // typed store to fails the same way on both backends instead of working
+        // on one of them. Nothing is created, so the texture is invalid rather
+        // than a kernel output that quietly does nothing. See
+        // supportsComputeWrite.
+        if (computeWrite && !supportsComputeWrite(descriptor.format))
             return;
 
         auto textureDescriptor = [MTLTextureDescriptor
@@ -79,6 +88,12 @@ struct Texture::Native
             textureDescriptor.usage |= MTLTextureUsageRenderTarget;
             textureDescriptor.storageMode = MTLStorageModePrivate;
         }
+
+        // A kernel's output only needs the write usage; the storage mode is
+        // deliberately left alone, so a texture a kernel accumulates into can
+        // still be seeded from the CPU with update().
+        if (computeWrite)
+            textureDescriptor.usage |= MTLTextureUsageShaderWrite;
 
         texture = [metalDevice newTextureWithDescriptor:textureDescriptor];
 
@@ -174,6 +189,7 @@ struct Texture::Native
     // because those buffers are always 32-bit BGRA/RGBA.
     int pixelStride = 4;
     bool renderTarget = false;
+    bool computeWrite = false;
     ObjC::Ptr<NSObject<MTLTexture>> texture;
     CFRef<CVMetalTextureRef> cvTexture;
 };
@@ -227,6 +243,11 @@ bool Texture::isValid() const
 bool Texture::isRenderTarget() const
 {
     return impl->renderTarget && impl->texture.get() != nil;
+}
+
+bool Texture::isComputeWritable() const
+{
+    return impl->computeWrite && impl->texture.get() != nil;
 }
 
 void* Texture::nativeTexture() const

@@ -207,7 +207,24 @@ int ShaderGraph::addMul(ValueType type, int left, int right)
 int ShaderGraph::addTexture(TextureSampling sampling)
 {
     textureSamplings.add(sampling);
+    textureAccesses.add(TextureAccess::Sample);
     return textureSamplings.size() - 1;
+}
+
+int ShaderGraph::addWritableTexture()
+{
+    // The sampling is recorded to keep the two lists parallel and is never
+    // read: a written texture has no sampler on either backend. Spelled out
+    // rather than braced - `add({})` is Vector's initializer-list overload with
+    // an empty list, which adds nothing at all.
+    textureSamplings.add(TextureSampling {});
+    textureAccesses.add(TextureAccess::Write);
+    return textureSamplings.size() - 1;
+}
+
+void ShaderGraph::addTextureStore(int slot, int x, int y, int value)
+{
+    textureStoreList.add({slot, x, y, value});
 }
 
 int ShaderGraph::addSample(int textureSlot, int uv)
