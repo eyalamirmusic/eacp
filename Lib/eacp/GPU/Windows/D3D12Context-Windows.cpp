@@ -60,13 +60,18 @@ D3D12_ROOT_PARAMETER rootCBV(UINT shaderRegister, D3D12_SHADER_VISIBILITY visibi
     return parameter;
 }
 
-D3D12_ROOT_PARAMETER rootBufferView(D3D12_ROOT_PARAMETER_TYPE type,
-                                    UINT shaderRegister)
+// The visibility defaults to ALL for the compute signature, which accepts
+// nothing else; the render signature names a stage, the way its CBVs do, so one
+// register can carry a separate binding per stage.
+D3D12_ROOT_PARAMETER
+rootBufferView(D3D12_ROOT_PARAMETER_TYPE type,
+               UINT shaderRegister,
+               D3D12_SHADER_VISIBILITY visibility = D3D12_SHADER_VISIBILITY_ALL)
 {
     D3D12_ROOT_PARAMETER parameter = {};
     parameter.ParameterType = type;
     parameter.Descriptor.ShaderRegister = shaderRegister;
-    parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    parameter.ShaderVisibility = visibility;
     return parameter;
 }
 
@@ -219,7 +224,8 @@ void D3D12Context::createDevice()
 void D3D12Context::createRootSignatures()
 {
     D3D12_DESCRIPTOR_RANGE srvRanges[maxTextureSlots] = {};
-    D3D12_ROOT_PARAMETER renderParams[2 * maxUniformSlots + maxTextureSlots];
+    D3D12_ROOT_PARAMETER
+    renderParams[2 * maxUniformSlots + maxTextureSlots + 2 * maxBufferSlots];
 
     for (auto slot = 0; slot < maxUniformSlots; ++slot)
     {
@@ -236,6 +242,22 @@ void D3D12Context::createRootSignatures()
         srvRanges[slot].BaseShaderRegister = static_cast<UINT>(slot);
 
         renderParams[renderTextureParam(slot)] = rootTable(&srvRanges[slot]);
+    }
+
+    // The storage buffers a vertex or fragment stage subscripts. Root
+    // descriptors rather than tables, at registers above every texture slot,
+    // and declared per stage at the same register - one HLSL global is visible
+    // to both functions, so each stage binds its own.
+    for (auto slot = 0; slot < maxBufferSlots; ++slot)
+    {
+        renderParams[renderVertexSRVParam(slot)] =
+            rootBufferView(D3D12_ROOT_PARAMETER_TYPE_SRV,
+                           renderBufferRegister(slot),
+                           D3D12_SHADER_VISIBILITY_VERTEX);
+        renderParams[renderPixelSRVParam(slot)] =
+            rootBufferView(D3D12_ROOT_PARAMETER_TYPE_SRV,
+                           renderBufferRegister(slot),
+                           D3D12_SHADER_VISIBILITY_PIXEL);
     }
 
     // A static sampler for every (texture slot, sampling configuration) pair, at

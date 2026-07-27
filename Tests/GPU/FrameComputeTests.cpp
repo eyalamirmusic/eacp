@@ -233,6 +233,82 @@ struct ComputeImageThenDrawView final : GPUView
     DrawImage draw;
 };
 
+// The record the indexed-read shader picks out of the palette the kernel wrote.
+// Deliberately not record 0: a shader that dropped the index would read the
+// first record and still produce a plausible colour, so only a later one tells
+// the two apart.
+constexpr auto paletteRecords = 2;
+constexpr auto paletteRecord = 1;
+constexpr auto paletteBase = 0.1f;
+constexpr auto paletteStep = 0.15f;
+constexpr auto paletteFloats = paletteRecords * channelCount;
+
+constexpr float paletteValueAt(int element)
+{
+    return paletteBase + (float) element * paletteStep;
+}
+
+// Reads its colour out of a storage buffer at an index it computes, rather than
+// receiving it as a per-instance attribute the way ColorFromBuffer does. This
+// is what a render-stage buffer read is for: the shader picks the element.
+struct ColorFromIndexedBuffer final : ShaderProgram
+{
+    ColorFromIndexedBuffer() { compile(); }
+
+    void define() override
+    {
+        auto position = vertexInput(&QuadVertex::position);
+
+        setPosition(float4(position, 0.f, 1.f));
+        setFragment(float4(palette.read3(record), 1.f));
+    }
+
+    Uniform<InputBuffer> palette;
+    Uniform<UInt> record;
+
+    EACP_SHADER(palette, record)
+};
+
+// The Phase 4 frame: a kernel fills a palette buffer, and the fragment stage of
+// the very next pass subscripts it. No per-instance stream carries the colour -
+// the buffer is bound whole and the shader indexes it.
+struct ComputeThenIndexedDrawView final : GPUView
+{
+    ComputeThenIndexedDrawView()
+        : palette(Device::shared(),
+                  nullptr,
+                  sizeof(float) * paletteFloats,
+                  BufferUsage::Storage)
+    {
+        setSampleCount(1);
+
+        kernel.output = palette;
+        kernel.base = paletteBase;
+        kernel.stepSize = paletteStep;
+        kernel.prepare();
+
+        draw.setVertices(fullQuad, 6);
+        draw.palette = palette;
+        draw.record = (std::uint32_t) paletteRecord;
+        draw.prepare(sampleCount());
+    }
+
+    void render(Frame& frame) override
+    {
+        {
+            auto compute = frame.beginCompute();
+            compute.dispatch(kernel, paletteFloats);
+        }
+
+        auto pass = frame.beginPass({{0.f, 0.f, 0.f, 1.f}});
+        pass.draw(draw);
+    }
+
+    Buffer palette;
+    ColorKernel kernel;
+    ColorFromIndexedBuffer draw;
+};
+
 // The kernel both commit paths run, kept apart from the frame test's so each
 // says one thing.
 struct ScaleKernel final : ComputeProgram
@@ -365,6 +441,35 @@ auto tKernelImageFeedsTheDraw = test("FrameCompute/kernelImageFeedsTheDraw") = [
     auto top = image.at(viewWidth / 2, 0);
     auto bottom = image.at(viewWidth / 2, viewHeight - 1);
     check(std::abs(top.g - bottom.g) > 0.3f);
+};
+
+// A shader stage reading a buffer at an index it computed, which is the one
+// thing a vertex attribute cannot do. The kernel writes a palette of two
+// records; the fragment stage is told which one to read and subscripts it.
+// Reading the wrong record, or dropping the index, gives the other record's
+// colour - which is a different pixel, not a missing one.
+auto tIndexedBufferReadFeedsTheDraw =
+    test("FrameCompute/indexedBufferReadFeedsTheDraw") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    auto view = ComputeThenIndexedDrawView {};
+    auto image = readBack(view);
+
+    check(image.isValid());
+
+    auto pixel = image.at(viewWidth / 2, viewHeight / 2);
+
+    // The record the shader was pointed at, not the one before it.
+    constexpr auto first = paletteRecord * channelCount;
+
+    check(std::abs(pixel.r - paletteValueAt(first)) < 0.1f);
+    check(std::abs(pixel.g - paletteValueAt(first + 1)) < 0.1f);
+    check(std::abs(pixel.b - paletteValueAt(first + 2)) < 0.1f);
+
+    // And distinguishable from record 0, so the checks above could have failed.
+    check(std::abs(paletteValueAt(first) - paletteValueAt(0)) > 0.2f);
 };
 
 // read4 and the Float4 write address the same record: the index is in records

@@ -1880,6 +1880,125 @@ auto tCodegenComputeVectorStrides = test("GPU/codegenComputeVectorStrides") = []
     check(!contains(hlsl, "t0 + 3u"));
 };
 
+// A storage buffer read from a render stage: the same InputBuffer a kernel
+// subscripts, declared by a graph with no stores at all, so the shader is a
+// vertex/fragment pair rather than a kernel. What it buys is the indexed read a
+// vertex attribute cannot do - the shader picks the element, instead of the
+// input assembler handing it one.
+auto tCodegenFragmentBufferRead = test("GPU/codegenFragmentBufferRead") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto palette = builder.inputBuffer();
+    auto record = builder.uniform<UInt>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(float4(palette.read3(record), 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+
+    // Declared on the stage that reads it and nowhere else: the vertex function
+    // only builds a position, so a buffer parameter there would be dead weight
+    // the caller still has to bind.
+    check(contains(metal,
+                   "device const float* buffer0 [[buffer("
+                       + std::to_string(RenderPass::bufferBase) + ")]]"));
+    check(countOccurrences(metal, "device const float* buffer0") == 1);
+    check(metal.find("fragmentMain") < metal.find("device const float* buffer0"));
+
+    // Read-only in a render stage, whatever a kernel would have got: there is
+    // no writable buffer on this side.
+    check(!contains(metal, "device float* buffer0"));
+
+    // An HLSL global is visible to both functions, so it is declared once
+    // outside either - above every texture register, which is what the render
+    // root signature's buffer SRVs are declared at.
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl,
+                   "StructuredBuffer<float> buffer0 : register(t"
+                       + std::to_string(RenderPass::bufferRegisterBase) + ");"));
+    check(!contains(hlsl, "RWStructuredBuffer"));
+
+    // The record index reaches the read on both backends: read3 strides by
+    // three, so an index the shader computed addresses its own record.
+    for (const auto& source: {metal, hlsl})
+    {
+        check(contains(source, "uint t0 = (uniforms.u0 * 3u);"));
+        check(contains(source,
+                       "float3(buffer0[t0], buffer0[(t0 + 1u)], "
+                       "buffer0[(t0 + 2u)])"));
+    }
+};
+
+// The vertex stage reads one too, and gets its own parameter. Nothing about the
+// binding is fragment-specific - which is what lets a vertex shader place a
+// per-instance record it looked up rather than one it was handed.
+auto tCodegenVertexBufferRead = test("GPU/codegenVertexBufferRead") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto offsets = builder.inputBuffer();
+    auto record = builder.uniform<UInt>();
+
+    builder.position(float4(position + offsets.read2(record), 0.0f, 1.0f));
+    builder.fragment(float4(builder.constant(1.0f), 1.0f, 1.0f, 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+
+    check(contains(metal,
+                   "device const float* buffer0 [[buffer("
+                       + std::to_string(RenderPass::bufferBase) + ")]]"));
+    check(countOccurrences(metal, "device const float* buffer0") == 1);
+    check(metal.find("device const float* buffer0") < metal.find("fragmentMain"));
+};
+
+// Both stages reading one buffer declare it once each, and the fragment stage's
+// parameter list keeps textures and buffers in their own index spaces.
+auto tCodegenBothStagesReadBuffer = test("GPU/codegenBothStagesReadBuffer") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto data = builder.inputBuffer();
+    auto record = builder.uniform<UInt>();
+
+    builder.position(float4(position * data[record], 0.0f, 1.0f));
+    builder.fragment(float4(data[record + 1u], 0.0f, 0.0f, 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+    check(countOccurrences(metal, "device const float* buffer0") == 2);
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(countOccurrences(hlsl, "StructuredBuffer<float> buffer0") == 1);
+};
+
+// Feeds a render shader that subscripts a storage buffer through the real
+// platform shader compiler, which is what says the registers and buffer indices
+// the emitter picked are ones the backend accepts. Self-skips without a GPU.
+auto tCodegenBufferReadCompiles = test("GPU/codegenBufferReadCompiles") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto palette = builder.inputBuffer();
+    auto record = builder.uniform<UInt>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(float4(palette.read3(record), 1.0f));
+
+    auto shader = builder.build();
+
+    auto library = device.makeShaderLibrary(shader.source);
+    check(library.isValid());
+};
+
 // Feeds an EDSL compute kernel (including the toFloat(threadId) cast) through
 // the real platform shader compiler and builds a compute pipeline. Self-skips
 // without a GPU device.

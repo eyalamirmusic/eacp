@@ -150,6 +150,55 @@ void RenderPass::setFragmentTexture(const Texture& texture,
     list->SetGraphicsRootDescriptorTable(renderTextureParam(slot), data->srv.gpu);
 }
 
+namespace
+{
+// The address a stage's root SRV binds to, with the buffer moved into the state
+// a shader read needs. A kernel that wrote this buffer left it in
+// UNORDERED_ACCESS; the barrier here is what orders the draw behind that write.
+D3D12_GPU_VIRTUAL_ADDRESS storageBufferAddress(CommandContext& commands,
+                                               const Buffer& buffer)
+{
+    auto* data = static_cast<D3D12BufferData*>(buffer.nativeBuffer());
+
+    if (data == nullptr || data->resource == nullptr)
+        return 0;
+
+    // The union of the two read states rather than one: the same buffer may be
+    // bound to both stages, and asking for each in turn would barrier it back
+    // and forth between two states that are both just "a shader is reading it".
+    transitionForUse(commands,
+                     *data,
+                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
+                         | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+    return data->resource->GetGPUVirtualAddress();
+}
+} // namespace
+
+void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots)
+        return;
+
+    auto& commands = *impl->encoder->commands;
+
+    if (auto address = storageBufferAddress(commands, buffer))
+        commands.list->SetGraphicsRootShaderResourceView(renderVertexSRVParam(slot),
+                                                         address);
+}
+
+void RenderPass::setFragmentStorageBuffer(const Buffer& buffer, int slot)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots)
+        return;
+
+    auto& commands = *impl->encoder->commands;
+
+    if (auto address = storageBufferAddress(commands, buffer))
+        commands.list->SetGraphicsRootShaderResourceView(renderPixelSRVParam(slot),
+                                                         address);
+}
+
 void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
 {
     if (!impl->encoder || slot < 0 || slot >= maxUniformSlots)
