@@ -6,6 +6,7 @@
 #include "StreamingRange.h"
 #include "WebViewDetail.h"
 
+#include <eacp/Core/Utils/Singleton.h>
 #include <eacp/Graphics/Image/Image.h>
 
 namespace eacp::Graphics
@@ -498,10 +499,11 @@ void WebView::installOffscreenAnimationSupport()
 
 namespace detail
 {
+// Immortal because ~WebView unregisters here, and a WebView at namespace scope
+// outlives a registry that first use constructed after it.
 Vector<WebView*>& registeredWebViews()
 {
-    static auto instances = Vector<WebView*>();
-    return instances;
+    return Singleton::getImmortal<Vector<WebView*>>();
 }
 
 void registerWebView(WebView* view)

@@ -5,6 +5,7 @@
 #include "../Layers/NativeLayer-Windows.h"
 
 #include <eacp/Core/Threads/Async.h>
+#include <eacp/Core/Utils/Singleton.h>
 
 #include <cmath>
 #include <memory>
@@ -293,10 +294,11 @@ struct PaintTarget
 // per-view InvalidateRect calls into a single WM_PAINT for the host window;
 // the handler then paints exactly the views that asked. Main-thread only,
 // so no locking is needed.
+// Immortal because ~Native erases itself here, and a View at namespace scope
+// outlives a registry that first use constructed after it.
 std::unordered_set<PaintTarget*>& dirtyViews()
 {
-    static auto views = std::unordered_set<PaintTarget*> {};
-    return views;
+    return Singleton::getImmortal<std::unordered_set<PaintTarget*>>();
 }
 } // namespace
 
