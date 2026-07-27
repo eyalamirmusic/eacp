@@ -5,6 +5,14 @@
 
 namespace eacp::Video
 {
+// Placement and colour appear throughout this module, so they are hoisted here
+// rather than qualified at each mention. Scoped to the module deliberately:
+// pulling them into all of eacp would collide with any user type of the same
+// name reached through `using namespace eacp`.
+using Graphics::Color;
+using Graphics::Point;
+using Graphics::Rect;
+
 // A GPU-backed View that draws a video stream. The frame for the current time
 // is wrapped zero-copy as a texture (Apple) or uploaded (Windows) and drawn
 // through the sprite renderer, then drawOverlay composites anything else — a
@@ -67,7 +75,7 @@ public:
     // rather than through sprites, and needs somewhere to flush to.
     virtual void drawOverlay(GPU::RenderPass& pass,
                              Sprites::SpriteRenderer& renderer,
-                             const Graphics::Rect& imageArea);
+                             const Rect& imageArea);
 
     // Whether the frame just rendered reached the GPU without a copy. False
     // when it went through the CPU upload path, or when nothing was drawn.
@@ -83,20 +91,19 @@ public:
     // exposed for testing.
     struct Placement
     {
-        Graphics::Point origin;
-        Graphics::Point edgeX;
-        Graphics::Point edgeY;
+        Point origin;
+        Point edgeX;
+        Point edgeY;
     };
 
-    static Placement computePlacement(const Graphics::Rect& area,
-                                      int rotationDegrees,
-                                      bool mirrored);
+    static Placement
+        computePlacement(const Rect& area, int rotationDegrees, bool mirrored);
 
     // The size a frame is displayed at, which swaps width and height for a
     // quarter-turn rotation. This is what the fit is computed against — a
     // portrait phone clip is stored landscape and must be letterboxed as the
     // portrait it will be shown as.
-    static Graphics::Point
+    static Point
         displaySize(int textureWidth, int textureHeight, int rotationDegrees);
 
 protected:
@@ -106,15 +113,15 @@ protected:
 private:
     void ensureRenderer();
     void applyFrameReadyCallback();
-    Graphics::Rect imageAreaFor(int textureWidth, int textureHeight) const;
+    Rect imageAreaFor(int textureWidth, int textureHeight) const;
 
     // Draws one texture into the view under the current fit, rotation and
     // mirror, and reports the on-screen rect it filled.
-    void drawFrameTexture(const GPU::Texture& texture, Graphics::Rect& imageArea);
+    void drawFrameTexture(const GPU::Texture& texture, Rect& imageArea);
 
     // Each returns whether the frame was drawn and, if so, sets imageArea.
-    bool drawZeroCopy(const VideoFrame& frame, Graphics::Rect& imageArea);
-    bool drawUpload(const VideoFrame& frame, Graphics::Rect& imageArea);
+    bool drawZeroCopy(const VideoFrame& frame, Rect& imageArea);
+    bool drawUpload(const VideoFrame& frame, Rect& imageArea);
 
     Player* player = nullptr;
     FrameStream* stream = nullptr;
@@ -130,11 +137,15 @@ private:
     UploadMode uploadMode = UploadMode::Auto;
 
     std::optional<Sprites::SpriteRenderer> renderer;
-    Graphics::Point rendererSize {0.0f, 0.0f};
+    Point rendererSize {0.0f, 0.0f};
 
-    // The CPU-upload path's texture, reused across frames and rebuilt only when
-    // the frame size changes.
+    // The CPU-upload path's textures, reused across frames and rebuilt only
+    // when the frame size or pixel format changes. A BGRA frame uses only the
+    // first; an NV12 frame uses both, the second carrying the half-size chroma
+    // plane.
     std::optional<GPU::Texture> uploadTexture;
+    std::optional<GPU::Texture> chromaTexture;
+    FramePixelFormat uploadedFormat = FramePixelFormat::BGRA8;
 
     // The frame the last upload came from, so a repaint that draws the same
     // frame again does not re-upload it.

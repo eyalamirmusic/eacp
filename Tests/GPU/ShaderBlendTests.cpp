@@ -27,9 +27,8 @@ EACP_SHADER_VALUE(QuadVertex, Float2)
 
 namespace
 {
-constexpr QuadVertex fullScreenTriangle[] = {{{-1.f, -1.f}},
-                                             {{3.f, -1.f}},
-                                             {{-1.f, 3.f}}};
+constexpr QuadVertex fullScreenTriangle[] = {
+    {{-1.f, -1.f}}, {{3.f, -1.f}}, {{-1.f, 3.f}}};
 
 // Emits a half-transparent red fragment, so the outcome depends entirely on
 // whether the pipeline blends it with what is already there.
@@ -60,7 +59,7 @@ struct BlendView final : GPUView
         : mode(modeToUse)
     {
         setSampleCount(1);
-        shader.color = std::array {1.f, 0.f, 0.f, 0.5f};
+        shader.color = Array {1.f, 0.f, 0.f, 0.5f};
         shader.setVertices(fullScreenTriangle);
         shader.prepare(sampleCount(), false, PrimitiveTopology::Triangles, mode);
     }
@@ -147,8 +146,8 @@ auto tAdditiveAdds = test("ShaderBlend/additiveAddsToTheBackground") = []
 
     const auto pixel = image.at(8, 8);
 
-    check(pixel.g > 0.9f);  // the background is untouched
-    check(pixel.r > 0.2f);  // and the fragment was added to it
+    check(pixel.g > 0.9f); // the background is untouched
+    check(pixel.r > 0.2f); // and the fragment was added to it
 };
 
 // The parameter is defaulted, so existing callers keep the unblended behaviour
