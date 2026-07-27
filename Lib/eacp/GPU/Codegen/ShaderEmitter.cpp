@@ -6,7 +6,6 @@
 #include "UniformLayout.h"
 
 #include <cstdio>
-#include <vector>
 
 // The single source-of-truth walker. MSL and HLSL differ only in the binding
 // syntax and the stage scaffolding captured by the helpers below; the expression
@@ -283,7 +282,7 @@ struct ExprPrinter
 
     const ShaderGraph& graph;
     Backend backend;
-    const std::vector<int>& locals; // node id -> local index, -1 = inline
+    const Vector<int>& locals; // node id -> local index, -1 = inline
 };
 
 // Operation nodes are worth naming when evaluated more than once; leaf reads
@@ -322,8 +321,8 @@ bool wantsLocal(ExprKind kind)
 // per root plus one per parent edge, visiting each node's children only once.
 void countUses(const ShaderGraph& graph,
                int node,
-               std::vector<int>& uses,
-               std::vector<char>& seen)
+               Vector<int>& uses,
+               Vector<char>& seen)
 {
     if (node < 0)
         return;
@@ -344,10 +343,10 @@ void countUses(const ShaderGraph& graph,
 // a name is left alone, and so is everything under it: it is already computed.
 void orderLocals(const ShaderGraph& graph,
                  int node,
-                 const std::vector<int>& uses,
-                 const std::vector<int>& locals,
-                 std::vector<char>& seen,
-                 std::vector<int>& order)
+                 const Vector<int>& uses,
+                 const Vector<int>& locals,
+                 Vector<char>& seen,
+                 Vector<int>& order)
 {
     if (node < 0 || seen[node] || locals[node] >= 0)
         return;
@@ -358,15 +357,15 @@ void orderLocals(const ShaderGraph& graph,
         orderLocals(graph, argument, uses, locals, seen, order);
 
     if (uses[node] > 1 && wantsLocal(graph.expr(node).kind))
-        order.push_back(node);
+        order.add(node);
 }
 
 // Which constant arrays a run of expressions subscripts, following the elements
 // of one that is used in case an element subscripts another.
 void collectArrays(const ShaderGraph& graph,
                    int node,
-                   std::vector<char>& used,
-                   std::vector<char>& seen)
+                   Vector<char>& used,
+                   Vector<char>& seen)
 {
     if (node < 0 || seen[node])
         return;
@@ -390,11 +389,11 @@ void collectArrays(const ShaderGraph& graph,
 // Which variables running a statement can leave holding something else -
 // following the bodies of an if or a loop, since what they write is written
 // just the same.
-void collectWrites(const ShaderGraph& graph, int block, std::vector<char>& written);
+void collectWrites(const ShaderGraph& graph, int block, Vector<char>& written);
 
 void collectWrites(const ShaderGraph& graph,
                    const Statement& statement,
-                   std::vector<char>& written)
+                   Vector<char>& written)
 {
     switch (statement.kind)
     {
@@ -421,21 +420,52 @@ void collectWrites(const ShaderGraph& graph,
     }
 }
 
-void collectWrites(const ShaderGraph& graph, int block, std::vector<char>& written)
+void collectWrites(const ShaderGraph& graph, int block, Vector<char>& written)
 {
     for (auto index: graph.block(block).statements)
         collectWrites(graph, graph.statement(index), written);
 }
 
+// A visited set a walk can have a fresh one of without paying for one. Marking
+// is a stamp rather than a flag, so starting over is a counter increment
+// instead of clearing a buffer the size of the graph.
+//
+// It exists because the walk below runs per open name per statement, and a
+// buffer allocated and zeroed each time costs the whole graph however small the
+// subtree walked turns out to be. On an ordinary shader that is invisible; on a
+// large one it is the difference between a shader that compiles and an app that
+// hangs.
+struct VisitSet
+{
+    explicit VisitSet(int nodeCount) { stamps.resize(nodeCount, 0); }
+
+    void restart() { ++generation; }
+
+    bool visit(int node)
+    {
+        if (stamps[node] == generation)
+            return false;
+
+        stamps[node] = generation;
+        return true;
+    }
+
+    Vector<int> stamps;
+
+    // Ahead of the stamps a fresh buffer holds, so nothing counts as visited
+    // until something visits it. Starting level with them makes every node of a
+    // new set look already seen - which is not a walk that gives the wrong
+    // answer slowly, it is one that gives it immediately.
+    int generation = 1;
+};
+
 bool readsAny(const ShaderGraph& graph,
               int node,
-              const std::vector<char>& written,
-              std::vector<char>& seen)
+              const Vector<char>& written,
+              VisitSet& seen)
 {
-    if (node < 0 || seen[node])
+    if (node < 0 || !seen.visit(node))
         return false;
-
-    seen[node] = 1;
 
     const auto& expr = graph.expr(node);
 
@@ -467,18 +497,19 @@ bool readsAny(const ShaderGraph& graph,
 struct StageEmitter
 {
     StageEmitter(const ShaderGraph& graphToUse, Backend backend)
-        : locals((std::size_t) graphToUse.nodeCount(), -1)
-        , printer {graphToUse, backend, locals}
+        : printer {graphToUse, backend, locals}
+        , visited(graphToUse.nodeCount())
     {
+        locals.resize(graphToUse.nodeCount(), -1);
     }
 
     const ShaderGraph& graph() const { return printer.graph; }
 
     // The locals a standalone run of expressions needs - a stage's outputs,
     // which no statement follows - counted over just those expressions.
-    std::string defineFor(const std::vector<int>& roots, const std::string& indent)
+    std::string defineFor(const Vector<int>& roots, const std::string& indent)
     {
-        auto open = std::vector<int> {};
+        auto open = Vector<int> {};
         return define(roots, indent, countUsesOver(roots), open);
     }
 
@@ -491,16 +522,17 @@ struct StageEmitter
     //
     // Emitted in slot order, so an array whose elements read another one finds
     // it already there.
-    std::string declareArrays(const std::vector<int>& roots,
-                              const std::string& indent)
+    std::string declareArrays(const Vector<int>& roots, const std::string& indent)
     {
         const auto& arrays = graph().arrays();
 
         if (arrays.empty())
             return {};
 
-        auto used = std::vector<char>((std::size_t) arrays.size(), 0);
-        auto seen = std::vector<char>((std::size_t) graph().nodeCount(), 0);
+        auto used = Vector<char> {};
+        used.resize(arrays.size(), 0);
+        auto seen = Vector<char> {};
+        seen.resize(graph().nodeCount(), 0);
 
         for (auto root: roots)
             collectArrays(graph(), root, used, seen);
@@ -509,7 +541,7 @@ struct StageEmitter
 
         for (auto slot = 0; slot < arrays.size(); ++slot)
         {
-            if (used[(std::size_t) slot] == 0)
+            if (used[slot] == 0)
                 continue;
 
             const auto& array = arrays[slot];
@@ -535,7 +567,7 @@ struct StageEmitter
     std::string emitBlock(int block, const std::string& indent)
     {
         auto uses = blockUses(block);
-        auto open = std::vector<int> {};
+        auto open = Vector<int> {};
         auto source = std::string {};
 
         for (auto index: graph().block(block).statements)
@@ -547,8 +579,8 @@ struct StageEmitter
 
     std::string emitStatement(const Statement& statement,
                               const std::string& indent,
-                              const std::vector<int>& uses,
-                              std::vector<int>& open)
+                              const Vector<int>& uses,
+                              Vector<int>& open)
     {
         auto inner = indent + "    ";
 
@@ -622,11 +654,14 @@ struct StageEmitter
     }
 
 private:
-    std::vector<int> countUsesOver(const std::vector<int>& roots) const
+    Vector<int> countUsesOver(const Vector<int>& roots) const
     {
-        auto count = (std::size_t) graph().nodeCount();
-        auto uses = std::vector<int>(count, 0);
-        auto seen = std::vector<char>(count, 0);
+        auto count = graph().nodeCount();
+        auto uses = Vector<int> {};
+        auto seen = Vector<char> {};
+
+        uses.resize(count, 0);
+        seen.resize(count, 0);
 
         for (auto root: roots)
             countUses(graph(), root, uses, seen);
@@ -637,29 +672,30 @@ private:
     // How often the statements of one block reach each node - the block's own
     // statements only, since a nested body counts its own when it is emitted.
     // A loop's condition is left out deliberately: see the note above.
-    std::vector<int> blockUses(int block) const
+    Vector<int> blockUses(int block) const
     {
-        auto roots = std::vector<int> {};
+        auto roots = Vector<int> {};
 
         for (auto index: graph().block(block).statements)
         {
             const auto& statement = graph().statement(index);
 
             if (statement.kind != StatementKind::Loop)
-                roots.push_back(statement.value);
+                roots.add(statement.value);
         }
 
         return countUsesOver(roots);
     }
 
-    std::string define(const std::vector<int>& roots,
+    std::string define(const Vector<int>& roots,
                        const std::string& indent,
-                       const std::vector<int>& uses,
-                       std::vector<int>& open)
+                       const Vector<int>& uses,
+                       Vector<int>& open)
     {
-        auto count = (std::size_t) graph().nodeCount();
-        auto ordered = std::vector<char>(count, 0);
-        auto order = std::vector<int> {};
+        auto count = graph().nodeCount();
+        auto ordered = Vector<char> {};
+        ordered.resize(count, 0);
+        auto order = Vector<int> {};
 
         for (auto root: roots)
             orderLocals(graph(), root, uses, locals, ordered, order);
@@ -669,7 +705,7 @@ private:
         for (auto node: order)
         {
             locals[node] = localCount++;
-            open.push_back(node);
+            open.add(node);
 
             source += indent + std::string(typeName(graph().expr(node).type)) + " t"
                       + std::to_string(locals[node]) + " = " + printer.print(node)
@@ -679,7 +715,7 @@ private:
         return source;
     }
 
-    void retire(std::vector<int>& open)
+    void retire(Vector<int>& open)
     {
         for (auto node: open)
             locals[node] = -1;
@@ -687,42 +723,66 @@ private:
         open.clear();
     }
 
-    void dropStale(const Statement& statement, std::vector<int>& open)
+    void dropStale(const Statement& statement, Vector<int>& open)
     {
         if (open.empty() || graph().variables().empty())
             return;
 
-        auto written =
-            std::vector<char>((std::size_t) graph().variables().size(), 0);
+        written.assign(graph().variables().size(), 0);
         collectWrites(graph(), statement, written);
 
-        auto kept = std::vector<int> {};
+        // A statement that leaves no variable holding something else cannot
+        // have staled a name, and most do not: a break, a continue, and an if
+        // whose bodies only compute. Asking each open name about an empty set
+        // is the same walk for a guaranteed no.
+        if (!written.contains(1))
+            return;
+
+        auto kept = Vector<int> {};
 
         for (auto node: open)
         {
-            auto seen = std::vector<char>((std::size_t) graph().nodeCount(), 0);
+            visited.restart();
 
-            if (readsAny(graph(), node, written, seen))
+            if (readsAny(graph(), node, written, visited))
                 locals[node] = -1;
             else
-                kept.push_back(node);
+                kept.add(node);
         }
 
         open = std::move(kept);
     }
 
 public:
-    std::vector<int> locals; // node id -> local index, -1 = inline
+    Vector<int> locals; // node id -> local index, -1 = inline
     ExprPrinter printer;
     int localCount = 0;
+
+private:
+    // Held by the emitter rather than by the walk, so that naming a stage costs
+    // one buffer instead of one per name per statement.
+    VisitSet visited;
+    Vector<char> written;
 };
 
 // Whether the expression tree under node reads a uniform. A Varying read is the
 // fragment-stage boundary: its vertex-stage source tree is walked separately as
 // part of the vertex stage, so the walk stops there.
-bool referencesUniform(const ShaderGraph& graph, int node)
+//
+// The visited set is not an optimisation here, it is what makes the walk
+// finite in practice. What this walks is a graph rather than a tree - the
+// emitter's whole reason for existing is that a shared subtree is stored once -
+// and a walk that revisits a shared node once per path through it is
+// exponential in the sharing, not quadratic. It went unnoticed for as long as
+// every shader was small enough that the exponent did not matter.
+//
+// A node reached twice is a node whose answer is already in the result: either
+// the walk that reached it first found a uniform, in which case it returned
+// true and this one is unreachable, or it did not, in which case there is none
+// under there to find.
+bool referencesUniform(const ShaderGraph& graph, int node, VisitSet& seen)
 {
-    if (node < 0)
+    if (node < 0 || !seen.visit(node))
         return false;
 
     const auto& expr = graph.expr(node);
@@ -734,7 +794,7 @@ bool referencesUniform(const ShaderGraph& graph, int node)
         return false;
 
     for (auto argument: expr.args)
-        if (referencesUniform(graph, argument))
+        if (referencesUniform(graph, argument, seen))
             return true;
 
     return false;
@@ -744,14 +804,12 @@ bool referencesUniform(const ShaderGraph& graph, int node)
 // its statements read and not only what its output expression does. Without
 // this a uniform read only from inside a loop would go undeclared: the
 // expression walk starts at the fragment colour and never reaches it.
-void collectStatementRoots(const ShaderGraph& graph,
-                           int block,
-                           std::vector<int>& roots)
+void collectStatementRoots(const ShaderGraph& graph, int block, Vector<int>& roots)
 {
     for (auto index: graph.block(block).statements)
     {
         const auto& statement = graph.statement(index);
-        roots.push_back(statement.value);
+        roots.add(statement.value);
 
         if (statement.body >= 0)
             collectStatementRoots(graph, statement.body, roots);
@@ -761,16 +819,29 @@ void collectStatementRoots(const ShaderGraph& graph,
     }
 }
 
-bool vertexUsesUniforms(const ShaderGraph& graph)
+// One visited set across every root, not one per root: a stage's roots share
+// most of their graph, and a node already known to hold no uniform holds none
+// whichever root reached it.
+bool anyReferencesUniform(const ShaderGraph& graph, const Vector<int>& roots)
 {
-    if (referencesUniform(graph, graph.position()))
-        return true;
+    auto seen = VisitSet {graph.nodeCount()};
 
-    for (const auto& varying: graph.varyings())
-        if (referencesUniform(graph, varying.sourceNode))
+    for (auto root: roots)
+        if (referencesUniform(graph, root, seen))
             return true;
 
     return false;
+}
+
+bool vertexUsesUniforms(const ShaderGraph& graph)
+{
+    auto roots = Vector<int> {};
+    roots.add(graph.position());
+
+    for (const auto& varying: graph.varyings())
+        roots.add(varying.sourceNode);
+
+    return anyReferencesUniform(graph, roots);
 }
 
 // The Uniforms struct shared by both stages (and the HLSL cbuffer wrapping it).
@@ -885,12 +956,12 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 
     source += "    if (gid >= uniforms.count)\n        return;\n";
 
-    auto roots = std::vector<int> {};
+    auto roots = Vector<int> {};
 
     for (const auto& store: graph.stores())
     {
-        roots.push_back(store.index);
-        roots.push_back(store.value);
+        roots.add(store.index);
+        roots.add(store.value);
     }
 
     auto stageRoots = roots;
@@ -998,10 +1069,10 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         source += "VertexOut vertexMain(VertexIn input)\n{\n";
     }
 
-    auto vertexRoots = std::vector<int> {graph.position()};
+    auto vertexRoots = Vector<int> {graph.position()};
 
     for (auto i = 0; i < graph.varyings().size(); ++i)
-        vertexRoots.push_back(graph.varyings()[i].sourceNode);
+        vertexRoots.add(graph.varyings()[i].sourceNode);
 
     // The vertex stage takes no statements: a mutable local and the control flow
     // driving it belong to the fragment expression, the way sampling does. See
@@ -1023,10 +1094,10 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     // The alpha test is a fragment root like the colour is: its subtree is
     // planned with the colour's, so a value both of them read (the texture
     // sample, typically) is computed once and shared.
-    auto fragmentRoots = std::vector {graph.fragment()};
+    auto fragmentRoots = Vector<int> {graph.fragment()};
 
     if (graph.discard() >= 0)
-        fragmentRoots.push_back(graph.discard());
+        fragmentRoots.add(graph.discard());
 
     // What the statements read counts towards the stage's uniform declaration,
     // but not towards the colour's locals: a statement's own expressions are
@@ -1034,10 +1105,7 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     auto stageRoots = fragmentRoots;
     collectStatementRoots(graph, ShaderGraph::rootBlock, stageRoots);
 
-    auto fragmentReadsUniform = false;
-
-    for (auto root: stageRoots)
-        fragmentReadsUniform |= referencesUniform(graph, root);
+    auto fragmentReadsUniform = anyReferencesUniform(graph, stageRoots);
 
     if (backend == Backend::Metal)
     {
