@@ -1,129 +1,63 @@
-nano_add_executable(ImageTests
-        SOURCES ImageTests.cpp
-        TARGETS eacp-graphics)
+# Rect's y-axis contract (RectTests). The splitters were y-up in a y-down
+# framework, so removeFromTop returned the bottom slice; nothing caught it
+# because the result is still a correctly sized rect that still draws.
+#
+# Color's constexpr contract (ColorTests): the static_asserts in there fail the
+# build if a definition moves back out of line.
+#
+# Uniqueness and coverage of the KeyCode table (KeyCodeTests), which is
+# hand-transcribed platform virtual key codes and therefore easy to typo.
+#
+# View->Image snapshots (RenderToImageTests: paint/layers/children/group-opacity
+# read back as pixels): CoreGraphics on Apple, an off-screen Direct2D target on
+# Windows.
+#
+# The portable half of a command-id menu bar (MenuCommandsTests): ids, labels,
+# accelerator text and the id-to-action lookup. Runs everywhere on purpose --
+# the Win32 calls it supports cannot be tested from a Mac, but they are a thin
+# shell around this, and the ordering agreement between the two walks is where
+# the real risk is.
+set(graphics_test_sources
+        ColorTests.cpp
+        CursorTests.cpp
+        ImageOpsTests.cpp
+        ImageTests.cpp
+        KeyCodeTests.cpp
+        MenuCommandsTests.cpp
+        MenuTests.cpp
+        RectTests.cpp
+        RenderToImageTests.cpp
+        RoundedRectTests.cpp
+        ScrollWheelTests.cpp
+        TestMain.cpp
+        WindowTests.cpp)
 
-nano_add_executable(ImageOpsTests
-        SOURCES ImageOpsTests.cpp
-        TARGETS eacp-graphics)
+# The macOS-only halves of the cursor, menu and scroll-wheel suites. Each
+# portable half covers the model; the .mm file next to it checks the backing
+# AppKit object really implements the selector the model relies on --
+# cursorUpdate:, validateMenuItem:, scrollWheel:. Miss any of those and the
+# state is remembered perfectly and never acted on, without failing anything
+# else. APPLE covers iOS, which has no AppKit, no menu bar and no pointing
+# device, so the native halves are macOS-only; the portable halves still build
+# everywhere.
+if (APPLE AND NOT IOS)
+    list(APPEND graphics_test_sources
+            CursorTests-macOS.mm
+            MenuTests-macOS.mm
+            ScrollWheelTests-macOS.mm)
+endif ()
 
-# Rect's y-axis contract. The splitters were y-up in a y-down framework, so
-# removeFromTop returned the bottom slice; nothing caught it because the result
-# is still a correctly sized rect that still draws.
-nano_add_executable(RectTests
-        SOURCES RectTests.cpp
-        TARGETS eacp-graphics)
+if (WIN32)
+    list(APPEND graphics_test_sources CompositionPixelTests-Windows.cpp)
+endif ()
 
-nano_add_executable(RoundedRectTests
-        SOURCES RoundedRectTests.cpp
-        TARGETS eacp-graphics)
-
-# Color's constexpr contract: the static_asserts in here fail the build if a
-# definition moves back out of line.
-nano_add_executable(ColorTests
-        SOURCES ColorTests.cpp
-        TARGETS eacp-graphics)
-
-# Uniqueness and coverage of the KeyCode table, which is hand-transcribed
-# platform virtual key codes and therefore easy to typo.
-nano_add_executable(KeyCodeTests
-        SOURCES KeyCodeTests.cpp
-        TARGETS eacp-graphics)
-
-nano_add_executable(WindowTests
+nano_add_executable(GraphicsTests
         NO_MAIN
         SOURCES
-            WindowTests.cpp
-            TestMain.cpp
-        TARGETS eacp-graphics)
-
-# View->Image snapshots (paint/layers/children/group-opacity read back as
-# pixels): CoreGraphics on Apple, an off-screen Direct2D target on Windows.
-nano_add_executable(RenderToImageTests
-        NO_MAIN
-        SOURCES
-            RenderToImageTests.cpp
-            TestMain.cpp
-        TARGETS eacp-graphics)
-
-# Wheel-event delivery. The portable half covers the event shape and routing;
-# the macOS file additionally checks the backing NSView really implements
-# scrollWheel:, since inheriting NSResponder's no-op version drops every event
-# without failing anything else.
-# APPLE covers iOS, which has no AppKit and no pointing device to scroll with,
-# so the native half is macOS-only. The portable half still builds everywhere.
-set(scroll_wheel_sources ScrollWheelTests.cpp TestMain.cpp)
-
-if (APPLE AND NOT IOS)
-    list(APPEND scroll_wheel_sources ScrollWheelTests-macOS.mm)
-endif ()
-
-nano_add_executable(ScrollWheelTests
-        NO_MAIN
-        SOURCES
-            ${scroll_wheel_sources}
+            ${graphics_test_sources}
         TARGETS eacp-graphics)
 
 if (APPLE AND NOT IOS)
-    set_target_properties(ScrollWheelTests PROPERTIES OBJCXX_STANDARD 20)
-    target_link_libraries(ScrollWheelTests PRIVATE "-framework AppKit")
+    set_target_properties(GraphicsTests PROPERTIES OBJCXX_STANDARD 20)
+    target_link_libraries(GraphicsTests PRIVATE "-framework AppKit")
 endif ()
-
-# The portable half of a command-id menu bar: ids, labels, accelerator text and
-# the id-to-action lookup. Runs everywhere on purpose — the Win32 calls it
-# supports cannot be tested from a Mac, but they are a thin shell around this,
-# and the ordering agreement between the two walks is where the real risk is.
-nano_add_executable(MenuCommandsTests
-        SOURCES MenuCommandsTests.cpp
-        TARGETS eacp-graphics)
-
-# Cursor shapes. The portable half covers the per-view state; the macOS file
-# additionally checks the backing view implements cursorUpdate: itself and that
-# its tracking area asks for cursor updates — miss either and the shape is
-# remembered perfectly and never drawn.
-set(cursor_sources CursorTests.cpp TestMain.cpp)
-
-if (APPLE AND NOT IOS)
-    list(APPEND cursor_sources CursorTests-macOS.mm)
-endif ()
-
-nano_add_executable(CursorTests
-        NO_MAIN
-        SOURCES
-            ${cursor_sources}
-        TARGETS eacp-graphics)
-
-if (APPLE AND NOT IOS)
-    set_target_properties(CursorTests PROPERTIES OBJCXX_STANDARD 20)
-    target_link_libraries(CursorTests PRIVATE "-framework AppKit")
-endif ()
-
-# Menu enablement. The portable half covers the model; the macOS file
-# additionally checks the forwarding target answers validateMenuItem:, since a
-# target that does not leaves every item enabled without failing anything else.
-# APPLE covers iOS, which has no menu bar at all, so the native half is
-# macOS-only. The portable half still builds everywhere.
-set(menu_sources MenuTests.cpp TestMain.cpp)
-
-if (APPLE AND NOT IOS)
-    list(APPEND menu_sources MenuTests-macOS.mm)
-endif ()
-
-nano_add_executable(MenuTests
-        NO_MAIN
-        SOURCES
-            ${menu_sources}
-        TARGETS eacp-graphics)
-
-if (APPLE AND NOT IOS)
-    set_target_properties(MenuTests PROPERTIES OBJCXX_STANDARD 20)
-    target_link_libraries(MenuTests PRIVATE "-framework AppKit")
-endif ()
-
-if(WIN32)
-    nano_add_executable(CompositionPixelTests
-            NO_MAIN
-            SOURCES
-                CompositionPixelTests-Windows.cpp
-                TestMain.cpp
-            TARGETS eacp-graphics)
-endif()

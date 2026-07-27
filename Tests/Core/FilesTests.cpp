@@ -1,3 +1,4 @@
+#include "AllocationCount.h"
 #include "Common.h"
 #include <atomic>
 #include <chrono>
@@ -243,66 +244,6 @@ auto tModificationTimeMissing = test("File/modificationTimeMissing") = []
 //
 // Everything above uses readFile as a helper for checking what a write produced,
 // so none of it asserts anything about the read.
-
-namespace
-{
-// What a read costs has no other observable: the bytes are the same however they
-// were assembled, and timing would make the assertion depend on the build.
-std::atomic<bool> countingAllocations {false};
-std::atomic<std::size_t> allocatedBytes {0};
-
-struct AllocationCount
-{
-    AllocationCount()
-    {
-        allocatedBytes.store(0, std::memory_order_relaxed);
-        countingAllocations.store(true, std::memory_order_relaxed);
-    }
-
-    ~AllocationCount()
-    {
-        countingAllocations.store(false, std::memory_order_relaxed);
-    }
-
-    std::size_t bytes() const
-    {
-        return allocatedBytes.load(std::memory_order_relaxed);
-    }
-};
-} // namespace
-
-void* operator new(std::size_t size)
-{
-    if (countingAllocations.load(std::memory_order_relaxed))
-        allocatedBytes.fetch_add(size, std::memory_order_relaxed);
-
-    if (auto* memory = std::malloc(size == 0 ? 1 : size))
-        return memory;
-
-    throw std::bad_alloc {};
-}
-
-void* operator new[](std::size_t size)
-{
-    return operator new(size);
-}
-
-void operator delete(void* memory) noexcept
-{
-    std::free(memory);
-}
-void operator delete[](void* memory) noexcept
-{
-    std::free(memory);
-}
-void operator delete(void* memory, std::size_t) noexcept
-{
-    std::free(memory);
-}
-void operator delete[](void* memory, std::size_t) noexcept
-{
-    std::free(memory);
-}
 
 // A doubling buffer plus a copy out measured 4.00x the file; reading into one
 // sized allocation is 1.0x. Anything under 2x separates them with room to spare.
