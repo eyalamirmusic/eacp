@@ -1804,6 +1804,77 @@ auto tCodegenCompute1DUnchanged = test("GPU/codegenCompute1DKeepsScalarId") = []
     check(contains(metal, "if (gid >= uniforms.count)"));
 };
 
+// Vector reads and writes over a buffer of records: read4(i) is elements
+// 4i..4i+3 and write(out, i, Float4) puts four back at the same place, so a
+// kernel over a struct of four floats never spells the stride. The buffer is
+// still a run of floats underneath - N scalar accesses, one index expression -
+// which is what keeps its bytes bindable as a per-instance stream.
+auto tCodegenComputeVectorElements = test("GPU/codegenComputeVectorElements") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    auto record = input.read4(i);
+    builder.write(output, i, record * 2.0f);
+
+    // Identical on both backends: nothing here is spelled per-language, so the
+    // whole body is one string checked twice.
+    for (const auto& text: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        // Each side's base index is named once and shared by its four
+        // accesses. The read's and the write's are separate nodes built by
+        // separate calls, so they are two names for the same product - one
+        // integer multiply either shader compiler folds.
+        check(contains(text, "uint t0 = (gid * 4u);"));
+        check(contains(text, "uint t1 = (gid * 4u);"));
+
+        check(contains(text,
+                       "float4 t2 = (float4(buffer0[t1], buffer0[(t1 + 1u)], "
+                       "buffer0[(t1 + 2u)], buffer0[(t1 + 3u)]) * 2.0);"));
+
+        // One store per component, at the record's own offsets.
+        check(contains(text, "buffer1[t0] = (t2).x;"));
+        check(contains(text, "buffer1[(t0 + 1u)] = (t2).y;"));
+        check(contains(text, "buffer1[(t0 + 2u)] = (t2).z;"));
+        check(contains(text, "buffer1[(t0 + 3u)] = (t2).w;"));
+    }
+};
+
+// The narrower widths address their own records: read2 strides by two and
+// read3 by three, so a buffer of pairs and one of triples each index in their
+// own units.
+auto tCodegenComputeVectorStrides = test("GPU/codegenComputeVectorStrides") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    builder.write(output, i, input.read2(i));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "uint t0 = (gid * 2u);"));
+    check(contains(metal, "float2(buffer0[t1], buffer0[(t1 + 1u)])"));
+    check(contains(metal, "buffer1[(t0 + 1u)] = (t2).y;"));
+    check(!contains(metal, "t0 + 2u"));
+
+    auto triples = ShaderBuilder {};
+    auto source = triples.inputBuffer();
+    auto index = triples.threadId();
+    triples.write(triples.outputBuffer(), index, source.read3(index));
+
+    auto hlsl = emitHlsl(triples.graph());
+    check(contains(hlsl, "uint t0 = (gid * 3u);"));
+    check(contains(hlsl,
+                   "float3(buffer0[t1], buffer0[(t1 + 1u)], buffer0[(t1 + 2u)])"));
+    check(contains(hlsl, "buffer1[(t0 + 2u)] = (t2).z;"));
+    check(!contains(hlsl, "t0 + 3u"));
+};
+
 // Feeds an EDSL compute kernel (including the toFloat(threadId) cast) through
 // the real platform shader compiler and builds a compute pipeline. Self-skips
 // without a GPU device.

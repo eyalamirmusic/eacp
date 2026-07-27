@@ -156,6 +156,39 @@ public:
         graphData.addStore(buffer.slot, index.node, value.node);
     }
 
+    // The vector writes, laying a record of N floats down at index * N - the
+    // layout InputBuffer::read2/3/4 reads back, and the one a CPU struct of N
+    // floats already has. The index is in records rather than in floats, so a
+    // kernel writing a struct of four never spells the stride itself.
+    //
+    // N scalar stores rather than one wide one: the buffer stays a run of
+    // floats on both backends, which is what keeps a kernel's output bindable
+    // as a per-instance vertex stream with no CPU-side element size to agree
+    // on. Retyping the binding would buy one 16-byte store and cost that.
+    void write(const OutputBuffer& buffer, const UInt& index, const Float2& value)
+    {
+        auto base = index * 2u;
+        graphData.addStore(buffer.slot, base.node, value.x().node);
+        graphData.addStore(buffer.slot, (base + 1u).node, value.y().node);
+    }
+
+    void write(const OutputBuffer& buffer, const UInt& index, const Float3& value)
+    {
+        auto base = index * 3u;
+        graphData.addStore(buffer.slot, base.node, value.x().node);
+        graphData.addStore(buffer.slot, (base + 1u).node, value.y().node);
+        graphData.addStore(buffer.slot, (base + 2u).node, value.z().node);
+    }
+
+    void write(const OutputBuffer& buffer, const UInt& index, const Float4& value)
+    {
+        auto base = index * 4u;
+        graphData.addStore(buffer.slot, base.node, value.x().node);
+        graphData.addStore(buffer.slot, (base + 1u).node, value.y().node);
+        graphData.addStore(buffer.slot, (base + 2u).node, value.z().node);
+        graphData.addStore(buffer.slot, (base + 3u).node, value.w().node);
+    }
+
     // One texel of a kernel's output image. The coordinates are the pair a 2D
     // kernel already has in hand from threadPosition(), and the colour is the
     // four channels both backends store in one go.

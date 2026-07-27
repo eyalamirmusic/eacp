@@ -180,6 +180,24 @@ protected:
         builder.write(buffer, index, value);
     }
 
+    // The vector writes, for a buffer whose elements are records of N floats.
+    // The index is in records, so it pairs with InputBuffer::read2/3/4 and a
+    // kernel never spells the stride itself.
+    void write(const OutputBuffer& buffer, const UInt& index, const Float2& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const OutputBuffer& buffer, const UInt& index, const Float3& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const OutputBuffer& buffer, const UInt& index, const Float4& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
     // One texel of a kernel's output image, at the coordinates a 2D kernel
     // already has in hand from threadPosition().
     void write(const WritableTexture2D& texture,

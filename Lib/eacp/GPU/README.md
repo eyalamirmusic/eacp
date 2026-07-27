@@ -221,6 +221,21 @@ own: the bytes a kernel wrote as a flat float array are read by the vertex stage
 at the per-instance stride `instanceInput()` declared. One buffer, two views of
 it, no copy.
 
+A buffer whose elements are records rather than single floats is read and
+written a record at a time. `read2`/`read3`/`read4` take N consecutive floats
+starting at `index * N`, and `write` has the matching `Float2`/`Float3`/`Float4`
+overloads — the index is in records on both sides, so a kernel over a struct of
+four floats never spells the stride:
+
+```cpp
+auto particle = state.read4(index);           // position.xy, velocity.xy
+write(next, index, float4(newPosition, newVelocity));
+```
+
+Underneath it is still N scalar accesses over a run of floats, deliberately: a
+retyped `float4` binding would buy one wide store and cost the CPU-side element
+size that makes those same bytes bindable as a per-instance vertex stream.
+
 A command buffer has one open encoder at a time, so let a pass end before
 beginning the one that reads what it wrote. `Apps/GPU/ComputeParticles` is the
 worked example, and `Apps/GPU/AsyncCompute` times the two commits against each
