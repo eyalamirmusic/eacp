@@ -1,20 +1,32 @@
 # Windows video decode: where it stands and what is left
 
 The Windows decode backend (`Lib/eacp/Video/Decode/Decoder-Windows.cpp`) runs on
-Media Foundation's `IMFSourceReader`. This is the plan for taking it to hardware
-decode, plus what was measured getting it to its current state, so the next
-person does not have to rediscover it.
+Media Foundation's `IMFSourceReader`. This is the record of taking it to hardware
+decode, plus what was measured on the way, so the next person does not have to
+rediscover it.
 
-**If you are picking this up on a machine with a real GPU, skip to
-"First session on real hardware".** Everything above it is context.
+**Route A step 1 is done and hardware decode is live.** On a machine with a
+video decoder the source reader is now bound to a D3D11 device and the decode
+runs on the GPU. Step 2 (zero-copy) is still unwritten, and the step 1 numbers
+say to leave it that way for now.
+
+**If you only want the outcome, read "Route A step 1: the result".** The
+sections before it are how the decision was reached; the ones after it are the
+probe source and the older software-decode history.
 
 ## Where it stands
 
-Frames are decoded by Media Foundation into NV12, copied out to a recycled CPU
-buffer, uploaded as two textures (`R8Unorm` luma, `RG8Unorm` chroma) and
-converted to RGB in the sprite shader. Nothing converts colour on the CPU, and
-nothing allocates per frame. **Decode is entirely in software** — see the next
-section for why.
+Frames are decoded into NV12, copied out to a recycled CPU buffer, uploaded as
+two textures (`R8Unorm` luma, `RG8Unorm` chroma) and converted to RGB in the
+sprite shader. Nothing converts colour on the CPU, and nothing allocates per
+frame.
+
+**Decode runs on the GPU's video engine where the machine has one, and in
+software where it does not.** `createVideoDevice()` asks for a D3D11 device with
+`D3D11_CREATE_DEVICE_VIDEO_SUPPORT` and requires it to report at least one
+decoder profile; a null result binds no device manager and the reader decodes
+exactly as it did before. The frames come back through `Lock2D` as CPU pixels
+either way, so nothing downstream of the decoder knows which happened.
 
 The work that got it here, in the order it was done:
 
@@ -38,8 +50,10 @@ The work that got it here, in the order it was done:
   the copy and the upload, and removed the software colour-conversion MFT.
 - **MP4 demuxer.** `Video::Mp4Demuxer` (`Lib/eacp/Video/Demux`) parses one video
   track's sample tables over a `MemoryMappedFile`. Not yet wired into decode.
+- **Route A step 1: the D3D11 device manager.** Hardware decode. Cut 8K60 CPU
+  from 122.6 s to 11.7 s over a 20 s window and took `starved` from 902 to 2.
 
-## The blocker: no hardware decode in the dev VM
+## The blocker on the dev VM: no hardware decode at all
 
 The machine this was developed on is a Parallels ARM VM on Apple Silicon (8
 cores, Windows on ARM). Its display adapter exposes **no video decoder through
@@ -68,13 +82,8 @@ Apple Silicon has a hardware Media Engine that decodes H.264 and HEVC. Parallels
 does not pass it through to the Windows guest. Nothing in the guest can route
 around that.
 
-Three things in that output are worth keeping:
+Two things in that output are worth keeping:
 
-- **The MFT enumeration is the conclusive test**, more so than the D3D checks.
-  It answers the question from the other side: it is not merely that the D3D
-  APIs advertise no decoder, it is that Media Foundation has no hardware decoder
-  registered to select. If `MFT_ENUM_FLAG_HARDWARE` returns zero for your
-  codec, no amount of device-manager plumbing will produce hardware decode.
 - **A video processor exists without a decoder.** The D3D11 video processor does
   fixed-function NV12→RGB, scaling and deinterlace, and it is available here.
   It is useless to us: the render path already sits at the vsync cap and the
@@ -85,6 +94,73 @@ Three things in that output are worth keeping:
   cores — already self-tuning. `HEVCVideoExtension` exposes **no `ICodecAPI` at
   all**. So the slowest case, 8K HEVC, has zero software levers. The wall is the
   software decode itself and on this VM it is unmovable.
+
+An earlier draft of this document also called the MFT enumeration "the
+conclusive test" and claimed a zero `MFT_ENUM_FLAG_HARDWARE` count means no
+device-manager plumbing can produce hardware decode. **That is wrong**, and the
+real-hardware probe below disproves it — see "What the MFT count does and does
+not tell you". The conclusion held on this VM, but it held because the D3D11
+decoder-profile count was zero, not because the MFT count was.
+
+## Real hardware: the same probe on an RTX 5070 Ti
+
+AMD Ryzen (16 logical processors), Windows 11, NVIDIA driver 32.0.15.9571.
+Probe output, 2026-07-26, abridged where it repeats:
+
+```
+logical processors: 16
+
+=== DXGI adapters ===
+  [0] NVIDIA GeForce RTX 5070 Ti      vendor=10DE device=2C05
+  [1] Microsoft Basic Render Driver   vendor=1414 device=008C (SOFTWARE)
+
+=== D3D12 video ===
+  H264 4K  : SUPPORTED
+  HEVC 4K  : SUPPORTED
+  HEVC 8K  : SUPPORTED
+
+=== D3D11 video ===
+  decoder profiles: 34
+    {1B81BE68-...}  H264_VLD_NOFGT
+    {5B11D51B-...}  HEVC_VLD_MAIN
+    {107AF0E0-...}  HEVC_VLD_MAIN10
+    (31 others)
+  video processor: available (NV12 input yes)
+
+=== Media Foundation decoder MFTs ===
+  H264  HARDWARE : 0
+  H264  SOFTWARE : 1   Microsoft H264 Video Decoder MFT   workerThreads=-1
+  HEVC  HARDWARE : 0
+  HEVC  SOFTWARE : 1   HEVCVideoExtension                 no ICodecAPI
+```
+
+### What the MFT count does and does not tell you
+
+Read the last two blocks together. This machine has **34 D3D11 decoder profiles
+including H.264 and HEVC Main/Main10, and zero hardware decoder MFTs** — the
+same `HARDWARE : 0` lines as the VM with none of the same meaning. Binding the
+D3D11 device manager to this machine produced full hardware decode anyway.
+
+`MFT_ENUM_FLAG_HARDWARE` counts *vendor-registered* MFTs. NVIDIA registers none.
+Hardware decode instead reaches the GPU through DXVA2: `Microsoft H264 Video
+Decoder MFT` and `HEVCVideoExtension` are Microsoft's own MFTs, and given a
+`MF_SOURCE_READER_D3D_MANAGER` they route the decode to the driver rather than
+running it on the CPU. The same MFT name appears in the probe whether it will
+decode in hardware or in software; the name is not the answer. Intel is the case
+that misleads in the other direction, registering a Quick Sync MFT that does
+show up under `HARDWARE`.
+
+So, to ask "will this machine decode in hardware":
+
+- **`ID3D11VideoDevice::GetVideoDecoderProfileCount() > 0` is the test**, and it
+  is the one `createVideoDevice()` uses. Zero means software, on both machines
+  here, and correctly.
+- **`MFT_ENUM_FLAG_HARDWARE` answers a narrower question** — whether a vendor
+  shipped an MFT — and a zero there rules nothing out.
+- **A non-empty profile list is still not per-clip.** Profiles are enumerated as
+  GUIDs, so H.264 present says nothing about HEVC Main10 at 8K. `open()` binds
+  the manager and lets Media Foundation pick; if no hardware path fits the clip,
+  MF falls back to a software MFT on its own and playback is unaffected.
 
 ## Which API reaches the most machines
 
@@ -149,6 +225,7 @@ Route A is two independent pieces and only the second is risky. Do not do them
 in one go.
 
 **Step 1 — bind the D3D11 device manager.** This alone gets hardware decode.
+**Done** — `createVideoDevice()` and `bindVideoDevice()` in `Decoder-Windows.cpp`.
 
 1. `D3D11CreateDevice` with `D3D11_CREATE_DEVICE_VIDEO_SUPPORT`.
 2. Set `ID3D10Multithread::SetMultithreadProtected(TRUE)` on the device — MF
@@ -159,10 +236,13 @@ in one go.
 5. Leave the existing CPU readback and NV12 upload path **exactly as they are**.
 
 Contained, mostly attribute-setting, and it fails safely: no video device means
-no manager and the current path is untouched. It captures the large win, because
-hardware versus software decode dwarfs everything in the measurement table below.
+no manager and the current path is untouched. It captured the large win, because
+hardware versus software decode dwarfs everything in the measurement tables
+below.
 
 **Step 2 — D3D11↔D3D12 interop**, to remove the GPU→CPU→GPU roundtrip.
+**Not done, and measurement says do not start it yet** — see "Route A step 1:
+the result". Kept here because the reasoning stays valid for weaker GPUs.
 
 1. Frames arrive as `IMFDXGIBuffer` wrapping an `ID3D11Texture2D` (NV12, usually
    a slice of a texture array — check `IMFDXGIBuffer::GetSubresourceIndex`).
@@ -195,47 +275,120 @@ Step 1 leaves a GPU→CPU readback, and its cost is not the same everywhere:
 Measure after step 1 before committing to step 2. A mediocre 8K number on a
 discrete card is expected and is not a failed approach.
 
-## First session on real hardware
+## Route A step 1: the result
 
-Concrete order of work for the Intel machine. The point of this ordering is that
-nothing is written blind until it has been shown to be needed.
+Measured on the RTX 5070 Ti above. Release (clang-cl), 20 s windows,
+`PlayingHeavyContent`. Same binary, same clips, same session; the only
+difference is the device manager.
 
-1. **Run the probe** (source below). Confirm `H264 HARDWARE` and/or
-   `HEVC HARDWARE` are non-zero and note the friendly names — on Intel you should
-   see an Intel hardware decoder MFT rather than `Microsoft H264 Video Decoder
-   MFT` / `HEVCVideoExtension`. Also note whether `ID3D12VideoDevice` is exposed
-   and which profiles pass, purely as a data point for the Route B question.
-   **Paste the output into this file**, next to the VM output above.
-2. **Baseline before changing anything.** Release build, `PlayingHeavyContent`,
-   the 4K and 8K clips, 20 s each. The numbers in the table below are from an ARM
-   VM and are worthless as a comparison on x86 — you need this machine's own
-   software-decode baseline or step 1's win is unquantifiable.
-3. **Implement step 1.** Behind a capability check, so a machine without a video
-   device silently keeps today's path.
-4. **Re-measure.** Decode fps, `starved`, `skipped`, CPU seconds, resident bytes.
-5. **Decide on step 2 from those numbers**, per the UMA/discrete split above.
+| | software (before) | hardware (after) |
+| --- | --- | --- |
+| 4K60 decode | 60.1 fps | 60.0 fps |
+| 4K60 skipped / starved | 1 / 2 | 2 / 3 |
+| 4K60 CPU | 45.0 s | **6.5 s** |
+| 8K60 decode | 51.7 fps | **60.1 fps** |
+| 8K60 render | 45.1 fps | **59.9 fps** |
+| 8K60 skipped / starved | 176 / 902 | **1 / 2** |
+| 8K60 CPU | 122.6 s | **11.7 s** |
+| 8K24 decode | 24.2 fps | 24.1 fps |
+| 8K24 skipped / starved | 3 / 23 | **0 / 0** |
+| 8K24 CPU | 74.4 s | **7.7 s** |
 
-Two things to expect trouble from, in order of likelihood:
+Reading these:
 
-- **COM apartment model.** `Decoder::open` calls `CoInitializeEx` with
-  `COINIT_APARTMENTTHREADED` on the calling thread, while `FrameStream` drives
-  `nextFrame`/`seek` from its own decode thread, which never initialises COM at
-  all. This survives today with a software MFT. It is much more likely to matter
-  once a hardware MFT and a D3D device manager are in the pipeline — MF generally
-  wants MTA. **This is the first thing to suspect if the new path hangs, returns
-  `E_UNEXPECTED`, or fails only on the decode thread.** Switching the decode
-  thread to explicit `COINIT_MULTITHREADED` is likely a prerequisite, not a
-  cleanup.
-- **`MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING`** is set today
-  (`Decoder-Windows.cpp:129`). With a D3D manager bound it can insert a video
-  processor into the chain and quietly undo the "no conversion MFT" work. Try
-  clearing it once hardware decode is running and confirm the output media type
-  is still NV12.
+- **8K60 was the only clip that did not play, and now it does.** Software decode
+  managed 51.7 of the needed 60 fps and dragged the render loop down to 45.1 fps
+  with it. Note what `starved` at 902 means against a render loop drawing ~902
+  frames in that window: essentially *every* frame the renderer drew was one it
+  had already drawn. Hardware decode holds 60.1 fps with `starved` at 2.
+- **4K60 and 8K24 already played in software on this CPU**, at 16 threads. Their
+  win is not throughput, it is the 7–10x CPU drop: 45.0 → 6.5 s and 74.4 → 7.7 s.
+  A frame rate at the vsync cap hid a machine spending two to four cores on
+  decode, which on a laptop is battery and fan and every other thread's cache.
+- **Decode fps cannot exceed the clip's rate** — `FrameStream` backpressures at
+  `queueDepth`, so 60.0 means "kept up", not "the ceiling". These numbers say
+  nothing about headroom, and were not asked to.
+- **Resident bytes barely moved** (8K60 482 → 747 MB) and are noise here: the
+  queue depth, not the decoder, sets that, and it varies with where playback
+  happens to be when the sampler looks.
 
-A note on the source reader and async MFTs: hardware decoder MFTs are typically
-asynchronous, but `IMFSourceReader` manages async MFTs internally, so the
-existing synchronous `ReadSample` loop should survive. The apartment question
-above is the real risk, not the loop shape.
+### Verifying hardware decode actually engaged
+
+Frame rate alone will not tell you — 4K60 read 60 fps both ways. Two checks that
+will, neither needing a debugger:
+
+- **`Get-Counter "\GPU Engine(*engtype_VideoDecode)\Utilization Percentage"`**
+  while the clip plays, filtered to the process's `pid_<n>_` instances. This read
+  37.8% during 8K60 and is the direct evidence.
+- **CPU seconds.** A 10x drop is not something a code path change produces.
+
+Enumerating **all** engine instances for the process is also how the
+`MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING` worry below was settled.
+
+### Decision on step 2: not now
+
+The plan expected a discrete GPU to "solve 4K outright and still want step 2 at
+8K", on the reasoning that 8K NV12 readback is ~3 GB/s over PCIe. **8K60 plays at
+the vsync cap with `starved` at 2 and 11.7 s of CPU.** There is no symptom left
+for step 2 to cure, so the risky half stays unwritten — which is the whole point
+of having staged it.
+
+What would change that verdict:
+
+- A GPU whose decoder outruns its readback more than this one does, or a narrower
+  PCIe link.
+- Content past 8K60, or several 8K streams composited at once.
+- Caring about the ~0.6 cores 8K60 still costs — most of which is the readback
+  and the NV12 copy, which is exactly what step 2 removes.
+
+The UMA-versus-discrete split above was aimed at the wrong axis: readback did not
+turn out to be a bottleneck on a *discrete* card, which is the case it predicted
+would need step 2 most. Modern PCIe has more headroom than the 3 GB/s estimate
+assumed it would strain.
+
+### What was expected to be trouble, and was not
+
+- **COM apartment model.** Flagged as the first thing to suspect, and the likely
+  prerequisite. It was neither. `nextFrame`/`seek` were driven from a decode
+  thread with no COM apartment at all, hardware decode and D3D manager included,
+  and it worked — tested deliberately by removing the apartment call and
+  re-running. `joinComApartment()` is in the file anyway, because the old code
+  had a genuine defect unrelated to hardware decode: it called `CoInitializeEx`
+  on whichever thread ran `open()` and `CoUninitialize` from the destructor,
+  which is not required to be the same thread. A `thread_local` pairs them
+  correctly by construction. Treat it as contract-correctness, not as the fix.
+- **`MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING`.** It is still set, and
+  with the D3D manager bound it inserts nothing: the process has **no
+  `videoprocessing` GPU engine instance at all** while playing, only `3d` (our
+  own upload and sprite shader, ~25%) and `videodecode` (~38%). Asking for NV12
+  when the decoder already produces NV12 leaves the flag with no work to do, as
+  its comment in the source claims. Left alone.
+- **Async MFTs.** As predicted, `IMFSourceReader` absorbs them and the
+  synchronous `ReadSample` loop was untouched.
+
+The one thing that did need care was ordering in the destructor: the reader holds
+the device manager, which holds the D3D11 device, and all three have to be
+released before `MFShutdown`.
+
+### Reproducing the measurements
+
+`PlayingHeavyContent` takes an optional second argument:
+
+```
+PlayingHeavyContent <clip> <seconds>
+```
+
+which plays for that long, logs one summary line and quits. It is a
+GUI-subsystem binary with no console, so redirect stdout to a file to read it.
+The line reports only the window: the stream's counters run from `open()`, and
+the frames decoded while the window was still being created are subtracted out.
+
+Without this the numbers have to be read off the HUD by eye, which is neither
+repeatable nor loggable — the before-and-after pairs above are the same clip,
+same binary, same session, and that is only affordable because it is one command
+each. Resident bytes and CPU seconds are not in the line; take those from the
+process (`TotalProcessorTime`, and poll `WorkingSet64` — the peak is not
+readable once the process has exited).
 
 ## The capability probe
 
@@ -514,10 +667,16 @@ int main()
 | --- | --- |
 | NV12 through the renderer | Yes — **done** |
 | MP4 demux (sample tables → byte ranges) | Yes — **done** (`Video::Mp4Demuxer`) |
-| Route A step 1 (D3D manager binding) | Compiles, but selects nothing |
+| Route A step 1 (D3D manager binding) | Runs, selects nothing — **done** |
 | Route A step 2 (D3D11↔D3D12 interop) | No — needs real decoder textures |
 | Bitstream → DXVA picture params, DPB | Writable, not verifiable |
 | `ID3D12VideoDecoder` submission | No |
+
+Step 1 turned out to be verifiable on hardware without any test of its own:
+`Decoder/decodesEncodedPixels` in `Tests/Video` encodes a synthetic clip, decodes
+it through `makeDecoder()` and compares actual pixel values, so it now exercises
+the D3D-bound reader and its colour handling on any machine with a decoder, and
+the software path on any machine without one. It passes on both.
 
 The demuxer parses one video track's sample tables — per-sample byte range,
 DTS/PTS, duration, keyframe flag, plus the avcC/hvcC record — over a
@@ -541,11 +700,13 @@ It cannot help the current pipeline, and the arithmetic is not close:
 File reading is about 1 MB/s. The pixel path moves multiple GB/s. I/O is roughly
 0.02% of the data movement.
 
-## Reference measurements
+## Reference measurements (ARM VM, software only)
 
-**These are software decode on an ARM VM. They are a record of what the
-optimisation work bought, not a baseline for any other machine.** Take a fresh
-baseline on real hardware before comparing anything.
+**These are software decode on the Parallels ARM VM, and predate hardware
+decode. They are a record of what the CPU-side optimisation work bought, not a
+baseline for any other machine** — the x86 hardware numbers are in "Route A step
+1: the result". Take a fresh baseline on whatever machine you are on before
+comparing anything.
 
 Release (clang-cl), 20 s of playback, `Apps/Video/PlayingHeavyContent` with the
 clip path as `argv[1]`. Clips are the 4K and 8K entries in
@@ -581,11 +742,16 @@ Read these carefully before assuming a change helped:
   `MF_MT_VIDEO_NOMINAL_RANGE`, falling back to height (>576 → BT.709). A
   hardcoded BT.709 decodes standard-definition content visibly wrong — saturated
   green lands 0.155 off, which is what `Decoder/decodesEncodedPixels` catches.
-  Any new decode path must carry this through to `FrameInfo`. A hardware MFT
-  reports these the same way, but confirm rather than assume.
+  Any new decode path must carry this through to `FrameInfo`. Confirmed to hold
+  with the D3D manager bound: the media-type attributes are read the same way and
+  `decodesEncodedPixels` passes against hardware decode unchanged.
 - **The shader and `Video::toImage` must stay in step.** Both derive their
   constants from `yuvTransformFor()`. No test covers the shader path directly, so
   a change there needs an A/B screenshot against a known-good frame.
 - **Zero-copy on Apple already exists** (`VideoFrame::fromNativeBuffer` wrapping a
   `CVPixelBuffer`). Route A step 2 is the Windows equivalent, and
   `UploadMode::ZeroCopy` is already the knob for forcing it.
+- **`nativeBufferToImage` on Windows still returns `{}`.** Frames from this
+  backend are always CPU pixels, even with hardware decode: the reader hands back
+  a DXGI-backed buffer and `Lock2D` reads it down. The function grows a body only
+  with step 2, when a frame starts carrying a texture instead.

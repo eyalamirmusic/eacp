@@ -4,6 +4,7 @@
 
 #include "FrameImage.h"
 
+#include <d3d11.h>
 #include <mfapi.h>
 #include <mferror.h>
 #include <mfidl.h>
@@ -21,11 +22,15 @@
 // shader converts. That is 1.5 bytes per pixel through the copy and the upload
 // instead of 4.
 //
-// Frames arrive as CPU buffers and are copied out tightly packed, the same
-// upload path Cameras::Camera takes on this platform (Texture::update).
-// Zero-copy needs the reader bound to a D3D11 device and its NV12 textures
-// shared into the D3D12 device, which is the same later phase the camera
-// backend is waiting on.
+// The reader is bound to a D3D11 device where one with a decoder exists, which
+// is what moves the decode itself onto the GPU's video engine; where none does
+// — a VM, a remote session, a frozen driver — the same code decodes in software
+// and nothing else changes.
+//
+// Frames still arrive as CPU buffers and are copied out tightly packed, the
+// same upload path Cameras::Camera takes on this platform (Texture::update).
+// Zero-copy needs those NV12 textures shared into the D3D12 device instead of
+// read back, which is the same later phase the camera backend is waiting on.
 
 namespace eacp::Video
 {
@@ -48,6 +53,83 @@ std::wstring widen(const char* utf8)
         wide.pop_back();
 
     return wide;
+}
+
+// COM is per-thread state: initialised on every thread that calls into Media
+// Foundation and released on that same thread. This decoder is driven from two
+// — open() by whoever opened the stream, nextFrame() and seek() by FrameStream's
+// decode thread — so a single flag on the decoder cannot describe it, and a
+// CoUninitialize() from a destructor is not necessarily even on the thread that
+// initialised. A thread_local gives the apartment the one lifetime COM accepts.
+//
+// The source reader in practice tolerates a decode thread with no apartment at
+// all, hardware decode included; this is the contract rather than a workaround.
+void joinComApartment()
+{
+    struct Apartment
+    {
+        // Multithreaded is what Media Foundation wants, and the decode thread
+        // has no apartment to lose. The event loop thread is already STA (see
+        // EventLoop-Windows: WebView2, the shell dialogs and DirectComposition
+        // need it there), so this reports RPC_E_CHANGED_MODE and leaves it
+        // alone — nothing was joined, so there is nothing to leave.
+        Apartment()
+            : joined {SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))}
+        {
+        }
+
+        ~Apartment()
+        {
+            if (joined)
+                CoUninitialize();
+        }
+
+        const bool joined;
+    };
+
+    thread_local auto apartment = Apartment {};
+}
+
+// A D3D11 device Media Foundation can decode on, or null. Null is not an error:
+// it is the software path this backend has always taken, and it is where a VM,
+// a remote desktop session or an OEM-frozen driver lands.
+//
+// The decoder-profile count is the capability check, and it is not the same
+// question as whether the adapter does video at all. An adapter can expose a
+// video *processor* — fixed-function colour conversion, scaling, deinterlace —
+// with no decoder behind it, and binding a manager to that accelerates nothing
+// while putting a device in the pipeline.
+ComPtr<ID3D11Device> createVideoDevice()
+{
+    ComPtr<ID3D11Device> device;
+
+    if (FAILED(D3D11CreateDevice(nullptr,
+                                 D3D_DRIVER_TYPE_HARDWARE,
+                                 nullptr,
+                                 D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+                                 nullptr,
+                                 0,
+                                 D3D11_SDK_VERSION,
+                                 &device,
+                                 nullptr,
+                                 nullptr)))
+        return nullptr;
+
+    ComPtr<ID3D11VideoDevice> videoDevice;
+
+    if (FAILED(device.As(&videoDevice))
+        || videoDevice->GetVideoDecoderProfileCount() == 0)
+        return nullptr;
+
+    // Media Foundation drives the device from its own worker threads, alongside
+    // the decode thread reading frames back off it.
+    ComPtr<ID3D10Multithread> multithread;
+
+    if (FAILED(device.As(&multithread)))
+        return nullptr;
+
+    multithread->SetMultithreadProtected(TRUE);
+    return device;
 }
 
 int rotationFromAttribute(UINT32 rotation)
@@ -100,27 +182,29 @@ struct WindowsDecoder final : Decoder
 {
     ~WindowsDecoder() override
     {
+        // The reader holds the device manager, which holds the device; all
+        // three go before the platform they were created on is shut down.
         reader.Reset();
+        deviceManager.Reset();
+        d3dDevice.Reset();
 
         if (mfStarted)
             MFShutdown();
-
-        if (comInitialized)
-            CoUninitialize();
     }
 
     bool open(const FilePath& path) override
     {
-        comInitialized =
-            SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED));
+        joinComApartment();
         mfStarted = SUCCEEDED(MFStartup(MF_VERSION));
 
         if (!mfStarted)
             return false;
 
         ComPtr<IMFAttributes> attributes;
-        if (FAILED(MFCreateAttributes(&attributes, 1)))
+        if (FAILED(MFCreateAttributes(&attributes, 2)))
             return false;
+
+        bindVideoDevice(*attributes.Get());
 
         // Only a safety net now that NV12 is what is asked for: the decoders
         // produce it natively, so no processor is inserted in the common case.
@@ -163,6 +247,8 @@ struct WindowsDecoder final : Decoder
     {
         if (reader == nullptr)
             return false;
+
+        joinComApartment();
 
         // A read can legitimately return no sample (a stream tick, a format
         // change) without being the end of the file, so keep asking until one
@@ -227,6 +313,8 @@ struct WindowsDecoder final : Decoder
         if (reader == nullptr)
             return;
 
+        joinComApartment();
+
         auto target = std::max(0.0, seconds);
 
         PROPVARIANT position;
@@ -242,6 +330,34 @@ struct WindowsDecoder final : Decoder
     }
 
 private:
+    // Points the reader at a D3D11 device so Media Foundation puts the decode
+    // on the GPU's video engine. Everything downstream is unaffected: the
+    // frames still come back through Lock2D as CPU pixels, they are just
+    // produced by fixed-function silicon instead of the CPU.
+    //
+    // Failure here is not propagated. Every step of it is a capability
+    // question, and the answer "no" means the software decoder, which is what
+    // this file did before any of this existed.
+    void bindVideoDevice(IMFAttributes& attributes)
+    {
+        d3dDevice = createVideoDevice();
+
+        if (d3dDevice == nullptr)
+            return;
+
+        UINT resetToken = 0;
+
+        if (FAILED(MFCreateDXGIDeviceManager(&resetToken, &deviceManager))
+            || FAILED(deviceManager->ResetDevice(d3dDevice.Get(), resetToken)))
+        {
+            deviceManager.Reset();
+            d3dDevice.Reset();
+            return;
+        }
+
+        attributes.SetUnknown(MF_SOURCE_READER_D3D_MANAGER, deviceManager.Get());
+    }
+
     bool readTrackInfo()
     {
         ComPtr<IMFMediaType> currentType;
@@ -400,6 +516,11 @@ private:
     }
 
     ComPtr<IMFSourceReader> reader;
+
+    // Null on anything with no hardware decoder, which is the software path.
+    ComPtr<ID3D11Device> d3dDevice;
+    ComPtr<IMFDXGIDeviceManager> deviceManager;
+
     VideoInfo videoInfo;
     LONG stride = 0;
 
@@ -416,7 +537,6 @@ private:
     // dropped so the first frame handed out is the one covering the target.
     double discardBefore = 0.0;
 
-    bool comInitialized = false;
     bool mfStarted = false;
 };
 
