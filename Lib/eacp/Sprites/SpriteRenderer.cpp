@@ -2,9 +2,20 @@
 
 namespace eacp::Sprites
 {
+// No EACP_SHADER_VALUE declaration for SpriteInstance: every field the shader
+// pulls from it is a plain float[N], which the EDSL already maps to FloatN. The
+// macro is only needed for structs with named components.
+
 void SpriteShader::define()
 {
     auto corner = vertexInput(&SpriteVertex::corner);
+
+    auto origin = instanceInput(&SpriteInstance::origin, 1);
+    auto edgeX = instanceInput(&SpriteInstance::edgeX, 1);
+    auto edgeY = instanceInput(&SpriteInstance::edgeY, 1);
+    auto uv0 = instanceInput(&SpriteInstance::uv0, 1);
+    auto uv1 = instanceInput(&SpriteInstance::uv1, 1);
+    auto tint = instanceInput(&SpriteInstance::tint, 1);
 
     auto game = origin + corner.x() * edgeX + corner.y() * edgeY;
     auto ndcX = game.x() / screenSize.x() * 2.0f - 1.0f;
@@ -12,7 +23,7 @@ void SpriteShader::define()
     setPosition(float4(ndcX, ndcY, 0.0f, 1.0f));
 
     auto uv = uv0 + corner * (uv1 - uv0);
-    setFragment(sample(image, varying(uv)) * tint);
+    setFragment(sample(image, varying(uv)) * varying(tint));
 }
 
 void Nv12Shader::define()
@@ -58,25 +69,23 @@ constexpr SpriteVertex unitQuad[] = {
 
 constexpr unsigned char whitePixel[] = {255, 255, 255, 255};
 
-// Built manually instead of through ShaderProgram::prepare(), which has no way
-// to pick a blend mode; everything the renderer draws is alpha-blended.
-GPU::RenderPipelineDescriptor
-    blendedDescriptor(const GPU::ShaderLibrary& library,
-                      const GPU::VertexLayout& vertexLayout,
-                      int sampleCount)
+// Everything the renderer draws is alpha-blended: a sprite sheet's transparent
+// margin, a translucent overlay and an antialiased line all depend on it.
+template <typename Program>
+void prepareBlended(Program& program, int sampleCount, GPU::PixelFormat colorFormat)
 {
-    auto descriptor = GPU::RenderPipelineDescriptor {};
-    descriptor.library = &library;
-    descriptor.vertexLayout = vertexLayout;
-    descriptor.sampleCount = sampleCount;
-    descriptor.blendMode = GPU::BlendMode::AlphaBlend;
-    return descriptor;
+    program.setVertices(unitQuad);
+    program.prepare(sampleCount,
+                    false,
+                    GPU::PrimitiveTopology::Triangles,
+                    GPU::BlendMode::AlphaBlend,
+                    colorFormat);
 }
 
 // A 1x1 opaque-white texture so untextured fills reuse the textured path: the
 // fill colour is the tint, multiplied by white. Its sampling is immaterial -
 // one clamped texel reads the same through any filter - so the untextured
-// entry points draw it through whichever program is already bound.
+// entry points draw it through whichever program is already open.
 GPU::Texture makeWhiteTexture()
 {
     auto descriptor = GPU::TextureDescriptor {};
@@ -86,102 +95,193 @@ GPU::Texture makeWhiteTexture()
 
     return GPU::Device::shared().makeTexture(descriptor, whitePixel);
 }
+// The shader divides by the logical size, and a view is briefly zero-sized
+// before its first layout - so a renderer built straight from those bounds
+// would emit NaNs rather than simply drawing nothing. One logical unit is the
+// harmless stand-in.
+Point usableSize(Point size)
+{
+    return {size.x > 0.0f ? size.x : 1.0f, size.y > 0.0f ? size.y : 1.0f};
+}
 } // namespace
 
-SpriteProgram::SpriteProgram(GPU::TextureSampling sampling,
-                             Point logicalSize,
-                             int sampleCount)
-    : shader(sampling)
-    , library(GPU::Device::shared(), shader.source())
-    , pipeline(GPU::Device::shared(),
-               blendedDescriptor(library, shader.vertexLayout(), sampleCount))
-{
-    shader.setVertices(unitQuad);
-    shader.screenSize = Array {logicalSize.x, logicalSize.y};
-}
-
-Nv12Program::Nv12Program(GPU::TextureSampling sampling,
-                         Point logicalSize,
-                         int sampleCount)
-    : shader(sampling)
-    , library(GPU::Device::shared(), shader.source())
-    , pipeline(GPU::Device::shared(),
-               blendedDescriptor(library, shader.vertexLayout(), sampleCount))
-{
-    shader.setVertices(unitQuad);
-    shader.screenSize = Array {logicalSize.x, logicalSize.y};
-}
-
-SpriteRenderer::SpriteRenderer(Point logicalSizeToUse, int sampleCountToUse)
-    : logicalSize(logicalSizeToUse)
+SpriteRenderer::SpriteRenderer(Point logicalSizeToUse,
+                               int sampleCountToUse,
+                               GPU::PixelFormat colorFormatToUse)
+    : logicalSize(usableSize(logicalSizeToUse))
     , sampleCount(sampleCountToUse)
+    , colorFormat(colorFormatToUse)
     , white(makeWhiteTexture())
 {
 }
 
-SpriteProgram& SpriteRenderer::programFor(GPU::TextureSampling sampling)
+SpriteShader& SpriteRenderer::programFor(GPU::TextureSampling sampling)
 {
     auto& slot = programs[GPU::samplingIndex(sampling)];
 
     if (!slot.has_value())
-        slot.emplace(sampling, logicalSize, sampleCount);
+        prepareBlended(slot.emplace(sampling), sampleCount, colorFormat);
 
     return *slot;
 }
 
-Nv12Program& SpriteRenderer::nv12ProgramFor(GPU::TextureSampling sampling)
+Nv12Shader& SpriteRenderer::nv12ProgramFor(GPU::TextureSampling sampling)
 {
     auto& slot = nv12Programs[GPU::samplingIndex(sampling)];
 
     if (!slot.has_value())
-        slot.emplace(sampling, logicalSize, sampleCount);
+        prepareBlended(slot.emplace(sampling), sampleCount, colorFormat);
 
     return *slot;
 }
 
-void SpriteRenderer::begin(GPU::RenderPass& passToUse)
+SpriteRenderer::~SpriteRenderer()
 {
-    pass = &passToUse;
-
-    // The pipeline is bound by the first draw instead of here, because which
-    // one it should be depends on how that draw samples.
-    boundProgram = -1;
+    // Only reachable by destroying a renderer mid-pass, which is already
+    // against the rules (its pipelines have to outlive the command list). Leave
+    // anyway, so that breaking one rule does not also leave the pass holding a
+    // pointer to freed memory.
+    detach();
 }
 
-void SpriteRenderer::drawQuad(const GPU::Texture& texture,
-                              Point origin,
-                              Point edgeX,
-                              Point edgeY,
-                              float u0,
-                              float v0,
-                              float u1,
-                              float v1,
-                              const Color& tint,
-                              GPU::TextureSampling sampling)
+void SpriteRenderer::begin(GPU::RenderPass& passToUse)
 {
-    const auto index = GPU::samplingIndex(sampling);
-    auto& program = programFor(sampling);
-    auto& shader = program.shader;
+    // A renderer only reaches here still in a pass if it was begun twice
+    // without that pass ending. Leave the old one properly - draining it is its
+    // own business, and it is still alive to be left.
+    detach();
 
-    if (index != boundProgram)
+    instances.clear();
+    batchTexture = nullptr;
+
+    pass = &passToUse;
+
+    // What makes end() optional: the pass now knows to come back here before it
+    // closes the encoder.
+    passToUse.addParticipant(*this);
+}
+
+void SpriteRenderer::end()
+{
+    flush();
+    detach();
+}
+
+void SpriteRenderer::flushInto(GPU::RenderPass&)
+{
+    flush();
+
+    // Not detach(): the pass is walking its participant list right now, and it
+    // drops every one of them itself once the walk is over.
+    pass = nullptr;
+}
+
+void SpriteRenderer::detach()
+{
+    if (pass == nullptr)
+        return;
+
+    pass->removeParticipant(*this);
+    pass = nullptr;
+}
+
+void SpriteRenderer::setLogicalSize(Point size)
+{
+    const auto usable = usableSize(size);
+
+    if (usable.x == logicalSize.x && usable.y == logicalSize.y)
+        return;
+
+    // The queued quads were issued in the old space, so they have to be drawn
+    // in it - the mapping to clip space is what is changing.
+    flush();
+    logicalSize = usable;
+}
+
+void SpriteRenderer::setScissorRect(const Rect& rectInPixels)
+{
+    flush();
+
+    if (pass != nullptr)
+        pass->setScissorRect(rectInPixels);
+}
+
+void SpriteRenderer::clearScissorRect()
+{
+    flush();
+
+    if (pass != nullptr)
+        pass->clearScissorRect();
+}
+
+void SpriteRenderer::flush()
+{
+    if (instances.size() == 0)
+        return;
+
+    if (pass == nullptr || batchTexture == nullptr)
     {
-        pass->setPipeline(program.pipeline);
-        pass->setVertexBuffer(shader.vertices());
-        boundProgram = index;
+        instances.clear();
+        return;
     }
 
-    shader.origin = Array {origin.x, origin.y};
-    shader.edgeX = Array {edgeX.x, edgeX.y};
-    shader.edgeY = Array {edgeY.x, edgeY.y};
-    shader.uv0 = Array {u0, v0};
-    shader.uv1 = Array {u1, v1};
-    shader.tint = Array {tint.r, tint.g, tint.b, tint.a};
-    shader.image = texture;
+    auto& shader = programFor(batchSampling);
 
-    pass->setVertexUniforms(shader);
-    pass->setFragmentUniforms(shader);
-    shader.bindTextures(*pass);
-    pass->draw(6);
+    shader.screenSize = Array {logicalSize.x, logicalSize.y};
+    shader.image = *batchTexture;
+    shader.setInstances(1, instances.data(), instances.size());
+
+    pass->drawInstanced(shader, instances.size());
+
+    instances.clear();
+    batchTexture = nullptr;
+}
+
+void SpriteRenderer::addQuad(const GPU::Texture& texture,
+                             Point origin,
+                             Point edgeX,
+                             Point edgeY,
+                             float u0,
+                             float v0,
+                             float u1,
+                             float v1,
+                             const Color& tint,
+                             GPU::TextureSampling sampling)
+{
+    // A quad joins the open run when it samples the same texture the same way;
+    // anything else has to be a draw of its own, and the run so far goes first
+    // so that the two keep the order they were issued in.
+    const auto joinsRun =
+        batchTexture == &texture
+        && GPU::samplingIndex(batchSampling) == GPU::samplingIndex(sampling);
+
+    if (!joinsRun)
+        flush();
+
+    batchTexture = &texture;
+    batchSampling = sampling;
+
+    auto& instance = instances.create();
+
+    instance.origin[0] = origin.x;
+    instance.origin[1] = origin.y;
+
+    instance.edgeX[0] = edgeX.x;
+    instance.edgeX[1] = edgeX.y;
+
+    instance.edgeY[0] = edgeY.x;
+    instance.edgeY[1] = edgeY.y;
+
+    instance.uv0[0] = u0;
+    instance.uv0[1] = v0;
+
+    instance.uv1[0] = u1;
+    instance.uv1[1] = v1;
+
+    instance.tint[0] = tint.r;
+    instance.tint[1] = tint.g;
+    instance.tint[2] = tint.b;
+    instance.tint[3] = tint.a;
 }
 
 void SpriteRenderer::drawTexture(const GPU::Texture& texture,
@@ -191,16 +291,16 @@ void SpriteRenderer::drawTexture(const GPU::Texture& texture,
                                  const Color& tint,
                                  GPU::TextureSampling sampling)
 {
-    drawQuad(texture,
-             {dst.x, dst.y},
-             {dst.w, 0.0f},
-             {0.0f, dst.h},
-             flipX ? 1.0f : 0.0f,
-             flipY ? 1.0f : 0.0f,
-             flipX ? 0.0f : 1.0f,
-             flipY ? 0.0f : 1.0f,
-             tint,
-             sampling);
+    addQuad(texture,
+            {dst.x, dst.y},
+            {dst.w, 0.0f},
+            {0.0f, dst.h},
+            flipX ? 1.0f : 0.0f,
+            flipY ? 1.0f : 0.0f,
+            flipX ? 0.0f : 1.0f,
+            flipY ? 0.0f : 1.0f,
+            tint,
+            sampling);
 }
 
 void SpriteRenderer::drawTexture(const GPU::Texture& texture,
@@ -212,16 +312,16 @@ void SpriteRenderer::drawTexture(const GPU::Texture& texture,
     const auto width = (float) texture.width();
     const auto height = (float) texture.height();
 
-    drawQuad(texture,
-             {dst.x, dst.y},
-             {dst.w, 0.0f},
-             {0.0f, dst.h},
-             src.x / width,
-             src.y / height,
-             (src.x + src.w) / width,
-             (src.y + src.h) / height,
-             tint,
-             sampling);
+    addQuad(texture,
+            {dst.x, dst.y},
+            {dst.w, 0.0f},
+            {0.0f, dst.h},
+            src.x / width,
+            src.y / height,
+            (src.x + src.w) / width,
+            (src.y + src.h) / height,
+            tint,
+            sampling);
 }
 
 void SpriteRenderer::drawTextureQuad(const GPU::Texture& texture,
@@ -231,7 +331,7 @@ void SpriteRenderer::drawTextureQuad(const GPU::Texture& texture,
                                      const Color& tint,
                                      GPU::TextureSampling sampling)
 {
-    drawQuad(texture, origin, edgeX, edgeY, 0.0f, 0.0f, 1.0f, 1.0f, tint, sampling);
+    addQuad(texture, origin, edgeX, edgeY, 0.0f, 0.0f, 1.0f, 1.0f, tint, sampling);
 }
 
 void SpriteRenderer::drawNv12Quad(const GPU::Texture& luma,
@@ -243,19 +343,17 @@ void SpriteRenderer::drawNv12Quad(const GPU::Texture& luma,
                                   const Color& tint,
                                   GPU::TextureSampling sampling)
 {
-    // Above the sprite programs in the same numbering, so switching between a
-    // video quad and an overlay rebinds exactly once either way.
-    const auto index = GPU::samplingConfigurations + GPU::samplingIndex(sampling);
-    auto& program = nv12ProgramFor(sampling);
-    auto& shader = program.shader;
+    // A video quad is its own draw, so whatever was queued before it has to
+    // reach the pass first or it would end up on top of the video instead of
+    // under it.
+    flush();
 
-    if (index != boundProgram)
-    {
-        pass->setPipeline(program.pipeline);
-        pass->setVertexBuffer(shader.vertices());
-        boundProgram = index;
-    }
+    if (pass == nullptr)
+        return;
 
+    auto& shader = nv12ProgramFor(sampling);
+
+    shader.screenSize = Array {logicalSize.x, logicalSize.y};
     shader.origin = Array {origin.x, origin.y};
     shader.edgeX = Array {edgeX.x, edgeX.y};
     shader.edgeY = Array {edgeY.x, edgeY.y};
@@ -269,24 +367,21 @@ void SpriteRenderer::drawNv12Quad(const GPU::Texture& luma,
     shader.luma = luma;
     shader.chroma = chroma;
 
-    pass->setVertexUniforms(shader);
-    pass->setFragmentUniforms(shader);
-    shader.bindTextures(*pass);
-    pass->draw(6);
+    pass->draw(shader);
 }
 
 void SpriteRenderer::fillRect(const Rect& rect, const Color& color)
 {
-    drawQuad(white,
-             {rect.x, rect.y},
-             {rect.w, 0.0f},
-             {0.0f, rect.h},
-             0.0f,
-             0.0f,
-             1.0f,
-             1.0f,
-             color,
-             {});
+    addQuad(white,
+            {rect.x, rect.y},
+            {rect.w, 0.0f},
+            {0.0f, rect.h},
+            0.0f,
+            0.0f,
+            1.0f,
+            1.0f,
+            color,
+            {});
 }
 
 void SpriteRenderer::drawRect(const Rect& rect, const Color& color, float thickness)
@@ -316,15 +411,15 @@ void SpriteRenderer::drawLine(Point a, Point b, const Color& color, float thickn
     const auto nx = -delta.y / length * half;
     const auto ny = delta.x / length * half;
 
-    drawQuad(white,
-             {a.x - nx, a.y - ny},
-             delta,
-             {nx * 2.0f, ny * 2.0f},
-             0.0f,
-             0.0f,
-             1.0f,
-             1.0f,
-             color,
-             {});
+    addQuad(white,
+            {a.x - nx, a.y - ny},
+            delta,
+            {nx * 2.0f, ny * 2.0f},
+            0.0f,
+            0.0f,
+            1.0f,
+            1.0f,
+            color,
+            {});
 }
 } // namespace eacp::Sprites

@@ -12,6 +12,7 @@ target_compile_options(eacp-gpu PUBLIC $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocesso
 # the native backend selection (ShaderBuilder-*) lives in the platform branches.
 target_sources(eacp-gpu PRIVATE
         Device/Device.cpp
+        Frame/RenderPass.cpp
         Codegen/ShaderGraph.cpp
         Codegen/ShaderEmitter.cpp
         Codegen/ShaderBuilder.cpp)

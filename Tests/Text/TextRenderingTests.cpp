@@ -75,7 +75,8 @@ struct TextView final : GPU::GPUView
 
         for (const auto character: text)
         {
-            const auto glyph = atlas->glyph((char32_t) character, FontStyle::Regular);
+            const auto glyph =
+                atlas->glyph((char32_t) character, FontStyle::Regular);
 
             if (!glyph.valid)
                 continue;
@@ -155,7 +156,8 @@ auto tDrawsInk = test("TextRendering/drawsGlyphsFromTheAtlas") = []
 
 // Nothing drawn means nothing lit — the control that stops the test above from
 // passing on a background that happens to be bright.
-auto tEmptyTextDrawsNothing = test("TextRendering/emptyTextLeavesTheTargetClear") = []
+auto tEmptyTextDrawsNothing =
+    test("TextRendering/emptyTextLeavesTheTargetClear") = []
 {
     if (!GPU::Device::shared().isValid())
         return;
@@ -175,7 +177,8 @@ auto tEmptyTextDrawsNothing = test("TextRendering/emptyTextLeavesTheTargetClear"
 
 // Whitespace advances the pen without drawing, so two words reach further right
 // than one while putting down the same amount of ink.
-auto tSpacesAdvanceWithoutInk = test("TextRendering/spacesAdvanceThePenWithoutDrawing") = []
+auto tSpacesAdvanceWithoutInk =
+    test("TextRendering/spacesAdvanceThePenWithoutDrawing") = []
 {
     if (!GPU::Device::shared().isValid())
         return;
@@ -260,7 +263,8 @@ auto tGlyphsSitOnTheBaseline = test("TextRendering/glyphsSitOnABaseline") = []
 // Drawing the same text twice must produce the same picture: the second frame
 // hits the cache and uploads nothing, and any staleness in the dirty-region
 // bookkeeping would show as a difference.
-auto tSecondFrameMatchesFirst = test("TextRendering/cachedSecondFrameIsIdentical") = []
+auto tSecondFrameMatchesFirst =
+    test("TextRendering/cachedSecondFrameIsIdentical") = []
 {
     if (!GPU::Device::shared().isValid())
         return;
@@ -291,7 +295,8 @@ auto tSecondFrameMatchesFirst = test("TextRendering/cachedSecondFrameIsIdentical
 // A glyph rasterized *after* the atlas has already uploaded once must still
 // appear — the case that exercises the incremental sub-region upload rather
 // than the initial full one.
-auto tLaterGlyphsStillUpload = test("TextRendering/glyphsAddedAfterFirstUploadStillDraw") = []
+auto tLaterGlyphsStillUpload =
+    test("TextRendering/glyphsAddedAfterFirstUploadStillDraw") = []
 {
     if (!GPU::Device::shared().isValid())
         return;

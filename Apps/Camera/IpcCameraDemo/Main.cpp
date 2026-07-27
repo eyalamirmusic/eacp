@@ -106,15 +106,12 @@ struct RemoteFrameView final : GPU::GPUView
         auto bounds = getLocalBounds();
         auto size = Point {bounds.w, bounds.h};
 
-        if (!renderer.has_value() || size.x != rendererSize.x
-            || size.y != rendererSize.y)
-        {
+        // A resize is a new logical size and nothing more: the pipelines the
+        // renderer compiled are unaffected by it.
+        if (!renderer.has_value())
             renderer.emplace(size, sampleCount());
-            rendererSize = size;
-        }
-
-        auto pass = frame.beginPass({Color::black()});
-        renderer->begin(pass);
+        else
+            renderer->setLogicalSize(size);
 
         if (fresh)
         {
@@ -134,8 +131,12 @@ struct RemoteFrameView final : GPU::GPUView
             fresh = false;
         }
 
+        auto pass = frame.beginPass({Color::black()});
+
         if (!texture.has_value() || !texture->isValid() || width <= 0)
             return;
+
+        renderer->begin(pass);
 
         auto imageArea = Cameras::CameraView::computeImageArea(
             bounds.w, bounds.h, width, height, Cameras::CameraView::Fit::Contain);
@@ -148,6 +149,8 @@ struct RemoteFrameView final : GPU::GPUView
             false,
             Graphics::Color::white(),
             {GPU::TextureFilter::Linear, GPU::TextureAddressMode::Clamp});
+
+        renderer->end();
     }
 
     int width = 0;
@@ -160,7 +163,6 @@ struct RemoteFrameView final : GPU::GPUView
     int framesShown = 0;
 
     std::optional<Sprites::SpriteRenderer> renderer;
-    Point rendererSize {0.f, 0.f};
     std::optional<GPU::Texture> texture;
 };
 

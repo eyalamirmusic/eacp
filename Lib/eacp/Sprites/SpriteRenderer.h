@@ -16,10 +16,29 @@ using Graphics::Point;
 using Graphics::Rect;
 
 // A unit-quad corner (each component 0 or 1) the shader maps onto the
-// destination parallelogram.
+// destination parallelogram. The only per-vertex data there is: everything that
+// differs between quads is per-instance, below.
 struct SpriteVertex
 {
     float corner[2];
+};
+
+// One quad. Everything that varies from quad to quad lives here so that a run
+// of them sharing a texture is a single instanced draw, rather than a draw, a
+// uniform upload and a texture bind apiece.
+struct SpriteInstance
+{
+    // The destination parallelogram in logical units: where the texture's
+    // top-left lands, and where its +u and +v axes go from there.
+    float origin[2];
+    float edgeX[2];
+    float edgeY[2];
+
+    // The sampled sub-rect, in normalised texture coordinates.
+    float uv0[2];
+    float uv1[2];
+
+    float tint[4];
 };
 
 // The sprite shader: a unit quad mapped onto a parallelogram (an origin plus two
@@ -27,6 +46,9 @@ struct SpriteVertex
 // multiplied by a tint. The parallelogram form lets one draw path cover both
 // axis-aligned rects (perpendicular edges) and arbitrarily oriented quads such
 // as thick lines.
+//
+// The quad itself is per-instance, so one draw covers as many of them as share a
+// texture; only the screen size and the texture are uniforms.
 struct SpriteShader final : GPU::ShaderProgram
 {
     explicit SpriteShader(GPU::TextureSampling sampling)
@@ -38,15 +60,9 @@ struct SpriteShader final : GPU::ShaderProgram
     void define() override;
 
     GPU::Uniform<GPU::Float2> screenSize;
-    GPU::Uniform<GPU::Float2> origin;
-    GPU::Uniform<GPU::Float2> edgeX;
-    GPU::Uniform<GPU::Float2> edgeY;
-    GPU::Uniform<GPU::Float2> uv0;
-    GPU::Uniform<GPU::Float2> uv1;
-    GPU::Uniform<GPU::Float4> tint;
     GPU::Uniform<GPU::Texture2D> image;
 
-    EACP_SHADER(screenSize, origin, edgeX, edgeY, uv0, uv1, tint, image)
+    EACP_SHADER(screenSize, image)
 };
 
 // How to turn NV12 samples into RGB, supplied per draw because the matrix and
@@ -77,6 +93,10 @@ struct YuvTransform
 // same tint and the same pipeline machinery — only the fragment colour is
 // derived differently. Giving video its own renderer would duplicate all of
 // that to change one expression.
+//
+// Unlike the sprite shader this one is not instanced, and deliberately: a video
+// frame is one quad per draw, so the quad stays in uniforms, where a batch of
+// one would only add machinery.
 struct Nv12Shader final : GPU::ShaderProgram
 {
     explicit Nv12Shader(GPU::TextureSampling sampling)
@@ -112,46 +132,76 @@ struct Nv12Shader final : GPU::ShaderProgram
         screenSize, origin, edgeX, edgeY, tint, yuvRange, yuvMatrix, luma, chroma)
 };
 
-// The shader, library and pipeline for one sampling configuration.
-//
-// Sampling is baked in when the shader is compiled (see GPU::TextureSampling),
-// so a renderer cannot re-point one program at a different filter between
-// draws - and this one has to serve both, drawing smoothly scaled camera frames
-// and crisp pixel art through the same calls. Hence a program per
-// configuration, built on first use: most renderers only ever touch one.
-struct SpriteProgram
-{
-    SpriteProgram(GPU::TextureSampling sampling, Point logicalSize, int sampleCount);
-
-    SpriteShader shader;
-    GPU::ShaderLibrary library;
-    GPU::RenderPipeline pipeline;
-};
-
-struct Nv12Program
-{
-    Nv12Program(GPU::TextureSampling sampling, Point logicalSize, int sampleCount);
-
-    Nv12Shader shader;
-    GPU::ShaderLibrary library;
-    GPU::RenderPipeline pipeline;
-};
-
 // 2D sprite renderer: textured quads and untextured primitives (drawn with a
 // 1x1 white texture) share one always-blended pipeline per sampling
-// configuration. Drawing happens in a fixed logical space, sized at
-// construction; the shader maps it to clip space. Every coordinate is a float,
-// so callers keep full sub-pixel precision - smooth motion, high-DPI,
-// fractional zoom - and snap only where they choose to.
-class SpriteRenderer
+// configuration. Drawing happens in a logical space the shader maps to clip
+// space. Every coordinate is a float, so callers keep full sub-pixel precision -
+// smooth motion, high-DPI, fractional zoom - and snap only where they choose to.
+//
+// Draws are batched. A quad is queued onto a run rather than drawn on the spot,
+// and the run becomes one instanced draw as soon as something makes the next
+// quad unable to join it: a different texture or sampling, a scissor change, a
+// video quad, or the end of the pass. Order is never rearranged, because with
+// blending on, order *is* the picture - a run is always a contiguous span of the
+// calls the caller made. A screen of text out of one font texture, or a floor
+// out of one tile, therefore costs a single draw.
+//
+// None of which the caller has to know: begin(pass) joins the pass as a
+// RenderPass::Participant, so whatever is still queued is drawn when the pass
+// ends. Batching is an implementation detail rather than a protocol.
+//
+//     sprites.begin(pass);
+//     sprites.fillRect(...);
+//     sprites.drawTexture(...);
+//     // pass ends; the queue goes with it
+//
+// A caller that changes pass state by hand - RenderPass::setScissorRect, a
+// pipeline of its own - does still have to say when, since quads queued before
+// the change would otherwise be drawn under it rather than under the state they
+// were issued in. That is what flush() is for, and why the scissor wrappers
+// below are worth preferring: they do it themselves.
+class SpriteRenderer : public GPU::RenderPass::Participant
 {
 public:
     // logicalSize is the logical space draws are expressed in; sampleCount must
-    // match the render pass's MSAA sample count.
-    SpriteRenderer(Point logicalSize, int sampleCount);
+    // match the render pass's MSAA sample count. colorFormat must match the
+    // attachment the pass writes: the default suits a view's drawable, and a
+    // renderer drawing into a texture (Frame::beginPass(texture)) passes
+    // GPU::pixelFormatFor(that texture's format) instead.
+    SpriteRenderer(Point logicalSizeToUse,
+                   int sampleCountToUse,
+                   GPU::PixelFormat colorFormatToUse = GPU::PixelFormat::BGRA8Unorm);
 
-    // Call once per frame with the pass, before any draw call.
+    ~SpriteRenderer() override;
+
+    // Call once per frame with the pass, before any draw call. Joins the pass,
+    // which draws anything still queued when it ends.
     void begin(GPU::RenderPass& passToUse);
+
+    // Draws whatever is still queued and leaves the pass early. Optional: the
+    // pass does this itself when it ends. Reach for it only to stop drawing
+    // through this renderer while the pass carries on - and note that beginning
+    // a new pass does not need it, since the old pass drained this renderer on
+    // its way out.
+    void end();
+
+    // Draws whatever is queued without leaving the pass. What to call before
+    // changing pass state by hand, so the quads issued under the old state are
+    // not drawn under the new one.
+    void flush();
+
+    // The logical space draws are expressed in. Cheap, because it is a uniform
+    // and not anything compiled: a view that resizes sets it again rather than
+    // rebuilding the renderer and recompiling its pipelines.
+    void setLogicalSize(Point size);
+    Point getLogicalSize() const { return logicalSize; }
+
+    // Draws the queued quads and then clips the pass, so that what was issued
+    // before the call escapes the clip. Same units as
+    // RenderPass::setScissorRect, which is render-target *pixels*: a caller
+    // working in logical points multiplies by GPUView::backingScale() first.
+    void setScissorRect(const Rect& rectInPixels);
+    void clearScissorRect();
 
     // The whole texture stretched to dst, optionally mirrored. The default tint
     // is opaque white, i.e. the texture's own colours.
@@ -211,36 +261,45 @@ public:
 
 private:
     // The core primitive: a textured parallelogram (origin + the two edge
-    // vectors) sampling the [uv0, uv1] sub-rect, multiplied by tint.
-    void drawQuad(const GPU::Texture& texture,
-                  Point origin,
-                  Point edgeX,
-                  Point edgeY,
-                  float u0,
-                  float v0,
-                  float u1,
-                  float v1,
-                  const Color& tint,
-                  GPU::TextureSampling sampling);
+    // vectors) sampling the [uv0, uv1] sub-rect, multiplied by tint. Queues it
+    // onto the open run, flushing first when this quad cannot join that run.
+    void addQuad(const GPU::Texture& texture,
+                 Point origin,
+                 Point edgeX,
+                 Point edgeY,
+                 float u0,
+                 float v0,
+                 float u1,
+                 float v1,
+                 const Color& tint,
+                 GPU::TextureSampling sampling);
 
-    SpriteProgram& programFor(GPU::TextureSampling sampling);
-    Nv12Program& nv12ProgramFor(GPU::TextureSampling sampling);
+    // The pass is closing and this is the last chance to draw. Flushes without
+    // touching the pass's participant list, which it is in the middle of.
+    void flushInto(GPU::RenderPass& endingPass) override;
+
+    // Leaves the pass, if still in one.
+    void detach();
+
+    SpriteShader& programFor(GPU::TextureSampling sampling);
+    Nv12Shader& nv12ProgramFor(GPU::TextureSampling sampling);
 
     Point logicalSize;
     int sampleCount = 1;
+    GPU::PixelFormat colorFormat = GPU::PixelFormat::BGRA8Unorm;
 
-    Array<std::optional<SpriteProgram>, GPU::samplingConfigurations> programs;
+    Array<std::optional<SpriteShader>, GPU::samplingConfigurations> programs;
 
     // Built on first use like the sprite programs, so an app that never draws
     // video never compiles a YUV shader.
-    Array<std::optional<Nv12Program>, GPU::samplingConfigurations> nv12Programs;
+    Array<std::optional<Nv12Shader>, GPU::samplingConfigurations> nv12Programs;
 
-    // Which pipeline is currently bound on the pass, or -1 when none is:
-    // begin() clears it, and a draw that needs a different program rebinds.
-    // Sprite programs occupy 0..samplingConfigurations-1 and the NV12 ones the
-    // range above, so one field orders both. Switching mid-frame costs a
-    // pipeline change, so callers that mix should batch where it is easy.
-    int boundProgram = -1;
+    // The open run: the quads queued so far, and what all of them share. The
+    // texture is referred to and not retained, so it has to outlive the flush -
+    // which it does, a run never outliving the pass it was queued in.
+    Vector<SpriteInstance> instances;
+    const GPU::Texture* batchTexture = nullptr;
+    GPU::TextureSampling batchSampling {};
 
     GPU::Texture white;
     GPU::RenderPass* pass = nullptr;

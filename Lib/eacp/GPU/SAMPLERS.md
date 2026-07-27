@@ -94,10 +94,15 @@ configuration**, not one program it re-points.
 
 `Sprites::SpriteRenderer` is the case in the tree: it draws camera frames
 (scaled to fit, so `Linear`) and pixel art (so `Nearest`) through the same
-`drawTexture`. It keeps an `Array<std::optional<SpriteProgram>,
+`drawTexture`. It keeps an `Array<std::optional<SpriteShader>,
 samplingConfigurations>` built on first use, and `drawTexture` takes a
-`TextureSampling` defaulting to `Nearest`. Switching sampling mid-frame costs a
-pipeline change, so batching by sampling is worth it where it is easy.
+`TextureSampling` defaulting to `Nearest`.
+
+Sampling is therefore part of what a batch is: the renderer queues quads and
+draws a run of them at once, and a change of sampling closes the open run for
+the same reason a change of texture does. Issuing draws grouped by sampling is
+worth it where it is easy, since alternating between two of them turns a single
+instanced draw into one draw per quad.
 
 ## Note for whoever is next on Windows
 

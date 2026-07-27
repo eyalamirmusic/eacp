@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <optional>
 
-// Scrolling, clipped panes: RenderPass::setScissorRect, wheel events, and
+// Scrolling, clipped panes: SpriteRenderer::setScissorRect, wheel events, and
 // GPUView::backingScale working together, which is the combination every
 // scrollable region needs.
 //
@@ -60,8 +60,15 @@ struct ClippingView final : GPU::GPUView
 
         const auto bounds = getLocalBounds();
 
+        // A resize only moves the logical space; the pipelines the renderer
+        // compiled are unaffected, so it is set rather than rebuilt.
         if (bounds.w > 0 && bounds.h > 0)
-            sprites.emplace(Graphics::Point {bounds.w, bounds.h}, sampleCount());
+        {
+            if (sprites)
+                sprites->setLogicalSize({bounds.w, bounds.h});
+            else
+                sprites.emplace(Graphics::Point {bounds.w, bounds.h}, sampleCount());
+        }
 
         layOutPanes();
         repaint();
@@ -102,13 +109,18 @@ struct ClippingView final : GPU::GPUView
         return {rect.x * scale, rect.y * scale, rect.w * scale, rect.h * scale};
     }
 
-    void drawPane(GPU::RenderPass& pass, const Pane& pane)
+    void drawPane(const Pane& pane)
     {
         sprites->fillRect(pane.bounds, paneColor);
 
         // Everything from here to clearScissorRect is confined to the pane, so
         // the rows below can be laid out as if the pane were unbounded.
-        pass.setScissorRect(toPixels(pane.bounds));
+        //
+        // Set through the renderer rather than on the pass: draws are batched,
+        // so the pane background queued just above has to reach the pass before
+        // the clip that must not catch it. The wrapper does that; setting the
+        // scissor on the pass by hand would clip the background too.
+        sprites->setScissorRect(toPixels(pane.bounds));
 
         for (auto row = 0; row < pane.rowCount; ++row)
         {
@@ -117,21 +129,19 @@ struct ClippingView final : GPU::GPUView
 
             // Wider than the pane on purpose: the overhang is what proves the
             // scissor rect is doing the work.
-            const auto rowRect = Graphics::Rect {pane.bounds.x + 10.f,
-                                                 y + rowGap,
-                                                 pane.bounds.w * 1.4f,
-                                                 rowHeight};
+            const auto rowRect = Graphics::Rect {
+                pane.bounds.x + 10.f, y + rowGap, pane.bounds.w * 1.4f, rowHeight};
 
             // Alternate rows shade slightly so scrolling is legible.
-            const auto color = row % 2 == 0 ? pane.rowColor
-                                            : pane.rowColor.darker(0.12f);
+            const auto color =
+                row % 2 == 0 ? pane.rowColor : pane.rowColor.darker(0.12f);
 
             sprites->fillRect(rowRect, color);
         }
 
         drawScrollbar(pane);
 
-        pass.clearScissorRect();
+        sprites->clearScissorRect();
     }
 
     void drawScrollbar(const Pane& pane)
@@ -164,7 +174,7 @@ struct ClippingView final : GPU::GPUView
         sprites->begin(pass);
 
         for (const auto& pane: panes)
-            drawPane(pass, pane);
+            drawPane(pane);
     }
 
     void mouseWheel(const Graphics::MouseEvent& event) override

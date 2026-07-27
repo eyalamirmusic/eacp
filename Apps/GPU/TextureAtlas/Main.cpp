@@ -42,7 +42,7 @@ std::uint32_t packRGBA(int r, int g, int b)
 // slot, so each upload is individually recognisable once it lands.
 std::vector<std::uint32_t> makeTile(int index)
 {
-    auto pixels = std::vector<std::uint32_t> ((std::size_t) (tileSize * tileSize));
+    auto pixels = std::vector<std::uint32_t>((std::size_t) (tileSize * tileSize));
 
     const auto r = 60 + (index * 37) % 190;
     const auto g = 60 + (index * 71) % 190;
@@ -52,8 +52,8 @@ std::vector<std::uint32_t> makeTile(int index)
     {
         for (auto x = 0; x < tileSize; ++x)
         {
-            const auto edge = x == 0 || y == 0 || x == tileSize - 1
-                              || y == tileSize - 1;
+            const auto edge =
+                x == 0 || y == 0 || x == tileSize - 1 || y == tileSize - 1;
 
             pixels[(std::size_t) (y * tileSize + x)] =
                 edge ? packRGBA(20, 22, 28) : packRGBA(r, g, b);
@@ -65,9 +65,8 @@ std::vector<std::uint32_t> makeTile(int index)
 
 GPU::Texture makeEmptyAtlas()
 {
-    const auto pixels =
-        std::vector<std::uint32_t> ((std::size_t) (atlasSize * atlasSize),
-                                    packRGBA(24, 26, 32));
+    const auto pixels = std::vector<std::uint32_t>(
+        (std::size_t) (atlasSize * atlasSize), packRGBA(24, 26, 32));
 
     auto descriptor = GPU::TextureDescriptor {};
     descriptor.width = atlasSize;
@@ -91,8 +90,15 @@ struct AtlasView final : GPU::GPUView
 
         const auto bounds = getLocalBounds();
 
+        // A resize only moves the logical space; the pipelines the renderer
+        // compiled are unaffected, so it is set rather than rebuilt.
         if (bounds.w > 0 && bounds.h > 0)
-            sprites.emplace(Graphics::Point {bounds.w, bounds.h}, sampleCount());
+        {
+            if (sprites)
+                sprites->setLogicalSize({bounds.w, bounds.h});
+            else
+                sprites.emplace(Graphics::Point {bounds.w, bounds.h}, sampleCount());
+        }
 
         repaint();
     }
@@ -152,21 +158,17 @@ struct AtlasView final : GPU::GPUView
         const auto barHeight = 10.f;
 
         // Square, centred, as large as the window allows.
-        const auto side = std::min(bounds.w - margin * 2.f,
-                                   bounds.h - margin * 3.f - barHeight);
-        const auto atlasRect = Graphics::Rect {(bounds.w - side) / 2.f,
-                                               margin,
-                                               side,
-                                               side};
+        const auto side =
+            std::min(bounds.w - margin * 2.f, bounds.h - margin * 3.f - barHeight);
+        const auto atlasRect =
+            Graphics::Rect {(bounds.w - side) / 2.f, margin, side, side};
 
         // The default Nearest keeps the texel grid crisp under magnification, so
         // an upload is visible as a hard-edged block rather than a smear.
         sprites->drawTexture(atlas, atlasRect);
 
-        const auto barRect = Graphics::Rect {atlasRect.x,
-                                             atlasRect.y + side + margin / 2.f,
-                                             side,
-                                             barHeight};
+        const auto barRect = Graphics::Rect {
+            atlasRect.x, atlasRect.y + side + margin / 2.f, side, barHeight};
 
         sprites->fillRect(barRect, barBack);
         sprites->fillRect({barRect.x,

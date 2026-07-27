@@ -263,6 +263,10 @@ void RenderPass::end()
     if (impl->ended)
         return;
 
+    // Before endEncoding, so a batching renderer's queued draws still reach
+    // this encoder. See RenderPass::Participant.
+    drainParticipants();
+
     if (auto activeEncoder = impl->encoder.get())
         [activeEncoder endEncoding];
 

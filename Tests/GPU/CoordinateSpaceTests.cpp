@@ -155,9 +155,9 @@ auto tScissorSharesTheConvention =
 
             // Clip to the top slice, then fill the whole view. Only the top
             // slice should survive.
-            pass.setScissorRect({top.x, top.y, top.w, top.h});
+            sprites->setScissorRect({top.x, top.y, top.w, top.h});
             sprites->fillRect({0.f, 0.f, viewW, viewH}, topColor);
-            pass.clearScissorRect();
+            sprites->clearScissorRect();
         }
 
         std::optional<Sprites::SpriteRenderer> sprites;

@@ -23,13 +23,15 @@ if (APPLE OR WIN32)
             TextureSamplingTests.cpp
             ShaderBlendTests.cpp
             CoordinateSpaceTests.cpp
+            SpriteBatchTests.cpp
             RenderTargetTests.cpp
             FrameComputeTests.cpp)
 endif ()
 
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through
 # SpriteRenderer: the y-axis contract it pins is between Rect and the things
-# that draw it, so it cannot be checked without one of them.
+# that draw it, so it cannot be checked without one of them. SpriteBatchTests
+# rides the same path to pin what the renderer's batching may not reorder.
 nano_add_executable(GPUTests
         NO_MAIN
         SOURCES
