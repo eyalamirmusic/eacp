@@ -11,7 +11,8 @@ target_sources(eacp-video PRIVATE
         SyntheticClip.cpp
         Decode/FrameImage.cpp
         Decode/FrameStream.cpp
-        Decode/Player.cpp)
+        Decode/Player.cpp
+        Demux/Mp4Demuxer.cpp)
 
 if (APPLE)
     target_sources(eacp-video PRIVATE
@@ -35,7 +36,10 @@ elseif (WIN32)
 
     # Media Foundation sink writer (H.264) and source reader, plus their GUIDs
     # and the PROPVARIANT helpers the reader's seek and duration queries use.
+    # d3d11 is the decoder's: the source reader is bound to a D3D11 video device
+    # so the decode runs on the GPU.
     target_link_libraries(eacp-video PRIVATE
+            d3d11
             mfplat
             mfreadwrite
             mfuuid

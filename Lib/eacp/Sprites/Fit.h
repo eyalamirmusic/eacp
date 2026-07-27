@@ -4,6 +4,8 @@
 
 namespace eacp::Sprites
 {
+using Graphics::Rect;
+
 // How an image is placed when its aspect ratio differs from the area it is
 // drawn into.
 enum class Fit
@@ -17,6 +19,6 @@ enum class Fit
 // areaWidth x areaHeight area under the given fit. Pure geometry, shared by
 // every view that puts a video-shaped texture on screen (CameraView,
 // VideoView), which is why it lives here rather than on either of them.
-Graphics::Rect fitRect(
+Rect fitRect(
     float areaWidth, float areaHeight, int imageWidth, int imageHeight, Fit fit);
 } // namespace eacp::Sprites

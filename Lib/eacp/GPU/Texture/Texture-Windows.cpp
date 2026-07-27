@@ -25,6 +25,8 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
             return DXGI_FORMAT_B8G8R8A8_UNORM;
         case TextureFormat::R8Unorm:
             return DXGI_FORMAT_R8_UNORM;
+        case TextureFormat::RG8Unorm:
+            return DXGI_FORMAT_R8G8_UNORM;
         default:
             return DXGI_FORMAT_R8G8B8A8_UNORM;
     }
