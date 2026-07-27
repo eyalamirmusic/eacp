@@ -28,6 +28,10 @@ decoder profile; a null result binds no device manager and the reader decodes
 exactly as it did before. The frames come back through `Lock2D` as CPU pixels
 either way, so nothing downstream of the decoder knows which happened.
 
+Those pixels are the decoder's own buffer, held locked for the life of the frame
+rather than copied out of — one CPU copy per frame on the way to the GPU instead
+of two.
+
 The work that got it here, in the order it was done:
 
 - **Recycled decode buffers.** `VideoFrame` shares a `shared_ptr` pixel buffer;
@@ -52,6 +56,10 @@ The work that got it here, in the order it was done:
   track's sample tables over a `MemoryMappedFile`. Not yet wired into decode.
 - **Route A step 1: the D3D11 device manager.** Hardware decode. Cut 8K60 CPU
   from 122.6 s to 11.7 s over a 20 s window and took `starved` from 902 to 2.
+- **Borrowed decoder buffers.** `VideoFrame::fromBorrowedPixels` points a frame
+  at the decoder's own locked buffer rather than draining it into one of ours,
+  removing a serial full-frame copy from the decode thread. Another third off
+  8K60 CPU, to 7.3 s, and 190 MB less resident.
 
 ## The blocker on the dev VM: no hardware decode at all
 
@@ -325,6 +333,73 @@ will, neither needing a debugger:
 Enumerating **all** engine instances for the process is also how the
 `MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING` worry below was settled.
 
+## Borrowing the decoder's buffer
+
+Step 1 left two full-frame CPU copies per frame after the readback:
+
+1. `copyPlanes` drained Media Foundation's buffer into a recycled `Vector` — on
+   the **decode thread**, and serial: it ran after the decoder's worker threads
+   were done, so no core count absorbed it.
+2. `Texture::update` memcpys that into a D3D12 upload heap — on the **render
+   thread** (`Texture-Windows.cpp`).
+
+The first is avoidable. `VideoFrame::fromBorrowedPixels` points a frame's pixels
+straight into the decoder's own buffer and holds the `IMFSample` locked until the
+last frame sharing it is gone — `borrowFrame()` in `Decoder-Windows.cpp`, with
+`copyFrame()` still there as the fallback for a buffer that will not `Lock2D`.
+This is the same idea as `VideoFrame::fromNativeBuffer` on Apple, minus the GPU
+wrap: the pixels are still read back to the CPU, they are just read once.
+
+Frames now carry the decoder's stride rather than a tightly packed one, which the
+NV12 layout already allowed for — both planes share `bytesPerRow`, so
+`chromaPlane()` finds the second one regardless of padding.
+
+| 20 s window | step 1 only | + borrowed buffer |
+| --- | --- | --- |
+| 4K60 CPU | 6.5 s | **5.3–5.7 s** |
+| 8K60 CPU | 11.7 s | **7.3–8.1 s** |
+| 8K24 CPU | 7.7 s | **5.0–6.1 s** |
+| 8K60 resident | 747 MB | **555 MB** |
+
+Roughly a third of the remaining CPU at 8K, and the memory drop is the frame-sized
+`Vector` pool that no longer exists. Frame rates do not move — they were already at
+the cap, and this was never a throughput change.
+
+### It also pays on the software path, which was not the prediction
+
+The expectation was that this would have to be gated to the hardware path:
+holding the decoder's buffers should deny a software MFT its own recycling and
+reintroduce the per-frame allocation that `fromPixelBuffer` was built to avoid —
+the change that took 8K from 12.6 to 34.5 fps and is the largest single win on
+record here.
+
+**Measured, it pays on both.** Forcing the software path on the same machine by
+returning null from `createVideoDevice()`, over two runs each:
+
+| 20 s window, software decode | copied | borrowed |
+| --- | --- | --- |
+| 4K60 CPU | 45.0 s | 41.8, 42.5 s |
+| 8K60 decode | 51.7 fps | 53.9, 54.4 fps |
+| 8K60 CPU | 122.6 s | 117.8, 118.9 s |
+| 8K24 CPU | 74.4 s | 68.8, 71.2 s |
+
+Small — 4 to 8% — and 8K60 still starves, because the software decode wall is
+still the wall. But it is a consistent direction across three clips and two runs,
+with no stall and no allocation regression. So there is no gate: both paths
+borrow. That is less code than the branch would have been.
+
+Two caveats worth carrying:
+
+- **This is one machine.** The failure mode if some MFT's output pool is smaller
+  than `queueDepth + 1` is a stall, not corruption — the decode thread would
+  block waiting for a surface it is itself holding. Nothing like it appeared
+  across two MFTs (`Microsoft H264 Video Decoder MFT`, `HEVCVideoExtension`),
+  hardware and software, at 1080p through 8K. `MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT`
+  is the lever if it ever does.
+- **`FrameStream`'s queue depth is what bounds the risk**, at three to five
+  frames. Raising it raises the number of decoder buffers held hostage, which is
+  a cost `maxQueueBytes` does not currently account for.
+
 ### Decision on step 2: not now
 
 The plan expected a discrete GPU to "solve 4K outright and still want step 2 at
@@ -338,8 +413,10 @@ What would change that verdict:
 - A GPU whose decoder outruns its readback more than this one does, or a narrower
   PCIe link.
 - Content past 8K60, or several 8K streams composited at once.
-- Caring about the ~0.6 cores 8K60 still costs — most of which is the readback
-  and the NV12 copy, which is exactly what step 2 removes.
+- Caring about the ~0.37 cores 8K60 still costs. Borrowing the decoder's buffer
+  already took a third of that off without any interop; what is left is the
+  readback itself plus the one remaining upload copy, and only step 2 removes
+  the readback.
 
 The UMA-versus-discrete split above was aimed at the wrong axis: readback did not
 turn out to be a bottleneck on a *discrete* card, which is the case it predicted

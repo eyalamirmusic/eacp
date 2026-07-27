@@ -132,6 +132,22 @@ ComPtr<ID3D11Device> createVideoDevice()
     return device;
 }
 
+// A decoded sample held open, so a frame's pixels can point straight into
+// Media Foundation's own buffer instead of being copied out of it. Locked for
+// exactly as long as the last VideoFrame sharing it lives.
+struct LockedSample
+{
+    ~LockedSample()
+    {
+        if (locked != nullptr)
+            locked->Unlock2D();
+    }
+
+    ComPtr<IMFSample> sample;
+    ComPtr<IMFMediaBuffer> buffer;
+    ComPtr<IMF2DBuffer> locked;
+};
+
 int rotationFromAttribute(UINT32 rotation)
 {
     switch (rotation)
@@ -447,10 +463,57 @@ private:
         return fresh;
     }
 
-    bool buildFrame(IMFSample* sample,
-                    double seconds,
-                    double duration,
-                    VideoFrame& out)
+    // Hands the decoder's own buffer to the frame instead of draining it into
+    // one of ours: the sample stays alive and locked for as long as the frame
+    // is, which takes a full-frame copy off this thread. At 8K that copy is
+    // 50 MB read and 50 MB written, and it is serial — it runs after the
+    // decoder's worker threads are done, so no core count absorbs it.
+    //
+    // Done on both the hardware and the software path. Holding a few of the
+    // decoder's output buffers was expected to cost the software MFT its own
+    // recycling and so not pay there; measured, it pays on both (see
+    // WindowsDecoder.md). What bounds the risk is that FrameStream only ever
+    // has queueDepth + 1 frames alive, which is three to five.
+    //
+    // Fails before touching anything when the buffer will not lock 2D, so the
+    // caller can simply fall back to copying.
+    bool borrowFrame(IMFSample* sample, FrameInfo& frameInfo, VideoFrame& out)
+    {
+        auto held = std::make_shared<LockedSample>();
+        held->sample = sample;
+
+        if (FAILED(sample->ConvertToContiguousBuffer(&held->buffer)))
+            return false;
+
+        ComPtr<IMF2DBuffer> buffer2D;
+        if (FAILED(held->buffer.As(&buffer2D)))
+            return false;
+
+        BYTE* scanline0 = nullptr;
+        LONG pitch = 0;
+
+        if (FAILED(buffer2D->Lock2D(&scanline0, &pitch)))
+            return false;
+
+        // A negative pitch would mean a bottom-up buffer, which NV12 never is.
+        if (pitch <= 0)
+        {
+            buffer2D->Unlock2D();
+            return false;
+        }
+
+        held->locked = std::move(buffer2D);
+
+        // The decoder's stride, not ours — this buffer is padded where our own
+        // is tightly packed. Both planes share it, which is what lets
+        // chromaPlane() find the second one.
+        frameInfo.bytesPerRow = static_cast<std::size_t>(pitch);
+
+        out = VideoFrame::fromBorrowedPixels(scanline0, std::move(held), frameInfo);
+        return true;
+    }
+
+    bool copyFrame(IMFSample* sample, FrameInfo& frameInfo, VideoFrame& out)
     {
         ComPtr<IMFMediaBuffer> buffer;
         if (FAILED(sample->ConvertToContiguousBuffer(&buffer)))
@@ -501,18 +564,29 @@ private:
                 return false;
         }
 
+        // copyPlanes writes tightly packed, whatever the source stride was.
+        frameInfo.bytesPerRow = static_cast<std::size_t>(videoInfo.width);
+
+        out = VideoFrame::fromPixelBuffer(std::move(pixels), frameInfo);
+        return true;
+    }
+
+    bool buildFrame(IMFSample* sample,
+                    double seconds,
+                    double duration,
+                    VideoFrame& out)
+    {
         auto frameInfo = FrameInfo {};
         frameInfo.width = videoInfo.width;
         frameInfo.height = videoInfo.height;
         frameInfo.format = FramePixelFormat::NV12;
-        frameInfo.bytesPerRow = static_cast<std::size_t>(videoInfo.width);
         frameInfo.yuvMatrix = yuvMatrix;
         frameInfo.fullRangeYuv = fullRangeYuv;
         frameInfo.seconds = seconds;
         frameInfo.duration = duration;
 
-        out = VideoFrame::fromPixelBuffer(std::move(pixels), frameInfo);
-        return true;
+        return borrowFrame(sample, frameInfo, out)
+               || copyFrame(sample, frameInfo, out);
     }
 
     ComPtr<IMFSourceReader> reader;

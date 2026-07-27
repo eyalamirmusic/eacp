@@ -176,6 +176,28 @@ public:
         return frame;
     }
 
+    // Points at pixels inside a buffer belonging to something else — a decoder
+    // output sample the backend has locked open — rather than a buffer of ours.
+    // `owner` is whatever keeps them readable, unlocked and handed back when
+    // the last frame sharing them is destroyed.
+    //
+    // This is the copy fromPixelBuffer cannot avoid. A backend can hold one of
+    // its decoder's buffers per queued frame instead of draining each into a
+    // buffer of its own, which takes a full-frame copy off the decode thread —
+    // at 8K, 50 MB read and 50 MB written per frame.
+    //
+    // The cost is holding that many of the decoder's output buffers, so it is
+    // only safe while the frames alive at once stay few, which FrameStream's
+    // queue depth is what bounds.
+    static VideoFrame fromBorrowedPixels(const std::uint8_t* pixels,
+                                         std::shared_ptr<void> owner,
+                                         const FrameInfo& info)
+    {
+        auto frame = VideoFrame {};
+        frame.payload = std::make_shared<Payload>(pixels, std::move(owner), info);
+        return frame;
+    }
+
     bool isValid() const { return payload != nullptr; }
 
     const FrameInfo& info() const
@@ -215,14 +237,10 @@ public:
         return payload != nullptr ? payload->buffer : nullptr;
     }
 
-    // The CPU-side BGRA8 pixels, or null on the zero-copy path.
+    // The CPU-side pixels, or null on the zero-copy path.
     const std::uint8_t* pixels() const
     {
-        if (payload == nullptr || payload->pixels == nullptr
-            || payload->pixels->size() == 0)
-            return nullptr;
-
-        return payload->pixels->data();
+        return payload != nullptr ? payload->pixelData : nullptr;
     }
 
     // The interleaved Cb/Cr plane of an NV12 frame, or null for any other
@@ -255,6 +273,17 @@ private:
                 const FrameInfo& infoToUse)
             : info(infoToUse)
             , pixels(std::move(pixelsToUse))
+            , pixelData(pixels != nullptr && pixels->size() > 0 ? pixels->data()
+                                                                : nullptr)
+        {
+        }
+
+        Payload(const std::uint8_t* pixelsToUse,
+                std::shared_ptr<void> ownerToUse,
+                const FrameInfo& infoToUse)
+            : info(infoToUse)
+            , owner(std::move(ownerToUse))
+            , pixelData(pixelsToUse)
         {
         }
 
@@ -268,9 +297,18 @@ private:
         Payload& operator=(const Payload&) = delete;
 
         FrameInfo info;
+
+        // A platform pixel buffer the GPU can wrap, on the zero-copy path only.
         void* buffer = nullptr;
         Releaser release = [](void*) {};
+
+        // Pixels this frame owns, and pixels it only borrows. Exactly one of
+        // these carries the memory `pixelData` points into, and both keep it
+        // alive for as long as the payload.
         std::shared_ptr<Vector<std::uint8_t>> pixels;
+        std::shared_ptr<void> owner;
+
+        const std::uint8_t* pixelData = nullptr;
     };
 
     std::shared_ptr<const Payload> payload;
