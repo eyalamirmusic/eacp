@@ -46,7 +46,7 @@ auto tRoundTrip = test("Ipc/Messenger/roundTripsBothDirections") = []
 // Length-prefixed framing is the difference between "messages" and "lines":
 // a payload full of delimiters and NULs - and bigger than any socket
 // buffer - must arrive as the one message it left as.
-auto tBinaryPayload = test("Ipc/Messenger/carriesArbitraryBytesIntact") = []
+auto tMessengerBinaryPayload = test("Ipc/Messenger/carriesArbitraryBytesIntact") = []
 {
     auto payload = std::string {"lines\nand\r\nmore"};
     payload += '\0';

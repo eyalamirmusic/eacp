@@ -1,3 +1,4 @@
+#include "AllocationCount.h"
 #include "Common.h"
 #include <atomic>
 #include <cstdlib>
@@ -312,67 +313,6 @@ auto tFifoIsInvalid = test("MemoryMappedFile/fifoIsInvalid") = []
 #endif
 
 // --- cost --------------------------------------------------------------------
-
-namespace
-{
-// The point of mapping is what it does not do, and the bytes look the same
-// either way. Counting allocations is the only observable that separates a
-// mapping from a read, and unlike timing it does not depend on the machine.
-std::atomic<bool> countingAllocations {false};
-std::atomic<std::size_t> allocatedBytes {0};
-
-struct AllocationCount
-{
-    AllocationCount()
-    {
-        allocatedBytes.store(0, std::memory_order_relaxed);
-        countingAllocations.store(true, std::memory_order_relaxed);
-    }
-
-    ~AllocationCount()
-    {
-        countingAllocations.store(false, std::memory_order_relaxed);
-    }
-
-    std::size_t bytes() const
-    {
-        return allocatedBytes.load(std::memory_order_relaxed);
-    }
-};
-} // namespace
-
-void* operator new(std::size_t size)
-{
-    if (countingAllocations.load(std::memory_order_relaxed))
-        allocatedBytes.fetch_add(size, std::memory_order_relaxed);
-
-    if (auto* memory = std::malloc(size == 0 ? 1 : size))
-        return memory;
-
-    throw std::bad_alloc {};
-}
-
-void* operator new[](std::size_t size)
-{
-    return operator new(size);
-}
-
-void operator delete(void* memory) noexcept
-{
-    std::free(memory);
-}
-void operator delete[](void* memory) noexcept
-{
-    std::free(memory);
-}
-void operator delete(void* memory, std::size_t) noexcept
-{
-    std::free(memory);
-}
-void operator delete[](void* memory, std::size_t) noexcept
-{
-    std::free(memory);
-}
 
 // readFile costs one copy of the file. A mapping costs the path and the Pimpl,
 // whatever the file's size — 4KB is far above what those need and far below
