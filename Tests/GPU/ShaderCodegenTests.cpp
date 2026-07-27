@@ -608,7 +608,15 @@ auto tCodegenLiteralArguments = test("GPU/codegenLiteralArguments") = []
     auto held = clamp(carried.x() + carried.y(), 0.0f, width);
     auto raised = max(-1.0f, carried.y());
 
-    builder.fragment(float4(lowest + gate, curve * blend, held, raised));
+    // clamp was the last one still insisting on a handle in front, which no
+    // reading of the module would have turned up: it took a corpus, and one
+    // shader in it writing clamp(0.02, 2.0, t), which is an odd thing to write
+    // and is what GLSL says a shader may.
+    auto pinned = clamp(0.02f, 2.0f, width);
+    auto bounded = clamp(0.25f, carried.x(), width);
+
+    builder.fragment(
+        float4(lowest + gate + pinned, curve * blend, held + bounded, raised));
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "smoothstep(0.0, uniforms.u0, "));
@@ -618,10 +626,13 @@ auto tCodegenLiteralArguments = test("GPU/codegenLiteralArguments") = []
     check(contains(metal, "mix(0.5, 1.0, "));
     check(contains(metal, ", 0.0, uniforms.u0)"));
     check(contains(metal, "max(-1.0, "));
+    check(contains(metal, "clamp(0.02, 2.0, uniforms.u0)"));
+    check(contains(metal, "clamp(0.25, (input.v0).x, uniforms.u0)"));
 
     auto hlsl = emitHlsl(builder.graph());
     check(contains(hlsl, "lerp(0.5, 1.0, "));
     check(contains(hlsl, "step((input.v0).y, 0.0)"));
+    check(contains(hlsl, "clamp(0.02, 2.0, uniforms.u0)"));
 };
 
 // The transcendental, rounding and geometric intrinsics all spell identically
