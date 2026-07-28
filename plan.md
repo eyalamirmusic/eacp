@@ -4,9 +4,13 @@ A GPU path rasterizer for `eacp-ui` that computes antialiasing coverage
 analytically in a compute kernel, rather than approximating it with
 multisampling or avoiding it with stencil-then-cover.
 
-This document plans the **cut-down version only**: per-pixel direct
-evaluation, no tiling, no binning. It is deliberately the smallest thing that
-produces a real artifact to judge, and it needs no changes to `eacp-gpu`.
+**Shipped.** All four phases are done and measured. This document is now the
+record of the rung as built, kept beside the rungs above it so the next one is
+not designed from memory. Where the plan turned out wrong the original claim is
+left in and corrected rather than quietly deleted — those are the useful parts.
+
+The scope was and remains the **cut-down version**: per-pixel direct evaluation,
+no tiling, no binning. The smallest thing that produces a real artifact to judge.
 
 ## Why this shape first
 
@@ -22,46 +26,89 @@ quality question answered — is analytic coverage visibly better than what we
 have, and better than CoreGraphics? — before anything is spent on the
 machinery that makes it scale.
 
-## What already exists
+That worked: the quality question was answered in phase 2, off a screenshot,
+before a line of `eacp-ui` was touched.
 
-Verified present, no work needed:
+## What shipped
+
+`eacp-gpuwidgets`
+
+- `Path::setFlatness` — curves and arcs subdivide to a tolerance in path units
+  instead of a fixed 24 segments.
+- `PathRasterizer` — path in, coverage mask out. Owns its texture, or writes
+  into a rect of one it does not own (`setTarget`).
+- `CoverageKernel` — the kernel, shared by every rasterizer in the process.
+- `CoverageShader` — a quad that paints a colour through a mask.
+
+`eacp-ui`
+
+- `CoverageAtlas` — one `computeWrite` texture every path in the interface
+  rasterizes into.
+- `PathShape` — a component's vector shape: the path, its coverage, its slot.
+- `Graphics::fillPath` — the public API.
+- `Knob` — a rotary control whose arc and pointer are a path.
+- `ShapeBatch::fillMask` and a uv sub-rect on `ShapeInstance`.
+
+`eacp-gpu`
+
+- `ComputeProgram` forwards `var` / `ifThen` / `loop` / `breakLoop` /
+  `continueLoop`, which `ShaderProgram` already did.
+- `toUInt(Int)`.
+
+Demos: `Apps/GPU/PathCoverage` (fill rules), `Apps/GPU/PathQuality` (the
+three-way comparison), and `Apps/UI/ComponentTree` (48 knobs, batched).
+
+## What already existed, and what the plan got wrong about it
+
+Verified present before starting, and correct:
 
 - `Frame::beginCompute()` records onto the **same command buffer** as the
-  frame's render passes, ordered by the queue with no fences. The kernel can
-  feed the very pass that draws its output, in one frame.
+  frame's render passes, ordered by the queue with no fences. The kernel feeds
+  the very pass that draws its output, in one frame. Phase 1 proved it.
 - `ComputePass::dispatch(width, height)` and `threadPosition()` for a 2D grid,
   with the generated bounds guard already handling the rounded-up dispatch.
 - `ComputeProgram` with `InputBuffer` (read) and `WritableTexture2D` (write).
-- `InputBuffer::operator[](const UInt&)` — dynamic indexing at an index the
-  kernel computed. Reads are scalar `Float`, so a 4-float segment is four
-  reads; fine, and it keeps the buffer layout trivial.
-- EDSL control flow: `loop(condition, body)`, `breakLoop()`, `continueLoop()`,
-  `ifThen(condition, then, else)`, and mutable `var(0.f)` locals.
-- `GPUWidgets::Path` **already flattens curves and arcs to polylines** and
-  exposes them via `getSubPaths()`. The CPU half of stage one is written.
-- The `ComputeImage` demo already proves the exact pattern: a kernel paints a
+- `InputBuffer::read4` — a 4-float segment as one record read. Scalar
+  underneath, which is fine and keeps the buffer layout trivial.
+- The `ComputeImage` demo already proved the pattern: a kernel paints a
   texture, the next pass samples it.
 
-## Explicitly not in scope
+Claimed present, and not:
 
-- Tiling, binning, prefix sums, indirect dispatch. That is rung three.
-- Atomics or threadgroup memory. If a design needs either, it belongs to a
-  later rung, not this one.
+- **"EDSL control flow: `loop`, `breakLoop`, `continueLoop`, `ifThen`, `var`."**
+  True of `ShaderBuilder` and of `ShaderProgram`, and the GPU README lists them
+  as part of the EDSL — but `ComputeProgram` did not forward any of them, so a
+  kernel could not use the one facility a kernel needs most. Nor was there a
+  `toUInt` to cross an `Int` loop counter into the `UInt` a buffer subscript
+  takes. Both added.
+- **"It needs no changes to `eacp-gpu`."** It needed those two.
+- **"`GPUWidgets::Path` already flattens curves and arcs to polylines."** True,
+  and useless at the sizes that matter: a fixed 24 segments made a 512px circle
+  a 48-gon *inscribed* in the circle it was meant to be, half a pixel small
+  everywhere between vertices. See phase 2.
+
+## Still not in scope
+
+- Tiling, binning, prefix sums, indirect dispatch. That is rung two and three.
+- Atomics or threadgroup memory. Neither was needed and neither was added.
 - Fixing conflation **between separate draws**. Coverage accumulation removes
-  conflation *within* a path; two abutting widgets are two draws and will
-  still seam. Pixel snapping and merging abutting geometry remain the answer
-  there, and are unaffected by any of this.
-- Stroking. Strokes become fills via an offsetting pass; out of scope until
-  fills are proven.
+  conflation *within* a path — which is what makes the knob's arc and pointer
+  join cleanly — but two abutting widgets are two draws and will still seam.
+  Pixel snapping and merging abutting geometry remain the answer there.
+- Stroking. Strokes become fills via an offsetting pass. `PathTessellator`
+  still has the old ribbon stroker for `PathView`; nothing strokes through
+  coverage yet.
 
 ## Design
 
 ### CPU side
 
-1. `GPUWidgets::Path` flattens to polylines (already done).
+1. `Path` flattens to polylines, adaptively.
 2. Walk the sub-paths, emitting directed segments as flat floats
    `[x0, y0, x1, y1, …]` into one `Buffer` with `Storage` usage. Closing
-   segments are emitted explicitly so every sub-path is a closed loop.
+   segments are emitted explicitly so every sub-path is a closed loop, and
+   horizontal ones are dropped — they contribute nothing to any pixel, so
+   dropping them once here beats guarding against them once per pixel.
 3. Compute the path's bounding box in device pixels, expanded by one pixel.
 4. Upload, dispatch over the bbox, draw the result.
 
@@ -78,62 +125,74 @@ Working in pixel-local coordinates where the pixel is the unit box:
 winding = 0
 i = 0
 loop(i < segmentCount):
-    read a = (segments[4i],   segments[4i+1])
-    read b = (segments[4i+2], segments[4i+3])
-    convert to pixel-local: a -= pixelCorner, b -= pixelCorner
+    (a, b) = segments.read4(i)                 // one record, four floats
+    a -= pixelCorner;  b -= pixelCorner
 
-    // Horizontal segments contribute nothing
-    ifThen(a.y != b.y):
-        direction = b.y > a.y ? +1 : -1
-        y0 = clamp(min(a.y, b.y), 0, 1)
-        y1 = clamp(max(a.y, b.y), 0, 1)
-        dy = y1 - y0                      // vertical extent inside this pixel
+    // The part of the segment's vertical span inside this pixel. Zero for one
+    // above it, below it, or horizontal — which is the only guard the body
+    // needs, a horizontal segment being also the only one that divides by zero.
+    low    = clamp(min(a.y, b.y), 0, 1)
+    high   = clamp(max(a.y, b.y), 0, 1)
+    height = high - low
 
-        ifThen(dy > 0):
-            t  = (0.5*(y0+y1) - a.y) / (b.y - a.y)
-            x  = clamp(a.x + t*(b.x - a.x), 0, 1)
-            winding += direction * dy * (1 - x)
+    ifThen(height > 0):
+        slope = 1 / (b.y - a.y)
+        xLow  = a.x + (low  - a.y) * slope * (b.x - a.x)
+        xHigh = a.x + (high - a.y) * slope * (b.x - a.x)
+
+        direction = b.y > a.y ? +height : -height
+        winding  += direction * (1 - meanClampedX(xLow, xHigh))
     i += 1
 
-coverage = fillRule == NonZero ? min(abs(winding), 1)
-                               : evenOddFold(winding)
-write(output, threadPosition(), float4(colour.rgb, colour.a * coverage))
+total    = abs(winding)
+coverage = evenOdd ? triangleWave(total) : min(total, 1)
+write(target, threadPosition() + origin, float4(coverage))
 ```
 
-**Accuracy — settled, and it is the exact form.** The plan started with `x`
-sampled at the midpoint of the clipped span, on the theory that the divergence
-was too small to matter. Measured, it mattered: where an edge leaves through the
-pixel's left or right side the midpoint puts the whole ramp in one pixel when it
+**The coverage integral is exact, not sampled.** The plan started with `x` taken
+at the midpoint of the clipped span, on the theory that the divergence was too
+small to matter. Measured, it mattered: where an edge leaves through the pixel's
+left or right side, the midpoint puts the whole ramp in one pixel when it
 belongs across two, and a near-horizontal edge read visibly harder than
 CoreGraphics'.
 
 The exact form costs about ten instructions and no extra reads, because
-`clamp(x, 0, 1)` has a closed-form antiderivative — `clamp(x,0,1)²/2 +
-max(x-1, 0)` — so the mean of the clamped ramp is the difference of that at the
-span's ends over its run. `CoverageKernel::meanClampedX` is that, with the
-zero-run case selected rather than branched.
+`clamp(x, 0, 1)` has a closed-form antiderivative:
+
+```
+G(x)                 = clamp(x, 0, 1)² / 2 + max(x - 1, 0)
+meanClampedX(from, to) = |to - from| < ε ? clamp(from, 0, 1)
+                                         : (G(to) - G(from)) / (to - from)
+```
+
+`CoverageKernel::meanClampedX` is that, with the zero-run case selected rather
+than branched.
 
 ### Integration with `ui::Graphics`
 
 The kernel writes coverage into a **shared atlas texture**, not a texture per
-path. Paths then draw as textured quads sampling their own sub-rect, which
-means several paths can go out in one batch instead of forcing a texture bind
-and a batch break each.
+path. Paths draw as quads sampling their own sub-rect, so several go out in one
+batch instead of forcing a texture bind and a batch break each.
 
-That does mean `ShapeBatch` needs a textured variant of its instance — a UV
-sub-rect and a texture bind — which is the one piece of design here that
-touches committed code. Alternative considered and rejected for now: a second
-batcher for textured quads, which would reintroduce the ordering problem the
-glyph queue already has.
+`ShapeBatch` therefore carries a uv sub-rect on its instance, which is the one
+piece of design here that touched committed code. Alternative considered and
+rejected: a second batcher for textured quads, which would reintroduce the
+ordering problem the glyph queue already has.
 
-Cost model to be honest about up front: `O(bbox pixels × segments)`. A 64×64
-icon with 200 segments is 800k segment-pixel tests — nothing. A full-screen
-path with 10k segments is ~20 billion — hopeless. This rung is for UI-scale
-paths and the plan should not pretend otherwise.
+What kept it to **one pipeline** rather than two was not in the plan and is the
+nicest part of the result: texel (0,0) of the atlas is opaque, and every
+*unmasked* shape's uv is a zero-sized rect inside it. A rounded rectangle
+multiplies its distance-field coverage by one. Every shape pays a fetch of a
+texel that is in cache for the whole frame; what it buys is that a path and the
+rectangles around it never break the batch apart.
 
-### The ordering constraint, discovered in phase 3
+Cost model, honestly: `O(bbox pixels × segments)`. A 64×64 icon with 200
+segments is 800k segment-pixel tests — nothing. A full-screen path with 10k
+segments is ~20 billion — hopeless. This rung is for UI-scale paths.
 
-Not foreseen above, and it shaped the public API more than anything else here:
+### The ordering constraint
+
+Not foreseen, and it shaped the public API more than anything else here:
 **a compute pass cannot be open while a render pass is.** The atlas is written by
 compute and sampled by the render pass, so every rasterization for a frame has
 to be recorded before `beginPass` — which is before any `paint()` runs.
@@ -146,24 +205,20 @@ therefore something a widget does when its value moves, and drawing is a quad �
 which is the right shape for the cost model anyway, but it was the constraint
 that picked it, not taste.
 
-## Phases
+## Results
 
-Each phase ends with something runnable and judged before the next starts.
+Each phase ended with something runnable and judged before the next started.
 
-**1. Kernel in isolation.** — done, `Apps/GPU/PathCoverage`. A self-intersecting
+**1. Kernel in isolation** — `Apps/GPU/PathCoverage`. A self-intersecting
 five-pointed star rasterized under both fill rules: solid under non-zero, a
-pentagonal hole under even-odd. Interior coverage is exactly saturated with no
-seams where the contour crosses itself, and the edges carry 97 distinct coverage
-levels. Compute-to-render on one frame works with no fence, as documented.
+pentagonal hole under even-odd. Interior coverage exactly saturated with no
+seams where the contour crosses itself, and edges carrying 97 distinct coverage
+levels. Compute-to-render on one frame works with no fence, as documented. The
+generated MSL was read rather than assumed: the loop re-tests its condition
+correctly and nothing is hoisted wrongly.
 
-Two gaps in `eacp-gpu` had to be closed to write the kernel at all, both of them
-things the README already claimed: `ComputeProgram` did not forward the statement
-vocabulary (`var`, `ifThen`, `loop`, `breakLoop`, `continueLoop`) that
-`ShaderProgram` does, and there was no `toUInt` to cross an `Int` loop counter
-into the `UInt` a buffer subscript takes.
-
-**2. Quality comparison.** — done, `Apps/GPU/PathQuality`. A rounded rectangle
-and a circle rendered three ways side by side: this kernel (single-sampled),
+**2. Quality comparison** — `Apps/GPU/PathQuality`. A rounded rectangle and a
+circle rendered three ways side by side: this kernel (single-sampled),
 `GPUWidgets::PathView` (ear-clip + 4x MSAA), and `Graphics::Context::fillPath`
 (CoreGraphics). Measured off the screenshot, over the circle's boundary:
 
@@ -177,84 +232,78 @@ Three levels is not a measurement artefact, it is what 4x MSAA *is*: a pixel can
 only be a quarter, a half or three quarters covered. That is the finding, and it
 is why analytic coverage is worth having.
 
-Getting there took two fixes the first cut had wrong, neither of them in the
-compute design:
+Reaching it took two fixes the first cut had wrong, neither in the compute
+design:
 
-- **The exact integral**, above. The approximation was the difference between
-  "smooth" and "as smooth as the platform".
-- **Adaptive flattening.** `Path` split every curve into a fixed 24 segments
-  whatever its size, so a 512px circle was a 48-gon *inscribed* in the circle it
-  was meant to be — half a pixel small everywhere between vertices, and faceted.
-  It now subdivides to a flatness tolerance in path units (`Path::setFlatness`),
-  and `addEllipse` pushes its vertices out by half the sagitta so the polygon
-  straddles the true curve instead of sitting inside it. This is geometry, not
-  rasterization: `PathView` renders through the same `Path` and got the same
-  improvement, which is why the MSAA column above is a fair comparison rather
-  than a strawman.
+- **The exact integral**, above. The difference between "smooth" and "as smooth
+  as the platform".
+- **Adaptive flattening.** The 48-gon problem. `Path` now subdivides to a
+  flatness tolerance — from the second-difference bound for Béziers and the
+  sagitta for arcs — and `addEllipse` pushes its vertices out by half the
+  sagitta so the polygon straddles the true curve instead of sitting inside it.
+  This is geometry, not rasterization: `PathView` renders through the same
+  `Path` and got the same improvement, which is why the MSAA column above is a
+  fair comparison rather than a strawman.
 
-**3. Atlas + batching.** — done. `UI::CoverageAtlas` is one `computeWrite`
-texture with a shelf allocator; `PathRasterizer::setTarget` points the kernel at
-a rect of it. `ShapeInstance` carries a uv sub-rect, and the fragment stage
-multiplies its distance-field coverage by what it reads there.
+The diagnosis is worth keeping: the kernel and the MSAA panel had *identical*
+radial coverage profiles, both sitting ~0.15 inside CoreGraphics'. Identical
+profiles meant the difference was not antialiasing at all — it was the shape.
 
-The trick that keeps it to one pipeline: texel (0,0) of the atlas is opaque, and
-every *unmasked* shape's uv rect is a zero-sized rect inside it. So a rounded
-rectangle multiplies by one. Every shape pays a texture fetch of a texel that is
-in cache for the whole frame; what it buys is that a path and the rectangles
-around it never break the batch apart.
+**3. Atlas + batching.** `CoverageAtlas`, `PathRasterizer::setTarget`, the uv
+sub-rect on `ShapeInstance`, and the opaque-texel trick above.
 
 *Verified:* 48 knobs added to `ComponentTree` — 247 components and 7 batch
 breaks became 295 and 8. The +1 is not the paths: with `fillPath` commented out
 and the knobs still in the tree it is also 8, so it is the extra child
 straddling the scroll clip. **48 vector paths cost zero batch breaks.**
 
-**4. `ui::Graphics::fillPath`.** — done, plus `UI::Knob`.
-
-The API takes a `PathShape` the component owns, not a `Path` passed in at paint
-time, and that is forced rather than chosen: rasterizing is a compute dispatch,
-a compute pass cannot be open inside the render pass `paint()` draws into, so
-the work has to be scheduled *before* the frame. Setting the path is what
-schedules it — from `resized()` or a value change — and `ComponentHost` runs
-everything dirty at the top of the next frame, before `beginPass`. No stale
-frame, no blocking commit, and the cost model is legible in the signature.
+**4. `ui::Graphics::fillPath`** and `UI::Knob`.
 
 The knob's arc and pointer are one path with two contours, which is where
 conflation-free filling earns its keep: they overlap, and coverage accumulating
 *within* a path means the join is solid rather than seamed. Wound the same way
 round, at that — under non-zero, contours that disagree subtract, and the first
-cut punched a visible hole through the join.
+cut punched a visible hole through the join, findable only by zooming in.
 
-Slots are kept between rasterizations while the mask still fits, so a knob being
-dragged re-rasterizes every frame and allocates nothing. When the shelf does run
-out the atlas grows, or compacts once it is at its largest; either moves every
-slot, which the host answers by re-rasterizing the tree. *Verified* by resizing
-the window nine times, which re-rasterizes all 48 masks at nine different sizes:
-still correct, still 8 breaks.
+Atlas slots are kept between rasterizations while the mask still fits, so a knob
+being dragged re-rasterizes every frame and allocates nothing. When the shelf
+does run out the atlas grows, or compacts once it is at its largest; either
+moves every slot, which the host answers by re-rasterizing the tree. *Verified*
+by resizing the window nine times, which rebuilds all 48 masks at nine different
+sizes: still correct, still 8 breaks.
 
-## Risks
+**Not verified:** turning a knob by hand. Synthesising input on the development
+machine lands clicks in whatever app is frontmost, so the drag path is the one
+thing here that has been reasoned about rather than watched.
 
-- **Scalar-only buffer reads.** Four `InputBuffer` reads per segment. Likely
-  fine; if the loop turns out read-bound, packing segments into a texture and
-  using `fetch` is the fallback.
-- **Loop length is uniform across the dispatch.** Every thread walks every
-  segment, including threads far outside the path. The bbox bounds this, but a
-  path with a large bbox and few segments wastes work. Mitigation if needed:
-  scissor the dispatch to sub-rects on the CPU — which is CPU-side binning, and
-  is rung two anyway.
-- **Unknown: EDSL loop codegen quality.** `loop()` re-tests its condition
-  rather than hoisting (per the `ShaderBuilder` note). Worth reading the
-  generated MSL once in phase 1 rather than assuming.
-- **Compute-to-render in one frame** is documented as ordered without fences,
-  but this is the first consumer in `eacp-ui`. Phase 1 proves it or finds out.
+## Risks, as they turned out
+
+- **Scalar-only buffer reads** — four per segment. Never showed up. The fallback
+  (segments in a texture, read with `fetch`) was not needed and is still there
+  if a profile ever asks for it.
+- **Loop length uniform across the dispatch** — every thread walks every
+  segment, including threads far outside the path. Real, and unmeasured at UI
+  scale because it does not bite there. It is exactly what rung 2 fixes.
+- **EDSL loop codegen quality** — read the generated MSL in phase 1 rather than
+  assuming. It is fine: the condition is re-tested in the `while` header as
+  documented, and the only redundancy (a `clamp` printed twice) is something any
+  shader compiler CSEs.
+- **Compute-to-render in one frame** — held, and is now load-bearing for every
+  frame `eacp-ui` draws with a path in it.
+
+New risk the build introduced, worth naming: **the atlas has a ceiling.** It
+grows to 4096² and then compacts; a tree whose masks genuinely do not fit at
+once will have some of them missing rather than wrong. That is the honest
+failure mode, but it is silent, and the first thing to add if a real interface
+ever approaches it is a way to notice.
 
 ## Rungs above this one
 
-Recorded so the first rung is not designed into a corner:
-
 **Rung 2 — CPU-side binning.** Bin segments into tiles on the CPU, upload
-per-tile lists and offsets, kernel reads only its own tile's list. Recovers
-most of the asymptotics of the real thing and still needs **no atomics**,
-because the CPU does the appending. Probably where this should stop for a UI.
+per-tile lists and offsets, kernel reads only its own tile's list. Recovers most
+of the asymptotics of the real thing and still needs **no atomics**, because the
+CPU does the appending. Probably where this should stop for a UI — and now with
+a baseline to beat, since anything it changes has to hold the phase-2 numbers.
 
 **Rung 3 — full GPU pipeline.** Needs atomics, threadgroup memory with
 barriers, and indirect dispatch added to `eacp-gpu` first. Only worth it for
@@ -262,3 +311,7 @@ many complex overlapping paths — a DAW canvas of live automation curves, a map
 view, a vector editor, or SVG document rendering. Note that an `SVG` module
 already exists in the tree, so that last one is less hypothetical than it
 sounds.
+
+**Not a rung, but next in line if paths get used:** stroking. Every widget that
+wants an outline currently gets it from the distance field, which only knows
+rounded boxes. A stroked *path* has no route through any of this yet.
