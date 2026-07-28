@@ -2235,6 +2235,52 @@ struct ConstantArray
     int slot = -1;
 };
 
+// Memory one threadgroup has in common: every thread in the group can read and
+// write it, no thread outside can see it, and it is gone when the group is. It
+// is what lets threads cooperate instead of each doing the same read - one
+// thread fetches an element, and after a barrier every thread in the group has
+// it.
+//
+// The size is a compile-time number in both shading languages, so it is a
+// template parameter here. Nothing initialises it: what it holds before the
+// group writes it is undefined, which is why every use starts by filling it and
+// waiting.
+//
+//   auto lane = sharedArray<Float, 64>();
+//   write(lane, threadIndexInGroup(), value);
+//   barrier();
+//   auto neighbour = lane[threadIndexInGroup() ^ 1u];
+//
+// Reading one is a subscript; writing one goes through ShaderBuilder::write, on
+// the same terms a buffer or a texture does, because a write is a statement and
+// has to land where it was written.
+template <typename T, int Size>
+struct SharedArray
+{
+    T operator[](const UInt& index) const
+    {
+        auto result = T {};
+        result.graph = graph;
+        result.node = graph->addSharedRead(slot, index.node);
+        return result;
+    }
+
+    T operator[](unsigned index) const
+    {
+        assert((int) index < Size && "eacp: shared-array index out of range");
+
+        auto result = T {};
+        result.graph = graph;
+        result.node = graph->addSharedRead(slot, graph->addUIntConstant(index));
+        return result;
+    }
+
+    static constexpr int size() { return Size; }
+
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
 // uint min/max, the branchless way to clamp an index to a valid range.
 inline UInt min(const UInt& a, const UInt& b)
 {

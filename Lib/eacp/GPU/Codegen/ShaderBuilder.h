@@ -133,6 +133,35 @@ public:
         return position;
     }
 
+    // Where this thread sits inside its own threadgroup, which is what indexes
+    // a shared array. Flat on both backends whatever the dispatch rank.
+    UInt threadIndexInGroup()
+    {
+        auto value = UInt {};
+        value.graph = &graphData;
+        value.node = graphData.addThreadIndexInGroup();
+        return value;
+    }
+
+    // Threadgroup memory. Size in elements, fixed at compile time because both
+    // languages require it to be. See SharedArray.
+    template <typename T, int Size>
+    SharedArray<T, Size> sharedArray()
+    {
+        return {&graphData, graphData.addSharedArray(ValueTypeOf<T>::value, Size)};
+    }
+
+    // Every thread in the group waits here, and every write to shared memory
+    // made before it is visible to all of them after it.
+    //
+    // It must be reached by **every thread in the group or by none** - a barrier
+    // inside an ifThen that some threads take and others do not is undefined in
+    // both languages, and undefined here means a hang rather than a wrong
+    // answer. The same applies to the bounds guard the emitter writes, which is
+    // why a kernel with a barrier may only be dispatched over a whole number of
+    // groups; ComputeProgram refuses anything else.
+    void barrier() { graphData.addBarrier(); }
+
     InputBuffer inputBuffer()
     {
         return {&graphData, graphData.addStorageBuffer(BufferAccess::Read)};
@@ -232,6 +261,14 @@ public:
         graphData.addStore(buffer.slot, (base + 1u).node, value.y().node);
         graphData.addStore(buffer.slot, (base + 2u).node, value.z().node);
         graphData.addStore(buffer.slot, (base + 3u).node, value.w().node);
+    }
+
+    // One element of threadgroup memory. A statement like every other write, and
+    // it has to be: what a group is doing is deciding the order things land in.
+    template <typename T, int Size>
+    void write(const SharedArray<T, Size>& array, const UInt& index, const T& value)
+    {
+        graphData.addSharedWrite(array.slot, index.node, value.node);
     }
 
     // One texel of a kernel's output image. The coordinates are the pair a 2D

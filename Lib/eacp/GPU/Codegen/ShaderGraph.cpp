@@ -17,6 +17,7 @@ bool dependsOnMutableState(ExprKind kind)
         case ExprKind::VarRead:
         case ExprKind::BufferRead:
         case ExprKind::AtomicLoad:
+        case ExprKind::SharedRead:
         case ExprKind::Sample:
         case ExprKind::Fetch:
             return true;
@@ -34,6 +35,7 @@ bool dependsOnMutableState(ExprKind kind)
         case ExprKind::Select:
         case ExprKind::Mul:
         case ExprKind::ThreadId:
+        case ExprKind::ThreadIndexInGroup:
         case ExprKind::ArrayRead:
             return false;
     }
@@ -465,6 +467,51 @@ int ShaderGraph::addAtomicAdd(int bufferSlot, int index, int value)
     addStatement(operation);
 
     return slot;
+}
+
+int ShaderGraph::addSharedArray(ValueType elementType, int size)
+{
+    sharedArrayList.add({elementType, size});
+    return sharedArrayList.size() - 1;
+}
+
+int ShaderGraph::addSharedRead(int slot, int index)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::SharedRead;
+    node.type = sharedArrayList[slot].elementType;
+    node.index = slot;
+    node.args.add(index);
+    return add(std::move(node));
+}
+
+void ShaderGraph::addSharedWrite(int slot, int index, int value)
+{
+    auto write = Statement {StatementKind::SharedWrite};
+    write.bufferSlot = slot;
+    write.index = index;
+    write.value = value;
+    addStatement(write);
+}
+
+// Deliberately not writesResources: threadgroup memory does not outlive the
+// dispatch, so a kernel that only writes shared memory computes nothing and is
+// not what makes a graph compute. What does is asking for a thread index, and
+// nothing can index a shared array without one.
+int ShaderGraph::addThreadIndexInGroup()
+{
+    groupIndexUsed = true;
+
+    auto node = Expr {};
+    node.kind = ExprKind::ThreadIndexInGroup;
+    node.type = ValueType::UInt;
+    return add(std::move(node));
+}
+
+void ShaderGraph::addBarrier()
+{
+    barrierUsed = true;
+    addStatement(Statement {StatementKind::Barrier});
 }
 
 int ShaderGraph::addAtomicLoad(int bufferSlot, int index)

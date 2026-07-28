@@ -294,6 +294,13 @@ struct ExprPrinter
                 return element;
             }
 
+            case ExprKind::ThreadIndexInGroup:
+                return "lid";
+
+            case ExprKind::SharedRead:
+                return "s" + std::to_string(expr.index) + "[" + ref(expr.args[0])
+                       + "]";
+
             case ExprKind::ArrayRead:
                 return "a" + std::to_string(expr.index) + "[" + ref(expr.args[0])
                        + "]";
@@ -324,6 +331,7 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Fetch:
         case ExprKind::BufferRead:
         case ExprKind::AtomicLoad:
+        case ExprKind::SharedRead:
         case ExprKind::ArrayRead:
             return true;
 
@@ -334,6 +342,7 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Swizzle:
         case ExprKind::VarRead:
         case ExprKind::ThreadId:
+        case ExprKind::ThreadIndexInGroup:
             return false;
     }
 
@@ -430,6 +439,8 @@ void collectWrites(const ShaderGraph& graph,
         // stands for can have moved on under it.
         case StatementKind::Store:
         case StatementKind::TextureStore:
+        case StatementKind::SharedWrite:
+        case StatementKind::Barrier:
             return;
 
         case StatementKind::If:
@@ -697,6 +708,34 @@ struct StageEmitter
                     source +=
                         indent + name + "[" + coordinates + "] = " + color + ";\n";
 
+                break;
+            }
+
+            // Both of these give up every open name afterwards, and for the
+            // same reason: a name standing for `s0[i]` is only worth anything
+            // while nothing has written shared memory since. A write may have
+            // hit the very element, and a barrier means every other thread's
+            // writes have just landed. The alternative is asking which element,
+            // which is a question about two runtime indices.
+            case StatementKind::SharedWrite:
+            {
+                source =
+                    define({statement.value, statement.index}, indent, uses, open);
+                source += indent + "s" + std::to_string(statement.bufferSlot) + "["
+                          + printer.ref(statement.index)
+                          + "] = " + printer.ref(statement.value) + ";\n";
+                retire(open);
+                break;
+            }
+
+            case StatementKind::Barrier:
+            {
+                source = indent
+                         + (printer.backend == Backend::Metal
+                                ? "threadgroup_barrier(mem_flags::mem_threadgroup);"
+                                : "GroupMemoryBarrierWithGroupSync();")
+                         + "\n";
+                retire(open);
                 break;
             }
 
@@ -1077,6 +1116,32 @@ const char* hlslBufferType(BufferAccess access)
     return "StructuredBuffer<float>";
 }
 
+// The threadgroup arrays, spelled where each language puts them: MSL's
+// `threadgroup` is a local of the kernel function and HLSL's `groupshared` is a
+// global, so the same declaration lands on opposite sides of the entry point.
+// Neither is initialised, in either language - what a shared array holds before
+// anything writes it is undefined, which is why every use of one starts by
+// filling it and then waiting.
+std::string sharedArrayDeclarations(const ShaderGraph& graph,
+                                    Backend backend,
+                                    const std::string& indent)
+{
+    auto source = std::string {};
+
+    for (auto slot = 0; slot < graph.sharedArrays().size(); ++slot)
+    {
+        const auto& array = graph.sharedArrays()[slot];
+
+        source += indent
+                  + std::string(backend == Backend::Metal ? "threadgroup "
+                                                          : "groupshared ")
+                  + typeName(array.elementType) + " s" + std::to_string(slot) + "["
+                  + std::to_string(array.size) + "];\n";
+    }
+
+    return source;
+}
+
 // Compute kernel emission. The expression printer is the render one; only the
 // scaffolding differs: storage buffers and the uniform block are MSL kernel
 // parameters but HLSL globals, and the work-item id arrives as a builtin
@@ -1149,7 +1214,13 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         source += "constant Uniforms& uniforms [[buffer("
                   + std::to_string(ComputePass::uniformBase) + ")]],\n    ";
         source += std::string(is2D ? "uint2" : "uint")
-                  + " gid [[thread_position_in_grid]])\n{\n";
+                  + " gid [[thread_position_in_grid]]";
+
+        if (graph.usesThreadIndexInGroup())
+            source += ",\n    uint lid [[thread_index_in_threadgroup]]";
+
+        source += ")\n{\n";
+        source += sharedArrayDeclarations(graph, backend, "    ");
     }
     else
     {
@@ -1197,13 +1268,23 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         if (graph.textureCount() > 0)
             source += "\n";
 
+        source += sharedArrayDeclarations(graph, backend, "");
+
+        if (graph.sharedArrays().size() > 0)
+            source += "\n";
+
         auto groupWidth =
             is2D ? ComputePass::threadGroupSize2D : ComputePass::threadGroupWidth;
         auto groupHeight = is2D ? ComputePass::threadGroupSize2D : 1;
 
         source += "[numthreads(" + std::to_string(groupWidth) + ", "
                   + std::to_string(groupHeight) + ", 1)]\n";
-        source += "void computeMain(uint3 threadId : SV_DispatchThreadID)\n{\n";
+        source += "void computeMain(uint3 threadId : SV_DispatchThreadID";
+
+        if (graph.usesThreadIndexInGroup())
+            source += ", uint lid : SV_GroupIndex";
+
+        source += ")\n{\n";
         source +=
             is2D ? "    uint2 gid = threadId.xy;\n" : "    uint gid = threadId.x;\n";
     }

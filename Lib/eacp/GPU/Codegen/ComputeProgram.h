@@ -139,6 +139,12 @@ public:
                && "eacp: a kernel written against threadPosition() is "
                   "dispatched with dispatch(width, height)");
 
+        assert(coversWholeGroups(count, ComputePass::threadGroupWidth)
+               && "eacp: a kernel with a barrier must be dispatched over a whole "
+                  "number of threadgroups - the bounds guard returns early, and a "
+                  "thread that returns before a barrier its neighbours are waiting "
+                  "at is undefined. Round the count up and guard the writes.");
+
         const std::uint32_t extents[] = {(std::uint32_t) count};
         return packWithExtents(extents, 1);
     }
@@ -150,6 +156,11 @@ public:
         assert(dispatchRank() == DispatchRank::TwoD
                && "eacp: a kernel written against threadId() is dispatched "
                   "with dispatch(count)");
+
+        assert(coversWholeGroups(width, ComputePass::threadGroupSize2D)
+               && coversWholeGroups(height, ComputePass::threadGroupSize2D)
+               && "eacp: a kernel with a barrier must be dispatched over a whole "
+                  "number of threadgroups in both axes");
 
         const std::uint32_t extents[] = {(std::uint32_t) width,
                                          (std::uint32_t) height};
@@ -184,6 +195,18 @@ protected:
 
     UInt threadId() { return builder.threadId(); }
     ThreadPosition threadPosition() { return builder.threadPosition(); }
+    UInt threadIndexInGroup() { return builder.threadIndexInGroup(); }
+
+    // Threadgroup memory and the barrier that makes one thread's writes to it
+    // visible to the rest. See ShaderBuilder::barrier for the one rule: every
+    // thread in the group reaches it, or none does.
+    template <typename T, int Size>
+    SharedArray<T, Size> sharedArray()
+    {
+        return builder.sharedArray<T, Size>();
+    }
+
+    void barrier() { builder.barrier(); }
 
     Float constant(float value) { return builder.constant(value); }
     Bool boolean(bool value) { return builder.boolean(value); }
@@ -285,6 +308,12 @@ protected:
         builder.write(buffer, index, value);
     }
 
+    template <typename T, int Size>
+    void write(const SharedArray<T, Size>& array, const UInt& index, const T& value)
+    {
+        builder.write(array, index, value);
+    }
+
     // One texel of a kernel's output image, at the coordinates a 2D kernel
     // already has in hand from threadPosition().
     void write(const WritableTexture2D& texture,
@@ -302,6 +331,14 @@ protected:
     virtual void define() = 0;
 
 private:
+    // Only a kernel that waits for its group is held to this: every other one is
+    // free to be dispatched over any count at all, the guard simply retiring the
+    // threads past the end.
+    bool coversWholeGroups(int extent, int groupSize) const
+    {
+        return !generated.usesBarriers || extent % groupSize == 0;
+    }
+
     const void* packWithExtents(const std::uint32_t* extents, int count)
     {
         uniformBytes.clear();

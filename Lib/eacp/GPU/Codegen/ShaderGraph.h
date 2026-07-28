@@ -47,6 +47,13 @@ enum class ExprKind
     ThreadId, // compute work-item id; emitted as the kernel's gid parameter.
     // index is the component: a 1D kernel has only 0 and prints the whole gid,
     // a 2D one prints gid.x or gid.y.
+    ThreadIndexInGroup, // where this thread sits inside its own threadgroup,
+    // which is what indexes a shared array. Flat on both backends whatever the
+    // dispatch rank - MSL's thread_index_in_threadgroup and HLSL's
+    // SV_GroupIndex are both a single number.
+    SharedRead, // one element of a threadgroup array; index = array slot,
+    // args = {index}. Impure like a buffer read, and rather more so: what it
+    // evaluates to depends on what *other* threads have written.
     BufferRead, // storage-buffer element read; index = buffer slot, args = {index}
     AtomicLoad, // one element of an atomic buffer; index = buffer slot,
     // args = {index}. An expression on both backends, unlike the add - MSL
@@ -109,6 +116,10 @@ enum class StatementKind
     Continue,
     Store, // buffer[index] = value; bufferSlot = the buffer
     TextureStore, // texture[index, indexY] = value; bufferSlot = the texture
+    SharedWrite, // shared[index] = value; bufferSlot = the threadgroup array
+    Barrier, // every thread in the group waits here, and every write to shared
+    // memory made before it is visible to all of them after it. Carries no
+    // operands: it is the statement whose whole content is where it is.
     AtomicAdd // vN = atomicAdd(buffer[index], value), declaring vN. slot = the
     // variable the value *before* the add lands in, bufferSlot / index = which
     // element, value = what is added.
@@ -156,6 +167,22 @@ struct ArrayConstant
 {
     ValueType elementType = ValueType::Float;
     Vector<int> elements; // expression nodes, one per element
+};
+
+// A threadgroup-shared array: memory one dispatch group has in common, which
+// every thread in it may read and write and no thread outside it can see. It is
+// a declaration like ArrayConstant and unlike it in every other way - the size
+// is a compile-time number rather than a list of expressions, nothing
+// initialises it, and what it holds at any moment is whatever the group last
+// put there.
+//
+// The two backends do not even declare it in the same place: MSL's `threadgroup`
+// is a local of the kernel function, HLSL's `groupshared` is a global. See the
+// emitter.
+struct ArrayShared
+{
+    ValueType elementType = ValueType::Float;
+    int size = 0;
 };
 
 // One node in the shader expression tree. Plain data referenced by integer id so
@@ -293,6 +320,28 @@ public:
     int addAtomicAdd(int bufferSlot, int index, int value);
     int addAtomicLoad(int bufferSlot, int index);
 
+    // Threadgroup memory: the array, an element read, an element write, the
+    // group-local thread index that indexes it, and the barrier that makes one
+    // thread's writes visible to the rest.
+    int addSharedArray(ValueType elementType, int size);
+    int addSharedRead(int slot, int index);
+    void addSharedWrite(int slot, int index, int value);
+    int addThreadIndexInGroup();
+    void addBarrier();
+
+    const Vector<ArrayShared>& sharedArrays() const { return sharedArrayList; }
+
+    // Whether the kernel asked where a thread sits in its group, which is what
+    // decides the entry point takes the extra parameter that says.
+    bool usesThreadIndexInGroup() const { return groupIndexUsed; }
+
+    // Whether it waits for its group anywhere, which constrains how it may be
+    // dispatched: the emitted bounds guard returns early, and a thread that
+    // returns before a barrier its neighbours are still waiting at is undefined
+    // in both languages. So a kernel with one is dispatched over a whole number
+    // of groups - see ComputeProgram, which refuses anything else.
+    bool usesBarriers() const { return barrierUsed; }
+
     void setPosition(int node) { positionNode = node; }
     void setFragment(int node) { fragmentNode = node; }
 
@@ -392,6 +441,7 @@ private:
     Vector<TextureSampling> textureSamplings;
     Vector<TextureAccess> textureAccesses; // parallel to textureSamplings
     Vector<ArrayConstant> arrayConstants;
+    Vector<ArrayShared> sharedArrayList;
 
     Vector<ValueType> variableTypes;
     Vector<Statement> statementList;
@@ -405,6 +455,8 @@ private:
     // block it was recorded in, which is the whole point - one emitted after the
     // statements instead would run whatever the ifThen around it decided.
     bool writesResources = false;
+    bool groupIndexUsed = false;
+    bool barrierUsed = false;
     int positionNode = -1;
     int fragmentNode = -1;
     int discardNode = -1;
