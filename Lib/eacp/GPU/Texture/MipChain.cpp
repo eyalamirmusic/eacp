@@ -12,12 +12,19 @@ namespace
 // extent the chain has already halved down past the last pair, so the second
 // row or column clamps back onto the first and the block is a 2x1, 1x2 or 1x1 -
 // which is the same rule both APIs' own generators use.
-struct Block
+//
+// Named for what it holds rather than just `Block`, and that is not a style
+// preference: eacp builds as a unity build by default, so every .cpp in a
+// target is concatenated into one translation unit and an anonymous namespace
+// does not separate this file from ShaderGraph.cpp, which has a `Block` of its
+// own. The collision is invisible in the non-unity build CLAUDE.md tells you to
+// configure locally, and is a compile error in CI.
+struct TexelBlock
 {
     int x0, x1, y0, y1;
 };
 
-Block blockFor(int x, int y, int sourceWidth, int sourceHeight)
+TexelBlock texelBlockFor(int x, int y, int sourceWidth, int sourceHeight)
 {
     const auto x0 = x * 2;
     const auto y0 = y * 2;
@@ -45,7 +52,7 @@ void halveBytes(const std::uint8_t* source,
     {
         for (auto x = 0; x < destinationWidth; ++x)
         {
-            const auto block = blockFor(x, y, sourceWidth, sourceHeight);
+            const auto block = texelBlockFor(x, y, sourceWidth, sourceHeight);
 
             for (auto channel = 0; channel < channels; ++channel)
             {
@@ -83,7 +90,7 @@ void halveFloats(const std::uint8_t* source,
     for (auto y = 0; y < destinationHeight; ++y)
         for (auto x = 0; x < destinationWidth; ++x)
         {
-            const auto block = blockFor(x, y, sourceWidth, sourceHeight);
+            const auto block = texelBlockFor(x, y, sourceWidth, sourceHeight);
 
             for (auto channel = 0; channel < channels; ++channel)
             {
@@ -123,7 +130,7 @@ void halveHalves(const std::uint8_t* source,
     for (auto y = 0; y < destinationHeight; ++y)
         for (auto x = 0; x < destinationWidth; ++x)
         {
-            const auto block = blockFor(x, y, sourceWidth, sourceHeight);
+            const auto block = texelBlockFor(x, y, sourceWidth, sourceHeight);
 
             for (auto channel = 0; channel < channels; ++channel)
             {
