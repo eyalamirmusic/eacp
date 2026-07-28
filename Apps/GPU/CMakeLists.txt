@@ -26,6 +26,10 @@ add_subdirectory(PathCoverage)
 # The same shapes filled three ways side by side - that kernel, ear clipping
 # under 4x MSAA, and the platform's own rasterizer.
 add_subdirectory(PathQuality)
+
+# Strokes as fills: overlapping quads, joins and caps unioned by the non-zero
+# rule, next to the platform's own stroker.
+add_subdirectory(PathStroke)
 add_subdirectory(Texture)
 add_subdirectory(Maze)
 add_subdirectory(Sprites)

@@ -1,4 +1,4 @@
-#include <eacp/GPUWidgets/GPUWidgets.h>
+#include "CoverageProbe.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -22,6 +22,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPUWidgets;
+using eacp::GPUWidgets::probe::rasterize;
 
 namespace
 {
@@ -213,94 +214,6 @@ Path thinDiagonal(float width, float height)
 }
 
 // -------------------------------------------------------------------- harness
-
-// Copies the mask into a buffer the CPU can read, one float per texel.
-//
-// Drawing it and reading the pixels back instead would put a whole compositor
-// between the kernel and the check - an alpha blend, a premultiply, and the
-// display's transfer function, which alone bends a coverage of 0.61 into 0.80.
-// None of that is what is under test, so none of it is in the way: the fetch
-// reads the texel the kernel wrote, and commit() blocks until it exists.
-struct MaskReadKernel final : GPU::ComputeProgram
-{
-    MaskReadKernel() { compile(); }
-
-    void define() override
-    {
-        auto texel = threadPosition();
-        auto value = fetch(mask, float2(toFloat(texel.x), toFloat(texel.y)));
-
-        write(coverage, texel.y * maskWidth + texel.x, value.x());
-    }
-
-    GPU::Uniform<GPU::Texture2D> mask;
-    GPU::Uniform<GPU::OutputBuffer> coverage;
-    GPU::Uniform<GPU::UInt> maskWidth;
-
-    EACP_SHADER(mask, coverage, maskWidth)
-};
-
-// One per process, like the coverage kernel itself: building a library and a
-// pipeline per test would be most of the suite's time.
-MaskReadKernel& maskReader()
-{
-    struct Prepared
-    {
-        Prepared() { kernel.prepare(); }
-
-        MaskReadKernel kernel;
-    };
-
-    static auto prepared = Prepared {};
-    return prepared.kernel;
-}
-
-// Rasterizes a path and hands back the coverage the kernel wrote, texel for
-// texel. Nothing here needs a window, which is what lets it run anywhere the
-// suite does.
-Vector<float> rasterize(PathRasterizer& rasterizer,
-                        const Path& path,
-                        float scale,
-                        FillRule rule)
-{
-    auto coverage = Vector<float> {};
-
-    rasterizer.setScale(scale);
-    rasterizer.setPath(path, rule);
-
-    if (rasterizer.isEmpty())
-        return coverage;
-
-    auto width = rasterizer.getCoverageWidth();
-    auto height = rasterizer.getCoverageHeight();
-    auto bytes = sizeof(float) * (std::size_t) (width * height);
-
-    auto readback = GPU::Buffer {
-        GPU::Device::shared(), nullptr, bytes, GPU::BufferUsage::Storage};
-
-    auto commands = GPU::Device::shared().makeCommandBuffer();
-
-    {
-        auto pass = commands.beginCompute();
-        rasterizer.dispatch(pass);
-    }
-
-    {
-        auto& reader = maskReader();
-        reader.mask = rasterizer.getCoverage();
-        reader.coverage = readback;
-        reader.maskWidth = (std::uint32_t) width;
-
-        auto pass = commands.beginCompute();
-        pass.dispatch(reader, width, height);
-    }
-
-    commands.commit();
-
-    coverage.resize(width * height);
-    readback.read(coverage.data(), bytes);
-    return coverage;
-}
 
 struct Comparison
 {

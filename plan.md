@@ -1,17 +1,28 @@
-# Compute coverage rasterizer — rungs one and two
+# Compute coverage rasterizer
 
 A GPU path rasterizer for `eacp-ui` that computes antialiasing coverage
 analytically in a compute kernel, rather than approximating it with
 multisampling or avoiding it with stencil-then-cover.
 
-**Both rungs shipped.** This document is the record of them as built, kept
-beside the rungs above so the next one is not designed from memory. Where a plan
-turned out wrong the original claim is left in and corrected rather than quietly
-deleted — those are the useful parts.
+**Everything below has shipped.** This document is the record of it as built,
+kept beside the rungs above so the next one is not designed from memory. Where a
+plan turned out wrong the original claim is left in and corrected rather than
+quietly deleted — those are the useful parts, and there is one in each section.
 
-Rung one was the **cut-down version**: per-pixel direct evaluation, no tiling,
-no binning. The smallest thing that produces a real artifact to judge. Rung two
-put the binning in, and is written up at the end.
+Three pieces, in the order they were built:
+
+- **Rung 1 — direct per-pixel evaluation.** The cut-down version: no tiling, no
+  binning, one thread walking every segment. The smallest thing that produces a
+  real artifact to judge, and it answered the quality question before anything
+  was spent on making it scale.
+- **Rung 2 — CPU-side binning.** A thread walks the outline near its own pixel
+  instead of the whole of it. The picture does not change; what changes is that a
+  path is priced by its outline rather than by its area.
+- **Stroking.** Not a rung — no new machinery, and coverage is computed exactly
+  as before. It is the capability that was missing, and it falls out of the one
+  property this rasterizer already had.
+
+The last section of each says what that piece got wrong.
 
 # Rung 1 — direct per-pixel evaluation
 
@@ -437,11 +448,12 @@ touches what a dispatch costs and not what a draw does.
 - **The tests were checked against deliberately broken binning**, because a
   test that cannot fail is not evidence. A backdrop column off by one, and a
   tile run one column short: 6 of the 7 tests fail on each.
-- **Not verified: the knobs on screen.** The machine locked partway through and
-  `ComponentTree` could not be screenshotted after the change. Its own reported
-  figures are unchanged, and the knob indicator is checked pixel-for-pixel at
-  nine sizes and five values by the new test — which covers the resize and drag
-  paths better than a screenshot would — but nobody has looked at it.
+- **The knobs on screen**, which the machine locking mid-run had left as the one
+  thing reasoned about rather than watched. Since looked at: 48 of them, 295
+  components, 8 batch breaks, and the arc-pointer join solid under magnification
+  with no seam and no hole. Worth keeping the method: the window was occluded, so
+  `screencapture -l <windowID>` (id from `CGWindowListCopyWindowInfo`) got it
+  without raising the window and stealing focus from whatever was in front.
 
 ## Rungs above this one
 
@@ -454,9 +466,137 @@ sounds. Rung two moves the bar it has to clear a long way: the automation-curve
 case above is now 375k segment-pixel tests, and a GPU pipeline has to beat that
 *including* what its own binning stages cost.
 
-**Not a rung, but next in line if paths get used:** stroking. Every widget that
-wants an outline currently gets it from the distance field, which only knows
-rounded boxes. A stroked *path* has no route through any of this yet.
+**Stroking** was next in line, and is done — see below.
 
 **The atlas ceiling** is still the silent failure named at the end of rung one,
-and rung two did not touch it.
+and neither rung two nor stroking touched it. It is now the only thing left on
+this list that is known to be wrong rather than merely absent.
+
+# Stroking
+
+**Shipped.** Not a rung — it adds no machinery to the rasterizer and changes
+nothing about how coverage is computed. It is the capability that was missing:
+before it, the only outline a widget could draw came from the distance field,
+which knows rounded boxes and nothing else.
+
+## What shipped
+
+`eacp-gpuwidgets`
+
+- `StrokeStyle`, `LineCap` (butt / round / square), `LineJoin` (miter / round /
+  bevel, with a miter limit).
+- `strokeToFill` — a stroke as a path to fill.
+
+`eacp-ui`
+
+- `PathShape::setStroke`, which converts and stores. It forces non-zero rather
+  than taking the rule, for the reason below.
+
+`Tests/GPUWidgets` — `PathStrokerTests.cpp`, and `CoverageProbe.h`, which is the
+mask read-back lifted out of the rung-two tests so both files use it.
+
+Demo: `Apps/GPU/PathStroke`.
+
+## Why there is no offset outline
+
+Stroking properly means offsetting each side of the path, resolving the joins,
+and unioning the pieces — and the union is the hard part, the one that needs
+line-line intersection and self-intersection removal.
+
+None of that is needed here. **Coverage accumulates within a path**, and under
+the non-zero rule overlapping contours saturate rather than fight. So the stroke
+is emitted as the pieces it is made of — a quad per segment, a join per corner,
+a cap per open end — each its own closed contour, all overlapping, and the fill
+does the union. The thing the rasterizer was already good at is exactly the thing
+that removes the hard half of stroking.
+
+What it costs is that **every contour must wind the same way**. Two that disagree
+subtract, so a join wound backwards does not look wrong — it removes the corner
+it was there to fill. That is the same trap the knob fell into in rung one, so
+rather than write the rule down again, the emitter measures each contour's signed
+area and reverses it if it disagrees. No call site spells a winding.
+
+It also means a stroked path **must** be filled non-zero. Under even-odd every
+overlap between two pieces would read as a hole. `setStroke` does not offer the
+choice; `strokeToFill` says so loudly and cannot enforce it.
+
+## What the plan got wrong
+
+**"Skip the join when the corner is nearly straight."** The first cut skipped a
+join when a bevel and a round join differed by less than the flattening
+tolerance — which on a flattened curve is every corner, and looked like a huge
+saving.
+
+It was a misread of which gap was which. `half·(1 − cos(τ/2))` is how far a
+*bevel* falls short of a *round* join, and it is tiny. Leaving the corner out
+entirely leaves the whole bevel triangle empty, and that runs from the outer edge
+all the way down to the vertex: narrow, but as deep as the stroke is wide. On a
+circle of 84 segments it is 84 slits, and it read as spokes.
+
+Caught by measuring coverage against distance rather than by looking: pixels
+*deep inside* a ribbon of half-width 2.5 were coming back at 0.85–0.99 instead of
+1.0, in a pattern that tracked the vertex spacing. The fix keeps the saving and
+drops the bug — a smooth corner is **beveled** rather than skipped, three points
+instead of a 23-point disc:
+
+| | contours for an 84-segment circle | deepest unsaturated pixel |
+|---|---|---|
+| join skipped | 84 | 2.37 of 2.5, at 0.988 |
+| bevel substituted | 168 | 0.29 of 2.5 — the antialiased band |
+
+## Results
+
+Against `Graphics::Context::strokePath` (CoreGraphics), identical geometry, 9pt
+wide, miter join and butt cap, over the 27,729 pixels either side calls partial:
+
+| | |
+|---|---|
+| distinct coverage levels | 203 (CoreGraphics 256) |
+| mean abs. difference, boundary pixels | 0.0153 |
+| mean abs. difference, whole panel | 0.00098 |
+| total ink | −0.54% |
+
+The panels are registered to the pixel — checked by shifting one against the
+other, and ±0 in both axes is the minimum.
+
+**Where the difference is, and it is not the stroker.** Broken out by shape, the
+corners agree to 0.008 and the cubic to 0.044. That is flattening: `strokeToFill`
+receives a path that is *already* a polyline, and offsetting amplifies its error
+— on the outside of a bend of radius r the sagitta grows by (r + width/2)/r, and
+both edges carry it. Tightening the source path's flatness by ten confirms it:
+
+| | zigzag | cubic | rounded rect | overall |
+|---|---|---|---|---|
+| default flatness (0.05) | 0.0083 | 0.0442 | 0.0099 | 0.0153 |
+| a tenth of it | 0.0051 | 0.0102 | 0.0065 | 0.0066 |
+
+and pixels differing by more than 0.3 go from 263 to zero.
+
+So **a stroke wants a tighter flatness than a fill does**, and nothing in
+`strokeToFill` can supply it: by the time it sees the path, the curve is gone.
+The default was tuned for fills and is left alone — it is a `Path` property, and
+paying for it on every fill to serve strokes is the wrong trade. It is documented
+on `strokeToFill` and on `PathShape::setStroke` instead, with these numbers.
+
+*Verified* besides: every contour of every shape under every join and cap winds
+the same way and is closed; a round-joined, round-capped stroke matches the
+distance field its geometry defines, per pixel, with no pixel inside it unfilled
+and none outside it filled; caps reach exactly as far as they should and a closed
+sub-path ignores them; the miter limit turns a hairpin over; a zero-length
+sub-path is a dot under round and square caps and nothing under butt.
+
+*Verified by eye*: the three joins are three different corners at a 50-degree
+chevron. Worth saying because the first version of that demo used a hairpin, and
+all three came out as bevels — correct, since the miter limit was doing its job,
+and useless as a demonstration.
+
+## Still not done
+
+- **Dashing.** No dash array, no phase. It is a different operation — cutting the
+  polyline before stroking it — and nothing here anticipates it.
+- **Variable width.** One width for the whole path.
+- **Stroking with a transform.** A non-uniform scale should stroke an ellipse's
+  pen, not a circle's. Everything here assumes a round pen in path units.
+- **The overlap is real work.** A stroke is 2–3× the contours of the path it came
+  from, and every overlapping piece is a segment every pixel in its tile tests.
+  Rung two is what makes that affordable; it was not, before.

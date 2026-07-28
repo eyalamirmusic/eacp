@@ -22,6 +22,15 @@ void PathShape::setPath(const GPUWidgets::Path& newPath, GPUWidgets::FillRule ru
     dirty = true;
 }
 
+void PathShape::setStroke(const GPUWidgets::Path& newPath,
+                          const GPUWidgets::StrokeStyle& style)
+{
+    // Non-zero and not the caller's choice: a stroke reaches the kernel as
+    // overlapping pieces, and under even-odd every overlap between them would
+    // read as a hole.
+    setPath(GPUWidgets::strokeToFill(newPath, style), GPUWidgets::FillRule::NonZero);
+}
+
 void PathShape::clear()
 {
     path.clear();
