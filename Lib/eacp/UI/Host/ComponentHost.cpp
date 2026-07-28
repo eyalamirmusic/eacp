@@ -91,7 +91,9 @@ void ComponentHost::resized()
     }
     else
     {
-        shapes.emplace(Point {bounds.w, bounds.h}, backingScale(), sampleCount());
+        paths.emplace();
+        shapes.emplace(
+            *paths, Point {bounds.w, bounds.h}, backingScale(), sampleCount());
     }
 
     if (root != nullptr)
@@ -125,6 +127,80 @@ void ComponentHost::paintComponent(Component& component, Graphics& g)
     component.paintOverChildren(g);
 }
 
+void ComponentHost::markAllPathsDirty(Component& component)
+{
+    for (auto* shape: component.getPathShapes())
+        shape->invalidate();
+
+    for (auto* child: component.getChildren())
+        markAllPathsDirty(*child);
+}
+
+void ComponentHost::rasterizeDirtyPaths(Component& component,
+                                        GPU::ComputePass& pass,
+                                        bool& atlasMoved)
+{
+    for (auto* shape: component.getPathShapes())
+    {
+        if (!shape->isDirty())
+            continue;
+
+        shape->rasterize(*paths, backingScale(), pass);
+
+        // Growing or compacting the atlas relocates every slot already handed
+        // out, so everything rasterized before this one now points at the wrong
+        // texels. Reported up rather than fixed here, because the fix is to
+        // start the whole walk again against the new layout.
+        if (paths->takeMovedFlag())
+            atlasMoved = true;
+    }
+
+    for (auto* child: component.getChildren())
+        rasterizeDirtyPaths(*child, pass, atlasMoved);
+}
+
+// Every path whose geometry changed since the last frame, drawn into the shared
+// atlas on this frame's own command buffer.
+//
+// It has to be here, before beginPass: a compute pass and a render pass cannot
+// be open at once, and the render pass is what samples the atlas. Which is also
+// why a path is set from resized() or a value change and never from paint() --
+// by the time this runs, everything dirty for this frame is already known, so
+// the mask a component draws is this frame's rather than the last one's.
+void ComponentHost::rasterizePaths(GPU::Frame& frame)
+{
+    if (root == nullptr || !paths.has_value())
+        return;
+
+    if (backingScale() != lastPathScale)
+    {
+        // Coverage is rasterized in device pixels, so a move to a display of a
+        // different scale makes every mask the wrong size for what samples it.
+        lastPathScale = backingScale();
+        markAllPathsDirty(*root);
+    }
+
+    // Twice at most. The first pass may move the atlas under what it has already
+    // placed, and the second runs against the layout that came out of it. A
+    // third would only be needed if the whole tree's masks could not fit in one
+    // atlas at all, and then the honest outcome is that the ones that did not
+    // fit are missing rather than that the frame never ends.
+    for (auto attempt = 0; attempt < 2; ++attempt)
+    {
+        auto atlasMoved = false;
+
+        {
+            auto compute = frame.beginCompute();
+            rasterizeDirtyPaths(*root, compute, atlasMoved);
+        }
+
+        if (!atlasMoved)
+            return;
+
+        markAllPathsDirty(*root);
+    }
+}
+
 void ComponentHost::render(GPU::Frame& frame)
 {
     auto bounds = getLocalBounds();
@@ -147,6 +223,8 @@ void ComponentHost::render(GPU::Frame& frame)
     // invalidation on its way out -- so anything derived from the tree has to be
     // ready before the tree is drawn, not after.
     lastComponentCount = root->countComponentsInTree();
+
+    rasterizePaths(frame);
 
     auto pass = frame.beginPass({background});
     shapes->begin(pass);

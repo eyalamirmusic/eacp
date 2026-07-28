@@ -4,12 +4,20 @@
 
 // A lightweight component tree in a single GPUView.
 //
-// What it is here to show is the cost model. Every strip below is four
-// components -- a name, a fader and two toggles -- inside a scrolling panel
-// inside a root, and the footer reports how many components that came to and
-// how many times the renderer had to break its batch to draw them. The second
-// number stays in single figures while the first runs into the hundreds,
-// because a component is not a native view and drawing one is queueing a quad.
+// What it is here to show is the cost model. Every strip below is five
+// components -- a name, a rotary knob, a fader and two toggles -- inside a
+// scrolling panel inside a root, and the footer reports how many components
+// that came to and how many times the renderer had to break its batch to draw
+// them. The second number stays in single figures while the first runs into the
+// hundreds, because a component is not a native view and drawing one is queueing
+// a quad.
+//
+// The knobs are the interesting ones. A knob's arc and pointer are a vector
+// path, rasterized to exact per-pixel coverage by a compute kernel into a shared
+// atlas -- so drawing one is also just a quad, and adding forty-eight of them to
+// this tree does not add a single batch break. That is what the shared atlas
+// buys: a coverage texture per path would have made each knob its own texture
+// bind and its own draw.
 //
 // Scroll the list to see clipping: rows are cut at the panel's edge without the
 // panel doing anything about it, since paint() is handed a Graphics already
@@ -41,7 +49,11 @@ struct ChannelStrip final : UI::Component
         solo.setToggleable(true);
         solo.setAccentColour({0.45f, 0.80f, 0.45f, 1.f});
 
+        pan.setValue(0.15f
+                     + 0.7f * static_cast<float>((indexToUse * 61) % 100) / 100.f);
+
         addAndMakeVisible(name);
+        addAndMakeVisible(pan);
         addAndMakeVisible(level);
         addAndMakeVisible(mute);
         addAndMakeVisible(solo);
@@ -72,11 +84,15 @@ struct ChannelStrip final : UI::Component
         name.setBounds(area.removeFromLeft(150.f));
         area.removeFromLeft(10.f);
 
+        pan.setBounds(area.removeFromLeft(area.h));
+        area.removeFromLeft(10.f);
+
         level.setBounds(area);
     }
 
     int index;
     UI::Label name;
+    UI::Knob pan;
     UI::Slider level;
     UI::Button mute {"Mute"};
     UI::Button solo {"Solo"};

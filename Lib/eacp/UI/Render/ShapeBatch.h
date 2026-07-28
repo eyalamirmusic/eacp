@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Common.h"
+#include "CoverageAtlas.h"
 
 namespace eacp::UI
 {
@@ -36,6 +37,13 @@ struct ShapeInstance
     // zero per fragment to answer a question settled per shape is work, and the
     // fourth slot was going spare anyway.
     float shape[4];
+
+    // The rect of the coverage atlas this shape's own coverage is multiplied
+    // by, as u, v, width, height. A vector path is a box masked by the coverage
+    // a kernel computed for it; everything else points at the atlas's opaque
+    // texel and is multiplied by one. See CoverageAtlas for why one pipeline
+    // does both.
+    float mask[4];
 };
 
 // Draws rounded rectangles, borders and lines, batched and instanced.
@@ -58,10 +66,17 @@ struct ShapeInstance
 class ShapeBatch : public GPU::RenderPass::Participant
 {
 public:
+    // atlas is the coverage texture every shape samples -- a path for its own
+    // mask, everything else for the opaque texel that multiplies by one. Taken
+    // by reference rather than settable, because the fragment stage always
+    // reads it: a batch without one could not draw at all, so there is no
+    // useful state in which it is absent.
+    //
     // logicalSize is the space draws are expressed in; pixelScale is device
     // pixels per point, which sets how wide the antialiasing ramp is. Both are
     // uniforms, so a resize sets them rather than rebuilding anything.
-    ShapeBatch(Point logicalSizeToUse,
+    ShapeBatch(const CoverageAtlas& atlasToUse,
+               Point logicalSizeToUse,
                float pixelScaleToUse,
                int sampleCountToUse,
                GPU::PixelFormat colorFormatToUse = GPU::PixelFormat::BGRA8Unorm);
@@ -94,6 +109,15 @@ public:
     // tall.
     void drawLine(Point a, Point b, const Color& color, float thickness = 1.f);
 
+    // A rect painted through a coverage mask: the atlas rect `maskUV` decides
+    // how much of `color` each pixel gets. This is how a vector path draws, and
+    // it joins the same batch as everything above it -- which is the whole
+    // reason the mask lives in a shared atlas rather than a texture of its own.
+    //
+    // The rect is the mask's own footprint and takes no antialiasing margin: the
+    // mask already carries its own soft edge, and the box around it is square.
+    void fillMask(const Rect& rect, const Color& color, const Rect& maskUV);
+
 private:
     struct Program;
 
@@ -114,6 +138,10 @@ private:
                              const Color& color,
                              float cornerRadius,
                              float borderWidth);
+
+    static void setMask(ShapeInstance& instance, const Rect& maskUV);
+
+    const CoverageAtlas& atlas;
 
     Point logicalSize;
     float pixelScale = 1.f;

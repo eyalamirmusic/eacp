@@ -90,7 +90,15 @@ struct CoverageKernel final : GPU::ComputeProgram
         // this is, but R8Unorm is outside the set a typed UAV store is
         // guaranteed for - see supportsComputeWrite - so the texture is RGBA8
         // and whoever samples it reads whichever channel it likes.
-        write(coverage, pixel.x, pixel.y, float4(value, value, value, value));
+        //
+        // The origin is what lets several paths share one texture: the grid is
+        // dispatched over this path's own size and the segments arrive in its
+        // own space, so only the write moves. Two adds per thread, against
+        // giving every path a texture and every draw a bind of its own.
+        write(coverage,
+              pixel.x + originX,
+              pixel.y + originY,
+              float4(value, value, value, value));
     }
 
     // The mean of clamp(x, 0, 1) as x runs linearly from one value to the
@@ -129,7 +137,9 @@ struct CoverageKernel final : GPU::ComputeProgram
     GPU::Uniform<GPU::WritableTexture2D> coverage;
     GPU::Uniform<GPU::Int> segmentCount;
     GPU::Uniform<GPU::Int> evenOdd; // 0 = non-zero fill rule, 1 = even-odd
+    GPU::Uniform<GPU::UInt> originX; // where this path sits in the target
+    GPU::Uniform<GPU::UInt> originY;
 
-    EACP_SHADER(segments, coverage, segmentCount, evenOdd)
+    EACP_SHADER(segments, coverage, segmentCount, evenOdd, originX, originY)
 };
 } // namespace eacp::GPUWidgets

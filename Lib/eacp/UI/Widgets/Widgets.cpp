@@ -247,6 +247,193 @@ void Slider::mouseUp(const MouseEvent&)
     repaint();
 }
 
+namespace
+{
+// Where the arc starts and how far it sweeps: the usual rotary gap at the
+// bottom, so full and empty are visibly different positions rather than the
+// same one. Measured clockwise from straight up, in the y-down space paths are
+// authored in.
+constexpr auto knobStartAngle = -0.75f * GPUWidgets::pi;
+constexpr auto knobSweepAngle = 1.5f * GPUWidgets::pi;
+
+// Points per unit of drag. A full sweep in about two hundred pixels of travel,
+// which is fine enough to set a value and coarse enough to reach both ends.
+constexpr auto knobDragRange = 200.f;
+
+Point onCircle(Point centre, float radius, float angle)
+{
+    return {centre.x + std::sin(angle) * radius,
+            centre.y - std::cos(angle) * radius};
+}
+
+// A ring segment as a closed contour: out along the start radius, round the
+// outside, back down the end radius, and round the inside the other way.
+void addArc(GPUWidgets::Path& path,
+            Point centre,
+            float innerRadius,
+            float outerRadius,
+            float fromAngle,
+            float toAngle)
+{
+    auto sweep = toAngle - fromAngle;
+
+    if (sweep <= 0.f || outerRadius <= innerRadius)
+        return;
+
+    // Enough steps that the flattening tolerance decides the smoothness rather
+    // than this does - Path subdivides curves adaptively, but an arc built out
+    // of lineTo has only what it is given.
+    auto steps = std::max(8, (int) std::ceil(sweep * outerRadius * 0.5f));
+
+    path.moveTo(onCircle(centre, outerRadius, fromAngle));
+
+    for (auto i = 1; i <= steps; ++i)
+        path.lineTo(onCircle(
+            centre, outerRadius, fromAngle + sweep * (float) i / (float) steps));
+
+    for (auto i = steps; i >= 0; --i)
+        path.lineTo(onCircle(
+            centre, innerRadius, fromAngle + sweep * (float) i / (float) steps));
+
+    path.close();
+}
+} // namespace
+
+Knob::Knob()
+{
+    setInterceptsMouseClicks(true);
+    setMouseCursor(eacp::Graphics::MouseCursor::ResizeUpDown);
+}
+
+void Knob::setValue(float newValue)
+{
+    auto clamped = std::clamp(newValue, 0.f, 1.f);
+
+    if (clamped == value)
+        return;
+
+    value = clamped;
+    rebuildIndicator();
+    onValueChange(value);
+    repaint();
+}
+
+void Knob::setAccentColour(const Color& colour)
+{
+    accent = colour;
+    repaint();
+}
+
+void Knob::resized()
+{
+    rebuildIndicator();
+}
+
+// Built here rather than in paint(), because rasterizing coverage is a compute
+// dispatch and a compute pass cannot be opened inside the render pass paint()
+// draws into. Called whenever the geometry changes -- which is what the value
+// changing means for a rotary control -- so the mask the next frame samples is
+// always the current one. See PathShape.
+void Knob::rebuildIndicator()
+{
+    auto bounds = getLocalBounds();
+    auto size = std::min(bounds.w, bounds.h);
+
+    if (size <= 0.f)
+    {
+        indicator.clear();
+        return;
+    }
+
+    auto centre = Point {bounds.w * 0.5f, bounds.h * 0.5f};
+    auto outer = size * 0.5f - 1.f;
+    auto thickness = std::max(2.f, size * 0.12f);
+
+    auto path = GPUWidgets::Path {};
+
+    addArc(path,
+           centre,
+           outer - thickness,
+           outer,
+           knobStartAngle,
+           knobStartAngle + knobSweepAngle * value);
+
+    // The pointer, as a second contour of the same path: one shape, one mask,
+    // one quad -- and no seam where it crosses the arc, since coverage
+    // accumulates within a path rather than between two draws of one.
+    //
+    // Wound the same way round as the arc, and that is load-bearing rather than
+    // tidy: under the non-zero rule two contours that disagree *subtract* where
+    // they overlap, so the wrong order here punches a hole through the join
+    // instead of merging with it.
+    auto pointerWidth = std::max(1.5f, size * 0.045f);
+    auto angle = knobStartAngle + knobSweepAngle * value;
+    auto tip = onCircle(centre, outer - thickness * 0.5f, angle);
+    auto across =
+        Point {std::cos(angle) * pointerWidth, std::sin(angle) * pointerWidth};
+
+    path.moveTo({centre.x - across.x, centre.y - across.y});
+    path.lineTo({tip.x - across.x, tip.y - across.y});
+    path.lineTo({tip.x + across.x, tip.y + across.y});
+    path.lineTo({centre.x + across.x, centre.y + across.y});
+    path.close();
+
+    indicator.setPath(path);
+}
+
+void Knob::paint(Graphics& g)
+{
+    const auto& theme = defaultTheme();
+    auto bounds = getLocalBounds();
+    auto size = std::min(bounds.w, bounds.h);
+    auto centre = Point {bounds.w * 0.5f, bounds.h * 0.5f};
+    auto outer = size * 0.5f - 1.f;
+
+    // The unfilled track is a ring, which the distance field draws as a
+    // bordered circle for nothing -- so only the part that actually needs a
+    // path becomes one.
+    auto thickness = std::max(2.f, size * 0.12f);
+
+    g.setColour(theme.outline);
+    g.drawRoundedRect({centre.x - outer, centre.y - outer, outer * 2.f, outer * 2.f},
+                      outer,
+                      thickness);
+
+    g.setColour(isMouseOver() || dragging ? theme.text : accent);
+    g.fillPath(indicator);
+}
+
+void Knob::mouseEnter(const MouseEvent&)
+{
+    repaint();
+}
+
+void Knob::mouseExit(const MouseEvent&)
+{
+    repaint();
+}
+
+void Knob::mouseDown(const MouseEvent&)
+{
+    dragging = true;
+    valueAtDragStart = value;
+    repaint();
+}
+
+// Against where the drag started rather than against the last event, so the
+// value cannot drift from accumulated rounding over a long drag.
+void Knob::mouseDrag(const MouseEvent& event)
+{
+    auto travel = event.downPosition.y - event.position.y;
+    setValue(valueAtDragStart + travel / knobDragRange);
+}
+
+void Knob::mouseUp(const MouseEvent&)
+{
+    dragging = false;
+    repaint();
+}
+
 ScrollPanel::ScrollPanel()
 {
     setInterceptsMouseClicks(true);

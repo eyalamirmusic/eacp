@@ -15,12 +15,28 @@ GPU::TextureDescriptor describeCoverage(int width, int height)
     descriptor.computeWrite = true;
     return descriptor;
 }
-} // namespace
 
-PathRasterizer::PathRasterizer()
+// One kernel for every rasterizer there will ever be. It is the same program in
+// all of them, and building one costs a shader library and a compute pipeline -
+// which an interface with a rasterizer per widget must not pay per widget.
+//
+// Shared state is safe here because a dispatch sets every uniform it reads
+// immediately before issuing it, and command encoding is single-threaded. Built
+// on first use rather than at load, since it needs the Device - which also puts
+// its destruction before the Device's own, statics tearing down in reverse.
+CoverageKernel& sharedKernel()
 {
-    kernel.prepare();
+    struct Prepared
+    {
+        Prepared() { kernel.prepare(); }
+
+        CoverageKernel kernel;
+    };
+
+    static auto prepared = Prepared {};
+    return prepared.kernel;
 }
+} // namespace
 
 void PathRasterizer::setScale(float pixelsPerUnit)
 {
@@ -30,6 +46,26 @@ void PathRasterizer::setScale(float pixelsPerUnit)
 bool PathRasterizer::isEmpty() const
 {
     return segments.empty() || coverageWidth <= 0 || coverageHeight <= 0;
+}
+
+void PathRasterizer::setTarget(const GPU::Texture& texture,
+                               int originXToUse,
+                               int originYToUse)
+{
+    target = &texture;
+    originX = originXToUse;
+    originY = originYToUse;
+
+    // Its own texture is now dead weight, and holding it would keep a whole
+    // path's worth of pixels alive for as long as the shape exists.
+    coverageTexture.reset();
+}
+
+void PathRasterizer::clearTarget()
+{
+    target = nullptr;
+    originX = 0;
+    originY = 0;
 }
 
 void PathRasterizer::setPath(const Path& path, FillRule rule)
@@ -88,23 +124,21 @@ void PathRasterizer::setPath(const Path& path, FillRule rule)
     if (isEmpty())
         return;
 
-    kernel.segmentCount = segments.size() / 4;
-    kernel.evenOdd = rule == FillRule::EvenOdd ? 1 : 0;
+    segmentCount = segments.size() / 4;
+    evenOdd = rule == FillRule::EvenOdd ? 1 : 0;
 
-    resizeCoverage(coverageWidth, coverageHeight);
     uploadSegments();
 }
 
-void PathRasterizer::resizeCoverage(int width, int height)
+void PathRasterizer::ensureOwnTexture()
 {
-    if (coverageTexture.has_value() && coverageTexture->width() == width
-        && coverageTexture->height() == height)
+    if (coverageTexture.has_value() && coverageTexture->width() == coverageWidth
+        && coverageTexture->height() == coverageHeight)
         return;
 
-    coverageTexture.emplace(
-        GPU::Device::shared(), describeCoverage(width, height), nullptr);
-
-    kernel.coverage = *coverageTexture;
+    coverageTexture.emplace(GPU::Device::shared(),
+                            describeCoverage(coverageWidth, coverageHeight),
+                            nullptr);
 }
 
 void PathRasterizer::uploadSegments()
@@ -120,14 +154,24 @@ void PathRasterizer::uploadSegments()
                               GPU::BufferUsage::Storage);
     else
         segmentBuffer->update(segments.data(), bytes);
-
-    kernel.segments = *segmentBuffer;
 }
 
 void PathRasterizer::dispatch(GPU::ComputePass& pass)
 {
     if (isEmpty())
         return;
+
+    if (target == nullptr)
+        ensureOwnTexture();
+
+    auto& kernel = sharedKernel();
+
+    kernel.coverage = target != nullptr ? *target : *coverageTexture;
+    kernel.segments = *segmentBuffer;
+    kernel.segmentCount = segmentCount;
+    kernel.evenOdd = evenOdd;
+    kernel.originX = (std::uint32_t) originX;
+    kernel.originY = (std::uint32_t) originY;
 
     pass.dispatch(kernel, coverageWidth, coverageHeight);
 }
