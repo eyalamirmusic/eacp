@@ -5,12 +5,12 @@
 
 namespace eacp::UI
 {
-Graphics::Graphics(Sprites::SpriteRenderer& spritesToUse,
+Graphics::Graphics(ShapeBatch& shapesToUse,
                    Text::TextRenderer& textToUse,
                    GPU::RenderPass& passToUse,
                    const Rect& surfaceToUse,
                    float backingScaleToUse)
-    : sprites(spritesToUse)
+    : shapes(shapesToUse)
     , text(textToUse)
     , pass(passToUse)
     , surface(surfaceToUse)
@@ -41,17 +41,17 @@ void Graphics::applyClip(const Rect& surfaceClip)
     // glyphs go out alongside the quads. setScissorRect flushes the sprite queue
     // itself; the text renderer has to be told, and then restarted for the
     // glyphs that follow.
-    sprites.flush();
+    shapes.flush();
     text.flush(pass);
     text.begin();
 
     if (sameRect(surfaceClip, surface))
-        sprites.clearScissorRect();
+        shapes.clearScissorRect();
     else
-        sprites.setScissorRect({surfaceClip.x * backingScale,
-                                surfaceClip.y * backingScale,
-                                surfaceClip.w * backingScale,
-                                surfaceClip.h * backingScale});
+        shapes.setScissorRect({surfaceClip.x * backingScale,
+                               surfaceClip.y * backingScale,
+                               surfaceClip.w * backingScale,
+                               surfaceClip.h * backingScale});
 
     appliedClip = surfaceClip;
     ++clipChanges;
@@ -81,16 +81,26 @@ void Graphics::fillAll(const Color& colour)
 
 void Graphics::fillRect(const Rect& rect)
 {
+    fillRoundedRect(rect, 0.f);
+}
+
+void Graphics::fillRoundedRect(const Rect& rect, float cornerRadius)
+{
     auto target = toSurface(rect);
     prepareToDraw(target);
-    sprites.fillRect(target, state.colour);
+    shapes.fillRect(target, state.colour, cornerRadius);
 }
 
 void Graphics::drawRect(const Rect& rect, float thickness)
 {
+    drawRoundedRect(rect, 0.f, thickness);
+}
+
+void Graphics::drawRoundedRect(const Rect& rect, float cornerRadius, float thickness)
+{
     auto target = toSurface(rect);
     prepareToDraw(target);
-    sprites.drawRect(target, state.colour, thickness);
+    shapes.drawRect(target, state.colour, thickness, cornerRadius);
 }
 
 void Graphics::drawLine(Point a, Point b, float thickness)
@@ -104,7 +114,7 @@ void Graphics::drawLine(Point a, Point b, float thickness)
                         std::abs(to.y - from.y) + thickness * 2.f};
 
     prepareToDraw(bounds);
-    sprites.drawLine(from, to, state.colour, thickness);
+    shapes.drawLine(from, to, state.colour, thickness);
 }
 
 float Graphics::drawText(std::string_view textToDraw, Point baselineLeft)
@@ -192,10 +202,10 @@ void Graphics::restoreState()
 
 void Graphics::flush()
 {
-    // Sprites first, then glyphs: within one clip region text composites above
+    // Shapes first, then glyphs: within one clip region text composites above
     // the fills, which is what a component drawing its own background and then
     // its own caption wants. See the module note on interleaving.
-    sprites.flush();
+    shapes.flush();
     text.flush(pass);
     text.begin();
 }

@@ -84,10 +84,15 @@ void ComponentHost::resized()
 
     // A resize only moves the logical space the shaders map from, so the
     // renderer is told rather than rebuilt -- its pipelines are unaffected.
-    if (sprites.has_value())
-        sprites->setLogicalSize({bounds.w, bounds.h});
+    if (shapes.has_value())
+    {
+        shapes->setLogicalSize({bounds.w, bounds.h});
+        shapes->setPixelScale(backingScale());
+    }
     else
-        sprites.emplace(Point {bounds.w, bounds.h}, sampleCount());
+    {
+        shapes.emplace(Point {bounds.w, bounds.h}, backingScale(), sampleCount());
+    }
 
     if (root != nullptr)
         root->setBounds(bounds);
@@ -124,8 +129,7 @@ void ComponentHost::render(GPU::Frame& frame)
 {
     auto bounds = getLocalBounds();
 
-    if (root == nullptr || !sprites.has_value() || bounds.w <= 0.f
-        || bounds.h <= 0.f)
+    if (root == nullptr || !shapes.has_value() || bounds.w <= 0.f || bounds.h <= 0.f)
     {
         frame.beginPass({background});
         return;
@@ -137,21 +141,27 @@ void ComponentHost::render(GPU::Frame& frame)
     text->setViewport({bounds.w, bounds.h}, backingScale());
     text->begin();
 
-    auto pass = frame.beginPass({background});
-    sprites->begin(pass);
+    // Counted before the walk rather than after it, so a component painting the
+    // figure reads this frame's rather than the last one's. A repaint asked for
+    // from inside a paint is lost -- the draw cycle it was issued in clears the
+    // invalidation on its way out -- so anything derived from the tree has to be
+    // ready before the tree is drawn, not after.
+    lastComponentCount = root->countComponentsInTree();
 
-    auto g = Graphics {*sprites, *text, pass, bounds, backingScale()};
+    auto pass = frame.beginPass({background});
+    shapes->begin(pass);
+
+    auto g = Graphics {*shapes, *text, pass, bounds, backingScale()};
 
     paintComponent(*root, g);
 
-    // Drains both queues while the pass is still open. The sprite renderer
-    // would drain itself when the pass ends, but that is after this point, so
-    // the last run of quads would land on top of the last run of glyphs rather
-    // than under it.
+    // Drains both queues while the pass is still open. The shape batch would
+    // drain itself when the pass ends, but that is after this point, so the last
+    // run of quads would land on top of the last run of glyphs rather than
+    // under it.
     g.flush();
 
     lastClipChanges = g.getClipChangeCount();
-    lastComponentCount = root->countComponentsInTree();
 }
 
 MouseEvent ComponentHost::makeEvent(const Component& target,

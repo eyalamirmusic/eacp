@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Common.h"
+#include "../Render/ShapeBatch.h"
 
 #include <string_view>
 
@@ -15,7 +16,7 @@ enum class Justification
 
 // The painter handed to Component::paint.
 //
-// An immediate-mode facade over the batching sprite and glyph renderers: a call
+// An immediate-mode facade over the batching shape and glyph renderers: a call
 // queues a quad rather than issuing a draw, and a run of them goes out as one
 // instanced draw when something forces a break. A tree of a few hundred
 // components therefore normally costs a handful of draws rather than one per
@@ -34,7 +35,7 @@ enum class Justification
 class Graphics
 {
 public:
-    Graphics(Sprites::SpriteRenderer& spritesToUse,
+    Graphics(ShapeBatch& shapesToUse,
              Text::TextRenderer& textToUse,
              GPU::RenderPass& passToUse,
              const Rect& surfaceToUse,
@@ -50,8 +51,16 @@ public:
 
     void fillRect(const Rect& rect);
 
+    // The same, with the corners rounded by `cornerRadius` points. Costs the
+    // same as a square one and joins the same batch: the renderer draws both
+    // from one distance field, so rounding is a number rather than a mode.
+    void fillRoundedRect(const Rect& rect, float cornerRadius);
+
     // An outline drawn inside the rect's edges.
     void drawRect(const Rect& rect, float thickness = 1.f);
+
+    void
+        drawRoundedRect(const Rect& rect, float cornerRadius, float thickness = 1.f);
 
     void drawLine(Point a, Point b, float thickness = 1.f);
 
@@ -135,7 +144,7 @@ private:
 
     void applyClip(const Rect& surfaceClip);
 
-    Sprites::SpriteRenderer& sprites;
+    ShapeBatch& shapes;
     Text::TextRenderer& text;
     GPU::RenderPass& pass;
 

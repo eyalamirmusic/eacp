@@ -57,7 +57,7 @@ struct ChannelStrip final : UI::Component
     void paint(UI::Graphics& g) override
     {
         g.setColour(UI::defaultTheme().panel);
-        g.fillRect(getLocalBounds().inset(0.f, 2.f));
+        g.fillRoundedRect(getLocalBounds().inset(0.f, 2.f), 6.f);
     }
 
     void resized() override
@@ -113,6 +113,44 @@ struct StripList final : UI::Component
     OwnedVector<ChannelStrip> strips;
 };
 
+// Reads the host's figures at paint time rather than being told them.
+//
+// A component told the numbers would have to repaint to show a change, and a
+// repaint asked for from inside the frame that produced them is lost -- so the
+// label would sit one frame behind for ever, which on a tree that only redraws
+// when something moves means it never updates at all.
+struct StatsBar final : UI::Component
+{
+    void paint(UI::Graphics& g) override
+    {
+        if (host == nullptr)
+            return;
+
+        auto text = std::to_string(host->getLastComponentCount()) + " components   "
+                    + std::to_string(host->getLastClipChangeCount())
+                    + " batch breaks";
+
+        g.setColour(UI::defaultTheme().dimText);
+        g.drawText(text, getLocalBounds(), UI::Justification::Right);
+
+        // The break count is only complete once the walk that produced it is
+        // over, so this frame paints the last one's and needs one more to catch
+        // up. Deferred rather than repainted on the spot because a repaint asked
+        // for from inside the draw cycle is cleared on its way out; posting it
+        // to the loop puts the request safely after the frame. Self-limiting --
+        // once the figure stops changing, so does this.
+        if (text != lastPainted)
+        {
+            lastPainted = text;
+            LOG(text);
+            Threads::callAsync([this] { repaint(); });
+        }
+    }
+
+    UI::ComponentHost* host = nullptr;
+    std::string lastPainted;
+};
+
 struct DemoRoot final : UI::Component
 {
     DemoRoot()
@@ -121,9 +159,6 @@ struct DemoRoot final : UI::Component
 
         selectAll.onClick = [this] { setAllToggles(true); };
         clearAll.onClick = [this] { setAllToggles(false); };
-
-        stats.setColour(UI::defaultTheme().dimText);
-        stats.setJustification(UI::Justification::Right);
 
         list.setContent(strips);
 
@@ -142,8 +177,6 @@ struct DemoRoot final : UI::Component
             strip->solo.setToggleState(shouldBeOn);
         }
     }
-
-    void setStatsText(std::string text) { stats.setText(std::move(text)); }
 
     void paint(UI::Graphics& g) override
     {
@@ -174,7 +207,7 @@ struct DemoRoot final : UI::Component
     UI::Button clearAll {"All off"};
     UI::ScrollPanel list;
     StripList strips;
-    UI::Label stats;
+    StatsBar stats;
 };
 
 struct DemoHost final : UI::ComponentHost
@@ -182,27 +215,11 @@ struct DemoHost final : UI::ComponentHost
     DemoHost()
     {
         setFontPointSize(13.f);
+        root.stats.host = this;
         setRootComponent(root);
     }
 
-    void render(GPU::Frame& frame) override
-    {
-        ComponentHost::render(frame);
-
-        // Read back after the walk, so the numbers are the ones this frame
-        // actually produced rather than the previous frame's.
-        auto text = std::to_string(getLastComponentCount()) + " components   "
-                    + std::to_string(getLastClipChangeCount()) + " batch breaks";
-
-        if (text != lastStatsText)
-        {
-            lastStatsText = text;
-            root.setStatsText(text);
-        }
-    }
-
     DemoRoot root;
-    std::string lastStatsText;
 };
 
 Graphics::WindowOptions makeOptions()
