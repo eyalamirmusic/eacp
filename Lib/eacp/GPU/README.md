@@ -157,6 +157,39 @@ Culling is pipeline state on D3D12 and encoder state on Metal. eacp hides that:
 `RenderPass::setPipeline` applies it on every bind, so a pass that draws a
 culled mesh and then a full-screen quad gets the same picture either way.
 
+## Viewport, and how it differs from a scissor
+
+`setScissorRect` clips: geometry outside the rect is thrown away, and what
+survives is where it always was. `setViewport` **remaps**: clip space lands on
+the rect instead of on the whole target, so the same vertices are drawn
+somewhere else, at some other size.
+
+```cpp
+pass.setViewport({0.f, 0.f, width / 2.f, height});   // left pane
+scene.drawFrom(leftCamera, pass);
+pass.setViewport({width / 2.f, 0.f, width / 2.f, height});  // right pane
+scene.drawFrom(rightCamera, pass);
+pass.clearViewport();
+```
+
+That is split screen, a shadow map into one tile of an atlas, or a thumbnail —
+none of which a scissor can do, because a scissor at the right-hand rect would
+delete the geometry rather than move it. Both take pixels with the origin at the
+top-left, like `Graphics::Rect`.
+
+The optional `near`/`far` remap the depth a fragment writes. A viewport of
+`[0.5, 1]` puts everything drawn through it behind everything drawn at the
+default `[0, 1]`, whatever the geometry's own z says — which is how a layer gets
+forced behind or in front of something it does not otherwise sort against.
+
+**A rect that is empty or not wholly inside the render target is ignored**, not
+clamped — the same rule `Texture::update` applies to regions, for the same
+reason. A clamped scissor still shows the caller what they asked for; a clamped
+viewport keeps drawing and silently squashes the picture into a rectangle nobody
+chose, which looks like a bug in the caller's own maths. Neither backend forces
+this: Metal accepts an out-of-target viewport happily. It is eacp's choice, and
+`ViewportTests` is what holds the two backends to it.
+
 ## Rendering into a texture
 
 A texture created with `TextureDescriptor::renderTarget` can be drawn into and

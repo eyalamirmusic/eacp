@@ -73,6 +73,39 @@ public:
     // Restores rasterization to the whole render target.
     void clearScissorRect();
 
+    // Maps clip space onto rect instead of onto the whole render target, in
+    // render-target *pixels* with the origin at the top-left - the same units
+    // and orientation setScissorRect uses.
+    //
+    // This is not a scissor and does not clip: it moves and scales what is
+    // drawn. Geometry filling clip space fills rect; geometry covering the left
+    // half of clip space covers the left half of rect, wherever rect is. That
+    // is what renders a scene into one pane of a split screen, or a shadow map
+    // into one tile of an atlas, without touching a single vertex - and it is
+    // why a scissor cannot do the job, since a scissor set to the same
+    // rectangle would simply throw that geometry away.
+    //
+    // near/far remap the depth a fragment writes: a viewport of [0.5, 1] puts
+    // everything it draws behind everything drawn at the default [0, 1],
+    // whatever its own geometry says. Both backends take the same range and
+    // mean the same thing by it.
+    //
+    // A rect that is empty, or not wholly inside the render target, is a no-op
+    // - deliberately not clamped, for the reason Texture::update gives about
+    // regions. Clamping a scissor is right because the clipped picture is the
+    // one the caller wanted; clamping a *viewport* would keep drawing and
+    // silently squash the image into the clamped rectangle, which looks like a
+    // rendering bug anywhere but here. Nothing appearing is easier to find.
+    //
+    // Viewport state persists for the rest of the pass; call clearViewport to
+    // go back to the whole target.
+    void setViewport(const Graphics::Rect& rect,
+                     float nearDepth = 0.f,
+                     float farDepth = 1.f);
+
+    // Restores the viewport to the whole render target at depth [0, 1].
+    void clearViewport();
+
     void setPipeline(const RenderPipeline& pipeline);
     void setVertexBuffer(const Buffer& buffer, int index = 0);
 
