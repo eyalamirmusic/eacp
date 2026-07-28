@@ -39,6 +39,10 @@ struct Buffer::Native
 Buffer::Buffer(Device& device, const void* data, std::size_t bytes, BufferUsage usage)
     : impl(device, data, bytes, usage)
 {
+    // Only the ones that got storage, so the count means GPU allocations rather
+    // than calls - a zero-byte or device-less Buffer allocated nothing.
+    if (isValid())
+        device.noteBufferCreated();
 }
 
 std::size_t Buffer::size() const

@@ -1,6 +1,7 @@
 set(gpu_test_sources
         GPUSmokeTests.cpp
         ShaderCodegenTests.cpp
+        StreamingBufferTests.cpp
         TestMain.cpp
         TextureUpdateTests.cpp)
 

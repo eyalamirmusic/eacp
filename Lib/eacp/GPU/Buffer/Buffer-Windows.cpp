@@ -112,6 +112,10 @@ Buffer::Buffer(Device& device,
                BufferUsage usage)
     : impl(device, data, bytes, usage)
 {
+    // Only the ones that got storage, so the count means GPU allocations rather
+    // than calls - a zero-byte or device-less Buffer allocated nothing.
+    if (isValid())
+        device.noteBufferCreated();
 }
 
 std::size_t Buffer::size() const
