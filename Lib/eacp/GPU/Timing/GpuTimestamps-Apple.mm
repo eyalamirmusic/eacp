@@ -142,12 +142,12 @@ void GpuTimestamps::beginSlot(int slot)
 {
     impl->ensureCreated();
 
-    if (!impl->supported)
-        return;
-
-    // The previous frame's command buffer goes now rather than at the next
-    // endSlot: it is the only thing the slot holds that is worth anything, and
-    // holding it is holding that frame's drawable pool entry too.
+    // Unconditional, like endSlot's retain: a device with no counters still
+    // times whole frames, so its slots still hold a command buffer.
+    //
+    // The previous frame's goes now rather than at the next endSlot: it is the
+    // only thing the slot holds that is worth anything, and holding it is
+    // holding that frame's drawable pool entry too.
     impl->slots[slot].commandBuffer.release();
 }
 
@@ -165,13 +165,15 @@ void* GpuTimestamps::nativeSamples(int slot) const
     return (__bridge void*) impl->slots[slot].samples.get();
 }
 
-void GpuTimestamps::endSlot(int slot, int, void* nativeCommandBuffer)
+// The command buffer is retained whether or not the counters exist, because it
+// is what carries the frame's own GPU time - and because a slot the timer is
+// waiting on cannot be answered without one.
+bool GpuTimestamps::endSlot(int slot, int, void* nativeCommandBuffer)
 {
-    if (!impl->supported)
-        return;
-
     impl->slots[slot].commandBuffer.reset(
         (__bridge NSObject<MTLCommandBuffer>*) nativeCommandBuffer);
+
+    return impl->slots[slot].commandBuffer.get() != nil;
 }
 
 void GpuTimestamps::noteSubmitted(int, std::uint64_t)
