@@ -2066,6 +2066,16 @@ inline Float toFloat(const Bool& value)
     return detail::convertTo<Float>(value);
 }
 
+// The crossing an index takes. A buffer subscript is a uint, while the counter
+// a kernel walks its input with is an Int - the family the comparisons, the
+// mutable local and the negative intermediate all live in - so a loop over a
+// buffer ends at this one call. Wraps below zero exactly as UInt's own
+// subtraction does; clamp with max() before crossing if that is reachable.
+inline UInt toUInt(const Int& value)
+{
+    return detail::convertTo<UInt>(value);
+}
+
 template <ShaderScalarLike T>
 Int toInt(const T& value)
 {
