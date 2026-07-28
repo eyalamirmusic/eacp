@@ -17,6 +17,11 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     # Glyph rasterization + atlas caching, on top of the GPU module.
     add_subdirectory(Text)
     add_subdirectory(Sprites)
+
+    # Lightweight component tier: a whole widget tree in one GPUView, drawn
+    # through the sprite and glyph batchers.
+    add_subdirectory(UI)
+
     add_subdirectory(CameraView)
 
     # View->video recorder, and video decode/playback. The Snapshot tier is

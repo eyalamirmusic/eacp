@@ -8,6 +8,7 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(Graphics)
     add_subdirectory(SVG)
     add_subdirectory(GPU)
+    add_subdirectory(UI)
 
     # Video decode + playback through the GPU display stack. No WebView needed.
     if (NOT IOS)
