@@ -138,6 +138,40 @@ void RenderPass::clearScissorRect()
     [activeEncoder setScissorRect:scissor];
 }
 
+void RenderPass::setViewport(const Graphics::Rect& rect,
+                             float nearDepth,
+                             float farDepth)
+{
+    auto activeEncoder = impl->encoder.get();
+
+    if (activeEncoder == nil || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+        return;
+
+    // No rounding, unlike the scissor: a viewport is a float rectangle in both
+    // APIs, and rounding it would move the mapping rather than the clip.
+    if (rect.w <= 0.f || rect.h <= 0.f || rect.x < 0.f || rect.y < 0.f
+        || rect.x + rect.w > (float) impl->targetWidth
+        || rect.y + rect.h > (float) impl->targetHeight)
+        return;
+
+    const MTLViewport viewport {rect.x, rect.y, rect.w, rect.h, nearDepth, farDepth};
+
+    [activeEncoder setViewport:viewport];
+}
+
+void RenderPass::clearViewport()
+{
+    auto activeEncoder = impl->encoder.get();
+
+    if (activeEncoder == nil || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+        return;
+
+    const MTLViewport viewport {
+        0.0, 0.0, (double) impl->targetWidth, (double) impl->targetHeight, 0.0, 1.0};
+
+    [activeEncoder setViewport:viewport];
+}
+
 void RenderPass::setPipeline(const RenderPipeline& pipeline)
 {
     auto activeEncoder = impl->encoder.get();

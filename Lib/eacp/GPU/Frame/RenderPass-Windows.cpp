@@ -85,6 +85,44 @@ void RenderPass::clearScissorRect()
     impl->encoder->commands->list->RSSetScissorRects(1, &scissor);
 }
 
+void RenderPass::setViewport(const Graphics::Rect& rect,
+                             float nearDepth,
+                             float farDepth)
+{
+    if (!impl->encoder || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+        return;
+
+    // No rounding, unlike the scissor: a viewport is a float rectangle in both
+    // APIs, and rounding it would move the mapping rather than the clip.
+    if (rect.w <= 0.f || rect.h <= 0.f || rect.x < 0.f || rect.y < 0.f
+        || rect.x + rect.w > static_cast<float>(impl->targetWidth)
+        || rect.y + rect.h > static_cast<float>(impl->targetHeight))
+        return;
+
+    D3D12_VIEWPORT viewport = {};
+    viewport.TopLeftX = rect.x;
+    viewport.TopLeftY = rect.y;
+    viewport.Width = rect.w;
+    viewport.Height = rect.h;
+    viewport.MinDepth = nearDepth;
+    viewport.MaxDepth = farDepth;
+
+    impl->encoder->commands->list->RSSetViewports(1, &viewport);
+}
+
+void RenderPass::clearViewport()
+{
+    if (!impl->encoder || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+        return;
+
+    D3D12_VIEWPORT viewport = {};
+    viewport.Width = static_cast<float>(impl->targetWidth);
+    viewport.Height = static_cast<float>(impl->targetHeight);
+    viewport.MaxDepth = 1.0f;
+
+    impl->encoder->commands->list->RSSetViewports(1, &viewport);
+}
+
 void RenderPass::setPipeline(const RenderPipeline& pipeline)
 {
     if (!impl->encoder)
