@@ -41,10 +41,12 @@ enum class FillRule
 // interface's paths share one atlas and draw in one batch - see
 // UI::CoverageAtlas.
 //
-// What it costs is bounding-box pixels times segments: a 64x64 icon of 200
-// segments is under a million segment-pixel tests and free, a full-screen path
-// of ten thousand segments is twenty billion and hopeless. This is for
-// UI-scale paths, and binning segments into tiles is what lifts that ceiling.
+// Segments are binned into tiles here, on the CPU, so a thread walks the outline
+// near its own pixel rather than the whole of it. What that costs is the sum
+// over tiles of tile pixels times the segments crossing the tile, plus one
+// backdrop read for every pixel that has no outline near it at all -
+// getSegmentTests() reports the first term. A path is therefore priced by its
+// outline rather than by its area, which is what lets one cover the window.
 class PathRasterizer
 {
 public:
@@ -73,6 +75,17 @@ public:
     // still has somewhere to spill its coverage.
     Graphics::Rect getCoveredBounds() const { return covered; }
 
+    // Directed segments the flattened path came to, closing ones included and
+    // horizontal ones dropped. How complex this path is, in the only unit the
+    // kernel counts in.
+    int getSegmentCount() const { return segments.size() / 4; }
+
+    // Segment-pixel tests the next dispatch will do, which is the work binning
+    // exists to cut: the same path unbinned costs coverage width times height
+    // times getSegmentCount(). Settled by setPath, so it can be read before a
+    // frame rather than measured during one.
+    long long getSegmentTests() const { return segmentTests; }
+
     // Writes into a rect of someone else's texture, whose top-left texel is
     // given. The texture must have been created with computeWrite, must outlive
     // the dispatch, and must be large enough - nothing here checks, because the
@@ -92,15 +105,39 @@ public:
     void dispatch(GPU::ComputePass& pass);
 
 private:
+    // One segment's crossing of one tile row: the tiles it lands in are a run,
+    // because within a row a straight segment spans a contiguous range of
+    // columns. Recorded on the counting pass so the filling pass does not clip
+    // the geometry a second time.
+    struct TileRun
+    {
+        int segment;
+        int firstTile;
+        int tiles;
+    };
+
     void ensureOwnTexture();
-    void uploadSegments();
+    void buildTiles();
+    void addBackdrop(float direction, float fromY, float toY, int column);
+    void finishBackdrops();
+    void countSegmentTests();
+    void upload();
 
     std::optional<GPU::Buffer> segmentBuffer;
+    std::optional<GPU::Buffer> tileBuffer;
+    std::optional<GPU::Buffer> backdropBuffer;
     std::optional<GPU::Texture> coverageTexture;
 
-    // Directed segments in coverage pixel space, four floats each. Kept between
-    // uploads so a re-rasterization at the same size reuses the buffer.
+    // Directed segments in coverage pixel space, four floats each, before
+    // binning. Every buffer below is kept between rasterizations too, so a path
+    // re-drawn at the same complexity allocates nothing at all.
     Vector<float> segments;
+
+    Vector<TileRun> runs;
+    Vector<float> tileOffsets;
+    Vector<int> tileCursor;
+    Vector<float> tileSegments;
+    Vector<float> backdrops;
 
     const GPU::Texture* target = nullptr;
     int originX = 0;
@@ -110,7 +147,9 @@ private:
     float scale = 1.f;
     int coverageWidth = 0;
     int coverageHeight = 0;
-    int segmentCount = 0;
+    int tilesWide = 0;
+    int tilesHigh = 0;
     int evenOdd = 0;
+    long long segmentTests = 0;
 };
 } // namespace eacp::GPUWidgets
