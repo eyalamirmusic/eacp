@@ -151,9 +151,11 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
                       (int) target.height);
 }
 
-// Rendering into an app-owned texture: one attachment, stored, no resolve and
-// no depth. Passes on one command buffer are ordered by the queue, so nothing
-// here has to say that a later pass may sample what this one wrote.
+// Rendering into an app-owned texture: one attachment, stored, and no resolve.
+// Depth comes from the target when it was created with one, cleared and
+// discarded exactly as the drawable pass does it. Passes on one command buffer
+// are ordered by the queue, so nothing here has to say that a later pass may
+// sample what this one wrote.
 RenderPass Frame::beginPass(const Texture& target,
                             const RenderPassDescriptor& descriptor)
 {
@@ -174,6 +176,15 @@ RenderPass Frame::beginPass(const Texture& target,
     const auto& color = descriptor.clearColor;
     colorAttachment.clearColor =
         MTLClearColorMake(color.r, color.g, color.b, color.a);
+
+    if (auto depth = (__bridge id<MTLTexture>) target.nativeDepthTexture())
+    {
+        auto depthAttachment = passDescriptor.depthAttachment;
+        depthAttachment.texture = depth;
+        depthAttachment.loadAction = MTLLoadActionClear;
+        depthAttachment.storeAction = MTLStoreActionDontCare;
+        depthAttachment.clearDepth = 1.0;
+    }
 
     auto encoder = [buffer renderCommandEncoderWithDescriptor:passDescriptor];
 

@@ -155,6 +155,24 @@ struct TextureDescriptor
     // unwritable. Unlike a render target this leaves update() alone, so a
     // kernel that accumulates can still be seeded from the CPU.
     bool computeWrite = false;
+
+    // Whether a pass rendering into this texture gets a depth buffer, which is
+    // what a pipeline built with RenderPipelineDescriptor::depth tests against
+    // and what a drawable pass already gets from GPUView::setDepth. Off by
+    // default: a full-screen pass over a whole texture has no use for one, and
+    // the buffer costs the colour texture's size again.
+    //
+    // Without it a 3D scene cannot be rendered into a texture at all. The depth
+    // test has nothing to test against, so what comes out is painter's order -
+    // which is the reason this exists, and why it is not the same question as
+    // multisampling.
+    //
+    // The buffer is created beside the colour texture and lives exactly as
+    // long, so a render target stays one object with no second lifetime to keep
+    // in step. It is cleared to the far plane at the start of every pass and
+    // never stored, like the drawable's. Ignored without renderTarget, which is
+    // what renders.
+    bool depth = false;
 };
 
 // A 2D texture sampled by the fragment stage (MTLTexture on Metal, a D3D12
@@ -187,6 +205,11 @@ public:
     // ComputePass::setOutputTexture needs, and false on a texture whose format
     // or device refused the request.
     bool isComputeWritable() const;
+
+    // Whether a pass into this texture carries a depth buffer, which is what a
+    // depth-tested pipeline needs and false on a target that did not ask for
+    // one. A pass runs either way; without this it runs without the test.
+    bool hasDepth() const;
 
     // Re-uploads pixels into a texture created by Device::makeTexture, reusing
     // the GPU resource instead of allocating a new one — the per-frame path for
@@ -225,6 +248,12 @@ public:
     // The read view the fragment stage binds on D3D12 (the same handle as
     // nativeTexture). Null on Metal, where the texture is bound directly.
     void* nativeReadView() const;
+
+    // The depth buffer a pass into this texture attaches, or null on a target
+    // that asked for none. An MTLTexture on Metal; on D3D12 the depth resource
+    // and its descriptor live inside the same texture data nativeTexture hands
+    // back, so this is null there and Frame reaches them through that.
+    void* nativeDepthTexture() const;
 
 private:
     struct Native;

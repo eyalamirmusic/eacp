@@ -25,6 +25,7 @@ if (APPLE OR WIN32)
             CoordinateSpaceTests.cpp
             SpriteBatchTests.cpp
             RenderTargetTests.cpp
+            RenderTargetDepthTests.cpp
             FrameComputeTests.cpp)
 endif ()
 
