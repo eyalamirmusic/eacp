@@ -115,6 +115,52 @@ private:
     bool dragging = false;
 };
 
+// A rotary control: a ring, an arc filled to the value, and a pointer.
+//
+// The one stock widget whose shape a rounded rectangle cannot express, and so
+// the one that shows what the path tier is for. The arc and the pointer are a
+// single PathShape -- rasterized to exact per-pixel coverage by a compute
+// kernel whenever the value changes, into the same atlas every other knob on
+// screen uses, and drawn as one quad in the same instanced batch as the
+// rectangles and glyphs around it. A hundred of them cost a hundred quads, not
+// a hundred draws.
+//
+// Dragged vertically rather than in a circle, which is what every rotary
+// control that is any good to use does: the hand does not have to trace the
+// shape it is turning.
+class Knob final : public Component
+{
+public:
+    Knob();
+
+    // Normalised 0-1, clamped.
+    void setValue(float newValue);
+    float getValue() const { return value; }
+
+    void setAccentColour(const Color& colour);
+
+    std::function<void(float)> onValueChange = [](float) {};
+
+    void paint(Graphics& g) override;
+    void resized() override;
+
+    void mouseEnter(const MouseEvent&) override;
+    void mouseExit(const MouseEvent&) override;
+    void mouseDown(const MouseEvent& event) override;
+    void mouseDrag(const MouseEvent& event) override;
+    void mouseUp(const MouseEvent&) override;
+
+private:
+    void rebuildIndicator();
+
+    float value = 0.5f;
+    float valueAtDragStart = 0.5f;
+    Color accent = defaultTheme().accent;
+    bool dragging = false;
+
+    PathShape indicator {*this};
+};
+
 // A clipping viewport over a taller content component, scrolled by the wheel.
 //
 // The clipping is not this component's code: paint() gives every component a

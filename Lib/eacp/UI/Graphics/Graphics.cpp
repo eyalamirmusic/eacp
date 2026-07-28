@@ -117,6 +117,16 @@ void Graphics::drawLine(Point a, Point b, float thickness)
     shapes.drawLine(from, to, state.colour, thickness);
 }
 
+void Graphics::fillPath(const PathShape& shape)
+{
+    if (shape.isEmpty())
+        return;
+
+    auto target = toSurface(shape.getBounds());
+    prepareToDraw(target);
+    shapes.fillMask(target, state.colour, shape.getMaskUV());
+}
+
 float Graphics::drawText(std::string_view textToDraw, Point baselineLeft)
 {
     auto pen = toSurface(baselineLeft);

@@ -34,7 +34,15 @@ Point normalized(Point value)
 
 struct ShapeBatch::Program final : GPU::ShaderProgram
 {
-    Program() { compile(); }
+    Program()
+    {
+        // Nearest, because a mask is drawn at exactly the size it was
+        // rasterized: one texel lands on one device pixel, and filtering a 1:1
+        // mapping can only blur coverage that is already exact.
+        maskAtlas.sampling = {GPU::TextureFilter::Nearest,
+                              GPU::TextureAddressMode::Clamp};
+        compile();
+    }
 
     void define() override
     {
@@ -47,6 +55,7 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
         auto halfExtent = instanceInput(&ShapeInstance::halfExtent, 1);
         auto color = instanceInput(&ShapeInstance::color, 1);
         auto shape = instanceInput(&ShapeInstance::shape, 1);
+        auto mask = instanceInput(&ShapeInstance::mask, 1);
 
         auto position = origin + corner.x() * edgeX + corner.y() * edgeY;
         auto clipX = position.x() / screenSize.x() * 2.f - 1.f;
@@ -61,6 +70,11 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
         auto fragHalfSize = varying(halfSize);
         auto fragColor = varying(color);
         auto fragShape = varying(shape);
+
+        // Where in the atlas this fragment reads. A zero-sized rect collapses
+        // to one texel however big the quad is, which is what an unmasked shape
+        // is given.
+        auto maskUV = varying(mask.xy() + corner * mask.zw());
 
         auto radius = fragShape.x();
         auto borderWidth = fragShape.y();
@@ -85,7 +99,14 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
 
         // Half a device pixel each side of the edge, which is the widest ramp
         // that still reads as a hard edge rather than a blur.
-        auto coverage = clamp(0.5f - shapeDistance * pixelScale, 0.f, 1.f);
+        auto fieldCoverage = clamp(0.5f - shapeDistance * pixelScale, 0.f, 1.f);
+
+        // Every shape pays this fetch, and that is the deliberate trade: a
+        // rectangle reads the one opaque texel -- in cache for the whole frame,
+        // and multiplying by one -- so that a path and the rectangles around it
+        // share a pipeline and go out in the same instanced draw. Branching to
+        // skip it would buy back a cached read and cost a batch break.
+        auto coverage = fieldCoverage * sample(maskAtlas, maskUV).x();
 
         setFragment(float4(
             fragColor.x(), fragColor.y(), fragColor.z(), fragColor.w() * coverage));
@@ -93,15 +114,18 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
 
     GPU::Uniform<GPU::Float2> screenSize;
     GPU::Uniform<GPU::Float> pixelScale;
+    GPU::Uniform<GPU::Texture2D> maskAtlas;
 
-    EACP_SHADER(screenSize, pixelScale)
+    EACP_SHADER(screenSize, pixelScale, maskAtlas)
 };
 
-ShapeBatch::ShapeBatch(Point logicalSizeToUse,
+ShapeBatch::ShapeBatch(const CoverageAtlas& atlasToUse,
+                       Point logicalSizeToUse,
                        float pixelScaleToUse,
                        int sampleCountToUse,
                        GPU::PixelFormat colorFormatToUse)
-    : logicalSize(logicalSizeToUse)
+    : atlas(atlasToUse)
+    , logicalSize(logicalSizeToUse)
     , pixelScale(pixelScaleToUse)
     , sampleCount(sampleCountToUse)
     , colorFormat(colorFormatToUse)
@@ -190,6 +214,7 @@ void ShapeBatch::flush()
 
     program->screenSize = Array {logicalSize.x, logicalSize.y};
     program->pixelScale = pixelScale;
+    program->maskAtlas = atlas.getTexture();
     program->setInstances(1, instances.data(), instances.size());
 
     pass->drawInstanced(*program, instances.size());
@@ -235,6 +260,54 @@ void ShapeBatch::addShape(Point origin,
     instance.shape[1] = std::max(0.f, borderWidth);
     instance.shape[2] = borderWidth > 0.f ? 1.f : 0.f;
     instance.shape[3] = 0.f;
+
+    // Nothing masks a distance-field shape, so it reads the atlas's opaque
+    // texel and its own coverage survives untouched.
+    setMask(instance, atlas.getOpaqueUV());
+
+    instances.add(instance);
+}
+
+void ShapeBatch::setMask(ShapeInstance& instance, const Rect& maskUV)
+{
+    instance.mask[0] = maskUV.x;
+    instance.mask[1] = maskUV.y;
+    instance.mask[2] = maskUV.w;
+    instance.mask[3] = maskUV.h;
+}
+
+void ShapeBatch::fillMask(const Rect& rect, const Color& color, const Rect& maskUV)
+{
+    if (rect.w <= 0.f || rect.h <= 0.f || color.a <= 0.f)
+        return;
+
+    auto instance = ShapeInstance {};
+
+    // The quad is the mask's own footprint exactly - no margin, since the soft
+    // edge is already in the coverage rather than something the field adds.
+    instance.origin[0] = rect.x;
+    instance.origin[1] = rect.y;
+    instance.edgeX[0] = rect.w;
+    instance.edgeX[1] = 0.f;
+    instance.edgeY[0] = 0.f;
+    instance.edgeY[1] = rect.h;
+
+    instance.halfExtent[0] = rect.w * 0.5f;
+    instance.halfExtent[1] = rect.h * 0.5f;
+
+    // A field box larger than the quad by the ramp's own width, so every
+    // fragment lands well inside it and the distance term multiplies by one.
+    // The mask is then the only thing deciding coverage, which is what a path
+    // rasterized to the exact fraction of each pixel it covers needs.
+    instance.halfSize[0] = instance.halfExtent[0] + antialiasMargin;
+    instance.halfSize[1] = instance.halfExtent[1] + antialiasMargin;
+
+    instance.color[0] = color.r;
+    instance.color[1] = color.g;
+    instance.color[2] = color.b;
+    instance.color[3] = color.a;
+
+    setMask(instance, maskUV);
 
     instances.add(instance);
 }

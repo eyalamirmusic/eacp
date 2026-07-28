@@ -66,6 +66,16 @@ void Component::removeChildComponent(Component& child)
     repaint();
 }
 
+void Component::addPathShape(PathShape& shape)
+{
+    pathShapes.add(&shape);
+}
+
+void Component::removePathShape(PathShape& shape)
+{
+    pathShapes.removeAllMatches(&shape);
+}
+
 void Component::setVisible(bool shouldBeVisible)
 {
     if (visible == shouldBeVisible)

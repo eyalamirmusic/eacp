@@ -131,6 +131,21 @@ icon with 200 segments is 800k segment-pixel tests — nothing. A full-screen
 path with 10k segments is ~20 billion — hopeless. This rung is for UI-scale
 paths and the plan should not pretend otherwise.
 
+### The ordering constraint, discovered in phase 3
+
+Not foreseen above, and it shaped the public API more than anything else here:
+**a compute pass cannot be open while a render pass is.** The atlas is written by
+compute and sampled by the render pass, so every rasterization for a frame has
+to be recorded before `beginPass` — which is before any `paint()` runs.
+
+So `fillPath` cannot take a path and rasterize it. Either the work is scheduled
+outside the frame, or a path drawn for the first time is a frame late. The API
+takes a `PathShape` the component owns and sets when its geometry changes; the
+host walks the tree for dirty ones at the top of the frame. Rasterizing is
+therefore something a widget does when its value moves, and drawing is a quad —
+which is the right shape for the cost model anyway, but it was the constraint
+that picked it, not taste.
+
 ## Phases
 
 Each phase ends with something runnable and judged before the next starts.
@@ -177,14 +192,44 @@ compute design:
   improvement, which is why the MSAA column above is a fair comparison rather
   than a strawman.
 
-**3. Atlas + batching.** Coverage into a shared atlas, textured instance in
-`ShapeBatch`, several paths in one batch. *Verify:* the `ComponentTree` demo's
-batch-break count does not rise when paths are added.
+**3. Atlas + batching.** — done. `UI::CoverageAtlas` is one `computeWrite`
+texture with a shelf allocator; `PathRasterizer::setTarget` points the kernel at
+a rect of it. `ShapeInstance` carries a uv sub-rect, and the fragment stage
+multiplies its distance-field coverage by what it reads there.
 
-**4. `ui::Graphics::fillPath`.** The public API, plus a widget that uses it
-(a rotary knob with an arc indicator is the honest test — it is what the
-widget set actually lacks). *Verify:* knob renders, batches, and the count
-still holds.
+The trick that keeps it to one pipeline: texel (0,0) of the atlas is opaque, and
+every *unmasked* shape's uv rect is a zero-sized rect inside it. So a rounded
+rectangle multiplies by one. Every shape pays a texture fetch of a texel that is
+in cache for the whole frame; what it buys is that a path and the rectangles
+around it never break the batch apart.
+
+*Verified:* 48 knobs added to `ComponentTree` — 247 components and 7 batch
+breaks became 295 and 8. The +1 is not the paths: with `fillPath` commented out
+and the knobs still in the tree it is also 8, so it is the extra child
+straddling the scroll clip. **48 vector paths cost zero batch breaks.**
+
+**4. `ui::Graphics::fillPath`.** — done, plus `UI::Knob`.
+
+The API takes a `PathShape` the component owns, not a `Path` passed in at paint
+time, and that is forced rather than chosen: rasterizing is a compute dispatch,
+a compute pass cannot be open inside the render pass `paint()` draws into, so
+the work has to be scheduled *before* the frame. Setting the path is what
+schedules it — from `resized()` or a value change — and `ComponentHost` runs
+everything dirty at the top of the next frame, before `beginPass`. No stale
+frame, no blocking commit, and the cost model is legible in the signature.
+
+The knob's arc and pointer are one path with two contours, which is where
+conflation-free filling earns its keep: they overlap, and coverage accumulating
+*within* a path means the join is solid rather than seamed. Wound the same way
+round, at that — under non-zero, contours that disagree subtract, and the first
+cut punched a visible hole through the join.
+
+Slots are kept between rasterizations while the mask still fits, so a knob being
+dragged re-rasterizes every frame and allocates nothing. When the shelf does run
+out the atlas grows, or compacts once it is at its largest; either moves every
+slot, which the host answers by re-rasterizing the tree. *Verified* by resizing
+the window nine times, which re-rasterizes all 48 masks at nine different sizes:
+still correct, still 8 breaks.
 
 ## Risks
 

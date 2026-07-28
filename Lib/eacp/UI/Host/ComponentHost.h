@@ -62,6 +62,14 @@ private:
 
     void paintComponent(Component& component, Graphics& g);
 
+    // Rasterizing every PathShape in the tree whose geometry changed, before
+    // the render pass opens. See the definition for why it can only happen here.
+    void rasterizePaths(GPU::Frame& frame);
+    void rasterizeDirtyPaths(Component& component,
+                             GPU::ComputePass& pass,
+                             bool& atlasMoved);
+    void markAllPathsDirty(Component& component);
+
     // Builds the event a component sees: the position converted into its own
     // space, and the fields the native event already carries.
     MouseEvent makeEvent(const Component& target,
@@ -79,8 +87,14 @@ private:
     float fontPointSize = 13.f;
 
     // Built on the first resize, once there is a size to build them against.
+    // The atlas comes first and outlives the batch that reads it.
+    std::optional<CoverageAtlas> paths;
     std::optional<ShapeBatch> shapes;
     std::optional<Text::TextRenderer> text;
+
+    // The scale everything in the atlas was rasterized at, so a move between
+    // displays can be noticed.
+    float lastPathScale = 0.f;
 
     // Where the button went down, in root space, carried through the drag so
     // every event can report it.

@@ -123,13 +123,24 @@ public:
     // does not grow with the first.
     int countComponentsInTree() const;
 
+    // The vector shapes this component draws. A PathShape adds itself here in
+    // its constructor, so the host can find every one in the tree and rasterize
+    // the dirty ones before the frame opens its render pass - which is the only
+    // point in a frame where a compute pass can run. See PathShape.
+    const Vector<PathShape*>& getPathShapes() const { return pathShapes; }
+
 private:
     friend class ComponentHost;
+    friend class PathShape;
+
+    void addPathShape(PathShape& shape);
+    void removePathShape(PathShape& shape);
 
     ComponentHost* findHost() const;
 
     Rect bounds;
     Vector<Component*> children;
+    Vector<PathShape*> pathShapes;
     Component* parent = nullptr;
 
     // Set on a root only, by ComponentHost::setRootComponent. Everything else

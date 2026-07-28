@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Common.h"
+#include "../Render/PathShape.h"
 #include "../Render/ShapeBatch.h"
 
 #include <string_view>
@@ -63,6 +64,19 @@ public:
         drawRoundedRect(const Rect& rect, float cornerRadius, float thickness = 1.f);
 
     void drawLine(Point a, Point b, float thickness = 1.f);
+
+    // Fills a vector shape the component built earlier, in the current colour.
+    //
+    // A path is not drawn from its geometry here: the coverage was computed by
+    // a compute kernel before this frame's render pass opened, and what this
+    // issues is a quad sampling it out of the shared atlas. So it joins the
+    // same instanced draw as the rectangles around it, and costs the same as
+    // one of them.
+    //
+    // Which is why the shape is a member of the component rather than a Path
+    // passed in: see PathShape for where the rasterization actually happens and
+    // why it cannot happen here.
+    void fillPath(const PathShape& shape);
 
     // Draws with the pen on the baseline at the string's left edge, and returns
     // the advance so differently coloured runs can be chained along a line.
