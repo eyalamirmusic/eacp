@@ -7,6 +7,7 @@
 #include "../Shader/ShaderLibrary.h"
 #include "../Shader/ShaderSource.h"
 #include "../Texture/Texture.h"
+#include "../Timing/FrameTimer.h"
 
 #include <cstdint>
 
@@ -127,7 +128,33 @@ public:
     // correctness - but without it a loop of off-screen renders is one endless
     // frame to StreamingBuffers, which then takes a fresh buffer every pass and
     // never reclaims one.
-    void beginFrame() { ++frameCount; }
+    //
+    // Out of line because it also starts the frame timer, which is the one
+    // thing both backends want done identically at this moment.
+    void beginFrame();
+
+    // What the GPU spent on the most recent frame it has finished: every pass
+    // that was given a label, plus the frame end to end.
+    //
+    // A pass is timed by giving it one:
+    //
+    //     auto pass = frame.beginPass({.label = "ui"});
+    //
+    // An unlabelled pass is not timed and costs nothing. The numbers are a few
+    // frames behind whatever is being drawn now, and cannot be anything else -
+    // see FrameTimings for why.
+    const FrameTimings& lastFrameTimings() const { return timer.lastTimings(); }
+
+    // Whether this device can time individual passes. False says only that the
+    // per-pass breakdown will be empty: FrameTimings::milliseconds, the frame
+    // as a whole, is measured by other means and still arrives.
+    //
+    // Answerable only once a frame has begun, since that is what builds the
+    // timestamp resources - ask after rendering, not before.
+    bool supportsPassTimings() const { return timer.isSupported(); }
+
+    // Internal: the timer Frame drives. Apps read lastFrameTimings().
+    FrameTimer& frameTimer() { return timer; }
 
     // How many GPU buffers have been created on this device since it came up.
     //
@@ -145,6 +172,8 @@ public:
 private:
     struct Native;
     Pimpl<Native> impl;
+
+    FrameTimer timer;
 
     std::uint64_t frameCount = 0;
     int bufferCount = 0;
