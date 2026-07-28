@@ -680,9 +680,24 @@ struct StageEmitter
             {
                 source =
                     define({statement.value, statement.index}, indent, uses, open);
-                source += indent + "buffer" + std::to_string(statement.bufferSlot)
-                          + "[" + printer.ref(statement.index)
-                          + "] = " + printer.ref(statement.value) + ";\n";
+
+                auto element = "buffer" + std::to_string(statement.bufferSlot) + "["
+                               + printer.ref(statement.index) + "]";
+                auto stored = printer.ref(statement.value);
+
+                // An atomic buffer's element is an atomic_uint on Metal and has
+                // to be stored through rather than assigned. HLSL's UAV element
+                // is an ordinary uint, so the plain assignment is already right
+                // there.
+                auto atomic = graph().storageBuffers()[statement.bufferSlot]
+                              == BufferAccess::Atomic;
+
+                if (atomic && printer.backend == Backend::Metal)
+                    source += indent + "atomic_store_explicit(&" + element + ", "
+                              + stored + ", memory_order_relaxed);\n";
+                else
+                    source += indent + element + " = " + stored + ";\n";
+
                 break;
             }
 

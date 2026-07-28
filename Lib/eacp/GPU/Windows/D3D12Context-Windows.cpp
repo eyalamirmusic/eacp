@@ -373,6 +373,35 @@ void D3D12Context::createRootSignatures()
     computeRootSignature = makeRootSignature(device.get(), computeDesc);
 }
 
+// Built on first use rather than beside the root signatures: a process that
+// never dispatches indirectly never makes one, and it depends on nothing that
+// could have changed since the device was created.
+//
+// pRootSignature stays null, which D3D12 allows exactly when every argument is
+// a Draw or a Dispatch - nothing about the bindings varies per command here,
+// only the grid, so there is no root-argument layout for the signature to
+// describe.
+ID3D12CommandSignature* D3D12Context::getDispatchSignature()
+{
+    if (dispatchSignature != nullptr || device == nullptr)
+        return dispatchSignature.get();
+
+    D3D12_INDIRECT_ARGUMENT_DESC argument = {};
+    argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH;
+
+    D3D12_COMMAND_SIGNATURE_DESC desc = {};
+    desc.ByteStride = sizeof(D3D12_DISPATCH_ARGUMENTS);
+    desc.NumArgumentDescs = 1;
+    desc.pArgumentDescs = &argument;
+
+    device->CreateCommandSignature(&desc,
+                                   nullptr,
+                                   __uuidof(ID3D12CommandSignature),
+                                   dispatchSignature.put_void());
+
+    return dispatchSignature.get();
+}
+
 D3D12Context::DescriptorAllocator
     D3D12Context::makeDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE type,
                                           UINT capacity)
@@ -799,6 +828,7 @@ void D3D12Context::recreateAfterDeviceLoss()
     available.clear();
     renderRootSignature = nullptr;
     computeRootSignature = nullptr;
+    dispatchSignature = nullptr;
     textureDescriptors = {};
     samplerDescriptors = {};
     fence = nullptr;

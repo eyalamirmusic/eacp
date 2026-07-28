@@ -263,6 +263,34 @@ public:
         graphData.addStore(buffer.slot, (base + 3u).node, value.w().node);
     }
 
+    // One element of an atomic buffer, set outright rather than added to. It
+    // completes the trio - add, load, store - and it is what a kernel computing
+    // a *dispatch size* needs: the threadgroup count an indirect dispatch reads
+    // is a number arrived at, not a number accumulated.
+    //
+    // Ordinary Store underneath, because the buffer's own access is what decides
+    // how it spells: only Metal needs anything, its atomic_uint having to be
+    // stored through rather than assigned.
+    void write(const AtomicBuffer& buffer, const UInt& index, const UInt& value)
+    {
+        graphData.addStore(buffer.slot, index.node, value.node);
+    }
+
+    void write(const AtomicBuffer& buffer, const UInt& index, unsigned value)
+    {
+        write(buffer, index, buffer.literal(value));
+    }
+
+    void write(const AtomicBuffer& buffer, unsigned index, const UInt& value)
+    {
+        write(buffer, buffer.literal(index), value);
+    }
+
+    void write(const AtomicBuffer& buffer, unsigned index, unsigned value)
+    {
+        write(buffer, buffer.literal(index), buffer.literal(value));
+    }
+
     // One element of threadgroup memory. A statement like every other write, and
     // it has to be: what a group is doing is deciding the order things land in.
     template <typename T, int Size>
