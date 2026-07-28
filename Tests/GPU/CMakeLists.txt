@@ -18,6 +18,7 @@ if (APPLE OR WIN32)
     list(APPEND gpu_test_sources
             GPUSnapshotTests.cpp
             ScissorTests.cpp
+            BaseVertexTests.cpp
             BackingScaleTests.cpp
             TextureRegionTests.cpp
             TextureSamplingTests.cpp
