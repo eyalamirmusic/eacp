@@ -146,12 +146,33 @@ Vector<UINT> makeStrideTable(const VertexLayout& layout)
     return {static_cast<UINT>(layout.stride)};
 }
 
-D3D12_RASTERIZER_DESC makeRasterizerDesc(int sampleCount)
+D3D12_CULL_MODE toD3DCullMode(CullMode mode)
+{
+    switch (mode)
+    {
+        case CullMode::None:
+            return D3D12_CULL_MODE_NONE;
+        case CullMode::Front:
+            return D3D12_CULL_MODE_FRONT;
+        case CullMode::Back:
+            return D3D12_CULL_MODE_BACK;
+    }
+
+    return D3D12_CULL_MODE_NONE;
+}
+
+D3D12_RASTERIZER_DESC makeRasterizerDesc(int sampleCount, CullMode cullMode)
 {
     D3D12_RASTERIZER_DESC desc = {};
     desc.FillMode = D3D12_FILL_MODE_SOLID;
-    // Match Metal's default of no face culling.
-    desc.CullMode = D3D12_CULL_MODE_NONE;
+    desc.CullMode = toD3DCullMode(cullMode);
+    // Stated rather than inherited, though it is also the default. D3D12 decides
+    // facing in screen space, after the viewport's y flip, so FALSE - clockwise
+    // there - is counter-clockwise in clip space, which is what CullMode
+    // promises a caller and what Metal is set to produce from the other side of
+    // that same flip. Tests/GPU/CullModeTests.cpp is what says whether it holds:
+    // measured on Metal, implied here.
+    desc.FrontCounterClockwise = FALSE;
     desc.DepthClipEnable = TRUE;
     desc.MultisampleEnable = sampleCount > 1 ? TRUE : FALSE;
     return desc;
@@ -216,6 +237,7 @@ struct RenderPipeline::Native
 {
     Native(Device& device, const RenderPipelineDescriptor& descriptor)
         : topology(descriptor.topology)
+        , cullMode(descriptor.cullMode)
     {
         pipeline.topology = toD3DTopology(descriptor.topology);
         pipeline.strides = makeStrideTable(descriptor.vertexLayout);
@@ -245,7 +267,8 @@ struct RenderPipeline::Native
         desc.PS.BytecodeLength = program->pixelBytecode->GetBufferSize();
         desc.BlendState = makeBlendDesc(descriptor.blendMode);
         desc.SampleMask = UINT_MAX;
-        desc.RasterizerState = makeRasterizerDesc(descriptor.sampleCount);
+        desc.RasterizerState =
+            makeRasterizerDesc(descriptor.sampleCount, descriptor.cullMode);
         desc.DepthStencilState = makeDepthStencilDesc(descriptor.depth);
         desc.InputLayout.pInputElementDescs = inputLayout.data();
         desc.InputLayout.NumElements = static_cast<UINT>(inputLayout.size());
@@ -268,6 +291,7 @@ struct RenderPipeline::Native
     ~Native() { getD3D12Context().deferRelease(std::move(pipeline.state)); }
 
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
+    CullMode cullMode = CullMode::None;
     D3D12Pipeline pipeline;
 };
 
@@ -285,6 +309,11 @@ bool RenderPipeline::isValid() const
 PrimitiveTopology RenderPipeline::topology() const
 {
     return impl->topology;
+}
+
+CullMode RenderPipeline::cullMode() const
+{
+    return impl->cullMode;
 }
 
 void* RenderPipeline::nativeState() const

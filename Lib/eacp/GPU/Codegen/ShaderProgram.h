@@ -701,16 +701,32 @@ public:
                  BlendMode blendMode = BlendMode::None,
                  PixelFormat colorFormat = PixelFormat::BGRA8Unorm)
     {
-        shaderLibrary.emplace(Device::shared(), generated.source);
-
         auto descriptor = RenderPipelineDescriptor {};
-        descriptor.library = &*shaderLibrary;
         descriptor.sampleCount = sampleCount;
-        descriptor.vertexLayout = generated.vertexLayout;
         descriptor.depth = depth;
         descriptor.topology = topology;
         descriptor.blendMode = blendMode;
         descriptor.colorFormat = colorFormat;
+
+        prepare(descriptor);
+    }
+
+    // The named form of the same thing, and what to reach for once more than
+    // one of these is not the shader's own choice: a program drawing into a
+    // texture takes its sample count, its depth and its pixel format from the
+    // target, and four positional arguments in a row say none of that at the
+    // call site. Cull mode is only reachable this way, being the one field with
+    // no positional slot.
+    //
+    // The program's own library and vertex layout are what they always were and
+    // are filled in here; whatever the caller left in those two fields is
+    // ignored.
+    void prepare(RenderPipelineDescriptor descriptor)
+    {
+        shaderLibrary.emplace(Device::shared(), generated.source);
+
+        descriptor.library = &*shaderLibrary;
+        descriptor.vertexLayout = generated.vertexLayout;
 
         pipelineState.emplace(Device::shared(), descriptor);
     }
