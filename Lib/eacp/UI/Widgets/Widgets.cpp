@@ -4,6 +4,12 @@
 
 namespace eacp::UI
 {
+// Corner radii, in points. Kept together because what makes a set of controls
+// look like a set is that they agree about this, and a literal at each call
+// site is how they stop agreeing.
+constexpr auto buttonCorner = 5.f;
+constexpr auto trackCorner = 4.f;
+
 const Theme& defaultTheme()
 {
     static const auto theme = Theme {};
@@ -79,15 +85,21 @@ void Button::paint(Graphics& g)
     auto bounds = getLocalBounds();
 
     g.setColour(toggledOn ? accent : theme.panel);
-    g.fillRect(bounds);
+    g.fillRoundedRect(bounds, buttonCorner);
 
     if (down)
-        g.fillAll(theme.pressed);
+    {
+        g.setColour(theme.pressed);
+        g.fillRoundedRect(bounds, buttonCorner);
+    }
     else if (isMouseOver())
-        g.fillAll(theme.hover);
+    {
+        g.setColour(theme.hover);
+        g.fillRoundedRect(bounds, buttonCorner);
+    }
 
     g.setColour(theme.outline);
-    g.drawRect(bounds);
+    g.drawRoundedRect(bounds, buttonCorner);
 
     // A lit toggle carries a dark caption, so it stays legible against the
     // accent rather than sitting light-on-light.
@@ -163,16 +175,17 @@ void Slider::paint(Graphics& g)
     auto bounds = getLocalBounds();
 
     g.setColour(theme.panel);
-    g.fillRect(bounds);
+    g.fillRoundedRect(bounds, trackCorner);
 
     if (orientation == Orientation::Horizontal)
     {
         g.setColour(accent);
-        g.fillRect(bounds.withWidth(bounds.w * value));
+        g.fillRoundedRect(bounds.withWidth(bounds.w * value), trackCorner);
 
         auto thumbX = bounds.w * value;
         g.setColour(theme.text);
-        g.fillRect({thumbX - 1.f, bounds.y, 2.f, bounds.h});
+        g.fillRoundedRect({thumbX - 1.5f, bounds.y + 2.f, 3.f, bounds.h - 4.f},
+                          1.5f);
     }
     else
     {
@@ -180,15 +193,20 @@ void Slider::paint(Graphics& g)
         auto filledHeight = bounds.h * value;
 
         g.setColour(accent);
-        g.fillRect(
-            {bounds.x, bounds.bottom() - filledHeight, bounds.w, filledHeight});
+        g.fillRoundedRect(
+            {bounds.x, bounds.bottom() - filledHeight, bounds.w, filledHeight},
+            trackCorner);
 
         g.setColour(theme.text);
-        g.fillRect({bounds.x, bounds.bottom() - filledHeight - 1.f, bounds.w, 2.f});
+        g.fillRoundedRect({bounds.x + 2.f,
+                           bounds.bottom() - filledHeight - 1.5f,
+                           bounds.w - 4.f,
+                           3.f},
+                          1.5f);
     }
 
     g.setColour(isMouseOver() || dragging ? theme.accent : theme.outline);
-    g.drawRect(bounds);
+    g.drawRoundedRect(bounds, trackCorner);
 }
 
 void Slider::setValueFromPosition(Point position)
@@ -293,10 +311,10 @@ void ScrollPanel::paintOverChildren(Graphics& g)
     auto thumbY = (bounds.h - thumbHeight) * (scrollOffset / maximum);
 
     g.setColour(theme.outline);
-    g.fillRect(track);
+    g.fillRoundedRect(track, trackWidth * 0.5f);
 
     g.setColour(theme.dimText);
-    g.fillRect({track.x, thumbY, trackWidth, thumbHeight});
+    g.fillRoundedRect({track.x, thumbY, trackWidth, thumbHeight}, trackWidth * 0.5f);
 }
 
 bool ScrollPanel::mouseWheelMove(const MouseEvent& event)

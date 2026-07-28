@@ -79,7 +79,7 @@ private:
     float fontPointSize = 13.f;
 
     // Built on the first resize, once there is a size to build them against.
-    std::optional<Sprites::SpriteRenderer> sprites;
+    std::optional<ShapeBatch> shapes;
     std::optional<Text::TextRenderer> text;
 
     // Where the button went down, in root space, carried through the drag so

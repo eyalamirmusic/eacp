@@ -1,7 +1,6 @@
 #pragma once
 
 #include <eacp/Graphics/Graphics.h>
-#include <eacp/Sprites/Sprites.h>
 #include <eacp/Text/Text.h>
 
 namespace eacp::UI
