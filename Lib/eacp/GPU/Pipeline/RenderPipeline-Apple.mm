@@ -95,6 +95,7 @@ struct RenderPipeline::Native
 {
     Native(Device& device, const RenderPipelineDescriptor& descriptor)
         : topology(descriptor.topology)
+        , cullMode(descriptor.cullMode)
     {
         auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
 
@@ -179,6 +180,7 @@ struct RenderPipeline::Native
     }
 
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
+    CullMode cullMode = CullMode::None;
     ObjC::Ptr<NSObject<MTLRenderPipelineState>> state;
     ObjC::Ptr<NSObject<MTLDepthStencilState>> depthState;
 };
@@ -197,6 +199,11 @@ bool RenderPipeline::isValid() const
 PrimitiveTopology RenderPipeline::topology() const
 {
     return impl->topology;
+}
+
+CullMode RenderPipeline::cullMode() const
+{
+    return impl->cullMode;
 }
 
 void* RenderPipeline::nativeState() const

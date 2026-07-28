@@ -22,6 +22,7 @@ if (APPLE OR WIN32)
             TextureRegionTests.cpp
             TextureSamplingTests.cpp
             ShaderBlendTests.cpp
+            CullModeTests.cpp
             CoordinateSpaceTests.cpp
             SpriteBatchTests.cpp
             RenderTargetTests.cpp
