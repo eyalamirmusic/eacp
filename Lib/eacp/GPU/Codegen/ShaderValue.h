@@ -543,6 +543,51 @@ struct OutputBuffer
     int slot = -1;
 };
 
+// A storage buffer of unsigned integers every thread in the dispatch may
+// read-modify-write at once, which is what makes one kernel able to hand out
+// slots of a shared array to threads that know nothing about each other.
+//
+// The elements are integers and not floats, and that is not a detail: the same
+// GPU::Buffer bound to an InputBuffer in a later kernel reads those bits as
+// floats and yields nonsense. Either read it back through load(), or have the
+// kernel that finishes with it write the values out somewhere a float buffer
+// can be read from.
+//
+// The add itself is ShaderBuilder::atomicAdd rather than a method here, because
+// it is a statement: see StatementKind::AtomicAdd for why the two backends
+// leave no other option.
+struct AtomicBuffer
+{
+    // What the element holds now. Ordered against this thread's own earlier
+    // operations and nothing else - relaxed, like the add - so it answers "how
+    // many are there" after a dispatch, not "what is the other threads' state"
+    // during one.
+    UInt load(const UInt& index) const
+    {
+        auto result = UInt {};
+        result.graph = graph;
+        result.node = graph->addAtomicLoad(slot, index.node);
+        return result;
+    }
+
+    // A literal index, anchored on this buffer's own graph - the same courtesy
+    // the intrinsics extend to a float literal, and worth more here, because a
+    // single shared counter is spelled at element zero and would otherwise be
+    // the one index a kernel could not write.
+    UInt load(unsigned index) const { return load(literal(index)); }
+
+    UInt literal(unsigned value) const
+    {
+        auto result = UInt {};
+        result.graph = graph;
+        result.node = graph->addUIntConstant(value);
+        return result;
+    }
+
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
 template <typename T>
 struct ValueTypeOf;
 
@@ -1992,6 +2037,36 @@ EACP_INT_COMPARISON(operator==, "==")
 EACP_INT_COMPARISON(operator!=, "!=")
 
 #undef EACP_INT_COMPARISON
+
+// And the unsigned ones, which neither of the sets above covers either. A UInt
+// is what a kernel is handed rather than what it builds - the thread id, a
+// buffer index, the slot an atomic add reserved - so until now the only way to
+// test one was to cross it into an Int first, and the one test that most wants
+// making is whether a reserved slot fits in the array it indexes.
+#define EACP_UINT_COMPARISON(name, spelling)                                        \
+    inline Bool name(const UInt& lhs, const UInt& rhs)                              \
+    {                                                                               \
+        return detail::compare(spelling, lhs, rhs);                                 \
+    }                                                                               \
+                                                                                    \
+    inline Bool name(const UInt& lhs, unsigned rhs)                                 \
+    {                                                                               \
+        return detail::compare(spelling, lhs, detail::uintConstantOn(lhs, rhs));    \
+    }                                                                               \
+                                                                                    \
+    inline Bool name(unsigned lhs, const UInt& rhs)                                 \
+    {                                                                               \
+        return detail::compare(spelling, detail::uintConstantOn(rhs, lhs), rhs);    \
+    }
+
+EACP_UINT_COMPARISON(operator<, "<")
+EACP_UINT_COMPARISON(operator<=, "<=")
+EACP_UINT_COMPARISON(operator>, ">")
+EACP_UINT_COMPARISON(operator>=, ">=")
+EACP_UINT_COMPARISON(operator==, "==")
+EACP_UINT_COMPARISON(operator!=, "!=")
+
+#undef EACP_UINT_COMPARISON
 
 // int min/max/abs: the branchless way to hold an index inside an array, for the
 // shader that would rather clamp than mask.

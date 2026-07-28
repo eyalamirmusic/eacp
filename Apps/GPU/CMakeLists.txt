@@ -30,6 +30,10 @@ add_subdirectory(PathQuality)
 # Strokes as fills: overlapping quads, joins and caps unioned by the non-zero
 # rule, next to the platform's own stroker.
 add_subdirectory(PathStroke)
+
+# Headless: what a rasterization costs on the CPU against what it costs on the
+# GPU, which is the split that decides what is worth moving between them.
+add_subdirectory(PathBench)
 add_subdirectory(Texture)
 add_subdirectory(Maze)
 add_subdirectory(Sprites)

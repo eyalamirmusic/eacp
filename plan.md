@@ -466,6 +466,10 @@ sounds. Rung two moves the bar it has to clear a long way: the automation-curve
 case above is now 375k segment-pixel tests, and a GPU pipeline has to beat that
 *including* what its own binning stages cost.
 
+*(That was the wrong bar, and rung 3's phase 0 measured the right one. Segment-
+pixel tests are the GPU's work, and rung two cut them so far that they stopped
+being what a rasterization costs — see below.)*
+
 **Stroking** was next in line, and is done — see below.
 
 **The atlas ceiling** is still the silent failure named at the end of rung one,
@@ -600,3 +604,200 @@ and useless as a demonstration.
 - **The overlap is real work.** A stroke is 2–3× the contours of the path it came
   from, and every overlapping piece is a segment every pixel in its tile tests.
   Rung two is what makes that affordable; it was not, before.
+
+# Rung 3 — the GPU pipeline
+
+**In progress.** Phase 0 has shipped and is what the rest is designed from.
+
+## Phase 0 — what rung 3 actually has to beat
+
+Rung 2 ended by naming its own successor's target: beat 375k segment-pixel
+tests, including what the GPU's own binning stages cost. That was measured
+before building anything, and it was the wrong target — segment-pixel tests are
+the *GPU's* work, and rung 2 cut them so far that they stopped being what a
+rasterization costs.
+
+`Apps/GPU/PathBench` is the measurement: headless, no window and no compositor,
+timing `setPath` (emit, bin, sum the backdrops, upload three buffers) against the
+dispatch. Release build, Apple silicon. Dispatches are batched twenty to a
+command buffer, because submitting each one and waiting measures the round trip
+instead of the kernel — unbatched it made a 40pt knob look dearer than a 96pt
+one. The empty-command-buffer floor is 0.02ms and is subtracted.
+
+| path | coverage px | segments | seg. tests | CPU ms | GPU ms | CPU share |
+|---|---|---|---|---|---|---|
+| knob indicator, 40pt | 73×67 | 72 | 24k | 0.001 | 0.034 | 4% |
+| knob indicator, 96pt | 177×163 | 166 | 58k | 0.004 | 0.022 | 14% |
+| PathQuality panel | 514×829 | 178 | 86k | 0.014 | 0.040 | 26% |
+| automation curve, 1200pt | 2402×356 | 846 | 461k | 0.049 | 0.047 | 51% |
+| full-window ellipse | 3203×2004 | 281 | 233k | 0.220 | 0.147 | 60% |
+| artwork, 4k segments | 1800×1786 | 4,000 | 3.4M | 0.223 | 0.081 | 73% |
+| artwork, 20k segments | 1807×1807 | 20,000 | 11.0M | 0.645 | 0.131 | 83% |
+| artwork, 100k segments | 1812×1821 | 99,998 | 37.3M | 2.362 | 0.188 | **93%** |
+
+And the workload the rung is actually for — a canvas where every path moves, so
+every one is re-binned and re-uploaded every frame:
+
+| | paths | segments | CPU ms | GPU ms | CPU share |
+|---|---|---|---|---|---|
+| automation lanes | 32 | 27k | 1.585 | 0.767 | 67% |
+| automation lanes | 128 | 108k | 6.492 | 2.306 | 74% |
+| PathQuality panels | 128 | 23k | 1.855 | 1.342 | 58% |
+
+**The GPU is no longer the rasterizer; the CPU is.** The 100k-segment artwork
+does 37 million segment-pixel tests in 0.19ms, and the CPU spends 2.36ms
+deciding which 37 million. A canvas of 128 live automation lanes spends 6.5ms of
+a 16.6ms frame on the CPU before a single pixel is computed. So rung 3's case is
+not that it computes coverage faster — it will not — it is that it takes the CPU
+out of the per-frame path entirely.
+
+## The two costs, which are not one cost
+
+The stage split, measured by instrumenting the four stages of `setPath`
+temporarily and reverting it (the numbers are here so it does not have to be
+done again):
+
+| path | emit | bin | backdrop | upload |
+|---|---|---|---|---|
+| PathQuality panel | 0.001 | 0.003 | **0.008** | 0.001 |
+| automation curve, 1200pt | 0.006 | 0.016 | **0.022** | 0.003 |
+| full-window ellipse | 0.002 | 0.020 | **0.177** | 0.021 |
+| artwork, 4k segments | 0.028 | **0.097** | 0.079 | 0.013 |
+| artwork, 20k segments | 0.147 | **0.367** | 0.079 | 0.020 |
+| artwork, 100k segments | 0.756 | **1.411** | 0.081 | 0.044 |
+
+This is the finding phase 0 exists for, and it was not expected: there are
+**two independent CPU costs**, each of which dominates a different real case,
+and moving only one leaves the other in charge.
+
+- **Binning and emit** are priced by the outline: `O(segments × tile rows
+  crossed)`. It is 92% of the 100k-segment artwork and 2% of the full-window
+  ellipse.
+- **The backdrop** is priced by the *area*: it is one float per pixel row per
+  tile column, so `coverage pixels / 16`, zeroed and then prefix-summed along
+  every row whatever the path is. It is 80% of the full-window ellipse — which
+  has only 281 segments — and 3% of the 100k artwork.
+
+The full-window ellipse is the one that makes the point. 281 segments is nothing,
+binning them costs 0.020ms, and the rasterization still costs 0.220ms, because
+201 tile columns × 2004 rows is 402k floats to clear, sum and upload — 1.6MB of
+CPU memory traffic for a shape with an outline a knob could carry.
+
+That is rung 2's per-pixel-row backdrop being exactly as expensive as it is
+correct. It is the design decision rung 2 was proudest of — a per-tile backdrop
+is a sixteenth the size but needs every segment ending inside a band filed under
+every tile to its right, which is the blow-up binning existed to prevent — and it
+is now the single largest CPU cost for any path that covers real area.
+
+## What this makes rung 3
+
+Not "port the binner to the GPU". Three things, and the middle one is the
+interesting one:
+
+1. **Flatten and emit on the GPU** — 32% of the 100k-segment artwork's CPU time
+   is transforming an already-flattened polyline into the segment array.
+2. **The backdrop without a per-row array.** Vello's answer is a per-tile integer
+   backdrop, which rung 2 rejected for a good reason that still holds. The GPU
+   version can have what the CPU one could not: a per-tile backdrop *plus* a
+   per-row correction computed by the threads that need it, so the O(area) array
+   never exists on either side of the bus.
+3. **Bin with atomics** rather than the two counting-sort passes.
+
+Only the third is what the plan above named. The prerequisites are unchanged —
+atomics, threadgroup memory with barriers, indirect dispatch — but what they are
+for has moved.
+
+**The floor this cannot go below:** a UI-scale path is 0.001–0.014ms of CPU and
+already 4–26% of its own cost. Rung 3 adds stages, dispatches and a round trip
+that rung 2 does not have, so it will make a knob slower. Whatever ships has to
+keep rung 2's path for small paths and pick between them, or it is a regression
+for the only interface eacp actually draws today.
+
+## Phase 1 — atomics in the EDSL
+
+**Shipped.** The first of the three GPU features rung 3 is gated on.
+
+### What shipped
+
+`eacp-gpu`
+
+- `BufferAccess::Atomic`, `AtomicBuffer`, `Uniform<AtomicBuffer>` — a storage
+  buffer of unsigned integers, declared `device atomic_uint*` on Metal and
+  `RWStructuredBuffer<uint>` on D3D. It binds exactly as an output does; only
+  the element type differs, and only the emitted declaration knows.
+- `atomicAdd(buffer, index, value)` — adds to one element, yields what it held
+  before. Literal index and addend accepted, since a single shared counter is
+  spelled at element zero and would otherwise be the one index a kernel could
+  not write.
+- `AtomicBuffer::load` — reading a counter back, which nothing else can do: the
+  bits are integers, so the same buffer bound as an `InputBuffer` reads garbage.
+- **`UInt` comparisons**, which did not exist. Neither the float set (constrained
+  on the float scalar shape) nor the integer set covered them, so a `UInt` — the
+  thread id, a buffer index, and now a reserved slot — could not be compared with
+  anything without crossing into an `Int` first. The single most important guard
+  in a binning kernel is whether the slot it just reserved fits in the array it
+  indexes, so this was not optional.
+
+`Tests/GPU/AtomicTests.cpp`, and both backends' generated source checked on
+whichever host runs the suite — the Windows half cannot be executed here and is
+the half more likely to be wrong, the two languages disagreeing about whether an
+atomic add is an expression at all.
+
+### The one thing that is not a choice
+
+`atomicAdd` is a **statement**, not an expression, and both languages forced it:
+MSL's `atomic_fetch_add_explicit` returns the old value, but HLSL's
+`InterlockedAdd` writes it through an out parameter and cannot appear inside a
+larger expression. Naming the result is the only shape both can print — and it
+is the shape a caller wants anyway, the old value being a slot reserved for this
+thread.
+
+### What the tests had to be
+
+A test that cannot fail is not evidence, and the obvious atomics test cannot
+fail: `counter = counter + 1` across a thousand threads still lands on a
+plausible number, just a smaller one, so checking the total is "about right"
+passes on a broken build. What is checked instead is that the tickets handed out
+are a **permutation of 0..n-1** — every one distinct, none skipped — which no
+lost update can survive.
+
+*Verified* by de-atomicising the Metal emission on purpose (a plain load, add and
+store, and a non-atomic buffer type): all three tests fail. Restored, all three
+pass, and the suite is 824/824.
+
+### Two bugs it found, and only the second was mine
+
+**A kernel that only counts was not a kernel.** `isCompute()` was keyed off
+having a store, and an atomic add is not a store — so a kernel whose only output
+was a counter emitted a *vertex/fragment pair* and failed to compile on a `gid`
+no render stage has. Found by the histogram test, which writes nothing.
+
+**A store did not happen where it was written.** This one predates this work
+entirely and is the more serious of the two. Stores were **roots** of the compute
+graph rather than statements in it — collected into a list and emitted after the
+body, whatever block the `write()` call was made in. So:
+
+```
+    if ((v0 < 64u))
+    {
+    }
+    buffer1[v0] = float(gid);       // the guard does nothing
+```
+
+and a store inside a loop ran **once, after it**, on the counter's final value —
+a kernel told to write four elements wrote one, at the wrong index. Both
+compiled. Both produced plausible output. Neither said anything.
+
+Every shipped kernel writes at the top level, which is exactly why it survived —
+and phase 4 cannot: a binner must guard its writes against overflow, which is
+the very shape that was silently discarded. Stores are statements now
+(`StatementKind::Store` / `TextureStore`), so they land in the block they were
+recorded in. `Tests/GPU/StorePlacementTests.cpp` checks the values rather than
+the source — the elements a kernel was told to leave alone still hold what they
+held — and both tests fail against the old shape.
+
+Fixing it broke two shipped codegen tests, which turned out to be a second
+instance of the same omission: `blockUses` counted a statement's *value* as a
+use but not its *index*, so once each store was its own statement the offsets of
+a record looked used once instead of twice and stopped being named. The tests
+were right and the emitter was wrong; `blockUses` counts subscripts now.
