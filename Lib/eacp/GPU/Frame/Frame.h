@@ -3,6 +3,8 @@
 #include "ComputePass.h"
 #include "RenderPass.h"
 
+#include <string_view>
+
 namespace eacp::GPU
 {
 class Device;
@@ -11,6 +13,20 @@ struct RenderPassDescriptor
 {
     Graphics::Color clearColor = Graphics::Color::black();
     bool clear = true;
+
+    // Names this pass for the GPU timer, which is also what turns timing on for
+    // it: a labelled pass has its start and end timestamped by the hardware and
+    // turns up in Device::lastFrameTimings(), while an unlabelled one is not
+    // measured and costs nothing.
+    //
+    // A label rather than a flag because a frame has several passes and the
+    // question worth asking is which of them costs what. Copied as the pass
+    // begins, so a temporary is safe.
+    //
+    // Initialised here rather than left to aggregate initialisation, or every
+    // existing `beginPass({colour})` in the tree warns under
+    // -Wmissing-field-initializers for the field it does not know about.
+    std::string_view label = {};
 };
 
 // Off-screen render target for snapshots: a colour texture the app owns instead
@@ -80,7 +96,10 @@ public:
     // A command buffer has one open encoder at a time: let the returned pass end
     // (drop it out of scope, or call end()) before beginning the pass that reads
     // what it wrote.
-    ComputePass beginCompute();
+    //
+    // A label times the pass, exactly as it does on a render pass — see
+    // RenderPassDescriptor::label.
+    ComputePass beginCompute(std::string_view label = {});
 
     bool isValid() const;
 

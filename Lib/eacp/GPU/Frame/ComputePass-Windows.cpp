@@ -170,6 +170,9 @@ void ComputePass::dispatch(int width, int height)
 
 void ComputePass::end()
 {
+    if (impl->encoder)
+        endTimedPass(*impl->encoder);
+
     impl->encoder.reset();
 }
 } // namespace eacp::GPU

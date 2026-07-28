@@ -318,6 +318,11 @@ void RenderPass::end()
     // recorded. See RenderPass::Participant.
     drainParticipants();
 
+    // After them, so what a participant flushed is inside the pass being timed
+    // rather than after it.
+    if (impl->encoder)
+        endTimedPass(*impl->encoder);
+
     // Commands are recorded onto the frame's list, which submits when the
     // frame is destroyed; releasing the encoder marks the pass finished.
     impl->encoder.reset();
