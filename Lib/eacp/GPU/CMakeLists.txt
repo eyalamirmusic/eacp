@@ -11,6 +11,7 @@ target_compile_options(eacp-gpu PUBLIC $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocesso
 # builds on every platform and is not gated behind the APPLE/WIN32 branches. Only
 # the native backend selection (ShaderBuilder-*) lives in the platform branches.
 target_sources(eacp-gpu PRIVATE
+        Buffer/StreamingBuffers.cpp
         Device/Device.cpp
         Frame/RenderPass.cpp
         Codegen/ShaderGraph.cpp

@@ -94,11 +94,13 @@ struct Frame::Native
 Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture)
     : impl(device, drawable, msaaTexture, depthTexture)
 {
+    device.beginFrame();
 }
 
 Frame::Frame(Device& device, const OffscreenTarget& target)
     : impl(device, target)
 {
+    device.beginFrame();
 }
 
 Frame::~Frame()

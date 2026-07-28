@@ -8,6 +8,8 @@
 #include "../Shader/ShaderSource.h"
 #include "../Texture/Texture.h"
 
+#include <cstdint>
+
 namespace eacp::Graphics
 {
 class Image;
@@ -113,8 +115,38 @@ public:
     void trackSubmittedWork(void* nativeCommandBuffer);
     void waitForSubmittedWork();
 
+    // How many frames have begun on this device. StreamingBuffers picks which
+    // of its pools to write into from this, so that a renderer streaming
+    // per-frame data has nothing to call at the frame boundary and therefore
+    // nothing to forget - see StreamingBuffers for why that matters.
+    std::uint64_t frameIndex() const { return frameCount; }
+
+    // Called by Frame's constructor on both backends, including the off-screen
+    // one. An off-screen frame blocks until the GPU is done, so nothing it
+    // wrote is in flight afterwards and the advance is not needed for
+    // correctness - but without it a loop of off-screen renders is one endless
+    // frame to StreamingBuffers, which then takes a fresh buffer every pass and
+    // never reclaims one.
+    void beginFrame() { ++frameCount; }
+
+    // How many GPU buffers have been created on this device since it came up.
+    //
+    // Per-frame data goes through StreamingBuffers, which recycles, so this
+    // settles once a renderer's pools are warm. A count that keeps climbing
+    // while the drawing repeats is allocation churn in the frame loop -
+    // newBufferWithBytes on Metal, a committed resource on D3D12 - which is
+    // what the assertions in Tests/GPU are there to catch.
+    int buffersCreated() const { return bufferCount; }
+
+    // Called by Buffer's constructor on both backends, for buffers that got
+    // real storage.
+    void noteBufferCreated() { ++bufferCount; }
+
 private:
     struct Native;
     Pimpl<Native> impl;
+
+    std::uint64_t frameCount = 0;
+    int bufferCount = 0;
 };
 } // namespace eacp::GPU
