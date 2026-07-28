@@ -119,6 +119,44 @@ Send a `Float` and compare it; send a `Float4x4`. `Int` and the integer vectors
 *are* uniforms — both languages give a signed integer four bytes and pack it
 where they pack a float.
 
+## Pipeline state
+
+`prepare(sampleCount)` covers the common settings positionally. Everything else
+a pipeline can be told goes through the descriptor form, which is the same
+`RenderPipelineDescriptor` a hand-written shader fills in:
+
+```cpp
+shader.prepare({.sampleCount = sampleCount(),
+                .depth = true,
+                .cullMode = CullMode::Back});
+```
+
+**Depth is three fields, not one.** `depth` says the pipeline has a depth
+attachment — the view has to have one too (`setDepth(true)`), and both backends
+reject a draw whose pipeline disagrees with the pass about that. `depthCompare`
+and `depthWrite` are what to do with it, and they come apart where it matters:
+translucent geometry tests against the opaque depth already written and must not
+write its own, or the nearer of two translucent surfaces hides the further one
+instead of blending over it.
+
+```cpp
+opaque.prepare({.sampleCount = 1, .depth = true});                    // the default: LessEqual, writing
+glass.prepare({.sampleCount = 1, .depth = true, .depthWrite = false}); // tests, does not write
+```
+
+**Culling is off by default, and `Winding::Clockwise` means clockwise on the
+rendered image.** Both APIs decide facing after the viewport transform, so a
+front face is the same triangle on Metal and on D3D12 — `PipelineStateTests`
+asserts that rather than leaving it to this paragraph. A mesh in glTF's
+convention is counter-clockwise in *its* coordinates and comes out clockwise
+here once a projection has flipped y, so which value a loader wants depends on
+its own matrices; draw it with `CullMode::None` first and turn culling on when
+the geometry is right, not before.
+
+Culling is pipeline state on D3D12 and encoder state on Metal. eacp hides that:
+`RenderPass::setPipeline` applies it on every bind, so a pass that draws a
+culled mesh and then a full-screen quad gets the same picture either way.
+
 ## Rendering into a texture
 
 A texture created with `TextureDescriptor::renderTarget` can be drawn into and
