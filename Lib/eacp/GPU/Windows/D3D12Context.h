@@ -72,6 +72,13 @@ public:
     {
         return computeRootSignature.get();
     }
+
+    // The command signature ExecuteIndirect needs to read a dispatch out of a
+    // buffer. One argument, of type Dispatch, which is the case D3D12 lets a
+    // signature carry a null root signature for: nothing about the bindings
+    // changes per command, only the grid. Built on first use and shared, since
+    // it depends on nothing but the device.
+    ID3D12CommandSignature* getDispatchSignature();
     ID3D12DescriptorHeap* getTextureHeap() const
     {
         return textureDescriptors.heap.get();
@@ -218,6 +225,7 @@ private:
 
     winrt::com_ptr<ID3D12RootSignature> renderRootSignature;
     winrt::com_ptr<ID3D12RootSignature> computeRootSignature;
+    winrt::com_ptr<ID3D12CommandSignature> dispatchSignature;
 
     DescriptorAllocator textureDescriptors;
     DescriptorAllocator samplerDescriptors;

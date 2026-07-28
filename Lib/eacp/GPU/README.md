@@ -264,6 +264,48 @@ with `counts.load(index)`, or have the kernel that finishes with it write the
 values somewhere a float buffer can be read from. It binds like an output
 otherwise, and takes a slot from the same counter.
 
+### A dispatch the GPU sized
+
+`dispatchIndirect` takes its threadgroup counts out of a buffer an earlier
+kernel wrote, so a stage whose size depends on what the stage before it found
+costs no readback — the number never reaches the CPU:
+
+```cpp
+{
+    auto pass = commands.beginCompute();
+    pass.dispatch(count, capacity);        // counts into `arguments`
+}
+{
+    auto pass = commands.beginCompute();
+    pass.dispatch(prepare, 1);             // count -> DispatchArguments
+}
+{
+    auto pass = commands.beginCompute();
+    pass.dispatchIndirect(consume, arguments, capacity);
+}
+```
+
+`DispatchArguments` is the three **threadgroup** counts both backends read, at
+the same size and in the same order. A kernel that counted 1000 items writes
+`(1000 + threadGroupWidth - 1) / threadGroupWidth`, not 1000. Writing them means
+writing integers, so the buffer is a `Uniform<AtomicBuffer>` and
+`write(arguments, 0u, groups)` is the store.
+
+The last argument is what the generated bounds guard compares against, and it
+cannot be the real count — nothing on the CPU knows it. Pass the **capacity**.
+The guard then stops nothing short, and a kernel that must not run past the real
+count reads it from a buffer and returns itself. Both guards matter: this one
+keeps threads inside the allocation, the kernel's own keeps them inside the
+data. The grid is rounded up to whole groups either way, so the tail of the last
+group runs and has to be harmless.
+
+Each stage is its own pass. Threads of one dispatch are ordered against each
+other by nothing but the end of that dispatch, so a kernel reading what the
+previous one counted has to be in a later pass.
+
+1D only. A 2D indirect dispatch would take a width and a height beside an offset
+and could not be told apart from this one; nothing has needed it.
+
 ### Threadgroup memory
 
 `sharedArray<T, N>()` is memory one dispatch group has in common: every thread

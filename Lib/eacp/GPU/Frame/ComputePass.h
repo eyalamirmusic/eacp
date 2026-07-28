@@ -9,6 +9,21 @@ namespace eacp::GPU
 class ComputePipeline;
 class Buffer;
 
+// What an indirect dispatch reads out of a buffer: three threadgroup counts.
+// Both backends take exactly this, in this order and at this size - Metal's
+// MTLDispatchThreadgroupsIndirectArguments and D3D12's D3D12_DISPATCH_ARGUMENTS
+// are the same three 32-bit unsigned integers - so a kernel writing one is
+// writing the same three numbers whichever machine it runs on.
+//
+// **Threadgroups, not threads.** A kernel that has counted 1000 items writes
+// (1000 + threadGroupWidth - 1) / threadGroupWidth here, not 1000.
+struct DispatchArguments
+{
+    std::uint32_t groupsX = 1;
+    std::uint32_t groupsY = 1;
+    std::uint32_t groupsZ = 1;
+};
+
 // Records dispatch commands for a single compute pass (MTLComputeCommandEncoder
 // on Metal). Ends the encoder automatically on destruction. Obtained from
 // CommandBuffer::beginCompute.
@@ -66,6 +81,14 @@ public:
     // authored against threadPosition() needs.
     void dispatch(int width, int height);
 
+    // Runs the kernel over a grid the **GPU** decided: the threadgroup counts
+    // come from DispatchArguments living in a buffer an earlier kernel on this
+    // command buffer wrote, and the CPU never learns the number. That is the
+    // whole point - a stage whose size depends on what the stage before it found
+    // would otherwise need a readback, and a readback is a round trip through
+    // the host between two passes that were going to be adjacent.
+    void dispatchIndirect(const Buffer& arguments, int offsetInBytes = 0);
+
     // Binds and dispatches a prepared ComputeProgram in one call: its pipeline,
     // storage buffers and uniform block (including the implicit element count
     // its generated bounds guard reads), then a dispatch over count work items.
@@ -94,6 +117,35 @@ public:
         const auto* uniforms = program.packedUniforms(width, height);
         setBytes(uniforms, (std::size_t) program.uniformByteSize());
         dispatch(width, height);
+    }
+
+    // The indirect form of the program dispatch: same binding, and a grid that
+    // is not known here.
+    //
+    // guardCount is what the generated bounds guard compares against, and it
+    // cannot be the real count - nothing on this side of the wire knows it. Pass
+    // the **capacity**: the largest the count could be, which is usually the
+    // size of the buffer the kernel writes. The guard then stops nothing short,
+    // and a kernel that must not run past the real count reads it from a buffer
+    // and returns itself. Both guards matter and neither replaces the other -
+    // this one keeps threads inside the allocation, the kernel's own keeps them
+    // inside the data.
+    //
+    // 1D only. A 2D indirect dispatch would take a width and a height beside an
+    // offset and could not be told apart from this one, and nothing has needed
+    // it; bind by hand and use the raw form above if it ever does.
+    template <typename Program>
+    void dispatchIndirect(Program& program,
+                          const Buffer& arguments,
+                          int guardCount,
+                          int offsetInBytes = 0)
+    {
+        setPipeline(program.pipeline());
+        program.bindResources(*this);
+
+        const auto* uniforms = program.packedUniforms(guardCount);
+        setBytes(uniforms, (std::size_t) program.uniformByteSize());
+        dispatchIndirect(arguments, offsetInBytes);
     }
 
     void end();

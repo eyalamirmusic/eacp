@@ -314,6 +314,28 @@ protected:
         builder.write(array, index, value);
     }
 
+    // An atomic buffer's element, set rather than added to - what a kernel
+    // computing a dispatch size writes.
+    void write(const AtomicBuffer& buffer, const UInt& index, const UInt& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const AtomicBuffer& buffer, const UInt& index, unsigned value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const AtomicBuffer& buffer, unsigned index, const UInt& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const AtomicBuffer& buffer, unsigned index, unsigned value)
+    {
+        builder.write(buffer, index, value);
+    }
+
     // One texel of a kernel's output image, at the coordinates a 2D kernel
     // already has in hand from threadPosition().
     void write(const WritableTexture2D& texture,
