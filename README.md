@@ -23,7 +23,10 @@ them, so apps inherit the look, feel, and performance of the host OS:
   on Windows).
 - **Graphics** — `Window`, `View`, `Path`, `Font`, and a `Context` drawing
   abstraction backed by Core Graphics / CoreText on Apple platforms and the
-  native Windows graphics stack.
+  native Windows graphics stack. `primaryDisplay()` reports the screen's frame
+  and work area in points, so an app can pick a first window size that fits;
+  `View::getWindow()` lets a view reach the window it is in rather than be
+  handed it.
 - **GPU** — `GPUView`, frames, passes, buffers, textures and pipelines over
   Metal and D3D12, plus compute — and a shader EDSL that makes a shader a C++
   struct rather than a string literal per backend. See
