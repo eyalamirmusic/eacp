@@ -157,15 +157,19 @@ void* GpuTimestamps::nativeSamples(int slot) const
     return impl->slots[slot].heap.get();
 }
 
-void GpuTimestamps::endSlot(int slot, int passCount, void* nativeCommandBuffer)
+// Unlike Metal, there is nothing to report without the queries: D3D12 measures
+// the frame with the same timestamps it measures a pass with, so a device that
+// cannot take them has no frame total either. Saying so is what keeps the
+// timer's slots from filling up with frames that can never be answered.
+bool GpuTimestamps::endSlot(int slot, int passCount, void* nativeCommandBuffer)
 {
     if (!impl->supported)
-        return;
+        return false;
 
     auto* list = static_cast<ID3D12GraphicsCommandList*>(nativeCommandBuffer);
 
     if (list == nullptr)
-        return;
+        return false;
 
     auto& entry = impl->slots[slot];
 
@@ -190,6 +194,8 @@ void GpuTimestamps::endSlot(int slot, int passCount, void* nativeCommandBuffer)
                            2,
                            entry.readback.get(),
                            queryBytes * static_cast<UINT64>(frameStartQuery));
+
+    return true;
 }
 
 void GpuTimestamps::noteSubmitted(int slot, std::uint64_t fenceValue)

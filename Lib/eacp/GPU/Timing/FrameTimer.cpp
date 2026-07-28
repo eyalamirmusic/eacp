@@ -62,10 +62,13 @@ void FrameTimer::endFrame(void* nativeCommandBuffer)
     if (current < 0)
         return;
 
-    timestamps.endSlot(current, passCount, nativeCommandBuffer);
-
+    // Pending only if the backend will actually have an answer. A slot left
+    // waiting on one that never comes is never recycled, and four of those is
+    // the timer switched off for the rest of the process - which is exactly
+    // what a device with no counter support used to do.
     slots[current].passCount = passCount;
-    slots[current].pending = true;
+    slots[current].pending =
+        timestamps.endSlot(current, passCount, nativeCommandBuffer);
 }
 
 void FrameTimer::noteSubmitted(std::uint64_t fenceValue)

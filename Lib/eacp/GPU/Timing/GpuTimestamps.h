@@ -50,7 +50,18 @@ public:
     // Records whatever has to be on the command buffer before it is committed -
     // the closing timestamp and a ResolveQueryData on D3D12, nothing on Metal -
     // and takes hold of what will say when the GPU has finished with the slot.
-    void endSlot(int slot, int passCount, void* nativeCommandBuffer);
+    //
+    // Returns whether the slot is now waiting on the GPU and will have
+    // something to report. False means it never will, and the caller must not
+    // leave it pending: a slot that can never complete is never recycled, and
+    // four of those stop the timer for the rest of the process.
+    //
+    // The two backends differ here, which is why this is a question rather than
+    // an assumption. Metal still has the frame's own total without any counter
+    // support at all, so an unsupported device answers true and reports that
+    // much; D3D12 measures the frame with the same queries as everything else,
+    // so without them it answers false and reports nothing.
+    bool endSlot(int slot, int passCount, void* nativeCommandBuffer);
 
     // The fence value the submission was given, which D3D12 only learns after
     // the list has been executed. Does nothing on Metal, where the command
