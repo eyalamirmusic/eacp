@@ -21,6 +21,22 @@ static MTLVertexFormat toMetalVertexFormat(VertexFormat format)
             return MTLVertexFormatFloat3;
         case VertexFormat::Float4:
             return MTLVertexFormatFloat4;
+
+        // The Normalized variants, not the plain integer ones: an attribute
+        // declared UByte4Norm reads as 0..1 in the shader, where plain
+        // MTLVertexFormatUChar4 would hand it 0..255. The same choice on D3D12
+        // is UNORM against UINT, and the two backends have to agree on it or a
+        // colour comes out 255 times too bright on one of them.
+        case VertexFormat::UByte4Norm:
+            return MTLVertexFormatUChar4Normalized;
+        case VertexFormat::Half2:
+            return MTLVertexFormatHalf2;
+        case VertexFormat::Half4:
+            return MTLVertexFormatHalf4;
+        case VertexFormat::Short2Norm:
+            return MTLVertexFormatShort2Normalized;
+        case VertexFormat::Short4Norm:
+            return MTLVertexFormatShort4Normalized;
     }
 
     return MTLVertexFormatFloat3;

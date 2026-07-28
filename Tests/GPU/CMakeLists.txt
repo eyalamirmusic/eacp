@@ -20,6 +20,7 @@ if (APPLE OR WIN32)
             GPUSnapshotTests.cpp
             ScissorTests.cpp
             BaseVertexTests.cpp
+            VertexFormatTests.cpp
             BackingScaleTests.cpp
             TextureRegionTests.cpp
             TextureSamplingTests.cpp

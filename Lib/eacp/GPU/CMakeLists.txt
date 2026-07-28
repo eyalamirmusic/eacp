@@ -14,6 +14,7 @@ target_sources(eacp-gpu PRIVATE
         Buffer/StreamingBuffers.cpp
         Device/Device.cpp
         Frame/RenderPass.cpp
+        Codegen/PackedVertex.cpp
         Codegen/ShaderGraph.cpp
         Codegen/ShaderEmitter.cpp
         Codegen/ShaderBuilder.cpp)

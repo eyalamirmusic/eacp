@@ -65,6 +65,22 @@ DXGI_FORMAT toDXGIFormat(VertexFormat format)
             return DXGI_FORMAT_R32G32B32_FLOAT;
         case VertexFormat::Float4:
             return DXGI_FORMAT_R32G32B32A32_FLOAT;
+
+        // UNORM and SNORM rather than UINT and SINT: the shader reads these as
+        // 0..1 and -1..1, which is what the Normalized Metal formats give. The
+        // integer variants would deliver raw 0..255 and disagree with the other
+        // backend rather than fail, which is why VertexFormatTests compares a
+        // packed render against an unpacked one instead of trusting either.
+        case VertexFormat::UByte4Norm:
+            return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case VertexFormat::Half2:
+            return DXGI_FORMAT_R16G16_FLOAT;
+        case VertexFormat::Half4:
+            return DXGI_FORMAT_R16G16B16A16_FLOAT;
+        case VertexFormat::Short2Norm:
+            return DXGI_FORMAT_R16G16_SNORM;
+        case VertexFormat::Short4Norm:
+            return DXGI_FORMAT_R16G16B16A16_SNORM;
     }
 
     return DXGI_FORMAT_R32G32B32_FLOAT;
