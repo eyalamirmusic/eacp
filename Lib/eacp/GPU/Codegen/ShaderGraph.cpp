@@ -16,6 +16,7 @@ bool dependsOnMutableState(ExprKind kind)
     {
         case ExprKind::VarRead:
         case ExprKind::BufferRead:
+        case ExprKind::AtomicLoad:
         case ExprKind::Sample:
         case ExprKind::Fetch:
             return true;
@@ -334,7 +335,14 @@ int ShaderGraph::addWritableTexture()
 
 void ShaderGraph::addTextureStore(int slot, int x, int y, int value)
 {
-    textureStoreList.add({slot, x, y, value});
+    writesResources = true;
+
+    auto store = Statement {StatementKind::TextureStore};
+    store.bufferSlot = slot;
+    store.index = x;
+    store.indexY = y;
+    store.value = value;
+    addStatement(store);
 }
 
 int ShaderGraph::addSample(int textureSlot, int uv)
@@ -428,7 +436,45 @@ int ShaderGraph::addBufferRead(int slot, int index)
 
 void ShaderGraph::addStore(int slot, int index, int value)
 {
-    storeList.add({slot, index, value});
+    writesResources = true;
+
+    auto store = Statement {StatementKind::Store};
+    store.bufferSlot = slot;
+    store.index = index;
+    store.value = value;
+    addStatement(store);
+}
+
+// The variable is registered without a Declare, because the AtomicAdd statement
+// is itself the declaration - the emitted line names the type and takes the old
+// value in one go on Metal, and on Windows declares it a line above the
+// InterlockedAdd that fills it. A Declare here would emit a second definition of
+// the same name.
+int ShaderGraph::addAtomicAdd(int bufferSlot, int index, int value)
+{
+    writesResources = true;
+
+    auto slot = variableTypes.size();
+    variableTypes.add(ValueType::UInt);
+
+    auto operation = Statement {StatementKind::AtomicAdd};
+    operation.slot = slot;
+    operation.bufferSlot = bufferSlot;
+    operation.index = index;
+    operation.value = value;
+    addStatement(operation);
+
+    return slot;
+}
+
+int ShaderGraph::addAtomicLoad(int bufferSlot, int index)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::AtomicLoad;
+    node.type = ValueType::UInt;
+    node.index = bufferSlot;
+    node.args.add(index);
+    return add(std::move(node));
 }
 
 int ShaderGraph::addStatement(Statement newStatement)

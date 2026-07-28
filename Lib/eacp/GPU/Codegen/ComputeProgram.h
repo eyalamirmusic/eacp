@@ -73,6 +73,17 @@ public:
             pass.setOutputBuffer(*buffer, handle.slot);
     }
 
+    // An atomic buffer binds exactly as an output does - a Metal device buffer,
+    // a D3D UAV - since what makes it atomic is the type the kernel declares it
+    // through and not how the pass hands it over.
+    void onAtomicBuffer(const char*,
+                        AtomicBuffer& handle,
+                        const Buffer* buffer) override
+    {
+        if (buffer != nullptr)
+            pass.setOutputBuffer(*buffer, handle.slot);
+    }
+
     void onTexture(const char*,
                    Texture2D& handle,
                    const Texture* texture,
@@ -227,6 +238,29 @@ protected:
 
     void breakLoop() { builder.breakLoop(); }
     void continueLoop() { builder.continueLoop(); }
+
+    // Adds to one element of a shared counter and yields what it held before, so
+    // threads that never meet each other still come away with distinct numbers.
+    // See ShaderBuilder::atomicAdd for what it does and does not order.
+    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, const UInt& value)
+    {
+        return builder.atomicAdd(buffer, index, value);
+    }
+
+    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, const UInt& value)
+    {
+        return builder.atomicAdd(buffer, index, value);
+    }
+
+    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, unsigned value)
+    {
+        return builder.atomicAdd(buffer, index, value);
+    }
+
+    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, unsigned value)
+    {
+        return builder.atomicAdd(buffer, index, value);
+    }
 
     void write(const OutputBuffer& buffer, const UInt& index, const Float& value)
     {

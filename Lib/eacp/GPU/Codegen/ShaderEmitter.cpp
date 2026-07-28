@@ -278,6 +278,22 @@ struct ExprPrinter
                 return "buffer" + std::to_string(expr.index) + "["
                        + ref(expr.args[0]) + "]";
 
+            case ExprKind::AtomicLoad:
+            {
+                // HLSL has nothing to spell: a UAV element of an
+                // RWStructuredBuffer<uint> is already the thing an interlocked
+                // operation acts on, and reading one is a subscript. MSL wraps
+                // its atomic_uint, so the value has to be taken out of it.
+                auto element = "buffer" + std::to_string(expr.index) + "["
+                               + ref(expr.args[0]) + "]";
+
+                if (backend == Backend::Metal)
+                    return "atomic_load_explicit(&" + element
+                           + ", memory_order_relaxed)";
+
+                return element;
+            }
+
             case ExprKind::ArrayRead:
                 return "a" + std::to_string(expr.index) + "[" + ref(expr.args[0])
                        + "]";
@@ -307,6 +323,7 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Sample:
         case ExprKind::Fetch:
         case ExprKind::BufferRead:
+        case ExprKind::AtomicLoad:
         case ExprKind::ArrayRead:
             return true;
 
@@ -405,7 +422,14 @@ void collectWrites(const ShaderGraph& graph,
     {
         case StatementKind::Declare:
         case StatementKind::Assign:
+        case StatementKind::AtomicAdd:
             written[statement.slot] = 1;
+            return;
+
+        // A store writes a resource, not a variable, so nothing an open name
+        // stands for can have moved on under it.
+        case StatementKind::Store:
+        case StatementKind::TextureStore:
             return;
 
         case StatementKind::If:
@@ -641,6 +665,68 @@ struct StageEmitter
                 break;
             }
 
+            case StatementKind::Store:
+            {
+                source =
+                    define({statement.value, statement.index}, indent, uses, open);
+                source += indent + "buffer" + std::to_string(statement.bufferSlot)
+                          + "[" + printer.ref(statement.index)
+                          + "] = " + printer.ref(statement.value) + ";\n";
+                break;
+            }
+
+            // The one place the two languages spell a texture write differently:
+            // MSL takes the colour first and the coordinate second, HLSL
+            // subscripts the texture like an array.
+            case StatementKind::TextureStore:
+            {
+                source = define({statement.value, statement.index, statement.indexY},
+                                indent,
+                                uses,
+                                open);
+
+                auto name = "texture" + std::to_string(statement.bufferSlot);
+                auto coordinates = "uint2(" + printer.ref(statement.index) + ", "
+                                   + printer.ref(statement.indexY) + ")";
+                auto color = printer.ref(statement.value);
+
+                if (printer.backend == Backend::Metal)
+                    source += indent + name + ".write(" + color + ", " + coordinates
+                              + ");\n";
+                else
+                    source +=
+                        indent + name + "[" + coordinates + "] = " + color + ";\n";
+
+                break;
+            }
+
+            case StatementKind::AtomicAdd:
+            {
+                source =
+                    define({statement.value, statement.index}, indent, uses, open);
+
+                auto name = "v" + std::to_string(statement.slot);
+                auto element = "buffer" + std::to_string(statement.bufferSlot) + "["
+                               + printer.ref(statement.index) + "]";
+                auto addend = printer.ref(statement.value);
+
+                if (printer.backend == Backend::Metal)
+                {
+                    source += indent + "uint " + name
+                              + " = atomic_fetch_add_explicit(&" + element + ", "
+                              + addend + ", memory_order_relaxed);\n";
+                    break;
+                }
+
+                // Two lines here rather than one: InterlockedAdd hands the old
+                // value back through an out parameter, so the name has to exist
+                // before the call that fills it.
+                source += indent + "uint " + name + ";\n";
+                source += indent + "InterlockedAdd(" + element + ", " + addend + ", "
+                          + name + ");\n";
+                break;
+            }
+
             case StatementKind::Break:
                 source = indent + "break;\n";
                 break;
@@ -686,8 +772,16 @@ private:
         {
             const auto& statement = graph().statement(index);
 
-            if (statement.kind != StatementKind::Loop)
-                roots.add(statement.value);
+            if (statement.kind == StatementKind::Loop)
+                continue;
+
+            roots.add(statement.value);
+
+            // The subscripts count too. A store's index is a use like any
+            // other, and leaving it out is what decides a record's offsets are
+            // read once each when the read and the write both address them.
+            roots.add(statement.index);
+            roots.add(statement.indexY);
         }
 
         return countUsesOver(roots);
@@ -817,6 +911,12 @@ void collectStatementRoots(const ShaderGraph& graph, int block, Vector<int>& roo
         const auto& statement = graph.statement(index);
         roots.add(statement.value);
 
+        // A store and an atomic add each subscript their resource with an
+        // expression of their own, which nothing else in the statement reaches -
+        // so a uniform read only there would otherwise go undeclared.
+        roots.add(statement.index);
+        roots.add(statement.indexY);
+
         if (statement.body >= 0)
             collectStatementRoots(graph, statement.body, roots);
 
@@ -943,6 +1043,40 @@ std::string uniformBlock(Backend backend,
     return source;
 }
 
+// How each access spells the buffer it declares. An atomic one is the only kind
+// whose *elements* differ - unsigned integers, wrapped in the type the language
+// requires an interlocked operation to act through - so it cannot be a
+// qualifier on the float declaration the other two share.
+const char* metalBufferType(BufferAccess access)
+{
+    switch (access)
+    {
+        case BufferAccess::Read:
+            return "device const float*";
+        case BufferAccess::Write:
+            return "device float*";
+        case BufferAccess::Atomic:
+            return "device atomic_uint*";
+    }
+
+    return "device const float*";
+}
+
+const char* hlslBufferType(BufferAccess access)
+{
+    switch (access)
+    {
+        case BufferAccess::Read:
+            return "StructuredBuffer<float>";
+        case BufferAccess::Write:
+            return "RWStructuredBuffer<float>";
+        case BufferAccess::Atomic:
+            return "RWStructuredBuffer<uint>";
+    }
+
+    return "StructuredBuffer<float>";
+}
+
 // Compute kernel emission. The expression printer is the render one; only the
 // scaffolding differs: storage buffers and the uniform block are MSL kernel
 // parameters but HLSL globals, and the work-item id arrives as a builtin
@@ -988,9 +1122,7 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 
         for (auto i = 0; i < buffers.size(); ++i)
         {
-            auto writable = buffers[i] == BufferAccess::Write;
-            source += std::string(writable ? "device float* buffer"
-                                           : "device const float* buffer")
+            source += std::string(metalBufferType(buffers[i])) + " buffer"
                       + std::to_string(i) + " [[buffer(" + std::to_string(i)
                       + ")]],\n    ";
         }
@@ -1026,12 +1158,12 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         for (auto i = 0; i < buffers.size(); ++i)
         {
             auto slot = std::to_string(i);
-            auto writable = buffers[i] == BufferAccess::Write;
+            auto readOnly = buffers[i] == BufferAccess::Read;
 
-            source += writable ? "RWStructuredBuffer<float> buffer"
-                               : "StructuredBuffer<float> buffer";
+            source += hlslBufferType(buffers[i]);
+            source += " buffer";
             source += slot;
-            source += writable ? " : register(u" : " : register(t";
+            source += readOnly ? " : register(t" : " : register(u";
             source += slot + ");\n";
         }
 
@@ -1080,51 +1212,18 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                      "uniforms.height)\n        return;\n"
                    : "    if (gid >= uniforms.count)\n        return;\n";
 
-    auto roots = Vector<int> {};
-
-    for (const auto& store: graph.stores())
-    {
-        roots.add(store.index);
-        roots.add(store.value);
-    }
-
-    for (const auto& store: graph.textureStores())
-    {
-        roots.add(store.x);
-        roots.add(store.y);
-        roots.add(store.value);
-    }
-
-    auto stageRoots = roots;
+    // A kernel's whole body is its statement stream now, stores included, so
+    // there is nothing to emit after it. That is the fix for stores having once
+    // been roots emitted at the end: one written inside an ifThen ran whatever
+    // the condition said, and one inside a loop ran once afterwards, on the
+    // counter's final value.
+    auto stageRoots = Vector<int> {};
     collectStatementRoots(graph, ShaderGraph::rootBlock, stageRoots);
 
     auto stage = StageEmitter {graph, backend};
 
     source += stage.declareArrays(stageRoots, "    ");
     source += stage.emitBlock(ShaderGraph::rootBlock, "    ");
-    source += stage.defineFor(roots, "    ");
-
-    for (const auto& store: graph.stores())
-        source += "    buffer" + std::to_string(store.slot) + "["
-                  + stage.printer.ref(store.index)
-                  + "] = " + stage.printer.ref(store.value) + ";\n";
-
-    // The one place the two languages spell a texture write differently: MSL
-    // takes the colour first and the coordinate second, HLSL subscripts the
-    // texture like an array.
-    for (const auto& store: graph.textureStores())
-    {
-        auto name = "texture" + std::to_string(store.slot);
-        auto coordinates = "uint2(" + stage.printer.ref(store.x) + ", "
-                           + stage.printer.ref(store.y) + ")";
-        auto color = stage.printer.ref(store.value);
-
-        if (backend == Backend::Metal)
-            source +=
-                "    " + name + ".write(" + color + ", " + coordinates + ");\n";
-        else
-            source += "    " + name + "[" + coordinates + "] = " + color + ";\n";
-    }
 
     source += "}\n";
     return source;

@@ -48,15 +48,28 @@ enum class ExprKind
     // index is the component: a 1D kernel has only 0 and prints the whole gid,
     // a 2D one prints gid.x or gid.y.
     BufferRead, // storage-buffer element read; index = buffer slot, args = {index}
+    AtomicLoad, // one element of an atomic buffer; index = buffer slot,
+    // args = {index}. An expression on both backends, unlike the add - MSL
+    // spells it atomic_load_explicit and HLSL is an ordinary subscript, since
+    // there a UAV element is already what an interlocked op works on.
     ArrayRead // constant-array element read; index = array slot, args = {index}
 };
 
 // How a kernel accesses a storage buffer: a read-only input (Metal device
-// const / D3D SRV) or a writable output (Metal device / D3D UAV).
+// const / D3D SRV), a writable output (Metal device / D3D UAV), or an atomic
+// one - unsigned integer elements every thread may read-modify-write at once.
+//
+// Atomic is a separate access rather than a flag on Write because it changes
+// the element type: MSL needs device atomic_uint* and HLSL an
+// RWStructuredBuffer<uint>, neither of which is the run of floats the other two
+// are. The bits in one are integers, so a buffer written atomically by one
+// kernel and read as floats by the next reads garbage; load it atomically, or
+// have the kernel that fills it convert.
 enum class BufferAccess
 {
     Read,
-    Write
+    Write,
+    Atomic
 };
 
 // How a shader accesses a texture: sampled and fetched (Metal
@@ -93,7 +106,20 @@ enum class StatementKind
     If, // if (value) { body } else { elseBody }
     Loop, // while (value) { body }
     Break,
-    Continue
+    Continue,
+    Store, // buffer[index] = value; bufferSlot = the buffer
+    TextureStore, // texture[index, indexY] = value; bufferSlot = the texture
+    AtomicAdd // vN = atomicAdd(buffer[index], value), declaring vN. slot = the
+    // variable the value *before* the add lands in, bufferSlot / index = which
+    // element, value = what is added.
+    //
+    // A statement rather than an expression, and it is the one place the two
+    // languages force that: MSL's atomic_fetch_add_explicit returns the old
+    // value, but HLSL's InterlockedAdd writes it through an out parameter and
+    // cannot appear in the middle of one. Naming the result is the only shape
+    // both can print, and it is the shape a caller wants anyway - the old value
+    // is a slot reserved for this thread, which is what the whole operation is
+    // usually for.
 };
 
 // One statement. Which fields carry meaning depends on the kind above; the
@@ -102,10 +128,14 @@ enum class StatementKind
 struct Statement
 {
     StatementKind kind = StatementKind::Assign;
-    int slot = -1; // Declare / Assign: the variable written
-    int value = -1; // Declare / Assign: the value; If / Loop: the condition
+    int slot = -1; // Declare / Assign / AtomicAdd: the variable written
+    int value = -1; // Declare / Assign: the value; If / Loop: the condition;
+    // AtomicAdd: the addend; Store / TextureStore: what is written
     int body = -1; // If / Loop: the block that runs
     int elseBody = -1; // If: the block that runs when the condition is false
+    int bufferSlot = -1; // AtomicAdd / Store / TextureStore: the resource
+    int index = -1; // AtomicAdd / Store: the element; TextureStore: the column
+    int indexY = -1; // TextureStore: the row
 };
 
 // A run of statements, held by index so a nested body is an int on the
@@ -159,27 +189,6 @@ public:
     {
         ValueType type = ValueType::Float;
         int sourceNode = -1; // vertex-stage expression feeding this varying
-    };
-
-    // One kernel output write: buffer[index] = value. Stores are the compute
-    // roots, the way position/fragment are the render roots; recording any
-    // store marks the whole graph as a compute kernel.
-    struct Store
-    {
-        int slot = -1;
-        int index = -1;
-        int value = -1;
-    };
-
-    // Its texture sibling: texture[x, y] = colour. A compute root exactly as a
-    // buffer store is, and what makes a kernel able to produce something a
-    // later render pass samples.
-    struct TextureStore
-    {
-        int slot = -1;
-        int x = -1;
-        int y = -1;
-        int value = -1;
     };
 
     int addInput(ValueType type);
@@ -278,6 +287,12 @@ public:
     int addBufferRead(int slot, int index);
     void addStore(int slot, int index, int value);
 
+    // The atomic pair. addAtomicAdd returns the *variable* slot holding the
+    // element's value from before the add, which addVarRead then reads - it is a
+    // statement, so unlike every other producer here it does not yield a node.
+    int addAtomicAdd(int bufferSlot, int index, int value);
+    int addAtomicLoad(int bufferSlot, int index);
+
     void setPosition(int node) { positionNode = node; }
     void setFragment(int node) { fragmentNode = node; }
 
@@ -321,15 +336,15 @@ public:
 
     const Vector<BufferAccess>& storageBuffers() const { return storageSlots; }
     const Vector<ArrayConstant>& arrays() const { return arrayConstants; }
-    const Vector<Store>& stores() const { return storeList; }
-    const Vector<TextureStore>& textureStores() const { return textureStoreList; }
 
-    // Recording any store - to a buffer or to a texture - is what marks the
-    // graph as a kernel.
-    bool isCompute() const
-    {
-        return storeList.size() > 0 || textureStoreList.size() > 0;
-    }
+    // Recording any store - to a buffer, to a texture, or an atomic add - is
+    // what marks the graph as a kernel.
+    //
+    // The atomic case is easy to leave out and impossible to miss afterwards: a
+    // kernel that only counts things writes nothing, so a graph judged by its
+    // stores alone would emit a vertex/fragment pair for it and fail to compile
+    // on a `gid` no render stage has.
+    bool isCompute() const { return writesResources; }
 
     DispatchRank dispatchRank() const { return rank; }
 
@@ -374,8 +389,6 @@ private:
     Vector<VaryingSlot> varyingSlots;
     Vector<ValueType> uniformTypes;
     Vector<BufferAccess> storageSlots;
-    Vector<Store> storeList;
-    Vector<TextureStore> textureStoreList;
     Vector<TextureSampling> textureSamplings;
     Vector<TextureAccess> textureAccesses; // parallel to textureSamplings
     Vector<ArrayConstant> arrayConstants;
@@ -386,6 +399,12 @@ private:
     Vector<int> openBlocks; // innermost last; blocks[back()] takes new statements
     DispatchRank rank = DispatchRank::OneD;
     bool rankFixed = false;
+
+    // Any store, texture store or atomic add. Kept as a flag rather than read
+    // off a list of stores, because a store is a statement now: it lives in the
+    // block it was recorded in, which is the whole point - one emitted after the
+    // statements instead would run whatever the ifThen around it decided.
+    bool writesResources = false;
     int positionNode = -1;
     int fragmentNode = -1;
     int discardNode = -1;
