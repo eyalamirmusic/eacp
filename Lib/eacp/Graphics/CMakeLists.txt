@@ -48,6 +48,7 @@ if (APPLE)
                 Menu/Menu-iOS.mm
                 Tray/TrayIcon-iOS.mm
                 View/View-iOS.mm
+                Window/Display-iOS.mm
                 Window/Window-iOS.mm)
         target_link_libraries(eacp-graphics PRIVATE
                 "-framework UIKit"
@@ -62,6 +63,7 @@ if (APPLE)
                 Menu/Menu-macOS.mm
                 Tray/TrayIcon-macOS.mm
                 View/View-macOS.mm
+                Window/Display-macOS.mm
                 Window/EmbeddedView-macOS.mm
                 Window/Window-macOS.mm)
         target_link_libraries(eacp-graphics PRIVATE
@@ -87,6 +89,7 @@ elseif (WIN32)
             Tray/TrayIcon-Windows.cpp
             View/View-Windows.cpp
             Window/CompositionHostWindow-Windows.cpp
+            Window/Display-Windows.cpp
             Window/EmbeddedView-Windows.cpp
             Window/Window-Windows.cpp)
 
