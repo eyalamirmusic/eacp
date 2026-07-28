@@ -44,6 +44,20 @@ void View::removeFromParent()
     parent = nullptr;
 }
 
+Window* View::getWindow() const
+{
+    // Only the view a window adopted carries the pointer, so a subview walks up
+    // to find it. Reading it off the root rather than caching it per view is
+    // what makes a subtree moved from one window to another need no bookkeeping:
+    // the answer follows the parent chain it already moved along.
+    const View* root = this;
+
+    while (root->parent != nullptr)
+        root = root->parent;
+
+    return root->ownerWindow;
+}
+
 void View::resized() {}
 
 Rect View::getLocalBounds() const
