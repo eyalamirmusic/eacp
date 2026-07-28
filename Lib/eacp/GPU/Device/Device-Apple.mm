@@ -32,6 +32,23 @@ ObjC::Ptr<NSObject<MTLSamplerState>> makeSampler(id<MTLDevice> metalDevice,
     samplerDescriptor.get().sAddressMode = toMetalAddressMode(sampling.addressMode);
     samplerDescriptor.get().tAddressMode = toMetalAddressMode(sampling.addressMode);
 
+    // Set rather than left at its default, which is NotMipmapped - "sample level
+    // 0, whatever other levels exist".
+    //
+    // D3D12's static samplers have declared MIN_MAG_MIP_LINEAR and
+    // MIN_MAG_MIP_POINT since they were written, so the two backends have
+    // disagreed here from the start and nothing could tell: no texture had a
+    // second level to sample. The first mipmapped one would have been filtered
+    // across levels on Windows and read at full size on Apple, from the same
+    // TextureSampling and with no way to see it but the picture.
+    //
+    // This needs no new sampling configuration, which is why the count stays at
+    // four: mip filtering on a single-level texture is what both APIs do anyway,
+    // so it is invisible to every texture without a chain.
+    samplerDescriptor.get().mipFilter = sampling.filter == TextureFilter::Linear
+                                            ? MTLSamplerMipFilterLinear
+                                            : MTLSamplerMipFilterNearest;
+
     return [metalDevice newSamplerStateWithDescriptor:samplerDescriptor.get()];
 }
 } // namespace

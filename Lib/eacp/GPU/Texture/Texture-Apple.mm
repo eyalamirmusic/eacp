@@ -4,6 +4,7 @@
 #include "Texture.h"
 
 #include "../Device/Device.h"
+#include "MipChain.h"
 
 #include <eacp/Core/ObjC/CFRef.h>
 #include <eacp/Core/ObjC/ObjC.h>
@@ -57,6 +58,7 @@ struct Texture::Native
         : width(descriptor.width)
         , height(descriptor.height)
         , pixelStride(bytesPerPixel(descriptor.format))
+        , format(descriptor.format)
         , renderTarget(descriptor.renderTarget)
         , computeWrite(descriptor.computeWrite)
     {
@@ -73,12 +75,23 @@ struct Texture::Native
         if (computeWrite && !supportsComputeWrite(descriptor.format))
             return;
 
+        // A chain is only worth asking for when there are pixels to build it
+        // from: a render target or a kernel output has none at creation, so it
+        // would get levels nothing ever writes and the sampler would read them.
+        if (descriptor.mipmapped && pixels != nullptr)
+            levels = mipLevelCount(width, height);
+
         auto textureDescriptor = [MTLTextureDescriptor
             texture2DDescriptorWithPixelFormat:toMetalFormat(descriptor.format)
                                          width:(NSUInteger) width
                                         height:(NSUInteger) height
-                                     mipmapped:NO];
+                                     mipmapped:levels > 1 ? YES : NO];
         textureDescriptor.usage = MTLTextureUsageShaderRead;
+
+        // Set explicitly as well as through the `mipmapped` flag, so the count
+        // the texture is created with and the count the upload loop fills cannot
+        // come from two different pieces of arithmetic.
+        textureDescriptor.mipmapLevelCount = (NSUInteger) levels;
 
         // A render target is written by the GPU and read by it, so it goes in
         // private storage and keeps the default (managed/shared) mode otherwise
@@ -146,7 +159,43 @@ struct Texture::Native
 
     void update(const void* pixels, std::size_t bytesPerRow)
     {
+        if (levels > 1)
+        {
+            uploadChain(pixels, bytesPerRow);
+            return;
+        }
+
         updateRegion(0, 0, width, height, pixels, bytesPerRow);
+    }
+
+    // Every level, from the chain built on the CPU. Not
+    // generateMipmapsForTexture, which would work here and has no counterpart on
+    // D3D12 - see MipChain.h for why one filter shared by both backends is worth
+    // more than a free one on this side only.
+    void uploadChain(const void* pixels, std::size_t bytesPerRow)
+    {
+        if (texture.get() == nil || pixels == nullptr)
+            return;
+
+        const auto chain = buildMipChain(pixels, width, height, format, bytesPerRow);
+
+        if (!chain.isValid())
+            return;
+
+        for (auto level = 0; level < chain.levelCount() && level < levels; ++level)
+        {
+            const auto levelWidth = mipExtent(width, level);
+            const auto levelHeight = mipExtent(height, level);
+
+            [texture.get()
+                 replaceRegion:MTLRegionMake2D(0,
+                                               0,
+                                               (NSUInteger) levelWidth,
+                                               (NSUInteger) levelHeight)
+                   mipmapLevel:(NSUInteger) level
+                     withBytes:chain.level(level)
+                   bytesPerRow:(NSUInteger) (levelWidth * pixelStride)];
+        }
     }
 
     // Both update() overloads land here; the whole-texture one is just the full
@@ -188,6 +237,11 @@ struct Texture::Native
     // Bytes per pixel of the texture's format; the CV-wrapped path stays at 4
     // because those buffers are always 32-bit BGRA/RGBA.
     int pixelStride = 4;
+    TextureFormat format = TextureFormat::RGBA8Unorm;
+
+    // 1 unless a chain was asked for and there were pixels to build one from.
+    int levels = 1;
+
     bool renderTarget = false;
     bool computeWrite = false;
     ObjC::Ptr<NSObject<MTLTexture>> texture;
@@ -243,6 +297,11 @@ bool Texture::isValid() const
 bool Texture::isRenderTarget() const
 {
     return impl->renderTarget && impl->texture.get() != nil;
+}
+
+int Texture::mipLevels() const
+{
+    return impl->levels;
 }
 
 bool Texture::isComputeWritable() const

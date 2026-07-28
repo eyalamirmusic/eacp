@@ -390,6 +390,46 @@ record per instance — a lookup table, a record picked by an id the shader
 computed. When it *is* one record per instance, `instanceInput` is still the
 idiomatic path.
 
+## Mipmaps
+
+```cpp
+auto descriptor = TextureDescriptor {};
+descriptor.width = 1024;
+descriptor.height = 1024;
+descriptor.mipmapped = true;
+
+auto albedo = Device::shared().makeTexture(descriptor, pixels);
+```
+
+What this buys is the picture, not speed. A texture minified without mips samples
+a scattering of individual texels, and *which* texels changes as the camera
+moves — so a tiled floor or a detailed model shimmers and crawls at distance, and
+no filtering at level 0 fixes it, because the information being aliased was
+thrown away before the filter saw it. Off by default: a UI atlas or a video frame
+is never drawn smaller than it is and would pay a third more memory for levels
+nothing reads.
+
+**The chain is built on the CPU, by eacp, for both backends.** Metal has
+`generateMipmapsForTexture` and D3D12 has no equivalent at all — a chain there
+means a compute shader, a UAV per level and a root signature to bind them. So the
+choice was a GPU chain on one backend against a hand-written one on the other,
+which is two filters producing two pictures for the same texture, or one filter
+producing the same bytes for both. Only the second can be checked by a test, and
+this library has been wrong about a cross-backend detail often enough to prefer
+the version that can be.
+
+A texture created with no pixels — a render target, a kernel output — gets no
+chain, since there is nothing to build one from. `update()` rebuilds it;
+`update(region, ...)` does not, because a partial upload cannot know what the
+rest of the texture holds. Ask a texture what it got with `mipLevels()`.
+
+No new `TextureSampling` configuration is involved: mip filtering on a
+single-level texture is what both APIs do anyway, so the four configurations
+still cover everything. That is also where a long-standing divergence was found —
+D3D12's static samplers had always declared `MIN_MAG_MIP_LINEAR`, while Metal
+left `mipFilter` at its default of `NotMipmapped`. Nothing could see it while no
+texture had a second level.
+
 ## Texture formats
 
 | Format | Notes |

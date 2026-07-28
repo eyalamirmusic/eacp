@@ -15,6 +15,7 @@ target_sources(eacp-gpu PRIVATE
         Device/Device.cpp
         Frame/RenderPass.cpp
         Timing/FrameTimer.cpp
+        Texture/MipChain.cpp
         Codegen/PackedVertex.cpp
         Codegen/ShaderGraph.cpp
         Codegen/ShaderEmitter.cpp
