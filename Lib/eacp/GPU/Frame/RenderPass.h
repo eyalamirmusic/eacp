@@ -230,6 +230,45 @@ public:
             setFragmentUniforms(program, slot);
     }
 
+    // Everything a program needs bound before a draw - its pipeline, its uniform
+    // block on the stage that reads it, its textures and its storage buffers -
+    // with the geometry taken from `vertices` rather than from the program, and
+    // no draw issued.
+    //
+    // This is draw(program) with two things taken off it, and both are what the
+    // consumer it exists for cannot supply. Geometry the *app* owns - a buffer it
+    // updates in place, packs itself, or streams - never becomes the program's,
+    // and such a buffer is usually drawn as several sub-ranges differing in one
+    // piece of state, so there is no single vertex count to hand over either.
+    //
+    // Per draw the caller then re-binds whatever it is actually changing -
+    // program.bindTextures(*this) for a texture, setUniforms(program) for a
+    // uniform - and calls draw(vertexCount, firstVertex). What it does not have
+    // to do is restate the list above, which is the point: a program bound by
+    // hand and a program drawn by draw(program) go through the same lines, so a
+    // seventh thing added here reaches both.
+    //
+    // The program need not own a vertex buffer at all when this overload is
+    // used. Nothing here asks it for one.
+    template <typename Program>
+    void bind(Program& program, const Buffer& vertices)
+    {
+        setPipeline(program.pipeline());
+        setVertexBuffer(vertices);
+        setUniforms(program);
+
+        program.bindTextures(*this);
+        program.bindBuffers(*this);
+    }
+
+    // The same over the program's own geometry, for a caller drawing it as
+    // sub-ranges rather than all at once.
+    template <typename Program>
+    void bind(Program& program)
+    {
+        bind(program, program.vertices());
+    }
+
     // Binds and draws a prepared ShaderProgram in one call: its pipeline, vertex
     // buffer, uniform block and textures, then an indexed draw when the program
     // owns indices and a plain one otherwise. Templated so this header stays
@@ -237,18 +276,27 @@ public:
     template <typename Program>
     void draw(Program& program)
     {
-        setPipeline(program.pipeline());
-        setVertexBuffer(program.vertices());
-        setUniforms(program);
-
-        program.bindTextures(*this);
-        program.bindBuffers(*this);
+        bind(program);
 
         if (program.hasIndices())
             drawIndexed(
                 program.indices(), program.indexCount(), program.indexFormat());
         else
             draw(program.vertexCount());
+    }
+
+    // One sub-range of app-owned geometry, bound and drawn: draw(program) except
+    // that the vertices and the count come from the caller. For a caller with a
+    // single range - one with several should bind() once and loop, rather than
+    // re-binding the pipeline and re-uploading the uniform block per draw.
+    template <typename Program>
+    void draw(Program& program,
+              const Buffer& vertices,
+              int vertexCount,
+              int firstVertex = 0)
+    {
+        bind(program, vertices);
+        draw(vertexCount, firstVertex);
     }
 
     // Instanced sibling of draw(program): binds the program's pipeline, its
@@ -261,13 +309,8 @@ public:
     template <typename Program>
     void drawInstanced(Program& program, int instanceCount, int firstInstance = 0)
     {
-        setPipeline(program.pipeline());
-        setVertexBuffer(program.vertices(), 0);
+        bind(program);
         program.bindInstances(*this);
-        setUniforms(program);
-
-        program.bindTextures(*this);
-        program.bindBuffers(*this);
 
         if (program.hasIndices())
             drawIndexedInstanced(program.indices(),

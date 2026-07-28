@@ -34,7 +34,8 @@ if (APPLE OR WIN32)
             FrameTimingTests.cpp
             PipelineStateTests.cpp
             ViewportTests.cpp
-            MipmapTests.cpp)
+            MipmapTests.cpp
+            ExternalGeometryTests.cpp)
 endif ()
 
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through
