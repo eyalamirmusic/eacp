@@ -197,7 +197,7 @@ bool GpuTimestamps::isSlotComplete(int slot) const
            || status == MTLCommandBufferStatusError;
 }
 
-double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds) const
+double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
 {
     auto& entry = impl->slots[slot];
     auto buffer = (id<MTLCommandBuffer>) entry.commandBuffer.get();
