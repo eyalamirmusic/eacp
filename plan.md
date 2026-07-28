@@ -100,13 +100,18 @@ coverage = fillRule == NonZero ? min(abs(winding), 1)
 write(output, threadPosition(), float4(colour.rgb, colour.a * coverage))
 ```
 
-**Accuracy note.** Sampling `x` at the midpoint of the clipped span is a very
-good approximation, not the exact integral — it diverges slightly only where an
-edge crosses the pixel's left or right boundary *within* the same pixel row.
-Still far above any MSAA sample count. The exact form integrates the clamped
-`x` over the span piecewise; it is more arithmetic in the same loop and can be
-swapped in later without changing anything around it. Start approximate,
-measure, decide.
+**Accuracy — settled, and it is the exact form.** The plan started with `x`
+sampled at the midpoint of the clipped span, on the theory that the divergence
+was too small to matter. Measured, it mattered: where an edge leaves through the
+pixel's left or right side the midpoint puts the whole ramp in one pixel when it
+belongs across two, and a near-horizontal edge read visibly harder than
+CoreGraphics'.
+
+The exact form costs about ten instructions and no extra reads, because
+`clamp(x, 0, 1)` has a closed-form antiderivative — `clamp(x,0,1)²/2 +
+max(x-1, 0)` — so the mean of the clamped ramp is the difference of that at the
+span's ends over its run. `CoverageKernel::meanClampedX` is that, with the
+zero-run case selected rather than branched.
 
 ### Integration with `ui::Graphics`
 
@@ -130,17 +135,47 @@ paths and the plan should not pretend otherwise.
 
 Each phase ends with something runnable and judged before the next starts.
 
-**1. Kernel in isolation.** A `Apps/GPU/PathCoverage` demo: one hard-coded
-path, one dispatch, sample the coverage texture full-screen. No `eacp-ui`
-involvement. *Verify:* a star or donut renders with smooth edges and the
-correct fill rule; even-odd and nonzero visibly differ on a self-intersecting
-path.
+**1. Kernel in isolation.** — done, `Apps/GPU/PathCoverage`. A self-intersecting
+five-pointed star rasterized under both fill rules: solid under non-zero, a
+pentagonal hole under even-odd. Interior coverage is exactly saturated with no
+seams where the contour crosses itself, and the edges carry 97 distinct coverage
+levels. Compute-to-render on one frame works with no fence, as documented.
 
-**2. Quality comparison.** Same path rendered three ways side by side —
-this kernel, `GPUWidgets::PathView` (ear-clip + MSAA), and
-`Graphics::Path` through CoreGraphics into an `Image`. *Verify:* screenshot,
-zoom in on a curve. This is the phase that decides whether any of the rest is
-worth doing, and it is cheap to reach.
+Two gaps in `eacp-gpu` had to be closed to write the kernel at all, both of them
+things the README already claimed: `ComputeProgram` did not forward the statement
+vocabulary (`var`, `ifThen`, `loop`, `breakLoop`, `continueLoop`) that
+`ShaderProgram` does, and there was no `toUInt` to cross an `Int` loop counter
+into the `UInt` a buffer subscript takes.
+
+**2. Quality comparison.** — done, `Apps/GPU/PathQuality`. A rounded rectangle
+and a circle rendered three ways side by side: this kernel (single-sampled),
+`GPUWidgets::PathView` (ear-clip + 4x MSAA), and `Graphics::Context::fillPath`
+(CoreGraphics). Measured off the screenshot, over the circle's boundary:
+
+| | distinct coverage levels | mean abs. difference from CoreGraphics | worst pixel |
+|---|---|---|---|
+| coverage kernel | 97 | 0.00098 | 0.21 |
+| ear clip + 4x MSAA | **3** | 0.00120 | 0.37 |
+| CoreGraphics | 97 | — | — |
+
+Three levels is not a measurement artefact, it is what 4x MSAA *is*: a pixel can
+only be a quarter, a half or three quarters covered. That is the finding, and it
+is why analytic coverage is worth having.
+
+Getting there took two fixes the first cut had wrong, neither of them in the
+compute design:
+
+- **The exact integral**, above. The approximation was the difference between
+  "smooth" and "as smooth as the platform".
+- **Adaptive flattening.** `Path` split every curve into a fixed 24 segments
+  whatever its size, so a 512px circle was a 48-gon *inscribed* in the circle it
+  was meant to be — half a pixel small everywhere between vertices, and faceted.
+  It now subdivides to a flatness tolerance in path units (`Path::setFlatness`),
+  and `addEllipse` pushes its vertices out by half the sagitta so the polygon
+  straddles the true curve instead of sitting inside it. This is geometry, not
+  rasterization: `PathView` renders through the same `Path` and got the same
+  improvement, which is why the MSAA column above is a fair comparison rather
+  than a strawman.
 
 **3. Atlas + batching.** Coverage into a shared atlas, textured instance in
 `ShapeBatch`, several paths in one batch. *Verify:* the `ComponentTree` demo's

@@ -173,7 +173,60 @@ protected:
 
     UInt threadId() { return builder.threadId(); }
     ThreadPosition threadPosition() { return builder.threadPosition(); }
+
     Float constant(float value) { return builder.constant(value); }
+    Bool boolean(bool value) { return builder.boolean(value); }
+    Int integer(int value) { return builder.integer(value); }
+
+    template <ShaderHandleLike T, SameShaderHandle<T>... Rest>
+    ConstantArray<ShaderHandle<T>, 1 + (int) sizeof...(Rest)>
+        array(const T& first, const Rest&... rest)
+    {
+        return builder.array(first, rest...);
+    }
+
+    // Control flow, forwarded from the builder exactly as ShaderProgram
+    // forwards it. A kernel needs it more than a fragment stage does: walking a
+    // list whose length only the CPU knows is what a buffer input is for, and
+    // that is a loop over a mutable counter or it is nothing.
+    template <ShaderHandleLike T>
+    Var<ShaderHandle<T>> var(const T& initialValue)
+    {
+        return builder.var(initialValue);
+    }
+
+    template <typename T>
+        requires(isMatrix(ValueTypeOf<T>::value))
+    Var<T> var(const T& initialValue)
+    {
+        return builder.var(initialValue);
+    }
+
+    Var<Float> var(float initialValue) { return builder.var(initialValue); }
+    Var<Bool> var(bool initialValue) { return builder.var(initialValue); }
+    Var<Int> var(int initialValue) { return builder.var(initialValue); }
+
+    template <typename Body>
+    void ifThen(const Bool& condition, Body&& body)
+    {
+        builder.ifThen(condition, std::forward<Body>(body));
+    }
+
+    template <typename Then, typename Else>
+    void ifThen(const Bool& condition, Then&& whenTrue, Else&& whenFalse)
+    {
+        builder.ifThen(
+            condition, std::forward<Then>(whenTrue), std::forward<Else>(whenFalse));
+    }
+
+    template <typename Body>
+    void loop(const Bool& condition, Body&& body)
+    {
+        builder.loop(condition, std::forward<Body>(body));
+    }
+
+    void breakLoop() { builder.breakLoop(); }
+    void continueLoop() { builder.continueLoop(); }
 
     void write(const OutputBuffer& buffer, const UInt& index, const Float& value)
     {
