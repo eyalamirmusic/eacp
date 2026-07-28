@@ -4,6 +4,7 @@
 
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
+#include "MipChain.h"
 
 #include <cmath>
 
@@ -64,11 +65,18 @@ struct Texture::Native
         : width(descriptor.width)
         , height(descriptor.height)
         , pixelStride(bytesPerPixel(descriptor.format))
+        , format(descriptor.format)
     {
         auto& context = getD3D12Context();
 
         if (!context.isValid() || !device.isValid() || width <= 0 || height <= 0)
             return;
+
+        // Only with pixels to build one from: a render target or a kernel output
+        // has none at creation, so it would get levels nothing ever writes and
+        // the sampler would read them.
+        if (descriptor.mipmapped && pixels != nullptr)
+            levels = mipLevelCount(width, height);
 
         D3D12_HEAP_PROPERTIES heap = {};
         heap.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -78,7 +86,7 @@ struct Texture::Native
         desc.Width = static_cast<UINT64>(width);
         desc.Height = static_cast<UINT>(height);
         desc.DepthOrArraySize = 1;
-        desc.MipLevels = 1;
+        desc.MipLevels = static_cast<UINT16>(levels);
         desc.Format = toDXGIFormat(descriptor.format);
         desc.SampleDesc.Count = 1;
 
@@ -149,7 +157,9 @@ struct Texture::Native
                     int destX,
                     int destY,
                     int regionWidth,
-                    int regionHeight)
+                    int regionHeight,
+                    int mipLevel = 0,
+                    bool transitionAfterwards = true)
     {
         auto desc = data.resource->GetDesc();
 
@@ -159,6 +169,11 @@ struct Texture::Native
         auto regionDesc = desc;
         regionDesc.Width = static_cast<UINT64>(regionWidth);
         regionDesc.Height = static_cast<UINT>(regionHeight);
+
+        // One level, always: this describes the *staging* side, which is a flat
+        // rectangle of pixels. Leaving the resource's own count here would ask
+        // for the footprint of a chain a region this size cannot have.
+        regionDesc.MipLevels = 1;
 
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
         UINT rows = 0;
@@ -192,6 +207,7 @@ struct Texture::Native
         D3D12_TEXTURE_COPY_LOCATION destination = {};
         destination.pResource = data.resource.get();
         destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        destination.SubresourceIndex = static_cast<UINT>(mipLevel);
 
         D3D12_TEXTURE_COPY_LOCATION source = {};
         source.pResource = staging;
@@ -204,8 +220,15 @@ struct Texture::Native
                                           0,
                                           &source,
                                           nullptr);
-        transitionTextureForUse(
-            commands->list.get(), data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+        // Held back while a chain is mid-upload: every level goes into the same
+        // resource, so transitioning after each one would move it out of
+        // COPY_DEST and straight back for the next - a pair of barriers per
+        // level, for nothing.
+        if (transitionAfterwards)
+            transitionTextureForUse(commands->list.get(),
+                                    data,
+                                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
         // Not parked in transients: the staging pool owns the buffer and takes
         // it back once this recording's fence passes.
@@ -222,16 +245,12 @@ struct Texture::Native
             return;
         }
 
-        // The resource was created in COPY_DEST, so the copy records with no
+        // The resource was created in COPY_DEST, so the copies record with no
         // leading barrier.
-        if (!copyPixels(context,
-                        commands,
-                        pixels,
-                        static_cast<std::size_t>(width * pixelStride),
-                        0,
-                        0,
-                        width,
-                        height))
+        if (!recordLevels(context,
+                          commands,
+                          pixels,
+                          static_cast<std::size_t>(width * pixelStride)))
         {
             context.discard(commands);
             data.resource = nullptr;
@@ -241,9 +260,83 @@ struct Texture::Native
         context.submit(commands);
     }
 
+    // The whole texture, as one level or as a chain. Every level is copied
+    // before the resource moves back to PIXEL_SHADER_RESOURCE, so the transition
+    // happens once however many levels there are.
+    bool recordLevels(D3D12Context& context,
+                      CommandContext* commands,
+                      const void* pixels,
+                      std::size_t sourcePitch)
+    {
+        if (levels <= 1)
+            return copyPixels(
+                context, commands, pixels, sourcePitch, 0, 0, width, height);
+
+        const auto chain = buildMipChain(pixels, width, height, format, sourcePitch);
+
+        if (!chain.isValid())
+            return false;
+
+        for (auto level = 0; level < levels; ++level)
+        {
+            const auto levelWidth = mipExtent(width, level);
+            const auto levelHeight = mipExtent(height, level);
+
+            if (!copyPixels(context,
+                            commands,
+                            chain.level(level),
+                            static_cast<std::size_t>(levelWidth * pixelStride),
+                            0,
+                            0,
+                            levelWidth,
+                            levelHeight,
+                            level,
+                            level == levels - 1))
+                return false;
+        }
+
+        return true;
+    }
+
     void update(const void* pixels, std::size_t bytesPerRow)
     {
+        if (levels > 1)
+        {
+            updateChain(pixels, bytesPerRow);
+            return;
+        }
+
         updateRegion(0, 0, width, height, pixels, bytesPerRow);
+    }
+
+    // The re-upload path for a mipmapped texture. Unlike updateRegion it has to
+    // move the resource back to COPY_DEST first, since by now it is being
+    // sampled.
+    void updateChain(const void* pixels, std::size_t bytesPerRow)
+    {
+        if (data.resource == nullptr || pixels == nullptr)
+            return;
+
+        auto& context = getD3D12Context();
+        auto* commands = context.acquire();
+
+        if (commands == nullptr)
+            return;
+
+        transitionTextureForUse(
+            commands->list.get(), data, D3D12_RESOURCE_STATE_COPY_DEST);
+
+        const auto pitch = bytesPerRow > 0
+                               ? bytesPerRow
+                               : static_cast<std::size_t>(width * pixelStride);
+
+        if (!recordLevels(context, commands, pixels, pitch))
+        {
+            context.discard(commands);
+            return;
+        }
+
+        context.submit(commands);
     }
 
     // Both update() overloads land here; the whole-texture one is just the full
@@ -383,6 +476,13 @@ struct Texture::Native
     // Bytes per pixel of the texture's format; the (stubbed) zero-copy wrap
     // path stays at 4 because those buffers are always 32-bit BGRA/RGBA.
     int pixelStride = 4;
+    TextureFormat format = TextureFormat::RGBA8Unorm;
+
+    // 1 unless a chain was asked for and there were pixels to build one from.
+    // The SRV is created from a null description, which covers every level the
+    // resource has, so nothing else here needs to know the count.
+    int levels = 1;
+
     bool computeWrite = false;
     D3D12TextureData data;
 };
@@ -431,6 +531,11 @@ int Texture::height() const
 bool Texture::isValid() const
 {
     return impl->data.resource != nullptr && impl->data.srv.cpu.ptr != 0;
+}
+
+int Texture::mipLevels() const
+{
+    return impl->levels;
 }
 
 bool Texture::isRenderTarget() const
