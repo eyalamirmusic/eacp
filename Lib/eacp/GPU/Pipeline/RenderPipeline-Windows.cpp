@@ -182,13 +182,17 @@ D3D12_RASTERIZER_DESC makeRasterizerDesc(int sampleCount, CullMode cullMode)
     D3D12_RASTERIZER_DESC desc = {};
     desc.FillMode = D3D12_FILL_MODE_SOLID;
     desc.CullMode = toD3DCullMode(cullMode);
-    // Stated rather than inherited, though it is also the default. D3D12 decides
-    // facing in screen space, after the viewport's y flip, so FALSE - clockwise
-    // there - is counter-clockwise in clip space, which is what CullMode
-    // promises a caller and what Metal is set to produce from the other side of
-    // that same flip. Tests/GPU/CullModeTests.cpp is what says whether it holds:
-    // measured on Metal, implied here.
-    desc.FrontCounterClockwise = FALSE;
+    // TRUE, which is not the D3D12 default: CullMode promises counter-clockwise
+    // in *clip* space is the front face, and this is what delivers it.
+    //
+    // The tempting reading is that D3D12 needs the opposite of Metal because it
+    // decides facing in screen space, after a y flip Metal does not have. It has
+    // no such extra flip: both APIs put clip-space y up and the framebuffer
+    // origin at the top left, so the NDC-to-screen mapping reverses winding by
+    // exactly the same amount on each, and the setting that expresses one
+    // convention is the same on both. Measured, not reasoned - it was FALSE on
+    // that reasoning and Tests/GPU/CullModeTests.cpp culled the opposite face.
+    desc.FrontCounterClockwise = TRUE;
     desc.DepthClipEnable = TRUE;
     desc.MultisampleEnable = sampleCount > 1 ? TRUE : FALSE;
     return desc;

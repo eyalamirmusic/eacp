@@ -15,16 +15,19 @@
 // drawing nothing.
 //
 // **This file is also where the two backends are held to one convention**, and
-// that is worth more than the coverage. Each backend's own default reads
-// "clockwise is front-facing" and they do not mean the same thing by it:
-// measured here, Metal decides facing in clip space, while D3D12's rule is in
-// screen space, which the viewport's y flip has already turned the other way
-// round. So eacp states the convention in clip space - counter-clockwise is
-// front, as glTF has it - sets each backend to whatever produces that, and this
-// file is what fails if either drifts. The Metal half is measured; the D3D12
-// half is what its rasterizer rule implies, and if that implication is wrong
-// these cases are what say so on Windows, rather than an app finding its world
-// inside out.
+// that is worth more than the coverage. Both backends default to "clockwise is
+// front-facing", so eacp states the convention in clip space instead -
+// counter-clockwise is front, as glTF has it - sets each backend to whatever
+// produces that, and this file is what fails if either drifts.
+//
+// It has already done that job once. The D3D12 half was originally set from the
+// reasoning that D3D12 decides facing in screen space, after a y flip Metal does
+// not have, and so needed the opposite setting; on that reasoning it went to
+// FrontCounterClockwise = FALSE and these two cases culled the opposite face on
+// Windows. There is no such extra flip - clip-space y is up and the framebuffer
+// origin is top left on both APIs - and the setting is now TRUE, the same
+// convention Metal spells MTLWindingCounterClockwise. Both halves are measured
+// now, which is the only reason either is trustworthy.
 //
 // Runs on both backends; self-skips without a GPU device.
 

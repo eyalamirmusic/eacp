@@ -72,12 +72,12 @@ enum class BlendMode
 // worth stating in the space a shader is written in rather than in the image,
 // where the viewport's y flip has already reversed it.
 //
-// Both defaults read "clockwise is front" and mean different things by it:
-// Metal decides facing in clip space and D3D12 in screen space, one y flip
-// apart, so left to themselves the two would cull opposite faces of the same
-// mesh. Metal is therefore set to MTLWindingCounterClockwise and D3D12 keeps
-// FrontCounterClockwise = FALSE, both explicitly, and
-// Tests/GPU/CullModeTests.cpp is what fails if either drifts.
+// Worth stating because both backends default to "clockwise is front", which is
+// the opposite of it. They do agree on what winding means, though: clip-space y
+// is up and the framebuffer origin is top left on each, so the same convention
+// is spelled the same way on both - MTLWindingCounterClockwise on Metal,
+// FrontCounterClockwise = TRUE on D3D12, both explicitly, with
+// Tests/GPU/CullModeTests.cpp there to fail if either drifts.
 enum class CullMode
 {
     None,
