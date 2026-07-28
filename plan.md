@@ -1076,7 +1076,72 @@ across all 16 column residues at 2–5/255, which is the screenshot's dithering)
   canvas is forced onto steps. The backdrop is the same for every thread of a
   tile column, so eight lookups per 8×8 group would do instead of sixty-four —
   which is what threadgroup memory is for, and what phase 2 shipped. Not done,
-  because choosing the array on exactly those paths costs nothing and needed no
-  new machinery.
+  and the next section says why it should stay that way.
 - **The atlas ceiling** is still the silent failure named at the end of rung one.
   Nothing has touched it.
+
+# What is left of rung 3
+
+Phase 4 moved the backdrop off the paths where it was expensive. It did not move
+it off the workload this rung exists for, and saying why is the whole of what is
+left to plan.
+
+## The canvas still pays for the array, and steps cannot save it
+
+A lane of automation curves keeps the **array**, and phase 4.0's own measurement
+— building no backdrop at all — says what that costs: the curve is 0.053ms of CPU
+with one and 0.017 without. **Two thirds of it, still.** The dense artwork is the
+other end at 27%, with binning and emit holding the rest.
+
+So the profile is not flat and there is no second cost to go hunting. It is the
+same backdrop as before, on the other side of the choice.
+
+That is not a failure of the choice: the automation curve's coverage is only 3.9×
+emptier than its crossings, so steps would be nearly as large and the kernel would
+search them as well. Phase 4 was never going to help this case, and the numbers
+say so plainly — forced onto steps the canvas is 6.483ms of CPU against the
+array's 6.552.
+
+**That same number is the argument against the cooperative lookup.** Eight
+backdrop lookups per 8×8 group instead of sixty-four is the obvious next thing to
+build — the search is per pixel, threadgroup memory shipped in phase 2 for exactly
+this shape, and on a canvas forced onto steps the search is 0.94ms of the GPU's
+3.27. It should still not be built: even with the search free, steps buy the
+canvas 1% of its CPU and cost it the difference on the GPU anyway,
+because the paths where the search bites are precisely the ones that now take the
+array. The search only looks expensive when it is measured on paths that have
+already been routed away from it. Worth writing down, because the measurement
+that kills it is not the one anybody would think to take.
+
+## The backdrop, on the GPU, batched
+
+What does move the canvas is taking the array off the CPU altogether. Clearing,
+scattering into and prefix-summing 53,756 cells per path is O(area) work the GPU
+does in microseconds, and the design was costed while phase 4 was being measured:
+sparse records uploaded, a scatter kernel adding them in fixed-point through
+`atomicAdd` — there are no float atomics in either language — and a row scan in
+threadgroup memory. `O(cells + records)` rather than `O(cells × records)`, and it
+uses phases 1 and 2 for what they were added for.
+
+It only pays **batched**, since it adds dispatches to every path, and that is the
+part worth doing first on its own account. Today 128 paths are 128 dispatches and
+some 384 buffer updates, one rasterizer at a time; `CoverageAtlas` already gathers
+every path in the frame, so the batch is structure the module is missing rather
+than scaffolding for this stage. Every later GPU stage amortizes against the same
+batch.
+
+## The order this suggests
+
+1. **Batch the frame's rasterizations.** Structural, measurable on its own
+   (dispatch count and buffer updates for the 128-path canvases), and the
+   precondition for everything below.
+2. **The backdrop on the GPU**, which is the canvas's largest remaining item.
+3. **Binning and emit on the GPU**, which is what the dense artwork has left once
+   its backdrop is gone, and what the plan named first when it thought binning
+   was the whole of it.
+
+**The atlas ceiling** is not on that list and should be done before any of it. It
+is the only thing in this document known to be *wrong* rather than merely absent,
+it has survived three rungs, and it fails silently — a tree whose masks do not fit
+loses some of them with nothing said. Noticing costs almost nothing; the reason it
+is still here is that it has never been the interesting problem.
