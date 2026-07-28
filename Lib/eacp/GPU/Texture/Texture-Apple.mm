@@ -97,10 +97,30 @@ struct Texture::Native
 
         texture = [metalDevice newTextureWithDescriptor:textureDescriptor];
 
+        if (renderTarget && descriptor.depth && texture.get() != nil)
+            makeDepthTexture(metalDevice);
+
         // The default storage mode keeps replaceRegion valid on every Mac
         // generation; it handles the CPU-to-GPU synchronisation itself.
         if (texture.get() != nil && pixels != nullptr)
             update(pixels, 0);
+    }
+
+    // The depth buffer a pass into this texture attaches. Single-sampled,
+    // because a texture target never multisamples, and private - the pass
+    // clears it and stores nothing, so it is never read outside the GPU.
+    void makeDepthTexture(id<MTLDevice> metalDevice)
+    {
+        auto depthDescriptor = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                         width:(NSUInteger) width
+                                        height:(NSUInteger) height
+                                     mipmapped:NO];
+
+        depthDescriptor.usage = MTLTextureUsageRenderTarget;
+        depthDescriptor.storageMode = MTLStorageModePrivate;
+
+        depthTexture = [metalDevice newTextureWithDescriptor:depthDescriptor];
     }
 
     // Zero-copy wrap of a CVPixelBuffer: the texture cache maps the buffer's
@@ -191,6 +211,7 @@ struct Texture::Native
     bool renderTarget = false;
     bool computeWrite = false;
     ObjC::Ptr<NSObject<MTLTexture>> texture;
+    ObjC::Ptr<NSObject<MTLTexture>> depthTexture;
     CFRef<CVMetalTextureRef> cvTexture;
 };
 
@@ -250,9 +271,19 @@ bool Texture::isComputeWritable() const
     return impl->computeWrite && impl->texture.get() != nil;
 }
 
+bool Texture::hasDepth() const
+{
+    return impl->depthTexture.get() != nil;
+}
+
 void* Texture::nativeTexture() const
 {
     return (__bridge void*) impl->texture.get();
+}
+
+void* Texture::nativeDepthTexture() const
+{
+    return (__bridge void*) impl->depthTexture.get();
 }
 
 void* Texture::nativeReadView() const

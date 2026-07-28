@@ -133,6 +133,8 @@ struct Texture::Native
         context.freeTextureDescriptor(data.srv);
         context.freeTextureDescriptor(data.uav);
         context.deferRelease(std::move(data.rtvHeap));
+        context.deferRelease(std::move(data.dsvHeap));
+        context.deferRelease(std::move(data.depthResource));
         context.deferRelease(std::move(data.resource));
     }
 
@@ -330,6 +332,65 @@ struct Texture::Native
         data.rtv = handle;
     }
 
+    // The depth buffer a pass into this target attaches, and its DSV. Created
+    // in DEPTH_WRITE and left there: nothing else ever uses the resource, so it
+    // needs no barrier and no state tracking.
+    //
+    // The optimised clear value is not optional. D3D12 wants a resource that
+    // will be cleared to say so at creation, and a ClearDepthStencilView that
+    // does not match it is a validation error rather than a slow path - and it
+    // must agree with the 1.0 the pass clears to.
+    void createDepthBuffer(D3D12Context& context)
+    {
+        D3D12_HEAP_PROPERTIES heap = {};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+        D3D12_RESOURCE_DESC desc = {};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        desc.Width = static_cast<UINT64>(width);
+        desc.Height = static_cast<UINT>(height);
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = 1;
+        desc.Format = DXGI_FORMAT_D32_FLOAT;
+        desc.SampleDesc.Count = 1;
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+        D3D12_CLEAR_VALUE clearValue = {};
+        clearValue.Format = DXGI_FORMAT_D32_FLOAT;
+        clearValue.DepthStencil.Depth = 1.f;
+
+        if (FAILED(context.getDevice()->CreateCommittedResource(
+                &heap,
+                D3D12_HEAP_FLAG_NONE,
+                &desc,
+                D3D12_RESOURCE_STATE_DEPTH_WRITE,
+                &clearValue,
+                __uuidof(ID3D12Resource),
+                data.depthResource.put_void())))
+            return;
+
+        D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+        heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        heapDesc.NumDescriptors = 1;
+
+        if (FAILED(context.getDevice()->CreateDescriptorHeap(
+                &heapDesc, __uuidof(ID3D12DescriptorHeap), data.dsvHeap.put_void())))
+        {
+            data.depthResource = nullptr;
+            return;
+        }
+
+        D3D12_DEPTH_STENCIL_VIEW_DESC viewDesc = {};
+        viewDesc.Format = DXGI_FORMAT_D32_FLOAT;
+        viewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+
+        auto handle = data.dsvHeap->GetCPUDescriptorHandleForHeapStart();
+        context.getDevice()->CreateDepthStencilView(
+            data.depthResource.get(), &viewDesc, handle);
+
+        data.dsv = handle;
+    }
+
     // The view a kernel writes through. It comes out of the same shader-visible
     // heap as the SRV - the allocator is CBV_SRV_UAV - so a writable texture
     // costs one more descriptor and no new heap.
@@ -357,6 +418,9 @@ struct Texture::Native
     {
         if (descriptor.renderTarget)
             createRenderTargetView(context, descriptor);
+
+        if (descriptor.renderTarget && descriptor.depth && data.rtv.ptr != 0)
+            createDepthBuffer(context);
 
         if (computeWrite)
             createUnorderedAccessView(context, descriptor);
@@ -443,6 +507,11 @@ bool Texture::isComputeWritable() const
     return isValid() && impl->data.isComputeWritable();
 }
 
+bool Texture::hasDepth() const
+{
+    return isValid() && impl->data.hasDepth();
+}
+
 void* Texture::nativeTexture() const
 {
     return const_cast<D3D12TextureData*>(&impl->data);
@@ -451,5 +520,13 @@ void* Texture::nativeTexture() const
 void* Texture::nativeReadView() const
 {
     return const_cast<D3D12TextureData*>(&impl->data);
+}
+
+// The depth resource and its descriptor live inside the same D3D12TextureData
+// nativeTexture hands back, which is what Frame reaches them through - so this
+// backend has no separate handle to give.
+void* Texture::nativeDepthTexture() const
+{
+    return nullptr;
 }
 } // namespace eacp::GPU

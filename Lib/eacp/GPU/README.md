@@ -152,8 +152,32 @@ The pipeline has to agree with what it draws into: `prepare(...)` takes a
 `pixelFormatFor(itsFormat)`. Neither backend takes a draw whose pipeline
 disagrees with its attachment.
 
-Render targets are single-sampled and have no depth attachment. What this is for
-is a full-screen pass over a whole texture, and neither has a meaning there.
+### Depth
+
+A target drawing a 3D scene needs a depth buffer, and asks for one on the same
+descriptor:
+
+```cpp
+descriptor.renderTarget = true;
+descriptor.depth = true;         // pass gets a depth attachment
+...
+program.prepare(1, true, ...);   // pipeline tests against it
+```
+
+The buffer belongs to the target, is created with it and dies with it, so there
+is no second lifetime to keep in step. Every pass into the texture clears it to
+the far plane and stores nothing.
+
+The two flags have to agree. A pipeline that declares depth drawing into a
+target that has none is a validation error on Metal and an untested draw on
+D3D12 — and on Apple silicon it *appears* to work, because the tile memory is
+there whether or not anything attached it. Do not read that as permission;
+`Texture::hasDepth()` is what a pipeline should be built from.
+
+Render targets are still single-sampled. A texture target has nothing to resolve
+into — the texture is what a resolve would produce — so a pipeline drawing into
+one passes `sampleCount` 1 even when the same shader draws multisampled into the
+drawable.
 
 ## Compute
 
