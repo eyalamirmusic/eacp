@@ -735,6 +735,15 @@ public:
     int uniformByteSize() const { return uniformBytes.size(); }
     bool hasUniforms() const { return !uniformBytes.empty(); }
 
+    // Which stage define() actually read a uniform from, answered by the same
+    // walk that decided whether to declare the block in that stage's generated
+    // function. RenderPass::draw(program) binds to the stage that says yes and
+    // leaves the other alone; a program declaring uniforms neither stage reads
+    // binds to nobody. Ask these rather than hasUniforms() when hand-rolling a
+    // draw over app-owned geometry.
+    bool vertexReadsUniforms() const { return generated.vertexReadsUniforms; }
+    bool fragmentReadsUniforms() const { return generated.fragmentReadsUniforms; }
+
     // Binds every assigned texture member to the pass; a no-op for programs
     // without textures. RenderPass::draw(program) calls this.
     void bindTextures(RenderPass& pass)

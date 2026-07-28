@@ -1406,6 +1406,107 @@ auto tCodegenSharedUniformEmits = test("GPU/codegenSharedUniformEmits") = []
                        + uniformDecl(RenderPass::uniformBase) + ")"));
 };
 
+// GeneratedShader reports which stage reads a uniform, and it is the emitter's
+// own answer rather than a second opinion: each flag is checked against whether
+// the Metal signature beside it declared the block. That is what
+// RenderPass::draw(program) binds from, so a bound stage and a declared
+// parameter cannot drift apart. Pure string generation, no GPU device required.
+auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
+{
+    // build() emits the host's backend, so the signature is read through
+    // emitMetal for a platform-independent comparison; the flags come off the
+    // graph and are the same either way.
+    auto stagesOf = [](const ShaderGraph& graph, const GeneratedShader& generated)
+    {
+        auto metal = emitMetal(graph);
+        auto declaration = uniformDecl(RenderPass::uniformBase);
+
+        auto vertexDeclares = contains(
+            metal, "vertexMain(VertexIn input [[stage_in]], " + declaration);
+        auto fragmentDeclares = contains(
+            metal, "fragmentMain(VertexOut input [[stage_in]],\n    " + declaration);
+
+        // The flag and the signature are two statements of one fact; assert
+        // they agree before reading either.
+        check(generated.vertexReadsUniforms == vertexDeclares);
+        check(generated.fragmentReadsUniforms == fragmentDeclares);
+    };
+
+    // Read only by the position: the fragment stage is never bound.
+    auto vertexOnly = ShaderBuilder {};
+    auto vertexPosition = vertexOnly.vertexInput<Float2>();
+    auto scale = vertexOnly.uniform<Float>();
+    vertexOnly.position(
+        float4(vertexPosition.x() * scale, vertexPosition.y() * scale, 0.0f, 1.0f));
+    vertexOnly.fragment(float4(vertexOnly.constant(1.0f),
+                               vertexOnly.constant(1.0f),
+                               vertexOnly.constant(1.0f),
+                               vertexOnly.constant(1.0f)));
+
+    auto vertexShader = vertexOnly.build();
+    stagesOf(vertexOnly.graph(), vertexShader);
+    check(vertexShader.vertexReadsUniforms);
+    check(!vertexShader.fragmentReadsUniforms);
+
+    // Read only by the colour: the vertex stage is never bound.
+    auto fragmentOnly = ShaderBuilder {};
+    auto fragmentPosition = fragmentOnly.vertexInput<Float2>();
+    auto color = fragmentOnly.uniform<Float4>();
+    fragmentOnly.position(float4(fragmentPosition, 0.0f, 1.0f));
+    fragmentOnly.fragment(color);
+
+    auto fragmentShader = fragmentOnly.build();
+    stagesOf(fragmentOnly.graph(), fragmentShader);
+    check(!fragmentShader.vertexReadsUniforms);
+    check(fragmentShader.fragmentReadsUniforms);
+
+    // Declared and read by neither stage: nothing is bound at all, though the
+    // program still has a block to pack.
+    auto unread = ShaderBuilder {};
+    auto unreadPosition = unread.vertexInput<Float2>();
+    auto unusedTint = unread.uniform<Float4>();
+    (void) unusedTint;
+    unread.position(float4(unreadPosition, 0.0f, 1.0f));
+    unread.fragment(float4(unread.constant(1.0f),
+                           unread.constant(0.0f),
+                           unread.constant(0.0f),
+                           unread.constant(1.0f)));
+
+    auto unreadShader = unread.build();
+    stagesOf(unread.graph(), unreadShader);
+    check(!unreadShader.vertexReadsUniforms);
+    check(!unreadShader.fragmentReadsUniforms);
+};
+
+// A uniform read only from inside a statement still counts towards the fragment
+// stage: the flag is collected over the statement roots, not over the colour
+// expression alone. Without that a shader whose uniform is read only inside a
+// loop or a branch would go unbound and read garbage - the same trap the
+// declaration walk already guards against.
+auto tCodegenUniformInStatementBinds =
+    test("GPU/codegenUniformInStatementBinds") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto carried = builder.varying(position);
+    auto threshold = builder.uniform<Float>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto shade = builder.var(0.0f);
+    builder.ifThen(carried.x() > threshold, [&] { shade = threshold; });
+
+    builder.fragment(float4(shade, shade, shade, 1.0f));
+
+    auto generated = builder.build();
+    check(!generated.vertexReadsUniforms);
+    check(generated.fragmentReadsUniforms);
+    check(contains(emitMetal(builder.graph()),
+                   "fragmentMain(VertexOut input [[stage_in]],\n    "
+                       + uniformDecl(RenderPass::uniformBase)));
+};
+
 // Compiles a fragment-uniform shader through the real platform shader compiler
 // and builds a pipeline, exercising the uniform-bearing fragment signature.
 // Self-skips without a GPU device.
