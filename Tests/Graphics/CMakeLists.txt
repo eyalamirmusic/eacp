@@ -20,6 +20,7 @@
 set(graphics_test_sources
         ColorTests.cpp
         CursorTests.cpp
+        DisplayTests.cpp
         ImageOpsTests.cpp
         ImageTests.cpp
         KeyCodeTests.cpp

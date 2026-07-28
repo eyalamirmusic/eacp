@@ -7,6 +7,7 @@
 #include "Primitives/TextMetrics.h"
 #include "Tray/TrayIcon.h"
 #include "View/ViewList.h"
+#include "Window/Display.h"
 #include "Window/EmbeddedView.h"
 #include "Window/Window.h"
 #include "Widgets/TextInput.h"
