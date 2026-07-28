@@ -801,3 +801,282 @@ instance of the same omission: `blockUses` counted a statement's *value* as a
 use but not its *index*, so once each store was its own statement the offsets of
 a record looked used once instead of twice and stopped being named. The tests
 were right and the emitter was wrong; `blockUses` counts subscripts now.
+
+## Phase 2 — threadgroup memory and barriers
+
+**Shipped.** The second prerequisite.
+
+### What shipped
+
+`eacp-gpu`
+
+- `sharedArray<T, N>` — memory one dispatch group has in common: every thread in
+  the group reads and writes it, no thread outside sees it, and it is gone when
+  the group is.
+- `threadIndexInGroup()`, which is what indexes it.
+- `barrier()`, which is what makes one thread's writes to it visible to the rest.
+
+Writing goes through the same `write()` family the buffers and textures use, and
+that is phase 1's fix cashing in rather than a taste decision: a write is a
+statement now, so it lands in the block it was written in. Nothing initialises
+threadgroup memory, so every use begins by filling it and waiting — which is
+exactly the shape phase 1 was silently discarding.
+
+`Tests/GPU/SharedMemoryTests.cpp`.
+
+### The one place this EDSL is not the same shape twice
+
+Everywhere else the two backends are the same construct under a different
+keyword. Here they are not: MSL's `threadgroup` is a local of the kernel
+function and HLSL's `groupshared` is a global, so the same array lands on
+**opposite sides of the entry point**. The test asserts that rather than matching
+text, since matching text would pass on an emitter that put it in the right place
+for the wrong reason.
+
+### What the tests had to be
+
+The obvious test cannot fail. A kernel that writes `shared[lane]` and reads
+`shared[lane]` back passes perfectly on per-thread scratch — it is the same value
+either way, and the memory being shared never enters into it. So every test here
+has a thread read a slot **another thread wrote**: a reduction where one thread
+per group sums all 64 values, and an exchange where every thread reads the lane
+opposite its own.
+
+*Verified* by emitting the Metal array as a plain local: all three fail, the
+exchange coming back as the identity.
+
+### The rule that reached the dispatch, which was not foreseen
+
+A barrier must be reached by every thread in the group or by none. That collides
+with something eacp does on the author's behalf and never showed them: the
+emitted bounds guard returns early, so dispatching 100 threads over 64-wide
+groups retires 28 of them before a barrier the other 36 are still waiting at.
+
+The author cannot see that guard, so they cannot be asked to reason about it.
+`GeneratedShader` carries whether the kernel waits, and `ComputeProgram` asserts
+the dispatch covers whole groups — round the count up and guard the writes.
+*Verified*: it fires. 829/829 pass.
+
+## Phase 3 — indirect dispatch
+
+**Shipped.** The last of the three.
+
+### What shipped
+
+`eacp-gpu`
+
+- `ComputePass::dispatchIndirect` — threadgroup counts taken out of a buffer an
+  earlier kernel wrote, so a stage sized by what the stage before it found costs
+  no readback. The number never reaches the CPU, which is the whole point: a
+  readback is a round trip through the host between two passes that were going
+  to be adjacent.
+- `DispatchArguments` — the three threadgroup counts, the same size and in the
+  same order on both backends. A kernel that counted 1000 items writes
+  `(1000 + threadGroupWidth - 1) / threadGroupWidth`, not 1000.
+- `write()` on an `AtomicBuffer`: an element **set** rather than added to, which
+  is what writing a dispatch size is. An ordinary `Store` underneath, spelled by
+  the buffer's own access, since only Metal needs anything for it.
+
+`Tests/GPU/IndirectDispatchTests.cpp`. 1D only — a 2D indirect dispatch would
+take a width and a height beside an offset and could not be told apart from this
+one, and nothing has needed it.
+
+### The guard that cannot be the count
+
+What the generated bounds guard compares against cannot be the real count:
+nothing on the CPU knows it. It is the **capacity**, so the guard stops nothing
+short, and a kernel that must not run past the real count reads it from a buffer
+and returns itself. Both guards matter and neither replaces the other — one keeps
+threads inside the allocation, the other keeps them inside the data. The grid is
+rounded up to whole groups either way, so the tail of the last group runs and has
+to be harmless.
+
+### The first test proved nothing, and that is the part worth keeping
+
+It had a consumer guarding itself against the exact count — which is the shape a
+real pipeline has — and it passed against a `dispatchIndirect` that ignored the
+argument buffer outright. A kernel that guards itself writes the same output
+however many threads ran, so the grid was **not observable in the result at
+all**.
+
+The consumer that measures is unguarded now: a dispatch of n groups writes
+exactly n×64 elements, and 137 marked items becoming 192 writes is a number
+neither the count nor the capacity nor anything the CPU passed in could produce.
+The guarded version stays beside it as the pattern, labelled as such. 832/832
+pass.
+
+### Unverified, and named as such
+
+D3D12 needs a command signature and a transition to `INDIRECT_ARGUMENT`, the
+buffer having been written as a UAV by the kernel that filled it. The signature
+carries a null root signature, which D3D12 permits when every argument is a
+`Dispatch`. That path is written and has never been run — there is no D3D12
+machine here.
+
+## Phase 4 — the backdrop
+
+**Shipped.** Phase 4.0 measured the shape of the thing before replacing it, and
+the measurement killed the design this document had already named for it.
+
+### What phase 0 got wrong about its own table
+
+Phase 0's stage split charged the backdrop's **scatter** to `bin`. `addBackdrop`
+runs inside the binning loop, so timing that loop timed both, and only the clear,
+the prefix sum and the buffer went into the `backdrop` column. The scatter is
+`O(records)` and on a dense path it is most of it.
+
+Measured properly — by building no backdrop at all, which is wrong on screen and
+exact on the clock — the per-row backdrop is not one of two costs. It is the
+larger one nearly everywhere:
+
+| path | CPU ms | without the backdrop | it is |
+|---|---|---|---|
+| knob indicator, 40pt | 0.001 | 0.001 | — |
+| knob indicator, 96pt | 0.004 | 0.002 | 50% |
+| PathQuality panel | 0.015 | 0.004 | 73% |
+| automation curve, 1200pt | 0.053 | 0.017 | 68% |
+| full-window ellipse | 0.230 | 0.030 | **87%** |
+| artwork, 4k segments | 0.237 | 0.081 | 66% |
+| artwork, 20k segments | 0.667 | 0.341 | 49% |
+| artwork, 100k segments | 2.417 | 1.754 | 27% |
+| automation lanes × 32 | 1.568 | 0.527 | 66% |
+| automation lanes × 128 | 6.490 | 2.137 | **67%** |
+| panels × 128 | 1.872 | 0.533 | **72%** |
+
+Two thirds of the CPU cost of the canvas workloads this rung exists for is the
+backdrop. The dense artwork is the only case where binning is the bigger half,
+and phase 0's `bin` column is overstated by the same amount its `backdrop`
+column is short.
+
+### Why the design named above is dead
+
+Rung 3 was to have a per-tile backdrop *plus a per-row correction computed by the
+threads that need it*. Measured before building: the correction is walked by
+every pixel of every tile to the right of a partial segment, and partials are not
+rare — the 40pt knob has 75 of them against 72 segments. Against an expansion
+that costs one walk per tile column, it is 14–41× the kernel work **on every case
+in the corpus**:
+
+| path | cells today | records in them | per-tile correction | an expansion |
+|---|---|---|---|---|
+| knob indicator, 40pt | 335 | 226 | 46,694 | 1,130 |
+| PathQuality panel | 27,357 | 1,534 | 1,012,584 | 50,622 |
+| automation curve, 1200pt | 53,756 | 13,882 | 28,426,952 | 2,096,182 |
+| full-window ellipse | 402,804 | 4,200 | 12,442,356 | 844,200 |
+| artwork, 100k segments | 207,594 | 467,741 | 1,776,319,512 | 53,322,474 |
+
+The ellipse's coverage kernel does 233k segment tests today. The correction would
+add 12.4M cheaper ones to that — fifty times the work, to save 0.2ms of CPU. It is
+rung 2's own objection to a per-tile backdrop resurfacing one level down: what
+made it wrong on the CPU makes it wrong on the GPU too, and moving it across the
+bus does not change the count.
+
+### What the same measurement suggests instead
+
+The ellipse's array is **402,804 cells carrying 4,200 non-zero numbers.** The CPU
+clears, prefix-sums and ships 402k floats to deliver 4,200 — 96 cells per number.
+
+A row's backdrop is the prefix of that row's *own* deltas, and nothing else's. So
+it is a step function whose steps are the outline's crossings of that row, not the
+row's columns: the ellipse's busiest row has **5 steps across 201 columns**. Stored
+as per-row `(column, cumulative)` pairs it is `O(segments)` and never `O(area)`,
+on either side of the bus, with no atomics, no extra pass and no cells buffer
+anywhere — and the thread finds its value with a short search in place of one
+array read.
+
+### What shipped
+
+`eacp-gpuwidgets`
+
+- `PathRasterizer` builds the backdrop as per-row `(column, winding)` steps —
+  the crossings recorded per segment-band, counting-sorted into bands, and
+  summed through a scratch array one band tall.
+- `CoverageKernel::backdropAt` — the lookup, a binary search over the row's run.
+- Both forms kept, and **chosen per path**: `chooseBackdropForm` takes the array
+  when the outline crosses too many of its rows for steps to compress it. The
+  kernel branches on which, uniformly across the dispatch.
+
+No change to `eacp-ui`, `eacp-gpu`, or any public API.
+
+### What the first two cuts got wrong, which was the same thing twice
+
+**Sorting the expansion instead of the crossings.** The first cut bucketed the
+per-row deltas by row and column with two counting sorts. That is the obvious
+reading of "steps per row", and it made the automation curve 2× dearer and the
+100k artwork 2.3× — the sort alone was 0.061ms of the curve's 0.112 and 2.17 of
+the artwork's 5.61. A crossing covers up to sixteen pixel rows, so ordering what
+it expands to is up to sixteen times the work of ordering it. Sorting the
+crossings by band and expanding afterwards cut the sort by eight.
+
+**Walking a band's crossings once per pixel row.** The second cut did, which is
+`16 × crossings` and put the artwork at 7.58ms — worse than what it replaced by
+three times. Accumulating each crossing once into a scratch array one band tall
+and reading back only the columns something landed in is what fixed it, and the
+scratch is the dense array again at a sixteenth of the height. What made the
+full-sized one expensive was its size and not its shape, which is the thing both
+of those cuts had to learn separately.
+
+### The two forms, and why there are two
+
+Measured on the same path both ways, the crossover is real and it is narrow:
+
+| path | array is emptier by | steps CPU+GPU | array CPU+GPU |
+|---|---|---|---|
+| knob indicator, 96pt | 2.9× | 0.027 | **0.015** |
+| artwork, 4k segments | 2.6× | 0.375 | **0.331** |
+| automation curve, 1200pt | 3.9× | **0.072** | 0.081 |
+| PathQuality panel | 17.8× | **0.023** | 0.030 |
+| full-window ellipse | 95.9× | **0.149** | 0.327 |
+
+Steps are `2` floats where the array is `1`, so on a path whose outline crosses
+nearly every row they are *larger* than what they replace, and the kernel pays a
+search on top. The choice is made before binning from the outline's total
+vertical travel, so the form that is not built costs nothing: the array is
+scattered into as the crossings are found, and the crossings are only recorded
+when steps are what will be made of them.
+
+### Results
+
+Both binaries built and run alternately, so the numbers see the same machine —
+which mattered, the load average having gone from 2 to 39 during the session.
+Medians of three:
+
+| path | form | CPU before | CPU after | GPU before | GPU after |
+|---|---|---|---|---|---|
+| knob indicator, 40pt | array | 0.001 | 0.001 | — | — |
+| PathQuality panel | steps | 0.015 | **0.009** | 0.013 | 0.014 |
+| automation curve, 1200pt | array | 0.058 | 0.049 | 0.019 | 0.018 |
+| full-window ellipse | steps | 0.222 | **0.048** | 0.102 | 0.093 |
+| artwork, 100k segments | array | 2.338 | 2.510 | 0.160 | 0.172 |
+| automation lanes × 128 | array | 6.539 | 6.552 | 2.266 | 2.255 |
+| panels × 128 | steps | 1.859 | **1.246** | 1.395 | 1.356 |
+
+The ellipse is 4.6× and its whole backdrop is now 8,400 floats where it was
+402,804. A canvas of 128 panels is 1.5×. Everything that keeps the array is
+unchanged, which is the point of keeping it.
+
+**Verified.** The rasterizer tests pass with **either form forced on every
+path**, so both are covered rather than one being dead. Against deliberate
+breaks, with the step form forced: a search off by one, steps emitted in
+descending column order, and row offsets read one row late each fail 7 of the 30
+— and removing the step compression, which is not a bug, fails none. On screen,
+`PathQuality` still reads 197 distinct coverage levels against 4x MSAA's 5, with
+no step inside the fill that aligns to the tile grid (84 found, spread evenly
+across all 16 column residues at 2–5/255, which is the screenshot's dithering);
+`ComponentTree` still reports 295 components and 8 batch breaks.
+
+### What is still wrong
+
+- **The dense artwork is 7% dearer**, and about half of that is not the counting
+  it was first blamed on — removing the emit-loop accumulation recovers 0.04ms
+  of 0.11. The rest is the binning loop's extra branch. It is a 2.5ms path that
+  is already far outside a frame, and it is what rung 3's GPU binning is for.
+- **The search is per pixel**, and it is what makes the step form lose on a path
+  with many crossings per row: it costs 0.94ms of the 128-lane canvas when that
+  canvas is forced onto steps. The backdrop is the same for every thread of a
+  tile column, so eight lookups per 8×8 group would do instead of sixty-four —
+  which is what threadgroup memory is for, and what phase 2 shipped. Not done,
+  because choosing the array on exactly those paths costs nothing and needed no
+  new machinery.
+- **The atlas ceiling** is still the silent failure named at the end of rung one.
+  Nothing has touched it.

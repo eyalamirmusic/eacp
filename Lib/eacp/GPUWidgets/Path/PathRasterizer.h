@@ -44,9 +44,21 @@ enum class FillRule
 // Segments are binned into tiles here, on the CPU, so a thread walks the outline
 // near its own pixel rather than the whole of it. What that costs is the sum
 // over tiles of tile pixels times the segments crossing the tile, plus one
-// backdrop read for every pixel that has no outline near it at all -
+// backdrop lookup for every pixel that has no outline near it at all -
 // getSegmentTests() reports the first term. A path is therefore priced by its
 // outline rather than by its area, which is what lets one cover the window.
+//
+// What everything to the left of a tile contributes - the backdrop - can be
+// priced by the outline too, and that is the one thing here that is not obvious.
+// A pixel row's backdrop is the running sum of the winding entering it at each
+// tile column, so it is a *step function*, and its steps are the outline's
+// crossings of that row rather than the row's columns: a window-sized ellipse
+// has five steps across two hundred columns, where holding a value per column
+// per row cost more CPU than everything else here put together.
+//
+// Steps are two numbers where a column is one, though, so an outline crossing
+// nearly every row of its own coverage is cheaper held the plain way. Both are
+// built, one per path, whichever this one is shaped for.
 class PathRasterizer
 {
 public:
@@ -116,16 +128,35 @@ private:
         int tiles;
     };
 
+    // One segment's crossing into one tile column, over the part of one tile
+    // row's band it spans. The winding it hands the pixel rows to the right of
+    // it, kept as the crossing rather than expanded over those rows - there is
+    // one of these per segment per band, and expanding gives sixteen.
+    struct BandRun
+    {
+        int band;
+        int column;
+        float fromY;
+        float toY;
+        float direction;
+    };
+
     void ensureOwnTexture();
     void buildTiles();
-    void addBackdrop(float direction, float fromY, float toY, int column);
+    void chooseBackdropForm();
+    void buildDenseBackdrop();
+    void buildStepBackdrop();
+    void addBackdrop(float direction, float fromY, float toY, int column, int band);
+    void sortRunsByBand();
     void finishBackdrops();
     void countSegmentTests();
     void upload();
 
     std::optional<GPU::Buffer> segmentBuffer;
     std::optional<GPU::Buffer> tileBuffer;
-    std::optional<GPU::Buffer> backdropBuffer;
+    std::optional<GPU::Buffer> stepBuffer;
+    std::optional<GPU::Buffer> rowBuffer;
+    std::optional<GPU::Buffer> denseBuffer;
     std::optional<GPU::Texture> coverageTexture;
 
     // Directed segments in coverage pixel space, four floats each, before
@@ -137,6 +168,23 @@ private:
     Vector<float> tileOffsets;
     Vector<int> tileCursor;
     Vector<float> tileSegments;
+
+    Vector<BandRun> bandRuns;
+    Vector<BandRun> sortedRuns;
+    Vector<int> runCounts;
+
+    // One band's winding per pixel row per tile column, which is the dense
+    // array this replaced - at one band's size rather than the path's, and
+    // cleared where it was written rather than all over.
+    Vector<float> bandScratch;
+    Vector<char> columnTouched;
+    Vector<int> touchedColumns;
+
+    // The backdrop as the kernel reads it, in whichever of the two forms is
+    // smaller for this path: a run of (column, winding) steps per pixel row with
+    // where each row's run starts, or the winding at every column of every row.
+    Vector<float> backdropSteps;
+    Vector<float> backdropRows;
     Vector<float> backdrops;
 
     const GPU::Texture* target = nullptr;
@@ -150,6 +198,8 @@ private:
     int tilesWide = 0;
     int tilesHigh = 0;
     int evenOdd = 0;
+    bool sparseBackdrop = true;
     long long segmentTests = 0;
+    float backdropSpan = 0.f;
 };
 } // namespace eacp::GPUWidgets
