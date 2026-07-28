@@ -59,6 +59,31 @@ static MTLPixelFormat toMetalPixelFormat(PixelFormat format)
     return MTLPixelFormatBGRA8Unorm;
 }
 
+static MTLCompareFunction toMetalCompareFunction(DepthCompare compare)
+{
+    switch (compare)
+    {
+        case DepthCompare::Never:
+            return MTLCompareFunctionNever;
+        case DepthCompare::Less:
+            return MTLCompareFunctionLess;
+        case DepthCompare::LessEqual:
+            return MTLCompareFunctionLessEqual;
+        case DepthCompare::Equal:
+            return MTLCompareFunctionEqual;
+        case DepthCompare::NotEqual:
+            return MTLCompareFunctionNotEqual;
+        case DepthCompare::GreaterEqual:
+            return MTLCompareFunctionGreaterEqual;
+        case DepthCompare::Greater:
+            return MTLCompareFunctionGreater;
+        case DepthCompare::Always:
+            return MTLCompareFunctionAlways;
+    }
+
+    return MTLCompareFunctionLessEqual;
+}
+
 static MTLVertexStepFunction toMetalStepFunction(StepRate rate)
 {
     switch (rate)
@@ -111,6 +136,8 @@ struct RenderPipeline::Native
 {
     Native(Device& device, const RenderPipelineDescriptor& descriptor)
         : topology(descriptor.topology)
+        , cullMode(descriptor.cullMode)
+        , frontFace(descriptor.frontFace)
     {
         auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
 
@@ -143,8 +170,9 @@ struct RenderPipeline::Native
                 MTLPixelFormatDepth32Float;
 
             auto depthDescriptor = [[MTLDepthStencilDescriptor alloc] init];
-            depthDescriptor.depthCompareFunction = MTLCompareFunctionLessEqual;
-            depthDescriptor.depthWriteEnabled = YES;
+            depthDescriptor.depthCompareFunction =
+                toMetalCompareFunction(descriptor.depthCompare);
+            depthDescriptor.depthWriteEnabled = descriptor.depthWrite ? YES : NO;
             depthState =
                 [metalDevice newDepthStencilStateWithDescriptor:depthDescriptor];
             [depthDescriptor release];
@@ -195,6 +223,8 @@ struct RenderPipeline::Native
     }
 
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
+    CullMode cullMode = CullMode::None;
+    Winding frontFace = Winding::Clockwise;
     ObjC::Ptr<NSObject<MTLRenderPipelineState>> state;
     ObjC::Ptr<NSObject<MTLDepthStencilState>> depthState;
 };
@@ -213,6 +243,16 @@ bool RenderPipeline::isValid() const
 PrimitiveTopology RenderPipeline::topology() const
 {
     return impl->topology;
+}
+
+CullMode RenderPipeline::cullMode() const
+{
+    return impl->cullMode;
+}
+
+Winding RenderPipeline::frontFace() const
+{
+    return impl->frontFace;
 }
 
 void* RenderPipeline::nativeState() const

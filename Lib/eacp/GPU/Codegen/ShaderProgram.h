@@ -752,16 +752,34 @@ public:
                  BlendMode blendMode = BlendMode::None,
                  PixelFormat colorFormat = PixelFormat::BGRA8Unorm)
     {
+        prepare({.colorFormat = colorFormat,
+                 .topology = topology,
+                 .sampleCount = sampleCount,
+                 .blendMode = blendMode,
+                 .depth = depth});
+    }
+
+    // The same thing said as a descriptor, for the settings the positional form
+    // has no room for - face culling, the depth comparison, whether depth is
+    // written:
+    //
+    //     program.prepare({.sampleCount = view.sampleCount(),
+    //                      .depth = true,
+    //                      .cullMode = CullMode::Back});
+    //
+    // A descriptor rather than five more defaulted parameters because five is
+    // already where a call site stops being readable, and because every setting
+    // added here would otherwise have to be repeated in this signature.
+    //
+    // `library` and `vertexLayout` are the program's own and are overwritten:
+    // the generated shader is what this type exists to build, and a caller is
+    // in no position to supply either.
+    void prepare(RenderPipelineDescriptor descriptor)
+    {
         shaderLibrary.emplace(Device::shared(), generated.source);
 
-        auto descriptor = RenderPipelineDescriptor {};
         descriptor.library = &*shaderLibrary;
-        descriptor.sampleCount = sampleCount;
         descriptor.vertexLayout = generated.vertexLayout;
-        descriptor.depth = depth;
-        descriptor.topology = topology;
-        descriptor.blendMode = blendMode;
-        descriptor.colorFormat = colorFormat;
 
         pipelineState.emplace(Device::shared(), descriptor);
     }

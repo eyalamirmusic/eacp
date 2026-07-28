@@ -34,6 +34,34 @@ MTLPrimitiveType toMetalPrimitiveType(PrimitiveTopology topology)
 
     return MTLPrimitiveTypeTriangle;
 }
+
+MTLCullMode toMetalCullMode(CullMode mode)
+{
+    switch (mode)
+    {
+        case CullMode::None:
+            return MTLCullModeNone;
+        case CullMode::Back:
+            return MTLCullModeBack;
+        case CullMode::Front:
+            return MTLCullModeFront;
+    }
+
+    return MTLCullModeNone;
+}
+
+MTLWinding toMetalWinding(Winding winding)
+{
+    switch (winding)
+    {
+        case Winding::Clockwise:
+            return MTLWindingClockwise;
+        case Winding::CounterClockwise:
+            return MTLWindingCounterClockwise;
+    }
+
+    return MTLWindingClockwise;
+}
 } // namespace
 
 struct RenderPass::Native
@@ -123,6 +151,17 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
     if (auto depthState =
             (__bridge id<MTLDepthStencilState>) pipeline.nativeDepthState())
         [activeEncoder setDepthStencilState:depthState];
+
+    // Unconditionally, both of them, even for a pipeline that culls nothing.
+    // These are encoder state on this backend and a pipeline that says nothing
+    // about them would otherwise inherit whatever the last one set - so a pass
+    // drawing a culled mesh and then a full-screen quad would lose half the
+    // quad, and only on Metal, where D3D12 has them in the pipeline object.
+    if (activeEncoder != nil)
+    {
+        [activeEncoder setCullMode:toMetalCullMode(pipeline.cullMode())];
+        [activeEncoder setFrontFacingWinding:toMetalWinding(pipeline.frontFace())];
+    }
 
     impl->primitiveType = toMetalPrimitiveType(pipeline.topology());
 }
