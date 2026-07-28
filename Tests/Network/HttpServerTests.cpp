@@ -15,13 +15,6 @@ using eacp::Threads::stopEventLoop;
 
 namespace
 {
-std::atomic<int> nextPort {52001};
-
-int reservePort()
-{
-    return nextPort.fetch_add(1);
-}
-
 std::string baseUrl(int port)
 {
     return "http://127.0.0.1:" + std::to_string(port);
