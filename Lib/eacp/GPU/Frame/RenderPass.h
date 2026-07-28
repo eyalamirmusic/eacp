@@ -156,19 +156,28 @@ public:
 
     // Draws indexCount indices from an Index-usage buffer, assembling with the
     // pipeline's topology. firstIndex is an offset into the index buffer.
+    //
+    // baseVertex is added to every index before the vertex is fetched, which is
+    // what lets one vertex buffer hold many meshes while each keeps indices
+    // starting from zero. Without it a caller packing meshes together has to
+    // bake the offset into the index values as it copies them in - a pass over
+    // every index, and one that forces 32-bit indices as soon as the shared
+    // buffer passes 65536 vertices even when no single mesh is near that.
     void drawIndexed(const Buffer& indices,
                      int indexCount,
                      IndexFormat format = IndexFormat::UInt32,
-                     int firstIndex = 0);
+                     int firstIndex = 0,
+                     int baseVertex = 0);
 
     // Instanced sibling of drawIndexed: reuses the index buffer per instance.
-    // Same step-rate semantics as drawInstanced.
+    // Same step-rate semantics as drawInstanced, and the same baseVertex.
     void drawIndexedInstanced(const Buffer& indices,
                               int indexCount,
                               int instanceCount,
                               IndexFormat format = IndexFormat::UInt32,
                               int firstIndex = 0,
-                              int firstInstance = 0);
+                              int firstInstance = 0,
+                              int baseVertex = 0);
 
     // Binds a program's uniform block to the stage that reads it, and to no
     // other. The program answers per stage from the same walk that decided

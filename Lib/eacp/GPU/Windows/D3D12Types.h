@@ -247,6 +247,13 @@ struct D3D12Encoder
 {
     CommandContext* commands = nullptr;
     Vector<UINT> strides;
+
+    // Where a timed pass writes its closing timestamp. The opening one is
+    // recorded by beginPass; this one has to wait for the pass to end, which is
+    // the pass's own business and not the frame's. Null and -1 when the pass
+    // carries no label and is therefore not timed.
+    ID3D12QueryHeap* queryHeap = nullptr;
+    int endQuery = -1;
 };
 
 // The compute sibling of D3D12Encoder. The CommandContext stays owned by the
@@ -254,7 +261,26 @@ struct D3D12Encoder
 struct D3D12ComputeEncoder
 {
     CommandContext* commands = nullptr;
+
+    // See D3D12Encoder. A compute pass on a Frame can be timed the same way; one
+    // on a CommandBuffer cannot, there being no frame to attribute it to.
+    ID3D12QueryHeap* queryHeap = nullptr;
+    int endQuery = -1;
 };
+
+// Closes a timed pass, wherever the pass happens to end. Both encoders carry
+// the same two fields for it, so both end the same way.
+template <typename Encoder>
+inline void endTimedPass(const Encoder& encoder)
+{
+    if (encoder.queryHeap == nullptr || encoder.endQuery < 0
+        || encoder.commands == nullptr)
+        return;
+
+    encoder.commands->list->EndQuery(encoder.queryHeap,
+                                     D3D12_QUERY_TYPE_TIMESTAMP,
+                                     static_cast<UINT>(encoder.endQuery));
+}
 
 // Records the barrier a buffer needs before being used in the target state.
 // First use in a recording is free: the buffer was in COMMON (they decay

@@ -266,7 +266,8 @@ void RenderPass::drawInstanced(int vertexCount,
 void RenderPass::drawIndexed(const Buffer& indices,
                              int indexCount,
                              IndexFormat format,
-                             int firstIndex)
+                             int firstIndex,
+                             int baseVertex)
 {
     auto activeEncoder = impl->encoder.get();
     auto metalBuffer = (__bridge id<MTLBuffer>) indices.nativeBuffer();
@@ -279,11 +280,17 @@ void RenderPass::drawIndexed(const Buffer& indices,
     auto indexSize = format == IndexFormat::UInt16 ? sizeof(std::uint16_t)
                                                    : sizeof(std::uint32_t);
 
+    // The eight-argument selector rather than the five-argument one because
+    // only this form carries a base vertex; instanceCount:1 makes it the same
+    // draw the short form issues.
     [activeEncoder drawIndexedPrimitives:impl->primitiveType
                               indexCount:(NSUInteger) indexCount
                                indexType:indexType
                              indexBuffer:metalBuffer
-                       indexBufferOffset:(NSUInteger) firstIndex * indexSize];
+                       indexBufferOffset:(NSUInteger) firstIndex * indexSize
+                           instanceCount:1
+                              baseVertex:(NSInteger) baseVertex
+                            baseInstance:0];
 }
 
 void RenderPass::drawIndexedInstanced(const Buffer& indices,
@@ -291,7 +298,8 @@ void RenderPass::drawIndexedInstanced(const Buffer& indices,
                                       int instanceCount,
                                       IndexFormat format,
                                       int firstIndex,
-                                      int firstInstance)
+                                      int firstInstance,
+                                      int baseVertex)
 {
     auto activeEncoder = impl->encoder.get();
     auto metalBuffer = (__bridge id<MTLBuffer>) indices.nativeBuffer();
@@ -310,7 +318,7 @@ void RenderPass::drawIndexedInstanced(const Buffer& indices,
                              indexBuffer:metalBuffer
                        indexBufferOffset:(NSUInteger) firstIndex * indexSize
                            instanceCount:(NSUInteger) instanceCount
-                              baseVertex:0
+                              baseVertex:(NSInteger) baseVertex
                             baseInstance:(NSUInteger) firstInstance];
 }
 

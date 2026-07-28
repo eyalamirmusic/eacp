@@ -251,7 +251,8 @@ void RenderPass::drawInstanced(int vertexCount,
 void RenderPass::drawIndexed(const Buffer& indices,
                              int indexCount,
                              IndexFormat format,
-                             int firstIndex)
+                             int firstIndex,
+                             int baseVertex)
 {
     if (!impl->encoder || !impl->pipelineBound)
         return;
@@ -271,8 +272,11 @@ void RenderPass::drawIndexed(const Buffer& indices,
         format == IndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
 
     commands.list->IASetIndexBuffer(&view);
-    commands.list->DrawIndexedInstanced(
-        static_cast<UINT>(indexCount), 1, static_cast<UINT>(firstIndex), 0, 0);
+    commands.list->DrawIndexedInstanced(static_cast<UINT>(indexCount),
+                                        1,
+                                        static_cast<UINT>(firstIndex),
+                                        static_cast<INT>(baseVertex),
+                                        0);
 }
 
 void RenderPass::drawIndexedInstanced(const Buffer& indices,
@@ -280,7 +284,8 @@ void RenderPass::drawIndexedInstanced(const Buffer& indices,
                                       int instanceCount,
                                       IndexFormat format,
                                       int firstIndex,
-                                      int firstInstance)
+                                      int firstInstance,
+                                      int baseVertex)
 {
     if (!impl->encoder || !impl->pipelineBound)
         return;
@@ -303,7 +308,7 @@ void RenderPass::drawIndexedInstanced(const Buffer& indices,
     commands.list->DrawIndexedInstanced(static_cast<UINT>(indexCount),
                                         static_cast<UINT>(instanceCount),
                                         static_cast<UINT>(firstIndex),
-                                        0,
+                                        static_cast<INT>(baseVertex),
                                         static_cast<UINT>(firstInstance));
 }
 
@@ -312,6 +317,11 @@ void RenderPass::end()
     // Before the encoder goes, so a batching renderer's queued draws still get
     // recorded. See RenderPass::Participant.
     drainParticipants();
+
+    // After them, so what a participant flushed is inside the pass being timed
+    // rather than after it.
+    if (impl->encoder)
+        endTimedPass(*impl->encoder);
 
     // Commands are recorded onto the frame's list, which submits when the
     // frame is destroyed; releasing the encoder marks the pass finished.
