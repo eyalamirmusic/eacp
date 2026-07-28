@@ -168,10 +168,10 @@ D3D12_CULL_MODE toD3DCullMode(CullMode mode)
     {
         case CullMode::None:
             return D3D12_CULL_MODE_NONE;
-        case CullMode::Back:
-            return D3D12_CULL_MODE_BACK;
         case CullMode::Front:
             return D3D12_CULL_MODE_FRONT;
+        case CullMode::Back:
+            return D3D12_CULL_MODE_BACK;
     }
 
     return D3D12_CULL_MODE_NONE;
@@ -208,9 +208,16 @@ D3D12_COMPARISON_FUNC toD3DComparison(DepthCompare compare)
 // already resolves topology: the descriptor owns it, and the Metal backend
 // applies it when the pipeline is bound.
 //
-// Both APIs decide a triangle's winding after the viewport transform, on the
-// image as it comes out - so a front face is the same triangle on both, and
-// PipelineStateTests checks exactly that rather than trusting this paragraph.
+// FrontCounterClockwise is TRUE for Winding::CounterClockwise, which is not the
+// D3D12 default and is what delivers the convention CullMode promises.
+//
+// The tempting reading is that D3D12 needs the opposite of Metal because it
+// decides facing in screen space, after a y flip Metal does not have. It has no
+// such extra flip: both APIs put clip-space y up and the framebuffer origin at
+// the top left, so the NDC-to-screen mapping reverses winding by exactly the
+// same amount on each, and one convention is spelled the same way on both.
+// Measured, not reasoned - it was FALSE on that reasoning and
+// Tests/GPU/CullModeTests.cpp culled the opposite face.
 D3D12_RASTERIZER_DESC makeRasterizerDesc(const RenderPipelineDescriptor& from)
 {
     D3D12_RASTERIZER_DESC desc = {};
@@ -337,7 +344,7 @@ struct RenderPipeline::Native
 
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
     CullMode cullMode = CullMode::None;
-    Winding frontFace = Winding::Clockwise;
+    Winding frontFace = Winding::CounterClockwise;
     D3D12Pipeline pipeline;
 };
 

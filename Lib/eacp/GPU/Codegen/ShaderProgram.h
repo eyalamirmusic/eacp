@@ -752,28 +752,26 @@ public:
                  BlendMode blendMode = BlendMode::None,
                  PixelFormat colorFormat = PixelFormat::BGRA8Unorm)
     {
-        prepare({.colorFormat = colorFormat,
-                 .topology = topology,
-                 .sampleCount = sampleCount,
-                 .blendMode = blendMode,
-                 .depth = depth});
+        auto descriptor = RenderPipelineDescriptor {};
+        descriptor.sampleCount = sampleCount;
+        descriptor.depth = depth;
+        descriptor.topology = topology;
+        descriptor.blendMode = blendMode;
+        descriptor.colorFormat = colorFormat;
+
+        prepare(descriptor);
     }
 
-    // The same thing said as a descriptor, for the settings the positional form
-    // has no room for - face culling, the depth comparison, whether depth is
-    // written:
+    // The named form of the same thing, and what to reach for once more than
+    // one of these is not the shader's own choice: a program drawing into a
+    // texture takes its sample count, its depth and its pixel format from the
+    // target, and four positional arguments in a row say none of that at the
+    // call site. Cull mode, front face and the depth comparison are only
+    // reachable this way, having no positional slots.
     //
-    //     program.prepare({.sampleCount = view.sampleCount(),
-    //                      .depth = true,
-    //                      .cullMode = CullMode::Back});
-    //
-    // A descriptor rather than five more defaulted parameters because five is
-    // already where a call site stops being readable, and because every setting
-    // added here would otherwise have to be repeated in this signature.
-    //
-    // `library` and `vertexLayout` are the program's own and are overwritten:
-    // the generated shader is what this type exists to build, and a caller is
-    // in no position to supply either.
+    // The program's own library and vertex layout are what they always were and
+    // are filled in here; whatever the caller left in those two fields is
+    // ignored.
     void prepare(RenderPipelineDescriptor descriptor)
     {
         shaderLibrary.emplace(Device::shared(), generated.source);
@@ -803,6 +801,15 @@ public:
 
     int uniformByteSize() const { return uniformBytes.size(); }
     bool hasUniforms() const { return !uniformBytes.empty(); }
+
+    // Which stage define() actually read a uniform from, answered by the same
+    // walk that decided whether to declare the block in that stage's generated
+    // function. RenderPass::draw(program) binds to the stage that says yes and
+    // leaves the other alone; a program declaring uniforms neither stage reads
+    // binds to nobody. Ask these rather than hasUniforms() when hand-rolling a
+    // draw over app-owned geometry.
+    bool vertexReadsUniforms() const { return generated.vertexReadsUniforms; }
+    bool fragmentReadsUniforms() const { return generated.fragmentReadsUniforms; }
 
     // Binds every assigned texture member to the pass; a no-op for programs
     // without textures. RenderPass::draw(program) calls this.

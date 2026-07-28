@@ -189,6 +189,8 @@ public:
     void* getHandle();
     void* getContentViewHandle();
 
+    // Makes this view the window's content, and makes the window findable from
+    // it: View::getWindow() answers for this view and everything under it.
     void setContentView(View& view);
 
     // Brings the window to the front and activates the app so it rises above
@@ -240,6 +242,31 @@ public:
 
 private:
     WindowOptions options;
+
+    // The back-pointer View::getWindow() reads, owned as a member so it is
+    // cleared by the window's own destruction rather than by a line in each
+    // platform's destructor - three of which are `= default`, and a fourth
+    // would be written the day a fourth platform arrives. A view outliving its
+    // window then reports no window instead of a dangling one.
+    struct ContentViewLink
+    {
+        ~ContentViewLink() { attach(nullptr, nullptr); }
+
+        void attach(View* view, Window* window)
+        {
+            if (contentView != nullptr)
+                contentView->ownerWindow = nullptr;
+
+            contentView = view;
+
+            if (contentView != nullptr)
+                contentView->ownerWindow = window;
+        }
+
+        View* contentView = nullptr;
+    };
+
+    ContentViewLink contentLink;
 
     struct Native;
     Pimpl<Native> impl;

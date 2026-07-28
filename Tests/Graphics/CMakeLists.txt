@@ -20,6 +20,7 @@
 set(graphics_test_sources
         ColorTests.cpp
         CursorTests.cpp
+        DisplayTests.cpp
         ImageOpsTests.cpp
         ImageTests.cpp
         KeyCodeTests.cpp
@@ -30,6 +31,7 @@ set(graphics_test_sources
         RoundedRectTests.cpp
         ScrollWheelTests.cpp
         TestMain.cpp
+        ViewWindowTests.cpp
         WindowTests.cpp)
 
 # The macOS-only halves of the cursor, menu and scroll-wheel suites. Each

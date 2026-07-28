@@ -212,23 +212,34 @@ public:
                               int firstInstance = 0,
                               int baseVertex = 0);
 
+    // Binds a program's uniform block to the stage that reads it, and to no
+    // other. The program answers per stage from the same walk that decided
+    // whether to declare the block in that stage's generated function, so the
+    // bind cannot disagree with the signature it is aimed at - and a stage that
+    // never declared it is not bound at all, which is what the validation layer
+    // reports as an unused binding. A program whose uniforms neither stage
+    // reads binds nothing. draw(program) calls this; app code hand-rolling a
+    // draw over its own geometry should call it rather than the two setters.
+    template <typename Program>
+    void setUniforms(Program& program, int slot = 0)
+    {
+        if (program.vertexReadsUniforms())
+            setVertexUniforms(program, slot);
+
+        if (program.fragmentReadsUniforms())
+            setFragmentUniforms(program, slot);
+    }
+
     // Binds and draws a prepared ShaderProgram in one call: its pipeline, vertex
     // buffer, uniform block and textures, then an indexed draw when the program
-    // owns indices and a plain one otherwise. The uniform block is bound to both
-    // stages so a uniform works wherever define() reads it; a stage whose
-    // generated function never declares the block ignores the bind. Templated so
-    // this header stays independent of the codegen layer.
+    // owns indices and a plain one otherwise. Templated so this header stays
+    // independent of the codegen layer.
     template <typename Program>
     void draw(Program& program)
     {
         setPipeline(program.pipeline());
         setVertexBuffer(program.vertices());
-
-        if (program.hasUniforms())
-        {
-            setVertexUniforms(program);
-            setFragmentUniforms(program);
-        }
+        setUniforms(program);
 
         program.bindTextures(*this);
         program.bindBuffers(*this);
@@ -253,12 +264,7 @@ public:
         setPipeline(program.pipeline());
         setVertexBuffer(program.vertices(), 0);
         program.bindInstances(*this);
-
-        if (program.hasUniforms())
-        {
-            setVertexUniforms(program);
-            setFragmentUniforms(program);
-        }
+        setUniforms(program);
 
         program.bindTextures(*this);
         program.bindBuffers(*this);

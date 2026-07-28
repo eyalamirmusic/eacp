@@ -298,7 +298,10 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
                       static_cast<int>(impl->drawable->height));
 }
 
-// Rendering into an app-owned texture: one attachment, no resolve and no depth.
+// Rendering into an app-owned texture: one attachment and no resolve. Depth is
+// the target's own, from TextureDescriptor::depth, and rests in DEPTH_WRITE for
+// its lifetime, so it costs a clear here and no barrier.
+//
 // Deliberately does not touch passBegun, which records whether the *back
 // buffer* was moved out of PRESENT - a frame whose only passes were into
 // textures must not have one transitioned back on the way out.
@@ -321,7 +324,8 @@ RenderPass Frame::beginPass(const Texture& target,
     impl->bindRootState(context, list);
     transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
-    list->OMSetRenderTargets(1, &data->rtv, FALSE, nullptr);
+    auto hasDepth = data->hasDepth();
+    list->OMSetRenderTargets(1, &data->rtv, FALSE, hasDepth ? &data->dsv : nullptr);
 
     auto width = target.width();
     auto height = target.height();
@@ -342,6 +346,12 @@ RenderPass Frame::beginPass(const Texture& target,
         const float clearColor[4] = {color.r, color.g, color.b, color.a};
         list->ClearRenderTargetView(data->rtv, clearColor, 0, nullptr);
     }
+
+    // Cleared to the far plane whenever there is one, matching both the
+    // drawable pass here and the Metal pass's unconditional depth clear.
+    if (hasDepth)
+        list->ClearDepthStencilView(
+            data->dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
     auto* encoder = new D3D12Encoder {impl->commands, {}};
     impl->timePass(*encoder, descriptor.label);

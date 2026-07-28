@@ -33,6 +33,9 @@ public:
     // until the first beginSlot, which is what creates the resources - a
     // Device cannot build them in its own constructor, since it is not yet
     // itself when that runs.
+    //
+    // It can also go back to false, once, having been true: an adapter is only
+    // taken at its word until a resolved slot proves otherwise. See resolveSlot.
     bool isSupported() const;
 
     // Forgets what the slot held and prepares it for a frame's samples.
@@ -76,7 +79,14 @@ public:
     // Reads a completed slot back. milliseconds[i] is filled for each of the
     // passCount passes; the return value is the whole frame's GPU time, or zero
     // where the backend cannot say.
-    double resolveSlot(int slot, int passCount, double* milliseconds) const;
+    //
+    // Not const, because reading a slot is also the only chance to find out that
+    // an adapter which advertised timestamps does not actually write any - some
+    // virtualised GPUs report a frequency, accept the query heap and then leave
+    // the readback untouched. A slot that comes back entirely unwritten retires
+    // isSupported(), so a caller is told it cannot profile instead of being
+    // handed a column of zeroes.
+    double resolveSlot(int slot, int passCount, double* milliseconds);
 
     // How many slots there are, and therefore how many frames may be timed at
     // once. One more than the deepest pipeline either backend runs, so the

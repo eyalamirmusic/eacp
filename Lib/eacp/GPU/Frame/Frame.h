@@ -69,9 +69,18 @@ public:
     // sample in a later one and neither backend needs a fence to say so.
     //
     // The texture must have been created with TextureDescriptor::renderTarget;
-    // anything else yields a pass that records nothing. Multisampling and depth
-    // are deliberately absent - what this is for is a full-screen pass over a
-    // whole texture, and neither has a meaning there.
+    // anything else yields a pass that records nothing.
+    //
+    // Depth is the target's, from TextureDescriptor::depth: a target created
+    // with one gets it attached, cleared to the far plane and discarded, and a
+    // target created without one runs the pass with no depth test at all. Ask
+    // for it whenever the pass draws a 3D scene rather than a full-screen quad,
+    // and match it with RenderPipelineDescriptor::depth on the pipeline.
+    //
+    // Multisampling is still deliberately absent. A texture target has nothing
+    // to resolve into - the texture *is* what a resolve would produce - and the
+    // pass is single-sampled, so a pipeline used here needs sampleCount 1 even
+    // when the same shader draws multisampled into the drawable.
     //
     // A texture cannot be sampled by the same pass that renders into it. That
     // is what two of them and a swap is for - see the ping-pong a feedback
