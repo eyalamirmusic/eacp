@@ -58,6 +58,14 @@ public:
     void setPath(const GPUWidgets::Path& newPath,
                  GPUWidgets::FillRule rule = GPUWidgets::FillRule::NonZero);
 
+    // The same geometry stroked rather than filled. There is no such thing as
+    // rasterizing a stroke here - the kernel fills - so the stroke is turned
+    // into the region it covers and that is what the shape holds. See
+    // GPUWidgets::strokeToFill, and note its warning about flatness: build the
+    // path with a tighter tolerance than a fill would need.
+    void setStroke(const GPUWidgets::Path& newPath,
+                   const GPUWidgets::StrokeStyle& style);
+
     void clear();
 
     // True until a path has been set and rasterized. Drawing one is a no-op.
