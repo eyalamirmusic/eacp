@@ -8,6 +8,7 @@
 #include "../Device/Device.h"
 #include "../Frame/RenderPass.h"
 #include "GeneratedShader.h"
+#include "PackedVertex.h"
 #include "ShaderBuilder.h"
 #include "ShaderTypes.h"
 #include "ShaderValue.h"
@@ -328,7 +329,7 @@ struct Uniform<WritableTexture2D> : WritableTexture2D
     const Texture* value = nullptr;
 };
 
-inline VertexFormat toVertexFormat(ValueType type)
+constexpr VertexFormat toVertexFormat(ValueType type)
 {
     switch (type)
     {
@@ -355,6 +356,40 @@ inline VertexFormat toVertexFormat(ValueType type)
     }
 
     return VertexFormat::Float;
+}
+
+// A CPU vertex field's wire format.
+//
+// The default is whatever its shader value implies, which is the unpacked one -
+// a Float4 attribute is four floats. A packed type overrides it by declaring a
+// vertexFormat of its own, which is the whole mechanism: the field keeps saying
+// what the shader sees through ShaderValue, and says separately what the buffer
+// holds. See PackedVertex.h.
+template <typename T>
+struct VertexFormatOf
+{
+    static constexpr auto value =
+        toVertexFormat(ValueTypeOf<typename ShaderValueOf<T>::type>::value);
+};
+
+template <typename T>
+    requires requires { T::vertexFormat; }
+struct VertexFormatOf<T>
+{
+    static constexpr auto value = T::vertexFormat;
+};
+
+// What a field of type M is expected to occupy, for the size check every input
+// makes. A packed field is measured against the format it declares; anything
+// else against the CPU type its shader value implies - the same question asked
+// of whichever of the two is authoritative for that field.
+template <typename M, typename Handle>
+constexpr std::size_t expectedAttributeBytes()
+{
+    if constexpr (requires { M::vertexFormat; })
+        return (std::size_t) bytesPerAttribute(M::vertexFormat);
+    else
+        return sizeof(typename CpuValueOf<Handle>::type);
 }
 
 // The non-templated surface the uniform member walk bottoms out in. The templated
@@ -828,11 +863,11 @@ protected:
     typename ShaderValueOf<M>::type vertexInput(M C::* member)
     {
         using Handle = typename ShaderValueOf<M>::type;
-        static_assert(sizeof(M) == sizeof(typename CpuValueOf<Handle>::type),
-                      "vertex field size does not match its shader value type");
+        static_assert(sizeof(M) == expectedAttributeBytes<M, Handle>(),
+                      "vertex field size does not match the format it declares");
 
         constexpr auto type = ValueTypeOf<Handle>::value;
-        vertexLayoutData.attribute(toVertexFormat(type), memberOffset(member));
+        vertexLayoutData.attribute(VertexFormatOf<M>::value, memberOffset(member));
         vertexLayoutData.stride = (int) sizeof(C);
 
         auto added = builder.addVertexInput(type);
@@ -854,12 +889,12 @@ protected:
     typename ShaderValueOf<M>::type instanceInput(M C::* member, int bufferIndex)
     {
         using Handle = typename ShaderValueOf<M>::type;
-        static_assert(sizeof(M) == sizeof(typename CpuValueOf<Handle>::type),
-                      "instance field size does not match its shader value type");
+        static_assert(sizeof(M) == expectedAttributeBytes<M, Handle>(),
+                      "instance field size does not match the format it declares");
 
         constexpr auto type = ValueTypeOf<Handle>::value;
         vertexLayoutData.attribute(
-            toVertexFormat(type), memberOffset(member), bufferIndex);
+            VertexFormatOf<M>::value, memberOffset(member), bufferIndex);
         vertexLayoutData.buffer(bufferIndex, (int) sizeof(C), StepRate::PerInstance);
         usesInstancing = true;
 
