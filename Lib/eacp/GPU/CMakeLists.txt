@@ -11,8 +11,11 @@ target_compile_options(eacp-gpu PUBLIC $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocesso
 # builds on every platform and is not gated behind the APPLE/WIN32 branches. Only
 # the native backend selection (ShaderBuilder-*) lives in the platform branches.
 target_sources(eacp-gpu PRIVATE
+        Buffer/StreamingBuffers.cpp
         Device/Device.cpp
         Frame/RenderPass.cpp
+        Timing/FrameTimer.cpp
+        Codegen/PackedVertex.cpp
         Codegen/ShaderGraph.cpp
         Codegen/ShaderEmitter.cpp
         Codegen/ShaderBuilder.cpp)
@@ -32,6 +35,7 @@ if (APPLE)
             Pipeline/RenderPipeline-Apple.mm
             Shader/ShaderLibrary-Apple.mm
             Texture/Texture-Apple.mm
+            Timing/GpuTimestamps-Apple.mm
             View/GPUView-Apple.mm)
     target_link_libraries(eacp-gpu PRIVATE
             "-framework CoreVideo"
@@ -59,6 +63,7 @@ elseif (WIN32)
             Pipeline/RenderPipeline-Windows.cpp
             Shader/ShaderLibrary-Windows.cpp
             Texture/Texture-Windows.cpp
+            Timing/GpuTimestamps-Windows.cpp
             View/GPUView-Windows.cpp
             Windows/D3D12Context-Windows.cpp)
     target_link_libraries(eacp-gpu PRIVATE
