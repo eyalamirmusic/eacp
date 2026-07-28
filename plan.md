@@ -1,16 +1,19 @@
-# Compute coverage rasterizer — first rung
+# Compute coverage rasterizer — rungs one and two
 
 A GPU path rasterizer for `eacp-ui` that computes antialiasing coverage
 analytically in a compute kernel, rather than approximating it with
 multisampling or avoiding it with stencil-then-cover.
 
-**Shipped.** All four phases are done and measured. This document is now the
-record of the rung as built, kept beside the rungs above it so the next one is
-not designed from memory. Where the plan turned out wrong the original claim is
-left in and corrected rather than quietly deleted — those are the useful parts.
+**Both rungs shipped.** This document is the record of them as built, kept
+beside the rungs above so the next one is not designed from memory. Where a plan
+turned out wrong the original claim is left in and corrected rather than quietly
+deleted — those are the useful parts.
 
-The scope was and remains the **cut-down version**: per-pixel direct evaluation,
-no tiling, no binning. The smallest thing that produces a real artifact to judge.
+Rung one was the **cut-down version**: per-pixel direct evaluation, no tiling,
+no binning. The smallest thing that produces a real artifact to judge. Rung two
+put the binning in, and is written up at the end.
+
+# Rung 1 — direct per-pixel evaluation
 
 ## Why this shape first
 
@@ -90,6 +93,8 @@ Claimed present, and not:
 ## Still not in scope
 
 - Tiling, binning, prefix sums, indirect dispatch. That is rung two and three.
+  (Binning and a prefix sum arrived in rung two, on the CPU. Indirect dispatch
+  still has not, and is not needed for it.)
 - Atomics or threadgroup memory. Neither was needed and neither was added.
 - Fixing conflation **between separate draws**. Coverage accumulation removes
   conflation *within* a path — which is what makes the knob's arc and pointer
@@ -189,6 +194,10 @@ rectangles around it never break the batch apart.
 Cost model, honestly: `O(bbox pixels × segments)`. A 64×64 icon with 200
 segments is 800k segment-pixel tests — nothing. A full-screen path with 10k
 segments is ~20 billion — hopeless. This rung is for UI-scale paths.
+
+*(That was rung one's cost and it is no longer the cost. Rung two replaced it
+with the outline's, which is what made the full-screen case ordinary rather than
+hopeless — see the last section.)*
 
 ### The ordering constraint
 
@@ -297,21 +306,157 @@ once will have some of them missing rather than wrong. That is the honest
 failure mode, but it is silent, and the first thing to add if a real interface
 ever approaches it is a way to notice.
 
-## Rungs above this one
+# Rung 2 — CPU-side binning
 
-**Rung 2 — CPU-side binning.** Bin segments into tiles on the CPU, upload
-per-tile lists and offsets, kernel reads only its own tile's list. Recovers most
-of the asymptotics of the real thing and still needs **no atomics**, because the
-CPU does the appending. Probably where this should stop for a UI — and now with
-a baseline to beat, since anything it changes has to hold the phase-2 numbers.
+**Shipped.** A path is now priced by its outline instead of by its area. Nothing
+about the picture changed, which is the whole point: this rung is a rewrite of
+*which segments a pixel looks at*, not of what a segment contributes.
+
+## What shipped
+
+`eacp-gpuwidgets`
+
+- `PathRasterizer` bins its segments into 16×16-pixel tiles and uploads three
+  buffers instead of one: the segments grouped by tile, where each tile's run
+  starts, and the backdrop.
+- `PathRasterizer::getSegmentCount` / `getSegmentTests` — what the dispatch is
+  about to cost, settled at `setPath` so it can be read before a frame rather
+  than measured during one.
+- `CoverageKernel` walks one tile's run, starting from the backdrop.
+
+`Tests/GPUWidgets/PathRasterizerTests.cpp` — the coverage the kernel writes,
+against an independent CPU reference that walks every segment for every pixel.
+
+No change to `eacp-ui`, `eacp-gpu`, or any public API but those two accessors.
+
+## The design, and the one place the obvious version is wrong
+
+Binning a segment into the tiles its bounding box touches is not enough, and the
+reason is the thing worth writing down.
+
+A segment does not contribute only to the pixels it passes through. In this
+formulation it contributes the signed area to its right, so a segment
+**anywhere to the left** of a pixel adds its full winding to it. Bin only by
+overlap and every tile to the right of the outline loses everything.
+
+The standard answer is a *backdrop*: the winding entering a tile from the left,
+so a thread starts from a number instead of walking the segments that produced
+it. The subtlety is what it is indexed by. Vello keeps one integer per tile,
+which is only correct if every segment left of the tile spans the tile's whole
+vertical extent — and to hold that, a segment that ends *inside* the band has to
+go into the list of every tile to its right. On a shape whose outline runs
+near-horizontally through a band — the top of any circle — that is most of the
+row, which is exactly the blow-up binning was for.
+
+So the backdrop here is **per pixel row per tile column**, not per tile:
+
+```
+backdrops[row * tilesWide + column]
+```
+
+That is `coverage pixels / tileSize` floats — a sixteenth of the mask — and it
+makes the split exact with no special case. A segment is either in a tile's list
+or in its backdrop, decided per tile row:
+
+```
+clip the segment to the tile row's y-band       -> [enters, leaves]
+beyond = ceil(max(enters, leaves) / tileSize)   -- first column entirely right of it
+list    : columns [floor(min(enters, leaves) / tileSize), beyond - 1]
+backdrop: column beyond, then a prefix sum along the row carries it right
+```
+
+The two ranges are disjoint and together cover everything that contributes;
+columns left of the first are entirely right of the segment and contribute zero.
+
+Clipping to the tile row before taking the x-range is the second thing that
+matters. A long diagonal binned by its bounding box lands in every tile of a
+square; clipped per row it lands in the two or three per row it actually
+crosses. That is the difference between binning helping and binning being a
+different way to do the same work.
+
+Two CPU passes, counting-sort style, so no tile owns a container: count the
+entries, prefix-sum the counts into offsets, fill. The per-(segment, tile row)
+clip is recorded on the first pass so the second does not redo the geometry.
+Every buffer is kept between rasterizations, so a knob being dragged still
+allocates nothing.
+
+## Results
+
+**The picture did not move.** `Apps/GPU/PathQuality`, measured over the circle's
+boundary the same way phase 2 was, before and after:
+
+| | distinct coverage levels | mean abs. difference from CoreGraphics | worst pixel |
+|---|---|---|---|
+| unbinned | 194 | 0.00900 | 0.13 |
+| binned | 194 | 0.00900 | 0.13 |
+
+(Absolute figures differ from phase 2's table because this measurement projects
+all three channels rather than reading one; what matters is that it is the same
+measurement on both sides.) The two renders differ in **17 pixels out of 2.9
+million, by one 8-bit step each** — the CPU summing a backdrop in a different
+order than the GPU loop did.
+
+**Fill rules and seams.** `Apps/GPU/PathCoverage`: solid under non-zero,
+pentagonal hole under even-odd. Over 1.69M pixels of flat region — flat found
+from the coverage *gradient*, not from its value, since defining it as "the
+saturated pixels" would exclude the wrongly-unsaturated block one is hunting
+for — there are zero pixels that are neither empty nor full, and zero
+flat-to-flat steps on any residue of the tile grid. Even-odd matters here: it
+folds, so a backdrop out by one winding inverts a region instead of hiding under
+`min(total, 1)`.
+
+**The win**, from `getSegmentTests()` against the same path's unbinned cost:
+
+| path | coverage px | segments | unbinned | binned | |
+|---|---|---|---|---|---|
+| knob indicator, 40pt | 71×67 | 102 | 485k | 31k | 15.6× |
+| knob indicator, 96pt | 173×163 | 102 | 2.9M | 42k | 68.9× |
+| PathQuality panel | 608×994 | 194 | 117M | 100k | 1167× |
+| automation curve, 1200pt | 2402×389 | 818 | 764M | 375k | 2037× |
+| full-window ellipse | 3203×2004 | 281 | 1.80**B** | 233k | 7747× |
+
+The ratio grows with area because the numerator does and the denominator does
+not. The last row is the case rung one called hopeless.
+
+**Component tier.** `Apps/UI/ComponentTree` still reports 295 components and 8
+batch breaks — the figures from rung one, unchanged, as they should be: binning
+touches what a dispatch costs and not what a draw does.
+
+## What this rung got wrong, and what is still unverified
+
+- **"Recovers most of the asymptotics."** It recovers all of the ones that
+  matter. What is left is the per-tile constant — three buffer reads before the
+  loop — which is why the 40pt knob gains 15× and the full-window path 7747×.
+  Binning is close to free at small sizes rather than a win at them.
+- **The test does not go through a render pass, and that was not the plan.**
+  The first cut drew the mask and read the pixels back, and every shape failed
+  by ~0.19. It was the display transfer function: a coverage of 0.607 comes back
+  as 0.800. Reading the mask into a buffer with a second compute pass instead
+  removes the compositor from the measurement entirely, and the tolerance went
+  from "some fraction I would have had to justify" to 1.5/255.
+- **The tests were checked against deliberately broken binning**, because a
+  test that cannot fail is not evidence. A backdrop column off by one, and a
+  tile run one column short: 6 of the 7 tests fail on each.
+- **Not verified: the knobs on screen.** The machine locked partway through and
+  `ComponentTree` could not be screenshotted after the change. Its own reported
+  figures are unchanged, and the knob indicator is checked pixel-for-pixel at
+  nine sizes and five values by the new test — which covers the resize and drag
+  paths better than a screenshot would — but nobody has looked at it.
+
+## Rungs above this one
 
 **Rung 3 — full GPU pipeline.** Needs atomics, threadgroup memory with
 barriers, and indirect dispatch added to `eacp-gpu` first. Only worth it for
 many complex overlapping paths — a DAW canvas of live automation curves, a map
 view, a vector editor, or SVG document rendering. Note that an `SVG` module
 already exists in the tree, so that last one is less hypothetical than it
-sounds.
+sounds. Rung two moves the bar it has to clear a long way: the automation-curve
+case above is now 375k segment-pixel tests, and a GPU pipeline has to beat that
+*including* what its own binning stages cost.
 
 **Not a rung, but next in line if paths get used:** stroking. Every widget that
 wants an outline currently gets it from the distance field, which only knows
 rounded boxes. A stroked *path* has no route through any of this yet.
+
+**The atlas ceiling** is still the silent failure named at the end of rung one,
+and rung two did not touch it.

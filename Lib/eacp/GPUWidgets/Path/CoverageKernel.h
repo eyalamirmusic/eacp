@@ -4,9 +4,8 @@
 
 namespace eacp::GPUWidgets
 {
-// The EDSL-authored kernel behind PathRasterizer: one thread per pixel, walking
-// every segment of a path and accumulating that segment's signed contribution to
-// its own pixel's coverage.
+// The EDSL-authored kernel behind PathRasterizer: one thread per pixel,
+// accumulating each segment's signed contribution to its own pixel's coverage.
 //
 // It is the trapezoid arithmetic a scanline cell rasterizer (FreeType's, and
 // every one since) does, evaluated per pixel instead of accumulated along a row.
@@ -20,14 +19,24 @@ namespace eacp::GPUWidgets
 // Exact, not approximate: see meanClampedX below for the one place where that
 // costs anything, and for what sampling instead would get wrong.
 //
+// A thread walks only the segments of its own tile. The rest of the path reaches
+// it as a single number - the winding entering the tile from the left, summed on
+// the CPU for the thread's own pixel row - so a pixel pays for the outline
+// passing near it and not for the outline existing. See PathRasterizer, which
+// does the binning, the transform into pixel space, and the backdrop sum.
+//
 // Horizontal segments contribute nothing, and are dropped on the CPU rather than
 // guarded against here.
-//
-// Segments arrive already in the coverage texture's own pixel space, four floats
-// per segment (x0, y0, x1, y1) - see PathRasterizer, which does the transform
-// once at upload instead of per pixel per segment.
 struct CoverageKernel final : GPU::ComputeProgram
 {
+    // Coverage pixels along one side of a tile. A thread reads two offsets and a
+    // backdrop before its loop, so tiles want to be big enough that the three
+    // reads disappear against the segments they save; they also want to be small
+    // enough that a tile holds only the outline near it. Sixteen is four of the
+    // 8x8 threadgroups the 2D dispatch uses, so the offsets a group reads are
+    // the same for every thread in it.
+    static constexpr int tileSize = 16;
+
     CoverageKernel() { compile(); }
 
     void define() override
@@ -36,10 +45,21 @@ struct CoverageKernel final : GPU::ComputeProgram
         auto pixelX = toFloat(pixel.x);
         auto pixelY = toFloat(pixel.y);
 
-        auto winding = var(0.f);
-        auto index = var(0);
+        auto column = pixel.x / (unsigned) tileSize;
+        auto tile = (pixel.y / (unsigned) tileSize) * tilesWide + column;
 
-        loop(index < segmentCount,
+        // Everything left of this tile covers the pixel's whole row-slice, so
+        // its contribution depends on the row and not on the column - which is
+        // what lets the CPU sum it once per row into a number the thread starts
+        // from instead of a list it walks.
+        auto winding = var(backdrops[pixel.y * tilesWide + column]);
+
+        // Held in locals rather than re-read: the loop condition is re-tested in
+        // the generated while header, and these do not change under it.
+        auto index = var(toInt(tileOffsets[tile]));
+        auto last = var(toInt(tileOffsets[tile + 1u]));
+
+        loop(index < last,
              [&]
              {
                  auto segment = segments.read4(toUInt(index));
@@ -133,13 +153,36 @@ struct CoverageKernel final : GPU::ComputeProgram
         return select(flat, clamp(from, 0.f, 1.f), ramp);
     }
 
-    GPU::Uniform<GPU::InputBuffer> segments; // 4 floats per directed segment
+    // Segments grouped by the tile that walks them, four floats each
+    // (x0, y0, x1, y1), already in the coverage texture's own pixel space. A
+    // segment crossing a tile boundary appears once under each tile it crosses.
+    GPU::Uniform<GPU::InputBuffer> segments;
+
+    // Where each tile's run of segments starts, one entry per tile and a last
+    // one holding the total, so a tile's run is [tileOffsets[t], tileOffsets[t+1]).
+    // Counts, carried as floats because a storage buffer is a run of floats -
+    // exact well past any segment count this rasterizer is for.
+    GPU::Uniform<GPU::InputBuffer> tileOffsets;
+
+    // The winding entering a tile from the left, one entry per pixel row per
+    // tile column, indexed row-major. Per row rather than per tile because a
+    // segment ending inside the tile's band covers some of its rows and not
+    // others - a single number per tile would be the winding at only one of them.
+    GPU::Uniform<GPU::InputBuffer> backdrops;
+
     GPU::Uniform<GPU::WritableTexture2D> coverage;
-    GPU::Uniform<GPU::Int> segmentCount;
+    GPU::Uniform<GPU::UInt> tilesWide;
     GPU::Uniform<GPU::Int> evenOdd; // 0 = non-zero fill rule, 1 = even-odd
     GPU::Uniform<GPU::UInt> originX; // where this path sits in the target
     GPU::Uniform<GPU::UInt> originY;
 
-    EACP_SHADER(segments, coverage, segmentCount, evenOdd, originX, originY)
+    EACP_SHADER(segments,
+                tileOffsets,
+                backdrops,
+                coverage,
+                tilesWide,
+                evenOdd,
+                originX,
+                originY)
 };
 } // namespace eacp::GPUWidgets
