@@ -16,6 +16,7 @@ namespace eacp::Graphics
 {
 
 class Image;
+class Window;
 
 enum class MouseEventType
 {
@@ -275,9 +276,31 @@ public:
     const Vector<Layer*>& getLayers() const { return layers; }
     View* getParent() const { return parent; }
 
+    // The window this view is in, or null while it is in none - before
+    // Window::setContentView, inside an EmbeddedView (whose host window belongs
+    // to another framework), or once the window has been destroyed.
+    //
+    // What it is for is a view that needs something only its window can give it:
+    // the mouse lock, the modifier keys, the title. Without this the app has to
+    // hand the window to the view, which means constructing the two in that
+    // order forever and threading a reference through every view that wants one.
+    //
+    // A pointer rather than a reference given at construction, because a view
+    // can precede its window, outlive it, or never have one, and a reference
+    // cannot say so. Walks up to the root: the window adopts the content view,
+    // and everything under it is in the same window by definition.
+    Window* getWindow() const;
+
     void* getNativeLayer();
 
 private:
+    // Set by Window::setContentView on the view it adopts, and cleared when
+    // that window is destroyed - which is what keeps getWindow() from handing
+    // back a window that is gone. Only ever set on a root view; every other
+    // view finds it by walking up. See Window::ContentViewLink.
+    friend class Window;
+    Window* ownerWindow = nullptr;
+
     void handleMouseEvent(const MouseEvent& event);
     Point convertPointToDescendant(const Point& point, View* descendant);
     MouseEvent

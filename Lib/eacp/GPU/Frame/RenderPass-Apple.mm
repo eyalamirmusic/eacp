@@ -41,10 +41,10 @@ MTLCullMode toMetalCullMode(CullMode mode)
     {
         case CullMode::None:
             return MTLCullModeNone;
-        case CullMode::Back:
-            return MTLCullModeBack;
         case CullMode::Front:
             return MTLCullModeFront;
+        case CullMode::Back:
+            return MTLCullModeBack;
     }
 
     return MTLCullModeNone;
@@ -54,13 +54,13 @@ MTLWinding toMetalWinding(Winding winding)
 {
     switch (winding)
     {
-        case Winding::Clockwise:
-            return MTLWindingClockwise;
         case Winding::CounterClockwise:
             return MTLWindingCounterClockwise;
+        case Winding::Clockwise:
+            return MTLWindingClockwise;
     }
 
-    return MTLWindingClockwise;
+    return MTLWindingCounterClockwise;
 }
 } // namespace
 
@@ -186,15 +186,23 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
             (__bridge id<MTLDepthStencilState>) pipeline.nativeDepthState())
         [activeEncoder setDepthStencilState:depthState];
 
-    // Unconditionally, both of them, even for a pipeline that culls nothing.
-    // These are encoder state on this backend and a pipeline that says nothing
-    // about them would otherwise inherit whatever the last one set - so a pass
-    // drawing a culled mesh and then a full-screen quad would lose half the
-    // quad, and only on Metal, where D3D12 has them in the pipeline object.
-    if (activeEncoder != nil)
+    // Face culling is encoder state on Metal and pipeline state on D3D12, so it
+    // travels on the pipeline and is applied here - which also means both of
+    // these have to be set on every setPipeline rather than only on the culling
+    // ones: encoder state persists, so a culled pipeline would otherwise leave
+    // its mode behind for whatever draws next.
+    //
+    // The default winding is CounterClockwise, which is not Metal's own and is
+    // not a preference either: it is what makes this backend mean by "front"
+    // what CullMode says eacp means - counter-clockwise in *clip* space. Metal
+    // decides facing there, before the viewport's y flip, which is measured
+    // rather than assumed (Tests/GPU/CullModeTests.cpp) and is the opposite end
+    // of that flip from D3D12's screen-space rule. Leaving both backends on
+    // their own defaults would have culled opposite faces from the same mesh.
+    if (impl->pipelineBound)
     {
-        [activeEncoder setCullMode:toMetalCullMode(pipeline.cullMode())];
         [activeEncoder setFrontFacingWinding:toMetalWinding(pipeline.frontFace())];
+        [activeEncoder setCullMode:toMetalCullMode(pipeline.cullMode())];
     }
 
     impl->primitiveType = toMetalPrimitiveType(pipeline.topology());

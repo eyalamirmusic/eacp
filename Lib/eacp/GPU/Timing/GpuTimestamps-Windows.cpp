@@ -214,8 +214,7 @@ bool GpuTimestamps::isSlotComplete(int slot) const
     return entry.submitted && getD3D12Context().hasCompleted(entry.fenceValue);
 }
 
-double
-    GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds) const
+double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
 {
     const auto& entry = impl->slots[slot];
 
@@ -236,7 +235,23 @@ double
         milliseconds[pass] =
             toMilliseconds(entry.results[pass * 2], entry.results[pass * 2 + 1]);
 
-    return toMilliseconds(entry.results[frameStartQuery],
-                          entry.results[frameEndQuery]);
+    const auto frameStart = entry.results[frameStartQuery];
+    const auto frameEnd = entry.results[frameEndQuery];
+
+    // Where an adapter that only claimed to support timestamps is found out.
+    // These two are absolute GPU tick counts, taken on the command list outside
+    // any pass, and the slot is only read once its fence has passed - so both
+    // reading zero cannot mean a quick frame, only that the writes never landed.
+    // The Parallels virtual GPU does exactly this: it answers
+    // GetTimestampFrequency, creates the query heap and resolves nothing.
+    //
+    // Retiring support here rather than reporting zeroes is what keeps the rest
+    // honest: endSlot then stops marking slots pending, so none are left waiting
+    // on an answer that will not come, and supportsPassTimings() tells a
+    // profiler the truth before it draws an empty graph.
+    if (frameStart == 0 && frameEnd == 0)
+        impl->supported = false;
+
+    return toMilliseconds(frameStart, frameEnd);
 }
 } // namespace eacp::GPU

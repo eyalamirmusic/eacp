@@ -60,29 +60,43 @@ enum class BlendMode
     Additive
 };
 
-// Which faces the rasterizer discards before shading them. None draws both,
-// which is what a 2D renderer wants and what both backends did before this
-// existed. Back is the setting for closed geometry - a mesh's far side is
-// hidden by its near side anyway, so shading it is work thrown away, and glTF
-// models are authored expecting it.
+// Which faces the rasterizer keeps. None draws both and is the default: it is
+// where both backends start, and it is what a mesh whose winding is not known
+// to be consistent needs - a wrongly-wound triangle under culling does not draw
+// wrongly, it does not draw at all.
+//
+// The default winding convention is **a triangle whose vertices run
+// counter-clockwise in clip space - the space setPosition writes, with y up -
+// is front-facing.** That is glTF's convention, and it is the one worth stating
+// in the space a shader is written in rather than in the image, where the
+// viewport's y flip has already reversed the sign of it.
+//
+// Worth stating because both backends default to "clockwise is front", which is
+// the opposite of it. They do agree on what winding means, though: clip-space y
+// is up and the framebuffer origin is top left on each, so the same convention
+// is spelled the same way on both - MTLWindingCounterClockwise on Metal,
+// FrontCounterClockwise = TRUE on D3D12, both explicitly, with
+// Tests/GPU/CullModeTests.cpp there to fail if either drifts.
 enum class CullMode
 {
     None,
-    Back,
-    Front
+    Front,
+    Back
 };
 
-// Which winding, seen on the rendered image, counts as the front face.
+// Which winding counts as the front face, in the clip space CullMode's note
+// states the convention in.
 //
-// Clockwise is the default because it is what both backends already did:
-// Metal's own default is MTLWindingClockwise and D3D12's is
-// FrontCounterClockwise = FALSE. glTF defines its front faces the other way -
-// counter-clockwise in *its* coordinates - so a loader picks the value that
-// matches after its own handedness flip rather than assuming either.
+// CounterClockwise is the default and is that convention, so a pipeline that
+// says nothing about winding gets glTF's answer. The field exists for the
+// geometry that does not arrive in it: a mesh wound the other way, an instance
+// mirrored by a negative scale - which reverses the winding of every triangle
+// in it - or an inside-out shape like a skybox, none of which should need its
+// indices rewritten to draw.
 enum class Winding
 {
-    Clockwise,
-    CounterClockwise
+    CounterClockwise,
+    Clockwise
 };
 
 // The test a fragment's depth has to pass against what is already in the depth
@@ -133,10 +147,15 @@ struct RenderPipelineDescriptor
     DepthCompare depthCompare = DepthCompare::LessEqual;
     bool depthWrite = true;
 
-    // Face culling. Off by default: a 2D renderer's quads have no meaningful
-    // winding, and turning this on by default would make half of them vanish.
+    // Face culling, off by default. Worth turning on for closed geometry whose
+    // winding is consistent: a back face is rasterised and shaded before the
+    // depth test throws it away, so culling it is work not done rather than work
+    // undone.
+    //
+    // frontFace only matters once cullMode is not None, and its default is the
+    // convention CullMode's note states.
     CullMode cullMode = CullMode::None;
-    Winding frontFace = Winding::Clockwise;
+    Winding frontFace = Winding::CounterClockwise;
 };
 
 // A compiled render pipeline state (MTLRenderPipelineState on Metal). Create via
@@ -151,11 +170,9 @@ public:
     // The descriptor's topology, read back by the render pass at draw time.
     PrimitiveTopology topology() const;
 
-    // Culling, read back by the render pass for the same reason topology is:
-    // Metal sets it on the encoder rather than baking it into the pipeline, so
-    // the pass has to apply it when the pipeline is bound. On D3D12 both are
-    // already in the PSO and these are only here so the two backends present the
-    // same class.
+    // The descriptor's cull mode and front face. Metal reads them here and sets
+    // them on the encoder, face culling being encoder state there rather than
+    // part of the pipeline state object it is on D3D12.
     CullMode cullMode() const;
     Winding frontFace() const;
 

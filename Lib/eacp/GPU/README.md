@@ -64,6 +64,54 @@ that `EACP_SHADER` names and then calls `define()` through the vtable. After
 that, `prepare(sampleCount)` builds the library and the pipeline, and
 `pass.draw(shader)` binds everything and issues the draw.
 
+The uniform block is bound only to the stage that reads one. Which stage that is
+comes from the same walk the emitter declares the block from, so a bind cannot
+disagree with the signature it is aimed at — and a stage that never declared it
+is not bound at all, which is what Metal's validation layer otherwise reports as
+an unused binding. App code that takes `draw(program)` apart to draw its own
+geometry should call `pass.setUniforms(program)` rather than the two per-stage
+setters, for the same reason.
+
+### Naming the pipeline's state
+
+`prepare` also takes a `RenderPipelineDescriptor`, which is the form to reach for
+once more than one of these is not the shader's own choice:
+
+```cpp
+auto descriptor = RenderPipelineDescriptor {};
+descriptor.sampleCount = sampleCount();
+descriptor.depth = true;
+descriptor.blendMode = BlendMode::AlphaBlend;
+descriptor.cullMode = CullMode::Back;
+
+program.prepare(descriptor);
+```
+
+The program fills in its own library and vertex layout, so those two fields are
+ignored. The positional `prepare(sampleCount, depth, topology, blend, format)`
+still exists and means exactly the same thing; it just says less at the call
+site, and the fields past `depth` are usually the *target's* answers rather than
+the shader's.
+
+### Face culling, and which way round front is
+
+`CullMode::None` is the default: both faces rasterise, which is what a mesh whose
+winding is not known to be consistent needs. Under `Front` or `Back` a
+wrongly-wound triangle does not draw wrongly — it does not draw at all.
+
+**A triangle whose vertices run counter-clockwise in clip space — the space
+`setPosition` writes, with y up — is front-facing.** That is glTF's convention,
+and it is stated here in clip space rather than in the image because the viewport
+flips y on the way and reverses the answer.
+
+It is worth stating at all because both backends' own defaults read "clockwise is
+front-facing", which is the opposite of the convention above. What they do not
+differ on is what winding means: clip-space y is up and the framebuffer origin is
+top left on each, so the NDC-to-screen mapping reverses winding by the same
+amount on both and one convention is spelled the same way twice —
+`MTLWindingCounterClockwise` on one side, `FrontCounterClockwise = TRUE` on the
+other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
+
 ### What the EDSL has
 
 - `Float`, `Float2/3/4`, `Float2x2`, `Float3x3`, `Float4x4` — built from their
@@ -144,18 +192,22 @@ opaque.prepare({.sampleCount = 1, .depth = true});                    // the def
 glass.prepare({.sampleCount = 1, .depth = true, .depthWrite = false}); // tests, does not write
 ```
 
-**Culling is off by default, and `Winding::Clockwise` means clockwise on the
-rendered image.** Both APIs decide facing after the viewport transform, so a
-front face is the same triangle on Metal and on D3D12 — `PipelineStateTests`
-asserts that rather than leaving it to this paragraph. A mesh in glTF's
-convention is counter-clockwise in *its* coordinates and comes out clockwise
-here once a projection has flipped y, so which value a loader wants depends on
-its own matrices; draw it with `CullMode::None` first and turn culling on when
-the geometry is right, not before.
+**Culling is off by default, and the front face is counter-clockwise in clip
+space** — glTF's convention, spelled out under "Face culling, and which way round
+front is" above. `frontFace` is there for the geometry that does not arrive in
+it: a mesh wound the other way, an instance mirrored by a negative scale, or an
+inside-out shape like a skybox, none of which should need its indices rewritten.
+
+```cpp
+skybox.prepare({.sampleCount = 1, .cullMode = CullMode::Back,
+                .frontFace = Winding::Clockwise});
+```
 
 Culling is pipeline state on D3D12 and encoder state on Metal. eacp hides that:
-`RenderPass::setPipeline` applies it on every bind, so a pass that draws a
-culled mesh and then a full-screen quad gets the same picture either way.
+`RenderPass::setPipeline` applies both the mode and the winding on every bind, so
+a pass that draws a culled mesh and then a full-screen quad gets the same picture
+either way — `PipelineStateTests` covers that, and `CullModeTests` covers the
+convention itself.
 
 ## Viewport, and how it differs from a scissor
 
@@ -223,8 +275,38 @@ The pipeline has to agree with what it draws into: `prepare(...)` takes a
 `pixelFormatFor(itsFormat)`. Neither backend takes a draw whose pipeline
 disagrees with its attachment.
 
-Render targets are single-sampled and have no depth attachment. What this is for
-is a full-screen pass over a whole texture, and neither has a meaning there.
+### Depth
+
+A target drawing a 3D scene needs a depth buffer, and asks for one on the same
+descriptor:
+
+```cpp
+auto texture = TextureDescriptor {};
+texture.renderTarget = true;
+texture.depth = true;                                 // the pass gets one
+
+auto pipeline = RenderPipelineDescriptor {};
+pipeline.sampleCount = 1;                             // a texture pass never MSAAs
+pipeline.depth = true;                                // the pipeline tests it
+pipeline.colorFormat = pixelFormatFor(texture.format);
+
+program.prepare(pipeline);
+```
+
+The buffer belongs to the target, is created with it and dies with it, so there
+is no second lifetime to keep in step. Every pass into the texture clears it to
+the far plane and stores nothing.
+
+The two flags have to agree. A pipeline that declares depth drawing into a
+target that has none is a validation error on Metal and an untested draw on
+D3D12 — and on Apple silicon it *appears* to work, because the tile memory is
+there whether or not anything attached it. Do not read that as permission;
+`Texture::hasDepth()` is what a pipeline should be built from.
+
+Render targets are still single-sampled. A texture target has nothing to resolve
+into — the texture is what a resolve would produce — so a pipeline drawing into
+one passes `sampleCount` 1 even when the same shader draws multisampled into the
+drawable.
 
 ## Compute
 

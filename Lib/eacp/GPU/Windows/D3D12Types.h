@@ -185,6 +185,16 @@ struct D3D12TextureData
     winrt::com_ptr<ID3D12DescriptorHeap> rtvHeap;
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = {};
 
+    // A target created with TextureDescriptor::depth owns its depth buffer and
+    // that buffer's DSV, on the same terms as the RTV above and for the same
+    // reason: DSV descriptors are not shader-visible either. The resource rests
+    // in DEPTH_WRITE for its whole lifetime - nothing else ever touches it - so
+    // unlike the colour resource it needs no state tracking and no barriers,
+    // which is what D3D12DepthTarget below already relies on for the drawable.
+    winrt::com_ptr<ID3D12Resource> depthResource;
+    winrt::com_ptr<ID3D12DescriptorHeap> dsvHeap;
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = {};
+
     // A plain texture rests in PIXEL_SHADER_RESOURCE forever - it is only ever
     // sampled - and a render target moves between that and RENDER_TARGET as the
     // passes go by. Unlike a buffer this does not decay to COMMON at
@@ -195,6 +205,7 @@ struct D3D12TextureData
 
     bool isRenderTarget() const { return rtv.ptr != 0; }
     bool isComputeWritable() const { return uav.cpu.ptr != 0; }
+    bool hasDepth() const { return dsv.ptr != 0; }
 };
 
 // The frame's color target. All members are owned by GPUView and stay valid

@@ -839,7 +839,9 @@ bool anyReferencesUniform(const ShaderGraph& graph, const Vector<int>& roots)
     return false;
 }
 
-bool vertexUsesUniforms(const ShaderGraph& graph)
+// Every expression the vertex stage evaluates: the clip position and each
+// varying it hands the fragment stage.
+Vector<int> vertexStageRoots(const ShaderGraph& graph)
 {
     auto roots = Vector<int> {};
     roots.add(graph.position());
@@ -847,7 +849,22 @@ bool vertexUsesUniforms(const ShaderGraph& graph)
     for (const auto& varying: graph.varyings())
         roots.add(varying.sourceNode);
 
-    return anyReferencesUniform(graph, roots);
+    return roots;
+}
+
+// Its fragment sibling: the colour, the alpha test when there is one, and what
+// the statements evaluate. Wider than the roots the colour's locals are planned
+// from, which is why emit() keeps both - a value a statement reads is declared
+// by the stage but named where the statement is emitted.
+Vector<int> fragmentStageRoots(const ShaderGraph& graph)
+{
+    auto roots = Vector<int> {graph.fragment()};
+
+    if (graph.discard() >= 0)
+        roots.add(graph.discard());
+
+    collectStatementRoots(graph, ShaderGraph::rootBlock, roots);
+    return roots;
 }
 
 // Which storage-buffer slots a run of expressions subscripts. A render stage
@@ -1214,16 +1231,13 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     // setFragmentBytes bind. Uniforms live at buffer(uniformBase..) so a
     // vertex layout with multiple per-instance slots (0..N) never collides
     // with them.
-    auto vertexRoots = Vector<int> {graph.position()};
-
-    for (auto i = 0; i < graph.varyings().size(); ++i)
-        vertexRoots.add(graph.varyings()[i].sourceNode);
+    auto vertexRoots = vertexStageRoots(graph);
 
     if (backend == Backend::Metal)
     {
         source += "vertex VertexOut vertexMain(VertexIn input [[stage_in]]";
 
-        if (hasUniforms && vertexUsesUniforms(graph))
+        if (hasUniforms && vertexReadsUniforms(graph))
             source += ", constant Uniforms& uniforms [[buffer("
                       + std::to_string(RenderPass::uniformBase) + ")]]";
 
@@ -1263,16 +1277,13 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     // What the statements read counts towards the stage's uniform declaration,
     // but not towards the colour's locals: a statement's own expressions are
     // named where that statement is emitted, above.
-    auto stageRoots = fragmentRoots;
-    collectStatementRoots(graph, ShaderGraph::rootBlock, stageRoots);
-
-    auto fragmentReadsUniform = anyReferencesUniform(graph, stageRoots);
+    auto stageRoots = fragmentStageRoots(graph);
 
     if (backend == Backend::Metal)
     {
         source += "fragment float4 fragmentMain(VertexOut input [[stage_in]]";
 
-        if (hasUniforms && fragmentReadsUniform)
+        if (hasUniforms && fragmentReadsUniforms(graph))
             source += ",\n    constant Uniforms& uniforms [[buffer("
                       + std::to_string(RenderPass::uniformBase) + ")]]";
 
@@ -1312,6 +1323,16 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     return source;
 }
 } // namespace
+
+bool vertexReadsUniforms(const ShaderGraph& graph)
+{
+    return anyReferencesUniform(graph, vertexStageRoots(graph));
+}
+
+bool fragmentReadsUniforms(const ShaderGraph& graph)
+{
+    return anyReferencesUniform(graph, fragmentStageRoots(graph));
+}
 
 std::string emitMetal(const ShaderGraph& graph)
 {

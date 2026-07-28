@@ -224,7 +224,7 @@ struct RenderPipeline::Native
 
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
     CullMode cullMode = CullMode::None;
-    Winding frontFace = Winding::Clockwise;
+    Winding frontFace = Winding::CounterClockwise;
     ObjC::Ptr<NSObject<MTLRenderPipelineState>> state;
     ObjC::Ptr<NSObject<MTLDepthStencilState>> depthState;
 };
