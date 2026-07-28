@@ -125,6 +125,7 @@ GeneratedShader ShaderBuilder::build() const
         source.withCompute("computeMain");
         result.source = std::move(source);
         result.dispatchRank = graphData.dispatchRank();
+        result.usesBarriers = graphData.usesBarriers();
         return result;
     }
 

@@ -89,6 +89,8 @@ that, `prepare(sampleCount)` builds the library and the pipeline, and
   opinion about
 - Statements: `var`, `select`, `ifThen`, `loop`, `breakLoop`, `continueLoop`.
   A `var` takes any handle and any matrix
+- Compute-only: `atomicAdd`, `sharedArray<T, N>`, `barrier`,
+  `threadIndexInGroup` — see the compute section
 - `Array<T, N>` with a subscript, at a literal or a computed index
 - Texture reads: `sample`, `sample` at a chosen level, and `fetch` at texel
   coordinates
@@ -261,6 +263,47 @@ in a later kernel reads those bits as floats and yields nonsense. Read it back
 with `counts.load(index)`, or have the kernel that finishes with it write the
 values somewhere a float buffer can be read from. It binds like an output
 otherwise, and takes a slot from the same counter.
+
+### Threadgroup memory
+
+`sharedArray<T, N>()` is memory one dispatch group has in common: every thread
+in the group reads and writes it, no thread outside sees it, and it is gone when
+the group is. `threadIndexInGroup()` is what indexes it, and `barrier()` is what
+makes one thread's writes visible to the rest:
+
+```cpp
+void define() override
+{
+    auto lane = threadIndexInGroup();
+    auto scratch = sharedArray<Float, 64>();
+
+    write(scratch, lane, input[threadId()]);
+    barrier();
+
+    // every thread now holds what all 64 of them fetched
+    write(output, threadId(), scratch[lane ^ 1u]);
+}
+```
+
+Nothing initialises it — what it holds before the group writes it is undefined,
+which is why every use starts by filling it and waiting. Reading is a subscript;
+writing goes through the same `write()` the buffers and textures use, because a
+write is a statement and has to land where it was written.
+
+**A barrier must be reached by every thread in the group or by none.** One
+inside an `ifThen` that some threads take and others do not is undefined in both
+languages, and undefined here means a hang rather than a wrong answer. Diverging
+*after* a barrier is ordinary control flow; diverging *around* one is not.
+
+That rule reaches the dispatch too: the emitted bounds guard returns early, so a
+kernel with a barrier may only be dispatched over a whole number of groups —
+`ComputeProgram` asserts rather than leaving it to the caller to remember. Round
+the count up to a multiple of `ComputePass::threadGroupWidth` (or of
+`threadGroupSize2D` in both axes) and guard the writes instead.
+
+The declaration is the one place the two backends are not the same shape twice:
+MSL's `threadgroup` is a local of the kernel function, HLSL's `groupshared` is a
+global, so the same array lands on opposite sides of the entry point.
 
 A buffer whose elements are records rather than single floats is read and
 written a record at a time. `read2`/`read3`/`read4` take N consecutive floats

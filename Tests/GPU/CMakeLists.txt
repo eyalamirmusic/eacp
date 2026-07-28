@@ -2,6 +2,7 @@ set(gpu_test_sources
         AtomicTests.cpp
         GPUSmokeTests.cpp
         ShaderCodegenTests.cpp
+        SharedMemoryTests.cpp
         StorePlacementTests.cpp
         TestMain.cpp
         TextureUpdateTests.cpp)

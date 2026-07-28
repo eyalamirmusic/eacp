@@ -19,5 +19,10 @@ struct GeneratedShader
     // disagree with the entry point that was emitted for it. Meaningless for a
     // render shader.
     DispatchRank dispatchRank = DispatchRank::OneD;
+
+    // Whether the kernel waits for its group. Carried for the same reason the
+    // rank is: it constrains the dispatch, and the check belongs where the
+    // dispatch is rather than in the head of whoever wrote the kernel.
+    bool usesBarriers = false;
 };
 } // namespace eacp::GPU
