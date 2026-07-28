@@ -104,13 +104,13 @@ wrongly-wound triangle does not draw wrongly — it does not draw at all.
 and it is stated here in clip space rather than in the image because the viewport
 flips y on the way and reverses the answer.
 
-It is worth stating at all because the two backends' own defaults both read
-"clockwise is front-facing" and do not mean the same thing by it: Metal decides
-facing in clip space, D3D12 in screen space, one flip apart. Left to themselves
-they cull opposite faces of the same mesh. eacp sets each to produce the
-convention above — `MTLWindingCounterClockwise` on one side,
-`FrontCounterClockwise = FALSE` on the other — and `Tests/GPU/CullModeTests.cpp`
-is what fails if either drifts.
+It is worth stating at all because both backends' own defaults read "clockwise is
+front-facing", which is the opposite of the convention above. What they do not
+differ on is what winding means: clip-space y is up and the framebuffer origin is
+top left on each, so the NDC-to-screen mapping reverses winding by the same
+amount on both and one convention is spelled the same way twice —
+`MTLWindingCounterClockwise` on one side, `FrontCounterClockwise = TRUE` on the
+other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
 
 ### What the EDSL has
 
