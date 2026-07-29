@@ -155,13 +155,15 @@ struct AppleScreenCapture final : ScreenCapture
                     config.showsCursor = NO;
                     config.queueDepth = 6;
 
+                    auto* streamSink = (EacpScreenSink*) self->sink.get();
+
                     auto* newStream =
                         [[SCStream alloc] initWithFilter:filter
                                            configuration:config
-                                                delegate:self->sink.get()];
+                                                delegate:streamSink];
 
                     NSError* addError = nil;
-                    [newStream addStreamOutput:self->sink.get()
+                    [newStream addStreamOutput:streamSink
                                           type:SCStreamOutputTypeScreen
                             sampleHandlerQueue:self->sampleQueue
                                          error:&addError];
@@ -205,7 +207,7 @@ struct AppleScreenCapture final : ScreenCapture
         {
             if (stream)
             {
-                [stream.get() stopCaptureWithCompletionHandler:^(NSError*) {
+                [(SCStream*) stream.get() stopCaptureWithCompletionHandler:^(NSError*) {
                     // No more samples arrive after this; finalize on the main thread.
                     Threads::callAsync([self, promise] {
                         self->encoder->finish().then([promise] { promise.resolve(); });
@@ -220,8 +222,14 @@ struct AppleScreenCapture final : ScreenCapture
         return encoder->finish();
     }
 
-    ObjC::Ptr<SCStream> stream API_AVAILABLE(macos(12.3));
-    ObjC::Ptr<EacpScreenSink> sink API_AVAILABLE(macos(12.3));
+    // An availability attribute on a member does not satisfy clang — it wants
+    // the whole enclosing struct annotated, which this one cannot be: it is
+    // constructed on every macOS version and answers false from start() on the
+    // ones without ScreenCaptureKit. Storing the two 12.3-only objects as their
+    // common base keeps the declarations version-free, and every use of them
+    // already sits inside an @available guard that can cast back.
+    ObjC::Ptr<NSObject> stream;
+    ObjC::Ptr<NSObject> sink;
     dispatch_queue_t sampleQueue = nullptr;
     AppleEncoder* encoder = nullptr;
     bool active = false;
