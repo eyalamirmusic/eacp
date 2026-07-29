@@ -1080,6 +1080,9 @@ across all 16 column residues at 2–5/255, which is the screenshot's dithering)
 - **The atlas ceiling** is still the silent failure named at the end of rung one.
   Nothing has touched it.
 
+  *(Since done, and it was not the failure this document kept describing. See
+  the last section.)*
+
 # What is left of rung 3
 
 Phase 4 moved the backdrop off the paths where it was expensive. It did not move
@@ -1145,3 +1148,153 @@ is the only thing in this document known to be *wrong* rather than merely absent
 it has survived three rungs, and it fails silently — a tree whose masks do not fit
 loses some of them with nothing said. Noticing costs almost nothing; the reason it
 is still here is that it has never been the interesting problem.
+
+*(Done — and "loses some of them" was wrong three times over. See below.)*
+
+# The atlas ceiling
+
+**Shipped.** Not a rung and not a phase: it is the one thing in this document
+that was known to be broken rather than missing, named at the end of rung one and
+carried unchanged through rung two, stroking and four phases of rung three.
+
+The work was supposed to be a counter. It was three bugs, and the counter.
+
+## What this document kept saying, and what actually happened
+
+Rung one called it "the honest failure mode, but it is silent" and said a tree
+that does not fit "will have some of them missing rather than wrong". Rung two
+and phase 4 repeated it. `ComponentHost` said it in a comment, right above the
+loop that did not do it.
+
+None of it was true. What happened instead, watched on screen in
+`Apps/UI/AtlasCeiling` with the old code put back:
+
+| | the claim | what it did |
+|---|---|---|
+| shapes that did not fit | missing | **every shape wrong** — each drawing a torn piece of some other shape's mask |
+| what it reported | nothing | `0 dropped`, and an atlas 26% full |
+
+The atlas is rasterized in at most two passes: the first may grow or compact it,
+which relocates every slot already handed out, and the second runs against the
+layout that came out of that. But the second pass was allowed to move things
+too — and a move *there* has no third pass to answer it. A shape placed early
+keeps a uv into texels a later shape has since been given. Every tile in the
+demo came out as fragments of its neighbours, and the frame that produced it
+reported nothing missing, because nothing was: they were all there, all wrong.
+
+So the fix is a refusal. `CoverageAtlas::setRelocationAllowed` is off for the
+pass whose layout is the one being drawn through, and an allocation that would
+move anything is refused and counted instead. *Then* the claim this document has
+made since rung one is true, and the demo shows it: empty frames, and a footer
+that says how many.
+
+## Two more, found on the way
+
+**The shelf leaked an atlas.** When the first pass moved the atlas it kept
+placing afterwards, and those slots belong to nobody — every shape is about to
+be rasterized again. The second pass then allocated *beside* them. A tree needed
+close to twice the room it should, which is the difference between fitting and
+not for exactly the trees near the ceiling. The walk empties the shelf between
+the two passes now, which it may do precisely because it has just invalidated
+everything.
+
+**`allocate` did not always return.** A mask as large as the atlas itself cannot
+sit in the first row — the opaque corner owns four texels of it — so the shelf
+made room, failed to place it, and recursed to make room again. Not slow, not
+wrong: it never came back. Reachable by a full-window path at 4093 device pixels
+or more in both axes, which is an ordinary window on a Retina display.
+
+Found by trying to write the test that reaches the ceiling, which is the second
+time in this project that the hard part of a test was the part that found the
+bug. It is a loop of two now — place, make room, place — so a second failure is
+the answer rather than another attempt, and `fitsEmptyShelf` is what says a mask
+can never fit.
+
+## Why nobody had hit it
+
+Worth writing down, because it is the reason this survived three rungs and it
+also says who will hit it first. **A mask is the size of the shape on screen**,
+so every shape visible at once cannot come to more than the window's own area: a
+1100×720 window at two device pixels to the point is 3.2M texels against the
+atlas's 16.8M. A window packed solid with vector art is a fifth of the atlas.
+
+The ceiling therefore needs a tree with more in it than the window shows —
+scrolled-away rows, hidden tabs, shapes stacked on shapes. That is why the demo
+is a list forty rows long rather than a full window of artwork, and why an
+interface like `ComponentTree` was never going to reach it however many knobs it
+grew.
+
+## What shipped
+
+`eacp-ui`
+
+- `CoverageAtlas::setRelocationAllowed` / `forgetAllocations`, and `allocate`
+  rebuilt as place → make room → place, which terminates by construction.
+- `CoverageAtlas::getDroppedCount` and `getFillFraction` — what was refused, and
+  how much of the atlas is spoken for while there is still room to spare.
+- `PathShape::wasDropped` — has geometry, has no mask.
+- `ComponentHost::getLastDroppedPathCount`, `getAtlasFillFraction`,
+  `getAtlasSize`, and `onPathsDropped` for a client that would rather be told.
+
+`Tests/UI` — a new target, and `CoverageAtlasTests.cpp`.
+
+Demo: `Apps/UI/AtlasCeiling`.
+
+## The figure is what is missing, not what was refused
+
+The first cut counted refusals per frame, which is the obvious reading and is
+wrong by the very next frame: nothing is dirty, nothing allocates, nothing is
+refused, and the count says zero while a third of the interface is blank. The
+demo caught it immediately — `34 shapes with no room in it`, then `0`, with the
+screen unchanged.
+
+So the count is over shapes rather than allocations: a `PathShape` that was
+refused says so until it is rasterized again, and the walk that was already
+visiting every shape adds them up. It costs nothing, and it means the figure on
+screen is the number of shapes not on screen.
+
+## Results
+
+`Apps/UI/AtlasCeiling`, 240 tiles of about 80k texels each — some 19M against
+the atlas's 16.8M:
+
+| | |
+|---|---|
+| atlas | 4096², 90% full |
+| placed | 206 |
+| dropped | 34, reported on screen and through the callback once |
+| the shapes that fit | correct — tile *n* has 3 + *n* mod 9 sides, and every one of them does |
+| the shapes that did not | absent, inside a frame that is still drawn |
+
+`Apps/UI/ComponentTree` still reports 295 components and 8 batch breaks, with the
+knobs unchanged: an interface that fits pays nothing for any of this.
+
+**Verified.** 842/842 tests pass, the ten new ones included. Against deliberate
+breaks: ignoring the relocation policy — which is exactly the old behaviour —
+fails 3 of the 10, dropping the count fails 4, and a shelf cursor out by one
+fails 2. On screen, the old policy restored gives the wrong-shapes screenshot
+above, and putting it back gives the right one.
+
+## What is still wrong
+
+- **Nothing gives space back.** A shape destroyed leaves its slot reserved until
+  something compacts the atlas, which only happens when an allocation fails. An
+  interface that builds and drops vector shapes over a long session reaches the
+  ceiling sooner than the shapes it is actually holding would suggest.
+- **A dropped shape does not ask again by itself.** It comes back when the atlas
+  is next rebuilt — a resize, a display change, any later allocation that
+  compacts. Retrying every frame was the alternative and it is worse: a tree that
+  genuinely does not fit would re-rasterize itself twice a frame for ever, which
+  is a cliff with no sign on it, in place of a shape that is missing and counted.
+  That path is reasoned about rather than watched; the relocation-and-rebuild it
+  relies on is watched, being what the demo's first frame does.
+- **The ceiling is still a ceiling.** Nothing here makes an atlas hold more. What
+  it makes is a tree that overruns it lose the shapes it cannot hold, say how
+  many, and keep drawing everything else correctly.
+
+## What is next
+
+The list rung 3 left, now that the thing that was to be done before it is done:
+**batch the frame's rasterizations**, then the backdrop on the GPU, then binning
+and emit. The first is structural, measurable on its own, and the precondition
+for the two after it — see "The order this suggests" above.

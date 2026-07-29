@@ -80,6 +80,13 @@ public:
     // The atlas rect the quad samples.
     Rect getMaskUV() const { return maskUV; }
 
+    // True when this shape has geometry and no mask, the atlas having had no
+    // room for it. It stays true until the shape is rasterized again, which is
+    // what makes it a count of what is missing from the picture rather than of
+    // what happened during one frame -- the frame after a drop allocates
+    // nothing at all, and the shape is just as absent.
+    bool wasDropped() const { return dropped; }
+
 private:
     friend class ComponentHost;
 
@@ -115,5 +122,6 @@ private:
     bool dirty = false;
     bool ready = false;
     bool placed = false;
+    bool dropped = false;
 };
 } // namespace eacp::UI

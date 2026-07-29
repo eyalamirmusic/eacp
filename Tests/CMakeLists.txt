@@ -19,6 +19,7 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND NOT IOS)
     add_subdirectory(GPU)
     add_subdirectory(Text)
     add_subdirectory(GPUWidgets)
+    add_subdirectory(UI)
     add_subdirectory(Camera)
 
     # The video playback stack above the Decoder interface — frame queueing,
