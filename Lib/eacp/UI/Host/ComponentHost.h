@@ -39,6 +39,27 @@ public:
     int getLastClipChangeCount() const { return lastClipChanges; }
     int getLastComponentCount() const { return lastComponentCount; }
 
+    // Vector shapes in the tree that have no mask, the coverage atlas having had
+    // no room for them: each one draws as nothing. Zero unless an interface has
+    // reached the atlas ceiling, which is a real limit rather than an error --
+    // the atlas grows to 4096 square and then compacts, and a tree whose masks
+    // do not fit in that at once loses the ones that arrive last.
+    //
+    // Worth reading somewhere, because nothing else says it happened. A shape
+    // dropped this way comes back the next time the atlas is rebuilt -- a
+    // resize, a display change, or any later allocation that compacts it.
+    int getLastDroppedPathCount() const { return lastDroppedPaths; }
+
+    // Called when that figure changes, for a client that would rather be told
+    // than poll. Once on the way up and once on the way back down.
+    std::function<void(int droppedCount)> onPathsDropped = [](int) {};
+
+    // How full the coverage atlas is, and how large it has grown, as the
+    // distance to that ceiling while there is still distance to it. Room
+    // reserved rather than room used: the shelf never gives space back.
+    float getAtlasFillFraction() const;
+    int getAtlasSize() const;
+
     void resized() override;
     void render(GPU::Frame& frame) override;
 
@@ -62,13 +83,22 @@ private:
 
     void paintComponent(Component& component, Graphics& g);
 
+    // What one walk of the tree found: whether the atlas moved under it, and how
+    // many shapes are on it with no mask.
+    struct PathWalk
+    {
+        bool atlasMoved = false;
+        int dropped = 0;
+    };
+
     // Rasterizing every PathShape in the tree whose geometry changed, before
     // the render pass opens. See the definition for why it can only happen here.
     void rasterizePaths(GPU::Frame& frame);
     void rasterizeDirtyPaths(Component& component,
                              GPU::ComputePass& pass,
-                             bool& atlasMoved);
+                             PathWalk& walk);
     void markAllPathsDirty(Component& component);
+    void reportDroppedPaths(int count);
 
     // Builds the event a component sees: the position converted into its own
     // space, and the fields the native event already carries.
@@ -109,5 +139,6 @@ private:
 
     int lastClipChanges = 0;
     int lastComponentCount = 0;
+    int lastDroppedPaths = 0;
 };
 } // namespace eacp::UI

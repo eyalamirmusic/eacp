@@ -36,6 +36,7 @@ void PathShape::clear()
     path.clear();
     dirty = true;
     ready = false;
+    dropped = false;
     bounds = {};
 }
 
@@ -53,6 +54,7 @@ void PathShape::rasterize(CoverageAtlas& atlas, float scale, GPU::ComputePass& p
 {
     dirty = false;
     ready = false;
+    dropped = false;
 
     if (path.isEmpty() || scale <= 0.f)
         return;
@@ -76,8 +78,15 @@ void PathShape::rasterize(CoverageAtlas& atlas, float scale, GPU::ComputePass& p
         slot = atlas.allocate(width, height);
         placed = slot.width > 0;
 
+        // Nowhere to put it: the atlas is at its ceiling. The shape draws as
+        // nothing until the atlas is rebuilt -- which invalidates every shape,
+        // so this one asks again then -- and says so meanwhile, that being the
+        // only sign anything is missing.
         if (!placed)
+        {
+            dropped = true;
             return;
+        }
     }
 
     rasterizer.setTarget(atlas.getTexture(), slot.x, slot.y);

@@ -32,6 +32,7 @@ void ComponentHost::componentDeleted(Component& component)
     {
         root = nullptr;
         lastComponentCount = 0;
+        lastDroppedPaths = 0;
     }
 }
 
@@ -45,6 +46,16 @@ void ComponentHost::setRootComponent(Component& newRoot)
     root->setBounds(getLocalBounds());
 
     repaint();
+}
+
+float ComponentHost::getAtlasFillFraction() const
+{
+    return paths.has_value() ? paths->getFillFraction() : 0.f;
+}
+
+int ComponentHost::getAtlasSize() const
+{
+    return paths.has_value() ? paths->getWidth() : 0;
 }
 
 void ComponentHost::setBackgroundColour(const Color& colour)
@@ -138,25 +149,33 @@ void ComponentHost::markAllPathsDirty(Component& component)
 
 void ComponentHost::rasterizeDirtyPaths(Component& component,
                                         GPU::ComputePass& pass,
-                                        bool& atlasMoved)
+                                        PathWalk& walk)
 {
     for (auto* shape: component.getPathShapes())
     {
-        if (!shape->isDirty())
-            continue;
+        if (shape->isDirty())
+        {
+            shape->rasterize(*paths, backingScale(), pass);
 
-        shape->rasterize(*paths, backingScale(), pass);
+            // Growing or compacting the atlas relocates every slot already
+            // handed out, so everything rasterized before this one now points
+            // at the wrong texels. Reported up rather than fixed here, because
+            // the fix is to start the whole walk again against the new layout.
+            if (paths->takeMovedFlag())
+                walk.atlasMoved = true;
+        }
 
-        // Growing or compacting the atlas relocates every slot already handed
-        // out, so everything rasterized before this one now points at the wrong
-        // texels. Reported up rather than fixed here, because the fix is to
-        // start the whole walk again against the new layout.
-        if (paths->takeMovedFlag())
-            atlasMoved = true;
+        // Counted whether or not it was rasterized this frame. A shape the
+        // atlas had no room for is missing from every frame until there is room
+        // for it, and the frame after the one that dropped it rasterizes
+        // nothing at all -- so counting refusals would report the ceiling once
+        // and then say the interface was fine while half of it was blank.
+        if (shape->wasDropped())
+            ++walk.dropped;
     }
 
     for (auto* child: component.getChildren())
-        rasterizeDirtyPaths(*child, pass, atlasMoved);
+        rasterizeDirtyPaths(*child, pass, walk);
 }
 
 // Every path whose geometry changed since the last frame, drawn into the shared
@@ -180,6 +199,8 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
         markAllPathsDirty(*root);
     }
 
+    auto walk = PathWalk {};
+
     // Twice at most. The first pass may move the atlas under what it has already
     // placed, and the second runs against the layout that came out of it. A
     // third would only be needed if the whole tree's masks could not fit in one
@@ -187,18 +208,46 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
     // fit are missing rather than that the frame never ends.
     for (auto attempt = 0; attempt < 2; ++attempt)
     {
-        auto atlasMoved = false;
+        // Which is only the honest outcome if the second pass is forbidden to
+        // move anything. A move there is unanswerable -- there is no third pass
+        // to rebuild what it displaced -- so a shape placed early would keep a
+        // uv into texels a later shape has since been handed, and draw that
+        // shape's coverage instead of its own. Wrong rather than missing, and
+        // silent either way. Refused, the mask is simply absent and counted.
+        paths->setRelocationAllowed(attempt == 0);
+
+        walk = PathWalk {};
 
         {
             auto compute = frame.beginCompute();
-            rasterizeDirtyPaths(*root, compute, atlasMoved);
+            rasterizeDirtyPaths(*root, compute, walk);
         }
 
-        if (!atlasMoved)
-            return;
+        if (!walk.atlasMoved)
+            break;
 
+        // Everything is about to be rasterized again, so no shape holds a slot
+        // and the shelf can start empty. It has to: the first pass kept placing
+        // after the move, and those slots belong to nobody now. Left in place
+        // they are an atlas-sized leak in the one situation -- a tree that only
+        // just fits -- where it decides whether the tree fits at all.
         markAllPathsDirty(*root);
+        paths->forgetAllocations();
     }
+
+    reportDroppedPaths(walk.dropped);
+}
+
+// The atlas ran out and some masks are not on screen. Reported on the change
+// rather than every frame, so a client that logs it says so once when an
+// interface reaches the ceiling and once when it comes back under it.
+void ComponentHost::reportDroppedPaths(int count)
+{
+    if (count == lastDroppedPaths)
+        return;
+
+    lastDroppedPaths = count;
+    onPathsDropped(count);
 }
 
 void ComponentHost::render(GPU::Frame& frame)
