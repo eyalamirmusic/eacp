@@ -211,6 +211,14 @@ auto tSharedSourceIsRight =
     check(has(hlsl, "uint lid : SV_GroupIndex"));
     check(has(hlsl, "GroupMemoryBarrierWithGroupSync();"));
 
+    // And neither kernel opens with the bounds guard every other one does. A
+    // guard returns, a return above a barrier is the varying flow control
+    // *around* one that neither language will have - HLSL rejects the kernel
+    // outright - and a dispatch over whole groups leaves it nothing to retire
+    // anyway.
+    check(!has(metal, "return;"));
+    check(!has(hlsl, "if (gid >= uniforms.count)"));
+
     // MSL declares it inside the kernel and HLSL above it, so the two differ in
     // which side of the entry point the declaration falls on.
     check(metal.find("s0[64]") > metal.find("kernel void computeMain"));

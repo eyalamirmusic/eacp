@@ -163,13 +163,24 @@ public:
     // than a strip, which is what a kernel reading its neighbours wants.
     static constexpr int threadGroupSize2D = 8;
 
+    // How many storage buffers one kernel may bind. The D3D root signature
+    // declares a root SRV and a root UAV per slot below this and nothing above
+    // it, so a slot past the end binds nowhere at all - and a kernel reading an
+    // unbound buffer reads zeroes rather than failing, which is silent
+    // everywhere but in the picture. So the emitter asserts on a kernel that
+    // asks for more, rather than letting the last one fall off the end.
+    //
+    // Metal has no such ceiling short of uniformBase, its buffer indices being
+    // one flat space the uniform block sits on top of.
+    static constexpr int maxBufferSlots = 8;
+
     // The D3D shader register a kernel's first texture takes. A texture shares
     // the t/u register spaces with the storage buffers there, and the two slot
     // spaces are counted separately, so textures start above every buffer slot
     // - the emitter writes these registers and the root signature declares
     // them, and D3D12Types.h holds the two to the same number. Metal is
     // unaffected: its texture indices are a space of their own.
-    static constexpr int textureRegisterBase = 4;
+    static constexpr int textureRegisterBase = maxBufferSlots;
 
 private:
     struct Native;
