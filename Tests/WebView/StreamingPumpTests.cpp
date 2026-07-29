@@ -67,6 +67,13 @@ auto tStreamingRangeFetch = test("StreamingPump/rangeFetchReturns206Slice") = []
     auto options = WebView::Options {};
     options.streamingSchemes["teststream"] = testProvider();
 
+    // This is the only suite in the binary that registers a custom scheme, and
+    // WebView2 fails any later environment that shares a user-data folder with
+    // one registering a different set (ERROR_INVALID_STATE). Without its own
+    // folder this passes alone and fails whenever a plain WebView test ran
+    // first — i.e. every time the whole binary is run in one process.
+    options.userDataFolderSuffix = "streamingpump";
+
     auto webView = WebView {options};
     auto window = Window {};
     window.setContentView(webView);
