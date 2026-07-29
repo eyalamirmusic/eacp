@@ -659,10 +659,13 @@ Float4 baseOf(const Float4&);
 // The same mapping over every family, for the places that genuinely take any of
 // them: a vector constructor's arguments, and the width its components add up
 // to. Split from baseOf so that widening the one does not widen the other.
+// UInt rides along as a family of one, which is what lets the counter a kernel
+// walks a buffer with be a Var<UInt> on the same terms as any other local.
 Float handleOf(const Float&);
 Float2 handleOf(const Float2&);
 Float3 handleOf(const Float3&);
 Float4 handleOf(const Float4&);
+UInt handleOf(const UInt&);
 Int handleOf(const Int&);
 Int2 handleOf(const Int2&);
 Int3 handleOf(const Int3&);
@@ -1715,6 +1718,13 @@ struct Var
         return *this;
     }
 
+    Var& operator=(unsigned value)
+        requires std::same_as<T, UInt>
+    {
+        graph->assign(slot, graph->addUIntConstant(value));
+        return *this;
+    }
+
     // The compound operators, over whatever the free operators above accept:
     // another value of the same shape, a scalar broadcast across a vector, or a
     // literal. A combination they reject fails here rather than silently
@@ -1993,6 +2003,36 @@ EACP_INT_COMPARISON(operator!=, "!=")
 
 #undef EACP_INT_COMPARISON
 
+// And the uint ones, which are what a loop over a buffer tests: the counter
+// beside an index computed from threadId() is a UInt, and so is the element
+// count it runs to. The literal overloads take unsigned and record a uint
+// constant node, so a bound is spelled i < 4u exactly as the index arithmetic
+// spells i + 1u.
+#define EACP_UINT_COMPARISON(name, spelling)                                        \
+    inline Bool name(const UInt& lhs, const UInt& rhs)                              \
+    {                                                                               \
+        return detail::compare(spelling, lhs, rhs);                                 \
+    }                                                                               \
+                                                                                    \
+    inline Bool name(const UInt& lhs, unsigned rhs)                                 \
+    {                                                                               \
+        return detail::compare(spelling, lhs, detail::uintConstantOn(lhs, rhs));    \
+    }                                                                               \
+                                                                                    \
+    inline Bool name(unsigned lhs, const UInt& rhs)                                 \
+    {                                                                               \
+        return detail::compare(spelling, detail::uintConstantOn(rhs, lhs), rhs);    \
+    }
+
+EACP_UINT_COMPARISON(operator<, "<")
+EACP_UINT_COMPARISON(operator<=, "<=")
+EACP_UINT_COMPARISON(operator>, ">")
+EACP_UINT_COMPARISON(operator>=, ">=")
+EACP_UINT_COMPARISON(operator==, "==")
+EACP_UINT_COMPARISON(operator!=, "!=")
+
+#undef EACP_UINT_COMPARISON
+
 // int min/max/abs: the branchless way to hold an index inside an array, for the
 // shader that would rather clamp than mask.
 inline Int min(const Int& a, const Int& b)
@@ -2070,6 +2110,27 @@ template <ShaderScalarLike T>
 Int toInt(const T& value)
 {
     return detail::convertTo<Int>(value);
+}
+
+// And between the two integer vocabularies, which a guarded index crosses
+// twice: into the signed one for arithmetic that may go below zero - the tap
+// of a padded convolution, a backwards step - and back out through toUInt for
+// the subscript once it is clamped. toUInt of a float scalar truncates
+// towards zero on the way, exactly as toInt does.
+inline Int toInt(const UInt& value)
+{
+    return detail::convertTo<Int>(value);
+}
+
+inline UInt toUInt(const Int& value)
+{
+    return detail::convertTo<UInt>(value);
+}
+
+template <ShaderScalarLike T>
+UInt toUInt(const T& value)
+{
+    return detail::convertTo<UInt>(value);
 }
 
 // And the same crossing a whole vector at a time, which is what a shader
