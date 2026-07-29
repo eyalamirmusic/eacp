@@ -121,6 +121,11 @@ private:
 
     bool mouseLockIntent = false;
     bool mouseLockEngaged = false;
+
+    // A minimized window is reported to the view tree as hidden, so the restore
+    // that follows has to report it visible again. Nothing else distinguishes
+    // that WM_SIZE from an ordinary resize.
+    bool hostMinimized = false;
 };
 
 } // namespace eacp::Graphics

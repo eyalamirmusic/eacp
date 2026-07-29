@@ -216,6 +216,14 @@ public:
     // wrong and must be rebuilt — a glyph atlas rasterized at 2x is blurry at 1x.
     virtual void backingScaleChanged() {}
 
+    // The window hosting this view moved on screen, or was shown/hidden.
+    // Views drawn by the composition tree need neither: it follows the window
+    // for free. A view backed by a native surface the OS places in screen
+    // coordinates (a WebView) does — that surface keeps whatever placement and
+    // visibility it was given until it is told otherwise.
+    virtual void hostWindowMoved() {}
+    virtual void hostWindowVisibilityChanged(bool) {}
+
     Rect getBounds() const;
     Rect getLocalBounds() const;
 

@@ -1100,4 +1100,9 @@ void WebView::mouseDragged(const MouseEvent&) {}
 void WebView::mouseMoved(const MouseEvent&) {}
 void WebView::mouseExited(const MouseEvent&) {}
 void WebView::mouseWheel(const MouseEvent&) {}
+
+// The WKWebView is an ordinary subview, so it follows the window's placement
+// and visibility on its own.
+void WebView::hostWindowMoved() {}
+void WebView::hostWindowVisibilityChanged(bool) {}
 } // namespace eacp::Graphics
