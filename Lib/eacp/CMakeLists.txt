@@ -19,6 +19,11 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(Sprites)
     add_subdirectory(CameraView)
 
+    # glTF loading and mesh drawing, on top of the GPU module. It links
+    # eacp-graphics for the image codecs, which is what decodes a model's PNG
+    # and JPEG textures.
+    add_subdirectory(Mesh)
+
     # View->video recorder, and video decode/playback. The Snapshot tier is
     # portable (AVFoundation on macOS, Media Foundation on Windows); the Screen
     # tier is ScreenCaptureKit on macOS and a stub on Windows until

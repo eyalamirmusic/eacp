@@ -21,6 +21,11 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND NOT IOS)
     add_subdirectory(GPUWidgets)
     add_subdirectory(Camera)
 
+    # glTF loading and mesh drawing. Most of this suite is CPU-only — node
+    # composition, index packing, material defaults — and rides here only
+    # because the module it tests links the GPU one.
+    add_subdirectory(Mesh)
+
     # The video playback stack above the Decoder interface — frame queueing,
     # playhead-to-frame selection, the clock — is portable C++, so these run
     # against a synthetic decoder with no media file and no codec involved.

@@ -155,6 +155,7 @@ Lib/eacp/
               the shader EDSL — see GPU/README.md
   GPUWidgets/ Views drawn on the GPU (gradients, paths)
   Sprites/    Batched textured-quad renderer
+  Mesh/       glTF loading and mesh drawing, on top of the GPU module
   Text/       Font metrics, glyph rasterization and a GPU glyph atlas
   SIMD/       Portable SIMD kernels with runtime backend dispatch
   Camera/     Capture devices and frames, plus CameraView/ to show them
