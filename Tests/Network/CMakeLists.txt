@@ -17,9 +17,11 @@ if (NOT IOS)
             IpcRpcTests.cpp)
 endif ()
 
+# eacp-network-rpc re-exports eacp-network, so naming that one too would put the
+# archive on the link line twice and ld warns about the duplicate.
 nano_add_executable(NetworkTests
         SOURCES ${network_test_sources}
-        TARGETS eacp-network eacp-network-json eacp-network-rpc)
+        TARGETS eacp-network-json eacp-network-rpc)
 
 if (NOT IOS)
     add_executable(IpcLockHarness IpcLockHarness.cpp)
