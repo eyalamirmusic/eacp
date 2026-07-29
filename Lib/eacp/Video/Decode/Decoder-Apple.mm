@@ -38,7 +38,8 @@ int rotationFromTransform(CGAffineTransform transform)
 // blocking operation by contract (Decoder::open returns success or failure), so
 // the wait happens here. AVFoundation runs the completion on its own queue, so
 // this is safe on any thread including the main one.
-AVAssetTrack* firstVideoTrack(AVURLAsset* asset)
+API_AVAILABLE(macos(12.0), ios(15.0))
+AVAssetTrack* awaitFirstVideoTrack(AVURLAsset* asset)
 {
     __block AVAssetTrack* found = nil;
     auto* ready = dispatch_semaphore_create(0);
@@ -54,6 +55,16 @@ AVAssetTrack* firstVideoTrack(AVURLAsset* asset)
     dispatch_release(ready);
 
     return found;
+}
+
+AVAssetTrack* firstVideoTrack(AVURLAsset* asset)
+{
+    if (@available(macOS 12.0, iOS 15.0, *))
+        return awaitFirstVideoTrack(asset);
+
+    // The loader above does not exist below macOS 12 / iOS 15, where the only
+    // way in is the synchronous accessor it eventually replaced.
+    return [[asset tracksWithMediaType:AVMediaTypeVideo] firstObject];
 }
 } // namespace
 

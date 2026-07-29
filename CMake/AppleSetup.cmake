@@ -14,7 +14,16 @@ macro(eacp_setup_apple)
                 "${CMAKE_CURRENT_SOURCE_DIR}/CMake/iOSBundleInfo.plist.in"
                 CACHE INTERNAL "eacp iOS bundle Info.plist template")
     else ()
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "")
+        # CMake's Darwin module already creates CMAKE_OSX_DEPLOYMENT_TARGET as an
+        # empty cache entry during project(), so a plain `set(... CACHE STRING "")`
+        # here is a no-op and every binary silently inherits the build machine's
+        # SDK version. Claim the entry only when nothing has filled it in, which
+        # still lets -DCMAKE_OSX_DEPLOYMENT_TARGET=... on the command line win.
+        if (NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+            set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING
+                    "Minimum macOS version eacp targets" FORCE)
+        endif ()
+
         set(EACP_MACOS_PLIST
                 "${CMAKE_CURRENT_SOURCE_DIR}/CMake/macOSBundleInfo.plist.in"
                 CACHE INTERNAL "eacp macOS bundle Info.plist template")
