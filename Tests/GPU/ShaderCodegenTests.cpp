@@ -1750,10 +1750,20 @@ auto tCodegenComputeTextureWrite = test("GPU/codegenComputeTextureWrite") = []
                    "texture1.write(texture0.sample(sampler0, float2(float(gid.x), "
                    "float(gid.y))), uint2(gid.x, gid.y));"));
 
+    // Written from ComputePass::textureRegisterBase rather than from a literal,
+    // since the base is where the buffer slots end - move the one and the other
+    // moves with it, and a test naming a number would only say where it used to
+    // be.
+    auto textureRegister = [](int slot)
+    { return std::to_string(ComputePass::textureRegisterBase + slot); };
+
     auto hlsl = emitHlsl(builder.graph());
-    check(contains(hlsl, "Texture2D texture0 : register(t4);"));
+    check(contains(hlsl,
+                   "Texture2D texture0 : register(t" + textureRegister(0) + ");"));
     check(contains(hlsl, "SamplerState sampler0 : register(s0);"));
-    check(contains(hlsl, "RWTexture2D<float4> texture1 : register(u5);"));
+    check(contains(hlsl,
+                   "RWTexture2D<float4> texture1 : register(u" + textureRegister(1)
+                       + ");"));
     check(!contains(hlsl, "SamplerState sampler1"));
     check(contains(hlsl,
                    "texture1[uint2(gid.x, gid.y)] = texture0.Sample(sampler0, "

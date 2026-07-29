@@ -5,6 +5,7 @@
 #include "ShaderGraph.h"
 #include "UniformLayout.h"
 
+#include <cassert>
 #include <cstdio>
 
 // The single source-of-truth walker. MSL and HLSL differ only in the binding
@@ -1196,6 +1197,11 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 
     const auto& buffers = graph.storageBuffers();
 
+    assert(buffers.size() <= ComputePass::maxBufferSlots
+           && "eacp: a kernel may bind ComputePass::maxBufferSlots storage "
+              "buffers. A slot past that has no register the root signature "
+              "declares, so it binds nowhere and reads zeroes.");
+
     if (backend == Backend::Metal)
     {
         source += "kernel void computeMain(";
@@ -1304,9 +1310,16 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
             is2D ? "    uint2 gid = threadId.xy;\n" : "    uint gid = threadId.x;\n";
     }
 
-    source += is2D ? "    if (gid.x >= uniforms.width || gid.y >= "
-                     "uniforms.height)\n        return;\n"
-                   : "    if (gid >= uniforms.count)\n        return;\n";
+    // A kernel that waits for its group is dispatched over a whole number of
+    // groups - ComputeProgram refuses anything else - so every thread of it is
+    // inside the grid and there is nothing for the guard to retire. Emitting it
+    // anyway is worse than dead code: a return above a barrier is exactly the
+    // varying flow control *around* one that the two languages will not have,
+    // and HLSL rejects the kernel outright rather than compiling it (X4026).
+    if (!graph.usesBarriers())
+        source += is2D ? "    if (gid.x >= uniforms.width || gid.y >= "
+                         "uniforms.height)\n        return;\n"
+                       : "    if (gid >= uniforms.count)\n        return;\n";
 
     // A kernel's whole body is its statement stream now, stores included, so
     // there is nothing to emit after it. That is the fix for stores having once
