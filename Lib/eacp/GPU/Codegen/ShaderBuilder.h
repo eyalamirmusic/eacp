@@ -133,33 +133,95 @@ public:
         return position;
     }
 
-    // Where this thread sits inside its own threadgroup, which is what indexes
-    // a shared array. Flat on both backends whatever the dispatch rank.
-    UInt threadIndexInGroup()
+    // Where a thread sits inside its threadgroup, and which group it belongs
+    // to - the pair every shared-memory algorithm indexes with: the local id
+    // subscripts the shared tile, the group id decides which slice of the
+    // problem the group owns. 1D forms beside threadId(), 2D siblings beside
+    // threadPosition(); asking for one fixes the dispatch rank exactly as the
+    // global ids do.
+    UInt localId()
     {
         auto value = UInt {};
         value.graph = &graphData;
-        value.node = graphData.addThreadIndexInGroup();
+        value.node = graphData.addLocalId();
         return value;
     }
 
-    // Threadgroup memory. Size in elements, fixed at compile time because both
-    // languages require it to be. See SharedArray.
-    template <typename T, int Size>
-    SharedArray<T, Size> sharedArray()
+    ThreadPosition localPosition()
     {
-        return {&graphData, graphData.addSharedArray(ValueTypeOf<T>::value, Size)};
+        auto position = ThreadPosition {};
+
+        position.x.graph = &graphData;
+        position.x.node = graphData.addLocalPosition(0);
+        position.y.graph = &graphData;
+        position.y.node = graphData.addLocalPosition(1);
+
+        return position;
     }
 
-    // Every thread in the group waits here, and every write to shared memory
-    // made before it is visible to all of them after it.
-    //
-    // It must be reached by **every thread in the group or by none** - a barrier
-    // inside an ifThen that some threads take and others do not is undefined in
-    // both languages, and undefined here means a hang rather than a wrong
-    // answer. The same applies to the bounds guard the emitter writes, which is
-    // why a kernel with a barrier may only be dispatched over a whole number of
-    // groups; ComputeProgram refuses anything else.
+    UInt groupId()
+    {
+        auto value = UInt {};
+        value.graph = &graphData;
+        value.node = graphData.addGroupId();
+        return value;
+    }
+
+    ThreadPosition groupPosition()
+    {
+        auto position = ThreadPosition {};
+
+        position.x.graph = &graphData;
+        position.x.node = graphData.addGroupPosition(0);
+        position.y.graph = &graphData;
+        position.y.node = graphData.addGroupPosition(1);
+
+        return position;
+    }
+
+    // The implicit grid bound the dispatch supplied, readable in the body: the
+    // very value the generated guard tests. A kernel that barriers has no such
+    // guard - see barrier() - so this is what it bounds its own stores with.
+    UInt gridCount()
+    {
+        auto value = UInt {};
+        value.graph = &graphData;
+        value.node = graphData.addGridExtent(DispatchRank::OneD, 0);
+        return value;
+    }
+
+    UInt gridWidth()
+    {
+        auto value = UInt {};
+        value.graph = &graphData;
+        value.node = graphData.addGridExtent(DispatchRank::TwoD, 0);
+        return value;
+    }
+
+    UInt gridHeight()
+    {
+        auto value = UInt {};
+        value.graph = &graphData;
+        value.node = graphData.addGridExtent(DispatchRank::TwoD, 1);
+        return value;
+    }
+
+    // A threadgroup-shared array of count elements, its size a compile-time
+    // constant in the emitted kernel. Size it against the fixed group shape
+    // the dispatch uses (ComputePass::threadGroupWidth wide in 1D,
+    // threadGroupSize2D squared in 2D).
+    template <typename T>
+    Shared<T> shared(int count)
+    {
+        return {&graphData, graphData.addSharedArray(ValueTypeOf<T>::value, count)};
+    }
+
+    // The threadgroup barrier: every thread of the group arrives before any
+    // continues, and shared elements written before it are visible after.
+    // Recording one removes the kernel's early-return bounds guard - a
+    // barrier below a return some threads took is undefined on both backends,
+    // so every thread runs the whole body and the kernel bounds its own
+    // stores instead, typically with ifThen(id < gridCount(), ...).
     void barrier() { graphData.addBarrier(); }
 
     InputBuffer inputBuffer()
@@ -291,12 +353,13 @@ public:
         write(buffer, buffer.literal(index), buffer.literal(value));
     }
 
-    // One element of threadgroup memory. A statement like every other write, and
-    // it has to be: what a group is doing is deciding the order things land in.
-    template <typename T, int Size>
-    void write(const SharedArray<T, Size>& array, const UInt& index, const T& value)
+    // One element of a threadgroup-shared array. A single wide store whatever
+    // the element type - the array never crosses the CPU boundary, so there
+    // is no layout contract to keep and nothing to decompose.
+    template <typename T>
+    void write(const Shared<T>& array, const UInt& index, const T& value)
     {
-        graphData.addSharedWrite(array.slot, index.node, value.node);
+        graphData.addSharedStore(array.slot, index.node, value.node);
     }
 
     // One texel of a kernel's output image. The coordinates are the pair a 2D
@@ -412,6 +475,11 @@ public:
     Var<Int> var(int initialValue)
     {
         return {graphData, ValueType::Int, graphData.addIntConstant(initialValue)};
+    }
+
+    Var<UInt> var(unsigned initialValue)
+    {
+        return {graphData, ValueType::UInt, graphData.addUIntConstant(initialValue)};
     }
 
     // A matrix is a mutable local on the same terms - the orientation a shader

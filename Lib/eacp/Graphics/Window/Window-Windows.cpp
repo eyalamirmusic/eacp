@@ -644,6 +644,7 @@ void* Window::getContentViewHandle()
 
 void Window::setContentView(View& view)
 {
+    contentLink.attach(&view, this);
     impl->setContentView(&view);
 }
 

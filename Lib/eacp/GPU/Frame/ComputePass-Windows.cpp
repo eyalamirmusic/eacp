@@ -207,6 +207,9 @@ void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
 
 void ComputePass::end()
 {
+    if (impl->encoder)
+        endTimedPass(*impl->encoder);
+
     impl->encoder.reset();
 }
 } // namespace eacp::GPU

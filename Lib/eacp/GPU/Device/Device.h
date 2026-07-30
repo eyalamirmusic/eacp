@@ -7,6 +7,9 @@
 #include "../Shader/ShaderLibrary.h"
 #include "../Shader/ShaderSource.h"
 #include "../Texture/Texture.h"
+#include "../Timing/FrameTimer.h"
+
+#include <cstdint>
 
 namespace eacp::Graphics
 {
@@ -113,8 +116,66 @@ public:
     void trackSubmittedWork(void* nativeCommandBuffer);
     void waitForSubmittedWork();
 
+    // How many frames have begun on this device. StreamingBuffers picks which
+    // of its pools to write into from this, so that a renderer streaming
+    // per-frame data has nothing to call at the frame boundary and therefore
+    // nothing to forget - see StreamingBuffers for why that matters.
+    std::uint64_t frameIndex() const { return frameCount; }
+
+    // Called by Frame's constructor on both backends, including the off-screen
+    // one. An off-screen frame blocks until the GPU is done, so nothing it
+    // wrote is in flight afterwards and the advance is not needed for
+    // correctness - but without it a loop of off-screen renders is one endless
+    // frame to StreamingBuffers, which then takes a fresh buffer every pass and
+    // never reclaims one.
+    //
+    // Out of line because it also starts the frame timer, which is the one
+    // thing both backends want done identically at this moment.
+    void beginFrame();
+
+    // What the GPU spent on the most recent frame it has finished: every pass
+    // that was given a label, plus the frame end to end.
+    //
+    // A pass is timed by giving it one:
+    //
+    //     auto pass = frame.beginPass({.label = "ui"});
+    //
+    // An unlabelled pass is not timed and costs nothing. The numbers are a few
+    // frames behind whatever is being drawn now, and cannot be anything else -
+    // see FrameTimings for why.
+    const FrameTimings& lastFrameTimings() const { return timer.lastTimings(); }
+
+    // Whether this device can time individual passes. False says only that the
+    // per-pass breakdown will be empty: FrameTimings::milliseconds, the frame
+    // as a whole, is measured by other means and still arrives.
+    //
+    // Answerable only once a frame has begun, since that is what builds the
+    // timestamp resources - ask after rendering, not before.
+    bool supportsPassTimings() const { return timer.isSupported(); }
+
+    // Internal: the timer Frame drives. Apps read lastFrameTimings().
+    FrameTimer& frameTimer() { return timer; }
+
+    // How many GPU buffers have been created on this device since it came up.
+    //
+    // Per-frame data goes through StreamingBuffers, which recycles, so this
+    // settles once a renderer's pools are warm. A count that keeps climbing
+    // while the drawing repeats is allocation churn in the frame loop -
+    // newBufferWithBytes on Metal, a committed resource on D3D12 - which is
+    // what the assertions in Tests/GPU are there to catch.
+    int buffersCreated() const { return bufferCount; }
+
+    // Called by Buffer's constructor on both backends, for buffers that got
+    // real storage.
+    void noteBufferCreated() { ++bufferCount; }
+
 private:
     struct Native;
     Pimpl<Native> impl;
+
+    FrameTimer timer;
+
+    std::uint64_t frameCount = 0;
+    int bufferCount = 0;
 };
 } // namespace eacp::GPU

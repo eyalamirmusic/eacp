@@ -4,6 +4,7 @@
 
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
+#include "MipChain.h"
 
 #include <cmath>
 
@@ -64,11 +65,18 @@ struct Texture::Native
         : width(descriptor.width)
         , height(descriptor.height)
         , pixelStride(bytesPerPixel(descriptor.format))
+        , format(descriptor.format)
     {
         auto& context = getD3D12Context();
 
         if (!context.isValid() || !device.isValid() || width <= 0 || height <= 0)
             return;
+
+        // Only with pixels to build one from: a render target or a kernel output
+        // has none at creation, so it would get levels nothing ever writes and
+        // the sampler would read them.
+        if (descriptor.mipmapped && pixels != nullptr)
+            levels = mipLevelCount(width, height);
 
         D3D12_HEAP_PROPERTIES heap = {};
         heap.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -78,7 +86,7 @@ struct Texture::Native
         desc.Width = static_cast<UINT64>(width);
         desc.Height = static_cast<UINT>(height);
         desc.DepthOrArraySize = 1;
-        desc.MipLevels = 1;
+        desc.MipLevels = static_cast<UINT16>(levels);
         desc.Format = toDXGIFormat(descriptor.format);
         desc.SampleDesc.Count = 1;
 
@@ -133,6 +141,8 @@ struct Texture::Native
         context.freeTextureDescriptor(data.srv);
         context.freeTextureDescriptor(data.uav);
         context.deferRelease(std::move(data.rtvHeap));
+        context.deferRelease(std::move(data.dsvHeap));
+        context.deferRelease(std::move(data.depthResource));
         context.deferRelease(std::move(data.resource));
     }
 
@@ -149,7 +159,9 @@ struct Texture::Native
                     int destX,
                     int destY,
                     int regionWidth,
-                    int regionHeight)
+                    int regionHeight,
+                    int mipLevel = 0,
+                    bool transitionAfterwards = true)
     {
         auto desc = data.resource->GetDesc();
 
@@ -159,6 +171,11 @@ struct Texture::Native
         auto regionDesc = desc;
         regionDesc.Width = static_cast<UINT64>(regionWidth);
         regionDesc.Height = static_cast<UINT>(regionHeight);
+
+        // One level, always: this describes the *staging* side, which is a flat
+        // rectangle of pixels. Leaving the resource's own count here would ask
+        // for the footprint of a chain a region this size cannot have.
+        regionDesc.MipLevels = 1;
 
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
         UINT rows = 0;
@@ -192,6 +209,7 @@ struct Texture::Native
         D3D12_TEXTURE_COPY_LOCATION destination = {};
         destination.pResource = data.resource.get();
         destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        destination.SubresourceIndex = static_cast<UINT>(mipLevel);
 
         D3D12_TEXTURE_COPY_LOCATION source = {};
         source.pResource = staging;
@@ -204,8 +222,15 @@ struct Texture::Native
                                           0,
                                           &source,
                                           nullptr);
-        transitionTextureForUse(
-            commands->list.get(), data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+        // Held back while a chain is mid-upload: every level goes into the same
+        // resource, so transitioning after each one would move it out of
+        // COPY_DEST and straight back for the next - a pair of barriers per
+        // level, for nothing.
+        if (transitionAfterwards)
+            transitionTextureForUse(commands->list.get(),
+                                    data,
+                                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
         // Not parked in transients: the staging pool owns the buffer and takes
         // it back once this recording's fence passes.
@@ -222,16 +247,12 @@ struct Texture::Native
             return;
         }
 
-        // The resource was created in COPY_DEST, so the copy records with no
+        // The resource was created in COPY_DEST, so the copies record with no
         // leading barrier.
-        if (!copyPixels(context,
-                        commands,
-                        pixels,
-                        static_cast<std::size_t>(width * pixelStride),
-                        0,
-                        0,
-                        width,
-                        height))
+        if (!recordLevels(context,
+                          commands,
+                          pixels,
+                          static_cast<std::size_t>(width * pixelStride)))
         {
             context.discard(commands);
             data.resource = nullptr;
@@ -241,9 +262,83 @@ struct Texture::Native
         context.submit(commands);
     }
 
+    // The whole texture, as one level or as a chain. Every level is copied
+    // before the resource moves back to PIXEL_SHADER_RESOURCE, so the transition
+    // happens once however many levels there are.
+    bool recordLevels(D3D12Context& context,
+                      CommandContext* commands,
+                      const void* pixels,
+                      std::size_t sourcePitch)
+    {
+        if (levels <= 1)
+            return copyPixels(
+                context, commands, pixels, sourcePitch, 0, 0, width, height);
+
+        const auto chain = buildMipChain(pixels, width, height, format, sourcePitch);
+
+        if (!chain.isValid())
+            return false;
+
+        for (auto level = 0; level < levels; ++level)
+        {
+            const auto levelWidth = mipExtent(width, level);
+            const auto levelHeight = mipExtent(height, level);
+
+            if (!copyPixels(context,
+                            commands,
+                            chain.level(level),
+                            static_cast<std::size_t>(levelWidth * pixelStride),
+                            0,
+                            0,
+                            levelWidth,
+                            levelHeight,
+                            level,
+                            level == levels - 1))
+                return false;
+        }
+
+        return true;
+    }
+
     void update(const void* pixels, std::size_t bytesPerRow)
     {
+        if (levels > 1)
+        {
+            updateChain(pixels, bytesPerRow);
+            return;
+        }
+
         updateRegion(0, 0, width, height, pixels, bytesPerRow);
+    }
+
+    // The re-upload path for a mipmapped texture. Unlike updateRegion it has to
+    // move the resource back to COPY_DEST first, since by now it is being
+    // sampled.
+    void updateChain(const void* pixels, std::size_t bytesPerRow)
+    {
+        if (data.resource == nullptr || pixels == nullptr)
+            return;
+
+        auto& context = getD3D12Context();
+        auto* commands = context.acquire();
+
+        if (commands == nullptr)
+            return;
+
+        transitionTextureForUse(
+            commands->list.get(), data, D3D12_RESOURCE_STATE_COPY_DEST);
+
+        const auto pitch = bytesPerRow > 0
+                               ? bytesPerRow
+                               : static_cast<std::size_t>(width * pixelStride);
+
+        if (!recordLevels(context, commands, pixels, pitch))
+        {
+            context.discard(commands);
+            return;
+        }
+
+        context.submit(commands);
     }
 
     // Both update() overloads land here; the whole-texture one is just the full
@@ -330,6 +425,65 @@ struct Texture::Native
         data.rtv = handle;
     }
 
+    // The depth buffer a pass into this target attaches, and its DSV. Created
+    // in DEPTH_WRITE and left there: nothing else ever uses the resource, so it
+    // needs no barrier and no state tracking.
+    //
+    // The optimised clear value is not optional. D3D12 wants a resource that
+    // will be cleared to say so at creation, and a ClearDepthStencilView that
+    // does not match it is a validation error rather than a slow path - and it
+    // must agree with the 1.0 the pass clears to.
+    void createDepthBuffer(D3D12Context& context)
+    {
+        D3D12_HEAP_PROPERTIES heap = {};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+        D3D12_RESOURCE_DESC desc = {};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        desc.Width = static_cast<UINT64>(width);
+        desc.Height = static_cast<UINT>(height);
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = 1;
+        desc.Format = DXGI_FORMAT_D32_FLOAT;
+        desc.SampleDesc.Count = 1;
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+        D3D12_CLEAR_VALUE clearValue = {};
+        clearValue.Format = DXGI_FORMAT_D32_FLOAT;
+        clearValue.DepthStencil.Depth = 1.f;
+
+        if (FAILED(context.getDevice()->CreateCommittedResource(
+                &heap,
+                D3D12_HEAP_FLAG_NONE,
+                &desc,
+                D3D12_RESOURCE_STATE_DEPTH_WRITE,
+                &clearValue,
+                __uuidof(ID3D12Resource),
+                data.depthResource.put_void())))
+            return;
+
+        D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+        heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        heapDesc.NumDescriptors = 1;
+
+        if (FAILED(context.getDevice()->CreateDescriptorHeap(
+                &heapDesc, __uuidof(ID3D12DescriptorHeap), data.dsvHeap.put_void())))
+        {
+            data.depthResource = nullptr;
+            return;
+        }
+
+        D3D12_DEPTH_STENCIL_VIEW_DESC viewDesc = {};
+        viewDesc.Format = DXGI_FORMAT_D32_FLOAT;
+        viewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+
+        auto handle = data.dsvHeap->GetCPUDescriptorHandleForHeapStart();
+        context.getDevice()->CreateDepthStencilView(
+            data.depthResource.get(), &viewDesc, handle);
+
+        data.dsv = handle;
+    }
+
     // The view a kernel writes through. It comes out of the same shader-visible
     // heap as the SRV - the allocator is CBV_SRV_UAV - so a writable texture
     // costs one more descriptor and no new heap.
@@ -358,6 +512,9 @@ struct Texture::Native
         if (descriptor.renderTarget)
             createRenderTargetView(context, descriptor);
 
+        if (descriptor.renderTarget && descriptor.depth && data.rtv.ptr != 0)
+            createDepthBuffer(context);
+
         if (computeWrite)
             createUnorderedAccessView(context, descriptor);
 
@@ -383,6 +540,13 @@ struct Texture::Native
     // Bytes per pixel of the texture's format; the (stubbed) zero-copy wrap
     // path stays at 4 because those buffers are always 32-bit BGRA/RGBA.
     int pixelStride = 4;
+    TextureFormat format = TextureFormat::RGBA8Unorm;
+
+    // 1 unless a chain was asked for and there were pixels to build one from.
+    // The SRV is created from a null description, which covers every level the
+    // resource has, so nothing else here needs to know the count.
+    int levels = 1;
+
     bool computeWrite = false;
     D3D12TextureData data;
 };
@@ -433,6 +597,11 @@ bool Texture::isValid() const
     return impl->data.resource != nullptr && impl->data.srv.cpu.ptr != 0;
 }
 
+int Texture::mipLevels() const
+{
+    return impl->levels;
+}
+
 bool Texture::isRenderTarget() const
 {
     return isValid() && impl->data.isRenderTarget();
@@ -443,6 +612,11 @@ bool Texture::isComputeWritable() const
     return isValid() && impl->data.isComputeWritable();
 }
 
+bool Texture::hasDepth() const
+{
+    return isValid() && impl->data.hasDepth();
+}
+
 void* Texture::nativeTexture() const
 {
     return const_cast<D3D12TextureData*>(&impl->data);
@@ -451,5 +625,13 @@ void* Texture::nativeTexture() const
 void* Texture::nativeReadView() const
 {
     return const_cast<D3D12TextureData*>(&impl->data);
+}
+
+// The depth resource and its descriptor live inside the same D3D12TextureData
+// nativeTexture hands back, which is what Frame reaches them through - so this
+// backend has no separate handle to give.
+void* Texture::nativeDepthTexture() const
+{
+    return nullptr;
 }
 } // namespace eacp::GPU

@@ -122,7 +122,10 @@ struct Buffer::Native
     // it correct: the copy lands in order, before the draw or dispatch that
     // wanted the bytes, so two flushes of the same program in one frame each read
     // what they were given.
-    bool stage(D3D12Context& context, const void* data, std::size_t bytes)
+    bool stage(D3D12Context& context,
+               const void* data,
+               std::size_t bytes,
+               std::size_t destinationOffset = 0)
     {
         if (bufferData.resource == nullptr)
             return false;
@@ -136,7 +139,7 @@ struct Buffer::Native
         if (commands == nullptr)
             return false;
 
-        auto copied = copyInto(context, *commands, data, bytes);
+        auto copied = copyInto(context, *commands, data, bytes, destinationOffset);
 
         if (!ownsRecording)
             return copied;
@@ -152,7 +155,8 @@ struct Buffer::Native
     bool copyInto(D3D12Context& context,
                   CommandContext& commands,
                   const void* data,
-                  std::size_t bytes)
+                  std::size_t bytes,
+                  std::size_t destinationOffset)
     {
         auto source = context.allocateUpload(commands, bytes);
 
@@ -162,8 +166,11 @@ struct Buffer::Native
         std::memcpy(source.mapped, data, bytes);
 
         transitionForUse(commands, bufferData, D3D12_RESOURCE_STATE_COPY_DEST);
-        commands.list->CopyBufferRegion(
-            bufferData.resource.get(), 0, source.resource, source.offset, bytes);
+        commands.list->CopyBufferRegion(bufferData.resource.get(),
+                                        destinationOffset,
+                                        source.resource,
+                                        source.offset,
+                                        bytes);
 
         return true;
     }
@@ -185,6 +192,10 @@ Buffer::Buffer(Device& device,
                BufferUsage usage)
     : impl(device, data, bytes, usage)
 {
+    // Only the ones that got storage, so the count means GPU allocations rather
+    // than calls - a zero-byte or device-less Buffer allocated nothing.
+    if (isValid())
+        device.noteBufferCreated();
 }
 
 std::size_t Buffer::size() const
@@ -197,12 +208,15 @@ bool Buffer::isValid() const
     return impl->bufferData.resource != nullptr;
 }
 
-void Buffer::read(void* dst, std::size_t bytes) const
+void Buffer::read(void* dst, std::size_t bytes, std::size_t offset) const
 {
     auto* source = impl->bufferData.resource.get();
 
-    if (source == nullptr)
+    if (source == nullptr || offset >= impl->bufferData.size)
         return;
+
+    auto available = impl->bufferData.size - offset;
+    auto count = bytes < available ? bytes : available;
 
     auto& context = getD3D12Context();
     auto* commands = context.acquire();
@@ -215,7 +229,7 @@ void Buffer::read(void* dst, std::size_t bytes) const
 
     D3D12_RESOURCE_DESC desc = {};
     desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    desc.Width = impl->bufferData.size;
+    desc.Width = count;
     desc.Height = 1;
     desc.DepthOrArraySize = 1;
     desc.MipLevels = 1;
@@ -238,28 +252,28 @@ void Buffer::read(void* dst, std::size_t bytes) const
     }
 
     transitionForUse(*commands, impl->bufferData, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    commands->list->CopyBufferRegion(
-        staging.get(), 0, source, 0, impl->bufferData.size);
+    commands->list->CopyBufferRegion(staging.get(), 0, source, offset, count);
 
     // The copy was enqueued on the same queue as the writes, so waiting on
     // this submission's fence also waits for them.
     context.waitFor(context.submit(commands));
 
     void* mapped = nullptr;
-    const D3D12_RANGE readRange = {0, bytes};
+    const D3D12_RANGE readRange = {0, count};
 
     if (SUCCEEDED(staging->Map(0, &readRange, &mapped)))
     {
-        std::memcpy(dst, mapped, bytes);
+        std::memcpy(dst, mapped, count);
 
         const D3D12_RANGE noWrite = {0, 0};
         staging->Unmap(0, &noWrite);
     }
 }
 
-void Buffer::update(const void* data, std::size_t bytes)
+void Buffer::update(const void* data, std::size_t bytes, std::size_t offset)
 {
-    if (impl->bufferData.resource == nullptr || data == nullptr || bytes == 0)
+    if (impl->bufferData.resource == nullptr || data == nullptr || bytes == 0
+        || offset >= impl->bufferData.size)
         return;
 
     auto& context = getD3D12Context();
@@ -267,8 +281,9 @@ void Buffer::update(const void* data, std::size_t bytes)
     if (!context.isValid())
         return;
 
-    auto count = bytes < impl->bufferData.size ? bytes : impl->bufferData.size;
-    impl->stage(context, data, count);
+    auto available = impl->bufferData.size - offset;
+    auto count = bytes < available ? bytes : available;
+    impl->stage(context, data, count, offset);
 }
 
 void* Buffer::nativeBuffer() const

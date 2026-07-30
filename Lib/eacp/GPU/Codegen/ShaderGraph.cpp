@@ -17,9 +17,9 @@ bool dependsOnMutableState(ExprKind kind)
         case ExprKind::VarRead:
         case ExprKind::BufferRead:
         case ExprKind::AtomicLoad:
-        case ExprKind::SharedRead:
         case ExprKind::Sample:
         case ExprKind::Fetch:
+        case ExprKind::SharedRead:
             return true;
 
         case ExprKind::Input:
@@ -35,8 +35,10 @@ bool dependsOnMutableState(ExprKind kind)
         case ExprKind::Select:
         case ExprKind::Mul:
         case ExprKind::ThreadId:
-        case ExprKind::ThreadIndexInGroup:
         case ExprKind::ArrayRead:
+        case ExprKind::LocalId:
+        case ExprKind::GroupId:
+        case ExprKind::GridExtent:
             return false;
     }
 
@@ -337,14 +339,14 @@ int ShaderGraph::addWritableTexture()
 
 void ShaderGraph::addTextureStore(int slot, int x, int y, int value)
 {
-    writesResources = true;
+    textureStoreList.add({slot, x, y, value});
 
-    auto store = Statement {StatementKind::TextureStore};
-    store.bufferSlot = slot;
-    store.index = x;
-    store.indexY = y;
-    store.value = value;
-    addStatement(store);
+    auto statement = Statement {StatementKind::TextureStore};
+    statement.slot = slot;
+    statement.index = x;
+    statement.indexY = y;
+    statement.value = value;
+    addStatement(statement);
 }
 
 int ShaderGraph::addSample(int textureSlot, int uv)
@@ -394,17 +396,18 @@ int ShaderGraph::addArrayRead(int slot, int index)
     return add(std::move(node));
 }
 
-int ShaderGraph::addThreadIndex(DispatchRank forRank, int component)
+int ShaderGraph::addIndexNode(ExprKind kind, DispatchRank forRank, int component)
 {
     assert((!rankFixed || rank == forRank)
-           && "eacp: a kernel takes either threadId() or threadPosition(), not "
-              "both - the dispatch has one grid shape");
+           && "eacp: a kernel takes either the 1D indices (threadId, localId, "
+              "groupId, gridCount) or the 2D ones, never both - the dispatch "
+              "has one grid shape");
 
     rank = forRank;
     rankFixed = true;
 
     auto node = Expr {};
-    node.kind = ExprKind::ThreadId;
+    node.kind = kind;
     node.type = ValueType::UInt;
     node.index = component;
     return add(std::move(node));
@@ -412,12 +415,72 @@ int ShaderGraph::addThreadIndex(DispatchRank forRank, int component)
 
 int ShaderGraph::addThreadId()
 {
-    return addThreadIndex(DispatchRank::OneD, 0);
+    return addIndexNode(ExprKind::ThreadId, DispatchRank::OneD, 0);
 }
 
 int ShaderGraph::addThreadPosition(int component)
 {
-    return addThreadIndex(DispatchRank::TwoD, component);
+    return addIndexNode(ExprKind::ThreadId, DispatchRank::TwoD, component);
+}
+
+int ShaderGraph::addLocalId()
+{
+    localIdUsed = true;
+    return addIndexNode(ExprKind::LocalId, DispatchRank::OneD, 0);
+}
+
+int ShaderGraph::addLocalPosition(int component)
+{
+    localIdUsed = true;
+    return addIndexNode(ExprKind::LocalId, DispatchRank::TwoD, component);
+}
+
+int ShaderGraph::addGroupId()
+{
+    groupIdUsed = true;
+    return addIndexNode(ExprKind::GroupId, DispatchRank::OneD, 0);
+}
+
+int ShaderGraph::addGroupPosition(int component)
+{
+    groupIdUsed = true;
+    return addIndexNode(ExprKind::GroupId, DispatchRank::TwoD, component);
+}
+
+int ShaderGraph::addGridExtent(DispatchRank forRank, int component)
+{
+    return addIndexNode(ExprKind::GridExtent, forRank, component);
+}
+
+int ShaderGraph::addSharedArray(ValueType elementType, int elements)
+{
+    sharedArrayList.add({elementType, elements});
+    return sharedArrayList.size() - 1;
+}
+
+int ShaderGraph::addSharedRead(int slot, int index)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::SharedRead;
+    node.type = sharedArrayList[slot].elementType;
+    node.index = slot;
+    node.args.add(index);
+    return add(std::move(node));
+}
+
+void ShaderGraph::addSharedStore(int slot, int index, int value)
+{
+    auto statement = Statement {StatementKind::SharedStore};
+    statement.slot = slot;
+    statement.index = index;
+    statement.value = value;
+    addStatement(statement);
+}
+
+void ShaderGraph::addBarrier()
+{
+    barrierUsed = true;
+    addStatement(Statement {StatementKind::Barrier});
 }
 
 int ShaderGraph::addStorageBuffer(BufferAccess access)
@@ -438,23 +501,18 @@ int ShaderGraph::addBufferRead(int slot, int index)
 
 void ShaderGraph::addStore(int slot, int index, int value)
 {
-    writesResources = true;
+    storeList.add({slot, index, value});
 
-    auto store = Statement {StatementKind::Store};
-    store.bufferSlot = slot;
-    store.index = index;
-    store.value = value;
-    addStatement(store);
+    auto statement = Statement {StatementKind::Store};
+    statement.slot = slot;
+    statement.index = index;
+    statement.value = value;
+    addStatement(statement);
 }
 
-// The variable is registered without a Declare, because the AtomicAdd statement
-// is itself the declaration - the emitted line names the type and takes the old
-// value in one go on Metal, and on Windows declares it a line above the
-// InterlockedAdd that fills it. A Declare here would emit a second definition of
-// the same name.
 int ShaderGraph::addAtomicAdd(int bufferSlot, int index, int value)
 {
-    writesResources = true;
+    atomicUsed = true;
 
     auto slot = variableTypes.size();
     variableTypes.add(ValueType::UInt);
@@ -467,51 +525,6 @@ int ShaderGraph::addAtomicAdd(int bufferSlot, int index, int value)
     addStatement(operation);
 
     return slot;
-}
-
-int ShaderGraph::addSharedArray(ValueType elementType, int size)
-{
-    sharedArrayList.add({elementType, size});
-    return sharedArrayList.size() - 1;
-}
-
-int ShaderGraph::addSharedRead(int slot, int index)
-{
-    auto node = Expr {};
-    node.kind = ExprKind::SharedRead;
-    node.type = sharedArrayList[slot].elementType;
-    node.index = slot;
-    node.args.add(index);
-    return add(std::move(node));
-}
-
-void ShaderGraph::addSharedWrite(int slot, int index, int value)
-{
-    auto write = Statement {StatementKind::SharedWrite};
-    write.bufferSlot = slot;
-    write.index = index;
-    write.value = value;
-    addStatement(write);
-}
-
-// Deliberately not writesResources: threadgroup memory does not outlive the
-// dispatch, so a kernel that only writes shared memory computes nothing and is
-// not what makes a graph compute. What does is asking for a thread index, and
-// nothing can index a shared array without one.
-int ShaderGraph::addThreadIndexInGroup()
-{
-    groupIndexUsed = true;
-
-    auto node = Expr {};
-    node.kind = ExprKind::ThreadIndexInGroup;
-    node.type = ValueType::UInt;
-    return add(std::move(node));
-}
-
-void ShaderGraph::addBarrier()
-{
-    barrierUsed = true;
-    addStatement(Statement {StatementKind::Barrier});
 }
 
 int ShaderGraph::addAtomicLoad(int bufferSlot, int index)

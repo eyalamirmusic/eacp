@@ -1,6 +1,7 @@
 #include "ShaderBuilder.h"
 
 #include "../Pipeline/VertexLayout.h"
+#include "ShaderEmitter.h"
 
 namespace eacp::GPU
 {
@@ -125,13 +126,14 @@ GeneratedShader ShaderBuilder::build() const
         source.withCompute("computeMain");
         result.source = std::move(source);
         result.dispatchRank = graphData.dispatchRank();
-        result.usesBarriers = graphData.usesBarriers();
         return result;
     }
 
     source.withVertex("vertexMain").withFragment("fragmentMain");
     result.source = std::move(source);
     result.vertexLayout = buildVertexLayout(graphData);
+    result.vertexReadsUniforms = vertexReadsUniforms(graphData);
+    result.fragmentReadsUniforms = fragmentReadsUniforms(graphData);
     return result;
 }
 } // namespace eacp::GPU

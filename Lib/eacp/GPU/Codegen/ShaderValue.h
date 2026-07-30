@@ -704,10 +704,13 @@ Float4 baseOf(const Float4&);
 // The same mapping over every family, for the places that genuinely take any of
 // them: a vector constructor's arguments, and the width its components add up
 // to. Split from baseOf so that widening the one does not widen the other.
+// UInt rides along as a family of one, which is what lets the counter a kernel
+// walks a buffer with be a Var<UInt> on the same terms as any other local.
 Float handleOf(const Float&);
 Float2 handleOf(const Float2&);
 Float3 handleOf(const Float3&);
 Float4 handleOf(const Float4&);
+UInt handleOf(const UInt&);
 Int handleOf(const Int&);
 Int2 handleOf(const Int2&);
 Int3 handleOf(const Int3&);
@@ -1760,6 +1763,13 @@ struct Var
         return *this;
     }
 
+    Var& operator=(unsigned value)
+        requires std::same_as<T, UInt>
+    {
+        graph->assign(slot, graph->addUIntConstant(value));
+        return *this;
+    }
+
     // The compound operators, over whatever the free operators above accept:
     // another value of the same shape, a scalar broadcast across a vector, or a
     // literal. A combination they reject fails here rather than silently
@@ -2038,11 +2048,11 @@ EACP_INT_COMPARISON(operator!=, "!=")
 
 #undef EACP_INT_COMPARISON
 
-// And the unsigned ones, which neither of the sets above covers either. A UInt
-// is what a kernel is handed rather than what it builds - the thread id, a
-// buffer index, the slot an atomic add reserved - so until now the only way to
-// test one was to cross it into an Int first, and the one test that most wants
-// making is whether a reserved slot fits in the array it indexes.
+// And the uint ones, which are what a loop over a buffer tests: the counter
+// beside an index computed from threadId() is a UInt, and so is the element
+// count it runs to. The literal overloads take unsigned and record a uint
+// constant node, so a bound is spelled i < 4u exactly as the index arithmetic
+// spells i + 1u.
 #define EACP_UINT_COMPARISON(name, spelling)                                        \
     inline Bool name(const UInt& lhs, const UInt& rhs)                              \
     {                                                                               \
@@ -2141,20 +2151,31 @@ inline Float toFloat(const Bool& value)
     return detail::convertTo<Float>(value);
 }
 
-// The crossing an index takes. A buffer subscript is a uint, while the counter
-// a kernel walks its input with is an Int - the family the comparisons, the
-// mutable local and the negative intermediate all live in - so a loop over a
-// buffer ends at this one call. Wraps below zero exactly as UInt's own
-// subtraction does; clamp with max() before crossing if that is reachable.
+template <ShaderScalarLike T>
+Int toInt(const T& value)
+{
+    return detail::convertTo<Int>(value);
+}
+
+// And between the two integer vocabularies, which a guarded index crosses
+// twice: into the signed one for arithmetic that may go below zero - the tap
+// of a padded convolution, a backwards step - and back out through toUInt for
+// the subscript once it is clamped. toUInt of a float scalar truncates
+// towards zero on the way, exactly as toInt does.
+inline Int toInt(const UInt& value)
+{
+    return detail::convertTo<Int>(value);
+}
+
 inline UInt toUInt(const Int& value)
 {
     return detail::convertTo<UInt>(value);
 }
 
 template <ShaderScalarLike T>
-Int toInt(const T& value)
+UInt toUInt(const T& value)
 {
-    return detail::convertTo<Int>(value);
+    return detail::convertTo<UInt>(value);
 }
 
 // And the same crossing a whole vector at a time, which is what a shader
@@ -2235,27 +2256,17 @@ struct ConstantArray
     int slot = -1;
 };
 
-// Memory one threadgroup has in common: every thread in the group can read and
-// write it, no thread outside can see it, and it is gone when the group is. It
-// is what lets threads cooperate instead of each doing the same read - one
-// thread fetches an element, and after a barrier every thread in the group has
-// it.
-//
-// The size is a compile-time number in both shading languages, so it is a
-// template parameter here. Nothing initialises it: what it holds before the
-// group writes it is undefined, which is why every use starts by filling it and
-// waiting.
-//
-//   auto lane = sharedArray<Float, 64>();
-//   write(lane, threadIndexInGroup(), value);
-//   barrier();
-//   auto neighbour = lane[threadIndexInGroup() ^ 1u];
-//
-// Reading one is a subscript; writing one goes through ShaderBuilder::write, on
-// the same terms a buffer or a texture does, because a write is a statement and
-// has to land where it was written.
-template <typename T, int Size>
-struct SharedArray
+// A threadgroup-shared array, created inside a kernel body: the tile a
+// reduction or a blocked matmul stages in on-chip memory so a group of
+// threads reads it instead of re-reading global memory. It is never
+// CPU-visible - there is nothing to bind - so the element type is any value
+// type, a float4 record included; a subscript reads the current element, and
+// writes go through write(shared, index, value) beside the buffer writes.
+// What one thread wrote is visible to the rest of its group only after
+// barrier(), and a value read before a barrier does not stand for the same
+// element after it - the emitter gives up any name spanning one.
+template <typename T>
+struct Shared
 {
     T operator[](const UInt& index) const
     {
@@ -2265,17 +2276,15 @@ struct SharedArray
         return result;
     }
 
+    // The literal subscript, for the fixed element a reduction converges on:
+    // the group leader reads tile[0u] after the last barrier.
     T operator[](unsigned index) const
     {
-        assert((int) index < Size && "eacp: shared-array index out of range");
-
         auto result = T {};
         result.graph = graph;
         result.node = graph->addSharedRead(slot, graph->addUIntConstant(index));
         return result;
     }
-
-    static constexpr int size() { return Size; }
 
     ShaderGraph* graph = nullptr;
     int slot = -1;

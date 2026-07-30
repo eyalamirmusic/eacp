@@ -15,13 +15,6 @@ namespace Json = eacp::HTTP::Json;
 
 namespace
 {
-std::atomic<int> nextPort {53001};
-
-int reservePort()
-{
-    return nextPort.fetch_add(1);
-}
-
 std::string baseUrl(int port)
 {
     return "http://127.0.0.1:" + std::to_string(port);

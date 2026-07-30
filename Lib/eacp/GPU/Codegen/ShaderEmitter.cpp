@@ -295,15 +295,35 @@ struct ExprPrinter
                 return element;
             }
 
-            case ExprKind::ThreadIndexInGroup:
-                return "lid";
+            case ExprKind::ArrayRead:
+                return "a" + std::to_string(expr.index) + "[" + ref(expr.args[0])
+                       + "]";
+
+            // The threadgroup indices ride the same scaffolding as gid: both
+            // backends' entry points bind them to these names, a scalar in a
+            // 1D kernel and a pair in a 2D one.
+            case ExprKind::LocalId:
+                if (graph.dispatchRank() == DispatchRank::OneD)
+                    return "lid";
+
+                return expr.index == 0 ? "lid.x" : "lid.y";
+
+            case ExprKind::GroupId:
+                if (graph.dispatchRank() == DispatchRank::OneD)
+                    return "tgid";
+
+                return expr.index == 0 ? "tgid.x" : "tgid.y";
+
+            // The implicit bound the dispatch appended to the uniform block,
+            // under the names the block declares it with.
+            case ExprKind::GridExtent:
+                if (graph.dispatchRank() == DispatchRank::OneD)
+                    return "uniforms.count";
+
+                return expr.index == 0 ? "uniforms.width" : "uniforms.height";
 
             case ExprKind::SharedRead:
                 return "s" + std::to_string(expr.index) + "[" + ref(expr.args[0])
-                       + "]";
-
-            case ExprKind::ArrayRead:
-                return "a" + std::to_string(expr.index) + "[" + ref(expr.args[0])
                        + "]";
         }
 
@@ -332,8 +352,8 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Fetch:
         case ExprKind::BufferRead:
         case ExprKind::AtomicLoad:
-        case ExprKind::SharedRead:
         case ExprKind::ArrayRead:
+        case ExprKind::SharedRead:
             return true;
 
         case ExprKind::Input:
@@ -343,7 +363,9 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Swizzle:
         case ExprKind::VarRead:
         case ExprKind::ThreadId:
-        case ExprKind::ThreadIndexInGroup:
+        case ExprKind::LocalId:
+        case ExprKind::GroupId:
+        case ExprKind::GridExtent:
             return false;
     }
 
@@ -436,14 +458,6 @@ void collectWrites(const ShaderGraph& graph,
             written[statement.slot] = 1;
             return;
 
-        // A store writes a resource, not a variable, so nothing an open name
-        // stands for can have moved on under it.
-        case StatementKind::Store:
-        case StatementKind::TextureStore:
-        case StatementKind::SharedWrite:
-        case StatementKind::Barrier:
-            return;
-
         case StatementKind::If:
             collectWrites(graph, statement.body, written);
 
@@ -458,8 +472,59 @@ void collectWrites(const ShaderGraph& graph,
 
         case StatementKind::Break:
         case StatementKind::Continue:
+        case StatementKind::Store:
+        case StatementKind::TextureStore:
+        case StatementKind::SharedStore:
+        case StatementKind::Barrier:
             return;
     }
+}
+
+// Whether running a statement can change what threadgroup memory holds: a
+// store to it, or the barrier that publishes what other threads stored -
+// following nested bodies the way collectWrites does. What this feeds is the
+// same rule variables get: a name computed from shared memory is given up the
+// moment shared memory may have moved on.
+bool touchesShared(const ShaderGraph& graph, int block);
+
+bool touchesShared(const ShaderGraph& graph, const Statement& statement)
+{
+    switch (statement.kind)
+    {
+        case StatementKind::SharedStore:
+        case StatementKind::Barrier:
+            return true;
+
+        case StatementKind::If:
+            if (touchesShared(graph, statement.body))
+                return true;
+
+            return statement.elseBody >= 0
+                   && touchesShared(graph, statement.elseBody);
+
+        case StatementKind::Loop:
+            return touchesShared(graph, statement.body);
+
+        case StatementKind::Declare:
+        case StatementKind::Assign:
+        case StatementKind::Break:
+        case StatementKind::Continue:
+        case StatementKind::Store:
+        case StatementKind::TextureStore:
+        case StatementKind::AtomicAdd:
+            return false;
+    }
+
+    return false;
+}
+
+bool touchesShared(const ShaderGraph& graph, int block)
+{
+    for (auto index: graph.block(block).statements)
+        if (touchesShared(graph, graph.statement(index)))
+            return true;
+
+    return false;
 }
 
 void collectWrites(const ShaderGraph& graph, int block, Vector<char>& written)
@@ -501,10 +566,14 @@ struct VisitSet
     int generation = 1;
 };
 
-bool readsAny(const ShaderGraph& graph,
-              int node,
-              const Vector<char>& written,
-              VisitSet& seen)
+// Whether the value under node no longer stands for itself after a statement:
+// it read a variable that statement wrote, or it read threadgroup memory and
+// the statement may have moved what that holds.
+bool readsStale(const ShaderGraph& graph,
+                int node,
+                const Vector<char>& written,
+                bool sharedMoved,
+                VisitSet& seen)
 {
     if (node < 0 || !seen.visit(node))
         return false;
@@ -514,8 +583,11 @@ bool readsAny(const ShaderGraph& graph,
     if (expr.kind == ExprKind::VarRead && written[expr.index] != 0)
         return true;
 
+    if (sharedMoved && expr.kind == ExprKind::SharedRead)
+        return true;
+
     for (auto argument: expr.args)
-        if (readsAny(graph, argument, written, seen))
+        if (readsStale(graph, argument, written, sharedMoved, seen))
             return true;
 
     return false;
@@ -677,12 +749,20 @@ struct StageEmitter
                 break;
             }
 
+            case StatementKind::Break:
+                source = indent + "break;\n";
+                break;
+
+            case StatementKind::Continue:
+                source = indent + "continue;\n";
+                break;
+
             case StatementKind::Store:
             {
                 source =
-                    define({statement.value, statement.index}, indent, uses, open);
+                    define({statement.index, statement.value}, indent, uses, open);
 
-                auto element = "buffer" + std::to_string(statement.bufferSlot) + "["
+                auto element = "buffer" + std::to_string(statement.slot) + "["
                                + printer.ref(statement.index) + "]";
                 auto stored = printer.ref(statement.value);
 
@@ -690,8 +770,8 @@ struct StageEmitter
                 // to be stored through rather than assigned. HLSL's UAV element
                 // is an ordinary uint, so the plain assignment is already right
                 // there.
-                auto atomic = graph().storageBuffers()[statement.bufferSlot]
-                              == BufferAccess::Atomic;
+                auto atomic =
+                    graph().storageBuffers()[statement.slot] == BufferAccess::Atomic;
 
                 if (atomic && printer.backend == Backend::Metal)
                     source += indent + "atomic_store_explicit(&" + element + ", "
@@ -702,63 +782,10 @@ struct StageEmitter
                 break;
             }
 
-            // The one place the two languages spell a texture write differently:
-            // MSL takes the colour first and the coordinate second, HLSL
-            // subscripts the texture like an array.
-            case StatementKind::TextureStore:
-            {
-                source = define({statement.value, statement.index, statement.indexY},
-                                indent,
-                                uses,
-                                open);
-
-                auto name = "texture" + std::to_string(statement.bufferSlot);
-                auto coordinates = "uint2(" + printer.ref(statement.index) + ", "
-                                   + printer.ref(statement.indexY) + ")";
-                auto color = printer.ref(statement.value);
-
-                if (printer.backend == Backend::Metal)
-                    source += indent + name + ".write(" + color + ", " + coordinates
-                              + ");\n";
-                else
-                    source +=
-                        indent + name + "[" + coordinates + "] = " + color + ";\n";
-
-                break;
-            }
-
-            // Both of these give up every open name afterwards, and for the
-            // same reason: a name standing for `s0[i]` is only worth anything
-            // while nothing has written shared memory since. A write may have
-            // hit the very element, and a barrier means every other thread's
-            // writes have just landed. The alternative is asking which element,
-            // which is a question about two runtime indices.
-            case StatementKind::SharedWrite:
-            {
-                source =
-                    define({statement.value, statement.index}, indent, uses, open);
-                source += indent + "s" + std::to_string(statement.bufferSlot) + "["
-                          + printer.ref(statement.index)
-                          + "] = " + printer.ref(statement.value) + ";\n";
-                retire(open);
-                break;
-            }
-
-            case StatementKind::Barrier:
-            {
-                source = indent
-                         + (printer.backend == Backend::Metal
-                                ? "threadgroup_barrier(mem_flags::mem_threadgroup);"
-                                : "GroupMemoryBarrierWithGroupSync();")
-                         + "\n";
-                retire(open);
-                break;
-            }
-
             case StatementKind::AtomicAdd:
             {
                 source =
-                    define({statement.value, statement.index}, indent, uses, open);
+                    define({statement.index, statement.value}, indent, uses, open);
 
                 auto name = "v" + std::to_string(statement.slot);
                 auto element = "buffer" + std::to_string(statement.bufferSlot) + "["
@@ -782,13 +809,50 @@ struct StageEmitter
                 break;
             }
 
-            case StatementKind::Break:
-                source = indent + "break;\n";
+            case StatementKind::SharedStore:
+                source =
+                    define({statement.index, statement.value}, indent, uses, open);
+                source += indent + "s" + std::to_string(statement.slot) + "["
+                          + printer.ref(statement.index)
+                          + "] = " + printer.ref(statement.value) + ";\n";
                 break;
 
-            case StatementKind::Continue:
-                source = indent + "continue;\n";
+            // The synchronisation point itself. The names it invalidates -
+            // anything computed from shared memory - are given up by the
+            // dropStale below, the same pass an assignment retires its
+            // variable's readers through.
+            case StatementKind::Barrier:
+                source =
+                    indent
+                    + (printer.backend == Backend::Metal
+                           ? "threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+                           : "GroupMemoryBarrierWithGroupSync();\n");
                 break;
+
+            // The one place the two languages spell a write differently: MSL
+            // takes the colour first and the coordinate second, HLSL
+            // subscripts the texture like an array.
+            case StatementKind::TextureStore:
+            {
+                source = define({statement.index, statement.indexY, statement.value},
+                                indent,
+                                uses,
+                                open);
+
+                auto name = "texture" + std::to_string(statement.slot);
+                auto coordinates = "uint2(" + printer.ref(statement.index) + ", "
+                                   + printer.ref(statement.indexY) + ")";
+                auto color = printer.ref(statement.value);
+
+                if (printer.backend == Backend::Metal)
+                    source += indent + name + ".write(" + color + ", " + coordinates
+                              + ");\n";
+                else
+                    source +=
+                        indent + name + "[" + coordinates + "] = " + color + ";\n";
+
+                break;
+            }
 
             case StatementKind::Loop:
                 break;
@@ -827,16 +891,12 @@ private:
         {
             const auto& statement = graph().statement(index);
 
-            if (statement.kind == StatementKind::Loop)
-                continue;
-
-            roots.add(statement.value);
-
-            // The subscripts count too. A store's index is a use like any
-            // other, and leaving it out is what decides a record's offsets are
-            // read once each when the read and the write both address them.
-            roots.add(statement.index);
-            roots.add(statement.indexY);
+            if (statement.kind != StatementKind::Loop)
+            {
+                roots.add(statement.value);
+                roots.add(statement.index);
+                roots.add(statement.indexY);
+            }
         }
 
         return countUsesOver(roots);
@@ -880,17 +940,20 @@ private:
 
     void dropStale(const Statement& statement, Vector<int>& open)
     {
-        if (open.empty() || graph().variables().empty())
+        if (open.empty())
             return;
+
+        auto sharedMoved = touchesShared(graph(), statement);
 
         written.assign(graph().variables().size(), 0);
         collectWrites(graph(), statement, written);
 
-        // A statement that leaves no variable holding something else cannot
-        // have staled a name, and most do not: a break, a continue, and an if
-        // whose bodies only compute. Asking each open name about an empty set
-        // is the same walk for a guaranteed no.
-        if (!written.contains(1))
+        // A statement that leaves no variable holding something else and
+        // moves no shared memory cannot have staled a name, and most do not:
+        // a break, a continue, and an if whose bodies only compute. Asking
+        // each open name about an empty set is the same walk for a
+        // guaranteed no.
+        if (!written.contains(1) && !sharedMoved)
             return;
 
         auto kept = Vector<int> {};
@@ -899,7 +962,7 @@ private:
         {
             visited.restart();
 
-            if (readsAny(graph(), node, written, visited))
+            if (readsStale(graph(), node, written, sharedMoved, visited))
                 locals[node] = -1;
             else
                 kept.add(node);
@@ -965,10 +1028,6 @@ void collectStatementRoots(const ShaderGraph& graph, int block, Vector<int>& roo
     {
         const auto& statement = graph.statement(index);
         roots.add(statement.value);
-
-        // A store and an atomic add each subscript their resource with an
-        // expression of their own, which nothing else in the statement reaches -
-        // so a uniform read only there would otherwise go undeclared.
         roots.add(statement.index);
         roots.add(statement.indexY);
 
@@ -994,7 +1053,9 @@ bool anyReferencesUniform(const ShaderGraph& graph, const Vector<int>& roots)
     return false;
 }
 
-bool vertexUsesUniforms(const ShaderGraph& graph)
+// Every expression the vertex stage evaluates: the clip position and each
+// varying it hands the fragment stage.
+Vector<int> vertexStageRoots(const ShaderGraph& graph)
 {
     auto roots = Vector<int> {};
     roots.add(graph.position());
@@ -1002,7 +1063,22 @@ bool vertexUsesUniforms(const ShaderGraph& graph)
     for (const auto& varying: graph.varyings())
         roots.add(varying.sourceNode);
 
-    return anyReferencesUniform(graph, roots);
+    return roots;
+}
+
+// Its fragment sibling: the colour, the alpha test when there is one, and what
+// the statements evaluate. Wider than the roots the colour's locals are planned
+// from, which is why emit() keeps both - a value a statement reads is declared
+// by the stage but named where the statement is emitted.
+Vector<int> fragmentStageRoots(const ShaderGraph& graph)
+{
+    auto roots = Vector<int> {graph.fragment()};
+
+    if (graph.discard() >= 0)
+        roots.add(graph.discard());
+
+    collectStatementRoots(graph, ShaderGraph::rootBlock, roots);
+    return roots;
 }
 
 // Which storage-buffer slots a run of expressions subscripts. A render stage
@@ -1132,32 +1208,6 @@ const char* hlslBufferType(BufferAccess access)
     return "StructuredBuffer<float>";
 }
 
-// The threadgroup arrays, spelled where each language puts them: MSL's
-// `threadgroup` is a local of the kernel function and HLSL's `groupshared` is a
-// global, so the same declaration lands on opposite sides of the entry point.
-// Neither is initialised, in either language - what a shared array holds before
-// anything writes it is undefined, which is why every use of one starts by
-// filling it and then waiting.
-std::string sharedArrayDeclarations(const ShaderGraph& graph,
-                                    Backend backend,
-                                    const std::string& indent)
-{
-    auto source = std::string {};
-
-    for (auto slot = 0; slot < graph.sharedArrays().size(); ++slot)
-    {
-        const auto& array = graph.sharedArrays()[slot];
-
-        source += indent
-                  + std::string(backend == Backend::Metal ? "threadgroup "
-                                                          : "groupshared ")
-                  + typeName(array.elementType) + " s" + std::to_string(slot) + "["
-                  + std::to_string(array.size) + "];\n";
-    }
-
-    return source;
-}
-
 // Compute kernel emission. The expression printer is the render one; only the
 // scaffolding differs: storage buffers and the uniform block are MSL kernel
 // parameters but HLSL globals, and the work-item id arrives as a builtin
@@ -1237,11 +1287,28 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         source += std::string(is2D ? "uint2" : "uint")
                   + " gid [[thread_position_in_grid]]";
 
-        if (graph.usesThreadIndexInGroup())
-            source += ",\n    uint lid [[thread_index_in_threadgroup]]";
+        auto indexType = std::string(is2D ? "uint2" : "uint");
+
+        if (graph.usesLocalId())
+            source +=
+                ",\n    " + indexType + " lid [[thread_position_in_threadgroup]]";
+
+        if (graph.usesGroupId())
+            source +=
+                ",\n    " + indexType + " tgid [[threadgroup_position_in_grid]]";
 
         source += ")\n{\n";
-        source += sharedArrayDeclarations(graph, backend, "    ");
+
+        // Threadgroup arrays are body-scope declarations on Metal, ahead of
+        // everything that subscripts them.
+        for (auto i = 0; i < graph.sharedArrays().size(); ++i)
+        {
+            const auto& shared = graph.sharedArrays()[i];
+
+            source += "    threadgroup " + std::string(typeName(shared.elementType))
+                      + " s" + std::to_string(i) + "["
+                      + std::to_string(shared.elements) + "];\n";
+        }
     }
     else
     {
@@ -1289,7 +1356,15 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         if (graph.textureCount() > 0)
             source += "\n";
 
-        source += sharedArrayDeclarations(graph, backend, "");
+        // Threadgroup arrays are globals on HLSL, like the buffers above.
+        for (auto i = 0; i < graph.sharedArrays().size(); ++i)
+        {
+            const auto& shared = graph.sharedArrays()[i];
+
+            source += "groupshared " + std::string(typeName(shared.elementType))
+                      + " s" + std::to_string(i) + "["
+                      + std::to_string(shared.elements) + "];\n";
+        }
 
         if (graph.sharedArrays().size() > 0)
             source += "\n";
@@ -1302,30 +1377,38 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                   + std::to_string(groupHeight) + ", 1)]\n";
         source += "void computeMain(uint3 threadId : SV_DispatchThreadID";
 
-        if (graph.usesThreadIndexInGroup())
-            source += ", uint lid : SV_GroupIndex";
+        if (graph.usesLocalId())
+            source += ", uint3 localThread : SV_GroupThreadID";
+
+        if (graph.usesGroupId())
+            source += ", uint3 groupIndex : SV_GroupID";
 
         source += ")\n{\n";
         source +=
             is2D ? "    uint2 gid = threadId.xy;\n" : "    uint gid = threadId.x;\n";
+
+        if (graph.usesLocalId())
+            source += is2D ? "    uint2 lid = localThread.xy;\n"
+                           : "    uint lid = localThread.x;\n";
+
+        if (graph.usesGroupId())
+            source += is2D ? "    uint2 tgid = groupIndex.xy;\n"
+                           : "    uint tgid = groupIndex.x;\n";
     }
 
-    // A kernel that waits for its group is dispatched over a whole number of
-    // groups - ComputeProgram refuses anything else - so every thread of it is
-    // inside the grid and there is nothing for the guard to retire. Emitting it
-    // anyway is worse than dead code: a return above a barrier is exactly the
-    // varying flow control *around* one that the two languages will not have,
-    // and HLSL rejects the kernel outright rather than compiling it (X4026).
-    if (!graph.usesBarriers())
+    // The early-return bounds guard the rounded-up dispatch needs - except in
+    // a kernel that barriers, where a return some threads take ahead of a
+    // barrier the rest sit at is undefined on both backends. There every
+    // thread runs the whole body, and the kernel bounds its own stores
+    // against gridCount()/gridWidth()/gridHeight() instead.
+    if (!graph.usesBarrier())
         source += is2D ? "    if (gid.x >= uniforms.width || gid.y >= "
                          "uniforms.height)\n        return;\n"
                        : "    if (gid >= uniforms.count)\n        return;\n";
 
-    // A kernel's whole body is its statement stream now, stores included, so
-    // there is nothing to emit after it. That is the fix for stores having once
-    // been roots emitted at the end: one written inside an ifThen ran whatever
-    // the condition said, and one inside a loop ran once afterwards, on the
-    // counter's final value.
+    // Stores ride the statement stream like everything else, so the body is
+    // one block walk: a write records where it was made, inside whatever
+    // loop or branch was open, and the emitter has no end-of-kernel step.
     auto stageRoots = Vector<int> {};
     collectStatementRoots(graph, ShaderGraph::rootBlock, stageRoots);
 
@@ -1422,16 +1505,13 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     // setFragmentBytes bind. Uniforms live at buffer(uniformBase..) so a
     // vertex layout with multiple per-instance slots (0..N) never collides
     // with them.
-    auto vertexRoots = Vector<int> {graph.position()};
-
-    for (auto i = 0; i < graph.varyings().size(); ++i)
-        vertexRoots.add(graph.varyings()[i].sourceNode);
+    auto vertexRoots = vertexStageRoots(graph);
 
     if (backend == Backend::Metal)
     {
         source += "vertex VertexOut vertexMain(VertexIn input [[stage_in]]";
 
-        if (hasUniforms && vertexUsesUniforms(graph))
+        if (hasUniforms && vertexReadsUniforms(graph))
             source += ", constant Uniforms& uniforms [[buffer("
                       + std::to_string(RenderPass::uniformBase) + ")]]";
 
@@ -1471,16 +1551,13 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     // What the statements read counts towards the stage's uniform declaration,
     // but not towards the colour's locals: a statement's own expressions are
     // named where that statement is emitted, above.
-    auto stageRoots = fragmentRoots;
-    collectStatementRoots(graph, ShaderGraph::rootBlock, stageRoots);
-
-    auto fragmentReadsUniform = anyReferencesUniform(graph, stageRoots);
+    auto stageRoots = fragmentStageRoots(graph);
 
     if (backend == Backend::Metal)
     {
         source += "fragment float4 fragmentMain(VertexOut input [[stage_in]]";
 
-        if (hasUniforms && fragmentReadsUniform)
+        if (hasUniforms && fragmentReadsUniforms(graph))
             source += ",\n    constant Uniforms& uniforms [[buffer("
                       + std::to_string(RenderPass::uniformBase) + ")]]";
 
@@ -1520,6 +1597,16 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     return source;
 }
 } // namespace
+
+bool vertexReadsUniforms(const ShaderGraph& graph)
+{
+    return anyReferencesUniform(graph, vertexStageRoots(graph));
+}
+
+bool fragmentReadsUniforms(const ShaderGraph& graph)
+{
+    return anyReferencesUniform(graph, fragmentStageRoots(graph));
+}
 
 std::string emitMetal(const ShaderGraph& graph)
 {

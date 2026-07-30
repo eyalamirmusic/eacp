@@ -16,4 +16,14 @@ Texture Device::makeTexture(const Graphics::Image& image)
 
     return makeTexture(descriptor, image.pixels().data());
 }
+
+void Device::beginFrame()
+{
+    ++frameCount;
+
+    // The timer takes its slot from the counter, the same way StreamingBuffers
+    // takes its pool from it - one advance, driven by whoever built the Frame,
+    // and nothing for either of them to be told separately.
+    timer.beginFrame(frameCount);
+}
 } // namespace eacp::GPU

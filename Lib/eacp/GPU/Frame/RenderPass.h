@@ -73,6 +73,39 @@ public:
     // Restores rasterization to the whole render target.
     void clearScissorRect();
 
+    // Maps clip space onto rect instead of onto the whole render target, in
+    // render-target *pixels* with the origin at the top-left - the same units
+    // and orientation setScissorRect uses.
+    //
+    // This is not a scissor and does not clip: it moves and scales what is
+    // drawn. Geometry filling clip space fills rect; geometry covering the left
+    // half of clip space covers the left half of rect, wherever rect is. That
+    // is what renders a scene into one pane of a split screen, or a shadow map
+    // into one tile of an atlas, without touching a single vertex - and it is
+    // why a scissor cannot do the job, since a scissor set to the same
+    // rectangle would simply throw that geometry away.
+    //
+    // near/far remap the depth a fragment writes: a viewport of [0.5, 1] puts
+    // everything it draws behind everything drawn at the default [0, 1],
+    // whatever its own geometry says. Both backends take the same range and
+    // mean the same thing by it.
+    //
+    // A rect that is empty, or not wholly inside the render target, is a no-op
+    // - deliberately not clamped, for the reason Texture::update gives about
+    // regions. Clamping a scissor is right because the clipped picture is the
+    // one the caller wanted; clamping a *viewport* would keep drawing and
+    // silently squash the image into the clamped rectangle, which looks like a
+    // rendering bug anywhere but here. Nothing appearing is easier to find.
+    //
+    // Viewport state persists for the rest of the pass; call clearViewport to
+    // go back to the whole target.
+    void setViewport(const Graphics::Rect& rect,
+                     float nearDepth = 0.f,
+                     float farDepth = 1.f);
+
+    // Restores the viewport to the whole render target at depth [0, 1].
+    void clearViewport();
+
     void setPipeline(const RenderPipeline& pipeline);
     void setVertexBuffer(const Buffer& buffer, int index = 0);
 
@@ -156,37 +189,57 @@ public:
 
     // Draws indexCount indices from an Index-usage buffer, assembling with the
     // pipeline's topology. firstIndex is an offset into the index buffer.
+    //
+    // baseVertex is added to every index before the vertex is fetched, which is
+    // what lets one vertex buffer hold many meshes while each keeps indices
+    // starting from zero. Without it a caller packing meshes together has to
+    // bake the offset into the index values as it copies them in - a pass over
+    // every index, and one that forces 32-bit indices as soon as the shared
+    // buffer passes 65536 vertices even when no single mesh is near that.
     void drawIndexed(const Buffer& indices,
                      int indexCount,
                      IndexFormat format = IndexFormat::UInt32,
-                     int firstIndex = 0);
+                     int firstIndex = 0,
+                     int baseVertex = 0);
 
     // Instanced sibling of drawIndexed: reuses the index buffer per instance.
-    // Same step-rate semantics as drawInstanced.
+    // Same step-rate semantics as drawInstanced, and the same baseVertex.
     void drawIndexedInstanced(const Buffer& indices,
                               int indexCount,
                               int instanceCount,
                               IndexFormat format = IndexFormat::UInt32,
                               int firstIndex = 0,
-                              int firstInstance = 0);
+                              int firstInstance = 0,
+                              int baseVertex = 0);
+
+    // Binds a program's uniform block to the stage that reads it, and to no
+    // other. The program answers per stage from the same walk that decided
+    // whether to declare the block in that stage's generated function, so the
+    // bind cannot disagree with the signature it is aimed at - and a stage that
+    // never declared it is not bound at all, which is what the validation layer
+    // reports as an unused binding. A program whose uniforms neither stage
+    // reads binds nothing. draw(program) calls this; app code hand-rolling a
+    // draw over its own geometry should call it rather than the two setters.
+    template <typename Program>
+    void setUniforms(Program& program, int slot = 0)
+    {
+        if (program.vertexReadsUniforms())
+            setVertexUniforms(program, slot);
+
+        if (program.fragmentReadsUniforms())
+            setFragmentUniforms(program, slot);
+    }
 
     // Binds and draws a prepared ShaderProgram in one call: its pipeline, vertex
     // buffer, uniform block and textures, then an indexed draw when the program
-    // owns indices and a plain one otherwise. The uniform block is bound to both
-    // stages so a uniform works wherever define() reads it; a stage whose
-    // generated function never declares the block ignores the bind. Templated so
-    // this header stays independent of the codegen layer.
+    // owns indices and a plain one otherwise. Templated so this header stays
+    // independent of the codegen layer.
     template <typename Program>
     void draw(Program& program)
     {
         setPipeline(program.pipeline());
         setVertexBuffer(program.vertices());
-
-        if (program.hasUniforms())
-        {
-            setVertexUniforms(program);
-            setFragmentUniforms(program);
-        }
+        setUniforms(program);
 
         program.bindTextures(*this);
         program.bindBuffers(*this);
@@ -211,12 +264,7 @@ public:
         setPipeline(program.pipeline());
         setVertexBuffer(program.vertices(), 0);
         program.bindInstances(*this);
-
-        if (program.hasUniforms())
-        {
-            setVertexUniforms(program);
-            setFragmentUniforms(program);
-        }
+        setUniforms(program);
 
         program.bindTextures(*this);
         program.bindBuffers(*this);
