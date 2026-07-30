@@ -41,6 +41,10 @@ constexpr auto tileCount = 240;
 constexpr auto tileSize = 170.f;
 constexpr auto padding = 12.f;
 
+// Points a second, which walks the forty rows in about half a minute - long
+// enough to watch the atlas fill and reach its ceiling on the way down.
+constexpr auto scrollPerSecond = 240.f;
+
 // A tile's shape, and the whole point of it being a different shape per tile: a
 // mask drawn through the wrong slot is a polygon with the wrong number of sides,
 // which is visible. Sides run 3 to 11 and the rotation varies too, so no two
@@ -225,15 +229,48 @@ struct DemoHost final : UI::ComponentHost
 
         onPathsDropped = [](int count)
         { LOG("coverage atlas: ", count, " shapes with no room in it"); };
+
+        // The compositor's clock rather than a Threads::Timer. A timer on Windows
+        // is a WM_TIMER, which rounds its period up to the ~15.6ms system tick: a
+        // request for 60Hz arrives at 39Hz in alternating 16 and 31ms steps, and
+        // no rate above about 59Hz is reachable however much more you ask for.
+        // The scroll stuttered at a cadence the renderer had nothing to do with -
+        // it does 0.2ms of work a frame. DisplayLink is the display's own clock,
+        // which is what a frame wants, and it is what setContinuous drives.
+        setContinuous(true);
     }
 
-    // Stops of its own accord: the panel clamps at the bottom and ignores a
-    // position it is already at, so the frames stop coming with it.
-    void step() { root.list.setScrollPosition(root.list.getScrollPosition() + 6.f); }
+    // In points per second against the frame's own delta, rather than a fixed step
+    // per frame: the step form walks the list at whatever rate the clock happens
+    // to run at, which is 120Hz on this display and 60 on the next one.
+    //
+    // Stops of its own accord, as it always did: the panel clamps at the bottom
+    // and a position it is already at is what says so. Torn down from a fresh
+    // stack frame because stopContinuous() destroys the link, and this is running
+    // inside the link's own callback.
+    void update(Threads::FrameTime frame) override
+    {
+        auto step = scrollPerSecond * (float) frame.delta;
+
+        // The first tick carries no delta, so it asks for no movement -- and a
+        // request for none is not the panel refusing to move, which is what the
+        // test below is for. Told apart here rather than there, because getting it
+        // wrong stopped the walk on frame one and looked like the link never ran.
+        if (step <= 0.f)
+            return;
+
+        auto before = root.list.getScrollPosition();
+        root.list.setScrollPosition(before + step);
+
+        if (root.list.getScrollPosition() == before && !stopping)
+        {
+            stopping = true;
+            Threads::callAsync([this] { setContinuous(false); });
+        }
+    }
 
     DemoRoot root;
-
-    Threads::Timer scroller {[this] { step(); }, 60};
+    bool stopping = false;
 };
 
 Graphics::WindowOptions makeOptions()
