@@ -377,13 +377,14 @@ struct Window::Native
                                                                 alpha:c.a]];
         }
 
-        if (options.cornerRadius)
+        // An opaque window paints its background square into the corners, and
+        // over everything a see-through content view was meant to reveal. Make
+        // the window itself clear and let the content — clipped to the radius
+        // in setContentView — define the visible shape; the shadow follows it
+        // automatically. This wins over backgroundColor by design; see
+        // WindowOptions.
+        if (options.cornerRadius || options.transparentBackground)
         {
-            // An opaque window paints its background square into the
-            // corners. Make the window itself clear and let the rounded,
-            // clipped content view (see setContentView) define the visible
-            // shape — the shadow follows it automatically. This wins over
-            // backgroundColor by design; see WindowOptions.
             [getWindow() setOpaque:NO];
             [getWindow() setBackgroundColor:[NSColor clearColor]];
         }
