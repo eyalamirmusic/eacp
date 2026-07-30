@@ -55,7 +55,16 @@ void CommandBuffer::commit()
         return;
 
     impl->committed = true;
-    getD3D12Context().submit(impl->commands);
+
+    // Waits, because Metal's commit does ([buffer waitUntilCompleted]) and one
+    // contract has to hold on both backends. Without it they disagree on what a
+    // returned commit() means: code that commits and then reads its results
+    // through anything but Buffer::read - which waits on its own fence - would
+    // race here and not there, and a benchmark timing commit() would measure
+    // the CPU-side record on this backend and the finished work on that one.
+    // commitAsync() is how a caller opts out of the wait.
+    auto& context = getD3D12Context();
+    context.waitFor(context.submit(impl->commands));
 }
 
 Threads::Async<void> CommandBuffer::commitAsync()

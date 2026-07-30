@@ -141,35 +141,20 @@ void Buffer::read(void* dst, std::size_t bytes, std::size_t offset) const
     if (commands == nullptr)
         return;
 
-    D3D12_HEAP_PROPERTIES heap = {};
-    heap.Type = D3D12_HEAP_TYPE_READBACK;
+    // Out of the pool, for the reason the upload side takes one: a read
+    // repeats every run at the same size, and creating a committed resource
+    // costs more than the copy. The pool owns it - it must not be parked in
+    // transients, and it stays valid until the fence this submission signals.
+    auto* staging = context.acquireReadbackBuffer(*commands, count);
 
-    D3D12_RESOURCE_DESC desc = {};
-    desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    desc.Width = count;
-    desc.Height = 1;
-    desc.DepthOrArraySize = 1;
-    desc.MipLevels = 1;
-    desc.SampleDesc.Count = 1;
-    desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-    auto staging = winrt::com_ptr<ID3D12Resource>();
-
-    if (FAILED(context.getDevice()->CreateCommittedResource(
-            &heap,
-            D3D12_HEAP_FLAG_NONE,
-            &desc,
-            D3D12_RESOURCE_STATE_COPY_DEST,
-            nullptr,
-            __uuidof(ID3D12Resource),
-            staging.put_void())))
+    if (staging == nullptr)
     {
         context.discard(commands);
         return;
     }
 
     transitionForUse(*commands, impl->bufferData, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    commands->list->CopyBufferRegion(staging.get(), 0, source, offset, count);
+    commands->list->CopyBufferRegion(staging, 0, source, offset, count);
 
     // The copy was enqueued on the same queue as the writes, so waiting on
     // this submission's fence also waits for them.
@@ -202,18 +187,37 @@ void Buffer::update(const void* data, std::size_t bytes, std::size_t offset)
 
     auto available = impl->bufferData.size - offset;
     auto count = bytes < available ? bytes : available;
-    auto staging = context.makeUploadBuffer(data, count);
     auto* commands = context.acquire();
 
-    if (staging == nullptr || commands == nullptr)
+    if (commands == nullptr)
+        return;
+
+    // Out of the pool rather than freshly created: an update repeats every
+    // frame at the same size - a model's input tensor, a video frame - and
+    // creating a committed resource costs far more than the copy it exists
+    // for. The pool owns it, so it must not be parked in transients.
+    auto* staging = context.acquireStagingBuffer(*commands, count);
+
+    if (staging == nullptr)
     {
         context.discard(commands);
         return;
     }
 
+    void* mapped = nullptr;
+    const D3D12_RANGE noRead = {0, 0};
+
+    if (FAILED(staging->Map(0, &noRead, &mapped)))
+    {
+        context.discard(commands);
+        return;
+    }
+
+    std::memcpy(mapped, data, count);
+    staging->Unmap(0, nullptr);
+
     transitionForUse(*commands, impl->bufferData, D3D12_RESOURCE_STATE_COPY_DEST);
-    commands->list->CopyBufferRegion(resource, offset, staging.get(), 0, count);
-    commands->transients.add(std::move(staging));
+    commands->list->CopyBufferRegion(resource, offset, staging, 0, count);
     context.submit(commands);
 }
 
