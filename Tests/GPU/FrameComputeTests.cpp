@@ -696,3 +696,99 @@ auto tReadAfterCommitAsyncIsOrdered =
     for (auto i = 0; i < kernelCount; ++i)
         check(result[i] == kernelInput[i] * kernelScale);
 };
+
+namespace
+{
+// Groups of 64 sum their slice of the input through a threadgroup tile: each
+// thread loads one element (zero out of range - a kernel that barriers has no
+// early return to take), a log2(64)-step tree folds the tile in half per
+// barrier, and the group leader writes the partial sum.
+struct GroupSumKernel final : ComputeProgram
+{
+    GroupSumKernel() { compile(); }
+
+    void define() override
+    {
+        auto gid = threadId();
+        auto lid = localId();
+        auto group = groupId();
+        auto tile = shared<Float>(groupWidth);
+
+        auto value = var(0.0f);
+        ifThen(gid < gridCount(), [&] { value = input[gid]; });
+        write(tile, lid, value.get());
+        barrier();
+
+        for (auto stride = groupWidth / 2; stride > 0; stride /= 2)
+        {
+            auto bound = (unsigned) stride;
+
+            ifThen(lid < bound,
+                   [&] { write(tile, lid, tile[lid] + tile[lid + bound]); });
+            barrier();
+        }
+
+        ifThen(lid == 0u, [&] { write(output, group, tile[0u]); });
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(input, output)
+};
+} // namespace
+
+// The whole shared-memory contract on the device: cross-thread visibility
+// through the tile, barrier ordering, and the guard-less bottom - the grid is
+// deliberately not a multiple of the group, so the excess threads run the
+// whole body and must contribute zeros rather than garbage or a hang. Small
+// integers sum exactly in float, so the checks are equalities.
+auto tSharedMemoryGroupSums = test("FrameCompute/sharedMemoryGroupSums") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto count = 130;
+    constexpr auto width = ComputePass::threadGroupWidth;
+    constexpr auto groups = (count + width - 1) / width;
+
+    float values[count] = {};
+
+    for (auto i = 0; i < count; ++i)
+        values[i] = (float) (i % 7 + 1);
+
+    auto source = device.makeBuffer(values, sizeof(values), BufferUsage::Storage);
+    auto sums = device.makeBuffer(sizeof(float) * groups, BufferUsage::Storage);
+
+    auto kernel = GroupSumKernel {};
+    kernel.input = source;
+    kernel.output = sums;
+    kernel.prepare();
+
+    {
+        auto commands = device.makeCommandBuffer();
+
+        {
+            auto pass = commands.beginCompute();
+            pass.dispatch(kernel, count);
+        }
+
+        commands.commit();
+    }
+
+    float result[groups] = {};
+    sums.read(result, sizeof(result));
+
+    for (auto group = 0; group < groups; ++group)
+    {
+        auto last = group == groups - 1 ? count : (group + 1) * width;
+        auto expected = 0.0f;
+
+        for (auto i = group * width; i < last; ++i)
+            expected += values[i];
+
+        check(result[group] == expected);
+    }
+};

@@ -281,6 +281,33 @@ struct ExprPrinter
             case ExprKind::ArrayRead:
                 return "a" + std::to_string(expr.index) + "[" + ref(expr.args[0])
                        + "]";
+
+            // The threadgroup indices ride the same scaffolding as gid: both
+            // backends' entry points bind them to these names, a scalar in a
+            // 1D kernel and a pair in a 2D one.
+            case ExprKind::LocalId:
+                if (graph.dispatchRank() == DispatchRank::OneD)
+                    return "lid";
+
+                return expr.index == 0 ? "lid.x" : "lid.y";
+
+            case ExprKind::GroupId:
+                if (graph.dispatchRank() == DispatchRank::OneD)
+                    return "tgid";
+
+                return expr.index == 0 ? "tgid.x" : "tgid.y";
+
+            // The implicit bound the dispatch appended to the uniform block,
+            // under the names the block declares it with.
+            case ExprKind::GridExtent:
+                if (graph.dispatchRank() == DispatchRank::OneD)
+                    return "uniforms.count";
+
+                return expr.index == 0 ? "uniforms.width" : "uniforms.height";
+
+            case ExprKind::SharedRead:
+                return "s" + std::to_string(expr.index) + "[" + ref(expr.args[0])
+                       + "]";
         }
 
         return {};
@@ -308,6 +335,7 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Fetch:
         case ExprKind::BufferRead:
         case ExprKind::ArrayRead:
+        case ExprKind::SharedRead:
             return true;
 
         case ExprKind::Input:
@@ -317,6 +345,9 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Swizzle:
         case ExprKind::VarRead:
         case ExprKind::ThreadId:
+        case ExprKind::LocalId:
+        case ExprKind::GroupId:
+        case ExprKind::GridExtent:
             return false;
     }
 
@@ -424,8 +455,56 @@ void collectWrites(const ShaderGraph& graph,
         case StatementKind::Continue:
         case StatementKind::Store:
         case StatementKind::TextureStore:
+        case StatementKind::SharedStore:
+        case StatementKind::Barrier:
             return;
     }
+}
+
+// Whether running a statement can change what threadgroup memory holds: a
+// store to it, or the barrier that publishes what other threads stored -
+// following nested bodies the way collectWrites does. What this feeds is the
+// same rule variables get: a name computed from shared memory is given up the
+// moment shared memory may have moved on.
+bool touchesShared(const ShaderGraph& graph, int block);
+
+bool touchesShared(const ShaderGraph& graph, const Statement& statement)
+{
+    switch (statement.kind)
+    {
+        case StatementKind::SharedStore:
+        case StatementKind::Barrier:
+            return true;
+
+        case StatementKind::If:
+            if (touchesShared(graph, statement.body))
+                return true;
+
+            return statement.elseBody >= 0
+                   && touchesShared(graph, statement.elseBody);
+
+        case StatementKind::Loop:
+            return touchesShared(graph, statement.body);
+
+        case StatementKind::Declare:
+        case StatementKind::Assign:
+        case StatementKind::Break:
+        case StatementKind::Continue:
+        case StatementKind::Store:
+        case StatementKind::TextureStore:
+            return false;
+    }
+
+    return false;
+}
+
+bool touchesShared(const ShaderGraph& graph, int block)
+{
+    for (auto index: graph.block(block).statements)
+        if (touchesShared(graph, graph.statement(index)))
+            return true;
+
+    return false;
 }
 
 void collectWrites(const ShaderGraph& graph, int block, Vector<char>& written)
@@ -467,10 +546,14 @@ struct VisitSet
     int generation = 1;
 };
 
-bool readsAny(const ShaderGraph& graph,
-              int node,
-              const Vector<char>& written,
-              VisitSet& seen)
+// Whether the value under node no longer stands for itself after a statement:
+// it read a variable that statement wrote, or it read threadgroup memory and
+// the statement may have moved what that holds.
+bool readsStale(const ShaderGraph& graph,
+                int node,
+                const Vector<char>& written,
+                bool sharedMoved,
+                VisitSet& seen)
 {
     if (node < 0 || !seen.visit(node))
         return false;
@@ -480,8 +563,11 @@ bool readsAny(const ShaderGraph& graph,
     if (expr.kind == ExprKind::VarRead && written[expr.index] != 0)
         return true;
 
+    if (sharedMoved && expr.kind == ExprKind::SharedRead)
+        return true;
+
     for (auto argument: expr.args)
-        if (readsAny(graph, argument, written, seen))
+        if (readsStale(graph, argument, written, sharedMoved, seen))
             return true;
 
     return false;
@@ -659,6 +745,26 @@ struct StageEmitter
                           + "] = " + printer.ref(statement.value) + ";\n";
                 break;
 
+            case StatementKind::SharedStore:
+                source =
+                    define({statement.index, statement.value}, indent, uses, open);
+                source += indent + "s" + std::to_string(statement.slot) + "["
+                          + printer.ref(statement.index)
+                          + "] = " + printer.ref(statement.value) + ";\n";
+                break;
+
+            // The synchronisation point itself. The names it invalidates -
+            // anything computed from shared memory - are given up by the
+            // dropStale below, the same pass an assignment retires its
+            // variable's readers through.
+            case StatementKind::Barrier:
+                source =
+                    indent
+                    + (printer.backend == Backend::Metal
+                           ? "threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+                           : "GroupMemoryBarrierWithGroupSync();\n");
+                break;
+
             // The one place the two languages spell a write differently: MSL
             // takes the colour first and the coordinate second, HLSL
             // subscripts the texture like an array.
@@ -770,17 +876,20 @@ private:
 
     void dropStale(const Statement& statement, Vector<int>& open)
     {
-        if (open.empty() || graph().variables().empty())
+        if (open.empty())
             return;
+
+        auto sharedMoved = touchesShared(graph(), statement);
 
         written.assign(graph().variables().size(), 0);
         collectWrites(graph(), statement, written);
 
-        // A statement that leaves no variable holding something else cannot
-        // have staled a name, and most do not: a break, a continue, and an if
-        // whose bodies only compute. Asking each open name about an empty set
-        // is the same walk for a guaranteed no.
-        if (!written.contains(1))
+        // A statement that leaves no variable holding something else and
+        // moves no shared memory cannot have staled a name, and most do not:
+        // a break, a continue, and an if whose bodies only compute. Asking
+        // each open name about an empty set is the same walk for a
+        // guaranteed no.
+        if (!written.contains(1) && !sharedMoved)
             return;
 
         auto kept = Vector<int> {};
@@ -789,7 +898,7 @@ private:
         {
             visited.restart();
 
-            if (readsAny(graph(), node, written, visited))
+            if (readsStale(graph(), node, written, sharedMoved, visited))
                 locals[node] = -1;
             else
                 kept.add(node);
@@ -1075,7 +1184,30 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         source += "constant Uniforms& uniforms [[buffer("
                   + std::to_string(ComputePass::uniformBase) + ")]],\n    ";
         source += std::string(is2D ? "uint2" : "uint")
-                  + " gid [[thread_position_in_grid]])\n{\n";
+                  + " gid [[thread_position_in_grid]]";
+
+        auto indexType = std::string(is2D ? "uint2" : "uint");
+
+        if (graph.usesLocalId())
+            source +=
+                ",\n    " + indexType + " lid [[thread_position_in_threadgroup]]";
+
+        if (graph.usesGroupId())
+            source +=
+                ",\n    " + indexType + " tgid [[threadgroup_position_in_grid]]";
+
+        source += ")\n{\n";
+
+        // Threadgroup arrays are body-scope declarations on Metal, ahead of
+        // everything that subscripts them.
+        for (auto i = 0; i < graph.sharedArrays().size(); ++i)
+        {
+            const auto& shared = graph.sharedArrays()[i];
+
+            source += "    threadgroup " + std::string(typeName(shared.elementType))
+                      + " s" + std::to_string(i) + "["
+                      + std::to_string(shared.elements) + "];\n";
+        }
     }
     else
     {
@@ -1123,20 +1255,55 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         if (graph.textureCount() > 0)
             source += "\n";
 
+        // Threadgroup arrays are globals on HLSL, like the buffers above.
+        for (auto i = 0; i < graph.sharedArrays().size(); ++i)
+        {
+            const auto& shared = graph.sharedArrays()[i];
+
+            source += "groupshared " + std::string(typeName(shared.elementType))
+                      + " s" + std::to_string(i) + "["
+                      + std::to_string(shared.elements) + "];\n";
+        }
+
+        if (graph.sharedArrays().size() > 0)
+            source += "\n";
+
         auto groupWidth =
             is2D ? ComputePass::threadGroupSize2D : ComputePass::threadGroupWidth;
         auto groupHeight = is2D ? ComputePass::threadGroupSize2D : 1;
 
         source += "[numthreads(" + std::to_string(groupWidth) + ", "
                   + std::to_string(groupHeight) + ", 1)]\n";
-        source += "void computeMain(uint3 threadId : SV_DispatchThreadID)\n{\n";
+        source += "void computeMain(uint3 threadId : SV_DispatchThreadID";
+
+        if (graph.usesLocalId())
+            source += ", uint3 localThread : SV_GroupThreadID";
+
+        if (graph.usesGroupId())
+            source += ", uint3 groupIndex : SV_GroupID";
+
+        source += ")\n{\n";
         source +=
             is2D ? "    uint2 gid = threadId.xy;\n" : "    uint gid = threadId.x;\n";
+
+        if (graph.usesLocalId())
+            source += is2D ? "    uint2 lid = localThread.xy;\n"
+                           : "    uint lid = localThread.x;\n";
+
+        if (graph.usesGroupId())
+            source += is2D ? "    uint2 tgid = groupIndex.xy;\n"
+                           : "    uint tgid = groupIndex.x;\n";
     }
 
-    source += is2D ? "    if (gid.x >= uniforms.width || gid.y >= "
-                     "uniforms.height)\n        return;\n"
-                   : "    if (gid >= uniforms.count)\n        return;\n";
+    // The early-return bounds guard the rounded-up dispatch needs - except in
+    // a kernel that barriers, where a return some threads take ahead of a
+    // barrier the rest sit at is undefined on both backends. There every
+    // thread runs the whole body, and the kernel bounds its own stores
+    // against gridCount()/gridWidth()/gridHeight() instead.
+    if (!graph.usesBarrier())
+        source += is2D ? "    if (gid.x >= uniforms.width || gid.y >= "
+                         "uniforms.height)\n        return;\n"
+                       : "    if (gid >= uniforms.count)\n        return;\n";
 
     // Stores ride the statement stream like everything else, so the body is
     // one block walk: a write records where it was made, inside whatever

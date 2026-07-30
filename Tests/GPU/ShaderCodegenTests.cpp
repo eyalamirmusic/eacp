@@ -2568,3 +2568,126 @@ auto tCodegenUniformCompiles = test("GPU/codegenUniformCompiles") = []
     auto pipeline = device.makeRenderPipeline(descriptor);
     check(pipeline.isValid());
 };
+
+// A shared-memory reduction kernel end to end in text: the threadgroup tile,
+// the local and group ids in the entry signature, the barrier - and the guard
+// that is not there. A kernel that barriers gets no early return, because a
+// barrier below a return some threads took is undefined on both backends;
+// what bounds its loads instead is gridCount(), the same value the guard
+// would have read.
+auto tCodegenComputeSharedReduction = test("GPU/codegenComputeSharedReduction") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto gid = builder.threadId();
+    auto lid = builder.localId();
+    auto group = builder.groupId();
+    auto tile = builder.shared<Float>(64);
+
+    auto value = builder.var(0.0f);
+    builder.ifThen(gid < builder.gridCount(), [&] { value = input[gid]; });
+    builder.write(tile, lid, value.get());
+    builder.barrier();
+
+    builder.ifThen(lid < 32u,
+                   [&] { builder.write(tile, lid, tile[lid] + tile[lid + 32u]); });
+    builder.barrier();
+
+    builder.ifThen(lid == 0u, [&] { builder.write(output, group, tile[0u]); });
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "uint lid [[thread_position_in_threadgroup]]"));
+    check(contains(metal, "uint tgid [[threadgroup_position_in_grid]]"));
+    check(contains(metal, "threadgroup float s0[64];"));
+    check(contains(metal, "threadgroup_barrier(mem_flags::mem_threadgroup);"));
+    check(!contains(metal, "return;"));
+    check(contains(metal, "if ((gid < uniforms.count))"));
+    check(contains(metal, "s0[lid] = v0;"));
+    check(contains(metal, "s0[lid] = (s0[lid] + s0[(lid + 32u)]);"));
+    check(contains(metal, "buffer1[tgid] = s0[0u];"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "groupshared float s0[64];"));
+    check(contains(hlsl, "uint3 localThread : SV_GroupThreadID"));
+    check(contains(hlsl, "uint3 groupIndex : SV_GroupID"));
+    check(contains(hlsl, "uint lid = localThread.x;"));
+    check(contains(hlsl, "uint tgid = groupIndex.x;"));
+    check(contains(hlsl, "GroupMemoryBarrierWithGroupSync();"));
+    check(!contains(hlsl, "return;"));
+    check(contains(hlsl, "s0[lid] = (s0[lid] + s0[(lid + 32u)]);"));
+    check(contains(hlsl, "buffer1[tgid] = s0[0u];"));
+};
+
+// A name computed from shared memory does not survive a barrier: what the
+// tile held before other threads' stores were published is not what it holds
+// after, so the emitter re-reads rather than reusing the local - the same
+// rule an assignment imposes on the names that read its variable.
+auto tCodegenComputeSharedNamesRetire =
+    test("GPU/codegenComputeSharedNamesRetire") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto output = builder.outputBuffer();
+    auto gid = builder.threadId();
+    auto lid = builder.localId();
+    auto tile = builder.shared<Float>(64);
+
+    builder.write(tile, lid, toFloat(gid));
+    builder.barrier();
+
+    // Used twice, so it takes a name.
+    auto sum = tile[lid] + 1.0f;
+    builder.write(output, gid, sum * sum);
+
+    builder.barrier();
+
+    // The same handle used twice again: the pre-barrier name is gone, so the
+    // element is read - and named - afresh.
+    builder.write(output, gid + 1u, sum * sum);
+
+    auto metal = emitMetal(builder.graph());
+    check(countOccurrences(metal, "s0[lid] + 1.0") == 2);
+    check(contains(metal, "float t0 = (s0[lid] + 1.0);"));
+    check(contains(metal, "float t1 = (s0[lid] + 1.0);"));
+    check(contains(metal, "buffer0[gid] = (t0 * t0);"));
+    check(contains(metal, "buffer0[(gid + 1u)] = (t1 * t1);"));
+};
+
+// The 2D siblings and a wide element type: localPosition()/groupPosition()
+// ride the pair scaffolding exactly as threadPosition() does, and a shared
+// array of float4 declares its element type verbatim - it never crosses the
+// CPU boundary, so there is no scalar-layout contract to decompose it into.
+auto tCodegenComputeShared2DFloat4 = test("GPU/codegenComputeShared2DFloat4") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto position = builder.threadPosition();
+    auto local = builder.localPosition();
+    auto group = builder.groupPosition();
+    auto tile = builder.shared<Float4>(64);
+
+    auto flatLocal = local.y * 8u + local.x;
+    builder.write(
+        tile, flatLocal, input.read4(position.y * builder.gridWidth() + position.x));
+    builder.barrier();
+
+    auto picked = tile[group.x % 8u + group.y];
+    builder.write(output, position.y * builder.gridWidth() + position.x, picked);
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "uint2 lid [[thread_position_in_threadgroup]]"));
+    check(contains(metal, "uint2 tgid [[threadgroup_position_in_grid]]"));
+    check(contains(metal, "threadgroup float4 s0[64];"));
+    check(contains(metal, "s0[((lid.y * 8u) + lid.x)] = "));
+    check(contains(metal, "uniforms.width"));
+    check(!contains(metal, "return;"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "groupshared float4 s0[64];"));
+    check(contains(hlsl, "uint2 lid = localThread.xy;"));
+    check(contains(hlsl, "uint2 tgid = groupIndex.xy;"));
+};

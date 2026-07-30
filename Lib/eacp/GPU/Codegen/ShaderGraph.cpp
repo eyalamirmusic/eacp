@@ -18,6 +18,7 @@ bool dependsOnMutableState(ExprKind kind)
         case ExprKind::BufferRead:
         case ExprKind::Sample:
         case ExprKind::Fetch:
+        case ExprKind::SharedRead:
             return true;
 
         case ExprKind::Input:
@@ -34,6 +35,9 @@ bool dependsOnMutableState(ExprKind kind)
         case ExprKind::Mul:
         case ExprKind::ThreadId:
         case ExprKind::ArrayRead:
+        case ExprKind::LocalId:
+        case ExprKind::GroupId:
+        case ExprKind::GridExtent:
             return false;
     }
 
@@ -391,17 +395,18 @@ int ShaderGraph::addArrayRead(int slot, int index)
     return add(std::move(node));
 }
 
-int ShaderGraph::addThreadIndex(DispatchRank forRank, int component)
+int ShaderGraph::addIndexNode(ExprKind kind, DispatchRank forRank, int component)
 {
     assert((!rankFixed || rank == forRank)
-           && "eacp: a kernel takes either threadId() or threadPosition(), not "
-              "both - the dispatch has one grid shape");
+           && "eacp: a kernel takes either the 1D indices (threadId, localId, "
+              "groupId, gridCount) or the 2D ones, never both - the dispatch "
+              "has one grid shape");
 
     rank = forRank;
     rankFixed = true;
 
     auto node = Expr {};
-    node.kind = ExprKind::ThreadId;
+    node.kind = kind;
     node.type = ValueType::UInt;
     node.index = component;
     return add(std::move(node));
@@ -409,12 +414,72 @@ int ShaderGraph::addThreadIndex(DispatchRank forRank, int component)
 
 int ShaderGraph::addThreadId()
 {
-    return addThreadIndex(DispatchRank::OneD, 0);
+    return addIndexNode(ExprKind::ThreadId, DispatchRank::OneD, 0);
 }
 
 int ShaderGraph::addThreadPosition(int component)
 {
-    return addThreadIndex(DispatchRank::TwoD, component);
+    return addIndexNode(ExprKind::ThreadId, DispatchRank::TwoD, component);
+}
+
+int ShaderGraph::addLocalId()
+{
+    localIdUsed = true;
+    return addIndexNode(ExprKind::LocalId, DispatchRank::OneD, 0);
+}
+
+int ShaderGraph::addLocalPosition(int component)
+{
+    localIdUsed = true;
+    return addIndexNode(ExprKind::LocalId, DispatchRank::TwoD, component);
+}
+
+int ShaderGraph::addGroupId()
+{
+    groupIdUsed = true;
+    return addIndexNode(ExprKind::GroupId, DispatchRank::OneD, 0);
+}
+
+int ShaderGraph::addGroupPosition(int component)
+{
+    groupIdUsed = true;
+    return addIndexNode(ExprKind::GroupId, DispatchRank::TwoD, component);
+}
+
+int ShaderGraph::addGridExtent(DispatchRank forRank, int component)
+{
+    return addIndexNode(ExprKind::GridExtent, forRank, component);
+}
+
+int ShaderGraph::addSharedArray(ValueType elementType, int elements)
+{
+    sharedArrayList.add({elementType, elements});
+    return sharedArrayList.size() - 1;
+}
+
+int ShaderGraph::addSharedRead(int slot, int index)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::SharedRead;
+    node.type = sharedArrayList[slot].elementType;
+    node.index = slot;
+    node.args.add(index);
+    return add(std::move(node));
+}
+
+void ShaderGraph::addSharedStore(int slot, int index, int value)
+{
+    auto statement = Statement {StatementKind::SharedStore};
+    statement.slot = slot;
+    statement.index = index;
+    statement.value = value;
+    addStatement(statement);
+}
+
+void ShaderGraph::addBarrier()
+{
+    barrierUsed = true;
+    addStatement(Statement {StatementKind::Barrier});
 }
 
 int ShaderGraph::addStorageBuffer(BufferAccess access)
