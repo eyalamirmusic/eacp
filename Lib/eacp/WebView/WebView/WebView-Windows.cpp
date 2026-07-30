@@ -460,7 +460,11 @@ struct WebView::Native
                     registerSchemeHandlers();
                     updateBounds();
 
-                    controller->put_IsVisible(TRUE);
+                    // A window hidden while the controller was still
+                    // initializing (a tray app's panel, hidden right after it
+                    // is constructed) must not have the browser's window come
+                    // up on screen now.
+                    setControllerVisible(hostVisible);
 
                     initialized = true;
                     initInProgress = false;
@@ -1180,6 +1184,32 @@ struct WebView::Native
         return 1.f;
     }
 
+    // Visual hosting still leaves WebView2 a top-level window of its own for
+    // input, IME and accessibility, which it places in screen coordinates
+    // derived from the parent HWND. It re-derives that placement only when
+    // told: without this the window keeps the position the host had when the
+    // controller was created, so it is left behind wherever the window opened.
+    void notifyParentWindowMoved()
+    {
+        if (controller)
+            controller->NotifyParentWindowPositionChanged();
+    }
+
+    // That same window is shown and hidden independently of the host, so a
+    // hidden window (a tray app's panel, a minimized window) otherwise leaves
+    // it behind on screen — still hit-testable, and still compositing a page
+    // nobody can see. The host's visibility is remembered rather than read
+    // back, because it can change while the controller is still initializing —
+    // and because a window that has never been shown is not thereby hidden:
+    // an offscreen snapshot of one still needs the page rendering.
+    void setControllerVisible(bool visible)
+    {
+        hostVisible = visible;
+
+        if (controller)
+            controller->put_IsVisible(visible ? TRUE : FALSE);
+    }
+
     // --- Input forwarding ---------------------------------------------------
     // A visual-hosted WebView2 has no input HWND, so the framework forwards the
     // mouse events it routed to this View (see the WebView::mouse* overrides).
@@ -1507,6 +1537,9 @@ struct WebView::Native
 
     bool initialized = false;
     bool initInProgress = false;
+
+    // Whether the host window is showing. See setControllerVisible.
+    bool hostVisible = true;
 
     static constexpr int maxCompositionCreateRetries = 3;
     int compositionCreateRetries = 0;
@@ -1853,6 +1886,16 @@ void WebView::resized()
     View::resized();
     impl->ensureInitialized();
     impl->updateBounds();
+}
+
+void WebView::hostWindowMoved()
+{
+    impl->notifyParentWindowMoved();
+}
+
+void WebView::hostWindowVisibilityChanged(bool visible)
+{
+    impl->setControllerVisible(visible);
 }
 
 // Visual hosting gives the WebView no input HWND of its own, and the key-focus

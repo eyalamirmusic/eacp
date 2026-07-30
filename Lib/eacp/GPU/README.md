@@ -64,6 +64,54 @@ that `EACP_SHADER` names and then calls `define()` through the vtable. After
 that, `prepare(sampleCount)` builds the library and the pipeline, and
 `pass.draw(shader)` binds everything and issues the draw.
 
+The uniform block is bound only to the stage that reads one. Which stage that is
+comes from the same walk the emitter declares the block from, so a bind cannot
+disagree with the signature it is aimed at — and a stage that never declared it
+is not bound at all, which is what Metal's validation layer otherwise reports as
+an unused binding. App code that takes `draw(program)` apart to draw its own
+geometry should call `pass.setUniforms(program)` rather than the two per-stage
+setters, for the same reason.
+
+### Naming the pipeline's state
+
+`prepare` also takes a `RenderPipelineDescriptor`, which is the form to reach for
+once more than one of these is not the shader's own choice:
+
+```cpp
+auto descriptor = RenderPipelineDescriptor {};
+descriptor.sampleCount = sampleCount();
+descriptor.depth = true;
+descriptor.blendMode = BlendMode::AlphaBlend;
+descriptor.cullMode = CullMode::Back;
+
+program.prepare(descriptor);
+```
+
+The program fills in its own library and vertex layout, so those two fields are
+ignored. The positional `prepare(sampleCount, depth, topology, blend, format)`
+still exists and means exactly the same thing; it just says less at the call
+site, and the fields past `depth` are usually the *target's* answers rather than
+the shader's.
+
+### Face culling, and which way round front is
+
+`CullMode::None` is the default: both faces rasterise, which is what a mesh whose
+winding is not known to be consistent needs. Under `Front` or `Back` a
+wrongly-wound triangle does not draw wrongly — it does not draw at all.
+
+**A triangle whose vertices run counter-clockwise in clip space — the space
+`setPosition` writes, with y up — is front-facing.** That is glTF's convention,
+and it is stated here in clip space rather than in the image because the viewport
+flips y on the way and reverses the answer.
+
+It is worth stating at all because both backends' own defaults read "clockwise is
+front-facing", which is the opposite of the convention above. What they do not
+differ on is what winding means: clip-space y is up and the framebuffer origin is
+top left on each, so the NDC-to-screen mapping reverses winding by the same
+amount on both and one convention is spelled the same way twice —
+`MTLWindingCounterClockwise` on one side, `FrontCounterClockwise = TRUE` on the
+other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
+
 ### What the EDSL has
 
 - `Float`, `Float2/3/4`, `Float2x2`, `Float3x3`, `Float4x4` — built from their
@@ -122,6 +170,81 @@ Send a `Float` and compare it; send a `Float4x4`. `Int` and the integer vectors
 *are* uniforms — both languages give a signed integer four bytes and pack it
 where they pack a float.
 
+## Pipeline state
+
+`prepare(sampleCount)` covers the common settings positionally. Everything else
+a pipeline can be told goes through the descriptor form, which is the same
+`RenderPipelineDescriptor` a hand-written shader fills in:
+
+```cpp
+shader.prepare({.sampleCount = sampleCount(),
+                .depth = true,
+                .cullMode = CullMode::Back});
+```
+
+**Depth is three fields, not one.** `depth` says the pipeline has a depth
+attachment — the view has to have one too (`setDepth(true)`), and both backends
+reject a draw whose pipeline disagrees with the pass about that. `depthCompare`
+and `depthWrite` are what to do with it, and they come apart where it matters:
+translucent geometry tests against the opaque depth already written and must not
+write its own, or the nearer of two translucent surfaces hides the further one
+instead of blending over it.
+
+```cpp
+opaque.prepare({.sampleCount = 1, .depth = true});                    // the default: LessEqual, writing
+glass.prepare({.sampleCount = 1, .depth = true, .depthWrite = false}); // tests, does not write
+```
+
+**Culling is off by default, and the front face is counter-clockwise in clip
+space** — glTF's convention, spelled out under "Face culling, and which way round
+front is" above. `frontFace` is there for the geometry that does not arrive in
+it: a mesh wound the other way, an instance mirrored by a negative scale, or an
+inside-out shape like a skybox, none of which should need its indices rewritten.
+
+```cpp
+skybox.prepare({.sampleCount = 1, .cullMode = CullMode::Back,
+                .frontFace = Winding::Clockwise});
+```
+
+Culling is pipeline state on D3D12 and encoder state on Metal. eacp hides that:
+`RenderPass::setPipeline` applies both the mode and the winding on every bind, so
+a pass that draws a culled mesh and then a full-screen quad gets the same picture
+either way — `PipelineStateTests` covers that, and `CullModeTests` covers the
+convention itself.
+
+## Viewport, and how it differs from a scissor
+
+`setScissorRect` clips: geometry outside the rect is thrown away, and what
+survives is where it always was. `setViewport` **remaps**: clip space lands on
+the rect instead of on the whole target, so the same vertices are drawn
+somewhere else, at some other size.
+
+```cpp
+pass.setViewport({0.f, 0.f, width / 2.f, height});   // left pane
+scene.drawFrom(leftCamera, pass);
+pass.setViewport({width / 2.f, 0.f, width / 2.f, height});  // right pane
+scene.drawFrom(rightCamera, pass);
+pass.clearViewport();
+```
+
+That is split screen, a shadow map into one tile of an atlas, or a thumbnail —
+none of which a scissor can do, because a scissor at the right-hand rect would
+delete the geometry rather than move it. Both take pixels with the origin at the
+top-left, like `Graphics::Rect`.
+
+The optional `near`/`far` remap the depth a fragment writes. A viewport of
+`[0.5, 1]` puts everything drawn through it behind everything drawn at the
+default `[0, 1]`, whatever the geometry's own z says — which is how a layer gets
+forced behind or in front of something it does not otherwise sort against.
+
+**A rect that is empty or not wholly inside the render target is ignored**, not
+clamped — the same rule `Texture::update` applies to regions, for the same
+reason. A clamped scissor still shows the caller what they asked for; a clamped
+viewport keeps drawing and silently squashes the picture into a rectangle nobody
+chose, which looks like a bug in the caller's own maths. Neither backend forces
+this: Metal accepts an out-of-target viewport happily. It is eacp's choice, and
+`ViewportTests` is what holds the two backends to it.
+
 ## Rendering into a texture
 
 A texture created with `TextureDescriptor::renderTarget` can be drawn into and
@@ -155,8 +278,38 @@ The pipeline has to agree with what it draws into: `prepare(...)` takes a
 `pixelFormatFor(itsFormat)`. Neither backend takes a draw whose pipeline
 disagrees with its attachment.
 
-Render targets are single-sampled and have no depth attachment. What this is for
-is a full-screen pass over a whole texture, and neither has a meaning there.
+### Depth
+
+A target drawing a 3D scene needs a depth buffer, and asks for one on the same
+descriptor:
+
+```cpp
+auto texture = TextureDescriptor {};
+texture.renderTarget = true;
+texture.depth = true;                                 // the pass gets one
+
+auto pipeline = RenderPipelineDescriptor {};
+pipeline.sampleCount = 1;                             // a texture pass never MSAAs
+pipeline.depth = true;                                // the pipeline tests it
+pipeline.colorFormat = pixelFormatFor(texture.format);
+
+program.prepare(pipeline);
+```
+
+The buffer belongs to the target, is created with it and dies with it, so there
+is no second lifetime to keep in step. Every pass into the texture clears it to
+the far plane and stores nothing.
+
+The two flags have to agree. A pipeline that declares depth drawing into a
+target that has none is a validation error on Metal and an untested draw on
+D3D12 — and on Apple silicon it *appears* to work, because the tile memory is
+there whether or not anything attached it. Do not read that as permission;
+`Texture::hasDepth()` is what a pipeline should be built from.
+
+Render targets are still single-sampled. A texture target has nothing to resolve
+into — the texture is what a resolve would produce — so a pipeline drawing into
+one passes `sampleCount` 1 even when the same shader draws multisampled into the
+drawable.
 
 ## Compute
 
@@ -451,6 +604,46 @@ Reach for this when the thing being read is not an image and does not line up on
 record per instance — a lookup table, a record picked by an id the shader
 computed. When it *is* one record per instance, `instanceInput` is still the
 idiomatic path.
+
+## Mipmaps
+
+```cpp
+auto descriptor = TextureDescriptor {};
+descriptor.width = 1024;
+descriptor.height = 1024;
+descriptor.mipmapped = true;
+
+auto albedo = Device::shared().makeTexture(descriptor, pixels);
+```
+
+What this buys is the picture, not speed. A texture minified without mips samples
+a scattering of individual texels, and *which* texels changes as the camera
+moves — so a tiled floor or a detailed model shimmers and crawls at distance, and
+no filtering at level 0 fixes it, because the information being aliased was
+thrown away before the filter saw it. Off by default: a UI atlas or a video frame
+is never drawn smaller than it is and would pay a third more memory for levels
+nothing reads.
+
+**The chain is built on the CPU, by eacp, for both backends.** Metal has
+`generateMipmapsForTexture` and D3D12 has no equivalent at all — a chain there
+means a compute shader, a UAV per level and a root signature to bind them. So the
+choice was a GPU chain on one backend against a hand-written one on the other,
+which is two filters producing two pictures for the same texture, or one filter
+producing the same bytes for both. Only the second can be checked by a test, and
+this library has been wrong about a cross-backend detail often enough to prefer
+the version that can be.
+
+A texture created with no pixels — a render target, a kernel output — gets no
+chain, since there is nothing to build one from. `update()` rebuilds it;
+`update(region, ...)` does not, because a partial upload cannot know what the
+rest of the texture holds. Ask a texture what it got with `mipLevels()`.
+
+No new `TextureSampling` configuration is involved: mip filtering on a
+single-level texture is what both APIs do anyway, so the four configurations
+still cover everything. That is also where a long-standing divergence was found —
+D3D12's static samplers had always declared `MIN_MAG_MIP_LINEAR`, while Metal
+left `mipFilter` at its default of `NotMipmapped`. Nothing could see it while no
+texture had a second level.
 
 ## Texture formats
 

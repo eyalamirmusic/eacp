@@ -21,6 +21,22 @@ static MTLVertexFormat toMetalVertexFormat(VertexFormat format)
             return MTLVertexFormatFloat3;
         case VertexFormat::Float4:
             return MTLVertexFormatFloat4;
+
+        // The Normalized variants, not the plain integer ones: an attribute
+        // declared UByte4Norm reads as 0..1 in the shader, where plain
+        // MTLVertexFormatUChar4 would hand it 0..255. The same choice on D3D12
+        // is UNORM against UINT, and the two backends have to agree on it or a
+        // colour comes out 255 times too bright on one of them.
+        case VertexFormat::UByte4Norm:
+            return MTLVertexFormatUChar4Normalized;
+        case VertexFormat::Half2:
+            return MTLVertexFormatHalf2;
+        case VertexFormat::Half4:
+            return MTLVertexFormatHalf4;
+        case VertexFormat::Short2Norm:
+            return MTLVertexFormatShort2Normalized;
+        case VertexFormat::Short4Norm:
+            return MTLVertexFormatShort4Normalized;
     }
 
     return MTLVertexFormatFloat3;
@@ -41,6 +57,31 @@ static MTLPixelFormat toMetalPixelFormat(PixelFormat format)
     }
 
     return MTLPixelFormatBGRA8Unorm;
+}
+
+static MTLCompareFunction toMetalCompareFunction(DepthCompare compare)
+{
+    switch (compare)
+    {
+        case DepthCompare::Never:
+            return MTLCompareFunctionNever;
+        case DepthCompare::Less:
+            return MTLCompareFunctionLess;
+        case DepthCompare::LessEqual:
+            return MTLCompareFunctionLessEqual;
+        case DepthCompare::Equal:
+            return MTLCompareFunctionEqual;
+        case DepthCompare::NotEqual:
+            return MTLCompareFunctionNotEqual;
+        case DepthCompare::GreaterEqual:
+            return MTLCompareFunctionGreaterEqual;
+        case DepthCompare::Greater:
+            return MTLCompareFunctionGreater;
+        case DepthCompare::Always:
+            return MTLCompareFunctionAlways;
+    }
+
+    return MTLCompareFunctionLessEqual;
 }
 
 static MTLVertexStepFunction toMetalStepFunction(StepRate rate)
@@ -95,6 +136,8 @@ struct RenderPipeline::Native
 {
     Native(Device& device, const RenderPipelineDescriptor& descriptor)
         : topology(descriptor.topology)
+        , cullMode(descriptor.cullMode)
+        , frontFace(descriptor.frontFace)
     {
         auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
 
@@ -127,8 +170,9 @@ struct RenderPipeline::Native
                 MTLPixelFormatDepth32Float;
 
             auto depthDescriptor = [[MTLDepthStencilDescriptor alloc] init];
-            depthDescriptor.depthCompareFunction = MTLCompareFunctionLessEqual;
-            depthDescriptor.depthWriteEnabled = YES;
+            depthDescriptor.depthCompareFunction =
+                toMetalCompareFunction(descriptor.depthCompare);
+            depthDescriptor.depthWriteEnabled = descriptor.depthWrite ? YES : NO;
             depthState =
                 [metalDevice newDepthStencilStateWithDescriptor:depthDescriptor];
             [depthDescriptor release];
@@ -179,6 +223,8 @@ struct RenderPipeline::Native
     }
 
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
+    CullMode cullMode = CullMode::None;
+    Winding frontFace = Winding::CounterClockwise;
     ObjC::Ptr<NSObject<MTLRenderPipelineState>> state;
     ObjC::Ptr<NSObject<MTLDepthStencilState>> depthState;
 };
@@ -197,6 +243,16 @@ bool RenderPipeline::isValid() const
 PrimitiveTopology RenderPipeline::topology() const
 {
     return impl->topology;
+}
+
+CullMode RenderPipeline::cullMode() const
+{
+    return impl->cullMode;
+}
+
+Winding RenderPipeline::frontFace() const
+{
+    return impl->frontFace;
 }
 
 void* RenderPipeline::nativeState() const

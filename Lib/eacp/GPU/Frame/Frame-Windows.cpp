@@ -16,15 +16,16 @@ namespace eacp::GPU
 {
 struct Frame::Native
 {
-    Native(Device& device,
+    Native(Device& deviceToUse,
            void* drawableHandle,
            void* msaaTextureHandle,
            void* depthTextureHandle)
-        : drawable(static_cast<D3D12Drawable*>(drawableHandle))
+        : device(&deviceToUse)
+        , drawable(static_cast<D3D12Drawable*>(drawableHandle))
         , msaa(static_cast<D3D12MsaaTarget*>(msaaTextureHandle))
         , depth(static_cast<D3D12DepthTarget*>(depthTextureHandle))
     {
-        if (device.isValid() && drawable != nullptr)
+        if (deviceToUse.isValid() && drawable != nullptr)
             open(getD3D12Context().acquire());
     }
 
@@ -32,13 +33,14 @@ struct Frame::Native
     // target is passed as a D3D12Drawable with a null swapChain, so beginPass
     // renders into it exactly like a back buffer but the destructor resolves and
     // hands it back for read-back instead of presenting.
-    Native(Device& device, const OffscreenTarget& target)
-        : drawable(static_cast<D3D12Drawable*>(target.colorTexture))
+    Native(Device& deviceToUse, const OffscreenTarget& target)
+        : device(&deviceToUse)
+        , drawable(static_cast<D3D12Drawable*>(target.colorTexture))
         , msaa(static_cast<D3D12MsaaTarget*>(target.msaaTexture))
         , depth(static_cast<D3D12DepthTarget*>(target.depthTexture))
         , offscreen(true)
     {
-        if (device.isValid() && drawable != nullptr
+        if (deviceToUse.isValid() && drawable != nullptr
             && drawable->backBuffer != nullptr)
             open(getD3D12Context().acquire());
     }
@@ -51,6 +53,42 @@ struct Frame::Native
     {
         commands = commandsToUse;
         getD3D12Context().setOpenRecording(commands);
+    }
+
+    // The frame's opening timestamp, which has to be the first thing on the
+    // list for the total to mean the frame. Metal takes this off the command
+    // buffer afterwards and records nothing here.
+    //
+    // Called from Frame's constructor body rather than from this one, and the
+    // order is the whole point: Device::beginFrame() is what gives the timer
+    // the slot to write into, and it runs after every member is built. Recorded
+    // from here it would go into the previous frame's query heap.
+    void beginTiming()
+    {
+        if (commands != nullptr)
+            device->frameTimer().beginRecording(commands->list.get());
+    }
+
+    // Opens a timed pass on the list and hands the encoder what it needs to
+    // close it when the pass ends.
+    void timePass(D3D12Encoder& encoder, std::string_view label)
+    {
+        auto& timer = device->frameTimer();
+        const auto pass = timer.beginPass(label);
+
+        if (pass < 0 || commands == nullptr)
+            return;
+
+        auto* heap = static_cast<ID3D12QueryHeap*>(timer.nativeSamples());
+
+        if (heap == nullptr)
+            return;
+
+        commands->list->EndQuery(
+            heap, D3D12_QUERY_TYPE_TIMESTAMP, static_cast<UINT>(pass * 2));
+
+        encoder.queryHeap = heap;
+        encoder.endQuery = pass * 2 + 1;
     }
 
     bool useMsaa() const { return msaa != nullptr && msaa->texture != nullptr; }
@@ -93,6 +131,7 @@ struct Frame::Native
                                                  nullTexture);
     }
 
+    Device* device = nullptr;
     CommandContext* commands = nullptr;
     D3D12Drawable* drawable = nullptr;
     D3D12MsaaTarget* msaa = nullptr;
@@ -104,11 +143,15 @@ struct Frame::Native
 Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture)
     : impl(device, drawable, msaaTexture, depthTexture)
 {
+    device.beginFrame();
+    impl->beginTiming();
 }
 
 Frame::Frame(Device& device, const OffscreenTarget& target)
     : impl(device, target)
 {
+    device.beginFrame();
+    impl->beginTiming();
 }
 
 Frame::~Frame()
@@ -152,7 +195,10 @@ Frame::~Frame()
         }
 
         auto& context = getD3D12Context();
-        context.submit(impl->commands);
+
+        impl->device->frameTimer().endFrame(list);
+        impl->device->frameTimer().noteSubmitted(context.submit(impl->commands));
+
         context.waitIdle();
         return;
     }
@@ -191,7 +237,12 @@ Frame::~Frame()
                    D3D12_RESOURCE_STATE_PRESENT);
     }
 
-    getD3D12Context().submit(impl->commands);
+    // The closing timestamp and the query resolve go onto the list while it is
+    // still open; the fence value they will be read against only exists once it
+    // has been executed.
+    impl->device->frameTimer().endFrame(list);
+    impl->device->frameTimer().noteSubmitted(
+        getD3D12Context().submit(impl->commands));
 
     if (impl->drawable->swapChain != nullptr)
         impl->drawable->swapChain->Present(1, 0);
@@ -251,13 +302,19 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
         list->ClearDepthStencilView(
             impl->depth->view, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
+    auto* encoder = new D3D12Encoder {impl->commands, {}};
+    impl->timePass(*encoder, descriptor.label);
+
     // The pass carries the target's pixel size so it can clamp scissor rects.
-    return RenderPass(new D3D12Encoder {impl->commands, {}},
+    return RenderPass(encoder,
                       static_cast<int>(impl->drawable->width),
                       static_cast<int>(impl->drawable->height));
 }
 
-// Rendering into an app-owned texture: one attachment, no resolve and no depth.
+// Rendering into an app-owned texture: one attachment and no resolve. Depth is
+// the target's own, from TextureDescriptor::depth, and rests in DEPTH_WRITE for
+// its lifetime, so it costs a clear here and no barrier.
+//
 // Deliberately does not touch passBegun, which records whether the *back
 // buffer* was moved out of PRESENT - a frame whose only passes were into
 // textures must not have one transitioned back on the way out.
@@ -280,7 +337,8 @@ RenderPass Frame::beginPass(const Texture& target,
     impl->bindRootState(context, list);
     transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
-    list->OMSetRenderTargets(1, &data->rtv, FALSE, nullptr);
+    auto hasDepth = data->hasDepth();
+    list->OMSetRenderTargets(1, &data->rtv, FALSE, hasDepth ? &data->dsv : nullptr);
 
     auto width = target.width();
     auto height = target.height();
@@ -302,7 +360,16 @@ RenderPass Frame::beginPass(const Texture& target,
         list->ClearRenderTargetView(data->rtv, clearColor, 0, nullptr);
     }
 
-    return RenderPass(new D3D12Encoder {impl->commands, {}}, width, height);
+    // Cleared to the far plane whenever there is one, matching both the
+    // drawable pass here and the Metal pass's unconditional depth clear.
+    if (hasDepth)
+        list->ClearDepthStencilView(
+            data->dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+    auto* encoder = new D3D12Encoder {impl->commands, {}};
+    impl->timePass(*encoder, descriptor.label);
+
+    return RenderPass(encoder, width, height);
 }
 
 // A compute pass on the frame's own recording. The graphics and compute root
@@ -313,14 +380,33 @@ RenderPass Frame::beginPass(const Texture& target,
 // A buffer this pass writes as a UAV and a later pass binds as vertex data is
 // transitioned by RenderPass::setVertexBuffer: same recording, so the per-
 // recording state tracking sees the UAV state and emits the barrier.
-ComputePass Frame::beginCompute()
+ComputePass Frame::beginCompute(std::string_view label)
 {
     if (impl->commands == nullptr)
         return ComputePass(nullptr);
 
     bindComputeRootState(getD3D12Context(), impl->commands->list.get());
 
-    return ComputePass(new D3D12ComputeEncoder {impl->commands});
+    auto* encoder = new D3D12ComputeEncoder {impl->commands};
+
+    // Same two queries as a render pass, on the same list, in the order the
+    // work was recorded — a compute pass is not special here.
+    auto& timer = impl->device->frameTimer();
+    const auto pass = timer.beginPass(label);
+
+    if (pass >= 0)
+    {
+        if (auto* heap = static_cast<ID3D12QueryHeap*>(timer.nativeSamples()))
+        {
+            impl->commands->list->EndQuery(
+                heap, D3D12_QUERY_TYPE_TIMESTAMP, static_cast<UINT>(pass * 2));
+
+            encoder->queryHeap = heap;
+            encoder->endQuery = pass * 2 + 1;
+        }
+    }
+
+    return ComputePass(encoder);
 }
 
 bool Frame::isValid() const

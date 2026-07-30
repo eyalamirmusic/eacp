@@ -34,6 +34,34 @@ MTLPrimitiveType toMetalPrimitiveType(PrimitiveTopology topology)
 
     return MTLPrimitiveTypeTriangle;
 }
+
+MTLCullMode toMetalCullMode(CullMode mode)
+{
+    switch (mode)
+    {
+        case CullMode::None:
+            return MTLCullModeNone;
+        case CullMode::Front:
+            return MTLCullModeFront;
+        case CullMode::Back:
+            return MTLCullModeBack;
+    }
+
+    return MTLCullModeNone;
+}
+
+MTLWinding toMetalWinding(Winding winding)
+{
+    switch (winding)
+    {
+        case Winding::CounterClockwise:
+            return MTLWindingCounterClockwise;
+        case Winding::Clockwise:
+            return MTLWindingClockwise;
+    }
+
+    return MTLWindingCounterClockwise;
+}
 } // namespace
 
 struct RenderPass::Native
@@ -110,6 +138,40 @@ void RenderPass::clearScissorRect()
     [activeEncoder setScissorRect:scissor];
 }
 
+void RenderPass::setViewport(const Graphics::Rect& rect,
+                             float nearDepth,
+                             float farDepth)
+{
+    auto activeEncoder = impl->encoder.get();
+
+    if (activeEncoder == nil || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+        return;
+
+    // No rounding, unlike the scissor: a viewport is a float rectangle in both
+    // APIs, and rounding it would move the mapping rather than the clip.
+    if (rect.w <= 0.f || rect.h <= 0.f || rect.x < 0.f || rect.y < 0.f
+        || rect.x + rect.w > (float) impl->targetWidth
+        || rect.y + rect.h > (float) impl->targetHeight)
+        return;
+
+    const MTLViewport viewport {rect.x, rect.y, rect.w, rect.h, nearDepth, farDepth};
+
+    [activeEncoder setViewport:viewport];
+}
+
+void RenderPass::clearViewport()
+{
+    auto activeEncoder = impl->encoder.get();
+
+    if (activeEncoder == nil || impl->targetWidth <= 0 || impl->targetHeight <= 0)
+        return;
+
+    const MTLViewport viewport {
+        0.0, 0.0, (double) impl->targetWidth, (double) impl->targetHeight, 0.0, 1.0};
+
+    [activeEncoder setViewport:viewport];
+}
+
 void RenderPass::setPipeline(const RenderPipeline& pipeline)
 {
     auto activeEncoder = impl->encoder.get();
@@ -123,6 +185,25 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
     if (auto depthState =
             (__bridge id<MTLDepthStencilState>) pipeline.nativeDepthState())
         [activeEncoder setDepthStencilState:depthState];
+
+    // Face culling is encoder state on Metal and pipeline state on D3D12, so it
+    // travels on the pipeline and is applied here - which also means both of
+    // these have to be set on every setPipeline rather than only on the culling
+    // ones: encoder state persists, so a culled pipeline would otherwise leave
+    // its mode behind for whatever draws next.
+    //
+    // The default winding is CounterClockwise, which is not Metal's own and is
+    // not a preference either: it is what makes this backend mean by "front"
+    // what CullMode says eacp means - counter-clockwise in *clip* space. Metal
+    // decides facing there, before the viewport's y flip, which is measured
+    // rather than assumed (Tests/GPU/CullModeTests.cpp) and is the opposite end
+    // of that flip from D3D12's screen-space rule. Leaving both backends on
+    // their own defaults would have culled opposite faces from the same mesh.
+    if (impl->pipelineBound)
+    {
+        [activeEncoder setFrontFacingWinding:toMetalWinding(pipeline.frontFace())];
+        [activeEncoder setCullMode:toMetalCullMode(pipeline.cullMode())];
+    }
 
     impl->primitiveType = toMetalPrimitiveType(pipeline.topology());
 }
@@ -232,7 +313,8 @@ void RenderPass::drawInstanced(int vertexCount,
 void RenderPass::drawIndexed(const Buffer& indices,
                              int indexCount,
                              IndexFormat format,
-                             int firstIndex)
+                             int firstIndex,
+                             int baseVertex)
 {
     auto activeEncoder = impl->encoder.get();
     auto metalBuffer = (__bridge id<MTLBuffer>) indices.nativeBuffer();
@@ -245,11 +327,17 @@ void RenderPass::drawIndexed(const Buffer& indices,
     auto indexSize = format == IndexFormat::UInt16 ? sizeof(std::uint16_t)
                                                    : sizeof(std::uint32_t);
 
+    // The eight-argument selector rather than the five-argument one because
+    // only this form carries a base vertex; instanceCount:1 makes it the same
+    // draw the short form issues.
     [activeEncoder drawIndexedPrimitives:impl->primitiveType
                               indexCount:(NSUInteger) indexCount
                                indexType:indexType
                              indexBuffer:metalBuffer
-                       indexBufferOffset:(NSUInteger) firstIndex * indexSize];
+                       indexBufferOffset:(NSUInteger) firstIndex * indexSize
+                           instanceCount:1
+                              baseVertex:(NSInteger) baseVertex
+                            baseInstance:0];
 }
 
 void RenderPass::drawIndexedInstanced(const Buffer& indices,
@@ -257,7 +345,8 @@ void RenderPass::drawIndexedInstanced(const Buffer& indices,
                                       int instanceCount,
                                       IndexFormat format,
                                       int firstIndex,
-                                      int firstInstance)
+                                      int firstInstance,
+                                      int baseVertex)
 {
     auto activeEncoder = impl->encoder.get();
     auto metalBuffer = (__bridge id<MTLBuffer>) indices.nativeBuffer();
@@ -276,7 +365,7 @@ void RenderPass::drawIndexedInstanced(const Buffer& indices,
                              indexBuffer:metalBuffer
                        indexBufferOffset:(NSUInteger) firstIndex * indexSize
                            instanceCount:(NSUInteger) instanceCount
-                              baseVertex:0
+                              baseVertex:(NSInteger) baseVertex
                             baseInstance:(NSUInteger) firstInstance];
 }
 

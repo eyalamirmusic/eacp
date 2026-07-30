@@ -303,3 +303,47 @@ auto tLogicalSizeChangeKeepsEarlierQuads =
     // way across, and it runs to the right edge.
     check(isGreen(image.at(image.width() * 3 / 4, row)));
 };
+
+// The regression gate for the per-flush allocation SpriteRenderer used to do.
+//
+// setInstances allocated a brand-new GPU::Buffer on every call, and the
+// renderer calls it once per flush - on every texture change, and again at pass
+// end. So a steady frame of drawing created several GPU resources, forever, in
+// the frame loop. It was correct, because a buffer allocated a moment ago
+// cannot be one the GPU is still reading, but it is exactly the churn the house
+// rules forbid.
+//
+// Stated as a count rather than a timing, so it is deterministic, needs no
+// clock, and cannot flake on a shared runner.
+auto tSteadyStateAllocatesNoBuffers =
+    test("SpriteBatch/steadyStateAllocatesNoBuffers") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    auto red = solidTexture(255, 0, 0);
+    auto green = solidTexture(0, 255, 0);
+
+    // Alternating textures on purpose: a texture change is what ends a run, so
+    // this is three flushes per frame rather than one. The bug being guarded
+    // against scaled with flushes, not with frames.
+    auto view = DrawingView {[&red, &green](auto& sprites)
+                             {
+                                 sprites.drawTexture(red, {0.f, 0.f, 16.f, 16.f});
+                                 sprites.drawTexture(green, {20.f, 0.f, 16.f, 16.f});
+                                 sprites.drawTexture(red, {40.f, 0.f, 16.f, 16.f});
+                             }};
+
+    // Warm: the first frame builds the pipeline and its library, and the pools
+    // fill over the frames in flight after it.
+    for (auto frame = 0; frame < 8; ++frame)
+        view.renderToImage(1.f);
+
+    const auto before = Device::shared().buffersCreated();
+
+    for (auto frame = 0; frame < 10; ++frame)
+        view.renderToImage(1.f);
+
+    // Before StreamingBuffers this climbed by one per flush per frame.
+    check(Device::shared().buffersCreated() == before);
+};

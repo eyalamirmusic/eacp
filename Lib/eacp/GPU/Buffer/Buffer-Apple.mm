@@ -39,6 +39,10 @@ struct Buffer::Native
 Buffer::Buffer(Device& device, const void* data, std::size_t bytes, BufferUsage usage)
     : impl(device, data, bytes, usage)
 {
+    // Only the ones that got storage, so the count means GPU allocations rather
+    // than calls - a zero-byte or device-less Buffer allocated nothing.
+    if (isValid())
+        device.noteBufferCreated();
 }
 
 std::size_t Buffer::size() const
@@ -51,8 +55,11 @@ bool Buffer::isValid() const
     return impl->buffer.get() != nil;
 }
 
-void Buffer::read(void* dst, std::size_t bytes) const
+void Buffer::read(void* dst, std::size_t bytes, std::size_t offset) const
 {
+    if (offset >= impl->length)
+        return;
+
     // Shared storage makes the copy itself a memcpy, but the kernel that filled
     // the buffer may still be running: commitAsync returns before the GPU has
     // done anything at all. Waiting for the newest submission waits for every
@@ -61,19 +68,24 @@ void Buffer::read(void* dst, std::size_t bytes) const
     if (impl->device != nullptr)
         impl->device->waitForSubmittedWork();
 
+    auto available = impl->length - offset;
+    auto count = bytes < available ? bytes : available;
+
     if (auto metalBuffer = impl->buffer.get())
-        std::memcpy(dst, [metalBuffer contents], bytes);
+        std::memcpy(dst, (const char*) [metalBuffer contents] + offset, count);
 }
 
-void Buffer::update(const void* data, std::size_t bytes)
+void Buffer::update(const void* data, std::size_t bytes, std::size_t offset)
 {
     auto metalBuffer = impl->buffer.get();
 
-    if (metalBuffer == nil || data == nullptr || bytes == 0)
+    if (metalBuffer == nil || data == nullptr || bytes == 0
+        || offset >= impl->length)
         return;
 
-    auto count = bytes < impl->length ? bytes : impl->length;
-    std::memcpy([metalBuffer contents], data, count);
+    auto available = impl->length - offset;
+    auto count = bytes < available ? bytes : available;
+    std::memcpy((char*) [metalBuffer contents] + offset, data, count);
 }
 
 void* Buffer::nativeBuffer() const

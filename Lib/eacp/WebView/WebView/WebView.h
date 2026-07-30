@@ -296,6 +296,13 @@ protected:
     // than the empty container View that hosts it. See View::nativeFocusTarget.
     void* nativeFocusTarget() override;
 
+    // Windows keeps the browser's input/IME surface outside the composition
+    // tree, placed in screen coordinates and shown independently of the host
+    // window, so both have to be followed explicitly. No-ops on macOS/iOS,
+    // where the native web view is an ordinary subview of the window.
+    void hostWindowMoved() override;
+    void hostWindowVisibilityChanged(bool visible) override;
+
     // Windows hosts the WebView as a composition visual (no input HWND), so the
     // framework's routed mouse events are forwarded to the browser here. On
     // macOS/iOS the native web view receives input directly and these are

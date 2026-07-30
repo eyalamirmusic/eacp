@@ -44,6 +44,38 @@ struct Frame::Native
             commandBuffer.reset((NSObject<MTLCommandBuffer>*) [queue commandBuffer]);
     }
 
+    // Points a pass descriptor's samples at this frame's slot in the timer.
+    //
+    // Only the two outer stage boundaries are sampled: a render pass starts at
+    // the top of its vertex work and ends at the bottom of its fragment work,
+    // and the two in between would say where the middle was rather than how
+    // long the whole took.
+    void timeRenderPass(MTLRenderPassDescriptor* passDescriptor,
+                        std::string_view label) const
+    {
+        if (device == nullptr)
+            return;
+
+        auto& timer = device->frameTimer();
+        const auto pass = timer.beginPass(label);
+
+        if (pass < 0)
+            return;
+
+        auto samples = (__bridge id<MTLCounterSampleBuffer>) timer.nativeSamples();
+
+        if (samples == nil)
+            return;
+
+        auto attachment = passDescriptor.sampleBufferAttachments[0];
+
+        attachment.sampleBuffer = samples;
+        attachment.startOfVertexSampleIndex = (NSUInteger) (pass * 2);
+        attachment.endOfVertexSampleIndex = MTLCounterDontSample;
+        attachment.startOfFragmentSampleIndex = MTLCounterDontSample;
+        attachment.endOfFragmentSampleIndex = (NSUInteger) (pass * 2 + 1);
+    }
+
     // The texture the pass stores into: the drawable's on-screen texture, or the
     // app-owned off-screen colour texture for a snapshot.
     id<MTLTexture> storeTexture() const
@@ -65,11 +97,13 @@ struct Frame::Native
 Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture)
     : impl(device, drawable, msaaTexture, depthTexture)
 {
+    device.beginFrame();
 }
 
 Frame::Frame(Device& device, const OffscreenTarget& target)
     : impl(device, target)
 {
+    device.beginFrame();
 }
 
 Frame::~Frame()
@@ -84,7 +118,14 @@ Frame::~Frame()
     // waits for it. A presented frame only waits to be *scheduled*, which says
     // nothing about a compute pass on it having run.
     if (impl->device != nullptr)
+    {
         impl->device->trackSubmittedWork((__bridge void*) buffer);
+
+        // Also before the commit, though for a different reason: the timer
+        // retains the command buffer here, and once committed it may finish -
+        // and be asked for its GPU times - at any moment.
+        impl->device->frameTimer().endFrame((__bridge void*) buffer);
+    }
 
     if (target != nil)
     {
@@ -142,6 +183,8 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
         depthAttachment.clearDepth = 1.0;
     }
 
+    impl->timeRenderPass(passDescriptor, descriptor.label);
+
     auto encoder = [buffer renderCommandEncoderWithDescriptor:passDescriptor];
 
     // The pass carries the target's pixel size so it can clamp scissor rects;
@@ -151,9 +194,11 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
                       (int) target.height);
 }
 
-// Rendering into an app-owned texture: one attachment, stored, no resolve and
-// no depth. Passes on one command buffer are ordered by the queue, so nothing
-// here has to say that a later pass may sample what this one wrote.
+// Rendering into an app-owned texture: one attachment, stored, and no resolve.
+// Depth comes from the target when it was created with one, cleared and
+// discarded exactly as the drawable pass does it. Passes on one command buffer
+// are ordered by the queue, so nothing here has to say that a later pass may
+// sample what this one wrote.
 RenderPass Frame::beginPass(const Texture& target,
                             const RenderPassDescriptor& descriptor)
 {
@@ -175,6 +220,17 @@ RenderPass Frame::beginPass(const Texture& target,
     colorAttachment.clearColor =
         MTLClearColorMake(color.r, color.g, color.b, color.a);
 
+    if (auto depth = (__bridge id<MTLTexture>) target.nativeDepthTexture())
+    {
+        auto depthAttachment = passDescriptor.depthAttachment;
+        depthAttachment.texture = depth;
+        depthAttachment.loadAction = MTLLoadActionClear;
+        depthAttachment.storeAction = MTLStoreActionDontCare;
+        depthAttachment.clearDepth = 1.0;
+    }
+
+    impl->timeRenderPass(passDescriptor, descriptor.label);
+
     auto encoder = [buffer renderCommandEncoderWithDescriptor:passDescriptor];
 
     return RenderPass((__bridge void*) encoder,
@@ -182,13 +238,39 @@ RenderPass Frame::beginPass(const Texture& target,
                       (int) texture.height);
 }
 
-ComputePass Frame::beginCompute()
+// A compute pass samples at the encoder's own boundaries rather than at a
+// vertex and a fragment stage, which is the same pair of numbers by another
+// name: when the work started and when it finished.
+ComputePass Frame::beginCompute(std::string_view label)
 {
-    if (auto buffer = impl->commandBuffer.get())
-        return ComputePass((__bridge void*) [(id<MTLCommandBuffer>) buffer
-                               computeCommandEncoder]);
+    auto buffer = impl->commandBuffer.get();
 
-    return ComputePass(nullptr);
+    if (buffer == nil)
+        return ComputePass(nullptr);
+
+    auto passDescriptor = [MTLComputePassDescriptor computePassDescriptor];
+
+    if (impl->device != nullptr)
+    {
+        auto& timer = impl->device->frameTimer();
+        const auto pass = timer.beginPass(label);
+
+        if (pass >= 0)
+        {
+            if (auto samples =
+                    (__bridge id<MTLCounterSampleBuffer>) timer.nativeSamples())
+            {
+                auto attachment = passDescriptor.sampleBufferAttachments[0];
+
+                attachment.sampleBuffer = samples;
+                attachment.startOfEncoderSampleIndex = (NSUInteger) (pass * 2);
+                attachment.endOfEncoderSampleIndex = (NSUInteger) (pass * 2 + 1);
+            }
+        }
+    }
+
+    return ComputePass((__bridge void*) [(id<MTLCommandBuffer>) buffer
+        computeCommandEncoderWithDescriptor:passDescriptor]);
 }
 
 bool Frame::isValid() const

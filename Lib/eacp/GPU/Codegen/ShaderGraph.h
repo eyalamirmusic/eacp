@@ -47,19 +47,19 @@ enum class ExprKind
     ThreadId, // compute work-item id; emitted as the kernel's gid parameter.
     // index is the component: a 1D kernel has only 0 and prints the whole gid,
     // a 2D one prints gid.x or gid.y.
-    ThreadIndexInGroup, // where this thread sits inside its own threadgroup,
-    // which is what indexes a shared array. Flat on both backends whatever the
-    // dispatch rank - MSL's thread_index_in_threadgroup and HLSL's
-    // SV_GroupIndex are both a single number.
-    SharedRead, // one element of a threadgroup array; index = array slot,
-    // args = {index}. Impure like a buffer read, and rather more so: what it
-    // evaluates to depends on what *other* threads have written.
     BufferRead, // storage-buffer element read; index = buffer slot, args = {index}
     AtomicLoad, // one element of an atomic buffer; index = buffer slot,
     // args = {index}. An expression on both backends, unlike the add - MSL
     // spells it atomic_load_explicit and HLSL is an ordinary subscript, since
     // there a UAV element is already what an interlocked op works on.
-    ArrayRead // constant-array element read; index = array slot, args = {index}
+    ArrayRead, // constant-array element read; index = array slot, args = {index}
+    LocalId, // position within the threadgroup; index = component, like ThreadId
+    GroupId, // the threadgroup's own index in the grid; index = component
+    GridExtent, // the implicit bounds uniform the generated guard reads: count
+    // for a 1D kernel, width/height by component for a 2D one. Exposed so a
+    // kernel that barriers - and therefore has no early-return guard - can
+    // bound its stores against the very same value the dispatch supplied.
+    SharedRead // threadgroup-array element read; index = slot, args = {index}
 };
 
 // How a kernel accesses a storage buffer: a read-only input (Metal device
@@ -114,12 +114,11 @@ enum class StatementKind
     Loop, // while (value) { body }
     Break,
     Continue,
-    Store, // buffer[index] = value; bufferSlot = the buffer
-    TextureStore, // texture[index, indexY] = value; bufferSlot = the texture
-    SharedWrite, // shared[index] = value; bufferSlot = the threadgroup array
-    Barrier, // every thread in the group waits here, and every write to shared
-    // memory made before it is visible to all of them after it. Carries no
-    // operands: it is the statement whose whole content is where it is.
+    Store, // buffer[index] = value; slot = the storage slot
+    TextureStore, // texture[index, indexY] = value; slot = the texture slot
+    SharedStore, // shared[index] = value; slot = the threadgroup-array slot
+    Barrier, // threadgroup barrier: every thread in the group arrives before
+    // any proceeds, and threadgroup memory written before it is visible after
     AtomicAdd // vN = atomicAdd(buffer[index], value), declaring vN. slot = the
     // variable the value *before* the add lands in, bufferSlot / index = which
     // element, value = what is added.
@@ -139,14 +138,15 @@ enum class StatementKind
 struct Statement
 {
     StatementKind kind = StatementKind::Assign;
-    int slot = -1; // Declare / Assign / AtomicAdd: the variable written
-    int value = -1; // Declare / Assign: the value; If / Loop: the condition;
-    // AtomicAdd: the addend; Store / TextureStore: what is written
+    int slot = -1; // Declare / Assign: the variable written; stores: the slot
+    int value = -1; // Declare / Assign / stores: the value; If / Loop: the condition
     int body = -1; // If / Loop: the block that runs
     int elseBody = -1; // If: the block that runs when the condition is false
-    int bufferSlot = -1; // AtomicAdd / Store / TextureStore: the resource
-    int index = -1; // AtomicAdd / Store: the element; TextureStore: the column
-    int indexY = -1; // TextureStore: the row
+    int index = -1; // Store: the element index; TextureStore: x; AtomicAdd: the
+    // element
+    int indexY = -1; // TextureStore: y
+    int bufferSlot = -1; // AtomicAdd: the buffer, its slot field being taken by
+    // the variable the old value lands in
 };
 
 // A run of statements, held by index so a nested body is an int on the
@@ -169,20 +169,15 @@ struct ArrayConstant
     Vector<int> elements; // expression nodes, one per element
 };
 
-// A threadgroup-shared array: memory one dispatch group has in common, which
-// every thread in it may read and write and no thread outside it can see. It is
-// a declaration like ArrayConstant and unlike it in every other way - the size
-// is a compile-time number rather than a list of expressions, nothing
-// initialises it, and what it holds at any moment is whatever the group last
-// put there.
-//
-// The two backends do not even declare it in the same place: MSL's `threadgroup`
-// is a local of the kernel function, HLSL's `groupshared` is a global. See the
-// emitter.
-struct ArrayShared
+// A threadgroup-shared array: the tile a reduction or a blocked matmul stages
+// in on-chip memory. Unlike a storage buffer it never crosses the CPU
+// boundary, so its element type is whatever the kernel wants - a float4 tile
+// is one wide element, not four scalars with a layout contract. The size is a
+// compile-time constant in the emitted source, fixed when define() runs.
+struct SharedArray
 {
     ValueType elementType = ValueType::Float;
-    int size = 0;
+    int elements = 0;
 };
 
 // One node in the shader expression tree. Plain data referenced by integer id so
@@ -216,6 +211,30 @@ public:
     {
         ValueType type = ValueType::Float;
         int sourceNode = -1; // vertex-stage expression feeding this varying
+    };
+
+    // One kernel output write: buffer[index] = value. Recording any store
+    // marks the whole graph as a compute kernel, the way position/fragment
+    // mark a render one - this list is that signature. Each store is also
+    // recorded as a statement in the block open at the time, which is where
+    // it is emitted: a write inside a loop body runs once per iteration,
+    // not once after the loop.
+    struct Store
+    {
+        int slot = -1;
+        int index = -1;
+        int value = -1;
+    };
+
+    // Its texture sibling: texture[x, y] = colour. A compute signature entry
+    // exactly as a buffer store is, and what makes a kernel able to produce
+    // something a later render pass samples.
+    struct TextureStore
+    {
+        int slot = -1;
+        int x = -1;
+        int y = -1;
+        int value = -1;
     };
 
     int addInput(ValueType type);
@@ -320,27 +339,21 @@ public:
     int addAtomicAdd(int bufferSlot, int index, int value);
     int addAtomicLoad(int bufferSlot, int index);
 
-    // Threadgroup memory: the array, an element read, an element write, the
-    // group-local thread index that indexes it, and the barrier that makes one
-    // thread's writes visible to the rest.
-    int addSharedArray(ValueType elementType, int size);
+    // The threadgroup pieces: where a thread sits inside its group and which
+    // group it belongs to (components on the terms ThreadId sets - a 1D kernel
+    // has only component 0), the implicit grid bound as a readable value, a
+    // shared array with its subscript read and write, and the barrier that
+    // orders them. Each id kind fixes the dispatch rank exactly as the global
+    // ids do, so a kernel cannot mix a flat local id with a grid dispatch.
+    int addLocalId();
+    int addLocalPosition(int component);
+    int addGroupId();
+    int addGroupPosition(int component);
+    int addGridExtent(DispatchRank forRank, int component);
+    int addSharedArray(ValueType elementType, int elements);
     int addSharedRead(int slot, int index);
-    void addSharedWrite(int slot, int index, int value);
-    int addThreadIndexInGroup();
+    void addSharedStore(int slot, int index, int value);
     void addBarrier();
-
-    const Vector<ArrayShared>& sharedArrays() const { return sharedArrayList; }
-
-    // Whether the kernel asked where a thread sits in its group, which is what
-    // decides the entry point takes the extra parameter that says.
-    bool usesThreadIndexInGroup() const { return groupIndexUsed; }
-
-    // Whether it waits for its group anywhere, which constrains how it may be
-    // dispatched: the emitted bounds guard returns early, and a thread that
-    // returns before a barrier its neighbours are still waiting at is undefined
-    // in both languages. So a kernel with one is dispatched over a whole number
-    // of groups - see ComputeProgram, which refuses anything else.
-    bool usesBarriers() const { return barrierUsed; }
 
     void setPosition(int node) { positionNode = node; }
     void setFragment(int node) { fragmentNode = node; }
@@ -385,6 +398,18 @@ public:
 
     const Vector<BufferAccess>& storageBuffers() const { return storageSlots; }
     const Vector<ArrayConstant>& arrays() const { return arrayConstants; }
+    const Vector<Store>& stores() const { return storeList; }
+    const Vector<TextureStore>& textureStores() const { return textureStoreList; }
+    const Vector<SharedArray>& sharedArrays() const { return sharedArrayList; }
+
+    // Which threadgroup pieces the kernel asked for, driving what the emitters
+    // add to the entry signature - and, for the barrier, what they take away:
+    // a kernel that barriers gets no early-return bounds guard, because a
+    // barrier below a return some threads took is undefined on both backends.
+    // Such a kernel bounds its own stores, typically against gridExtent.
+    bool usesLocalId() const { return localIdUsed; }
+    bool usesGroupId() const { return groupIdUsed; }
+    bool usesBarrier() const { return barrierUsed; }
 
     // Recording any store - to a buffer, to a texture, or an atomic add - is
     // what marks the graph as a kernel.
@@ -393,7 +418,10 @@ public:
     // kernel that only counts things writes nothing, so a graph judged by its
     // stores alone would emit a vertex/fragment pair for it and fail to compile
     // on a `gid` no render stage has.
-    bool isCompute() const { return writesResources; }
+    bool isCompute() const
+    {
+        return storeList.size() > 0 || textureStoreList.size() > 0 || atomicUsed;
+    }
 
     DispatchRank dispatchRank() const { return rank; }
 
@@ -411,7 +439,7 @@ public:
 private:
     int add(Expr node);
     int addStatement(Statement newStatement);
-    int addThreadIndex(DispatchRank forRank, int component);
+    int addIndexNode(ExprKind kind, DispatchRank forRank, int component);
 
     // Structural sharing for the two kinds that can take it. A key holds
     // everything add() would have to compare to call two nodes the same value;
@@ -438,10 +466,20 @@ private:
     Vector<VaryingSlot> varyingSlots;
     Vector<ValueType> uniformTypes;
     Vector<BufferAccess> storageSlots;
+    Vector<Store> storeList;
+    Vector<TextureStore> textureStoreList;
     Vector<TextureSampling> textureSamplings;
     Vector<TextureAccess> textureAccesses; // parallel to textureSamplings
     Vector<ArrayConstant> arrayConstants;
-    Vector<ArrayShared> sharedArrayList;
+    Vector<SharedArray> sharedArrayList;
+    bool localIdUsed = false;
+    bool groupIdUsed = false;
+    bool barrierUsed = false;
+
+    // Whether anything atomic was recorded. A kernel whose only output is a
+    // counter has no store to be recognised by, so this is what tells the
+    // emitter it is one - see isCompute.
+    bool atomicUsed = false;
 
     Vector<ValueType> variableTypes;
     Vector<Statement> statementList;
@@ -449,14 +487,6 @@ private:
     Vector<int> openBlocks; // innermost last; blocks[back()] takes new statements
     DispatchRank rank = DispatchRank::OneD;
     bool rankFixed = false;
-
-    // Any store, texture store or atomic add. Kept as a flag rather than read
-    // off a list of stores, because a store is a statement now: it lives in the
-    // block it was recorded in, which is the whole point - one emitted after the
-    // statements instead would run whatever the ifThen around it decided.
-    bool writesResources = false;
-    bool groupIndexUsed = false;
-    bool barrierUsed = false;
     int positionNode = -1;
     int fragmentNode = -1;
     int discardNode = -1;

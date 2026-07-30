@@ -139,12 +139,6 @@ public:
                && "eacp: a kernel written against threadPosition() is "
                   "dispatched with dispatch(width, height)");
 
-        assert(coversWholeGroups(count, ComputePass::threadGroupWidth)
-               && "eacp: a kernel with a barrier must be dispatched over a whole "
-                  "number of threadgroups - the bounds guard returns early, and a "
-                  "thread that returns before a barrier its neighbours are waiting "
-                  "at is undefined. Round the count up and guard the writes.");
-
         const std::uint32_t extents[] = {(std::uint32_t) count};
         return packWithExtents(extents, 1);
     }
@@ -157,11 +151,6 @@ public:
                && "eacp: a kernel written against threadId() is dispatched "
                   "with dispatch(count)");
 
-        assert(coversWholeGroups(width, ComputePass::threadGroupSize2D)
-               && coversWholeGroups(height, ComputePass::threadGroupSize2D)
-               && "eacp: a kernel with a barrier must be dispatched over a whole "
-                  "number of threadgroups in both axes");
-
         const std::uint32_t extents[] = {(std::uint32_t) width,
                                          (std::uint32_t) height};
         return packWithExtents(extents, 2);
@@ -170,6 +159,13 @@ public:
     // The grid shape this kernel's body asked for, which decides which dispatch
     // it takes.
     DispatchRank dispatchRank() const { return generated.dispatchRank; }
+
+    // The fixed group shape every dispatch uses, restated here because it is
+    // part of a shared-memory kernel's arithmetic: localId() runs to
+    // groupWidth in a 1D kernel (groupSize2D per axis in a 2D one), and a
+    // shared tile is sized in these units.
+    static constexpr int groupWidth = ComputePass::threadGroupWidth;
+    static constexpr int groupSize2D = ComputePass::threadGroupSize2D;
 
     int uniformByteSize() const { return uniformBytes.size(); }
 
@@ -195,72 +191,27 @@ protected:
 
     UInt threadId() { return builder.threadId(); }
     ThreadPosition threadPosition() { return builder.threadPosition(); }
-    UInt threadIndexInGroup() { return builder.threadIndexInGroup(); }
+    Float constant(float value) { return builder.constant(value); }
 
-    // Threadgroup memory and the barrier that makes one thread's writes to it
-    // visible to the rest. See ShaderBuilder::barrier for the one rule: every
-    // thread in the group reaches it, or none does.
-    template <typename T, int Size>
-    SharedArray<T, Size> sharedArray()
-    {
-        return builder.sharedArray<T, Size>();
-    }
-
+    // The threadgroup vocabulary, forwarded on the terms the ids above set:
+    // where a thread sits in its group, which group it is in, the implicit
+    // grid bound the dispatch supplied, a shared array, and the barrier that
+    // orders access to it. The group shape is the fixed one the dispatch
+    // uses, so shared tiles are sized against the constants below.
+    UInt localId() { return builder.localId(); }
+    ThreadPosition localPosition() { return builder.localPosition(); }
+    UInt groupId() { return builder.groupId(); }
+    ThreadPosition groupPosition() { return builder.groupPosition(); }
+    UInt gridCount() { return builder.gridCount(); }
+    UInt gridWidth() { return builder.gridWidth(); }
+    UInt gridHeight() { return builder.gridHeight(); }
     void barrier() { builder.barrier(); }
 
-    Float constant(float value) { return builder.constant(value); }
-    Bool boolean(bool value) { return builder.boolean(value); }
-    Int integer(int value) { return builder.integer(value); }
-
-    template <ShaderHandleLike T, SameShaderHandle<T>... Rest>
-    ConstantArray<ShaderHandle<T>, 1 + (int) sizeof...(Rest)>
-        array(const T& first, const Rest&... rest)
-    {
-        return builder.array(first, rest...);
-    }
-
-    // Control flow, forwarded from the builder exactly as ShaderProgram
-    // forwards it. A kernel needs it more than a fragment stage does: walking a
-    // list whose length only the CPU knows is what a buffer input is for, and
-    // that is a loop over a mutable counter or it is nothing.
-    template <ShaderHandleLike T>
-    Var<ShaderHandle<T>> var(const T& initialValue)
-    {
-        return builder.var(initialValue);
-    }
-
     template <typename T>
-        requires(isMatrix(ValueTypeOf<T>::value))
-    Var<T> var(const T& initialValue)
+    Shared<T> shared(int count)
     {
-        return builder.var(initialValue);
+        return builder.shared<T>(count);
     }
-
-    Var<Float> var(float initialValue) { return builder.var(initialValue); }
-    Var<Bool> var(bool initialValue) { return builder.var(initialValue); }
-    Var<Int> var(int initialValue) { return builder.var(initialValue); }
-
-    template <typename Body>
-    void ifThen(const Bool& condition, Body&& body)
-    {
-        builder.ifThen(condition, std::forward<Body>(body));
-    }
-
-    template <typename Then, typename Else>
-    void ifThen(const Bool& condition, Then&& whenTrue, Else&& whenFalse)
-    {
-        builder.ifThen(
-            condition, std::forward<Then>(whenTrue), std::forward<Else>(whenFalse));
-    }
-
-    template <typename Body>
-    void loop(const Bool& condition, Body&& body)
-    {
-        builder.loop(condition, std::forward<Body>(body));
-    }
-
-    void breakLoop() { builder.breakLoop(); }
-    void continueLoop() { builder.continueLoop(); }
 
     // Adds to one element of a shared counter and yields what it held before, so
     // threads that never meet each other still come away with distinct numbers.
@@ -285,6 +236,44 @@ protected:
         return builder.atomicAdd(buffer, index, value);
     }
 
+    // Control flow, forwarded from the builder on the terms ShaderProgram
+    // forwards it: a mutable local, the two branching statements, the loop and
+    // its two jumps. The unsigned overload is the counter a reduction kernel
+    // walks a buffer with - it lives beside the UInt indices threadId() hands
+    // out, and the uint comparisons are what bound it.
+    template <ShaderHandleLike T>
+    Var<ShaderHandle<T>> var(const T& initialValue)
+    {
+        return builder.var(initialValue);
+    }
+
+    Var<Float> var(float initialValue) { return builder.var(initialValue); }
+    Var<Bool> var(bool initialValue) { return builder.var(initialValue); }
+    Var<Int> var(int initialValue) { return builder.var(initialValue); }
+    Var<UInt> var(unsigned initialValue) { return builder.var(initialValue); }
+
+    template <typename Body>
+    void ifThen(const Bool& condition, Body&& body)
+    {
+        builder.ifThen(condition, std::forward<Body>(body));
+    }
+
+    template <typename Then, typename Else>
+    void ifThen(const Bool& condition, Then&& whenTrue, Else&& whenFalse)
+    {
+        builder.ifThen(
+            condition, std::forward<Then>(whenTrue), std::forward<Else>(whenFalse));
+    }
+
+    template <typename Body>
+    void loop(const Bool& condition, Body&& body)
+    {
+        builder.loop(condition, std::forward<Body>(body));
+    }
+
+    void breakLoop() { builder.breakLoop(); }
+    void continueLoop() { builder.continueLoop(); }
+
     void write(const OutputBuffer& buffer, const UInt& index, const Float& value)
     {
         builder.write(buffer, index, value);
@@ -308,8 +297,10 @@ protected:
         builder.write(buffer, index, value);
     }
 
-    template <typename T, int Size>
-    void write(const SharedArray<T, Size>& array, const UInt& index, const T& value)
+    // One element of a threadgroup-shared array, published to the rest of the
+    // group by the next barrier().
+    template <typename T>
+    void write(const Shared<T>& array, const UInt& index, const T& value)
     {
         builder.write(array, index, value);
     }
@@ -353,14 +344,6 @@ protected:
     virtual void define() = 0;
 
 private:
-    // Only a kernel that waits for its group is held to this: every other one is
-    // free to be dispatched over any count at all, the guard simply retiring the
-    // threads past the end.
-    bool coversWholeGroups(int extent, int groupSize) const
-    {
-        return !generated.usesBarriers || extent % groupSize == 0;
-    }
-
     const void* packWithExtents(const std::uint32_t* extents, int count)
     {
         uniformBytes.clear();

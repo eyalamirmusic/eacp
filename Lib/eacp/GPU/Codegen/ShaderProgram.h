@@ -4,9 +4,11 @@
 
 #include <algorithm>
 
+#include "../Buffer/StreamingBuffers.h"
 #include "../Device/Device.h"
 #include "../Frame/RenderPass.h"
 #include "GeneratedShader.h"
+#include "PackedVertex.h"
 #include "ShaderBuilder.h"
 #include "ShaderTypes.h"
 #include "ShaderValue.h"
@@ -343,7 +345,7 @@ struct Uniform<WritableTexture2D> : WritableTexture2D
     const Texture* value = nullptr;
 };
 
-inline VertexFormat toVertexFormat(ValueType type)
+constexpr VertexFormat toVertexFormat(ValueType type)
 {
     switch (type)
     {
@@ -370,6 +372,40 @@ inline VertexFormat toVertexFormat(ValueType type)
     }
 
     return VertexFormat::Float;
+}
+
+// A CPU vertex field's wire format.
+//
+// The default is whatever its shader value implies, which is the unpacked one -
+// a Float4 attribute is four floats. A packed type overrides it by declaring a
+// vertexFormat of its own, which is the whole mechanism: the field keeps saying
+// what the shader sees through ShaderValue, and says separately what the buffer
+// holds. See PackedVertex.h.
+template <typename T>
+struct VertexFormatOf
+{
+    static constexpr auto value =
+        toVertexFormat(ValueTypeOf<typename ShaderValueOf<T>::type>::value);
+};
+
+template <typename T>
+    requires requires { T::vertexFormat; }
+struct VertexFormatOf<T>
+{
+    static constexpr auto value = T::vertexFormat;
+};
+
+// What a field of type M is expected to occupy, for the size check every input
+// makes. A packed field is measured against the format it declares; anything
+// else against the CPU type its shader value implies - the same question asked
+// of whichever of the two is authoritative for that field.
+template <typename M, typename Handle>
+constexpr std::size_t expectedAttributeBytes()
+{
+    if constexpr (requires { M::vertexFormat; })
+        return (std::size_t) bytesPerAttribute(M::vertexFormat);
+    else
+        return sizeof(typename CpuValueOf<Handle>::type);
 }
 
 // The non-templated surface the uniform member walk bottoms out in. The templated
@@ -667,11 +703,18 @@ public:
         uploadIndices(data, sizeof(std::uint16_t), count, IndexFormat::UInt16);
     }
 
-    // Uploads typed per-instance data for a buffer slot and owns the buffer.
+    // Uploads typed per-instance data for a buffer slot and owns the storage.
     // bufferIndex must match the slot an instanceInput() pulled into; the
     // element type's size must match that slot's per-instance stride. All
     // instance slots carry the same element count - the instance count passed
     // to RenderPass::drawInstanced(program, ...).
+    //
+    // Each call gets storage no earlier call's draw is still reading, so one
+    // program can be flushed many times in a frame - which SpriteRenderer and
+    // Text::GlyphRenderer both do, on every texture, sampling and scissor
+    // change. That used to hold by accident, because every call allocated a
+    // fresh GPU buffer; it is now a property of StreamingBuffers, which
+    // recycles and so allocates nothing once its pools are warm.
     template <typename I, std::size_t N>
     void setInstances(int bufferIndex, const I (&data)[N])
     {
@@ -688,10 +731,18 @@ public:
                   "per-instance layout");
 
         if (instanceBuffers.size() <= bufferIndex)
+        {
+            instanceStreams.resize(bufferIndex + 1);
             instanceBuffers.resize(bufferIndex + 1);
+        }
 
-        instanceBuffers[bufferIndex].emplace(
-            Device::shared(), data, sizeof(I) * (std::size_t) count);
+        auto& stream = instanceStreams[bufferIndex];
+
+        if (!stream.has_value())
+            stream.emplace(BufferUsage::Vertex);
+
+        instanceBuffers[bufferIndex] =
+            &stream->write(data, sizeof(I) * (std::size_t) count);
         instanceCountValue = count;
         setExternalInstanceBuffer(bufferIndex, nullptr);
     }
@@ -735,16 +786,32 @@ public:
                  BlendMode blendMode = BlendMode::None,
                  PixelFormat colorFormat = PixelFormat::BGRA8Unorm)
     {
-        shaderLibrary.emplace(Device::shared(), generated.source);
-
         auto descriptor = RenderPipelineDescriptor {};
-        descriptor.library = &*shaderLibrary;
         descriptor.sampleCount = sampleCount;
-        descriptor.vertexLayout = generated.vertexLayout;
         descriptor.depth = depth;
         descriptor.topology = topology;
         descriptor.blendMode = blendMode;
         descriptor.colorFormat = colorFormat;
+
+        prepare(descriptor);
+    }
+
+    // The named form of the same thing, and what to reach for once more than
+    // one of these is not the shader's own choice: a program drawing into a
+    // texture takes its sample count, its depth and its pixel format from the
+    // target, and four positional arguments in a row say none of that at the
+    // call site. Cull mode, front face and the depth comparison are only
+    // reachable this way, having no positional slots.
+    //
+    // The program's own library and vertex layout are what they always were and
+    // are filled in here; whatever the caller left in those two fields is
+    // ignored.
+    void prepare(RenderPipelineDescriptor descriptor)
+    {
+        shaderLibrary.emplace(Device::shared(), generated.source);
+
+        descriptor.library = &*shaderLibrary;
+        descriptor.vertexLayout = generated.vertexLayout;
 
         pipelineState.emplace(Device::shared(), descriptor);
     }
@@ -768,6 +835,15 @@ public:
 
     int uniformByteSize() const { return uniformBytes.size(); }
     bool hasUniforms() const { return !uniformBytes.empty(); }
+
+    // Which stage define() actually read a uniform from, answered by the same
+    // walk that decided whether to declare the block in that stage's generated
+    // function. RenderPass::draw(program) binds to the stage that says yes and
+    // leaves the other alone; a program declaring uniforms neither stage reads
+    // binds to nobody. Ask these rather than hasUniforms() when hand-rolling a
+    // draw over app-owned geometry.
+    bool vertexReadsUniforms() const { return generated.vertexReadsUniforms; }
+    bool fragmentReadsUniforms() const { return generated.fragmentReadsUniforms; }
 
     // Binds every assigned texture member to the pass; a no-op for programs
     // without textures. RenderPass::draw(program) calls this.
@@ -846,11 +922,11 @@ protected:
     typename ShaderValueOf<M>::type vertexInput(M C::* member)
     {
         using Handle = typename ShaderValueOf<M>::type;
-        static_assert(sizeof(M) == sizeof(typename CpuValueOf<Handle>::type),
-                      "vertex field size does not match its shader value type");
+        static_assert(sizeof(M) == expectedAttributeBytes<M, Handle>(),
+                      "vertex field size does not match the format it declares");
 
         constexpr auto type = ValueTypeOf<Handle>::value;
-        vertexLayoutData.attribute(toVertexFormat(type), memberOffset(member));
+        vertexLayoutData.attribute(VertexFormatOf<M>::value, memberOffset(member));
         vertexLayoutData.stride = (int) sizeof(C);
 
         auto added = builder.addVertexInput(type);
@@ -872,12 +948,12 @@ protected:
     typename ShaderValueOf<M>::type instanceInput(M C::* member, int bufferIndex)
     {
         using Handle = typename ShaderValueOf<M>::type;
-        static_assert(sizeof(M) == sizeof(typename CpuValueOf<Handle>::type),
-                      "instance field size does not match its shader value type");
+        static_assert(sizeof(M) == expectedAttributeBytes<M, Handle>(),
+                      "instance field size does not match the format it declares");
 
         constexpr auto type = ValueTypeOf<Handle>::value;
         vertexLayoutData.attribute(
-            toVertexFormat(type), memberOffset(member), bufferIndex);
+            VertexFormatOf<M>::value, memberOffset(member), bufferIndex);
         vertexLayoutData.buffer(bufferIndex, (int) sizeof(C), StepRate::PerInstance);
         usesInstancing = true;
 
@@ -939,6 +1015,7 @@ protected:
     Var<Float> var(float initialValue) { return builder.var(initialValue); }
     Var<Bool> var(bool initialValue) { return builder.var(initialValue); }
     Var<Int> var(int initialValue) { return builder.var(initialValue); }
+    Var<UInt> var(unsigned initialValue) { return builder.var(initialValue); }
 
     template <typename Body>
     void ifThen(const Bool& condition, Body&& body)
@@ -1076,8 +1153,8 @@ private:
             && externalInstanceBuffers[slot] != nullptr)
             return externalInstanceBuffers[slot];
 
-        if (slot < instanceBuffers.size() && instanceBuffers[slot].has_value())
-            return &*instanceBuffers[slot];
+        if (slot < instanceBuffers.size() && instanceBuffers[slot] != nullptr)
+            return instanceBuffers[slot];
 
         return nullptr;
     }
@@ -1121,8 +1198,14 @@ private:
     // Per-instance buffers indexed by their vertex-buffer slot; slot 0 stays
     // empty (the per-vertex buffer). Populated by setInstances, bound by
     // bindInstances. usesInstancing gates the multi-slot layout in compile().
+    //
+    // The stream owns a slot's storage across frames; the pointer beside it is
+    // the one buffer the last setInstances wrote, which is what a bind needs.
+    // Two of them rather than one because the stream hands out a different
+    // buffer each call, and the slot has to remember which.
     bool usesInstancing = false;
-    Vector<std::optional<Buffer>> instanceBuffers;
+    Vector<std::optional<StreamingBuffers>> instanceStreams;
+    Vector<const Buffer*> instanceBuffers;
 
     // Slots pointed at a buffer someone else owns (setInstanceBuffer), which is
     // how a compute kernel's output is drawn. Parallel to instanceBuffers so a

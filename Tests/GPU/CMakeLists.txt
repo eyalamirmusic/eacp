@@ -1,10 +1,12 @@
 set(gpu_test_sources
         AtomicTests.cpp
+        BufferRangeTests.cpp
         GPUSmokeTests.cpp
         IndirectDispatchTests.cpp
         ShaderCodegenTests.cpp
         SharedMemoryTests.cpp
         StorePlacementTests.cpp
+        StreamingBufferTests.cpp
         TestMain.cpp
         TextureUpdateTests.cpp)
 
@@ -22,14 +24,22 @@ if (APPLE OR WIN32)
     list(APPEND gpu_test_sources
             GPUSnapshotTests.cpp
             ScissorTests.cpp
+            BaseVertexTests.cpp
+            VertexFormatTests.cpp
             BackingScaleTests.cpp
             TextureRegionTests.cpp
             TextureSamplingTests.cpp
             ShaderBlendTests.cpp
+            CullModeTests.cpp
             CoordinateSpaceTests.cpp
             SpriteBatchTests.cpp
             RenderTargetTests.cpp
-            FrameComputeTests.cpp)
+            RenderTargetDepthTests.cpp
+            FrameComputeTests.cpp
+            FrameTimingTests.cpp
+            PipelineStateTests.cpp
+            ViewportTests.cpp
+            MipmapTests.cpp)
 endif ()
 
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through

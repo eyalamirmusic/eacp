@@ -65,6 +65,22 @@ DXGI_FORMAT toDXGIFormat(VertexFormat format)
             return DXGI_FORMAT_R32G32B32_FLOAT;
         case VertexFormat::Float4:
             return DXGI_FORMAT_R32G32B32A32_FLOAT;
+
+        // UNORM and SNORM rather than UINT and SINT: the shader reads these as
+        // 0..1 and -1..1, which is what the Normalized Metal formats give. The
+        // integer variants would deliver raw 0..255 and disagree with the other
+        // backend rather than fail, which is why VertexFormatTests compares a
+        // packed render against an unpacked one instead of trusting either.
+        case VertexFormat::UByte4Norm:
+            return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case VertexFormat::Half2:
+            return DXGI_FORMAT_R16G16_FLOAT;
+        case VertexFormat::Half4:
+            return DXGI_FORMAT_R16G16B16A16_FLOAT;
+        case VertexFormat::Short2Norm:
+            return DXGI_FORMAT_R16G16_SNORM;
+        case VertexFormat::Short4Norm:
+            return DXGI_FORMAT_R16G16B16A16_SNORM;
     }
 
     return DXGI_FORMAT_R32G32B32_FLOAT;
@@ -146,14 +162,70 @@ Vector<UINT> makeStrideTable(const VertexLayout& layout)
     return {static_cast<UINT>(layout.stride)};
 }
 
-D3D12_RASTERIZER_DESC makeRasterizerDesc(int sampleCount)
+D3D12_CULL_MODE toD3DCullMode(CullMode mode)
+{
+    switch (mode)
+    {
+        case CullMode::None:
+            return D3D12_CULL_MODE_NONE;
+        case CullMode::Front:
+            return D3D12_CULL_MODE_FRONT;
+        case CullMode::Back:
+            return D3D12_CULL_MODE_BACK;
+    }
+
+    return D3D12_CULL_MODE_NONE;
+}
+
+D3D12_COMPARISON_FUNC toD3DComparison(DepthCompare compare)
+{
+    switch (compare)
+    {
+        case DepthCompare::Never:
+            return D3D12_COMPARISON_FUNC_NEVER;
+        case DepthCompare::Less:
+            return D3D12_COMPARISON_FUNC_LESS;
+        case DepthCompare::LessEqual:
+            return D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        case DepthCompare::Equal:
+            return D3D12_COMPARISON_FUNC_EQUAL;
+        case DepthCompare::NotEqual:
+            return D3D12_COMPARISON_FUNC_NOT_EQUAL;
+        case DepthCompare::GreaterEqual:
+            return D3D12_COMPARISON_FUNC_GREATER_EQUAL;
+        case DepthCompare::Greater:
+            return D3D12_COMPARISON_FUNC_GREATER;
+        case DepthCompare::Always:
+            return D3D12_COMPARISON_FUNC_ALWAYS;
+    }
+
+    return D3D12_COMPARISON_FUNC_LESS_EQUAL;
+}
+
+// Culling here is pipeline state, where Metal makes it encoder state - the one
+// place in this file where the two APIs disagree about *when* a setting is
+// fixed rather than about what it is called. eacp resolves that the way it
+// already resolves topology: the descriptor owns it, and the Metal backend
+// applies it when the pipeline is bound.
+//
+// FrontCounterClockwise is TRUE for Winding::CounterClockwise, which is not the
+// D3D12 default and is what delivers the convention CullMode promises.
+//
+// The tempting reading is that D3D12 needs the opposite of Metal because it
+// decides facing in screen space, after a y flip Metal does not have. It has no
+// such extra flip: both APIs put clip-space y up and the framebuffer origin at
+// the top left, so the NDC-to-screen mapping reverses winding by exactly the
+// same amount on each, and one convention is spelled the same way on both.
+// Measured, not reasoned - it was FALSE on that reasoning and
+// Tests/GPU/CullModeTests.cpp culled the opposite face.
+D3D12_RASTERIZER_DESC makeRasterizerDesc(const RenderPipelineDescriptor& from)
 {
     D3D12_RASTERIZER_DESC desc = {};
     desc.FillMode = D3D12_FILL_MODE_SOLID;
-    // Match Metal's default of no face culling.
-    desc.CullMode = D3D12_CULL_MODE_NONE;
+    desc.CullMode = toD3DCullMode(from.cullMode);
+    desc.FrontCounterClockwise = from.frontFace == Winding::CounterClockwise;
     desc.DepthClipEnable = TRUE;
-    desc.MultisampleEnable = sampleCount > 1 ? TRUE : FALSE;
+    desc.MultisampleEnable = from.sampleCount > 1 ? TRUE : FALSE;
     return desc;
 }
 
@@ -196,18 +268,19 @@ D3D12_BLEND_DESC makeBlendDesc(BlendMode mode)
     }
 }
 
-// Less-equal depth test with depth writes on, matching the Metal backend. The
-// [0,1] depth range is shared by both APIs, so no convention flip is needed.
-D3D12_DEPTH_STENCIL_DESC makeDepthStencilDesc(bool depth)
+// The [0,1] depth range is shared by both APIs, so no convention flip is needed
+// and the comparison means the same thing on each.
+D3D12_DEPTH_STENCIL_DESC makeDepthStencilDesc(const RenderPipelineDescriptor& from)
 {
     D3D12_DEPTH_STENCIL_DESC desc = {};
 
-    if (!depth)
+    if (!from.depth)
         return desc;
 
     desc.DepthEnable = TRUE;
-    desc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
-    desc.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    desc.DepthWriteMask =
+        from.depthWrite ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+    desc.DepthFunc = toD3DComparison(from.depthCompare);
     return desc;
 }
 } // namespace
@@ -216,6 +289,8 @@ struct RenderPipeline::Native
 {
     Native(Device& device, const RenderPipelineDescriptor& descriptor)
         : topology(descriptor.topology)
+        , cullMode(descriptor.cullMode)
+        , frontFace(descriptor.frontFace)
     {
         pipeline.topology = toD3DTopology(descriptor.topology);
         pipeline.strides = makeStrideTable(descriptor.vertexLayout);
@@ -245,8 +320,8 @@ struct RenderPipeline::Native
         desc.PS.BytecodeLength = program->pixelBytecode->GetBufferSize();
         desc.BlendState = makeBlendDesc(descriptor.blendMode);
         desc.SampleMask = UINT_MAX;
-        desc.RasterizerState = makeRasterizerDesc(descriptor.sampleCount);
-        desc.DepthStencilState = makeDepthStencilDesc(descriptor.depth);
+        desc.RasterizerState = makeRasterizerDesc(descriptor);
+        desc.DepthStencilState = makeDepthStencilDesc(descriptor);
         desc.InputLayout.pInputElementDescs = inputLayout.data();
         desc.InputLayout.NumElements = static_cast<UINT>(inputLayout.size());
         desc.PrimitiveTopologyType = toTopologyType(descriptor.topology);
@@ -268,6 +343,8 @@ struct RenderPipeline::Native
     ~Native() { getD3D12Context().deferRelease(std::move(pipeline.state)); }
 
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
+    CullMode cullMode = CullMode::None;
+    Winding frontFace = Winding::CounterClockwise;
     D3D12Pipeline pipeline;
 };
 
@@ -285,6 +362,18 @@ bool RenderPipeline::isValid() const
 PrimitiveTopology RenderPipeline::topology() const
 {
     return impl->topology;
+}
+
+// Both are already inside the PSO here. Reported anyway so the class reads the
+// same on either backend, and so a caller can ask a pipeline what it does.
+CullMode RenderPipeline::cullMode() const
+{
+    return impl->cullMode;
+}
+
+Winding RenderPipeline::frontFace() const
+{
+    return impl->frontFace;
 }
 
 void* RenderPipeline::nativeState() const

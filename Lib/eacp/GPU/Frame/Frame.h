@@ -3,6 +3,8 @@
 #include "ComputePass.h"
 #include "RenderPass.h"
 
+#include <string_view>
+
 namespace eacp::GPU
 {
 class Device;
@@ -11,6 +13,20 @@ struct RenderPassDescriptor
 {
     Graphics::Color clearColor = Graphics::Color::black();
     bool clear = true;
+
+    // Names this pass for the GPU timer, which is also what turns timing on for
+    // it: a labelled pass has its start and end timestamped by the hardware and
+    // turns up in Device::lastFrameTimings(), while an unlabelled one is not
+    // measured and costs nothing.
+    //
+    // A label rather than a flag because a frame has several passes and the
+    // question worth asking is which of them costs what. Copied as the pass
+    // begins, so a temporary is safe.
+    //
+    // Initialised here rather than left to aggregate initialisation, or every
+    // existing `beginPass({colour})` in the tree warns under
+    // -Wmissing-field-initializers for the field it does not know about.
+    std::string_view label = {};
 };
 
 // Off-screen render target for snapshots: a colour texture the app owns instead
@@ -53,9 +69,18 @@ public:
     // sample in a later one and neither backend needs a fence to say so.
     //
     // The texture must have been created with TextureDescriptor::renderTarget;
-    // anything else yields a pass that records nothing. Multisampling and depth
-    // are deliberately absent - what this is for is a full-screen pass over a
-    // whole texture, and neither has a meaning there.
+    // anything else yields a pass that records nothing.
+    //
+    // Depth is the target's, from TextureDescriptor::depth: a target created
+    // with one gets it attached, cleared to the far plane and discarded, and a
+    // target created without one runs the pass with no depth test at all. Ask
+    // for it whenever the pass draws a 3D scene rather than a full-screen quad,
+    // and match it with RenderPipelineDescriptor::depth on the pipeline.
+    //
+    // Multisampling is still deliberately absent. A texture target has nothing
+    // to resolve into - the texture *is* what a resolve would produce - and the
+    // pass is single-sampled, so a pipeline used here needs sampleCount 1 even
+    // when the same shader draws multisampled into the drawable.
     //
     // A texture cannot be sampled by the same pass that renders into it. That
     // is what two of them and a swap is for - see the ping-pong a feedback
@@ -80,7 +105,10 @@ public:
     // A command buffer has one open encoder at a time: let the returned pass end
     // (drop it out of scope, or call end()) before beginning the pass that reads
     // what it wrote.
-    ComputePass beginCompute();
+    //
+    // A label times the pass, exactly as it does on a render pass — see
+    // RenderPassDescriptor::label.
+    ComputePass beginCompute(std::string_view label = {});
 
     bool isValid() const;
 
