@@ -39,17 +39,21 @@ public:
     std::size_t size() const;
     bool isValid() const;
 
-    // Copies bytes back from the buffer into dst. Valid once the command buffer
-    // that wrote it has committed (CommandBuffer::commit blocks until then).
-    void read(void* dst, std::size_t bytes) const;
+    // Copies bytes back from the buffer into dst, starting at offset bytes
+    // into the buffer. Valid once the command buffer that wrote it has
+    // committed (CommandBuffer::commit blocks until then). The copy is
+    // clamped to the buffer's end; an offset past it reads nothing.
+    void read(void* dst, std::size_t bytes, std::size_t offset = 0) const;
 
-    // Overwrites the buffer's contents from the CPU — the per-frame path for
-    // dynamic geometry, reusing the GPU resource instead of allocating a new
-    // one. Copies min(bytes, size()) bytes; a no-op on an invalid buffer or
-    // null data. The new contents are seen by commands encoded after the
-    // call; update at most once per displayed frame, as pacing against
-    // frames still in flight is not synchronised here.
-    void update(const void* data, std::size_t bytes);
+    // Overwrites part of the buffer's contents from the CPU, starting at
+    // offset bytes into the buffer — the per-frame path for dynamic
+    // geometry, reusing the GPU resource instead of allocating a new one.
+    // The copy is clamped to the buffer's end; a no-op on an invalid buffer,
+    // null data or an offset past the end. The new contents are seen by
+    // commands encoded after the call; update at most once per displayed
+    // frame, as pacing against frames still in flight is not synchronised
+    // here.
+    void update(const void* data, std::size_t bytes, std::size_t offset = 0);
 
     // Opaque native handle for cross-translation-unit use by other GPU types.
     void* nativeBuffer() const;
