@@ -90,9 +90,12 @@ public:
 private:
     friend class ComponentHost;
 
-    // Allocates a slot and records the dispatch. Called by the host, on the
-    // frame's own command buffer, before the render pass opens.
-    void rasterize(CoverageAtlas& atlas, float scale, GPU::ComputePass& pass);
+    // Allocates a slot and hands the binned path to the frame's batch. No GPU
+    // work is recorded here: the batch is dispatched once, after the whole tree
+    // has been walked, which is what keeps a hundred paths to one dispatch.
+    void rasterize(CoverageAtlas& atlas,
+                   float scale,
+                   GPUWidgets::CoverageBatch& batch);
 
     // The atlas moved everything, or the display did: whatever was rasterized
     // is no longer where the uv says it is, and the slot it was in belongs to

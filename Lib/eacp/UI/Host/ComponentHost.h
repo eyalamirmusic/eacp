@@ -95,7 +95,7 @@ private:
     // the render pass opens. See the definition for why it can only happen here.
     void rasterizePaths(GPU::Frame& frame);
     void rasterizeDirtyPaths(Component& component,
-                             GPU::ComputePass& pass,
+                             GPUWidgets::CoverageBatch& batch,
                              PathWalk& walk);
     void markAllPathsDirty(Component& component);
     void reportDroppedPaths(int count);
@@ -119,6 +119,13 @@ private:
     // Built on the first resize, once there is a size to build them against.
     // The atlas comes first and outlives the batch that reads it.
     std::optional<CoverageAtlas> paths;
+
+    // Every path the frame rasterizes, gathered and dispatched as one. Held
+    // across frames rather than made per frame, because what it holds is the
+    // buffers -- a canvas whose paths all move re-fills them and allocates
+    // nothing.
+    GPUWidgets::CoverageBatch pathBatch;
+
     std::optional<ShapeBatch> shapes;
     std::optional<Text::TextRenderer> text;
 

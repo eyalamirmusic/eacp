@@ -1,5 +1,6 @@
 #include <eacp/GPUWidgets/GPUWidgets.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -17,10 +18,12 @@ using Graphics::Rect;
 // re-uploaded before the frame it appears in.
 //
 // So this measures the two sides against each other rather than either alone.
-// setPath is the CPU: emit the segments, bin them into tiles, sum the backdrops,
-// upload three buffers. The dispatch is the GPU. A rung above this one moves
-// work from the first column to the second, and it is only worth building if the
-// first column is where the time is.
+// setPath is the CPU: emit the segments, bin them into tiles, sum the backdrops.
+// The dispatch is the GPU, and it is also where the bytes go up - a batch
+// gathers and uploads when the work is recorded, not when the path was set, so
+// that a frame sends every path's at once. A rung above this one moves work from
+// the first column to the second, and it is only worth building if the first
+// column is where the time is.
 //
 // Headless on purpose - no window, no swapchain, no compositor - so what is
 // timed is the rasterizer and not a frame.
@@ -200,6 +203,25 @@ double cpuMilliseconds(GPUWidgets::PathRasterizer& rasterizer,
     return millisecondsSince(start) / (double) repetitions;
 }
 
+// Blocks until everything submitted so far has run.
+//
+// It has to be spelled out, because commit() does not do it on every backend:
+// Metal's waits for completion, D3D12's returns as soon as the list is on the
+// queue. Left alone, every GPU figure here would be submission time on Windows -
+// which reads as a rasterization of thirty-seven million segment tests costing
+// nothing at all, and is the sort of number a document gets built on.
+//
+// A read is what both backends do wait for. The bytes are irrelevant; the queue
+// is in order, so waiting for a read submitted after the work waits for the work.
+void waitForGpu()
+{
+    static auto fence = GPU::Buffer {
+        GPU::Device::shared(), nullptr, sizeof(float), GPU::BufferUsage::Storage};
+
+    auto value = 0.f;
+    fence.read(&value, sizeof(value));
+}
+
 // One command buffer submitted and waited on with nothing in it. Every GPU
 // figure below rides on top of this, and at UI scale it is most of what a naive
 // reading would call the GPU's time - so it is measured and subtracted rather
@@ -216,6 +238,7 @@ double submitFloor()
         }
 
         commands.commit();
+        waitForGpu();
     };
 
     for (auto i = 0; i < 8; ++i)
@@ -250,6 +273,7 @@ double gpuMilliseconds(GPUWidgets::PathRasterizer& rasterizer, double floor)
         }
 
         commands.commit();
+        waitForGpu();
     };
 
     for (auto i = 0; i < 2; ++i)
@@ -295,6 +319,25 @@ void report(Case& item, double floor)
 // every one is re-binned and re-uploaded every frame. One rasterizer each, the
 // way a tree of widgets holds one PathShape each, and the whole set timed
 // together - because what a frame has to fit in is the sum.
+//
+// Both ways round, because that is what the batch changed. Unbatched, each path
+// is a dispatch of its own and its own buffers; batched, they are gathered into
+// one set and one dispatch. The binning is identical either way - it is the same
+// setPath - so the difference is the per-path overhead and nothing else.
+//
+// A target every path writes into, the way an interface's atlas is. Sized to
+// hold the lot side by side, since what is being timed is the dispatch and not
+// the packing.
+GPU::Texture makeCanvasTarget(int width, int height)
+{
+    auto descriptor = GPU::TextureDescriptor {};
+    descriptor.width = width;
+    descriptor.height = height;
+    descriptor.format = GPU::TextureFormat::RGBA8Unorm;
+    descriptor.computeWrite = true;
+    return {GPU::Device::shared(), descriptor, nullptr};
+}
+
 void reportCanvas(const char* name,
                   int count,
                   const GPUWidgets::Path& path,
@@ -309,13 +352,57 @@ void reportCanvas(const char* name,
         rasterizer.setPath(path);
     }
 
+    // Stacked down the target rather than tiled, which keeps the texture within
+    // what a device will make while every path still lands somewhere of its own.
+    auto width = rasterizers[0].getCoverageWidth();
+    auto height = rasterizers[0].getCoverageHeight();
+    auto rows = std::max(1, 4096 / std::max(1, height));
+    auto columns = (count + rows - 1) / rows;
+
+    auto target = makeCanvasTarget(std::min(16384, width * columns), rows * height);
+    auto batch = GPUWidgets::CoverageBatch {};
+
+    auto place = [&]
+    {
+        for (auto i = 0; i < count; ++i)
+            rasterizers[i].setTarget(
+                target, (i / rows) * width, (i % rows) * height);
+    };
+
+    place();
+
     auto cpuOnce = [&]
     {
         for (auto& rasterizer: rasterizers)
             rasterizer.setPath(path);
+
+        place();
     };
 
-    auto gpuOnce = [&]
+    auto gather = [&]
+    {
+        batch.begin(target);
+
+        for (auto& rasterizer: rasterizers)
+            batch.add(rasterizer);
+    };
+
+    auto batchedOnce = [&]
+    {
+        gather();
+
+        auto commands = GPU::Device::shared().makeCommandBuffer();
+
+        {
+            auto pass = commands.beginCompute();
+            batch.dispatch(pass);
+        }
+
+        commands.commit();
+        waitForGpu();
+    };
+
+    auto unbatchedOnce = [&]
     {
         auto commands = GPU::Device::shared().makeCommandBuffer();
 
@@ -327,12 +414,15 @@ void reportCanvas(const char* name,
         }
 
         commands.commit();
+        waitForGpu();
     };
 
     for (auto i = 0; i < 4; ++i)
     {
         cpuOnce();
-        gpuOnce();
+        batchedOnce();
+        cpuOnce();
+        unbatchedOnce();
     }
 
     constexpr auto rounds = 20;
@@ -344,21 +434,40 @@ void reportCanvas(const char* name,
 
     auto cpu = millisecondsSince(cpuStart) / (double) rounds;
 
-    auto gpuStart = Clock::now();
+    // A whole frame each way, binning included, because the bytes go up when the
+    // work is recorded now: timing the two dispatches alone would give the
+    // unbatched side buffers that were already filled and the batched side a
+    // gather it does every time. Re-binning before each is what makes both send
+    // what a canvas whose paths all move sends.
+    auto unbatchedStart = Clock::now();
 
     for (auto i = 0; i < rounds; ++i)
-        gpuOnce();
+    {
+        cpuOnce();
+        unbatchedOnce();
+    }
 
-    auto gpu = millisecondsSince(gpuStart) / (double) rounds;
+    auto unbatched = millisecondsSince(unbatchedStart) / (double) rounds;
 
-    std::printf("%-26s %13d %8d %12s %9.3f %9.3f %8.0f%%\n",
+    auto batchedStart = Clock::now();
+
+    for (auto i = 0; i < rounds; ++i)
+    {
+        cpuOnce();
+        batchedOnce();
+    }
+
+    auto batched = millisecondsSince(batchedStart) / (double) rounds;
+
+    std::printf("%-26s %7d %9d %9.3f %9.3f %9.3f %6d %7d\n",
                 name,
                 count,
                 rasterizers[0].getSegmentCount() * count,
-                "-",
                 cpu,
-                gpu,
-                100.0 * cpu / (cpu + gpu));
+                unbatched,
+                batched,
+                batch.getDispatchCount(),
+                batch.getBufferUpdateCount());
 }
 } // namespace
 
@@ -396,14 +505,15 @@ int main()
     for (auto& item: cases)
         report(item, floor);
 
-    std::printf("\n%-26s %13s %8s %12s %9s %9s %9s\n",
+    std::printf("\n%-26s %7s %9s %9s %9s %9s %6s %7s\n",
                 "canvas, all moving",
                 "paths",
                 "segments",
-                "",
-                "CPU ms",
-                "GPU ms",
-                "CPU share");
+                "bin ms",
+                "one each",
+                "batched",
+                "disp.",
+                "uploads");
 
     auto lane = automationCurve(1200.f, 192.f, 40);
     reportCanvas("automation lanes x 32", 32, lane, 2.f);

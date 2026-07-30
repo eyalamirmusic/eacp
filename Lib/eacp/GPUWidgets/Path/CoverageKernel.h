@@ -27,6 +27,12 @@ namespace eacp::GPUWidgets
 //
 // Horizontal segments contribute nothing, and are dropped on the CPU rather than
 // guarded against here.
+//
+// **One dispatch rasterizes many paths.** Every buffer below holds every path in
+// the batch end to end, and a record says where each one's run starts; a thread
+// finds which path it is working on before it does anything else. See
+// CoverageBatch, which is what concatenates them. A single path is a batch of
+// one and goes down exactly the same road.
 struct CoverageKernel final : GPU::ComputeProgram
 {
     // Coverage pixels along one side of a tile. A thread reads two offsets and a
@@ -37,31 +43,161 @@ struct CoverageKernel final : GPU::ComputeProgram
     // the same for every thread in it.
     static constexpr int tileSize = 16;
 
+    // The side of one dispatch block, which is the 2D threadgroup's own shape.
+    // Paths are laid out in the grid a block at a time rather than a pixel at a
+    // time, so a group's 64 threads are the 8x8 corner of exactly one path - the
+    // locality the per-pixel dispatch had, kept across a batch that has no
+    // rectangle to dispatch over.
+    static constexpr int blockSize = GPU::ComputeProgram::groupSize2D;
+
+    // Floats per path record: three float4 reads, and every field of them used.
+    // How wide the path's block grid is would be a thirteenth and is derived
+    // from the width instead, which is a shift and an add against a fourth read
+    // and four floats per path.
+    static constexpr int recordFloats = 12;
+
     CoverageKernel() { compile(); }
 
     void define() override
     {
-        auto pixel = threadPosition();
-        auto pixelX = toFloat(pixel.x);
-        auto pixelY = toFloat(pixel.y);
+        // A block *is* a threadgroup, so which block this thread is in comes
+        // from the group's own index rather than from dividing the thread's.
+        //
+        // That is not a tidiness: everything between here and the loop -- the
+        // search, the twelve floats of the record, the two divisions by the
+        // path's block width -- has one answer per group. Asked through the
+        // thread id it is a dozen memory loads per thread that a compiler
+        // cannot prove uniform; asked through the group id it is provably
+        // uniform and the hardware answers it once for the whole group. On a
+        // path with half a segment test per pixel that difference was the
+        // rasterization several times over.
+        auto group = groupPosition();
+        auto lane = localPosition();
 
-        auto column = pixel.x / (unsigned) tileSize;
-        auto tile = (pixel.y / (unsigned) tileSize) * tilesWide + column;
+        auto block = group.y * gridColumns + group.x;
+
+        auto path = pathAt(block);
+        auto record = path * (unsigned) (recordFloats / 4);
+
+        auto bases = records.read4(record);
+        auto shape = records.read4(record + 1u);
+        auto place = records.read4(record + 2u);
+
+        auto segmentBase = toUInt(bases.x());
+        auto tileBase = toUInt(bases.y());
+        auto stepBase = toUInt(bases.z());
+        auto rowBase = toUInt(bases.w());
+
+        auto denseBase = toUInt(shape.x());
+        auto width = toUInt(shape.y());
+        auto height = toUInt(shape.z());
+        auto tilesWide = toUInt(shape.w());
+
+        auto originX = toUInt(place.x());
+        auto originY = toUInt(place.y());
+        auto blocksWide =
+            (width + (unsigned) (blockSize - 1)) / (unsigned) blockSize;
+
+        // Where in its own path this thread's pixel is. A block past the end of
+        // the batch belongs to the last path and lands well below it, which is
+        // what the guard below retires - so the search never needs its own.
+        auto local = block - toUInt(blockOffsets[path]);
+        auto pixelX = (local % blocksWide) * (unsigned) blockSize + lane.x;
+        auto pixelY = (local / blocksWide) * (unsigned) blockSize + lane.y;
+
+        ifThen(pixelX < width && pixelY < height,
+               [&]
+               {
+                   auto value = coverageAt(pixelX,
+                                           pixelY,
+                                           segmentBase,
+                                           tileBase,
+                                           stepBase,
+                                           rowBase,
+                                           denseBase,
+                                           tilesWide,
+                                           place.z(),
+                                           place.w());
+
+                   // The same coverage in all four channels. A one-channel mask
+                   // is what this is, but R8Unorm is outside the set a typed UAV
+                   // store is guaranteed for - see supportsComputeWrite - so the
+                   // texture is RGBA8 and whoever samples it reads whichever
+                   // channel it likes.
+                   //
+                   // The origin is what lets several paths share one texture: the
+                   // segments arrive in each path's own space, so only the write
+                   // moves.
+                   write(coverage,
+                         pixelX + originX,
+                         pixelY + originY,
+                         float4(value, value, value, value));
+               });
+    }
+
+    // Which path owns a block: the last one whose run starts at or before it.
+    // Binary search rather than a walk because a canvas is a hundred paths and
+    // this runs once per pixel - though every thread of a group asks the same
+    // question and gets the same answer, a block being one path's by
+    // construction.
+    GPU::UInt pathAt(const GPU::UInt& block)
+    {
+        auto wanted = toFloat(block);
+        auto lo = var(0);
+        auto hi = var(pathCount);
+
+        loop(lo < hi,
+             [&]
+             {
+                 auto mid = (lo.get() + hi.get()) >> 1;
+
+                 ifThen(
+                     blockOffsets[toUInt(mid)] <= wanted,
+                     [&] { lo = mid + 1; },
+                     [&] { hi = mid; });
+             });
+
+        // lo is the first run starting past this block, so the one before it
+        // owns it. Stepped back with a clamp rather than a subtraction, the
+        // first entry being zero and therefore never past anything.
+        return toUInt(max(lo.get(), 1) - 1);
+    }
+
+    // One pixel's coverage, in its own path's space. Everything it needs to find
+    // its way into the shared buffers arrives as a base, so the arithmetic below
+    // is the single-path arithmetic it always was.
+    GPU::Float coverageAt(const GPU::UInt& pixelX,
+                          const GPU::UInt& pixelY,
+                          const GPU::UInt& segmentBase,
+                          const GPU::UInt& tileBase,
+                          const GPU::UInt& stepBase,
+                          const GPU::UInt& rowBase,
+                          const GPU::UInt& denseBase,
+                          const GPU::UInt& tilesWide,
+                          const GPU::Float& evenOdd,
+                          const GPU::Float& sparse)
+    {
+        auto x = toFloat(pixelX);
+        auto y = toFloat(pixelY);
+
+        auto column = pixelX / (unsigned) tileSize;
+        auto tile = tileBase + (pixelY / (unsigned) tileSize) * tilesWide + column;
 
         // Everything left of this tile covers the pixel's whole row-slice, so
         // its contribution depends on the row and not on the column - which is
         // what lets it arrive as a number the thread starts from instead of a
         // list it walks.
         //
-        // Which of the two forms it arrives in is settled per path and is the
-        // same for every thread of the dispatch, so this branch is taken one way
-        // by all of them and costs nothing beyond being written twice.
+        // Which of the two forms it arrives in is settled per path, so this
+        // branch is taken one way by every thread of a path and costs nothing
+        // beyond being written twice.
         auto winding = var(0.f);
 
         ifThen(
-            sparseBackdrop != 0,
-            [&] { winding = backdropAt(pixel.y, toFloat(column)); },
-            [&] { winding = backdrops[pixel.y * tilesWide + column]; });
+            sparse != 0.f,
+            [&]
+            { winding = backdropAt(rowBase + pixelY, stepBase, toFloat(column)); },
+            [&] { winding = backdrops[denseBase + pixelY * tilesWide + column]; });
 
         // Held in locals rather than re-read: the loop condition is re-tested in
         // the generated while header, and these do not change under it.
@@ -71,12 +207,12 @@ struct CoverageKernel final : GPU::ComputeProgram
         loop(index < last,
              [&]
              {
-                 auto segment = segments.read4(toUInt(index));
+                 auto segment = segments.read4(segmentBase + toUInt(index));
 
-                 auto ax = segment.x() - pixelX;
-                 auto ay = segment.y() - pixelY;
-                 auto bx = segment.z() - pixelX;
-                 auto by = segment.w() - pixelY;
+                 auto ax = segment.x() - x;
+                 auto ay = segment.y() - y;
+                 auto bx = segment.z() - x;
+                 auto by = segment.w() - y;
 
                  // The part of the segment's vertical span that falls inside
                  // this pixel. Zero for a segment above it, below it, or
@@ -107,27 +243,13 @@ struct CoverageKernel final : GPU::ComputeProgram
         // Even-odd folds the winding into a triangle wave - 0, 1, 0, 1 as it
         // rises - so a doubly-wound region reads as a hole; non-zero simply
         // saturates. Both are computed and one is chosen, rather than branched
-        // on: the choice is uniform across the whole dispatch, so a branch here
-        // would buy nothing and cost the divergence check.
+        // on: the choice is uniform across a whole path, so a branch here would
+        // buy nothing and cost the divergence check.
         auto folded = fract(total * 0.5f) * 2.f;
         auto evenOddCoverage = min(folded, 2.f - folded);
         auto nonZeroCoverage = min(total, 1.f);
 
-        auto value = select(evenOdd != 0, evenOddCoverage, nonZeroCoverage);
-
-        // The same coverage in all four channels. A one-channel mask is what
-        // this is, but R8Unorm is outside the set a typed UAV store is
-        // guaranteed for - see supportsComputeWrite - so the texture is RGBA8
-        // and whoever samples it reads whichever channel it likes.
-        //
-        // The origin is what lets several paths share one texture: the grid is
-        // dispatched over this path's own size and the segments arrive in its
-        // own space, so only the write moves. Two adds per thread, against
-        // giving every path a texture and every draw a bind of its own.
-        write(coverage,
-              pixel.x + originX,
-              pixel.y + originY,
-              float4(value, value, value, value));
+        return select(evenOdd != 0.f, evenOddCoverage, nonZeroCoverage);
     }
 
     // The winding entering this tile column, at this pixel row: everything the
@@ -140,7 +262,9 @@ struct CoverageKernel final : GPU::ComputeProgram
     // column. Binary search rather than a walk because the two are priced
     // differently in the case that matters: dense artwork puts a hundred steps
     // in a row, and this runs once per pixel.
-    GPU::Float backdropAt(const GPU::UInt& row, const GPU::Float& column)
+    GPU::Float backdropAt(const GPU::UInt& row,
+                          const GPU::UInt& stepBase,
+                          const GPU::Float& column)
     {
         auto first = toInt(backdropRows[row]);
         auto lo = var(first);
@@ -152,7 +276,7 @@ struct CoverageKernel final : GPU::ComputeProgram
                  auto mid = (lo.get() + hi.get()) >> 1;
 
                  ifThen(
-                     backdropSteps.read2(toUInt(mid)).x() <= column,
+                     backdropSteps.read2(stepBase + toUInt(mid)).x() <= column,
                      [&] { lo = mid + 1; },
                      [&] { hi = mid; });
              });
@@ -162,7 +286,7 @@ struct CoverageKernel final : GPU::ComputeProgram
         // The read is taken either way, select having no unevaluated arm, so the
         // index is stepped back with a clamp rather than a subtraction - which
         // is what keeps it inside a buffer that always holds at least one step.
-        auto found = backdropSteps.read2(toUInt(max(lo.get(), 1) - 1));
+        auto found = backdropSteps.read2(stepBase + toUInt(max(lo.get(), 1) - 1));
         return select(lo > first, found.y(), 0.f);
     }
 
@@ -201,12 +325,14 @@ struct CoverageKernel final : GPU::ComputeProgram
     // Segments grouped by the tile that walks them, four floats each
     // (x0, y0, x1, y1), already in the coverage texture's own pixel space. A
     // segment crossing a tile boundary appears once under each tile it crosses.
+    // Every path in the batch, end to end; a record says where each one starts.
     GPU::Uniform<GPU::InputBuffer> segments;
 
     // Where each tile's run of segments starts, one entry per tile and a last
     // one holding the total, so a tile's run is [tileOffsets[t], tileOffsets[t+1]).
     // Counts, carried as floats because a storage buffer is a run of floats -
-    // exact well past any segment count this rasterizer is for.
+    // exact well past any segment count this rasterizer is for. Each path's
+    // offsets are relative to its own segment run.
     GPU::Uniform<GPU::InputBuffer> tileOffsets;
 
     // The winding entering a tile from the left, as the steps it changes at:
@@ -229,27 +355,38 @@ struct CoverageKernel final : GPU::ComputeProgram
     // The same backdrop written out in full instead - the winding at every tile
     // column of every pixel row, indexed row-major. Priced by the area rather
     // than by the outline, which is dearer to build and cheaper to read, and so
-    // is what a path whose outline crosses nearly every row uses instead. Only
-    // one of the two is filled; the other binds a single zero.
+    // is what a path whose outline crosses nearly every row uses instead. A path
+    // fills one of the two; the other holds nothing for it.
     GPU::Uniform<GPU::InputBuffer> backdrops;
-    GPU::Uniform<GPU::Int> sparseBackdrop;
+
+    // Twelve floats per path, the bases and the shape above: where its runs
+    // begin in each of the five buffers, how big its coverage is, how wide its
+    // tile grid is, where it sits in the target, and which fill rule and
+    // backdrop form it was built for.
+    GPU::Uniform<GPU::InputBuffer> records;
+
+    // Where each path's blocks start, with a last entry holding the total. The
+    // one buffer a thread reads before it knows anything at all, which is why it
+    // is separate from the records rather than a field of them: the search wants
+    // its keys next to each other.
+    GPU::Uniform<GPU::InputBuffer> blockOffsets;
 
     GPU::Uniform<GPU::WritableTexture2D> coverage;
-    GPU::Uniform<GPU::UInt> tilesWide;
-    GPU::Uniform<GPU::Int> evenOdd; // 0 = non-zero fill rule, 1 = even-odd
-    GPU::Uniform<GPU::UInt> originX; // where this path sits in the target
-    GPU::Uniform<GPU::UInt> originY;
+
+    // How many blocks across the dispatch grid is, which is what turns a thread
+    // position into a block index, and how many paths the search is over.
+    GPU::Uniform<GPU::UInt> gridColumns;
+    GPU::Uniform<GPU::Int> pathCount;
 
     EACP_SHADER(segments,
                 tileOffsets,
                 backdropSteps,
                 backdropRows,
                 backdrops,
-                sparseBackdrop,
+                records,
+                blockOffsets,
                 coverage,
-                tilesWide,
-                evenOdd,
-                originX,
-                originY)
+                gridColumns,
+                pathCount)
 };
 } // namespace eacp::GPUWidgets

@@ -148,14 +148,14 @@ void ComponentHost::markAllPathsDirty(Component& component)
 }
 
 void ComponentHost::rasterizeDirtyPaths(Component& component,
-                                        GPU::ComputePass& pass,
+                                        GPUWidgets::CoverageBatch& batch,
                                         PathWalk& walk)
 {
     for (auto* shape: component.getPathShapes())
     {
         if (shape->isDirty())
         {
-            shape->rasterize(*paths, backingScale(), pass);
+            shape->rasterize(*paths, backingScale(), batch);
 
             // Growing or compacting the atlas relocates every slot already
             // handed out, so everything rasterized before this one now points
@@ -175,7 +175,7 @@ void ComponentHost::rasterizeDirtyPaths(Component& component,
     }
 
     for (auto* child: component.getChildren())
-        rasterizeDirtyPaths(*child, pass, walk);
+        rasterizeDirtyPaths(*child, batch, walk);
 }
 
 // Every path whose geometry changed since the last frame, drawn into the shared
@@ -218,10 +218,12 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
 
         walk = PathWalk {};
 
-        {
-            auto compute = frame.beginCompute();
-            rasterizeDirtyPaths(*root, compute, walk);
-        }
+        // Gathered rather than dispatched, so a first pass the atlas moved under
+        // costs no GPU work at all: beginning the batch again is what throws it
+        // away, where recording a dispatch per shape meant every one of them had
+        // already been issued against a layout that no longer held.
+        pathBatch.begin(paths->getTexture());
+        rasterizeDirtyPaths(*root, pathBatch, walk);
 
         if (!walk.atlasMoved)
             break;
@@ -233,6 +235,12 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
         // just fits -- where it decides whether the tree fits at all.
         markAllPathsDirty(*root);
         paths->forgetAllocations();
+    }
+
+    if (!pathBatch.isEmpty())
+    {
+        auto compute = frame.beginCompute();
+        pathBatch.dispatch(compute);
     }
 
     reportDroppedPaths(walk.dropped);

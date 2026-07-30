@@ -41,53 +41,6 @@ GPU::TextureDescriptor describeCoverage(int width, int height)
     return descriptor;
 }
 
-// Grown by reallocation and refilled in place otherwise: a path re-drawn at the
-// same complexity - a knob turning, a curve dragged - reuses every buffer it
-// already has.
-void uploadTo(std::optional<GPU::Buffer>& buffer, const Vector<float>& values)
-{
-    auto bytes = sizeof(float) * (std::size_t) values.size();
-
-    if (!buffer.has_value() || buffer->size() < bytes)
-        buffer.emplace(
-            GPU::Device::shared(), values.data(), bytes, GPU::BufferUsage::Storage);
-    else
-        buffer->update(values.data(), bytes);
-}
-
-// The form that was not chosen still binds, since the kernel declares both. One
-// float is enough for a buffer no thread reads, and it is made once rather than
-// refilled with the same nothing on every rasterization.
-void ensurePlaceholder(std::optional<GPU::Buffer>& buffer)
-{
-    if (!buffer.has_value())
-    {
-        auto zero = 0.f;
-        buffer.emplace(
-            GPU::Device::shared(), &zero, sizeof(zero), GPU::BufferUsage::Storage);
-    }
-}
-
-// One kernel for every rasterizer there will ever be. It is the same program in
-// all of them, and building one costs a shader library and a compute pipeline -
-// which an interface with a rasterizer per widget must not pay per widget.
-//
-// Shared state is safe here because a dispatch sets every uniform it reads
-// immediately before issuing it, and command encoding is single-threaded. Built
-// on first use rather than at load, since it needs the Device - which also puts
-// its destruction before the Device's own, statics tearing down in reverse.
-CoverageKernel& sharedKernel()
-{
-    struct Prepared
-    {
-        Prepared() { kernel.prepare(); }
-
-        CoverageKernel kernel;
-    };
-
-    static auto prepared = Prepared {};
-    return prepared.kernel;
-}
 } // namespace
 
 void PathRasterizer::setScale(float pixelsPerUnit)
@@ -107,6 +60,7 @@ void PathRasterizer::setTarget(const GPU::Texture& texture,
     target = &texture;
     originX = originXToUse;
     originY = originYToUse;
+    soloStale = true;
 
     // Its own texture is now dead weight, and holding it would keep a whole
     // path's worth of pixels alive for as long as the shape exists.
@@ -118,6 +72,15 @@ void PathRasterizer::clearTarget()
     target = nullptr;
     originX = 0;
     originY = 0;
+    soloStale = true;
+}
+
+const GPU::Texture* PathRasterizer::getTargetTexture() const
+{
+    if (target != nullptr)
+        return target;
+
+    return coverageTexture.has_value() ? &*coverageTexture : nullptr;
 }
 
 void PathRasterizer::setPath(const Path& path, FillRule rule)
@@ -128,6 +91,7 @@ void PathRasterizer::setPath(const Path& path, FillRule rule)
     coverageWidth = 0;
     coverageHeight = 0;
     segmentTests = 0;
+    soloStale = true;
 
     if (path.isEmpty() || scale <= 0.f)
         return;
@@ -186,7 +150,6 @@ void PathRasterizer::setPath(const Path& path, FillRule rule)
     evenOdd = rule == FillRule::EvenOdd ? 1 : 0;
 
     buildTiles();
-    upload();
 }
 
 void PathRasterizer::addBackdrop(
@@ -535,25 +498,6 @@ void PathRasterizer::ensureOwnTexture()
                             nullptr);
 }
 
-void PathRasterizer::upload()
-{
-    uploadTo(segmentBuffer, tileSegments);
-    uploadTo(tileBuffer, tileOffsets);
-
-    if (sparseBackdrop)
-    {
-        uploadTo(stepBuffer, backdropSteps);
-        uploadTo(rowBuffer, backdropRows);
-        ensurePlaceholder(denseBuffer);
-    }
-    else
-    {
-        uploadTo(denseBuffer, backdrops);
-        ensurePlaceholder(stepBuffer);
-        ensurePlaceholder(rowBuffer);
-    }
-}
-
 void PathRasterizer::dispatch(GPU::ComputePass& pass)
 {
     if (isEmpty())
@@ -562,20 +506,20 @@ void PathRasterizer::dispatch(GPU::ComputePass& pass)
     if (target == nullptr)
         ensureOwnTexture();
 
-    auto& kernel = sharedKernel();
+    if (!solo.has_value())
+        solo.emplace();
 
-    kernel.coverage = target != nullptr ? *target : *coverageTexture;
-    kernel.segments = *segmentBuffer;
-    kernel.tileOffsets = *tileBuffer;
-    kernel.backdropSteps = *stepBuffer;
-    kernel.backdropRows = *rowBuffer;
-    kernel.backdrops = *denseBuffer;
-    kernel.sparseBackdrop = sparseBackdrop ? 1 : 0;
-    kernel.tilesWide = (std::uint32_t) tilesWide;
-    kernel.evenOdd = evenOdd;
-    kernel.originX = (std::uint32_t) originX;
-    kernel.originY = (std::uint32_t) originY;
+    // Gathered again only when there is something new to gather. Dispatching the
+    // same rasterizer repeatedly - a demo redrawing a static path every frame -
+    // then costs a dispatch and no bytes at all, which is what it cost when
+    // every rasterizer owned its buffers.
+    if (soloStale)
+    {
+        solo->begin(*getTargetTexture());
+        solo->add(*this);
+        soloStale = false;
+    }
 
-    pass.dispatch(kernel, coverageWidth, coverageHeight);
+    solo->dispatch(pass);
 }
 } // namespace eacp::GPUWidgets

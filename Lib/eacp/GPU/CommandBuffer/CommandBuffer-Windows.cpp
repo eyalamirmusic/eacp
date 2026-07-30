@@ -18,13 +18,39 @@ struct CommandBuffer::Native
     explicit Native(Device& device)
     {
         if (device.isValid())
-            commands = getD3D12Context().acquire();
+            open(getD3D12Context().acquire());
     }
 
     ~Native()
     {
+        close();
+
         if (commands != nullptr && !committed)
             getD3D12Context().discard(commands);
+    }
+
+    // Publishes the recording as the one a CPU upload may record onto, for as
+    // long as this command buffer is the thing recording - the same courtesy
+    // Frame extends, and for the same reason. A buffer filled between here and
+    // commit() puts its copy on this list instead of acquiring and submitting
+    // one of its own, so a batch that uploads seven buffers before dispatching
+    // them is one submission rather than eight.
+    void open(CommandContext* commandsToUse)
+    {
+        commands = commandsToUse;
+
+        if (commands != nullptr)
+            getD3D12Context().setOpenRecording(commands);
+    }
+
+    // Withdrawn before anything is submitted, so an upload can never be handed
+    // a list that has already been closed.
+    void close()
+    {
+        auto& context = getD3D12Context();
+
+        if (commands != nullptr && context.getOpenRecording() == commands)
+            context.setOpenRecording(nullptr);
     }
 
     CommandContext* commands = nullptr;
@@ -55,6 +81,7 @@ void CommandBuffer::commit()
         return;
 
     impl->committed = true;
+    impl->close();
     getD3D12Context().submit(impl->commands);
 }
 
@@ -69,6 +96,7 @@ Threads::Async<void> CommandBuffer::commitAsync()
     }
 
     impl->committed = true;
+    impl->close();
 
     // submit() already returns without waiting here - what the fence adds is
     // the moment to say so.
