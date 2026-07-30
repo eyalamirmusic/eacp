@@ -16,6 +16,10 @@ constexpr UINT samplerHeapCapacity = 256;
 // Root CBVs read in 256-byte units, so transient constant uploads round up.
 constexpr std::size_t constantAlignment = 256;
 
+// One page of the constant ring, sized so a recording of a few hundred
+// dispatches or draws fits in a single page and never allocates mid-frame.
+constexpr std::size_t constantPageBytes = 64 * 1024;
+
 winrt::com_ptr<ID3D12Device> createHardwareOrWarpDevice()
 {
     auto device = winrt::com_ptr<ID3D12Device>();
@@ -549,6 +553,7 @@ std::uint64_t D3D12Context::submit(CommandContext* commands)
         // its staging slots are free at once rather than behind a fence.
         commands->transients.clear();
         returnStaging(*commands, 0);
+        returnConstantPages(*commands, 0);
         available.push_back(commands);
         return 0;
     }
@@ -559,6 +564,7 @@ std::uint64_t D3D12Context::submit(CommandContext* commands)
     commands->fenceValue = signal();
     lastSubmittedValue = commands->fenceValue;
     returnStaging(*commands, commands->fenceValue);
+    returnConstantPages(*commands, commands->fenceValue);
     available.push_back(commands);
     return commands->fenceValue;
 }
@@ -571,6 +577,7 @@ void D3D12Context::discard(CommandContext* commands)
     commands->list->Close();
     commands->transients.clear();
     returnStaging(*commands, 0);
+    returnConstantPages(*commands, 0);
     commands->fenceValue = 0;
     available.push_back(commands);
 }
@@ -652,28 +659,84 @@ D3D12_GPU_VIRTUAL_ADDRESS D3D12Context::uploadConstants(CommandContext& commands
                                                         const void* data,
                                                         std::size_t bytes)
 {
-    auto aligned = (bytes + constantAlignment - 1) & ~(constantAlignment - 1);
-    auto buffer = makeUploadBuffer(nullptr, aligned);
-
-    if (buffer == nullptr)
+    if (data == nullptr || bytes == 0)
         return 0;
+
+    auto aligned = (bytes + constantAlignment - 1) & ~(constantAlignment - 1);
+    auto* page = pageFor(commands, aligned);
+
+    if (page == nullptr)
+        return 0;
+
+    auto offset = page->used;
+    page->used += aligned;
+
+    std::memcpy(page->mapped + offset, data, bytes);
+    return page->address + offset;
+}
+
+D3D12Context::ConstantPage* D3D12Context::pageFor(CommandContext& commands,
+                                                  std::size_t bytes)
+{
+    // The page this recording is already filling, while it still has room.
+    // Constant blocks are 256 bytes and a recording's dispatches run into the
+    // hundreds at most, so this is the answer nearly every time.
+    if (!commands.constantsTaken.empty())
+    {
+        auto lastTaken =
+            commands.constantsTaken[commands.constantsTaken.getLastElementIndex()];
+        auto& open = constantPages[lastTaken];
+
+        if (open.remaining() >= bytes)
+            return &open;
+    }
+
+    auto take = [&](int index) -> ConstantPage*
+    {
+        auto& page = constantPages[index];
+        page.lent = true;
+        page.used = 0;
+        commands.constantsTaken.add(index);
+        return &page;
+    };
+
+    for (auto index = 0; index < constantPages.size(); ++index)
+    {
+        const auto& page = constantPages[index];
+
+        if (!page.lent && hasCompleted(page.freeAt) && page.bytes >= bytes)
+            return take(index);
+    }
+
+    // A block larger than the page size gets a page of its own rather than
+    // failing — uniform blocks are capped well below it, but nothing here
+    // depends on that being true.
+    auto pageBytes = std::max(constantPageBytes, bytes);
+    auto resource = makeUploadBuffer(nullptr, pageBytes);
+
+    if (resource == nullptr)
+        return nullptr;
 
     void* mapped = nullptr;
     const D3D12_RANGE noRead = {0, 0};
 
-    if (FAILED(buffer->Map(0, &noRead, &mapped)))
-        return 0;
+    if (FAILED(resource->Map(0, &noRead, &mapped)))
+        return nullptr;
 
-    std::memcpy(mapped, data, bytes);
-    buffer->Unmap(0, nullptr);
+    auto page = ConstantPage {};
+    page.address = resource->GetGPUVirtualAddress();
+    page.mapped = static_cast<std::byte*>(mapped);
+    page.bytes = pageBytes;
+    page.resource = std::move(resource);
 
-    auto address = buffer->GetGPUVirtualAddress();
-    commands.transients.add(std::move(buffer));
-    return address;
+    constantPages.add(std::move(page));
+    return take(constantPages.size() - 1);
 }
 
-ID3D12Resource* D3D12Context::acquireStagingBuffer(CommandContext& commands,
-                                                   std::size_t bytes)
+ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& pool,
+                                            Vector<int>& taken,
+                                            std::size_t bytes,
+                                            D3D12_HEAP_TYPE heapType)
 {
     if (!isValid() || bytes == 0)
         return nullptr;
@@ -681,30 +744,31 @@ ID3D12Resource* D3D12Context::acquireStagingBuffer(CommandContext& commands,
     auto isFree = [this](const StagingBuffer& slot)
     { return !slot.lent && hasCompleted(slot.freeAt); };
 
-    // A free slot already big enough is the common case once playback settles:
-    // every frame of a given clip stages exactly the same number of bytes.
-    for (auto index = 0; index < staging.size(); ++index)
+    // A free slot already big enough is the common case once the traffic
+    // settles: every frame of a given clip, and every run of a given model,
+    // moves exactly the same number of bytes.
+    for (auto index = 0; index < pool.size(); ++index)
     {
-        auto& slot = staging[index];
+        auto& slot = pool[index];
 
         if (isFree(slot) && slot.bytes >= bytes)
         {
             slot.lent = true;
-            commands.stagingTaken.add(index);
+            taken.add(index);
             return slot.resource.get();
         }
     }
 
     // Otherwise grow a free slot rather than adding one, so a stream that
     // switches to a larger frame size does not strand the old buffers.
-    for (auto index = 0; index < staging.size(); ++index)
+    for (auto index = 0; index < pool.size(); ++index)
     {
-        auto& slot = staging[index];
+        auto& slot = pool[index];
 
         if (!isFree(slot))
             continue;
 
-        auto grown = makeUploadBuffer(nullptr, bytes);
+        auto grown = makeHeapBuffer(heapType, bytes);
 
         if (grown == nullptr)
             return nullptr;
@@ -713,11 +777,11 @@ ID3D12Resource* D3D12Context::acquireStagingBuffer(CommandContext& commands,
         slot.resource = std::move(grown);
         slot.bytes = bytes;
         slot.lent = true;
-        commands.stagingTaken.add(index);
+        taken.add(index);
         return slot.resource.get();
     }
 
-    auto fresh = makeUploadBuffer(nullptr, bytes);
+    auto fresh = makeHeapBuffer(heapType, bytes);
 
     if (fresh == nullptr)
         return nullptr;
@@ -728,33 +792,70 @@ ID3D12Resource* D3D12Context::acquireStagingBuffer(CommandContext& commands,
     slot.lent = true;
 
     auto* resource = slot.resource.get();
-    staging.add(std::move(slot));
-    commands.stagingTaken.add(staging.size() - 1);
+    pool.add(std::move(slot));
+    taken.add(pool.size() - 1);
     return resource;
+}
+
+ID3D12Resource* D3D12Context::acquireStagingBuffer(CommandContext& commands,
+                                                   std::size_t bytes)
+{
+    return acquirePooled(
+        staging, commands.stagingTaken, bytes, D3D12_HEAP_TYPE_UPLOAD);
+}
+
+ID3D12Resource* D3D12Context::acquireReadbackBuffer(CommandContext& commands,
+                                                    std::size_t bytes)
+{
+    return acquirePooled(
+        readback, commands.readbackTaken, bytes, D3D12_HEAP_TYPE_READBACK);
+}
+
+void D3D12Context::returnPooled(Vector<StagingBuffer>& pool,
+                                Vector<int>& taken,
+                                std::uint64_t freeAt)
+{
+    for (auto index: taken)
+    {
+        if (index < 0 || index >= pool.size())
+            continue;
+
+        pool[index].lent = false;
+        pool[index].freeAt = freeAt;
+    }
+
+    taken.clear();
 }
 
 void D3D12Context::returnStaging(CommandContext& commands, std::uint64_t freeAt)
 {
-    for (auto index: commands.stagingTaken)
-    {
-        if (index < 0 || index >= staging.size())
-            continue;
-
-        staging[index].lent = false;
-        staging[index].freeAt = freeAt;
-    }
-
-    commands.stagingTaken.clear();
+    returnPooled(staging, commands.stagingTaken, freeAt);
+    returnPooled(readback, commands.readbackTaken, freeAt);
 }
 
-winrt::com_ptr<ID3D12Resource> D3D12Context::makeUploadBuffer(const void* data,
-                                                              std::size_t bytes)
+void D3D12Context::returnConstantPages(CommandContext& commands,
+                                       std::uint64_t freeAt)
+{
+    for (auto index: commands.constantsTaken)
+    {
+        if (index < 0 || index >= constantPages.size())
+            continue;
+
+        constantPages[index].lent = false;
+        constantPages[index].freeAt = freeAt;
+    }
+
+    commands.constantsTaken.clear();
+}
+
+winrt::com_ptr<ID3D12Resource> D3D12Context::makeHeapBuffer(D3D12_HEAP_TYPE type,
+                                                            std::size_t bytes)
 {
     if (!isValid() || bytes == 0)
         return nullptr;
 
     D3D12_HEAP_PROPERTIES heap = {};
-    heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+    heap.Type = type;
 
     D3D12_RESOURCE_DESC desc = {};
     desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -765,15 +866,33 @@ winrt::com_ptr<ID3D12Resource> D3D12Context::makeUploadBuffer(const void* data,
     desc.SampleDesc.Count = 1;
     desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
+    // The one state each heap type is created in and stays in: an upload
+    // buffer is only ever read by the GPU, a readback buffer only ever written
+    // by a copy.
+    auto state = type == D3D12_HEAP_TYPE_READBACK
+                     ? D3D12_RESOURCE_STATE_COPY_DEST
+                     : D3D12_RESOURCE_STATE_GENERIC_READ;
+
     auto buffer = winrt::com_ptr<ID3D12Resource>();
 
     if (FAILED(device->CreateCommittedResource(&heap,
                                                D3D12_HEAP_FLAG_NONE,
                                                &desc,
-                                               D3D12_RESOURCE_STATE_GENERIC_READ,
+                                               state,
                                                nullptr,
                                                __uuidof(ID3D12Resource),
                                                buffer.put_void())))
+        return nullptr;
+
+    return buffer;
+}
+
+winrt::com_ptr<ID3D12Resource> D3D12Context::makeUploadBuffer(const void* data,
+                                                              std::size_t bytes)
+{
+    auto buffer = makeHeapBuffer(D3D12_HEAP_TYPE_UPLOAD, bytes);
+
+    if (buffer == nullptr)
         return nullptr;
 
     if (data != nullptr)
@@ -795,6 +914,8 @@ void D3D12Context::recreateAfterDeviceLoss()
 {
     retired.clear();
     staging.clear();
+    readback.clear();
+    constantPages.clear();
     pool.clear();
     available.clear();
     renderRootSignature = nullptr;

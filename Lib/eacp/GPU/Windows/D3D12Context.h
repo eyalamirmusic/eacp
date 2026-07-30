@@ -38,6 +38,14 @@ struct CommandContext
     // the pool, stamped at submit with the fence that frees them again.
     Vector<int> stagingTaken;
 
+    // Readback-pool slots this recording is copying into, on the same terms.
+    Vector<int> readbackTaken;
+
+    // Constant-ring pages this recording is bump-allocating from, oldest
+    // first, so the last entry is the one still being filled. Returned to the
+    // ring at submit on the same terms as stagingTaken.
+    Vector<int> constantsTaken;
+
     // Identifies the recording for buffer state tracking: a buffer first
     // touched under a new id was implicitly promoted from COMMON, so no
     // barrier is needed (buffers decay back to COMMON after every execute).
@@ -128,9 +136,9 @@ public:
     // up to one poll interval, against a dispatch measured in milliseconds.
     void notifyWhenCompleted(std::uint64_t value, Callback done);
 
-    // Copies bytes into a fresh upload-heap buffer parked on the recording
-    // (so it outlives GPU execution) and returns its address for a root CBV.
-    // Returns 0 on failure.
+    // Copies bytes into the recording's constant ring and returns their
+    // address for a root CBV. The page outlives GPU execution, being held by
+    // the recording until its fence passes. Returns 0 on failure.
     D3D12_GPU_VIRTUAL_ADDRESS uploadConstants(CommandContext& commands,
                                               const void* data,
                                               std::size_t bytes);
@@ -144,12 +152,18 @@ public:
     // returned once `commands` completes on the GPU. Null on failure.
     //
     // For staging that repeats every frame at a size worth pooling — a video
-    // frame is a 33 MB upload at 4K and 133 MB at 8K — where creating and
-    // destroying a committed resource that large per frame costs considerably
-    // more than the copy it exists for. The caller must not park the result in
-    // transients; the pool owns it.
+    // frame is a 33 MB upload at 4K and 133 MB at 8K, a model's input tensor
+    // 588 KB every run — where creating and destroying a committed resource
+    // costs considerably more than the copy it exists for. The caller must not
+    // park the result in transients; the pool owns it.
     ID3D12Resource* acquireStagingBuffer(CommandContext& commands,
                                          std::size_t bytes);
+
+    // The download-side sibling of acquireStagingBuffer, out of a pool of
+    // readback-heap buffers and on identical terms. Buffer::read stages every
+    // download through one of these.
+    ID3D12Resource* acquireReadbackBuffer(CommandContext& commands,
+                                          std::size_t bytes);
 
     DescriptorSlot allocateTextureDescriptor();
     void freeTextureDescriptor(const DescriptorSlot& slot);
@@ -189,6 +203,38 @@ private:
         UINT descriptorSize = 0;
     };
 
+    // A page of the constant ring: an upload-heap buffer mapped once for its
+    // whole lifetime and bump-allocated from, `used` bytes at a time.
+    //
+    // An upload heap is CPU-write-combined memory the GPU reads directly, and
+    // D3D12 permits a resource to stay mapped indefinitely — so the map, the
+    // address lookup and the allocation all happen once per page rather than
+    // once per constant block, which is what the whole ring exists for.
+    struct ConstantPage
+    {
+        winrt::com_ptr<ID3D12Resource> resource;
+        std::byte* mapped = nullptr;
+        D3D12_GPU_VIRTUAL_ADDRESS address = 0;
+        std::size_t bytes = 0;
+        std::size_t used = 0;
+        std::uint64_t freeAt = 0;
+        bool lent = false;
+
+        std::size_t remaining() const { return bytes - used; }
+    };
+
+    // A slot in one of the CPU-visible buffer pools. `freeAt` is the fence
+    // value that must pass before it can be lent out again; `lent` marks the
+    // window between the acquire and the submit that stamps the real fence,
+    // during which the slot must not be handed to a second recording.
+    struct StagingBuffer
+    {
+        winrt::com_ptr<ID3D12Resource> resource;
+        std::size_t bytes = 0;
+        std::uint64_t freeAt = 0;
+        bool lent = false;
+    };
+
     void createAll();
     void createDevice();
     void createRootSignatures();
@@ -202,10 +248,34 @@ private:
     void pollCompletions();
     void deferReleaseUnknown(winrt::com_ptr<IUnknown> object);
 
-    // Hands a recording's staging slots back to the pool. `freeAt` is the fence
-    // value that must pass before they can be lent out again — 0 for a
-    // recording that never reached the GPU, so its slots are free at once.
+    // A buffer on one of the CPU-visible heaps, in the one state that heap
+    // type is ever used in. The shared body of makeUploadBuffer and both pools.
+    winrt::com_ptr<ID3D12Resource> makeHeapBuffer(D3D12_HEAP_TYPE type,
+                                                  std::size_t bytes);
+
+    // The pool logic both acquireStagingBuffer and acquireReadbackBuffer are:
+    // reuse a free slot that already fits, else grow one, else add one.
+    ID3D12Resource* acquirePooled(Vector<StagingBuffer>& pool,
+                                  Vector<int>& taken,
+                                  std::size_t bytes,
+                                  D3D12_HEAP_TYPE heapType);
+
+    void returnPooled(Vector<StagingBuffer>& pool,
+                      Vector<int>& taken,
+                      std::uint64_t freeAt);
+
+    // Hands a recording's pooled slots, both directions, back to their pools.
+    // `freeAt` is the fence value that must pass before they can be lent out
+    // again — 0 for a recording that never reached the GPU, so its slots are
+    // free at once.
     void returnStaging(CommandContext& commands, std::uint64_t freeAt);
+
+    // The constant ring's sibling of returnStaging, on the same freeAt terms.
+    void returnConstantPages(CommandContext& commands, std::uint64_t freeAt);
+
+    // The page `commands` can fit `bytes` into, taking a fresh one from the
+    // ring when the open one is full. Null if none can be had.
+    ConstantPage* pageFor(CommandContext& commands, std::size_t bytes);
 
     winrt::com_ptr<ID3D12Device> device;
     winrt::com_ptr<ID3D12CommandQueue> queue;
@@ -238,19 +308,14 @@ private:
 
     Vector<Retired> retired;
 
-    // Upload-heap buffers kept for reuse. `freeAt` is the fence value that must
-    // pass before a slot can be lent out again; `lent` marks the window between
-    // acquireStagingBuffer and the submit that stamps the real fence, during
-    // which the slot must not be handed to a second recording.
-    struct StagingBuffer
-    {
-        winrt::com_ptr<ID3D12Resource> resource;
-        std::size_t bytes = 0;
-        std::uint64_t freeAt = 0;
-        bool lent = false;
-    };
-
+    // Upload-heap buffers kept for reuse, and their readback-heap mirror.
     Vector<StagingBuffer> staging;
+    Vector<StagingBuffer> readback;
+
+    // The constant ring. Every dispatch and every draw uploads its uniform
+    // block through it, so the count that matters is blocks per recording, not
+    // bytes: a page holds 256 of them and a recording rarely needs a second.
+    Vector<ConstantPage> constantPages;
 
     // Callbacks owed to submissions still running, and the poll that settles
     // them. The timer only exists while something is pending, so an app that
