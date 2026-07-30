@@ -11,7 +11,6 @@ namespace eacp::GPUWidgets
 namespace
 {
 constexpr auto blockSize = CoverageKernel::blockSize;
-constexpr auto recordFloats = CoverageKernel::recordFloats;
 
 // Grown by reallocation and refilled in place otherwise: a canvas whose paths all
 // move re-uploads the same buffers every frame and allocates nothing after the
@@ -40,6 +39,18 @@ void padEmpty(Vector<float>& values)
         values.add(0.f);
 }
 
+// The cells the backdrop stages work in. Never uploaded and never read back -
+// the clear kernel is what puts a value in it - so this is an allocation and
+// nothing else, grown when a batch needs more than the last one did.
+void ensureCells(std::optional<GPU::Buffer>& buffer, int count)
+{
+    auto bytes = sizeof(std::uint32_t) * (std::size_t) std::max(1, count);
+
+    if (!buffer.has_value() || buffer->size() < bytes)
+        buffer.emplace(
+            GPU::Device::shared(), nullptr, bytes, GPU::BufferUsage::Storage);
+}
+
 // One path's run onto the end of the batch's. In bulk rather than value by
 // value: gathering a canvas is a couple of million floats, and the batch is only
 // worth having if putting them together is cheaper than the per-path overhead it
@@ -63,13 +74,14 @@ void appendAll(Vector<float>& into, const Vector<float>& from)
 // immediately before issuing it, and command encoding is single-threaded. Built
 // on first use rather than at load, since it needs the Device - which also puts
 // its destruction before the Device's own, statics tearing down in reverse.
-CoverageKernel& sharedKernel()
+template <typename Kernel>
+Kernel& sharedKernel()
 {
     struct Prepared
     {
         Prepared() { kernel.prepare(); }
 
-        CoverageKernel kernel;
+        Kernel kernel;
     };
 
     static auto prepared = Prepared {};
@@ -82,15 +94,19 @@ void CoverageBatch::begin(const GPU::Texture& targetToUse)
     target = &targetToUse;
     paths = 0;
     blocks = 0;
+    cells = 0;
+    scanRows = 0;
     uploaded = false;
 
     segments.clear();
     tileOffsets.clear();
     backdropSteps.clear();
     backdropRows.clear();
-    backdrops.clear();
+    crossings.clear();
     records.clear();
     blockOffsets.clear();
+    crossingStarts.clear();
+    scanStarts.clear();
 }
 
 void CoverageBatch::add(const PathRasterizer& rasterizer)
@@ -112,16 +128,17 @@ void CoverageBatch::add(const PathRasterizer& rasterizer)
     auto tileBase = tileOffsets.size();
     auto stepBase = backdropSteps.size() / 2;
     auto rowBase = backdropRows.size();
-    auto denseBase = backdrops.size();
 
     blockOffsets.add((float) blocks);
+    crossingStarts.add((float) (crossings.size() / 3));
+    scanStarts.add((float) scanRows);
 
     records.add((float) segmentBase);
     records.add((float) tileBase);
     records.add((float) stepBase);
     records.add((float) rowBase);
 
-    records.add((float) denseBase);
+    records.add((float) cells);
     records.add((float) width);
     records.add((float) height);
     records.add((float) rasterizer.tilesWide);
@@ -144,11 +161,28 @@ void CoverageBatch::add(const PathRasterizer& rasterizer)
     }
     else
     {
-        appendAll(backdrops, rasterizer.backdrops);
+        appendAll(crossings, rasterizer.crossings);
+        cells += rasterizer.getCellCount();
+        scanRows += height;
+
+        // Every base in a record is a float, which holds an integer exactly to
+        // sixteen million and silently rounds one past it. This is the only base
+        // that grows with *area* - the others grow with the outline and would
+        // need a batch nothing could draw - and a canvas of a hundred and
+        // twenty-eight full-width lanes is already at seven million.
+        assert(cells <= (1 << 24)
+               && "eacp: a batch's backdrop outgrew what a float index holds");
     }
 
     ++paths;
     blocks += blocksWide * blocksHigh;
+
+    // The one place the record's shape is written rather than read, held to the
+    // constant the three kernels read it through. A field added here and nowhere
+    // else does not misread - it shifts every field of every later path by one,
+    // which is a picture that looks almost right.
+    assert(records.size() == paths * CoverageKernel::recordFloats
+           && "eacp: a path record is not CoverageKernel::recordFloats long");
 }
 
 void CoverageBatch::upload()
@@ -158,20 +192,57 @@ void CoverageBatch::upload()
     // The last entry is the total, which is what makes the search's upper bound
     // a read rather than a special case.
     blockOffsets.add((float) blocks);
+    crossingStarts.add((float) (crossings.size() / 3));
+    scanStarts.add((float) scanRows);
 
     padEmpty(segments);
     padEmpty(tileOffsets);
     padEmpty(backdropSteps);
     padEmpty(backdropRows);
-    padEmpty(backdrops);
+    padEmpty(crossings);
 
     uploadTo(segmentBuffer, segments, bufferUpdates);
     uploadTo(tileBuffer, tileOffsets, bufferUpdates);
     uploadTo(stepBuffer, backdropSteps, bufferUpdates);
     uploadTo(rowBuffer, backdropRows, bufferUpdates);
-    uploadTo(denseBuffer, backdrops, bufferUpdates);
+    uploadTo(crossingBuffer, crossings, bufferUpdates);
+    uploadTo(crossingStartBuffer, crossingStarts, bufferUpdates);
+    uploadTo(scanStartBuffer, scanStarts, bufferUpdates);
     uploadTo(recordBuffer, records, bufferUpdates);
     uploadTo(blockBuffer, blockOffsets, bufferUpdates);
+
+    ensureCells(cellBuffer, cells);
+}
+
+// Clear, scatter, sum - the array form of the backdrop, for every path in the
+// batch that takes it, before the kernel that reads it runs. Each stage orders
+// against the next by the pass itself; nothing here needs a fence, and nothing
+// here reaches the CPU.
+void CoverageBatch::buildBackdrops(GPU::ComputePass& pass)
+{
+    if (cells <= 0)
+        return;
+
+    auto& clear = sharedKernel<BackdropClearKernel>();
+    clear.cells = *cellBuffer;
+    pass.dispatch(clear, cells);
+
+    auto& scatter = sharedKernel<BackdropScatterKernel>();
+    scatter.crossings = *crossingBuffer;
+    scatter.records = *recordBuffer;
+    scatter.cells = *cellBuffer;
+    scatter.pathStarts = *crossingStartBuffer;
+    scatter.pathCount = paths;
+    pass.dispatch(scatter, crossings.size() / 3);
+
+    auto& scan = sharedKernel<BackdropScanKernel>();
+    scan.records = *recordBuffer;
+    scan.cells = *cellBuffer;
+    scan.pathStarts = *scanStartBuffer;
+    scan.pathCount = paths;
+    pass.dispatch(scan, scanRows);
+
+    dispatches += 3;
 }
 
 void CoverageBatch::dispatch(GPU::ComputePass& pass)
@@ -188,6 +259,8 @@ void CoverageBatch::dispatch(GPU::ComputePass& pass)
         uploaded = true;
     }
 
+    buildBackdrops(pass);
+
     // The blocks laid out as a rectangle rather than a row. A dimension of a
     // dispatch may have 65,535 threadgroups, and a canvas of a hundred and
     // twenty-eight full-width lanes is a million and a half blocks - so a single
@@ -197,20 +270,20 @@ void CoverageBatch::dispatch(GPU::ComputePass& pass)
     gridColumns = (int) std::ceil(std::sqrt((double) blocks));
     auto gridRows = (blocks + gridColumns - 1) / gridColumns;
 
-    auto& kernel = sharedKernel();
+    auto& kernel = sharedKernel<CoverageKernel>();
 
     kernel.coverage = *target;
     kernel.segments = *segmentBuffer;
     kernel.tileOffsets = *tileBuffer;
     kernel.backdropSteps = *stepBuffer;
     kernel.backdropRows = *rowBuffer;
-    kernel.backdrops = *denseBuffer;
+    kernel.cells = *cellBuffer;
     kernel.records = *recordBuffer;
-    kernel.blockOffsets = *blockBuffer;
+    kernel.pathStarts = *blockBuffer;
     kernel.gridColumns = (std::uint32_t) gridColumns;
     kernel.pathCount = paths;
 
     pass.dispatch(kernel, gridColumns * blockSize, gridRows * blockSize);
-    dispatches = 1;
+    ++dispatches;
 }
 } // namespace eacp::GPUWidgets
