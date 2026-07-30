@@ -422,6 +422,8 @@ void collectWrites(const ShaderGraph& graph,
 
         case StatementKind::Break:
         case StatementKind::Continue:
+        case StatementKind::Store:
+        case StatementKind::TextureStore:
             return;
     }
 }
@@ -649,6 +651,39 @@ struct StageEmitter
                 source = indent + "continue;\n";
                 break;
 
+            case StatementKind::Store:
+                source =
+                    define({statement.index, statement.value}, indent, uses, open);
+                source += indent + "buffer" + std::to_string(statement.slot) + "["
+                          + printer.ref(statement.index)
+                          + "] = " + printer.ref(statement.value) + ";\n";
+                break;
+
+            // The one place the two languages spell a write differently: MSL
+            // takes the colour first and the coordinate second, HLSL
+            // subscripts the texture like an array.
+            case StatementKind::TextureStore:
+            {
+                source = define({statement.index, statement.indexY, statement.value},
+                                indent,
+                                uses,
+                                open);
+
+                auto name = "texture" + std::to_string(statement.slot);
+                auto coordinates = "uint2(" + printer.ref(statement.index) + ", "
+                                   + printer.ref(statement.indexY) + ")";
+                auto color = printer.ref(statement.value);
+
+                if (printer.backend == Backend::Metal)
+                    source += indent + name + ".write(" + color + ", " + coordinates
+                              + ");\n";
+                else
+                    source +=
+                        indent + name + "[" + coordinates + "] = " + color + ";\n";
+
+                break;
+            }
+
             case StatementKind::Loop:
                 break;
         }
@@ -687,7 +722,11 @@ private:
             const auto& statement = graph().statement(index);
 
             if (statement.kind != StatementKind::Loop)
+            {
                 roots.add(statement.value);
+                roots.add(statement.index);
+                roots.add(statement.indexY);
+            }
         }
 
         return countUsesOver(roots);
@@ -816,6 +855,8 @@ void collectStatementRoots(const ShaderGraph& graph, int block, Vector<int>& roo
     {
         const auto& statement = graph.statement(index);
         roots.add(statement.value);
+        roots.add(statement.index);
+        roots.add(statement.indexY);
 
         if (statement.body >= 0)
             collectStatementRoots(graph, statement.body, roots);
@@ -1097,51 +1138,16 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                      "uniforms.height)\n        return;\n"
                    : "    if (gid >= uniforms.count)\n        return;\n";
 
-    auto roots = Vector<int> {};
-
-    for (const auto& store: graph.stores())
-    {
-        roots.add(store.index);
-        roots.add(store.value);
-    }
-
-    for (const auto& store: graph.textureStores())
-    {
-        roots.add(store.x);
-        roots.add(store.y);
-        roots.add(store.value);
-    }
-
-    auto stageRoots = roots;
+    // Stores ride the statement stream like everything else, so the body is
+    // one block walk: a write records where it was made, inside whatever
+    // loop or branch was open, and the emitter has no end-of-kernel step.
+    auto stageRoots = Vector<int> {};
     collectStatementRoots(graph, ShaderGraph::rootBlock, stageRoots);
 
     auto stage = StageEmitter {graph, backend};
 
     source += stage.declareArrays(stageRoots, "    ");
     source += stage.emitBlock(ShaderGraph::rootBlock, "    ");
-    source += stage.defineFor(roots, "    ");
-
-    for (const auto& store: graph.stores())
-        source += "    buffer" + std::to_string(store.slot) + "["
-                  + stage.printer.ref(store.index)
-                  + "] = " + stage.printer.ref(store.value) + ";\n";
-
-    // The one place the two languages spell a texture write differently: MSL
-    // takes the colour first and the coordinate second, HLSL subscripts the
-    // texture like an array.
-    for (const auto& store: graph.textureStores())
-    {
-        auto name = "texture" + std::to_string(store.slot);
-        auto coordinates = "uint2(" + stage.printer.ref(store.x) + ", "
-                           + stage.printer.ref(store.y) + ")";
-        auto color = stage.printer.ref(store.value);
-
-        if (backend == Backend::Metal)
-            source +=
-                "    " + name + ".write(" + color + ", " + coordinates + ");\n";
-        else
-            source += "    " + name + "[" + coordinates + "] = " + color + ";\n";
-    }
 
     source += "}\n";
     return source;

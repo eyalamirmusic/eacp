@@ -115,6 +115,31 @@ void repaintViewTree(View* view)
 
 namespace
 {
+// A native surface a view owns outside the composition tree (a WebView's
+// browser window) does not follow the host window on its own, so the whole
+// tree is told when it moves or its visibility changes.
+void notifyViewTreeOfHostMove(View* view)
+{
+    if (!view)
+        return;
+
+    view->hostWindowMoved();
+
+    for (auto* subview: view->getSubviews())
+        notifyViewTreeOfHostMove(subview);
+}
+
+void notifyViewTreeOfHostVisibility(View* view, bool visible)
+{
+    if (!view)
+        return;
+
+    view->hostWindowVisibilityChanged(visible);
+
+    for (auto* subview: view->getSubviews())
+        notifyViewTreeOfHostVisibility(subview, visible);
+}
+
 void markViewTreeLayersDirty(const View* view)
 {
     if (!view)
@@ -542,7 +567,24 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
             accumulateRawMouseMovement(lParam);
             return std::nullopt;
 
+        // A minimized window reports a 0x0 client area, which would collapse
+        // the view tree — and any native surface sized from it — only to
+        // restore it a moment later. Treat it as a visibility change instead.
         case WM_SIZE:
+            if (wParam == SIZE_MINIMIZED)
+            {
+                hostMinimized = true;
+                notifyViewTreeOfHostVisibility(contentView, false);
+                return 0;
+            }
+
+            if (hostMinimized)
+            {
+                hostMinimized = false;
+                notifyViewTreeOfHostVisibility(contentView,
+                                               IsWindowVisible(hwnd) != FALSE);
+            }
+
             resizeContentViewToClient();
             InvalidateRect(hwnd, nullptr, FALSE);
 
@@ -550,11 +592,17 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
                 clipCursorToClient();
             return 0;
 
-        // The clip rectangle is in screen coordinates, so a moved window
-        // needs it refreshed to keep confining the pinned cursor.
+        // Both things that track the window in screen coordinates: a view's
+        // native surface, and the clip rectangle confining a pinned cursor.
         case WM_MOVE:
+            notifyViewTreeOfHostMove(contentView);
+
             if (mouseLockEngaged)
                 clipCursorToClient();
+            return std::nullopt;
+
+        case WM_SHOWWINDOW:
+            notifyViewTreeOfHostVisibility(contentView, wParam != FALSE);
             return std::nullopt;
 
         case WM_SETFOCUS:

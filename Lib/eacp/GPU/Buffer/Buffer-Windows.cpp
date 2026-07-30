@@ -78,10 +78,7 @@ struct Buffer::Native
     // Close() fail with OBJECT_DELETED_WHILE_STILL_IN_USE, which invalidates
     // the whole list: not just the draw that used the buffer, but every draw
     // recorded after it silently disappears.
-    ~Native()
-    {
-        getD3D12Context().deferRelease(std::move(bufferData.resource));
-    }
+    ~Native() { getD3D12Context().deferRelease(std::move(bufferData.resource)); }
 
     void upload(D3D12Context& context, const void* data, std::size_t bytes)
     {
@@ -128,12 +125,15 @@ bool Buffer::isValid() const
     return impl->bufferData.resource != nullptr;
 }
 
-void Buffer::read(void* dst, std::size_t bytes) const
+void Buffer::read(void* dst, std::size_t bytes, std::size_t offset) const
 {
     auto* source = impl->bufferData.resource.get();
 
-    if (source == nullptr)
+    if (source == nullptr || offset >= impl->bufferData.size)
         return;
+
+    auto available = impl->bufferData.size - offset;
+    auto count = bytes < available ? bytes : available;
 
     auto& context = getD3D12Context();
     auto* commands = context.acquire();
@@ -146,7 +146,7 @@ void Buffer::read(void* dst, std::size_t bytes) const
 
     D3D12_RESOURCE_DESC desc = {};
     desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    desc.Width = impl->bufferData.size;
+    desc.Width = count;
     desc.Height = 1;
     desc.DepthOrArraySize = 1;
     desc.MipLevels = 1;
@@ -169,30 +169,30 @@ void Buffer::read(void* dst, std::size_t bytes) const
     }
 
     transitionForUse(*commands, impl->bufferData, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    commands->list->CopyBufferRegion(
-        staging.get(), 0, source, 0, impl->bufferData.size);
+    commands->list->CopyBufferRegion(staging.get(), 0, source, offset, count);
 
     // The copy was enqueued on the same queue as the writes, so waiting on
     // this submission's fence also waits for them.
     context.waitFor(context.submit(commands));
 
     void* mapped = nullptr;
-    const D3D12_RANGE readRange = {0, bytes};
+    const D3D12_RANGE readRange = {0, count};
 
     if (SUCCEEDED(staging->Map(0, &readRange, &mapped)))
     {
-        std::memcpy(dst, mapped, bytes);
+        std::memcpy(dst, mapped, count);
 
         const D3D12_RANGE noWrite = {0, 0};
         staging->Unmap(0, &noWrite);
     }
 }
 
-void Buffer::update(const void* data, std::size_t bytes)
+void Buffer::update(const void* data, std::size_t bytes, std::size_t offset)
 {
     auto* resource = impl->bufferData.resource.get();
 
-    if (resource == nullptr || data == nullptr || bytes == 0)
+    if (resource == nullptr || data == nullptr || bytes == 0
+        || offset >= impl->bufferData.size)
         return;
 
     auto& context = getD3D12Context();
@@ -200,7 +200,8 @@ void Buffer::update(const void* data, std::size_t bytes)
     if (!context.isValid())
         return;
 
-    auto count = bytes < impl->bufferData.size ? bytes : impl->bufferData.size;
+    auto available = impl->bufferData.size - offset;
+    auto count = bytes < available ? bytes : available;
     auto staging = context.makeUploadBuffer(data, count);
     auto* commands = context.acquire();
 
@@ -211,7 +212,7 @@ void Buffer::update(const void* data, std::size_t bytes)
     }
 
     transitionForUse(*commands, impl->bufferData, D3D12_RESOURCE_STATE_COPY_DEST);
-    commands->list->CopyBufferRegion(resource, 0, staging.get(), 0, count);
+    commands->list->CopyBufferRegion(resource, offset, staging.get(), 0, count);
     commands->transients.add(std::move(staging));
     context.submit(commands);
 }

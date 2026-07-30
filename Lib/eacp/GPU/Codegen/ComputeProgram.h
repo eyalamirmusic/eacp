@@ -175,6 +175,44 @@ protected:
     ThreadPosition threadPosition() { return builder.threadPosition(); }
     Float constant(float value) { return builder.constant(value); }
 
+    // Control flow, forwarded from the builder on the terms ShaderProgram
+    // forwards it: a mutable local, the two branching statements, the loop and
+    // its two jumps. The unsigned overload is the counter a reduction kernel
+    // walks a buffer with - it lives beside the UInt indices threadId() hands
+    // out, and the uint comparisons are what bound it.
+    template <ShaderHandleLike T>
+    Var<ShaderHandle<T>> var(const T& initialValue)
+    {
+        return builder.var(initialValue);
+    }
+
+    Var<Float> var(float initialValue) { return builder.var(initialValue); }
+    Var<Bool> var(bool initialValue) { return builder.var(initialValue); }
+    Var<Int> var(int initialValue) { return builder.var(initialValue); }
+    Var<UInt> var(unsigned initialValue) { return builder.var(initialValue); }
+
+    template <typename Body>
+    void ifThen(const Bool& condition, Body&& body)
+    {
+        builder.ifThen(condition, std::forward<Body>(body));
+    }
+
+    template <typename Then, typename Else>
+    void ifThen(const Bool& condition, Then&& whenTrue, Else&& whenFalse)
+    {
+        builder.ifThen(
+            condition, std::forward<Then>(whenTrue), std::forward<Else>(whenFalse));
+    }
+
+    template <typename Body>
+    void loop(const Bool& condition, Body&& body)
+    {
+        builder.loop(condition, std::forward<Body>(body));
+    }
+
+    void breakLoop() { builder.breakLoop(); }
+    void continueLoop() { builder.continueLoop(); }
+
     void write(const OutputBuffer& buffer, const UInt& index, const Float& value)
     {
         builder.write(buffer, index, value);
