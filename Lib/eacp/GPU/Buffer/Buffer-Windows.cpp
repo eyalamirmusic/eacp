@@ -64,11 +64,31 @@ struct Buffer::Native
         if (!context.isValid() || !device.isValid() || bytes == 0)
             return;
 
-        bufferData.resource =
-            makeDefaultBuffer(context.getDevice(), bytes, toResourceFlags(usage));
+        flags = toResourceFlags(usage);
+        capacity = bytes;
 
-        if (bufferData.resource != nullptr && data != nullptr)
-            upload(context, data, bytes);
+        // A spare of the right shape only when this buffer arrives with the data
+        // to fill it. Created empty, it has to be the zero-filled resource the
+        // runtime hands back rather than one still holding somebody else's
+        // numbers -- a compute output target read before it is written would
+        // otherwise see them.
+        if (data != nullptr)
+            if (auto spare = context.takeDefaultBuffer(bytes, flags))
+            {
+                bufferData.resource = std::move(spare);
+                capacity = bufferData.resource->GetDesc().Width;
+            }
+
+        if (bufferData.resource == nullptr)
+            bufferData.resource =
+                makeDefaultBuffer(context.getDevice(), bytes, flags);
+
+        // A buffer whose initial data never reached it is not a buffer, and
+        // isValid() is how the caller finds out rather than drawing from
+        // whatever the heap happened to hold.
+        if (bufferData.resource != nullptr && data != nullptr
+            && !stage(context, data, bytes))
+            bufferData.resource = nullptr;
     }
 
     // Handed to the context rather than released here, the same way a Texture
@@ -78,32 +98,85 @@ struct Buffer::Native
     // Close() fail with OBJECT_DELETED_WHILE_STILL_IN_USE, which invalidates
     // the whole list: not just the draw that used the buffer, but every draw
     // recorded after it silently disappears.
+    //
+    // Offered up for reuse rather than dropped, on the same terms: it is exactly
+    // the buffer the replacement is about to ask for.
     ~Native()
     {
-        getD3D12Context().deferRelease(std::move(bufferData.resource));
+        getD3D12Context().recycleDefaultBuffer(
+            std::move(bufferData.resource), capacity, flags);
     }
 
-    void upload(D3D12Context& context, const void* data, std::size_t bytes)
+    // The copy that fills the buffer from CPU bytes, and the whole of what makes
+    // a buffer cheap enough to create per draw.
+    //
+    // Two things, of the same order of cost. The staging bytes are bump-allocated
+    // from the recording's upload arena instead of a committed resource made for
+    // this one copy, and the copy goes onto whatever recording is already open
+    // instead of one acquired and submitted for it alone. A batching renderer
+    // builds a buffer per batch flush, and paying a CreateCommittedResource and a
+    // queue submission for each is what made a frame of eacp-ui cost sixty
+    // milliseconds of driver time on Windows and nothing measurable on Metal.
+    //
+    // Recording onto the frame's list rather than ahead of it is also what keeps
+    // it correct: the copy lands in order, before the draw or dispatch that
+    // wanted the bytes, so two flushes of the same program in one frame each read
+    // what they were given.
+    bool stage(D3D12Context& context, const void* data, std::size_t bytes)
     {
-        auto staging = context.makeUploadBuffer(data, bytes);
-        auto* commands = context.acquire();
+        if (bufferData.resource == nullptr)
+            return false;
 
-        if (staging == nullptr || commands == nullptr)
-        {
+        auto* commands = context.getOpenRecording();
+        auto ownsRecording = commands == nullptr;
+
+        if (ownsRecording)
+            commands = context.acquire();
+
+        if (commands == nullptr)
+            return false;
+
+        auto copied = copyInto(context, *commands, data, bytes);
+
+        if (!ownsRecording)
+            return copied;
+
+        if (copied)
+            context.submit(commands);
+        else
             context.discard(commands);
-            bufferData.resource = nullptr;
-            return;
-        }
 
-        commands->list->CopyBufferRegion(
-            bufferData.resource.get(), 0, staging.get(), 0, bytes);
-        commands->transients.add(std::move(staging));
-        context.submit(commands);
+        return copied;
+    }
+
+    bool copyInto(D3D12Context& context,
+                  CommandContext& commands,
+                  const void* data,
+                  std::size_t bytes)
+    {
+        auto source = context.allocateUpload(commands, bytes);
+
+        if (!source.isValid())
+            return false;
+
+        std::memcpy(source.mapped, data, bytes);
+
+        transitionForUse(commands, bufferData, D3D12_RESOURCE_STATE_COPY_DEST);
+        commands.list->CopyBufferRegion(
+            bufferData.resource.get(), 0, source.resource, source.offset, bytes);
+
+        return true;
     }
 
     // Mutable because the state tracking advances inside the const read():
     // the copy to the readback buffer is a use like any other.
     mutable D3D12BufferData bufferData;
+
+    // What the resource actually is, as against what the caller asked for: a
+    // recycled one is at least the requested size and often larger, and it is
+    // the real size that decides who it can be handed to next.
+    std::size_t capacity = 0;
+    D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE;
 };
 
 Buffer::Buffer(Device& device,
@@ -186,9 +259,7 @@ void Buffer::read(void* dst, std::size_t bytes) const
 
 void Buffer::update(const void* data, std::size_t bytes)
 {
-    auto* resource = impl->bufferData.resource.get();
-
-    if (resource == nullptr || data == nullptr || bytes == 0)
+    if (impl->bufferData.resource == nullptr || data == nullptr || bytes == 0)
         return;
 
     auto& context = getD3D12Context();
@@ -197,19 +268,7 @@ void Buffer::update(const void* data, std::size_t bytes)
         return;
 
     auto count = bytes < impl->bufferData.size ? bytes : impl->bufferData.size;
-    auto staging = context.makeUploadBuffer(data, count);
-    auto* commands = context.acquire();
-
-    if (staging == nullptr || commands == nullptr)
-    {
-        context.discard(commands);
-        return;
-    }
-
-    transitionForUse(*commands, impl->bufferData, D3D12_RESOURCE_STATE_COPY_DEST);
-    commands->list->CopyBufferRegion(resource, 0, staging.get(), 0, count);
-    commands->transients.add(std::move(staging));
-    context.submit(commands);
+    impl->stage(context, data, count);
 }
 
 void* Buffer::nativeBuffer() const
