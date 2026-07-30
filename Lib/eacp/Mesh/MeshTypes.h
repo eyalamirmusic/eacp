@@ -141,9 +141,8 @@ static_assert(sizeof(Mat4) == sizeof(float) * 16,
 static_assert(sizeof(Vec3) == sizeof(float) * 3,
               "a Vec3 is uploaded as a Float3 uniform by memcpy");
 
-// What the pipeline consumes. Every packed format Phase 3 of the GPU plan landed
-// is here except the two-component ones, and the vertex is 28 bytes against the
-// 48 it would be with everything unpacked.
+// What the pipeline consumes: 32 bytes against the 48 it would be with
+// everything unpacked.
 //
 // The normal is four components with an unused w rather than an octahedral pair,
 // which would be 24 bytes. Octahedral decoding is arithmetic in the shader, and
@@ -151,13 +150,23 @@ static_assert(sizeof(Vec3) == sizeof(float) * 3,
 // during the vertex fetch, in hardware, for free. Four bytes is the price of
 // keeping that true, and it is the right one until vertex fetch is measured to
 // be the limit.
+//
+// The UV is a full Float2, and was a Float16x2 until the tiled case was
+// measured. Half carries eleven bits of mantissa wherever it sits, so its
+// precision is relative - and a UV's requirement is not. One texel of a
+// 1024-wide texture is 1/1024 of a tile whether the coordinate reads 0.5 or
+// 40.5. Half holds a UV to well under a texel up to about 4 and loses a bit per
+// octave above that, so at the 40 a tiled floor reaches, the worst error is
+// 1/64 of a tile: 16 texels of that texture, which is a visible seam between two
+// triangles that should meet. Tiling is ordinary for architectural geometry and
+// terrain, so the format has to survive it. MeshVertexTests pins the numbers.
 struct MeshVertex
 {
     float position[3];
     GPU::SNorm16x4 normal;
-    GPU::Float16x2 uv;
+    float uv[2];
     GPU::UNorm8x4 color;
 };
 
-static_assert(sizeof(MeshVertex) == 28, "the mesh vertex is meant to stay packed");
+static_assert(sizeof(MeshVertex) == 32, "the mesh vertex is meant to stay packed");
 } // namespace eacp::Mesh

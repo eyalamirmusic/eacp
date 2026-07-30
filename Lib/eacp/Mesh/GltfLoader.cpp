@@ -268,7 +268,10 @@ private:
             }
 
             if (uvs.isValid() && i < uvs.count)
-                vertex.uv = GPU::Float16x2::from(uvs.get(i, 0), uvs.get(i, 1));
+            {
+                vertex.uv[0] = uvs.get(i, 0);
+                vertex.uv[1] = uvs.get(i, 1);
+            }
 
             // COLOR_0 may be VEC3 or VEC4, so alpha comes from the accessor only
             // when it has a fourth component and is opaque otherwise - the same

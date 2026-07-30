@@ -450,9 +450,9 @@ auto tPackedAttributesRoundTrip = test("Gltf/packedAttributesRoundTrip") = []
     // A signed normalized short holds a direction to about 3e-5.
     check(near((float) vertex.normal.values[2] / 32767.0f, 1.0f, 1.0e-4f));
 
-    // Half holds a UV to about one part in a thousand across [0, 1].
-    check(near(GPU::halfToFloat(vertex.uv.values[0]), 0.25f, 1.0e-3f));
-    check(near(GPU::halfToFloat(vertex.uv.values[1]), 0.75f, 1.0e-3f));
+    // A UV is stored as it arrived, so the accessor's value is the assertion.
+    check(near(vertex.uv[0], 0.25f, 1.0e-6f));
+    check(near(vertex.uv[1], 0.75f, 1.0e-6f));
 
     // COLOR_0 was absent, so the vertex colour is opaque white rather than the
     // transparent black a zero-filled struct would hold - the same default trap

@@ -246,14 +246,12 @@ auto tNormalizedComponentTypesMapToUnitRange =
     check(loaded.data.vertices[0].color.values[1] == 0);
     check(loaded.data.vertices[1].color.values[0] == 128);
 
-    // The UVs went 0..65535 -> 0..1 -> half. Half's precision is the tolerance,
-    // not the normalization's.
-    check(
-        near(GPU::halfToFloat(loaded.data.vertices[1].uv.values[0]), 1.0f, 1.0e-3f));
-    check(
-        near(GPU::halfToFloat(loaded.data.vertices[2].uv.values[0]), 0.5f, 1.0e-3f));
-    check(near(
-        GPU::halfToFloat(loaded.data.vertices[2].uv.values[1]), 0.25f, 1.0e-3f));
+    // The UVs went 0..65535 -> 0..1. The normalization's precision is the
+    // tolerance, and it is the only one left now that the UV is stored as a
+    // float: 1/65535 is what a normalized short can say.
+    check(near(loaded.data.vertices[1].uv[0], 1.0f, 1.0e-4f));
+    check(near(loaded.data.vertices[2].uv[0], 0.5f, 1.0e-4f));
+    check(near(loaded.data.vertices[2].uv[1], 0.25f, 1.0e-4f));
 };
 
 // A sparse accessor: dense data plus a short list of elements that override it.

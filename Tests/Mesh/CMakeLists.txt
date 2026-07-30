@@ -3,6 +3,7 @@ set(mesh_test_sources
         GltfLoaderTests.cpp
         GltfReaderTests.cpp
         MeshTransformTests.cpp
+        MeshVertexTests.cpp
         TestMain.cpp)
 
 # The rendered cases ride the same off-screen path the GPU suite does
