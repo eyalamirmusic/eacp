@@ -2211,6 +2211,40 @@ struct ConstantArray
     int slot = -1;
 };
 
+// A threadgroup-shared array, created inside a kernel body: the tile a
+// reduction or a blocked matmul stages in on-chip memory so a group of
+// threads reads it instead of re-reading global memory. It is never
+// CPU-visible - there is nothing to bind - so the element type is any value
+// type, a float4 record included; a subscript reads the current element, and
+// writes go through write(shared, index, value) beside the buffer writes.
+// What one thread wrote is visible to the rest of its group only after
+// barrier(), and a value read before a barrier does not stand for the same
+// element after it - the emitter gives up any name spanning one.
+template <typename T>
+struct Shared
+{
+    T operator[](const UInt& index) const
+    {
+        auto result = T {};
+        result.graph = graph;
+        result.node = graph->addSharedRead(slot, index.node);
+        return result;
+    }
+
+    // The literal subscript, for the fixed element a reduction converges on:
+    // the group leader reads tile[0u] after the last barrier.
+    T operator[](unsigned index) const
+    {
+        auto result = T {};
+        result.graph = graph;
+        result.node = graph->addSharedRead(slot, graph->addUIntConstant(index));
+        return result;
+    }
+
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
 // uint min/max, the branchless way to clamp an index to a valid range.
 inline UInt min(const UInt& a, const UInt& b)
 {

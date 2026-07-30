@@ -149,6 +149,13 @@ public:
     // it takes.
     DispatchRank dispatchRank() const { return generated.dispatchRank; }
 
+    // The fixed group shape every dispatch uses, restated here because it is
+    // part of a shared-memory kernel's arithmetic: localId() runs to
+    // groupWidth in a 1D kernel (groupSize2D per axis in a 2D one), and a
+    // shared tile is sized in these units.
+    static constexpr int groupWidth = ComputePass::threadGroupWidth;
+    static constexpr int groupSize2D = ComputePass::threadGroupSize2D;
+
     int uniformByteSize() const { return uniformBytes.size(); }
 
     // Binds every assigned buffer and texture member to the pass at its
@@ -174,6 +181,26 @@ protected:
     UInt threadId() { return builder.threadId(); }
     ThreadPosition threadPosition() { return builder.threadPosition(); }
     Float constant(float value) { return builder.constant(value); }
+
+    // The threadgroup vocabulary, forwarded on the terms the ids above set:
+    // where a thread sits in its group, which group it is in, the implicit
+    // grid bound the dispatch supplied, a shared array, and the barrier that
+    // orders access to it. The group shape is the fixed one the dispatch
+    // uses, so shared tiles are sized against the constants below.
+    UInt localId() { return builder.localId(); }
+    ThreadPosition localPosition() { return builder.localPosition(); }
+    UInt groupId() { return builder.groupId(); }
+    ThreadPosition groupPosition() { return builder.groupPosition(); }
+    UInt gridCount() { return builder.gridCount(); }
+    UInt gridWidth() { return builder.gridWidth(); }
+    UInt gridHeight() { return builder.gridHeight(); }
+    void barrier() { builder.barrier(); }
+
+    template <typename T>
+    Shared<T> shared(int count)
+    {
+        return builder.shared<T>(count);
+    }
 
     // Control flow, forwarded from the builder on the terms ShaderProgram
     // forwards it: a mutable local, the two branching statements, the loop and
@@ -234,6 +261,14 @@ protected:
     void write(const OutputBuffer& buffer, const UInt& index, const Float4& value)
     {
         builder.write(buffer, index, value);
+    }
+
+    // One element of a threadgroup-shared array, published to the rest of the
+    // group by the next barrier().
+    template <typename T>
+    void write(const Shared<T>& array, const UInt& index, const T& value)
+    {
+        builder.write(array, index, value);
     }
 
     // One texel of a kernel's output image, at the coordinates a 2D kernel

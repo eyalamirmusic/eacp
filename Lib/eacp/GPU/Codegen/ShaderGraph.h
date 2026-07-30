@@ -48,7 +48,14 @@ enum class ExprKind
     // index is the component: a 1D kernel has only 0 and prints the whole gid,
     // a 2D one prints gid.x or gid.y.
     BufferRead, // storage-buffer element read; index = buffer slot, args = {index}
-    ArrayRead // constant-array element read; index = array slot, args = {index}
+    ArrayRead, // constant-array element read; index = array slot, args = {index}
+    LocalId, // position within the threadgroup; index = component, like ThreadId
+    GroupId, // the threadgroup's own index in the grid; index = component
+    GridExtent, // the implicit bounds uniform the generated guard reads: count
+    // for a 1D kernel, width/height by component for a 2D one. Exposed so a
+    // kernel that barriers - and therefore has no early-return guard - can
+    // bound its stores against the very same value the dispatch supplied.
+    SharedRead // threadgroup-array element read; index = slot, args = {index}
 };
 
 // How a kernel accesses a storage buffer: a read-only input (Metal device
@@ -95,7 +102,10 @@ enum class StatementKind
     Break,
     Continue,
     Store, // buffer[index] = value; slot = the storage slot
-    TextureStore // texture[index, indexY] = value; slot = the texture slot
+    TextureStore, // texture[index, indexY] = value; slot = the texture slot
+    SharedStore, // shared[index] = value; slot = the threadgroup-array slot
+    Barrier // threadgroup barrier: every thread in the group arrives before
+    // any proceeds, and threadgroup memory written before it is visible after
 };
 
 // One statement. Which fields carry meaning depends on the kind above; the
@@ -130,6 +140,17 @@ struct ArrayConstant
 {
     ValueType elementType = ValueType::Float;
     Vector<int> elements; // expression nodes, one per element
+};
+
+// A threadgroup-shared array: the tile a reduction or a blocked matmul stages
+// in on-chip memory. Unlike a storage buffer it never crosses the CPU
+// boundary, so its element type is whatever the kernel wants - a float4 tile
+// is one wide element, not four scalars with a layout contract. The size is a
+// compile-time constant in the emitted source, fixed when define() runs.
+struct SharedArray
+{
+    ValueType elementType = ValueType::Float;
+    int elements = 0;
 };
 
 // One node in the shader expression tree. Plain data referenced by integer id so
@@ -285,6 +306,22 @@ public:
     int addBufferRead(int slot, int index);
     void addStore(int slot, int index, int value);
 
+    // The threadgroup pieces: where a thread sits inside its group and which
+    // group it belongs to (components on the terms ThreadId sets - a 1D kernel
+    // has only component 0), the implicit grid bound as a readable value, a
+    // shared array with its subscript read and write, and the barrier that
+    // orders them. Each id kind fixes the dispatch rank exactly as the global
+    // ids do, so a kernel cannot mix a flat local id with a grid dispatch.
+    int addLocalId();
+    int addLocalPosition(int component);
+    int addGroupId();
+    int addGroupPosition(int component);
+    int addGridExtent(DispatchRank forRank, int component);
+    int addSharedArray(ValueType elementType, int elements);
+    int addSharedRead(int slot, int index);
+    void addSharedStore(int slot, int index, int value);
+    void addBarrier();
+
     void setPosition(int node) { positionNode = node; }
     void setFragment(int node) { fragmentNode = node; }
 
@@ -330,6 +367,16 @@ public:
     const Vector<ArrayConstant>& arrays() const { return arrayConstants; }
     const Vector<Store>& stores() const { return storeList; }
     const Vector<TextureStore>& textureStores() const { return textureStoreList; }
+    const Vector<SharedArray>& sharedArrays() const { return sharedArrayList; }
+
+    // Which threadgroup pieces the kernel asked for, driving what the emitters
+    // add to the entry signature - and, for the barrier, what they take away:
+    // a kernel that barriers gets no early-return bounds guard, because a
+    // barrier below a return some threads took is undefined on both backends.
+    // Such a kernel bounds its own stores, typically against gridExtent.
+    bool usesLocalId() const { return localIdUsed; }
+    bool usesGroupId() const { return groupIdUsed; }
+    bool usesBarrier() const { return barrierUsed; }
 
     // Recording any store - to a buffer or to a texture - is what marks the
     // graph as a kernel.
@@ -354,7 +401,7 @@ public:
 private:
     int add(Expr node);
     int addStatement(Statement newStatement);
-    int addThreadIndex(DispatchRank forRank, int component);
+    int addIndexNode(ExprKind kind, DispatchRank forRank, int component);
 
     // Structural sharing for the two kinds that can take it. A key holds
     // everything add() would have to compare to call two nodes the same value;
@@ -386,6 +433,10 @@ private:
     Vector<TextureSampling> textureSamplings;
     Vector<TextureAccess> textureAccesses; // parallel to textureSamplings
     Vector<ArrayConstant> arrayConstants;
+    Vector<SharedArray> sharedArrayList;
+    bool localIdUsed = false;
+    bool groupIdUsed = false;
+    bool barrierUsed = false;
 
     Vector<ValueType> variableTypes;
     Vector<Statement> statementList;
