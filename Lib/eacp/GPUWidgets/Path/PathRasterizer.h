@@ -1,6 +1,6 @@
 #pragma once
 
-#include "CoverageKernel.h"
+#include "CoverageBatch.h"
 #include "Path.h"
 
 namespace eacp::GPUWidgets
@@ -69,10 +69,11 @@ public:
     void setScale(float pixelsPerUnit);
     float getScale() const { return scale; }
 
-    // Uploads the path's segments and measures the coverage it will need. Every
-    // sub-path is closed, since a fill always treats one as closed. No texture
-    // is touched here: the size it settles is what a caller asks an atlas for
-    // before pointing this at a slot of it.
+    // Bins the path's segments and measures the coverage it will need. Every
+    // sub-path is closed, since a fill always treats one as closed. Nothing on
+    // the GPU is touched here - no texture, and no buffer: the bytes go up when
+    // the work is recorded, which is what lets a frame send every path's at once
+    // and, on D3D12, put the copies on the list the frame is already building.
     void setPath(const Path& path, FillRule rule = FillRule::NonZero);
 
     // True when there is nothing to dispatch and no coverage to sample - an
@@ -114,9 +115,21 @@ public:
 
     // Runs the kernel over the covered rect. A no-op on an empty path. The pass
     // must end before the render pass that samples the coverage begins.
+    //
+    // This is a batch of one, and a frame drawing more than one path should not
+    // use it: hand them all to a CoverageBatch instead and dispatch that. What
+    // this costs over the batch is a set of buffers of its own, which is the
+    // right trade for the demo and the test that rasterize a single path and the
+    // wrong one for an interface.
     void dispatch(GPU::ComputePass& pass);
 
 private:
+    friend class CoverageBatch;
+
+    // Where the coverage goes: the texture a slot was taken in, or the one this
+    // owns. Null until a dispatch has settled which.
+    const GPU::Texture* getTargetTexture() const;
+
     // One segment's crossing of one tile row: the tiles it lands in are a run,
     // because within a row a straight segment spans a contiguous range of
     // columns. Recorded on the counting pass so the filling pass does not clip
@@ -150,13 +163,11 @@ private:
     void sortRunsByBand();
     void finishBackdrops();
     void countSegmentTests();
-    void upload();
 
-    std::optional<GPU::Buffer> segmentBuffer;
-    std::optional<GPU::Buffer> tileBuffer;
-    std::optional<GPU::Buffer> stepBuffer;
-    std::optional<GPU::Buffer> rowBuffer;
-    std::optional<GPU::Buffer> denseBuffer;
+    // The buffers a solo dispatch needs, made on the first one and not at all
+    // for a rasterizer a CoverageBatch drives - which is every one in an
+    // interface.
+    std::optional<CoverageBatch> solo;
     std::optional<GPU::Texture> coverageTexture;
 
     // Directed segments in coverage pixel space, four floats each, before
@@ -201,5 +212,10 @@ private:
     bool sparseBackdrop = true;
     long long segmentTests = 0;
     float backdropSpan = 0.f;
+
+    // Whether the solo batch still describes this path. A rasterizer dispatched
+    // repeatedly without changing - which is what a benchmark and a static demo
+    // do - gathers and uploads once.
+    bool soloStale = true;
 };
 } // namespace eacp::GPUWidgets

@@ -20,7 +20,8 @@ struct MaskReadKernel final : GPU::ComputeProgram
     void define() override
     {
         auto texel = threadPosition();
-        auto value = fetch(mask, float2(toFloat(texel.x), toFloat(texel.y)));
+        auto value = fetch(
+            mask, float2(toFloat(texel.x + originX), toFloat(texel.y + originY)));
 
         write(coverage, texel.y * maskWidth + texel.x, value.x());
     }
@@ -29,7 +30,12 @@ struct MaskReadKernel final : GPU::ComputeProgram
     GPU::Uniform<GPU::OutputBuffer> coverage;
     GPU::Uniform<GPU::UInt> maskWidth;
 
-    EACP_SHADER(mask, coverage, maskWidth)
+    // Where in the texture the rect being read starts, so one path's mask can be
+    // read out of a texture several of them share.
+    GPU::Uniform<GPU::UInt> originX;
+    GPU::Uniform<GPU::UInt> originY;
+
+    EACP_SHADER(mask, coverage, maskWidth, originX, originY)
 };
 
 // One per process, like the coverage kernel itself: building a library and a
@@ -45,6 +51,41 @@ inline MaskReadKernel& maskReader()
 
     static auto prepared = Prepared {};
     return prepared.kernel;
+}
+
+// One rect of a mask texture, row-major, one float per texel. What reads a
+// single path's coverage out of a texture a whole batch of them wrote into.
+inline Vector<float>
+    readRegion(const GPU::Texture& texture, int x, int y, int width, int height)
+{
+    auto values = Vector<float> {};
+
+    if (!GPU::Device::shared().isValid() || width <= 0 || height <= 0)
+        return values;
+
+    auto bytes = sizeof(float) * (std::size_t) (width * height);
+    auto readback = GPU::Buffer {
+        GPU::Device::shared(), nullptr, bytes, GPU::BufferUsage::Storage};
+
+    auto commands = GPU::Device::shared().makeCommandBuffer();
+
+    {
+        auto& reader = maskReader();
+        reader.mask = texture;
+        reader.coverage = readback;
+        reader.maskWidth = (std::uint32_t) width;
+        reader.originX = (std::uint32_t) x;
+        reader.originY = (std::uint32_t) y;
+
+        auto pass = commands.beginCompute();
+        pass.dispatch(reader, width, height);
+    }
+
+    commands.commit();
+
+    values.resize(width * height);
+    readback.read(values.data(), bytes);
+    return values;
 }
 
 // Row-major, one float per coverage pixel. Empty when there is no device, or
@@ -85,6 +126,8 @@ inline Vector<float> rasterize(PathRasterizer& rasterizer,
         reader.mask = rasterizer.getCoverage();
         reader.coverage = readback;
         reader.maskWidth = (std::uint32_t) width;
+        reader.originX = 0u;
+        reader.originY = 0u;
 
         auto pass = commands.beginCompute();
         pass.dispatch(reader, width, height);

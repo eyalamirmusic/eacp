@@ -1298,3 +1298,153 @@ The list rung 3 left, now that the thing that was to be done before it is done:
 **batch the frame's rasterizations**, then the backdrop on the GPU, then binning
 and emit. The first is structural, measurable on its own, and the precondition
 for the two after it — see "The order this suggests" above.
+
+*(The first is done — see below.)*
+
+# Batching the frame's rasterizations
+
+**Shipped.** The first of the three rung-3 items, and the precondition for the
+other two: every path a frame rasterizes goes up as one set of buffers and down
+as one dispatch.
+
+## What shipped
+
+`eacp-gpuwidgets`
+
+- `CoverageBatch` — begin, add each rasterized path, dispatch once. Owns the
+  seven buffers the frame uploads and keeps them between frames.
+- `CoverageKernel` rewritten to rasterize a batch: every buffer holds every
+  path's run end to end, and a twelve-float record per path says where each
+  one's begins.
+- `PathRasterizer` no longer owns buffers and no longer uploads. `setPath` is
+  binning and nothing else; `dispatch` is a batch of one, built lazily, so every
+  existing caller — the demos, the probe — is unchanged.
+
+`eacp-ui`
+
+- `ComponentHost` holds the batch, gathers the tree into it, and dispatches
+  after the walk rather than during it.
+- `PathShape::rasterize` takes the batch instead of the pass.
+
+`eacp-gpu`
+
+- `CommandBuffer` publishes its recording on Windows, the way `Frame` already
+  did. A buffer filled between `makeCommandBuffer` and `commit` now puts its
+  copy on that list instead of acquiring and submitting one of its own.
+
+`Tests/GPUWidgets/CoverageBatchTests.cpp`, and `probe::readRegion` beside the
+existing whole-mask read.
+
+## Threads are handed out a block at a time, not a pixel at a time
+
+A batch has no rectangle to dispatch over: the paths are different sizes and
+live at different corners of the atlas. The obvious answer is a flat dispatch
+over the concatenated pixels, with each thread finding its path from a global
+index — and it throws away the one thing the per-path dispatch had for free,
+which is that the 64 threads of a group are an 8×8 corner of one path and read
+the same tile offsets.
+
+So the unit of layout is the **block**: the 8×8 the 2D threadgroup already is.
+The grid is that many blocks arranged as a rectangle — a row of them would not
+be dispatchable, a canvas of 128 full-width lanes being 1.7 million blocks
+against the 65,535 threadgroups a dimension may have.
+
+## What this got wrong, three times, and the third is the one worth keeping
+
+**The fill rule came out of the padding.** The first record was sixteen floats
+with three unused, and the kernel read the flags out of the fourth `read4`
+rather than the third. A star under even-odd filled its own hole. Caught by the
+existing rasterizer tests within a minute, and the fix removed the padding
+rather than moving the read: twelve floats, three reads, every field used.
+
+**The gather was value by value.** `Vector::add` per float, for the two million
+floats a canvas of automation lanes comes to. It made the batched canvas
+**twenty times slower than the unbatched one** — 142ms against 7ms — and it took
+a while to believe, because the dispatch count had gone from 32 to 1 and every
+other number had improved. One `resize` and one `memcpy` per path per buffer:
+142ms → 6.9ms. The lesson is not "use memcpy": it is that the thing batching
+adds is a copy, and a copy done badly is larger than everything it saves.
+
+**Asking through the thread id what has one answer per group.** The first kernel
+computed its block from `threadPosition()`, which is arithmetically identical
+and performs nothing like the same: the search for which path a block belongs
+to, the twelve floats of the record and the two divisions by the path's block
+width are then a dozen memory loads *per thread* that no compiler can prove
+uniform. Asked through `groupPosition()` they are provably uniform and the
+hardware answers them once for the whole group.
+
+It matters here more than it looks, and the reason is rung two's own success: an
+automation curve does **0.54 segment tests per pixel**. The rasterization proper
+is a handful of instructions, so a dozen redundant loads in front of it is not
+an overhead on the work — it is several times the work. Binning made the kernel
+cheap enough that its own preamble became the cost.
+
+## Results
+
+`Apps/GPU/PathBench`, release, Windows on a Parallels vGPU. The absolute figures
+are not comparable with phase 0's macOS ones; the columns are comparable with
+each other. `one each` and `batched` are whole frames — re-bin, upload, dispatch,
+wait — so both sides send what a canvas whose paths all move sends:
+
+| | paths | bin ms | one each | batched | dispatches | uploads |
+|---|---|---|---|---|---|---|
+| automation lanes | 32 | 6.22 | 10.19 | 10.04 | 1 | 7 |
+| automation lanes | 128 | 24.84 | 38.17 | 36.86 | 1 | 7 |
+| PathQuality panels | 128 | 3.13 | 9.13 | **7.14** | 1 | 7 |
+
+Against 128 dispatches and some 512 buffer updates. Net of the binning both
+sides pay, the panels' per-frame cost falls by a third (6.00ms → 4.00ms) and the
+lanes' by 7%; the split is the point — a canvas of many small paths is where
+per-path overhead lived, and a canvas of a few huge ones was never paying it.
+
+**Two Windows findings fell out, and both were larger than the batching.**
+
+*A buffer update outside a frame was a queue submission.* `Buffer::update` puts
+its copy on the open recording if there is one and acquires, records and submits
+one of its own if there is not — and only `Frame` published a recording, so
+anything rasterizing outside a frame paid a submission per buffer. That is why
+the 40pt knob's CPU cost read 0.380ms before this work and 0.003ms after: it was
+never binning, it was five submissions. `CommandBuffer` publishes its recording
+now, which fixed the same thing for every headless caller.
+
+*And `commit()` does not wait on D3D12.* It waits on Metal. So every GPU figure
+this bench had ever printed on Windows was submission time — a rasterization of
+37 million segment-pixel tests reading as 0.000ms, which is exactly the sort of
+number a document gets built on. The bench waits explicitly now (a read, which
+both backends do wait for), and the shape that comes back matches phase 0's:
+93% CPU share on the 100k-segment artwork, against phase 0's 93%.
+
+**Verified.** 899/899 tests pass, the six new ones included. The batch tests are
+against the *unbatched* rasterization of the same paths, which the existing tests
+already hold to the segment-by-segment CPU definition — so what they check is
+that gathering paths together does not move any of them. Deliberately broken:
+the origin dropped (4 of 6 fail), the segment base pinned to zero (3 fail), the
+block search off by one (8 fail, the solo path included, since a batch of one
+goes down the same road), and — the one that matters — every path claiming to
+start at block zero, which is invisible to a batch of one and fails exactly the
+four batch tests and nothing else.
+
+On screen: `ComponentTree` still reports 295 components and 8 batch breaks with
+the knobs unchanged, and `AtlasCeiling` still 240 shapes, 4096², 90% full, 34
+dropped, with every tile that fits still showing its own side count.
+
+## What is still wrong
+
+- **The gather is still a copy.** Every path's arrays are memcpy'd into the
+  batch's before they go up. It is bandwidth rather than per-element cost now,
+  but the honest shape is for `PathRasterizer` to bin straight into the batch's
+  arrays and skip it. Not done because it means the rasterizer no longer owns
+  what it built, which is a bigger change than this one was.
+- **A batch is one texture.** Every path in it writes into the atlas, which is
+  what an interface does anyway. A frame drawing into two would need two batches,
+  and nothing stops it — but nothing helps either.
+- **The block grid wastes up to one row.** `ceil(sqrt(blocks))` columns leaves a
+  partial last row whose threads find themselves past the end of the last path
+  and retire on the same guard the partial blocks use. It is under a thousandth
+  of the dispatch and it is measured by nothing.
+
+## What is next
+
+The two rung-3 items behind this one, unchanged: **the backdrop on the GPU**,
+which is what the canvas's remaining CPU cost mostly is, and then **binning and
+emit on the GPU**. Both amortize against the batch that now exists.

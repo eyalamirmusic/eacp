@@ -50,7 +50,9 @@ Rect PathShape::getBounds() const
     return bounds;
 }
 
-void PathShape::rasterize(CoverageAtlas& atlas, float scale, GPU::ComputePass& pass)
+void PathShape::rasterize(CoverageAtlas& atlas,
+                          float scale,
+                          GPUWidgets::CoverageBatch& batch)
 {
     dirty = false;
     ready = false;
@@ -90,7 +92,7 @@ void PathShape::rasterize(CoverageAtlas& atlas, float scale, GPU::ComputePass& p
     }
 
     rasterizer.setTarget(atlas.getTexture(), slot.x, slot.y);
-    rasterizer.dispatch(pass);
+    batch.add(rasterizer);
 
     maskUV = atlas.uvFor(slot.x, slot.y, width, height);
     bounds = rasterizer.getCoveredBounds();
