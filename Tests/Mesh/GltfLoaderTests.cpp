@@ -109,6 +109,9 @@ auto tNodeTransformsComposeDownTheTree =
     check(bool(loaded));
     check(loaded.data.nodes.size() == 2);
 
+    if (!hasNodes(loaded, 2))
+        return;
+
     auto origin = loaded.data.nodes[1].worldTransform.transformPoint({0, 0, 0});
     check(near(origin, Vec3 {0.0f, 10.0f, 0.0f}, 1.0e-4f));
 
@@ -162,6 +165,9 @@ auto tMatrixAndTrsAgree = test("Gltf/matrixAndTrsAgree") = []
     check(bool(loaded));
     check(loaded.data.nodes.size() == 2);
 
+    if (!hasNodes(loaded, 2))
+        return;
+
     for (auto i = 0; i < 16; ++i)
         check(near(loaded.data.nodes[0].worldTransform.values[i],
                    loaded.data.nodes[1].worldTransform.values[i],
@@ -211,6 +217,9 @@ auto tPrimitivesKeepZeroBasedIndices =
     check(loaded.data.primitives.size() == 2);
     check(loaded.data.vertices.size() == 6);
 
+    if (!hasPrimitives(loaded, 2))
+        return;
+
     const auto& first = loaded.data.primitives[0];
     const auto& second = loaded.data.primitives[1];
 
@@ -257,6 +266,9 @@ auto tMaterialDefaultsAreOpaqueWhite =
 
     check(bool(loaded));
     check(loaded.data.materials.size() == 1);
+
+    if (!hasMaterials(loaded, 1) || !hasPrimitives(loaded, 1))
+        return;
 
     const auto& material = loaded.data.materials[0];
 
@@ -306,6 +318,9 @@ auto tAlphaModesAreRead = test("Gltf/alphaModesAreRead") = []
 
     check(bool(loaded));
     check(loaded.data.materials.size() == 2);
+
+    if (!hasMaterials(loaded, 2) || !hasPrimitives(loaded, 1))
+        return;
 
     check(loaded.data.materials[0].alphaMode == AlphaMode::Mask);
     check(near(loaded.data.materials[0].alphaCutoff, 0.25f, 1.0e-6f));
@@ -422,6 +437,9 @@ auto tPackedAttributesRoundTrip = test("Gltf/packedAttributesRoundTrip") = []
 
     check(bool(loaded));
     check(loaded.data.vertices.size() == 3);
+
+    if (!hasVertices(loaded, 3))
+        return;
 
     const auto& vertex = loaded.data.vertices[0];
 

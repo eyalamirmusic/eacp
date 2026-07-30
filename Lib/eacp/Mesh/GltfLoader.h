@@ -6,16 +6,22 @@
 
 #include <string>
 
-// glTF 2.0 into MeshData, via cgltf.
+// glTF 2.0 into MeshData.
 //
 // Both the .gltf (JSON plus separate buffers) and .glb (one binary container)
-// forms load through the same call - cgltf detects which from the bytes - and a
-// .gltf's external buffers and images are resolved relative to its own
-// directory, which is why loadFromMemory needs a base path to do the same.
+// forms load through the same call - GltfReader tells them apart by the magic
+// word rather than by a file extension - and a .gltf's external buffers and
+// images are resolved relative to its own directory, which is why
+// loadGltfFromMemory needs a base path to do the same.
+//
+// No third-party parser: the JSON is Miro::Json and everything above it is
+// GltfReader, so the whole path from bytes to geometry is code in this tree. See
+// §5.2 of imgui-eacp's EACP_GPU_PLAN.md for why that was worth doing rather than
+// taking a dependency.
 //
 // What is deliberately not read yet, so that an absence reads as a decision:
-// animation, skins, cameras, and every KHR_* extension. Each is either a second
-// dependency or a phase of its own; see §5.8 of imgui-eacp's EACP_GPU_PLAN.md.
+// animation, skins, cameras, and every KHR_* extension. Each is a phase of its
+// own; see §5.8 of the same document.
 
 namespace eacp::Mesh
 {

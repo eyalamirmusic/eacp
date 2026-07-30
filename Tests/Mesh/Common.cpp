@@ -52,6 +52,71 @@ LoadResult loadDocument(const std::string& json, const BinaryBuffer& binary)
     return loadGltfFromMemory(document.data(), document.size());
 }
 
+namespace
+{
+void appendWord(std::vector<std::uint8_t>& out, std::uint32_t value)
+{
+    out.push_back((std::uint8_t) (value & 0xff));
+    out.push_back((std::uint8_t) ((value >> 8) & 0xff));
+    out.push_back((std::uint8_t) ((value >> 16) & 0xff));
+    out.push_back((std::uint8_t) ((value >> 24) & 0xff));
+}
+
+// A chunk's payload is padded to a four-byte boundary, and the pad byte differs
+// by type: a JSON chunk pads with spaces so the text stays parseable, a BIN chunk
+// with zeroes. The declared length is the unpadded one.
+void appendChunk(std::vector<std::uint8_t>& out,
+                 std::uint32_t type,
+                 const std::uint8_t* payload,
+                 std::size_t size,
+                 std::uint8_t padByte)
+{
+    auto padded = (size + 3) & ~std::size_t {3};
+
+    appendWord(out, (std::uint32_t) size);
+    appendWord(out, type);
+
+    out.insert(out.end(), payload, payload + size);
+    out.insert(out.end(), padded - size, padByte);
+}
+} // namespace
+
+std::vector<std::uint8_t> makeGlb(const std::string& json,
+                                  const std::vector<std::uint8_t>& binary)
+{
+    constexpr std::uint32_t magic = 0x46546C67; // "glTF"
+    constexpr std::uint32_t jsonChunk = 0x4E4F534A; // "JSON"
+    constexpr std::uint32_t binaryChunk = 0x004E4942; // "BIN\0"
+
+    auto chunks = std::vector<std::uint8_t> {};
+
+    appendChunk(chunks,
+                jsonChunk,
+                reinterpret_cast<const std::uint8_t*>(json.data()),
+                json.size(),
+                ' ');
+
+    if (!binary.empty())
+        appendChunk(chunks, binaryChunk, binary.data(), binary.size(), 0);
+
+    auto glb = std::vector<std::uint8_t> {};
+
+    appendWord(glb, magic);
+    appendWord(glb, 2);
+
+    // The total length includes the header, which is why it is written after the
+    // chunks are sized rather than guessed at.
+    appendWord(glb, (std::uint32_t) (12 + chunks.size()));
+
+    glb.insert(glb.end(), chunks.begin(), chunks.end());
+    return glb;
+}
+
+LoadResult loadBytes(const std::vector<std::uint8_t>& bytes)
+{
+    return loadGltfFromMemory(bytes.data(), bytes.size());
+}
+
 std::vector<float> cubePositions()
 {
     // Four corners per face rather than eight shared ones, because each face

@@ -48,6 +48,15 @@ public:
         return offset;
     }
 
+    // Raw bytes, for the component types that are not float or uint16: a
+    // normalized colour, a normalized UV, a sparse index list.
+    int appendBytes(const std::vector<std::uint8_t>& values)
+    {
+        auto offset = (int) bytes.size();
+        bytes.insert(bytes.end(), values.begin(), values.end());
+        return offset;
+    }
+
     int size() const { return (int) bytes.size(); }
 
     // The buffer as the data URI a glTF's "buffers" entry names.
@@ -55,6 +64,52 @@ public:
 
     std::vector<std::uint8_t> bytes;
 };
+
+// Wraps JSON and binary into a GLB container: the 12-byte header, then a JSON
+// chunk and a BIN chunk, each four-byte aligned with the padding its type
+// requires — spaces for JSON, zeroes for BIN.
+//
+// Written here rather than checked in as a fixture for the same reason the .gltf
+// documents are: a test that builds its own container says what it is asserting
+// about, and the repository keeps no binary blobs.
+std::vector<std::uint8_t> makeGlb(const std::string& json,
+                                  const std::vector<std::uint8_t>& binary);
+
+// Loads bytes directly, for the cases that are about the container rather than
+// about the schema.
+LoadResult loadBytes(const std::vector<std::uint8_t>& bytes);
+
+// Whether a case may go on to subscript what it just loaded.
+//
+// NanoTest's check() records a failure and keeps running, and Vector's
+// operator[] is unchecked and noexcept — so a case that asserts a load
+// succeeded and then indexes into it *segfaults* when the load fails, instead of
+// reporting the failure it was written to report. That is a much worse outcome
+// than a red line, because in CI it takes the whole suite's buffered output with
+// it and says nothing about which case died.
+//
+// Every case below that subscripts anything guards on one of these first. Found
+// by deliberately breaking the GLB chunk walk and watching a test crash where it
+// should have failed.
+inline bool hasVertices(const LoadResult& result, int count)
+{
+    return bool(result) && result.data.vertices.size() >= count;
+}
+
+inline bool hasNodes(const LoadResult& result, int count)
+{
+    return bool(result) && result.data.nodes.size() >= count;
+}
+
+inline bool hasPrimitives(const LoadResult& result, int count)
+{
+    return bool(result) && result.data.primitives.size() >= count;
+}
+
+inline bool hasMaterials(const LoadResult& result, int count)
+{
+    return bool(result) && result.data.materials.size() >= count;
+}
 
 // Parses a document written as JSON text, with `binary` supplied as the single
 // buffer. The "@BUFFER@" token in the JSON is replaced with the data URI, and

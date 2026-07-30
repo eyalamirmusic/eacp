@@ -1,6 +1,7 @@
 set(mesh_test_sources
         Common.cpp
         GltfLoaderTests.cpp
+        GltfReaderTests.cpp
         MeshTransformTests.cpp
         TestMain.cpp)
 

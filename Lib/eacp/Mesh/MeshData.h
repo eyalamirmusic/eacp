@@ -9,7 +9,7 @@
 
 // The CPU side of a loaded model, named for what a renderer needs rather than
 // for what any one file format calls things. Nothing here mentions glTF and no
-// header here includes cgltf: GltfLoader is a translation *into* this, so a
+// header here includes the reader: GltfLoader is a translation *into* this, so a
 // second loader is a new file rather than a refactor, and MeshRenderer never
 // learns what produced its input.
 //
