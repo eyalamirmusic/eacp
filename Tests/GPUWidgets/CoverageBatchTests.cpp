@@ -219,17 +219,8 @@ Difference compare(const Vector<float>& batched,
 
 // Every entry read back out of the shared texture and held against its own solo
 // rasterization.
-void checkBatchMatchesAlone(Vector<Entry>& entries)
+void checkEachMatchesAlone(Vector<Entry>& entries, const GPU::Texture& target)
 {
-    if (!GPU::Device::shared().isValid())
-        return;
-
-    auto batch = CoverageBatch {};
-    auto target = rasterizeTogether(entries, batch);
-
-    check(batch.getPathCount() == entries.size());
-    check(batch.getDispatchCount() == 1);
-
     for (auto i = 0; i < entries.size(); ++i)
     {
         const auto& entry = entries[i];
@@ -254,6 +245,18 @@ void checkBatchMatchesAlone(Vector<Entry>& entries)
 
         check(difference.past == 0, where);
     }
+}
+
+void checkBatchMatchesAlone(Vector<Entry>& entries)
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto batch = CoverageBatch {};
+    auto target = rasterizeTogether(entries, batch);
+
+    check(batch.getPathCount() == entries.size());
+    checkEachMatchesAlone(entries, target);
 }
 } // namespace
 
@@ -324,6 +327,40 @@ auto tBackdropFormsDoNotCross =
     checkBatchMatchesAlone(entries);
 };
 
+// The same batch dispatched a second time without being gathered again, which is
+// what a static path redrawn every frame is - and what the solo rasterizer does
+// on every dispatch after its first.
+//
+// It is the one thing the array form of the backdrop can get wrong that a single
+// dispatch cannot. Its cells are *added* into, so a second scatter landing on
+// what the first one's sums left behind is a backdrop twice over - and the stage
+// that keeps it from happening writes nothing but zeroes, which no picture taken
+// once will ever miss.
+auto tSecondDispatchDrawsTheSame =
+    test("CoverageBatch/dispatchingTwiceDrawsTheSameThing") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto entries = Vector<Entry> {};
+    entries.add({star({0.f, 0.f, 44.f, 44.f}, 7), FillRule::NonZero, 2.f});
+    entries.add({roundedRect({0.f, 0.f, 70.f, 52.f}, 9.f), FillRule::NonZero, 2.f});
+
+    auto batch = CoverageBatch {};
+    auto target = rasterizeTogether(entries, batch);
+
+    auto commands = GPU::Device::shared().makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute();
+        batch.dispatch(pass);
+    }
+
+    commands.commit();
+
+    checkEachMatchesAlone(entries, target);
+};
+
 // A batch big enough that the block grid is a rectangle rather than a row, which
 // is the layout the dispatch has to use at all - a dimension may have 65,535
 // threadgroups and a canvas has more blocks than that.
@@ -370,29 +407,41 @@ auto tEmptyBatchDispatchesNothing =
     check(batch.getBufferUpdateCount() == 0);
 };
 
-// What the batch is for: one dispatch and one set of buffer updates however many
-// paths went into it. Unbatched, the same frame was one dispatch and three or
-// four updates per path.
+// What the batch is for: the same dispatches and the same buffer updates however
+// many paths went into it. Unbatched, the same frame was one dispatch and three
+// or four updates per path.
+//
+// Held against a batch of one of the same path rather than against a written-out
+// number. A constant would say what the count is and not what it must not depend
+// on, and it would have to be edited whenever a stage is added - which is
+// exactly the edit that would quietly absorb a per-path dispatch.
 auto tOneDispatchWhateverTheCount =
     test("CoverageBatch/costIsPerFrameNotPerPath") = []
 {
     if (!GPU::Device::shared().isValid())
         return;
 
-    auto entries = Vector<Entry> {};
+    auto shape = ellipse({0.f, 0.f, 44.f, 24.f});
 
-    for (auto i = 0; i < 40; ++i)
-        entries.add(
-            {ellipse({0.f, 0.f, 30.f + (float) i, 24.f}), FillRule::NonZero, 2.f});
+    auto gather = [&](int count, CoverageBatch& batch)
+    {
+        auto entries = Vector<Entry> {};
 
-    auto batch = CoverageBatch {};
-    auto target = rasterizeTogether(entries, batch);
+        for (auto i = 0; i < count; ++i)
+            entries.add({shape, FillRule::NonZero, 2.f});
 
-    check(batch.getPathCount() == 40);
-    check(batch.getDispatchCount() == 1);
+        return rasterizeTogether(entries, batch);
+    };
 
-    // Seven buffers: the segments, the tile offsets, the two halves of the step
-    // backdrop, the array backdrop, the records, and the block offsets. Not
-    // seven per path, which is the whole point.
-    check(batch.getBufferUpdateCount() == 7);
+    auto one = CoverageBatch {};
+    auto many = CoverageBatch {};
+
+    gather(1, one);
+    gather(40, many);
+
+    check(one.getPathCount() == 1);
+    check(many.getPathCount() == 40);
+
+    check(many.getDispatchCount() == one.getDispatchCount());
+    check(many.getBufferUpdateCount() == one.getBufferUpdateCount());
 };

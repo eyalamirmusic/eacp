@@ -4,6 +4,99 @@
 
 namespace eacp::GPUWidgets
 {
+// The backdrop is accumulated by an atomic add, and neither shader language has
+// one for floats - so the winding is carried as a fixed-point integer while it
+// is being summed, and crosses back to a float when it is read. Twenty
+// fractional bits leaves eleven for the whole part, which is a winding depth of
+// two thousand: past any outline this rasterizer will see, and fine enough that
+// a row summing a thousand crossings is still inside a thousandth of a coverage
+// step.
+constexpr float backdropFixedScale = 1048576.f;
+
+// A dispatch whose work belongs to many paths, and the search that says which.
+// Every stage of a batched rasterization needs it - a thread has an item index
+// and nothing else - and they need it identically, so it is written once here.
+struct PathIndexedKernel : GPU::ComputeProgram
+{
+    // Which path owns a work item: the last one whose run starts at or before
+    // it. Binary search rather than a walk because a canvas is a hundred paths
+    // and this runs once per item.
+    //
+    // A path with nothing for this stage has a run of length zero, and the
+    // search steps over it rather than landing on it: its start is the same
+    // number as its successor's, so the first start *past* the item is past
+    // both, and the entry before that is the one that owns it.
+    GPU::UInt pathAt(const GPU::UInt& item)
+    {
+        auto wanted = toFloat(item);
+        auto lo = var(0);
+        auto hi = var(pathCount);
+
+        loop(lo < hi,
+             [&]
+             {
+                 auto mid = (lo.get() + hi.get()) >> 1;
+
+                 ifThen(
+                     pathStarts[toUInt(mid)] <= wanted,
+                     [&] { lo = mid + 1; },
+                     [&] { hi = mid; });
+             });
+
+        // lo is the first run starting past this item, so the one before it
+        // owns it. Stepped back with a clamp rather than a subtraction, the
+        // first entry being zero and therefore never past anything.
+        return toUInt(max(lo.get(), 1) - 1);
+    }
+
+    // Floats per path record: three float4 reads, and every field of them used.
+    // How wide the path's block grid is would be a thirteenth and is derived
+    // from the width instead, which is a shift and an add against a fourth read
+    // and four floats per path.
+    static constexpr int recordFloats = 12;
+
+    // The three reads a record is, named rather than counted. Every stage wants
+    // a different one of them and a stage that wanted the wrong one would read
+    // plausible numbers out of the neighbouring field - so the offsets are
+    // written once here, beside the constant, rather than spelled at each call.
+    GPU::Float4 recordBases(const GPU::UInt& path)
+    {
+        return records.read4(recordAt(path));
+    }
+
+    GPU::Float4 recordShape(const GPU::UInt& path)
+    {
+        return records.read4(recordAt(path) + 1u);
+    }
+
+    GPU::Float4 recordPlace(const GPU::UInt& path)
+    {
+        return records.read4(recordAt(path) + 2u);
+    }
+
+    // Where each path's run of this stage's items starts, with a last entry
+    // holding the total. The one buffer a thread reads before it knows anything
+    // at all, which is why it is its own buffer rather than a field of the
+    // records: the search wants its keys next to each other.
+    GPU::Uniform<GPU::InputBuffer> pathStarts;
+
+    // Twelve floats per path: where its runs begin in each of the buffers, how
+    // big its coverage is, how wide its tile grid is, where it sits in the
+    // target, and which fill rule and backdrop form it was built for. Read by
+    // every stage, through the three accessors above.
+    GPU::Uniform<GPU::InputBuffer> records;
+
+    // How many paths the search is over. Not the run total: the last entry of
+    // pathStarts is a terminator and belongs to no path.
+    GPU::Uniform<GPU::Int> pathCount;
+
+private:
+    static GPU::UInt recordAt(const GPU::UInt& path)
+    {
+        return path * (unsigned) (recordFloats / 4);
+    }
+};
+
 // The EDSL-authored kernel behind PathRasterizer: one thread per pixel,
 // accumulating each segment's signed contribution to its own pixel's coverage.
 //
@@ -20,10 +113,11 @@ namespace eacp::GPUWidgets
 // costs anything, and for what sampling instead would get wrong.
 //
 // A thread walks only the segments of its own tile. The rest of the path reaches
-// it as a single number - the winding entering the tile from the left, summed on
-// the CPU for the thread's own pixel row - so a pixel pays for the outline
-// passing near it and not for the outline existing. See PathRasterizer, which
-// does the binning, the transform into pixel space, and the backdrop sum.
+// it as a single number - the winding entering the tile from the left, at the
+// thread's own pixel row - so a pixel pays for the outline passing near it and
+// not for the outline existing. See PathRasterizer, which does the binning and
+// the transform into pixel space, and BackdropKernels.h for where that number
+// comes from when it is not a list of steps.
 //
 // Horizontal segments contribute nothing, and are dropped on the CPU rather than
 // guarded against here.
@@ -33,7 +127,7 @@ namespace eacp::GPUWidgets
 // finds which path it is working on before it does anything else. See
 // CoverageBatch, which is what concatenates them. A single path is a batch of
 // one and goes down exactly the same road.
-struct CoverageKernel final : GPU::ComputeProgram
+struct CoverageKernel final : PathIndexedKernel
 {
     // Coverage pixels along one side of a tile. A thread reads two offsets and a
     // backdrop before its loop, so tiles want to be big enough that the three
@@ -49,12 +143,6 @@ struct CoverageKernel final : GPU::ComputeProgram
     // locality the per-pixel dispatch had, kept across a batch that has no
     // rectangle to dispatch over.
     static constexpr int blockSize = GPU::ComputeProgram::groupSize2D;
-
-    // Floats per path record: three float4 reads, and every field of them used.
-    // How wide the path's block grid is would be a thirteenth and is derived
-    // from the width instead, which is a shift and an add against a fourth read
-    // and four floats per path.
-    static constexpr int recordFloats = 12;
 
     CoverageKernel() { compile(); }
 
@@ -77,11 +165,10 @@ struct CoverageKernel final : GPU::ComputeProgram
         auto block = group.y * gridColumns + group.x;
 
         auto path = pathAt(block);
-        auto record = path * (unsigned) (recordFloats / 4);
 
-        auto bases = records.read4(record);
-        auto shape = records.read4(record + 1u);
-        auto place = records.read4(record + 2u);
+        auto bases = recordBases(path);
+        auto shape = recordShape(path);
+        auto place = recordPlace(path);
 
         auto segmentBase = toUInt(bases.x());
         auto tileBase = toUInt(bases.y());
@@ -101,7 +188,7 @@ struct CoverageKernel final : GPU::ComputeProgram
         // Where in its own path this thread's pixel is. A block past the end of
         // the batch belongs to the last path and lands well below it, which is
         // what the guard below retires - so the search never needs its own.
-        auto local = block - toUInt(blockOffsets[path]);
+        auto local = block - toUInt(pathStarts[path]);
         auto pixelX = (local % blocksWide) * (unsigned) blockSize + lane.x;
         auto pixelY = (local / blocksWide) * (unsigned) blockSize + lane.y;
 
@@ -115,6 +202,7 @@ struct CoverageKernel final : GPU::ComputeProgram
                                            stepBase,
                                            rowBase,
                                            denseBase,
+                                           height,
                                            tilesWide,
                                            place.z(),
                                            place.w());
@@ -135,34 +223,6 @@ struct CoverageKernel final : GPU::ComputeProgram
                });
     }
 
-    // Which path owns a block: the last one whose run starts at or before it.
-    // Binary search rather than a walk because a canvas is a hundred paths and
-    // this runs once per pixel - though every thread of a group asks the same
-    // question and gets the same answer, a block being one path's by
-    // construction.
-    GPU::UInt pathAt(const GPU::UInt& block)
-    {
-        auto wanted = toFloat(block);
-        auto lo = var(0);
-        auto hi = var(pathCount);
-
-        loop(lo < hi,
-             [&]
-             {
-                 auto mid = (lo.get() + hi.get()) >> 1;
-
-                 ifThen(
-                     blockOffsets[toUInt(mid)] <= wanted,
-                     [&] { lo = mid + 1; },
-                     [&] { hi = mid; });
-             });
-
-        // lo is the first run starting past this block, so the one before it
-        // owns it. Stepped back with a clamp rather than a subtraction, the
-        // first entry being zero and therefore never past anything.
-        return toUInt(max(lo.get(), 1) - 1);
-    }
-
     // One pixel's coverage, in its own path's space. Everything it needs to find
     // its way into the shared buffers arrives as a base, so the arithmetic below
     // is the single-path arithmetic it always was.
@@ -173,6 +233,7 @@ struct CoverageKernel final : GPU::ComputeProgram
                           const GPU::UInt& stepBase,
                           const GPU::UInt& rowBase,
                           const GPU::UInt& denseBase,
+                          const GPU::UInt& height,
                           const GPU::UInt& tilesWide,
                           const GPU::Float& evenOdd,
                           const GPU::Float& sparse)
@@ -197,7 +258,7 @@ struct CoverageKernel final : GPU::ComputeProgram
             sparse != 0.f,
             [&]
             { winding = backdropAt(rowBase + pixelY, stepBase, toFloat(column)); },
-            [&] { winding = backdrops[denseBase + pixelY * tilesWide + column]; });
+            [&] { winding = cellAt(denseBase + column * height + pixelY); });
 
         // Held in locals rather than re-read: the loop condition is re-tested in
         // the generated while header, and these do not change under it.
@@ -250,6 +311,20 @@ struct CoverageKernel final : GPU::ComputeProgram
         auto nonZeroCoverage = min(total, 1.f);
 
         return select(evenOdd != 0.f, evenOddCoverage, nonZeroCoverage);
+    }
+
+    // The same thing when it was built as an array: one cell per tile column per
+    // pixel row, already summed left to right by the scan stage, so the lookup
+    // is the read and nothing else.
+    //
+    // The cells are integers because an atomic add is - see backdropFixedScale -
+    // so this is where they stop being. Column-major, which is not the order it
+    // reads in: it is the order the scan writes in, and a scan thread owns a
+    // row while a coverage block owns eight of them at one column, so both walk
+    // consecutive cells and only the scatter is scattered.
+    GPU::Float cellAt(const GPU::UInt& index)
+    {
+        return toFloat(toInt(cells.load(index))) * (1.f / backdropFixedScale);
     }
 
     // The winding entering this tile column, at this pixel row: everything the
@@ -353,38 +428,30 @@ struct CoverageKernel final : GPU::ComputeProgram
     GPU::Uniform<GPU::InputBuffer> backdropRows;
 
     // The same backdrop written out in full instead - the winding at every tile
-    // column of every pixel row, indexed row-major. Priced by the area rather
-    // than by the outline, which is dearer to build and cheaper to read, and so
-    // is what a path whose outline crosses nearly every row uses instead. A path
-    // fills one of the two; the other holds nothing for it.
-    GPU::Uniform<GPU::InputBuffer> backdrops;
-
-    // Twelve floats per path, the bases and the shape above: where its runs
-    // begin in each of the five buffers, how big its coverage is, how wide its
-    // tile grid is, where it sits in the target, and which fill rule and
-    // backdrop form it was built for.
-    GPU::Uniform<GPU::InputBuffer> records;
-
-    // Where each path's blocks start, with a last entry holding the total. The
-    // one buffer a thread reads before it knows anything at all, which is why it
-    // is separate from the records rather than a field of them: the search wants
-    // its keys next to each other.
-    GPU::Uniform<GPU::InputBuffer> blockOffsets;
+    // column of every pixel row. Priced by the area rather than by the outline,
+    // which is dearer to build and cheaper to read, and so is what a path whose
+    // outline crosses nearly every row uses instead. A path fills one of the
+    // two; the other holds nothing for it.
+    //
+    // Nothing on the CPU fills it or ever sees it: three kernels ahead of this
+    // one clear it, scatter the outline's crossings into it and sum each row -
+    // see BackdropKernels.h - so an array priced by the area costs the area
+    // nowhere but on the GPU, which is the only place it was ever cheap.
+    GPU::Uniform<GPU::AtomicBuffer> cells;
 
     GPU::Uniform<GPU::WritableTexture2D> coverage;
 
-    // How many blocks across the dispatch grid is, which is what turns a thread
-    // position into a block index, and how many paths the search is over.
+    // How many blocks across the dispatch grid is, which is what turns a group
+    // position into a block index.
     GPU::Uniform<GPU::UInt> gridColumns;
-    GPU::Uniform<GPU::Int> pathCount;
 
     EACP_SHADER(segments,
                 tileOffsets,
                 backdropSteps,
                 backdropRows,
-                backdrops,
+                cells,
                 records,
-                blockOffsets,
+                pathStarts,
                 coverage,
                 gridColumns,
                 pathCount)

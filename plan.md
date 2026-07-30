@@ -1448,3 +1448,184 @@ dropped, with every tile that fits still showing its own side count.
 The two rung-3 items behind this one, unchanged: **the backdrop on the GPU**,
 which is what the canvas's remaining CPU cost mostly is, and then **binning and
 emit on the GPU**. Both amortize against the batch that now exists.
+
+*(The first is done — see below.)*
+
+# The backdrop on the GPU
+
+**Shipped.** The second of the three rung-3 items, and the one phase 4.0 named as
+two thirds of the CPU cost of the workload this rung exists for. The array form
+of the backdrop is now built by three kernels ahead of the coverage one, out of
+the outline's crossings, and the CPU never touches an array priced by the area
+again.
+
+## What moved, and what stayed exactly where it was
+
+There are two forms of backdrop and rung 3 only had to move one of them. The
+step form is the outline's size already and is still sorted and summed on the
+CPU. The array form — one value per tile column per pixel row — was cleared,
+scattered into, prefix-summed and shipped every frame a path moved, and that is
+what is gone.
+
+What the CPU knows and the GPU does not is where the outline crosses into each
+tile column. There are as many of those as there is outline, so the crossings go
+up and the array is built from them:
+
+```
+clear    - one thread per cell, zeroing what the last dispatch left
+scatter  - one thread per crossing, adding its winding to the rows it spans
+scan     - one thread per pixel row, summing that row's cells left to right
+```
+
+`O(cells + crossings)` rather than the `O(cells × crossings)` a per-pixel walk of
+the outline would be — which is the objection phase 4 raised against the per-tile
+backdrop and is *not* an objection to this, the difference being that this
+touches each cell once rather than once per pixel to its right.
+
+## What shipped
+
+`eacp-gpuwidgets`
+
+- `BackdropKernels.h` — the three stages, and `PathIndexedKernel`, the search for
+  which path a work item belongs to, which all four kernels now share.
+- `PathRasterizer` records crossings — three floats, the column and the y it
+  enters and leaves at, directed the way its own segment runs — instead of
+  scattering into an array. `buildDenseBackdrop` is gone.
+- `CoverageBatch` allocates the cells, gathers the crossings, and runs the three
+  stages before the coverage one. The cells are never uploaded and never read
+  back: the only thing the CPU knows about them is how many there are.
+- `CoverageKernel` reads the array through `cells.load` instead of a float
+  buffer, and column-major instead of row-major.
+
+`Tests/GPUWidgets/CoverageBatchTests.cpp` — one new test, and the dispatch-count
+assertions rewritten (below).
+
+No change to `eacp-ui`, `eacp-gpu`, or any public API.
+
+## Three things that are not incidental
+
+**The cells are integers.** `atomicAdd` is the only way threads that never meet
+can accumulate into the same place, and neither shader language has one for
+floats. So the winding is fixed point at 2^20 while it is being summed, which
+leaves eleven bits of whole part — a winding depth of two thousand — and is fine
+enough that a row summing a thousand crossings is inside a thousandth of a
+coverage step. It stops being fixed point where the coverage kernel reads it.
+
+**Column-major, which is not the order anything reads it in.** It is the order
+the *scan* writes in: a scan thread owns a row and walks it a column at a time,
+so neighbouring threads touch neighbouring cells. It suits the coverage kernel
+too — an 8×8 block is eight rows at one column, which is eight consecutive cells
+where row-major made it eight strides. Only the scatter is scattered, and it was
+going to be.
+
+**The crossing is three floats and not four.** The sign of the span is the sign
+of the winding, so directing the record removes the fourth. It matters more than
+it sounds: the crossings are what the array form now costs on the bus, and on a
+dense path there are more of them than there are cells.
+
+## What the generated source said, and what it cost
+
+Read rather than assumed, which is the practice this document keeps and which
+paid here. Both loops came out re-reading their buffers on every iteration: the
+scan's `while` header alone re-read all four floats of the path record per
+column, and the scatter fetched the record and the crossing again inside the
+body — nine loads around an add.
+
+The emitter CSEs within a block and not across one, so a value that is only an
+expression is emitted again in every block that mentions it. `var()` is what
+pins it to a local, which `CoverageKernel::coverageAt` already knew and said so.
+With that the scan's inner loop is one load, one add and one store, and the
+scatter's is a min, a max, a compare and an `InterlockedAdd`.
+
+## Results
+
+`Apps/GPU/PathBench`, release, Windows on a Parallels vGPU. Both binaries built
+and run alternately five times, medians — the machine had a neural-net benchmark
+and two IDEs on it, and the alternation is what makes that cancel rather than
+count.
+
+| path | form | CPU before | CPU after | | GPU before | GPU after |
+|---|---|---|---|---|---|---|
+| knob indicator, 40pt | array | 0.003 | 0.003 | — | 0.028 | 0.082 |
+| knob indicator, 96pt | array | 0.010 | 0.007 | 1.4× | 0.017 | 0.084 |
+| PathQuality panel | steps | 0.025 | 0.032 | — | 0.076 | 0.071 |
+| automation curve, 1200pt | array | 0.203 | **0.063** | 3.2× | 0.141 | 0.145 |
+| full-window ellipse | steps | 0.170 | 0.140 | — | 0.301 | 0.218 |
+| artwork, 4k segments | array | 0.907 | **0.394** | 2.3× | 0.181 | 0.257 |
+| artwork, 20k segments | array | 2.002 | **1.185** | 1.7× | 0.279 | 0.344 |
+| artwork, 100k segments | array | 5.677 | 4.777 | 1.2× | 0.385 | 0.443 |
+
+And the workload the rung is for — a canvas where every path moves, so every one
+is re-binned and re-uploaded every frame:
+
+| | paths | bin before | bin after | | frame before | frame after | |
+|---|---|---|---|---|---|---|---|
+| automation lanes | 32 | 7.131 | **1.974** | 3.6× | 13.966 | **7.946** | 1.8× |
+| automation lanes | 128 | 27.577 | **8.060** | 3.4× | 43.529 | **22.351** | 1.9× |
+| PathQuality panels | 128 | 3.486 | 3.370 | — | 11.964 | 11.539 | — |
+
+The lanes take the array and the panels take the steps, and the panels not moving
+is the result as much as the lanes moving is: nothing was traded, one form was
+relocated. A canvas of a hundred and twenty-eight live automation lanes now
+spends 8ms of CPU where it spent 27.6, and its whole frame halves.
+
+**Verified.** 900/900 tests pass, the new one included. The rasterizer, batch and
+stroker tests all pass with **either form forced on every path**, so neither arm
+is dead. Against deliberate breaks, of the 23 rasterizer, batch and stroker
+tests: a scan that does not accumulate fails 8, a scatter covering only the first
+row of a crossing fails 8, and a scatter that ignores the path's cell base fails
+exactly the 4 batch tests and nothing else — which is the signature a batching
+bug should have. On screen, `ComponentTree` still reports 295 components and 8
+batch breaks
+with the knobs unchanged, and `AtlasCeiling` still drops 34 shapes and draws
+every one that fits.
+
+## What this got wrong, and what it costs
+
+**The clear stage was not covered by anything, and it is load-bearing.** Removing
+it altogether passed the entire suite. Every test rasterized once, and cells only
+need clearing on the *second* dispatch into the same buffer — which is what a
+static path redrawn every frame is, and what the solo rasterizer does on every
+frame after its first. `CoverageBatch/dispatchingTwiceDrawsTheSameThing` is the
+test that had to be written for it, and it is the only one that fails without the
+stage. A test that cannot fail is not evidence; here there was no test at all,
+and the picture it protects is one nobody would take twice.
+
+**The dispatch-count assertions were a constant, and the constant was wrong the
+moment a stage was added.** They said "one dispatch", which is now four. Rewritten
+to hold a batch of forty against a batch of one of the same path: what matters is
+that the count does not move with the path count, and a number would have to be
+edited by the very change that could hide a regression.
+
+**A small path pays three dispatches for a backdrop it barely has.** The 40pt
+knob's GPU time goes 0.028 → 0.082ms, and that is the floor phase 0 predicted
+this rung could not go below. It is per *batch* and not per path, so an interface
+pays it once a frame however many knobs are in it — but a demo or a bench that
+rasterizes one path at a time pays it every time, and the per-path table above is
+measured that way.
+
+**The scan is one thread per row, and a single wide path has few rows.** An
+automation curve is 356 rows of 151 columns: six threadgroups, each thread
+walking 151 dependent loads. Cutting the walk to one column takes its GPU time
+from 0.207 to 0.090ms on the same run, so the walk is essentially all of what the
+stage costs there. On the canvas it does not bite — 128 lanes is 45,568 rows —
+and a group-per-row scan in threadgroup memory would buy the solo case and cost
+the canvas, a log-depth scan doing several times the work of a serial one. Left
+alone deliberately, and named here because the measurement that decides it is the
+one nobody would take.
+
+**The form chooser is now measured against a cost that no longer exists.**
+`sparseBackdropMargin` was tuned when the array meant O(area) CPU work; it now
+means O(area) GPU memory and two extra stages against a per-pixel binary search.
+That is a different trade with a different answer, and the constant has not been
+re-derived. It is the next measurement, not the next build.
+
+## Still not done
+
+- **Binning and emit on the GPU**, which is the last of the three and is now
+  nearly the whole of what a dense path costs: the 100k-segment artwork is 4.8ms
+  of CPU with no backdrop left in it.
+- **The cells have a ceiling.** Every base in a record is a float, exact to
+  sixteen million; the 128-lane canvas is already at seven. It is the only base
+  that grows with area rather than with outline, so it is the only one that will
+  ever reach it, and an assert now says so rather than the picture.

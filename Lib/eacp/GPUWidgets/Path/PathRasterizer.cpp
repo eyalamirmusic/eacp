@@ -16,6 +16,11 @@ constexpr auto tileSize = CoverageKernel::tileSize;
 // the steps win by five times where they do not. The crossover is broad and
 // nothing in the corpus lands near it, so this is a measured constant rather
 // than a tuned one.
+//
+// Measured against an array the CPU built, though. It is built on the GPU now,
+// so what it costs is O(area) of GPU memory and two stages ahead of the coverage
+// kernel, against a per-pixel search - a different trade, whose answer has not
+// been re-derived.
 constexpr auto sparseBackdropMargin = 8;
 
 // The tile a coordinate falls in, and the first tile entirely past it. Together
@@ -164,23 +169,18 @@ void PathRasterizer::addBackdrop(
         return;
     }
 
-    auto firstRow = std::max((int) std::floor(fromY), 0);
-    auto endRow = std::min((int) std::ceil(toY), coverageHeight);
-
-    for (auto row = firstRow; row < endRow; ++row)
-    {
-        auto height =
-            std::min(toY, (float) (row + 1)) - std::max(fromY, (float) row);
-
-        if (height > 0.f)
-            backdrops[row * tilesWide + column] += direction * height;
-    }
+    // Directed the way the segment runs, so the sign of the span is the sign of
+    // the winding and there is no third number to carry. Nothing else is done
+    // with it here: the array these belong to is built on the GPU, and the whole
+    // point of the form is that the CPU never walks its area.
+    crossings.add((float) column);
+    crossings.add(direction > 0.f ? fromY : toY);
+    crossings.add(direction > 0.f ? toY : fromY);
 }
 
 // Which of the two backdrop forms this path is shaped for, settled before the
-// binning loop so that the one that is not chosen costs nothing at all - the
-// array is scattered into as the crossings are found, and the crossings are only
-// recorded when the steps are what will be built from them.
+// binning loop, which is what lets a crossing be written straight into the shape
+// the form it belongs to wants rather than into one both could be built from.
 //
 // It turns on how empty the array would be, against the pixel rows the crossings
 // between them cover. Those are bounded from the outline's total vertical travel
@@ -199,9 +199,6 @@ void PathRasterizer::chooseBackdropForm()
 
     sparseBackdrop = (long long) tilesWide * coverageHeight
                      > (long long) sparseBackdropMargin * rows;
-
-    if (!sparseBackdrop)
-        backdrops.assign(tilesWide * coverageHeight, 0.f);
 }
 
 // Splits every segment across the tile rows it crosses, and within each row
@@ -223,6 +220,7 @@ void PathRasterizer::buildTiles()
     runs.clear();
     tileOffsets.assign(tileCount + 1, 0.f);
     bandRuns.clear();
+    crossings.clear();
 
     chooseBackdropForm();
 
@@ -302,20 +300,6 @@ void PathRasterizer::buildTiles()
     countSegmentTests();
 }
 
-// Each column of the array holds only what crossed into it; running them left to
-// right turns that into the winding entering the column, which is what a thread
-// reads when there is no step list to search.
-void PathRasterizer::buildDenseBackdrop()
-{
-    for (auto row = 0; row < coverageHeight; ++row)
-    {
-        auto* columns = backdrops.data() + row * tilesWide;
-
-        for (auto column = 1; column < tilesWide; ++column)
-            columns[column] += columns[column - 1];
-    }
-}
-
 // One counting sort, into one bucket per tile row, so that a band's crossings
 // can be gathered in one pass. The key space is the path's height in tiles, so
 // this is linear in the crossings and never in the area.
@@ -344,13 +328,13 @@ void PathRasterizer::sortRunsByBand()
         sortedRuns[runCounts[run.band]++] = run;
 }
 
-// The backdrop, in whichever form this path was found to be shaped for.
+// The backdrop, in whichever form this path was found to be shaped for. The
+// array form is already done: its crossings are what the GPU builds it from, and
+// they were recorded as they were found.
 void PathRasterizer::finishBackdrops()
 {
     if (sparseBackdrop)
         buildStepBackdrop();
-    else
-        buildDenseBackdrop();
 }
 
 // Turns the crossings into what a thread looks its backdrop up in: per pixel
@@ -463,6 +447,11 @@ void PathRasterizer::buildStepBackdrop()
         backdropSteps.add(0.f);
         backdropSteps.add(0.f);
     }
+}
+
+int PathRasterizer::getCellCount() const
+{
+    return sparseBackdrop ? 0 : tilesWide * coverageHeight;
 }
 
 void PathRasterizer::countSegmentTests()

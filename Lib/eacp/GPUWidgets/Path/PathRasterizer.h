@@ -57,8 +57,11 @@ enum class FillRule
 // per row cost more CPU than everything else here put together.
 //
 // Steps are two numbers where a column is one, though, so an outline crossing
-// nearly every row of its own coverage is cheaper held the plain way. Both are
-// built, one per path, whichever this one is shaped for.
+// nearly every row of its own coverage is cheaper held the plain way. Both
+// forms exist and one is chosen per path - and either way what this class
+// produces is the outline's crossings: the steps are sorted and summed from them
+// here, and the array is cleared, scattered into and summed from them on the
+// GPU. See BackdropKernels.h.
 class PathRasterizer
 {
 public:
@@ -154,10 +157,13 @@ private:
         float direction;
     };
 
+    // Cells the array form of this path's backdrop needs on the GPU, and zero
+    // for a path built as steps. One per tile column per pixel row.
+    int getCellCount() const;
+
     void ensureOwnTexture();
     void buildTiles();
     void chooseBackdropForm();
-    void buildDenseBackdrop();
     void buildStepBackdrop();
     void addBackdrop(float direction, float fromY, float toY, int column, int band);
     void sortRunsByBand();
@@ -193,10 +199,11 @@ private:
 
     // The backdrop as the kernel reads it, in whichever of the two forms is
     // smaller for this path: a run of (column, winding) steps per pixel row with
-    // where each row's run starts, or the winding at every column of every row.
+    // where each row's run starts, or - three floats to a crossing - what the
+    // GPU builds the array of every column of every row out of.
     Vector<float> backdropSteps;
     Vector<float> backdropRows;
-    Vector<float> backdrops;
+    Vector<float> crossings;
 
     const GPU::Texture* target = nullptr;
     int originX = 0;
