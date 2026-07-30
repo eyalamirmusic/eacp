@@ -304,6 +304,11 @@ public:
         return {graphData, ValueType::Int, graphData.addIntConstant(initialValue)};
     }
 
+    Var<UInt> var(unsigned initialValue)
+    {
+        return {graphData, ValueType::UInt, graphData.addUIntConstant(initialValue)};
+    }
+
     // A matrix is a mutable local on the same terms - the orientation a shader
     // builds up over several steps before it goes through it - and it needs an
     // overload of its own for the reason it needs one everywhere here: it is

@@ -93,7 +93,9 @@ enum class StatementKind
     If, // if (value) { body } else { elseBody }
     Loop, // while (value) { body }
     Break,
-    Continue
+    Continue,
+    Store, // buffer[index] = value; slot = the storage slot
+    TextureStore // texture[index, indexY] = value; slot = the texture slot
 };
 
 // One statement. Which fields carry meaning depends on the kind above; the
@@ -102,10 +104,12 @@ enum class StatementKind
 struct Statement
 {
     StatementKind kind = StatementKind::Assign;
-    int slot = -1; // Declare / Assign: the variable written
-    int value = -1; // Declare / Assign: the value; If / Loop: the condition
+    int slot = -1; // Declare / Assign: the variable written; stores: the slot
+    int value = -1; // Declare / Assign / stores: the value; If / Loop: the condition
     int body = -1; // If / Loop: the block that runs
     int elseBody = -1; // If: the block that runs when the condition is false
+    int index = -1; // Store: the element index; TextureStore: x
+    int indexY = -1; // TextureStore: y
 };
 
 // A run of statements, held by index so a nested body is an int on the
@@ -161,9 +165,12 @@ public:
         int sourceNode = -1; // vertex-stage expression feeding this varying
     };
 
-    // One kernel output write: buffer[index] = value. Stores are the compute
-    // roots, the way position/fragment are the render roots; recording any
-    // store marks the whole graph as a compute kernel.
+    // One kernel output write: buffer[index] = value. Recording any store
+    // marks the whole graph as a compute kernel, the way position/fragment
+    // mark a render one - this list is that signature. Each store is also
+    // recorded as a statement in the block open at the time, which is where
+    // it is emitted: a write inside a loop body runs once per iteration,
+    // not once after the loop.
     struct Store
     {
         int slot = -1;
@@ -171,9 +178,9 @@ public:
         int value = -1;
     };
 
-    // Its texture sibling: texture[x, y] = colour. A compute root exactly as a
-    // buffer store is, and what makes a kernel able to produce something a
-    // later render pass samples.
+    // Its texture sibling: texture[x, y] = colour. A compute signature entry
+    // exactly as a buffer store is, and what makes a kernel able to produce
+    // something a later render pass samples.
     struct TextureStore
     {
         int slot = -1;

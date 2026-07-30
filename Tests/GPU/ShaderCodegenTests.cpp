@@ -1784,6 +1784,72 @@ auto tCodegenComputeIndexArithmetic = test("GPU/codegenComputeIndexArithmetic") 
     check(contains(hlsl, "buffer1[(gid * 2u)] = "));
 };
 
+// The uint comparisons, and the loop they unlock: a reduction kernel is a
+// Var<UInt> counter tested against a uint bound - until these existed the
+// counter had to be a float carried in lockstep beside the index. The literal
+// forms record uint constant nodes, so the whole header spells in uints. Pure
+// string generation.
+auto tCodegenComputeUIntLoop = test("GPU/codegenComputeUIntLoop") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto count = builder.uniform<UInt>();
+    auto gid = builder.threadId();
+
+    auto total = builder.var(0.0f);
+    auto i = builder.var(0u);
+
+    builder.loop(i < count,
+                 [&]
+                 {
+                     total += input[gid * count + i];
+                     i += 1u;
+                 });
+
+    builder.ifThen(gid == 0u, [&] { total *= 2.0f; });
+
+    builder.write(output, gid, total);
+
+    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        check(contains(source, "uint v1 = 0u;"));
+        check(contains(source, "while ((v1 < uniforms.u0))"));
+        check(contains(source, "v1 = (v1 + 1u);"));
+        check(contains(source, "if ((gid == 0u))"));
+
+        // The condition reads the counter the body advances, so it must be
+        // printed into the header rather than bound to a local before it.
+        check(source.find("while (") < source.find("v1 = (v1 + 1u);"));
+    }
+};
+
+// Crossing between the index vocabularies: into the signed one for arithmetic
+// that may go below zero, back out with toUInt once clamped, and toUInt of a
+// float scalar truncating towards zero. Constructor-style casts, spelled the
+// same by both backends. Pure string generation.
+auto tCodegenComputeIndexCasts = test("GPU/codegenComputeIndexCasts") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto scale = builder.uniform<Float>();
+    auto gid = builder.threadId();
+
+    auto previous = input[toUInt(max(toInt(gid) - 1, 0))];
+    auto scaled = input[toUInt(toFloat(gid) * scale)];
+
+    builder.write(output, gid, previous + scaled);
+
+    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        check(contains(source, "uint(max((int(gid) - 1), 0))"));
+        check(contains(source, "uint((float(gid) * uniforms.u0))"));
+    }
+};
+
 // A 2D kernel: threadPosition() gives a pair of indices, which changes the
 // entry signature, the threadgroup shape and the implicit extents the guard
 // reads. Asserting the emitted signature rather than only the runtime result is

@@ -981,6 +981,7 @@ protected:
     Var<Float> var(float initialValue) { return builder.var(initialValue); }
     Var<Bool> var(bool initialValue) { return builder.var(initialValue); }
     Var<Int> var(int initialValue) { return builder.var(initialValue); }
+    Var<UInt> var(unsigned initialValue) { return builder.var(initialValue); }
 
     template <typename Body>
     void ifThen(const Bool& condition, Body&& body)

@@ -1,4 +1,5 @@
 set(gpu_test_sources
+        BufferRangeTests.cpp
         GPUSmokeTests.cpp
         ShaderCodegenTests.cpp
         StreamingBufferTests.cpp
