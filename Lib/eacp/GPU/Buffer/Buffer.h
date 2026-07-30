@@ -41,6 +41,11 @@ public:
 
     // Copies bytes back from the buffer into dst. Valid once the command buffer
     // that wrote it has committed (CommandBuffer::commit blocks until then).
+    //
+    // Which is also the rule for bytes the CPU wrote: a construction or update
+    // that happened while a Frame was recording put its copy on that frame's
+    // list, so it has not reached the buffer until the frame ends. Reading
+    // inside the frame that filled it reads what was there before.
     void read(void* dst, std::size_t bytes) const;
 
     // Overwrites the buffer's contents from the CPU — the per-frame path for

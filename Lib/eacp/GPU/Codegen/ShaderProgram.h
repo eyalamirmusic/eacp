@@ -1082,6 +1082,19 @@ private:
         return nullptr;
     }
 
+    // A buffer per call, deliberately, and not something to "optimise" into
+    // reuse. A program is routinely drawn more than once in a frame with
+    // different data -- that is what a batching renderer is -- and both draws
+    // read their buffer when the frame executes, not when it was encoded.
+    // Refilling one buffer in place would hand the first draw the second's
+    // instances: on Metal because update() is a CPU memcpy into shared memory,
+    // and on D3D12 because the copy would land on the queue after the draw that
+    // wanted the old contents.
+    //
+    // Replacing it is what keeps both correct: the encoder retains the old
+    // resource (deferRelease on D3D12, the command encoder on Metal), so the
+    // first draw keeps reading the bytes it was given. Making that cheap is the
+    // backend's job -- see Buffer-Windows.cpp.
     void uploadIndices(const void* data,
                        std::size_t elementSize,
                        int count,

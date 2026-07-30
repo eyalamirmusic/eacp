@@ -152,7 +152,6 @@ void GlyphRenderer::drawQueue(RenderPass& pass,
                                static_cast<float>(texture.height())};
     program.atlas = texture;
 
-    program.setVertices(unitQuad);
     program.setInstances(1, queue.data(), static_cast<int>(queue.size()));
 
     pass.drawInstanced(program, static_cast<int>(queue.size()));
@@ -168,6 +167,15 @@ void GlyphRenderer::flush(RenderPass& pass, GlyphAtlas& atlas)
             1, false, PrimitiveTopology::Triangles, BlendMode::AlphaBlend);
         colorProgram->prepare(
             1, false, PrimitiveTopology::Triangles, BlendMode::AlphaBlend);
+
+        // The quad every glyph is instanced over never changes, so it is
+        // uploaded once here rather than per draw. Per draw it was a buffer
+        // built and thrown away for six vertices that were already on the GPU -
+        // cheap on Metal, and two committed resources and a queue submission
+        // on D3D12.
+        maskProgram->setVertices(unitQuad);
+        colorProgram->setVertices(unitQuad);
+
         prepared = true;
     }
 
