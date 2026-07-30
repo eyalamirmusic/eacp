@@ -102,6 +102,18 @@ struct WindowOptions
     // background; set to black to avoid a white flash on launch/resize.
     std::optional<Color> backgroundColor;
 
+    // Nothing is painted behind the content view, so wherever the content is
+    // see-through the desktop is. For floating cards and HUDs, where the page
+    // draws one small shape and the surplus around it must not exist. Wins
+    // over backgroundColor.
+    //
+    // The content then defines the whole window: macOS makes the window
+    // non-opaque with a clear background, and Windows creates it with no
+    // redirection surface (WS_EX_NOREDIRECTIONBITMAP) and no frame — so no
+    // system rounding or shadow is drawn around the transparent surplus, and
+    // cornerRadius is left to the content as well.
+    bool transparentBackground = false;
+
     // Minimum content size in points (0 = no minimum). Content-relative, to
     // match width/height and the resize callbacks above.
     int minWidth = 0;
