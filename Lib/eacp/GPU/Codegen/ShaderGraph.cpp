@@ -335,6 +335,13 @@ int ShaderGraph::addWritableTexture()
 void ShaderGraph::addTextureStore(int slot, int x, int y, int value)
 {
     textureStoreList.add({slot, x, y, value});
+
+    auto statement = Statement {StatementKind::TextureStore};
+    statement.slot = slot;
+    statement.index = x;
+    statement.indexY = y;
+    statement.value = value;
+    addStatement(statement);
 }
 
 int ShaderGraph::addSample(int textureSlot, int uv)
@@ -429,6 +436,12 @@ int ShaderGraph::addBufferRead(int slot, int index)
 void ShaderGraph::addStore(int slot, int index, int value)
 {
     storeList.add({slot, index, value});
+
+    auto statement = Statement {StatementKind::Store};
+    statement.slot = slot;
+    statement.index = index;
+    statement.value = value;
+    addStatement(statement);
 }
 
 int ShaderGraph::addStatement(Statement newStatement)
