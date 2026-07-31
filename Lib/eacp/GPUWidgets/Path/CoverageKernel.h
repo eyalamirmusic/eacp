@@ -18,6 +18,20 @@ constexpr float backdropFixedScale = 1048576.f;
 // and nothing else - and they need it identically, so it is written once here.
 struct PathIndexedKernel : GPU::ComputeProgram
 {
+    // Coverage pixels along one side of a tile. A thread reads two offsets and a
+    // backdrop before its loop, so tiles want to be big enough that the three
+    // reads disappear against the segments they save; they also want to be small
+    // enough that a tile holds only the outline near it. Sixteen is four of the
+    // 8x8 threadgroups the 2D dispatch uses, so the offsets a group reads are
+    // the same for every thread in it.
+    static constexpr int tileSize = 16;
+
+    // Floats per path record: two float4 reads, and every field of them used.
+    // How wide the path's tile grid and its block grid are would be a ninth and
+    // a tenth, and are derived from the width instead - a shift and an add
+    // against a third read and four more floats per path.
+    static constexpr int recordFloats = 8;
+
     // Which path owns a work item: the last one whose run starts at or before
     // it. Binary search rather than a walk because a canvas is a hundred paths
     // and this runs once per item.
@@ -49,29 +63,29 @@ struct PathIndexedKernel : GPU::ComputeProgram
         return toUInt(max(lo.get(), 1) - 1);
     }
 
-    // Floats per path record: three float4 reads, and every field of them used.
-    // How wide the path's block grid is would be a thirteenth and is derived
-    // from the width instead, which is a shift and an add against a fourth read
-    // and four floats per path.
-    static constexpr int recordFloats = 12;
-
-    // The three reads a record is, named rather than counted. Every stage wants
-    // a different one of them and a stage that wanted the wrong one would read
-    // plausible numbers out of the neighbouring field - so the offsets are
-    // written once here, beside the constant, rather than spelled at each call.
-    GPU::Float4 recordBases(const GPU::UInt& path)
+    // The two reads a record is, named rather than counted. A stage that took
+    // the wrong one would read plausible numbers out of the neighbouring field,
+    // so the offsets are written once here, beside the constant, rather than
+    // spelled at each call.
+    //
+    // Where the split falls is not arbitrary: the scatter and the scan want the
+    // path's cell base and its height and nothing else, so those share a read
+    // and neither stage touches the second.
+    GPU::Float4 recordShape(const GPU::UInt& path)
     {
         return records.read4(recordAt(path));
     }
 
-    GPU::Float4 recordShape(const GPU::UInt& path)
+    GPU::Float4 recordPlace(const GPU::UInt& path)
     {
         return records.read4(recordAt(path) + 1u);
     }
 
-    GPU::Float4 recordPlace(const GPU::UInt& path)
+    // How many tile columns a path of this width has, which is the one number
+    // the record leaves out because it is a shift away from one it holds.
+    static GPU::UInt tilesWideOf(const GPU::UInt& width)
     {
-        return records.read4(recordAt(path) + 2u);
+        return (width + (unsigned) (tileSize - 1)) / (unsigned) tileSize;
     }
 
     // Where each path's run of this stage's items starts, with a last entry
@@ -80,10 +94,10 @@ struct PathIndexedKernel : GPU::ComputeProgram
     // records: the search wants its keys next to each other.
     GPU::Uniform<GPU::InputBuffer> pathStarts;
 
-    // Twelve floats per path: where its runs begin in each of the buffers, how
-    // big its coverage is, how wide its tile grid is, where it sits in the
-    // target, and which fill rule and backdrop form it was built for. Read by
-    // every stage, through the three accessors above.
+    // Eight floats per path: where its backdrop cells begin, how big its
+    // coverage is and which fill rule it takes, then where its segment and tile
+    // runs begin and where it sits in the target. Read by every stage, through
+    // the two accessors above.
     GPU::Uniform<GPU::InputBuffer> records;
 
     // How many paths the search is over. Not the run total: the last entry of
@@ -117,7 +131,7 @@ private:
 // thread's own pixel row - so a pixel pays for the outline passing near it and
 // not for the outline existing. See PathRasterizer, which does the binning and
 // the transform into pixel space, and BackdropKernels.h for where that number
-// comes from when it is not a list of steps.
+// comes from.
 //
 // Horizontal segments contribute nothing, and are dropped on the CPU rather than
 // guarded against here.
@@ -129,14 +143,6 @@ private:
 // one and goes down exactly the same road.
 struct CoverageKernel final : PathIndexedKernel
 {
-    // Coverage pixels along one side of a tile. A thread reads two offsets and a
-    // backdrop before its loop, so tiles want to be big enough that the three
-    // reads disappear against the segments they save; they also want to be small
-    // enough that a tile holds only the outline near it. Sixteen is four of the
-    // 8x8 threadgroups the 2D dispatch uses, so the offsets a group reads are
-    // the same for every thread in it.
-    static constexpr int tileSize = 16;
-
     // The side of one dispatch block, which is the 2D threadgroup's own shape.
     // Paths are laid out in the grid a block at a time rather than a pixel at a
     // time, so a group's 64 threads are the 8x8 corner of exactly one path - the
@@ -166,22 +172,18 @@ struct CoverageKernel final : PathIndexedKernel
 
         auto path = pathAt(block);
 
-        auto bases = recordBases(path);
         auto shape = recordShape(path);
         auto place = recordPlace(path);
 
-        auto segmentBase = toUInt(bases.x());
-        auto tileBase = toUInt(bases.y());
-        auto stepBase = toUInt(bases.z());
-        auto rowBase = toUInt(bases.w());
-
-        auto denseBase = toUInt(shape.x());
+        auto cellBase = toUInt(shape.x());
         auto width = toUInt(shape.y());
         auto height = toUInt(shape.z());
-        auto tilesWide = toUInt(shape.w());
 
-        auto originX = toUInt(place.x());
-        auto originY = toUInt(place.y());
+        auto segmentBase = toUInt(place.x());
+        auto tileBase = toUInt(place.y());
+        auto originX = toUInt(place.z());
+        auto originY = toUInt(place.w());
+
         auto blocksWide =
             (width + (unsigned) (blockSize - 1)) / (unsigned) blockSize;
 
@@ -199,13 +201,10 @@ struct CoverageKernel final : PathIndexedKernel
                                            pixelY,
                                            segmentBase,
                                            tileBase,
-                                           stepBase,
-                                           rowBase,
-                                           denseBase,
+                                           cellBase,
                                            height,
-                                           tilesWide,
-                                           place.z(),
-                                           place.w());
+                                           tilesWideOf(width),
+                                           shape.w());
 
                    // The same coverage in all four channels. A one-channel mask
                    // is what this is, but R8Unorm is outside the set a typed UAV
@@ -230,13 +229,10 @@ struct CoverageKernel final : PathIndexedKernel
                           const GPU::UInt& pixelY,
                           const GPU::UInt& segmentBase,
                           const GPU::UInt& tileBase,
-                          const GPU::UInt& stepBase,
-                          const GPU::UInt& rowBase,
-                          const GPU::UInt& denseBase,
+                          const GPU::UInt& cellBase,
                           const GPU::UInt& height,
                           const GPU::UInt& tilesWide,
-                          const GPU::Float& evenOdd,
-                          const GPU::Float& sparse)
+                          const GPU::Float& evenOdd)
     {
         auto x = toFloat(pixelX);
         auto y = toFloat(pixelY);
@@ -247,18 +243,9 @@ struct CoverageKernel final : PathIndexedKernel
         // Everything left of this tile covers the pixel's whole row-slice, so
         // its contribution depends on the row and not on the column - which is
         // what lets it arrive as a number the thread starts from instead of a
-        // list it walks.
-        //
-        // Which of the two forms it arrives in is settled per path, so this
-        // branch is taken one way by every thread of a path and costs nothing
-        // beyond being written twice.
-        auto winding = var(0.f);
-
-        ifThen(
-            sparse != 0.f,
-            [&]
-            { winding = backdropAt(rowBase + pixelY, stepBase, toFloat(column)); },
-            [&] { winding = cellAt(denseBase + column * height + pixelY); });
+        // list it walks. One load, the stages ahead of this one having already
+        // summed it along the row.
+        auto winding = var(cellAt(cellBase + column * height + pixelY));
 
         // Held in locals rather than re-read: the loop condition is re-tested in
         // the generated while header, and these do not change under it.
@@ -313,9 +300,9 @@ struct CoverageKernel final : PathIndexedKernel
         return select(evenOdd != 0.f, evenOddCoverage, nonZeroCoverage);
     }
 
-    // The same thing when it was built as an array: one cell per tile column per
-    // pixel row, already summed left to right by the scan stage, so the lookup
-    // is the read and nothing else.
+    // The winding entering this tile column at this pixel row, which the stages
+    // ahead of this one left summed in place: the lookup is the read and nothing
+    // else.
     //
     // The cells are integers because an atomic add is - see backdropFixedScale -
     // so this is where they stop being. Column-major, which is not the order it
@@ -325,44 +312,6 @@ struct CoverageKernel final : PathIndexedKernel
     GPU::Float cellAt(const GPU::UInt& index)
     {
         return toFloat(toInt(cells.load(index))) * (1.f / backdropFixedScale);
-    }
-
-    // The winding entering this tile column, at this pixel row: everything the
-    // outline does to the left of here, which the thread would otherwise have to
-    // walk the whole of.
-    //
-    // A row's backdrop is a step function, and its steps are the outline's
-    // crossings of that row rather than the row's tile columns - so what is
-    // stored is the steps, and the lookup is for the last one at or left of this
-    // column. Binary search rather than a walk because the two are priced
-    // differently in the case that matters: dense artwork puts a hundred steps
-    // in a row, and this runs once per pixel.
-    GPU::Float backdropAt(const GPU::UInt& row,
-                          const GPU::UInt& stepBase,
-                          const GPU::Float& column)
-    {
-        auto first = toInt(backdropRows[row]);
-        auto lo = var(first);
-        auto hi = var(toInt(backdropRows[row + 1u]));
-
-        loop(lo < hi,
-             [&]
-             {
-                 auto mid = (lo.get() + hi.get()) >> 1;
-
-                 ifThen(
-                     backdropSteps.read2(stepBase + toUInt(mid)).x() <= column,
-                     [&] { lo = mid + 1; },
-                     [&] { hi = mid; });
-             });
-
-        // lo is the first step past this column, so the one before it holds the
-        // answer, and no step before it means nothing has crossed this row yet.
-        // The read is taken either way, select having no unevaluated arm, so the
-        // index is stepped back with a clamp rather than a subtraction - which
-        // is what keeps it inside a buffer that always holds at least one step.
-        auto found = backdropSteps.read2(stepBase + toUInt(max(lo.get(), 1) - 1));
-        return select(lo > first, found.y(), 0.f);
     }
 
     // The mean of clamp(x, 0, 1) as x runs linearly from one value to the
@@ -410,32 +359,16 @@ struct CoverageKernel final : PathIndexedKernel
     // offsets are relative to its own segment run.
     GPU::Uniform<GPU::InputBuffer> tileOffsets;
 
-    // The winding entering a tile from the left, as the steps it changes at:
-    // (tile column, winding) pairs, ordered by column, grouped by pixel row.
+    // The winding entering a tile from the left: one value at every tile column
+    // of every pixel row.
     //
     // Per pixel row rather than per tile because a segment ending inside a
     // tile's band covers some of its rows and not others, so one number per tile
-    // would be the winding at only one of them. As steps rather than as a value
-    // per row per column because the second is the area's size and this is the
-    // outline's: a window-sized ellipse changes winding five times across two
-    // hundred columns, and storing the two hundred cost more CPU than the rest
-    // of the rasterization together.
-    GPU::Uniform<GPU::InputBuffer> backdropSteps;
-
-    // Where each pixel row's run of steps starts, with a last entry holding the
-    // total - so a row's steps are [backdropRows[y], backdropRows[y + 1]), and a
-    // row no edge crosses is an empty range rather than a run of zeroes.
-    GPU::Uniform<GPU::InputBuffer> backdropRows;
-
-    // The same backdrop written out in full instead - the winding at every tile
-    // column of every pixel row. Priced by the area rather than by the outline,
-    // which is dearer to build and cheaper to read, and so is what a path whose
-    // outline crosses nearly every row uses instead. A path fills one of the
-    // two; the other holds nothing for it.
+    // would be the winding at only one of them.
     //
     // Nothing on the CPU fills it or ever sees it: three kernels ahead of this
     // one clear it, scatter the outline's crossings into it and sum each row -
-    // see BackdropKernels.h - so an array priced by the area costs the area
+    // see BackdropKernels.h - so a backdrop priced by the area costs the area
     // nowhere but on the GPU, which is the only place it was ever cheap.
     GPU::Uniform<GPU::AtomicBuffer> cells;
 
@@ -447,8 +380,6 @@ struct CoverageKernel final : PathIndexedKernel
 
     EACP_SHADER(segments,
                 tileOffsets,
-                backdropSteps,
-                backdropRows,
                 cells,
                 records,
                 pathStarts,

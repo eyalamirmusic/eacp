@@ -1,4 +1,4 @@
-#include "PathRasterizer.h"
+﻿#include "PathRasterizer.h"
 
 #include <cmath>
 #include <cstring>
@@ -8,20 +8,6 @@ namespace eacp::GPUWidgets
 namespace
 {
 constexpr auto tileSize = CoverageKernel::tileSize;
-
-// How much emptier than its crossings the array form has to be before the step
-// form is worth it. Both were measured across the whole PathBench corpus at
-// several factors: the array wins where a row's crossings are dense enough that
-// the steps barely compress it and the kernel still pays to search them, and
-// the steps win by five times where they do not. The crossover is broad and
-// nothing in the corpus lands near it, so this is a measured constant rather
-// than a tuned one.
-//
-// Measured against an array the CPU built, though. It is built on the GPU now,
-// so what it costs is O(area) of GPU memory and two stages ahead of the coverage
-// kernel, against a per-pixel search - a different trade, whose answer has not
-// been re-derived.
-constexpr auto sparseBackdropMargin = 8;
 
 // The tile a coordinate falls in, and the first tile entirely past it. Together
 // they bracket a span: [tileOf(from), tileAfter(to) - 1] is every tile the span
@@ -91,7 +77,6 @@ const GPU::Texture* PathRasterizer::getTargetTexture() const
 void PathRasterizer::setPath(const Path& path, FillRule rule)
 {
     segments.clear();
-    backdropSpan = 0.f;
     covered = {};
     coverageWidth = 0;
     coverageHeight = 0;
@@ -141,11 +126,6 @@ void PathRasterizer::setPath(const Path& path, FillRule rule)
             segments.add(fromY);
             segments.add(to.x * scale - left);
             segments.add(toY);
-
-            // Accumulated here because this is where the segment is already in
-            // hand, and it is what chooseBackdropForm spends - one subtraction
-            // rather than a second walk over all of them.
-            backdropSpan += std::abs(toY - fromY);
         }
     }
 
@@ -157,48 +137,23 @@ void PathRasterizer::setPath(const Path& path, FillRule rule)
     buildTiles();
 }
 
-void PathRasterizer::addBackdrop(
-    float direction, float fromY, float toY, int column, int band)
+// One crossing of the outline into one tile column, over the part of one tile
+// row's band it spans. It is what the backdrop's array is built from, and there
+// is one per segment per band it crosses - so recording the crossing rather than
+// what it expands to is what keeps this side of the work priced by the outline.
+//
+// Directed the way the segment runs, so the sign of the span is the sign of the
+// winding and there is no third number to carry. Nothing else is done with it
+// here: the array these belong to is built on the GPU, and the whole point is
+// that the CPU never walks its area.
+void PathRasterizer::addCrossing(float direction, float fromY, float toY, int column)
 {
     if (column >= tilesWide)
         return;
 
-    if (sparseBackdrop)
-    {
-        bandRuns.add(BandRun {band, column, fromY, toY, direction});
-        return;
-    }
-
-    // Directed the way the segment runs, so the sign of the span is the sign of
-    // the winding and there is no third number to carry. Nothing else is done
-    // with it here: the array these belong to is built on the GPU, and the whole
-    // point of the form is that the CPU never walks its area.
     crossings.add((float) column);
     crossings.add(direction > 0.f ? fromY : toY);
     crossings.add(direction > 0.f ? toY : fromY);
-}
-
-// Which of the two backdrop forms this path is shaped for, settled before the
-// binning loop, which is what lets a crossing be written straight into the shape
-// the form it belongs to wants rather than into one both could be built from.
-//
-// It turns on how empty the array would be, against the pixel rows the crossings
-// between them cover. Those are bounded from the outline's total vertical travel
-// rather than counted: a segment's span rounds out to at most two extra rows,
-// and splitting it across bands repeats at most one row per boundary it crosses.
-// Both are loose upward, which only ever chooses the array, and the corpus this
-// was measured on has nothing within an order of magnitude of the crossover on
-// either side.
-void PathRasterizer::chooseBackdropForm()
-{
-    constexpr auto bandRepeat = 1.f + 1.f / (float) tileSize;
-    constexpr auto roundingPerSegment = 4;
-
-    auto rows = (long long) (backdropSpan * bandRepeat)
-                + (long long) roundingPerSegment * getSegmentCount();
-
-    sparseBackdrop = (long long) tilesWide * coverageHeight
-                     > (long long) sparseBackdropMargin * rows;
 }
 
 // Splits every segment across the tile rows it crosses, and within each row
@@ -219,10 +174,7 @@ void PathRasterizer::buildTiles()
 
     runs.clear();
     tileOffsets.assign(tileCount + 1, 0.f);
-    bandRuns.clear();
     crossings.clear();
-
-    chooseBackdropForm();
 
     auto count = segments.size() / 4;
 
@@ -250,7 +202,7 @@ void PathRasterizer::buildTiles()
             auto leaves = segment[0] + (bandBottom - segment[1]) * slope;
 
             auto beyond = std::max(tileAfter(std::max(enters, leaves)), 0);
-            addBackdrop(direction, bandTop, bandBottom, beyond, row);
+            addCrossing(direction, bandTop, bandBottom, beyond);
 
             auto firstColumn = std::max(tileOf(std::min(enters, leaves)), 0);
             auto lastColumn = std::min(beyond - 1, tilesWide - 1);
@@ -296,162 +248,12 @@ void PathRasterizer::buildTiles()
     if (tileSegments.empty())
         tileSegments.resize(4);
 
-    finishBackdrops();
     countSegmentTests();
-}
-
-// One counting sort, into one bucket per tile row, so that a band's crossings
-// can be gathered in one pass. The key space is the path's height in tiles, so
-// this is linear in the crossings and never in the area.
-//
-// It sorts the crossings rather than what they expand to, which is the whole
-// difference: a crossing covers up to sixteen pixel rows, and ordering the
-// expansion instead cost more than the array this replaced.
-void PathRasterizer::sortRunsByBand()
-{
-    sortedRuns.resize(bandRuns.size());
-    runCounts.assign(tilesHigh, 0);
-
-    for (const auto& run: bandRuns)
-        ++runCounts[run.band];
-
-    auto running = 0;
-
-    for (auto band = 0; band < tilesHigh; ++band)
-    {
-        auto here = runCounts[band];
-        runCounts[band] = running;
-        running += here;
-    }
-
-    for (const auto& run: bandRuns)
-        sortedRuns[runCounts[run.band]++] = run;
-}
-
-// The backdrop, in whichever form this path was found to be shaped for. The
-// array form is already done: its crossings are what the GPU builds it from, and
-// they were recorded as they were found.
-void PathRasterizer::finishBackdrops()
-{
-    if (sparseBackdrop)
-        buildStepBackdrop();
-}
-
-// Turns the crossings into what a thread looks its backdrop up in: per pixel
-// row, the running sum at each tile column the winding changes at.
-//
-// Only the columns it *changes* at, which is the whole point - a row crossed by
-// four edges has four steps whatever its width, so a step list is the outline's
-// size and the array it replaces was the area's. A column whose crossings cancel
-// changes nothing and is left out with them.
-//
-// One band at a time, through a scratch array of that band's rows by the path's
-// columns. That is the dense array again, and deliberately: at a band's height
-// it is a few thousand floats whatever the path covers, it is written once per
-// crossing rather than read once per row, and only the columns something landed
-// in are summed or cleared. What made the full-sized one expensive was its size,
-// not its shape.
-//
-// Bands are disjoint in rows and taken in order, so each row's steps come out
-// after the last row's and nothing is sorted a second time.
-void PathRasterizer::buildStepBackdrop()
-{
-    backdropRows.assign(coverageHeight + 1, 0.f);
-    backdropSteps.clear();
-
-    if (!bandRuns.empty())
-    {
-        sortRunsByBand();
-
-        bandScratch.assign(tileSize * tilesWide, 0.f);
-        columnTouched.assign(tilesWide, 0);
-
-        auto at = 0;
-        auto count = sortedRuns.size();
-
-        for (auto band = 0; band < tilesHigh; ++band)
-        {
-            auto bandTop = band * tileSize;
-            auto lastRow = std::min(bandTop + tileSize, coverageHeight);
-
-            touchedColumns.clear();
-
-            for (; at < count && sortedRuns[at].band == band; ++at)
-            {
-                const auto& run = sortedRuns[at];
-
-                columnTouched[run.column] = 1;
-
-                auto firstRow = std::max((int) std::floor(run.fromY), bandTop);
-                auto endRow = std::min((int) std::ceil(run.toY), lastRow);
-
-                for (auto row = firstRow; row < endRow; ++row)
-                {
-                    auto height = std::min(run.toY, (float) (row + 1))
-                                  - std::max(run.fromY, (float) row);
-
-                    if (height > 0.f)
-                        bandScratch[(row - bandTop) * tilesWide + run.column] +=
-                            run.direction * height;
-                }
-            }
-
-            // Ascending, which is what the kernel's search needs and what the
-            // order they were first written in would not give. Collected by
-            // walking the columns rather than by sorting what was written,
-            // since there is one walk per band and it is the cheaper of the two
-            // exactly when the band is full enough for the order to matter.
-            for (auto column = 0; column < tilesWide; ++column)
-                if (columnTouched[column] != 0)
-                    touchedColumns.add(column);
-
-            for (auto row = bandTop; row < lastRow; ++row)
-            {
-                backdropRows[row] = (float) (backdropSteps.size() / 2);
-
-                const auto* scratch =
-                    bandScratch.data() + (row - bandTop) * tilesWide;
-                auto running = 0.f;
-                auto emitted = 0.f;
-
-                for (auto column: touchedColumns)
-                {
-                    running += scratch[column];
-
-                    if (running != emitted)
-                    {
-                        backdropSteps.add((float) column);
-                        backdropSteps.add(running);
-                        emitted = running;
-                    }
-                }
-            }
-
-            for (auto column: touchedColumns)
-            {
-                columnTouched[column] = 0;
-
-                for (auto row = 0; row < tileSize; ++row)
-                    bandScratch[row * tilesWide + column] = 0.f;
-            }
-        }
-    }
-
-    backdropRows[coverageHeight] = (float) (backdropSteps.size() / 2);
-
-    // A path that changes no row's winding anywhere still binds a buffer, and a
-    // zero-length one is not a buffer. No row's run reaches this step, and a
-    // guarded read that lands on it is thrown away by the same guard.
-    if (backdropSteps.empty())
-    {
-        backdropSteps.add(0.f);
-        backdropSteps.add(0.f);
-    }
 }
 
 int PathRasterizer::getCellCount() const
 {
-    return sparseBackdrop ? 0 : tilesWide * coverageHeight;
+    return tilesWide * coverageHeight;
 }
 
 void PathRasterizer::countSegmentTests()

@@ -100,8 +100,6 @@ void CoverageBatch::begin(const GPU::Texture& targetToUse)
 
     segments.clear();
     tileOffsets.clear();
-    backdropSteps.clear();
-    backdropRows.clear();
     crossings.clear();
     records.clear();
     blockOffsets.clear();
@@ -124,55 +122,38 @@ void CoverageBatch::add(const PathRasterizer& rasterizer)
     auto blocksWide = (width + blockSize - 1) / blockSize;
     auto blocksHigh = (height + blockSize - 1) / blockSize;
 
-    auto segmentBase = segments.size() / 4;
-    auto tileBase = tileOffsets.size();
-    auto stepBase = backdropSteps.size() / 2;
-    auto rowBase = backdropRows.size();
-
     blockOffsets.add((float) blocks);
     crossingStarts.add((float) (crossings.size() / 3));
     scanStarts.add((float) scanRows);
 
-    records.add((float) segmentBase);
-    records.add((float) tileBase);
-    records.add((float) stepBase);
-    records.add((float) rowBase);
-
+    // The shape read, which is the only one the scatter and the scan take: a
+    // thread of either wants where this path's cells begin and how tall it is,
+    // and wants nothing else at all. Keeping those two in one float4 is why the
+    // record is laid out this way round rather than by what the fields mean.
     records.add((float) cells);
     records.add((float) width);
     records.add((float) height);
-    records.add((float) rasterizer.tilesWide);
+    records.add((float) rasterizer.evenOdd);
 
+    records.add((float) (segments.size() / 4));
+    records.add((float) tileOffsets.size());
     records.add((float) rasterizer.originX);
     records.add((float) rasterizer.originY);
-    records.add((float) rasterizer.evenOdd);
-    records.add(rasterizer.sparseBackdrop ? 1.f : 0.f);
 
     appendAll(segments, rasterizer.tileSegments);
     appendAll(tileOffsets, rasterizer.tileOffsets);
+    appendAll(crossings, rasterizer.crossings);
 
-    // Only the form this path was built for. The other one holds nothing for it,
-    // and nothing reads it: the record says which, and the branch on it is taken
-    // one way by every thread of the path.
-    if (rasterizer.sparseBackdrop)
-    {
-        appendAll(backdropSteps, rasterizer.backdropSteps);
-        appendAll(backdropRows, rasterizer.backdropRows);
-    }
-    else
-    {
-        appendAll(crossings, rasterizer.crossings);
-        cells += rasterizer.getCellCount();
-        scanRows += height;
+    cells += rasterizer.getCellCount();
+    scanRows += height;
 
-        // Every base in a record is a float, which holds an integer exactly to
-        // sixteen million and silently rounds one past it. This is the only base
-        // that grows with *area* - the others grow with the outline and would
-        // need a batch nothing could draw - and a canvas of a hundred and
-        // twenty-eight full-width lanes is already at seven million.
-        assert(cells <= (1 << 24)
-               && "eacp: a batch's backdrop outgrew what a float index holds");
-    }
+    // Every base in a record is a float, which holds an integer exactly to
+    // sixteen million and silently rounds one past it. This is the only base
+    // that grows with *area* - the others grow with the outline and would need a
+    // batch nothing could draw - and a canvas of a hundred and twenty-eight
+    // full-width lanes is already at seven million.
+    assert(cells <= (1 << 24)
+           && "eacp: a batch's backdrop outgrew what a float index holds");
 
     ++paths;
     blocks += blocksWide * blocksHigh;
@@ -197,14 +178,10 @@ void CoverageBatch::upload()
 
     padEmpty(segments);
     padEmpty(tileOffsets);
-    padEmpty(backdropSteps);
-    padEmpty(backdropRows);
     padEmpty(crossings);
 
     uploadTo(segmentBuffer, segments, bufferUpdates);
     uploadTo(tileBuffer, tileOffsets, bufferUpdates);
-    uploadTo(stepBuffer, backdropSteps, bufferUpdates);
-    uploadTo(rowBuffer, backdropRows, bufferUpdates);
     uploadTo(crossingBuffer, crossings, bufferUpdates);
     uploadTo(crossingStartBuffer, crossingStarts, bufferUpdates);
     uploadTo(scanStartBuffer, scanStarts, bufferUpdates);
@@ -214,10 +191,9 @@ void CoverageBatch::upload()
     ensureCells(cellBuffer, cells);
 }
 
-// Clear, scatter, sum - the array form of the backdrop, for every path in the
-// batch that takes it, before the kernel that reads it runs. Each stage orders
-// against the next by the pass itself; nothing here needs a fence, and nothing
-// here reaches the CPU.
+// Clear, scatter, sum - the backdrop, for every path in the batch, before the
+// kernel that reads it runs. Each stage orders against the next by the pass
+// itself; nothing here needs a fence, and nothing here reaches the CPU.
 void CoverageBatch::buildBackdrops(GPU::ComputePass& pass)
 {
     if (cells <= 0)
@@ -275,8 +251,6 @@ void CoverageBatch::dispatch(GPU::ComputePass& pass)
     kernel.coverage = *target;
     kernel.segments = *segmentBuffer;
     kernel.tileOffsets = *tileBuffer;
-    kernel.backdropSteps = *stepBuffer;
-    kernel.backdropRows = *rowBuffer;
     kernel.cells = *cellBuffer;
     kernel.records = *recordBuffer;
     kernel.pathStarts = *blockBuffer;

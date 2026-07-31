@@ -16,15 +16,16 @@ class PathRasterizer;
 // command list of its own. None of that is the rasterization.
 //
 // So the paths are concatenated instead: one segment buffer holding every path's
-// segments end to end, one tile-offset buffer, one backdrop of each form, and a
-// record per path saying where its runs begin. The kernel finds a thread's path
-// before it does anything else and then works exactly as it did.
+// segments end to end, one tile-offset buffer, one run of backdrop crossings,
+// and a record per path saying where its runs begin. The kernel finds a thread's
+// path before it does anything else and then works exactly as it did.
 //
-// The array form of the backdrop is built here too, by three kernels ahead of
-// the coverage one, out of the crossings the paths uploaded rather than out of
-// an array the CPU filled - see BackdropKernels.h. They are why a batch is worth
-// having twice over: those stages are per batch and not per path, so a frame
-// pays for them once however many paths are in it.
+// The backdrop is built here too, by three kernels ahead of the coverage one,
+// out of the crossings the paths uploaded rather than out of an array the CPU
+// filled - see BackdropKernels.h. They are why a batch is worth having twice
+// over: those stages are per batch and not per path, so a frame pays for them
+// once however many paths are in it, and a path drawn on its own is the only
+// thing that ever pays all three by itself.
 //
 //   batch.begin(atlas.getTexture());
 //   for (auto* shape: dirtyShapes)
@@ -41,8 +42,7 @@ class PathRasterizer;
 // 65,535 groups a dimension of a dispatch may have.
 //
 // Every path added must write into the texture the batch was begun with. Nothing
-// else is required of them: sizes, fill rules and backdrop forms are per path and
-// stay that way.
+// else is required of them: sizes and fill rules are per path and stay that way.
 class CoverageBatch
 {
 public:
@@ -76,31 +76,27 @@ private:
 
     std::optional<GPU::Buffer> segmentBuffer;
     std::optional<GPU::Buffer> tileBuffer;
-    std::optional<GPU::Buffer> stepBuffer;
-    std::optional<GPU::Buffer> rowBuffer;
     std::optional<GPU::Buffer> crossingBuffer;
     std::optional<GPU::Buffer> crossingStartBuffer;
     std::optional<GPU::Buffer> scanStartBuffer;
     std::optional<GPU::Buffer> recordBuffer;
     std::optional<GPU::Buffer> blockBuffer;
 
-    // The array form of the backdrop, one integer per tile column per pixel row
-    // of every path that takes it. Allocated and never uploaded: the only thing
-    // the CPU knows about it is how big it is.
+    // The backdrop, one integer per tile column per pixel row of every path in
+    // the batch. Allocated and never uploaded: the only thing the CPU knows
+    // about it is how big it is.
     std::optional<GPU::Buffer> cellBuffer;
 
     // The paths' arrays end to end. Kept between frames and refilled, so a
     // canvas whose paths all move re-uploads and allocates nothing.
     Vector<float> segments;
     Vector<float> tileOffsets;
-    Vector<float> backdropSteps;
-    Vector<float> backdropRows;
     Vector<float> crossings;
     Vector<float> records;
     Vector<float> blockOffsets;
 
-    // Where each path's run of crossings and of scanned pixel rows begins. A
-    // path built as steps has neither, and an empty run in both.
+    // Where each path's run of crossings and of scanned pixel rows begins, which
+    // is what the scatter and the scan find their own path through.
     Vector<float> crossingStarts;
     Vector<float> scanStarts;
 
