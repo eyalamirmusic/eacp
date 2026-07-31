@@ -79,6 +79,11 @@ struct CompositionHostWindow
     uint64_t generation = 0;
     bool topMostTarget = false;
 
+    // See WindowOptions::transparentBackground: the HWND was created with no
+    // redirection surface, so there is no bitmap behind the visual tree to
+    // fill — and filling it is what would make the window opaque again.
+    bool transparentBackground = false;
+
     std::bitset<256> keyState;
     bool trackingMouseLeave = false;
 

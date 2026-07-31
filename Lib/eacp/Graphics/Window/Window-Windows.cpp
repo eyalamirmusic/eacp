@@ -130,10 +130,18 @@ struct Window::Native
     {
         DWORD style = WS_OVERLAPPEDWINDOW;
 
+        host.transparentBackground = options.transparentBackground;
+
         if (options.flags.contains(WindowFlags::Borderless))
         {
             style = WS_POPUP;
-            framelessRounded = options.cornerRadius.has_value();
+
+            // A transparent window is shaped by its content, so it takes no
+            // frame at all: the frame DWM rounds is also the frame it drops a
+            // rectangular shadow around, and that shadow would trace the
+            // see-through surplus the window exists to hide.
+            framelessRounded =
+                options.cornerRadius.has_value() && !options.transparentBackground;
             framelessResizable =
                 framelessRounded && options.flags.contains(WindowFlags::Resizable);
         }
@@ -160,6 +168,13 @@ struct Window::Native
         DWORD exStyle = options.alwaysOnTop ? WS_EX_TOPMOST : 0;
         if (options.ignoresMouseEvents)
             exStyle |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
+
+        // Without a redirection surface the composition tree is all there is:
+        // DWM has no opaque GDI bitmap of the client area to composite the
+        // visuals over, so the content's own alpha reaches the screen. It
+        // cannot be turned on after creation.
+        if (options.transparentBackground)
+            exStyle |= WS_EX_NOREDIRECTIONBITMAP;
 
         showWithoutActivating = options.showInactive;
         ignoresMouseEvents = options.ignoresMouseEvents;
@@ -195,7 +210,7 @@ struct Window::Native
                             (HINSTANCE) eacp::Plugins::getCurrentModuleHandle(),
                             this);
 
-        if (host.hwnd && options.cornerRadius)
+        if (host.hwnd && options.cornerRadius && !options.transparentBackground)
             applyRoundedCorners();
 
         // Match the title bar to the system theme and opt the process into

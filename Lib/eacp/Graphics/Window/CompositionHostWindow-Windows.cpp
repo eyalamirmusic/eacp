@@ -449,9 +449,12 @@ void CompositionHostWindow::teardown()
 // windowBackgroundColor on macOS. Left unpainted it appears as a white
 // rectangle frozen at the window's creation size (resizes reallocate the
 // bitmap but nothing ever painted it).
+//
+// A transparent window has no redirection bitmap at all, and painting one is
+// exactly the opaque background it was created to avoid.
 void CompositionHostWindow::fillWindowBackground(HDC dc) const
 {
-    if (!dc)
+    if (!dc || transparentBackground)
         return;
 
     RECT client {};
