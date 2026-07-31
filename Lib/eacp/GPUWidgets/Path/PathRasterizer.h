@@ -99,9 +99,13 @@ public:
 
     // Segment-pixel tests the next dispatch will do, which is the work binning
     // exists to cut: the same path unbinned costs coverage width times height
-    // times getSegmentCount(). Settled by setPath, so it can be read before a
-    // frame rather than measured during one.
-    long long getSegmentTests() const { return segmentTests; }
+    // times getSegmentCount().
+    //
+    // Counted when asked for and not when the path is set. Counting walks every
+    // tile, which is priced by the *area* - on a window-sized path it was a
+    // fifth of what a rasterization cost, spent on a number only a bench and a
+    // test ever read.
+    long long getSegmentTests() const;
 
     // Writes into a rect of someone else's texture, whose top-left texel is
     // given. The texture must have been created with computeWrite, must outlive
@@ -148,7 +152,6 @@ private:
     void ensureOwnTexture();
     void buildTiles();
     void addCrossing(float direction, float fromY, float toY, int column);
-    void countSegmentTests();
 
     // The buffers a solo dispatch needs, made on the first one and not at all
     // for a rasterizer a CoverageBatch drives - which is every one in an
@@ -182,7 +185,9 @@ private:
     int tilesWide = 0;
     int tilesHigh = 0;
     int evenOdd = 0;
-    long long segmentTests = 0;
+
+    // Negative until something asks, which is what makes the count lazy.
+    mutable long long segmentTests = -1;
 
     // Whether the solo batch still describes this path. A rasterizer dispatched
     // repeatedly without changing - which is what a benchmark and a static demo
