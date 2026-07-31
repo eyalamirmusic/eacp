@@ -1,6 +1,7 @@
 #include "SVGAttributes.h"
 #include "NumberReader.h"
 
+#include <algorithm>
 #include <sstream>
 
 namespace eacp::SVG
@@ -280,6 +281,157 @@ GPUWidgets::AffineTransform parseTransformMatrix(const std::string& value)
         });
 
     return result;
+}
+
+namespace
+{
+PreserveAspectRatio::Align alignFromKeyword(std::string_view keyword)
+{
+    if (keyword == "Min")
+        return PreserveAspectRatio::Align::Min;
+
+    if (keyword == "Max")
+        return PreserveAspectRatio::Align::Max;
+
+    return PreserveAspectRatio::Align::Mid;
+}
+
+// "xMidYMax" and its eight siblings, which are the only alignment words the
+// grammar has: an x keyword and a y keyword run together, eight characters,
+// always in that order.
+bool readAlignKeyword(const std::string& token, PreserveAspectRatio& result)
+{
+    if (token.size() != 8 || token[0] != 'x' || token[4] != 'Y')
+        return false;
+
+    result.uniform = true;
+    result.x = alignFromKeyword(std::string_view {token}.substr(1, 3));
+    result.y = alignFromKeyword(std::string_view {token}.substr(5, 3));
+
+    return true;
+}
+
+template <typename Consumer>
+void forEachToken(const std::string& value, Consumer&& consume)
+{
+    auto pos = size_t {0};
+
+    while (pos < value.size())
+    {
+        skipWhitespace(value, pos);
+
+        auto start = pos;
+
+        while (pos < value.size()
+               && !std::isspace(static_cast<unsigned char>(value[pos])))
+            ++pos;
+
+        if (pos > start)
+            consume(value.substr(start, pos - start));
+    }
+}
+
+std::string trimmed(const std::string& value)
+{
+    auto first = value.find_first_not_of(" \t\r\n");
+
+    if (first == std::string::npos)
+        return {};
+
+    return value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
+}
+} // namespace
+
+PreserveAspectRatio parsePreserveAspectRatio(const std::string& value)
+{
+    auto result = PreserveAspectRatio {};
+
+    forEachToken(value,
+                 [&result](const std::string& token)
+                 {
+                     // "defer" is a legacy word that only ever meant anything on
+                     // an <image>, so it is read past rather than acted on.
+                     if (token == "none")
+                         result.uniform = false;
+                     else if (token == "meet")
+                         result.slice = false;
+                     else if (token == "slice")
+                         result.slice = true;
+                     else if (token != "defer")
+                         readAlignKeyword(token, result);
+                 });
+
+    return result;
+}
+
+GPUWidgets::AffineTransform viewBoxTransform(const Graphics::Rect& viewBox,
+                                             const Graphics::Rect& viewport,
+                                             const PreserveAspectRatio& fit)
+{
+    using Affine = GPUWidgets::AffineTransform;
+
+    if (viewBox.w <= 0.f || viewBox.h <= 0.f)
+        return {};
+
+    auto scaleX = viewport.w / viewBox.w;
+    auto scaleY = viewport.h / viewBox.h;
+
+    if (fit.uniform)
+    {
+        // The smaller scale fits the box inside the viewport and the larger one
+        // covers it, which is the whole of the difference between meet and
+        // slice.
+        auto both = fit.slice ? std::max(scaleX, scaleY) : std::min(scaleX, scaleY);
+
+        scaleX = both;
+        scaleY = both;
+    }
+
+    auto offsetFor = [](PreserveAspectRatio::Align align, float spare)
+    {
+        if (align == PreserveAspectRatio::Align::Min)
+            return 0.f;
+
+        return align == PreserveAspectRatio::Align::Mid ? spare * 0.5f : spare;
+    };
+
+    // Negative under slice, which is what puts the overflow on both sides.
+    auto x = viewport.x + offsetFor(fit.x, viewport.w - viewBox.w * scaleX);
+    auto y = viewport.y + offsetFor(fit.y, viewport.h - viewBox.h * scaleY);
+
+    return Affine::translation(-viewBox.x, -viewBox.y)
+        .then(Affine::scaling(scaleX, scaleY))
+        .then(Affine::translation(x, y));
+}
+
+std::unordered_map<std::string, std::string>
+    parseStyleDeclarations(const std::string& value)
+{
+    auto declarations = std::unordered_map<std::string, std::string> {};
+    auto pos = size_t {0};
+
+    while (pos < value.size())
+    {
+        auto end = value.find(';', pos);
+
+        if (end == std::string::npos)
+            end = value.size();
+
+        auto colon = value.find(':', pos);
+
+        if (colon != std::string::npos && colon < end)
+        {
+            auto property = trimmed(value.substr(pos, colon - pos));
+
+            if (!property.empty())
+                declarations[property] =
+                    trimmed(value.substr(colon + 1, end - colon - 1));
+        }
+
+        pos = end + 1;
+    }
+
+    return declarations;
 }
 
 Vector<float> parseNumberList(const std::string& value)

@@ -43,6 +43,19 @@ bool NumberReader::hasNumber()
     return !atEnd() && isNumberStart(peek());
 }
 
+bool NumberReader::readFlag()
+{
+    skipWhitespaceAndCommas();
+
+    if (!atEnd() && (peek() == '0' || peek() == '1'))
+        return src[pos++] == '1';
+
+    // Not what the grammar allows, but a document that writes "0.0" where a flag
+    // belongs means false by it, and refusing to read the number would put every
+    // later coordinate of the command one place out.
+    return readFloat() != 0.f;
+}
+
 float NumberReader::readFloat()
 {
     skipWhitespaceAndCommas();

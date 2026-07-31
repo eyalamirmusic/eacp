@@ -37,6 +37,57 @@ Transform parseTransform(const std::string& value);
 // format has them.
 GPUWidgets::AffineTransform parseTransformMatrix(const std::string& value);
 
+// How a viewBox is fitted to the viewport it is drawn into.
+//
+// The default is the interesting part: a document that says nothing gets
+// xMidYMid meet, which is uniform and centred - *not* the stretch-to-fit that
+// falls out of scaling each axis by itself. Which is why this exists at all: a
+// logo in a component of the wrong aspect was quietly being made oval.
+struct PreserveAspectRatio
+{
+    enum class Align
+    {
+        Min,
+        Mid,
+        Max
+    };
+
+    // False for the one value that distorts, preserveAspectRatio="none", where
+    // each axis is scaled to fill its own and the alignment has nothing to do.
+    bool uniform = true;
+
+    Align x = Align::Mid;
+    Align y = Align::Mid;
+
+    // meet scales the box to fit inside the viewport and leaves the spare axis
+    // empty; slice scales it to cover and lets the overflow run past the edges,
+    // which the component's own clip cuts.
+    bool slice = false;
+};
+
+PreserveAspectRatio parsePreserveAspectRatio(const std::string& value);
+
+// The map from a viewBox onto the viewport it fills: the box's origin to zero,
+// scaled by the fit, and shifted by whatever the alignment does with the spare
+// space. What an <svg> does with its own viewBox and what a <symbol> does with
+// the size its <use> gave it, which is why it is a free function rather than
+// something the component keeps to itself.
+GPUWidgets::AffineTransform viewBoxTransform(const Graphics::Rect& viewBox,
+                                             const Graphics::Rect& viewport,
+                                             const PreserveAspectRatio& fit);
+
+// A style="..." attribute's declarations, by property name.
+//
+// The same properties a presentation attribute spells, in CSS's punctuation -
+// and where a document writes both, this one wins. That is the whole of the
+// cascade an SVG can rely on without a stylesheet, and it is enough, because a
+// style attribute is what every drawing program emits.
+//
+// Selectors are a different project: this reads a declaration block and nothing
+// else, so a <style> element in the document is still ignored.
+std::unordered_map<std::string, std::string>
+    parseStyleDeclarations(const std::string& value);
+
 Vector<float> parseNumberList(const std::string& value);
 
 Vector<Graphics::Point> parsePointList(const std::string& value);

@@ -31,6 +31,13 @@
 // antialiased edges and the background may show through the join. Widgets rarely
 // abut; artwork does it constantly. The Tiles document is a grid of triangles
 // sharing exact vertices, which is that case at its worst.
+//
+// Both were answered, and the two documents that answered them are still here
+// because the answers are worth being able to re-read. What the documents added
+// since show is the format rather than the tier: the features the component
+// builder has and the native one does not, and the fit it now gets right -- a
+// document is letterboxed into a component of the wrong aspect rather than
+// stretched, which is what preserveAspectRatio's own default says.
 
 using namespace eacp;
 
@@ -75,6 +82,71 @@ const auto featureDocument = std::string {
   <text x="200" y="164" text-anchor="middle" font-family="Helvetica" font-size="22" fill="#204A34">Component tier</text>
   <text x="200" y="182" text-anchor="middle" font-family="Helvetica" font-size="11" fill="#7A6A5A">one dispatch, one draw</text>
   <text x="376" y="272" text-anchor="end" font-family="Helvetica" font-size="9" fill="#B0A294">viewBox origin 20,20</text>
+</svg>)SVG"};
+
+// Everything rung 2 added, and the first document where the two halves of this
+// window are supposed to disagree.
+//
+// The component tier draws all of it. The native side draws the arcs -- the path
+// parser is shared, and it emits cubics that either path type takes -- and none
+// of the rest: a <use> resolves nothing there, a style="" declaration is not
+// read, a dash pattern has no operation behind it, and preserveAspectRatio is
+// the stretch-to-fit SVGView has always done. So the left half is what the
+// module rendered before this rung and the right half is what it renders now,
+// which makes the difference the thing you are looking at rather than a bug to
+// find.
+const auto documentFeatureDocument = std::string {
+    R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240">
+  <defs>
+    <symbol id="star" viewBox="0 0 20 20">
+      <polygon points="10,1 12.6,7.2 19.5,7.6 14.2,12 15.9,18.6 10,15 4.1,18.6 5.8,12 0.5,7.6 7.4,7.2"
+               fill="#F5A623" stroke="#8C6212" stroke-width="0.6" stroke-linejoin="round"/>
+    </symbol>
+    <!-- The head is two arcs, which is how a full circle is written in path
+         data. Its stem is wound the same way round on purpose: two contours of
+         one path that disagree cancel where they overlap under the non-zero
+         rule, which is a hairline of background across the join and not a
+         renderer bug. -->
+    <path id="pin" d="M -9 0 A 9 9 0 1 1 9 0 A 9 9 0 1 1 -9 0 Z M 5 6 L 0 21 L -5 6 Z"/>
+  </defs>
+
+  <rect x="0" y="0" width="320" height="240" fill="#FBF8F3"/>
+
+  <g style="fill:#3B7A57;stroke:#204A34;stroke-width:2;stroke-linejoin:round" fill="#D0021B">
+    <path d="M 26 62 A 40 40 0 0 1 106 62 L 66 62 Z"/>
+    <path d="M 130 20 h 44 a 12 12 0 0 1 12 12 v 24 a 12 12 0 0 1 -12 12 h -44 a 12 12 0 0 1 -12 -12 v -24 a 12 12 0 0 1 12 -12 z"/>
+  </g>
+
+  <use href="#star" x="216" y="16" width="34" height="34"/>
+  <use href="#star" x="254" y="12" width="48" height="48"/>
+  <use href="#star" x="222" y="58" width="22" height="22"/>
+
+  <circle cx="66" cy="158" r="38" fill="none" stroke="#7A4FA3" stroke-width="4" stroke-dasharray="10 6"/>
+  <circle cx="66" cy="158" r="27" fill="none" stroke="#D96A4A" stroke-width="4" stroke-dasharray="10 6" stroke-dashoffset="8"/>
+
+  <path d="M 122 198 C 162 148, 214 248, 254 198" fill="none" stroke="#2C5F8A"
+        stroke-width="3" stroke-dasharray="1 7" stroke-linecap="round"/>
+
+  <g fill="#4A90D9" stroke="#2C5F8A" stroke-width="1.5">
+    <use href="#pin" x="146" y="116"/>
+    <use href="#pin" x="196" y="134"/>
+    <use href="#pin" x="246" y="116"/>
+  </g>
+
+  <text x="160" y="230" text-anchor="middle" font-family="Helvetica" font-size="11"
+        fill="#D0021B" style="fill:#8A7A6A">arcs · use · symbol · dashes · style</text>
+</svg>)SVG"};
+
+// The same markup in a component of a different aspect, which is the only way to
+// see what preserveAspectRatio does. A 320x120 document in a tall half-window
+// letterboxes under the default; the native side, which stretches, does not.
+const auto aspectDocument = std::string {
+    R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120">
+  <rect x="0" y="0" width="320" height="120" fill="#EFE7DA"/>
+  <circle cx="60" cy="60" r="44" fill="#4A90D9"/>
+  <circle cx="160" cy="60" r="44" fill="#3B7A57"/>
+  <circle cx="260" cy="60" r="44" fill="#D96A4A"/>
+  <text x="160" y="66" text-anchor="middle" font-family="Helvetica" font-size="20" fill="#FBF8F3">round, not oval</text>
 </svg>)SVG"};
 
 // A grid of triangles sharing exact vertices, in alternating colours: the seam
@@ -179,6 +251,10 @@ Vector<Document> makeDocuments()
 
     documents.add({"Badge", badgeDocument, true});
     documents.add({"Features", featureDocument, true});
+    documents.add({"Document features - arcs, use, dashes, style",
+                   documentFeatureDocument,
+                   true});
+    documents.add({"Aspect ratio - fitted against stretched", aspectDocument, true});
     documents.add({"Tiles - abutting edges", makeTilesDocument(16, 12), false});
     documents.add({"Stacked - 300 large shapes", makeStackedDocument(300), false});
 

@@ -1,5 +1,6 @@
 #include "PathStroker.h"
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 
@@ -331,6 +332,175 @@ struct Stroker
     Vector<Point> scratch;
 };
 } // namespace
+
+namespace
+{
+// Where along the pattern the walk has got: which entry, how much of it is
+// still to come, and whether that entry draws.
+struct DashCursor
+{
+    void advanceTo(int entry, const Vector<float>& pattern)
+    {
+        index = entry % pattern.size();
+        remaining = pattern[index];
+
+        // Read off the index rather than toggled, so skipping a zero-length
+        // entry cannot leave the two disagreeing.
+        drawing = index % 2 == 0;
+    }
+
+    // The next entry with a length to it. A zero-length one is stepped straight
+    // over: a zero-length *on* is a dot, which the format draws as a round cap
+    // and this does not, there being no segment for a cap to hang off.
+    void advance(const Vector<float>& pattern)
+    {
+        for (auto steps = 0; steps < pattern.size(); ++steps)
+        {
+            advanceTo(index + 1, pattern);
+
+            if (remaining > 0.f)
+                return;
+        }
+    }
+
+    int index = 0;
+    float remaining = 0.f;
+    bool drawing = true;
+};
+
+float totalLength(const Vector<float>& pattern)
+{
+    auto total = 0.f;
+
+    for (auto length: pattern)
+        total += length;
+
+    return total;
+}
+
+// Where every sub-path starts, which is the same place for all of them: the
+// offset is a property of the pattern, not of how far along the shape the walk
+// has come.
+DashCursor cursorAt(const Vector<float>& pattern, float offset)
+{
+    auto total = totalLength(pattern);
+    auto into = std::fmod(offset, total);
+
+    if (into < 0.f)
+        into += total;
+
+    auto cursor = DashCursor {};
+    cursor.advanceTo(0, pattern);
+
+    while (into >= cursor.remaining)
+    {
+        into -= cursor.remaining;
+        cursor.advanceTo(cursor.index + 1, pattern);
+    }
+
+    cursor.remaining -= into;
+
+    return cursor;
+}
+
+Point along(const Point& from, const Point& to, float fraction)
+{
+    return {from.x + (to.x - from.x) * fraction,
+            from.y + (to.y - from.y) * fraction};
+}
+} // namespace
+
+bool DashPattern::isEmpty() const
+{
+    if (lengths.empty())
+        return true;
+
+    auto total = 0.f;
+
+    for (auto length: lengths)
+    {
+        if (length < 0.f)
+            return true;
+
+        total += length;
+    }
+
+    return total <= 0.f;
+}
+
+Path dashPath(const Path& path, const DashPattern& dash)
+{
+    if (dash.isEmpty() || path.isEmpty())
+        return path;
+
+    auto pattern = dash.lengths;
+
+    // An odd list is written out twice so that it comes out even, which is what
+    // makes "5 3 2" alternate rather than repeat: 5 on, 3 off, 2 on, then 5 off,
+    // 3 on, 2 off. The format says so, and it is the one thing about dashing
+    // that reliably surprises.
+    if (dash.lengths.size() % 2 != 0)
+        for (auto length: dash.lengths)
+            pattern.add(length);
+
+    auto out = Path {};
+    out.setFlatness(path.getFlatness());
+
+    for (const auto& sub: path.getSubPaths())
+    {
+        if (sub.points.size() < 2)
+            continue;
+
+        auto cursor = cursorAt(pattern, dash.offset);
+        auto penDown = false;
+
+        auto walk = [&](const Point& from, const Point& to)
+        {
+            auto span = std::sqrt((to.x - from.x) * (to.x - from.x)
+                                  + (to.y - from.y) * (to.y - from.y));
+
+            if (span < epsilon)
+                return;
+
+            auto travelled = 0.f;
+
+            while (travelled < span)
+            {
+                auto step = std::min(cursor.remaining, span - travelled);
+
+                if (cursor.drawing)
+                {
+                    if (!penDown)
+                    {
+                        out.moveTo(along(from, to, travelled / span));
+                        penDown = true;
+                    }
+
+                    out.lineTo(along(from, to, (travelled + step) / span));
+                }
+
+                travelled += step;
+                cursor.remaining -= step;
+
+                if (cursor.remaining > 0.f)
+                    continue;
+
+                cursor.advance(pattern);
+                penDown = false;
+            }
+        };
+
+        for (auto i = 1; i < sub.points.size(); ++i)
+            walk(sub.points[i - 1], sub.points[i]);
+
+        // The closing edge is a segment like any other, so a closed shape dashes
+        // round the corner it started at rather than stopping short of it.
+        if (sub.closed)
+            walk(sub.points.back(), sub.points.front());
+    }
+
+    return out;
+}
 
 Path strokeToFill(const Path& path, const StrokeStyle& style)
 {
