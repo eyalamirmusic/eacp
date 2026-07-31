@@ -6,11 +6,13 @@
 namespace eacp::UI
 {
 Graphics::Graphics(ShapeBatch& shapesToUse,
+                   MeshBatch& meshesToUse,
                    Text::TextRenderer& textToUse,
                    GPU::RenderPass& passToUse,
                    const Rect& surfaceToUse,
                    float backingScaleToUse)
     : shapes(shapesToUse)
+    , meshes(meshesToUse)
     , hostText(textToUse)
     , text(&textToUse)
     , pass(passToUse)
@@ -38,10 +40,11 @@ Point Graphics::toSurface(Point point) const
 
 void Graphics::applyClip(const Rect& surfaceClip)
 {
-    // Both queues have to be drawn under the clip they were issued in, so the
-    // glyphs go out alongside the quads. setScissorRect flushes the sprite queue
-    // itself; the text renderer has to be told, and then restarted for the
-    // glyphs that follow.
+    // Every queue has to be drawn under the clip it was issued in, so the meshes
+    // and the glyphs go out alongside the quads. setScissorRect flushes the
+    // sprite queue itself; the text renderer has to be told, and then restarted
+    // for the glyphs that follow.
+    meshes.flush();
     shapes.flush();
     text->flush(pass);
     text->begin();
@@ -58,8 +61,25 @@ void Graphics::applyClip(const Rect& surfaceClip)
     ++clipChanges;
 }
 
-void Graphics::prepareToDraw(const Rect& surfaceBounds)
+void Graphics::prepareToDraw(const Rect& surfaceBounds, Renderer renderer)
 {
+    // Unconditionally, and before the clip is even looked at: what decides the
+    // order two renderers come out in is which of them flushed first, so the one
+    // not about to be used has to be emptied whether or not anything else about
+    // the state changed. Counted when it had anything in it, that being exactly
+    // the draw this alternation cost.
+    auto quads = renderer == Renderer::Quads;
+
+    if (quads ? !meshes.isEmpty() : !shapes.isEmpty())
+    {
+        if (quads)
+            meshes.flush();
+        else
+            shapes.flush();
+
+        ++rendererSwitches;
+    }
+
     if (sameRect(appliedClip, state.clip))
         return;
 
@@ -124,6 +144,14 @@ void Graphics::fillPath(const PathShape& shape)
         return;
 
     auto target = toSurface(shape.getBounds());
+
+    if (shape.isMeshed())
+    {
+        prepareToDraw(target, Renderer::Meshes);
+        meshes.addMesh(shape.getMesh(), state.origin, state.colour);
+        return;
+    }
+
     prepareToDraw(target);
     shapes.fillMask(target, state.colour, shape.getMaskUV());
 }
@@ -182,6 +210,7 @@ void Graphics::setTextRenderer(Text::TextRenderer& renderer)
     if (text == &renderer)
         return;
 
+    meshes.flush();
     shapes.flush();
     text->flush(pass);
 
@@ -242,6 +271,11 @@ void Graphics::flush()
     // Shapes first, then glyphs: within one clip region text composites above
     // the fills, which is what a component drawing its own background and then
     // its own caption wants. See the module note on interleaving.
+    //
+    // Only one of the two shape queues can hold anything by now -- drawing into
+    // either empties the other -- so the order between those two is whatever
+    // order they were issued in, which is the one that matters.
+    meshes.flush();
     shapes.flush();
     text->flush(pass);
     text->begin();

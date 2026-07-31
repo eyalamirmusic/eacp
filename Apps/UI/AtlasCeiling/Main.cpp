@@ -82,6 +82,12 @@ struct Tile final : UI::Component
     explicit Tile(int indexToUse)
         : index(indexToUse)
     {
+        // A tile is exactly the size at which a shape stops being worth a mask,
+        // so left to itself every one of these would draw as triangles and the
+        // atlas would never fill at all. Which is the right default and the
+        // wrong demo: this one exists to show what reaching the ceiling looks
+        // like, so it asks for the masks on purpose.
+        shape.setBacking(UI::PathShape::Backing::Mask);
     }
 
     void resized() override

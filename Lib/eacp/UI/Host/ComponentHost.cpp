@@ -33,6 +33,7 @@ void ComponentHost::componentDeleted(Component& component)
         root = nullptr;
         lastComponentCount = 0;
         lastDroppedPaths = 0;
+        lastMeshedPaths = 0;
     }
 }
 
@@ -99,12 +100,14 @@ void ComponentHost::resized()
     {
         shapes->setLogicalSize({bounds.w, bounds.h});
         shapes->setPixelScale(backingScale());
+        meshes->setLogicalSize({bounds.w, bounds.h});
     }
     else
     {
         paths.emplace();
         shapes.emplace(
             *paths, Point {bounds.w, bounds.h}, backingScale(), sampleCount());
+        meshes.emplace(Point {bounds.w, bounds.h}, sampleCount());
     }
 
     if (root != nullptr)
@@ -172,6 +175,9 @@ void ComponentHost::rasterizeDirtyPaths(Component& component,
         // and then say the interface was fine while half of it was blank.
         if (shape->wasDropped())
             ++walk.dropped;
+
+        if (shape->isMeshed())
+            ++walk.meshed;
     }
 
     for (auto* child: component.getChildren())
@@ -243,6 +249,7 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
         pathBatch.dispatch(compute);
     }
 
+    lastMeshedPaths = walk.meshed;
     reportDroppedPaths(walk.dropped);
 }
 
@@ -285,8 +292,9 @@ void ComponentHost::render(GPU::Frame& frame)
 
     auto pass = frame.beginPass({background});
     shapes->begin(pass);
+    meshes->begin(pass);
 
-    auto g = Graphics {*shapes, *text, pass, bounds, backingScale()};
+    auto g = Graphics {*shapes, *meshes, *text, pass, bounds, backingScale()};
 
     paintComponent(*root, g);
 
@@ -297,6 +305,7 @@ void ComponentHost::render(GPU::Frame& frame)
     g.flush();
 
     lastClipChanges = g.getClipChangeCount();
+    lastRendererSwitches = g.getRendererSwitchCount();
 }
 
 MouseEvent ComponentHost::makeEvent(const Component& target,

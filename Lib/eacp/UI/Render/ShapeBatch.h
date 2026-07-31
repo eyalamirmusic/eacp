@@ -87,6 +87,10 @@ public:
     void end();
     void flush();
 
+    // Whether a flush would draw anything, which is what a caller ordering this
+    // renderer against another one has to know: see MeshBatch.
+    bool isEmpty() const { return instances.empty(); }
+
     void setLogicalSize(Point size);
     void setPixelScale(float scale);
 

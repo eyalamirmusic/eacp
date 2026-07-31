@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Common.h"
+#include "../Render/MeshBatch.h"
 #include "../Render/PathShape.h"
 #include "../Render/ShapeBatch.h"
 
@@ -37,6 +38,7 @@ class Graphics
 {
 public:
     Graphics(ShapeBatch& shapesToUse,
+             MeshBatch& meshesToUse,
              Text::TextRenderer& textToUse,
              GPU::RenderPass& passToUse,
              const Rect& surfaceToUse,
@@ -76,6 +78,11 @@ public:
     // Which is why the shape is a member of the component rather than a Path
     // passed in: see PathShape for where the rasterization actually happens and
     // why it cannot happen here.
+    //
+    // A shape too large to be worth a mask arrives as triangles instead, and
+    // then it is its own geometry that is drawn. Everything above still holds
+    // except the batch it joins - so a run of them is still one draw, and an
+    // alternation between the two kinds is two.
     void fillPath(const PathShape& shape);
 
     // Draws with the pen on the baseline at the string's left edge, and returns
@@ -174,6 +181,13 @@ public:
     // watch when a tree starts costing more than it should.
     int getClipChangeCount() const { return clipChanges; }
 
+    // How many times painting alternated between the two shape renderers, each
+    // one a draw. Zero for an interface, whose shapes are all masks, and zero
+    // for a document whose large shapes happen to be drawn together; a document
+    // interleaving large and small ones pays one per alternation, which is the
+    // only cost the mesh route adds to the picture.
+    int getRendererSwitchCount() const { return rendererSwitches; }
+
     // Draws whatever is still queued, in the order it was issued. Called at the
     // end of a frame; also what a caller changing pass state by hand needs.
     void flush();
@@ -186,6 +200,17 @@ private:
         Rect clip;
     };
 
+    // Which of the two shape renderers is about to be drawn into. They share one
+    // pass, and a pass draws in flush order rather than in call order, so
+    // whatever is queued in the other one has to go out first -- otherwise a
+    // document stacking a meshed shape over a masked one would come out with the
+    // masked one on top, wherever in the document it was.
+    enum class Renderer
+    {
+        Quads,
+        Meshes
+    };
+
     Rect toSurface(const Rect& rect) const;
     Point toSurface(Point point) const;
 
@@ -196,11 +221,13 @@ private:
     // only a primitive that genuinely overflows pays. That elision is what
     // keeps a deep tree at a handful of draws, since otherwise every component
     // would break the batch just by having its own bounds.
-    void prepareToDraw(const Rect& surfaceBounds);
+    void prepareToDraw(const Rect& surfaceBounds,
+                       Renderer renderer = Renderer::Quads);
 
     void applyClip(const Rect& surfaceClip);
 
     ShapeBatch& shapes;
+    MeshBatch& meshes;
 
     // The host's renderer, and the one in force. They differ only inside a
     // ScopedTextRenderer.
@@ -219,5 +246,6 @@ private:
     // until a primitive forces them to agree.
     Rect appliedClip;
     int clipChanges = 0;
+    int rendererSwitches = 0;
 };
 } // namespace eacp::UI

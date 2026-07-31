@@ -39,6 +39,10 @@ public:
     int getLastClipChangeCount() const { return lastClipChanges; }
     int getLastComponentCount() const { return lastComponentCount; }
 
+    // Draws spent alternating between masked and meshed shapes. See
+    // Graphics::getRendererSwitchCount.
+    int getLastRendererSwitchCount() const { return lastRendererSwitches; }
+
     // Vector shapes in the tree that have no mask, the coverage atlas having had
     // no room for them: each one draws as nothing. Zero unless an interface has
     // reached the atlas ceiling, which is a real limit rather than an error --
@@ -53,6 +57,13 @@ public:
     // Called when that figure changes, for a client that would rather be told
     // than poll. Once on the way up and once on the way back down.
     std::function<void(int droppedCount)> onPathsDropped = [](int) {};
+
+    // Vector shapes in the tree drawn as triangles rather than out of the atlas,
+    // being too large for a mask to be worth storing. Zero for an interface,
+    // whose shapes are widget-sized; artwork is what meets the threshold, and
+    // this is the figure that says how much of a document stopped competing for
+    // the atlas. See PathShape::Backing.
+    int getLastMeshedPathCount() const { return lastMeshedPaths; }
 
     // How full the coverage atlas is, and how large it has grown, as the
     // distance to that ceiling while there is still distance to it. Room
@@ -83,12 +94,13 @@ private:
 
     void paintComponent(Component& component, Graphics& g);
 
-    // What one walk of the tree found: whether the atlas moved under it, and how
-    // many shapes are on it with no mask.
+    // What one walk of the tree found: whether the atlas moved under it, how
+    // many shapes are on it with no mask, and how many never asked for one.
     struct PathWalk
     {
         bool atlasMoved = false;
         int dropped = 0;
+        int meshed = 0;
     };
 
     // Rasterizing every PathShape in the tree whose geometry changed, before
@@ -127,6 +139,12 @@ private:
     GPUWidgets::CoverageBatch pathBatch;
 
     std::optional<ShapeBatch> shapes;
+
+    // Where the shapes too large for the atlas go. Built alongside the quad
+    // batch and drawn into the same pass, so the two interleave in the order the
+    // tree painted them.
+    std::optional<MeshBatch> meshes;
+
     std::optional<Text::TextRenderer> text;
 
     // The scale everything in the atlas was rasterized at, so a move between
@@ -145,7 +163,9 @@ private:
     Component* hoveredComponent = nullptr;
 
     int lastClipChanges = 0;
+    int lastRendererSwitches = 0;
     int lastComponentCount = 0;
     int lastDroppedPaths = 0;
+    int lastMeshedPaths = 0;
 };
 } // namespace eacp::UI
