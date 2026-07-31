@@ -12,6 +12,11 @@
 // compose, a viewBox origin read and then discarded, presentation attributes
 // that did not inherit. Each of those is a fact about a matrix or a rectangle,
 // so each can be pinned here without a window, a device or a frame.
+//
+// The same holds of everything rung 2 added -- how a viewBox is fitted, what an
+// arc's four flag combinations pick out, which of style="" and an attribute
+// wins, where a <use> puts what it names. All of it is arithmetic on points, and
+// all of it is the kind of thing that draws *nearly* right when it is wrong.
 
 using namespace nano;
 using namespace eacp;
@@ -364,4 +369,351 @@ auto tMaskAreaFollowsTheShapes =
           "tiled shapes cannot exceed what they tile");
     check(stackedDocument->getTotalMaskArea() > 15.f * documentArea,
           "stacked ones are bounded by nothing");
+};
+
+// --------------------------------------------------------- preserveAspectRatio
+
+// The default is the point. A document that says nothing about its aspect gets
+// xMidYMid meet, and the fit that falls out of scaling each axis to its own -
+// which is what the module did - is the one value the format calls "none".
+auto tAspectDefault = test("PreserveAspectRatio/theDefaultIsUniformAndCentred") = []
+{
+    auto fit = SVG::parsePreserveAspectRatio("");
+
+    check(fit.uniform);
+    check(!fit.slice);
+    check(fit.x == SVG::PreserveAspectRatio::Align::Mid);
+    check(fit.y == SVG::PreserveAspectRatio::Align::Mid);
+
+    // A 200x100 box in a 100x100 viewport: uniform means both axes at 0.5, and
+    // centred means the 50 points of spare height are split.
+    auto transform = SVG::viewBoxTransform(
+        {0.f, 0.f, 200.f, 100.f}, {0.f, 0.f, 100.f, 100.f}, fit);
+
+    check(isNear(transform.apply({0.f, 0.f}), 0.f, 25.f));
+    check(isNear(transform.apply({200.f, 100.f}), 100.f, 75.f));
+};
+
+auto tAspectNone = test("PreserveAspectRatio/noneStretchesEachAxisToItsOwn") = []
+{
+    auto fit = SVG::parsePreserveAspectRatio("none");
+
+    check(!fit.uniform);
+
+    auto transform = SVG::viewBoxTransform(
+        {0.f, 0.f, 200.f, 100.f}, {0.f, 0.f, 100.f, 100.f}, fit);
+
+    check(isNear(transform.apply({200.f, 100.f}), 100.f, 100.f),
+          "the far corner reaches the far corner, which is what distorts");
+};
+
+auto tAspectSlice = test("PreserveAspectRatio/sliceCoversAndMeetFits") = []
+{
+    auto box = Graphics::Rect {0.f, 0.f, 200.f, 100.f};
+    auto viewport = Graphics::Rect {0.f, 0.f, 100.f, 100.f};
+
+    auto meet = SVG::viewBoxTransform(
+        box, viewport, SVG::parsePreserveAspectRatio("xMidYMid meet"));
+    auto slice = SVG::viewBoxTransform(
+        box, viewport, SVG::parsePreserveAspectRatio("xMidYMid slice"));
+
+    // meet takes the smaller scale and leaves the viewport's spare axis empty;
+    // slice takes the larger and overflows, which the component's clip cuts.
+    check(isNear(meet.getScaleFactor(), 0.5f));
+    check(isNear(slice.getScaleFactor(), 1.f));
+
+    check(isNear(slice.apply({0.f, 0.f}), -50.f, 0.f),
+          "the overflow is split, so the box starts before the viewport does");
+};
+
+auto tAspectAlignment =
+    test("PreserveAspectRatio/alignmentDecidesWhereTheSpareGoes") = []
+{
+    auto box = Graphics::Rect {0.f, 0.f, 200.f, 100.f};
+    auto viewport = Graphics::Rect {0.f, 0.f, 100.f, 100.f};
+
+    auto atOrigin = SVG::viewBoxTransform(
+        box, viewport, SVG::parsePreserveAspectRatio("xMinYMin meet"));
+    auto atFarCorner = SVG::viewBoxTransform(
+        box, viewport, SVG::parsePreserveAspectRatio("xMaxYMax meet"));
+
+    check(isNear(atOrigin.apply({0.f, 0.f}), 0.f, 0.f));
+    check(isNear(atFarCorner.apply({0.f, 0.f}), 0.f, 50.f));
+};
+
+auto tAspectFromTheDocument =
+    test("SVGComponent/aDocumentIsFittedRatherThanStretched") = []
+{
+    auto component = componentFor(
+        R"(<svg viewBox="0 0 200 100"><rect x="0" y="0" width="200" height="100"/></svg>)",
+        100.f,
+        100.f);
+
+    auto transform = component->documentToComponent();
+
+    check(component->getAspectRatio().uniform);
+    check(isNear(transform.apply({0.f, 0.f}), 0.f, 25.f),
+          "letterboxed, not stretched to the component's own aspect");
+
+    auto stretched = componentFor(
+        R"(<svg viewBox="0 0 200 100" preserveAspectRatio="none"><rect x="0" y="0" width="200" height="100"/></svg>)",
+        100.f,
+        100.f);
+
+    check(isNear(stretched->documentToComponent().apply({0.f, 0.f}), 0.f, 0.f));
+};
+
+// ------------------------------------------------------------------ style=""
+
+auto tStyleDeclarations =
+    test("SVGAttributes/styleDeclarationsAreReadAsProperties") = []
+{
+    auto declarations =
+        SVG::parseStyleDeclarations("  fill : #ff0000 ; stroke-width:2.5;  ");
+
+    check(declarations.size() == 2, "the trailing semicolon is not a third");
+    check(declarations["fill"] == "#ff0000", "the value is trimmed");
+    check(declarations["stroke-width"] == "2.5");
+};
+
+// The one bit of the cascade a document can rely on without a stylesheet, and
+// the reason it matters: drawing programs emit both spellings, so reading the
+// attribute and ignoring the declaration means reading whichever the program
+// wrote for compatibility rather than what it meant.
+auto tStyleBeatsTheAttribute =
+    test("SVGComponent/aStyleDeclarationBeatsTheAttributeOfTheSameName") = []
+{
+    auto declared = componentFor(
+        R"(<svg width="100" height="100"><rect x="10" y="10" width="50" height="50" fill="red" style="fill:none"/></svg>)");
+
+    check(declared->getShapeCount() == 0, "the declaration said none");
+
+    auto attributeOnly = componentFor(
+        R"(<svg width="100" height="100"><rect x="10" y="10" width="50" height="50" fill="red"/></svg>)");
+
+    check(attributeOnly->getShapeCount() == 1);
+};
+
+auto tStyleInherits =
+    test("SVGComponent/styleDeclarationsInheritLikeAttributes") = []
+{
+    auto component = componentFor(
+        R"(<svg width="100" height="100"><g style="fill:none;stroke:red;stroke-width:1"><circle cx="50" cy="50" r="20"/></g></svg>)");
+
+    check(component->getShapeCount() == 1,
+          "the group's declarations reached the child");
+};
+
+// ---------------------------------------------------------------------- arcs
+
+// Four arcs join any two points at a given pair of radii, and the two flags are
+// what pick one. Getting the pair the wrong way round draws a shape that is
+// still an arc between the right endpoints, which is why this is checked by
+// where the bulge went rather than by whether anything was drawn.
+auto tArcFlagsPickTheArc = test("SVGPathParser/theTwoArcFlagsPickOneOfFourArcs") = []
+{
+    auto boundsOf = [](const std::string& d)
+    { return SVG::parseSVGPath<GPUWidgets::Path>(d).getBounds(); };
+
+    // A half circle from (0,50) to (100,50). Sweep bulges it one way, and its
+    // absence the other; in SVG's y-down space sweep=1 is the screen's
+    // clockwise, so the bulge goes up.
+    auto up = boundsOf("M 0 50 A 50 50 0 0 1 100 50");
+    auto down = boundsOf("M 0 50 A 50 50 0 0 0 100 50");
+
+    check(isNear(up.y, 0.f) && isNear(up.h, 50.f));
+    check(isNear(down.y, 50.f) && isNear(down.h, 50.f));
+
+    // The large-arc flag on a quarter turn takes the three quarters instead, so
+    // the same endpoints enclose the whole circle's extent.
+    auto minor = boundsOf("M 50 0 A 50 50 0 0 1 100 50");
+    auto major = boundsOf("M 50 0 A 50 50 0 1 1 100 50");
+
+    check(isNear(minor.w, 50.f) && isNear(minor.h, 50.f));
+    check(isNear(major.w, 100.f) && isNear(major.h, 100.f));
+};
+
+// Documents get this wrong constantly, usually by rounding the radii down, and
+// the specification says to grow them rather than to drop the arc.
+auto tArcRadiiAreGrown = test("SVGPathParser/radiiTooSmallToReachAreGrown") = []
+{
+    auto path = SVG::parseSVGPath<GPUWidgets::Path>("M 0 0 A 1 1 0 0 1 100 0");
+    auto bounds = path.getBounds();
+
+    check(isNear(bounds.w, 100.f), "it still has to arrive at the endpoint");
+    check(bounds.h > 40.f, "grown to a radius that just reaches, which is 50");
+};
+
+auto tArcDegenerate = test("SVGPathParser/aZeroRadiusArcIsTheLineToItsEndpoint") = []
+{
+    auto path = SVG::parseSVGPath<GPUWidgets::Path>("M 0 0 A 0 0 0 0 1 100 40");
+    auto bounds = path.getBounds();
+
+    check(path.getSubPaths().size() == 1, "the sub-path stays connected");
+    check(isNear(bounds.w, 100.f) && isNear(bounds.h, 40.f));
+};
+
+// The flags are single characters and the grammar lets them run into what
+// follows, which is how every minifier writes them. Read as numbers, "0150"
+// is one value and every coordinate after it lands somewhere else.
+auto tArcFlagsNeedNoSeparator =
+    test("SVGPathParser/arcFlagsMayBeWrittenWithNoSeparator") = []
+{
+    auto packed =
+        SVG::parseSVGPath<GPUWidgets::Path>("M0 0a50 50 0 0150 50").getBounds();
+    auto spaced =
+        SVG::parseSVGPath<GPUWidgets::Path>("M0 0 a50 50 0 0 1 50 50").getBounds();
+
+    check(isNear(packed.x, spaced.x) && isNear(packed.y, spaced.y));
+    check(isNear(packed.w, spaced.w) && isNear(packed.h, spaced.h));
+    check(isNear(packed.w, 50.f),
+          "and it is the arc that was written, not 110 of them");
+};
+
+// An arc is emitted as cubics rather than as a polyline, which is what lets one
+// parser body serve a native path and the GPU one. The GPU one then flattens
+// them to whatever tolerance it was told to hold.
+auto tArcHonoursFlatness =
+    test("SVGPathParser/anArcIsFlattenedToThePathsTolerance") = []
+{
+    auto d = std::string {"M 0 50 A 50 50 0 0 1 100 50"};
+
+    auto loose = GPUWidgets::Path {};
+    loose.setFlatness(2.f);
+    SVG::parseSVGPathInto(d, loose);
+
+    auto tight = GPUWidgets::Path {};
+    tight.setFlatness(0.01f);
+    SVG::parseSVGPathInto(d, tight);
+
+    check(tight.getSubPaths()[0].points.size()
+          > loose.getSubPaths()[0].points.size());
+};
+
+// ------------------------------------------------------------- defs and use
+
+auto tDefsDrawNothing = test("SVGComponent/defsHoldGeometryAndDrawNone") = []
+{
+    auto component = componentFor(
+        R"(<svg width="100" height="100"><defs><rect id="box" x="0" y="0" width="10" height="10" fill="red"/></defs></svg>)");
+
+    check(component->getShapeCount() == 0);
+};
+
+auto tUseInstantiates = test("SVGComponent/useDrawsWhatItNamesWhereItSaysTo") = []
+{
+    auto component = componentFor(
+        R"(<svg width="100" height="100"><defs><rect id="box" x="0" y="0" width="10" height="10" fill="red"/></defs>)"
+        R"(<use href="#box" x="40" y="40"/><use href="#box" x="80" y="80"/></svg>)");
+
+    check(component->getShapeCount() == 2,
+          "two use sites are two masks -- each has its own transform");
+
+    // The document is 100x100 in a 100x100 component, so document units are
+    // component points and the second copy's mask sits where x/y put it.
+    check(component->getTotalMaskArea() > 0.f);
+};
+
+auto tUseOfAMissingId = test("SVGComponent/useOfSomethingAbsentDrawsNothing") = []
+{
+    check(
+        componentFor(
+            R"(<svg width="100" height="100"><use href="#gone" x="10" y="10"/></svg>)")
+            ->getShapeCount()
+        == 0);
+
+    check(componentFor(R"(<svg width="100" height="100"><use x="10"/></svg>)")
+              ->getShapeCount()
+          == 0);
+};
+
+// The referenced content inherits from the use site rather than from where it
+// was written, which is the whole reason a document keeps one shape in defs and
+// draws it in six colours.
+auto tUseInheritsFromTheUseSite =
+    test("SVGComponent/referencedContentInheritsFromTheUseSite") = []
+{
+    auto component = componentFor(
+        R"(<svg width="100" height="100"><defs><rect id="box" x="0" y="0" width="10" height="10"/></defs>)"
+        R"(<use href="#box" fill="none"/></svg>)");
+
+    check(component->getShapeCount() == 0, "the use site's fill:none reached it");
+};
+
+// Forbidden by the format and perfectly writable, so the walk has to stop by
+// itself rather than by being told the document is well formed.
+auto tUseCycleTerminates =
+    test("SVGComponent/aUseCycleStopsRatherThanRecursing") = []
+{
+    auto component = componentFor(
+        R"(<svg width="100" height="100"><g id="loop"><rect x="0" y="0" width="10" height="10" fill="red"/><use href="#loop"/></g></svg>)");
+
+    check(component->getShapeCount() > 0 && component->getShapeCount() < 32,
+          "it drew, and it stopped");
+};
+
+auto tSymbolIsFittedToTheUse =
+    test("SVGComponent/aSymbolIsFittedToTheSizeTheUseAsksFor") = []
+{
+    auto component = componentFor(
+        R"(<svg width="100" height="100"><defs><symbol id="s" viewBox="0 0 10 10"><rect x="0" y="0" width="10" height="10" fill="red"/></symbol></defs>)"
+        R"(<use href="#s" x="0" y="0" width="50" height="50"/></svg>)");
+
+    check(component->getShapeCount() == 1);
+
+    // The symbol's own 10x10 box, drawn at the 50x50 the use asked for.
+    check(component->getTotalMaskArea() > 2000.f
+              && component->getTotalMaskArea() < 3000.f,
+          "the symbol's viewBox was mapped onto the use's size");
+};
+
+// ----------------------------------------------------------------- dashing
+
+// The observable here is thin on purpose: a dashed stroke is still one region
+// and therefore one mask, so what a component can say is that it drew and that
+// dashing did not turn one element into many. What the dashes actually are is
+// pinned in the GPUWidgets tests, where the geometry is readable.
+auto tDashedStrokeIsOneMask = test("SVGComponent/aDashedStrokeIsStillOneMask") = []
+{
+    auto component = componentFor(
+        R"(<svg width="100" height="100"><path d="M 10 50 L 90 50" fill="none" stroke="red" stroke-width="4" stroke-dasharray="6 3"/></svg>)");
+
+    check(component->getShapeCount() == 1);
+
+    auto solid = componentFor(
+        R"(<svg width="100" height="100"><path d="M 10 50 L 90 50" fill="none" stroke="red" stroke-width="4"/></svg>)");
+
+    check(component->getTotalMaskArea() > 0.f);
+    check(component->getTotalMaskArea() <= solid->getTotalMaskArea() + tolerance,
+          "cutting a line up cannot make the region it covers any bigger");
+};
+
+// -------------------------------------------------------------- font cache
+
+// A rebuild happens on every resize, and each renderer it drops is a glyph atlas
+// to raster again. Keeping them is only half the fix: the point size is the
+// document's times the transform's scale, so a resize genuinely asks for new
+// sizes and a cache that only ever grew would end a drag holding one renderer
+// per frame of it.
+auto tFontsSurviveARebuild =
+    test("SVGComponent/theFontCacheIsExactlyWhatTheLastBuildUsed") = []
+{
+    auto markup =
+        std::string {R"(<svg width="200" height="100" viewBox="0 0 200 100">)"
+                     R"(<text x="0" y="20" font-size="12">a</text>)"
+                     R"(<text x="0" y="60" font-size="24">b</text>)"
+                     R"(</svg>)"};
+
+    auto component = componentFor(markup, 200.f, 100.f);
+
+    check(component->getFontCount() == 2);
+
+    // Same size again: nothing changes, and nothing should have been rebuilt.
+    component->setBounds({0.f, 0.f, 200.f, 100.f});
+    check(component->getFontCount() == 2);
+
+    // A different size asks for two different point sizes, and the two it no
+    // longer wants have to go.
+    component->setBounds({0.f, 0.f, 400.f, 200.f});
+    check(component->getFontCount() == 2, "two sizes, not four");
 };

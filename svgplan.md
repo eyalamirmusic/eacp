@@ -1,9 +1,17 @@
 # SVG through the component tier
 
-**Rung 1 is done and both its questions are answered.** What follows was written
-before any of it was built; the sections it got wrong are marked where they
-stand, and the record of what actually happened is at the end under *Rung 1, as
-built*. The two answers, since they are the point:
+**Rungs 1 and 2 are done, and both of rung 1's questions are answered.** What
+follows was written before any of it was built; the sections it got wrong are
+marked where they stand, and the records of what actually happened are at the end
+under *Rung 1, as built* and *Rung 2, as built*.
+
+**One thing is open, and everything else waits behind it:** the atlas cannot hold
+a real document, rung 2 added a second way to find that out, and the fix the
+measurement points at — routing large-area shapes through a mesh instead of a
+mask — is unbuilt. Read *What is still open* at the end before designing anything
+else here.
+
+Rung 1's two answers, since they are the point:
 
 - **A document does not fit in the atlas.** A 300-shape stacked drawing asks for
   45.7M texels against the atlas's 16.8M and loses 229 of its 301 masks. The
@@ -19,18 +27,57 @@ exists to avoid. Moving it onto the coverage rasterizer means an SVG draws the
 way the interface does: masks rasterized in one compute dispatch before the
 frame, then quads out of a shared atlas in one instanced draw.
 
-The claim this plan makes is that **the render-tier swap is small and the
+# Where the module stands now
+
+The one section that is neither a plan nor a record: what is true today, so
+nothing has to be reconstructed from the three that follow. **Everything below
+about `SVGComponent` is the component tier; `SVGBuilder` is the native one and
+has moved only where the parse layer beneath it moved.**
+
+| file | what it is now |
+|---|---|
+| `XMLParser`, `SVGElement`, `NumberReader` | markup to a tag tree. `NumberReader::readFlag` was added for arcs |
+| `SVGAttributes` | colours, transform lists as matrices, `preserveAspectRatio` and the viewBox fit, style declarations, number and point lists |
+| `SVGPathParser` | `d` to a path, templated over `Graphics::Path` and `GPUWidgets::Path` and instantiated for both. Every command including `A`/`a` |
+| `SVGComponent` | the component-tier builder. One component, one `PathShape` per fill and per stroke |
+| `SVGBuilder` | the native builder, unchanged in what it renders |
+| `SVGParser` | the two joined |
+
+`CMakeLists.txt` links `eacp-graphics` and `eacp-ui`. `Tests/SVG` has 42 cases,
+and the dash geometry is pinned in `Tests/GPUWidgets`.
+
+What `SVGComponent` draws: shapes and paths with every path command, `viewBox`
+with its origin and `preserveAspectRatio`, transform lists as real matrices baked
+into the points, inherited presentation attributes, `style=""` declarations
+beating the attribute of the same name, `fill-rule`, stroke width / caps / joins
+/ miter limit / opacity / dashes, `defs` / `use` / `symbol`, and text at any
+family and size with real measurement.
+
+What it does not: gradients, `clipPath` and `mask`, group opacity as
+compositing, `<style>` elements and CSS selectors, filters, `<image>`. An element
+asking for one of those draws without it rather than not at all.
+
+And the thing that limits all of it: **the coverage atlas cannot hold a large
+document.** Measured, twice over — see *Rung 1, as built* and *What is still
+open*.
+
+# What the module was before any of this
+
+*Superseded by "Where the module stands now" above; kept because the rungs are
+written against it.*
+
+The claim this plan made is that **the render-tier swap is small and the
 document features are the work.** The parse layer is already renderer-agnostic
 in all but two return types, and `GPUWidgets::Path` was built to mirror
 `Graphics::Path` call for call. What is actually missing is a short list, and
-only three items on it are machinery neither tier has.
+only three items on it are machinery neither tier has. *It held: the swap was
+rung 1 and the features were rung 2, and rung 2 was the larger of the two.*
 
-The claim it also makes, and this one is the reason to read further: **the atlas
+The claim it also made, and this one is the reason to read further: **the atlas
 ceiling analysis in `plan.md` does not cover this case.** That is the first
 thing rung 1 has to find out, and it is the only thing here that could send the
-design back.
-
-# What the module is today
+design back. *It did not cover it, and it has sent the design back — which is
+what "What is still open" is about.*
 
 | file | what it is | does it move |
 |---|---|---|
@@ -57,7 +104,7 @@ design back.
   `Graphics::Point`. Nothing in the attribute layer has to be touched at all.
 - **Fill rule is free and is a gain.** SVG's `fill-rule` is not parsed today;
   `PathShape::setPath` takes `FillRule::NonZero | EvenOdd` and the kernel
-  computes both.
+  computes both. *It was free, and `SVGComponent` reads it.*
 - **Stroke style is free.** `stroke-linecap` and `stroke-linejoin` map onto
   `LineCap` / `LineJoin` / `miterLimit` exactly, all shipped.
 - **A document is one dispatch.** `CoverageBatch` gathers every dirty shape in
@@ -69,31 +116,40 @@ design back.
 
 # What is not there, and was also read
 
-- **The text tier holds one font.** `Text::TextRenderer` carries a single family
-  and point size, and changing either rebuilds the glyph atlas
-  (`TextRenderer.h:77-80`); `UI::Graphics::drawText` takes no font, and
-  `ComponentHost::setFontFamily` / `setFontPointSize` are per host. Only
-  `FontStyle` varies per call. **An SVG document mixes sizes and families in one
-  tree, and `example.svg` already does** — this is the one place the port needs
-  work in a module below it, and it is discussed under rung 1.
-- **`GPUWidgets::Path` has no transform.** The CPU path has `scaled(sx, sy)`,
-  which `buildPath` uses; the GPU one has neither that nor an affine.
-- **Elliptical arcs exist nowhere.** `SVGPathParser.cpp:173` logs *"Arc commands
-  (A/a) not yet supported"* and skips the numbers, so `Path` has no `arcTo` to
-  target either. `segmentsForArc` is already inside `Path` for `addEllipse`, so
-  the flattening half of it is there.
+*Three of these five were built. Each is marked; the two that stand are what
+rung 3 is for.*
+
+- **The text tier holds one font.** ~~`Text::TextRenderer` carries a single
+  family and point size, and changing either rebuilds the glyph atlas
+  (`TextRenderer.h:77-80`); `UI::Graphics::drawText` takes no font~~ *— still
+  true of `TextRenderer` itself, and worked around rather than fixed:
+  `Graphics::setTextRenderer` lets a document swap one in per run, at a batch
+  break each way and a glyph atlas apiece. Option 2 below, the size-keyed atlas,
+  is still the honest fix and still unbuilt.* Only `FontStyle` varies per call.
+  **An SVG document mixes sizes and families in one tree, and `example.svg`
+  already does** — this is the one place the port needs work in a module below
+  it, and it is discussed under rung 1.
+- ~~**`GPUWidgets::Path` has no transform.**~~ *Built in rung 1:
+  `transformed(affine)` and `scaled`.*
+- ~~**Elliptical arcs exist nowhere.**~~ *Built in rung 2, and not where this
+  expected — as cubics in the parser rather than an `arcTo` on `Path`, so both
+  path types got them. See "Rung 2, as built".*
 - **`ShapeBatch` fills with one solid colour times coverage** (`fillMask`), so
   there is no gradient anywhere in this tier. `GPUWidgets::Gradient` bakes into
-  `PathView`'s vertex-colour mesh, which is the other renderer.
+  `PathView`'s vertex-colour mesh, which is the other renderer. *Still true.*
 - **The clip is a GPU scissor**, axis-aligned by construction, and
   `UI::Graphics` offers translation only for that reason (`Graphics.h:29-35`).
-  `clipPath` and `mask` have no answer in the tier as it stands.
+  `clipPath` and `mask` have no answer in the tier as it stands. *Still true.*
 
-# Bugs in the module as it stands
+# Bugs in the module, which are now bugs in `SVGBuilder`
 
 Worth naming separately, because a port that faithfully reproduces them looks
 like a working port and is not one. Each is cheap to fix *while* porting and
 expensive to find afterwards.
+
+*All four are fixed in `SVGComponent` and **all four are still live in
+`SVGBuilder`**, which is what the two halves of the demo differ by. Read as a
+list of what the native tier does wrong, they are still current.*
 
 - **`viewBox` origin is ignored.** `buildSVG` reads `nums[2]` and `nums[3]` only,
   and only when width or height is absent — so `viewBox="10 20 100 100"` renders
@@ -113,6 +169,9 @@ expensive to find afterwards.
   tier has a real `measureText`, so the port fixes this by construction.
 
 # Rung 1 — the same document, drawn on the GPU
+
+*Done. The record is under "Rung 1, as built"; the list below is what was
+planned.*
 
 The smallest thing that produces a real artifact to judge, following the shape
 rung 1 of `plan.md` used: get a document on screen through `ComponentHost` and
@@ -177,6 +236,10 @@ Gradients, clip paths, group opacity, `defs`/`use`, CSS, filters, images. Also
 not arcs: they are missing today, so a document that needs them is no worse than
 it is now, and rung 1 is about the tier and not the format.
 
+*Rung 2 did arcs, `defs`/`use` and the style attribute. Gradients, clip paths,
+group opacity, CSS selectors, filters and images are still undone and are
+rung 3.*
+
 # The two questions rung 1 exists to answer
 
 *Both answered. The measurements are under "Rung 1, as built" at the end; the
@@ -233,6 +296,9 @@ as one path per colour.
 
 # Rung 2 — the document
 
+*Done. What was built and where this was wrong is under "Rung 2, as built" at the
+end; the list below is what was planned.*
+
 Everything here is inside `eacp-svg` and needs nothing new below it. Roughly in
 the order a real document notices:
 
@@ -285,37 +351,55 @@ the order a real document notices:
 # What this plan will probably get wrong
 
 In the spirit of the document beside it, the predictions most likely to be
-corrected by contact:
+corrected by contact. *All four have now met it, and the scoreboard is three
+right and one wrong:*
 
 - **That the port is the small part.** It is small in lines. The font problem was
   found by reading `TextRenderer.h` after claiming text ported straight across,
   and there may be a second one of those in the builder's contact with
-  `ComponentHost`.
+  `ComponentHost`. *Right, and the second one existed: `UI::Graphics` had no way
+  to draw through a renderer other than the host's.*
 - **That the atlas holds a real document.** The arithmetic above says it does
   not, and the arithmetic is crude — it assumes no shape is small, which no real
-  drawing obeys.
+  drawing obeys. *Right. Measured at 45.7M texels against 16.8M, with 229 masks
+  dropped, and rung 2's `use` gave it a second route in.*
 - **That two shapes per element is free.** It doubles the mask count for every
   stroked-and-filled element, against a ceiling that is already the open question.
+  *Right that it doubles, wrong that it matters most: stacking is what breaks the
+  budget.*
 - **That baking transforms into points is the whole answer.** It is exact for
   geometry and says nothing about stroke: a non-uniform scale should stroke an
   ellipse's pen, and `strokeToFill` assumes a round one in path units — which
   `plan.md` already lists as not done. A document that scales a stroked group
-  will be wrong in a way this plan does not fix.
+  will be wrong in a way this plan does not fix. *Wrong. Stroking in the
+  document's units and transforming the region turns the round pen into the
+  ellipse it should be, for free.*
 
 # The order, and what each rung buys
 
-1. **Rung 1** puts a document on the GPU and answers the two questions above.
-   Nothing after it should be designed before those answers exist.
-2. **Rung 2** makes it render documents rather than one document. Every item is
-   inside `eacp-svg`.
+1. ~~**Rung 1**~~ *done.* Puts a document on the GPU and answers the two
+   questions above. Nothing after it should be designed before those answers
+   exist.
+2. ~~**Rung 2**~~ *done.* Makes it render documents rather than one document.
+   ~~Every item is inside `eacp-svg`.~~ *All but dashing, which is a path
+   operation and shipped in `GPUWidgets`.*
 3. **Rung 3** is the three features that need work below the module, in the order
    documents actually miss them: gradients, then clipping, then group opacity.
+   *Unstarted, and it should not be started before the atlas decision — see
+   "What is still open".*
 
 One decision to make at the top of rung 1 and not later: whether the native
 `SVGView` stays. Keeping both means one parse layer and two builders, which is
 cheap and lets the two be compared on screen — which is exactly what rung 1's
 quality question needs. Recommendation is to keep it through rung 1 and delete it
 once the component tier renders the corpus at least as well.
+
+*Where that stands: the component tier now renders strictly more than the native
+one, so the stated condition is met and `SVGView` could go. It has not, because
+the comparison is still earning its keep — the demo's two halves are how every
+rung 2 feature was checked, and the four bugs listed above are still visible in
+the left one. The case for deleting it gets stronger the moment nobody is reading
+that window.*
 
 Worth saying plainly, since it is the argument for doing any of this: a static
 document does not need rung 3 of `plan.md` at all — it rasterizes once. What
@@ -457,7 +541,8 @@ baseline it is. `fill-rule`, `stroke-linecap`, `stroke-linejoin`,
 predicted.
 
 Still not done, and still rung 2: `preserveAspectRatio`, arcs, `defs`/`use`,
-`style="..."`, dashing. Rung 3 is unchanged.
+`style="..."`, dashing. Rung 3 is unchanged. *All five were built — the record
+picks up under "Rung 2, as built" below.*
 
 ## One thing to fix early in rung 2
 
@@ -465,3 +550,79 @@ Still not done, and still rung 2: `preserveAspectRatio`, arcs, `defs`/`use`,
 resize rebuilds a glyph atlas per distinct text size per frame. Harmless on the
 documents here — a resize re-rasterizes every mask anyway — and the first thing a
 text-heavy document will notice.
+
+# Rung 2, as built
+
+A record again rather than a plan. Everything rung 2 listed as inside
+`eacp-svg` is done, one item is not where the plan put it, and the atlas
+decision the measurement pointed at is *not* done and is now the only thing
+between here and rung 3.
+
+## What shipped
+
+| where | what |
+|---|---|
+| `SVG/SVGAttributes.{h,cpp}` | `parsePreserveAspectRatio` and `viewBoxTransform` — the nine alignments, `none`, and meet/slice; `parseStyleDeclarations` for the style attribute |
+| `SVG/NumberReader.{h,cpp}` | `readFlag`, because an arc's two flags are single characters and not numbers |
+| `SVG/SVGPathParser.cpp` | elliptical arcs: the endpoint-to-centre conversion of F.6.5, the radius correction of F.6.6, and the arc emitted as cubics |
+| `SVG/SVGComponent.{h,cpp}` | the fit instead of a stretch; `style=""` beating the attribute of the same name; `defs`/`use`/`symbol` with an id map and a depth limit; `stroke-dasharray` / `stroke-dashoffset`; the font cache |
+| `GPUWidgets/Path/PathStroker.{h,cpp}` | `DashPattern` and `dashPath` — the polyline cut into the pattern's on-lengths, before stroking |
+| `Apps/UI/SVGDocument` | two more documents: one exercising every feature above, one whose aspect differs from its component |
+| `Tests/SVG`, `Tests/GPUWidgets` | 42 cases, up from 21, and six on dashing where the geometry is readable |
+
+## What the plan got wrong
+
+- **Arcs are not `Path::arcTo`.** The plan put the flattening in
+  `GPUWidgets::Path`, where `segmentsForArc` already sits. But the parser is
+  templated over both path types, and `Graphics::Path` has no arc call and could
+  not portably be given one — `CGPathAddArc` does not do elliptical arcs without
+  a transform trick and Direct2D wants an `ArcSegment`. Emitting **cubics**
+  instead costs one function in the parser and serves both: a quarter turn at a
+  time is within about a ten-thousandth of the radius, two orders below what the
+  flattening afterwards preserves, and the GPU path then subdivides them to
+  whatever tolerance it was told to hold. The native tier got arcs for free, as
+  real curves, which is visible in the demo — it is the only rung 2 feature both
+  halves of that window draw.
+- **The flags are not numbers, and this was not in the plan at all.** The grammar
+  lets an arc's two flags run into what follows: `a5 5 0 0110 0` is largeArc 0,
+  sweep 1, then the point (10, 0). Read with `readFloat` those characters are one
+  value of 110 and every coordinate after them lands somewhere else. Every
+  minifier writes them that way, so a parser without `readFlag` fails on most
+  real documents while passing every hand-written test.
+- **`preserveAspectRatio` is not a small addition to `viewBox`, it is a change of
+  default.** The plan called the existing stretch-to-fit "a fair default and not
+  what the format says". It is worse than that: the format's default is
+  `xMidYMid meet`, so *every* document whose aspect differed from its component
+  was being distorted, and the demo's Aspect document is three circles that the
+  native tier still draws as ovals.
+- **"Everything here is inside `eacp-svg`" was not quite true.** Dashing is not:
+  it is a path operation, it belongs beside `strokeToFill`, and it shipped as
+  `GPUWidgets::dashPath`. The plan's own bullet said as much about dashing while
+  the section heading said otherwise. Small, and the same shape as rung 1's
+  `Graphics::setTextRenderer` — the item that needs a module below it is the one
+  the summary line forgot.
+- **The font cache needed pruning, not keeping.** The plan said to stop dropping
+  the renderers. Simply keeping them is wrong in the case the note was about: the
+  point size is the document's times the transform's scale, so a live resize
+  genuinely asks for new sizes and a cache that only grew would end a drag
+  holding one renderer per frame of it. What shipped hands the old set to the
+  build as a spare list, lets `findOrAddFont` claim out of it, and drops the
+  rest — so the cache is exactly what the last build used.
+
+## What is still open, and it is the same thing
+
+`defs`/`use` builds each use site's geometry again rather than sharing a mask,
+which is not a shortcut: a `PathShape` holds the coverage a kernel rasterized at
+one size and one place, so two uses of one symbol are two masks however identical
+the markup was. A document that instantiates one shape two hundred times pays for
+two hundred, and that is **the stacking case again, arriving by another route.**
+
+So rung 2 has not moved the ceiling and has given it one more way to be hit. The
+decision rung 1 measured is still the decision: route large-area shapes through
+`PathView`'s ear-clip mesh, which needs no mask at all, and let the builder make
+that trade per shape from the shape's own area. Nothing else in rung 2 or 3
+depends on it, and everything in both is limited by it.
+
+Still not done, and now the whole of what is left below rung 3: the mesh route,
+and `<style>` elements with real selectors — which stays out of scope, as the
+plan said.

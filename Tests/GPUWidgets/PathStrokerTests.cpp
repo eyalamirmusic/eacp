@@ -431,3 +431,124 @@ auto tDegenerate = test("PathStroker/nothingToStrokeIsNoPath") = []
     check(strokeToFill(closedSquare(), StrokeStyle {0.f}).isEmpty());
     check(strokeToFill(closedSquare(), StrokeStyle {-2.f}).isEmpty());
 };
+
+// ----------------------------------------------------------------- dashing
+//
+// Dashing is a separate operation applied *before* stroking, and the order is
+// not a preference: a dash cuts the centre line, and by the time strokeToFill
+// has run the centre line has been replaced by the region around it. Cutting
+// afterwards would have nothing with a length left to cut.
+//
+// So what dashPath produces is readable geometry - open sub-paths along the
+// original polyline - and that is what these check, rather than coverage.
+
+namespace
+{
+Path straightLine(float length)
+{
+    auto path = Path {};
+    path.moveTo({0.f, 0.f});
+    path.lineTo({length, 0.f});
+
+    return path;
+}
+
+float lengthOf(const Path& path)
+{
+    auto total = 0.f;
+
+    for (const auto& sub: path.getSubPaths())
+        for (auto i = 1; i < sub.points.size(); ++i)
+            total += std::hypot(sub.points[i].x - sub.points[i - 1].x,
+                                sub.points[i].y - sub.points[i - 1].y);
+
+    return total;
+}
+} // namespace
+
+auto tDashCutsIntoOnLengths = test("PathStroker/aDashPatternCutsThePolylineUp") = []
+{
+    // Ten units of "2 on, 2 off" is on at 0-2, 4-6 and 8-10.
+    auto dashes = dashPath(straightLine(10.f), {{2.f, 2.f}, 0.f});
+
+    check(dashes.getSubPaths().size() == 3,
+          std::to_string(dashes.getSubPaths().size()) + " dashes");
+    check(std::abs(lengthOf(dashes) - 6.f) < 0.01f, "three on-lengths of two");
+
+    check(std::abs(dashes.getSubPaths()[1].points[0].x - 4.f) < 0.01f,
+          "the second starts where the first off-length ends");
+};
+
+// The one thing about dashing that reliably surprises: an odd list is written
+// out twice, so the entries alternate on and off rather than repeating. "3"
+// alone is three on and three off, not three on for ever.
+auto tOddPatternIsDoubled = test("PathStroker/anOddDashListIsWrittenOutTwice") = []
+{
+    auto dashes = dashPath(straightLine(12.f), {{3.f}, 0.f});
+
+    check(dashes.getSubPaths().size() == 2);
+    check(std::abs(lengthOf(dashes) - 6.f) < 0.01f);
+};
+
+auto tDashOffset = test("PathStroker/theOffsetStartsPartWayIntoThePattern") = []
+{
+    // Two units into "2 on 2 off" is the start of an off-length, so the line
+    // begins in a gap.
+    auto dashes = dashPath(straightLine(10.f), {{2.f, 2.f}, 2.f});
+
+    check(std::abs(dashes.getSubPaths()[0].points[0].x - 2.f) < 0.01f);
+    check(std::abs(lengthOf(dashes) - 4.f) < 0.01f, "two on-lengths, not three");
+
+    // A negative offset is the same walk from the other end of the cycle, and
+    // has to land somewhere in it rather than off it.
+    check(!dashPath(straightLine(10.f), {{2.f, 2.f}, -3.f}).isEmpty());
+};
+
+// The closing edge is a segment like any other, which is what makes a dashed
+// outline go round the corner it started at instead of stopping short of it.
+auto tClosedPathDashesRound =
+    test("PathStroker/aClosedSubPathDashesThroughItsJoin") = []
+{
+    auto square = Path {};
+    square.addRect({0.f, 0.f, 10.f, 10.f});
+
+    auto dashes = dashPath(square, {{20.f, 20.f}, 0.f});
+
+    // Forty units of perimeter under "20 on 20 off" is one dash of twenty, and
+    // it can only be twenty if the closing edge was walked.
+    check(std::abs(lengthOf(dashes) - 20.f) < 0.01f,
+          std::to_string(lengthOf(dashes)) + " of a 40-unit perimeter");
+
+    check(dashes.getSubPaths().size() == 1);
+    check(!dashes.getSubPaths()[0].closed,
+          "a dash is open however closed the source");
+};
+
+auto tNothingToDashBy =
+    test("PathStroker/aPatternThatCannotCutHandsThePathBack") = []
+{
+    auto line = straightLine(10.f);
+
+    check(std::abs(lengthOf(dashPath(line, {})) - 10.f) < 0.01f, "no lengths");
+    check(std::abs(lengthOf(dashPath(line, {{0.f, 0.f}, 0.f})) - 10.f) < 0.01f,
+          "lengths adding to nothing");
+
+    // A negative entry invalidates the whole list rather than being clamped
+    // away, because a document that wrote one did not mean any of it.
+    check(std::abs(lengthOf(dashPath(line, {{4.f, -2.f}, 0.f})) - 10.f) < 0.01f);
+};
+
+// The whole reason it is a path operation and not a stroke option: what comes
+// out is something strokeToFill can take, and each dash is a piece with two open
+// ends and therefore two caps.
+auto tDashesStroke = test("PathStroker/dashesAreStrokedLikeAnyOtherPath") = []
+{
+    auto dashes = dashPath(straightLine(10.f), {{2.f, 2.f}, 0.f});
+    auto region = strokeToFill(dashes, StrokeStyle {2.f, LineCap::Butt});
+
+    check(!region.isEmpty());
+
+    auto bounds = region.getBounds();
+    check(std::abs(bounds.h - 2.f) < 0.01f, "the stroke's own width, across");
+    check(std::abs(bounds.w - 10.f) < 0.01f, "and the line's length, along");
+};

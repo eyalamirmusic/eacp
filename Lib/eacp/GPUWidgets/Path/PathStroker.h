@@ -38,6 +38,39 @@ struct StrokeStyle
     float miterLimit = 4.f;
 };
 
+// A dash pattern, in the same units the path is authored in: on, off, on, off,
+// and how far into that the first sub-path starts.
+struct DashPattern
+{
+    Vector<float> lengths;
+    float offset = 0.f;
+
+    // Nothing a path can be cut by: an empty list, one that adds to nothing, or
+    // one with a negative entry -- which the format says invalidates the whole
+    // list rather than being clamped away, since a document that wrote one did
+    // not mean any of it.
+    bool isEmpty() const;
+};
+
+// The path's polylines cut into the pattern's on-lengths, as open sub-paths.
+//
+// Separate from strokeToFill and applied before it, because a dash cuts the
+// *centre line* and stroking has already replaced that with the region around
+// it: cut afterwards, there would be nothing left with a length to measure.
+//
+//   auto dashes = dashPath (path, {.lengths = {6.f, 3.f}});
+//   shape.setPath (strokeToFill (dashes, style));
+//
+// A closed sub-path is walked round through its closing edge and comes back as
+// open pieces, which is what puts a cap on the dash that straddles the start
+// rather than a join.
+//
+// Lengths are measured along the flattened polyline, which is fractionally
+// shorter than the curve it stands for, so dashes on a curve drift by whatever
+// the flattening left out -- one more reason a path meant for stroking is built
+// at the tighter tolerance strokeToFill already asks for.
+Path dashPath(const Path& path, const DashPattern& dash);
+
 // The region a stroke covers, as a path to fill under the **non-zero** rule.
 //
 // It is not an outline. It is the quad of every segment, the join at every

@@ -1,6 +1,10 @@
 #include "SVGPathParser.h"
 #include "NumberReader.h"
 
+#include <algorithm>
+#include <cmath>
+#include <optional>
+
 namespace eacp::SVG
 {
 
@@ -178,14 +182,199 @@ void handleSmoothQuadratic(NumberReader& reader,
     } while (reader.hasNumber());
 }
 
-void handleArc(NumberReader& reader)
+// An elliptical arc as its centre and the two angles across it, which is what
+// every renderer wants and the one thing the `d` attribute does not give.
+//
+// SVG writes an arc as where it ends up plus a description of the ellipse to get
+// there on, because that is what survives being edited: move the endpoint and
+// the arc still joins what follows it. The cost is the conversion below, which
+// is the specification's own (F.6.5, with the radius correction of F.6.6).
+struct CentredArc
 {
-    LOG("SVG: Arc commands (A/a) not yet supported");
-    while (reader.hasNumber())
+    Graphics::Point pointAt(float angle) const
     {
-        for (auto i = 0; i < 7 && reader.hasNumber(); ++i)
-            reader.readFloat();
+        auto x = radiusX * std::cos(angle);
+        auto y = radiusY * std::sin(angle);
+
+        return {centre.x + x * cosRotation - y * sinRotation,
+                centre.y + x * sinRotation + y * cosRotation};
     }
+
+    // The tangent, which is what the cubic approximation hangs its control
+    // points off.
+    Graphics::Point tangentAt(float angle) const
+    {
+        auto x = -radiusX * std::sin(angle);
+        auto y = radiusY * std::cos(angle);
+
+        return {x * cosRotation - y * sinRotation,
+                x * sinRotation + y * cosRotation};
+    }
+
+    Graphics::Point centre;
+    float radiusX = 0.f;
+    float radiusY = 0.f;
+    float cosRotation = 1.f;
+    float sinRotation = 0.f;
+    float startAngle = 0.f;
+    float sweepAngle = 0.f;
+};
+
+float angleBetween(const Graphics::Point& from, const Graphics::Point& to)
+{
+    return std::atan2(from.x * to.y - from.y * to.x, from.x * to.x + from.y * to.y);
+}
+
+// The endpoint form as the centred one. Returns nothing where the arc is
+// degenerate - a zero radius, or an endpoint the start is already at - which the
+// format says to draw as a straight line or as nothing at all.
+std::optional<CentredArc> centreArc(const Graphics::Point& start,
+                                    const Graphics::Point& end,
+                                    float radiusX,
+                                    float radiusY,
+                                    float rotationRadians,
+                                    bool largeArc,
+                                    bool sweep)
+{
+    if (radiusX == 0.f || radiusY == 0.f)
+        return std::nullopt;
+
+    auto arc = CentredArc {};
+    arc.radiusX = std::abs(radiusX);
+    arc.radiusY = std::abs(radiusY);
+    arc.cosRotation = std::cos(rotationRadians);
+    arc.sinRotation = std::sin(rotationRadians);
+
+    // The endpoints in the ellipse's own frame, with the chord between them
+    // centred on the origin.
+    auto halfChordX = (start.x - end.x) * 0.5f;
+    auto halfChordY = (start.y - end.y) * 0.5f;
+
+    auto x1 = arc.cosRotation * halfChordX + arc.sinRotation * halfChordY;
+    auto y1 = -arc.sinRotation * halfChordX + arc.cosRotation * halfChordY;
+
+    if (x1 == 0.f && y1 == 0.f)
+        return std::nullopt;
+
+    // Radii too small to reach across the chord are grown until they just do,
+    // rather than the arc being dropped. Documents get this wrong constantly,
+    // usually by rounding the radii down.
+    auto overshoot = (x1 * x1) / (arc.radiusX * arc.radiusX)
+                     + (y1 * y1) / (arc.radiusY * arc.radiusY);
+
+    if (overshoot > 1.f)
+    {
+        auto growth = std::sqrt(overshoot);
+        arc.radiusX *= growth;
+        arc.radiusY *= growth;
+    }
+
+    auto rxSquared = arc.radiusX * arc.radiusX;
+    auto rySquared = arc.radiusY * arc.radiusY;
+
+    auto denominator = rxSquared * y1 * y1 + rySquared * x1 * x1;
+    auto numerator = rxSquared * rySquared - denominator;
+
+    // Which of the two circles through the endpoints, and which way round it:
+    // the four combinations of the two flags are what pick one of the four arcs
+    // any pair of points and radii admit.
+    auto distance = std::sqrt(std::max(0.f, numerator / denominator))
+                    * (largeArc != sweep ? 1.f : -1.f);
+
+    auto centreX = distance * arc.radiusX * y1 / arc.radiusY;
+    auto centreY = -distance * arc.radiusY * x1 / arc.radiusX;
+
+    arc.centre = {arc.cosRotation * centreX - arc.sinRotation * centreY
+                      + (start.x + end.x) * 0.5f,
+                  arc.sinRotation * centreX + arc.cosRotation * centreY
+                      + (start.y + end.y) * 0.5f};
+
+    auto toStart =
+        Graphics::Point {(x1 - centreX) / arc.radiusX, (y1 - centreY) / arc.radiusY};
+    auto toEnd = Graphics::Point {(-x1 - centreX) / arc.radiusX,
+                                  (-y1 - centreY) / arc.radiusY};
+
+    arc.startAngle = angleBetween({1.f, 0.f}, toStart);
+    arc.sweepAngle = angleBetween(toStart, toEnd);
+
+    // atan2 gives the sweep in (-pi, pi], and the flag says which way round the
+    // ellipse the arc actually goes, so one of the two needs a whole turn added.
+    if (!sweep && arc.sweepAngle > 0.f)
+        arc.sweepAngle -= 2.f * GPUWidgets::pi;
+    else if (sweep && arc.sweepAngle < 0.f)
+        arc.sweepAngle += 2.f * GPUWidgets::pi;
+
+    return arc;
+}
+
+// The arc as cubics, which is what lets one body serve both path types: neither
+// has an arc call, and Graphics::Path could not be given a portable one, but
+// both take a cubic and the GPU one then flattens it to whatever tolerance it
+// was told to hold.
+//
+// A quarter turn at a time, where a cubic hugging the ellipse at both ends and
+// matching its tangents is within about a ten-thousandth of the radius - two
+// orders below anything the flattening afterwards will preserve.
+template <typename PathType>
+void addArcSegments(PathType& path, const CentredArc& arc)
+{
+    auto quarters = std::max(
+        1, (int) std::ceil(std::abs(arc.sweepAngle) / (GPUWidgets::pi * 0.5f)));
+
+    auto step = arc.sweepAngle / (float) quarters;
+
+    // The control points sit a fixed fraction of the tangent away, and this is
+    // that fraction: the value which makes the cubic pass through the arc's
+    // midpoint as well as its ends.
+    auto reach = 4.f / 3.f * std::tan(step * 0.25f);
+
+    for (auto i = 0; i < quarters; ++i)
+    {
+        auto from = arc.startAngle + step * (float) i;
+        auto to = from + step;
+
+        auto start = arc.pointAt(from);
+        auto end = arc.pointAt(to);
+        auto startTangent = arc.tangentAt(from);
+        auto endTangent = arc.tangentAt(to);
+
+        path.cubicTo(start.x + startTangent.x * reach,
+                     start.y + startTangent.y * reach,
+                     end.x - endTangent.x * reach,
+                     end.y - endTangent.y * reach,
+                     end.x,
+                     end.y);
+    }
+}
+
+template <typename PathType>
+void handleArc(NumberReader& reader, PathType& path, PathState& state, bool relative)
+{
+    do
+    {
+        auto radiusX = reader.readFloat();
+        auto radiusY = reader.readFloat();
+        auto rotation = reader.readFloat() * GPUWidgets::pi / 180.f;
+
+        // Flags rather than numbers, and the difference matters -- see
+        // NumberReader::readFlag.
+        auto largeArc = reader.readFlag();
+        auto sweep = reader.readFlag();
+
+        auto end = readPoint(reader, relative, state.current);
+
+        auto arc = centreArc(
+            state.current, end, radiusX, radiusY, rotation, largeArc, sweep);
+
+        // A degenerate arc is the straight line to its endpoint, which is what
+        // the format says and what keeps the sub-path connected.
+        if (arc.has_value())
+            addArcSegments(path, *arc);
+        else
+            path.lineTo(end);
+
+        state.current = end;
+    } while (reader.hasNumber());
 }
 
 template <typename PathType>
@@ -242,7 +431,7 @@ void dispatchCommand(char cmd,
             handleSmoothQuadratic(reader, path, state, relative);
             break;
         case 'A':
-            handleArc(reader);
+            handleArc(reader, path, state, relative);
             break;
         case 'Z':
             handleClosePath(path, state);

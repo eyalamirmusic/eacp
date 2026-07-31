@@ -34,6 +34,10 @@ struct SVGComponent::Style
     // Width in the document's units, converted when the region is built.
     GPUWidgets::StrokeStyle strokeStyle;
 
+    // Cut into the centre line before it is stroked, and therefore in the
+    // document's units too.
+    GPUWidgets::DashPattern dash;
+
     std::string fontFamily = UI::defaultUIFontFamily();
     float fontSize = 16.f;
 
@@ -233,40 +237,113 @@ bool isContainerTag(const std::string& tag)
 {
     return tag == "g" || tag == "svg";
 }
+
+// The referenced element's own coordinates, before a <use> places it. A
+// <symbol> and a nested <svg> bring a viewBox and are therefore instantiated
+// into whatever box the use site asks for; everything else is drawn where it
+// was authored.
+bool isViewportTag(const std::string& tag)
+{
+    return tag == "symbol" || tag == "svg";
+}
+
+// A <use> may name an element that contains the <use>, which the specification
+// forbids and nothing in a file prevents. Eight levels is past anything an
+// honest document nests and short enough that a cycle costs nothing.
+constexpr int maxUseDepth = 8;
+
+// An element's presentation properties, its style="..." declarations first and
+// the attribute of the same name after.
+//
+// Which way round matters: a style attribute is a CSS declaration block, so
+// where a document writes a property both ways the declaration is the one that
+// wins. Drawing programs emit both constantly - the attribute for compatibility
+// and the declaration for what they actually mean.
+struct PropertyReader
+{
+    explicit PropertyReader(const SVGElement& elementToUse)
+        : element(elementToUse)
+        , declarations(parseStyleDeclarations(elementToUse.attr("style")))
+    {
+    }
+
+    std::string operator()(const std::string& name) const
+    {
+        auto found = declarations.find(name);
+
+        return found != declarations.end() ? found->second : element.attr(name);
+    }
+
+    const SVGElement& element;
+    std::unordered_map<std::string, std::string> declarations;
+};
+
+void applyDashPattern(const std::string& value, GPUWidgets::DashPattern& dash)
+{
+    if (value.empty())
+        return;
+
+    dash.lengths = Strings::toLower(value) == "none" ? Vector<float> {}
+                                                     : parseNumberList(value);
+}
+
+void collectIds(const SVGElement& element,
+                std::unordered_map<std::string, const SVGElement*>& byId)
+{
+    auto id = element.attr("id");
+
+    // First wins where a document repeats an id, which is what a browser does
+    // with the same mistake.
+    if (!id.empty())
+        byId.emplace(id, &element);
+
+    for (auto& child: element.children)
+        collectIds(child, byId);
+}
 } // namespace
 
 void SVGComponent::applyPresentationAttributes(Style& style,
                                                const SVGElement& element)
 {
-    applyColour(element.attr("fill"), style.fill, style.hasFill);
-    applyColour(element.attr("stroke"), style.stroke, style.hasStroke);
+    auto read = PropertyReader {element};
 
-    applyNumber(element.attr("stroke-width"), style.strokeStyle.width);
-    applyNumber(element.attr("stroke-miterlimit"), style.strokeStyle.miterLimit);
-    applyNumber(element.attr("fill-opacity"), style.fillOpacity);
-    applyNumber(element.attr("stroke-opacity"), style.strokeOpacity);
-    applyNumber(element.attr("font-size"), style.fontSize);
+    applyColour(read("fill"), style.fill, style.hasFill);
+    applyColour(read("stroke"), style.stroke, style.hasStroke);
 
-    auto opacity = element.attr("opacity");
+    applyNumber(read("stroke-width"), style.strokeStyle.width);
+    applyNumber(read("stroke-miterlimit"), style.strokeStyle.miterLimit);
+    applyNumber(read("stroke-dashoffset"), style.dash.offset);
+    applyNumber(read("fill-opacity"), style.fillOpacity);
+    applyNumber(read("stroke-opacity"), style.strokeOpacity);
+    applyNumber(read("font-size"), style.fontSize);
+
+    applyDashPattern(read("stroke-dasharray"), style.dash);
+
+    auto opacity = read("opacity");
     if (!opacity.empty())
         style.opacity *= Strings::parseFloatOr(opacity, 1.f);
 
-    auto fillRule = element.attr("fill-rule");
+    auto fillRule = read("fill-rule");
     if (!fillRule.empty())
         style.fillRule = parseFillRule(fillRule);
 
-    auto cap = element.attr("stroke-linecap");
+    auto cap = read("stroke-linecap");
     if (!cap.empty())
         style.strokeStyle.cap = parseLineCap(cap);
 
-    auto join = element.attr("stroke-linejoin");
+    auto join = read("stroke-linejoin");
     if (!join.empty())
         style.strokeStyle.join = parseLineJoin(join);
 
-    auto family = element.attr("font-family");
+    auto family = read("font-family");
     if (!family.empty())
         style.fontFamily = firstFontFamily(family);
 
+    // Read off the attribute and not through the declarations, unlike everything
+    // above it. SVG 1.1 has no transform *property*, and the CSS one that came
+    // later writes its arguments differently enough - lengths with units,
+    // angles with them too - that reading it here would be reading a grammar
+    // parseTransformMatrix does not implement.
     auto transform = element.attr("transform");
     if (!transform.empty())
     {
@@ -283,8 +360,15 @@ void SVGComponent::setDocument(const SVGElement& root)
 {
     documentRoot = root;
 
+    // Into the copy, not the argument: these outlive the call and the caller's
+    // element does not have to.
+    elementsById.clear();
+    collectIds(documentRoot, elementsById);
+
     documentWidth = root.numAttr("width", 300.f);
     documentHeight = root.numAttr("height", 150.f);
+
+    aspectRatio = parsePreserveAspectRatio(root.attr("preserveAspectRatio"));
 
     auto numbers = parseNumberList(root.attr("viewBox"));
 
@@ -312,14 +396,7 @@ void SVGComponent::setDocument(const SVGElement& root)
 
 GPUWidgets::AffineTransform SVGComponent::documentToComponent() const
 {
-    if (viewBox.w <= 0.f || viewBox.h <= 0.f)
-        return {};
-
-    auto area = getLocalBounds();
-
-    return GPUWidgets::AffineTransform::translation(-viewBox.x, -viewBox.y)
-        .then(GPUWidgets::AffineTransform::scaling(area.w / viewBox.w,
-                                                   area.h / viewBox.h));
+    return viewBoxTransform(viewBox, getLocalBounds(), aspectRatio);
 }
 
 void SVGComponent::clearContent()
@@ -328,11 +405,21 @@ void SVGComponent::clearContent()
     shapes.clear();
     texts.clear();
 
-    // Dropped with the rest, so a resize rebuilds every glyph atlas the document
-    // needs. Which is the honest cost: a resize re-rasterizes every mask in the
-    // document anyway, and one atlas per distinct text size is small beside
-    // that. It would be worth keeping if a document were ever text-heavy enough
-    // for the rebuild to show.
+    // Set aside for the next build rather than destroyed. A renderer bakes its
+    // family and size into a glyph atlas, so dropping one and asking for the
+    // same pair again is a raster of every glyph the document uses -- and a
+    // rebuild is not rare, since anything that changes the document's size runs
+    // one.
+    //
+    // Kept on the side rather than simply kept, because a *resize* genuinely
+    // asks for new sizes: the point size is the document's font size times the
+    // transform's scale, so a drag that crosses two hundred widths would leave
+    // two hundred renderers behind if the cache only ever grew. findOrAddFont
+    // claims what it recognizes out of here and rebuild drops the rest, which
+    // makes the cache exactly what the last build used.
+    for (auto& font: fonts)
+        spareFonts.add(std::move(font));
+
     fonts.clear();
 }
 
@@ -349,13 +436,17 @@ void SVGComponent::rebuild()
 
     auto area = getLocalBounds();
 
-    if (area.w <= 0.f || area.h <= 0.f || documentRoot.tag.empty())
-        return;
+    if (area.w > 0.f && area.h > 0.f && !documentRoot.tag.empty())
+    {
+        auto style = Style {};
+        style.transform = documentToComponent();
 
-    auto style = Style {};
-    style.transform = documentToComponent();
+        buildElement(documentRoot, style, 0);
+    }
 
-    buildElement(documentRoot, style);
+    // Every renderer the build did not claim back out of the cache: the sizes
+    // the document used to want and does not any more.
+    spareFonts.clear();
 }
 
 void SVGComponent::resized()
@@ -363,7 +454,9 @@ void SVGComponent::resized()
     rebuild();
 }
 
-void SVGComponent::buildElement(const SVGElement& element, const Style& inherited)
+void SVGComponent::buildElement(const SVGElement& element,
+                                const Style& inherited,
+                                int depth)
 {
     auto style = inherited;
     applyPresentationAttributes(style, element);
@@ -380,11 +473,96 @@ void SVGComponent::buildElement(const SVGElement& element, const Style& inherite
         return;
     }
 
+    if (element.tag == "use")
+    {
+        buildUse(element, style, depth);
+        return;
+    }
+
+    // Which is also what makes <defs> and <symbol> draw nothing where they
+    // stand: neither is a container here, so neither is descended into except
+    // through the <use> that names it.
     if (!isContainerTag(element.tag))
         return;
 
     for (auto& child: element.children)
-        buildElement(child, style);
+        buildElement(child, style, depth);
+}
+
+const SVGElement* SVGComponent::findElementById(const std::string& reference) const
+{
+    // "#name" and nothing else: a reference into another document has nothing
+    // here to look in, and neither has an empty one.
+    if (reference.size() < 2 || reference.front() != '#')
+        return nullptr;
+
+    auto found = elementsById.find(reference.substr(1));
+
+    return found != elementsById.end() ? found->second : nullptr;
+}
+
+void SVGComponent::buildUse(const SVGElement& element, const Style& style, int depth)
+{
+    if (depth >= maxUseDepth)
+        return;
+
+    auto* target = findElementById(element.attr("href"));
+
+    if (target == nullptr)
+        return;
+
+    auto useStyle = style;
+
+    // A use is the referenced element inside a group carrying the use's own
+    // attributes, with x and y translating *within* that group -- so the
+    // translation is the first thing the referenced geometry meets and the use's
+    // transform, already folded into style, is applied to the result.
+    useStyle.transform = GPUWidgets::AffineTransform::translation(
+                             element.numAttr("x"), element.numAttr("y"))
+                             .then(useStyle.transform);
+
+    if (isViewportTag(target->tag))
+    {
+        buildSymbol(*target, element, useStyle, depth + 1);
+        return;
+    }
+
+    // Built again rather than shared. A PathShape holds the mask a kernel
+    // rasterized at one size and one place, so two use sites of one symbol are
+    // two masks however identical the markup was -- which is the tier's cost for
+    // an instanced document, and the reason a use of a big shape is as expensive
+    // as writing it out.
+    buildElement(*target, useStyle, depth + 1);
+}
+
+void SVGComponent::buildSymbol(const SVGElement& symbol,
+                               const SVGElement& useSite,
+                               const Style& inherited,
+                               int depth)
+{
+    auto style = inherited;
+    applyPresentationAttributes(style, symbol);
+
+    auto numbers = parseNumberList(symbol.attr("viewBox"));
+
+    if (numbers.size() >= 4)
+    {
+        auto box = Graphics::Rect {numbers[0], numbers[1], numbers[2], numbers[3]};
+
+        // The use site says how big the symbol is drawn. Said nothing, it is
+        // drawn at the size it was authored, which is the box itself.
+        auto viewport = Graphics::Rect {0.f,
+                                        0.f,
+                                        useSite.numAttr("width", box.w),
+                                        useSite.numAttr("height", box.h)};
+
+        auto fit = parsePreserveAspectRatio(symbol.attr("preserveAspectRatio"));
+
+        style.transform = viewBoxTransform(box, viewport, fit).then(style.transform);
+    }
+
+    for (auto& child: symbol.children)
+        buildElement(child, style, depth);
 }
 
 void SVGComponent::buildShapes(const SVGElement& element, const Style& style)
@@ -423,7 +601,12 @@ void SVGComponent::buildShapes(const SVGElement& element, const Style& style)
             // non-zero whatever the element's fill-rule said, because it is a
             // union of overlapping contours and even-odd would read every
             // overlap as a hole.
-            auto region = GPUWidgets::strokeToFill(path, style.strokeStyle);
+            //
+            // Dashed before stroking, since a dash cuts the centre line and the
+            // stroke has replaced it. Free when nothing asked for one: dashPath
+            // hands an empty pattern its path straight back.
+            auto region = GPUWidgets::strokeToFill(
+                GPUWidgets::dashPath(path, style.dash), style.strokeStyle);
 
             addShape(region.transformed(style.transform),
                      style.stroke.withAlpha(style.stroke.a * style.opacity
@@ -493,10 +676,28 @@ int SVGComponent::findOrAddFont(const std::string& family, float pointSize)
     // Matched with a tolerance rather than exactly: two sizes a hundredth of a
     // point apart rasterize to the same glyphs and would otherwise cost two
     // atlases and two batch breaks to say so.
+    auto matches = [&](const DocumentFont& font)
+    {
+        return font.family == family && std::abs(font.pointSize - pointSize) < 0.01f;
+    };
+
     for (auto i = 0; i < fonts.size(); ++i)
-        if (fonts[i]->family == family
-            && std::abs(fonts[i]->pointSize - pointSize) < 0.01f)
+        if (matches(*fonts[i]))
             return i;
+
+    // The previous build's, if it wanted this one too -- which a rebuild at an
+    // unchanged size always does. Moved across rather than copied, a renderer
+    // owning a glyph atlas being the thing worth not making twice.
+    for (auto i = 0; i < spareFonts.size(); ++i)
+    {
+        if (!matches(*spareFonts[i]))
+            continue;
+
+        fonts.add(std::move(spareFonts[i]));
+        spareFonts.removeAt(i);
+
+        return fonts.size() - 1;
+    }
 
     fonts.createNew(family, pointSize);
 

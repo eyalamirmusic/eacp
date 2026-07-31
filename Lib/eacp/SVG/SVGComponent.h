@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SVGAttributes.h"
 #include "SVGElement.h"
 
 #include <eacp/UI/UI.h>
@@ -33,9 +34,10 @@ namespace eacp::SVG
 //     document.setDocument(*SVG::parseXML(markup));
 //     host.setRootComponent(document);
 //
-// What rung 1 does not do: gradients, clip paths and masks, group opacity as
-// compositing, defs/use, CSS selectors, filters, images, and elliptical arcs.
-// An element asking for one of those draws without it rather than not at all.
+// What it does not do: gradients, clip paths and masks, group opacity as
+// compositing, CSS selectors (the style *attribute* is read, a <style> element
+// is not), filters and images. An element asking for one of those draws without
+// it rather than not at all.
 class SVGComponent : public UI::Component
 {
 public:
@@ -50,6 +52,15 @@ public:
     // otherwise its width and height. What the geometry is authored in, before
     // the transform onto this component's bounds.
     Graphics::Rect getViewBox() const { return viewBox; }
+
+    // How that box is fitted to this component. The document's own
+    // preserveAspectRatio, which defaults to uniform and centred rather than to
+    // the stretch a naive fit would give.
+    PreserveAspectRatio getAspectRatio() const { return aspectRatio; }
+
+    // The document's units onto this component's points: what a caller placing
+    // something over the artwork, or hit-testing into it, needs.
+    GPUWidgets::AffineTransform documentToComponent() const;
 
     // The intrinsic size, for a caller sizing a window to the artwork.
     float getDocumentWidth() const { return documentWidth; }
@@ -163,9 +174,28 @@ private:
     // Everything the element says about itself, over what it inherited.
     static void applyPresentationAttributes(Style& style, const SVGElement& element);
 
-    void buildElement(const SVGElement& element, const Style& inherited);
+    // `depth` counts <use> indirections rather than tree depth, and exists
+    // because a document may reference an element that contains the reference:
+    // the specification forbids it and nothing stops a file doing it, so the
+    // walk stops rather than recursing until the stack runs out.
+    void buildElement(const SVGElement& element, const Style& inherited, int depth);
     void buildShapes(const SVGElement& element, const Style& style);
     void buildTextRun(const SVGElement& element, const Style& style);
+
+    // A <use>, which is the referenced element built again here: with this
+    // element's inherited style, its transform, and the extra translation its x
+    // and y ask for. Not a shared mask -- each use site has its own transform
+    // and therefore its own coverage, so there is nothing to share.
+    void buildUse(const SVGElement& element, const Style& style, int depth);
+
+    // A <symbol> (or a nested <svg>) instantiated by a use: a container that
+    // brings its own viewBox, mapped onto the size the use site asked for.
+    void buildSymbol(const SVGElement& symbol,
+                     const SVGElement& useSite,
+                     const Style& inherited,
+                     int depth);
+
+    const SVGElement* findElementById(const std::string& reference) const;
 
     void addShape(const GPUWidgets::Path& path,
                   const Graphics::Color& colour,
@@ -173,20 +203,25 @@ private:
 
     int findOrAddFont(const std::string& family, float pointSize);
 
-    // The document's own units onto this component's bounds: the viewBox origin
-    // moved to zero, then stretched to fill. preserveAspectRatio is not read,
-    // so a document whose aspect differs from its component distorts rather than
-    // letterboxes.
-    GPUWidgets::AffineTransform documentToComponent() const;
-
     SVGElement documentRoot;
     Graphics::Rect viewBox;
+    PreserveAspectRatio aspectRatio;
     float documentWidth = 0.f;
     float documentHeight = 0.f;
+
+    // Every element in the document that named itself, so a <use> can find it.
+    // Pointers into documentRoot, which is why that is stored whole and never
+    // edited after it is set.
+    std::unordered_map<std::string, const SVGElement*> elementsById;
 
     Vector<Drawable> order;
     OwnedVector<Shape> shapes;
     Vector<TextRun> texts;
     OwnedVector<DocumentFont> fonts;
+
+    // The previous build's renderers, between clearContent and the end of
+    // rebuild. See clearContent for why they are kept and why they are not kept
+    // for ever.
+    OwnedVector<DocumentFont> spareFonts;
 };
 } // namespace eacp::SVG
