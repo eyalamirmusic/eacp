@@ -34,7 +34,12 @@ namespace eacp::SVG
 //     document.setDocument(*SVG::parseXML(markup));
 //     host.setRootComponent(document);
 //
-// What it does not do: gradients, clip paths and masks, group opacity as
+// Gradients it does: linear and radial, any number of stops, all three spread
+// methods, both unit systems, gradientTransform, and one gradient inheriting
+// another through href. What it leaves out of them is the focal point of a
+// radial, which draws as a concentric one.
+//
+// What it does not do at all: clip paths and masks, group opacity as
 // compositing, CSS selectors (the style *attribute* is read, a <style> element
 // is not), filters and images. An element asking for one of those draws without
 // it rather than not at all.
@@ -125,6 +130,12 @@ private:
         UI::PathShape mask;
         Graphics::Color colour;
 
+        // The gradient the colour is replaced by, empty for the usual case.
+        // Resolved when the shape was built rather than at paint time, because
+        // placing one needs the geometry: a gradient in bounding-box units means
+        // something different for every element it paints.
+        UI::Gradient gradient;
+
         // The geometry's own bounds, kept because the mask's are only known once
         // a kernel has rasterized it and this has to be readable before that.
         Graphics::Rect maskBounds;
@@ -207,11 +218,19 @@ private:
                      const Style& inherited,
                      int depth);
 
-    const SVGElement* findElementById(const std::string& reference) const;
+    const SVGElement* findElementById(const std::string& id) const;
 
     void addShape(const GPUWidgets::Path& path,
                   const Graphics::Color& colour,
-                  GPUWidgets::FillRule rule);
+                  GPUWidgets::FillRule rule,
+                  const UI::Gradient& gradient = {});
+
+    // What a paint reference resolves to, against this document's ids and its
+    // viewBox. See SVG::resolveGradient, which is where the two coordinate
+    // systems are worked out.
+    UI::Gradient gradientFor(const std::string& reference,
+                             const Graphics::Rect& objectBounds,
+                             const GPUWidgets::AffineTransform& transform) const;
 
     int findOrAddFont(const std::string& family, float pointSize);
 

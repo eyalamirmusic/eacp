@@ -105,9 +105,13 @@ void ComponentHost::resized()
     else
     {
         paths.emplace();
-        shapes.emplace(
-            *paths, Point {bounds.w, bounds.h}, backingScale(), sampleCount());
-        meshes.emplace(Point {bounds.w, bounds.h}, sampleCount());
+        ramps.emplace();
+        shapes.emplace(*paths,
+                       *ramps,
+                       Point {bounds.w, bounds.h},
+                       backingScale(),
+                       sampleCount());
+        meshes.emplace(*ramps, Point {bounds.w, bounds.h}, sampleCount());
     }
 
     if (root != nullptr)
@@ -294,7 +298,8 @@ void ComponentHost::render(GPU::Frame& frame)
     shapes->begin(pass);
     meshes->begin(pass);
 
-    auto g = Graphics {*shapes, *meshes, *text, pass, bounds, backingScale()};
+    auto g =
+        Graphics {*shapes, *meshes, *ramps, *text, pass, bounds, backingScale()};
 
     paintComponent(*root, g);
 

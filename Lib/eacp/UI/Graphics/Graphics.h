@@ -39,6 +39,7 @@ class Graphics
 public:
     Graphics(ShapeBatch& shapesToUse,
              MeshBatch& meshesToUse,
+             GradientRamps& rampsToUse,
              Text::TextRenderer& textToUse,
              GPU::RenderPass& passToUse,
              const Rect& surfaceToUse,
@@ -46,6 +47,24 @@ public:
 
     void setColour(const Color& colour);
     Color getColour() const { return state.colour; }
+
+    // Fills what follows with a gradient rather than the flat colour, until
+    // clearGradient or a restoreState puts the colour back. Everything that
+    // fills takes it -- a rect, a rounded rect, a border, a line and a path --
+    // because to the renderer they are one primitive read several ways, and a
+    // gradient is a property of how it is coloured rather than of which it is.
+    //
+    // The geometry is read in the space in force *here*, not at the draw call:
+    // the ramp is claimed and the axis resolved once, so that a component
+    // filling twenty shapes from one gradient costs one lookup. Which is also
+    // why it is a call and not an argument -- see GradientRamps for where the
+    // colours go and why they are shared.
+    //
+    // A gradient the ramps had no room for falls back to the current colour, so
+    // a shape drawn through this always has something to be drawn in.
+    void setGradient(const Gradient& gradient);
+    void clearGradient();
+    bool hasGradient() const { return !state.gradient.isEmpty(); }
 
     // Fills the whole clip region, whatever the current origin is -- the usual
     // first line of a paint().
@@ -196,6 +215,12 @@ private:
     struct State
     {
         Color colour = Color::white();
+
+        // Already resolved against the ramps, so stacking a state is a copy of
+        // plain floats. A Gradient's own stop list here would allocate once per
+        // component in the tree, the walk saving and restoring around every one.
+        GradientFill gradient;
+
         Point origin;
         Rect clip;
     };
@@ -228,6 +253,7 @@ private:
 
     ShapeBatch& shapes;
     MeshBatch& meshes;
+    GradientRamps& ramps;
 
     // The host's renderer, and the one in force. They differ only inside a
     // ScopedTextRenderer.

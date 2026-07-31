@@ -1,5 +1,7 @@
 #include "ShapeBatch.h"
 
+#include "GradientShader.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -41,6 +43,12 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
         // mapping can only blur coverage that is already exact.
         maskAtlas.sampling = {GPU::TextureFilter::Nearest,
                               GPU::TextureAddressMode::Clamp};
+
+        // Linear, because a ramp is the opposite case: 256 texels stretched
+        // across whatever the shape is, so the filtering is what stops a
+        // gradient reading as the 256 bands it is stored as.
+        gradientRamps.sampling = {GPU::TextureFilter::Linear,
+                                  GPU::TextureAddressMode::Clamp};
         compile();
     }
 
@@ -56,6 +64,8 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
         auto color = instanceInput(&ShapeInstance::color, 1);
         auto shape = instanceInput(&ShapeInstance::shape, 1);
         auto mask = instanceInput(&ShapeInstance::mask, 1);
+        auto gradient = instanceInput(&ShapeInstance::gradient, 1);
+        auto gradientRamp = instanceInput(&ShapeInstance::gradientRamp, 1);
 
         auto position = origin + corner.x() * edgeX + corner.y() * edgeY;
         auto clipX = position.x() / screenSize.x() * 2.f - 1.f;
@@ -70,6 +80,12 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
         auto fragHalfSize = varying(halfSize);
         auto fragColor = varying(color);
         auto fragShape = varying(shape);
+
+        // Where this fragment is in the space the gradient was placed in, which
+        // is the same space the box is expressed in.
+        auto fragPosition = varying(position);
+        auto fragGradient = varying(gradient);
+        auto fragGradientRamp = varying(gradientRamp);
 
         // Where in the atlas this fragment reads. A zero-sized rect collapses
         // to one texel however big the quad is, which is what an unmasked shape
@@ -108,23 +124,32 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
         // skip it would buy back a cached read and cost a batch break.
         auto coverage = fieldCoverage * sample(maskAtlas, maskUV).x();
 
-        setFragment(float4(
-            fragColor.x(), fragColor.y(), fragColor.z(), fragColor.w() * coverage));
+        auto fill = gradientFill(fragColor,
+                                 fragPosition,
+                                 fragGradient,
+                                 fragGradientRamp,
+                                 fragShape.w(),
+                                 gradientRamps);
+
+        setFragment(float4(fill.x(), fill.y(), fill.z(), fill.w() * coverage));
     }
 
     GPU::Uniform<GPU::Float2> screenSize;
     GPU::Uniform<GPU::Float> pixelScale;
     GPU::Uniform<GPU::Texture2D> maskAtlas;
+    GPU::Uniform<GPU::Texture2D> gradientRamps;
 
-    EACP_SHADER(screenSize, pixelScale, maskAtlas)
+    EACP_SHADER(screenSize, pixelScale, maskAtlas, gradientRamps)
 };
 
 ShapeBatch::ShapeBatch(const CoverageAtlas& atlasToUse,
+                       GradientRamps& rampsToUse,
                        Point logicalSizeToUse,
                        float pixelScaleToUse,
                        int sampleCountToUse,
                        GPU::PixelFormat colorFormatToUse)
     : atlas(atlasToUse)
+    , ramps(rampsToUse)
     , logicalSize(logicalSizeToUse)
     , pixelScale(pixelScaleToUse)
     , sampleCount(sampleCountToUse)
@@ -212,9 +237,15 @@ void ShapeBatch::flush()
     if (instances.empty() || pass == nullptr)
         return;
 
+    // The rows baked while this run was being queued, uploaded before the draw
+    // that reads them. A row is written once and never rewritten, so this cannot
+    // disturb a draw already recorded.
+    ramps.commit();
+
     program->screenSize = Array {logicalSize.x, logicalSize.y};
     program->pixelScale = pixelScale;
     program->maskAtlas = atlas.getTexture();
+    program->gradientRamps = ramps.getTexture();
     program->setInstances(1, instances.data(), instances.size());
 
     pass->drawInstanced(*program, instances.size());
@@ -228,7 +259,8 @@ void ShapeBatch::addShape(Point origin,
                           Point halfSize,
                           const Color& color,
                           float cornerRadius,
-                          float borderWidth)
+                          float borderWidth,
+                          const GradientFill& gradient)
 {
     if (halfSize.x <= 0.f || halfSize.y <= 0.f || color.a <= 0.f)
         return;
@@ -259,11 +291,11 @@ void ShapeBatch::addShape(Point origin,
     instance.shape[0] = radius;
     instance.shape[1] = std::max(0.f, borderWidth);
     instance.shape[2] = borderWidth > 0.f ? 1.f : 0.f;
-    instance.shape[3] = 0.f;
 
     // Nothing masks a distance-field shape, so it reads the atlas's opaque
     // texel and its own coverage survives untouched.
     setMask(instance, atlas.getOpaqueUV());
+    setGradient(instance, gradient);
 
     instances.add(instance);
 }
@@ -276,7 +308,16 @@ void ShapeBatch::setMask(ShapeInstance& instance, const Rect& maskUV)
     instance.mask[3] = maskUV.h;
 }
 
-void ShapeBatch::fillMask(const Rect& rect, const Color& color, const Rect& maskUV)
+void ShapeBatch::setGradient(ShapeInstance& instance, const GradientFill& gradient)
+{
+    instance.shape[3] =
+        packGradient(gradient, instance.gradient, instance.gradientRamp);
+}
+
+void ShapeBatch::fillMask(const Rect& rect,
+                          const Color& color,
+                          const Rect& maskUV,
+                          const GradientFill& gradient)
 {
     if (rect.w <= 0.f || rect.h <= 0.f || color.a <= 0.f)
         return;
@@ -308,6 +349,7 @@ void ShapeBatch::fillMask(const Rect& rect, const Color& color, const Rect& mask
     instance.color[3] = color.a;
 
     setMask(instance, maskUV);
+    setGradient(instance, gradient);
 
     instances.add(instance);
 }
@@ -315,7 +357,8 @@ void ShapeBatch::fillMask(const Rect& rect, const Color& color, const Rect& mask
 void ShapeBatch::addAxisAlignedShape(const Rect& rect,
                                      const Color& color,
                                      float cornerRadius,
-                                     float borderWidth)
+                                     float borderWidth,
+                                     const GradientFill& gradient)
 {
     auto halfSize = Point {rect.w * 0.5f, rect.h * 0.5f};
     auto grownWidth = rect.w + antialiasMargin * 2.f;
@@ -327,28 +370,37 @@ void ShapeBatch::addAxisAlignedShape(const Rect& rect,
              halfSize,
              color,
              cornerRadius,
-             borderWidth);
+             borderWidth,
+             gradient);
 }
 
-void ShapeBatch::fillRect(const Rect& rect, const Color& color, float cornerRadius)
+void ShapeBatch::fillRect(const Rect& rect,
+                          const Color& color,
+                          float cornerRadius,
+                          const GradientFill& gradient)
 {
-    addAxisAlignedShape(rect, color, cornerRadius, 0.f);
+    addAxisAlignedShape(rect, color, cornerRadius, 0.f, gradient);
 }
 
 void ShapeBatch::drawRect(const Rect& rect,
                           const Color& color,
                           float thickness,
-                          float cornerRadius)
+                          float cornerRadius,
+                          const GradientFill& gradient)
 {
     if (thickness <= 0.f)
         return;
 
     // Drawn inside the edges, so the outline of a rect never grows it. The field
     // is measured from the rect's own boundary, so the ring lands within it.
-    addAxisAlignedShape(rect, color, cornerRadius, thickness);
+    addAxisAlignedShape(rect, color, cornerRadius, thickness, gradient);
 }
 
-void ShapeBatch::drawLine(Point a, Point b, const Color& color, float thickness)
+void ShapeBatch::drawLine(Point a,
+                          Point b,
+                          const Color& color,
+                          float thickness,
+                          const GradientFill& gradient)
 {
     if (thickness <= 0.f)
         return;
@@ -385,6 +437,7 @@ void ShapeBatch::drawLine(Point a, Point b, const Color& color, float thickness)
              {halfLength, halfThickness},
              color,
              halfThickness,
-             0.f);
+             0.f,
+             gradient);
 }
 } // namespace eacp::UI

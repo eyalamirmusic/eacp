@@ -460,4 +460,31 @@ Vector<Graphics::Point> parsePointList(const std::string& value)
     return points;
 }
 
+std::string parsePaintReference(const std::string& value)
+{
+    auto open = value.find("url(");
+
+    if (open == std::string::npos)
+        return {};
+
+    auto close = value.find(')', open);
+
+    if (close == std::string::npos)
+        return {};
+
+    auto reference = trimmed(value.substr(open + 4, close - open - 4));
+
+    // Quoted is legal and common: url('#id') and url("#id") mean what url(#id)
+    // does.
+    if (reference.size() >= 2
+        && (reference.front() == '\'' || reference.front() == '"')
+        && reference.back() == reference.front())
+        reference = reference.substr(1, reference.size() - 2);
+
+    if (!reference.empty() && reference.front() == '#')
+        reference.erase(reference.begin());
+
+    return reference;
+}
+
 } // namespace eacp::SVG
