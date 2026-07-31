@@ -80,7 +80,7 @@ void PathRasterizer::setPath(const Path& path, FillRule rule)
     covered = {};
     coverageWidth = 0;
     coverageHeight = 0;
-    segmentTests = 0;
+    segmentTests = -1;
     soloStale = true;
 
     if (path.isEmpty() || scale <= 0.f)
@@ -247,8 +247,6 @@ void PathRasterizer::buildTiles()
     // nothing if one did.
     if (tileSegments.empty())
         tileSegments.resize(4);
-
-    countSegmentTests();
 }
 
 int PathRasterizer::getCellCount() const
@@ -256,8 +254,11 @@ int PathRasterizer::getCellCount() const
     return tilesWide * coverageHeight;
 }
 
-void PathRasterizer::countSegmentTests()
+long long PathRasterizer::getSegmentTests() const
 {
+    if (segmentTests >= 0)
+        return segmentTests;
+
     segmentTests = 0;
 
     for (auto row = 0; row < tilesHigh; ++row)
@@ -276,6 +277,8 @@ void PathRasterizer::countSegmentTests()
             segmentTests += (long long) pixels * (long long) listed;
         }
     }
+
+    return segmentTests;
 }
 
 void PathRasterizer::ensureOwnTexture()

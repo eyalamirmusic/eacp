@@ -1810,3 +1810,96 @@ that fits still showing its own side count.
 Unchanged, and now the only item on it: **binning and emit on the GPU**, which is
 nearly the whole of what a dense path costs — the 100k-segment artwork is 4.2ms
 of CPU, and there is no longer anything else in it for them to share with.
+
+*(Measured before building. It is three stages rather than two, and the order is
+not this one — see below.)*
+
+# Binning and emit — phase 0
+
+The last rung-3 item, measured before anything is built for it, the way phase 0
+was. Phase 0's own split is no longer usable: it was macOS, it predates batching,
+and the column it was dominated by — the backdrop — no longer exists.
+
+## How it had to be measured, which is the part worth keeping
+
+The obvious instrumentation is a clock pair around each stage, and on this code
+it is **wrong by a factor of three**. Wrapping the emit loop and the binning loop
+in scopes holding a timer with a destructor tripled the whole translation unit:
+the 100k-segment artwork reads 4.8ms uninstrumented and 15ms instrumented, and
+the inflation is not the clocks — it is what a destructor in a hot function does
+to what the compiler will do around it.
+
+It is worth naming because of *how it looked*. The stages summed to the inflated
+total, the sum agreed with a wall clock taken around the same loop, and every
+internal consistency check passed. A cross-check inside the instrumented build
+cannot see a cost the instrumented build is paying everywhere. What caught it was
+running the *committed* binary against the same corpus.
+
+So the split is taken **by removal**: `setPath` stops after stage n, and the
+differences between the stops are the stages. Nothing is added inside any loop,
+and the total lands on the uninstrumented figure — 4.043 against the main table's
+4.071, which is the check that the method is sound.
+
+## The split
+
+Windows on a Parallels vGPU, release, alternated across stages so the machine's
+drift does not land on whichever was measured last.
+
+| path | emit | bin | fill | total | bin+emit |
+|---|---|---|---|---|---|
+| knob indicator, 40pt | 0.001 | 0.002 | 0.001 | 0.003 | 82% |
+| knob indicator, 96pt | 0.001 | 0.005 | 0.001 | 0.006 | 91% |
+| PathQuality panel | 0.001 | 0.006 | 0.004 | 0.011 | 63% |
+| automation curve, 1200pt | 0.006 | 0.033 | 0.011 | 0.050 | 78% |
+| full-window ellipse | 0.002 | **0.013** | **0.051** | 0.066 | 23% |
+| artwork, 4k segments | 0.030 | 0.196 | 0.060 | 0.285 | 79% |
+| artwork, 20k segments | 0.149 | 0.695 | 0.170 | 1.013 | 83% |
+| artwork, 100k segments | 0.728 | **2.723** | 0.694 | 4.145 | 83% |
+
+- **`emit`** is the flattened outline into directed segments in pixel space.
+- **`bin`** is the per-segment, per-tile-row clip: which tiles each segment lands
+  in, the crossings, and the counts.
+- **`fill`** is the prefix sum over the tiles, the cursor pass, and the
+  counting-sort scatter of the segments into their tiles.
+
+**Binning is the largest stage on every path but one**, and it is two thirds of
+the dense artwork. That is what the plan expected.
+
+**The exception is the finding.** The full-window ellipse spends 77% of its time
+in `fill`, and `fill` is where the prefix sum lives — `O(tiles)`, which is
+`O(area)`. 201 × 126 tiles is 25,326 of them, summed and cursored on every
+`setPath`, for a path with **281 segments**. It is the backdrop's story exactly,
+one stage over: an outline a knob could carry, priced by the area it covers. Emit
+is 18% of the dense artwork here against phase 0's 32% on macOS, so it is the
+smallest of the three and not the place to start.
+
+## One thing the measurement found that was not a stage
+
+`countSegmentTests` was a fourth column, and it was **21% of the full-window
+ellipse**. It walks every tile to compute `getSegmentTests()` — a number no demo,
+no widget and nothing in `eacp-ui` reads, only a bench and a test.
+
+It is counted on demand now and cached. That is not a rung, a phase or a design;
+it was `O(area)` work on every rasterization, spent on a getter.
+
+*Verified:* the ellipse goes 0.089 → 0.066ms of CPU and the whole corpus is
+unchanged otherwise; 900/900 pass, the test that reads the number included.
+
+## What this makes the work
+
+Three stages, and the order is not the one the plan has been carrying:
+
+1. **Binning**, which is 60–70% of every path with a real outline.
+2. **The `fill` prefix sum**, which is `O(area)` and is the whole of the
+   window-sized sparse path — and which the backdrop's phase 4 already knows how
+   to answer, having answered the same shape.
+3. **Emit**, which is a fifth of the dense case and nothing anywhere else.
+
+The prerequisites are all shipped: atomics for the counts, threadgroup memory and
+barriers for a per-group scan, indirect dispatch for a stage sized by the one
+before it.
+
+**The floor this cannot go below, restated:** a UI-scale path is 0.003–0.011ms of
+CPU, and the three backdrop stages already cost it 0.03ms of GPU it did not pay
+before. Whatever ships has to keep the CPU path for small paths, or it is a
+regression for the only interface eacp draws today.
