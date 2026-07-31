@@ -20,6 +20,10 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND NOT IOS)
     add_subdirectory(Text)
     add_subdirectory(GPUWidgets)
     add_subdirectory(UI)
+
+    # The parse layer and the geometry it builds. Above UI in the list because
+    # SVGComponent is a UI::Component, and none of these needs a window.
+    add_subdirectory(SVG)
     add_subdirectory(Camera)
 
     # The video playback stack above the Decoder interface — frame queueing,
