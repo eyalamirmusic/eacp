@@ -96,26 +96,6 @@ ColorResult parseColor(const std::string& value)
 
 namespace
 {
-void parseTranslate(NumberReader& reader, Transform& result)
-{
-    result.translateX = reader.readFloat();
-    result.translateY = reader.readFloat();
-}
-
-void parseScale(NumberReader& reader, Transform& result)
-{
-    result.scaleX = reader.readFloat();
-    auto saved = reader.pos;
-    result.scaleY = reader.readFloat();
-    if (reader.pos == saved)
-        result.scaleY = result.scaleX;
-}
-
-void parseRotate(NumberReader& reader, Transform& result)
-{
-    result.rotateDeg = reader.readFloat();
-}
-
 void skipWhitespace(const std::string& value, size_t& pos)
 {
     while (pos < value.size()
@@ -141,32 +121,22 @@ void advancePastClosingParen(const std::string& value, size_t& pos)
         ++pos;
 }
 
-using TransformFunctionParser = void (*)(NumberReader&, Transform&);
-
-struct TransformFunction
+std::string_view readFunctionName(const std::string& value, size_t& pos)
 {
-    std::string_view name;
-    TransformFunctionParser parse;
-};
+    auto start = pos;
 
-constexpr TransformFunction transformFunctions[] = {
-    {"translate", &parseTranslate},
-    {"scale", &parseScale},
-    {"rotate", &parseRotate},
-};
+    while (pos < value.size()
+           && std::isalpha(static_cast<unsigned char>(value[pos])))
+        ++pos;
 
-TransformFunctionParser matchTransformFunction(const std::string& value, size_t pos)
-{
-    for (const auto& fn: transformFunctions)
-        if (value.compare(pos, fn.name.size(), fn.name) == 0)
-            return fn.parse;
-    return nullptr;
+    return std::string_view {value}.substr(start, pos - start);
 }
-} // namespace
 
-Transform parseTransform(const std::string& value)
+// Hands each function of a transform list, in the order written, to `consume` as
+// its name and a reader positioned on its arguments.
+template <typename Consumer>
+void forEachTransformFunction(const std::string& value, Consumer&& consume)
 {
-    auto result = Transform();
     auto pos = size_t {0};
 
     while (pos < value.size())
@@ -175,8 +145,9 @@ Transform parseTransform(const std::string& value)
         if (pos >= value.size())
             break;
 
-        auto parse = matchTransformFunction(value, pos);
-        if (parse == nullptr)
+        auto name = readFunctionName(value, pos);
+
+        if (name.empty())
         {
             ++pos;
             continue;
@@ -186,10 +157,127 @@ Transform parseTransform(const std::string& value)
             break;
 
         auto reader = NumberReader {value, pos};
-        parse(reader, result);
+        consume(name, reader);
         pos = reader.pos;
+
         advancePastClosingParen(value, pos);
     }
+}
+
+// The second of a pair that may be written once for both, which is how scale and
+// translate are allowed to be spelled.
+float readOptionalFloat(NumberReader& reader, float fallback)
+{
+    return reader.hasNumber() ? reader.readFloat() : fallback;
+}
+
+float toRadians(float degrees)
+{
+    return degrees * GPUWidgets::pi / 180.f;
+}
+} // namespace
+
+Transform parseTransform(const std::string& value)
+{
+    auto result = Transform();
+
+    forEachTransformFunction(value,
+                             [&result](std::string_view name, NumberReader& reader)
+                             {
+                                 if (name == "translate")
+                                 {
+                                     result.translateX = reader.readFloat();
+                                     result.translateY =
+                                         readOptionalFloat(reader, 0.f);
+                                 }
+                                 else if (name == "scale")
+                                 {
+                                     result.scaleX = reader.readFloat();
+                                     result.scaleY =
+                                         readOptionalFloat(reader, result.scaleX);
+                                 }
+                                 else if (name == "rotate")
+                                 {
+                                     result.rotateDeg = reader.readFloat();
+                                 }
+                             });
+
+    return result;
+}
+
+namespace
+{
+GPUWidgets::AffineTransform readTransformFunction(std::string_view name,
+                                                  NumberReader& reader)
+{
+    using Affine = GPUWidgets::AffineTransform;
+
+    if (name == "translate")
+    {
+        auto x = reader.readFloat();
+        return Affine::translation(x, readOptionalFloat(reader, 0.f));
+    }
+
+    if (name == "scale")
+    {
+        auto x = reader.readFloat();
+        return Affine::scaling(x, readOptionalFloat(reader, x));
+    }
+
+    if (name == "rotate")
+    {
+        auto radians = toRadians(reader.readFloat());
+
+        if (!reader.hasNumber())
+            return Affine::rotation(radians);
+
+        // The three-argument form rotates about a point rather than the origin,
+        // which is how a document spins a shape in place without first working
+        // out where the origin put it.
+        auto centreX = reader.readFloat();
+        auto centreY = readOptionalFloat(reader, 0.f);
+
+        return Affine::rotationAbout(radians, {centreX, centreY});
+    }
+
+    if (name == "skewX")
+        return Affine::skew(toRadians(reader.readFloat()), 0.f);
+
+    if (name == "skewY")
+        return Affine::skew(0.f, toRadians(reader.readFloat()));
+
+    if (name == "matrix")
+    {
+        auto result = Affine {};
+        result.a = reader.readFloat();
+        result.b = reader.readFloat();
+        result.c = reader.readFloat();
+        result.d = reader.readFloat();
+        result.tx = reader.readFloat();
+        result.ty = reader.readFloat();
+
+        return result;
+    }
+
+    return {};
+}
+} // namespace
+
+GPUWidgets::AffineTransform parseTransformMatrix(const std::string& value)
+{
+    auto result = GPUWidgets::AffineTransform {};
+
+    forEachTransformFunction(
+        value,
+        [&result](std::string_view name, NumberReader& reader)
+        {
+            // A list composes right to left: each function transforms the
+            // coordinate system the next one is written in, so
+            // translate(..) rotate(..) rotates first and then translates. Which
+            // makes a newly read function the one applied *before* everything
+            // read so far.
+            result = readTransformFunction(name, reader).then(result);
+        });
 
     return result;
 }

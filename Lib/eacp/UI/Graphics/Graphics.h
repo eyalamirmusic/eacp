@@ -94,6 +94,48 @@ public:
     float lineHeight() const;
     float ascent() const;
 
+    // Draws the text that follows through `renderer` rather than the host's.
+    //
+    // A ComponentHost carries one font: a TextRenderer bakes its family at
+    // construction and rebuilds its atlas when the size changes, so a family and
+    // a size are properties of the host and only FontStyle varies per call. That
+    // is right for an interface, whose whole point is that it looks like one
+    // thing, and wrong for a document, which mixes both in one tree - an SVG with
+    // an 18pt heading over 11pt labels is two fonts and there is no third
+    // renderer to ask.
+    //
+    // So a caller that needs one keeps its own renderer, per family and size,
+    // and swaps it in around the run. Measurement follows it, which is the part
+    // that matters: measureText, lineHeight and ascent all report the swapped-in
+    // font, so a centred string centres against the glyphs that will actually be
+    // drawn.
+    //
+    // It costs a batch break each way. Every renderer has its own glyph atlas
+    // and therefore its own texture, so the outgoing one's queue has to be drawn
+    // before the incoming one's - which is the same cost a clip change pays, and
+    // the reason to swap once per run rather than once per string.
+    void setTextRenderer(Text::TextRenderer& renderer);
+    void resetTextRenderer();
+    Text::TextRenderer& getTextRenderer() const { return *text; }
+
+    struct ScopedTextRenderer
+    {
+        ScopedTextRenderer(Graphics& graphicsToUse, Text::TextRenderer& renderer)
+            : graphics(graphicsToUse)
+            , previous(graphicsToUse.getTextRenderer())
+        {
+            graphics.setTextRenderer(renderer);
+        }
+
+        ~ScopedTextRenderer() { graphics.setTextRenderer(previous); }
+
+        ScopedTextRenderer(const ScopedTextRenderer&) = delete;
+        ScopedTextRenderer& operator=(const ScopedTextRenderer&) = delete;
+
+        Graphics& graphics;
+        Text::TextRenderer& previous;
+    };
+
     void translate(float x, float y);
 
     // Narrows the clip to `rect`, expressed in the current space. Never widens
@@ -159,7 +201,12 @@ private:
     void applyClip(const Rect& surfaceClip);
 
     ShapeBatch& shapes;
-    Text::TextRenderer& text;
+
+    // The host's renderer, and the one in force. They differ only inside a
+    // ScopedTextRenderer.
+    Text::TextRenderer& hostText;
+    Text::TextRenderer* text;
+
     GPU::RenderPass& pass;
 
     Rect surface;

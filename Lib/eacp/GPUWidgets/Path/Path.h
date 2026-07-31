@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Common.h"
+#include "AffineTransform.h"
 
 namespace eacp::GPUWidgets
 {
@@ -66,6 +66,19 @@ public:
     void addRect(const Graphics::Rect& rect);
     void addRoundedRect(const Graphics::Rect& rect, float cornerRadius);
     void addEllipse(const Graphics::Rect& rect);
+
+    // The same geometry with every point mapped through `transform`.
+    //
+    // It maps the polyline, not the curves it was flattened from, so the segment
+    // count is whatever the flatness in force when the curves were added asked
+    // for. Scaling a path up afterwards therefore magnifies the flattening error
+    // with it, and a circle built at its authored size and then scaled by ten
+    // reads as the polygon it always was. Set setFlatness to the tolerance the
+    // *result* needs - the authored tolerance divided by
+    // transform.getScaleFactor() - before building anything meant to be
+    // transformed.
+    Path transformed(const AffineTransform& transform) const;
+    Path scaled(float scaleX, float scaleY) const;
 
     // The smallest rectangle containing every point; an empty rect for an empty
     // path.

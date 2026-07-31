@@ -11,7 +11,8 @@ Graphics::Graphics(ShapeBatch& shapesToUse,
                    const Rect& surfaceToUse,
                    float backingScaleToUse)
     : shapes(shapesToUse)
-    , text(textToUse)
+    , hostText(textToUse)
+    , text(&textToUse)
     , pass(passToUse)
     , surface(surfaceToUse)
     , backingScale(backingScaleToUse)
@@ -42,8 +43,8 @@ void Graphics::applyClip(const Rect& surfaceClip)
     // itself; the text renderer has to be told, and then restarted for the
     // glyphs that follow.
     shapes.flush();
-    text.flush(pass);
-    text.begin();
+    text->flush(pass);
+    text->begin();
 
     if (sameRect(surfaceClip, surface))
         shapes.clearScissorRect();
@@ -130,18 +131,18 @@ void Graphics::fillPath(const PathShape& shape)
 float Graphics::drawText(std::string_view textToDraw, Point baselineLeft)
 {
     auto pen = toSurface(baselineLeft);
-    auto width = text.measure(textToDraw);
+    auto width = text->measure(textToDraw);
 
     prepareToDraw({pen.x, pen.y - ascent(), width, lineHeight()});
 
-    return text.draw(textToDraw, pen, state.colour);
+    return text->draw(textToDraw, pen, state.colour);
 }
 
 void Graphics::drawText(std::string_view textToDraw,
                         const Rect& area,
                         Justification justification)
 {
-    auto width = text.measure(textToDraw);
+    auto width = text->measure(textToDraw);
 
     auto x = area.x;
 
@@ -159,17 +160,43 @@ void Graphics::drawText(std::string_view textToDraw,
 
 float Graphics::measureText(std::string_view textToMeasure) const
 {
-    return text.measure(textToMeasure);
+    return text->measure(textToMeasure);
 }
 
 float Graphics::lineHeight() const
 {
-    return text.lineHeight();
+    return text->lineHeight();
 }
 
 float Graphics::ascent() const
 {
-    return text.ascent();
+    return text->ascent();
+}
+
+// Both queues drain before the swap, for the same reason a clip change drains
+// them: what was issued under the old renderer has to be drawn from the old
+// renderer's atlas, and after this call there is no way back to it. The shapes
+// go too, so a fill queued before a run of text still ends up underneath it.
+void Graphics::setTextRenderer(Text::TextRenderer& renderer)
+{
+    if (text == &renderer)
+        return;
+
+    shapes.flush();
+    text->flush(pass);
+
+    text = &renderer;
+
+    // The incoming renderer has its own viewport and scale, and a document's
+    // renderer is built once and used across resizes, so it is told rather than
+    // assumed to know.
+    text->setViewport({surface.w, surface.h}, backingScale);
+    text->begin();
+}
+
+void Graphics::resetTextRenderer()
+{
+    setTextRenderer(hostText);
 }
 
 void Graphics::translate(float x, float y)
@@ -216,7 +243,7 @@ void Graphics::flush()
     // the fills, which is what a component drawing its own background and then
     // its own caption wants. See the module note on interleaving.
     shapes.flush();
-    text.flush(pass);
-    text.begin();
+    text->flush(pass);
+    text->begin();
 }
 } // namespace eacp::UI
