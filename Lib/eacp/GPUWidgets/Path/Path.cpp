@@ -243,6 +243,24 @@ void Path::addEllipse(const Graphics::Rect& rect)
     currentPoint = {centerX + radiusX, centerY};
 }
 
+Path Path::transformed(const AffineTransform& transform) const
+{
+    auto result = *this;
+
+    for (auto& sub: result.subPaths)
+        for (auto& point: sub.points)
+            point = transform.apply(point);
+
+    result.currentPoint = transform.apply(currentPoint);
+
+    return result;
+}
+
+Path Path::scaled(float scaleX, float scaleY) const
+{
+    return transformed(AffineTransform::scaling(scaleX, scaleY));
+}
+
 Graphics::Rect Path::getBounds() const
 {
     if (isEmpty())

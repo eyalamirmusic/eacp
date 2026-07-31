@@ -42,8 +42,9 @@ struct PathState
     char lastCommand = 0;
 };
 
+template <typename PathType>
 void handleMoveTo(NumberReader& reader,
-                  Graphics::Path& path,
+                  PathType& path,
                   PathState& state,
                   bool relative)
 {
@@ -61,8 +62,9 @@ void handleMoveTo(NumberReader& reader,
     }
 }
 
+template <typename PathType>
 void handleLineTo(NumberReader& reader,
-                  Graphics::Path& path,
+                  PathType& path,
                   PathState& state,
                   bool relative)
 {
@@ -74,8 +76,9 @@ void handleLineTo(NumberReader& reader,
     } while (reader.hasNumber());
 }
 
+template <typename PathType>
 void handleHorizontalLine(NumberReader& reader,
-                          Graphics::Path& path,
+                          PathType& path,
                           PathState& state,
                           bool relative)
 {
@@ -89,8 +92,9 @@ void handleHorizontalLine(NumberReader& reader,
     } while (reader.hasNumber());
 }
 
+template <typename PathType>
 void handleVerticalLine(NumberReader& reader,
-                        Graphics::Path& path,
+                        PathType& path,
                         PathState& state,
                         bool relative)
 {
@@ -104,8 +108,9 @@ void handleVerticalLine(NumberReader& reader,
     } while (reader.hasNumber());
 }
 
+template <typename PathType>
 void handleCubic(NumberReader& reader,
-                 Graphics::Path& path,
+                 PathType& path,
                  PathState& state,
                  bool relative)
 {
@@ -120,8 +125,9 @@ void handleCubic(NumberReader& reader,
     } while (reader.hasNumber());
 }
 
+template <typename PathType>
 void handleSmoothCubic(NumberReader& reader,
-                       Graphics::Path& path,
+                       PathType& path,
                        PathState& state,
                        bool relative)
 {
@@ -138,8 +144,9 @@ void handleSmoothCubic(NumberReader& reader,
     } while (reader.hasNumber());
 }
 
+template <typename PathType>
 void handleQuadratic(NumberReader& reader,
-                     Graphics::Path& path,
+                     PathType& path,
                      PathState& state,
                      bool relative)
 {
@@ -153,8 +160,9 @@ void handleQuadratic(NumberReader& reader,
     } while (reader.hasNumber());
 }
 
+template <typename PathType>
 void handleSmoothQuadratic(NumberReader& reader,
-                           Graphics::Path& path,
+                           PathType& path,
                            PathState& state,
                            bool relative)
 {
@@ -180,7 +188,8 @@ void handleArc(NumberReader& reader)
     }
 }
 
-void handleClosePath(Graphics::Path& path, PathState& state)
+template <typename PathType>
+void handleClosePath(PathType& path, PathState& state)
 {
     path.close();
     state.current = state.subpathStart;
@@ -197,9 +206,10 @@ char readCommandChar(NumberReader& reader, char lastCommand)
     return lastCommand;
 }
 
+template <typename PathType>
 void dispatchCommand(char cmd,
                      NumberReader& reader,
-                     Graphics::Path& path,
+                     PathType& path,
                      PathState& state)
 {
     auto relative = std::islower(static_cast<unsigned char>(cmd));
@@ -247,9 +257,9 @@ void dispatchCommand(char cmd,
 }
 } // namespace
 
-Graphics::Path parseSVGPath(const std::string& d)
+template <typename PathType>
+void parseSVGPathInto(const std::string& d, PathType& path)
 {
-    auto path = Graphics::Path();
     auto reader = NumberReader {d, 0};
     auto state = PathState();
 
@@ -262,8 +272,10 @@ Graphics::Path parseSVGPath(const std::string& d)
         auto cmd = readCommandChar(reader, state.lastCommand);
         dispatchCommand(cmd, reader, path, state);
     }
-
-    return path;
 }
+
+template void parseSVGPathInto<Graphics::Path>(const std::string&, Graphics::Path&);
+template void parseSVGPathInto<GPUWidgets::Path>(const std::string&,
+                                                 GPUWidgets::Path&);
 
 } // namespace eacp::SVG
