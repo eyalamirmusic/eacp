@@ -7,12 +7,14 @@ namespace eacp::UI
 {
 Graphics::Graphics(ShapeBatch& shapesToUse,
                    MeshBatch& meshesToUse,
+                   GradientRamps& rampsToUse,
                    Text::TextRenderer& textToUse,
                    GPU::RenderPass& passToUse,
                    const Rect& surfaceToUse,
                    float backingScaleToUse)
     : shapes(shapesToUse)
     , meshes(meshesToUse)
+    , ramps(rampsToUse)
     , hostText(textToUse)
     , text(&textToUse)
     , pass(passToUse)
@@ -26,6 +28,77 @@ Graphics::Graphics(ShapeBatch& shapesToUse,
 void Graphics::setColour(const Color& colour)
 {
     state.colour = colour;
+}
+
+namespace
+{
+// The gradient's own space onto the space it is drawn in: what maps the unit
+// segment from (0, 0) to (1, 0) onto a linear gradient's two ends, or the unit
+// circle onto a radial one.
+//
+// The linear case's second axis is the first one turned a quarter, which makes
+// the matrix a similarity and therefore invertible for any gradient with two
+// distinct ends. Nothing reads the second coordinate afterwards, so what it is
+// does not matter -- only that the matrix does not collapse.
+GPUWidgets::AffineTransform placementOf(const Gradient& gradient)
+{
+    if (gradient.kind == Gradient::Kind::Radial)
+        return {gradient.radius,
+                0.f,
+                0.f,
+                gradient.radius,
+                gradient.start.x,
+                gradient.start.y};
+
+    auto alongX = gradient.end.x - gradient.start.x;
+    auto alongY = gradient.end.y - gradient.start.y;
+
+    return {alongX, alongY, -alongY, alongX, gradient.start.x, gradient.start.y};
+}
+} // namespace
+
+void Graphics::setGradient(const Gradient& gradient)
+{
+    auto rampV = ramps.rowFor(gradient);
+
+    if (rampV < 0.f)
+    {
+        clearGradient();
+        return;
+    }
+
+    // Placed and inverted here rather than at each draw, which is the whole
+    // reason this is a state call: a gradient set once and filled twenty times
+    // is one lookup and one inversion.
+    //
+    // The origin goes on the end, so the caller places the gradient in its own
+    // component's points like everything else it draws.
+    auto placement = placementOf(gradient)
+                         .then(gradient.transform)
+                         .then(GPUWidgets::AffineTransform::translation(
+                             state.origin.x, state.origin.y));
+
+    // A gradient whose ends coincide, or whose radius is zero, or that a
+    // transform flattened: there is no space to map a fragment into, so it draws
+    // as the flat colour rather than as a division by nothing.
+    if (std::abs(placement.getDeterminant()) < 1e-12f)
+    {
+        clearGradient();
+        return;
+    }
+
+    state.gradient.kind = gradient.kind == Gradient::Kind::Radial
+                              ? GradientFill::Kind::Radial
+                              : GradientFill::Kind::Linear;
+
+    state.gradient.toGradientSpace = placement.inverted();
+    state.gradient.spread = gradient.spread;
+    state.gradient.rampV = rampV;
+}
+
+void Graphics::clearGradient()
+{
+    state.gradient = {};
 }
 
 Rect Graphics::toSurface(const Rect& rect) const
@@ -109,7 +182,7 @@ void Graphics::fillRoundedRect(const Rect& rect, float cornerRadius)
 {
     auto target = toSurface(rect);
     prepareToDraw(target);
-    shapes.fillRect(target, state.colour, cornerRadius);
+    shapes.fillRect(target, state.colour, cornerRadius, state.gradient);
 }
 
 void Graphics::drawRect(const Rect& rect, float thickness)
@@ -121,7 +194,7 @@ void Graphics::drawRoundedRect(const Rect& rect, float cornerRadius, float thick
 {
     auto target = toSurface(rect);
     prepareToDraw(target);
-    shapes.drawRect(target, state.colour, thickness, cornerRadius);
+    shapes.drawRect(target, state.colour, thickness, cornerRadius, state.gradient);
 }
 
 void Graphics::drawLine(Point a, Point b, float thickness)
@@ -135,7 +208,7 @@ void Graphics::drawLine(Point a, Point b, float thickness)
                         std::abs(to.y - from.y) + thickness * 2.f};
 
     prepareToDraw(bounds);
-    shapes.drawLine(from, to, state.colour, thickness);
+    shapes.drawLine(from, to, state.colour, thickness, state.gradient);
 }
 
 void Graphics::fillPath(const PathShape& shape)
@@ -148,12 +221,12 @@ void Graphics::fillPath(const PathShape& shape)
     if (shape.isMeshed())
     {
         prepareToDraw(target, Renderer::Meshes);
-        meshes.addMesh(shape.getMesh(), state.origin, state.colour);
+        meshes.addMesh(shape.getMesh(), state.origin, state.colour, state.gradient);
         return;
     }
 
     prepareToDraw(target);
-    shapes.fillMask(target, state.colour, shape.getMaskUV());
+    shapes.fillMask(target, state.colour, shape.getMaskUV(), state.gradient);
 }
 
 float Graphics::drawText(std::string_view textToDraw, Point baselineLeft)

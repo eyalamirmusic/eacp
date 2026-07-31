@@ -14,6 +14,7 @@ namespace eacp::UI
 using Color = eacp::Graphics::Color;
 using Point = eacp::Graphics::Point;
 using Rect = eacp::Graphics::Rect;
+using GradientStop = eacp::Graphics::GradientStop;
 
 // The platform's stock UI face, the proportional sibling of
 // Text::defaultMonospaceFamily. Same reasoning: no family name ships on both

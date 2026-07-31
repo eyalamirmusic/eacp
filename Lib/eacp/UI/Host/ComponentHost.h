@@ -129,8 +129,10 @@ private:
     float fontPointSize = 13.f;
 
     // Built on the first resize, once there is a size to build them against.
-    // The atlas comes first and outlives the batch that reads it.
+    // The atlas comes first and outlives the batch that reads it, and the
+    // gradient ramps with it -- both renderers sample that one.
     std::optional<CoverageAtlas> paths;
+    std::optional<GradientRamps> ramps;
 
     // Every path the frame rasterizes, gathered and dispatched as one. Held
     // across frames rather than made per frame, because what it holds is the

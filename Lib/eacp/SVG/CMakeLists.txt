@@ -5,6 +5,7 @@ target_sources(eacp-svg PRIVATE
         SVGAttributes.cpp
         SVGBuilder.cpp
         SVGComponent.cpp
+        SVGGradient.cpp
         SVGParser.cpp
         SVGPathParser.cpp
         XMLParser.cpp)

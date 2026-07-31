@@ -137,6 +137,78 @@ const auto documentFeatureDocument = std::string {
         fill="#D0021B" style="fill:#8A7A6A">arcs · use · symbol · dashes · style</text>
 </svg>)SVG"};
 
+// Gradients, which is the whole of what rung 3 added and the first thing the
+// native half of this window cannot draw at all.
+//
+// Every case that is easy to get wrong is in here on purpose. The default units
+// are fractions of each shape's own bounding box, so the same <linearGradient>
+// paints a wide rect and a tall one differently and a diagonal axis on a shape
+// that is not square is a non-uniform scale -- which is why the bands of the top
+// bar lean and the bands of the square do not, from one definition. The three
+// spread methods are the same four stops read three ways. And the last row
+// inherits its stops through href, which is how every drawing program writes a
+// family of gradients.
+const auto gradientDocument = std::string {
+    R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="360" height="300" viewBox="0 0 360 300">
+  <defs>
+    <linearGradient id="sunset">
+      <stop offset="0" stop-color="#F5A623"/>
+      <stop offset="0.45" stop-color="#D0021B"/>
+      <stop offset="1" stop-color="#4A2E7A"/>
+    </linearGradient>
+
+    <!-- The same colours, another axis: only the geometry is restated, and the
+         stops come through href. -->
+    <linearGradient id="sunsetDiagonal" href="#sunset" x1="0" y1="0" x2="1" y2="1"/>
+
+    <linearGradient id="band" x1="0" y1="0" x2="0.25" y2="0">
+      <stop offset="0" stop-color="#2C5F8A"/>
+      <stop offset="1" stop-color="#FBF8F3"/>
+    </linearGradient>
+    <linearGradient id="bandReflect" href="#band" spreadMethod="reflect"/>
+    <linearGradient id="bandRepeat" href="#band" spreadMethod="repeat"/>
+
+    <radialGradient id="globe" cx="0.35" cy="0.3" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.5" stop-color="#4A90D9"/>
+      <stop offset="1" stop-color="#173F63"/>
+    </radialGradient>
+
+    <!-- userSpaceOnUse, so this one is in the document's own coordinates and
+         paints the same stripe across whatever it is given, plus a skew no pair
+         of endpoints could describe. -->
+    <linearGradient id="skewed" gradientUnits="userSpaceOnUse"
+                    x1="20" y1="0" x2="90" y2="0"
+                    gradientTransform="skewX(35)" spreadMethod="reflect">
+      <stop offset="0" stop-color="#3B7A57"/>
+      <stop offset="1" stop-color="#F5A623"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="360" height="300" fill="#FBF8F3"/>
+
+  <rect x="20" y="16" width="320" height="44" rx="10" fill="url(#sunsetDiagonal)"/>
+  <rect x="20" y="70" width="80" height="80" fill="url(#sunsetDiagonal)"/>
+  <circle cx="170" cy="110" r="40" fill="url(#globe)"/>
+  <rect x="228" y="70" width="112" height="80" rx="8" fill="url(#skewed)"/>
+
+  <rect x="20" y="166" width="100" height="34" fill="url(#band)"/>
+  <rect x="130" y="166" width="100" height="34" fill="url(#bandReflect)"/>
+  <rect x="240" y="166" width="100" height="34" fill="url(#bandRepeat)"/>
+
+  <!-- A gradient on a stroke, and one inherited from a group by a child that
+       says nothing about its own fill. -->
+  <g fill="url(#sunset)">
+    <path d="M 20 216 h 90 v 46 h -90 z"/>
+    <circle cx="170" cy="239" r="23"/>
+  </g>
+  <path d="M 228 262 C 258 206, 288 292, 340 226" fill="none"
+        stroke="url(#globe)" stroke-width="9" stroke-linecap="round"/>
+
+  <text x="180" y="288" text-anchor="middle" font-family="Helvetica" font-size="11"
+        fill="#7A6A5A">linear · radial · spread · units · href</text>
+</svg>)SVG"};
+
 // The same markup in a component of a different aspect, which is the only way to
 // see what preserveAspectRatio does. A 320x120 document in a tall half-window
 // letterboxes under the default; the native side, which stretches, does not.
@@ -254,6 +326,8 @@ Vector<Document> makeDocuments()
     documents.add({"Document features - arcs, use, dashes, style",
                    documentFeatureDocument,
                    true});
+    documents.add(
+        {"Gradients - linear, radial, spread, units", gradientDocument, true});
     documents.add({"Aspect ratio - fitted against stretched", aspectDocument, true});
     documents.add({"Tiles - abutting edges", makeTilesDocument(16, 12), false});
     documents.add({"Stacked - 300 large shapes", makeStackedDocument(300), false});

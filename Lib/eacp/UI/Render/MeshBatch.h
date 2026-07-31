@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Common.h"
+#include "GradientRamps.h"
 
 #include <eacp/GPUWidgets/GPUWidgets.h>
 
@@ -27,14 +28,26 @@ struct MeshTriangle
     float positionB[2];
     float positionC[2];
 
-    // How much of the shape reaches each of the three corners, the fourth slot
-    // spare. A shape's interior carries 1 throughout and its feather ring fades
-    // to 0, so interpolating this across the triangle is the whole of the
-    // antialiasing: no distance field, and no multisampling to ask a
-    // single-sample pass for.
+    // How much of the shape reaches each of the three corners, with which kind
+    // of gradient fills it in the fourth. A shape's interior carries 1
+    // throughout and its feather ring fades to 0, so interpolating the first
+    // three across the triangle is the whole of the antialiasing: no distance
+    // field, and no multisampling to ask a single-sample pass for.
     float coverage[4];
 
     float color[4];
+
+    // The same two the quad renderer carries, meaning the same things: the map
+    // into the gradient's own space, its translation, the row of the ramp
+    // texture and the spread mode.
+    //
+    // Per triangle rather than per shape, which is what this costs: a meshed
+    // shape is a few hundred triangles, and every one of them repeats its
+    // gradient. It is 32 bytes a triangle against an indirection through a
+    // buffer the fragment stage would have to read, and the cheaper of those two
+    // is not obvious enough to build the harder one first.
+    float gradient[4];
+    float gradientRamp[4];
 };
 
 // Draws filled shapes as triangles, batched and instanced.
@@ -62,7 +75,8 @@ public:
     // logicalSize is the space draws are expressed in -- the same points
     // ShapeBatch works in -- so a resize sets it rather than rebuilding
     // anything.
-    MeshBatch(Point logicalSizeToUse,
+    MeshBatch(GradientRamps& rampsToUse,
+              Point logicalSizeToUse,
               int sampleCountToUse,
               GPU::PixelFormat colorFormatToUse = GPU::PixelFormat::BGRA8Unorm);
 
@@ -80,7 +94,8 @@ public:
     // to. The colour multiplies each vertex's own coverage.
     void addMesh(const Vector<GPUWidgets::MeshVertex>& mesh,
                  Point offset,
-                 const Color& color);
+                 const Color& color,
+                 const GradientFill& gradient = {});
 
     bool isEmpty() const { return triangles.empty(); }
 
@@ -89,6 +104,8 @@ private:
 
     void flushInto(GPU::RenderPass& endingPass) override;
     void detach();
+
+    GradientRamps& ramps;
 
     Point logicalSize;
     int sampleCount = 1;

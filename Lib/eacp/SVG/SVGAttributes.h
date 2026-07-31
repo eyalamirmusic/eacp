@@ -1,8 +1,10 @@
 #pragma once
 
 #include "Common.h"
+#include "SVGElement.h"
 
 #include <eacp/GPUWidgets/Path/AffineTransform.h>
+#include <eacp/UI/Render/Gradient.h>
 
 namespace eacp::SVG
 {
@@ -91,5 +93,12 @@ std::unordered_map<std::string, std::string>
 Vector<float> parseNumberList(const std::string& value);
 
 Vector<Graphics::Point> parsePointList(const std::string& value);
+
+// The id a paint value refers to, for `fill="url(#logoFade)"` and its stroke
+// twin, or empty when the value is a plain colour. A url() the document wrote
+// with a fallback after it -- `url(#missing) red` -- still names the reference;
+// resolving it is the caller's business, and falling back is what it does when
+// the id is not there.
+std::string parsePaintReference(const std::string& value);
 
 } // namespace eacp::SVG

@@ -1,6 +1,7 @@
 #include "SVGComponent.h"
 
 #include "SVGAttributes.h"
+#include "SVGGradient.h"
 #include "SVGPathParser.h"
 
 #include <algorithm>
@@ -20,6 +21,12 @@ struct SVGComponent::Style
     Graphics::Color stroke = Graphics::Color::black();
     bool hasFill = true;
     bool hasStroke = false;
+
+    // The id a `fill="url(#id)"` names, empty for the usual case of a colour.
+    // Inherited like the colour it stands in for, so a group can paint its
+    // children with one gradient.
+    std::string fillReference;
+    std::string strokeReference;
 
     // Multiplied into the colours rather than composited. Correct for a single
     // element, and an approximation for a group: fading a subtree as a unit
@@ -112,10 +119,29 @@ GPUWidgets::LineJoin parseLineJoin(const std::string& value)
     return GPUWidgets::LineJoin::Miter;
 }
 
-void applyColour(const std::string& value, Graphics::Color& colour, bool& present)
+// A paint: a colour, or the id of a gradient the document defined elsewhere.
+//
+// The reference is remembered rather than resolved, because resolving it needs
+// the shape -- a gradient in bounding-box units is placed against the geometry
+// it fills, which does not exist yet while the style is being read.
+void applyPaint(const std::string& value,
+                Graphics::Color& colour,
+                std::string& reference,
+                bool& present)
 {
     if (value.empty())
         return;
+
+    auto referenced = parsePaintReference(value);
+
+    if (!referenced.empty())
+    {
+        reference = referenced;
+        present = true;
+        return;
+    }
+
+    reference.clear();
 
     auto parsed = parseColor(value);
     present = !parsed.isNone;
@@ -287,6 +313,22 @@ void applyDashPattern(const std::string& value, GPUWidgets::DashPattern& dash)
                                                      : parseNumberList(value);
 }
 
+// The id an element's href names, or empty when it has none or names another
+// document -- which there is nothing here to look in.
+//
+// Both spellings, because SVG 2 dropped the namespace and every file written
+// before it still carries xlink:href. A document that writes both means the
+// same thing twice.
+std::string hrefId(const SVGElement& element)
+{
+    auto href = element.attr("href");
+
+    if (href.empty())
+        href = element.attr("xlink:href");
+
+    return href.size() > 1 && href.front() == '#' ? href.substr(1) : std::string {};
+}
+
 void collectIds(const SVGElement& element,
                 std::unordered_map<std::string, const SVGElement*>& byId)
 {
@@ -307,8 +349,8 @@ void SVGComponent::applyPresentationAttributes(Style& style,
 {
     auto read = PropertyReader {element};
 
-    applyColour(read("fill"), style.fill, style.hasFill);
-    applyColour(read("stroke"), style.stroke, style.hasStroke);
+    applyPaint(read("fill"), style.fill, style.fillReference, style.hasFill);
+    applyPaint(read("stroke"), style.stroke, style.strokeReference, style.hasStroke);
 
     applyNumber(read("stroke-width"), style.strokeStyle.width);
     applyNumber(read("stroke-miterlimit"), style.strokeStyle.miterLimit);
@@ -489,14 +531,12 @@ void SVGComponent::buildElement(const SVGElement& element,
         buildElement(child, style, depth);
 }
 
-const SVGElement* SVGComponent::findElementById(const std::string& reference) const
+const SVGElement* SVGComponent::findElementById(const std::string& id) const
 {
-    // "#name" and nothing else: a reference into another document has nothing
-    // here to look in, and neither has an empty one.
-    if (reference.size() < 2 || reference.front() != '#')
+    if (id.empty())
         return nullptr;
 
-    auto found = elementsById.find(reference.substr(1));
+    auto found = elementsById.find(id);
 
     return found != elementsById.end() ? found->second : nullptr;
 }
@@ -506,7 +546,7 @@ void SVGComponent::buildUse(const SVGElement& element, const Style& style, int d
     if (depth >= maxUseDepth)
         return;
 
-    auto* target = findElementById(element.attr("href"));
+    auto* target = findElementById(hrefId(element));
 
     if (target == nullptr)
         return;
@@ -579,10 +619,12 @@ void SVGComponent::buildShapes(const SVGElement& element, const Style& style)
         auto path = buildGeometry(element, fillFlatness() / scale);
 
         if (!path.isEmpty())
-            addShape(path.transformed(style.transform),
-                     style.fill.withAlpha(style.fill.a * style.opacity
-                                          * style.fillOpacity),
-                     style.fillRule);
+            addShape(
+                path.transformed(style.transform),
+                style.fill.withAlpha(style.fill.a * style.opacity
+                                     * style.fillOpacity),
+                style.fillRule,
+                gradientFor(style.fillReference, path.getBounds(), style.transform));
     }
 
     if (style.hasStroke && style.strokeStyle.width > 0.f)
@@ -608,10 +650,16 @@ void SVGComponent::buildShapes(const SVGElement& element, const Style& style)
             auto region = GPUWidgets::strokeToFill(
                 GPUWidgets::dashPath(path, style.dash), style.strokeStyle);
 
+            // Against the *centre line's* bounds and not the stroked region's,
+            // because that is the bounding box the format means: a gradient in
+            // bounding-box units is placed by the geometry, and a stroke growing
+            // it by half a pen width would shift the shading with the width.
             addShape(region.transformed(style.transform),
                      style.stroke.withAlpha(style.stroke.a * style.opacity
                                             * style.strokeOpacity),
-                     GPUWidgets::FillRule::NonZero);
+                     GPUWidgets::FillRule::NonZero,
+                     gradientFor(
+                         style.strokeReference, path.getBounds(), style.transform));
         }
     }
 }
@@ -660,15 +708,29 @@ void SVGComponent::buildTextRun(const SVGElement& element, const Style& style)
 
 void SVGComponent::addShape(const GPUWidgets::Path& path,
                             const Graphics::Color& colour,
-                            GPUWidgets::FillRule rule)
+                            GPUWidgets::FillRule rule,
+                            const UI::Gradient& gradient)
 {
     auto& shape = shapes.createNew(*this);
 
     shape.colour = colour;
+    shape.gradient = gradient;
     shape.maskBounds = path.getBounds();
     shape.mask.setPath(path, rule);
 
     order.add({false, shapes.size() - 1});
+}
+
+UI::Gradient
+    SVGComponent::gradientFor(const std::string& reference,
+                              const Graphics::Rect& objectBounds,
+                              const GPUWidgets::AffineTransform& transform) const
+{
+    if (reference.empty())
+        return {};
+
+    return resolveGradient(
+        reference, elementsById, objectBounds, viewBox, transform);
 }
 
 int SVGComponent::findOrAddFont(const std::string& family, float pointSize)
@@ -761,6 +823,15 @@ void SVGComponent::paint(UI::Graphics& g)
             auto& shape = *shapes[item.index];
 
             g.setColour(shape.colour);
+
+            // Set per shape rather than kept across them, because each one's
+            // gradient is placed against its own geometry. A document with no
+            // gradients never touches either call after the first.
+            if (shape.gradient.isEmpty())
+                g.clearGradient();
+            else
+                g.setGradient(shape.gradient);
+
             g.fillPath(shape.mask);
             continue;
         }

@@ -74,6 +74,31 @@ struct AffineTransform
     // itself picks for that.
     float getScaleFactor() const { return std::sqrt(std::abs(a * d - b * c)); }
 
+    float getDeterminant() const { return a * d - b * c; }
+
+    // The transform that undoes this one, or the identity when there is none --
+    // which is a matrix that collapsed the plane onto a line or a point, and has
+    // no inverse to give. A caller that needs to know asks getDeterminant.
+    AffineTransform inverted() const
+    {
+        auto determinant = getDeterminant();
+
+        if (std::abs(determinant) < 1e-12f)
+            return {};
+
+        auto inverseA = d / determinant;
+        auto inverseB = -b / determinant;
+        auto inverseC = -c / determinant;
+        auto inverseD = a / determinant;
+
+        return {inverseA,
+                inverseB,
+                inverseC,
+                inverseD,
+                -(inverseA * tx + inverseC * ty),
+                -(inverseB * tx + inverseD * ty)};
+    }
+
     bool isIdentity() const
     {
         return a == 1.f && b == 0.f && c == 0.f && d == 1.f && tx == 0.f

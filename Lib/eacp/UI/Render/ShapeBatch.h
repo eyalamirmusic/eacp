@@ -2,6 +2,7 @@
 
 #include "../Common.h"
 #include "CoverageAtlas.h"
+#include "GradientRamps.h"
 
 namespace eacp::UI
 {
@@ -36,7 +37,21 @@ struct ShapeInstance
     // something the shader rederives from the width: comparing a float against
     // zero per fragment to answer a question settled per shape is work, and the
     // fourth slot was going spare anyway.
+    //
+    // The fourth is no longer spare: it carries which kind of gradient fills
+    // this shape, 0 for none.
     float shape[4];
+
+    // The four of the affine that takes a fragment into the gradient's own
+    // space, its translation living in the first two of the next field. See
+    // GradientFill for why a whole matrix and not an axis.
+    float gradient[4];
+
+    // That translation, then the row of the ramp texture this shape's colours
+    // were baked into, then the spread mode. See GradientRamps: every gradient
+    // in the interface is a row of one texture, so a gradient-filled shape joins
+    // the same instanced draw as a flat one.
+    float gradientRamp[4];
 
     // The rect of the coverage atlas this shape's own coverage is multiplied
     // by, as u, v, width, height. A vector path is a box masked by the coverage
@@ -76,6 +91,7 @@ public:
     // pixels per point, which sets how wide the antialiasing ramp is. Both are
     // uniforms, so a resize sets them rather than rebuilding anything.
     ShapeBatch(const CoverageAtlas& atlasToUse,
+               GradientRamps& rampsToUse,
                Point logicalSizeToUse,
                float pixelScaleToUse,
                int sampleCountToUse,
@@ -100,18 +116,30 @@ public:
     void setScissorRect(const Rect& rectInPixels);
     void clearScissorRect();
 
-    void fillRect(const Rect& rect, const Color& color, float cornerRadius = 0.f);
+    // Every call below takes the fill twice over: a colour, and a gradient that
+    // replaces it where there is one. Both rather than one of the two, because
+    // a gradient the ramps had no room for falls back to the colour beside it --
+    // so a shape always has something to be drawn in.
+    void fillRect(const Rect& rect,
+                  const Color& color,
+                  float cornerRadius = 0.f,
+                  const GradientFill& gradient = {});
 
     // An outline drawn inside the rect's edges.
     void drawRect(const Rect& rect,
                   const Color& color,
                   float thickness = 1.f,
-                  float cornerRadius = 0.f);
+                  float cornerRadius = 0.f,
+                  const GradientFill& gradient = {});
 
     // A line of any orientation, with round caps -- which the distance field
     // gives for nothing, the cap being the corner radius of a box one thickness
     // tall.
-    void drawLine(Point a, Point b, const Color& color, float thickness = 1.f);
+    void drawLine(Point a,
+                  Point b,
+                  const Color& color,
+                  float thickness = 1.f,
+                  const GradientFill& gradient = {});
 
     // A rect painted through a coverage mask: the atlas rect `maskUV` decides
     // how much of `color` each pixel gets. This is how a vector path draws, and
@@ -120,7 +148,10 @@ public:
     //
     // The rect is the mask's own footprint and takes no antialiasing margin: the
     // mask already carries its own soft edge, and the box around it is square.
-    void fillMask(const Rect& rect, const Color& color, const Rect& maskUV);
+    void fillMask(const Rect& rect,
+                  const Color& color,
+                  const Rect& maskUV,
+                  const GradientFill& gradient = {});
 
 private:
     struct Program;
@@ -136,16 +167,20 @@ private:
                   Point halfSize,
                   const Color& color,
                   float cornerRadius,
-                  float borderWidth);
+                  float borderWidth,
+                  const GradientFill& gradient);
 
     void addAxisAlignedShape(const Rect& rect,
                              const Color& color,
                              float cornerRadius,
-                             float borderWidth);
+                             float borderWidth,
+                             const GradientFill& gradient);
 
     static void setMask(ShapeInstance& instance, const Rect& maskUV);
+    static void setGradient(ShapeInstance& instance, const GradientFill& gradient);
 
     const CoverageAtlas& atlas;
+    GradientRamps& ramps;
 
     Point logicalSize;
     float pixelScale = 1.f;

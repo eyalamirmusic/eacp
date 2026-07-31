@@ -1,10 +1,11 @@
 # SVG through the component tier
 
-**Rungs 1 and 2 are done, both of rung 1's questions are answered, and the fix
-the first answer pointed at is built.** What follows was written before any of it
-was built; the sections it got wrong are marked where they stand, and the records
-of what actually happened are at the end under *Rung 1, as built*, *Rung 2, as
-built* and *The mesh route, as built*.
+**Rungs 1 and 2 are done, both of rung 1's questions are answered, the fix the
+first answer pointed at is built, and rung 3's first feature with it.** What
+follows was written before any of it was built; the sections it got wrong are
+marked where they stand, and the records of what actually happened are at the end
+under *Rung 1, as built*, *Rung 2, as built*, *The mesh route, as built* and
+*Rung 3, gradients, as built*.
 
 **Where that leaves the ceiling:** the atlas still cannot hold a document's masks
 and no longer has to. A shape too large to be worth one is drawn as triangles
@@ -58,12 +59,15 @@ What `SVGComponent` draws: shapes and paths with every path command, `viewBox`
 with its origin and `preserveAspectRatio`, transform lists as real matrices baked
 into the points, inherited presentation attributes, `style=""` declarations
 beating the attribute of the same name, `fill-rule`, stroke width / caps / joins
-/ miter limit / opacity / dashes, `defs` / `use` / `symbol`, and text at any
-family and size with real measurement.
+/ miter limit / opacity / dashes, `defs` / `use` / `symbol`, gradients — linear
+and radial, any number of stops, both unit systems, `gradientTransform`, all
+three spread methods and `href` inheritance — and text at any family and size
+with real measurement.
 
-What it does not: gradients, `clipPath` and `mask`, group opacity as
-compositing, `<style>` elements and CSS selectors, filters, `<image>`. An element
-asking for one of those draws without it rather than not at all.
+What it does not: the focal point of a radial gradient, `clipPath` and `mask`,
+group opacity as compositing, `<style>` elements and CSS selectors, filters,
+`<image>`. An element asking for one of those draws without it rather than not at
+all.
 
 And the thing that used to limit all of it: **the coverage atlas cannot hold a
 large document.** Measured, twice over — see *Rung 1, as built* and *What is
@@ -394,8 +398,8 @@ right and one wrong:*
    operation and shipped in `GPUWidgets`.*
 3. **Rung 3** is the three features that need work below the module, in the order
    documents actually miss them: gradients, then clipping, then group opacity.
-   *Unstarted, and now unblocked: the atlas decision was the thing in front of
-   it, and it is made and built.*
+   *Gradients are done — see "Rung 3, gradients, as built". Clipping and group
+   opacity are not.*
 
 One decision to make at the top of rung 1 and not later: whether the native
 `SVGView` stays. Keeping both means one parse layer and two builders, which is
@@ -752,3 +756,74 @@ conservative, and each refusal has a reason it could not be otherwise:
 
 Still not done below rung 3: stroke meshing, and `<style>` elements with real
 selectors — which stays out of scope, as the plan said.
+
+# Rung 3, gradients, as built
+
+The first of rung 3's three, and the one documents miss most. It needed work
+below `eacp-svg`, as the plan said it would — but not the work the plan
+described.
+
+## What shipped
+
+| where | what |
+|---|---|
+| `UI/Render/Gradient.h` | `Gradient` — kind, placement, transform, spread, stops — and `GradientFill`, the resolved form a painter's state can hold without owning a stop list |
+| `UI/Render/GradientRamps.{h,cpp}` | one texture, a row of 256 colours per distinct stop list, keyed by the colours alone |
+| `UI/Render/GradientShader.h` | the fragment maths, written once and used by both renderers |
+| `UI/Render/ShapeBatch`, `MeshBatch` | two instance fields apiece, and the ramp sampler |
+| `UI/Graphics` | `setGradient` / `clearGradient`, placed and inverted once per call rather than per draw |
+| `GPUWidgets/Path/AffineTransform.h` | `inverted` and `getDeterminant` |
+| `SVG/SVGGradient.{h,cpp}` | `<linearGradient>`, `<radialGradient>`, `<stop>`, both unit systems, `gradientTransform`, `spreadMethod`, `href` inheritance |
+| `SVG/SVGAttributes` | `parsePaintReference`, for `fill="url(#id)"` |
+| `SVG/SVGComponent` | a gradient per shape, resolved against its own geometry at build time |
+| `Apps/UI/SVGDocument` | a Gradients document, the first the native half cannot draw at all |
+| `Tests/SVG`, `Tests/UI` | 19 more cases, 979 in the project |
+
+## Where the plan was wrong, and it was wrong in the useful direction
+
+- **A stop table does not need a second pipeline.** The plan said two-stop linear
+  gradients as instance fields were the cheap answer and that "many stops,
+  radial, spreads" meant "a stop-table texture and a second pipeline". The
+  second half does not follow: an extra sampler on the *same* pipeline is what
+  the coverage atlas already is, and every shape reading a ramp texel it may
+  ignore is the trade `fillMask` already makes for the mask. So the ramp costs
+  one more fetch and no batch break — and once it exists, arbitrary stops,
+  radial and all three spreads come with it. The general answer turned out
+  cheaper in instance bytes than the restricted one: a row is four floats where
+  two colours were eight.
+- **An axis is not general enough, and fails quietly.** The plan's "a gradient
+  axis and two colours evaluated per fragment" would have been wrong for the
+  commonest case in the format. `gradientUnits="objectBoundingBox"` is the
+  default, so a gradient on a shape that is not square is under a non-uniform
+  scale — and a linear gradient under one has bands that are no longer
+  perpendicular to the line between its two ends. Transforming the endpoints
+  gives a plausible picture that is not the right one. What ships instead is the
+  *inverse of the placement*, a whole affine: the fragment is mapped into the
+  gradient's own space, where linear is x and radial is distance from the
+  origin. Two dot products, exact for both kinds under any transform, and the
+  demo's top bar leans while the square beside it does not — from one
+  definition, which is the proof.
+- **The mesh route needed it too, and pays for it.** A gradient-filled shape is
+  often a background, which is exactly what the mesh route takes. Its instance is
+  a *triangle*, so the same eight floats are repeated a few hundred times per
+  shape: 56 bytes a triangle became 88. That is the honest cost and it is
+  written down rather than designed around — a per-shape table the fragment
+  indexes would remove it, and is not worth building before a document is
+  measured wanting it.
+
+## What it does not do
+
+- **The focal point of a radial gradient.** `fx`/`fy` are read as nothing and the
+  gradient draws concentric. The map is already an affine, so this is a formula
+  in `gradientFill` rather than a shape of data — it is out because no document
+  here needed it.
+- **Gradients on text.** Glyphs go through the text renderer, which fills from a
+  colour. Unrelated machinery, and the same answer as text-as-paths.
+- **Anything about the seam question**, which the mesh route did not move either.
+
+## Rung 3's remaining two
+
+Clipping, then group opacity — in that order, and the note in the original rung 3
+section still stands as the design worth trying first for the clip: a shape is
+already a colour times a mask, so composing a second mask into the coverage
+kernel needs no new pipeline and no stencil.
