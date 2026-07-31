@@ -13,6 +13,28 @@ namespace eacp::GPUWidgets
 // step.
 constexpr float backdropFixedScale = 1048576.f;
 
+// One kernel of each sort for every batch there will ever be. It is the same
+// program in all of them, and building one costs a shader library and a compute
+// pipeline.
+//
+// Shared state is safe here because a dispatch sets every uniform it reads
+// immediately before issuing it, and command encoding is single-threaded. Built
+// on first use rather than at load, since it needs the Device - which also puts
+// its destruction before the Device's own, statics tearing down in reverse.
+template <typename Kernel>
+Kernel& sharedKernel()
+{
+    struct Prepared
+    {
+        Prepared() { kernel.prepare(); }
+
+        Kernel kernel;
+    };
+
+    static auto prepared = Prepared {};
+    return prepared.kernel;
+}
+
 // A dispatch whose work belongs to many paths, and the search that says which.
 // Every stage of a batched rasterization needs it - a thread has an item index
 // and nothing else - and they need it identically, so it is written once here.
@@ -68,9 +90,11 @@ struct PathIndexedKernel : GPU::ComputeProgram
     // so the offsets are written once here, beside the constant, rather than
     // spelled at each call.
     //
-    // Where the split falls is not arbitrary: the scatter and the scan want the
-    // path's cell base and its height and nothing else, so those share a read
-    // and neither stage touches the second.
+    // Where the split falls is not arbitrary. Four of the six stages want only
+    // where the path's cells and tiles begin and how big its coverage is, so
+    // those four numbers share a read and none of them touches the second: the
+    // binner reads it once per segment, and a segment is the most numerous thing
+    // in the batch.
     GPU::Float4 recordShape(const GPU::UInt& path)
     {
         return records.read4(recordAt(path));
@@ -94,10 +118,13 @@ struct PathIndexedKernel : GPU::ComputeProgram
     // records: the search wants its keys next to each other.
     GPU::Uniform<GPU::InputBuffer> pathStarts;
 
-    // Eight floats per path: where its backdrop cells begin, how big its
-    // coverage is and which fill rule it takes, then where its segment and tile
-    // runs begin and where it sits in the target. Read by every stage, through
-    // the two accessors above.
+    // Eight floats per path: where its backdrop cells and its tiles begin and
+    // how big its coverage is, then which fill rule it takes and where it sits
+    // in the target. Read by every stage, through the two accessors above.
+    //
+    // The last is spare, and deliberately last: three reads of four is the
+    // shape, and padding in the middle of a record is exactly what once put the
+    // fill rule in the wrong one.
     GPU::Uniform<GPU::InputBuffer> records;
 
     // How many paths the search is over. Not the run total: the last entry of
@@ -129,9 +156,9 @@ private:
 // A thread walks only the segments of its own tile. The rest of the path reaches
 // it as a single number - the winding entering the tile from the left, at the
 // thread's own pixel row - so a pixel pays for the outline passing near it and
-// not for the outline existing. See PathRasterizer, which does the binning and
-// the transform into pixel space, and BackdropKernels.h for where that number
-// comes from.
+// not for the outline existing. See BinKernels.h, which sorts the segments into
+// tiles, and BackdropKernels.h for where that number comes from. The CPU's part
+// is the transform into pixel space and nothing else.
 //
 // Horizontal segments contribute nothing, and are dropped on the CPU rather than
 // guarded against here.
@@ -178,11 +205,10 @@ struct CoverageKernel final : PathIndexedKernel
         auto cellBase = toUInt(shape.x());
         auto width = toUInt(shape.y());
         auto height = toUInt(shape.z());
+        auto tileBase = toUInt(shape.w());
 
-        auto segmentBase = toUInt(place.x());
-        auto tileBase = toUInt(place.y());
-        auto originX = toUInt(place.z());
-        auto originY = toUInt(place.w());
+        auto originX = toUInt(place.y());
+        auto originY = toUInt(place.z());
 
         auto blocksWide =
             (width + (unsigned) (blockSize - 1)) / (unsigned) blockSize;
@@ -199,12 +225,11 @@ struct CoverageKernel final : PathIndexedKernel
                {
                    auto value = coverageAt(pixelX,
                                            pixelY,
-                                           segmentBase,
                                            tileBase,
                                            cellBase,
                                            height,
                                            tilesWideOf(width),
-                                           shape.w());
+                                           place.x());
 
                    // The same coverage in all four channels. A one-channel mask
                    // is what this is, but R8Unorm is outside the set a typed UAV
@@ -227,7 +252,6 @@ struct CoverageKernel final : PathIndexedKernel
     // is the single-path arithmetic it always was.
     GPU::Float coverageAt(const GPU::UInt& pixelX,
                           const GPU::UInt& pixelY,
-                          const GPU::UInt& segmentBase,
                           const GPU::UInt& tileBase,
                           const GPU::UInt& cellBase,
                           const GPU::UInt& height,
@@ -249,13 +273,18 @@ struct CoverageKernel final : PathIndexedKernel
 
         // Held in locals rather than re-read: the loop condition is re-tested in
         // the generated while header, and these do not change under it.
-        auto index = var(toInt(tileOffsets[tile]));
-        auto last = var(toInt(tileOffsets[tile + 1u]));
+        //
+        // The offsets are the batch's own, not the path's: the prefix sum that
+        // produced them ran over every tile of every path at once, so a tile's
+        // run is already where it is in the one segment array and nothing has a
+        // base to add.
+        auto index = var(tileOffsets.load(tile));
+        auto last = var(tileOffsets.load(tile + 1u));
 
-        loop(index < last,
+        loop(index.get() < last.get(),
              [&]
              {
-                 auto segment = segments.read4(segmentBase + toUInt(index));
+                 auto segment = tileSegments.read4(index.get());
 
                  auto ax = segment.x() - x;
                  auto ay = segment.y() - y;
@@ -283,7 +312,7 @@ struct CoverageKernel final : PathIndexedKernel
                             winding += direction * (1.f - meanClampedX(xLow, xHigh));
                         });
 
-                 index += 1;
+                 index += 1u;
              });
 
         auto total = abs(winding.get());
@@ -349,15 +378,19 @@ struct CoverageKernel final : PathIndexedKernel
     // Segments grouped by the tile that walks them, four floats each
     // (x0, y0, x1, y1), already in the coverage texture's own pixel space. A
     // segment crossing a tile boundary appears once under each tile it crosses.
-    // Every path in the batch, end to end; a record says where each one starts.
-    GPU::Uniform<GPU::InputBuffer> segments;
+    // Every path in the batch, end to end.
+    //
+    // Nothing on the CPU fills this: the binning kernel clips each segment to
+    // the tile rows it crosses and a counting sort puts it here - see
+    // BinKernels.h.
+    GPU::Uniform<GPU::InputBuffer> tileSegments;
 
-    // Where each tile's run of segments starts, one entry per tile and a last
-    // one holding the total, so a tile's run is [tileOffsets[t], tileOffsets[t+1]).
-    // Counts, carried as floats because a storage buffer is a run of floats -
-    // exact well past any segment count this rasterizer is for. Each path's
-    // offsets are relative to its own segment run.
-    GPU::Uniform<GPU::InputBuffer> tileOffsets;
+    // Where each tile's run of segments starts, one entry per tile of every path
+    // in the batch and a last one holding the total, so a tile's run is
+    // [tileOffsets[t], tileOffsets[t + 1]). Built by the prefix sum over what
+    // the binner counted, which is why it is read as integers rather than as the
+    // floats every uploaded buffer holds.
+    GPU::Uniform<GPU::AtomicBuffer> tileOffsets;
 
     // The winding entering a tile from the left: one value at every tile column
     // of every pixel row.
@@ -378,7 +411,7 @@ struct CoverageKernel final : PathIndexedKernel
     // position into a block index.
     GPU::Uniform<GPU::UInt> gridColumns;
 
-    EACP_SHADER(segments,
+    EACP_SHADER(tileSegments,
                 tileOffsets,
                 cells,
                 records,

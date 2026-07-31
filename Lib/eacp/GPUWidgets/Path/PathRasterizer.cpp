@@ -1,7 +1,6 @@
 ﻿#include "PathRasterizer.h"
 
 #include <cmath>
-#include <cstring>
 
 namespace eacp::GPUWidgets
 {
@@ -99,6 +98,10 @@ void PathRasterizer::setPath(const Path& path, FillRule rule)
     covered = {
         left / scale, top / scale, (right - left) / scale, (bottom - top) / scale};
 
+    tilesWide = (coverageWidth + tileSize - 1) / tileSize;
+    tilesHigh = (coverageHeight + tileSize - 1) / tileSize;
+    entryBound = 0;
+
     for (const auto& sub: path.getSubPaths())
     {
         const auto& points = sub.points;
@@ -122,10 +125,15 @@ void PathRasterizer::setPath(const Path& path, FillRule rule)
             if (fromY == toY)
                 continue;
 
-            segments.add(from.x * scale - left);
+            auto fromX = from.x * scale - left;
+            auto toX = to.x * scale - left;
+
+            segments.add(fromX);
             segments.add(fromY);
-            segments.add(to.x * scale - left);
+            segments.add(toX);
             segments.add(toY);
+
+            entryBound += boundEntriesOf(fromX, fromY, toX, toY);
         }
     }
 
@@ -133,48 +141,76 @@ void PathRasterizer::setPath(const Path& path, FillRule rule)
         return;
 
     evenOdd = rule == FillRule::EvenOdd ? 1 : 0;
-
-    buildTiles();
 }
 
-// One crossing of the outline into one tile column, over the part of one tile
-// row's band it spans. It is what the backdrop's array is built from, and there
-// is one per segment per band it crosses - so recording the crossing rather than
-// what it expands to is what keeps this side of the work priced by the outline.
+// How much room one segment's binning needs, which is the only thing about
+// binning that has to be settled before the dispatch.
 //
-// Directed the way the segment runs, so the sign of the span is the sign of the
-// winding and there is no third number to carry. Nothing else is done with it
-// here: the array these belong to is built on the GPU, and the whole point is
-// that the CPU never walks its area.
-void PathRasterizer::addCrossing(float direction, float fromY, float toY, int column)
+// The exact count is what the clip finds, and the clip is on the GPU - so this
+// bounds it instead, in constant time and in the loop that emits the segment,
+// which is what keeps it off a second pass over an array that is megabytes on a
+// dense path.
+//
+// A segment is straight, so its x runs one way as its y does and the bands it
+// crosses hand their x-ranges to each other end to end. A band therefore costs
+// one column for itself and one for each column boundary the segment crosses
+// inside it - and summed over the bands, the second term telescopes into the
+// segment's own width in tiles. So the rows it crosses plus its width in tiles
+// is an upper bound; the rows times the whole grid's width is the other one,
+// which is smaller when the segment is nearly horizontal.
+//
+// It comes out about a third over the true count, which buys an array a third
+// too big and no work at all - against a clip walked here to learn the exact
+// number, which is the whole of what this rung moved.
+int PathRasterizer::boundEntriesOf(float fromX,
+                                   float fromY,
+                                   float toX,
+                                   float toY) const
 {
-    if (column >= tilesWide)
+    auto firstRow = std::max(tileOf(std::min(fromY, toY)), 0);
+    auto lastRow = std::min(tileAfter(std::max(fromY, toY)) - 1, tilesHigh - 1);
+    auto rows = lastRow - firstRow + 1;
+
+    if (rows <= 0)
+        return 0;
+
+    auto width = std::abs(toX - fromX) / (float) tileSize;
+
+    return std::min(rows * tilesWide, rows + (int) std::ceil(width));
+}
+
+int PathRasterizer::getCellCount() const
+{
+    return tilesWide * coverageHeight;
+}
+
+long long PathRasterizer::getSegmentTests() const
+{
+    countTiles();
+    return segmentTests;
+}
+
+int PathRasterizer::getEntryCount() const
+{
+    countTiles();
+    return entryCount;
+}
+
+// The same clip the binning kernel does, walked here for its counts alone: what
+// the dispatch is about to cost, and how many entries it will really produce
+// against the bound the array was sized to.
+//
+// This is the one thing left on this side that is priced by the outline times
+// the tiles it crosses, and it is deliberate: nothing in an interface reads
+// either number, and a bench or a test that wants them would otherwise have to
+// read the tile offsets back off the GPU.
+void PathRasterizer::countTiles() const
+{
+    if (segmentTests >= 0)
         return;
 
-    crossings.add((float) column);
-    crossings.add(direction > 0.f ? fromY : toY);
-    crossings.add(direction > 0.f ? toY : fromY);
-}
-
-// Splits every segment across the tile rows it crosses, and within each row
-// files it under the tiles it actually reaches. Clipping to the row first is
-// what keeps a long diagonal honest: binned by its bounding box it would land in
-// every tile of a square, when it passes through a couple per row.
-//
-// Everything to the left of the tiles it reaches is not filed anywhere. It
-// covers those pixels' whole row-slices, so its contribution turns on the pixel
-// row alone, and it goes to the backdrop instead - a number a thread starts its
-// winding from rather than a list it walks.
-void PathRasterizer::buildTiles()
-{
-    tilesWide = (coverageWidth + tileSize - 1) / tileSize;
-    tilesHigh = (coverageHeight + tileSize - 1) / tileSize;
-
-    auto tileCount = tilesWide * tilesHigh;
-
-    runs.clear();
-    tileOffsets.assign(tileCount + 1, 0.f);
-    crossings.clear();
+    segmentTests = 0;
+    entryCount = 0;
 
     auto count = segments.size() / 4;
 
@@ -184,7 +220,6 @@ void PathRasterizer::buildTiles()
 
         auto topY = std::min(segment[1], segment[3]);
         auto bottomY = std::max(segment[1], segment[3]);
-        auto direction = segment[3] > segment[1] ? 1.f : -1.f;
         auto slope = (segment[2] - segment[0]) / (segment[3] - segment[1]);
 
         auto firstRow = std::max(tileOf(topY), 0);
@@ -202,83 +237,22 @@ void PathRasterizer::buildTiles()
             auto leaves = segment[0] + (bandBottom - segment[1]) * slope;
 
             auto beyond = std::max(tileAfter(std::max(enters, leaves)), 0);
-            addCrossing(direction, bandTop, bandBottom, beyond);
-
             auto firstColumn = std::max(tileOf(std::min(enters, leaves)), 0);
             auto lastColumn = std::min(beyond - 1, tilesWide - 1);
 
-            if (lastColumn < firstColumn)
-                continue;
-
-            runs.add(TileRun {
-                index, row * tilesWide + firstColumn, lastColumn - firstColumn + 1});
+            // The last tile of a row or column is a partial one, and counting it
+            // whole would flatter the number this exists to report.
+            auto rows = std::min(tileSize, coverageHeight - row * tileSize);
 
             for (auto column = firstColumn; column <= lastColumn; ++column)
-                tileOffsets[row * tilesWide + column + 1] += 1.f;
+            {
+                segmentTests += (long long) rows
+                                * (long long) std::min(
+                                    tileSize, coverageWidth - column * tileSize);
+                ++entryCount;
+            }
         }
     }
-
-    // Counted one tile late above, so summing turns the counts into the start of
-    // each tile's run and leaves the total in the last entry.
-    for (auto tile = 1; tile <= tileCount; ++tile)
-        tileOffsets[tile] += tileOffsets[tile - 1];
-
-    tileCursor.resize(tileCount);
-
-    for (auto tile = 0; tile < tileCount; ++tile)
-        tileCursor[tile] = (int) tileOffsets[tile];
-
-    tileSegments.resize((int) tileOffsets[tileCount] * 4);
-
-    for (const auto& run: runs)
-    {
-        const auto* source = segments.data() + run.segment * 4;
-
-        for (auto tile = 0; tile < run.tiles; ++tile)
-        {
-            auto at = tileCursor[run.firstTile + tile]++;
-            std::memcpy(tileSegments.data() + at * 4, source, sizeof(float) * 4);
-        }
-    }
-
-    // A path whose segments all fall outside the coverage rect leaves nothing to
-    // bind, and a zero-length buffer is not a buffer. One record of zeroes is a
-    // horizontal segment, which no tile's run reaches and which would contribute
-    // nothing if one did.
-    if (tileSegments.empty())
-        tileSegments.resize(4);
-}
-
-int PathRasterizer::getCellCount() const
-{
-    return tilesWide * coverageHeight;
-}
-
-long long PathRasterizer::getSegmentTests() const
-{
-    if (segmentTests >= 0)
-        return segmentTests;
-
-    segmentTests = 0;
-
-    for (auto row = 0; row < tilesHigh; ++row)
-    {
-        // The last tile of a row or column is a partial one, and counting it
-        // whole would flatter the number this exists to report.
-        auto rows = std::min(tileSize, coverageHeight - row * tileSize);
-
-        for (auto column = 0; column < tilesWide; ++column)
-        {
-            auto tile = row * tilesWide + column;
-            auto listed = tileOffsets[tile + 1] - tileOffsets[tile];
-            auto pixels =
-                rows * std::min(tileSize, coverageWidth - column * tileSize);
-
-            segmentTests += (long long) pixels * (long long) listed;
-        }
-    }
-
-    return segmentTests;
 }
 
 void PathRasterizer::ensureOwnTexture()

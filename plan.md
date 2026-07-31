@@ -1903,3 +1903,274 @@ before it.
 CPU, and the three backdrop stages already cost it 0.03ms of GPU it did not pay
 before. Whatever ships has to keep the CPU path for small paths, or it is a
 regression for the only interface eacp draws today.
+
+*(Built — and the first two of those three are one piece, not two. The floor
+turned out not to need a second path. See below.)*
+
+# Binning — on the GPU
+
+**Shipped.** The last of rung 3. A rasterization's CPU cost is now the outline
+flattened into pixel space and nothing else: the clip that decides which tiles a
+segment lands in, the count per tile, the prefix sum over those counts and the
+counting sort that files the segments are all dispatches, and the backdrop's
+crossings fall out of the same clip rather than being uploaded.
+
+A canvas of a hundred and twenty-eight live automation lanes binds in 0.9ms of
+CPU where it took 8.1, and the full-window ellipse is 38× cheaper.
+
+## Why the order phase 0 named was not available
+
+Phase 0 listed three stages in cost order: binning, then the `fill` prefix sum,
+then emit. The first two cannot be separated. The counts are what the sum sums,
+so a binner on the GPU whose sum stayed on the CPU would have to read the counts
+back — a round trip through the host between two dispatches that were going to be
+adjacent, which is the exact thing indirect dispatch was added in phase 3 to
+avoid. They moved together, and emit stayed where it was.
+
+That leaves emit as very nearly the whole of what a dense path now costs, which
+phase 0 called "the smallest of the three and not the place to start". It is the
+place to start now, because it is the only thing left.
+
+## The count and the fill are one kernel, dispatched twice
+
+The two passes have to agree **exactly** about which tiles a segment lands in. A
+fill that found one tile more than the count did would write past the end of that
+tile's run and into the next one's — a few pixels of one tile showing a segment
+that belongs to its neighbour, on some paths and not others, in a way no test
+would reliably reach.
+
+Two kernels holding the same arithmetic are equal until a shader compiler
+contracts a multiply-add in one of them and not the other. That is not a
+hypothetical about the arithmetic — the clip is a division, three multiply-adds
+and a `floor`, and the two would sit in differently-shaped functions. So there is
+one kernel and a `mode` uniform, and it is dispatched twice: count, then fill.
+The branch is uniform across the whole dispatch and costs nothing that can be
+measured.
+
+It also halves what has to be written down. The clip appears once.
+
+## The prefix sum, and the array it leaves behind
+
+`PrefixSum` is a general exclusive scan over a buffer of unsigned integers. A
+group of 64 threads owns 1024 consecutive elements — each thread sums its own 16,
+the 64 subtotals are scanned in threadgroup memory by six unrolled doublings, and
+each thread walks its 16 again writing the running total. What is left is one
+number per group, which is the same problem a thousandth the size, so the levels
+recurse. Two reach a million elements; a batch cannot allocate more.
+
+Two things about it are not incidental.
+
+**The barriers are statements, not iterations.** The doubling loop is a C++ loop
+that runs while the graph is built, so what the kernel contains is six barriers in
+a row rather than one inside a loop — which it has to be, since a barrier some
+threads reach a different number of times is undefined on both backends. Phase 2
+shipped the rule that a barriered kernel loses its bounds guard and must be
+dispatched over whole groups; this is the first thing to use it.
+
+**The scan leaves its source zeroed.** It reads every element it sums, so writing
+a zero behind it costs nothing — and it is exactly what the stage after it needs.
+A counting sort wants a cursor per tile starting at zero, and that is the array
+whose counts were just consumed. No second buffer, and no clear between them.
+
+That makes the *clear* stage load-bearing twice over rather than once: the fill
+pass leaves the cursors holding each tile's count again, so a second dispatch into
+the same batch starts from those unless something zeroes them. Deliberately
+removed, `CoverageBatch/dispatchingTwiceDrawsTheSameThing` is the one test of the
+904 that fails — which is the test written for the same shape when the backdrop
+moved, catching the same class of bug one stage over.
+
+## What the CPU cannot know, and what it does instead
+
+The entry array — every (segment, tile) pair, four floats each — has a size only
+the clip knows, and the clip is on the GPU. So the CPU reserves a **bound**
+instead, in constant time per segment.
+
+A segment is straight, so its x runs one way as its y does, and the tile rows it
+crosses hand their x-ranges to each other end to end. A row therefore costs one
+column for itself plus one for each column boundary the segment crosses inside
+it — and summed over the rows, the second term telescopes into the segment's own
+width in tiles. `rows + ceil(width / 16)` is an upper bound; `rows × tilesWide` is
+the other one, and it is the smaller when the segment is nearly horizontal.
+
+Measured over the corpus it reserves 1.17–1.63× what is really used. The fill
+guards its write against the capacity anyway, so a bound that was somehow short
+would drop a segment rather than corrupt a neighbour — but it would drop it
+silently, so `PathRasterizer/theEntryBoundIsOne` checks the bound directly against
+the count on the shapes that stretch each of its two terms. With the row term
+removed it fails, and so do twelve other tests.
+
+**And the first version of it was a second pass.** A loop over the emitted
+segment array, which on a dense path is megabytes read twice. Measured by removal
+against a build without it:
+
+| path | emit | emit + bound, as a second pass | the bound is |
+|---|---|---|---|
+| PathQuality panel | 0.002 | 0.003 | 33% |
+| automation curve, 1200pt | 0.008 | 0.011 | 27% |
+| artwork, 4k segments | 0.034 | 0.052 | 35% |
+| artwork, 100k segments | 0.879 | 1.445 | **39%** |
+
+A third of everything left on the CPU, for arithmetic that was already in
+registers one loop earlier. Folded into the emit loop it is inside the noise —
+6% on the 100k artwork, and negative on three rows of the same table.
+
+## How this was measured, which went wrong the way phase 0 said it would
+
+Phase 0 wrote down that instrumenting these loops inflates them by a factor of
+three, and that the split has to be taken **by removal**. The first attempt at the
+bound's split ignored that and put a runtime switch in — one `getenv` at the top
+of the function, no clock, nothing in a loop. It inflated the 100k artwork from
+1.17ms to 2.06 and the whole corpus with it, because an opaque call is a barrier
+to everything the compiler wanted to do around it.
+
+So the tables above are two binaries, alternated. That mattered more than usual:
+the same binary read 1.17ms early in the session and 2.9ms later, the machine
+having picked up load. Every ratio below is from an alternated pair; the absolute
+figures are worth nothing on their own.
+
+## What shipped
+
+`eacp-gpuwidgets`
+
+- `BinKernels.h` — `BinKernel`, the clip, the count and the fill; and
+  `ClearKernel`, which zeroes the backdrop's cells and the tile counts in one
+  dispatch.
+- `PrefixSum.h` / `.cpp` — `ScanBlockKernel`, `ScanAddKernel`, and the levels
+  between them.
+- `PathRasterizer` no longer bins. `setPath` is flatten, transform and the bound;
+  `buildTiles`, the run list, the tile offsets, the cursor array, the tile-segment
+  array and the crossings are all gone. `getSegmentTests` still walks the clip,
+  but only when something asks, and `getEntryCount` beside it is what says the
+  bound is one.
+- `CoverageBatch` allocates the counts, the offsets and the entries, and
+  dispatches clear → count → backdrop scan → sum → fill → coverage.
+- `BackdropKernels.h` is down to the row scan: the scatter moved into the binner,
+  because the crossing is what the clip already computed.
+- `CoverageKernel` reads global tile offsets — the sum ran over every tile of
+  every path at once — so a path's segment base is gone from the record, and the
+  record is the same eight floats with the tile base in the read the binner takes.
+
+`Tests/GPUWidgets/PrefixSumTests.cpp`, and `PathRasterizer/theEntryBoundIsOne`.
+
+No change to `eacp-ui`, `eacp-gpu`, or any public API but the two accessors.
+
+## Results
+
+`Apps/GPU/PathBench`, release, Windows on a Parallels vGPU. Both binaries built
+and run alternately, five rounds, medians.
+
+| path | CPU before | CPU after | | GPU before | GPU after |
+|---|---|---|---|---|---|
+| knob indicator, 40pt | 0.003 | 0.001 | 3× | 0.047 | 0.096 |
+| knob indicator, 96pt | 0.007 | 0.001 | 7× | 0.034 | 0.061 |
+| PathQuality panel | 0.012 | **0.001** | 12× | 0.055 | 0.097 |
+| automation curve, 1200pt | 0.057 | **0.007** | 8× | 0.142 | 0.182 |
+| full-window ellipse | 0.077 | **0.002** | **38×** | 0.296 | 0.319 |
+| artwork, 4k segments | 0.314 | 0.035 | 9× | 0.194 | 0.233 |
+| artwork, 20k segments | 1.131 | 0.173 | 7× | 0.245 | 0.265 |
+| artwork, 100k segments | 5.125 | **0.891** | 6× | 0.470 | 0.513 |
+
+And the workload the rung is for — a canvas where every path moves, so every one
+is re-binned and re-uploaded every frame:
+
+| | paths | bin before | bin after | | frame before | frame after | |
+|---|---|---|---|---|---|---|---|
+| automation lanes | 32 | 2.048 | **0.222** | 9.2× | 4.279 | **2.104** | 2.0× |
+| automation lanes | 128 | 8.079 | **0.879** | 9.2× | 14.905 | **7.024** | 2.1× |
+| PathQuality panels | 128 | 1.685 | **0.198** | 8.5× | 5.223 | **3.303** | 1.6× |
+
+Dispatches per batch go 4 → 8; buffer updates go 7 → **5**, the crossings and
+their per-path starts having stopped being something the CPU builds.
+
+The GPU column is dearer everywhere and by roughly a constant: three more
+dispatches and their barriers, plus the clip now running there. On the canvases
+that is bought back several times over by the CPU column, which is the whole
+trade. On a single small path it is not, and the next section is about that.
+
+**Verified.** 904/904 tests pass, the four new ones included. The rasterizer,
+batch and stroker tests hold the mask pixel for pixel against a CPU reference that
+walks every segment for every pixel, which is what a binner has to meet.
+
+Against deliberate breaks:
+
+| what was broken | of 41 GPUWidgets tests |
+|---|---|
+| the scan's levels never composed (no add-down pass) | 4 fail, two of them pictures |
+| the first tile column off by one | 7 fail |
+| the tile counts not cleared | **exactly 1** — `dispatchingTwiceDrawsTheSameThing` |
+| every path claiming its tiles start at zero | **exactly the 5 batch tests** |
+| the entry bound's row term dropped | 14 fail, the bound test naming the shortfall |
+
+The last two are the signatures those bugs should have: a batching bug fails only
+the batch tests, and a bound that comes up short fails the pictures *and* says so
+in the one test that measures it.
+
+On screen: `ComponentTree` still reports 295 components and 8 batch breaks with
+the knobs unchanged; `AtlasCeiling` still 240 shapes, 4096², 90% full, 34 dropped,
+with every tile that fits showing its own side count; `PathQuality`'s compute panel
+carries 91 distinct coverage levels over the circle's boundary against the MSAA
+panel's 58, and its interior holds 6 steps in 130,682 pixels spread across four
+different residues mod 16 — which is the screenshot's dithering and not the tile
+grid, a tile-grid residue being the thing that would pile them all onto one.
+
+## What the generated source said
+
+Read rather than assumed, and it paid twice.
+
+The scan came out right: `groupshared uint s0[64]`, the six doublings unrolled
+with their barriers at the top level of the kernel, and each element's index
+common-subexpressioned into a local.
+
+The binner did not. In the fill arm the segment was re-read from the buffer
+**inside the innermost loop** — four loads per entry written rather than four per
+segment — because a value that is only an expression is emitted again in every
+block that mentions it. `var()` is what pins it, which `CoverageKernel::coverageAt`
+already knew and said so, and the backdrop's kernels learned in phase 4. That is
+three times this exact thing has been found by reading the source and no times by
+anything else.
+
+## What this cost
+
+- **A solo rasterization pays eight dispatches.** `PathBench`'s unbatched canvas
+  of 128 panels goes 10.85ms → 14.67ms, which is 128 paths each paying stages that
+  are per batch. That is the floor phase 0 predicted, and it is why the demos and
+  the probe going through `PathRasterizer::dispatch` are a batch of one rather
+  than something cheaper. It did **not** turn out to need a second CPU path for
+  small paths: a knob is 0.001ms of CPU and 0.096ms of GPU either way, and an
+  interface pays the stages once a frame however many knobs are in it.
+- **`getSegmentTests()` is a prediction now.** It walks the clip on the CPU to
+  count what the kernel is about to find, from the same arithmetic, rather than
+  reading what was built. The numbers are identical across the corpus, before and
+  after — but it is a model of the binner and no longer the binner itself.
+- **The dispatch count is not quite independent of the batch.** The scan is
+  `2·levels − 1` dispatches and levels grow with the log of the tile count, so a
+  batch a thousand times larger is two dispatches dearer.
+  `CoverageBatch/costIsPerFrameNotPerPath` holds a batch of 40 against a batch of
+  one and still passes, both being one level deep; it would not if the 40 crossed
+  into two.
+
+## What is still wrong
+
+- **Emit is now the whole of it.** The 100k-segment artwork is 0.891ms of CPU and
+  emit is ~94% of that: flattening the path and transforming it into pixel space,
+  which is the one thing left that reads the geometry. Phase 0 called it a fifth
+  of the dense case; it was, next to a binner that no longer exists.
+- **The gather is still a copy**, unchanged and for the reason given when the
+  batch shipped: the honest shape is for the rasterizer to emit straight into the
+  batch's arrays, which means it no longer owns what it built.
+- **The entry array is a third bigger than it needs to be**, which is what a
+  bound taken without clipping buys. Indirect dispatch would let the fill be sized
+  by what the count found, but the *allocation* still has to be decided before
+  either runs, so it would not help this.
+- **The binner is one thread per segment.** A segment crossing forty tile rows is
+  a thread doing forty times the work of the one beside it, and a flattened
+  outline mostly does not do that — but a rectangle's side does. Not measured,
+  because nothing in the corpus is made of them.
+
+## What is next
+
+Rung 3's list is empty. What is left of the CPU is **emit**: the flattening and
+the transform, ~94% of a dense path's remaining 0.9ms and immeasurable on
+anything at UI scale. It is a different kind of move from the three above — the
+path's curves would have to reach the GPU, not its polyline — and nothing in
+`eacp-ui` is waiting on it.

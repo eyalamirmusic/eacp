@@ -3,6 +3,7 @@
 #include <NanoTest/NanoTest.h>
 
 #include <cmath>
+#include <string>
 
 // What the kernel computes, against what the same arithmetic gives when nothing
 // is binned at all.
@@ -362,6 +363,65 @@ auto tBinningCutsWork = test("PathRasterizer/binningCutsWorkWithArea") = []
     if (!result.ran)
         return;
 
+    check(result.pixelsOver == 0);
     check(result.segmentTests > 0);
     check(result.segmentTests * 20 < result.unbinnedTests);
+};
+
+// The array the counting sort fills is sized to a bound, because the count is
+// what the clip finds and the clip is on the GPU. A bound that came up short
+// would be the quietest failure in the rasterizer: the write is guarded, so what
+// happens is that some tile silently loses a segment and an edge goes soft in
+// one place.
+//
+// So it is checked directly, on the shapes that stretch the two terms it is made
+// of - a segment crossing many rows, one crossing many columns, and one doing
+// both - rather than only where a picture happens to notice.
+auto tEntryBoundHolds = test("PathRasterizer/theEntryBoundIsOne") = []
+{
+    auto paths = Vector<Path> {};
+    paths.add(thinDiagonal(240.f, 180.f));
+    paths.add(knobIndicator(96.f, 0.7f));
+    paths.add(selfIntersectingStar({2.f, 2.f, 180.f, 180.f}));
+
+    auto wide = Path {};
+    wide.addEllipse({0.f, 0.f, 900.f, 40.f});
+    paths.add(wide);
+
+    auto tall = Path {};
+    tall.addEllipse({0.f, 0.f, 40.f, 900.f});
+    paths.add(tall);
+
+    // A single segment running corner to corner, which is the shape the bound's
+    // "twice the rows it crosses" term exists for.
+    auto slash = Path {};
+    slash.moveTo({4.f, 4.f});
+    slash.lineTo({500.f, 400.f});
+    slash.lineTo({500.f, 396.f});
+    paths.add(slash);
+
+    auto rasterizer = PathRasterizer {};
+
+    for (const auto& path: paths)
+    {
+        for (auto scale: {1.f, 2.f, 3.f})
+        {
+            rasterizer.setScale(scale);
+            rasterizer.setPath(path);
+
+            auto counted = rasterizer.getEntryCount();
+            auto reserved = rasterizer.getEntryBound();
+
+            check(counted <= reserved,
+                  std::to_string(counted) + " entries in room for "
+                      + std::to_string(reserved));
+
+            // And a bound rather than a shrug. Loose enough that the derivation
+            // has room to be conservative, tight enough that reserving the whole
+            // tile grid per segment would not pass.
+            check(reserved <= counted * 2 + 64,
+                  std::to_string(reserved) + " reserved for "
+                      + std::to_string(counted));
+        }
+    }
 };

@@ -41,23 +41,20 @@ enum class FillRule
 // interface's paths share one atlas and draw in one batch - see
 // UI::CoverageAtlas.
 //
-// Segments are binned into tiles here, on the CPU, so a thread walks the outline
-// near its own pixel rather than the whole of it. What that costs is the sum
-// over tiles of tile pixels times the segments crossing the tile, plus one
-// backdrop lookup for every pixel that has no outline near it at all -
-// getSegmentTests() reports the first term. A path is therefore priced by its
-// outline rather than by its area, which is what lets one cover the window.
+// Segments are binned into tiles so a thread walks the outline near its own
+// pixel rather than the whole of it. What that costs is the sum over tiles of
+// tile pixels times the segments crossing the tile, plus one backdrop lookup for
+// every pixel that has no outline near it at all - getSegmentTests() reports the
+// first term. A path is therefore priced by its outline rather than by its area,
+// which is what lets one cover the window.
 //
-// What everything to the left of a tile contributes - the backdrop - is priced
-// by the outline here too, and that is the one thing that is not obvious. It is
-// held as a value per tile column per pixel row, which is the *area's* size, and
-// building that used to cost more CPU than everything else here put together.
-//
-// So this class does not build it. What it produces is the outline's crossings
-// into each tile column, of which there are as many as there is outline, and
-// three kernels ahead of the coverage one clear the array, scatter the crossings
-// into it and sum each row. See BackdropKernels.h. A path is therefore priced by
-// its outline on the CPU and by its area only where area is cheap.
+// **None of that happens here.** What this class does is flatten the path and
+// transform it into the coverage texture's pixel space, which is `O(segments)`
+// and nothing else. The clip that decides which tiles each segment lands in, the
+// count per tile, the prefix sum over them and the counting sort that files the
+// segments are four kernels - see BinKernels.h - and so is the backdrop, which
+// falls out of the same clip. The only thing settled on this side is how much
+// room to allocate, which is a bound taken per segment without clipping.
 class PathRasterizer
 {
 public:
@@ -68,11 +65,12 @@ public:
     void setScale(float pixelsPerUnit);
     float getScale() const { return scale; }
 
-    // Bins the path's segments and measures the coverage it will need. Every
-    // sub-path is closed, since a fill always treats one as closed. Nothing on
-    // the GPU is touched here - no texture, and no buffer: the bytes go up when
-    // the work is recorded, which is what lets a frame send every path's at once
-    // and, on D3D12, put the copies on the list the frame is already building.
+    // Flattens the path into directed segments in coverage pixel space and
+    // measures the room its rasterization will need. Every sub-path is closed,
+    // since a fill always treats one as closed. Nothing on the GPU is touched
+    // here - no texture, and no buffer: the bytes go up when the work is
+    // recorded, which is what lets a frame send every path's at once and, on
+    // D3D12, put the copies on the list the frame is already building.
     void setPath(const Path& path, FillRule rule = FillRule::NonZero);
 
     // True when there is nothing to dispatch and no coverage to sample - an
@@ -101,11 +99,24 @@ public:
     // exists to cut: the same path unbinned costs coverage width times height
     // times getSegmentCount().
     //
-    // Counted when asked for and not when the path is set. Counting walks every
-    // tile, which is priced by the *area* - on a window-sized path it was a
-    // fifth of what a rasterization cost, spent on a number only a bench and a
-    // test ever read.
+    // Counted when asked for and not when the path is set - it is the one thing
+    // here that still does the clip on the CPU, and nothing but a bench and a
+    // test ever reads it. What it counts is what the binning kernel will find,
+    // from the same arithmetic; it is a prediction rather than a measurement,
+    // and the only place the two could differ is a boundary an ulp wide.
     long long getSegmentTests() const;
+
+    // How many times a segment appears under some tile, which is the size of the
+    // array the counting sort fills. The dispatch is sized by a bound on this
+    // rather than by this - see getEntryBound - so the two together are what say
+    // whether that bound is one.
+    int getEntryCount() const;
+
+    // The room a batch reserves for those entries. The exact count is what the
+    // clip finds, and the clip is on the GPU, so this is an upper bound taken
+    // per segment in constant time - see measure(). It has to be one: a bound
+    // that came up short would drop segments and say nothing.
+    int getEntryBound() const { return entryBound; }
 
     // Writes into a rect of someone else's texture, whose top-left texel is
     // given. The texture must have been created with computeWrite, must outlive
@@ -125,10 +136,12 @@ public:
     // must end before the render pass that samples the coverage begins.
     //
     // This is a batch of one, and a frame drawing more than one path should not
-    // use it: hand them all to a CoverageBatch instead and dispatch that. What
-    // this costs over the batch is a set of buffers of its own, which is the
-    // right trade for the demo and the test that rasterize a single path and the
-    // wrong one for an interface.
+    // use it: hand them all to a CoverageBatch instead and dispatch that. What it
+    // costs over the batch is a set of buffers of its own and, more than that,
+    // the stages - clearing, binning, summing and sorting are per batch, so a
+    // path on its own pays for all of them by itself. That is the right trade for
+    // the demo and the test that rasterize a single path and the wrong one for an
+    // interface.
     void dispatch(GPU::ComputePass& pass);
 
 private:
@@ -138,20 +151,16 @@ private:
     // owns. Null until a dispatch has settled which.
     const GPU::Texture* getTargetTexture() const;
 
-    // One segment's crossing of one tile row: the tiles it lands in are a run,
-    // because within a row a straight segment spans a contiguous range of
-    // columns. Recorded on the counting pass so the filling pass does not clip
-    // the geometry a second time.
-    struct TileRun
-    {
-        int segment;
-        int firstTile;
-        int tiles;
-    };
+    // Tiles across the coverage, which is what a batch adds up to size the count
+    // and offset arrays the binning kernels work in.
+    int getTileCount() const { return tilesWide * tilesHigh; }
 
     void ensureOwnTexture();
-    void buildTiles();
-    void addCrossing(float direction, float fromY, float toY, int column);
+    void countTiles() const;
+
+    // A ceiling on the tiles one segment lands in, taken as the segment is
+    // emitted - see the definition for why that is where it belongs.
+    int boundEntriesOf(float fromX, float fromY, float toX, float toY) const;
 
     // The buffers a solo dispatch needs, made on the first one and not at all
     // for a rasterizer a CoverageBatch drives - which is every one in an
@@ -159,20 +168,11 @@ private:
     std::optional<CoverageBatch> solo;
     std::optional<GPU::Texture> coverageTexture;
 
-    // Directed segments in coverage pixel space, four floats each, before
-    // binning. Every buffer below is kept between rasterizations too, so a path
-    // re-drawn at the same complexity allocates nothing at all.
+    // Directed segments in coverage pixel space, four floats each. The one array
+    // this builds, and the only thing it hands a batch. Kept between
+    // rasterizations, so a path re-drawn at the same complexity allocates
+    // nothing at all.
     Vector<float> segments;
-
-    Vector<TileRun> runs;
-    Vector<float> tileOffsets;
-    Vector<int> tileCursor;
-    Vector<float> tileSegments;
-
-    // Where the outline crosses into a tile column, three floats each, which is
-    // what the GPU builds the backdrop out of. Priced by the outline, where what
-    // it builds is priced by the area.
-    Vector<float> crossings;
 
     const GPU::Texture* target = nullptr;
     int originX = 0;
@@ -184,10 +184,13 @@ private:
     int coverageHeight = 0;
     int tilesWide = 0;
     int tilesHigh = 0;
+    int entryBound = 0;
     int evenOdd = 0;
 
-    // Negative until something asks, which is what makes the count lazy.
+    // Negative until something asks, which is what makes the walk that fills
+    // both of them lazy.
     mutable long long segmentTests = -1;
+    mutable int entryCount = 0;
 
     // Whether the solo batch still describes this path. A rasterizer dispatched
     // repeatedly without changing - which is what a benchmark and a static demo
