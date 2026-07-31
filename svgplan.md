@@ -1,25 +1,29 @@
 # SVG through the component tier
 
-**Rungs 1 and 2 are done, and both of rung 1's questions are answered.** What
-follows was written before any of it was built; the sections it got wrong are
-marked where they stand, and the records of what actually happened are at the end
-under *Rung 1, as built* and *Rung 2, as built*.
+**Rungs 1 and 2 are done, both of rung 1's questions are answered, and the fix
+the first answer pointed at is built.** What follows was written before any of it
+was built; the sections it got wrong are marked where they stand, and the records
+of what actually happened are at the end under *Rung 1, as built*, *Rung 2, as
+built* and *The mesh route, as built*.
 
-**One thing is open, and everything else waits behind it:** the atlas cannot hold
-a real document, rung 2 added a second way to find that out, and the fix the
-measurement points at — routing large-area shapes through a mesh instead of a
-mask — is unbuilt. Read *What is still open* at the end before designing anything
-else here.
+**Where that leaves the ceiling:** the atlas still cannot hold a document's masks
+and no longer has to. A shape too large to be worth one is drawn as triangles
+instead, chosen per shape from its own area, and the document that asked for
+45.7M texels and lost 229 masks now asks for none and loses nothing. Rung 3 is
+unblocked.
 
 Rung 1's two answers, since they are the point:
 
 - **A document does not fit in the atlas.** A 300-shape stacked drawing asks for
   45.7M texels against the atlas's 16.8M and loses 229 of its 301 masks. The
   arithmetic below was right and `plan.md`'s ceiling argument does not cover
-  artwork.
+  artwork. *Answered by the mesh route: the same document now takes no atlas
+  space at all.*
 - **Abutting shapes seam.** Measured, not judged: the shared edge of two
   triangles carries about a quarter of the backdrop, and against a contrasting
-  one it is an unmistakable hairline.
+  one it is an unmistakable hairline. *Still open, and unaffected by the mesh
+  route — those tiles are small enough to keep their masks, and a mesh seams the
+  same way a mask does.*
 
 `eacp-svg` renders a document into one native `Graphics::ShapeLayer` per shape —
 CAShapeLayer on macOS, Direct2D on Windows — which is the tier `UI::Component`
@@ -44,7 +48,11 @@ has moved only where the parse layer beneath it moved.**
 | `SVGParser` | the two joined |
 
 `CMakeLists.txt` links `eacp-graphics` and `eacp-ui`. `Tests/SVG` has 42 cases,
-and the dash geometry is pinned in `Tests/GPUWidgets`.
+and the dash and mesh geometry are pinned in `Tests/GPUWidgets`.
+
+Nothing in the module chooses between a mask and a mesh, and that is deliberate:
+`UI::PathShape` decides from the shape's own area, so the builder is unchanged by
+the thing that unblocked it and every other widget gets the same trade.
 
 What `SVGComponent` draws: shapes and paths with every path command, `viewBox`
 with its origin and `preserveAspectRatio`, transform lists as real matrices baked
@@ -57,9 +65,10 @@ What it does not: gradients, `clipPath` and `mask`, group opacity as
 compositing, `<style>` elements and CSS selectors, filters, `<image>`. An element
 asking for one of those draws without it rather than not at all.
 
-And the thing that limits all of it: **the coverage atlas cannot hold a large
-document.** Measured, twice over — see *Rung 1, as built* and *What is still
-open*.
+And the thing that used to limit all of it: **the coverage atlas cannot hold a
+large document.** Measured, twice over — see *Rung 1, as built* and *What is
+still open* — and answered in *The mesh route, as built*, which is the last
+section.
 
 # What the module was before any of this
 
@@ -385,8 +394,8 @@ right and one wrong:*
    operation and shipped in `GPUWidgets`.*
 3. **Rung 3** is the three features that need work below the module, in the order
    documents actually miss them: gradients, then clipping, then group opacity.
-   *Unstarted, and it should not be started before the atlas decision — see
-   "What is still open".*
+   *Unstarted, and now unblocked: the atlas decision was the thing in front of
+   it, and it is made and built.*
 
 One decision to make at the top of rung 1 and not later: whether the native
 `SVGView` stays. Keeping both means one parse layer and two builders, which is
@@ -611,6 +620,8 @@ between here and rung 3.
 
 ## What is still open, and it is the same thing
 
+*Written at the end of rung 2, and answered by the section after it.*
+
 `defs`/`use` builds each use site's geometry again rather than sharing a mask,
 which is not a shortcut: a `PathShape` holds the coverage a kernel rasterized at
 one size and one place, so two uses of one symbol are two masks however identical
@@ -626,3 +637,118 @@ depends on it, and everything in both is limited by it.
 Still not done, and now the whole of what is left below rung 3: the mesh route,
 and `<style>` elements with real selectors — which stays out of scope, as the
 plan said.
+
+# The mesh route, as built
+
+The decision above, taken and measured. It is not in `eacp-svg` at all: the
+choice belongs to `UI::PathShape`, which is what makes it available to every
+widget and invisible to the builder.
+
+## What it buys, on the documents that asked
+
+Same window, same 1.5 backing scale, through `Apps/UI/SVGDocument`. *Asks* is
+what the shapes that still take masks come to; *unmeshed* is what the document
+would have asked for with no mesh route at all, which is the figure rung 1
+measured.
+
+| document | shapes | meshed | asks | unmeshed | dropped | switches |
+|---|---|---|---|---|---|---|
+| Badge | 3 | 2 | 1.1M | 2.2M | 0 | 3 |
+| Features | 11 | 1 | 0.6M | 1.5M | 0 | 2 |
+| Document features | 20 | 1 | 0.5M | 1.4M | 0 | 2 |
+| Aspect | 4 | 4 | 0.0M | 0.8M | 0 | 1 |
+| Tiles — 384 abutting triangles | 384 | 0 | 1.9M | 1.9M | 0 | 0 |
+| Stacked — 300 large circles | 301 | **301** | **0.0M** | 43.9M | **0** | 2 |
+
+The Stacked document is the whole point: 229 masks missing before, none now, and
+the atlas is not merely coping but untouched. The Tiles document is the other
+half of the same point — 384 shapes, none of them meshed, because each is small
+enough that a mask is the better answer and the threshold says so.
+
+*Switches* is the cost this adds and the only one: two renderers sharing a pass
+draw in flush order rather than call order, so alternating between a masked and a
+meshed shape costs a draw. A document that meshes all or none of its shapes pays
+one or zero; the worst case is a document that alternates, and no document here
+comes near it. `Graphics::getRendererSwitchCount` reports it because nothing else
+would.
+
+## Where the decision is made, and why there
+
+`PathShape::Backing` is `Automatic` unless a caller says otherwise, and
+`Automatic` compares the mask the shape would need against a fixed 256×256 device
+pixels — a 256th of a full atlas, so a tree needs that many large shapes before
+the ceiling is in view. A widget's paths are orders below it; artwork is what
+meets it.
+
+Putting it there rather than in the builder was the one design change from the
+plan, and it earns itself twice: the SVG module needed no line for it, and
+`Apps/UI/AtlasCeiling` had to ask for `Backing::Mask` explicitly to keep
+demonstrating the ceiling — which is the clearest evidence that the default is
+doing something.
+
+## What the mesh is, and what it costs in quality
+
+`GPUWidgets::tessellateAntialiasedFill` returns a triangle list carrying a
+coverage per vertex: the contour pulled in by half a device pixel and filled
+solid, ringed by a mitred band that fades to nothing over the other half. The
+outline ends up in the middle of that band, which is where a mask puts its 50%
+coverage too, so a shape neither grows nor shrinks by changing route.
+
+The plan expected to pay `PathView`'s quality — 3 distinct coverage levels
+against the kernel's 97 — and that turned out to be the wrong thing to expect,
+in both directions. `PathView` gets its 3 levels from 4x MSAA, and the component
+pass has no multisampling at all and cannot have any (`ComponentHost` explains
+why: a multisampled scissor edge feathers, and the glyph pipeline is
+single-sample). So the ear-clip mesh as it stood would have had *one* level —
+hard edges on precisely the largest shapes in the document. The feather ring is
+what replaces the MSAA, and it is analytic rather than sampled, so what it
+actually costs against a mask is the difference between a linear ramp across the
+flattened polyline and the exact area of each pixel the path covers. On the
+Badge's circle that is not a difference you can find: the edge reads the same as
+Direct2D's beside it.
+
+## What it refuses, which is the part that had to be right
+
+A refusal costs the atlas and is answered by the mask; a wrong acceptance is
+answered by nothing and draws the wrong shape. So the tessellator is
+conservative, and each refusal has a reason it could not be otherwise:
+
+- **More than one contour.** A hole and a second blob are the same two contours
+  with no fill rule to tell them apart. Which also means the fill rule never
+  comes up — one simple contour fills the same way under either.
+- **A contour that crosses itself.** This is the one that would have shipped
+  quietly wrong. Ear clipping tests a candidate triangle against the other
+  *vertices*, so a five-pointed star written as five crossing edges — which is
+  how SVG documents write one — comes back fully consumed and fills as a
+  pentagon. Nothing downstream would say so. A quadratic crossing test in front
+  of it is what catches it, and it is why the point count is capped.
+- **More points than ear clipping is worth running on**, the work growing faster
+  than the count while the kernel it would replace reads segments in parallel and
+  does not care.
+- **Ear clipping not consuming the polygon anyway**, which is also the test that
+  catches a shape with a feature thinner than its own feather: pulling the ring
+  inwards folds it through itself, and the fill that came back would have a bite
+  out of it.
+
+## What this does not fix
+
+- **A large thin stroke still takes a full mask.** `strokeToFill` emits the
+  stroke as overlapping contours, so it is refused on the first rule above, and a
+  ring's mask is its whole bounding box however little of it is inked. That is
+  the next atlas consumer worth measuring, and the answer is probably to mesh
+  from the polyline rather than from the stroked region — which is
+  `tessellateStroke`, already sitting there, needing a feather and non-overlapping
+  joins.
+- **A meshed shape re-uploads its triangles every time the tree paints**, where a
+  masked one draws a quad and re-uploads nothing. A static document paints once
+  and does not care; an animated one trades a per-frame memcpy for the atlas
+  space, which is the right way round but is not free.
+- **Seams are unchanged.** Two abutting meshes antialias against the backdrop
+  exactly as two abutting masks do.
+- **Nothing clips a document to its own viewport.** Visible on the Stacked
+  document, whose circles run past the letterboxed artwork to the component's
+  own bounds. Older than this work and unrelated to it, but this is the document
+  that makes it obvious.
+
+Still not done below rung 3: stroke meshing, and `<style>` elements with real
+selectors — which stays out of scope, as the plan said.

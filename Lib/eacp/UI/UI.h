@@ -6,6 +6,7 @@
 #include "Graphics/Graphics.h"
 #include "Host/ComponentHost.h"
 #include "Render/CoverageAtlas.h"
+#include "Render/MeshBatch.h"
 #include "Render/PathShape.h"
 #include "Render/ShapeBatch.h"
 #include "Widgets/Widgets.h"

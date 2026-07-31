@@ -714,12 +714,34 @@ float SVGComponent::getTotalMaskArea() const
     return total;
 }
 
+float SVGComponent::getAtlasMaskArea() const
+{
+    auto total = 0.f;
+
+    for (auto& shape: shapes)
+        if (!shape->mask.isMeshed())
+            total += shape->maskBounds.w * shape->maskBounds.h;
+
+    return total;
+}
+
 int SVGComponent::getDroppedShapeCount() const
 {
     auto count = 0;
 
     for (auto& shape: shapes)
         if (shape->mask.wasDropped())
+            ++count;
+
+    return count;
+}
+
+int SVGComponent::getMeshedShapeCount() const
+{
+    auto count = 0;
+
+    for (auto& shape: shapes)
+        if (shape->mask.isMeshed())
             ++count;
 
     return count;

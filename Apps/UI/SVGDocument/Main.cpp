@@ -277,7 +277,8 @@ struct StatsBar final : UI::Component
         // The demand is in device pixels, so it is the mask area times the
         // square of the backing scale; the supply is the atlas squared.
         auto scale = host->backingScale();
-        auto asked = document->getTotalMaskArea() * scale * scale;
+        auto asked = document->getAtlasMaskArea() * scale * scale;
+        auto unmeshed = document->getTotalMaskArea() * scale * scale;
         auto held = (float) host->getAtlasSize() * (float) host->getAtlasSize();
 
         auto millions = [](float texels)
@@ -287,13 +288,16 @@ struct StatsBar final : UI::Component
         };
 
         auto text =
-            std::to_string(document->getShapeCount()) + " masks   "
+            std::to_string(document->getShapeCount()) + " shapes   "
+            + std::to_string(document->getMeshedShapeCount()) + " meshed   "
             + std::to_string(document->getFontCount()) + " fonts   " + "asks "
-            + millions(asked) + "M texels of a " + millions(held) + "M atlas   "
+            + millions(asked) + "M texels of a " + millions(held) + "M atlas ("
+            + millions(unmeshed) + "M unmeshed)   "
             + std::to_string((int) (host->getAtlasFillFraction() * 100.f))
             + "% reserved   " + std::to_string(document->getDroppedShapeCount())
             + " dropped   " + std::to_string(host->getLastClipChangeCount())
-            + " breaks";
+            + " breaks   " + std::to_string(host->getLastRendererSwitchCount())
+            + " switches";
 
         g.setColour(UI::defaultTheme().dimText);
         g.drawText(text, getLocalBounds(), UI::Justification::Left);

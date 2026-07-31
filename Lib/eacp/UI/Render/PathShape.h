@@ -43,6 +43,31 @@ class Component;
 class PathShape
 {
 public:
+    // How the shape's coverage is produced. Two answers, because a mask does not
+    // scale with the shape it covers: coverage is computed per device pixel and
+    // stored, so a shape the size of a document costs the atlas a document's
+    // worth of texels. An interface never notices - its shapes are widget-sized
+    // and tile rather than stack - and artwork does: a drawing of large stacked
+    // shapes asks for several times the atlas and loses whatever arrives after
+    // it is full.
+    enum class Backing
+    {
+        // A mask while the shape is small enough to be worth storing one, and a
+        // mesh once it is not. What a shape gets unless it is told otherwise,
+        // since the threshold is about the atlas rather than about the widget.
+        Automatic,
+
+        // Always a mask: exact coverage, at the cost of the shape's own area in
+        // the atlas. What a shape wants when its edge is the point of it.
+        Mask,
+
+        // Always a mesh where the geometry allows one. A triangulator cannot
+        // read every path -- holes, self-crossing contours -- and this is a
+        // preference rather than an instruction, so a shape it cannot tessellate
+        // falls back to a mask and draws correctly rather than not at all.
+        Mesh
+    };
+
     // Registers with the component that draws it, which is how the host finds
     // it to rasterize. The component has to outlive the shape, which holding it
     // as a member gets you.
@@ -51,6 +76,16 @@ public:
 
     PathShape(const PathShape&) = delete;
     PathShape& operator=(const PathShape&) = delete;
+
+    // Takes effect at the next rasterization, so setting it before the path is
+    // the usual order.
+    void setBacking(Backing newBacking);
+    Backing getBacking() const { return backing; }
+
+    // Whether this shape ended up as triangles rather than a mask -- which is
+    // worth being able to read, because it is the difference between costing the
+    // atlas nothing and costing it the shape's whole area.
+    bool isMeshed() const { return !mesh.empty(); }
 
     // The geometry, in the owning component's points. Marks the shape for
     // rasterization at the top of the next frame; cheap enough to call whenever
@@ -74,11 +109,16 @@ public:
     // Where the coverage lands, in the owning component's points - the path's
     // bounds snapped out to whole device pixels. Not the path's own bounds:
     // this is the rect the quad has to cover for every partly-covered pixel to
-    // be drawn.
+    // be drawn. A meshed shape reports the triangles' own reach instead, which
+    // is the path's bounds plus half the feather.
     Rect getBounds() const;
 
     // The atlas rect the quad samples.
     Rect getMaskUV() const { return maskUV; }
+
+    // The triangles, in the owning component's points, for a shape that ended up
+    // meshed. Empty for one backed by a mask.
+    const Vector<GPUWidgets::MeshVertex>& getMesh() const { return mesh; }
 
     // True when this shape has geometry and no mask, the atlas having had no
     // room for it. It stays true until the shape is rasterized again, which is
@@ -97,6 +137,12 @@ private:
                    float scale,
                    GPUWidgets::CoverageBatch& batch);
 
+    // The mesh route, tried first when the backing asks for it. False when the
+    // shape is small enough to be worth a mask, or when the geometry is
+    // something a triangulator cannot read - either way the mask route answers
+    // for it, so a refusal here costs the atlas rather than the picture.
+    bool buildMesh(float scale);
+
     // The atlas moved everything, or the display did: whatever was rasterized
     // is no longer where the uv says it is, and the slot it was in belongs to
     // somebody else now.
@@ -113,6 +159,12 @@ private:
     GPUWidgets::Path path;
     GPUWidgets::FillRule fillRule = GPUWidgets::FillRule::NonZero;
     GPUWidgets::PathRasterizer rasterizer;
+
+    Backing backing = Backing::Automatic;
+
+    // The triangles, when this shape is meshed. Non-empty is what says it is:
+    // the two routes are exclusive, so a shape holding a mesh holds no slot.
+    Vector<GPUWidgets::MeshVertex> mesh;
 
     // The room reserved in the atlas, kept between rasterizations: a mask that
     // still fits in it stays put, which is what stops a knob being dragged from

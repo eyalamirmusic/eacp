@@ -78,6 +78,12 @@ public:
     // from the picture. See ComponentHost::getLastDroppedPathCount.
     int getDroppedShapeCount() const;
 
+    // And how many never asked it for room, being large enough that drawing them
+    // as triangles costs less than storing their coverage would. See
+    // UI::PathShape::Backing: it is what keeps a document of large stacked
+    // shapes inside an atlas that cannot hold their masks.
+    int getMeshedShapeCount() const;
+
     // The area of every mask added up, in this component's points squared.
     // Times the square of the device scale, that is roughly the number of atlas
     // texels the document asks for - roughly, because a mask is the geometry's
@@ -92,6 +98,12 @@ public:
     // its own full bounding box. This sum is how far past the window a
     // particular document goes.
     float getTotalMaskArea() const;
+
+    // The same sum over the shapes that actually took a mask, which is what the
+    // atlas is really asked for. The two figures differ by exactly the shapes
+    // the mesh route took, and the gap between them is the whole of what that
+    // route buys.
+    float getAtlasMaskArea() const;
 
     // Distinct (family, size) pairs the document's text asked for. Each is its
     // own glyph atlas and therefore its own texture, so each is a batch break in

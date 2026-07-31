@@ -11,6 +11,7 @@ target_sources(eacp-ui PRIVATE
         Graphics/Graphics.cpp
         Host/ComponentHost.cpp
         Render/CoverageAtlas.cpp
+        Render/MeshBatch.cpp
         Render/PathShape.cpp
         Render/ShapeBatch.cpp
         Widgets/Widgets.cpp)

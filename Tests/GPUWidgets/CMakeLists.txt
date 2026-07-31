@@ -4,5 +4,6 @@ nano_add_executable(GPUWidgetsTests
             PathTests.cpp
             PathRasterizerTests.cpp
             PathStrokerTests.cpp
+            PathTessellatorTests.cpp
             PrefixSumTests.cpp
         TARGETS eacp-gpuwidgets)
