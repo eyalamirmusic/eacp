@@ -20,6 +20,17 @@ namespace eacp::GPU
 {
 // The GPU device (MTLDevice + command queue on Metal). Owns the resource
 // factories. Most apps use the process-wide Device::shared().
+//
+// A Device is single-threaded, and a thread that wants the GPU without queueing
+// behind the main one makes its own:
+//
+//     auto worker = GPU::Device();
+//
+// Everything that Device creates belongs to it — a Buffer, a Texture and a
+// CommandBuffer made from one are not usable from another, on either backend
+// (an MTLBuffer belongs to its MTLDevice; a D3D12 recording to its queue's
+// pool). Using a Device off the thread that constructed it is a debug assertion
+// rather than a race left to be found later.
 class Device
 {
 public:
@@ -91,6 +102,12 @@ public:
     // Opaque native handles for cross-translation-unit use by other GPU types.
     void* nativeDevice() const;
     void* nativeQueue() const;
+
+    // The backend's per-Device state: a D3D12Context on Windows, which every
+    // Windows translation unit reaches through getD3D12Context(device). Null on
+    // Metal, where the queue and the caches are members of Device::Native and
+    // the native handles above are all anything needs.
+    void* nativeContext() const;
 
     // The Metal CVMetalTextureCache backing zero-copy pixel-buffer textures.
     // Null on backends without it (Windows), where wrapPixelBuffer is a no-op.

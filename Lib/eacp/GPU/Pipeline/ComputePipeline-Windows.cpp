@@ -16,9 +16,9 @@ namespace eacp::GPU
 {
 struct ComputePipeline::Native
 {
-    Native(Device&, const ShaderLibrary& library)
+    Native(Device& device, const ShaderLibrary& library)
     {
-        auto& context = getD3D12Context();
+        auto& context = getD3D12Context(device);
 
         if (!context.isValid() || context.getComputeRootSignature() == nullptr)
             return;

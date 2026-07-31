@@ -7,6 +7,8 @@
 
 namespace eacp::GPU
 {
+class Device;
+
 // Times each labelled pass of a frame on the GPU, and hands back the most
 // recent frame whose numbers have arrived.
 //
@@ -22,8 +24,10 @@ namespace eacp::GPU
 class FrameTimer
 {
 public:
-    // Called by Device::beginFrame, which every Frame constructor runs.
-    void beginFrame(std::uint64_t frameIndex);
+    // Called by Device::beginFrame, which every Frame constructor runs, and
+    // which passes the Device these frames belong to — the backend needs it to
+    // name the queue whose fence says when a slot is readable.
+    void beginFrame(std::uint64_t frameIndex, Device& device);
 
     // Called by Frame::beginPass and Frame::beginCompute for a pass carrying a
     // label. Returns the pass's ordinal in this frame - its two samples are at
@@ -53,7 +57,7 @@ public:
     bool isSupported() const { return timestamps.isSupported(); }
 
 private:
-    void drainCompleted();
+    void drainCompleted(const Device& device);
 
     struct Slot
     {

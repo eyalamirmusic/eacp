@@ -13,16 +13,31 @@
 #include <cstdint>
 #include <optional>
 
-// Process-wide D3D12 plumbing shared by every Windows GPU translation unit:
-// the device and direct queue, the fence that orders CPU/GPU work, a pool of
-// command allocator/list pairs recycled once their fence value passes, and the
-// shader-visible descriptor heaps textures allocate their SRV/sampler slots
-// from. The 2D graphics layer keeps its own D3D11 device for Direct2D; the two
-// stacks only meet in the compositor, which composes swapchains from either
-// device. Not part of GPU.h.
+// The D3D12 plumbing shared by every Windows GPU translation unit, split in
+// two along the line that decides what a second GPU::Device can be.
+//
+// D3D12Shared is one per process: the ID3D12Device and the two root
+// signatures. All of it is immutable once created, or free-threaded by
+// contract, so sharing it costs nothing and duplicating it would cost a second
+// driver device.
+//
+// D3D12Context is one per GPU::Device: the command queue, the fence, the
+// command-list pool, the staging and readback pools, the constant ring and the
+// descriptor heaps. Every one of those is mutable and none of it is
+// synchronized, which is exactly why it cannot be shared — two Devices
+// forwarding to one context are two handles to the same pool, and the second
+// one's recording lands in the first one's list. A Device is therefore
+// single-threaded and owns its context; see the affinity note on acquire().
+//
+// The 2D graphics layer keeps its own D3D11 device for Direct2D; the two stacks
+// only meet in the compositor, which composes swapchains from either device.
+// Not part of GPU.h.
 
 namespace eacp::GPU
 {
+class Device;
+class D3D12Context;
+
 // One recording in flight: an allocator/list pair plus the transient upload
 // resources (per-draw constant buffers, staging copies) the recorded commands
 // reference. Everything is released together once fenceValue has passed.
@@ -32,6 +47,11 @@ struct CommandContext
     winrt::com_ptr<ID3D12GraphicsCommandList> list;
     Vector<winrt::com_ptr<ID3D12Resource>> transients;
     std::uint64_t fenceValue = 0;
+
+    // The context that lent this recording out, so anything holding one — an
+    // encoder, a pass — can reach the queue and the constant ring it belongs
+    // to without being told which Device it came from.
+    D3D12Context* context = nullptr;
 
     // Staging-pool slots this recording is copying out of. Unlike transients
     // these are not released when the recording is recycled — they go back to
@@ -62,16 +82,15 @@ struct DescriptorSlot
     D3D12_GPU_DESCRIPTOR_HANDLE gpu = {};
 };
 
-class D3D12Context
+// The process-wide half. Created on first use by getD3D12Shared().
+class D3D12Shared
 {
 public:
-    D3D12Context();
-    ~D3D12Context();
+    D3D12Shared();
 
     bool isValid() const { return device != nullptr; }
 
     ID3D12Device* getDevice() const { return device.get(); }
-    ID3D12CommandQueue* getQueue() const { return queue.get(); }
     ID3D12RootSignature* getRenderRootSignature() const
     {
         return renderRootSignature.get();
@@ -80,6 +99,64 @@ public:
     {
         return computeRootSignature.get();
     }
+
+    // Bumped every time the device is rebuilt. A context whose own copy is
+    // behind this is holding a queue, heaps and pools that belong to a device
+    // that no longer exists, and renews them the next time its owning thread
+    // asks it for anything. See D3D12Context::renewIfDeviceRecreated.
+    std::uint64_t getGeneration() const { return generation; }
+
+    // Drops the device and both root signatures and builds them again after
+    // device removal. Resources created on the old device (app buffers,
+    // textures, pipelines) stay dead; their owners rebuild via
+    // GPUView::onDeviceRestored, mirroring the D3D11 backend's recovery
+    // contract.
+    void recreateAfterDeviceLoss();
+
+private:
+    void createAll();
+    void createDevice();
+    void createRootSignatures();
+
+    winrt::com_ptr<ID3D12Device> device;
+    winrt::com_ptr<ID3D12RootSignature> renderRootSignature;
+    winrt::com_ptr<ID3D12RootSignature> computeRootSignature;
+
+    std::uint64_t generation = 1;
+};
+
+D3D12Shared& getD3D12Shared();
+
+class D3D12Context
+{
+public:
+    // The queue type is per-context because the queue is: a Device that only
+    // ever runs kernels can take D3D12_COMMAND_LIST_TYPE_COMPUTE and be
+    // scheduled alongside the graphics queue instead of strictly behind it.
+    // DIRECT is the default because a Device that renders needs it.
+    explicit D3D12Context(
+        D3D12_COMMAND_LIST_TYPE type = D3D12_COMMAND_LIST_TYPE_DIRECT);
+    ~D3D12Context();
+
+    D3D12Context(const D3D12Context&) = delete;
+    D3D12Context& operator=(const D3D12Context&) = delete;
+
+    bool isValid() const { return queue != nullptr; }
+
+    // Forwarded from the shared half, so a call site holding a context reaches
+    // the device and the signatures the same way it reaches the queue.
+    ID3D12Device* getDevice() const { return getD3D12Shared().getDevice(); }
+    ID3D12RootSignature* getRenderRootSignature() const
+    {
+        return getD3D12Shared().getRenderRootSignature();
+    }
+    ID3D12RootSignature* getComputeRootSignature() const
+    {
+        return getD3D12Shared().getComputeRootSignature();
+    }
+
+    ID3D12CommandQueue* getQueue() const { return queue.get(); }
+
     ID3D12DescriptorHeap* getTextureHeap() const
     {
         return textureDescriptors.heap.get();
@@ -111,10 +188,17 @@ public:
 
     // An open command list ready for recording. Owned by the caller until it
     // is handed back through submit() or discard().
+    //
+    // Callable only from the thread that constructed the Device this context
+    // belongs to — nothing in here is synchronized, and the whole point of a
+    // context per Device is that it needs no lock. The assertion is the
+    // enforcement: a violation is a loud debug failure rather than a pool
+    // handing the same recording to two threads.
     CommandContext* acquire();
 
     // Closes and executes the list, signals the fence and recycles the
     // context. Returns the fence value that completes when the GPU finishes.
+    // Same thread rule as acquire().
     std::uint64_t submit(CommandContext* commands);
 
     // Recycles a recording that should never reach the GPU.
@@ -128,12 +212,14 @@ public:
     // Calls `done` once `value` has passed on the GPU, without blocking — the
     // non-blocking sibling of waitFor, and what CommandBuffer::commitAsync is
     // built on. Fires inline when the value has already passed; otherwise from
-    // a poll on the event loop, so `done` always runs on the main thread.
+    // a poll on the event loop, so `done` always runs on the thread that owns
+    // this context — which must therefore be a thread running an event loop.
+    // A worker Device without one commits synchronously instead.
     //
-    // A poll rather than a waiter thread because the whole backend is
-    // main-thread only: a fence event would need a thread whose only job is to
-    // hand the result straight back here. The cost is a completion latency of
-    // up to one poll interval, against a dispatch measured in milliseconds.
+    // A poll rather than a waiter thread because a fence event would need a
+    // thread whose only job is to hand the result straight back here. The cost
+    // is a completion latency of up to one poll interval, against a dispatch
+    // measured in milliseconds.
     void notifyWhenCompleted(std::uint64_t value, Callback done);
 
     // Copies bytes into the recording's constant ring and returns their
@@ -187,11 +273,21 @@ public:
         deferReleaseUnknown(object.template as<IUnknown>());
     }
 
-    // Tears everything down and rebuilds on a fresh device after device
-    // removal. Resources created on the old device (app buffers, textures,
-    // pipelines) stay dead; their owners rebuild via GPUView::onDeviceRestored,
-    // mirroring the D3D11 backend's recovery contract.
-    void recreateAfterDeviceLoss();
+    // Rebuilds the queue, fence, pools and heaps against a device that was
+    // recreated after removal. Everything the old device owned is dropped
+    // rather than released against it.
+    //
+    // Called on this context's own thread — by renewIfDeviceRecreated at the
+    // next acquire — except on the Device driving recovery, whose swapchains
+    // are rebuilt in the same breath and so cannot wait for a later call.
+    void renewForNewDevice();
+
+    // Makes this context follow the main thread rather than the one that
+    // constructed it. Device::shared() is the only caller: it is created
+    // lazily, so a worker that merely touched it first — to compile a kernel,
+    // say — would otherwise own the process-wide Device, and the UI's next
+    // frame would trip the assertion above.
+    void followMainThread() { mainThreadOwned = true; }
 
 private:
     struct DescriptorAllocator
@@ -236,9 +332,8 @@ private:
     };
 
     void createAll();
-    void createDevice();
-    void createRootSignatures();
     void createNullDescriptors();
+    void releaseAll();
     DescriptorAllocator makeDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE type,
                                                 UINT capacity);
     DescriptorSlot allocateFrom(DescriptorAllocator& allocator);
@@ -247,6 +342,14 @@ private:
     void purgeRetired();
     void pollCompletions();
     void deferReleaseUnknown(winrt::com_ptr<IUnknown> object);
+
+    // Renews everything if the shared device was rebuilt since this context
+    // was. Cheap enough to sit at the top of acquire(): one integer compare.
+    void renewIfDeviceRecreated();
+
+    // The thread rule acquire() and submit() document. Compiled out of a
+    // release build, where the whole check is the assertion.
+    void assertOwningThread() const;
 
     // A buffer on one of the CPU-visible heaps, in the one state that heap
     // type is ever used in. The shared body of makeUploadBuffer and both pools.
@@ -277,18 +380,28 @@ private:
     // ring when the open one is full. Null if none can be had.
     ConstantPage* pageFor(CommandContext& commands, std::size_t bytes);
 
-    winrt::com_ptr<ID3D12Device> device;
+    D3D12_COMMAND_LIST_TYPE queueType = D3D12_COMMAND_LIST_TYPE_DIRECT;
+
+    // The thread that constructed this context, and therefore the one Device
+    // it belongs to may be used from. Stamped once and never changed — unless
+    // followMainThread() said to track the main thread instead.
+    DWORD owningThreadId = 0;
+    bool mainThreadOwned = false;
+
     winrt::com_ptr<ID3D12CommandQueue> queue;
     winrt::com_ptr<ID3D12Fence> fence;
     HANDLE fenceEvent = nullptr;
     std::uint64_t nextFenceValue = 1;
     std::uint64_t lastSubmittedValue = 0;
     std::uint64_t recordingCounter = 0;
-    std::uint64_t generation = 1;
 
-    winrt::com_ptr<ID3D12RootSignature> renderRootSignature;
-    winrt::com_ptr<ID3D12RootSignature> computeRootSignature;
+    // Which build of the shared device this context's objects belong to.
+    std::uint64_t generation = 0;
 
+    // Per-context rather than shared: a heap's free list is mutable, and the
+    // duplication is 1024 + 256 descriptors, which is tens of kilobytes. The
+    // compute-with-buffers path never touches them at all — buffers bind as
+    // root descriptors by GPU address.
     DescriptorAllocator textureDescriptors;
     DescriptorAllocator samplerDescriptors;
 
@@ -332,7 +445,11 @@ private:
     std::optional<Threads::Timer> completionPoll;
 };
 
-// The process-wide context, created on first use. Main-thread only, like the
-// rest of the GPU backend.
-D3D12Context& getD3D12Context();
+// The context belonging to a Device — its queue, its pools, its heaps.
+//
+// A resource does not cross Devices: a buffer, texture or recording belongs to
+// the context that made it, and purgeRetired's correctness argument (that the
+// context is *fully* idle) holds only per context. That is Metal's contract
+// anyway, an MTLBuffer belonging to its MTLDevice.
+D3D12Context& getD3D12Context(const Device& device);
 } // namespace eacp::GPU

@@ -110,12 +110,17 @@ public:
 
     const ShaderSource& source() const { return generated.source; }
 
-    // Builds the shader library and compute pipeline from the generated kernel.
-    void prepare()
+    // Builds the shader library and compute pipeline from the generated kernel,
+    // on the Device whose passes will dispatch it. A pipeline belongs to the
+    // device that compiled it, so a kernel a worker Device dispatches is
+    // compiled on that Device rather than on the process-wide one.
+    void prepare(Device& device)
     {
-        shaderLibrary.emplace(Device::shared(), generated.source);
-        pipelineState.emplace(Device::shared(), *shaderLibrary);
+        shaderLibrary.emplace(device, generated.source);
+        pipelineState.emplace(device, *shaderLibrary);
     }
+
+    void prepare() { prepare(Device::shared()); }
 
     const ComputePipeline& pipeline() const { return *pipelineState; }
 

@@ -4,45 +4,24 @@
 
 #include "../Windows/D3D12Context.h"
 
-// Windows/D3D12 backend. The GPU device is the process-wide D3D12 device and
-// direct queue owned by getD3D12Context(). The 2D graphics layer keeps its own
-// D3D11 device for Direct2D; the compositor composes output from both, so the
-// devices never need to be shared. nativeQueue() is the direct command queue.
-
-namespace eacp::Graphics
-{
-// Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
-void addRenderingDeviceReplacedListener(std::function<void()> listener);
-} // namespace eacp::Graphics
+// Windows/D3D12 backend. A Device owns its D3D12Context — its command queue,
+// fence, command-list pool, staging and readback pools, constant ring and
+// descriptor heaps — and shares only the ID3D12Device and the root signatures
+// with every other Device, through getD3D12Shared(). That is what makes
+// `auto worker = GPU::Device();` on a camera thread mean the same thing here as
+// it does on Metal, where Device::Native has always held its own MTLCommandQueue.
+//
+// The 2D graphics layer keeps its own D3D11 device for Direct2D; the compositor
+// composes output from both, so the devices never need to be shared.
+// nativeQueue() is this Device's command queue.
 
 namespace eacp::GPU
 {
-// Defined in View/GPUView-Windows.cpp: rebuilds every live GPUView's swapchain
-// against the recreated device.
-void refreshAllGPUViewsForNewDevice();
-
 struct Device::Native
 {
-    Native()
-    {
-        // A GPU reset kills the 2D layer's D3D11 device and this D3D12 device
-        // together. The graphics layer's recovery fires this listener after it
-        // re-established its own device; if ours died too (or never existed),
-        // rebuild it and every GPUView swapchain. The 2D layer also replaces
-        // its device voluntarily, so a healthy D3D12 device is left alone.
-        Graphics::addRenderingDeviceReplacedListener(
-            []
-            {
-                auto& context = getD3D12Context();
-
-                if (context.isValid()
-                    && SUCCEEDED(context.getDevice()->GetDeviceRemovedReason()))
-                    return;
-
-                context.recreateAfterDeviceLoss();
-                refreshAllGPUViewsForNewDevice();
-            });
-    }
+    // Mutable because the accessors that reach it are const — a const Device
+    // still submits, the way a const Buffer still reads.
+    mutable D3D12Context context;
 };
 
 Device::Device()
@@ -53,22 +32,39 @@ Device::Device()
 Device& Device::shared()
 {
     static Device instance;
+
+    // The process-wide Device is created lazily but belongs to the main thread
+    // regardless of which thread asked for it first — every GPUView and every
+    // Frame drives it from there. See D3D12Context::followMainThread.
+    [[maybe_unused]] static const auto boundToMainThread =
+        (instance.impl->context.followMainThread(), true);
+
     return instance;
+}
+
+D3D12Context& getD3D12Context(const Device& device)
+{
+    return *static_cast<D3D12Context*>(device.nativeContext());
 }
 
 bool Device::isValid() const
 {
-    return getD3D12Context().isValid();
+    return impl->context.isValid();
+}
+
+void* Device::nativeContext() const
+{
+    return &impl->context;
 }
 
 void* Device::nativeDevice() const
 {
-    return getD3D12Context().getDevice();
+    return impl->context.getDevice();
 }
 
 void* Device::nativeQueue() const
 {
-    return getD3D12Context().getQueue();
+    return impl->context.getQueue();
 }
 
 void* Device::nativeTextureCache() const
@@ -88,13 +84,12 @@ void* Device::nativeSampler(TextureSampling) const
 
 void Device::trackSubmittedWork(void*)
 {
-    // Nothing to record: every submit already stamps the queue's fence, and
+    // Nothing to record: every submit already stamps this Device's fence, and
     // lastSubmitted() is the value the wait below needs.
 }
 
 void Device::waitForSubmittedWork()
 {
-    auto& context = getD3D12Context();
-    context.waitFor(context.lastSubmitted());
+    impl->context.waitFor(impl->context.lastSubmitted());
 }
 } // namespace eacp::GPU

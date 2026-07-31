@@ -288,7 +288,8 @@ D3D12_DEPTH_STENCIL_DESC makeDepthStencilDesc(const RenderPipelineDescriptor& fr
 struct RenderPipeline::Native
 {
     Native(Device& device, const RenderPipelineDescriptor& descriptor)
-        : topology(descriptor.topology)
+        : context(getD3D12Context(device))
+        , topology(descriptor.topology)
         , cullMode(descriptor.cullMode)
         , frontFace(descriptor.frontFace)
     {
@@ -296,10 +297,7 @@ struct RenderPipeline::Native
         pipeline.strides = makeStrideTable(descriptor.vertexLayout);
         pipeline.depth = descriptor.depth;
 
-        auto& context = getD3D12Context();
-
-        if (!context.isValid() || !device.isValid()
-            || context.getRenderRootSignature() == nullptr
+        if (!context.isValid() || context.getRenderRootSignature() == nullptr
             || descriptor.library == nullptr)
             return;
 
@@ -340,8 +338,9 @@ struct RenderPipeline::Native
     // PSO built and dropped inside one frame — which is what constructing a
     // SpriteRenderer in render() does — has to outlive the recording rather
     // than release here. See D3D12Context::deferRelease.
-    ~Native() { getD3D12Context().deferRelease(std::move(pipeline.state)); }
+    ~Native() { context.deferRelease(std::move(pipeline.state)); }
 
+    D3D12Context& context;
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
     CullMode cullMode = CullMode::None;
     Winding frontFace = Winding::CounterClockwise;

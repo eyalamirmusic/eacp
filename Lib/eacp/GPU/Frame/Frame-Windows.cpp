@@ -26,7 +26,7 @@ struct Frame::Native
         , depth(static_cast<D3D12DepthTarget*>(depthTextureHandle))
     {
         if (deviceToUse.isValid() && drawable != nullptr)
-            commands = getD3D12Context().acquire();
+            commands = context().acquire();
     }
 
     // Off-screen snapshot target (GPUView::renderNativeContent). The colour
@@ -42,8 +42,12 @@ struct Frame::Native
     {
         if (deviceToUse.isValid() && drawable != nullptr
             && drawable->backBuffer != nullptr)
-            commands = getD3D12Context().acquire();
+            commands = context().acquire();
     }
+
+    // The frame belongs to its Device's context: the recording came out of that
+    // queue's pool and is submitted back to it.
+    D3D12Context& context() const { return getD3D12Context(*device); }
 
     // The frame's opening timestamp, which has to be the first thing on the
     // list for the total to mean the frame. Metal takes this off the command
@@ -181,7 +185,7 @@ Frame::~Frame()
                        D3D12_RESOURCE_STATE_COPY_SOURCE);
         }
 
-        auto& context = getD3D12Context();
+        auto& context = impl->context();
 
         impl->device->frameTimer().endFrame(list);
         impl->device->frameTimer().noteSubmitted(context.submit(impl->commands));
@@ -228,8 +232,7 @@ Frame::~Frame()
     // still open; the fence value they will be read against only exists once it
     // has been executed.
     impl->device->frameTimer().endFrame(list);
-    impl->device->frameTimer().noteSubmitted(
-        getD3D12Context().submit(impl->commands));
+    impl->device->frameTimer().noteSubmitted(impl->context().submit(impl->commands));
 
     if (impl->drawable->swapChain != nullptr)
         impl->drawable->swapChain->Present(1, 0);
@@ -241,7 +244,7 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
         || impl->drawable->backBuffer == nullptr)
         return RenderPass(nullptr);
 
-    auto& context = getD3D12Context();
+    auto& context = impl->context();
     auto* list = impl->commands->list.get();
 
     impl->bindRootState(context, list);
@@ -318,7 +321,7 @@ RenderPass Frame::beginPass(const Texture& target,
     if (impl->commands == nullptr || data == nullptr || !target.isRenderTarget())
         return RenderPass(nullptr);
 
-    auto& context = getD3D12Context();
+    auto& context = impl->context();
     auto* list = impl->commands->list.get();
 
     impl->bindRootState(context, list);
@@ -372,7 +375,7 @@ ComputePass Frame::beginCompute(std::string_view label)
     if (impl->commands == nullptr)
         return ComputePass(nullptr);
 
-    bindComputeRootState(getD3D12Context(), impl->commands->list.get());
+    bindComputeRootState(impl->context(), impl->commands->list.get());
 
     auto* encoder = new D3D12ComputeEncoder {impl->commands};
 

@@ -44,15 +44,16 @@ struct GpuTimestamps::Native
     };
 
     // Deferred for the same reason as the Metal backend's: this is built by
-    // Device, and Device::shared() has not returned when that runs.
-    void ensureCreated()
+    // Device, which is not yet itself when that runs — hence the Device
+    // arriving with the first slot rather than at construction.
+    void ensureCreated(GPU::Device& owner)
     {
         if (tried)
             return;
 
         tried = true;
 
-        auto& context = getD3D12Context();
+        auto& context = getD3D12Context(owner);
 
         if (!context.isValid())
             return;
@@ -124,9 +125,9 @@ bool GpuTimestamps::isSupported() const
     return impl->supported;
 }
 
-void GpuTimestamps::beginSlot(int slot)
+void GpuTimestamps::beginSlot(int slot, Device& device)
 {
-    impl->ensureCreated();
+    impl->ensureCreated(device);
 
     if (!impl->supported)
         return;
@@ -207,11 +208,11 @@ void GpuTimestamps::noteSubmitted(int slot, std::uint64_t fenceValue)
     impl->slots[slot].submitted = true;
 }
 
-bool GpuTimestamps::isSlotComplete(int slot) const
+bool GpuTimestamps::isSlotComplete(int slot, const Device& device) const
 {
     const auto& entry = impl->slots[slot];
 
-    return entry.submitted && getD3D12Context().hasCompleted(entry.fenceValue);
+    return entry.submitted && getD3D12Context(device).hasCompleted(entry.fenceValue);
 }
 
 double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
