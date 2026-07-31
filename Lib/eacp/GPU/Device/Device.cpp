@@ -24,6 +24,6 @@ void Device::beginFrame()
     // The timer takes its slot from the counter, the same way StreamingBuffers
     // takes its pool from it - one advance, driven by whoever built the Frame,
     // and nothing for either of them to be told separately.
-    timer.beginFrame(frameCount);
+    timer.beginFrame(frameCount, *this);
 }
 } // namespace eacp::GPU

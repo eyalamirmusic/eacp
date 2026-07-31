@@ -12,6 +12,11 @@
 #include <cmath>
 #include <unordered_set>
 
+// A GPUView is a UI view: it lives on the main thread, its swapchain is created
+// from Device::shared()'s command queue, and its frames render on that Device.
+// So every context lookup here names the shared Device rather than taking one -
+// a view is not a thing a worker Device can own.
+
 namespace eacp::GPU
 {
 namespace
@@ -86,7 +91,7 @@ struct GPUView::Native : DeviceResourceHolder
 
         // The last frames may still reference the back buffers and targets
         // about to be released.
-        getD3D12Context().waitIdle();
+        getD3D12Context(Device::shared()).waitIdle();
 
         if (spriteVisual)
             if (auto* container =
@@ -171,7 +176,7 @@ struct GPUView::Native : DeviceResourceHolder
 
     void createSwapChain()
     {
-        auto& context = getD3D12Context();
+        auto& context = getD3D12Context(Device::shared());
 
         if (!context.isValid())
             return;
@@ -297,7 +302,7 @@ struct GPUView::Native : DeviceResourceHolder
     {
         // The buffers being replaced may still be referenced by an in-flight
         // frame, and ResizeBuffers requires every outstanding reference gone.
-        getD3D12Context().waitIdle();
+        getD3D12Context(Device::shared()).waitIdle();
 
         for (auto& buffer: backBuffers)
             buffer = nullptr;
@@ -317,7 +322,7 @@ struct GPUView::Native : DeviceResourceHolder
 
     void updateMultisampleTexture()
     {
-        getD3D12Context().deferRelease(std::move(msaaTexture));
+        getD3D12Context(Device::shared()).deferRelease(std::move(msaaTexture));
 
         if (sampleCount <= 1 || width == 0 || height == 0 || device == nullptr
             || !rtvHeap)
@@ -363,7 +368,7 @@ struct GPUView::Native : DeviceResourceHolder
     // keys off the same condition render() uses to pick the colour target.
     void updateDepthTexture()
     {
-        getD3D12Context().deferRelease(std::move(depthTexture));
+        getD3D12Context(Device::shared()).deferRelease(std::move(depthTexture));
 
         if (!depthEnabled || width == 0 || height == 0 || device == nullptr
             || !dsvHeap)
@@ -413,7 +418,7 @@ struct GPUView::Native : DeviceResourceHolder
 
     void render()
     {
-        auto& context = getD3D12Context();
+        auto& context = getD3D12Context(Device::shared());
 
         if (!swapChain || !context.isValid() || width == 0 || height == 0)
             return;
@@ -684,7 +689,7 @@ Graphics::Image GPUView::renderNativeContent(float scale)
     if (pixelWidth == 0 || pixelHeight == 0)
         return {};
 
-    auto& context = getD3D12Context();
+    auto& context = getD3D12Context(Device::shared());
     if (!context.isValid())
         return {};
 

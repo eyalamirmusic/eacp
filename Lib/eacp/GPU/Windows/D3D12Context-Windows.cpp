@@ -4,7 +4,12 @@
 #include "D3D12Context.h"
 #include "D3D12Types.h"
 
+#include "../Device/Device.h"
+
+#include <eacp/Core/Threads/ThreadUtils.h>
+
 #include <algorithm>
+#include <cassert>
 
 namespace eacp::GPU
 {
@@ -114,118 +119,67 @@ winrt::com_ptr<ID3D12RootSignature>
 }
 } // namespace
 
-D3D12Context::D3D12Context()
+// Defined in View/GPUView-Windows.cpp: rebuilds every live GPUView's swapchain
+// against the recreated device.
+void refreshAllGPUViewsForNewDevice();
+} // namespace eacp::GPU
+
+namespace eacp::Graphics
 {
-    fenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+// Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
+void addRenderingDeviceReplacedListener(std::function<void()> listener);
+} // namespace eacp::Graphics
+
+namespace eacp::GPU
+{
+D3D12Shared::D3D12Shared()
+{
     createAll();
+
+    // A GPU reset kills the 2D layer's D3D11 device and this D3D12 device
+    // together. The graphics layer's recovery fires this listener after it
+    // re-established its own device; if ours died too (or never existed),
+    // rebuild it and every GPUView swapchain. The 2D layer also replaces its
+    // device voluntarily, so a healthy D3D12 device is left alone.
+    //
+    // Registered here rather than by Device, because there is one of these and
+    // there may be any number of Devices — a listener each would rebuild the
+    // swapchains once per Device.
+    Graphics::addRenderingDeviceReplacedListener(
+        []
+        {
+            auto& shared = getD3D12Shared();
+
+            if (shared.isValid()
+                && SUCCEEDED(shared.getDevice()->GetDeviceRemovedReason()))
+                return;
+
+            shared.recreateAfterDeviceLoss();
+
+            // The shared Device's context is what the swapchains below are
+            // rebuilt against, so it is renewed here and now. Every other
+            // Device renews on its own thread, at its next acquire().
+            getD3D12Context(Device::shared()).renewForNewDevice();
+            refreshAllGPUViewsForNewDevice();
+        });
 }
 
-D3D12Context::~D3D12Context()
-{
-    if (isValid())
-        waitIdle();
-
-    if (fenceEvent != nullptr)
-        CloseHandle(fenceEvent);
-}
-
-void D3D12Context::createAll()
+void D3D12Shared::createAll()
 {
     createDevice();
 
     if (device == nullptr)
         return;
 
-    D3D12_COMMAND_QUEUE_DESC queueDesc = {};
-    queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-
-    if (FAILED(device->CreateCommandQueue(
-            &queueDesc, __uuidof(ID3D12CommandQueue), queue.put_void()))
-        || FAILED(device->CreateFence(
-            0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), fence.put_void())))
-    {
-        fence = nullptr;
-        queue = nullptr;
-        device = nullptr;
-        return;
-    }
-
-    nextFenceValue = 1;
-    lastSubmittedValue = 0;
-
     createRootSignatures();
-
-    textureDescriptors = makeDescriptorAllocator(
-        D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, textureHeapCapacity);
-    samplerDescriptors = makeDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER,
-                                                 samplerHeapCapacity);
-
-    createNullDescriptors();
 }
 
-// Tier 1 hardware requires every descriptor table the root signature declares
-// to be populated, so the slots a shader does not use still need something
-// bound. It has to be something permanently valid: the obvious candidate — the
-// heap's first descriptor — belongs to whichever texture allocated it, and
-// descriptor slots are recycled through a free list, so that descriptor can
-// come to describe a destroyed resource. Binding it then points the GPU at
-// freed memory, which hangs the device rather than failing cleanly.
-//
-// A null SRV is the case D3D12 provides for exactly this: reads return zero
-// and nothing is dereferenced. These two slots are allocated once and never
-// freed.
-void D3D12Context::createNullDescriptors()
-{
-    if (device == nullptr)
-        return;
-
-    nullTexture = allocateFrom(textureDescriptors);
-    nullTextureUAV = allocateFrom(textureDescriptors);
-    nullSampler = allocateFrom(samplerDescriptors);
-
-    if (nullTexture.cpu.ptr != 0)
-    {
-        D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
-        srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        srv.Texture2D.MipLevels = 1;
-
-        device->CreateShaderResourceView(nullptr, &srv, nullTexture.cpu);
-    }
-
-    // The compute signature's UAV tables need their own: a range declared UAV
-    // will not take the SRV descriptor above, so the two are separate slots
-    // even though both describe nothing.
-    if (nullTextureUAV.cpu.ptr != 0)
-    {
-        D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
-        uav.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-
-        device->CreateUnorderedAccessView(
-            nullptr, nullptr, &uav, nullTextureUAV.cpu);
-    }
-
-    if (nullSampler.cpu.ptr != 0)
-    {
-        D3D12_SAMPLER_DESC sampler = {};
-        sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
-        sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-        sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-        sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-        sampler.MaxLOD = D3D12_FLOAT32_MAX;
-
-        device->CreateSampler(&sampler, nullSampler.cpu);
-    }
-}
-
-void D3D12Context::createDevice()
+void D3D12Shared::createDevice()
 {
     device = createHardwareOrWarpDevice();
 }
 
-void D3D12Context::createRootSignatures()
+void D3D12Shared::createRootSignatures()
 {
     D3D12_DESCRIPTOR_RANGE srvRanges[maxTextureSlots] = {};
     D3D12_ROOT_PARAMETER
@@ -377,6 +331,177 @@ void D3D12Context::createRootSignatures()
     computeRootSignature = makeRootSignature(device.get(), computeDesc);
 }
 
+void D3D12Shared::recreateAfterDeviceLoss()
+{
+    renderRootSignature = nullptr;
+    computeRootSignature = nullptr;
+    device = nullptr;
+
+    ++generation;
+    createAll();
+}
+
+D3D12Shared& getD3D12Shared()
+{
+    static auto shared = D3D12Shared();
+    return shared;
+}
+
+D3D12Context::D3D12Context(D3D12_COMMAND_LIST_TYPE type)
+    : queueType(type)
+    , owningThreadId(GetCurrentThreadId())
+{
+    fenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    createAll();
+}
+
+D3D12Context::~D3D12Context()
+{
+    if (isValid())
+        waitIdle();
+
+    if (fenceEvent != nullptr)
+        CloseHandle(fenceEvent);
+}
+
+void D3D12Context::createAll()
+{
+    auto& shared = getD3D12Shared();
+    generation = shared.getGeneration();
+
+    auto* device = shared.getDevice();
+
+    if (device == nullptr)
+        return;
+
+    D3D12_COMMAND_QUEUE_DESC queueDesc = {};
+    queueDesc.Type = queueType;
+
+    if (FAILED(device->CreateCommandQueue(
+            &queueDesc, __uuidof(ID3D12CommandQueue), queue.put_void()))
+        || FAILED(device->CreateFence(
+            0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), fence.put_void())))
+    {
+        fence = nullptr;
+        queue = nullptr;
+        return;
+    }
+
+    nextFenceValue = 1;
+    lastSubmittedValue = 0;
+
+    textureDescriptors = makeDescriptorAllocator(
+        D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, textureHeapCapacity);
+    samplerDescriptors = makeDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER,
+                                                 samplerHeapCapacity);
+
+    createNullDescriptors();
+}
+
+// Tier 1 hardware requires every descriptor table the root signature declares
+// to be populated, so the slots a shader does not use still need something
+// bound. It has to be something permanently valid: the obvious candidate — the
+// heap's first descriptor — belongs to whichever texture allocated it, and
+// descriptor slots are recycled through a free list, so that descriptor can
+// come to describe a destroyed resource. Binding it then points the GPU at
+// freed memory, which hangs the device rather than failing cleanly.
+//
+// A null SRV is the case D3D12 provides for exactly this: reads return zero
+// and nothing is dereferenced. These two slots are allocated once and never
+// freed.
+void D3D12Context::createNullDescriptors()
+{
+    auto* device = getDevice();
+
+    if (device == nullptr)
+        return;
+
+    nullTexture = allocateFrom(textureDescriptors);
+    nullTextureUAV = allocateFrom(textureDescriptors);
+    nullSampler = allocateFrom(samplerDescriptors);
+
+    if (nullTexture.cpu.ptr != 0)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
+        srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srv.Texture2D.MipLevels = 1;
+
+        device->CreateShaderResourceView(nullptr, &srv, nullTexture.cpu);
+    }
+
+    // The compute signature's UAV tables need their own: a range declared UAV
+    // will not take the SRV descriptor above, so the two are separate slots
+    // even though both describe nothing.
+    if (nullTextureUAV.cpu.ptr != 0)
+    {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
+        uav.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+
+        device->CreateUnorderedAccessView(
+            nullptr, nullptr, &uav, nullTextureUAV.cpu);
+    }
+
+    if (nullSampler.cpu.ptr != 0)
+    {
+        D3D12_SAMPLER_DESC sampler = {};
+        sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+        sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler.MaxLOD = D3D12_FLOAT32_MAX;
+
+        device->CreateSampler(&sampler, nullSampler.cpu);
+    }
+}
+
+void D3D12Context::releaseAll()
+{
+    retired.clear();
+    staging.clear();
+    readback.clear();
+    constantPages.clear();
+    pool.clear();
+    available.clear();
+    textureDescriptors = {};
+    samplerDescriptors = {};
+    nullTexture = {};
+    nullTextureUAV = {};
+    nullSampler = {};
+    fence = nullptr;
+    queue = nullptr;
+}
+
+void D3D12Context::renewForNewDevice()
+{
+    releaseAll();
+    createAll();
+}
+
+void D3D12Context::renewIfDeviceRecreated()
+{
+    if (generation != getD3D12Shared().getGeneration())
+        renewForNewDevice();
+}
+
+void D3D12Context::assertOwningThread() const
+{
+    const auto onOwningThread = mainThreadOwned
+                                    ? Threads::isMainThread()
+                                    : GetCurrentThreadId() == owningThreadId;
+
+    // Plain ASCII: this string is printed by the CRT to a console that will
+    // not be in a codepage that can spell anything else.
+    assert(onOwningThread
+           && "eacp: a GPU::Device belongs to the thread that made it - give "
+              "each thread its own");
+
+    // The assertion is the whole check; a release build pays nothing for it.
+    (void) onOwningThread;
+}
+
 D3D12Context::DescriptorAllocator
     D3D12Context::makeDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE type,
                                           UINT capacity)
@@ -388,7 +513,10 @@ D3D12Context::DescriptorAllocator
     desc.NumDescriptors = capacity;
     desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
-    if (FAILED(device->CreateDescriptorHeap(
+    auto* device = getDevice();
+
+    if (device == nullptr
+        || FAILED(device->CreateDescriptorHeap(
             &desc, __uuidof(ID3D12DescriptorHeap), allocator.heap.put_void())))
         return allocator;
 
@@ -475,6 +603,10 @@ void D3D12Context::purgeRetired()
     // Freed only when the GPU has gone completely idle: nothing left recording,
     // and the fence past everything ever submitted.
     //
+    // Per context, and only sound because it is: no other context's command
+    // list can reference a resource this one retired, since resources do not
+    // cross Devices. See getD3D12Context.
+    //
     // The per-entry fence value cannot answer this on its own. A retired object
     // is stamped with the value the *next* signal will carry, which assumes the
     // recording that references it submits next — but a frame issues uploads of
@@ -497,6 +629,9 @@ void D3D12Context::purgeRetired()
 
 CommandContext* D3D12Context::acquire()
 {
+    assertOwningThread();
+    renewIfDeviceRecreated();
+
     if (!isValid())
         return nullptr;
 
@@ -519,13 +654,19 @@ CommandContext* D3D12Context::acquire()
     }
     else
     {
+        // The allocator and the list are created for the queue type they will
+        // execute on: a compute-queue context records COMPUTE lists throughout.
         auto fresh = makeOwned<CommandContext>();
+        auto listType = queueType;
+        auto* device = getDevice();
 
-        if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-                                                  __uuidof(ID3D12CommandAllocator),
-                                                  fresh->allocator.put_void()))
+        if (device == nullptr
+            || FAILED(
+                device->CreateCommandAllocator(listType,
+                                               __uuidof(ID3D12CommandAllocator),
+                                               fresh->allocator.put_void()))
             || FAILED(device->CreateCommandList(0,
-                                                D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                                listType,
                                                 fresh->allocator.get(),
                                                 nullptr,
                                                 __uuidof(ID3D12GraphicsCommandList),
@@ -536,6 +677,7 @@ CommandContext* D3D12Context::acquire()
         pool.add(std::move(fresh));
     }
 
+    commands->context = this;
     commands->fenceValue = 0;
     commands->recordingId = ++recordingCounter;
     return commands;
@@ -543,6 +685,8 @@ CommandContext* D3D12Context::acquire()
 
 std::uint64_t D3D12Context::submit(CommandContext* commands)
 {
+    assertOwningThread();
+
     if (commands == nullptr || !isValid())
         return 0;
 
@@ -571,6 +715,8 @@ std::uint64_t D3D12Context::submit(CommandContext* commands)
 
 void D3D12Context::discard(CommandContext* commands)
 {
+    assertOwningThread();
+
     if (commands == nullptr)
         return;
 
@@ -851,7 +997,9 @@ void D3D12Context::returnConstantPages(CommandContext& commands,
 winrt::com_ptr<ID3D12Resource> D3D12Context::makeHeapBuffer(D3D12_HEAP_TYPE type,
                                                             std::size_t bytes)
 {
-    if (!isValid() || bytes == 0)
+    auto* device = getDevice();
+
+    if (device == nullptr || bytes == 0)
         return nullptr;
 
     D3D12_HEAP_PROPERTIES heap = {};
@@ -908,31 +1056,5 @@ winrt::com_ptr<ID3D12Resource> D3D12Context::makeUploadBuffer(const void* data,
     }
 
     return buffer;
-}
-
-void D3D12Context::recreateAfterDeviceLoss()
-{
-    retired.clear();
-    staging.clear();
-    readback.clear();
-    constantPages.clear();
-    pool.clear();
-    available.clear();
-    renderRootSignature = nullptr;
-    computeRootSignature = nullptr;
-    textureDescriptors = {};
-    samplerDescriptors = {};
-    fence = nullptr;
-    queue = nullptr;
-    device = nullptr;
-
-    ++generation;
-    createAll();
-}
-
-D3D12Context& getD3D12Context()
-{
-    static auto context = D3D12Context();
-    return context;
 }
 } // namespace eacp::GPU

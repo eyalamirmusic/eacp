@@ -2,11 +2,11 @@
 
 namespace eacp::GPU
 {
-void FrameTimer::beginFrame(std::uint64_t frameIndex)
+void FrameTimer::beginFrame(std::uint64_t frameIndex, Device& device)
 {
     // Before the new frame takes a slot, so that the one it is about to take is
     // read first if the GPU has since finished with it.
-    drainCompleted();
+    drainCompleted(device);
 
     const auto next = (int) (frameIndex % (std::uint64_t) GpuTimestamps::slotCount);
 
@@ -25,7 +25,7 @@ void FrameTimer::beginFrame(std::uint64_t frameIndex)
 
     slots[current].frameIndex = frameIndex;
 
-    timestamps.beginSlot(current);
+    timestamps.beginSlot(current, device);
 }
 
 int FrameTimer::beginPass(std::string_view label)
@@ -77,13 +77,13 @@ void FrameTimer::noteSubmitted(std::uint64_t fenceValue)
         timestamps.noteSubmitted(current, fenceValue);
 }
 
-void FrameTimer::drainCompleted()
+void FrameTimer::drainCompleted(const Device& device)
 {
     for (auto slot = 0; slot < GpuTimestamps::slotCount; ++slot)
     {
         auto& entry = slots[slot];
 
-        if (!entry.pending || !timestamps.isSlotComplete(slot))
+        if (!entry.pending || !timestamps.isSlotComplete(slot, device))
             continue;
 
         double milliseconds[GpuTimestamps::maxTimedPasses] = {};

@@ -6,6 +6,8 @@
 
 namespace eacp::GPU
 {
+class Device;
+
 // The backend half of frame timing: a fixed set of slots, each holding one
 // in-flight frame's raw GPU timestamps.
 //
@@ -38,8 +40,11 @@ public:
     // taken at its word until a resolved slot proves otherwise. See resolveSlot.
     bool isSupported() const;
 
-    // Forgets what the slot held and prepares it for a frame's samples.
-    void beginSlot(int slot);
+    // Forgets what the slot held and prepares it for a frame's samples. The
+    // Device is the one whose frames these are: it owns the query heaps on
+    // D3D12, and the fence they are read against. Metal needs neither and
+    // ignores it.
+    void beginSlot(int slot, Device& device);
 
     // Records the frame's own start timestamp, which is a D3D12 need: its total
     // is two queries on the command list like everything else. Metal reads
@@ -73,8 +78,9 @@ public:
 
     // Whether the GPU has finished the frame that wrote this slot, so its
     // samples can be read. Reading one before this is true reads a timestamp
-    // the GPU has not written yet.
-    bool isSlotComplete(int slot) const;
+    // the GPU has not written yet. The Device is the one that submitted it,
+    // whose fence answers the question on D3D12.
+    bool isSlotComplete(int slot, const Device& device) const;
 
     // Reads a completed slot back. milliseconds[i] is filled for each of the
     // passCount passes; the return value is the whole frame's GPU time, or zero

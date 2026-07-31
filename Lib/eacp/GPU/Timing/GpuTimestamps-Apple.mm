@@ -39,15 +39,16 @@ struct GpuTimestamps::Native
     };
 
     // Deferred rather than done in the constructor, because this is built by
-    // Device and Device::shared() has not returned yet when that runs.
-    void ensureCreated()
+    // Device, which is not yet itself when that runs - hence the Device
+    // arriving with the first slot rather than at construction.
+    void ensureCreated(GPU::Device& owner)
     {
         if (tried)
             return;
 
         tried = true;
 
-        auto metal = (__bridge id<MTLDevice>) Device::shared().nativeDevice();
+        auto metal = (__bridge id<MTLDevice>) owner.nativeDevice();
 
         if (metal == nil)
             return;
@@ -138,9 +139,9 @@ bool GpuTimestamps::isSupported() const
     return impl->supported;
 }
 
-void GpuTimestamps::beginSlot(int slot)
+void GpuTimestamps::beginSlot(int slot, Device& device)
 {
-    impl->ensureCreated();
+    impl->ensureCreated(device);
 
     // Unconditional, like endSlot's retain: a device with no counters still
     // times whole frames, so its slots still hold a command buffer.
@@ -181,7 +182,9 @@ void GpuTimestamps::noteSubmitted(int, std::uint64_t)
     // A D3D12 idea. Metal's command buffer knows its own status.
 }
 
-bool GpuTimestamps::isSlotComplete(int slot) const
+// The Device is a D3D12 need - its fence is what answers there. A Metal
+// command buffer reports its own status, so the slot already holds the answer.
+bool GpuTimestamps::isSlotComplete(int slot, const Device&) const
 {
     auto buffer = (id<MTLCommandBuffer>) impl->slots[slot].commandBuffer.get();
 

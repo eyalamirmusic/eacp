@@ -16,17 +16,19 @@ namespace eacp::GPU
 struct CommandBuffer::Native
 {
     explicit Native(Device& device)
+        : context(getD3D12Context(device))
     {
-        if (device.isValid())
-            commands = getD3D12Context().acquire();
+        if (context.isValid())
+            commands = context.acquire();
     }
 
     ~Native()
     {
         if (commands != nullptr && !committed)
-            getD3D12Context().discard(commands);
+            context.discard(commands);
     }
 
+    D3D12Context& context;
     CommandContext* commands = nullptr;
     bool committed = false;
 };
@@ -44,7 +46,7 @@ ComputePass CommandBuffer::beginCompute()
     // The root signature and heaps are fixed for every compute pipeline, so
     // binding them here frees the pass from caring about setPipeline/set*
     // ordering.
-    bindComputeRootState(getD3D12Context(), impl->commands->list.get());
+    bindComputeRootState(impl->context, impl->commands->list.get());
 
     return ComputePass(new D3D12ComputeEncoder {impl->commands});
 }
@@ -63,7 +65,7 @@ void CommandBuffer::commit()
     // race here and not there, and a benchmark timing commit() would measure
     // the CPU-side record on this backend and the finished work on that one.
     // commitAsync() is how a caller opts out of the wait.
-    auto& context = getD3D12Context();
+    auto& context = impl->context;
     context.waitFor(context.submit(impl->commands));
 }
 
@@ -81,7 +83,7 @@ Threads::Async<void> CommandBuffer::commitAsync()
 
     // submit() already returns without waiting here - what the fence adds is
     // the moment to say so.
-    auto& context = getD3D12Context();
+    auto& context = impl->context;
     context.notifyWhenCompleted(context.submit(impl->commands),
                                 [promise] { promise.resolve(); });
 

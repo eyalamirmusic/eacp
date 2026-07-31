@@ -56,12 +56,11 @@ winrt::com_ptr<ID3D12Resource> makeDefaultBuffer(ID3D12Device* device,
 struct Buffer::Native
 {
     Native(Device& device, const void* data, std::size_t bytes, BufferUsage usage)
+        : context(getD3D12Context(device))
     {
         bufferData.size = bytes;
 
-        auto& context = getD3D12Context();
-
-        if (!context.isValid() || !device.isValid() || bytes == 0)
+        if (!context.isValid() || bytes == 0)
             return;
 
         bufferData.resource =
@@ -78,7 +77,7 @@ struct Buffer::Native
     // Close() fail with OBJECT_DELETED_WHILE_STILL_IN_USE, which invalidates
     // the whole list: not just the draw that used the buffer, but every draw
     // recorded after it silently disappears.
-    ~Native() { getD3D12Context().deferRelease(std::move(bufferData.resource)); }
+    ~Native() { context.deferRelease(std::move(bufferData.resource)); }
 
     void upload(D3D12Context& context, const void* data, std::size_t bytes)
     {
@@ -97,6 +96,11 @@ struct Buffer::Native
         commands->transients.add(std::move(staging));
         context.submit(commands);
     }
+
+    // The Device's context, held for the buffer's lifetime: read(), update()
+    // and the deferred release all belong to the queue this resource was made
+    // against, and a buffer never moves between Devices.
+    D3D12Context& context;
 
     // Mutable because the state tracking advances inside the const read():
     // the copy to the readback buffer is a use like any other.
@@ -135,7 +139,7 @@ void Buffer::read(void* dst, std::size_t bytes, std::size_t offset) const
     auto available = impl->bufferData.size - offset;
     auto count = bytes < available ? bytes : available;
 
-    auto& context = getD3D12Context();
+    auto& context = impl->context;
     auto* commands = context.acquire();
 
     if (commands == nullptr)
@@ -180,7 +184,7 @@ void Buffer::update(const void* data, std::size_t bytes, std::size_t offset)
         || offset >= impl->bufferData.size)
         return;
 
-    auto& context = getD3D12Context();
+    auto& context = impl->context;
 
     if (!context.isValid())
         return;

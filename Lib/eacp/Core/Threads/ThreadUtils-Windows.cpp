@@ -5,6 +5,8 @@
 
 #include <atomic>
 #include <cassert>
+#include <crtdbg.h>
+#include <cstdlib>
 
 namespace eacp::Threads
 {
@@ -42,6 +44,18 @@ void initMainThread()
     // overwrite the host process's error mode.
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
                  | SEM_NOOPENFILEERRORBOX);
+
+    // A failed assert() is the same problem one layer down: the debug CRT
+    // answers it with a modal dialog, so a test binary that trips one stops
+    // dead with an empty log instead of failing. Reported to stderr and aborted
+    // instead, which is what a headless run can act on.
+#ifndef NDEBUG
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+    _set_abort_behavior(_WRITE_ABORT_MSG, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
 
     getMainThreadState().mainThreadId = GetCurrentThreadId();
 }

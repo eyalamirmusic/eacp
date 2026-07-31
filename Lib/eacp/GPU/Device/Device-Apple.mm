@@ -112,6 +112,13 @@ bool Device::isValid() const
     return impl->device.get() != nil;
 }
 
+void* Device::nativeContext() const
+{
+    // Nothing to hand out: the queue, the texture cache and the samplers are
+    // already members of Native, reached through the handles below.
+    return nullptr;
+}
+
 void* Device::nativeDevice() const
 {
     return (__bridge void*) impl->device.get();

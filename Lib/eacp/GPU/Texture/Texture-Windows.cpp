@@ -62,14 +62,13 @@ bool supportsTypedUAVStore(ID3D12Device* device, DXGI_FORMAT format)
 struct Texture::Native
 {
     Native(Device& device, const TextureDescriptor& descriptor, const void* pixels)
-        : width(descriptor.width)
+        : context(getD3D12Context(device))
+        , width(descriptor.width)
         , height(descriptor.height)
         , pixelStride(bytesPerPixel(descriptor.format))
         , format(descriptor.format)
     {
-        auto& context = getD3D12Context();
-
-        if (!context.isValid() || !device.isValid() || width <= 0 || height <= 0)
+        if (!context.isValid() || width <= 0 || height <= 0)
             return;
 
         // Only with pixels to build one from: a render target or a kernel output
@@ -133,11 +132,13 @@ struct Texture::Native
     // is a planned optimisation; until then the camera/video path uploads via
     // update(). A null resource yields an invalid texture, which the higher
     // layer detects and falls back from.
-    Native(Device&, void*) {}
+    Native(Device& device, void*)
+        : context(getD3D12Context(device))
+    {
+    }
 
     ~Native()
     {
-        auto& context = getD3D12Context();
         context.freeTextureDescriptor(data.srv);
         context.freeTextureDescriptor(data.uav);
         context.deferRelease(std::move(data.rtvHeap));
@@ -319,7 +320,6 @@ struct Texture::Native
         if (data.resource == nullptr || pixels == nullptr)
             return;
 
-        auto& context = getD3D12Context();
         auto* commands = context.acquire();
 
         if (commands == nullptr)
@@ -361,8 +361,6 @@ struct Texture::Native
         // clamping would silently upload skewed pixels.
         if (x < 0 || y < 0 || x + regionWidth > width || y + regionHeight > height)
             return;
-
-        auto& context = getD3D12Context();
 
         if (!context.isValid())
             return;
@@ -533,6 +531,11 @@ struct Texture::Native
         // see D3D12Context::createRootSignatures. Allocating one anyway would
         // also let the 256-entry sampler heap fail texture creation for nothing.
     }
+
+    // The Device's context, held for the texture's lifetime: the descriptor
+    // slots came out of its heaps and go back to them, and every upload runs
+    // on its queue. A texture never moves between Devices.
+    D3D12Context& context;
 
     int width = 0;
     int height = 0;

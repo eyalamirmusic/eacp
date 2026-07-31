@@ -243,7 +243,7 @@ void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
         return;
 
     auto& commands = *impl->encoder->commands;
-    auto address = getD3D12Context().uploadConstants(commands, data, bytes);
+    auto address = commands.context->uploadConstants(commands, data, bytes);
 
     if (address != 0)
         commands.list->SetGraphicsRootConstantBufferView(renderVertexCBVParam(slot),
@@ -256,7 +256,7 @@ void RenderPass::setFragmentBytes(const void* data, std::size_t bytes, int slot)
         return;
 
     auto& commands = *impl->encoder->commands;
-    auto address = getD3D12Context().uploadConstants(commands, data, bytes);
+    auto address = commands.context->uploadConstants(commands, data, bytes);
 
     if (address != 0)
         commands.list->SetGraphicsRootConstantBufferView(renderPixelCBVParam(slot),
