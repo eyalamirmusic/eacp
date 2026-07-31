@@ -52,6 +52,14 @@ bool Device::isValid() const
     return impl->context.isValid();
 }
 
+std::string Device::name() const
+{
+    if (!isValid())
+        return "no D3D12 device";
+
+    return getD3D12Shared().getAdapterName();
+}
+
 void* Device::nativeContext() const
 {
     return &impl->context;
