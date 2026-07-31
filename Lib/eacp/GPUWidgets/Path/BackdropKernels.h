@@ -4,14 +4,14 @@
 
 namespace eacp::GPUWidgets
 {
-// The three stages that build the array form of the backdrop, on the GPU.
+// The three stages that build the backdrop, on the GPU.
 //
-// The backdrop is what everything to the left of a tile contributes to a pixel,
-// and it comes in two forms - a run of steps per pixel row, or a value at every
-// tile column of every pixel row. The second is priced by the *area*, and that
-// was the single largest CPU cost of any path covering real area: a window-sized
-// ellipse is two hundred and eighty-one segments and four hundred thousand
-// cells, cleared, scattered into, summed and shipped every frame it moves.
+// The backdrop is what everything to the left of a tile contributes to a pixel:
+// a value at every tile column of every pixel row. It is priced by the *area*,
+// and that was the single largest CPU cost of any path covering real area - a
+// window-sized ellipse is two hundred and eighty-one segments and four hundred
+// thousand cells, cleared, scattered into, summed and shipped every frame it
+// moves.
 //
 // None of that has to happen on the CPU. What the CPU knows and the GPU does not
 // is where the outline crosses into each tile column, and there are as many of
@@ -108,8 +108,7 @@ struct BackdropScatterKernel final : PathIndexedKernel
 
     // Every path's crossings end to end, three floats each, in the order they
     // were binned. Which path a thread's crossing belongs to is what pathStarts
-    // says; a path built as steps instead has no crossings here and an empty
-    // run.
+    // says.
     GPU::Uniform<GPU::InputBuffer> crossings;
     GPU::Uniform<GPU::AtomicBuffer> cells;
 
@@ -123,7 +122,14 @@ struct BackdropScatterKernel final : PathIndexedKernel
 // a canvas is tens of thousands of them - and a thread walking its row column by
 // column reads a cell its neighbours' cells sit next to, the array being stored
 // a column at a time. A group cooperating on one row would buy a shorter
-// dependency chain and lose that, on the only paths that take this form at all.
+// dependency chain and lose that.
+//
+// It does bite on a single wide path, which has few rows and many columns: an
+// automation curve is 356 rows of 151, so six threadgroups each walking 151
+// dependent loads, and cutting the walk to one column takes the stage from 0.207
+// to 0.090ms. On a canvas it does not - 128 lanes is 45,568 rows - and a
+// log-depth scan does several times the work of a serial one, so buying the solo
+// case would cost the case this exists for.
 struct BackdropScanKernel final : PathIndexedKernel
 {
     BackdropScanKernel() { compile(); }
@@ -139,7 +145,7 @@ struct BackdropScanKernel final : PathIndexedKernel
         // record on every column.
         auto cellBase = var(toUInt(shape.x()));
         auto height = var(toUInt(shape.z()));
-        auto tilesWide = var(toUInt(shape.w()));
+        auto tilesWide = var(tilesWideOf(toUInt(shape.y())));
         auto row = var(item - toUInt(pathStarts[path]));
 
         auto running = var(0u);

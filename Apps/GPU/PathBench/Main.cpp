@@ -1,4 +1,4 @@
-#include <eacp/GPUWidgets/GPUWidgets.h>
+﻿#include <eacp/GPUWidgets/GPUWidgets.h>
 
 #include <algorithm>
 #include <chrono>
@@ -338,6 +338,39 @@ GPU::Texture makeCanvasTarget(int width, int height)
     return {GPU::Device::shared(), descriptor, nullptr};
 }
 
+// Where a canvas's paths sit in the one target they all write into. As many side
+// by side as a texture may be wide and as many down as a device will make, and
+// past that they share a slot rather than being placed beyond the edge.
+//
+// Sharing rather than overflowing is the point: a store outside a texture is
+// dropped by the hardware without a word, so a canvas laid out past its target
+// silently stops writing the pixels of exactly the paths the count was raised to
+// measure. The work is identical either way - what overlaps is where it lands.
+struct CanvasLayout
+{
+    CanvasLayout(int pathWidth, int pathHeight, int count)
+        : width(std::max(1, pathWidth))
+        , height(std::max(1, pathHeight))
+    {
+        rows = std::clamp(4096 / height, 1, std::max(1, count));
+        columns =
+            std::clamp((count + rows - 1) / rows, 1, std::max(1, 16384 / width));
+    }
+
+    int originX(int index) const { return (index / rows) % columns * width; }
+    int originY(int index) const { return index % rows * height; }
+
+    GPU::Texture makeTarget() const
+    {
+        return makeCanvasTarget(width * columns, height * rows);
+    }
+
+    int width;
+    int height;
+    int rows;
+    int columns;
+};
+
 void reportCanvas(const char* name,
                   int count,
                   const GPUWidgets::Path& path,
@@ -352,21 +385,17 @@ void reportCanvas(const char* name,
         rasterizer.setPath(path);
     }
 
-    // Stacked down the target rather than tiled, which keeps the texture within
-    // what a device will make while every path still lands somewhere of its own.
-    auto width = rasterizers[0].getCoverageWidth();
-    auto height = rasterizers[0].getCoverageHeight();
-    auto rows = std::max(1, 4096 / std::max(1, height));
-    auto columns = (count + rows - 1) / rows;
+    auto layout = CanvasLayout {rasterizers[0].getCoverageWidth(),
+                                rasterizers[0].getCoverageHeight(),
+                                count};
 
-    auto target = makeCanvasTarget(std::min(16384, width * columns), rows * height);
+    auto target = layout.makeTarget();
     auto batch = GPUWidgets::CoverageBatch {};
 
     auto place = [&]
     {
         for (auto i = 0; i < count; ++i)
-            rasterizers[i].setTarget(
-                target, (i / rows) * width, (i % rows) * height);
+            rasterizers[i].setTarget(target, layout.originX(i), layout.originY(i));
     };
 
     place();

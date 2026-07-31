@@ -1620,6 +1620,8 @@ means O(area) GPU memory and two extra stages against a per-pixel binary search.
 That is a different trade with a different answer, and the constant has not been
 re-derived. It is the next measurement, not the next build.
 
+*(Measured — and the answer was not a constant. See the next section.)*
+
 ## Still not done
 
 - **Binning and emit on the GPU**, which is the last of the three and is now
@@ -1629,3 +1631,182 @@ re-derived. It is the next measurement, not the next build.
   sixteen million; the 128-lane canvas is already at seven. It is the only base
   that grows with area rather than with outline, so it is the only one that will
   ever reach it, and an assert now says so rather than the picture.
+
+# The step backdrop, deleted
+
+**Shipped.** The previous section left the form chooser as the next measurement.
+The measurement was taken, and what it said was not that the constant is wrong by
+some factor. It is that there is no crossover left to put a constant on: once the
+array moved to the GPU it became the cheaper form **everywhere**, and the step
+form was an arm nothing should ever take.
+
+So it is gone, and with it the choice, the constant, and the branch the kernel
+took one way per path.
+
+## The measurement that decided it
+
+`PathRasterizer` gained a temporary way to force either form — one process, both
+arms, alternating so the machine's drift cancels rather than counting — and
+`Apps/GPU/PathBench` timed the corpus each way. Windows on a Parallels vGPU,
+release, medians of five.
+
+The axis is *sparsity*: the cells the array would need against the pixel rows the
+crossings the steps are made of cover. It is the number `chooseBackdropForm`
+compared against 8, so it is the one the two costs have to be plotted against.
+
+**Per path**, which is a batch of one and therefore charges all three backdrop
+stages to a single path:
+
+| path | chosen | sparsity | cells | steps | array |
+|---|---|---|---|---|---|
+| knob indicator, 40pt | array | 0.7 | 335 | **0.010** | 0.039 |
+| knob indicator, 96pt | array | 1.6 | 1,956 | **0.028** | 0.061 |
+| PathQuality panel | steps | 12.0 | 27,357 | **0.065** | 0.091 |
+| automation curve, 1200pt | array | 3.1 | 53,756 | 0.800 | **0.257** |
+| full-window ellipse | steps | 75.0 | 402,804 | **0.463** | 0.530 |
+| artwork, 4k segments | array | 2.1 | 201,818 | 0.990 | **0.525** |
+| artwork, 20k segments | array | 0.7 | 204,191 | 3.348 | **1.371** |
+| artwork, 100k segments | array | 0.3 | 207,594 | 12.075 | **4.966** |
+
+**Batched**, which is the only way an interface draws one — the three stages are
+per batch, so a path deciding between the forms is deciding at the margin, beside
+others that have already paid for them:
+
+| | chosen | sparsity | steps | array | |
+|---|---|---|---|---|---|
+| automation lanes × 32 | array | 3.1 | 17.544 | **4.392** | 4.0× |
+| automation lanes × 128 | array | 3.1 | 60.978 | **15.960** | 3.8× |
+| PathQuality panels × 128 | steps | 12.0 | 7.759 | **5.715** | 1.4× |
+
+The panels are the finding in one row: the chooser takes the steps, and the array
+is a third cheaper.
+
+**The sweep that closes it.** An ellipse at a fixed height has two crossings per
+row whatever its width, so stretching one walks sparsity up in proportion and
+changes nothing else. Sixteen of them, batched:
+
+| ellipse | sparsity | cells | steps | array | |
+|---|---|---|---|---|---|
+| 80 × 500pt | 4.0 | 176,352 | 0.837 | **0.184** | 4.5× |
+| 160 × 500pt | 7.7 | 336,672 | 0.474 | **0.231** | 2.1× |
+| 320 × 500pt | 14.9 | 657,312 | 0.925 | **0.834** | 1.1× |
+| 640 × 500pt | 28.7 | 1,298,592 | 1.928 | **1.436** | 1.3× |
+| 1280 × 500pt | 51.6 | 2,586,304 | 4.488 | **3.738** | 1.2× |
+| 2560 × 500pt | 90.8 | 5,156,544 | 8.668 | **7.251** | 1.2× |
+| 5120 × 500pt | 155.6 | 10,297,024 | 18.408 | **15.919** | 1.2× |
+
+An ellipse is the shape *most* favourable to the steps — two steps in a row is a
+search that terminates immediately and a step buffer of nothing — and they lose
+at every sparsity the sweep reaches, twenty times past the constant that was
+sending them there. There is no crossover further out to go looking for.
+
+## Why the answer moved so far
+
+Two reasons, and the second was not in the plan at all.
+
+**The array's CPU cost is the outline's now, and the steps' never was.** Phase 4
+moved the array's O(area) work to the GPU and left the steps where they were —
+a counting sort, an expansion through a band scratch array, and an emit walk that
+is `coverageHeight × columns touched per band`. That last term is area-shaped
+whenever the outline touches most columns, which is why the automation curve
+spends 0.579ms of CPU on steps against 0.055 on the array. **The form that was
+kept for being cheap to build is now the dear one to build.**
+
+**The steps are not cheaper to read either.** They were supposed to be paying for
+their build with a smaller buffer and a cheap lookup, but the lookup is a binary
+search *per pixel* where the array's is one load — and the array is a sixteenth
+of the pixels, so what it costs the GPU to clear and scan is against a saving
+taken sixteen times over. Across the sweep the array's GPU column is at or below
+the steps' at every size. Neither half of the trade survived.
+
+## What shipped
+
+`eacp-gpuwidgets`
+
+- `PathRasterizer` builds one backdrop. `buildStepBackdrop`, `sortRunsByBand`,
+  `finishBackdrops`, `chooseBackdropForm`, `sparseBackdropMargin` and seven
+  arrays are gone; `addBackdrop` is `addCrossing` and does the one thing.
+  `getCellCount` is public, being what a batch's only area-priced buffer costs.
+- `CoverageKernel` loses `backdropAt` — the per-pixel binary search — and the
+  branch in front of it. Every path reads its backdrop with one load.
+- `CoverageBatch` loses two buffers: 7 uploads a frame, not 9.
+
+The record shrank with them, and further than the two dead fields:
+
+| | before | after |
+|---|---|---|
+| floats per path | 12 | **8** |
+| `read4`s to fetch one | 3 | **2** |
+| unused fields | 0 | 0 |
+
+`stepBase`, `rowBase` and the form flag left three of twelve slots empty, and
+padding is exactly what put the fill rule in the wrong `read4` when the batch was
+built. So `tilesWide` came out too — it is `ceil(width / 16)`, a shift and an add
+against four floats a path and a third read. What is left is two full reads, and
+the split is chosen so the scatter and the scan still take **one**: they want the
+cell base and the height, and those share a read.
+
+No change to `eacp-ui`, `eacp-gpu`, or any public API but `getCellCount`.
+
+## Results
+
+Same harness, same machine, before and after the deletion. The CPU column is
+stable to a thousandth; the GPU column on a small path is a fifth of the 0.75ms
+submit floor this VM has and should be read as noise below about 0.05ms.
+
+| path | CPU before | CPU after | GPU before | GPU after |
+|---|---|---|---|---|
+| knob indicator, 40pt | 0.003 | 0.003 | 0.053 | 0.078 |
+| knob indicator, 96pt | 0.007 | 0.007 | 0.034 | 0.022 |
+| PathQuality panel | 0.023 | **0.013** | 0.010 | 0.042 |
+| automation curve, 1200pt | 0.054 | 0.054 | 0.149 | 0.113 |
+| full-window ellipse | 0.128 | **0.085** | 0.198 | 0.260 |
+| artwork, 4k segments | 0.296 | 0.292 | 0.215 | 0.197 |
+| artwork, 20k segments | 1.073 | 1.044 | 0.311 | 0.263 |
+| artwork, 100k segments | 4.380 | 4.211 | 0.444 | 0.437 |
+
+| canvas | bin before | bin after | | uploads | dispatches |
+|---|---|---|---|---|---|
+| automation lanes × 32 | 1.836 | 1.820 | — | 9 → 7 | 4 |
+| automation lanes × 128 | 7.394 | 7.330 | — | 9 → 7 | 4 |
+| PathQuality panels × 128 | 3.317 | **1.750** | 1.9× | 9 → 7 | 1 → 4 |
+
+Everything that already took the array is unchanged, which is the point: nothing
+was traded, one arm was removed. What moves is the two cases that took the steps
+— the panels canvas binds in half the time, and the full-window ellipse's CPU
+falls by a third.
+
+**Verified.** 900/900 tests pass. Against deliberate breaks, of the 23 rasterizer,
+batch and stroker tests: the derived tile count losing its rounding-up fails 7,
+the two record reads swapped fails 12, and the scatter ignoring the path's cell
+base fails **exactly the 5 batch tests that look at pixels and nothing else** —
+which is the signature a batching bug should have, and the one that says the
+shrunk record still reaches each path's own cells. On screen, `ComponentTree`
+still reports 295 components and 8 batch breaks with the knobs unchanged, and
+`AtlasCeiling` still 240 shapes, 4096², 90% full, 34 dropped, with every tile
+that fits still showing its own side count.
+
+## What this cost, and what is still wrong
+
+- **Every path pays three dispatches for its backdrop now, not just some.** Solo,
+  the PathQuality panel's GPU time goes 0.010 → 0.042ms and the ellipse's 0.198 →
+  0.260. It is per *batch*, so an interface pays it once a frame however many
+  paths are in it — but a demo or a bench rasterizing one path at a time pays it
+  every time, and the per-path table above is measured that way. That is the
+  floor phase 0 predicted and it is now unconditional.
+- **The cells ceiling is reachable by every path rather than by some.** A batch
+  indexes them through a float, so 16.7M, and every path in a batch now
+  contributes `coverage pixels / 16` to it. For `eacp-ui` that is unreachable —
+  the atlas caps at 4096², so a frame's cells cannot exceed 1.05M — but a
+  standalone `CoverageBatch` on a maximal target lands right on it. The assert is
+  what says so; nothing raises it.
+- **The step form is in the history and not in the tree.** It is the right place
+  for it, but worth saying plainly: if a device ever prices a per-pixel load
+  against a per-pixel search differently enough to matter, this measurement is
+  the thing to re-take, not the code to re-derive.
+
+## What is next
+
+Unchanged, and now the only item on it: **binning and emit on the GPU**, which is
+nearly the whole of what a dense path costs — the 100k-segment artwork is 4.2ms
+of CPU, and there is no longer anything else in it for them to share with.

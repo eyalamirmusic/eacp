@@ -22,14 +22,13 @@
 // The failures worth ruling out are all silent and all specific:
 //
 //  - a base off by a path: one path draws another's outline
-//  - the fill rule or backdrop form read from a neighbouring record: a star
-//    fills its own hole, or a region comes out inverted
+//  - the fill rule read from a neighbouring record: a star fills its own hole
 //  - the origin dropped: every mask lands on top of the first
 //  - the block search off by one: a strip along one path's edge belongs to the
 //    path before it
 //
-// So the batch below is deliberately mixed: different sizes, both fill rules,
-// both backdrop forms, and origins that are not multiples of the block.
+// So the batches below are deliberately mixed: different sizes, both fill rules,
+// and origins that are not multiples of the block.
 
 using namespace nano;
 using namespace eacp;
@@ -312,12 +311,13 @@ auto tFillRulesDoNotCross = test("CoverageBatch/eachPathKeepsItsOwnFillRule") = 
     check(solid[centre] > 0.99f);
 };
 
-// Both backdrop forms in one batch. A full-window ellipse takes the step form
-// and a small dense star takes the array, so the two arms of the branch are both
-// live in one dispatch - and each path's base has to reach the buffer its own
-// form lives in.
-auto tBackdropFormsDoNotCross =
-    test("CoverageBatch/bothBackdropFormsInOneBatch") = []
+// Backdrops of wildly different sizes in one batch. The cell base is the one
+// base that grows with a path's *area*, so an ellipse covering a third of a
+// million cells beside a star covering a few hundred is where a base taken from
+// the wrong path lands somewhere else entirely rather than a few rows off - and
+// the small path between the two large ones is the one whose own base is
+// smallest and whose neighbours' are not.
+auto tCellBasesDoNotCross = test("CoverageBatch/backdropsOfVeryDifferentSizes") = []
 {
     auto entries = Vector<Entry> {};
     entries.add({ellipse({0.f, 0.f, 700.f, 460.f}), FillRule::NonZero, 2.f});
@@ -331,11 +331,11 @@ auto tBackdropFormsDoNotCross =
 // what a static path redrawn every frame is - and what the solo rasterizer does
 // on every dispatch after its first.
 //
-// It is the one thing the array form of the backdrop can get wrong that a single
-// dispatch cannot. Its cells are *added* into, so a second scatter landing on
-// what the first one's sums left behind is a backdrop twice over - and the stage
-// that keeps it from happening writes nothing but zeroes, which no picture taken
-// once will ever miss.
+// It is the one thing the backdrop can get wrong that a single dispatch cannot.
+// Its cells are *added* into, so a second scatter landing on what the first
+// one's sums left behind is a backdrop twice over - and the stage that keeps it
+// from happening writes nothing but zeroes, which no picture taken once will
+// ever miss.
 auto tSecondDispatchDrawsTheSame =
     test("CoverageBatch/dispatchingTwiceDrawsTheSameThing") = []
 {

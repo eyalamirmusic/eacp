@@ -48,20 +48,16 @@ enum class FillRule
 // getSegmentTests() reports the first term. A path is therefore priced by its
 // outline rather than by its area, which is what lets one cover the window.
 //
-// What everything to the left of a tile contributes - the backdrop - can be
-// priced by the outline too, and that is the one thing here that is not obvious.
-// A pixel row's backdrop is the running sum of the winding entering it at each
-// tile column, so it is a *step function*, and its steps are the outline's
-// crossings of that row rather than the row's columns: a window-sized ellipse
-// has five steps across two hundred columns, where holding a value per column
-// per row cost more CPU than everything else here put together.
+// What everything to the left of a tile contributes - the backdrop - is priced
+// by the outline here too, and that is the one thing that is not obvious. It is
+// held as a value per tile column per pixel row, which is the *area's* size, and
+// building that used to cost more CPU than everything else here put together.
 //
-// Steps are two numbers where a column is one, though, so an outline crossing
-// nearly every row of its own coverage is cheaper held the plain way. Both
-// forms exist and one is chosen per path - and either way what this class
-// produces is the outline's crossings: the steps are sorted and summed from them
-// here, and the array is cleared, scattered into and summed from them on the
-// GPU. See BackdropKernels.h.
+// So this class does not build it. What it produces is the outline's crossings
+// into each tile column, of which there are as many as there is outline, and
+// three kernels ahead of the coverage one clear the array, scatter the crossings
+// into it and sum each row. See BackdropKernels.h. A path is therefore priced by
+// its outline on the CPU and by its area only where area is cheap.
 class PathRasterizer
 {
 public:
@@ -95,6 +91,11 @@ public:
     // horizontal ones dropped. How complex this path is, in the only unit the
     // kernel counts in.
     int getSegmentCount() const { return segments.size() / 4; }
+
+    // What this path's backdrop costs a batch in cells - one integer per tile
+    // column per pixel row. This is the only thing a batch allocates that grows
+    // with *area*, so it is the only one that can reach a ceiling.
+    int getCellCount() const;
 
     // Segment-pixel tests the next dispatch will do, which is the work binning
     // exists to cut: the same path unbinned costs coverage width times height
@@ -144,30 +145,9 @@ private:
         int tiles;
     };
 
-    // One segment's crossing into one tile column, over the part of one tile
-    // row's band it spans. The winding it hands the pixel rows to the right of
-    // it, kept as the crossing rather than expanded over those rows - there is
-    // one of these per segment per band, and expanding gives sixteen.
-    struct BandRun
-    {
-        int band;
-        int column;
-        float fromY;
-        float toY;
-        float direction;
-    };
-
-    // Cells the array form of this path's backdrop needs on the GPU, and zero
-    // for a path built as steps. One per tile column per pixel row.
-    int getCellCount() const;
-
     void ensureOwnTexture();
     void buildTiles();
-    void chooseBackdropForm();
-    void buildStepBackdrop();
-    void addBackdrop(float direction, float fromY, float toY, int column, int band);
-    void sortRunsByBand();
-    void finishBackdrops();
+    void addCrossing(float direction, float fromY, float toY, int column);
     void countSegmentTests();
 
     // The buffers a solo dispatch needs, made on the first one and not at all
@@ -186,23 +166,9 @@ private:
     Vector<int> tileCursor;
     Vector<float> tileSegments;
 
-    Vector<BandRun> bandRuns;
-    Vector<BandRun> sortedRuns;
-    Vector<int> runCounts;
-
-    // One band's winding per pixel row per tile column, which is the dense
-    // array this replaced - at one band's size rather than the path's, and
-    // cleared where it was written rather than all over.
-    Vector<float> bandScratch;
-    Vector<char> columnTouched;
-    Vector<int> touchedColumns;
-
-    // The backdrop as the kernel reads it, in whichever of the two forms is
-    // smaller for this path: a run of (column, winding) steps per pixel row with
-    // where each row's run starts, or - three floats to a crossing - what the
-    // GPU builds the array of every column of every row out of.
-    Vector<float> backdropSteps;
-    Vector<float> backdropRows;
+    // Where the outline crosses into a tile column, three floats each, which is
+    // what the GPU builds the backdrop out of. Priced by the outline, where what
+    // it builds is priced by the area.
     Vector<float> crossings;
 
     const GPU::Texture* target = nullptr;
@@ -216,9 +182,7 @@ private:
     int tilesWide = 0;
     int tilesHigh = 0;
     int evenOdd = 0;
-    bool sparseBackdrop = true;
     long long segmentTests = 0;
-    float backdropSpan = 0.f;
 
     // Whether the solo batch still describes this path. A rasterizer dispatched
     // repeatedly without changing - which is what a benchmark and a static demo
