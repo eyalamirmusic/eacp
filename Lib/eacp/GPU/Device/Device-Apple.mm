@@ -112,6 +112,14 @@ bool Device::isValid() const
     return impl->device.get() != nil;
 }
 
+std::string Device::name() const
+{
+    if (!isValid())
+        return "no Metal device";
+
+    return [[impl->device.get() name] UTF8String];
+}
+
 void* Device::nativeContext() const
 {
     // Nothing to hand out: the queue, the texture cache and the samplers are

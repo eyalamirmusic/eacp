@@ -10,6 +10,7 @@
 #include "../Timing/FrameTimer.h"
 
 #include <cstdint>
+#include <string>
 
 namespace eacp::Graphics
 {
@@ -98,6 +99,14 @@ public:
     CommandBuffer makeCommandBuffer() { return CommandBuffer {*this}; }
 
     bool isValid() const;
+
+    // What the GPU this Device runs on calls itself — the MTLDevice's name on
+    // Metal, the DXGI adapter description on D3D12. For a log line or a
+    // benchmark header, which has to say which hardware produced a number, and
+    // is worth having as a call rather than as a platform ifdef in every app
+    // that prints one. An invalid Device names itself rather than returning
+    // nothing, so a caller can print it either way.
+    std::string name() const;
 
     // Opaque native handles for cross-translation-unit use by other GPU types.
     void* nativeDevice() const;

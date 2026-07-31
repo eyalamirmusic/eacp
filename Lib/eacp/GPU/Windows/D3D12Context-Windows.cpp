@@ -99,6 +99,36 @@ rootTable(const D3D12_DESCRIPTOR_RANGE* range,
     return parameter;
 }
 
+// What the adapter this device came up on calls itself, for a log line or a
+// benchmark header that has to say which GPU produced a number. Found by LUID
+// rather than by re-running adapter selection, so it names the adapter
+// D3D12CreateDevice actually picked - including WARP, which is worth seeing
+// spelled out when a machine has silently fallen back to it.
+std::string describeAdapter(ID3D12Device* device)
+{
+    if (device == nullptr)
+        return "no device";
+
+    auto factory = winrt::com_ptr<IDXGIFactory4>();
+
+    if (FAILED(CreateDXGIFactory2(0, __uuidof(IDXGIFactory4), factory.put_void())))
+        return "unknown adapter";
+
+    auto adapter = winrt::com_ptr<IDXGIAdapter1>();
+
+    if (FAILED(factory->EnumAdapterByLuid(device->GetAdapterLuid(),
+                                          __uuidof(IDXGIAdapter1),
+                                          adapter.put_void())))
+        return "unknown adapter";
+
+    auto description = DXGI_ADAPTER_DESC1 {};
+
+    if (FAILED(adapter->GetDesc1(&description)))
+        return "unknown adapter";
+
+    return winrt::to_string(std::wstring_view {description.Description});
+}
+
 winrt::com_ptr<ID3D12RootSignature>
     makeRootSignature(ID3D12Device* device, const D3D12_ROOT_SIGNATURE_DESC& desc)
 {
@@ -177,6 +207,7 @@ void D3D12Shared::createAll()
 void D3D12Shared::createDevice()
 {
     device = createHardwareOrWarpDevice();
+    adapterName = describeAdapter(device.get());
 }
 
 void D3D12Shared::createRootSignatures()

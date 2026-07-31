@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 
 // The D3D12 plumbing shared by every Windows GPU translation unit, split in
 // two along the line that decides what a second GPU::Device can be.
@@ -91,6 +92,12 @@ public:
     bool isValid() const { return device != nullptr; }
 
     ID3D12Device* getDevice() const { return device.get(); }
+
+    // What the adapter calls itself, read once at device creation. Shared
+    // rather than per-context because every Device on this machine runs on the
+    // same adapter.
+    const std::string& getAdapterName() const { return adapterName; }
+
     ID3D12RootSignature* getRenderRootSignature() const
     {
         return renderRootSignature.get();
@@ -119,6 +126,7 @@ private:
     void createRootSignatures();
 
     winrt::com_ptr<ID3D12Device> device;
+    std::string adapterName;
     winrt::com_ptr<ID3D12RootSignature> renderRootSignature;
     winrt::com_ptr<ID3D12RootSignature> computeRootSignature;
 
