@@ -6,9 +6,8 @@ interface EacpBridge
 {
     invoke<Res = unknown, Req = unknown>(command: string, payload?: Req): Promise<Res>;
     on<T = unknown>(event: string, handler: (payload: T) => void): () => void;
-    // Registers a function the native (C++) side can call via
-    // WebViewBridge::call(name, ...) — the reverse of a command. May be
-    // sync or async; its resolved value is sent back to C++.
+    // Registers a function C++ can call via WebViewBridge::call(name, ...) —
+    // the reverse of a command. Sync or async; the resolved value is sent back.
     expose<Req = unknown, Res = unknown>(
         name: string,
         fn: (payload: Req) => Res | Promise<Res>,
@@ -19,28 +18,19 @@ declare global
 {
     interface Window
     {
-        // Optional — `window.eacp` is injected by the native WebView host.
-        // Absent during `npm run dev` in a regular browser, which is a
-        // supported workflow: hooks fall back to their initial values and
-        // commands reject with a clear error.
+        // Injected by the native WebView host. Absent during `npm run dev` in
+        // a browser, which is supported: hooks fall back to their initial
+        // values and commands reject with a clear error.
         eacp?: EacpBridge;
     }
 }
 
-// Returns whether the native eacp WebView bridge is currently present.
-// Evaluated lazily so workflows that inject the bridge after page load
-// — or never inject it at all, e.g. `npm run dev` in Chrome — resolve
-// to the right answer at call time rather than at module load.
 export function isBackendAvailable(): boolean
 {
     return typeof window !== 'undefined' && window.eacp != null;
 }
 
-// Registers a function the native (C++) side can call via
-// WebViewBridge::call(name, ...). The reverse of a command: instead of
-// the page invoking C++, C++ invokes the page, awaiting the result.
-// No-op when the bridge isn't present (e.g. `npm run dev` in a browser),
-// so app code can call it unconditionally at startup.
+// No-op when the bridge isn't present, so app code can call it unconditionally.
 export function expose<Req = unknown, Res = unknown>(
     name: string,
     fn: (payload: Req) => Res | Promise<Res>,
@@ -51,22 +41,46 @@ export function expose<Req = unknown, Res = unknown>(
     window.eacp!.expose(name, fn);
 }
 
-// Command / event namespace prefix. Empty by default: a page that owns the
-// whole bridge invokes 'group.getParams' directly.
-//
-// It is non-empty when this client is mounted as a SUB-API of a larger one. A
-// host that reflects this API under a member name receives its commands as
-// '<member>.group.getParams' and publishes its events as
-// '<member>.group.values', so the host page calls configureBridge once before
-// render and every generated command, event and hook routes through it.
-//
-// Read at call time rather than captured, so it also applies to the
-// subscriptions the generated hooks set up after configureBridge runs.
+// Command / event namespace prefix. Empty by default; non-empty when this
+// client is mounted as a SUB-API, where the host receives its commands as
+// '<member>.group.getParams' and publishes events as '<member>.group.values'.
 let namespacePrefix = '';
 
+// Live subscriptions, tracked so configureBridge can re-point them. Unlike
+// invoke, which resolves the prefix per call, window.eacp.on commits to one
+// name at subscribe time — so anything that subscribed first would otherwise
+// stay bound to the unprefixed name, silently receiving nothing.
+interface Subscription
+{
+    event: string;
+    handler: (payload: unknown) => void;
+    unsubscribe: () => void;
+}
+
+const subscriptions = new Set<Subscription>();
+
+function bind(subscription: Subscription): void
+{
+    subscription.unsubscribe = window.eacp!.on(
+        namespacePrefix + subscription.event, subscription.handler);
+}
+
+// Safe to call at any point in startup. Commands issued beforehand still
+// resolve against the old prefix — they are one-shot calls with no later
+// correction — so a page that invokes at module scope should configure first.
 export function configureBridge(options: { prefix?: string }): void
 {
-    namespacePrefix = options.prefix ?? '';
+    const next = options.prefix ?? '';
+    if (next === namespacePrefix)
+        return;
+
+    namespacePrefix = next;
+
+    for (const subscription of subscriptions)
+    {
+        subscription.unsubscribe();
+        bind(subscription);
+    }
 }
 
 const webViewTransport: Transport<Events> = {
@@ -84,8 +98,21 @@ const webViewTransport: Transport<Events> = {
     {
         if (! isBackendAvailable())
             return () => {};
-        return window.eacp!.on(namespacePrefix + event,
-                               handler as (payload: unknown) => void);
+
+        const subscription: Subscription = {
+            event,
+            handler: handler as (payload: unknown) => void,
+            unsubscribe: () => {},
+        };
+
+        bind(subscription);
+        subscriptions.add(subscription);
+
+        return () =>
+        {
+            subscription.unsubscribe();
+            subscriptions.delete(subscription);
+        };
     },
 };
 
