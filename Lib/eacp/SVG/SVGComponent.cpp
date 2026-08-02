@@ -313,22 +313,6 @@ void applyDashPattern(const std::string& value, GPUWidgets::DashPattern& dash)
                                                      : parseNumberList(value);
 }
 
-// The id an element's href names, or empty when it has none or names another
-// document -- which there is nothing here to look in.
-//
-// Both spellings, because SVG 2 dropped the namespace and every file written
-// before it still carries xlink:href. A document that writes both means the
-// same thing twice.
-std::string hrefId(const SVGElement& element)
-{
-    auto href = element.attr("href");
-
-    if (href.empty())
-        href = element.attr("xlink:href");
-
-    return href.size() > 1 && href.front() == '#' ? href.substr(1) : std::string {};
-}
-
 void collectIds(const SVGElement& element,
                 std::unordered_map<std::string, const SVGElement*>& byId)
 {
