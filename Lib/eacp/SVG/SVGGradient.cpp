@@ -20,21 +20,6 @@ const SVGElement* findById(const ElementsById& byId, const std::string& id)
     return found != byId.end() ? found->second : nullptr;
 }
 
-// The id an element's href names, or empty when it has none or names another
-// document -- which there is nothing here to look in.
-//
-// Both spellings, because SVG 2 dropped the namespace and every file written
-// before it still carries xlink:href.
-std::string hrefId(const SVGElement& element)
-{
-    auto href = element.attr("href");
-
-    if (href.empty())
-        href = element.attr("xlink:href");
-
-    return href.size() > 1 && href.front() == '#' ? href.substr(1) : std::string {};
-}
-
 // An attribute, following href to whatever the gradient inherits it from.
 //
 // Documents from every drawing program do this: one gradient carries the stops

@@ -101,4 +101,12 @@ Vector<Graphics::Point> parsePointList(const std::string& value);
 // the id is not there.
 std::string parsePaintReference(const std::string& value);
 
+// The id an element's href names, or empty when it has none or names another
+// document -- which there is nothing here to look in.
+//
+// Both spellings, because SVG 2 dropped the namespace and every file written
+// before it still carries xlink:href. A document that writes both means the
+// same thing twice.
+std::string hrefId(const SVGElement& element);
+
 } // namespace eacp::SVG

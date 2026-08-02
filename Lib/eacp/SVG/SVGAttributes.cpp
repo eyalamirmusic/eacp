@@ -487,4 +487,14 @@ std::string parsePaintReference(const std::string& value)
     return reference;
 }
 
+std::string hrefId(const SVGElement& element)
+{
+    auto href = element.attr("href");
+
+    if (href.empty())
+        href = element.attr("xlink:href");
+
+    return href.size() > 1 && href.front() == '#' ? href.substr(1) : std::string {};
+}
+
 } // namespace eacp::SVG
