@@ -1,17 +1,9 @@
 // Generated. Do not edit by hand.
 //
-// Dev/test mock of the native eacp WebView bridge. Installs a window.eacp that
-// loops invoke()/on()/expose() back in-process — no native host — so the SAME
-// generated client (backend / hooks / react) runs unchanged in a plain browser
-// (`npm run dev`) or a jsdom test. isBackendAvailable() only checks
-// `window.eacp != null`, so installing this is all it takes for hooks to fetch
-// and events to flow.
-//
-// Nothing here is app-specific: the transport is generic. The SCENARIO — typed
-// command handlers (the same Handlers shape C++ implements) plus an event
-// timeline — is supplied by the app and stays in the app. Both sides are typed
-// against THIS app's schema, so adding a command in C++ breaks a stale scenario
-// at compile time.
+// Dev/test mock of the native bridge: installs a window.eacp that loops
+// invoke()/on()/expose() back in-process, so the same generated client runs
+// unchanged in a plain browser (`npm run dev`) or a jsdom test. The scenario —
+// typed command handlers plus an event timeline — is supplied by the app.
 import { dispatch, type Handlers } from './schema.handlers';
 import type { EventName, Events } from './schema.events';
 
@@ -26,9 +18,8 @@ export interface MockControl
 
 export interface MockScenario
 {
-    // Typed command handlers — the SAME contract C++ implements. A command the
-    // UI invokes that you did not supply rejects with a clear error, so gaps
-    // fail loudly instead of silently resolving undefined.
+    // The same contract C++ implements. A command you did not supply rejects
+    // with a clear error rather than silently resolving undefined.
     handlers?: Partial<Handlers>;
     // Drives events over time; re-run whenever the scenario is (re)installed.
     run?: (control: MockControl) => void | Promise<void>;
@@ -36,8 +27,6 @@ export interface MockScenario
 
 type Listener = (payload: unknown) => void;
 
-// Reuses the generated dispatch() but keeps it honest: an unimplemented command
-// throws a clear message rather than a raw "handlers.x is not a function".
 function guarded(partial: Partial<Handlers>): Handlers
 {
     return new Proxy(partial, {
