@@ -32,6 +32,15 @@ struct WindowEvents
 {
     // Fires when the window gains (true) or loses (false) key focus.
     std::function<void(bool isKey)> onActivationChanged;
+
+    // Fires when the user closes a WindowOptions::hidesOnClose window: by
+    // then it has ordered out, its state is intact, and the app is still
+    // running. Without this the close is invisible to app code — onQuit is
+    // exactly what hidesOnClose suppresses — so it is where a tray-resident
+    // app drops its Dock icon (Apps::setDockIconVisible(false)) and stops
+    // work that only a visible window needs. Never fires for a window that
+    // closes normally; that one gets onQuit and is destroyed.
+    std::function<void()> onHidden = [] {};
 };
 
 struct WindowOptions

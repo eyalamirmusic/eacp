@@ -14,6 +14,15 @@ namespace eacp::Apps
 // button, so there is nothing to toggle.
 void setDockIconVisible(bool) {}
 
+// No OS-level power-off announcement to watch for, so a quit request is
+// never the system's (see App.h).
+bool isSystemPoweringOff()
+{
+    return false;
+}
+
+void Detail::observeSystemPowerOff() {}
+
 // Presence-only check for an embedded Authenticode signature — deliberately
 // not WinVerifyTrust, whose full chain validation is sensitive to expiry,
 // revocation and network availability (see App.h).
@@ -193,9 +202,9 @@ std::optional<std::wstring> showShellSaveDialog(const FileSaveOptions& options)
         auto flags = FILEOPENDIALOGOPTIONS {};
         if (SUCCEEDED(dialog->GetOptions(&flags)))
         {
-            flags = static_cast<FILEOPENDIALOGOPTIONS>(
-                flags | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST
-                | FOS_OVERWRITEPROMPT);
+            flags = static_cast<FILEOPENDIALOGOPTIONS>(flags | FOS_FORCEFILESYSTEM
+                                                       | FOS_PATHMUSTEXIST
+                                                       | FOS_OVERWRITEPROMPT);
             dialog->SetOptions(flags);
         }
 

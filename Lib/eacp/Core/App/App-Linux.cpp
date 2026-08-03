@@ -5,6 +5,15 @@ namespace eacp::Apps
 // No Dock/activation-policy concept here.
 void setDockIconVisible(bool) {}
 
+// No OS-level power-off announcement to watch for, so a quit request is
+// never the system's (see App.h).
+bool isSystemPoweringOff()
+{
+    return false;
+}
+
+void Detail::observeSystemPowerOff() {}
+
 // Linux has no binary-signing convention to check against.
 bool isDistributionSigned()
 {
