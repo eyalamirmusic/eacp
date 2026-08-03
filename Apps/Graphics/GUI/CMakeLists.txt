@@ -1,7 +1,7 @@
 project(GUIApp VERSION 2.0.0)
 
 add_executable(GUI Main.cpp)
-target_link_libraries(GUI PRIVATE eacp-graphics)
+target_link_libraries(GUI PRIVATE eacp-ui)
 
 set(BUNDLE_ID "com.eacp.guiapp")
 

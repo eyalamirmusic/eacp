@@ -1,114 +1,120 @@
-#include <eacp/Graphics/Graphics.h>
+#include <eacp/UI/UI.h>
 
-#include <array>
-
-using namespace eacp;
-using namespace Graphics;
+#include <string>
 
 // The pointer changing shape per *region* of one view.
 //
 // That is the case the API exists for, and the one a per-view cursor cannot do.
-// A GPU-drawn UI is a single view with a whole widget tree painted into it — an
-// editor is one view holding a splitter, a text area and a file list — so the
-// shape has to follow the pointer inside a view rather than being fixed for it.
+// A GPU-drawn UI is a single native view with a whole widget tree painted into
+// it — an editor is one view holding a splitter, a text area and a file list —
+// so the shape has to follow the pointer inside a view rather than being fixed
+// for it.
 //
-// Move across the bands and watch the pointer. The shape is set from mouseMoved
-// on every move, with no bookkeeping about which band was last under the
-// pointer, because setting the same shape twice is free.
+// Which is why this is now a component per band rather than one view doing
+// arithmetic on the pointer's x. A component says what its cursor is and the
+// host applies whichever one the pointer is over, so the regions are the
+// ordinary tree and there is no hit testing to write: the same walk that decides
+// who gets a click decides what the pointer looks like.
+//
+// Move across the bands and watch the pointer.
 
-struct CursorBandsView final : View
+using namespace eacp;
+
+namespace
 {
-    struct Band
+struct Band final : UI::Component
+{
+    Band(eacp::Graphics::MouseCursor cursorToUse,
+         std::string labelToUse,
+         const UI::Color& colourToUse)
+        : label(std::move(labelToUse))
+        , colour(colourToUse)
     {
-        MouseCursor cursor;
-        const char* label;
-        Color color;
-    };
+        setMouseCursor(cursorToUse);
 
-    static constexpr auto bandCount = 5;
-
-    CursorBandsView()
-    {
-        getProperties().handlesMouseEvents = true;
-
-        for (auto index = 0; index < bandCount; ++index)
-        {
-            fills[index]->setFillColor(bands[index].color);
-            labels[index]->setText(bands[index].label);
-            labels[index]->setColor({0.97f, 0.97f, 0.99f});
-
-            addChildren({fills[index], labels[index]});
-        }
+        // Without this the band is decorative and the pointer never enters it,
+        // so the host has nothing to take a cursor from.
+        setInterceptsMouseClicks(true);
     }
 
-    int bandAt(const Point& position) const
+    void mouseEnter(const UI::MouseEvent&) override { repaint(); }
+    void mouseExit(const UI::MouseEvent&) override { repaint(); }
+
+    void paint(UI::Graphics& g) override
     {
-        const auto width = getLocalBounds().w;
+        g.fillAll(isMouseOver() ? colour.brighter(0.06f) : colour);
 
-        if (width <= 0.f)
-            return 0;
-
-        const auto index = (int) (position.x / (width / bandCount));
-
-        return std::clamp(index, 0, bandCount - 1);
+        g.setColour({0.97f, 0.97f, 0.99f, 1.f});
+        g.drawText(label, getLocalBounds().inset(12.f, 0.f).removeFromTop(48.f));
     }
 
-    void mouseMoved(const MouseEvent& event) override
-    {
-        setMouseCursor(bands[bandAt(event.pos)].cursor);
-    }
+    std::string label;
+    UI::Color colour;
+};
 
-    // Leaving the view puts the arrow back. Without this the last band's shape
-    // would follow the pointer out over the window's own chrome.
-    void mouseExited(const MouseEvent&) override
+struct Bands final : UI::Component
+{
+    Bands()
     {
-        setMouseCursor(MouseCursor::Default);
+        for (auto& band: bands)
+            addAndMakeVisible(*band);
     }
 
     void resized() override
     {
         auto area = getLocalBounds();
-        const auto bandWidth = area.w / bandCount;
+        const auto bandWidth = area.w / bands.size();
 
-        for (auto index = 0; index < bandCount; ++index)
-        {
-            const auto slice = area.removeFromLeft(bandWidth);
-
-            auto path = Path();
-            path.addRect(slice);
-            fills[index]->setPath(path);
-
-            scaleToFit({fills[index], labels[index]});
-            labels[index]->setPosition({slice.x + 12.f, 24.f});
-        }
+        for (auto& band: bands)
+            band->setBounds(area.removeFromLeft(bandWidth));
     }
 
-    static constexpr std::array<Band, bandCount> bands {
-        {{MouseCursor::Default, "Default", {0.16f, 0.17f, 0.21f}},
-         {MouseCursor::IBeam, "IBeam", {0.20f, 0.24f, 0.32f}},
-         {MouseCursor::PointingHand, "Hand", {0.24f, 0.30f, 0.42f}},
-         {MouseCursor::ResizeLeftRight, "Resize L/R", {0.28f, 0.36f, 0.52f}},
-         {MouseCursor::Crosshair, "Crosshair", {0.32f, 0.42f, 0.62f}}}};
+    OwnedVector<Band> bands = []
+    {
+        using Cursor = eacp::Graphics::MouseCursor;
 
-    Array<ShapeLayerView, bandCount> fills;
-    Array<TextLayerView, bandCount> labels;
+        auto list = OwnedVector<Band> {};
+
+        list.createNew(Cursor::Default, "Default", UI::Color {0.16f, 0.17f, 0.21f});
+        list.createNew(Cursor::IBeam, "IBeam", UI::Color {0.20f, 0.24f, 0.32f});
+        list.createNew(
+            Cursor::PointingHand, "Hand", UI::Color {0.24f, 0.30f, 0.42f});
+        list.createNew(
+            Cursor::ResizeLeftRight, "Resize L/R", UI::Color {0.28f, 0.36f, 0.52f});
+        list.createNew(
+            Cursor::Crosshair, "Crosshair", UI::Color {0.32f, 0.42f, 0.62f});
+
+        return list;
+    }();
 };
+
+struct Host final : UI::ComponentHost
+{
+    Host() { setRootComponent(bands); }
+
+    Bands bands;
+};
+
+eacp::Graphics::WindowOptions windowOptions()
+{
+    auto options = eacp::Graphics::WindowOptions {};
+
+    options.width = 760;
+    options.height = 200;
+    options.title = "Cursor Shapes — move across the bands";
+    options.backgroundColor = eacp::Graphics::Color {0.16f, 0.17f, 0.21f};
+
+    return options;
+}
 
 struct CursorShapesApp
 {
-    CursorShapesApp() { window.setContentView(view); }
+    CursorShapesApp() { window.setContentView(host); }
 
-    CursorBandsView view;
-    Window window {[]
-                   {
-                       auto options = WindowOptions {};
-                       options.width = 760;
-                       options.height = 200;
-                       options.title = "Cursor Shapes — move across the bands";
-                       options.backgroundColor = Color {0.16f, 0.17f, 0.21f};
-                       return options;
-                   }()};
+    Host host;
+    eacp::Graphics::Window window {windowOptions()};
 };
+} // namespace
 
 int main(int argc, char* argv[])
 {
