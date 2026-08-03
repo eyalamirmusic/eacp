@@ -37,9 +37,20 @@ void Component::setBounds(const Rect& newBounds)
     bounds = newBounds;
 
     if (sizeChanged)
+    {
         resized();
 
-    repaint();
+        // A paint() draws in local bounds, so a component that is now a
+        // different size is drawing the wrong picture until it is asked again.
+        repaint();
+        return;
+    }
+
+    // Moved rather than resized: the recording is in this component's own space
+    // and the frame applies the position as it replays, so what it has is still
+    // right. A dragged card and a scrolled list therefore cost a frame and no
+    // paint at all.
+    invalidateHost();
 }
 
 void Component::setPos(const Rect& ratio)
@@ -59,7 +70,14 @@ void Component::addChildComponent(Component& child)
     child.parent = this;
     children.add(&child);
 
-    repaint();
+    // The child is the thing that is new, not this component's own drawing. It
+    // was born stale and nothing above it knew, so the chain is joined up here
+    // -- otherwise a component added to a tree that is otherwise settled would
+    // never be reached by the recording walk.
+    if (child.needsRecording())
+        child.markAncestorsDirty();
+
+    invalidateHost();
 }
 
 void Component::addAndMakeVisible(Component& child)
@@ -82,7 +100,7 @@ void Component::removeChildComponent(Component& child)
     child.parent = nullptr;
     children.removeAllMatches(&child);
 
-    repaint();
+    invalidateHost();
 }
 
 void Component::addPathShape(PathShape& shape)
@@ -111,7 +129,16 @@ void Component::setVisible(bool shouldBeVisible)
         return;
 
     visible = shouldBeVisible;
-    repaint();
+
+    // Nothing this component draws has changed -- only whether the frame draws
+    // it. A component shown again replays the list it was hidden with.
+    invalidateHost();
+
+    // Unless it never had one. A subtree hidden before it was ever recorded is
+    // skipped by the walk, so its ancestors may have forgotten it; being shown
+    // is the point at which that has to be put right.
+    if (visible && needsRecording())
+        markAncestorsDirty();
 }
 
 void Component::toFront()
@@ -121,7 +148,11 @@ void Component::toFront()
 
     parent->children.removeAllMatches(this);
     parent->children.add(this);
-    repaint();
+
+    // Order is structure rather than content: the frame walks the child list as
+    // it stands, so a reordered sibling is drawn in its new place without either
+    // of them painting again.
+    invalidateHost();
 }
 
 void Component::toBack()
@@ -131,7 +162,8 @@ void Component::toBack()
 
     parent->children.removeAllMatches(this);
     parent->children.insert(0, this);
-    repaint();
+
+    invalidateHost();
 }
 
 void Component::setInterceptsMouseClicks(bool shouldIntercept)
@@ -257,6 +289,32 @@ ComponentHost* Component::findHost() const
 }
 
 void Component::repaint()
+{
+    // The ancestor walk only where the bit was not already set. If it was, they
+    // were marked when it was set and nothing has cleared them since -- the
+    // recording walk cannot, because it recomputes descendantDirty from what is
+    // still pending below rather than clearing it on the way out.
+    if (!selfDirty)
+    {
+        selfDirty = true;
+        markAncestorsDirty();
+    }
+
+    // And always the host, even for a component already stale: a repaint asked
+    // for after this frame's recording walk has run has to bring about the next
+    // frame, or the change waits for whatever happens to invalidate the view
+    // next.
+    invalidateHost();
+}
+
+void Component::markAncestorsDirty()
+{
+    for (auto* current = parent; current != nullptr && !current->descendantDirty;
+         current = current->parent)
+        current->descendantDirty = true;
+}
+
+void Component::invalidateHost()
 {
     if (auto* found = findHost())
         found->repaint();

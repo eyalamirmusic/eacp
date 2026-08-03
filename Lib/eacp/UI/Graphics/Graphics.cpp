@@ -1,40 +1,25 @@
 #include "Graphics.h"
 
-#include <algorithm>
+#include "../Render/Layer.h"
+
 #include <cmath>
 
 namespace eacp::UI
 {
-Graphics::Graphics(ShapeBatch& shapesToUse,
-                   MeshBatch& meshesToUse,
-                   LayerRenderer& layersToUse,
+Graphics::Graphics(DrawList& listToUse,
                    GradientRamps& rampsToUse,
                    Text::TextRenderer& textToUse,
-                   GPU::RenderPass& passToUse,
-                   const Rect& surfaceToUse,
-                   float backingScaleToUse)
-    : shapes(shapesToUse)
-    , meshes(meshesToUse)
-    , layers(layersToUse)
+                   const Rect& bounds)
+    : list(listToUse)
     , ramps(rampsToUse)
     , text(textToUse)
-    , pass(passToUse)
-    , surface(surfaceToUse)
-    , backingScale(backingScaleToUse)
-    , appliedClip(surfaceToUse)
+    , recordedClip(bounds)
 {
-    state.clip = surface;
+    state.clip = bounds;
 
     // The host's face is where every component starts, so a tree that never
     // mentions a font looks like one thing.
     state.font = text.getFont();
-
-    // The renderers outlive the painter, so a frame that ended inside a clip
-    // would hand the next one its mask. The pass is new every frame and takes
-    // its scissor with it; this does not, so it is put back by hand. Free when
-    // there was none, which is every frame of an interface that never clips.
-    shapes.setClipMask({});
-    meshes.setClipMask({});
 }
 
 void Graphics::setColour(const Color& colour)
@@ -113,104 +98,26 @@ void Graphics::clearGradient()
     state.gradient = {};
 }
 
-Rect Graphics::toSurface(const Rect& rect) const
+Rect Graphics::toLocal(const Rect& rect) const
 {
     return {rect.x + state.origin.x, rect.y + state.origin.y, rect.w, rect.h};
 }
 
-Point Graphics::toSurface(Point point) const
+Point Graphics::toLocal(Point point) const
 {
     return {point.x + state.origin.x, point.y + state.origin.y};
 }
 
-void Graphics::applyClip(bool changeScissor, bool changeMask)
+void Graphics::recordClip()
 {
-    // Every queue has to be drawn under the clip it was issued in, so the meshes
-    // and the glyphs go out alongside the quads. setScissorRect flushes the
-    // sprite queue itself; the text renderer has to be told, and then restarted
-    // for the glyphs that follow.
-    meshes.flush();
-    shapes.flush();
-    text.flush(pass);
-    text.begin();
+    if (sameRect(recordedClip, state.clip)
+        && sameClipMask(recordedClipMask, state.clipMask))
+        return;
 
-    if (changeScissor)
-    {
-        if (sameRect(state.clip, surface))
-            shapes.clearScissorRect();
-        else
-            shapes.setScissorRect({state.clip.x * backingScale,
-                                   state.clip.y * backingScale,
-                                   state.clip.w * backingScale,
-                                   state.clip.h * backingScale});
+    list.addClip({state.clip, state.clipMask});
 
-        appliedClip = state.clip;
-    }
-
-    if (changeMask)
-    {
-        // Both renderers, and not only the one about to draw: a document's
-        // clipped run may hold shapes of either kind, and whichever is told
-        // second would otherwise draw the run before it under this clip.
-        shapes.setClipMask(state.clipMask);
-        meshes.setClipMask(state.clipMask);
-
-        appliedClipMask = state.clipMask;
-    }
-
-    ++clipChanges;
-}
-
-void Graphics::prepareToDraw(const Rect& surfaceBounds, Renderer renderer)
-{
-    // Unconditionally, and before the clip is even looked at: what decides the
-    // order the renderers come out in is which of them flushed first, so every
-    // one not about to be used has to be emptied whether or not anything else
-    // about the state changed. Counted when one had anything in it, that being
-    // exactly the draw this alternation cost.
-    //
-    // The layer renderer queues nothing -- it draws where it is called, a layer
-    // being one quad of its own texture -- so it never appears here as something
-    // to drain, only as the thing the other two are drained for.
-    auto holding = (renderer != Renderer::Quads && !shapes.isEmpty())
-                   || (renderer != Renderer::Meshes && !meshes.isEmpty());
-
-    if (holding)
-    {
-        if (renderer != Renderer::Meshes)
-            meshes.flush();
-
-        if (renderer != Renderer::Quads)
-            shapes.flush();
-
-        ++rendererSwitches;
-    }
-
-    // And the glyphs, for a layer alone. Text is otherwise left to composite
-    // above the fills of its own clip region whatever order it was issued in --
-    // which is what a component drawing its own background and then its own
-    // caption wants -- but a layer is a picture placed *over* what came before
-    // it, and a document fading a group over a heading means the heading to be
-    // underneath.
-    if (renderer == Renderer::Layers)
-    {
-        text.flush(pass);
-        text.begin();
-    }
-
-    // A rect the primitive is wholly inside cuts nothing off it, so the change
-    // can wait for a primitive that the two rects actually disagree about --
-    // which is the elision that keeps a deep tree at a handful of draws. A mask
-    // gets no such reprieve: it is coverage rather than a bound, so a fragment
-    // anywhere in the primitive may be the one it cuts.
-    auto changeScissor = !sameRect(appliedClip, state.clip)
-                         && !(contains(state.clip, surfaceBounds)
-                              && contains(appliedClip, surfaceBounds));
-
-    auto changeMask = !sameClipMask(appliedClipMask, state.clipMask);
-
-    if (changeScissor || changeMask)
-        applyClip(changeScissor, changeMask);
+    recordedClip = state.clip;
+    recordedClipMask = state.clipMask;
 }
 
 void Graphics::fillAll()
@@ -231,9 +138,16 @@ void Graphics::fillRect(const Rect& rect)
 
 void Graphics::fillRoundedRect(const Rect& rect, float cornerRadius)
 {
-    auto target = toSurface(rect);
-    prepareToDraw(target);
-    shapes.fillRect(target, state.colour, cornerRadius, state.gradient);
+    recordClip();
+
+    auto shape = ShapeDraw {};
+    shape.kind = ShapeDraw::Kind::Fill;
+    shape.rect = toLocal(rect);
+    shape.colour = state.colour;
+    shape.cornerRadius = cornerRadius;
+    shape.gradient = state.gradient;
+
+    list.addShape(shape);
 }
 
 void Graphics::drawRect(const Rect& rect, float thickness)
@@ -243,23 +157,32 @@ void Graphics::drawRect(const Rect& rect, float thickness)
 
 void Graphics::drawRoundedRect(const Rect& rect, float cornerRadius, float thickness)
 {
-    auto target = toSurface(rect);
-    prepareToDraw(target);
-    shapes.drawRect(target, state.colour, thickness, cornerRadius, state.gradient);
+    recordClip();
+
+    auto shape = ShapeDraw {};
+    shape.kind = ShapeDraw::Kind::Border;
+    shape.rect = toLocal(rect);
+    shape.colour = state.colour;
+    shape.cornerRadius = cornerRadius;
+    shape.thickness = thickness;
+    shape.gradient = state.gradient;
+
+    list.addShape(shape);
 }
 
 void Graphics::drawLine(Point a, Point b, float thickness)
 {
-    auto from = toSurface(a);
-    auto to = toSurface(b);
+    recordClip();
 
-    auto bounds = Rect {std::min(from.x, to.x) - thickness,
-                        std::min(from.y, to.y) - thickness,
-                        std::abs(to.x - from.x) + thickness * 2.f,
-                        std::abs(to.y - from.y) + thickness * 2.f};
+    auto shape = ShapeDraw {};
+    shape.kind = ShapeDraw::Kind::Line;
+    shape.from = toLocal(a);
+    shape.to = toLocal(b);
+    shape.colour = state.colour;
+    shape.thickness = thickness;
+    shape.gradient = state.gradient;
 
-    prepareToDraw(bounds);
-    shapes.drawLine(from, to, state.colour, thickness, state.gradient);
+    list.addShape(shape);
 }
 
 void Graphics::fillPath(const PathShape& shape)
@@ -267,17 +190,25 @@ void Graphics::fillPath(const PathShape& shape)
     if (shape.isEmpty())
         return;
 
-    auto target = toSurface(shape.getBounds());
+    recordClip();
+
+    auto target = toLocal(shape.getBounds());
 
     if (shape.isMeshed())
     {
-        prepareToDraw(target, Renderer::Meshes);
-        meshes.addMesh(shape.getMesh(), state.origin, state.colour, state.gradient);
+        list.addMesh(
+            shape.getMesh(), state.origin, target, state.colour, state.gradient);
         return;
     }
 
-    prepareToDraw(target);
-    shapes.fillMask(target, state.colour, shape.getMaskUV(), state.gradient);
+    auto masked = ShapeDraw {};
+    masked.kind = ShapeDraw::Kind::Mask;
+    masked.rect = target;
+    masked.colour = state.colour;
+    masked.maskUV = shape.getMaskUV();
+    masked.gradient = state.gradient;
+
+    list.addShape(masked);
 }
 
 void Graphics::drawLayer(const Layer& layer)
@@ -285,38 +216,48 @@ void Graphics::drawLayer(const Layer& layer)
     if (layer.isEmpty())
         return;
 
-    auto target = toSurface(layer.getBounds());
+    recordClip();
 
-    prepareToDraw(target, Renderer::Layers);
-
-    // Straight to the pass rather than into a queue, and the clip goes with it
-    // rather than being state the renderer holds: one layer is one draw, so
-    // there is nothing to batch and nothing for a state change to break.
-    layers.draw(pass, layer, target, state.clipMask, shapes.getAtlas());
+    list.addLayer(layer, toLocal(layer.getBounds()));
 }
 
 float Graphics::drawText(std::string_view textToDraw, Point baselineLeft)
 {
-    auto pen = toSurface(baselineLeft);
-    auto width = text.measure(textToDraw, state.font);
+    recordClip();
 
-    prepareToDraw({pen.x, pen.y - ascent(), width, lineHeight()});
+    // One walk of the string for both the glyphs and the advance, and it happens
+    // here rather than at every frame that draws them -- which is the largest
+    // single thing recording buys. A label used to be laid out three times a
+    // frame: once to measure for the justification, once to measure for the clip
+    // rect, and once to emit.
+    auto& glyphs = list.glyphStorage();
+    auto first = glyphs.size();
 
-    return text.draw(textToDraw, pen, state.colour, state.font);
+    auto advance =
+        text.layoutInto(glyphs, textToDraw, toLocal(baselineLeft), state.font);
+
+    list.addGlyphRun(first, state.colour);
+
+    return advance;
 }
 
 void Graphics::drawText(std::string_view textToDraw,
                         const Rect& area,
                         Justification justification)
 {
-    auto width = text.measure(textToDraw, state.font);
-
     auto x = area.x;
 
-    if (justification == Justification::Centred)
-        x = area.x + (area.w - width) * 0.5f;
-    else if (justification == Justification::Right)
-        x = area.right() - width;
+    // Measured only where the answer is used. A left-justified caption is the
+    // common case and its pen is the box's own edge, so the walk that would work
+    // out how wide it is has nothing to decide.
+    if (justification != Justification::Left)
+    {
+        auto width = text.measure(textToDraw, state.font);
+
+        x = justification == Justification::Centred
+                ? area.x + (area.w - width) * 0.5f
+                : area.right() - width;
+    }
 
     // Centre the line box on the area, then step down to the baseline, so a
     // caption sits optically centred rather than hanging off the top edge.
@@ -363,7 +304,7 @@ void Graphics::translate(float x, float y)
 
 void Graphics::reduceClipRegion(const Rect& rect)
 {
-    state.clip = state.clip.intersection(toSurface(rect));
+    state.clip = state.clip.intersection(toLocal(rect));
 }
 
 void Graphics::reduceClipToShape(const PathShape& shape)
@@ -392,7 +333,7 @@ void Graphics::reduceClipToShape(const PathShape& shape)
         return;
     }
 
-    state.clipMask = {toSurface(bounds), shape.getMaskUV()};
+    state.clipMask = {toLocal(bounds), shape.getMaskUV()};
 }
 
 Rect Graphics::getClipBounds() const
@@ -420,20 +361,5 @@ void Graphics::restoreState()
 
     state = stack.back();
     stack.erase(stack.end() - 1);
-}
-
-void Graphics::flush()
-{
-    // Shapes first, then glyphs: within one clip region text composites above
-    // the fills, which is what a component drawing its own background and then
-    // its own caption wants. See the module note on interleaving.
-    //
-    // Only one of the two shape queues can hold anything by now -- drawing into
-    // either empties the other -- so the order between those two is whatever
-    // order they were issued in, which is the one that matters.
-    meshes.flush();
-    shapes.flush();
-    text.flush(pass);
-    text.begin();
 }
 } // namespace eacp::UI

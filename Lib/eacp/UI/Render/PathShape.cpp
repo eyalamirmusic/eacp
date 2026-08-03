@@ -27,6 +27,11 @@ PathShape::PathShape(Component& ownerToUse)
 PathShape::~PathShape()
 {
     owner.removePathShape(*this);
+
+    // The recorded quad carries this shape's uv, and the slot behind it belongs
+    // to whatever the atlas hands it to next. Dropping the owner's recording is
+    // what stops a shape that is gone drawing somebody else's coverage.
+    owner.repaint();
 }
 
 void PathShape::setPath(const GPUWidgets::Path& newPath, GPUWidgets::FillRule rule)
@@ -34,6 +39,11 @@ void PathShape::setPath(const GPUWidgets::Path& newPath, GPUWidgets::FillRule ru
     path = newPath;
     fillRule = rule;
     dirty = true;
+
+    // The component drew this shape as a quad of its bounds sampling a rect of
+    // the atlas, and both are about to change. Asking the owner to paint again
+    // is what puts the new ones into what the frame replays.
+    owner.repaint();
 }
 
 void PathShape::setStroke(const GPUWidgets::Path& newPath,
@@ -52,6 +62,8 @@ void PathShape::setBacking(Backing newBacking)
 
     backing = newBacking;
     dirty = true;
+
+    owner.repaint();
 }
 
 void PathShape::clear()
@@ -62,6 +74,8 @@ void PathShape::clear()
     ready = false;
     dropped = false;
     bounds = {};
+
+    owner.repaint();
 }
 
 bool PathShape::isEmpty() const

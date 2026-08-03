@@ -1,10 +1,9 @@
 #pragma once
 
 #include "../Common.h"
-#include "../Render/LayerRenderer.h"
-#include "../Render/MeshBatch.h"
+#include "../Render/DrawList.h"
+#include "../Render/GradientRamps.h"
 #include "../Render/PathShape.h"
-#include "../Render/ShapeBatch.h"
 
 #include <string_view>
 
@@ -19,15 +18,25 @@ enum class Justification
 
 // The painter handed to Component::paint.
 //
-// An immediate-mode facade over the batching shape and glyph renderers: a call
-// queues a quad rather than issuing a draw, and a run of them goes out as one
-// instanced draw when something forces a break. A tree of a few hundred
-// components therefore normally costs a handful of draws rather than one per
-// component, which is the whole reason the component tier is lightweight.
+// An immediate-mode facade over a recording: a call resolves what it was asked
+// for -- a colour, a gradient's row, a string's glyphs -- and appends it to a
+// DrawList, and the frame replays the list into the batching renderers. A run of
+// primitives goes out as one instanced draw when something forces a break, so a
+// tree of a few hundred components normally costs a handful of draws rather than
+// one per component, which is the whole reason the component tier is lightweight.
 //
-// Coordinates are logical points in the *calling component's* space. The tree
-// walk translates the origin before each paint(), so a component always draws
-// as though it sat at the origin, whatever its bounds are.
+// Recorded rather than issued, because a component whose drawing has not changed
+// should not be asked to draw it again: the list is kept, and paint() runs when
+// the component says it has something new to say. See DrawList, and Component's
+// repaint().
+//
+// Coordinates are logical points in the *calling component's* space, and that is
+// what is recorded -- the list knows nothing about where its component sits, so
+// one that moves replays what it has instead of painting again.
+//
+// Nothing here touches a render pass, which is what lets a component be painted
+// with no frame in progress: a test can build a painter, paint into it and read
+// the list back with no GPU at all.
 //
 // State -- colour, origin, clip -- is stacked via saveState/restoreState, or the
 // RAII ScopedState below. Only translation is offered rather than a full affine
@@ -38,14 +47,13 @@ enum class Justification
 class Graphics
 {
 public:
-    Graphics(ShapeBatch& shapesToUse,
-             MeshBatch& meshesToUse,
-             LayerRenderer& layersToUse,
+    // `bounds` is the area being painted, in its own space -- a component's
+    // local bounds. It is where the clip starts, so fillAll fills the component
+    // and a clip can only ever narrow from there.
+    Graphics(DrawList& listToUse,
              GradientRamps& rampsToUse,
              Text::TextRenderer& textToUse,
-             GPU::RenderPass& passToUse,
-             const Rect& surfaceToUse,
-             float backingScaleToUse);
+             const Rect& bounds);
 
     void setColour(const Color& colour);
     Color getColour() const { return state.colour; }
@@ -194,7 +202,13 @@ public:
     Rect getClipBounds() const;
 
     // Nothing drawn now can be seen. Worth testing before building expensive
-    // geometry -- the tree walk tests it to skip whole scrolled-away subtrees.
+    // geometry inside a paint().
+    //
+    // It answers about the clip this painting narrowed for itself, and not about
+    // where the component ended up: a list is recorded once and replayed wherever
+    // its component has moved to, so what an ancestor's clip cuts away is the
+    // replay's business rather than the recording's. A subtree scrolled out of
+    // view is skipped by the frame without being painted at all.
     bool isClipEmpty() const;
 
     void saveState();
@@ -216,23 +230,6 @@ public:
         Graphics& graphics;
     };
 
-    // How many times the clip actually had to change while painting. That is
-    // what a batch break costs here -- everything issued between two changes
-    // goes out as one instanced draw per renderer -- so it is the number to
-    // watch when a tree starts costing more than it should.
-    int getClipChangeCount() const { return clipChanges; }
-
-    // How many times painting alternated between the two shape renderers, each
-    // one a draw. Zero for an interface, whose shapes are all masks, and zero
-    // for a document whose large shapes happen to be drawn together; a document
-    // interleaving large and small ones pays one per alternation, which is the
-    // only cost the mesh route adds to the picture.
-    int getRendererSwitchCount() const { return rendererSwitches; }
-
-    // Draws whatever is still queued, in the order it was issued. Called at the
-    // end of a frame; also what a caller changing pass state by hand needs.
-    void flush();
-
 private:
     struct State
     {
@@ -253,64 +250,31 @@ private:
         ClipMask clipMask;
     };
 
-    // Which of the two shape renderers is about to be drawn into. They share one
-    // pass, and a pass draws in flush order rather than in call order, so
-    // whatever is queued in the other one has to go out first -- otherwise a
-    // document stacking a meshed shape over a masked one would come out with the
-    // masked one on top, wherever in the document it was.
-    enum class Renderer
-    {
-        Quads,
-        Meshes,
-        Layers
-    };
+    // The current origin applied, which is what a recorded coordinate is in: the
+    // painting's own space rather than the surface's.
+    Rect toLocal(const Rect& rect) const;
+    Point toLocal(Point point) const;
 
-    Rect toSurface(const Rect& rect) const;
-    Point toSurface(Point point) const;
+    // Records the clip as it now stands, when it differs from the clip already
+    // recorded. Called before every primitive, so a save/restore around a run
+    // costs the two clips the run was actually drawn under and not one per state
+    // change -- which is what a paint() that stacks state for no other reason
+    // would otherwise pay.
+    void recordClip();
 
-    // Puts the right scissor on the pass for a primitive covering
-    // `surfaceBounds` -- which usually means leaving it alone. A component
-    // drawing inside its own bounds is cut by neither the clip it asked for nor
-    // the one already on the pass, so it needs no change and no batch break;
-    // only a primitive that genuinely overflows pays. That elision is what
-    // keeps a deep tree at a handful of draws, since otherwise every component
-    // would break the batch just by having its own bounds.
-    void prepareToDraw(const Rect& surfaceBounds,
-                       Renderer renderer = Renderer::Quads);
-
-    // Puts the clip the caller asked for onto the renderers: the scissor rect,
-    // the clip mask, or both. One break however many of them changed, since
-    // what it costs is draining the queues and that happens once.
-    void applyClip(bool changeScissor, bool changeMask);
-
-    ShapeBatch& shapes;
-    MeshBatch& meshes;
-    LayerRenderer& layers;
+    DrawList& list;
     GradientRamps& ramps;
 
     // One renderer for the whole tree, whatever faces it draws in: the atlas
     // behind it holds them all.
     Text::TextRenderer& text;
 
-    GPU::RenderPass& pass;
-
-    Rect surface;
-    float backingScale = 1.f;
-
     State state;
     Vector<State> stack;
 
-    // The clip currently on the pass, which lags the one the caller asked for
-    // until a primitive forces them to agree.
-    Rect appliedClip;
-
-    // The mask currently on the renderers. It lags the same way, but not for
-    // the same reason: a scissor change can be elided for a primitive already
-    // inside both rects, and a mask is not a bound anything can be inside -- so
-    // this catches up whenever it differs at all.
-    ClipMask appliedClipMask;
-
-    int clipChanges = 0;
-    int rendererSwitches = 0;
+    // What the list has been told, which lags what the caller asked for until a
+    // primitive makes the two matter.
+    Rect recordedClip;
+    ClipMask recordedClipMask;
 };
 } // namespace eacp::UI
