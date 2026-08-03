@@ -23,6 +23,13 @@ Graphics::Graphics(ShapeBatch& shapesToUse,
     , appliedClip(surfaceToUse)
 {
     state.clip = surface;
+
+    // The renderers outlive the painter, so a frame that ended inside a clip
+    // would hand the next one its mask. The pass is new every frame and takes
+    // its scissor with it; this does not, so it is put back by hand. Free when
+    // there was none, which is every frame of an interface that never clips.
+    shapes.setClipMask({});
+    meshes.setClipMask({});
 }
 
 void Graphics::setColour(const Color& colour)
@@ -111,7 +118,7 @@ Point Graphics::toSurface(Point point) const
     return {point.x + state.origin.x, point.y + state.origin.y};
 }
 
-void Graphics::applyClip(const Rect& surfaceClip)
+void Graphics::applyClip(bool changeScissor, bool changeMask)
 {
     // Every queue has to be drawn under the clip it was issued in, so the meshes
     // and the glyphs go out alongside the quads. setScissorRect flushes the
@@ -122,15 +129,30 @@ void Graphics::applyClip(const Rect& surfaceClip)
     text->flush(pass);
     text->begin();
 
-    if (sameRect(surfaceClip, surface))
-        shapes.clearScissorRect();
-    else
-        shapes.setScissorRect({surfaceClip.x * backingScale,
-                               surfaceClip.y * backingScale,
-                               surfaceClip.w * backingScale,
-                               surfaceClip.h * backingScale});
+    if (changeScissor)
+    {
+        if (sameRect(state.clip, surface))
+            shapes.clearScissorRect();
+        else
+            shapes.setScissorRect({state.clip.x * backingScale,
+                                   state.clip.y * backingScale,
+                                   state.clip.w * backingScale,
+                                   state.clip.h * backingScale});
 
-    appliedClip = surfaceClip;
+        appliedClip = state.clip;
+    }
+
+    if (changeMask)
+    {
+        // Both renderers, and not only the one about to draw: a document's
+        // clipped run may hold shapes of either kind, and whichever is told
+        // second would otherwise draw the run before it under this clip.
+        shapes.setClipMask(state.clipMask);
+        meshes.setClipMask(state.clipMask);
+
+        appliedClipMask = state.clipMask;
+    }
+
     ++clipChanges;
 }
 
@@ -153,13 +175,19 @@ void Graphics::prepareToDraw(const Rect& surfaceBounds, Renderer renderer)
         ++rendererSwitches;
     }
 
-    if (sameRect(appliedClip, state.clip))
-        return;
+    // A rect the primitive is wholly inside cuts nothing off it, so the change
+    // can wait for a primitive that the two rects actually disagree about --
+    // which is the elision that keeps a deep tree at a handful of draws. A mask
+    // gets no such reprieve: it is coverage rather than a bound, so a fragment
+    // anywhere in the primitive may be the one it cuts.
+    auto changeScissor = !sameRect(appliedClip, state.clip)
+                         && !(contains(state.clip, surfaceBounds)
+                              && contains(appliedClip, surfaceBounds));
 
-    if (contains(state.clip, surfaceBounds) && contains(appliedClip, surfaceBounds))
-        return;
+    auto changeMask = !sameClipMask(appliedClipMask, state.clipMask);
 
-    applyClip(state.clip);
+    if (changeScissor || changeMask)
+        applyClip(changeScissor, changeMask);
 }
 
 void Graphics::fillAll()
@@ -310,6 +338,35 @@ void Graphics::translate(float x, float y)
 void Graphics::reduceClipRegion(const Rect& rect)
 {
     state.clip = state.clip.intersection(toSurface(rect));
+}
+
+void Graphics::reduceClipToShape(const PathShape& shape)
+{
+    auto bounds = shape.getBounds();
+
+    // A shape that has no coverage has no bounds either -- it was never
+    // rasterized, or the atlas had no room for it -- and a clip that knows
+    // nothing about where it is cannot narrow anything. Whatever rectangle the
+    // caller reduced to before this stands, which is how a refused clip comes
+    // out as the region's own box rather than as nothing at all.
+    if (bounds.isEmpty())
+    {
+        state.clipMask = {};
+        return;
+    }
+
+    // Narrowed by the bounds whether or not the mask itself can be used: they
+    // are what a meshed clip comes to, and they are what the glyphs are cut by,
+    // there being no way to sample a mask from the text pipeline.
+    reduceClipRegion(bounds);
+
+    if (shape.isEmpty() || shape.isMeshed())
+    {
+        state.clipMask = {};
+        return;
+    }
+
+    state.clipMask = {toSurface(bounds), shape.getMaskUV()};
 }
 
 Rect Graphics::getClipBounds() const

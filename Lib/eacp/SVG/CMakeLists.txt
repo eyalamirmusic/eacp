@@ -4,7 +4,9 @@ target_sources(eacp-svg PRIVATE
         NumberReader.cpp
         SVGAttributes.cpp
         SVGBuilder.cpp
+        SVGClip.cpp
         SVGComponent.cpp
+        SVGGeometry.cpp
         SVGGradient.cpp
         SVGParser.cpp
         SVGPathParser.cpp

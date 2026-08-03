@@ -90,6 +90,35 @@ GPUWidgets::AffineTransform viewBoxTransform(const Graphics::Rect& viewBox,
 std::unordered_map<std::string, std::string>
     parseStyleDeclarations(const std::string& value);
 
+// An element's presentation properties, its style="..." declarations first and
+// the attribute of the same name after.
+//
+// Which way round matters: a style attribute is a CSS declaration block, so
+// where a document writes a property both ways the declaration is the one that
+// wins. Drawing programs emit both constantly - the attribute for compatibility
+// and the declaration for what they actually mean.
+//
+// Built once per element and then asked, because the declarations are parsed in
+// the constructor: reading eight properties off one element is one parse.
+struct PropertyReader
+{
+    explicit PropertyReader(const SVGElement& elementToUse)
+        : element(elementToUse)
+        , declarations(parseStyleDeclarations(elementToUse.attr("style")))
+    {
+    }
+
+    std::string operator()(const std::string& name) const
+    {
+        auto found = declarations.find(name);
+
+        return found != declarations.end() ? found->second : element.attr(name);
+    }
+
+    const SVGElement& element;
+    std::unordered_map<std::string, std::string> declarations;
+};
+
 Vector<float> parseNumberList(const std::string& value);
 
 Vector<Graphics::Point> parsePointList(const std::string& value);

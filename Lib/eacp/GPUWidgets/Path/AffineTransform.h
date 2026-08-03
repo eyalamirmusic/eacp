@@ -105,6 +105,16 @@ struct AffineTransform
                && ty == 0.f;
     }
 
+    // Exactly, since what asks is a cache deciding whether two things were
+    // placed by the same matrix -- and two matrices composed the same way out of
+    // the same numbers are bit-identical, while two that merely look alike are a
+    // different placement and deserve their own entry.
+    bool operator==(const AffineTransform& other) const
+    {
+        return a == other.a && b == other.b && c == other.c && d == other.d
+               && tx == other.tx && ty == other.ty;
+    }
+
     float a = 1.f;
     float b = 0.f;
     float c = 0.f;

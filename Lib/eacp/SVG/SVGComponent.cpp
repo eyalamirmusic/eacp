@@ -1,6 +1,7 @@
 #include "SVGComponent.h"
 
 #include "SVGAttributes.h"
+#include "SVGGeometry.h"
 #include "SVGGradient.h"
 #include "SVGPathParser.h"
 
@@ -17,6 +18,13 @@ namespace eacp::SVG
 // end to end.
 struct SVGComponent::Style
 {
+    // A clip-path an element asked for, and the space it was asked for in.
+    struct ClipReference
+    {
+        std::string reference;
+        GPUWidgets::AffineTransform transform;
+    };
+
     Graphics::Color fill = Graphics::Color::black();
     Graphics::Color stroke = Graphics::Color::black();
     bool hasFill = true;
@@ -52,6 +60,22 @@ struct SVGComponent::Style
     // tree. Baked into the geometry rather than applied to anything at draw
     // time, which is what lets the whole document be one component.
     GPUWidgets::AffineTransform transform;
+
+    // The clip-paths in force, outermost first, each with the transform that was
+    // in force where it was written -- a clip belongs to the space of the
+    // element carrying it, and a child adding a transform of its own does not
+    // move the clip it inherited.
+    //
+    // Carried rather than resolved on the spot because a clip in bounding-box
+    // units cannot be resolved without the geometry it is about to cut, and that
+    // does not exist while the style is being read. Resolving late is also what
+    // shares one region between every child of a clipped group.
+    //
+    // clip-path is not an inherited property, and this is not it being inherited
+    // -- an element's clip applies to the element, which for a container is
+    // everything drawn inside it. Reading the attribute per element and adding
+    // to the copy is exactly that scope.
+    Vector<ClipReference> clips;
 };
 
 namespace
@@ -156,109 +180,6 @@ void applyNumber(const std::string& value, float& target)
         target = Strings::parseFloatOr(value, target);
 }
 
-void addRectGeometry(GPUWidgets::Path& path, const SVGElement& element)
-{
-    auto rect = Graphics::Rect {element.numAttr("x"),
-                                element.numAttr("y"),
-                                element.numAttr("width"),
-                                element.numAttr("height")};
-
-    if (rect.w <= 0.f || rect.h <= 0.f)
-        return;
-
-    auto rx = element.numAttr("rx");
-    auto ry = element.numAttr("ry");
-
-    // Either radius alone stands for both, which is what the format says.
-    if (rx <= 0.f)
-        rx = ry;
-    if (ry <= 0.f)
-        ry = rx;
-
-    // Path rounds corners with one radius rather than two, so an elliptical
-    // corner becomes the circular one that fits inside it.
-    if (rx > 0.f && ry > 0.f)
-        path.addRoundedRect(rect, std::min(rx, ry));
-    else
-        path.addRect(rect);
-}
-
-void addEllipseGeometry(
-    GPUWidgets::Path& path, float cx, float cy, float rx, float ry)
-{
-    if (rx <= 0.f || ry <= 0.f)
-        return;
-
-    path.addEllipse({cx - rx, cy - ry, rx * 2.f, ry * 2.f});
-}
-
-void addPolylineGeometry(GPUWidgets::Path& path,
-                         const SVGElement& element,
-                         bool closed)
-{
-    auto points = parsePointList(element.attr("points"));
-
-    if (points.empty())
-        return;
-
-    path.moveTo(points[0]);
-
-    for (auto i = 1; i < points.size(); ++i)
-        path.lineTo(points[i]);
-
-    if (closed)
-        path.close();
-}
-
-// The element's geometry in the document's own units, flattened to `flatness`.
-//
-// Untransformed on purpose. The caller maps it afterwards, which for a stroke is
-// the difference between a pen that scales with the drawing and one that does
-// not: stroking here and transforming the region turns a round pen into the
-// ellipse a non-uniform scale should make of it, where transforming first and
-// stroking after would keep it stubbornly round.
-GPUWidgets::Path buildGeometry(const SVGElement& element, float flatness)
-{
-    auto path = GPUWidgets::Path {};
-    path.setFlatness(flatness);
-
-    auto& tag = element.tag;
-
-    if (tag == "rect")
-        addRectGeometry(path, element);
-    else if (tag == "circle")
-        addEllipseGeometry(path,
-                           element.numAttr("cx"),
-                           element.numAttr("cy"),
-                           element.numAttr("r"),
-                           element.numAttr("r"));
-    else if (tag == "ellipse")
-        addEllipseGeometry(path,
-                           element.numAttr("cx"),
-                           element.numAttr("cy"),
-                           element.numAttr("rx"),
-                           element.numAttr("ry"));
-    else if (tag == "line")
-    {
-        path.moveTo({element.numAttr("x1"), element.numAttr("y1")});
-        path.lineTo({element.numAttr("x2"), element.numAttr("y2")});
-    }
-    else if (tag == "polyline")
-        addPolylineGeometry(path, element, false);
-    else if (tag == "polygon")
-        addPolylineGeometry(path, element, true);
-    else if (tag == "path")
-        parseSVGPathInto(element.attr("d"), path);
-
-    return path;
-}
-
-bool isShapeTag(const std::string& tag)
-{
-    return tag == "rect" || tag == "circle" || tag == "ellipse" || tag == "line"
-           || tag == "polyline" || tag == "polygon" || tag == "path";
-}
-
 bool isContainerTag(const std::string& tag)
 {
     return tag == "g" || tag == "svg";
@@ -277,32 +198,6 @@ bool isViewportTag(const std::string& tag)
 // forbids and nothing in a file prevents. Eight levels is past anything an
 // honest document nests and short enough that a cycle costs nothing.
 constexpr int maxUseDepth = 8;
-
-// An element's presentation properties, its style="..." declarations first and
-// the attribute of the same name after.
-//
-// Which way round matters: a style attribute is a CSS declaration block, so
-// where a document writes a property both ways the declaration is the one that
-// wins. Drawing programs emit both constantly - the attribute for compatibility
-// and the declaration for what they actually mean.
-struct PropertyReader
-{
-    explicit PropertyReader(const SVGElement& elementToUse)
-        : element(elementToUse)
-        , declarations(parseStyleDeclarations(elementToUse.attr("style")))
-    {
-    }
-
-    std::string operator()(const std::string& name) const
-    {
-        auto found = declarations.find(name);
-
-        return found != declarations.end() ? found->second : element.attr(name);
-    }
-
-    const SVGElement& element;
-    std::unordered_map<std::string, std::string> declarations;
-};
 
 void applyDashPattern(const std::string& value, GPUWidgets::DashPattern& dash)
 {
@@ -377,6 +272,14 @@ void SVGComponent::applyPresentationAttributes(Style& style,
         // so it applies before everything inherited.
         style.transform = parseTransformMatrix(transform).then(style.transform);
     }
+
+    // After the transform, because the region a clip-path names is in the space
+    // the element establishes rather than the one it sits in: a group that
+    // translates carries its clip with it.
+    auto clip = parsePaintReference(read("clip-path"));
+
+    if (!clip.empty())
+        style.clips.add({clip, style.transform});
 }
 
 SVGComponent::SVGComponent() = default;
@@ -429,6 +332,7 @@ void SVGComponent::clearContent()
 {
     order.clear();
     shapes.clear();
+    clips.clear();
     texts.clear();
 
     // Set aside for the next build rather than destroyed. A renderer bakes its
@@ -598,53 +502,67 @@ void SVGComponent::buildShapes(const SVGElement& element, const Style& style)
     if (scale <= 0.f)
         return;
 
-    if (style.hasFill)
+    auto fillPath = style.hasFill ? buildGeometry(element, fillFlatness() / scale)
+                                  : GPUWidgets::Path {};
+
+    // Built a second time rather than shared with the fill, at a tolerance ten
+    // times tighter. The two masks are different regions anyway, so there is
+    // nothing to share but the polyline, and the polyline a fill can afford is
+    // not one a stroke can.
+    auto strokePath = style.hasStroke && style.strokeStyle.width > 0.f
+                          ? buildGeometry(element, strokeFlatness() / scale)
+                          : GPUWidgets::Path {};
+
+    // The element's own bounding box, which a clip in bounding-box units is
+    // placed against -- the geometry's and not the stroked region's, the format
+    // meaning the box the shape was authored as. Resolved once for both, so an
+    // element that is filled and stroked is two masks under one clip rather than
+    // two clips.
+    auto objectBounds =
+        !fillPath.isEmpty() ? fillPath.getBounds() : strokePath.getBounds();
+
+    auto clip = resolveClips(style, objectBounds);
+
+    // A clipPath that resolved to a region of nothing: the element is not drawn
+    // at all, which is what an empty clip means and is different from having no
+    // clip.
+    if (clip.hasRect && clip.rect.isEmpty())
+        return;
+
+    if (!fillPath.isEmpty())
+        addShape(
+            fillPath.transformed(style.transform),
+            style.fill.withAlpha(style.fill.a * style.opacity * style.fillOpacity),
+            style.fillRule,
+            clip,
+            gradientFor(style.fillReference, objectBounds, style.transform));
+
+    if (!strokePath.isEmpty())
     {
-        auto path = buildGeometry(element, fillFlatness() / scale);
+        // PathShape::setStroke would do this, but it strokes what it is given
+        // and this has to stroke in the document's units and transform the
+        // region afterwards -- see buildGeometry. The result fills non-zero
+        // whatever the element's fill-rule said, because it is a union of
+        // overlapping contours and even-odd would read every overlap as a hole.
+        //
+        // Dashed before stroking, since a dash cuts the centre line and the
+        // stroke has replaced it. Free when nothing asked for one: dashPath
+        // hands an empty pattern its path straight back.
+        auto region = GPUWidgets::strokeToFill(
+            GPUWidgets::dashPath(strokePath, style.dash), style.strokeStyle);
 
-        if (!path.isEmpty())
-            addShape(
-                path.transformed(style.transform),
-                style.fill.withAlpha(style.fill.a * style.opacity
-                                     * style.fillOpacity),
-                style.fillRule,
-                gradientFor(style.fillReference, path.getBounds(), style.transform));
-    }
-
-    if (style.hasStroke && style.strokeStyle.width > 0.f)
-    {
-        // Built a second time rather than shared with the fill, at a tolerance
-        // ten times tighter. The two masks are different regions anyway, so
-        // there is nothing to share but the polyline, and the polyline a fill
-        // can afford is not one a stroke can.
-        auto path = buildGeometry(element, strokeFlatness() / scale);
-
-        if (!path.isEmpty())
-        {
-            // PathShape::setStroke would do this, but it strokes what it is
-            // given and this has to stroke in the document's units and transform
-            // the region afterwards -- see buildGeometry. The result fills
-            // non-zero whatever the element's fill-rule said, because it is a
-            // union of overlapping contours and even-odd would read every
-            // overlap as a hole.
-            //
-            // Dashed before stroking, since a dash cuts the centre line and the
-            // stroke has replaced it. Free when nothing asked for one: dashPath
-            // hands an empty pattern its path straight back.
-            auto region = GPUWidgets::strokeToFill(
-                GPUWidgets::dashPath(path, style.dash), style.strokeStyle);
-
-            // Against the *centre line's* bounds and not the stroked region's,
-            // because that is the bounding box the format means: a gradient in
-            // bounding-box units is placed by the geometry, and a stroke growing
-            // it by half a pen width would shift the shading with the width.
-            addShape(region.transformed(style.transform),
-                     style.stroke.withAlpha(style.stroke.a * style.opacity
-                                            * style.strokeOpacity),
-                     GPUWidgets::FillRule::NonZero,
-                     gradientFor(
-                         style.strokeReference, path.getBounds(), style.transform));
-        }
+        // Against the *centre line's* bounds and not the stroked region's,
+        // because that is the bounding box the format means: a gradient in
+        // bounding-box units is placed by the geometry, and a stroke growing it
+        // by half a pen width would shift the shading with the width.
+        addShape(region.transformed(style.transform),
+                 style.stroke.withAlpha(style.stroke.a * style.opacity
+                                        * style.strokeOpacity),
+                 GPUWidgets::FillRule::NonZero,
+                 clip,
+                 gradientFor(style.strokeReference,
+                             strokePath.getBounds(),
+                             style.transform));
     }
 }
 
@@ -686,6 +604,20 @@ void SVGComponent::buildTextRun(const SVGElement& element, const Style& style)
 
     run.fontIndex = findOrAddFont(style.fontFamily, pointSize);
 
+    // Only the rectangular part of it will ever be applied -- a glyph is drawn
+    // by a renderer that samples no mask -- but the bounds of a shaped clip
+    // still cut the string, which is the difference between a clipped caption
+    // being trimmed and it running out of the region entirely.
+    //
+    // The box is empty because a run's own is not known here: it is the extent
+    // of glyphs the renderer has not measured yet. A clip in bounding-box units
+    // is therefore not applied to text at all, rather than applied against a box
+    // of nothing, which would erase it.
+    run.clip = resolveClips(style, {});
+
+    if (run.clip.hasRect && run.clip.rect.isEmpty())
+        return;
+
     texts.add(run);
     order.add({true, texts.size() - 1});
 }
@@ -693,16 +625,125 @@ void SVGComponent::buildTextRun(const SVGElement& element, const Style& style)
 void SVGComponent::addShape(const GPUWidgets::Path& path,
                             const Graphics::Color& colour,
                             GPUWidgets::FillRule rule,
+                            const ClipState& clip,
                             const UI::Gradient& gradient)
 {
     auto& shape = shapes.createNew(*this);
 
     shape.colour = colour;
     shape.gradient = gradient;
+    shape.clip = clip;
     shape.maskBounds = path.getBounds();
     shape.mask.setPath(path, rule);
 
     order.add({false, shapes.size() - 1});
+}
+
+int SVGComponent::findOrAddClip(const std::string& reference,
+                                const GPUWidgets::AffineTransform& transform,
+                                const Graphics::Rect& objectBounds)
+{
+    // Only where the region is actually placed against it. In user space the
+    // box is not read at all, and keying on it there would give a group's clip
+    // one region per child -- which is the whole thing this sharing exists to
+    // avoid.
+    auto placedAgainstBox = clipUsesBoundingBox(reference, elementsById);
+
+    // A box of nothing to place it against: text, whose extent is the
+    // renderer's business, or geometry that came to nothing. Left unclipped
+    // rather than clipped to a point.
+    if (placedAgainstBox && (objectBounds.w <= 0.f || objectBounds.h <= 0.f))
+        return -1;
+
+    auto bounds = placedAgainstBox ? objectBounds : Graphics::Rect {};
+
+    auto matches = [&](const Clip& clip)
+    {
+        return clip.reference == reference && clip.transform == transform
+               && UI::sameRect(clip.objectBounds, bounds);
+    };
+
+    for (auto i = 0; i < clips.size(); ++i)
+        if (matches(*clips[i]))
+            return i;
+
+    auto scale = transform.getScaleFactor();
+
+    if (scale <= 0.f)
+        return -1;
+
+    auto region =
+        resolveClipPath(reference, elementsById, bounds, fillFlatness() / scale);
+
+    // Not a clipPath, or a reference to nothing at all: ignored, and the element
+    // draws unclipped. A clipPath that *is* one and holds no geometry is the
+    // other case entirely, and falls through to an entry whose bounds are empty
+    // -- so everything under it is clipped away.
+    if (!region.resolved)
+        return -1;
+
+    auto path = region.path.transformed(transform);
+
+    auto& clip = clips.createNew(*this);
+
+    clip.reference = reference;
+    clip.transform = transform;
+    clip.objectBounds = bounds;
+
+    // A rectangle is a scissor rect: exact, free of the atlas, and the only kind
+    // of clip that reaches the glyphs. Worth testing for rather than assuming
+    // away, because the commonest clip in any document is a viewport and every
+    // viewport is one.
+    if (auto rectangle = asAxisAlignedRect(path))
+    {
+        clip.isRectangle = true;
+        clip.bounds = *rectangle;
+
+        return clips.size() - 1;
+    }
+
+    clip.bounds = path.getBounds();
+
+    // Never the mesh route. A mesh carries its coverage in its own vertices and
+    // leaves nothing for another shape to sample, and a clip is only a clip
+    // because something else can read it.
+    clip.mask.setBacking(UI::PathShape::Backing::Mask);
+    clip.mask.setPath(path, region.rule);
+
+    return clips.size() - 1;
+}
+
+SVGComponent::ClipState
+    SVGComponent::resolveClips(const Style& style,
+                               const Graphics::Rect& objectBounds)
+{
+    auto result = ClipState {};
+
+    for (const auto& reference: style.clips)
+    {
+        auto index =
+            findOrAddClip(reference.reference, reference.transform, objectBounds);
+
+        if (index < 0)
+            continue;
+
+        const auto& clip = *clips[index];
+
+        // Every clip narrows the rectangle, whether or not its own shape is the
+        // one that survives as a mask. That is what makes nesting exact wherever
+        // the outer clips are rectangles, and bounded wherever they are not.
+        result.rect =
+            result.hasRect ? result.rect.intersection(clip.bounds) : clip.bounds;
+        result.hasRect = true;
+
+        // And the innermost shaped one takes the mask, there being one to take:
+        // a fragment reads a single region, so an outer shape has already given
+        // what it can give above.
+        if (!clip.isRectangle)
+            result.maskIndex = index;
+    }
+
+    return result;
 }
 
 UI::Gradient
@@ -782,6 +823,17 @@ int SVGComponent::getDroppedShapeCount() const
     return count;
 }
 
+int SVGComponent::getClipMaskCount() const
+{
+    auto count = 0;
+
+    for (auto& clip: clips)
+        if (!clip->isRectangle)
+            ++count;
+
+    return count;
+}
+
 int SVGComponent::getMeshedShapeCount() const
 {
     auto count = 0;
@@ -800,27 +852,23 @@ void SVGComponent::paint(UI::Graphics& g)
     // in and one out however many strings it has.
     auto* activeFont = static_cast<DocumentFont*>(nullptr);
 
-    for (auto& item: order)
+    auto drawShape = [&](const Shape& shape)
     {
-        if (!item.isText)
-        {
-            auto& shape = *shapes[item.index];
+        g.setColour(shape.colour);
 
-            g.setColour(shape.colour);
+        // Set per shape rather than kept across them, because each one's
+        // gradient is placed against its own geometry. A document with no
+        // gradients never touches either call after the first.
+        if (shape.gradient.isEmpty())
+            g.clearGradient();
+        else
+            g.setGradient(shape.gradient);
 
-            // Set per shape rather than kept across them, because each one's
-            // gradient is placed against its own geometry. A document with no
-            // gradients never touches either call after the first.
-            if (shape.gradient.isEmpty())
-                g.clearGradient();
-            else
-                g.setGradient(shape.gradient);
+        g.fillPath(shape.mask);
+    };
 
-            g.fillPath(shape.mask);
-            continue;
-        }
-
-        auto& run = texts[item.index];
+    auto drawText = [&](const TextRun& run)
+    {
         auto& font = *fonts[run.fontIndex];
 
         if (&font != activeFont)
@@ -841,6 +889,43 @@ void SVGComponent::paint(UI::Graphics& g)
 
         g.setColour(run.colour);
         g.drawText(run.text, {x, run.baseline.y});
+    };
+
+    auto applyClip = [&](const ClipState& clip)
+    {
+        if (clip.hasRect)
+            g.reduceClipRegion(clip.rect);
+
+        if (clip.maskIndex >= 0)
+            g.reduceClipToShape(clips[clip.maskIndex]->mask);
+    };
+
+    for (auto& item: order)
+    {
+        const auto& clip =
+            item.isText ? texts[item.index].clip : shapes[item.index]->clip;
+
+        // Only where there is one. A clip costs a batch break each way, and a
+        // document without them should pay nothing at all -- which also means
+        // the run of shapes under one clip stays one draw, since the state does
+        // not go up and down between them.
+        if (clip.isEmpty())
+        {
+            if (item.isText)
+                drawText(texts[item.index]);
+            else
+                drawShape(*shapes[item.index]);
+
+            continue;
+        }
+
+        auto scope = UI::Graphics::ScopedState {g};
+        applyClip(clip);
+
+        if (item.isText)
+            drawText(texts[item.index]);
+        else
+            drawShape(*shapes[item.index]);
     }
 
     if (activeFont != nullptr)

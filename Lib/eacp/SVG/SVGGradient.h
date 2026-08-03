@@ -4,10 +4,6 @@
 
 namespace eacp::SVG
 {
-// Every element in a document that named itself, which is what a gradient needs
-// to follow href and what the builder already keeps for <use>.
-using ElementsById = std::unordered_map<std::string, const SVGElement*>;
-
 // A gradient's spreadMethod, which is what happens past its two ends. The
 // default is pad, and it is what a document that says nothing means.
 UI::GradientSpread parseSpreadMethod(const std::string& value);

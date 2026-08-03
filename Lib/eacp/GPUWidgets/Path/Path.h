@@ -77,6 +77,12 @@ public:
     // *result* needs - the authored tolerance divided by
     // transform.getScaleFactor() - before building anything meant to be
     // transformed.
+    // Another path's sub-paths added to this one's, which under the non-zero
+    // rule is the union of the two regions -- what a clip path made of several
+    // shapes is, and what a stroke and the shape it outlines are not, those
+    // being wound against each other on purpose.
+    void append(const Path& other);
+
     Path transformed(const AffineTransform& transform) const;
     Path scaled(float scaleX, float scaleY) const;
 

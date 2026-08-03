@@ -1,6 +1,8 @@
 #pragma once
 
 #include "../Common.h"
+#include "ClipMask.h"
+#include "CoverageAtlas.h"
 #include "GradientRamps.h"
 
 #include <eacp/GPUWidgets/GPUWidgets.h>
@@ -75,7 +77,14 @@ public:
     // logicalSize is the space draws are expressed in -- the same points
     // ShapeBatch works in -- so a resize sets it rather than rebuilding
     // anything.
-    MeshBatch(GradientRamps& rampsToUse,
+    //
+    // The coverage atlas is here for the clip alone. A mesh carries its own
+    // antialiasing in its vertices and needs no mask of its own, but a clip is a
+    // mask however the shape under it was drawn -- and it has to be the same
+    // atlas the quads read, so that one clip covers a document drawn out of both
+    // renderers.
+    MeshBatch(const CoverageAtlas& atlasToUse,
+              GradientRamps& rampsToUse,
               Point logicalSizeToUse,
               int sampleCountToUse,
               GPU::PixelFormat colorFormatToUse = GPU::PixelFormat::BGRA8Unorm);
@@ -87,6 +96,12 @@ public:
     void flush();
 
     void setLogicalSize(Point size);
+
+    // The same clip the quad renderer takes, meaning the same thing and drawing
+    // what is queued for the same reason. Both are told, so that a clipped group
+    // holding shapes of both kinds is cut identically wherever the threshold
+    // happened to send each one.
+    void setClipMask(const ClipMask& mask);
 
     // A tessellated shape, in the batch's own space: `mesh` is a flat triangle
     // list authored in some component's points and `offset` is where that
@@ -105,7 +120,10 @@ private:
     void flushInto(GPU::RenderPass& endingPass) override;
     void detach();
 
+    const CoverageAtlas& atlas;
     GradientRamps& ramps;
+
+    ClipMask clip;
 
     Point logicalSize;
     int sampleCount = 1;
