@@ -2127,6 +2127,52 @@ inline UInt toUInt(const Int& value)
     return detail::convertTo<UInt>(value);
 }
 
+// A float's *bits*, not its value: the reinterpretation, where toUInt above is
+// the conversion. 1.0f arrives as 0x3f800000 rather than as 1.
+//
+// What this is for is data a buffer carries that is not really float. Storage
+// buffers are runs of floats on both backends, so a kernel reading anything
+// packed - two halves in a word, four bytes, a bitfield - gets it as a float
+// whose value is meaningless and whose bits are the payload. This is the way
+// back to them, and it is exact: neither backend rounds or canonicalizes a
+// bitcast, including of a pattern that would read as a denormal.
+inline UInt asUInt(const Float& value)
+{
+    return detail::intrinsic<UInt>("as_type<uint>", value);
+}
+
+// The two half-precision floats packed into one 32-bit word, widened: .x is
+// the low sixteen bits, .y the high.
+//
+// Half of a model's file can be fp16 weights - hand tracking's landmark model
+// stores 102 of its constant tensors that way - and widening them on the CPU
+// to feed a float buffer doubles exactly the traffic the format existed to
+// halve. Unpacking here instead keeps them packed all the way to the ALU, and
+// costs nothing in accuracy: every fp16 value, subnormals and infinities
+// included, is exactly representable in fp32, so this widening is lossless by
+// construction rather than by tolerance.
+//
+// Emitted through a helper function rather than a bare call, because the two
+// languages do not merely spell this differently - MSL bitcasts the word to a
+// half2 and converts, HLSL calls f16tof32 twice against a shift - and a call
+// node is one name and one argument list on both. See ShaderEmitter's
+// helperDefinitions.
+// Recorded against the graph directly rather than through detail::intrinsic,
+// which takes float-vocabulary arguments only: UInt is deliberately outside it
+// (see baseOf), and an index type is exactly what a packed word arrives as.
+inline Float2 unpackHalf2(const UInt& bits)
+{
+    auto arguments = Vector<int> {};
+    arguments.add(bits.node);
+
+    auto result = Float2 {};
+    result.graph = bits.graph;
+    result.node = bits.graph->addCall(
+        ValueType::Float2, "eacpUnpackHalf2", std::move(arguments));
+
+    return result;
+}
+
 template <ShaderScalarLike T>
 UInt toUInt(const T& value)
 {
