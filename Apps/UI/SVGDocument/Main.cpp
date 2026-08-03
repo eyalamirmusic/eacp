@@ -209,6 +209,99 @@ const auto gradientDocument = std::string {
         fill="#7A6A5A">linear · radial · spread · units · href</text>
 </svg>)SVG"};
 
+// Clip paths, and every way one is placed differently from the last.
+//
+// The thing to look at is the first row, because the two halves of it cost
+// different things for the same picture. The left pane is a rectangle, which is
+// a scissor rect: exact, free of the atlas, and the only kind of clip the glyphs
+// can be cut by. The right one is two circles, which is a mask -- one mask, for
+// the three shapes under it, and one of those three is large enough to be drawn
+// as triangles rather than out of the atlas at all. A clip that only worked on
+// masked shapes would let that one through.
+//
+// The rest are the placements a document gets wrong quietly. The pair in the
+// second row name one clipPath and get different regions from it, because the
+// units are fractions of each shape's own box. The frame beside them is a single
+// child with clip-rule="evenodd", so its inner rectangle is a hole in the region
+// and not another piece of it. The third row is a clip inside a clip, where the
+// outer one is a rectangle and the two therefore intersect exactly.
+const auto clipDocument = std::string {
+    R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="360" height="300" viewBox="0 0 360 300">
+  <defs>
+    <linearGradient id="clipFade" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F5A623"/>
+      <stop offset="1" stop-color="#D0021B"/>
+    </linearGradient>
+
+    <clipPath id="pane">
+      <rect x="20" y="16" width="150" height="80"/>
+    </clipPath>
+
+    <!-- Two shapes, so the region is their union. -->
+    <clipPath id="pair">
+      <circle cx="228" cy="56" r="36"/>
+      <circle cx="292" cy="56" r="36"/>
+    </clipPath>
+
+    <!-- In fractions of whatever it clips, so one definition is a different
+         region for each of the two shapes below. -->
+    <clipPath id="leftPart" clipPathUnits="objectBoundingBox">
+      <rect x="0" y="0" width="0.55" height="1"/>
+    </clipPath>
+
+    <clipPath id="frame" clip-rule="evenodd">
+      <path d="M 200 116 h 140 v 80 h -140 z M 224 136 h 92 v 40 h -92 z"/>
+    </clipPath>
+
+    <clipPath id="band">
+      <rect x="20" y="216" width="150" height="46"/>
+    </clipPath>
+    <clipPath id="lens">
+      <circle cx="96" cy="252" r="34"/>
+    </clipPath>
+
+    <clipPath id="caption">
+      <rect x="200" y="230" width="96" height="36"/>
+    </clipPath>
+  </defs>
+
+  <rect x="0" y="0" width="360" height="300" fill="#FBF8F3"/>
+
+  <!-- Behind rather than around, and filled rather than stroked: an outline is
+       one shape whose mask is its whole bounding box however little of that box
+       is inked, and a fill this size is large enough to be drawn as triangles
+       and cost the atlas nothing. -->
+  <rect x="20" y="16" width="150" height="80" fill="#EDE6DA"/>
+
+  <g clip-path="url(#pane)" fill="#4A90D9">
+    <circle cx="40" cy="40" r="40"/>
+    <circle cx="95" cy="72" r="40" fill="#3B7A57"/>
+    <circle cx="150" cy="40" r="40" fill="#D96A4A"/>
+  </g>
+
+  <g clip-path="url(#pair)">
+    <rect x="180" y="10" width="172" height="92" fill="url(#clipFade)"/>
+    <rect x="180" y="36" width="172" height="10" fill="#FBF8F3" opacity="0.75"/>
+    <rect x="180" y="66" width="172" height="10" fill="#FBF8F3" opacity="0.75"/>
+  </g>
+
+  <rect x="20" y="116" width="70" height="80" fill="url(#clipFade)" clip-path="url(#leftPart)"/>
+  <circle cx="140" cy="156" r="40" fill="#2C5F8A" clip-path="url(#leftPart)"/>
+
+  <rect x="200" y="116" width="140" height="80" fill="url(#clipFade)" clip-path="url(#frame)"/>
+
+  <g clip-path="url(#band)">
+    <rect x="20" y="216" width="150" height="72" fill="#F5A623"/>
+    <circle cx="96" cy="252" r="46" fill="#204A34" clip-path="url(#lens)"/>
+  </g>
+
+  <text x="200" y="258" font-family="Helvetica" font-size="24" fill="#7A4FA3"
+        clip-path="url(#caption)">clipped text</text>
+
+  <text x="180" y="292" text-anchor="middle" font-family="Helvetica" font-size="11"
+        fill="#7A6A5A">rect · union · units · clip-rule · nested</text>
+</svg>)SVG"};
+
 // The same markup in a component of a different aspect, which is the only way to
 // see what preserveAspectRatio does. A 320x120 document in a tall half-window
 // letterboxes under the default; the native side, which stretches, does not.
@@ -328,6 +421,7 @@ Vector<Document> makeDocuments()
                    true});
     documents.add(
         {"Gradients - linear, radial, spread, units", gradientDocument, true});
+    documents.add({"Clip paths - rect, union, units, nesting", clipDocument, true});
     documents.add({"Aspect ratio - fitted against stretched", aspectDocument, true});
     documents.add({"Tiles - abutting edges", makeTilesDocument(16, 12), false});
     documents.add({"Stacked - 300 large shapes", makeStackedDocument(300), false});
@@ -364,11 +458,16 @@ struct StatsBar final : UI::Component
         auto text =
             std::to_string(document->getShapeCount()) + " shapes   "
             + std::to_string(document->getMeshedShapeCount()) + " meshed   "
+            + std::to_string(document->getClipCount()) + " clips ("
+            + std::to_string(document->getClipMaskCount()) + " masked)   "
             + std::to_string(document->getFontCount()) + " fonts   " + "asks "
             + millions(asked) + "M texels of a " + millions(held) + "M atlas ("
             + millions(unmeshed) + "M unmeshed)   "
             + std::to_string((int) (host->getAtlasFillFraction() * 100.f))
-            + "% reserved   " + std::to_string(document->getDroppedShapeCount())
+            // The host's figure rather than the document's, because a clip
+            // region is a mask like any other and one the atlas refused is as
+            // missing from the picture as a shape would be.
+            + "% reserved   " + std::to_string(host->getLastDroppedPathCount())
             + " dropped   " + std::to_string(host->getLastClipChangeCount())
             + " breaks   " + std::to_string(host->getLastRendererSwitchCount())
             + " switches";

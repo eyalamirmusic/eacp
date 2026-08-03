@@ -1,5 +1,6 @@
 #include "MeshBatch.h"
 
+#include "ClipShader.h"
 #include "GradientShader.h"
 
 #include <algorithm>
@@ -15,6 +16,12 @@ struct MeshBatch::Program final : GPU::ShaderProgram
 {
     Program()
     {
+        // Nearest for the clip and linear for the ramp, each for the reason
+        // ShapeBatch gives: a mask is read at the size it was rasterized, a ramp
+        // is 256 texels stretched over a shape.
+        maskAtlas.sampling = {GPU::TextureFilter::Nearest,
+                              GPU::TextureAddressMode::Clamp};
+
         gradientRamps.sampling = {GPU::TextureFilter::Linear,
                                   GPU::TextureAddressMode::Clamp};
         compile();
@@ -66,20 +73,31 @@ struct MeshBatch::Program final : GPU::ShaderProgram
                                  fragKind,
                                  gradientRamps);
 
-        setFragment(float4(fill.x(), fill.y(), fill.z(), fill.w() * fragCoverage));
+        // The vertex coverage is the shape's own edge; the clip is a mask over
+        // it, sampled exactly as the quad renderer samples it -- which is what
+        // makes one clip cut a document drawn out of both.
+        auto clipped = fragCoverage
+                       * clipCoverage(fragPosition, clipRegion, clipMask, maskAtlas);
+
+        setFragment(float4(fill.x(), fill.y(), fill.z(), fill.w() * clipped));
     }
 
     GPU::Uniform<GPU::Float2> screenSize;
+    GPU::Uniform<GPU::Float4> clipRegion;
+    GPU::Uniform<GPU::Float4> clipMask;
+    GPU::Uniform<GPU::Texture2D> maskAtlas;
     GPU::Uniform<GPU::Texture2D> gradientRamps;
 
-    EACP_SHADER(screenSize, gradientRamps)
+    EACP_SHADER(screenSize, clipRegion, clipMask, maskAtlas, gradientRamps)
 };
 
-MeshBatch::MeshBatch(GradientRamps& rampsToUse,
+MeshBatch::MeshBatch(const CoverageAtlas& atlasToUse,
+                     GradientRamps& rampsToUse,
                      Point logicalSizeToUse,
                      int sampleCountToUse,
                      GPU::PixelFormat colorFormatToUse)
-    : ramps(rampsToUse)
+    : atlas(atlasToUse)
+    , ramps(rampsToUse)
     , logicalSize(logicalSizeToUse)
     , sampleCount(sampleCountToUse)
     , colorFormat(colorFormatToUse)
@@ -141,6 +159,16 @@ void MeshBatch::setLogicalSize(Point size)
     logicalSize = {std::max(1.f, size.x), std::max(1.f, size.y)};
 }
 
+void MeshBatch::setClipMask(const ClipMask& mask)
+{
+    if (sameClipMask(clip, mask))
+        return;
+
+    flush();
+
+    clip = mask;
+}
+
 void MeshBatch::flush()
 {
     if (triangles.empty() || pass == nullptr)
@@ -149,6 +177,13 @@ void MeshBatch::flush()
     ramps.commit();
 
     program->screenSize = Array {logicalSize.x, logicalSize.y};
+
+    packClipMask(clip,
+                 atlas.getOpaqueUV(),
+                 program->clipRegion.value,
+                 program->clipMask.value);
+
+    program->maskAtlas = atlas.getTexture();
     program->gradientRamps = ramps.getTexture();
     program->setInstances(1, triangles.data(), triangles.size());
 

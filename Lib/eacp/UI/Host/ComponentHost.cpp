@@ -111,7 +111,7 @@ void ComponentHost::resized()
                        Point {bounds.w, bounds.h},
                        backingScale(),
                        sampleCount());
-        meshes.emplace(*ramps, Point {bounds.w, bounds.h}, sampleCount());
+        meshes.emplace(*paths, *ramps, Point {bounds.w, bounds.h}, sampleCount());
     }
 
     if (root != nullptr)

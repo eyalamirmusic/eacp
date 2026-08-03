@@ -1,11 +1,12 @@
 # SVG through the component tier
 
 **Rungs 1 and 2 are done, both of rung 1's questions are answered, the fix the
-first answer pointed at is built, and rung 3's first feature with it.** What
-follows was written before any of it was built; the sections it got wrong are
-marked where they stand, and the records of what actually happened are at the end
-under *Rung 1, as built*, *Rung 2, as built*, *The mesh route, as built* and
-*Rung 3, gradients, as built*.
+first answer pointed at is built, and two of rung 3's three features with it —
+gradients and clipping. Group opacity is what is left.** What follows was written
+before any of it was built; the sections it got wrong are marked where they
+stand, and the records of what actually happened are at the end under *Rung 1, as
+built*, *Rung 2, as built*, *The mesh route, as built*, *Rung 3, gradients, as
+built* and *Rung 3, clipping, as built*.
 
 **Where that leaves the ceiling:** the atlas still cannot hold a document's masks
 and no longer has to. A shape too large to be worth one is drawn as triangles
@@ -41,14 +42,17 @@ has moved only where the parse layer beneath it moved.**
 
 | file | what it is now |
 |---|---|
-| `XMLParser`, `SVGElement`, `NumberReader` | markup to a tag tree. `NumberReader::readFlag` was added for arcs |
-| `SVGAttributes` | colours, transform lists as matrices, `preserveAspectRatio` and the viewBox fit, style declarations, number and point lists |
+| `XMLParser`, `SVGElement`, `NumberReader` | markup to a tag tree. `NumberReader::readFlag` was added for arcs; `ElementsById` lives here, being what every reference is looked up in |
+| `SVGAttributes` | colours, transform lists as matrices, `preserveAspectRatio` and the viewBox fit, style declarations, number and point lists, `PropertyReader` |
+| `SVGGeometry` | a shape element to a path, in its own units. Shared, because the clip layer builds the same six primitives the builder does |
 | `SVGPathParser` | `d` to a path, templated over `Graphics::Path` and `GPUWidgets::Path` and instantiated for both. Every command including `A`/`a` |
-| `SVGComponent` | the component-tier builder. One component, one `PathShape` per fill and per stroke |
+| `SVGGradient` | `<linearGradient>`, `<radialGradient>`, both unit systems, `href` inheritance |
+| `SVGClip` | a `clip-path` reference to a region, and the test for the rectangle a region often is |
+| `SVGComponent` | the component-tier builder. One component, one `PathShape` per fill and per stroke, and one shared region per clip |
 | `SVGBuilder` | the native builder, unchanged in what it renders |
 | `SVGParser` | the two joined |
 
-`CMakeLists.txt` links `eacp-graphics` and `eacp-ui`. `Tests/SVG` has 42 cases,
+`CMakeLists.txt` links `eacp-graphics` and `eacp-ui`. `Tests/SVG` has 55 cases,
 and the dash and mesh geometry are pinned in `Tests/GPUWidgets`.
 
 Nothing in the module chooses between a mask and a mesh, and that is deliberate:
@@ -61,13 +65,14 @@ into the points, inherited presentation attributes, `style=""` declarations
 beating the attribute of the same name, `fill-rule`, stroke width / caps / joins
 / miter limit / opacity / dashes, `defs` / `use` / `symbol`, gradients — linear
 and radial, any number of stops, both unit systems, `gradientTransform`, all
-three spread methods and `href` inheritance — and text at any family and size
-with real measurement.
+three spread methods and `href` inheritance — clip paths of any number of shapes,
+with their own transforms, `use` inside them, both unit systems and `clip-rule` —
+and text at any family and size with real measurement.
 
-What it does not: the focal point of a radial gradient, `clipPath` and `mask`,
-group opacity as compositing, `<style>` elements and CSS selectors, filters,
-`<image>`. An element asking for one of those draws without it rather than not at
-all.
+What it does not: the focal point of a radial gradient, `<mask>`, two shaped
+clips intersecting, group opacity as compositing, `<style>` elements and CSS
+selectors, filters, `<image>`. An element asking for one of those draws without
+it rather than not at all.
 
 And the thing that used to limit all of it: **the coverage atlas cannot hold a
 large document.** Measured, twice over — see *Rung 1, as built* and *What is
@@ -152,7 +157,12 @@ rung 3 is for.*
   `PathView`'s vertex-colour mesh, which is the other renderer. *Still true.*
 - **The clip is a GPU scissor**, axis-aligned by construction, and
   `UI::Graphics` offers translation only for that reason (`Graphics.h:29-35`).
-  `clipPath` and `mask` have no answer in the tier as it stands. *Still true.*
+  `clipPath` and `mask` have no answer in the tier as it stands. *Half answered:
+  the scissor is still the only clip a **rotation** could ask for and still what
+  the glyphs are cut by, but a clip is no longer only a rect — a region is a
+  second mask multiplied in at draw time, in both shape renderers. `<mask>` is
+  still nowhere, being render-to-texture rather than coverage. See "Rung 3,
+  clipping, as built".*
 
 # Bugs in the module, which are now bugs in `SVGBuilder`
 
@@ -356,7 +366,13 @@ the order a real document notices:
   coverage at rasterization time — one more mask read in the coverage kernel —
   would need no new pipeline and no stencil, which is a better shape than the
   stencil work `Graphics.h` assumes. Unbuilt and uncosted; named here because it
-  is the design worth trying first.
+  is the design worth trying first. *Built, and the second multiply was right
+  while the place for it was not: at rasterization time it would reach only the
+  shapes that still take masks, and the mesh route means the largest shapes in a
+  document — the ones documents actually clip — no longer do. It is a draw-time
+  fetch in both renderers instead, and it is renderer state rather than a
+  per-shape field, so it costs nothing per shape at all. `<mask>` is still
+  unbuilt and belongs with group opacity.*
 - **`<image>`**, which is a texture rather than a path and belongs with the
   sprite renderer.
 - **Filters.** Out of scope, and should stay out.
@@ -398,8 +414,8 @@ right and one wrong:*
    operation and shipped in `GPUWidgets`.*
 3. **Rung 3** is the three features that need work below the module, in the order
    documents actually miss them: gradients, then clipping, then group opacity.
-   *Gradients are done — see "Rung 3, gradients, as built". Clipping and group
-   opacity are not.*
+   *Gradients and clipping are done — see "Rung 3, gradients, as built" and "Rung
+   3, clipping, as built". Group opacity is not.*
 
 One decision to make at the top of rung 1 and not later: whether the native
 `SVGView` stays. Keeping both means one parse layer and two builders, which is
@@ -823,7 +839,118 @@ described.
 
 ## Rung 3's remaining two
 
+*Clipping is the section below. Group opacity is what is left.*
+
 Clipping, then group opacity — in that order, and the note in the original rung 3
 section still stands as the design worth trying first for the clip: a shape is
 already a colour times a mask, so composing a second mask into the coverage
-kernel needs no new pipeline and no stencil.
+kernel needs no new pipeline and no stencil. *Half right. No new pipeline and no
+stencil, and one more multiply — but at draw time rather than in the kernel, for
+a reason that did not exist when this was written.*
+
+# Rung 3, clipping, as built
+
+The second of rung 3's three. It needed no new pipeline, no stencil and no render
+target, as the plan said — and it does not happen where the plan put it.
+
+## What shipped
+
+| where | what |
+|---|---|
+| `UI/Render/ClipMask.h` | the region a draw is multiplied by: where it lands, and the atlas rect it reads |
+| `UI/Render/ClipShader.h` | the fragment maths and the packing, written once and used by both renderers |
+| `UI/Render/ShapeBatch`, `MeshBatch` | two uniforms apiece and one more fetch; the mesh renderer took the coverage atlas for the first time |
+| `UI/Graphics` | `reduceClipToShape`, stacked with the rest of the state, applied alongside the scissor and counted with it |
+| `GPUWidgets/Path/Path` | `append`, which is what a union of contours is; `AffineTransform::operator==`, for a cache that keys on placement |
+| `SVG/SVGGeometry.{h,cpp}` | the element-to-path builder, moved out of `SVGComponent` so the clip layer can build the same shapes |
+| `SVG/SVGAttributes` | `PropertyReader` moved here, being what reads any presentation property |
+| `SVG/SVGClip.{h,cpp}` | `<clipPath>`, its children's transforms, `use` inside it, both unit systems, `clip-rule`, and the rectangle test |
+| `SVG/SVGComponent` | one region per clip per placement, shared across a clipped group; the innermost shaped one takes the mask |
+| `Apps/UI/SVGDocument` | a Clips document, and the dropped count is the host's now rather than the document's |
+| `Tests/SVG`, `Tests/UI` | 16 more cases, 1011 in the project |
+
+## Where the plan was wrong
+
+- **The clip does not belong in the coverage kernel, and the thing that moved it
+  is the mesh route.** Composing a clip into a shape's own coverage reaches
+  exactly the shapes that have coverage — and since rung 2 the largest shapes in
+  a document have none at all, being drawn as triangles. Those are precisely the
+  shapes a document clips: a background, a photo-sized rectangle, a panel. So
+  that design would have had to force everything it touched back onto the atlas,
+  undoing the thing that unblocked rung 3 in the first place. Sampling the region
+  at *draw* time reaches both renderers, and the mesh route stays intact.
+- **It is cheaper than either design implied, because a clip is state.** The plan
+  costed features in instance bytes, which is what the gradient work paid — 32
+  more bytes on every triangle of every meshed shape. A clip is not a property of
+  a shape but of a *run* of them, so it is two uniforms and no per-instance
+  growth at all: a clipped group of twenty shapes carries nothing, and a change
+  of clip costs one batch break, which is exactly what a scissor rect has always
+  cost. The whole feature is 8 bytes per draw call.
+- **A rectangle is not a mask, and saying so is most of the win.** The commonest
+  clip in any document is a viewport rectangle, and coverage is the wrong answer
+  for one: it is a scissor rect, which is exact, costs the atlas nothing, nests
+  exactly with every other rectangle in force, and is the only kind of clip that
+  reaches the glyphs. `asAxisAlignedRect` is thirty lines and it is what keeps a
+  full-page clip from taking a full-page mask. Half the clips in the demo
+  document are rectangles and none of them touches the atlas.
+- **The two empty regions mean opposite things.** A `clip-path` naming something
+  that is not there is ignored and the element draws unclipped; a `<clipPath>`
+  that exists and holds no geometry is a region of nothing, and everything
+  referencing it draws not at all. Both are an empty path and nothing about the
+  geometry says which — so the resolver says, and the builder drops those shapes
+  at build time rather than drawing them through an empty mask.
+
+## What a clip costs the atlas, which the plan never asked
+
+A clip is a mask like any other and comes out of the same 16.8M texels, and the
+first version of the Clips document lost one — 111k texels of frame that the
+second rasterization pass could not place, on a document whose own shapes fit
+comfortably. What made it worth finding rather than annoying:
+
+- **The whole picture went missing, not the clip.** A shape whose mask is refused
+  is absent; a *clip* whose mask is refused was taking its shape with it, because
+  a shape with no coverage reports no bounds and the clip narrowed itself to
+  them. Now a refused clip narrows to nothing and leaves whatever rectangle the
+  caller already had — so it degrades to the region's own bounding box, which is
+  a picture clipped loosely rather than a picture with a hole in it.
+- **The demo could not say so.** `SVGComponent::getDroppedShapeCount` counts
+  shapes, and a clip region is not one, so the footer read `0 dropped` while a
+  quarter of the document was missing. It reads the host's figure now, which
+  counts every mask in the tree.
+- **The thing that actually filled the atlas was a hairline.** A 150×80 rectangle
+  *outlined* at one point wide takes a mask of its whole bounding box — 119k
+  texels to ink about 1500 of them — which is the large-thin-stroke case the mesh
+  route section already named as the next atlas consumer worth measuring. Drawing
+  the same rectangle filled costs nothing at all, because a fill that size meshes.
+  Replacing one outline with one fill was the difference between the document
+  dropping a mask and reserving 58% of the atlas.
+
+## What it does not do
+
+- **Two shaped clips do not intersect.** A fragment reads one region, so where a
+  document clips a clipped group the inner shape takes the mask and the outer
+  contributes its bounding box. That is exact whenever the outer clip is a
+  rectangle — which is the common nesting, a viewport around a shaped one — and
+  loose otherwise, in the direction of drawing too much. The fix is the plan's
+  own original idea, in the place it does belong: compose two *regions* into one
+  at rasterization time. Between clips the ordering is a short chain and both
+  sides are masks, which are the two things that made it wrong for shapes.
+- **Text is cut by the rectangle only.** Glyphs are drawn by a renderer that
+  samples no atlas, so a string under a shaped clip is trimmed to the region's
+  box. The same answer as text-as-paths and gradients-on-text, and the same fix.
+- **A bounding-box clip on a group is placed against each child's own box** rather
+  than the group's, since the region is resolved where the geometry is. On a
+  shape — which is where documents write it — it is exact. And a bounding-box
+  clip on text is not applied at all, a run's extent being the renderer's business
+  rather than the builder's.
+- **`<mask>` is not this.** Luminance masking is a subtree rendered to a texture
+  and read back as coverage, which is the same machinery group opacity needs and
+  is the next thing after it.
+
+## Rung 3's remaining one
+
+Group opacity, and the note above about `<mask>` is the reason to do it next:
+compositing a subtree and fading it as a unit is render-to-texture, and once
+there is a texture to fade there is one to read a luminance mask out of. Two
+features, one piece of machinery, and it is the last piece this module is
+waiting on.

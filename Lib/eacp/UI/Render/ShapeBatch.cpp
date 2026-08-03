@@ -1,5 +1,6 @@
 #include "ShapeBatch.h"
 
+#include "ClipShader.h"
 #include "GradientShader.h"
 
 #include <algorithm>
@@ -124,6 +125,13 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
         // skip it would buy back a cached read and cost a batch break.
         auto coverage = fieldCoverage * sample(maskAtlas, maskUV).x();
 
+        // And the clip's, out of the same texture: a clipped shape is its own
+        // coverage times the region's, which is one more fetch rather than a
+        // stencil or a pass of its own. Unclipped, it reads the opaque texel
+        // and multiplies by one -- see ClipShader.
+        coverage =
+            coverage * clipCoverage(fragPosition, clipRegion, clipMask, maskAtlas);
+
         auto fill = gradientFill(fragColor,
                                  fragPosition,
                                  fragGradient,
@@ -136,10 +144,13 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
 
     GPU::Uniform<GPU::Float2> screenSize;
     GPU::Uniform<GPU::Float> pixelScale;
+    GPU::Uniform<GPU::Float4> clipRegion;
+    GPU::Uniform<GPU::Float4> clipMask;
     GPU::Uniform<GPU::Texture2D> maskAtlas;
     GPU::Uniform<GPU::Texture2D> gradientRamps;
 
-    EACP_SHADER(screenSize, pixelScale, maskAtlas, gradientRamps)
+    EACP_SHADER(
+        screenSize, pixelScale, clipRegion, clipMask, maskAtlas, gradientRamps)
 };
 
 ShapeBatch::ShapeBatch(const CoverageAtlas& atlasToUse,
@@ -232,6 +243,18 @@ void ShapeBatch::clearScissorRect()
         pass->clearScissorRect();
 }
 
+void ShapeBatch::setClipMask(const ClipMask& mask)
+{
+    if (sameClipMask(clip, mask))
+        return;
+
+    // Before the state changes, so what was queued is drawn under the clip it
+    // was issued in.
+    flush();
+
+    clip = mask;
+}
+
 void ShapeBatch::flush()
 {
     if (instances.empty() || pass == nullptr)
@@ -244,6 +267,12 @@ void ShapeBatch::flush()
 
     program->screenSize = Array {logicalSize.x, logicalSize.y};
     program->pixelScale = pixelScale;
+
+    packClipMask(clip,
+                 atlas.getOpaqueUV(),
+                 program->clipRegion.value,
+                 program->clipMask.value);
+
     program->maskAtlas = atlas.getTexture();
     program->gradientRamps = ramps.getTexture();
     program->setInstances(1, instances.data(), instances.size());

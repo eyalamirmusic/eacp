@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Common.h"
+#include "ClipMask.h"
 #include "CoverageAtlas.h"
 #include "GradientRamps.h"
 
@@ -116,6 +117,12 @@ public:
     void setScissorRect(const Rect& rectInPixels);
     void clearScissorRect();
 
+    // Multiplies everything queued after the call by a second mask out of the
+    // same atlas, in the batch's own space. Draws what is queued first, for the
+    // reason the scissor does: the clip is one uniform for the whole draw, so a
+    // change of it is a batch break. An empty mask is no clip at all.
+    void setClipMask(const ClipMask& mask);
+
     // Every call below takes the fill twice over: a colour, and a gradient that
     // replaces it where there is one. Both rather than one of the two, because
     // a gradient the ramps had no room for falls back to the colour beside it --
@@ -181,6 +188,8 @@ private:
 
     const CoverageAtlas& atlas;
     GradientRamps& ramps;
+
+    ClipMask clip;
 
     Point logicalSize;
     float pixelScale = 1.f;

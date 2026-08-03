@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SVGAttributes.h"
+#include "SVGClip.h"
 #include "SVGElement.h"
 
 #include <eacp/UI/UI.h>
@@ -39,10 +40,18 @@ namespace eacp::SVG
 // another through href. What it leaves out of them is the focal point of a
 // radial, which draws as a concentric one.
 //
-// What it does not do at all: clip paths and masks, group opacity as
-// compositing, CSS selectors (the style *attribute* is read, a <style> element
-// is not), filters and images. An element asking for one of those draws without
-// it rather than not at all.
+// Clip paths it does: a clipPath of any number of shapes, its own transforms,
+// <use> inside it, both unit systems, and clip-rule. A rectangular one is a
+// scissor rect and costs the atlas nothing; every other shape is a mask, and one
+// mask reaches a shape at a time -- so where a document clips a clipped group,
+// the inner region is exact and the outer one contributes its bounding box. Text
+// is cut by the rectangle rather than by the shape, glyphs being drawn by a
+// renderer that samples no mask.
+//
+// What it does not do at all: <mask>, group opacity as compositing, CSS
+// selectors (the style *attribute* is read, a <style> element is not), filters
+// and images. An element asking for one of those draws without it rather than
+// not at all.
 class SVGComponent : public UI::Component
 {
 public:
@@ -78,6 +87,17 @@ public:
     // that is both filled and stroked is two, because a PathShape holds one
     // filled region and a stroke is a different region.
     int getShapeCount() const { return shapes.size(); }
+
+    // Distinct clip regions the document came to. Not the number of elements
+    // carrying a clip-path: a group's clip is one region however many children
+    // it cuts, which is what stops a clipped group of twenty shapes costing
+    // twenty identical masks.
+    int getClipCount() const { return clips.size(); }
+
+    // Of those, how many took a mask. The rest were rectangles, which are a
+    // scissor rect and cost the atlas nothing at all -- and a viewport clip, the
+    // commonest of all clips, is always one of those.
+    int getClipMaskCount() const;
 
     // Of those, how many the coverage atlas had no room for -- each one missing
     // from the picture. See ComponentHost::getLastDroppedPathCount.
@@ -117,6 +137,23 @@ public:
     int getFontCount() const { return fonts.size(); }
 
 private:
+    // What a clip-path came to for one drawable: the region multiplying its
+    // coverage, and the rectangle everything rectangular about its clips
+    // intersected to.
+    //
+    // Both, and not one or the other. The rectangle is what a rectangular clip
+    // is exactly, what an outer clip contributes when an inner one already holds
+    // the mask, what a clip the atlas refused falls back to, and the only thing
+    // that reaches the text renderer.
+    struct ClipState
+    {
+        int maskIndex = -1;
+        Graphics::Rect rect;
+        bool hasRect = false;
+
+        bool isEmpty() const { return maskIndex < 0 && !hasRect; }
+    };
+
     // One filled region: the mask a kernel rasterized for it and the colour it
     // is multiplied by. A stroke is one of these too, its geometry being the
     // region the pen covers rather than the pen's path.
@@ -129,6 +166,7 @@ private:
 
         UI::PathShape mask;
         Graphics::Color colour;
+        ClipState clip;
 
         // The gradient the colour is replaced by, empty for the usual case.
         // Resolved when the shape was built rather than at paint time, because
@@ -159,6 +197,38 @@ private:
         Graphics::Color colour;
         TextAnchor anchor = TextAnchor::Start;
         int fontIndex = 0;
+
+        // Only the rectangle of it ever applies. See ClipState.
+        ClipState clip;
+    };
+
+    // A clip region the document referenced, built once however many drawables
+    // it cuts.
+    //
+    // Shared where a group's clip-path covers twenty children, which is the
+    // usual way a document writes one: the region is the same mask at the same
+    // place for every one of them, so the twenty are one entry here. That is not
+    // true of <use>, whose instances differ by a transform, and it stops being
+    // true here for the same reason -- a clip in bounding-box units is placed
+    // against each element it clips, so those do not share.
+    struct Clip
+    {
+        explicit Clip(UI::Component& owner)
+            : mask(owner)
+        {
+        }
+
+        std::string reference;
+        GPUWidgets::AffineTransform transform;
+        Graphics::Rect objectBounds;
+
+        // Unused for a clip that came out a rectangle, which needs no mask: the
+        // bounds below are the whole of it, and a scissor rect draws them for
+        // nothing.
+        UI::PathShape mask;
+        bool isRectangle = false;
+
+        Graphics::Rect bounds;
     };
 
     // A renderer per (family, size) the document asks for. See the note on
@@ -223,7 +293,21 @@ private:
     void addShape(const GPUWidgets::Path& path,
                   const Graphics::Color& colour,
                   GPUWidgets::FillRule rule,
+                  const ClipState& clip,
                   const UI::Gradient& gradient = {});
+
+    // The clips an element inherited, resolved against the geometry they are
+    // about to cut. Empty when nothing in the tree above it asked for one, which
+    // is the case that has to cost nothing.
+    ClipState resolveClips(const Style& style, const Graphics::Rect& objectBounds);
+
+    // The entry for one clip reference at one place, made if this is the first
+    // drawable to ask for it. Negative when the reference resolves to nothing --
+    // an id that names no clipPath, or one holding no geometry -- which the
+    // format says draws the element unclipped.
+    int findOrAddClip(const std::string& reference,
+                      const GPUWidgets::AffineTransform& transform,
+                      const Graphics::Rect& objectBounds);
 
     // What a paint reference resolves to, against this document's ids and its
     // viewBox. See SVG::resolveGradient, which is where the two coordinate
@@ -247,6 +331,7 @@ private:
 
     Vector<Drawable> order;
     OwnedVector<Shape> shapes;
+    OwnedVector<Clip> clips;
     Vector<TextRun> texts;
     OwnedVector<DocumentFont> fonts;
 

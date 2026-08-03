@@ -168,6 +168,36 @@ public:
     // it: a component cannot escape its parent's clip by asking.
     void reduceClipRegion(const Rect& rect);
 
+    // Narrows the clip to a vector shape: everything drawn after this is
+    // multiplied by the shape's own coverage as well as its own, until a
+    // restoreState puts back what was in force before.
+    //
+    // It costs what a clip change costs -- one batch break, the same as a
+    // scissor rect -- so it belongs around a run of shapes rather than around
+    // each one. The shape has to be mask-backed to be usable as a clip
+    // (Backing::Mask), a mesh carrying no coverage anything could sample: one
+    // that is meshed narrows the clip to its own bounds and no further, which is
+    // a picture clipped to a rectangle rather than one clipped to nothing.
+    //
+    // A shape the atlas had no room for has no bounds either, and narrows
+    // nothing at all -- so a caller that knows where its region is should reduce
+    // to that rectangle itself first, and then this refines it wherever there is
+    // a mask to refine it with.
+    //
+    // Two shaped clips do not intersect, and that is the limit worth knowing:
+    // a fragment reads one mask, so a second call replaces the first -- while
+    // still narrowing the rectangle to the new shape's bounds, so the result is
+    // never larger than either of them asked for. It is exact whenever the outer
+    // clip is a rectangle, which is what a viewport clip is; where it is not,
+    // composing the two regions into one before they arrive is the answer, and
+    // the tier has nothing that does it yet.
+    //
+    // Text is unaffected. Glyphs are drawn by a renderer that samples no atlas,
+    // so a string under a shaped clip is cut by the bounds and not by the shape.
+    void reduceClipToShape(const PathShape& shape);
+
+    bool hasClipShape() const { return !state.clipMask.isEmpty(); }
+
     // The clip, back in the current space.
     Rect getClipBounds() const;
 
@@ -223,6 +253,10 @@ private:
 
         Point origin;
         Rect clip;
+
+        // In surface space, like the clip rect beside it, so that stacking a
+        // state carries the region rather than the shape it came from.
+        ClipMask clipMask;
     };
 
     // Which of the two shape renderers is about to be drawn into. They share one
@@ -249,7 +283,10 @@ private:
     void prepareToDraw(const Rect& surfaceBounds,
                        Renderer renderer = Renderer::Quads);
 
-    void applyClip(const Rect& surfaceClip);
+    // Puts the clip the caller asked for onto the renderers: the scissor rect,
+    // the clip mask, or both. One break however many of them changed, since
+    // what it costs is draining the queues and that happens once.
+    void applyClip(bool changeScissor, bool changeMask);
 
     ShapeBatch& shapes;
     MeshBatch& meshes;
@@ -271,6 +308,13 @@ private:
     // The clip currently on the pass, which lags the one the caller asked for
     // until a primitive forces them to agree.
     Rect appliedClip;
+
+    // The mask currently on the renderers. It lags the same way, but not for
+    // the same reason: a scissor change can be elided for a primitive already
+    // inside both rects, and a mask is not a bound anything can be inside -- so
+    // this catches up whenever it differs at all.
+    ClipMask appliedClipMask;
+
     int clipChanges = 0;
     int rendererSwitches = 0;
 };

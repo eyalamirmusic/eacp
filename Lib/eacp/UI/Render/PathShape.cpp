@@ -147,6 +147,14 @@ void PathShape::rasterize(CoverageAtlas& atlas,
         if (!placed)
         {
             dropped = true;
+
+            // Cleared rather than left where the last successful rasterization
+            // put it. Nothing draws this shape while it has no mask, so the only
+            // reader of stale bounds would be a caller asking where the shape
+            // is -- a clip narrowing itself to them, say -- and answering that
+            // with the last size it happened to be is worse than answering
+            // nowhere.
+            bounds = {};
             return;
         }
     }

@@ -5,6 +5,7 @@
 #include "Component/MouseEvent.h"
 #include "Graphics/Graphics.h"
 #include "Host/ComponentHost.h"
+#include "Render/ClipMask.h"
 #include "Render/CoverageAtlas.h"
 #include "Render/Gradient.h"
 #include "Render/GradientRamps.h"
