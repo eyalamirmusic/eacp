@@ -17,6 +17,12 @@ void registerContentViewHwnd(View* root, HWND hwnd);
 void unregisterContentViewHwnd(View* root);
 HWND findHostHwndForView(View* view);
 
+// Whether `hwnd` hosts a WindowOptions::transparentBackground surface. Content
+// that composites straight to the screen (a GPUView's swapchain) must respect
+// its own alpha there — an opaque swapchain would paint the black box the
+// option exists to remove. False for an unknown/null HWND.
+bool isHostWindowTransparent(HWND hwnd);
+
 // Marks `view` and all its subviews for repaint, e.g. after a DPI change or a
 // rendering-device replacement invalidates every backing surface.
 void repaintViewTree(View* view);
