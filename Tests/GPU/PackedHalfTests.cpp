@@ -123,6 +123,23 @@ struct UnpackKernel final : ComputeProgram
     EACP_SHADER(words, output)
 };
 
+// Ordinary arithmetic, so nothing pulls the helper in.
+struct PlainKernel final : ComputeProgram
+{
+    PlainKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        write(output, i, input[i] * 2.0f);
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(input, output)
+};
+
 // Bit-for-bit, not within a tolerance. Widening fp16 to fp32 is exact for
 // every value there is - fp32 has more exponent range and more mantissa - so
 // any difference at all is a fault rather than rounding. NaN is the one
@@ -191,22 +208,6 @@ auto tUnpackHalf2 = test("PackedHalf/unpacksEveryFloat16Class") = []
 // ordinary arithmetic carries no definition for one.
 auto tHelperIsNotAlwaysEmitted = test("PackedHalf/emitsTheHelperOnlyWhenUsed") = []
 {
-    struct PlainKernel final : ComputeProgram
-    {
-        PlainKernel() { compile(); }
-
-        void define() override
-        {
-            auto i = threadId();
-            write(output, i, input[i] * 2.0f);
-        }
-
-        Uniform<InputBuffer> input;
-        Uniform<OutputBuffer> output;
-
-        EACP_SHADER(input, output)
-    };
-
     auto contains = [](const std::string& text, const char* needle)
     { return text.find(needle) != std::string::npos; };
 
