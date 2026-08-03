@@ -161,6 +161,18 @@ Vector<CompositionHostWindow*>& compositionHosts()
 }
 } // namespace
 
+bool isHostWindowTransparent(HWND hwnd)
+{
+    if (hwnd == nullptr)
+        return false;
+
+    for (auto* host: compositionHosts())
+        if (host->hwnd == hwnd)
+            return host->transparentBackground;
+
+    return false;
+}
+
 // Called by the rendering-device recovery in D2DFactory-Windows.cpp. Unlike
 // Windows.UI.Composition — which could hot-swap the rendering device and keep
 // its surfaces (they merely lost their pixels) — DirectComposition binds the

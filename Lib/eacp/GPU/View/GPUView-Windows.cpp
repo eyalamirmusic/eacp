@@ -1,5 +1,6 @@
 #include "GPUView.h"
 #include <eacp/Graphics/DComp-Windows.h>
+#include <eacp/Graphics/Window/CompositionHostWindow-Windows.h>
 
 #include "../Device/Device.h"
 #include "../Frame/Frame.h"
@@ -189,7 +190,15 @@ struct GPUView::Native : DeviceResourceHolder
         descriptor.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         descriptor.BufferCount = bufferCount;
         descriptor.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
-        descriptor.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+
+        // In a transparentBackground window the swapchain composites straight
+        // to the screen, so its alpha must reach DWM — IGNORE would fill the
+        // window with an opaque black box. Opaque windows keep IGNORE: their
+        // GPU content never meant its alpha for the desktop behind the window.
+        descriptor.AlphaMode =
+            Graphics::isHostWindowTransparent(Graphics::findHostHwndForView(&view))
+                ? DXGI_ALPHA_MODE_PREMULTIPLIED
+                : DXGI_ALPHA_MODE_IGNORE;
 
         // A waitable swapchain is what makes the present queue's depth ours to
         // choose. Without it DXGI queues up to three frames of its own accord,
