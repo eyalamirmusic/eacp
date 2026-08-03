@@ -119,6 +119,10 @@ public:
     // Makes this the host's focused component, and asks the native view for the
     // keyboard while it is at it -- a component tree only sees a key event if the
     // one view it lives in is the window's first responder.
+    //
+    // Does nothing on a component that does not want focus, so the flag above is
+    // the single answer to whether one can hold the keyboard rather than one of
+    // two depending on how it was asked.
     void grabKeyboardFocus();
 
     // Gives it up, leaving the host with none. A tree with nothing focused sends
@@ -148,6 +152,26 @@ public:
 
     Point localPointToRoot(Point localPoint) const;
     Point rootPointToLocal(Point rootPoint) const;
+
+    // The host this subtree is in, or null while it is not in one -- which is
+    // the normal state of a component under construction, so a caller has to
+    // check rather than assume.
+    ComponentHost* getHost() const { return findHost(); }
+
+    // What `text` would take, in points, without a paint() to ask.
+    //
+    // The painter is only in hand while painting, and the two places that most
+    // need a width are not: laying a component out against its own text, and
+    // working out which character a click landed on. Both go to the same
+    // renderer the painting does, so the answer agrees with what is drawn.
+    //
+    // Zero while this component is not in a host, there being no font to measure
+    // against.
+    float measureText(std::string_view text, const Font& font) const;
+
+    // The font a component with nothing to say about its own draws in: the
+    // host's. Zero-initialized while there is no host.
+    Font getHostFont() const;
 
     bool isMouseOver() const { return mouseOver; }
 

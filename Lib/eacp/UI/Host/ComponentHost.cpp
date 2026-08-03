@@ -90,6 +90,33 @@ void ComponentHost::setFont(const Font& fontToUse)
     repaint();
 }
 
+Text::TextRenderer& ComponentHost::renderer() const
+{
+    if (!text.has_value())
+    {
+        text.emplace(font.pointSize, font.family);
+        text->setFont(font);
+    }
+
+    return *text;
+}
+
+float ComponentHost::measureText(std::string_view textToMeasure,
+                                 const Font& fontToUse) const
+{
+    return renderer().measure(textToMeasure, fontToUse);
+}
+
+float ComponentHost::getLineHeight(const Font& fontToUse) const
+{
+    return renderer().lineHeight(fontToUse);
+}
+
+float ComponentHost::getAscent(const Font& fontToUse) const
+{
+    return renderer().ascent(fontToUse);
+}
+
 void ComponentHost::setFontPointSize(float points)
 {
     auto updated = font;
@@ -390,11 +417,7 @@ void ComponentHost::render(GPU::Frame& frame)
         return;
     }
 
-    if (!text.has_value())
-    {
-        text.emplace(font.pointSize, font.family);
-        text->setFont(font);
-    }
+    renderer();
 
     text->setViewport({bounds.w, bounds.h}, backingScale());
     text->begin();

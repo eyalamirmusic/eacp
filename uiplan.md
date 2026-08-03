@@ -300,3 +300,54 @@ are not usable on this machine — they land in whatever app is frontmost — so
 native half of the path (that a `ComponentHost` becomes first responder and that
 `View::keyDown` reaches the override) rests on `setGrabsFocusOnMouseDown` and
 `focus()` being what they say they are, and on the two demos being run by hand.
+
+# Rung 3, as built
+
+Editing text, and the widget Todo's rows actually are.
+
+## What shipped
+
+| where | what |
+|---|---|
+| `UI/Component/Component` | `getHost`, `measureText` and `getHostFont` — measurement without a paint in progress |
+| `UI/Host/ComponentHost` | `measureText` / `getLineHeight` / `getAscent`, building the renderer on demand so a component can lay itself out before the first frame |
+| `UI/Widgets/Checkbox` | a box, a tick drawn as two strokes, a caption, and Space or Return to toggle |
+| `UI/Widgets/TextEditor` | caret, selection, mouse placement and drag-selection, arrows and Home/End, both deletes, the clipboard, Return and Escape, a placeholder, read-only, and horizontal scrolling to keep the caret in view |
+| `Apps/Graphics/Todo` | converted: rows that check off and edit in place, with the native `TextInput` gone |
+| `Tests/UI` | 22 more cases, 1071 in the project |
+
+## Where the plan was wrong
+
+- **Measurement, not the caret, was the missing piece.** The plan costed this
+  rung as caret and selection arithmetic. Both were straightforward; what was
+  not there at all is a way to measure a string *outside* `paint()` — and
+  placing a caret from a click is exactly that question. The painter is only in
+  hand while painting, so `Component::measureText` had to exist first, going to
+  the same renderer the drawing does so the answer agrees with what is on
+  screen. It is the second time this plan has found the gap one level below
+  where it was looking.
+- **The caret does not blink, on purpose.** A blink is a timer per editor and a
+  repaint of the tree twice a second for as long as a field has focus, in a tier
+  whose whole claim is that it draws nothing while nothing changes. A steady
+  caret is the honest trade here, and is written down as one rather than left to
+  look like an omission.
+- **`grabKeyboardFocus` had to learn to refuse.** Rung 2 let any component grab
+  focus while `setWantsKeyboardFocus(false)` released it — so the flag meant two
+  different things depending on which side of a grab it was read from, and a
+  component could sit focused while reporting that it could not be. It refuses
+  now, which is what makes the flag the single answer.
+
+## What the tests caught
+
+The UTF-8 cases, which is what they were written for. A caret moved by bytes
+splits a two-byte character on the first backspace, and a `setCaretPosition`
+landing inside a sequence corrupts the string the next time it is cut there —
+both invisible until someone types an accent. The editor moves by whole sequences
+and never leaves the caret inside one, and `café` is in the suite to keep it
+that way.
+
+## What it does not do
+
+Input methods, right-to-left text, and undo. Each is real work rather than an
+omission to be filled in later, and a document editor should not be built out of
+this widget until they are done.
