@@ -2,6 +2,7 @@ set(gpu_test_sources
         BufferRangeTests.cpp
         GPUSmokeTests.cpp
         MultiDeviceTests.cpp
+        PackedHalfTests.cpp
         ShaderCodegenTests.cpp
         StreamingBufferTests.cpp
         TestMain.cpp

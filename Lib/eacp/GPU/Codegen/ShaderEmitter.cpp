@@ -77,9 +77,61 @@ std::string callName(Backend backend, const std::string& name)
 
         if (name == "dfdy")
             return "ddy";
+
+        if (name == "as_type<uint>")
+            return "asuint";
     }
 
     return name;
+}
+
+// The builtins whose two spellings are not one name apart, emitted as a
+// function definition ahead of the shader body and called like any other.
+//
+// callName above handles the ordinary case - one name, one argument list, a
+// different word. This is for the rest: unpacking two halves out of a word is
+// a bitcast and a vector conversion on MSL, and two f16tof32 calls against a
+// shift on HLSL, and no renaming reconciles those. A helper does, and it keeps
+// the graph backend-agnostic - one call node with one argument, both sides.
+struct ShaderHelper
+{
+    const char* name;
+    const char* metal;
+    const char* directX;
+};
+
+const auto shaderHelpers = Array<ShaderHelper, 1> {
+    ShaderHelper {"eacpUnpackHalf2",
+                  "inline float2 eacpUnpackHalf2(uint bits)\n"
+                  "{\n"
+                  "    return float2(as_type<half2>(bits));\n"
+                  "}\n\n",
+                  "float2 eacpUnpackHalf2(uint bits)\n"
+                  "{\n"
+                  "    return float2(f16tof32(bits), f16tof32(bits >> 16));\n"
+                  "}\n\n"}};
+
+// Only the helpers a graph actually calls, so a shader that unpacks nothing
+// carries no definition for one.
+std::string helperDefinitions(const ShaderGraph& graph, Backend backend)
+{
+    auto definitions = std::string {};
+
+    for (const auto& helper: shaderHelpers)
+    {
+        auto used = false;
+
+        for (auto node = 0; node < graph.nodeCount() && !used; ++node)
+        {
+            const auto& expr = graph.expr(node);
+            used = expr.kind == ExprKind::Call && expr.text == helper.name;
+        }
+
+        if (used)
+            definitions += backend == Backend::Metal ? helper.metal : helper.directX;
+    }
+
+    return definitions;
 }
 
 // Prints one stage's expressions. Nodes the stage plan named as locals print
@@ -1126,6 +1178,8 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
     if (backend == Backend::Metal)
         source += "#include <metal_stdlib>\nusing namespace metal;\n\n";
 
+    source += helperDefinitions(graph, backend);
+
     auto uniformTypes = graph.uniforms();
     auto uniformNames = Vector<std::string> {};
 
@@ -1329,6 +1383,8 @@ std::string emit(const ShaderGraph& graph, Backend backend)
 
     if (backend == Backend::Metal)
         source += "#include <metal_stdlib>\nusing namespace metal;\n\n";
+
+    source += helperDefinitions(graph, backend);
 
     source += "struct VertexIn\n{\n";
 
