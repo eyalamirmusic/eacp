@@ -108,6 +108,11 @@ public:
     // renderer against another one has to know: see MeshBatch.
     bool isEmpty() const { return instances.empty(); }
 
+    // The texture every shape's coverage lives in, which a caller drawing
+    // something else under the same clip needs: a clip is a rect of this atlas
+    // however the thing it cuts was drawn. See LayerRenderer.
+    const CoverageAtlas& getAtlas() const { return atlas; }
+
     void setLogicalSize(Point size);
     void setPixelScale(float scale);
 

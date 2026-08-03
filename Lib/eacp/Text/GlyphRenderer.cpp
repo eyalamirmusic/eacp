@@ -163,10 +163,21 @@ void GlyphRenderer::flush(RenderPass& pass, GlyphAtlas& atlas)
     {
         // Blending is required: glyph coverage is an alpha ramp, and without it
         // the antialiased edges punch holes in whatever is behind them.
-        maskProgram->prepare(
-            1, false, PrimitiveTopology::Triangles, BlendMode::AlphaBlend);
-        colorProgram->prepare(
-            1, false, PrimitiveTopology::Triangles, BlendMode::AlphaBlend);
+        //
+        // The mode that accumulates the destination's alpha rather than
+        // weighting the source's by itself, which is what a target something
+        // will composite through needs -- a string drawn into a texture, and
+        // then that texture faded, otherwise loses the coverage of every edge it
+        // has. On a window's own drawable, where the destination is opaque
+        // already, the two are the same picture.
+        maskProgram->prepare(1,
+                             false,
+                             PrimitiveTopology::Triangles,
+                             BlendMode::AlphaBlendOntoTransparent);
+        colorProgram->prepare(1,
+                              false,
+                              PrimitiveTopology::Triangles,
+                              BlendMode::AlphaBlendOntoTransparent);
 
         // The quad every glyph is instanced over never changes, so it is
         // uploaded once here rather than per draw. Per draw it was a buffer

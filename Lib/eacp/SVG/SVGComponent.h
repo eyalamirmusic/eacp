@@ -48,10 +48,15 @@ namespace eacp::SVG
 // is cut by the rectangle rather than by the shape, glyphs being drawn by a
 // renderer that samples no mask.
 //
-// What it does not do at all: <mask>, group opacity as compositing, CSS
-// selectors (the style *attribute* is read, a <style> element is not), filters
-// and images. An element asking for one of those draws without it rather than
-// not at all.
+// Opacity it does properly, which is two features spelled the same way: on a
+// shape it is the colour's alpha, and on a container it is the group's -- drawn
+// into a texture of its own and faded once, so that the overlaps inside it stay
+// as solid as they were drawn. A document fades what it wrote rather than what
+// happened to be cheap.
+//
+// What it does not do at all: <mask>, CSS selectors (the style *attribute* is
+// read, a <style> element is not), filters and images. An element asking for one
+// of those draws without it rather than not at all.
 class SVGComponent : public UI::Component
 {
 public:
@@ -87,6 +92,11 @@ public:
     // that is both filled and stroked is two, because a PathShape holds one
     // filled region and a stroke is a different region.
     int getShapeCount() const { return shapes.size(); }
+
+    // Containers the document asked to fade as a whole, each of which is a
+    // texture of its own and a render pass to fill it. Zero for a document whose
+    // opacity is all per-element, which is most of them.
+    int getOpacityGroupCount() const { return groups.size(); }
 
     // Distinct clip regions the document came to. Not the number of elements
     // carrying a clip-path: a group's clip is one region however many children
@@ -249,20 +259,74 @@ private:
     };
 
     // Document order, which is paint order: SVG has no z-index and later
-    // elements cover earlier ones. Shapes and text runs live in their own
-    // vectors because a PathShape cannot be moved -- it registers with its
-    // component in its constructor -- so this is what keeps the two interleaved
-    // the way the markup had them.
+    // elements cover earlier ones. Shapes, text runs and groups live in their
+    // own vectors because neither a PathShape nor a Layer can be moved -- each
+    // registers with its component in its constructor -- so this is what keeps
+    // them interleaved the way the markup had them.
     struct Drawable
     {
-        bool isText = false;
+        enum class Kind
+        {
+            Shape,
+            Text,
+
+            // A group composited as a unit rather than drawn shape by shape,
+            // which is what a container's own opacity means. See OpacityGroup.
+            Group
+        };
+
+        Kind kind = Kind::Shape;
         int index = 0;
+    };
+
+    // A container the document asked to fade as a whole: its content, and the
+    // texture that content is rendered into so the fade can be applied once.
+    //
+    // The distinction is the whole feature. Multiplying a group's opacity into
+    // each of its children's colours -- which is what this module did before,
+    // and what SVGBuilder still does -- fades the children; the format means the
+    // group. They agree exactly until two shapes inside it overlap, and there
+    // the first shows the seam between them and the second does not.
+    //
+    // Built innermost-first, because a layer may hold another and UI::Layer
+    // renders them in the order they registered.
+    struct OpacityGroup
+    {
+        explicit OpacityGroup(UI::Component& owner)
+            : layer(owner)
+        {
+        }
+
+        UI::Layer layer;
+        Vector<Drawable> content;
     };
 
     struct Style;
 
     void rebuild();
     void clearContent();
+
+    // One list of drawables, in document order. Called for the document itself
+    // and again for each composited group, through its layer.
+    void paintDrawables(UI::Graphics& g, const Vector<Drawable>& drawables);
+
+    // The element built as it stands, with whatever the walk has already decided
+    // about it. The half of buildElement that opacity does not change.
+    void buildElementContent(const SVGElement& element,
+                             const Style& style,
+                             int depth);
+
+    // The element built into a texture of its own, to be faded as one thing.
+    void buildOpacityGroup(const SVGElement& element,
+                           const Style& style,
+                           int depth,
+                           float opacity);
+
+    // Where a composited group's content reaches, in this component's points --
+    // which is how large a texture it needs. A run holding text takes the whole
+    // component, a string's extent being the renderer's business rather than the
+    // builder's, and everything is cut to the component in any case.
+    Graphics::Rect boundsOf(const Vector<Drawable>& drawables) const;
 
     // Everything the element says about itself, over what it inherited.
     static void applyPresentationAttributes(Style& style, const SVGElement& element);
@@ -330,7 +394,13 @@ private:
     std::unordered_map<std::string, const SVGElement*> elementsById;
 
     Vector<Drawable> order;
+
+    // Where the walk is currently appending. The document's own order, except
+    // inside a container that is being composited, where it is that group's.
+    Vector<Drawable>* output = &order;
+
     OwnedVector<Shape> shapes;
+    OwnedVector<OpacityGroup> groups;
     OwnedVector<Clip> clips;
     Vector<TextRun> texts;
     OwnedVector<DocumentFont> fonts;

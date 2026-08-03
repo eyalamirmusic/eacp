@@ -12,6 +12,8 @@ target_sources(eacp-ui PRIVATE
         Host/ComponentHost.cpp
         Render/CoverageAtlas.cpp
         Render/GradientRamps.cpp
+        Render/Layer.cpp
+        Render/LayerRenderer.cpp
         Render/MeshBatch.cpp
         Render/PathShape.cpp
         Render/ShapeBatch.cpp

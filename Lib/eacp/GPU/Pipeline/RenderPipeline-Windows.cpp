@@ -248,6 +248,15 @@ D3D12_BLEND_DESC makeBlendDesc(BlendMode mode)
             target.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
             target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
             return desc;
+        case BlendMode::AlphaBlendOntoTransparent:
+            target.BlendEnable = TRUE;
+            target.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+            target.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+            target.BlendOp = D3D12_BLEND_OP_ADD;
+            target.SrcBlendAlpha = D3D12_BLEND_ONE;
+            target.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+            target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+            return desc;
         case BlendMode::Additive:
             target.BlendEnable = TRUE;
             target.SrcBlend = D3D12_BLEND_SRC_ALPHA;

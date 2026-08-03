@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Common.h"
+#include "../Render/LayerRenderer.h"
 #include "../Render/MeshBatch.h"
 #include "../Render/PathShape.h"
 #include "../Render/ShapeBatch.h"
@@ -39,6 +40,7 @@ class Graphics
 public:
     Graphics(ShapeBatch& shapesToUse,
              MeshBatch& meshesToUse,
+             LayerRenderer& layersToUse,
              GradientRamps& rampsToUse,
              Text::TextRenderer& textToUse,
              GPU::RenderPass& passToUse,
@@ -103,6 +105,16 @@ public:
     // except the batch it joins - so a run of them is still one draw, and an
     // alternation between the two kinds is two.
     void fillPath(const PathShape& shape);
+
+    // Draws a layer the host has already rendered: the whole of its content at
+    // once, faded by its opacity and cut by the clip in force.
+    //
+    // Which is the only way to fade a group as a unit rather than a shape at a
+    // time -- see Layer for the difference, which is exactly the overlaps inside
+    // it. The content was rendered into its own texture before this frame's pass
+    // opened, so what this issues is one quad, and the fade is a uniform: an
+    // animated opacity re-renders nothing.
+    void drawLayer(const Layer& layer);
 
     // Draws with the pen on the baseline at the string's left edge, and returns
     // the advance so differently coloured runs can be chained along a line.
@@ -267,7 +279,8 @@ private:
     enum class Renderer
     {
         Quads,
-        Meshes
+        Meshes,
+        Layers
     };
 
     Rect toSurface(const Rect& rect) const;
@@ -290,6 +303,7 @@ private:
 
     ShapeBatch& shapes;
     MeshBatch& meshes;
+    LayerRenderer& layers;
     GradientRamps& ramps;
 
     // The host's renderer, and the one in force. They differ only inside a

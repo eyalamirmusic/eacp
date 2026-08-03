@@ -9,6 +9,8 @@
 #include "Render/CoverageAtlas.h"
 #include "Render/Gradient.h"
 #include "Render/GradientRamps.h"
+#include "Render/Layer.h"
+#include "Render/LayerRenderer.h"
 #include "Render/MeshBatch.h"
 #include "Render/PathShape.h"
 #include "Render/ShapeBatch.h"

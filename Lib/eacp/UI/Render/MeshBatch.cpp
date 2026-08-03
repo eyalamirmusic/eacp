@@ -107,11 +107,12 @@ MeshBatch::MeshBatch(const CoverageAtlas& atlasToUse,
 
     // Always blended, for the same reason ShapeBatch is: the feather ring is a
     // coverage ramp, and without blending the antialiasing would punch holes in
-    // whatever is behind it.
+    // whatever is behind it. And the same mode, so that a shape drawn into a
+    // layer leaves the coverage it drew rather than the square of it.
     program->prepare(sampleCount,
                      false,
                      GPU::PrimitiveTopology::Triangles,
-                     GPU::BlendMode::AlphaBlend,
+                     GPU::BlendMode::AlphaBlendOntoTransparent,
                      colorFormat);
 }
 

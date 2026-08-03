@@ -302,6 +302,72 @@ const auto clipDocument = std::string {
         fill="#7A6A5A">rect · union · units · clip-rule · nested</text>
 </svg>)SVG"};
 
+// Group opacity, which is the last of rung 3 and the one whose difference you
+// have to construct a document to see at all.
+//
+// Every row here is the same three overlapping circles at the same 0.5. The top
+// pair is the difference: on the left the attribute is on each circle, on the
+// right it is on the group around them. Where the circles overlap, the left one
+// stacks two half-transparent discs and goes darker; the right one draws them
+// solid into a texture of its own and fades that once, so the overlap is exactly
+// the colour of the shapes and only the group is faded. The format spells both
+// `opacity` and means the second wherever it is written on a container.
+//
+// The bottom row is what that costs and what it buys. Left: a group inside a
+// group, each faded, which is two textures and the inner one rendered first --
+// the ordering rule the whole feature turns on. Right: a faded group holding
+// text and a gradient, since both go through renderers of their own and both
+// have to land in the texture rather than beside it.
+const auto opacityDocument = std::string {
+    R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="360" height="300" viewBox="0 0 360 300">
+  <defs>
+    <linearGradient id="fade" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F5A623"/>
+      <stop offset="1" stop-color="#D0021B"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="360" height="300" fill="#FBF8F3"/>
+
+  <!-- Each circle faded: the overlaps are darker, because two half-transparent
+       discs are stacked there. -->
+  <g>
+    <circle cx="60" cy="70" r="38" fill="#2C5F8A" opacity="0.5"/>
+    <circle cx="96" cy="70" r="38" fill="#2C5F8A" opacity="0.5"/>
+    <circle cx="78" cy="104" r="38" fill="#2C5F8A" opacity="0.5"/>
+  </g>
+
+  <!-- The group faded: one texture, one fade, and the overlaps are the shape's
+       own colour. -->
+  <g opacity="0.5">
+    <circle cx="244" cy="70" r="38" fill="#2C5F8A"/>
+    <circle cx="280" cy="70" r="38" fill="#2C5F8A"/>
+    <circle cx="262" cy="104" r="38" fill="#2C5F8A"/>
+  </g>
+
+  <text x="78" y="164" text-anchor="middle" font-family="Helvetica" font-size="11" fill="#7A6A5A">per element</text>
+  <text x="262" y="164" text-anchor="middle" font-family="Helvetica" font-size="11" fill="#7A6A5A">per group</text>
+
+  <!-- A group inside a group: the inner texture is rendered first and then
+       drawn into the outer one, so the two fades multiply. -->
+  <g opacity="0.7">
+    <rect x="20" y="188" width="150" height="88" fill="#3B7A57"/>
+    <g opacity="0.6">
+      <circle cx="70" cy="232" r="34" fill="#F5A623"/>
+      <circle cx="110" cy="232" r="34" fill="#F5A623"/>
+    </g>
+  </g>
+
+  <!-- Text and a gradient inside one, both of which go through renderers of
+       their own and both of which have to land in the texture. -->
+  <g opacity="0.55">
+    <rect x="200" y="188" width="140" height="88" rx="12" fill="url(#fade)"/>
+    <circle cx="240" cy="232" r="30" fill="#204A34"/>
+    <circle cx="290" cy="232" r="30" fill="#204A34"/>
+    <text x="270" y="270" text-anchor="middle" font-family="Helvetica" font-size="13" fill="#FBF8F3">in the layer</text>
+  </g>
+</svg>)SVG"};
+
 // The same markup in a component of a different aspect, which is the only way to
 // see what preserveAspectRatio does. A 320x120 document in a tall half-window
 // letterboxes under the default; the native side, which stretches, does not.
@@ -422,6 +488,8 @@ Vector<Document> makeDocuments()
     documents.add(
         {"Gradients - linear, radial, spread, units", gradientDocument, true});
     documents.add({"Clip paths - rect, union, units, nesting", clipDocument, true});
+    documents.add(
+        {"Group opacity - per element against per group", opacityDocument, true});
     documents.add({"Aspect ratio - fitted against stretched", aspectDocument, true});
     documents.add({"Tiles - abutting edges", makeTilesDocument(16, 12), false});
     documents.add({"Stacked - 300 large shapes", makeStackedDocument(300), false});
@@ -460,6 +528,8 @@ struct StatsBar final : UI::Component
             + std::to_string(document->getMeshedShapeCount()) + " meshed   "
             + std::to_string(document->getClipCount()) + " clips ("
             + std::to_string(document->getClipMaskCount()) + " masked)   "
+            + std::to_string(document->getOpacityGroupCount()) + " groups ("
+            + std::to_string(host->getLastRenderedLayerCount()) + " rendered)   "
             + std::to_string(document->getFontCount()) + " fonts   " + "asks "
             + millions(asked) + "M texels of a " + millions(held) + "M atlas ("
             + millions(unmeshed) + "M unmeshed)   "

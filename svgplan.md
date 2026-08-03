@@ -1,12 +1,12 @@
 # SVG through the component tier
 
-**Rungs 1 and 2 are done, both of rung 1's questions are answered, the fix the
-first answer pointed at is built, and two of rung 3's three features with it —
-gradients and clipping. Group opacity is what is left.** What follows was written
-before any of it was built; the sections it got wrong are marked where they
-stand, and the records of what actually happened are at the end under *Rung 1, as
-built*, *Rung 2, as built*, *The mesh route, as built*, *Rung 3, gradients, as
-built* and *Rung 3, clipping, as built*.
+**Every rung is done.** Rungs 1 and 2, both of rung 1's questions, the fix the
+first answer pointed at, and all three of rung 3's features: gradients, clipping
+and group opacity. What follows was written before any of it was built; the
+sections it got wrong are marked where they stand, and the records of what
+actually happened are at the end under *Rung 1, as built*, *Rung 2, as built*,
+*The mesh route, as built*, *Rung 3, gradients, as built*, *Rung 3, clipping, as
+built* and *Rung 3, group opacity, as built*.
 
 **Where that leaves the ceiling:** the atlas still cannot hold a document's masks
 and no longer has to. A shape too large to be worth one is drawn as triangles
@@ -48,7 +48,7 @@ has moved only where the parse layer beneath it moved.**
 | `SVGPathParser` | `d` to a path, templated over `Graphics::Path` and `GPUWidgets::Path` and instantiated for both. Every command including `A`/`a` |
 | `SVGGradient` | `<linearGradient>`, `<radialGradient>`, both unit systems, `href` inheritance |
 | `SVGClip` | a `clip-path` reference to a region, and the test for the rectangle a region often is |
-| `SVGComponent` | the component-tier builder. One component, one `PathShape` per fill and per stroke, and one shared region per clip |
+| `SVGComponent` | the component-tier builder. One component, one `PathShape` per fill and per stroke, one shared region per clip, one `UI::Layer` per faded group |
 | `SVGBuilder` | the native builder, unchanged in what it renders |
 | `SVGParser` | the two joined |
 
@@ -67,12 +67,12 @@ beating the attribute of the same name, `fill-rule`, stroke width / caps / joins
 and radial, any number of stops, both unit systems, `gradientTransform`, all
 three spread methods and `href` inheritance — clip paths of any number of shapes,
 with their own transforms, `use` inside them, both unit systems and `clip-rule` —
-and text at any family and size with real measurement.
+opacity on a group as the compositing it is rather than as alpha multiplied into
+each child — and text at any family and size with real measurement.
 
 What it does not: the focal point of a radial gradient, `<mask>`, two shaped
-clips intersecting, group opacity as compositing, `<style>` elements and CSS
-selectors, filters, `<image>`. An element asking for one of those draws without
-it rather than not at all.
+clips intersecting, `<style>` elements and CSS selectors, filters, `<image>`. An
+element asking for one of those draws without it rather than not at all.
 
 And the thing that used to limit all of it: **the coverage atlas cannot hold a
 large document.** Measured, twice over — see *Rung 1, as built* and *What is
@@ -359,7 +359,11 @@ the order a real document notices:
   pipeline, and it should not be built until a document needs it.
 - **Group opacity.** Per-element alpha is just colour alpha and already works;
   compositing a subtree and fading it as a unit needs render-to-texture and is a
-  different feature wearing the same attribute name.
+  different feature wearing the same attribute name. *Right on both counts, and
+  the render-to-texture was the easy half: `Frame::beginPass(texture)` already
+  existed and every renderer in the tier already drew into whatever pass it was
+  handed. What was missing was one line of blend state — see "Rung 3, group
+  opacity, as built".*
 - **`clipPath` and `mask`.** Worth noting that the tier is closer to this than it
   looks: a shape is *already* a colour multiplied by a mask sampled from the
   atlas, so a clip is a second multiply. Composing the clip into the shape's own
@@ -414,8 +418,8 @@ right and one wrong:*
    operation and shipped in `GPUWidgets`.*
 3. **Rung 3** is the three features that need work below the module, in the order
    documents actually miss them: gradients, then clipping, then group opacity.
-   *Gradients and clipping are done — see "Rung 3, gradients, as built" and "Rung
-   3, clipping, as built". Group opacity is not.*
+   *All three are done, in that order, and each needed less below the module than
+   this expected — see the three records at the end.*
 
 One decision to make at the top of rung 1 and not later: whether the native
 `SVGView` stays. Keeping both means one parse layer and two builders, which is
@@ -949,8 +953,96 @@ comfortably. What made it worth finding rather than annoying:
 
 ## Rung 3's remaining one
 
+*Built, in the section below.*
+
 Group opacity, and the note above about `<mask>` is the reason to do it next:
 compositing a subtree and fading it as a unit is render-to-texture, and once
 there is a texture to fade there is one to read a luminance mask out of. Two
 features, one piece of machinery, and it is the last piece this module is
 waiting on.
+
+# Rung 3, group opacity, as built
+
+The last of the three, and the only one whose difference you have to build a
+document to see: a group and its children agree exactly until two shapes inside
+it overlap.
+
+## What shipped
+
+| where | what |
+|---|---|
+| `GPU/Pipeline/RenderPipeline` | `BlendMode::AlphaBlendOntoTransparent`, in the enum and in both backends |
+| `UI/Render/Layer.{h,cpp}` | a run of drawing rendered into a texture of its own: bounds, opacity, an onPaint, and the texture kept across renders |
+| `UI/Render/LayerRenderer.{h,cpp}` | that texture drawn back into the pass, faded and clipped — one draw, no batching, nothing to batch |
+| `UI/Component/Component` | layers registered like path shapes, so the host can find them |
+| `UI/Host/ComponentHost` | the pass per dirty layer, before the frame's own, children before parents |
+| `UI/Graphics` | `drawLayer`, and the renderer ordering generalised from two to three |
+| `UI/Render/ShapeBatch`, `MeshBatch`, `Text/GlyphRenderer` | the new blend mode, which is what makes a layer's own coverage come out right |
+| `SVG/SVGComponent` | `opacity` on a container as a group and on a shape as a colour; drawables became a tree so a group's content is a list of its own |
+| `Apps/UI/SVGDocument` | an Opacity document: the same three circles faded two ways, nested groups, and a group holding text and a gradient |
+| `Tests/SVG`, `Tests/UI` | 11 more cases, 1022 in the project |
+
+## Where the plan was wrong, and it was one line
+
+- **The render-to-texture was already there.** `Frame::beginPass(texture)` takes
+  a pass on the same command buffer, ordered against the others with nothing
+  waiting in between, and every renderer in this tier already draws into whatever
+  pass it is handed. So the layer pass is the tree's own batches pointed at
+  another target for the length of one group — no second set of renderers, no
+  second pipeline, and the same coverage atlas underneath, since the masks are
+  rasterized before any of it.
+- **What was actually missing was a blend mode.** `AlphaBlend` weights the
+  source's alpha by itself, which is invisible on a window — nothing reads that
+  channel — and ruinous on a texture something is about to composite through: a
+  fragment at 50% coverage leaves 25% alpha behind, so every antialiased edge in
+  a layer comes out half as strong as it was drawn, and the group grows a pale
+  halo. One mode with `(ONE, ONE_MINUS_SRC_ALPHA)` in the alpha channel fixes it,
+  and it is what the three renderers now use everywhere: on an opaque target the
+  two are the same picture, so there is nothing to switch between.
+- **The composite needs no premultiplied pipeline either.** A layer texture holds
+  colour already weighted by its own coverage, which is what drawing into a
+  transparent target produces. The usual answer is a second blend equation; the
+  cheaper one is to divide the weight back out in the fragment stage and let the
+  ordinary blend put it back. The two cancel exactly — the output is the same
+  arithmetic to the last bit — and the tier keeps one blend equation.
+- **Fading a layer is not rebuilding it.** The opacity is a uniform where the
+  texture is composited, so an animated fade re-renders nothing at all and costs
+  one quad a frame. That was not designed for; it falls out of the layer holding
+  its content at full strength, which is the only thing it *can* hold if nested
+  groups are to multiply correctly.
+
+## What it costs, and what it does not
+
+A texture per faded group, sized to the group's own bounds in device pixels, and
+a render pass to fill it. Both are paid when the content changes rather than per
+frame: `ComponentHost::getLastRenderedLayerCount` reports how many were filled,
+and on a document that is not being resized it settles at zero.
+
+Nothing else in a document pays anything. A container that says nothing about its
+opacity is not a group, an `opacity` on a *shape* is still one multiply into its
+colour, and the demo's other seven documents build no layers at all.
+
+Nesting works the way the format needs it to and the ordering is the whole of
+what makes it work: the inner layer is rendered first and then drawn into the
+outer one, so two fades multiply rather than the inner one being lost. That is
+the one rule a caller has to obey — a layer must be constructed after everything
+it draws — and building innermost-out is what a tree walk gives you anyway.
+
+## What it does not do
+
+- **A group holding text takes a layer the size of the component.** A run's
+  extent is the width of glyphs the renderer has not measured yet, and a box
+  guessed at the wrong size cuts the string. Shapes are exact, so a group of
+  those is exactly as large as it needs to be.
+- **`<mask>` is still not built**, and it is now one step away rather than a
+  feature: a luminance mask is a subtree rendered into a texture — which is this
+  — read back as coverage instead of as colour.
+- **A layer is not isolated from what it will be drawn onto**, because it does not
+  have to be for opacity: fading a group composited over the backdrop and fading
+  an isolated group over the same backdrop are the same arithmetic. A blend mode
+  that is not source-over would need the isolation the format's `isolation`
+  property talks about, and filters are where that matters.
+- **Nothing re-renders a layer when its content changes on its own.** The layer
+  is dirtied by its bounds changing and by the document being rebuilt, which
+  covers everything this module does to one; a widget animating inside a layer has
+  to say so with `setDirty`.

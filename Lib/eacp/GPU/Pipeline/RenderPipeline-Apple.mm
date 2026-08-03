@@ -194,6 +194,15 @@ struct RenderPipeline::Native
                 colorAttachment.destinationAlphaBlendFactor =
                     MTLBlendFactorOneMinusSourceAlpha;
                 break;
+            case BlendMode::AlphaBlendOntoTransparent:
+                colorAttachment.blendingEnabled = YES;
+                colorAttachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+                colorAttachment.destinationRGBBlendFactor =
+                    MTLBlendFactorOneMinusSourceAlpha;
+                colorAttachment.sourceAlphaBlendFactor = MTLBlendFactorOne;
+                colorAttachment.destinationAlphaBlendFactor =
+                    MTLBlendFactorOneMinusSourceAlpha;
+                break;
             case BlendMode::Additive:
                 colorAttachment.blendingEnabled = YES;
                 colorAttachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
