@@ -101,6 +101,7 @@ void ComponentHost::resized()
         shapes->setLogicalSize({bounds.w, bounds.h});
         shapes->setPixelScale(backingScale());
         meshes->setLogicalSize({bounds.w, bounds.h});
+        layers->setLogicalSize({bounds.w, bounds.h});
     }
     else
     {
@@ -112,6 +113,7 @@ void ComponentHost::resized()
                        backingScale(),
                        sampleCount());
         meshes.emplace(*paths, *ramps, Point {bounds.w, bounds.h}, sampleCount());
+        layers.emplace(Point {bounds.w, bounds.h}, sampleCount());
     }
 
     if (root != nullptr)
@@ -186,6 +188,94 @@ void ComponentHost::rasterizeDirtyPaths(Component& component,
 
     for (auto* child: component.getChildren())
         rasterizeDirtyPaths(*child, batch, walk);
+}
+
+// Every layer whose content changed, each rendered into its own texture on this
+// frame's command buffer, before the pass that draws the tree.
+//
+// It has to be here for the same reason the compute dispatch does: a pass cannot
+// begin while another is open, so a texture the tree samples has to be finished
+// before the tree is drawn. Passes on one frame are ordered by the queue, so a
+// layer written here is legal to sample later in the same frame with nothing
+// waiting in between.
+//
+// Children before parents, and a component's own layers in the order they
+// registered -- which together are what lets a layer hold another one. See
+// Layer's ordering rule, which is the only thing a caller has to obey.
+void ComponentHost::renderLayers(GPU::Frame& frame)
+{
+    if (root == nullptr || !shapes.has_value())
+        return;
+
+    lastRenderedLayers = 0;
+    renderLayers(*root, frame);
+}
+
+void ComponentHost::renderLayers(Component& component, GPU::Frame& frame)
+{
+    for (auto* child: component.getChildren())
+        renderLayers(*child, frame);
+
+    for (auto* layer: component.getLayers())
+        if (layer->isDirty())
+            renderLayer(*layer, frame);
+}
+
+void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
+{
+    auto bounds = layer.getBounds();
+
+    if (!layer.ensureTexture(backingScale()))
+        return;
+
+    // The renderers are the tree's own, pointed at this pass and told the
+    // layer's size. One set rather than a second, because a pipeline is
+    // unaffected by what it draws into: the target's format and sample count are
+    // the drawable's, which is what a layer texture is made to match.
+    auto descriptor = GPU::RenderPassDescriptor {};
+    descriptor.clearColor = Color::black(0.f);
+
+    auto pass = frame.beginPass(layer.getTexture(), descriptor);
+
+    shapes->setLogicalSize({bounds.w, bounds.h});
+    meshes->setLogicalSize({bounds.w, bounds.h});
+    layers->setLogicalSize({bounds.w, bounds.h});
+
+    shapes->begin(pass);
+    meshes->begin(pass);
+
+    text->setViewport({bounds.w, bounds.h}, backingScale());
+    text->begin();
+
+    {
+        auto g = Graphics {*shapes,
+                           *meshes,
+                           *layers,
+                           *ramps,
+                           *text,
+                           pass,
+                           {0.f, 0.f, bounds.w, bounds.h},
+                           backingScale()};
+
+        // So the content draws in the coordinates it was authored in and the
+        // layer's own top-left lands on the texture's.
+        g.translate(-bounds.x, -bounds.y);
+
+        layer.onPaint(g);
+        g.flush();
+    }
+
+    shapes->end();
+    meshes->end();
+
+    auto surface = getLocalBounds();
+
+    shapes->setLogicalSize({surface.w, surface.h});
+    meshes->setLogicalSize({surface.w, surface.h});
+    layers->setLogicalSize({surface.w, surface.h});
+
+    layer.markRendered();
+    ++lastRenderedLayers;
 }
 
 // Every path whose geometry changed since the last frame, drawn into the shared
@@ -294,12 +384,20 @@ void ComponentHost::render(GPU::Frame& frame)
 
     rasterizePaths(frame);
 
+    // After the masks and before the tree: a layer's content is drawn out of the
+    // same atlas everything else is, so the coverage has to exist before the
+    // layer's own pass runs.
+    renderLayers(frame);
+
+    text->setViewport({bounds.w, bounds.h}, backingScale());
+    text->begin();
+
     auto pass = frame.beginPass({background});
     shapes->begin(pass);
     meshes->begin(pass);
 
-    auto g =
-        Graphics {*shapes, *meshes, *ramps, *text, pass, bounds, backingScale()};
+    auto g = Graphics {
+        *shapes, *meshes, *layers, *ramps, *text, pass, bounds, backingScale()};
 
     paintComponent(*root, g);
 

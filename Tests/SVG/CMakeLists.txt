@@ -3,4 +3,5 @@ nano_add_executable(SVGTests
             SVGClipTests.cpp
             SVGGeometryTests.cpp
             SVGGradientTests.cpp
+            SVGOpacityTests.cpp
         TARGETS eacp-svg)

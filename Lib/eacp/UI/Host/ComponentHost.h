@@ -43,6 +43,12 @@ public:
     // Graphics::getRendererSwitchCount.
     int getLastRendererSwitchCount() const { return lastRendererSwitches; }
 
+    // Layers in the tree that were rendered into a texture of their own this
+    // frame, each one a render pass before the frame's. Zero once nothing is
+    // changing: a layer whose content is unchanged is drawn from the texture it
+    // already has, which is what makes an animated opacity cheap.
+    int getLastRenderedLayerCount() const { return lastRenderedLayers; }
+
     // Vector shapes in the tree that have no mask, the coverage atlas having had
     // no room for them: each one draws as nothing. Zero unless an interface has
     // reached the atlas ceiling, which is a real limit rather than an error --
@@ -103,6 +109,13 @@ private:
         int meshed = 0;
     };
 
+    // Rendering every Layer in the tree whose content changed, each into a pass
+    // of its own, before the frame's own pass opens -- which is the only place
+    // it can happen, a pass not being able to begin inside another one.
+    void renderLayers(GPU::Frame& frame);
+    void renderLayers(Component& component, GPU::Frame& frame);
+    void renderLayer(Layer& layer, GPU::Frame& frame);
+
     // Rasterizing every PathShape in the tree whose geometry changed, before
     // the render pass opens. See the definition for why it can only happen here.
     void rasterizePaths(GPU::Frame& frame);
@@ -147,6 +160,10 @@ private:
     // tree painted them.
     std::optional<MeshBatch> meshes;
 
+    // What composites a layer's texture back into the picture. One draw apiece
+    // and nothing queued, so it holds no state between frames.
+    std::optional<LayerRenderer> layers;
+
     std::optional<Text::TextRenderer> text;
 
     // The scale everything in the atlas was rasterized at, so a move between
@@ -169,5 +186,6 @@ private:
     int lastComponentCount = 0;
     int lastDroppedPaths = 0;
     int lastMeshedPaths = 0;
+    int lastRenderedLayers = 0;
 };
 } // namespace eacp::UI

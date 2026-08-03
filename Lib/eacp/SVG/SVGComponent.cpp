@@ -36,10 +36,10 @@ struct SVGComponent::Style
     std::string fillReference;
     std::string strokeReference;
 
-    // Multiplied into the colours rather than composited. Correct for a single
-    // element, and an approximation for a group: fading a subtree as a unit
-    // means drawing it to a texture and fading that, which is a different
-    // feature wearing the same attribute name.
+    // Multiplied into the colours, which is what an element's own opacity is.
+    // A *container's* is not this: it composites the group through a layer and
+    // never reaches here, so what this carries is only ever the product of the
+    // element's own and whatever an enclosing group left opaque.
     float opacity = 1.f;
     float fillOpacity = 1.f;
     float strokeOpacity = 1.f;
@@ -199,6 +199,20 @@ bool isViewportTag(const std::string& tag)
 // honest document nests and short enough that a cycle costs nothing.
 constexpr int maxUseDepth = 8;
 
+// An element's own opacity, which is not a thing that inherits: it applies to
+// the element, and for a container that means to the group rather than to each
+// child. Read here rather than folded into the style, because those two are
+// different pictures and only the caller knows which it is looking at.
+float elementOpacity(const SVGElement& element)
+{
+    auto value = PropertyReader {element}("opacity");
+
+    if (value.empty())
+        return 1.f;
+
+    return std::clamp(Strings::parseFloatOr(value, 1.f), 0.f, 1.f);
+}
+
 void applyDashPattern(const std::string& value, GPUWidgets::DashPattern& dash)
 {
     if (value.empty())
@@ -239,10 +253,6 @@ void SVGComponent::applyPresentationAttributes(Style& style,
     applyNumber(read("font-size"), style.fontSize);
 
     applyDashPattern(read("stroke-dasharray"), style.dash);
-
-    auto opacity = read("opacity");
-    if (!opacity.empty())
-        style.opacity *= Strings::parseFloatOr(opacity, 1.f);
 
     auto fillRule = read("fill-rule");
     if (!fillRule.empty())
@@ -331,7 +341,9 @@ GPUWidgets::AffineTransform SVGComponent::documentToComponent() const
 void SVGComponent::clearContent()
 {
     order.clear();
+    output = &order;
     shapes.clear();
+    groups.clear();
     clips.clear();
     texts.clear();
 
@@ -391,6 +403,66 @@ void SVGComponent::buildElement(const SVGElement& element,
     auto style = inherited;
     applyPresentationAttributes(style, element);
 
+    auto own = elementOpacity(element);
+
+    // A shape or a string has nothing to composite with: its opacity is its
+    // colour's, exactly, and multiplying it in costs nothing and needs no
+    // texture. Only a container is a *group*, and only a group that is actually
+    // being faded is worth one.
+    auto leaf = isShapeTag(element.tag) || element.tag == "text";
+
+    if (leaf || own >= 1.f)
+    {
+        style.opacity *= own;
+        buildElementContent(element, style, depth);
+        return;
+    }
+
+    buildOpacityGroup(element, style, depth, own);
+}
+
+// A container drawn into a texture of its own so the fade lands on the group
+// rather than on each child of it.
+//
+// The children are built with the *inherited* opacity and not the group's, which
+// is the whole point: their own alpha is what they were authored with, and the
+// group's is applied once where the layer is composited.
+void SVGComponent::buildOpacityGroup(const SVGElement& element,
+                                     const Style& style,
+                                     int depth,
+                                     float opacity)
+{
+    auto content = Vector<Drawable> {};
+    auto* enclosing = output;
+
+    output = &content;
+    buildElementContent(element, style, depth);
+    output = enclosing;
+
+    if (content.empty())
+        return;
+
+    // Made here rather than before the content, because a layer may hold another
+    // and UI::Layer renders them in the order they registered -- so the inner
+    // one, whose own content is already built, has to exist first.
+    auto& group = groups.createNew(*this);
+
+    group.content = std::move(content);
+    group.layer.setOpacity(opacity);
+    group.layer.setBounds(boundsOf(group.content));
+
+    auto index = groups.size() - 1;
+
+    group.layer.onPaint = [this, index](UI::Graphics& g)
+    { paintDrawables(g, groups[index]->content); };
+
+    output->add({Drawable::Kind::Group, index});
+}
+
+void SVGComponent::buildElementContent(const SVGElement& element,
+                                       const Style& style,
+                                       int depth)
+{
     if (isShapeTag(element.tag))
     {
         buildShapes(element, style);
@@ -417,6 +489,60 @@ void SVGComponent::buildElement(const SVGElement& element,
 
     for (auto& child: element.children)
         buildElement(child, style, depth);
+}
+
+Graphics::Rect SVGComponent::boundsOf(const Vector<Drawable>& drawables) const
+{
+    auto area = getLocalBounds();
+    auto result = Graphics::Rect {};
+    auto found = false;
+
+    auto include = [&](const Graphics::Rect& rect)
+    {
+        if (!found)
+        {
+            result = rect;
+            found = true;
+            return;
+        }
+
+        auto left = std::min(result.x, rect.x);
+        auto top = std::min(result.y, rect.y);
+
+        result = {left,
+                  top,
+                  std::max(result.right(), rect.right()) - left,
+                  std::max(result.bottom(), rect.bottom()) - top};
+    };
+
+    for (const auto& item: drawables)
+    {
+        if (item.kind == Drawable::Kind::Shape)
+        {
+            // The geometry's bounds and not the mask's, which only exist once a
+            // kernel has rasterized one -- grown by a point, since a mask is the
+            // geometry snapped out to whole device pixels and a mesh carries a
+            // feather half a pixel wide.
+            const auto& shape = *shapes[item.index];
+
+            include(shape.maskBounds.inset(-1.f));
+            continue;
+        }
+
+        if (item.kind == Drawable::Kind::Group)
+        {
+            include(groups[item.index]->layer.getBounds());
+            continue;
+        }
+
+        // A run of text, whose extent is the width of glyphs nobody has measured
+        // yet: only the renderer holding them can say, and it is not asked until
+        // paint time. So the group takes the whole component rather than a box
+        // that might cut the string.
+        return area;
+    }
+
+    return found ? result.intersection(area) : Graphics::Rect {};
 }
 
 const SVGElement* SVGComponent::findElementById(const std::string& id) const
@@ -619,7 +745,7 @@ void SVGComponent::buildTextRun(const SVGElement& element, const Style& style)
         return;
 
     texts.add(run);
-    order.add({true, texts.size() - 1});
+    output->add({Drawable::Kind::Text, texts.size() - 1});
 }
 
 void SVGComponent::addShape(const GPUWidgets::Path& path,
@@ -636,7 +762,7 @@ void SVGComponent::addShape(const GPUWidgets::Path& path,
     shape.maskBounds = path.getBounds();
     shape.mask.setPath(path, rule);
 
-    order.add({false, shapes.size() - 1});
+    output->add({Drawable::Kind::Shape, shapes.size() - 1});
 }
 
 int SVGComponent::findOrAddClip(const std::string& reference,
@@ -847,6 +973,14 @@ int SVGComponent::getMeshedShapeCount() const
 
 void SVGComponent::paint(UI::Graphics& g)
 {
+    paintDrawables(g, order);
+}
+
+// The document, or one composited group of it -- the same walk either way, since
+// a group's content is a list of drawables like any other and the only thing
+// that differs is which Graphics it lands in.
+void SVGComponent::paintDrawables(UI::Graphics& g, const Vector<Drawable>& drawables)
+{
     // The document's own font, while a run of text is being drawn. Swapped only
     // when it changes, so a document whose text is all one size costs one break
     // in and one out however many strings it has.
@@ -900,32 +1034,50 @@ void SVGComponent::paint(UI::Graphics& g)
             g.reduceClipToShape(clips[clip.maskIndex]->mask);
     };
 
-    for (auto& item: order)
+    auto draw = [&](const Drawable& item)
     {
-        const auto& clip =
-            item.isText ? texts[item.index].clip : shapes[item.index]->clip;
+        if (item.kind == Drawable::Kind::Text)
+        {
+            drawText(texts[item.index]);
+            return;
+        }
+
+        if (item.kind == Drawable::Kind::Group)
+        {
+            // One quad of a texture the host filled before the frame's pass
+            // opened, faded by the group's own opacity -- which is what makes
+            // the overlaps inside it come out as they were drawn.
+            g.drawLayer(groups[item.index]->layer);
+            return;
+        }
+
+        drawShape(*shapes[item.index]);
+    };
+
+    for (auto& item: drawables)
+    {
+        // A group carries no clip of its own: the clip an element inherited is
+        // resolved where its geometry is, so every drawable inside the group has
+        // it already.
+        const auto* clip =
+            item.kind == Drawable::Kind::Text    ? &texts[item.index].clip
+            : item.kind == Drawable::Kind::Shape ? &shapes[item.index]->clip
+                                                 : nullptr;
 
         // Only where there is one. A clip costs a batch break each way, and a
         // document without them should pay nothing at all -- which also means
         // the run of shapes under one clip stays one draw, since the state does
         // not go up and down between them.
-        if (clip.isEmpty())
+        if (clip == nullptr || clip->isEmpty())
         {
-            if (item.isText)
-                drawText(texts[item.index]);
-            else
-                drawShape(*shapes[item.index]);
-
+            draw(item);
             continue;
         }
 
         auto scope = UI::Graphics::ScopedState {g};
-        applyClip(clip);
+        applyClip(*clip);
 
-        if (item.isText)
-            drawText(texts[item.index]);
-        else
-            drawShape(*shapes[item.index]);
+        draw(item);
     }
 
     if (activeFont != nullptr)

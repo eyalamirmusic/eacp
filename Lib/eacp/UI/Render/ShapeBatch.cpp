@@ -171,10 +171,16 @@ ShapeBatch::ShapeBatch(const CoverageAtlas& atlasToUse,
 
     // Always blended: every edge this draws is a coverage ramp, and without
     // blending the antialiasing would punch holes in whatever is behind it.
+    //
+    // The mode that accumulates the target's own alpha rather than weighting the
+    // source's by itself. Identical on the window, where the destination is
+    // already opaque, and the difference between a correct layer and one whose
+    // every antialiased edge composites too faintly -- see Layer, which renders
+    // this same batch into a transparent texture.
     program->prepare(sampleCount,
                      false,
                      GPU::PrimitiveTopology::Triangles,
-                     GPU::BlendMode::AlphaBlend,
+                     GPU::BlendMode::AlphaBlendOntoTransparent,
                      colorFormat);
 }
 

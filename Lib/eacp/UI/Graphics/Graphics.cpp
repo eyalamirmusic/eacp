@@ -7,6 +7,7 @@ namespace eacp::UI
 {
 Graphics::Graphics(ShapeBatch& shapesToUse,
                    MeshBatch& meshesToUse,
+                   LayerRenderer& layersToUse,
                    GradientRamps& rampsToUse,
                    Text::TextRenderer& textToUse,
                    GPU::RenderPass& passToUse,
@@ -14,6 +15,7 @@ Graphics::Graphics(ShapeBatch& shapesToUse,
                    float backingScaleToUse)
     : shapes(shapesToUse)
     , meshes(meshesToUse)
+    , layers(layersToUse)
     , ramps(rampsToUse)
     , hostText(textToUse)
     , text(&textToUse)
@@ -159,20 +161,38 @@ void Graphics::applyClip(bool changeScissor, bool changeMask)
 void Graphics::prepareToDraw(const Rect& surfaceBounds, Renderer renderer)
 {
     // Unconditionally, and before the clip is even looked at: what decides the
-    // order two renderers come out in is which of them flushed first, so the one
-    // not about to be used has to be emptied whether or not anything else about
-    // the state changed. Counted when it had anything in it, that being exactly
-    // the draw this alternation cost.
-    auto quads = renderer == Renderer::Quads;
+    // order the renderers come out in is which of them flushed first, so every
+    // one not about to be used has to be emptied whether or not anything else
+    // about the state changed. Counted when one had anything in it, that being
+    // exactly the draw this alternation cost.
+    //
+    // The layer renderer queues nothing -- it draws where it is called, a layer
+    // being one quad of its own texture -- so it never appears here as something
+    // to drain, only as the thing the other two are drained for.
+    auto holding = (renderer != Renderer::Quads && !shapes.isEmpty())
+                   || (renderer != Renderer::Meshes && !meshes.isEmpty());
 
-    if (quads ? !meshes.isEmpty() : !shapes.isEmpty())
+    if (holding)
     {
-        if (quads)
+        if (renderer != Renderer::Meshes)
             meshes.flush();
-        else
+
+        if (renderer != Renderer::Quads)
             shapes.flush();
 
         ++rendererSwitches;
+    }
+
+    // And the glyphs, for a layer alone. Text is otherwise left to composite
+    // above the fills of its own clip region whatever order it was issued in --
+    // which is what a component drawing its own background and then its own
+    // caption wants -- but a layer is a picture placed *over* what came before
+    // it, and a document fading a group over a heading means the heading to be
+    // underneath.
+    if (renderer == Renderer::Layers)
+    {
+        text->flush(pass);
+        text->begin();
     }
 
     // A rect the primitive is wholly inside cuts nothing off it, so the change
@@ -255,6 +275,21 @@ void Graphics::fillPath(const PathShape& shape)
 
     prepareToDraw(target);
     shapes.fillMask(target, state.colour, shape.getMaskUV(), state.gradient);
+}
+
+void Graphics::drawLayer(const Layer& layer)
+{
+    if (layer.isEmpty())
+        return;
+
+    auto target = toSurface(layer.getBounds());
+
+    prepareToDraw(target, Renderer::Layers);
+
+    // Straight to the pass rather than into a queue, and the clip goes with it
+    // rather than being state the renderer holds: one layer is one draw, so
+    // there is nothing to batch and nothing for a state change to break.
+    layers.draw(pass, layer, target, state.clipMask, shapes.getAtlas());
 }
 
 float Graphics::drawText(std::string_view textToDraw, Point baselineLeft)

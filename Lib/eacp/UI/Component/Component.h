@@ -129,18 +129,31 @@ public:
     // point in a frame where a compute pass can run. See PathShape.
     const Vector<PathShape*>& getPathShapes() const { return pathShapes; }
 
+    // The layers this component composites, found by the host the same way and
+    // for the same reason: a layer's content is rendered into a texture of its
+    // own before the frame's pass opens, a pass not being able to begin inside
+    // another one. See Layer, and note its ordering rule -- these are rendered
+    // in the order they registered, so a layer holding another has to be
+    // constructed after it.
+    const Vector<Layer*>& getLayers() const { return layers; }
+
 private:
     friend class ComponentHost;
     friend class PathShape;
+    friend class Layer;
 
     void addPathShape(PathShape& shape);
     void removePathShape(PathShape& shape);
+
+    void addLayer(Layer& layer);
+    void removeLayer(Layer& layer);
 
     ComponentHost* findHost() const;
 
     Rect bounds;
     Vector<Component*> children;
     Vector<PathShape*> pathShapes;
+    Vector<Layer*> layers;
     Component* parent = nullptr;
 
     // Set on a root only, by ComponentHost::setRootComponent. Everything else

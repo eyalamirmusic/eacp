@@ -76,6 +76,16 @@ void Component::removePathShape(PathShape& shape)
     pathShapes.removeAllMatches(&shape);
 }
 
+void Component::addLayer(Layer& layer)
+{
+    layers.add(&layer);
+}
+
+void Component::removeLayer(Layer& layer)
+{
+    layers.removeAllMatches(&layer);
+}
+
 void Component::setVisible(bool shouldBeVisible)
 {
     if (visible == shouldBeVisible)
