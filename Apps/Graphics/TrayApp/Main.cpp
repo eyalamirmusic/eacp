@@ -1,4 +1,5 @@
-#include <eacp/Graphics/Graphics.h>
+#include <eacp/UI/UI.h>
+
 #include <algorithm>
 
 using namespace eacp;
@@ -35,34 +36,43 @@ static Image makeTrayIcon()
 }
 
 // The content of the floating panel below. The window's cornerRadius clips
-// this view, so it just fills its bounds — the rounding comes for free.
-struct PanelView final : View
+// this component tree, so it just fills its bounds — the rounding comes for
+// free.
+struct PanelContent final : UI::Component
 {
-    PanelView()
+    PanelContent()
     {
-        background->setFillColor({0.11f, 0.11f, 0.13f});
-        title->setColor({0.95f, 0.95f, 0.95f});
-        subtitle->setColor({0.62f, 0.62f, 0.68f});
+        title.setFontSize(17.f);
+        title.setColour({0.95f, 0.95f, 0.95f, 1.f});
 
-        addChildren({background, title, subtitle});
+        subtitle.setColour({0.62f, 0.62f, 0.68f, 1.f});
+
+        addChildren({title, subtitle});
     }
+
+    void paint(UI::Graphics& g) override { g.fillAll({0.11f, 0.11f, 0.13f, 1.f}); }
 
     void resized() override
     {
-        auto bounds = getLocalBounds();
+        auto area = getLocalBounds().inset(20.f, 24.f);
 
-        auto path = Path();
-        path.addRect(bounds);
-        background->setPath(path);
-
-        scaleToFit({background, title, subtitle});
-        title->setPosition({20.f, bounds.h - 44.f});
-        subtitle->setPosition({20.f, bounds.h - 70.f});
+        title.setBounds(area.removeFromTop(26.f));
+        subtitle.setBounds(area.removeFromTop(22.f));
     }
 
-    ShapeLayerView background;
-    TextLayerView title {"Quick Panel"};
-    TextLayerView subtitle {"Toggled from the tray, never recreated"};
+    UI::Label title {"Quick Panel"};
+    UI::Label subtitle {"Toggled from the tray, never recreated"};
+};
+
+struct PanelHost final : UI::ComponentHost
+{
+    PanelHost()
+    {
+        setBackgroundColour({0.11f, 0.11f, 0.13f, 1.f});
+        setRootComponent(content);
+    }
+
+    PanelContent content;
 };
 
 struct TrayApp
@@ -75,7 +85,7 @@ struct TrayApp
         // the app starts as a bare tray icon. setVisible keeps the window
         // (and its content) alive across toggles, so it reappears exactly
         // where the user left it.
-        window.setContentView(panelView);
+        window.setContentView(panelHost);
         window.setVisible(false);
 
         tray.setIcon(makeTrayIcon());
@@ -124,7 +134,7 @@ struct TrayApp
 
     void togglePanel() { window.setVisible(!window.isVisible()); }
 
-    PanelView panelView;
+    PanelHost panelHost;
     Window window {getPanelOptions()};
     TrayIcon tray;
 };

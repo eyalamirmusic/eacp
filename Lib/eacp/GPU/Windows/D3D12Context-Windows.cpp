@@ -25,6 +25,13 @@ constexpr std::size_t constantAlignment = 256;
 // dispatches or draws fits in a single page and never allocates mid-frame.
 constexpr std::size_t constantPageBytes = 64 * 1024;
 
+// How much upload space a recording is given at a time. A frame of a component
+// interface uses well under a megabyte between its uniforms and its instance
+// data, so the common case is one chunk created once and refilled for the rest
+// of the run; the frame that builds a path-heavy interface's masks takes a
+// handful more and then stops.
+constexpr std::size_t uploadChunkBytes = 1024 * 1024;
+
 winrt::com_ptr<ID3D12Device> createHardwareOrWarpDevice()
 {
     auto device = winrt::com_ptr<ID3D12Device>();
@@ -362,10 +369,40 @@ void D3D12Shared::createRootSignatures()
     computeRootSignature = makeRootSignature(device.get(), computeDesc);
 }
 
+// Built on first use rather than beside the root signatures: a process that
+// never dispatches indirectly never makes one, and it depends on nothing that
+// could have changed since the device was created.
+//
+// pRootSignature stays null, which D3D12 allows exactly when every argument is
+// a Draw or a Dispatch - nothing about the bindings varies per command here,
+// only the grid, so there is no root-argument layout for the signature to
+// describe.
+ID3D12CommandSignature* D3D12Shared::getDispatchSignature()
+{
+    if (dispatchSignature != nullptr || device == nullptr)
+        return dispatchSignature.get();
+
+    D3D12_INDIRECT_ARGUMENT_DESC argument = {};
+    argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH;
+
+    D3D12_COMMAND_SIGNATURE_DESC desc = {};
+    desc.ByteStride = sizeof(D3D12_DISPATCH_ARGUMENTS);
+    desc.NumArgumentDescs = 1;
+    desc.pArgumentDescs = &argument;
+
+    device->CreateCommandSignature(&desc,
+                                   nullptr,
+                                   __uuidof(ID3D12CommandSignature),
+                                   dispatchSignature.put_void());
+
+    return dispatchSignature.get();
+}
+
 void D3D12Shared::recreateAfterDeviceLoss()
 {
     renderRootSignature = nullptr;
     computeRootSignature = nullptr;
+    dispatchSignature = nullptr;
     device = nullptr;
 
     ++generation;
@@ -494,6 +531,13 @@ void D3D12Context::releaseAll()
     staging.clear();
     readback.clear();
     constantPages.clear();
+    recycling.clear();
+    reusable.clear();
+    reusableBytes = 0;
+
+    // Before the pool it points into goes: a recording open across a device
+    // rebuild is one whose list belonged to the dead device either way.
+    openRecording = nullptr;
     pool.clear();
     available.clear();
     textureDescriptors = {};
@@ -622,40 +666,130 @@ void D3D12Context::deferReleaseUnknown(winrt::com_ptr<IUnknown> object)
     if (object == nullptr)
         return;
 
-    // Stamped with the value the next signal will carry: by the time that
-    // value completes, everything submitted before this call — and the open
-    // recording that submits next — has finished with the object. purgeRetired
-    // additionally waits for every recording to close; see the note there.
-    retired.add({std::move(object), nextFenceValue});
+    // Unstamped, because the value that frees it is not knowable yet. Every list
+    // that can reference the object from here on is one that already exists: no
+    // new command can name it, its owner is gone. But one of those lists may
+    // still be open, and an open list's fence value is not assigned until it
+    // submits — so there is nothing sound to stamp it with until nothing is
+    // recording. purgeRetired does that.
+    //
+    // Stamping it here with the value the *next* signal will carry is what this
+    // used to do, and it assumed the open recording submits next. A frame issues
+    // uploads of its own, and each used to acquire a second list that signalled
+    // *ahead* of the frame's; the frame's list then submitted with a higher value
+    // than the stamp, so the stamp completed while the list still referencing the
+    // object was open or executing. Releasing there is a use-after-free the debug
+    // layer raises on, and it crashed the editor a few keystrokes in.
+    retired.add({std::move(object), 0, false});
 }
 
 void D3D12Context::purgeRetired()
 {
-    // Freed only when the GPU has gone completely idle: nothing left recording,
-    // and the fence past everything ever submitted.
+    // Nothing is recording, so every list that could name anything retired so
+    // far has been submitted, and lastSubmittedValue is at or past all of their
+    // fences. That is the first moment an entry can be given a value that is
+    // sound, and it is the whole reason the stamping is here rather than at the
+    // point of retirement.
     //
-    // Per context, and only sound because it is: no other context's command
-    // list can reference a resource this one retired, since resources do not
-    // cross Devices. See getD3D12Context.
+    // Called from the top of acquire(), before the caller's context is taken out
+    // of the pool, so the first acquire of a frame sees the previous frame closed
+    // and stamps everything it retired.
     //
-    // The per-entry fence value cannot answer this on its own. A retired object
-    // is stamped with the value the *next* signal will carry, which assumes the
-    // recording that references it submits next — but a frame issues uploads of
-    // its own (every setInstances makes a buffer), and each acquires a second
-    // list that signals *ahead* of the frame. The frame's list then submits with
-    // a higher value than the stamp, so the stamp completes while the list still
-    // referencing the object is either open or still executing. Releasing there
-    // is a use-after-free the debug layer raises on, and it crashed the editor
-    // a few keystrokes in — every keystroke rebuilds the glyph instance buffer,
-    // so this path runs constantly once text is on screen.
-    //
-    // Draining is coarse but provably safe, and costs nothing here: the retired
-    // list holds a frame's worth of buffers, and the GPU goes idle between
-    // frames in an editor that only redraws on input.
-    if (available.size() != pool.size() || !hasCompleted(lastSubmittedValue))
+    // Per context, and only sound because it is: no other context's command list
+    // can reference a resource this one retired, since resources do not cross
+    // Devices. See getD3D12Context.
+    if (available.size() == pool.size())
+    {
+        for (auto& entry: retired)
+        {
+            if (!entry.stamped)
+            {
+                entry.fenceValue = lastSubmittedValue;
+                entry.stamped = true;
+            }
+        }
+    }
+
+    // Each goes as its own value passes. Waiting instead for the fence to be
+    // past *everything* ever submitted is what this used to do, and under
+    // continuous rendering the fence is always a frame or two behind, so it
+    // freed nothing at all: a scrolling interface held on to every buffer it had
+    // replaced -- thousands of them -- and grew its working set by megabytes a
+    // second until it happened to fall idle.
+    retired.eraseIf([this](const Retired& entry)
+                    { return entry.stamped && hasCompleted(entry.fenceValue); });
+
+    releaseRecycledBuffers();
+}
+
+// The same two steps as purgeRetired, for buffers that are to be handed out
+// again rather than dropped: stamp them once nothing is recording, and move them
+// to the free list once their value passes.
+void D3D12Context::releaseRecycledBuffers()
+{
+    if (available.size() == pool.size())
+    {
+        for (auto& entry: recycling)
+        {
+            if (!entry.stamped)
+            {
+                entry.fenceValue = lastSubmittedValue;
+                entry.stamped = true;
+            }
+        }
+    }
+
+    recycling.eraseIf(
+        [this](PooledBuffer& entry)
+        {
+            if (!entry.stamped || !hasCompleted(entry.fenceValue))
+                return false;
+
+            if (reusableBytes + entry.capacity <= reusableBudget)
+            {
+                reusableBytes += entry.capacity;
+                reusable.add(std::move(entry));
+            }
+
+            return true;
+        });
+}
+
+winrt::com_ptr<ID3D12Resource>
+    D3D12Context::takeDefaultBuffer(std::size_t bytes, D3D12_RESOURCE_FLAGS flags)
+{
+    // Best fit rather than first, so a request for a few hundred bytes does not
+    // take the megabyte-sized spare and leave the next large one to allocate.
+    auto best = reusable.end();
+
+    for (auto it = reusable.begin(); it != reusable.end(); ++it)
+        if (it->flags == flags && it->capacity >= bytes)
+            if (best == reusable.end() || it->capacity < best->capacity)
+                best = it;
+
+    if (best == reusable.end())
+        return nullptr;
+
+    auto resource = std::move(best->resource);
+    reusableBytes -= best->capacity;
+    reusable.erase(best);
+
+    return resource;
+}
+
+void D3D12Context::recycleDefaultBuffer(winrt::com_ptr<ID3D12Resource> resource,
+                                        std::size_t capacity,
+                                        D3D12_RESOURCE_FLAGS flags)
+{
+    if (resource == nullptr)
         return;
 
-    retired.clear();
+    auto entry = PooledBuffer {};
+    entry.resource = std::move(resource);
+    entry.capacity = capacity;
+    entry.flags = flags;
+
+    recycling.add(std::move(entry));
 }
 
 CommandContext* D3D12Context::acquire()
@@ -680,6 +814,7 @@ CommandContext* D3D12Context::acquire()
         commands = *recycled;
         available.erase(recycled);
         commands->transients.clear();
+        commands->rewindUploads();
         commands->allocator->Reset();
         commands->list->Reset(commands->allocator.get(), nullptr);
     }
@@ -830,6 +965,65 @@ void D3D12Context::pollCompletions()
 
     for (auto& done: ready)
         done();
+}
+
+CommandContext::UploadChunk* D3D12Context::uploadRoomFor(CommandContext& commands,
+                                                         std::size_t bytes)
+{
+    // Forward only. A chunk the cursor has passed was too full for an earlier
+    // request, and going back to check it again on every upload would make this
+    // linear in the uploads a frame has already made.
+    while (commands.uploadCursor < commands.uploads.size())
+    {
+        auto& chunk = commands.uploads[commands.uploadCursor];
+
+        if (chunk.capacity - chunk.used >= bytes)
+            return &chunk;
+
+        ++commands.uploadCursor;
+    }
+
+    auto chunk = CommandContext::UploadChunk {};
+    chunk.capacity = std::max(uploadChunkBytes, bytes);
+    chunk.resource = makeUploadBuffer(nullptr, chunk.capacity);
+
+    if (chunk.resource == nullptr)
+        return nullptr;
+
+    // Left mapped for the resource's whole life. An upload heap is CPU-visible
+    // memory, and mapping it per write would be a page-table round trip per
+    // draw for a pointer that never changes.
+    void* mapped = nullptr;
+    const D3D12_RANGE noRead = {0, 0};
+
+    if (FAILED(chunk.resource->Map(0, &noRead, &mapped)))
+        return nullptr;
+
+    chunk.mapped = static_cast<std::uint8_t*>(mapped);
+
+    return &commands.uploads.add(std::move(chunk));
+}
+
+UploadRange D3D12Context::allocateUpload(CommandContext& commands, std::size_t bytes)
+{
+    // Aligned to the constant requirement whatever the caller wants it for, so
+    // that a copy source and a root CBV can share one arena without a copy's
+    // odd length pushing the next constant off its 256-byte boundary.
+    auto aligned = (bytes + constantAlignment - 1) & ~(constantAlignment - 1);
+    auto* chunk = uploadRoomFor(commands, aligned);
+
+    if (chunk == nullptr)
+        return {};
+
+    auto range = UploadRange {};
+    range.resource = chunk->resource.get();
+    range.mapped = chunk->mapped + chunk->used;
+    range.offset = chunk->used;
+    range.address = chunk->resource->GetGPUVirtualAddress() + chunk->used;
+
+    chunk->used += aligned;
+
+    return range;
 }
 
 D3D12_GPU_VIRTUAL_ADDRESS D3D12Context::uploadConstants(CommandContext& commands,

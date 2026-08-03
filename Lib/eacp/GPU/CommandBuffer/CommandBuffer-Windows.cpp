@@ -19,13 +19,37 @@ struct CommandBuffer::Native
         : context(getD3D12Context(device))
     {
         if (context.isValid())
-            commands = context.acquire();
+            open(context.acquire());
     }
 
     ~Native()
     {
+        close();
+
         if (commands != nullptr && !committed)
             context.discard(commands);
+    }
+
+    // Publishes the recording as the one a CPU upload may record onto, for as
+    // long as this command buffer is the thing recording - the same courtesy
+    // Frame extends, and for the same reason. A buffer filled between here and
+    // commit() puts its copy on this list instead of acquiring and submitting
+    // one of its own, so a batch that uploads seven buffers before dispatching
+    // them is one submission rather than eight.
+    void open(CommandContext* commandsToUse)
+    {
+        commands = commandsToUse;
+
+        if (commands != nullptr)
+            context.setOpenRecording(commands);
+    }
+
+    // Withdrawn before anything is submitted, so an upload can never be handed
+    // a list that has already been closed.
+    void close()
+    {
+        if (commands != nullptr && context.getOpenRecording() == commands)
+            context.setOpenRecording(nullptr);
     }
 
     D3D12Context& context;
@@ -57,6 +81,7 @@ void CommandBuffer::commit()
         return;
 
     impl->committed = true;
+    impl->close();
 
     // Waits, because Metal's commit does ([buffer waitUntilCompleted]) and one
     // contract has to hold on both backends. Without it they disagree on what a
@@ -80,6 +105,7 @@ Threads::Async<void> CommandBuffer::commitAsync()
     }
 
     impl->committed = true;
+    impl->close();
 
     // submit() already returns without waiting here - what the fence adds is
     // the moment to say so.

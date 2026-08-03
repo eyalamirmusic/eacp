@@ -168,6 +168,43 @@ void ComputePass::dispatch(int width, int height)
     barrierAfterDispatch(list);
 }
 
+// The grid comes out of the buffer; the threadgroup size is baked into the
+// shader's [numthreads] and is not part of the arguments, which is why
+// D3D12_DISPATCH_ARGUMENTS holds only the three counts - the same three
+// DispatchArguments holds, at the same size and in the same order.
+//
+// The buffer needs a state of its own here. An earlier kernel wrote it as a
+// UAV, and a resource is only legal to read as indirect arguments from
+// INDIRECT_ARGUMENT - a transition Metal has no equivalent of and the reason
+// this is not simply the same three lines twice.
+void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
+{
+    if (!impl->encoder || offsetInBytes < 0)
+        return;
+
+    auto* data = static_cast<D3D12BufferData*>(arguments.nativeBuffer());
+
+    if (data == nullptr || data->resource == nullptr)
+        return;
+
+    auto& commands = *impl->encoder->commands;
+    auto* signature = commands.context->getDispatchSignature();
+
+    if (signature == nullptr)
+        return;
+
+    transitionForUse(commands, *data, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+
+    auto* list = commands.list.get();
+    list->ExecuteIndirect(signature,
+                          1,
+                          data->resource.get(),
+                          static_cast<UINT64>(offsetInBytes),
+                          nullptr,
+                          0);
+    barrierAfterDispatch(list);
+}
+
 void ComputePass::end()
 {
     if (impl->encoder)

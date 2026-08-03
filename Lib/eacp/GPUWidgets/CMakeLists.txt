@@ -8,7 +8,11 @@ target_link_libraries(eacp-gpuwidgets PUBLIC eacp-gpu)
 
 target_sources(eacp-gpuwidgets PRIVATE
         Gradient.cpp
+        Path/CoverageBatch.cpp
         Path/Path.cpp
+        Path/PathRasterizer.cpp
+        Path/PathStroker.cpp
+        Path/PrefixSum.cpp
         Path/PathTessellator.cpp
         View/PathView.cpp)
 

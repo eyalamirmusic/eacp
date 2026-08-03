@@ -312,6 +312,22 @@ struct Uniform<OutputBuffer> : OutputBuffer
     const Buffer* value = nullptr;
 };
 
+// The atomic sibling, bound the same way an output is. The buffer's contents
+// are unsigned integers rather than floats, so the bytes handed to it want to
+// start as such - a buffer of zeroed uint32s, not of zeroed floats, though the
+// two happen to agree on zero.
+template <>
+struct Uniform<AtomicBuffer> : AtomicBuffer
+{
+    Uniform& operator=(const Buffer& newBuffer)
+    {
+        value = &newBuffer;
+        return *this;
+    }
+
+    const Buffer* value = nullptr;
+};
+
 // A kernel's output image, following the Uniform<Texture2D> pattern: the
 // slot-indexed handle define() writes through, and the slot the assigned
 // GPU::Texture is bound at when dispatched. It carries no sampling - nothing
@@ -421,6 +437,11 @@ public:
         onOutputBuffer(name, member, member.value);
     }
 
+    void operator()(const char* name, Uniform<AtomicBuffer>& member)
+    {
+        onAtomicBuffer(name, member, member.value);
+    }
+
     void operator()(const char* name, Uniform<WritableTexture2D>& member)
     {
         onWritableTexture(name, member, member.value);
@@ -439,6 +460,7 @@ protected:
     }
     virtual void onInputBuffer(const char*, InputBuffer&, const Buffer*) {}
     virtual void onOutputBuffer(const char*, OutputBuffer&, const Buffer*) {}
+    virtual void onAtomicBuffer(const char*, AtomicBuffer&, const Buffer*) {}
     virtual void onWritableTexture(const char*, WritableTexture2D&, const Texture*)
     {
     }
@@ -478,6 +500,11 @@ public:
     void onOutputBuffer(const char*, OutputBuffer& handle, const Buffer*) override
     {
         handle = builder.outputBuffer();
+    }
+
+    void onAtomicBuffer(const char*, AtomicBuffer& handle, const Buffer*) override
+    {
+        handle = builder.atomicBuffer();
     }
 
     void onWritableTexture(const char*,
@@ -554,6 +581,13 @@ public:
         assert(false
                && "eacp: a render program cannot write a buffer - "
                   "Uniform<OutputBuffer> belongs to a ComputeProgram");
+    }
+
+    void onAtomicBuffer(const char*, AtomicBuffer&, const Buffer*) override
+    {
+        assert(false
+               && "eacp: a render program cannot write a buffer - "
+                  "Uniform<AtomicBuffer> belongs to a ComputeProgram");
     }
 
     void onWritableTexture(const char*, WritableTexture2D&, const Texture*) override
@@ -1125,6 +1159,19 @@ private:
         return nullptr;
     }
 
+    // A buffer per call, deliberately, and not something to "optimise" into
+    // reuse. A program is routinely drawn more than once in a frame with
+    // different data -- that is what a batching renderer is -- and both draws
+    // read their buffer when the frame executes, not when it was encoded.
+    // Refilling one buffer in place would hand the first draw the second's
+    // instances: on Metal because update() is a CPU memcpy into shared memory,
+    // and on D3D12 because the copy would land on the queue after the draw that
+    // wanted the old contents.
+    //
+    // Replacing it is what keeps both correct: the encoder retains the old
+    // resource (deferRelease on D3D12, the command encoder on Metal), so the
+    // first draw keeps reading the bytes it was given. Making that cheap is the
+    // backend's job -- see Buffer-Windows.cpp.
     void uploadIndices(const void* data,
                        std::size_t elementSize,
                        int count,

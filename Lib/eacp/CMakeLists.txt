@@ -4,7 +4,6 @@ add_subdirectory(Network)
 
 if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(Graphics)
-    add_subdirectory(SVG)
     if (EACP_BUILD_WEBVIEW)
         add_subdirectory(WebView)
     endif ()
@@ -17,6 +16,15 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     # Glyph rasterization + atlas caching, on top of the GPU module.
     add_subdirectory(Text)
     add_subdirectory(Sprites)
+
+    # Lightweight component tier: a whole widget tree in one GPUView, drawn
+    # through the sprite and glyph batchers.
+    add_subdirectory(UI)
+
+    # After UI, because a document now builds into either tier: native shape
+    # layers, or a component tree drawn through the coverage rasterizer.
+    add_subdirectory(SVG)
+
     add_subdirectory(CameraView)
 
     # View->video recorder, and video decode/playback. The Snapshot tier is

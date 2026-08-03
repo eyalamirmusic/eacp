@@ -1,8 +1,7 @@
 #include <eacp/Core/App/Clipboard.h>
-#include <eacp/Graphics/Graphics.h>
+#include <eacp/UI/UI.h>
 
 #include <string>
-#include <vector>
 
 // Key events and the clipboard, made visible.
 //
@@ -19,7 +18,7 @@ using namespace eacp;
 
 namespace
 {
-constexpr auto background = Graphics::Color {0.11f, 0.12f, 0.15f};
+constexpr auto backgroundColour = Graphics::Color {0.11f, 0.12f, 0.15f};
 constexpr auto rowHeight = 22.f;
 constexpr auto maxRows = 18;
 
@@ -112,20 +111,26 @@ std::string printable(const std::string& text)
     return result;
 }
 
-struct InspectorView final : Graphics::View
+struct InspectorContent final : UI::Component
 {
-    InspectorView()
+    InspectorContent()
     {
-        setHandlesMouseEvents(true);
-        setGrabsFocusOnMouseDown(true);
+        // The component tier has no keyboard until something asks for it: a
+        // panel that could take focus by accident is how a key ends up nowhere.
+        setWantsKeyboardFocus(true);
+        setInterceptsMouseClicks(true);
 
         rows.push_back("Press any key. Cmd+C copies this log, Cmd+V pastes.");
     }
 
-    void keyDown(const Graphics::KeyEvent& event) override
+    // Returning true on everything, which is exactly right here and worth saying
+    // why: this component *is* the key inspector, so a key it did not report
+    // would be a key it failed at. A component that only wants some keys must
+    // return false for the rest, or the Tab that should move focus and the
+    // shortcut that should reach the window die in it.
+    bool keyDown(const UI::KeyEvent& event) override
     {
-        if (event.modifiers.command
-            && event.charactersIgnoringModifiers == "c")
+        if (event.modifiers.command && event.charactersIgnoringModifiers == "c")
         {
             auto joined = std::string {};
 
@@ -133,67 +138,87 @@ struct InspectorView final : Graphics::View
                 joined += row + "\n";
 
             const auto copied = Clipboard::copyText(joined);
-            add(copied ? "-- copied the log to the clipboard"
-                       : "-- copy failed");
-            return;
+            add(copied ? "-- copied the log to the clipboard" : "-- copy failed");
+
+            return true;
         }
 
-        if (event.modifiers.command
-            && event.charactersIgnoringModifiers == "v")
+        if (event.modifiers.command && event.charactersIgnoringModifiers == "v")
         {
             // hasText first, so the "nothing to paste" case is distinguishable
             // from an empty clipboard read.
             if (!Clipboard::hasText())
             {
                 add("-- clipboard holds no text");
-                return;
+                return true;
             }
 
             const auto text = Clipboard::getText();
             add("-- pasted " + std::to_string(text.size()) + " bytes: \""
                 + printable(text.substr(0, 40)) + "\"");
-            return;
+
+            return true;
         }
 
         add(nameFor(event.keyCode) + "   chars: " + printable(event.characters)
-            + "   raw: " + printable(event.charactersIgnoringModifiers)
-            + "   mods: " + modifiersOf(event.modifiers)
-            + (event.isRepeat ? "   (repeat)" : ""));
+            + "   raw: " + printable(event.charactersIgnoringModifiers) + "   mods: "
+            + modifiersOf(event.modifiers) + (event.isRepeat ? "   (repeat)" : ""));
+
+        return true;
     }
 
     void add(std::string row)
     {
         rows.push_back(std::move(row));
 
-        while (rows.size() > maxRows)
+        while ((int) rows.size() > maxRows)
             rows.erase(rows.begin());
 
         repaint();
     }
 
-    void paint(Graphics::Context& context) override
+    void paint(UI::Graphics& g) override
     {
-        const auto bounds = getLocalBounds();
+        g.fillAll(backgroundColour);
 
-        context.setColor(background);
-        context.fillRect(bounds);
+        // A monospace face in a window whose stock face is proportional, which
+        // is the case that used to need a second renderer and its own atlas. It
+        // is a value on the painter now, and these rows are in the same batch as
+        // anything else the tree draws.
+        g.setFont({Text::defaultMonospaceFamily(), 13.f});
 
-        const auto font = Graphics::Font {{"Menlo", 13.f}};
-        auto y = 28.f;
+        auto y = 16.f;
 
         for (const auto& row: rows)
         {
             const auto isNote = !row.empty() && row[0] == '-';
 
-            context.setColor(isNote ? Graphics::Color {0.55f, 0.80f, 0.60f}
-                                    : Graphics::Color {0.85f, 0.87f, 0.91f});
+            g.setColour(isNote ? UI::Color {0.55f, 0.80f, 0.60f, 1.f}
+                               : UI::Color {0.85f, 0.87f, 0.91f, 1.f});
 
-            context.drawText(row, {16.f, y}, font);
+            g.drawText(row, {16.f, y + g.ascent()});
             y += rowHeight;
         }
     }
 
     std::vector<std::string> rows;
+};
+
+struct InspectorHost final : UI::ComponentHost
+{
+    InspectorHost()
+    {
+        setBackgroundColour(backgroundColour);
+
+        // Tab is a key to report like any other here, not a way out of the one
+        // component in the tree.
+        setTabMovesFocus(false);
+
+        setRootComponent(content);
+        content.grabKeyboardFocus();
+    }
+
+    InspectorContent content;
 };
 
 Graphics::WindowOptions windowOptions()
@@ -203,7 +228,7 @@ Graphics::WindowOptions windowOptions()
     options.width = 720;
     options.height = 460;
     options.title = "Key Inspector";
-    options.backgroundColor = background;
+    options.backgroundColor = backgroundColour;
 
     return options;
 }
@@ -212,11 +237,15 @@ struct KeyInspectorApp
 {
     KeyInspectorApp()
     {
-        window.setContentView(view);
-        view.focus();
+        window.setContentView(host);
+
+        // The native view has to be the window's first responder for the tree to
+        // hear anything at all; the component inside it already holds the focus
+        // the tree routes by.
+        host.focus();
     }
 
-    InspectorView view;
+    InspectorHost host;
     Graphics::Window window {windowOptions()};
 };
 } // namespace

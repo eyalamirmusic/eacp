@@ -38,13 +38,12 @@ struct GlyphView final : GPU::GPUView
         request.pointSize = 48.f;
         request.scale = 1.f;
 
-        auto rasterizer = makeOwned<GlyphRasterizer>(request);
-
-        if (!rasterizer->isValid())
+        // Built once to find out whether this machine can resolve the family at
+        // all; the atlas makes its own, per face.
+        if (!GlyphRasterizer {request}.isValid())
             return false;
 
-        atlas = makeOwned<GlyphAtlas>(
-            OwningPointer<GlyphSource> {std::move(rasterizer)}, 256, 1024);
+        atlas = makeOwned<GlyphAtlas>(rasterizerFaceFactory(), request, 256, 1024);
 
         renderer.emplace();
         renderer->setViewportSize({viewSize, viewSize});
@@ -143,7 +142,8 @@ auto tDrawsAGlyph = test("GlyphRenderer/drawsAGlyphFromTheAtlas") = []
 // The regression this class exists to prevent. A mask drawn through a general
 // sprite shader arrives opaque red; drawn correctly it takes the colour asked
 // for. Anything that reintroduces `sample * tint` fails here.
-auto tMaskTakesTheRequestedColour = test("GlyphRenderer/maskGlyphsTakeTheRequestedColour") = []
+auto tMaskTakesTheRequestedColour =
+    test("GlyphRenderer/maskGlyphsTakeTheRequestedColour") = []
 {
     if (!GPU::Device::shared().isValid())
         return;
@@ -161,14 +161,15 @@ auto tMaskTakesTheRequestedColour = test("GlyphRenderer/maskGlyphsTakeTheRequest
 
     const auto ink = brightest(image);
 
-    check(ink.g > 0.5f);       // the green it was asked for
-    check(ink.r < ink.g);      // and not the red an R8 sample would give
+    check(ink.g > 0.5f); // the green it was asked for
+    check(ink.r < ink.g); // and not the red an R8 sample would give
     check(ink.b < ink.g);
 };
 
 // Colour is per glyph, so a run of text can change colour mid-line without a
 // separate draw call.
-auto tColourIsPerGlyph = test("GlyphRenderer/differentColoursProduceDifferentPixels") = []
+auto tColourIsPerGlyph =
+    test("GlyphRenderer/differentColoursProduceDifferentPixels") = []
 {
     if (!GPU::Device::shared().isValid())
         return;
@@ -249,8 +250,14 @@ auto tQueueTracksAdds = test("GlyphRenderer/queueCountsWhatWasAdded") = []
     renderer.begin();
     check(renderer.queuedGlyphs() == 0);
 
-    renderer.add({0.f, 0.f, 10.f, 10.f}, {0.f, 0.f, 8.f, 8.f}, Graphics::Color::white(), false);
-    renderer.add({10.f, 0.f, 10.f, 10.f}, {0.f, 0.f, 8.f, 8.f}, Graphics::Color::white(), true);
+    renderer.add({0.f, 0.f, 10.f, 10.f},
+                 {0.f, 0.f, 8.f, 8.f},
+                 Graphics::Color::white(),
+                 false);
+    renderer.add({10.f, 0.f, 10.f, 10.f},
+                 {0.f, 0.f, 8.f, 8.f},
+                 Graphics::Color::white(),
+                 true);
 
     check(renderer.queuedGlyphs() == 2);
 
@@ -264,8 +271,14 @@ auto tSkipsEmptyRects = test("GlyphRenderer/emptyDestinationsAreSkipped") = []
     auto renderer = GlyphRenderer {};
 
     renderer.begin();
-    renderer.add({0.f, 0.f, 0.f, 10.f}, {0.f, 0.f, 8.f, 8.f}, Graphics::Color::white(), false);
-    renderer.add({0.f, 0.f, 10.f, 0.f}, {0.f, 0.f, 8.f, 8.f}, Graphics::Color::white(), false);
+    renderer.add({0.f, 0.f, 0.f, 10.f},
+                 {0.f, 0.f, 8.f, 8.f},
+                 Graphics::Color::white(),
+                 false);
+    renderer.add({0.f, 0.f, 10.f, 0.f},
+                 {0.f, 0.f, 8.f, 8.f},
+                 Graphics::Color::white(),
+                 false);
 
     check(renderer.queuedGlyphs() == 0);
 };

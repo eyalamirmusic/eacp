@@ -300,9 +300,7 @@ std::string formatHooksModule(std::span<TypeNode> typeRoots,
     out << "// Generated. Do not edit by hand.\n"
         << "//\n"
         << "// Pre-wired React hooks for every registered bridge event.\n"
-        << "// Keyed states get useXxx / useXxxIds / useXxxItem; plain\n"
-        << "// states get useXxx; push-only events get useXxx via\n"
-        << "// makeNativeEvent. Initial values come from toJSON(T{}).\n";
+        << "// Initial values come from toJSON(T{}).\n";
 
     if (!usedKeyed && !usedBridge && !usedNative)
     {

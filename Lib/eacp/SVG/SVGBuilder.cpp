@@ -37,6 +37,19 @@ static void addShapeLayer(SVGView& view,
 {
     auto& layer = view.ownedLayers.createNew();
     layer.setPath(path);
+
+    // The surface the path is drawn into, in surface-local coordinates. A
+    // CAShapeLayer sizes itself to its path and needs none of this; a
+    // DirectComposition surface has to be told its size, and a layer left at
+    // zero draws nothing at all - which is why this builder has never rendered a
+    // single shape on Windows, only its text, which sets its own bounds below.
+    //
+    // Sized to the whole view rather than to the path, because the geometry is
+    // in the view's coordinates and there is no way to translate a native path.
+    // So every shape in a document costs a surface the size of the document,
+    // which is exactly the cost the component tier exists to avoid.
+    layer.setBounds(view.getLocalBounds());
+
     applyFillAndStroke(layer, element);
     view.addLayer(layer);
 }
@@ -128,7 +141,7 @@ static void buildPath(SVGView& view, const SVGElement& element, float sx, float 
     if (d.empty())
         return;
 
-    auto path = parseSVGPath(d).scaled(sx, sy);
+    auto path = parseSVGPath<Graphics::Path>(d).scaled(sx, sy);
     addShapeLayer(view, element, std::move(path));
 }
 
@@ -186,15 +199,15 @@ static void
 {
     auto& child = parent.ownedChildren.createNew();
 
-    auto transform = element.attr("transform");
-    if (!transform.empty())
-    {
-        auto t = parseTransform(transform);
-        child.setBounds({t.translateX * sx,
-                         t.translateY * sy,
-                         parent.getBounds().w,
-                         parent.getBounds().h});
-    }
+    // Sized whether or not the group is moved, because its layers are sized to
+    // it and a zero-sized native layer draws nothing. Only the translation of
+    // the transform is used: a child view can be moved and not rotated, which is
+    // the whole ceiling of what this builder can express.
+    auto t = parseTransform(element.attr("transform"));
+    child.setBounds({t.translateX * sx,
+                     t.translateY * sy,
+                     parent.getBounds().w,
+                     parent.getBounds().h});
 
     for (auto& childElement: element.children)
         buildElement(child, childElement, sx, sy);

@@ -62,7 +62,8 @@ auto tResolvesASystemFont = test("GlyphRasterizer/resolvesASystemFont") = []
 
 // Metrics must track the pixel size, since that is how the atlas stays crisp on
 // a Retina panel: same points, twice the pixels.
-auto tMetricsScaleWithPixelSize = test("GlyphRasterizer/metricsScaleWithPixelSize") = []
+auto tMetricsScaleWithPixelSize =
+    test("GlyphRasterizer/metricsScaleWithPixelSize") = []
 {
     const auto small = GlyphRasterizer {monospaceRequest(16.f, 1.f)};
     const auto large = GlyphRasterizer {monospaceRequest(16.f, 2.f)};
@@ -96,8 +97,7 @@ auto tRasterizesALetter = test("GlyphRasterizer/rasterizesALetterAsAMask") = []
     check(bitmap.format == GlyphFormat::Mask);
     check(bitmap.advance > 0.f);
 
-    check(bitmap.pixels.size()
-          == (std::size_t) bitmap.width * bitmap.height);
+    check(bitmap.pixels.size() == (std::size_t) bitmap.width * bitmap.height);
 
     check(maxCoverage(bitmap) > 0); // it drew something
     check(bitmap.width < 200);
@@ -123,7 +123,8 @@ auto tSpaceIsValidButEmpty = test("GlyphRasterizer/spaceIsValidButDrawsNothing")
 
 // On a monospace face every glyph steps the pen by the same amount; that is the
 // property a terminal grid is built on.
-auto tMonospaceAdvancesMatch = test("GlyphRasterizer/monospaceGlyphsShareAnAdvance") = []
+auto tMonospaceAdvancesMatch =
+    test("GlyphRasterizer/monospaceGlyphsShareAnAdvance") = []
 {
     const auto rasterizer = GlyphRasterizer {monospaceRequest()};
 
@@ -134,7 +135,8 @@ auto tMonospaceAdvancesMatch = test("GlyphRasterizer/monospaceGlyphsShareAnAdvan
 
     for (const auto codepoint: {U'i', U'W', U'.', U'0'})
     {
-        const auto advance = rasterizer.rasterize(codepoint, FontStyle::Regular).advance;
+        const auto advance =
+            rasterizer.rasterize(codepoint, FontStyle::Regular).advance;
         check(std::abs(advance - reference) < 0.5f);
     }
 };
@@ -142,7 +144,8 @@ auto tMonospaceAdvancesMatch = test("GlyphRasterizer/monospaceGlyphsShareAnAdvan
 // Bearings are what CowTerm's atlas lacked. A letter with a descender must
 // extend below the baseline, and one without must not — the sign convention
 // being wrong would push half the text off its line.
-auto tBearingsDescribeTheBaseline = test("GlyphRasterizer/bearingsPlaceGlyphsOnTheBaseline") = []
+auto tBearingsDescribeTheBaseline =
+    test("GlyphRasterizer/bearingsPlaceGlyphsOnTheBaseline") = []
 {
     const auto rasterizer = GlyphRasterizer {monospaceRequest(32.f)};
 
@@ -160,7 +163,8 @@ auto tBearingsDescribeTheBaseline = test("GlyphRasterizer/bearingsPlaceGlyphsOnT
     check(p.bearingY - (float) p.height < -0.5f);
 };
 
-auto tStylesProduceDifferentGlyphs = test("GlyphRasterizer/boldDiffersFromRegular") = []
+auto tStylesProduceDifferentGlyphs =
+    test("GlyphRasterizer/boldDiffersFromRegular") = []
 {
     const auto rasterizer = GlyphRasterizer {monospaceRequest(32.f)};
 
@@ -205,7 +209,8 @@ auto tUnassignedCodepointIsSelfConsistent =
     if (!rasterizer.isValid())
         return;
 
-    for (const auto codepoint: {(char32_t) 0x10FFFD, (char32_t) 0xE000, (char32_t) 0xFFFF})
+    for (const auto codepoint:
+         {(char32_t) 0x10FFFD, (char32_t) 0xE000, (char32_t) 0xFFFF})
     {
         const auto bitmap = rasterizer.rasterize(codepoint, FontStyle::Regular);
 
@@ -284,12 +289,10 @@ auto tColorGlyphsReportFourBytesPerPixel =
 auto tAtlasAcceptsUnassignedCodepoints =
     test("GlyphRasterizer/atlasAcceptsUnassignedCodepoints") = []
 {
-    auto rasterizer = makeOwned<GlyphRasterizer>(monospaceRequest());
-
-    if (!rasterizer->isValid())
+    if (!GlyphRasterizer {monospaceRequest()}.isValid())
         return;
 
-    auto atlas = GlyphAtlas {OwningPointer<GlyphSource> {std::move(rasterizer)}, 256, 1024};
+    auto atlas = GlyphAtlas {rasterizerFaceFactory(), monospaceRequest(), 256, 1024};
 
     atlas.glyph((char32_t) 0x10FFFD, FontStyle::Regular);
     atlas.glyph((char32_t) 0xE000, FontStyle::Regular);
@@ -302,14 +305,13 @@ auto tAtlasAcceptsUnassignedCodepoints =
 };
 
 // The atlas on top of the real rasterizer: the end-to-end path, minus the GPU.
-auto tAtlasWorksOverRealRasterizer = test("GlyphRasterizer/atlasCachesRealGlyphs") = []
+auto tAtlasWorksOverRealRasterizer =
+    test("GlyphRasterizer/atlasCachesRealGlyphs") = []
 {
-    auto rasterizer = makeOwned<GlyphRasterizer>(monospaceRequest());
-
-    if (!rasterizer->isValid())
+    if (!GlyphRasterizer {monospaceRequest()}.isValid())
         return;
 
-    auto atlas = GlyphAtlas {OwningPointer<GlyphSource> {std::move(rasterizer)}, 256, 1024};
+    auto atlas = GlyphAtlas {rasterizerFaceFactory(), monospaceRequest(), 256, 1024};
 
     const auto first = atlas.glyph(U'A', FontStyle::Regular);
 
@@ -327,4 +329,102 @@ auto tAtlasWorksOverRealRasterizer = test("GlyphRasterizer/atlasCachesRealGlyphs
         atlas.glyph(codepoint, FontStyle::Regular);
 
     check(atlas.generation() == 0);
+};
+
+// Two sizes of a real face in one atlas, which is what the face table exists
+// for: the same character twice, in one texture, at the size each asked for.
+auto tRealFacesDifferBySize =
+    test("GlyphRasterizer/atlasHoldsTwoSizesOfOneFamily") = []
+{
+    if (!GlyphRasterizer {monospaceRequest()}.isValid())
+        return;
+
+    auto atlas = GlyphAtlas {rasterizerFaceFactory(), monospaceRequest(), 256, 1024};
+
+    const auto small = atlas.findOrAddFace(defaultMonospaceFamily(), 12.f);
+    const auto large = atlas.findOrAddFace(defaultMonospaceFamily(), 24.f);
+
+    check(small != large);
+
+    const auto a = atlas.glyph(U'A', FontStyle::Regular, small);
+    const auto b = atlas.glyph(U'A', FontStyle::Regular, large);
+
+    check(a.valid);
+    check(b.valid);
+
+    // Twice the points, and a monospace advance is proportional to them.
+    check(b.advance > a.advance * 1.5f);
+    check(b.src.h > a.src.h);
+
+    // Packed side by side rather than on top of each other.
+    check(a.src.x != b.src.x || a.src.y != b.src.y);
+
+    check(atlas.metrics(FontStyle::Regular, large).lineHeight()
+          > atlas.metrics(FontStyle::Regular, small).lineHeight());
+};
+
+// A family the atlas was not built with, asked for after the fact. This is what
+// a document mixing a proportional heading with a monospace log needs, and what
+// a single-face atlas could not do at all.
+auto tRealAtlasTakesASecondFamily =
+    test("GlyphRasterizer/atlasHoldsTwoFamilies") = []
+{
+    if (!GlyphRasterizer {monospaceRequest()}.isValid())
+        return;
+
+    auto atlas = GlyphAtlas {rasterizerFaceFactory(), monospaceRequest(), 256, 1024};
+
+    auto proportional = FontRequest {};
+    proportional.family = "Helvetica";
+    proportional.pointSize = 16.f;
+
+    if (!GlyphRasterizer {proportional}.isValid())
+        return;
+
+    const auto other =
+        atlas.findOrAddFace(proportional.family, proportional.pointSize);
+
+    check(other != 0);
+    check(atlas.glyph(U'W', FontStyle::Regular, other).valid);
+
+    // A proportional face gives 'i' and 'W' different advances; the monospace
+    // one it shares the atlas with does not.
+    const auto narrow = atlas.glyph(U'i', FontStyle::Regular, other);
+    const auto wide = atlas.glyph(U'W', FontStyle::Regular, other);
+
+    check(narrow.advance < wide.advance);
+    check(atlas.glyph(U'i', FontStyle::Regular).advance
+          == atlas.glyph(U'W', FontStyle::Regular).advance);
+};
+
+// The renderer's own font-per-call path, which is what UI::Graphics::setFont
+// drives: measurement has to follow the face, or a centred caption centres
+// against glyphs other than the ones drawn.
+auto tRendererMeasuresPerFont = test("GlyphRasterizer/rendererMeasuresTheFaceItIsGiven") = []
+{
+    if (!GlyphRasterizer {monospaceRequest()}.isValid())
+        return;
+
+    auto renderer = TextRenderer {13.f, defaultMonospaceFamily()};
+    renderer.setViewport({320.f, 64.f}, 1.f);
+
+    const auto text = std::string_view {"measure me"};
+
+    const auto small = renderer.measure(text, Font {defaultMonospaceFamily(), 12.f});
+    const auto large = renderer.measure(text, Font {defaultMonospaceFamily(), 24.f});
+
+    check(small > 0.f);
+    check(large > small * 1.5f);
+
+    // The default face is one of them rather than a third thing.
+    renderer.setFont({defaultMonospaceFamily(), 24.f});
+
+    check(renderer.measure(text) == large);
+    check(renderer.ascent() == renderer.ascent(Font {defaultMonospaceFamily(), 24.f}));
+
+    // And a bold run is measured as bold, not as the regular face beside it.
+    const auto bold =
+        renderer.measure(text, Font {defaultMonospaceFamily(), 24.f, FontStyle::Bold});
+
+    check(bold > 0.f);
 };

@@ -1,6 +1,6 @@
-#include <eacp/Graphics/Graphics.h>
 #include <eacp/Network/IPCRpc/RpcClient.h>
 #include <eacp/Network/IPCRpc/RpcServer.h>
+#include <eacp/UI/UI.h>
 
 #include <optional>
 
@@ -132,77 +132,99 @@ private:
     std::optional<Processes::Process> child;
 };
 
-struct DemoView final : View
+// Every dot the peer has sent, drawn as one component.
+//
+// One filled ellipse per dot, and no path at all: a circle this size is a
+// rounded rectangle whose corner radius is half its side, which the shape
+// renderer draws from the same distance field as every other rectangle in the
+// tree. So a hundred dots are a hundred quads in one instanced draw, and adding
+// one costs a repaint rather than a re-rasterized path.
+struct DotField final : UI::Component
 {
-    DemoView(const std::string& roleName, Color roleColor, Color dotColorToUse)
-        : dotColor(dotColorToUse)
+    explicit DotField(const UI::Color& dotColourToUse)
+        : dotColour(dotColourToUse)
     {
-        getProperties().handlesMouseEvents = true;
-
-        background->setFillColor({0.12f, 0.12f, 0.14f});
-        dots->setFillColor(dotColor);
-
-        title->setText(roleName);
-        title->setFont(FontOptions().withName("Helvetica-Bold"));
-        title->setColor(roleColor);
-        status->setColor({0.75f, 0.75f, 0.78f});
-
-        addChildren({background, dots, title, status});
+        setInterceptsMouseClicks(true);
     }
 
-    void mouseDown(const MouseEvent& event) override
+    void mouseDown(const UI::MouseEvent& event) override
     {
         auto bounds = getLocalBounds();
 
         if (bounds.w > 0.f && bounds.h > 0.f)
-            onClick({event.pos.x / bounds.w, event.pos.y / bounds.h});
+            onClick({event.position.x / bounds.w, event.position.y / bounds.h});
     }
 
-    void addDot(Point relative)
+    void addDot(UI::Point relative)
     {
-        dotPoints.add(relative);
-        rebuildDots();
+        dots.add(relative);
+        repaint();
     }
 
-    void setStatus(const std::string& text) { status->setText(text); }
+    void paint(UI::Graphics& g) override
+    {
+        auto bounds = getLocalBounds();
+
+        g.setColour(dotColour);
+
+        for (auto& dot: dots)
+            g.fillRoundedRect(
+                {dot.x * bounds.w - 7.f, dot.y * bounds.h - 7.f, 14.f, 14.f}, 7.f);
+    }
+
+    std::function<void(UI::Point)> onClick = [](UI::Point) {};
+
+    UI::Color dotColour;
+    Vector<UI::Point> dots;
+};
+
+struct DemoContent final : UI::Component
+{
+    DemoContent(const std::string& roleName,
+                const UI::Color& roleColour,
+                const UI::Color& dotColour)
+        : field(dotColour)
+    {
+        title.setText(roleName);
+        title.setFontStyle(UI::FontStyle::Bold);
+        title.setFontSize(15.f);
+        title.setColour(roleColour);
+
+        status.setColour({0.75f, 0.75f, 0.78f, 1.f});
+
+        addChildren({field, title, status});
+    }
+
+    void setStatus(const std::string& text) { status.setText(text); }
+
+    void paint(UI::Graphics& g) override { g.fillAll({0.12f, 0.12f, 0.14f, 1.f}); }
 
     void resized() override
     {
-        auto bounds = getLocalBounds();
+        field.setBounds(getLocalBounds());
 
-        auto backgroundPath = Path {};
-        backgroundPath.addRect(bounds);
-        background->setPath(backgroundPath);
-
-        scaleToFit({background, dots, title, status});
-
-        title->setPosition({20.f, bounds.h - 45.f});
-        status->setPosition({20.f, bounds.h - 70.f});
-
-        rebuildDots();
+        auto header = getLocalBounds().inset(20.f, 16.f);
+        title.setBounds(header.removeFromTop(24.f));
+        status.setBounds(header.removeFromTop(22.f));
     }
 
-    void rebuildDots()
+    DotField field;
+    UI::Label title;
+    UI::Label status;
+};
+
+struct DemoHost final : UI::ComponentHost
+{
+    DemoHost(const std::string& roleName,
+             const UI::Color& roleColour,
+             const UI::Color& dotColour)
+        : content(roleName, roleColour, dotColour)
     {
-        auto bounds = getLocalBounds();
-        auto path = Path {};
-
-        for (auto& point: dotPoints)
-            path.addEllipse(
-                {point.x * bounds.w - 7.f, point.y * bounds.h - 7.f, 14.f, 14.f});
-
-        dots->setPath(path);
+        setBackgroundColour({0.12f, 0.12f, 0.14f, 1.f});
+        setRootComponent(content);
     }
 
-    std::function<void(Point)> onClick = [](Point) {};
-
-    Color dotColor;
-    Vector<Point> dotPoints;
-
-    ShapeLayerView background;
-    ShapeLayerView dots;
-    TextLayerView title;
-    TextLayerView status;
+    DemoContent content;
 };
 
 namespace
@@ -222,43 +244,45 @@ WindowOptions windowOptionsFor(bool isServer)
 struct IpcDemoApp
 {
     IpcDemoApp()
-        : view(peer.isServer() ? "Server" : "Client",
+        : host(peer.isServer() ? "Server" : "Client",
                peer.isServer() ? serverColor : clientColor,
                peer.isServer() ? clientColor : serverColor)
         , window(windowOptionsFor(peer.isServer()))
     {
-        view.setStatus(peer.isServer() ? "Waiting for the second instance..."
-                                       : "Connecting...");
-        view.onClick = [this](Point relative) { peer.sendDot(relative); };
+        auto& content = host.content;
+
+        content.setStatus(peer.isServer() ? "Waiting for the second instance..."
+                                          : "Connecting...");
+        content.field.onClick = [this](Point relative) { peer.sendDot(relative); };
 
         peer.onConnected = [this]
-        { view.setStatus("Connected - click anywhere to send"); };
+        { host.content.setStatus("Connected - click anywhere to send"); };
 
         peer.onDot = [this](Point relative)
         {
             ++received;
-            view.addDot(relative);
-            view.setStatus("Received " + std::to_string(received)
-                           + (received == 1 ? " click" : " clicks"));
+            host.content.field.addDot(relative);
+            host.content.setStatus("Received " + std::to_string(received)
+                                   + (received == 1 ? " click" : " clicks"));
         };
 
         peer.onTotal = [this](int total)
         {
-            view.setStatus("Server now holds " + std::to_string(total)
-                           + (total == 1 ? " dot" : " dots"));
+            host.content.setStatus("Server now holds " + std::to_string(total)
+                                   + (total == 1 ? " dot" : " dots"));
         };
 
         peer.onPeerLeft = [this]
         {
-            view.setStatus(peer.isServer() ? "Peer left - waiting for a new one"
-                                           : "Peer left");
+            host.content.setStatus(
+                peer.isServer() ? "Peer left - waiting for a new one" : "Peer left");
         };
 
-        window.setContentView(view);
+        window.setContentView(host);
     }
 
     Peer peer;
-    DemoView view;
+    DemoHost host;
     Window window;
     int received = 0;
 };

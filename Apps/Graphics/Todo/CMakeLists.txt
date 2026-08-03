@@ -1,5 +1,5 @@
 add_executable(Todo Main.cpp)
-target_link_libraries(Todo PRIVATE eacp-graphics)
+target_link_libraries(Todo PRIVATE eacp-ui)
 
 set(BUNDLE_ID "com.eacp.todoapp")
 

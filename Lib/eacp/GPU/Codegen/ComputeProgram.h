@@ -73,6 +73,17 @@ public:
             pass.setOutputBuffer(*buffer, handle.slot);
     }
 
+    // An atomic buffer binds exactly as an output does - a Metal device buffer,
+    // a D3D UAV - since what makes it atomic is the type the kernel declares it
+    // through and not how the pass hands it over.
+    void onAtomicBuffer(const char*,
+                        AtomicBuffer& handle,
+                        const Buffer* buffer) override
+    {
+        if (buffer != nullptr)
+            pass.setOutputBuffer(*buffer, handle.slot);
+    }
+
     void onTexture(const char*,
                    Texture2D& handle,
                    const Texture* texture,
@@ -207,6 +218,29 @@ protected:
         return builder.shared<T>(count);
     }
 
+    // Adds to one element of a shared counter and yields what it held before, so
+    // threads that never meet each other still come away with distinct numbers.
+    // See ShaderBuilder::atomicAdd for what it does and does not order.
+    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, const UInt& value)
+    {
+        return builder.atomicAdd(buffer, index, value);
+    }
+
+    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, const UInt& value)
+    {
+        return builder.atomicAdd(buffer, index, value);
+    }
+
+    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, unsigned value)
+    {
+        return builder.atomicAdd(buffer, index, value);
+    }
+
+    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, unsigned value)
+    {
+        return builder.atomicAdd(buffer, index, value);
+    }
+
     // Control flow, forwarded from the builder on the terms ShaderProgram
     // forwards it: a mutable local, the two branching statements, the loop and
     // its two jumps. The unsigned overload is the counter a reduction kernel
@@ -274,6 +308,28 @@ protected:
     void write(const Shared<T>& array, const UInt& index, const T& value)
     {
         builder.write(array, index, value);
+    }
+
+    // An atomic buffer's element, set rather than added to - what a kernel
+    // computing a dispatch size writes.
+    void write(const AtomicBuffer& buffer, const UInt& index, const UInt& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const AtomicBuffer& buffer, const UInt& index, unsigned value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const AtomicBuffer& buffer, unsigned index, const UInt& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const AtomicBuffer& buffer, unsigned index, unsigned value)
+    {
+        builder.write(buffer, index, value);
     }
 
     // One texel of a kernel's output image, at the coordinates a 2D kernel

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Common.h"
+#include "AffineTransform.h"
 
 namespace eacp::GPUWidgets
 {
@@ -34,6 +34,19 @@ public:
     void clear();
     bool isEmpty() const;
 
+    // How far a flattened polyline may stray from the curve it replaces, in path
+    // units. Curves are subdivided until they hold to it, so a big shape gets
+    // more segments than a small one instead of every shape getting the same
+    // fixed count - which is what made a large circle read as the polygon it was.
+    //
+    // The default keeps the error under a tenth of a device pixel at the usual
+    // 2x backing scale, which is below anything an 8-bit coverage channel can
+    // express. Segment count grows as 1/sqrt of this, so loosening it to save
+    // work buys little and costs visibly; tighten it only for a shape rasterized
+    // far above its authored size. Set before the curves are added.
+    void setFlatness(float toleranceInPathUnits);
+    float getFlatness() const { return flatness; }
+
     // Starts a new sub-path at target. Subsequent line/curve calls extend it.
     void moveTo(const Graphics::Point& target);
     void lineTo(const Graphics::Point& target);
@@ -54,6 +67,25 @@ public:
     void addRoundedRect(const Graphics::Rect& rect, float cornerRadius);
     void addEllipse(const Graphics::Rect& rect);
 
+    // The same geometry with every point mapped through `transform`.
+    //
+    // It maps the polyline, not the curves it was flattened from, so the segment
+    // count is whatever the flatness in force when the curves were added asked
+    // for. Scaling a path up afterwards therefore magnifies the flattening error
+    // with it, and a circle built at its authored size and then scaled by ten
+    // reads as the polygon it always was. Set setFlatness to the tolerance the
+    // *result* needs - the authored tolerance divided by
+    // transform.getScaleFactor() - before building anything meant to be
+    // transformed.
+    // Another path's sub-paths added to this one's, which under the non-zero
+    // rule is the union of the two regions -- what a clip path made of several
+    // shapes is, and what a stroke and the shape it outlines are not, those
+    // being wound against each other on purpose.
+    void append(const Path& other);
+
+    Path transformed(const AffineTransform& transform) const;
+    Path scaled(float scaleX, float scaleY) const;
+
     // The smallest rectangle containing every point; an empty rect for an empty
     // path.
     Graphics::Rect getBounds() const;
@@ -63,7 +95,14 @@ public:
 private:
     SubPath& currentSubPath();
 
+    // Segments a curve or an arc needs to stay within flatness of the real
+    // thing. Both fall out of the same fact: uniform subdivision cuts the
+    // deviation by the square of the count.
+    int segmentsForCurve(float secondDifference) const;
+    int segmentsForArc(float radius, float sweep) const;
+
     Vector<SubPath> subPaths;
     Graphics::Point currentPoint;
+    float flatness = 0.05f;
 };
 } // namespace eacp::GPUWidgets
