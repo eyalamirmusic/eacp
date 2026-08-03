@@ -12,6 +12,8 @@ target_sources(eacp-ui PRIVATE
         Graphics/Graphics.cpp
         Host/ComponentHost.cpp
         Render/CoverageAtlas.cpp
+        Render/DrawList.cpp
+        Render/DrawPlayer.cpp
         Render/GradientRamps.cpp
         Render/Layer.cpp
         Render/LayerRenderer.cpp

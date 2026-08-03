@@ -9,6 +9,8 @@
 #include "Host/ComponentHost.h"
 #include "Render/ClipMask.h"
 #include "Render/CoverageAtlas.h"
+#include "Render/DrawList.h"
+#include "Render/DrawPlayer.h"
 #include "Render/Gradient.h"
 #include "Render/GradientRamps.h"
 #include "Render/Layer.h"

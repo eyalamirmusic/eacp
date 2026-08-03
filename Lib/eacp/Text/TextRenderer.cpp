@@ -141,7 +141,8 @@ float TextRenderer::layout(std::string_view text,
                            Graphics::Point pen,
                            const Graphics::Color& color,
                            const Font& font,
-                           bool emit)
+                           bool emit,
+                           Vector<PlacedGlyph>* into)
 {
     const auto face = faceFor(font);
 
@@ -159,13 +160,18 @@ float TextRenderer::layout(std::string_view text,
         {
             // The slot's src is in atlas texels but its offset and advance are
             // already in points, so only the size needs dividing by the scale.
-            auto destination = Graphics::Rect {pen.x + advance + glyph.offset.x,
-                                               pen.y + glyph.offset.y,
-                                               glyph.src.w / builtAtScale,
-                                               glyph.src.h / builtAtScale};
+            auto placed = PlacedGlyph {{pen.x + advance + glyph.offset.x,
+                                        pen.y + glyph.offset.y,
+                                        glyph.src.w / builtAtScale,
+                                        glyph.src.h / builtAtScale},
+                                       glyph.src,
+                                       glyph.format == GlyphFormat::Color};
 
-            glyphs->add(
-                destination, glyph.src, color, glyph.format == GlyphFormat::Color);
+            if (into != nullptr)
+                into->add(placed);
+            else
+                glyphs->add(
+                    placed.destination, placed.source, color, placed.colored);
         }
 
         advance += glyph.advance;
@@ -194,6 +200,30 @@ float TextRenderer::draw(std::string_view text,
         begin();
 
     return layout(text, baselineLeft, color, font, true);
+}
+
+float TextRenderer::layoutInto(Vector<PlacedGlyph>& into,
+                               std::string_view text,
+                               Graphics::Point baselineLeft,
+                               const Font& font)
+{
+    // No begin() here, unlike draw(): nothing is being queued, so there is no
+    // queue to have started. A recorded layout is legal outside a frame
+    // entirely, which is what lets a component be painted with no pass open.
+    return layout(text, baselineLeft, Graphics::Color::white(), font, true, &into);
+}
+
+void TextRenderer::drawGlyph(const PlacedGlyph& glyph, const Graphics::Color& color)
+{
+    if (!glyphs.has_value())
+        begin();
+
+    glyphs->add(glyph.destination, glyph.source, color, glyph.colored);
+}
+
+std::uint32_t TextRenderer::generation() const
+{
+    return atlas != nullptr ? atlas->generation() : 0;
 }
 
 float TextRenderer::measure(std::string_view text, FontStyle style)

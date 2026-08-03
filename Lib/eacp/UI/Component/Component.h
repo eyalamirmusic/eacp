@@ -96,11 +96,42 @@ public:
     void setMouseCursor(eacp::Graphics::MouseCursor cursorToUse);
     eacp::Graphics::MouseCursor getMouseCursor() const { return cursor; }
 
-    // Marks the tree dirty. There is no partial-repaint bookkeeping: the host
-    // redraws the whole tree, because with the draws batched that costs less
-    // than tracking which rectangles changed. Nothing is drawn at all while
-    // nothing is dirty, which is the part that matters for battery.
+    // Says that what this component draws has changed, so paint() has to be
+    // asked again before the next frame.
+    //
+    // It is the *only* thing that makes paint() run. A component's drawing is
+    // recorded the first time and kept (see DrawList), and every later frame
+    // replays what it has -- so a component that does not call this is not
+    // painted, however many frames go by and however busy the rest of the tree
+    // is. An animation next to it costs its own repaint and nothing more.
+    //
+    // What it is not: a redraw of a region. A component is the whole unit of
+    // invalidation, and the frame still draws the tree -- what this decides is
+    // which components have to work out what they draw, not which pixels are
+    // touched.
+    //
+    // Moving a component does not need one. The recording is in the component's
+    // own space and the frame applies its position as it replays, so a
+    // component that is dragged, scrolled or laid out somewhere else replays
+    // what it already has. A *resize* does need one, and setBounds does it.
+    //
+    // Called from inside a paint() it marks this component for the *next* frame
+    // rather than being lost, which is what a component drawing something
+    // derived from the frame it is in needs. What it cannot do from there is
+    // bring that frame about: asking the native view to draw while it is drawing
+    // is coalesced into the cycle already running, so a component that has no
+    // other reason to be redrawn should post the ask (Threads::callAsync) rather
+    // than make it in place.
     void repaint();
+
+    // Whether this component still owes a paint(): true from the moment
+    // repaint() is called until the frame that answers it, and true of a
+    // component that has never been painted at all.
+    //
+    // What the tier's redrawing policy looks like from outside, and the thing to
+    // read when a change is not showing up: a component that reports false after
+    // a frame and still looks wrong did not ask.
+    bool needsRepaint() const { return selfDirty; }
 
     virtual void paint(Graphics&) {}
 
@@ -249,7 +280,41 @@ private:
 
     ComponentHost* findHost() const;
 
+    // Asks the host for a frame without saying that anything this component
+    // draws has changed -- what a move, a reorder or a visibility change needs,
+    // all of which change the picture without changing any recording in it.
+    void invalidateHost();
+
+    // Every ancestor is told that something below it has to be recorded, which
+    // is what lets the frame skip a clean subtree without visiting it. Stops at
+    // the first that already knows: it and everything above it were marked when
+    // whatever told it was marked.
+    void markAncestorsDirty();
+
+    // Whether the frame still has recording to do in this subtree. Only ever
+    // true for a hidden one on its way in -- a visible subtree is recorded on
+    // the frame it is marked.
+    bool needsRecording() const { return selfDirty || descendantDirty; }
+
     Rect bounds;
+
+    // What paint() and paintOverChildren produced, in this component's own
+    // points. Kept until repaint() says they are stale, which is the whole of
+    // the tier's redrawing policy.
+    DrawList paintList;
+    DrawList overList;
+
+    // Whether this component's own drawing is stale, and whether anything below
+    // it is. Both start true, a component that has never painted being stale by
+    // definition.
+    //
+    // The invariant the frame relies on: a component with either bit set has
+    // descendantDirty set on every one of its ancestors. repaint() maintains it
+    // going in, and the recording walk maintains it coming out -- which is why
+    // that walk recomputes the second bit rather than simply clearing it.
+    bool selfDirty = true;
+    bool descendantDirty = true;
+
     Vector<Component*> children;
     Vector<PathShape*> pathShapes;
     Vector<Layer*> layers;
