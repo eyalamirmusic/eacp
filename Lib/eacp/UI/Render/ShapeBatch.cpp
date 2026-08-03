@@ -15,7 +15,7 @@ namespace
 // device pixel wide, and a point is never smaller than one.
 constexpr auto antialiasMargin = 1.f;
 
-constexpr ShapeVertex unitQuad[] = {
+constexpr ShapeVertex shapeUnitQuad[] = {
     {{0.f, 0.f}},
     {{1.f, 0.f}},
     {{1.f, 1.f}},
@@ -167,7 +167,7 @@ ShapeBatch::ShapeBatch(const CoverageAtlas& atlasToUse,
     , colorFormat(colorFormatToUse)
 {
     program.create();
-    program->setVertices(unitQuad);
+    program->setVertices(shapeUnitQuad);
 
     // Always blended: every edge this draws is a coverage ramp, and without
     // blending the antialiasing would punch holes in whatever is behind it.

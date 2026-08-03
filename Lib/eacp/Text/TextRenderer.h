@@ -3,10 +3,33 @@
 #include "GlyphAtlas.h"
 #include "GlyphRenderer.h"
 
+#include <cstdint>
 #include <string_view>
 
 namespace eacp::Text
 {
+// One glyph a layout placed: where it goes in the caller's own points, where it
+// is in the atlas, and which of the two atlases that is.
+//
+// What a caller keeps when it wants the layout done once rather than once per
+// frame. Laying a string out is a walk over its bytes with an atlas lookup per
+// glyph, and a string that has not changed produces the same glyphs every time
+// -- so a caller drawing an unchanged interface should be able to hold these and
+// hand them straight back. See layoutInto and drawGlyph, and note generation():
+// a slot kept across frames is only valid while the atlas has not been cleared
+// underneath it.
+struct PlacedGlyph
+{
+    Graphics::Rect destination;
+
+    // In atlas texels, which survive the atlas growing -- placements only ever
+    // extend right and down, and the size the shader divides by is read at the
+    // draw. Only a clear invalidates these, and generation() is what says so.
+    Graphics::Rect source;
+
+    bool colored = false;
+};
+
 // Draws strings. An atlas, a glyph renderer and the layout loop that walks a
 // string placing each glyph by its own bearings — the three things every
 // consumer of this module otherwise assembles by hand, and which have to agree
@@ -71,6 +94,29 @@ public:
                const Graphics::Color& color,
                const Font& font);
 
+    // Lays the string out and appends each drawable glyph to `into` instead of
+    // queueing it, returning the advance the way draw() does.
+    //
+    // One walk for both answers, which is the point: a caller that records a
+    // frame rather than issuing one needs the placements *and* the advance, and
+    // measuring first and drawing afterwards walks the string twice for two
+    // halves of the same loop.
+    float layoutInto(Vector<PlacedGlyph>& into,
+                     std::string_view text,
+                     Graphics::Point baselineLeft,
+                     const Font& font);
+
+    // Queues a glyph an earlier layoutInto placed. The colour is given here
+    // rather than held in the glyph, so one recorded run can be drawn in
+    // whatever colour the caller is drawing in now.
+    void drawGlyph(const PlacedGlyph& glyph, const Graphics::Color& color);
+
+    // Ticks when the atlas is cleared, which is what makes every PlacedGlyph
+    // handed out before it point at texels belonging to somebody else. A caller
+    // holding placements across frames compares this and lays out again; one
+    // that lays out every frame can ignore it.
+    std::uint32_t generation() const;
+
     // The advance `text` would take, without drawing it.
     float measure(std::string_view text, FontStyle style = FontStyle::Regular);
     float measure(std::string_view text, const Font& font);
@@ -90,11 +136,15 @@ private:
 
     // Walks the string, optionally emitting each glyph, and returns the total
     // advance. One loop rather than two so measure() and draw() cannot drift.
+    //
+    // `into` is where the glyphs go when there is one: the caller's vector, for
+    // a recorded layout, or the renderer's own queue when there is not.
     float layout(std::string_view text,
                  Graphics::Point pen,
                  const Graphics::Color& color,
                  const Font& font,
-                 bool emit);
+                 bool emit,
+                 Vector<PlacedGlyph>* into = nullptr);
 
     Font defaultFont;
     float builtAtScale = 0.0f;

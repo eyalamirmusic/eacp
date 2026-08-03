@@ -44,8 +44,10 @@ void ComponentHost::componentDeleted(Component& component)
     {
         root = nullptr;
         lastComponentCount = 0;
+        lastPaintedComponents = 0;
         lastDroppedPaths = 0;
         lastMeshedPaths = 0;
+        lastSharedMasks = 0;
     }
 }
 
@@ -87,7 +89,24 @@ void ComponentHost::setFont(const Font& fontToUse)
     if (text.has_value())
         text->setFont(font);
 
+    // Every component that never named a face of its own recorded glyphs of this
+    // one, so all of them have to be laid out again.
+    if (root != nullptr)
+        markTreeDirty(*root);
+
     repaint();
+}
+
+GradientRamps& ComponentHost::gradientRamps() const
+{
+    // Built on the first ask rather than with the batches, because painting
+    // needs it and drawing is what the batches are for: a tree can be painted
+    // before it has ever been sized, and a gradient resolved then has to have
+    // somewhere to bake its row.
+    if (!ramps.has_value())
+        ramps.emplace();
+
+    return *ramps;
 }
 
 Text::TextRenderer& ComponentHost::renderer() const
@@ -154,13 +173,13 @@ void ComponentHost::resized()
     else
     {
         paths.emplace();
-        ramps.emplace();
         shapes.emplace(*paths,
-                       *ramps,
+                       gradientRamps(),
                        Point {bounds.w, bounds.h},
                        backingScale(),
                        sampleCount());
-        meshes.emplace(*paths, *ramps, Point {bounds.w, bounds.h}, sampleCount());
+        meshes.emplace(
+            *paths, gradientRamps(), Point {bounds.w, bounds.h}, sampleCount());
         layers.emplace(Point {bounds.w, bounds.h}, sampleCount());
     }
 
@@ -170,29 +189,138 @@ void ComponentHost::resized()
     repaint();
 }
 
-void ComponentHost::paintComponent(Component& component, Graphics& g)
+void ComponentHost::markTreeDirty(Component& component)
+{
+    component.selfDirty = true;
+    component.descendantDirty = true;
+
+    for (auto* child: component.getChildren())
+        markTreeDirty(*child);
+}
+
+void ComponentHost::record(Component& component)
+{
+    auto local = component.getLocalBounds();
+
+    component.paintList.clear();
+    component.overList.clear();
+
+    // Cleared before the paint rather than after it, so a component that asks
+    // for a repaint from inside its own paint() is marked for the *next* frame
+    // rather than having the request cleared out from under it. Bringing that
+    // frame about is a separate matter -- see Component::repaint.
+    component.selfDirty = false;
+
+    {
+        auto g = Graphics {component.paintList, gradientRamps(), renderer(), local};
+        component.paint(g);
+    }
+
+    {
+        auto g = Graphics {component.overList, gradientRamps(), renderer(), local};
+        component.paintOverChildren(g);
+    }
+
+    ++paintedThisWalk;
+}
+
+bool ComponentHost::recordComponent(Component& component)
+{
+    // A hidden subtree is not painted, and what it owes is carried rather than
+    // forgotten: the walk above it needs to know there is still something down
+    // here, or nothing would reach it on the frame it is shown again.
+    if (!component.isVisible())
+        return component.needsRecording();
+
+    if (component.selfDirty)
+        record(component);
+
+    auto pending = false;
+
+    if (component.descendantDirty)
+        for (auto* child: component.getChildren())
+            pending = recordComponent(*child) || pending;
+
+    // Recomputed rather than cleared, which is what keeps repaint()'s early-out
+    // sound: a component below here that is still owed a recording leaves the
+    // chain of ancestors marked all the way to the root.
+    component.descendantDirty = pending;
+
+    return pending;
+}
+
+int ComponentHost::paintDirtyComponents()
+{
+    if (root == nullptr)
+        return 0;
+
+    recordTree();
+
+    return paintedThisWalk;
+}
+
+void ComponentHost::recordTree()
+{
+    paintedThisWalk = 0;
+
+    // Published only once the walk is over, so a component painting the figure
+    // reads the last completed frame's rather than however much of this one had
+    // happened before it was reached.
+    struct Publish
+    {
+        ~Publish() { host.lastPaintedComponents = host.paintedThisWalk; }
+        ComponentHost& host;
+    } publish {*this};
+
+    if (!root->needsRecording())
+        return;
+
+    auto before = renderer().generation();
+
+    recordComponent(*root);
+
+    if (renderer().generation() == before)
+        return;
+
+    // A glyph rasterized during the walk filled the atlas and cleared it, so
+    // every glyph recorded before that names texels that have been handed to
+    // somebody else. Once more, against the atlas that came out of it.
+    //
+    // Once, and not until it settles. If it ticks again the frame draws as it
+    // stands and the next one puts it right, which is the same judgement
+    // rasterizePaths makes about its two attempts: a frame with one stale glyph
+    // in it is better than a frame that never ends.
+    markTreeDirty(*root);
+    recordComponent(*root);
+}
+
+void ComponentHost::playComponent(Component& component,
+                                  DrawPlayer& player,
+                                  Point origin,
+                                  const Rect& clip)
 {
     if (!component.isVisible())
         return;
 
-    auto scope = Graphics::ScopedState {g};
-
     auto bounds = component.getBounds();
-    g.translate(bounds.x, bounds.y);
-    g.reduceClipRegion(component.getLocalBounds());
+    auto position = Point {origin.x + bounds.x, origin.y + bounds.y};
+
+    // Where this component may draw, in surface points: its own bounds, narrowed
+    // by everything its ancestors left of them.
+    auto visible = clip.intersection({position.x, position.y, bounds.w, bounds.h});
 
     // A component scrolled out of its parent, or entirely behind an opaque
-    // ancestor's clip, costs nothing at all -- not even the paint() call. The
-    // whole subtree goes with it, since a child cannot escape this clip.
-    if (g.isClipEmpty())
+    // ancestor's clip, costs nothing at all. The whole subtree goes with it,
+    // since a child cannot escape this clip.
+    if (visible.isEmpty())
         return;
 
-    component.paint(g);
+    player.play(component.paintList, position, visible);
 
     for (auto* child: component.getChildren())
-        paintComponent(*child, g);
+        playComponent(*child, player, position, visible);
 
-    component.paintOverChildren(g);
+    player.play(component.overList, position, visible);
 }
 
 void ComponentHost::markAllPathsDirty(Component& component)
@@ -212,7 +340,7 @@ void ComponentHost::rasterizeDirtyPaths(Component& component,
     {
         if (shape->isDirty())
         {
-            shape->rasterize(*paths, backingScale(), batch);
+            shape->rasterize(*paths, masks, backingScale(), batch);
 
             // Growing or compacting the atlas relocates every slot already
             // handed out, so everything rasterized before this one now points
@@ -232,6 +360,9 @@ void ComponentHost::rasterizeDirtyPaths(Component& component,
 
         if (shape->isMeshed())
             ++walk.meshed;
+
+        if (shape->isSharingMask())
+            ++walk.shared;
     }
 
     for (auto* child: component.getChildren())
@@ -296,21 +427,33 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
     text->begin();
 
     {
-        auto g = Graphics {*shapes,
-                           *meshes,
-                           *layers,
-                           *ramps,
-                           *text,
-                           pass,
-                           {0.f, 0.f, bounds.w, bounds.h},
-                           backingScale()};
+        // Recorded and played straight away rather than kept. A layer already
+        // has a cache -- its own texture, which is only rebuilt when the layer
+        // is dirty -- so a second one for the drawing that fills it would be a
+        // list that is written and read once.
+        auto list = DrawList {};
 
-        // So the content draws in the coordinates it was authored in and the
-        // layer's own top-left lands on the texture's.
-        g.translate(-bounds.x, -bounds.y);
+        {
+            auto g =
+                Graphics {list, *ramps, renderer(), {0.f, 0.f, bounds.w, bounds.h}};
 
-        layer.onPaint(g);
-        g.flush();
+            // So the content draws in the coordinates it was authored in and the
+            // layer's own top-left lands on the texture's.
+            g.translate(-bounds.x, -bounds.y);
+
+            layer.onPaint(g);
+        }
+
+        auto player = DrawPlayer {*shapes,
+                                  *meshes,
+                                  *layers,
+                                  *text,
+                                  pass,
+                                  {0.f, 0.f, bounds.w, bounds.h},
+                                  backingScale()};
+
+        player.play(list, {}, {0.f, 0.f, bounds.w, bounds.h});
+        player.flush();
     }
 
     shapes->end();
@@ -339,6 +482,12 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
     if (root == nullptr || !paths.has_value())
         return;
 
+    // Coverage is device pixels, so everything cached was rasterized at one
+    // scale and a move to another display drops the lot. Told before the walk
+    // rather than after the check below, so that the entries are gone by the
+    // time anything asks for one.
+    masks.setScale(backingScale());
+
     if (backingScale() != lastPathScale)
     {
         // Coverage is rasterized in device pixels, so a move to a display of a
@@ -346,6 +495,8 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
         lastPathScale = backingScale();
         markAllPathsDirty(*root);
     }
+
+    auto generationBefore = paths->generation();
 
     auto walk = PathWalk {};
 
@@ -383,6 +534,11 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
         // just fits -- where it decides whether the tree fits at all.
         markAllPathsDirty(*root);
         paths->forgetAllocations();
+
+        // With the shelf. Every entry names a slot that is about to be handed
+        // out again, so an entry that outlived the shelf would share texels
+        // belonging to whatever was placed there second.
+        masks.clear();
     }
 
     if (!pathBatch.isEmpty())
@@ -391,7 +547,16 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
         pathBatch.dispatch(compute);
     }
 
+    // The atlas grew or compacted, so every uv a component recorded points at
+    // texels that belong to somebody else now -- including the components that
+    // have nothing else stale about them. They have to be painted again, which
+    // is why this happens before the recording walk rather than after it.
+    if (paths->generation() != generationBefore)
+        markTreeDirty(*root);
+
     lastMeshedPaths = walk.meshed;
+    lastSharedMasks = walk.shared;
+
     reportDroppedPaths(walk.dropped);
 }
 
@@ -420,21 +585,38 @@ void ComponentHost::render(GPU::Frame& frame)
     renderer();
 
     text->setViewport({bounds.w, bounds.h}, backingScale());
-    text->begin();
 
     // Counted before the walk rather than after it, so a component painting the
-    // figure reads this frame's rather than the last one's. A repaint asked for
-    // from inside a paint is lost -- the draw cycle it was issued in clears the
-    // invalidation on its way out -- so anything derived from the tree has to be
-    // ready before the tree is drawn, not after.
+    // figure reads this frame's rather than the last one's.
     lastComponentCount = root->countComponentsInTree();
 
+    // A glyph's source rect and a mask's uv are both in the pixels of the
+    // display they were built for, so a move to one of a different scale makes
+    // every recording in the tree wrong at once.
+    if (backingScale() != lastRecordScale)
+    {
+        lastRecordScale = backingScale();
+        markTreeDirty(*root);
+    }
+
+    // Before the recording walk, and that is the order rather than an accident:
+    // a path is set from resized() or from a value changing, never from paint(),
+    // so everything dirty is already known -- and a walk that moved the atlas
+    // has to be answered by re-recording the uvs before anything records them.
     rasterizePaths(frame);
 
-    // After the masks and before the tree: a layer's content is drawn out of the
-    // same atlas everything else is, so the coverage has to exist before the
-    // layer's own pass runs.
+    // After the masks: a layer's content is drawn out of the same atlas
+    // everything else is, so the coverage has to exist before the layer's own
+    // pass runs.
+    //
+    // And before the tree is recorded, which is the part that is easy to get
+    // wrong. A component draws a layer as a quad of a texture, and a layer with
+    // no texture yet draws as nothing -- so a tree recorded first would record
+    // *nothing* for a layer about to be rendered, and then never look again,
+    // there being nothing to tell it the layer had arrived.
     renderLayers(frame);
+
+    recordTree();
 
     text->setViewport({bounds.w, bounds.h}, backingScale());
     text->begin();
@@ -443,19 +625,19 @@ void ComponentHost::render(GPU::Frame& frame)
     shapes->begin(pass);
     meshes->begin(pass);
 
-    auto g = Graphics {
-        *shapes, *meshes, *layers, *ramps, *text, pass, bounds, backingScale()};
+    auto player =
+        DrawPlayer {*shapes, *meshes, *layers, *text, pass, bounds, backingScale()};
 
-    paintComponent(*root, g);
+    playComponent(*root, player, {}, bounds);
 
     // Drains both queues while the pass is still open. The shape batch would
     // drain itself when the pass ends, but that is after this point, so the last
     // run of quads would land on top of the last run of glyphs rather than
     // under it.
-    g.flush();
+    player.flush();
 
-    lastClipChanges = g.getClipChangeCount();
-    lastRendererSwitches = g.getRendererSwitchCount();
+    lastClipChanges = player.getClipChangeCount();
+    lastRendererSwitches = player.getRendererSwitchCount();
 }
 
 MouseEvent ComponentHost::makeEvent(const Component& target,

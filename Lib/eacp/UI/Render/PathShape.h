@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoverageAtlas.h"
+#include "MaskCache.h"
 
 namespace eacp::UI
 {
@@ -87,9 +88,19 @@ public:
     // atlas nothing and costing it the shape's whole area.
     bool isMeshed() const { return !mesh.empty(); }
 
+    // Whether this shape draws through a mask somebody else rasterized. True of
+    // every copy but the first of a shape an interface repeats, and the figure
+    // that says how much of the atlas repetition is costing nothing.
+    bool isSharingMask() const { return sharing; }
+
     // The geometry, in the owning component's points. Marks the shape for
     // rasterization at the top of the next frame; cheap enough to call whenever
     // the geometry actually changes, and nothing else triggers the work.
+    //
+    // Setting the same geometry again costs the hash of it and nothing else:
+    // no dispatch, no repaint of the owner. A resized() may therefore rebuild
+    // every path it owns without checking whether it needed to, which is the
+    // order that keeps a layout readable.
     void setPath(const GPUWidgets::Path& newPath,
                  GPUWidgets::FillRule rule = GPUWidgets::FillRule::NonZero);
 
@@ -133,7 +144,12 @@ private:
     // Allocates a slot and hands the binned path to the frame's batch. No GPU
     // work is recorded here: the batch is dispatched once, after the whole tree
     // has been walked, which is what keeps a hundred paths to one dispatch.
+    //
+    // Or none of that: a shape whose geometry somebody has already rasterized
+    // takes their mask and dispatches nothing at all. See MaskCache for what
+    // that costs the shape that published it.
     void rasterize(CoverageAtlas& atlas,
+                   MaskCache& cache,
                    float scale,
                    GPUWidgets::CoverageBatch& batch);
 
@@ -160,6 +176,11 @@ private:
     GPUWidgets::FillRule fillRule = GPUWidgets::FillRule::NonZero;
     GPUWidgets::PathRasterizer rasterizer;
 
+    // What the geometry above hashes to, so that setting it again can be told
+    // from changing it. Meaningless while the path is empty, which is the one
+    // state a hash cannot describe.
+    std::uint64_t geometryHash = 0;
+
     Backing backing = Backing::Automatic;
 
     // The triangles, when this shape is meshed. Non-empty is what says it is:
@@ -168,8 +189,24 @@ private:
 
     // The room reserved in the atlas, kept between rasterizations: a mask that
     // still fits in it stays put, which is what stops a knob being dragged from
-    // consuming the atlas one frame at a time.
+    // consuming the atlas one frame at a time. Only while `placed`, which a
+    // shape drawing through somebody else's slot is not.
     CoverageAtlas::Slot slot;
+
+    // The key this shape offered its mask to the cache under, or zero. Held so
+    // that a change of geometry can take the offer back, the slot behind it
+    // being one this shape is about to rasterize into again.
+    std::uint64_t publishedKey = 0;
+
+    // Whether this shape's geometry has ever changed under it. One that has is
+    // one that will change again -- a knob being dragged, a meter -- and it
+    // stops offering its masks, since each offer it cannot take back costs a
+    // slot it could have rewritten.
+    bool churning = false;
+
+    // Whether the mask this shape draws is one it rasterized or one it was
+    // handed. A shape that was handed one holds no claim on the slot.
+    bool sharing = false;
 
     Rect maskUV;
     Rect bounds;
