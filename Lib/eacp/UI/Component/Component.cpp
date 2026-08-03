@@ -1,5 +1,6 @@
 #include "Component.h"
 
+#include "../DragAndDrop/DragAndDrop.h"
 #include "../Host/ComponentHost.h"
 
 #include <ranges>
@@ -15,6 +16,12 @@ Component::~Component()
     // of those outliving the component is a dangling write later.
     if (auto* found = findHost())
         found->componentDeleted(*this);
+
+    // And the same for a drag in progress, which holds the component it started
+    // from. A card destroyed mid-drag is the ordinary case rather than a strange
+    // one: a drop is what destroys it.
+    if (auto* container = findDragContainer())
+        container->componentDeleted(*this);
 
     for (auto* child: children)
         child->parent = nullptr;
@@ -216,6 +223,15 @@ Component* Component::nextComponentWantingFocus(bool forwards)
         next = order.size() - 1;
 
     return order[next];
+}
+
+DragAndDropContainer* Component::findDragContainer() const
+{
+    for (const auto* current = this; current != nullptr; current = current->parent)
+        if (current->dragContainer != nullptr)
+            return current->dragContainer;
+
+    return nullptr;
 }
 
 ComponentHost* Component::findHost() const

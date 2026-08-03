@@ -1,5 +1,5 @@
 add_executable(TaskBoard TaskBoard.cpp)
-target_link_libraries(TaskBoard PRIVATE eacp-graphics)
+target_link_libraries(TaskBoard PRIVATE eacp-ui)
 
 set(BUNDLE_ID "com.eacp.taskboard")
 

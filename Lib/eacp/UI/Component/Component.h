@@ -7,6 +7,8 @@
 namespace eacp::UI
 {
 class ComponentHost;
+class DragAndDropTarget;
+class DragAndDropContainer;
 
 // A lightweight UI element: bounds, children, paint, and mouse events.
 //
@@ -191,6 +193,16 @@ public:
     // point in a frame where a compute pass can run. See PathShape.
     const Vector<PathShape*>& getPathShapes() const { return pathShapes; }
 
+    // Where a drag can be dropped on this component, or null. Registered by a
+    // DragAndDropTarget member in its constructor, the same way a PathShape
+    // registers -- so a drag finds one by walking up from whatever the pointer
+    // is over, and nothing has to be cast to find out what a component is.
+    DragAndDropTarget* getDropTarget() const { return dropTarget; }
+
+    // The nearest ancestor running drags, including this one. Null in a tree
+    // that has no DragAndDropContainer in it, which is most trees.
+    DragAndDropContainer* findDragContainer() const;
+
     // The layers this component composites, found by the host the same way and
     // for the same reason: a layer's content is rendered into a texture of its
     // own before the frame's pass opens, a pass not being able to begin inside
@@ -203,6 +215,14 @@ private:
     friend class ComponentHost;
     friend class PathShape;
     friend class Layer;
+    friend class DragAndDropTarget;
+    friend class DragAndDropContainer;
+
+    void setDropTarget(DragAndDropTarget* target) { dropTarget = target; }
+    void setDragContainer(DragAndDropContainer* container)
+    {
+        dragContainer = container;
+    }
 
     void addPathShape(PathShape& shape);
     void removePathShape(PathShape& shape);
@@ -217,6 +237,9 @@ private:
     Vector<PathShape*> pathShapes;
     Vector<Layer*> layers;
     Component* parent = nullptr;
+
+    DragAndDropTarget* dropTarget = nullptr;
+    DragAndDropContainer* dragContainer = nullptr;
 
     // Set on a root only, by ComponentHost::setRootComponent. Everything else
     // walks up to find it, so a subtree moved between hosts needs no fixing up.

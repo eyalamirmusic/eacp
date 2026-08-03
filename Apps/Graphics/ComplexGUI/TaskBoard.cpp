@@ -1,12 +1,34 @@
-#include <eacp/Graphics/Graphics.h>
-#include <algorithm>
+#include <eacp/UI/UI.h>
+
+#include <string>
+
+// Cards dragged between columns, which is the one thing the component tier had
+// no answer for at all.
+//
+// The two halves were already there: a press captures the mouse to a component,
+// so drags and the release reach it wherever the pointer has since travelled,
+// and toFront orders siblings. What was missing is the part between — something
+// to carry, somewhere to say "I will take that", and an image that follows the
+// pointer above every column rather than clipped inside the one the drag started
+// in. That is UI::DragAndDropContainer and UI::DragAndDropTarget, and this app is
+// what they were built for.
+//
+// Note what a card being dragged is *not*: a component that moves. The card
+// stays where it is and a small image follows the pointer, because a drop
+// destroys the card and builds another one in the column that took it — which is
+// also why a drag carries an id rather than a pointer.
 
 using namespace eacp;
-using namespace Graphics;
+
+namespace
+{
+constexpr auto cardHeight = 62.f;
+constexpr auto cardGap = 8.f;
+constexpr auto headerHeight = 44.f;
 
 Random randomGen {};
 
-size_t nextRandom(size_t min, size_t max)
+std::size_t nextRandom(std::size_t min, std::size_t max)
 {
     return randomGen.get(min, max);
 }
@@ -22,790 +44,526 @@ struct TaskData
     int id = 0;
     std::string title;
     std::string description;
-    Color color;
+    UI::Color colour;
 };
 
-struct Button final : View
+// The card as it sits in a column, and the same card as the image under the
+// pointer: one painter, so the two cannot drift apart.
+void paintCard(UI::Graphics& g,
+               const UI::Rect& bounds,
+               const TaskData& data,
+               bool selected,
+               bool hovered,
+               bool compact)
 {
-    Button(const std::string& label, Color bgColor = Color::gray(0.33f))
-        : backgroundColor(bgColor)
-    {
-        setHandlesMouseEvents();
-        textLayer->setText(label);
-        textLayer->setColor(Color::gray(0.9f));
-        addChildren({backgroundLayer, textLayer});
-        updateAppearance();
-    }
+    const auto& theme = UI::defaultTheme();
 
-    void mouseEntered(const MouseEvent&) override { updateAppearance(); }
-    void mouseExited(const MouseEvent&) override { updateAppearance(); }
+    g.setColour(UI::Color::gray(0.23f).withAlpha(hovered ? 1.f : 0.9f));
+    g.fillRoundedRect(bounds, 8.f);
 
-    void mouseDown(const MouseEvent&) override
-    {
-        pressed = true;
-        updateAppearance();
-    }
+    g.setColour(selected ? UI::Color {0.4f, 0.6f, 1.f, 1.f} : theme.outline);
+    g.drawRoundedRect(bounds, 8.f, selected ? 2.f : 1.f);
 
-    void mouseUp(const MouseEvent& e) override
-    {
-        if (pressed && getLocalBounds().contains(e.pos))
-            Threads::callAsync(onClick);
+    g.setColour(data.colour);
+    g.fillRoundedRect({bounds.x, bounds.y, 4.f, bounds.h}, 2.f);
 
-        pressed = false;
-        updateAppearance();
-    }
+    auto text = bounds.inset(12.f, 10.f);
+    text.x = bounds.x + 12.f;
+    text.w = bounds.w - 20.f;
 
-    void updateAppearance()
-    {
-        auto alpha = 0.7f;
-        if (isHovering())
-            alpha = 0.9f;
-        if (pressed)
-            alpha = 1.0f;
+    g.setFontStyle(UI::FontStyle::Bold);
+    g.setColour(UI::Color::gray(0.95f));
+    g.drawText(data.title,
+               compact ? text : text.removeFromTop(text.h * 0.5f),
+               UI::Justification::Left);
 
-        backgroundLayer->setFillColor(backgroundColor.withAlpha(alpha));
-    }
+    if (compact)
+        return;
 
-    void resized() override
-    {
-        auto bounds = getLocalBounds();
-        auto path = Path();
-        path.addRoundedRect(bounds, 6.f);
-        backgroundLayer->setPath(path);
-        scaleToFit({backgroundLayer, textLayer});
-        textLayer->setPosition({8.f, bounds.h / 2.f - 7.f});
-    }
+    g.setFontStyle(UI::FontStyle::Regular);
+    g.setFontSize(11.f);
+    g.setColour(UI::Color::gray(0.7f));
+    g.drawText(data.description, text);
+}
 
-    bool pressed = false;
-    Color backgroundColor;
-    ShapeLayerView backgroundLayer;
-    TextLayerView textLayer;
-
-    Callback onClick = [] {};
-};
-
-struct TaskCard final : View
+struct TaskCard final : UI::Component
 {
-    TaskCard(const TaskData& taskData)
+    explicit TaskCard(const TaskData& taskData)
         : data(taskData)
     {
-        setHandlesMouseEvents().setGrabsFocusOnMouseDown();
-
-        titleLayer->setText(data.title);
-        titleLayer->setColor(Color::gray(0.95f));
-        titleLayer->setFont(FontOptions().withName("Helvetica-Bold").withSize(13.f));
-
-        descLayer->setText(data.description);
-        descLayer->setColor(Color::gray(0.7f));
-        descLayer->setFont(FontOptions().withSize(11.f));
-
-        deleteButton.onClick = [this] { onDelete(this); };
-
-        addChildren(
-            {backgroundLayer, accentLayer, titleLayer, descLayer, deleteButton});
-        updateAppearance();
+        setInterceptsMouseClicks(true);
+        setWantsKeyboardFocus(true);
+        setMouseCursor(eacp::Graphics::MouseCursor::PointingHand);
     }
 
-    void mouseEntered(const MouseEvent&) override { updateAppearance(); }
-    void mouseExited(const MouseEvent&) override { updateAppearance(); }
-
-    void mouseDown(const MouseEvent& e) override
+    void setSelected(bool shouldBeSelected)
     {
-        dragStartPos = e.pos;
-        onSelect(this);
+        selected = shouldBeSelected;
+        repaint();
     }
 
-    void mouseDragged(const MouseEvent& e) override
-    {
-        auto delta = e.pos - dragStartPos;
+    void mouseEnter(const UI::MouseEvent&) override { repaint(); }
+    void mouseExit(const UI::MouseEvent&) override { repaint(); }
 
-        if (delta.length() > 5.f && onDragStart)
-            onDragStart(this, e.pos);
+    void mouseDown(const UI::MouseEvent&) override { onSelect(this); }
+
+    void mouseDrag(const UI::MouseEvent& event) override
+    {
+        auto* container = findDragContainer();
+
+        if (container == nullptr)
+            return;
+
+        // Not on the first pixel: a drag that starts the moment the pointer
+        // twitches makes a card impossible to click.
+        if (!container->isDragging())
+        {
+            auto travelled = event.position - event.downPosition;
+
+            if (std::abs(travelled.x) + std::abs(travelled.y) < 4.f)
+                return;
+
+            auto info = UI::DragInfo {};
+            info.type = "card";
+            info.itemId = data.id;
+
+            container->startDragging(
+                info,
+                *this,
+                {180.f, 44.f},
+                [this](UI::Graphics& g, const UI::Rect& bounds)
+                { paintCard(g, bounds, data, false, true, true); });
+        }
+
+        container->dragTo(localPointToRoot(event.position));
     }
 
-    void setSelected(bool sel)
+    void mouseUp(const UI::MouseEvent& event) override
     {
-        selected = sel;
-        updateAppearance();
+        if (auto* container = findDragContainer())
+            container->drop(localPointToRoot(event.position));
     }
 
-    void updateAppearance()
+    void paint(UI::Graphics& g) override
     {
-        auto bgAlpha = 0.85f;
-        if (isHovering())
-            bgAlpha = 0.95f;
-        if (selected)
-            bgAlpha = 1.0f;
-
-        backgroundLayer->setFillColor(Color::gray(0.23f).withAlpha(bgAlpha));
-
-        if (selected)
-            backgroundLayer->setStrokeColor({0.4f, 0.6f, 1.0f});
-        else
-            backgroundLayer->setStrokeColor(Color::gray(0.33f));
-    }
-
-    void resized() override
-    {
-        auto bounds = getLocalBounds();
-
-        auto bgPath = Path();
-        bgPath.addRoundedRect(bounds, 8.f);
-        backgroundLayer->setPath(bgPath);
-        backgroundLayer->setStrokeWidth(selected ? 2.f : 1.f);
-
-        auto accentPath = Path();
-        accentPath.addRoundedRect({0, 0, 4.f, bounds.h}, 2.f);
-        accentLayer->setPath(accentPath);
-        accentLayer->setFillColor(data.color);
-
-        scaleToFit({backgroundLayer, accentLayer, titleLayer, descLayer});
-
-        titleLayer->setPosition({12.f, bounds.h - 22.f});
-        descLayer->setPosition({12.f, bounds.h - 40.f});
-
-        deleteButton.setBounds(bounds.fromRight(22.f, 6.f).fromTop(22.f, 6.f));
+        paintCard(g, getLocalBounds(), data, selected, isMouseOver(), false);
     }
 
     TaskData data;
-    std::function<void(TaskCard*)> onSelect {[](auto*) {}};
-    std::function<void(TaskCard*)> onDelete {[](auto*) {}};
-    std::function<void(TaskCard*, Point)> onDragStart {[](auto*, auto) {}};
-
     bool selected = false;
-    Point dragStartPos;
 
-    ShapeLayerView backgroundLayer;
-    ShapeLayerView accentLayer;
-    TextLayerView titleLayer;
-    TextLayerView descLayer;
-    Button deleteButton {"×", {0.5f, 0.2f, 0.2f}};
+    std::function<void(TaskCard*)> onSelect = [](TaskCard*) {};
 };
 
-struct Column final : View
+struct Column final : UI::Component
 {
-    Column(const std::string& columnName, Color color)
-        : name(columnName)
-        , headerColor(color)
+    Column(std::string columnName, const UI::Color& headerColourToUse)
+        : name(std::move(columnName))
+        , headerColour(headerColourToUse)
     {
-        headerText->setText(columnName);
-        headerText->setColor(Color::gray(0.9f));
-        headerText->setFont(FontOptions().withName("Helvetica-Bold").withSize(14.f));
+        add.onClick = [this] { onAddCard(); };
 
-        countText->setColor(Color::gray(0.6f));
-        countText->setFont(FontOptions().withSize(11.f));
+        // Only cards, and only from somewhere else: a column that took its own
+        // card back would rebuild it for nothing and lose its place in the list.
+        dropTarget.isInterestedIn = [this](const UI::DragInfo& info)
+        { return info.type == "card" && findCard(info.itemId) == nullptr; };
 
-        addButton.onClick = [this] { onAddCard(); };
+        dropTarget.itemDragEnter = [this](const UI::DragInfo&)
+        {
+            highlighted = true;
+            repaint();
+        };
 
-        addChildren({backgroundLayer, headerBg, headerText, countText, addButton});
-        updateCountText();
+        dropTarget.itemDragExit = [this](const UI::DragInfo&)
+        {
+            highlighted = false;
+            repaint();
+        };
+
+        dropTarget.itemDropped = [this](const UI::DragInfo& info)
+        { onCardDropped(info.itemId, *this); };
+
+        addAndMakeVisible(add);
     }
 
-    TaskCard* addCard(const TaskData& data)
+    TaskCard& addCard(const TaskData& data)
     {
-        auto& card = cards.createVisible(data);
-
+        auto& card = cards.createNew(data);
         card.onSelect = [this](auto* c) { onCardSelect(c); };
-        card.onDelete = [this](auto* c) { onCardDelete(c); };
-        card.onDragStart = [this](auto* c, auto p) { onCardDragStart(c, p); };
 
-        updateCountText();
-        layoutCards();
+        addAndMakeVisible(card);
+        resized();
+        repaint();
 
-        return &card;
+        return card;
     }
 
     void removeCard(TaskCard& card)
     {
-        cards.erase(card);
-        updateCountText();
-        layoutCards();
+        removeChildComponent(card);
+
+        for (auto i = 0; i < cards.size(); ++i)
+        {
+            if (cards[i].get() != &card)
+                continue;
+
+            cards.removeAt(i);
+            break;
+        }
+
+        resized();
+        repaint();
     }
 
-    TaskCard* findCard(int id)
+    TaskCard* findCard(int id) const
     {
         for (auto& card: cards)
-        {
             if (card->data.id == id)
                 return card.get();
-        }
+
         return nullptr;
     }
 
-    void updateCountText()
-    {
-        countText->setText(std::to_string(cards.size()) + " tasks");
-    }
-
-    void layoutCards() const
+    void paint(UI::Graphics& g) override
     {
         auto bounds = getLocalBounds();
-        auto cardY = bounds.h - 60.f;
-        auto cardHeight = 60.f;
-        auto cardSpacing = 8.f;
-        auto cardMargin = 8.f;
+
+        g.setColour(UI::Color::gray(highlighted ? 0.22f : 0.16f));
+        g.fillRoundedRect(bounds, 10.f);
+
+        g.setColour(headerColour.withAlpha(0.3f));
+        g.fillRoundedRect(bounds.fromTop(headerHeight), 10.f);
+
+        auto header = bounds.fromTop(headerHeight).inset(12.f, 6.f);
+
+        g.setFontStyle(UI::FontStyle::Bold);
+        g.setFontSize(14.f);
+        g.setColour(UI::Color::gray(0.9f));
+        g.drawText(name, header.removeFromTop(18.f));
+
+        g.setFontStyle(UI::FontStyle::Regular);
+        g.setFontSize(11.f);
+        g.setColour(UI::Color::gray(0.6f));
+        g.drawText(std::to_string(cards.size()) + " tasks", header);
+    }
+
+    void resized() override
+    {
+        auto bounds = getLocalBounds();
+
+        add.setBounds(bounds.fromTop(26.f, 8.f).fromRight(26.f, 8.f));
+
+        auto area = bounds.inset(8.f, 0.f);
+        area.removeFromTop(headerHeight + cardGap);
 
         for (auto& card: cards)
         {
-            card->setBounds({cardMargin,
-                             cardY - cardHeight,
-                             bounds.w - cardMargin * 2,
-                             cardHeight});
-            cardY -= cardHeight + cardSpacing;
+            card->setBounds(area.removeFromTop(cardHeight));
+            area.removeFromTop(cardGap);
         }
-    }
-
-    void resized() override
-    {
-        auto bounds = getLocalBounds();
-
-        auto bgPath = Path();
-        bgPath.addRoundedRect(bounds, 10.f);
-        backgroundLayer->setPath(bgPath);
-        backgroundLayer->setFillColor(Color::gray(0.16f));
-
-        auto headerPath = Path();
-        headerPath.addRoundedRect(bounds.fromTop(44.f), 10.f);
-        headerBg->setPath(headerPath);
-        headerBg->setFillColor(headerColor.withAlpha(0.3f));
-
-        scaleToFit({backgroundLayer, headerBg, headerText, countText});
-
-        headerText->setPosition({12.f, bounds.h - 30.f});
-        countText->setPosition({12.f, bounds.h - 12.f});
-
-        addButton.setBounds(bounds.fromRight(26.f, 8.f).fromTop(26.f, 6.f));
-
-        layoutCards();
     }
 
     std::string name;
-    Color headerColor;
-    ViewList<TaskCard> cards {*this};
-    std::function<void(TaskCard*)> onCardSelect {[](auto*) {}};
-    std::function<void(TaskCard*)> onCardDelete {[](auto*) {}};
-    std::function<void(TaskCard*, Point)> onCardDragStart {[](auto*, auto) {}};
-    std::function<void()> onAddCard {[] {}};
+    UI::Color headerColour;
+    bool highlighted = false;
 
-    ShapeLayerView backgroundLayer;
-    ShapeLayerView headerBg;
-    TextLayerView headerText;
-    TextLayerView countText;
-    Button addButton {"+", {0.2f, 0.4f, 0.3f}};
+    OwnedVector<TaskCard> cards;
+    UI::Button add {"+"};
+    UI::DragAndDropTarget dropTarget {*this};
+
+    std::function<void(TaskCard*)> onCardSelect = [](TaskCard*) {};
+    std::function<void(int, Column&)> onCardDropped = [](int, Column&) {};
+    std::function<void()> onAddCard = [] {};
 };
 
-struct DragOverlay final : View
+struct Board final : UI::Component
 {
-    DragOverlay(const TaskData& data)
-        : taskData(data)
+    Board()
     {
-        textLayer->setText(data.title);
-        textLayer->setColor(Color::gray(0.9f));
-        textLayer->setFont(FontOptions().withName("Helvetica-Bold").withSize(12.f));
-        addChildren({backgroundLayer, accentLayer, textLayer});
-    }
+        setInterceptsMouseClicks(true);
+        setWantsKeyboardFocus(true);
 
-    void resized() override
-    {
-        auto bounds = getLocalBounds();
-
-        auto bgPath = Path();
-        bgPath.addRoundedRect(bounds, 8.f);
-        backgroundLayer->setPath(bgPath);
-        backgroundLayer->setFillColor(Color::gray(0.27f, 0.95f));
-
-        auto accentPath = Path();
-        accentPath.addRoundedRect({0, 0, 4.f, bounds.h}, 2.f);
-        accentLayer->setPath(accentPath);
-        accentLayer->setFillColor(taskData.color);
-
-        scaleToFit({backgroundLayer, accentLayer, textLayer});
-        textLayer->setPosition({12.f, bounds.h / 2.f - 7.f});
-    }
-
-    TaskData taskData;
-    ShapeLayerView backgroundLayer;
-    ShapeLayerView accentLayer;
-    TextLayerView textLayer;
-};
-
-struct StatusBar final : View
-{
-    StatusBar()
-    {
-        statusText->setColor(Color::gray(0.6f));
-        statusText->setFont(FontOptions().withSize(11.f));
-        addChildren({backgroundLayer, statusText});
-    }
-
-    void setStatus(const std::string& text) { statusText->setText(text); }
-
-    void resized() override
-    {
-        auto bounds = getLocalBounds();
-
-        auto path = Path();
-        path.addRect(bounds);
-        backgroundLayer->setPath(path);
-        backgroundLayer->setFillColor(Color::gray(0.11f));
-
-        scaleToFit({backgroundLayer, statusText});
-        statusText->setPosition({12.f, bounds.h / 2.f - 6.f});
-    }
-
-    ShapeLayerView backgroundLayer;
-    TextLayerView statusText {
-        "Ready | Press 'N' to add task, Delete to remove, Arrow keys to navigate"};
-};
-
-struct Header final : View
-{
-    std::function<void()> onClearAll = [] {};
-    std::function<void()> onAddSample = [] {};
-
-    Header()
-    {
-        titleText->setText("Task Board");
-        titleText->setColor(Color::gray(0.95f));
-        titleText->setFont(FontOptions().withName("Helvetica-Bold").withSize(20.f));
-
-        clearButton.onClick = [this] { onClearAll(); };
-        sampleButton.onClick = [this] { onAddSample(); };
-
-        addChildren({backgroundLayer, titleText, clearButton, sampleButton});
-    }
-
-    void resized() override
-    {
-        auto bounds = getLocalBounds();
-
-        auto path = Path();
-        path.addRect(bounds);
-        backgroundLayer->setPath(path);
-        backgroundLayer->setFillColor(Color::gray(0.13f));
-
-        scaleToFit({backgroundLayer, titleText});
-        titleText->setPosition({20.f, bounds.center().y - 12.f});
-
-        clearButton.setBounds(bounds.fromRight(80.f, 100.f).inset(0.f, 12.f));
-        sampleButton.setBounds(bounds.fromRight(80.f, 10.f).inset(0.f, 12.f));
-    }
-
-    ShapeLayerView backgroundLayer;
-    TextLayerView titleText;
-    Button clearButton {"Clear All", {0.5f, 0.2f, 0.2f}};
-    Button sampleButton {"+ Sample", {0.2f, 0.4f, 0.6f}};
-};
-
-struct TaskBoardView final : View
-{
-    TaskBoardView()
-    {
-        setHandlesMouseEvents().setGrabsFocusOnMouseDown();
-
-        setupColumns();
-        setupCallbacks();
-
-        addChildren({header, todoColumn, progressColumn, doneColumn, statusBar});
-
-        addSampleTasks();
-    }
-
-    void setupColumns()
-    {
-        todoColumn.onCardSelect = [this](auto* c) { selectCard(c); };
-        todoColumn.onCardDelete = [this](auto* c) { deleteCard(*c); };
-        todoColumn.onCardDragStart = [this](auto* c, auto p) { startDrag(c, p); };
-        todoColumn.onAddCard = [this] { addNewTaskToColumn(&todoColumn); };
-
-        progressColumn.onCardSelect = [this](auto* c) { selectCard(c); };
-        progressColumn.onCardDelete = [this](auto* c) { deleteCard(*c); };
-        progressColumn.onCardDragStart = [this](auto* c, auto p)
-        { startDrag(c, p); };
-        progressColumn.onAddCard = [this] { addNewTaskToColumn(&progressColumn); };
-
-        doneColumn.onCardSelect = [this](auto* c) { selectCard(c); };
-        doneColumn.onCardDelete = [this](auto* c) { deleteCard(*c); };
-        doneColumn.onCardDragStart = [this](auto* c, auto p) { startDrag(c, p); };
-        doneColumn.onAddCard = [this] { addNewTaskToColumn(&doneColumn); };
-    }
-
-    void setupCallbacks()
-    {
-        header.onClearAll = [this] { clearAllTasks(); };
-        header.onAddSample = [this] { addSampleTasks(); };
-    }
-
-    void addSampleTasks()
-    {
-        static const auto sampleTitles =
-            EA::Vector<std::string> {"Design system architecture",
-                                     "Implement user auth",
-                                     "Write unit tests",
-                                     "Review pull request",
-                                     "Fix memory leak",
-                                     "Update documentation",
-                                     "Optimize database",
-                                     "Deploy to staging"};
-
-        static const auto sampleDescs = EA::Vector<std::string> {"High priority",
-                                                                 "Needs review",
-                                                                 "In progress",
-                                                                 "Blocked",
-                                                                 "Ready for QA"};
-
-        for (int i = 0; i < 3; ++i)
+        for (auto* column: columns())
         {
-            auto& title = getRandomElement(sampleTitles);
-            auto& desc = getRandomElement(sampleDescs);
+            column->onCardSelect = [this](auto* card) { selectCard(card); };
+            column->onCardDropped = [this](int id, Column& into)
+            { moveCard(id, into); };
+            column->onAddCard = [this, column] { addCardTo(*column); };
 
-            auto data = createTaskData(title, desc);
-
-            auto col = nextRandom(0, 2);
-
-            if (col == 0)
-                todoColumn.addCard(data);
-            else if (col == 1)
-                progressColumn.addCard(data);
-            else
-                doneColumn.addCard(data);
+            addAndMakeVisible(*column);
         }
 
-        updateStatus();
+        clearAll.onClick = [this] { removeEveryCard(); };
+        addSample.onClick = [this] { addSampleCards(); };
+
+        addAndMakeVisible(clearAll);
+        addAndMakeVisible(addSample);
+
+        addSampleCards();
     }
 
-    TaskData createTaskData(const std::string& title, const std::string& desc)
-    {
-        static const auto colors = EA::Vector<Color> {{0.4f, 0.6f, 1.0f},
-                                                      {1.0f, 0.5f, 0.3f},
-                                                      {0.5f, 0.8f, 0.4f},
-                                                      {0.9f, 0.4f, 0.6f},
-                                                      {0.6f, 0.4f, 0.9f}};
+    Array<Column*, 3> columns() { return {&todo, &progress, &done}; }
 
-        auto& color = getRandomElement(colors);
-        return {nextTaskId++, title, desc, color};
+    void addSampleCards()
+    {
+        static const auto titles = Vector<std::string> {"Design the architecture",
+                                                        "Implement user auth",
+                                                        "Write unit tests",
+                                                        "Review pull request",
+                                                        "Fix the memory leak",
+                                                        "Update documentation",
+                                                        "Optimize the database",
+                                                        "Deploy to staging"};
+
+        static const auto descriptions = Vector<std::string> {"High priority",
+                                                              "Needs review",
+                                                              "In progress",
+                                                              "Blocked",
+                                                              "Ready for QA"};
+
+        for (auto i = 0; i < 3; ++i)
+        {
+            auto data =
+                makeCard(getRandomElement(titles), getRandomElement(descriptions));
+
+            columns()[(int) nextRandom(0, 2)]->addCard(data);
+        }
+
+        repaint();
     }
 
-    void addNewTaskToColumn(Column* column)
+    TaskData makeCard(const std::string& title, const std::string& description)
     {
-        auto data = createTaskData("New Task " + std::to_string(nextTaskId),
-                                   "Click to edit");
-        auto* card = column->addCard(data);
-        selectCard(card);
-        updateStatus();
+        static const auto colours = Vector<UI::Color> {{0.4f, 0.6f, 1.0f, 1.f},
+                                                       {1.0f, 0.5f, 0.3f, 1.f},
+                                                       {0.5f, 0.8f, 0.4f, 1.f},
+                                                       {0.9f, 0.4f, 0.6f, 1.f},
+                                                       {0.6f, 0.4f, 0.9f, 1.f}};
+
+        return {nextId++, title, description, getRandomElement(colours)};
+    }
+
+    void addCardTo(Column& column)
+    {
+        auto data =
+            makeCard("New task " + std::to_string(nextId), "Click to select");
+
+        selectCard(&column.addCard(data));
     }
 
     void selectCard(TaskCard* card)
     {
-        if (selectedCard)
-            selectedCard->setSelected(false);
+        if (selected != nullptr)
+            selected->setSelected(false);
 
-        selectedCard = card;
+        selected = card;
 
-        if (selectedCard)
-            selectedCard->setSelected(true);
+        if (selected != nullptr)
+            selected->setSelected(true);
     }
 
-    void deleteCard(TaskCard& card)
+    Column* columnHolding(int id)
     {
-        if (&card == selectedCard)
-            selectedCard = nullptr;
-
-        if (auto* column = findColumnForCard(card))
-        {
-            column->removeCard(card);
-            updateStatus();
-        }
-    }
-
-    void clearAllTasks()
-    {
-        selectedCard = nullptr;
-
-        while (!todoColumn.cards.empty())
-            todoColumn.removeCard(todoColumn.cards.front());
-
-        while (!progressColumn.cards.empty())
-            progressColumn.removeCard(progressColumn.cards.front());
-
-        while (!doneColumn.cards.empty())
-            doneColumn.removeCard(doneColumn.cards.front());
-
-        updateStatus();
-    }
-
-    Column* findColumnForCard(TaskCard& card)
-    {
-        auto id = card.data.id;
-
-        if (todoColumn.findCard(id))
-            return &todoColumn;
-
-        if (progressColumn.findCard(id))
-            return &progressColumn;
-
-        if (doneColumn.findCard(id))
-            return &doneColumn;
+        for (auto* column: columns())
+            if (column->findCard(id) != nullptr)
+                return column;
 
         return nullptr;
     }
 
-    void startDrag(TaskCard* card, Point)
+    // The card is rebuilt rather than reparented, which is why the drag carries
+    // an id: what arrives in the new column is a different component with the
+    // same data, and the one the drag started from is gone by the time this
+    // returns.
+    void moveCard(int id, Column& into)
     {
-        draggedCard = card;
-        dragOverlay.create(card->data);
-        addSubview(*dragOverlay);
-        updateDragPosition();
-        selectCard(card);
-    }
+        auto* from = columnHolding(id);
 
-    void updateDragPosition()
-    {
-        if (!isDragging())
+        if (from == nullptr || from == &into)
             return;
 
-        auto mousePos = getMousePosition();
+        auto* card = from->findCard(id);
+        auto data = card->data;
 
-        if (dragOverlay != nullptr)
+        if (card == selected)
+            selected = nullptr;
+
+        from->removeCard(*card);
+
+        selectCard(&into.addCard(data));
+        into.highlighted = false;
+
+        repaint();
+    }
+
+    void removeEveryCard()
+    {
+        selected = nullptr;
+
+        for (auto* column: columns())
+            while (column->cards.size() > 0)
+                column->removeCard(*column->cards[0]);
+
+        repaint();
+    }
+
+    void moveSelected(int direction)
+    {
+        if (selected == nullptr)
+            return;
+
+        auto* from = columnHolding(selected->data.id);
+        auto all = columns();
+
+        for (auto i = 0; i < all.size(); ++i)
         {
-            dragOverlay->setBounds(
-                {mousePos.x - 100.f, mousePos.y - 30.f, 200.f, 60.f});
+            if (all[i] != from)
+                continue;
+
+            auto target = i + direction;
+
+            if (target >= 0 && target < all.size())
+                moveCard(selected->data.id, *all[target]);
+
+            return;
         }
     }
 
-    bool isDragging() const { return dragOverlay != nullptr; }
-
-    void endDrag()
+    bool keyDown(const UI::KeyEvent& event) override
     {
-        if (!isDragging())
-            return;
+        using namespace eacp::Graphics;
 
-        if (!draggedCard)
-            return;
-
-        if (selectedCard == draggedCard)
-            selectedCard = nullptr;
-
-        auto mousePos = getMousePosition();
-        auto* targetColumn = getColumnAtPoint(mousePos);
-
-        if (targetColumn)
-        {
-            auto* sourceColumn = findColumnForCard(*draggedCard);
-
-            if (sourceColumn && sourceColumn != targetColumn)
-            {
-                auto data = draggedCard->data;
-                sourceColumn->removeCard(*draggedCard);
-                auto* newCard = targetColumn->addCard(data);
-                selectCard(newCard);
-            }
-        }
-
-        draggedCard = nullptr;
-        updateStatus();
-        dragOverlay.reset();
-    }
-
-    Column* getColumnAtPoint(const Point& point)
-    {
-        if (todoColumn.getBounds().contains(point))
-            return &todoColumn;
-        if (progressColumn.getBounds().contains(point))
-            return &progressColumn;
-        if (doneColumn.getBounds().contains(point))
-            return &doneColumn;
-        return nullptr;
-    }
-
-    void mouseMoved(const MouseEvent&) override { updateDragPosition(); }
-
-    void mouseDragged(const MouseEvent&) override { updateDragPosition(); }
-
-    void mouseUp(const MouseEvent&) override { endDrag(); }
-
-    void keyDown(const KeyEvent& event) override
-    {
         if (event.keyCode == KeyCode::N)
         {
-            addNewTaskToColumn(&todoColumn);
+            addCardTo(todo);
+            return true;
         }
-        else if (event.keyCode == KeyCode::Delete && selectedCard)
+
+        if (event.keyCode == KeyCode::Delete && selected != nullptr)
         {
-            deleteCard(*selectedCard);
+            if (auto* column = columnHolding(selected->data.id))
+            {
+                auto* card = selected;
+                selected = nullptr;
+                column->removeCard(*card);
+            }
+
+            return true;
         }
-        else if (event.keyCode == KeyCode::RightArrow && selectedCard)
+
+        if (event.keyCode == KeyCode::RightArrow)
         {
-            moveCardRight();
+            moveSelected(1);
+            return true;
         }
-        else if (event.keyCode == KeyCode::LeftArrow && selectedCard)
+
+        if (event.keyCode == KeyCode::LeftArrow)
         {
-            moveCardLeft();
+            moveSelected(-1);
+            return true;
         }
-        else if (event.keyCode == KeyCode::UpArrow)
-        {
-            selectPreviousCard();
-        }
-        else if (event.keyCode == KeyCode::DownArrow)
-        {
-            selectNextCard();
-        }
+
+        return false;
     }
 
-    void moveCardRight()
+    void paint(UI::Graphics& g) override
     {
-        if (selectedCard == nullptr)
-            return;
+        g.fillAll(UI::Color::gray(0.1f));
 
-        auto* sourceColumn = findColumnForCard(*selectedCard);
-        Column* targetColumn = nullptr;
+        auto bounds = getLocalBounds();
 
-        if (sourceColumn == &todoColumn)
-            targetColumn = &progressColumn;
-        else if (sourceColumn == &progressColumn)
-            targetColumn = &doneColumn;
+        g.setColour(UI::Color::gray(0.13f));
+        g.fillRect(bounds.fromTop(60.f));
 
-        if (targetColumn)
-        {
-            auto data = selectedCard->data;
-            sourceColumn->removeCard(*selectedCard);
-            auto* newCard = targetColumn->addCard(data);
-            selectCard(newCard);
-            updateStatus();
-        }
-    }
+        g.setFontStyle(UI::FontStyle::Bold);
+        g.setFontSize(20.f);
+        g.setColour(UI::Color::gray(0.95f));
+        g.drawText("Task Board", bounds.fromTop(60.f).inset(20.f, 0.f));
 
-    void moveCardLeft()
-    {
-        if (!selectedCard)
-            return;
-
-        auto* sourceColumn = findColumnForCard(*selectedCard);
-        Column* targetColumn = nullptr;
-
-        if (sourceColumn == &doneColumn)
-            targetColumn = &progressColumn;
-        else if (sourceColumn == &progressColumn)
-            targetColumn = &todoColumn;
-
-        if (targetColumn)
-        {
-            auto data = selectedCard->data;
-            sourceColumn->removeCard(*selectedCard);
-            auto* newCard = targetColumn->addCard(data);
-            selectCard(newCard);
-            updateStatus();
-        }
-    }
-
-    EA::Vector<TaskCard*> getAllCards()
-    {
-        EA::Vector<TaskCard*> all;
-        for (auto& c: todoColumn.cards)
-            all.add(c.get());
-        for (auto& c: progressColumn.cards)
-            all.add(c.get());
-        for (auto& c: doneColumn.cards)
-            all.add(c.get());
-        return all;
-    }
-
-    void selectNextCard()
-    {
-        auto all = getAllCards();
-        if (all.empty())
-            return;
-
-        if (!selectedCard)
-        {
-            selectCard(all.front());
-            return;
-        }
-
-        auto it = std::find(all.begin(), all.end(), selectedCard);
-        if (it != all.end() && std::next(it) != all.end())
-            selectCard(*std::next(it));
-    }
-
-    void selectPreviousCard()
-    {
-        auto all = getAllCards();
-        if (all.empty())
-            return;
-
-        if (!selectedCard)
-        {
-            selectCard(all.back());
-            return;
-        }
-
-        auto it = std::find(all.begin(), all.end(), selectedCard);
-
-        if (it != all.end() && it != all.begin())
-            selectCard(*std::prev(it));
-    }
-
-    void updateStatus()
-    {
-        auto total = todoColumn.cards.size() + progressColumn.cards.size()
-                     + doneColumn.cards.size();
-
-        auto status = "Total: " + std::to_string(total) + " tasks | "
-                      + "To Do: " + std::to_string(todoColumn.cards.size()) + " | "
-                      + "In Progress: " + std::to_string(progressColumn.cards.size())
-                      + " | " + "Done: " + std::to_string(doneColumn.cards.size())
-                      + " | " + "Press N=new, Del=delete, Arrows=navigate/move";
-
-        statusBar.setStatus(status);
+        g.setFontStyle(UI::FontStyle::Regular);
+        g.setFontSize(11.f);
+        g.setColour(UI::Color::gray(0.6f));
+        g.drawText("Drag cards between columns · N adds one · Delete removes the "
+                   "selected one · Arrows move it",
+                   bounds.fromBottom(26.f).inset(20.f, 0.f));
     }
 
     void resized() override
     {
         auto bounds = getLocalBounds();
-        auto headerHeight = 54.f;
-        auto statusHeight = 28.f;
-        auto columnMargin = 12.f;
 
-        header.setBounds({0, bounds.h - headerHeight, bounds.w, headerHeight});
-        statusBar.setBounds({0, 0, bounds.w, statusHeight});
+        auto header = bounds.removeFromTop(60.f).inset(20.f, 14.f);
+        addSample.setBounds(header.removeFromRight(90.f));
+        header.removeFromRight(8.f);
+        clearAll.setBounds(header.removeFromRight(90.f));
 
-        auto contentHeight =
-            bounds.h - headerHeight - statusHeight - columnMargin * 2;
-        auto contentY = statusHeight + columnMargin;
-        auto columnWidth = (bounds.w - columnMargin * 4) / 3.f;
+        bounds.removeFromBottom(26.f);
 
-        todoColumn.setBounds({columnMargin, contentY, columnWidth, contentHeight});
+        auto area = bounds.inset(16.f, 12.f);
+        auto columnWidth = (area.w - cardGap * 2.f) / 3.f;
 
-        progressColumn.setBounds(
-            {columnMargin * 2 + columnWidth, contentY, columnWidth, contentHeight});
-
-        doneColumn.setBounds({columnMargin * 3 + columnWidth * 2,
-                              contentY,
-                              columnWidth,
-                              contentHeight});
+        for (auto* column: columns())
+        {
+            column->setBounds(area.removeFromLeft(columnWidth));
+            area.removeFromLeft(cardGap);
+        }
     }
 
-    int nextTaskId = 1;
-    TaskCard* selectedCard = nullptr;
-    TaskCard* draggedCard = nullptr;
+    Column todo {"To Do", {0.4f, 0.6f, 1.0f, 1.f}};
+    Column progress {"In Progress", {1.0f, 0.7f, 0.3f, 1.f}};
+    Column done {"Done", {0.5f, 0.8f, 0.4f, 1.f}};
 
-    Header header;
-    Column todoColumn {"To Do", {0.4f, 0.6f, 1.0f}};
-    Column progressColumn {"In Progress", {1.0f, 0.6f, 0.2f}};
-    Column doneColumn {"Done", {0.4f, 0.8f, 0.4f}};
-    StatusBar statusBar;
-    EA::OwningPointer<DragOverlay> dragOverlay;
+    UI::Button clearAll {"Clear all"};
+    UI::Button addSample {"+ Sample"};
+
+    TaskCard* selected = nullptr;
+    int nextId = 1;
+
+    // Last, so it is destroyed first: a drag holds pointers into the tree above
+    // it, and the tree going first would leave it cancelling drags on components
+    // that have already gone.
+    UI::DragAndDropContainer dragging {*this};
 };
+
+struct Host final : UI::ComponentHost
+{
+    Host()
+    {
+        setBackgroundColour(UI::Color::gray(0.1f));
+        setRootComponent(board);
+    }
+
+    Board board;
+};
+
+eacp::Graphics::WindowOptions windowOptions()
+{
+    auto options = eacp::Graphics::WindowOptions {};
+
+    options.width = 1000;
+    options.height = 640;
+    options.title = "Task Board";
+    options.minWidth = 640;
+    options.minHeight = 420;
+
+    return options;
+}
 
 struct TaskBoardApp
 {
-    TaskBoardApp() { window.setContentView(boardView); }
+    TaskBoardApp()
+    {
+        window.setContentView(host);
+        host.focus();
+        host.board.grabKeyboardFocus();
+    }
 
-    TaskBoardView boardView;
-    Window window;
+    Host host;
+    eacp::Graphics::Window window {windowOptions()};
 };
+} // namespace
 
-int main()
+int main(int argc, char* argv[])
 {
-    return eacp::Apps::run<TaskBoardApp>();
+    return Apps::run<TaskBoardApp>(argc, argv);
 }

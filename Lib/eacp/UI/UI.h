@@ -4,6 +4,7 @@
 #include "Component/Component.h"
 #include "Component/KeyEvent.h"
 #include "Component/MouseEvent.h"
+#include "DragAndDrop/DragAndDrop.h"
 #include "Graphics/Graphics.h"
 #include "Host/ComponentHost.h"
 #include "Render/ClipMask.h"

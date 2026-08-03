@@ -8,6 +8,7 @@ target_link_libraries(eacp-ui PUBLIC eacp-gpu eacp-gpuwidgets eacp-text)
 
 target_sources(eacp-ui PRIVATE
         Component/Component.cpp
+        DragAndDrop/DragAndDrop.cpp
         Graphics/Graphics.cpp
         Host/ComponentHost.cpp
         Render/CoverageAtlas.cpp
