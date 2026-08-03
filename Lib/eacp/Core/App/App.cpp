@@ -46,6 +46,7 @@ namespace
 bool s_runningAsPlugin = false;
 std::atomic<int> s_returnValue {0};
 Callback s_reopenHandler = [] {};
+std::function<bool()> s_quitHandler = [] { return true; };
 } // namespace
 
 void setReopenHandler(const Callback& handler)
@@ -56,6 +57,23 @@ void setReopenHandler(const Callback& handler)
 const Callback& getReopenHandler()
 {
     return s_reopenHandler;
+}
+
+void setQuitHandler(std::function<bool()> handler)
+{
+    if (handler)
+        s_quitHandler = std::move(handler);
+    else
+        s_quitHandler = [] { return true; };
+}
+
+void requestQuit()
+{
+    // The policy lives here, not in the app delegate that happens to have
+    // received the request: an app supplying its own delegate calls this and
+    // gets the logout exemption without having to know about it.
+    if (isSystemPoweringOff() || s_quitHandler())
+        quit();
 }
 
 void setReturnValue(int returnValue)

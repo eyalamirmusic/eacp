@@ -547,6 +547,13 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             if (self->hidesOnClose)
             {
                 ShowWindow(hwnd, SW_HIDE);
+
+                // After the hide, so a handler asking isVisible() is told
+                // the truth. The app's only sign this happened — the close
+                // is what hidesOnClose keeps from reaching quitCallback.
+                if (self->events != nullptr)
+                    self->events->onHidden();
+
                 return 0;
             }
 

@@ -69,6 +69,50 @@ void setReopenHandler(const Callback& handler);
 // Internal: the handler above, invoked by the platform's app delegate.
 const Callback& getReopenHandler();
 
+// Called when something asks the app to quit on the user's behalf: Cmd+Q,
+// the standard app menu's Quit, Dock ▸ Quit, a quit Apple Event. Return
+// false to refuse, leaving the app running — which is how a tray-resident
+// app answers Cmd+Q with "hide the window" instead of "exit". Unset, every
+// request quits, as it always has.
+//
+// quit() deliberately bypasses this and is the unconditional exit, so a
+// tray menu's own "Quit" item must call quit() — a handler that refused
+// everything would otherwise leave the app with no way out at all.
+//
+// A logout / restart / shutdown is never put to the handler either: that is
+// the system asking, not the user asking this app, and refusing it cancels
+// the logout with macOS naming this app as the culprit. Everything else is,
+// Dock ▸ Quit and a scripted `quit` included — they arrive as the same
+// Apple Event a logout does, and only the power-off notification that
+// precedes a real one tells them apart.
+//
+// Only macOS asks: it is the platform with an OS-level quit request. Set it
+// anywhere; elsewhere nothing calls it and a window's close button
+// (WindowOptions::hidesOnClose, WindowEvents::onHidden) is the close path.
+void setQuitHandler(std::function<bool()> handler);
+
+// Puts a quit request to the handler above and quits unless it refused.
+// What the platforms' user-initiated quit paths call; app code that means
+// "exit now" calls quit(). An app supplying its own NSApplicationDelegate
+// should call this from applicationShouldTerminate: and reply
+// NSTerminateCancel, which is all eacp's own delegate does — replacing the
+// delegate otherwise drops the app off the loop-unwinding teardown path and
+// lets Cocoa exit() out from under run<T>().
+void requestQuit();
+
+// True once the machine has announced a logout, restart or shutdown. The
+// window between that announcement and the process going away, in which an
+// app should be saving rather than asking questions. requestQuit() reads it
+// so a refusing quit handler can't hold up a logout. Always false off macOS.
+bool isSystemPoweringOff();
+
+namespace Detail
+{
+// Starts watching for the announcement above; called once by the loop
+// bootstrap of the eacp copy that owns the app.
+void observeSystemPowerOff();
+} // namespace Detail
+
 // True when this process's executable carries a distribution code signature:
 // Developer ID or Apple-issued (App Store / system) on macOS, an embedded
 // Authenticode signature on Windows, no development provisioning profile on
