@@ -140,11 +140,13 @@ public:
     // route buys.
     float getAtlasMaskArea() const;
 
-    // Distinct (family, size) pairs the document's text asked for. Each is its
-    // own glyph atlas and therefore its own texture, so each is a batch break in
-    // and a batch break out; the figure is here because nothing else says what a
-    // text-heavy document costs.
-    int getFontCount() const { return fonts.size(); }
+    // Distinct faces the document's text asked for -- a (family, size, style)
+    // apiece. They share the tree's one glyph atlas, so what a face costs is its
+    // own glyphs and nothing else: no texture, no batch break, and a document
+    // mixing six of them is still one draw. The figure is kept because it used
+    // to be the expensive number in a text-heavy document and is now the cheap
+    // one, which is worth being able to see.
+    int getFontCount() const;
 
 private:
     // What a clip-path came to for one drawable: the region multiplying its
@@ -206,7 +208,12 @@ private:
         Graphics::Point baseline;
         Graphics::Color colour;
         TextAnchor anchor = TextAnchor::Start;
-        int fontIndex = 0;
+
+        // The face, in the size the transform left it at. A value rather than an
+        // index into a table of renderers: one atlas holds every face the
+        // document uses, so there is no table and nothing to keep in step with
+        // it across a rebuild.
+        UI::Font font;
 
         // Only the rectangle of it ever applies. See ClipState.
         ClipState clip;
@@ -239,23 +246,6 @@ private:
         bool isRectangle = false;
 
         Graphics::Rect bounds;
-    };
-
-    // A renderer per (family, size) the document asks for. See the note on
-    // getFontCount for what each one costs, and UI::Graphics::setTextRenderer
-    // for why a document cannot simply use the host's.
-    struct DocumentFont
-    {
-        DocumentFont(std::string familyToUse, float pointSizeToUse)
-            : family(std::move(familyToUse))
-            , pointSize(pointSizeToUse)
-            , renderer(pointSizeToUse, family)
-        {
-        }
-
-        std::string family;
-        float pointSize = 0.f;
-        Text::TextRenderer renderer;
     };
 
     // Document order, which is paint order: SVG has no z-index and later
@@ -380,8 +370,6 @@ private:
                              const Graphics::Rect& objectBounds,
                              const GPUWidgets::AffineTransform& transform) const;
 
-    int findOrAddFont(const std::string& family, float pointSize);
-
     SVGElement documentRoot;
     Graphics::Rect viewBox;
     PreserveAspectRatio aspectRatio;
@@ -403,11 +391,5 @@ private:
     OwnedVector<OpacityGroup> groups;
     OwnedVector<Clip> clips;
     Vector<TextRun> texts;
-    OwnedVector<DocumentFont> fonts;
-
-    // The previous build's renderers, between clearContent and the end of
-    // rebuild. See clearContent for why they are kept and why they are not kept
-    // for ever.
-    OwnedVector<DocumentFont> spareFonts;
 };
 } // namespace eacp::SVG

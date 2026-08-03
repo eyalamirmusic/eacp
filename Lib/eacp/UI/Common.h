@@ -16,6 +16,13 @@ using Point = eacp::Graphics::Point;
 using Rect = eacp::Graphics::Rect;
 using GradientStop = eacp::Graphics::GradientStop;
 
+// A face to draw a run of text in. Text::Font rather than Graphics::Font, which
+// is the native tier's CoreText object: this one is a value naming a family, a
+// size and a style, and what resolves it is the glyph atlas every component in
+// the tree shares.
+using Font = eacp::Text::Font;
+using FontStyle = eacp::Text::FontStyle;
+
 // The platform's stock UI face, the proportional sibling of
 // Text::defaultMonospaceFamily. Same reasoning: no family name ships on both
 // systems, and asking for a literal one gets a substitute on the other.

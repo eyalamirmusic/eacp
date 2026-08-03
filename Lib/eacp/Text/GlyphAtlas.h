@@ -4,6 +4,7 @@
 #include "ShelfPacker.h"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <unordered_map>
 
@@ -49,11 +50,30 @@ struct GlyphSlot
 // existing glyphs keep their coordinates — shelf placements only ever extend
 // right and down, so nothing needs re-rasterizing. Only at maxSize does it
 // clear, and generation() ticks so callers can notice.
+//
+// **One atlas holds many faces.** A face is a (family, pointSize) pair, and the
+// key is (face, codepoint, style) — so a heading, a caption and a monospace log
+// share one texture and are drawn in one batch. The alternative, an atlas per
+// size, is what this class used to be: it costs a texture and a batch break per
+// size, which is bearable for an interface that looks like one thing and wrong
+// for a document, which mixes sizes by definition.
+//
+// The size is the caller's, in points; the *scale* is the atlas's, because
+// every glyph in it has to be rasterized for the same display.
 class GlyphAtlas
 {
 public:
-    // Owns its source. Pass a GlyphRasterizer in production, a stub in tests.
-    explicit GlyphAtlas(OwningPointer<GlyphSource> source,
+    // How a face is built. Production hands over a GlyphRasterizer; a test
+    // hands over a stub, which is what lets the packing, growth, upload and
+    // face-table logic be exercised with no font and no GPU.
+    using FaceFactory =
+        std::function<OwningPointer<GlyphSource>(const FontRequest&)>;
+
+    // `defaultFace` is face 0 and supplies the scale everything is rasterized
+    // at. A caller that never asks for another face gets exactly the atlas this
+    // class used to be.
+    explicit GlyphAtlas(FaceFactory factoryToUse,
+                        const FontRequest& defaultFace = {},
                         int initialSize = 512,
                         int maxSize = 4096);
 
@@ -62,12 +82,37 @@ public:
     GlyphAtlas(const GlyphAtlas&) = delete;
     GlyphAtlas& operator=(const GlyphAtlas&) = delete;
 
-    // Rasterizes on first request, then returns the cached slot.
-    GlyphSlot glyph(char32_t codepoint, FontStyle style);
+    // The index of the face this family and size name, built on first ask.
+    // Sizes match within faceSizeTolerance -- see the note there for why an
+    // exact match is the wrong test.
+    //
+    // Held by the caller across frames: an index stays valid for the life of
+    // the atlas, including across a scale change, which rebuilds what is behind
+    // each one rather than renumbering them.
+    int findOrAddFace(const std::string& family, float pointSize);
+
+    int findOrAddFace(const Font& font)
+    {
+        return findOrAddFace(font.family, font.pointSize);
+    }
+
+    int faceCount() const { return faces.size(); }
+
+    // Rasterizes on first request, then returns the cached slot. An out-of-range
+    // face draws nothing rather than reading past the table.
+    GlyphSlot glyph(char32_t codepoint, FontStyle style, int face = 0);
 
     // Face metrics in **points**, unlike the pixel-space FontMetrics the
     // rasterizer reports.
-    FontMetrics metrics(FontStyle style = FontStyle::Regular) const;
+    FontMetrics metrics(FontStyle style = FontStyle::Regular, int face = 0) const;
+
+    float scale() const { return deviceScale; }
+
+    // Device pixels per point for everything in the atlas. Changing it clears
+    // and rebuilds every face: a bitmap rasterized for one display is the wrong
+    // bitmap for another, and keeping them would mix two scales in one texture.
+    // Face indices survive, so a caller holding them needs no fixing up.
+    void setScale(float newScale);
 
     // Uploads whatever changed since the last call, then returns the textures.
     //
@@ -90,13 +135,32 @@ public:
 private:
     struct Page;
 
-    GlyphSlot insert(char32_t codepoint, FontStyle style);
+    GlyphSlot insert(char32_t codepoint, FontStyle style, int face);
     bool place(ShelfPacker& packer, const GlyphBitmap& bitmap, PackedRect& out);
     void growOrReset();
 
-    static std::uint32_t keyFor(char32_t codepoint, FontStyle style);
+    // Everything cached, dropped. Both the way out of a full atlas and what a
+    // scale change needs, which is why it is not simply part of growOrReset.
+    void dropEverything();
 
-    OwningPointer<GlyphSource> glyphSource;
+    OwningPointer<GlyphSource> makeSource(const std::string& family,
+                                          float pointSize) const;
+
+    static std::uint64_t keyFor(char32_t codepoint, FontStyle style, int face);
+
+    // One family and size, and the rasterizer that draws it at this atlas's
+    // scale.
+    struct Face
+    {
+        std::string family;
+        float pointSize = 0.f;
+        OwningPointer<GlyphSource> source;
+    };
+
+    FaceFactory factory;
+    Vector<Face> faces;
+
+    float deviceScale = 1.f;
 
     int atlasSize = 0;
     int maxAtlasSize = 0;
@@ -105,7 +169,7 @@ private:
     ShelfPacker maskPacker;
     ShelfPacker colorPacker;
 
-    std::unordered_map<std::uint32_t, GlyphSlot> slots;
+    std::unordered_map<std::uint64_t, GlyphSlot> slots;
 
     struct Page
     {
@@ -131,6 +195,12 @@ private:
 
     void resizePage(Page& page, int newSize, int bytesPerPixel);
     void uploadPage(Page& page, GPU::TextureFormat format, int bytesPerPixel);
-    void blit(Page& page, const GlyphBitmap& bitmap, const PackedRect& at, int bytesPerPixel);
+    void blit(Page& page,
+              const GlyphBitmap& bitmap,
+              const PackedRect& at,
+              int bytesPerPixel);
 };
+
+// The factory everything outside a test uses: one GlyphRasterizer per face.
+GlyphAtlas::FaceFactory rasterizerFaceFactory();
 } // namespace eacp::Text

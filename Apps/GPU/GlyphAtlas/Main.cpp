@@ -104,14 +104,21 @@ struct AtlasTextView final : GPU::GPUView
         request.pointSize = 22.f;
         request.scale = scale;
 
-        auto rasterizer = makeOwned<Text::GlyphRasterizer>(request);
+        // A display change is the atlas's own business now: it rebuilds each
+        // face at the new scale and drops what was rasterized for the old one,
+        // which is what replacing the whole object used to do from out here.
+        if (atlas)
+        {
+            atlas->setScale(scale);
+            builtAtScale = scale;
+            return;
+        }
 
-        if (!rasterizer->isValid())
+        if (!Text::GlyphRasterizer {request}.isValid())
             return;
 
-        atlas.reset();
         atlas = makeOwned<Text::GlyphAtlas>(
-            OwningPointer<Text::GlyphSource> {std::move(rasterizer)}, 256, 2048);
+            Text::rasterizerFaceFactory(), request, 256, 2048);
 
         builtAtScale = scale;
     }

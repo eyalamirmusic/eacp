@@ -55,6 +55,8 @@ struct SVGComponent::Style
 
     std::string fontFamily = UI::defaultUIFontFamily();
     float fontSize = 16.f;
+    bool bold = false;
+    bool italic = false;
 
     // The document's units onto this component's points, composed down the
     // tree. Baked into the geometry rather than applied to anything at draw
@@ -270,6 +272,19 @@ void SVGComponent::applyPresentationAttributes(Style& style,
     if (!family.empty())
         style.fontFamily = firstFontFamily(family);
 
+    // Inherited one at a time rather than as a pair, since a document sets one
+    // on a group and the other on a child. Numeric weights count as bold from
+    // 600 up, which is where the format puts the boundary.
+    auto weight = read("font-weight");
+    if (!weight.empty())
+        style.bold = weight == "bold" || weight == "bolder"
+                     || (std::isdigit(static_cast<unsigned char>(weight.front()))
+                         && std::stof(weight) >= 600.f);
+
+    auto slant = read("font-style");
+    if (!slant.empty())
+        style.italic = slant == "italic" || slant == "oblique";
+
     // Read off the attribute and not through the declarations, unlike everything
     // above it. SVG 1.1 has no transform *property*, and the CSS one that came
     // later writes its arguments differently enough - lengths with units,
@@ -346,23 +361,6 @@ void SVGComponent::clearContent()
     groups.clear();
     clips.clear();
     texts.clear();
-
-    // Set aside for the next build rather than destroyed. A renderer bakes its
-    // family and size into a glyph atlas, so dropping one and asking for the
-    // same pair again is a raster of every glyph the document uses -- and a
-    // rebuild is not rare, since anything that changes the document's size runs
-    // one.
-    //
-    // Kept on the side rather than simply kept, because a *resize* genuinely
-    // asks for new sizes: the point size is the document's font size times the
-    // transform's scale, so a drag that crosses two hundred widths would leave
-    // two hundred renderers behind if the cache only ever grew. findOrAddFont
-    // claims what it recognizes out of here and rebuild drops the rest, which
-    // makes the cache exactly what the last build used.
-    for (auto& font: fonts)
-        spareFonts.add(std::move(font));
-
-    fonts.clear();
 }
 
 // Every mask in the document, built against the size the component is now.
@@ -385,10 +383,6 @@ void SVGComponent::rebuild()
 
         buildElement(documentRoot, style, 0);
     }
-
-    // Every renderer the build did not claim back out of the cache: the sizes
-    // the document used to want and does not any more.
-    spareFonts.clear();
 }
 
 void SVGComponent::resized()
@@ -728,7 +722,8 @@ void SVGComponent::buildTextRun(const SVGElement& element, const Style& style)
     else if (anchor == "end")
         run.anchor = TextAnchor::End;
 
-    run.fontIndex = findOrAddFont(style.fontFamily, pointSize);
+    run.font = {
+        style.fontFamily, pointSize, Text::toFontStyle(style.bold, style.italic)};
 
     // Only the rectangular part of it will ever be applied -- a glyph is drawn
     // by a renderer that samples no mask -- but the bounds of a shaped clip
@@ -884,37 +879,24 @@ UI::Gradient
         reference, elementsById, objectBounds, viewBox, transform);
 }
 
-int SVGComponent::findOrAddFont(const std::string& family, float pointSize)
+int SVGComponent::getFontCount() const
 {
-    // Matched with a tolerance rather than exactly: two sizes a hundredth of a
-    // point apart rasterize to the same glyphs and would otherwise cost two
-    // atlases and two batch breaks to say so.
-    auto matches = [&](const DocumentFont& font)
+    auto distinct = Vector<UI::Font> {};
+
+    for (auto& run: texts)
     {
-        return font.family == family && std::abs(font.pointSize - pointSize) < 0.01f;
-    };
+        auto seen = false;
 
-    for (auto i = 0; i < fonts.size(); ++i)
-        if (matches(*fonts[i]))
-            return i;
+        for (auto& font: distinct)
+            seen =
+                seen
+                || (font.style == run.font.style && Text::sameFace(font, run.font));
 
-    // The previous build's, if it wanted this one too -- which a rebuild at an
-    // unchanged size always does. Moved across rather than copied, a renderer
-    // owning a glyph atlas being the thing worth not making twice.
-    for (auto i = 0; i < spareFonts.size(); ++i)
-    {
-        if (!matches(*spareFonts[i]))
-            continue;
-
-        fonts.add(std::move(spareFonts[i]));
-        spareFonts.removeAt(i);
-
-        return fonts.size() - 1;
+        if (!seen)
+            distinct.add(run.font);
     }
 
-    fonts.createNew(family, pointSize);
-
-    return fonts.size() - 1;
+    return distinct.size();
 }
 
 float SVGComponent::getTotalMaskArea() const
@@ -981,11 +963,6 @@ void SVGComponent::paint(UI::Graphics& g)
 // that differs is which Graphics it lands in.
 void SVGComponent::paintDrawables(UI::Graphics& g, const Vector<Drawable>& drawables)
 {
-    // The document's own font, while a run of text is being drawn. Swapped only
-    // when it changes, so a document whose text is all one size costs one break
-    // in and one out however many strings it has.
-    auto* activeFont = static_cast<DocumentFont*>(nullptr);
-
     auto drawShape = [&](const Shape& shape)
     {
         g.setColour(shape.colour);
@@ -1003,13 +980,10 @@ void SVGComponent::paintDrawables(UI::Graphics& g, const Vector<Drawable>& drawa
 
     auto drawText = [&](const TextRun& run)
     {
-        auto& font = *fonts[run.fontIndex];
-
-        if (&font != activeFont)
-        {
-            g.setTextRenderer(font.renderer);
-            activeFont = &font;
-        }
+        // Set per run rather than only when it changes, because a face costs
+        // nothing to change: every one the document uses is in the same atlas,
+        // so this is an assignment and not a batch break.
+        g.setFont(run.font);
 
         // Resolved here rather than when the run was built, because the offset
         // an anchor needs is the width of the glyphs that are about to be drawn
@@ -1079,8 +1053,5 @@ void SVGComponent::paintDrawables(UI::Graphics& g, const Vector<Drawable>& drawa
 
         draw(item);
     }
-
-    if (activeFont != nullptr)
-        g.resetTextRenderer();
 }
 } // namespace eacp::SVG

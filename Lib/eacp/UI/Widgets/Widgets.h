@@ -2,6 +2,7 @@
 
 #include "../Component/Component.h"
 
+#include <optional>
 #include <string>
 
 namespace eacp::UI
@@ -36,12 +37,28 @@ public:
     void setColour(const Color& colour);
     void setJustification(Justification newJustification);
 
+    // A face of its own, for a heading or a caption. Left unset, the label draws
+    // in whatever the host's is, which is what makes a screenful of them look
+    // like one interface.
+    void setFont(const Font& font);
+
+    // The host's face at another size or weight -- what a heading actually is,
+    // and what keeps a label from naming a family the host may not be using.
+    void setFontSize(float pointSize);
+    void setFontStyle(FontStyle style);
+
     void paint(Graphics& g) override;
 
 private:
     std::string text;
     Color colour = defaultTheme().text;
     Justification justification = Justification::Left;
+
+    // Empty until asked for. A label that never mentions a font has to draw in
+    // the painter's, and it cannot know what that is before it is painting.
+    std::optional<Font> font;
+    std::optional<float> pointSize;
+    std::optional<FontStyle> style;
 };
 
 class Button final : public Component

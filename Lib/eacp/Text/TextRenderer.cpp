@@ -48,8 +48,7 @@ char32_t nextCodepoint(std::string_view text, std::size_t& index)
 } // namespace
 
 TextRenderer::TextRenderer(float pointSizeToUse, std::string familyToUse)
-    : family(std::move(familyToUse))
-    , fontPointSize(pointSizeToUse)
+    : defaultFont {std::move(familyToUse), pointSizeToUse}
 {
 }
 
@@ -61,37 +60,70 @@ void TextRenderer::setViewport(Graphics::Point size, float scale)
     deviceScale = scale > 0.0f ? scale : 1.0f;
 }
 
+void TextRenderer::setFont(const Font& font)
+{
+    defaultFont = font;
+}
+
 void TextRenderer::setPointSize(float pointSizeToUse)
 {
-    fontPointSize = pointSizeToUse;
+    defaultFont.pointSize = pointSizeToUse;
 }
 
 void TextRenderer::rebuildIfNeeded()
 {
-    if (atlas != nullptr && builtAtScale == deviceScale
-        && builtAtPointSize == fontPointSize)
-        return;
+    if (atlas == nullptr)
+    {
+        auto request = FontRequest {};
+        request.family = defaultFont.family;
+        request.pointSize = defaultFont.pointSize;
+        request.scale = deviceScale;
 
-    auto request = FontRequest {};
-    request.family = family;
-    request.pointSize = fontPointSize;
-    request.scale = deviceScale;
+        atlas = makeOwned<GlyphAtlas>(rasterizerFaceFactory(), request);
+    }
+    else
+    {
+        // Only the scale rebuilds anything now. A changed size is a face the
+        // atlas did not have, which the next request adds beside the others
+        // rather than in place of them.
+        atlas->setScale(deviceScale);
+    }
 
-    // Replacing rather than resizing: every cached slot was rasterized for the
-    // old scale, and keeping them would mix sizes in one atlas.
-    atlas = makeOwned<GlyphAtlas>(makeOwned<GlyphRasterizer>(request));
     builtAtScale = deviceScale;
-    builtAtPointSize = fontPointSize;
 }
 
-float TextRenderer::lineHeight() const
+int TextRenderer::faceFor(const Font& font)
 {
-    return atlas != nullptr ? atlas->metrics().lineHeight() : fontPointSize;
+    rebuildIfNeeded();
+
+    return atlas->findOrAddFace(font);
 }
 
-float TextRenderer::ascent() const
+float TextRenderer::lineHeight()
 {
-    return atlas != nullptr ? atlas->metrics().ascent : fontPointSize;
+    return lineHeight(defaultFont);
+}
+
+float TextRenderer::lineHeight(const Font& font)
+{
+    // The face first, in its own statement: resolving it is what builds the
+    // atlas, so reading the pointer in the same expression would read it before
+    // there was one.
+    const auto face = faceFor(font);
+
+    return atlas->metrics(font.style, face).lineHeight();
+}
+
+float TextRenderer::ascent()
+{
+    return ascent(defaultFont);
+}
+
+float TextRenderer::ascent(const Font& font)
+{
+    const auto face = faceFor(font);
+
+    return atlas->metrics(font.style, face).ascent;
 }
 
 void TextRenderer::begin()
@@ -108,17 +140,17 @@ void TextRenderer::begin()
 float TextRenderer::layout(std::string_view text,
                            Graphics::Point pen,
                            const Graphics::Color& color,
-                           FontStyle style,
+                           const Font& font,
                            bool emit)
 {
-    rebuildIfNeeded();
+    const auto face = faceFor(font);
 
     auto advance = 0.0f;
     auto index = std::size_t {0};
 
     while (index < text.size())
     {
-        auto glyph = atlas->glyph(nextCodepoint(text, index), style);
+        auto glyph = atlas->glyph(nextCodepoint(text, index), font.style, face);
 
         if (!glyph.valid)
             continue;
@@ -147,15 +179,34 @@ float TextRenderer::draw(std::string_view text,
                          const Graphics::Color& color,
                          FontStyle style)
 {
+    auto font = defaultFont;
+    font.style = style;
+
+    return draw(text, baselineLeft, color, font);
+}
+
+float TextRenderer::draw(std::string_view text,
+                         Graphics::Point baselineLeft,
+                         const Graphics::Color& color,
+                         const Font& font)
+{
     if (!glyphs.has_value())
         begin();
 
-    return layout(text, baselineLeft, color, style, true);
+    return layout(text, baselineLeft, color, font, true);
 }
 
 float TextRenderer::measure(std::string_view text, FontStyle style)
 {
-    return layout(text, {}, Graphics::Color::white(), style, false);
+    auto font = defaultFont;
+    font.style = style;
+
+    return measure(text, font);
+}
+
+float TextRenderer::measure(std::string_view text, const Font& font)
+{
+    return layout(text, {}, Graphics::Color::white(), font, false);
 }
 
 void TextRenderer::flush(GPU::RenderPass& pass)

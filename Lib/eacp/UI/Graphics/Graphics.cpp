@@ -17,14 +17,17 @@ Graphics::Graphics(ShapeBatch& shapesToUse,
     , meshes(meshesToUse)
     , layers(layersToUse)
     , ramps(rampsToUse)
-    , hostText(textToUse)
-    , text(&textToUse)
+    , text(textToUse)
     , pass(passToUse)
     , surface(surfaceToUse)
     , backingScale(backingScaleToUse)
     , appliedClip(surfaceToUse)
 {
     state.clip = surface;
+
+    // The host's face is where every component starts, so a tree that never
+    // mentions a font looks like one thing.
+    state.font = text.getFont();
 
     // The renderers outlive the painter, so a frame that ended inside a clip
     // would hand the next one its mask. The pass is new every frame and takes
@@ -128,8 +131,8 @@ void Graphics::applyClip(bool changeScissor, bool changeMask)
     // for the glyphs that follow.
     meshes.flush();
     shapes.flush();
-    text->flush(pass);
-    text->begin();
+    text.flush(pass);
+    text.begin();
 
     if (changeScissor)
     {
@@ -191,8 +194,8 @@ void Graphics::prepareToDraw(const Rect& surfaceBounds, Renderer renderer)
     // underneath.
     if (renderer == Renderer::Layers)
     {
-        text->flush(pass);
-        text->begin();
+        text.flush(pass);
+        text.begin();
     }
 
     // A rect the primitive is wholly inside cuts nothing off it, so the change
@@ -295,18 +298,18 @@ void Graphics::drawLayer(const Layer& layer)
 float Graphics::drawText(std::string_view textToDraw, Point baselineLeft)
 {
     auto pen = toSurface(baselineLeft);
-    auto width = text->measure(textToDraw);
+    auto width = text.measure(textToDraw, state.font);
 
     prepareToDraw({pen.x, pen.y - ascent(), width, lineHeight()});
 
-    return text->draw(textToDraw, pen, state.colour);
+    return text.draw(textToDraw, pen, state.colour, state.font);
 }
 
 void Graphics::drawText(std::string_view textToDraw,
                         const Rect& area,
                         Justification justification)
 {
-    auto width = text->measure(textToDraw);
+    auto width = text.measure(textToDraw, state.font);
 
     auto x = area.x;
 
@@ -324,44 +327,32 @@ void Graphics::drawText(std::string_view textToDraw,
 
 float Graphics::measureText(std::string_view textToMeasure) const
 {
-    return text->measure(textToMeasure);
+    return text.measure(textToMeasure, state.font);
 }
 
 float Graphics::lineHeight() const
 {
-    return text->lineHeight();
+    return text.lineHeight(state.font);
 }
 
 float Graphics::ascent() const
 {
-    return text->ascent();
+    return text.ascent(state.font);
 }
 
-// Both queues drain before the swap, for the same reason a clip change drains
-// them: what was issued under the old renderer has to be drawn from the old
-// renderer's atlas, and after this call there is no way back to it. The shapes
-// go too, so a fill queued before a run of text still ends up underneath it.
-void Graphics::setTextRenderer(Text::TextRenderer& renderer)
+void Graphics::setFont(const Font& font)
 {
-    if (text == &renderer)
-        return;
-
-    meshes.flush();
-    shapes.flush();
-    text->flush(pass);
-
-    text = &renderer;
-
-    // The incoming renderer has its own viewport and scale, and a document's
-    // renderer is built once and used across resizes, so it is told rather than
-    // assumed to know.
-    text->setViewport({surface.w, surface.h}, backingScale);
-    text->begin();
+    state.font = font;
 }
 
-void Graphics::resetTextRenderer()
+void Graphics::setFontSize(float pointSize)
 {
-    setTextRenderer(hostText);
+    state.font.pointSize = pointSize;
+}
+
+void Graphics::setFontStyle(FontStyle style)
+{
+    state.font.style = style;
 }
 
 void Graphics::translate(float x, float y)
@@ -442,7 +433,7 @@ void Graphics::flush()
     // order they were issued in, which is the one that matters.
     meshes.flush();
     shapes.flush();
-    text->flush(pass);
-    text->begin();
+    text.flush(pass);
+    text.begin();
 }
 } // namespace eacp::UI

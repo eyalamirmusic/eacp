@@ -36,26 +36,44 @@ public:
     // scale rebuilds the atlas; a changed size is free.
     void setViewport(Graphics::Point size, float scale);
 
+    // The face used by the calls that name none. Changing it costs nothing but
+    // the glyphs of the new face: sizes coexist in one atlas, so the old one is
+    // still there for whatever is still drawing in it.
+    void setFont(const Font& font);
+    const Font& getFont() const { return defaultFont; }
+
     void setPointSize(float pointSizeToUse);
-    float pointSize() const { return fontPointSize; }
+    float pointSize() const { return defaultFont.pointSize; }
 
     // Distance between baselines, in logical points.
-    float lineHeight() const;
+    float lineHeight();
+    float lineHeight(const Font& font);
 
     // Baseline offset from the top of a line, for placing text against a box
     // rather than against a baseline.
-    float ascent() const;
+    float ascent();
+    float ascent(const Font& font);
 
     // Queue for drawing. `baselineLeft` is the pen: x at the string's left
     // edge, y on the baseline. Returns the advance, so successive calls can be
     // chained to build a line out of differently coloured runs.
+    //
+    // The overload taking a Font draws that face instead of the default one,
+    // and costs nothing extra: faces share the atlas and the batch, so a
+    // heading, a caption and a monospace log in one frame are one draw.
     float draw(std::string_view text,
                Graphics::Point baselineLeft,
                const Graphics::Color& color,
                FontStyle style = FontStyle::Regular);
 
+    float draw(std::string_view text,
+               Graphics::Point baselineLeft,
+               const Graphics::Color& color,
+               const Font& font);
+
     // The advance `text` would take, without drawing it.
     float measure(std::string_view text, FontStyle style = FontStyle::Regular);
+    float measure(std::string_view text, const Font& font);
 
     void begin();
 
@@ -66,18 +84,20 @@ public:
 private:
     void rebuildIfNeeded();
 
+    // The atlas's index for `font`, building the atlas first if the viewport
+    // has not yet been seen.
+    int faceFor(const Font& font);
+
     // Walks the string, optionally emitting each glyph, and returns the total
     // advance. One loop rather than two so measure() and draw() cannot drift.
     float layout(std::string_view text,
                  Graphics::Point pen,
                  const Graphics::Color& color,
-                 FontStyle style,
+                 const Font& font,
                  bool emit);
 
-    std::string family;
-    float fontPointSize = 13.0f;
+    Font defaultFont;
     float builtAtScale = 0.0f;
-    float builtAtPointSize = 0.0f;
 
     Graphics::Point viewportSize {0.0f, 0.0f};
     float deviceScale = 1.0f;

@@ -39,8 +39,37 @@ void Label::setJustification(Justification newJustification)
     repaint();
 }
 
+void Label::setFont(const Font& fontToUse)
+{
+    font = fontToUse;
+    repaint();
+}
+
+void Label::setFontSize(float pointSizeToUse)
+{
+    pointSize = pointSizeToUse;
+    repaint();
+}
+
+void Label::setFontStyle(FontStyle styleToUse)
+{
+    style = styleToUse;
+    repaint();
+}
+
 void Label::paint(Graphics& g)
 {
+    if (font.has_value())
+        g.setFont(*font);
+
+    // After the whole face, so a label given both keeps the size it was told
+    // last -- and so setFontSize on its own means "the host's, bigger".
+    if (pointSize.has_value())
+        g.setFontSize(*pointSize);
+
+    if (style.has_value())
+        g.setFontStyle(*style);
+
     g.setColour(colour);
     g.drawText(text, getLocalBounds(), justification);
 }

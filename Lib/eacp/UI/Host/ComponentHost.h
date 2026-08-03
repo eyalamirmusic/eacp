@@ -30,6 +30,12 @@ public:
 
     void setBackgroundColour(const Color& colour);
 
+    // The face every component starts painting in. A component can set another
+    // for its own paint(), and they share one glyph atlas, so what this decides
+    // is what the tree looks like rather than what it costs.
+    void setFont(const Font& font);
+    const Font& getFont() const { return font; }
+
     void setFontPointSize(float points);
     void setFontFamily(const std::string& family);
 
@@ -138,8 +144,7 @@ private:
 
     Color background {0.11f, 0.12f, 0.15f, 1.f};
 
-    std::string fontFamily {defaultUIFontFamily()};
-    float fontPointSize = 13.f;
+    Font font {defaultUIFontFamily(), 13.f};
 
     // Built on the first resize, once there is a size to build them against.
     // The atlas comes first and outlives the batch that reads it, and the
