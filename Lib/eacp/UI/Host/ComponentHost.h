@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Component/Component.h"
+#include "../Render/DrawPlayer.h"
 
 #include <optional>
 
@@ -14,9 +15,15 @@ namespace eacp::UI
 // application through Graphics::EmbeddedView, without knowing which.
 //
 // It owns the renderers the painter draws through and the root component, and
-// it converts the native view's events into component-local ones. Rendering is
-// the View's ordinary on-demand cycle: Component::repaint marks the tree dirty
-// and the next draw walks it. Nothing is submitted while nothing is dirty.
+// it converts the native view's events into component-local ones.
+//
+// Rendering is the View's ordinary on-demand cycle, and a frame is two walks of
+// the tree rather than one. The first records: a component whose drawing is
+// stale is painted into a DrawList of its own and every other one is stepped
+// over, so paint() runs where repaint() was called and nowhere else. The second
+// replays those lists into the batches in tree order. Nothing is submitted while
+// nothing is dirty, and an animation costs the paint of the one component that
+// is animating however large the tree around it is.
 class ComponentHost : public GPU::GPUView
 {
 public:
@@ -53,8 +60,14 @@ public:
     int getLastClipChangeCount() const { return lastClipChanges; }
     int getLastComponentCount() const { return lastComponentCount; }
 
+    // How many components were actually painted, as against how many were drawn.
+    // The figure this tier's redrawing policy is judged by: it is the count of
+    // repaint()s the frame answered, so a settled interface reports zero however
+    // many components it has, and an animation reports the one that is moving.
+    int getLastPaintedComponentCount() const { return lastPaintedComponents; }
+
     // Draws spent alternating between masked and meshed shapes. See
-    // Graphics::getRendererSwitchCount.
+    // DrawPlayer::getRendererSwitchCount.
     int getLastRendererSwitchCount() const { return lastRendererSwitches; }
 
     // Layers in the tree that were rendered into a texture of their own this
@@ -85,11 +98,27 @@ public:
     // the atlas. See PathShape::Backing.
     int getLastMeshedPathCount() const { return lastMeshedPaths; }
 
+    // Shapes in the tree drawing through a mask somebody else rasterized. A
+    // census like the meshed count beside it rather than a tally of what this
+    // frame did, since what is worth knowing is how much of the tree is costing
+    // the atlas nothing: an interface built out of repeated parts reports every
+    // copy but the first of each shape it repeats.
+    int getLastSharedMaskCount() const { return lastSharedMasks; }
+
     // How full the coverage atlas is, and how large it has grown, as the
     // distance to that ceiling while there is still distance to it. Room
     // reserved rather than room used: the shelf never gives space back.
     float getAtlasFillFraction() const;
     int getAtlasSize() const;
+
+    // Paints every component in the tree that has asked for it, into the list
+    // the next frame replays, and returns how many were painted.
+    //
+    // The frame calls this itself, at the top. It is public because it is the
+    // half of a frame that touches no pass and no drawable: a tree can be warmed
+    // up before it is ever shown, and what a change actually repainted can be
+    // asked without drawing anything.
+    int paintDirtyComponents();
 
     void resized() override;
     void render(GPU::Frame& frame) override;
@@ -130,7 +159,25 @@ private:
     // way out.
     void componentDeleted(Component& component);
 
-    void paintComponent(Component& component, Graphics& g);
+    // Paints every component in the tree whose drawing is stale, into a list of
+    // its own, and steps over every subtree that has nothing to record. Returns
+    // whether this subtree still has work waiting -- which only a hidden one
+    // does, since a visible one is recorded on the frame it is marked.
+    bool recordComponent(Component& component);
+
+    void recordTree();
+    void record(Component& component);
+
+    // Draws the recorded lists, in tree order, offsetting each by where its
+    // component sits and clipping it to what its ancestors left of it.
+    void playComponent(Component& component,
+                       DrawPlayer& player,
+                       Point origin,
+                       const Rect& clip);
+
+    // Everything in the subtree has to be painted again: the scale changed, the
+    // atlas moved under the uvs, or the tree's default face did.
+    static void markTreeDirty(Component& component);
 
     // What one walk of the tree found: whether the atlas moved under it, how
     // many shapes are on it with no mask, and how many never asked for one.
@@ -139,6 +186,7 @@ private:
         bool atlasMoved = false;
         int dropped = 0;
         int meshed = 0;
+        int shared = 0;
     };
 
     // Rendering every Layer in the tree whose content changed, each into a pass
@@ -185,10 +233,20 @@ private:
     Font font {defaultUIFontFamily(), 13.f};
 
     // Built on the first resize, once there is a size to build them against.
-    // The atlas comes first and outlives the batch that reads it, and the
-    // gradient ramps with it -- both renderers sample that one.
+    // The atlas comes first and outlives the batch that reads it.
     std::optional<CoverageAtlas> paths;
-    std::optional<GradientRamps> ramps;
+
+    // What is already in the atlas, by the geometry that put it there, so that
+    // a shape drawn in forty-eight places is rasterized once. Dropped with the
+    // atlas's allocations and never apart from them -- an entry naming a slot
+    // the shelf has given to somebody else is the one way this draws the wrong
+    // shape rather than merely too often.
+    MaskCache masks;
+
+    // The ramps are not among them: painting resolves a gradient to a row, and a
+    // tree can be painted before it is sized. Mutable for the same reason the
+    // text renderer beside it is -- see gradientRamps().
+    mutable std::optional<GradientRamps> ramps;
 
     // Every path the frame rasterizes, gathered and dispatched as one. Held
     // across frames rather than made per frame, because what it holds is the
@@ -214,9 +272,18 @@ private:
 
     Text::TextRenderer& renderer() const;
 
+    // The ramp table, built on the first ask. Painting needs one and drawing is
+    // what the batches are for, so this cannot wait for a size the way they do.
+    GradientRamps& gradientRamps() const;
+
     // The scale everything in the atlas was rasterized at, so a move between
     // displays can be noticed.
     float lastPathScale = 0.f;
+
+    // And the scale the tree's recordings were made at. A glyph's source rect
+    // and a mask's uv are both in the pixels of the display they were built
+    // for, so a move between two of them makes every list in the tree wrong.
+    float lastRecordScale = 0.f;
 
     // Where the button went down, in root space, carried through the drag so
     // every event can report it.
@@ -235,8 +302,13 @@ private:
     int lastClipChanges = 0;
     int lastRendererSwitches = 0;
     int lastComponentCount = 0;
+    int lastPaintedComponents = 0;
+    int paintedThisWalk = 0;
     int lastDroppedPaths = 0;
     int lastMeshedPaths = 0;
+
+    // Shapes that drew through a mask somebody else had already rasterized.
+    int lastSharedMasks = 0;
     int lastRenderedLayers = 0;
 };
 } // namespace eacp::UI

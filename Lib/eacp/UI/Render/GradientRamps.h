@@ -77,6 +77,10 @@ private:
     struct Row
     {
         Vector<GradientStop> stops;
+
+        // What the colours in it hash to, so that finding a gradient's row is a
+        // scan of integers rather than of stop lists.
+        std::uint64_t key = 0;
     };
 
     void bake(const Row& source, int row);

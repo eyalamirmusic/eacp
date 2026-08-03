@@ -91,6 +91,12 @@ public:
     // out before it is now wrong. Cleared by the reader.
     bool takeMovedFlag();
 
+    // Bumped whenever every uv already handed out stops meaning what it did.
+    // The flag above is for the caller that reads it once and re-rasterizes; this
+    // is for the one that *recorded* a uv rather than asking for one each frame,
+    // and has to notice at some later point that what it kept is stale.
+    std::uint32_t generation() const { return atlasGeneration; }
+
     // Masks there was no room for since the count was last cleared. Zero on any
     // interface that fits, and the only outward sign of the ceiling: each one
     // is a shape that will draw as nothing.
@@ -137,5 +143,7 @@ private:
     bool relocationAllowed = true;
     bool moved = false;
     int dropped = 0;
+
+    std::uint32_t atlasGeneration = 0;
 };
 } // namespace eacp::UI

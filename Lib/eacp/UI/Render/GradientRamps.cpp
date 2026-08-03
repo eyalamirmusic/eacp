@@ -1,5 +1,7 @@
 #include "GradientRamps.h"
 
+#include "ContentHash.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -7,6 +9,22 @@ namespace eacp::UI
 {
 namespace
 {
+std::uint64_t hashStops(const Vector<GradientStop>& stops)
+{
+    auto hash = ContentHash {};
+
+    for (const auto& stop: stops)
+    {
+        hash.mix(stop.position);
+        hash.mix(stop.color.r);
+        hash.mix(stop.color.g);
+        hash.mix(stop.color.b);
+        hash.mix(stop.color.a);
+    }
+
+    return hash.get();
+}
+
 bool sameStops(const Vector<GradientStop>& a, const Vector<GradientStop>& b)
 {
     if (a.size() != b.size())
@@ -68,7 +86,7 @@ std::uint8_t toByte(float value)
 // Sorted and clamped, so the baking above can assume both. A stable sort,
 // because two stops at one position are a hard edge whose side the document
 // chose by writing them in that order.
-Vector<GradientStop> normalized(const Vector<GradientStop>& stops)
+Vector<GradientStop> sortedAndClamped(const Vector<GradientStop>& stops)
 {
     auto sorted = stops;
 
@@ -100,10 +118,16 @@ float GradientRamps::rowFor(const Gradient& gradient)
     if (gradient.isEmpty())
         return -1.f;
 
-    auto stops = normalized(gradient.stops);
+    auto stops = sortedAndClamped(gradient.stops);
+    auto key = hashStops(stops);
 
+    // The key is compared first and the stops only when it matches, so a miss
+    // costs an integer per row rather than a walk of somebody else's stop list.
+    // The comparison stays because a key is a summary: two stop lists that
+    // collide on one are still two different gradients, and the row is theirs
+    // only if the colours agree.
     for (auto i = 0; i < rows.size(); ++i)
-        if (sameStops(rows[i].stops, stops))
+        if (rows[i].key == key && sameStops(rows[i].stops, stops))
             return vForRow(i);
 
     if (rows.size() >= maxRows)
@@ -113,7 +137,7 @@ float GradientRamps::rowFor(const Gradient& gradient)
     }
 
     auto row = rows.size();
-    rows.add({stops});
+    rows.add({stops, key});
     bake(rows[row], row);
 
     return vForRow(row);

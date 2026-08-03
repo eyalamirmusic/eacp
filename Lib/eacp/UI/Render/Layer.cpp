@@ -31,6 +31,12 @@ Layer::Layer(Component& ownerToUse)
 Layer::~Layer()
 {
     owner.removeLayer(*this);
+
+    // Whatever drew it is holding a pointer to it. The owner is the component
+    // that draws a layer -- that is the arrangement the class documents -- so
+    // dropping its recording here is what stops the next frame replaying a quad
+    // of a texture that has gone.
+    owner.repaint();
 }
 
 void Layer::setBounds(const Rect& newBounds)
@@ -48,12 +54,20 @@ void Layer::setOpacity(float newOpacity)
     // opacity is applied where it is composited. Fading one is therefore a
     // repaint and not a re-render, which is what makes a layer worth animating.
     opacity = std::clamp(newOpacity, 0.f, 1.f);
+
+    // And not a paint either: the opacity is read off the layer as it is drawn,
+    // so what the owner recorded still holds and only the frame has to happen.
+    owner.invalidateHost();
 }
 
 void Layer::setDirty()
 {
     dirty = true;
     ready = false;
+
+    // The owner drew this layer as a quad of its bounds, so a change of what is
+    // in it -- or of where it is -- is a change to what the owner recorded.
+    owner.repaint();
 }
 
 Rect Layer::getContentUV() const

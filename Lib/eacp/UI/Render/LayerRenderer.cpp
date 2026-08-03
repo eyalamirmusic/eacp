@@ -13,7 +13,7 @@ struct LayerVertex
     float corner[2];
 };
 
-constexpr LayerVertex unitQuad[] = {
+constexpr LayerVertex layerUnitQuad[] = {
     {{0.f, 0.f}},
     {{1.f, 0.f}},
     {{1.f, 1.f}},
@@ -101,7 +101,7 @@ LayerRenderer::LayerRenderer(Point logicalSizeToUse,
     , colorFormat(colorFormatToUse)
 {
     program.create();
-    program->setVertices(unitQuad);
+    program->setVertices(layerUnitQuad);
 
     // The same blend every renderer in this tier uses, so that a layer drawn
     // into another layer accumulates coverage as correctly as one drawn onto the

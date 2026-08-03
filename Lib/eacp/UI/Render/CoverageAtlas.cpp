@@ -199,6 +199,7 @@ bool CoverageAtlas::makeRoomFor(int width, int height)
 
         resizeTo(grown);
         moved = true;
+        ++atlasGeneration;
         return true;
     }
 
@@ -210,6 +211,7 @@ bool CoverageAtlas::makeRoomFor(int width, int height)
 
     reset();
     moved = true;
+    ++atlasGeneration;
     return true;
 }
 

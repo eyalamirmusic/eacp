@@ -127,10 +127,14 @@ struct StripList final : UI::Component
 
 // Reads the host's figures at paint time rather than being told them.
 //
-// A component told the numbers would have to repaint to show a change, and a
-// repaint asked for from inside the frame that produced them is lost -- so the
-// label would sit one frame behind for ever, which on a tree that only redraws
-// when something moves means it never updates at all.
+// A component told the numbers would have to repaint to show a change, and the
+// figures are only complete once the walk that produced them is over -- so the
+// label paints the last frame's and asks for one more to catch up.
+//
+// The count worth watching is the third. It is how many components the frame
+// painted, against how many it drew: it settles at zero on a tree that is
+// sitting still, and reports one while a strip's meter is moving, whatever the
+// two hundred components around it are doing.
 struct StatsBar final : UI::Component
 {
     void paint(UI::Graphics& g) override
@@ -138,19 +142,22 @@ struct StatsBar final : UI::Component
         if (host == nullptr)
             return;
 
-        auto text = std::to_string(host->getLastComponentCount()) + " components   "
-                    + std::to_string(host->getLastClipChangeCount())
-                    + " batch breaks";
+        auto text =
+            std::to_string(host->getLastComponentCount()) + " components   "
+            + std::to_string(host->getLastClipChangeCount()) + " batch breaks   "
+            + std::to_string(host->getLastPaintedComponentCount()) + " painted   "
+            + std::to_string(host->getLastSharedMaskCount()) + " masks shared";
 
         g.setColour(UI::defaultTheme().dimText);
         g.drawText(text, getLocalBounds(), UI::Justification::Right);
 
-        // The break count is only complete once the walk that produced it is
-        // over, so this frame paints the last one's and needs one more to catch
-        // up. Deferred rather than repainted on the spot because a repaint asked
-        // for from inside the draw cycle is cleared on its way out; posting it
-        // to the loop puts the request safely after the frame. Self-limiting --
-        // once the figure stops changing, so does this.
+        // The request itself would survive -- the recording walk clears a
+        // component's flag before painting it, so a repaint from inside a paint
+        // marks it for the next frame rather than being cleared on the way out.
+        // What does not survive is the *frame*: asking the native view for one
+        // from inside its own draw cycle is coalesced into the cycle already
+        // running. So the ask is posted to the loop, which puts it after the
+        // frame. Self-limiting -- once the figure stops changing, so does this.
         if (text != lastPainted)
         {
             lastPainted = text;
