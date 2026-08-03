@@ -54,6 +54,23 @@ auto tActivationChangedCallbackIsUserOwned =
     check(!lastState);
 };
 
+// The platform delegates call onHidden straight off the event struct, so an
+// app that never assigns one must still be safe to close.
+auto tHiddenCallbackDefaultsToCallableNoOp =
+    test("WindowEvents/hiddenDefaultsToCallableNoOp") = []
+{
+    auto events = WindowEvents {};
+
+    check(static_cast<bool>(events.onHidden));
+    events.onHidden();
+
+    auto calls = 0;
+    events.onHidden = [&] { ++calls; };
+    events.onHidden();
+
+    check(calls == 1);
+};
+
 auto tWindowOptionsNewAffordancesDefaultOff =
     test("WindowOptions/newAffordancesDefaultOff") = []
 {

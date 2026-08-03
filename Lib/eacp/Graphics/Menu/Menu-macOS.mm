@@ -70,8 +70,12 @@ Menu standardApplicationMenu(std::string applicationName)
 
     menu.addSeparator();
 
+    // requestQuit, not quit: this item and the Cmd+Q that AppKit would route
+    // to terminate: are the same user gesture, so they must reach the same
+    // answer — a tray-resident app refusing both (Apps::setQuitHandler)
+    // rather than only the one that happened to go through the delegate.
     menu.add(MenuItem::withAction("Quit " + applicationName,
-                                  [] { Apps::quit(); },
+                                  [] { Apps::requestQuit(); },
                                   commandKey("q")));
 
     return menu;

@@ -5,6 +5,7 @@
 
 #include "App.h"
 #include "../ObjC/CFRef.h"
+#include "../ObjC/ObjC.h"
 
 #include <cstring>
 #include <mach-o/dyld.h>
@@ -77,6 +78,33 @@ void setDockIconVisible(bool visible)
 {
     [NSApp setActivationPolicy:visible ? NSApplicationActivationPolicyRegular
                                        : NSApplicationActivationPolicyAccessory];
+}
+
+namespace
+{
+bool s_systemIsPoweringOff = false;
+} // namespace
+
+bool isSystemPoweringOff()
+{
+    return s_systemIsPoweringOff;
+}
+
+// The notification is the only thing that separates a logout from the user
+// quitting this app on purpose: Dock ▸ Quit and a scripted `quit` arrive as
+// the very same kAEQuitApplication a logout sends, so reading the Apple Event
+// would silently exempt the Dock's menu item — one of the gestures a
+// tray-resident app most needs to answer for itself.
+void Detail::observeSystemPowerOff()
+{
+    static auto observer = ObjC::Ptr<NSObject>(
+        [NSWorkspace.sharedWorkspace.notificationCenter
+            addObserverForName:NSWorkspaceWillPowerOffNotification
+                        object:nil
+                         queue:nil
+                    usingBlock:^(NSNotification*) { s_systemIsPoweringOff = true; }],
+        ObjC::RetainMode {});
+    (void) observer;
 }
 
 void openExternalURL(const std::string& url)
