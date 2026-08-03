@@ -32,10 +32,7 @@ struct StateContent final : UI::Component
         setWantsKeyboardFocus(true);
         setInterceptsMouseClicks(true);
 
-        addAndMakeVisible(title);
-        addAndMakeVisible(documentLine);
-        addAndMakeVisible(counterLine);
-        addAndMakeVisible(hintLine);
+        addChildren({title, documentLine, counterLine, hintLine});
 
         refresh();
     }

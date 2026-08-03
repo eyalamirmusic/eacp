@@ -193,9 +193,7 @@ struct DemoRoot final : UI::Component
 
         list.setContent(grid);
 
-        addAndMakeVisible(title);
-        addAndMakeVisible(list);
-        addAndMakeVisible(stats);
+        addChildren({title, list, stats});
     }
 
     void paint(UI::Graphics& g) override

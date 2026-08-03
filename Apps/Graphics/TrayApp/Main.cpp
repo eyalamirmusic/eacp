@@ -47,8 +47,7 @@ struct PanelContent final : UI::Component
 
         subtitle.setColour({0.62f, 0.62f, 0.68f, 1.f});
 
-        addAndMakeVisible(title);
-        addAndMakeVisible(subtitle);
+        addChildren({title, subtitle});
     }
 
     void paint(UI::Graphics& g) override { g.fillAll({0.11f, 0.11f, 0.13f, 1.f}); }

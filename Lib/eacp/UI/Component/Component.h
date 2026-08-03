@@ -4,6 +4,8 @@
 #include "KeyEvent.h"
 #include "MouseEvent.h"
 
+#include <functional>
+
 namespace eacp::UI
 {
 class ComponentHost;
@@ -31,6 +33,8 @@ class DragAndDropContainer;
 // getLocalBounds().
 class Component
 {
+    using Children = std::initializer_list<std::reference_wrapper<Component>>;
+
 public:
     Component();
     virtual ~Component();
@@ -39,6 +43,16 @@ public:
     Component& operator=(const Component&) = delete;
 
     void setBounds(const Rect& newBounds);
+
+    // Bounds as fractions of the parent's local bounds, so
+    // setPos({0.1f, 0.1f, 0.2f, 0.2f}) is a fifth-sized box a tenth of the way
+    // in. A layout written this way survives a resize without arithmetic, which
+    // is what most resized() bodies actually want.
+    //
+    // Does nothing while there is no parent, there being nothing to be a
+    // fraction of.
+    void setPos(const Rect& ratio);
+
     const Rect& getBounds() const { return bounds; }
 
     // The bounds with the origin moved to zero -- what to lay children out
@@ -52,6 +66,9 @@ public:
     // not owned: it has to outlive this component, which is what holding
     // children as members gets you for free.
     void addAndMakeVisible(Component& child);
+
+    // The same for a whole row of them: addChildren({title, subtitle}).
+    void addChildren(Children childrenToAdd);
 
     // Adds without showing, for a child whose visibility the caller drives.
     void addChildComponent(Component& child);

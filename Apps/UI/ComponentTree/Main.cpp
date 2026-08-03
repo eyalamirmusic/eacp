@@ -52,11 +52,7 @@ struct ChannelStrip final : UI::Component
         pan.setValue(0.15f
                      + 0.7f * static_cast<float>((indexToUse * 61) % 100) / 100.f);
 
-        addAndMakeVisible(name);
-        addAndMakeVisible(pan);
-        addAndMakeVisible(level);
-        addAndMakeVisible(mute);
-        addAndMakeVisible(solo);
+        addChildren({name, pan, level, mute, solo});
     }
 
     void levelChanged(float value)
@@ -178,11 +174,7 @@ struct DemoRoot final : UI::Component
 
         list.setContent(strips);
 
-        addAndMakeVisible(title);
-        addAndMakeVisible(selectAll);
-        addAndMakeVisible(clearAll);
-        addAndMakeVisible(list);
-        addAndMakeVisible(stats);
+        addChildren({title, selectAll, clearAll, list, stats});
     }
 
     void setAllToggles(bool shouldBeOn)

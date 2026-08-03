@@ -42,6 +42,12 @@ void Component::setBounds(const Rect& newBounds)
     repaint();
 }
 
+void Component::setPos(const Rect& ratio)
+{
+    if (parent != nullptr)
+        setBounds(parent->getLocalBounds().getRelative(ratio));
+}
+
 void Component::addChildComponent(Component& child)
 {
     if (child.parent == this)
@@ -60,6 +66,12 @@ void Component::addAndMakeVisible(Component& child)
 {
     addChildComponent(child);
     child.setVisible(true);
+}
+
+void Component::addChildren(Children childrenToAdd)
+{
+    for (auto& child: childrenToAdd)
+        addAndMakeVisible(child);
 }
 
 void Component::removeChildComponent(Component& child)

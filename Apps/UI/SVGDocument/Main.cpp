@@ -565,9 +565,7 @@ struct ComponentSide final : UI::Component
         title.setColour(UI::defaultTheme().text);
         stats.document = &document;
 
-        addAndMakeVisible(title);
-        addAndMakeVisible(document);
-        addAndMakeVisible(stats);
+        addChildren({title, document, stats});
     }
 
     void show(const Document& toShow)
