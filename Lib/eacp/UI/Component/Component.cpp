@@ -125,6 +125,92 @@ void Component::setMouseCursor(eacp::Graphics::MouseCursor cursorToUse)
     cursor = cursorToUse;
 }
 
+void Component::setWantsKeyboardFocus(bool shouldWantFocus)
+{
+    wantsKeyboardFocus = shouldWantFocus;
+
+    // Losing it on the way out, because a component that has stopped wanting the
+    // keyboard and is still holding it swallows every key the tree sends.
+    if (!wantsKeyboardFocus && hasKeyboardFocus())
+        giveAwayKeyboardFocus();
+}
+
+void Component::grabKeyboardFocus()
+{
+    if (auto* found = findHost())
+        found->setFocusedComponent(this);
+}
+
+void Component::giveAwayKeyboardFocus()
+{
+    if (!hasKeyboardFocus())
+        return;
+
+    if (auto* found = findHost())
+        found->setFocusedComponent(nullptr);
+}
+
+bool Component::hasKeyboardFocus() const
+{
+    auto* found = findHost();
+
+    return found != nullptr && found->getFocusedComponent() == this;
+}
+
+namespace
+{
+// The tree flattened into the order children were added, which is also the order
+// they are painted in. Depth first and parents before children, so a panel that
+// wants focus is reached before what it holds.
+void gatherFocusOrder(Component& component, Vector<Component*>& into)
+{
+    if (!component.isVisible())
+        return;
+
+    if (component.getWantsKeyboardFocus())
+        into.add(&component);
+
+    for (auto* child: component.getChildren())
+        gatherFocusOrder(*child, into);
+}
+} // namespace
+
+Component* Component::nextComponentWantingFocus(bool forwards)
+{
+    auto* root = this;
+
+    while (root->parent != nullptr)
+        root = root->parent;
+
+    auto order = Vector<Component*> {};
+    gatherFocusOrder(*root, order);
+
+    if (order.size() == 0)
+        return nullptr;
+
+    auto index = -1;
+
+    for (auto i = 0; i < order.size(); ++i)
+        if (order[i] == this)
+            index = i;
+
+    // Nothing focused yet, or focus on something that has stopped wanting it:
+    // start at whichever end the direction implies rather than nowhere.
+    if (index < 0)
+        return forwards ? order[0] : order[order.size() - 1];
+
+    auto next = forwards ? index + 1 : index - 1;
+
+    // Wrapping, so Tab off the last field returns to the first rather than
+    // trapping the keyboard at the end of the tree.
+    if (next >= order.size())
+        next = 0;
+    else if (next < 0)
+        next = order.size() - 1;
+
+    return order[next];
+}
+
 ComponentHost* Component::findHost() const
 {
     auto* current = this;

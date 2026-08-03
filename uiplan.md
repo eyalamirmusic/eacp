@@ -243,3 +243,60 @@ conversions has been looked at**. What stands behind them instead is the test
 suite, which now covers the font path end to end: two sizes and two families of a
 real face in one atlas, and `TextRenderer` measuring the face it was handed
 rather than its default.
+
+# Rung 2, as built
+
+The keyboard, and the two examples that needed it.
+
+## What shipped
+
+| where | what |
+|---|---|
+| `UI/Component/KeyEvent.h` | `KeyEvent`, `KeyCode` and `ModifierKeys`, aliased rather than converted |
+| `UI/Component/Component` | `setWantsKeyboardFocus`, `grabKeyboardFocus`, `giveAwayKeyboardFocus`, `hasKeyboardFocus`, `focusGained`/`focusLost`, `keyDown`/`keyUp` returning a verdict, and `nextComponentWantingFocus` |
+| `UI/Host/ComponentHost` | the focused component and its handover, key routing up the parent chain, focus on mouse down, Tab traversal, `setTabMovesFocus`, and focus dropped when its component is deleted |
+| `Apps/Graphics/KeyInspector` | converted: one focusable component, the log in a monospace face on the shared atlas |
+| `Apps/Graphics/MenuBarApp` | converted: the state view is a component that consumes the three keys it uses and returns the rest |
+| `Tests/UI/KeyboardTests.cpp` | 18 cases on where a key goes, 1049 in the project |
+
+## Where the plan was wrong
+
+- **A `UI::KeyEvent` should not exist.** The plan assumed it would mirror
+  `Graphics::KeyEvent` the way `UI::MouseEvent` mirrors its native sibling. But
+  what made that one worth converting is the *position*, which means nothing
+  until it is in the receiving component's space — and a key has none. Every
+  field a key event carries means the same thing wherever in the tree it lands,
+  so a parallel struct would have been a copy per keystroke and a second place
+  for `KeyCode` to be spelled. It is an alias.
+- **The verdict worry was the right worry and lands elsewhere.** The plan
+  expected every editor to grow a `return true` at the bottom and the bubbling
+  to become decorative. What the conversions actually show is the opposite
+  failure: `KeyInspector` genuinely does consume everything — it is a key
+  inspector, a key it did not report would be a bug — while `MenuBarApp`
+  consumes its three keys and returns the rest, and that difference is the whole
+  reason Tab still traverses in one and not the other.
+- **Tab is not a rule, it is a fallback.** Traversal happens only where nothing
+  in the tree consumed the key, so a component that wants Tab for itself takes
+  it exactly as it takes any other key rather than through a second mechanism.
+  `setTabMovesFocus(false)` is for a whole tree that wants it — which is what
+  `KeyInspector` is, Tab being a key to report there.
+
+## What the tests found that trying it would not have
+
+- **A focusable root makes every click focusable.** The press rule is "the
+  nearest ancestor that wants the keyboard", so "a press on something
+  unfocusable leaves focus alone" is only true when nothing above it wants focus
+  either. Two tests written from the same intuition contradicted each other, and
+  the rule is the honest one: a tree whose root takes focus has no unfocusable
+  clicks in it.
+- **Focus is dropped on deletion rather than moved on.** Handing the keyboard to
+  the next component in the focus order while a subtree is halfway through being
+  destroyed is how a `focusGained` lands on something already gone.
+
+## What is not verified
+
+The routing is tested; **no key has actually been pressed**. Synthetic keystrokes
+are not usable on this machine — they land in whatever app is frontmost — so the
+native half of the path (that a `ComponentHost` becomes first responder and that
+`View::keyDown` reaches the override) rests on `setGrabsFocusOnMouseDown` and
+`focus()` being what they say they are, and on the two demos being run by hand.
