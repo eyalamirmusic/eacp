@@ -12,6 +12,12 @@ ComponentHost::ComponentHost()
     // rectangles and glyphs, both of which land crisper without it.
     setSampleCount(1);
     setHandlesMouseEvents(true);
+
+    // A component tree is one native view, so that view has to become the
+    // window's first responder for anything inside it to hear a key. Which is
+    // what a press on any part of the tree should do anyway -- clicking an
+    // interface is how a user says the keyboard belongs to it.
+    setGrabsFocusOnMouseDown(true);
 }
 
 ComponentHost::~ComponentHost()
@@ -27,6 +33,12 @@ void ComponentHost::componentDeleted(Component& component)
 
     if (mouseDownTarget == &component)
         mouseDownTarget = nullptr;
+
+    // Dropped rather than moved on. Telling the next component in the focus
+    // order that it has the keyboard while a subtree is halfway through being
+    // destroyed is how a focusGained lands on something already gone.
+    if (focusedComponent == &component)
+        focusedComponent = nullptr;
 
     if (root == &component)
     {
@@ -475,6 +487,100 @@ void ComponentHost::updateHover(Component* target,
         target->mouseMove(makeEvent(*target, event));
 }
 
+void ComponentHost::setFocusedComponent(Component* component)
+{
+    if (focusedComponent == component)
+        return;
+
+    auto* previous = focusedComponent;
+
+    // Assigned before either callback, so a component asking whether it has
+    // focus from inside focusLost or focusGained is told the truth.
+    focusedComponent = component;
+
+    if (previous != nullptr)
+        previous->focusLost();
+
+    if (focusedComponent != nullptr)
+    {
+        // The native view, not the component: what the window hands keys to is
+        // this one view, and it can only pass them on if it has them.
+        focus();
+        focusedComponent->focusGained();
+    }
+
+    repaint();
+}
+
+void ComponentHost::moveFocusToPressed(Component* pressed)
+{
+    for (auto* current = pressed; current != nullptr;
+         current = current->getParentComponent())
+    {
+        if (current->getWantsKeyboardFocus())
+        {
+            setFocusedComponent(current);
+            return;
+        }
+    }
+}
+
+bool ComponentHost::dispatchKey(const eacp::Graphics::KeyEvent& event, bool isDown)
+{
+    // The focused component, or the root when there is none -- so a tree that
+    // has never been clicked still hears its shortcuts.
+    auto* target = focusedComponent != nullptr ? focusedComponent : root;
+
+    for (auto* current = target; current != nullptr;
+         current = current->getParentComponent())
+    {
+        if (isDown ? current->keyDown(event) : current->keyUp(event))
+            return true;
+    }
+
+    return false;
+}
+
+bool ComponentHost::moveFocusByTab(const eacp::Graphics::KeyEvent& event)
+{
+    if (!tabMovesFocus || event.keyCode != eacp::Graphics::KeyCode::Tab)
+        return false;
+
+    auto* from = focusedComponent != nullptr ? focusedComponent : root;
+
+    if (from == nullptr)
+        return false;
+
+    auto* next = from->nextComponentWantingFocus(!event.modifiers.shift);
+
+    if (next == nullptr)
+        return false;
+
+    setFocusedComponent(next);
+
+    return true;
+}
+
+void ComponentHost::keyDown(const eacp::Graphics::KeyEvent& event)
+{
+    if (root == nullptr)
+        return;
+
+    // The tree first, traversal second: a component that wants Tab for itself
+    // says so by consuming it, which is the same verdict every other key is
+    // decided by rather than a second mechanism.
+    if (dispatchKey(event, true))
+        return;
+
+    moveFocusByTab(event);
+}
+
+void ComponentHost::keyUp(const eacp::Graphics::KeyEvent& event)
+{
+    if (root != nullptr)
+        dispatchKey(event, false);
+}
+
 void ComponentHost::mouseDown(const eacp::Graphics::MouseEvent& event)
 {
     if (root == nullptr)
@@ -487,6 +593,7 @@ void ComponentHost::mouseDown(const eacp::Graphics::MouseEvent& event)
 
     if (mouseDownTarget != nullptr)
     {
+        moveFocusToPressed(mouseDownTarget);
         setHoveredComponent(mouseDownTarget, event);
         mouseDownTarget->mouseDown(makeEvent(*mouseDownTarget, event));
     }

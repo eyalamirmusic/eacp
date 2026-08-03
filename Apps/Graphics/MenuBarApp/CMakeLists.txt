@@ -1,5 +1,5 @@
 add_executable(MenuBarApp Main.cpp)
-target_link_libraries(MenuBarApp PRIVATE eacp-graphics)
+target_link_libraries(MenuBarApp PRIVATE eacp-ui)
 
 set(BUNDLE_ID "com.eacp.menubarapp")
 

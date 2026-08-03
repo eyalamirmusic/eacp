@@ -3,5 +3,6 @@ nano_add_executable(UITests
             ClipMaskTests.cpp
             CoverageAtlasTests.cpp
             GradientRampsTests.cpp
+            KeyboardTests.cpp
             LayerTests.cpp
         TARGETS eacp-ui)

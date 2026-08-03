@@ -86,6 +86,24 @@ public:
     void resized() override;
     void render(GPU::Frame& frame) override;
 
+    // The component keys are offered to first. Null means none has been focused,
+    // and the tree's keys go to the root -- which is what makes a shortcut work
+    // before anything has been clicked.
+    //
+    // Setting it tells the two components involved (focusLost, then focusGained)
+    // and asks the window for the keyboard, a component tree only hearing a key
+    // at all if the one native view it lives in is the first responder.
+    void setFocusedComponent(Component* component);
+    Component* getFocusedComponent() const { return focusedComponent; }
+
+    // Whether Tab moves focus through the tree. On by default; off for a tree
+    // where Tab means something else, an editor that indents being the case that
+    // wants it.
+    void setTabMovesFocus(bool shouldMoveFocus) { tabMovesFocus = shouldMoveFocus; }
+
+    void keyDown(const eacp::Graphics::KeyEvent& event) override;
+    void keyUp(const eacp::Graphics::KeyEvent& event) override;
+
     void mouseDown(const eacp::Graphics::MouseEvent& event) override;
     void mouseUp(const eacp::Graphics::MouseEvent& event) override;
     void mouseDragged(const eacp::Graphics::MouseEvent& event) override;
@@ -140,6 +158,18 @@ private:
     void setHoveredComponent(Component* component,
                              const eacp::Graphics::MouseEvent& event);
 
+    // Offers the event to `target` and then to each of its parents, stopping at
+    // the first that consumes it. Returns whether any of them did.
+    bool dispatchKey(const eacp::Graphics::KeyEvent& event, bool isDown);
+
+    // The pressed component, or the nearest ancestor of it, that wants the
+    // keyboard. A press on something that wants nothing leaves focus alone
+    // rather than clearing it, so clicking a panel does not silently disarm the
+    // editor next to it.
+    void moveFocusToPressed(Component* pressed);
+
+    bool moveFocusByTab(const eacp::Graphics::KeyEvent& event);
+
     Component* root = nullptr;
 
     Color background {0.11f, 0.12f, 0.15f, 1.f};
@@ -185,6 +215,9 @@ private:
     // the pointer leaves it, which is the behaviour a drag has to have.
     Component* mouseDownTarget = nullptr;
     Component* hoveredComponent = nullptr;
+    Component* focusedComponent = nullptr;
+
+    bool tabMovesFocus = true;
 
     int lastClipChanges = 0;
     int lastRendererSwitches = 0;

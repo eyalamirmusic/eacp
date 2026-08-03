@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Graphics/Graphics.h"
+#include "KeyEvent.h"
 #include "MouseEvent.h"
 
 namespace eacp::UI
@@ -109,6 +110,38 @@ public:
     // code at all to let its parent have it.
     virtual bool mouseWheelMove(const MouseEvent&) { return false; }
 
+    // Whether this component can hold keyboard focus. Off by default, the same
+    // way mouse interception is and for the same reason: a panel that holds an
+    // editor should not be able to take the keyboard away from it by accident.
+    void setWantsKeyboardFocus(bool shouldWantFocus);
+    bool getWantsKeyboardFocus() const { return wantsKeyboardFocus; }
+
+    // Makes this the host's focused component, and asks the native view for the
+    // keyboard while it is at it -- a component tree only sees a key event if the
+    // one view it lives in is the window's first responder.
+    void grabKeyboardFocus();
+
+    // Gives it up, leaving the host with none. A tree with nothing focused sends
+    // its keys to the root, which is what makes a shortcut work before anything
+    // has been clicked.
+    void giveAwayKeyboardFocus();
+
+    bool hasKeyboardFocus() const;
+
+    virtual void focusGained() {}
+    virtual void focusLost() {}
+
+    // Return true to consume. Unconsumed, a key carries on up the parent chain
+    // exactly as the wheel does -- so a shortcut on a root works while an editor
+    // deep inside it holds focus, and a component that ignores the keyboard
+    // needs no code to pass one on.
+    //
+    // The reply matters more here than it looks: an editor consuming everything
+    // it types must *not* consume the keys it ignores, or the tab that should
+    // move focus and the shortcut that should reach the window die in it.
+    virtual bool keyDown(const KeyEvent&) { return false; }
+    virtual bool keyUp(const KeyEvent&) { return false; }
+
     // The deepest visible, intercepting component under `localPoint`, or null.
     // Front-to-back, so the topmost sibling wins.
     Component* getComponentAt(Point localPoint);
@@ -117,6 +150,11 @@ public:
     Point rootPointToLocal(Point rootPoint) const;
 
     bool isMouseOver() const { return mouseOver; }
+
+    // The next component after this one that would take focus, in the order
+    // children were added, wrapping at the end of the tree. What Tab moves to,
+    // and null when nothing in the tree wants the keyboard at all.
+    Component* nextComponentWantingFocus(bool forwards = true);
 
     // Every component in this subtree, including this one. The demo reports it
     // next to the draw count, since the claim being tested is that the second
@@ -162,6 +200,7 @@ private:
 
     bool visible = true;
     bool interceptsMouseClicks = false;
+    bool wantsKeyboardFocus = false;
     bool mouseOver = false;
 
     eacp::Graphics::MouseCursor cursor = eacp::Graphics::MouseCursor::Default;

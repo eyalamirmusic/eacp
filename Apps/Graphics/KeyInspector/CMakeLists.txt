@@ -1,5 +1,5 @@
 add_executable(KeyInspector Main.cpp)
-target_link_libraries(KeyInspector PRIVATE eacp-graphics)
+target_link_libraries(KeyInspector PRIVATE eacp-ui)
 
 set(BUNDLE_ID "com.eacp.keyinspector")
 
