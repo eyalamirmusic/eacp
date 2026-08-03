@@ -39,6 +39,14 @@ public:
     void setFontPointSize(float points);
     void setFontFamily(const std::string& family);
 
+    // Measurement without a paint in progress -- see Component::measureText,
+    // which is where a component should ask. Builds the renderer if the host has
+    // not drawn yet: measuring needs the fonts and not the GPU, so a component
+    // can lay itself out before the first frame.
+    float measureText(std::string_view text, const Font& font) const;
+    float getLineHeight(const Font& font) const;
+    float getAscent(const Font& font) const;
+
     // What the last frame cost. `clipChanges` is the number of batch breaks:
     // between two of them every quad goes out as one instanced draw, so this is
     // the figure that should stay flat as the tree grows.
@@ -199,7 +207,12 @@ private:
     // and nothing queued, so it holds no state between frames.
     std::optional<LayerRenderer> layers;
 
-    std::optional<Text::TextRenderer> text;
+    // Mutable because measuring is a const question with a lazily built answer:
+    // a component asking for a width before the first frame has to be able to
+    // build the renderer to get one.
+    mutable std::optional<Text::TextRenderer> text;
+
+    Text::TextRenderer& renderer() const;
 
     // The scale everything in the atlas was rasterized at, so a move between
     // displays can be noticed.

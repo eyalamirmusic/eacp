@@ -93,6 +93,146 @@ private:
     bool down = false;
 };
 
+// A box and a tick, with a caption beside it. What a list of options is made of,
+// and the one widget whose whole state is a bool.
+class Checkbox final : public Component
+{
+public:
+    explicit Checkbox(std::string textToUse = {});
+
+    void setText(std::string newText);
+    const std::string& getText() const { return text; }
+
+    void setChecked(bool shouldBeChecked, bool notify = false);
+    bool isChecked() const { return checked; }
+
+    void setAccentColour(const Color& colour);
+
+    std::function<void(bool)> onChange = [](bool) {};
+
+    void paint(Graphics& g) override;
+
+    void mouseEnter(const MouseEvent&) override;
+    void mouseExit(const MouseEvent&) override;
+    void mouseUp(const MouseEvent& event) override;
+
+    // Space and Return toggle it, which is what makes a form usable without the
+    // pointer. Everything else is passed on.
+    bool keyDown(const KeyEvent& event) override;
+
+private:
+    std::string text;
+    Color accent = defaultTheme().accent;
+    bool checked = false;
+};
+
+// A single line of editable text: a caret, a selection, and the keys that move
+// them.
+//
+// Drawn by the component tier like everything else, rather than hosting a native
+// text field over the tree. The difference shows the first time an editor is put
+// inside something that scrolls -- a native view does not move with the content
+// it is over -- and in what it costs: this is a rectangle, a run of glyphs and a
+// caret in the same batch as the interface around it.
+//
+// Single line on purpose. Wrapping is a layout problem the tier has not needed
+// yet, and it is a different widget rather than a flag on this one.
+//
+// What it does not do: input methods, right-to-left text, and undo. All three
+// are real work rather than omissions to be filled in later, and a document
+// editor should not be built out of this until they are done.
+class TextEditor final : public Component
+{
+public:
+    explicit TextEditor(std::string textToUse = {});
+
+    // Setting the text moves the caret to the end and drops the selection, the
+    // way handing someone a field with something already in it does.
+    void setText(std::string newText, bool notify = false);
+    const std::string& getText() const { return text; }
+
+    // Shown in place of empty text, dimmed. Not part of the value: it is never
+    // returned by getText and typing does not have to clear it.
+    void setPlaceholder(std::string newPlaceholder);
+
+    void setReadOnly(bool shouldBeReadOnly);
+    bool isReadOnly() const { return readOnly; }
+
+    void setFont(const Font& font);
+    void setColour(const Color& colour);
+    void setAccentColour(const Color& colour);
+
+    // In bytes, clamped, and never inside a UTF-8 sequence -- so a caret can be
+    // used as a substring boundary without splitting a character.
+    void setCaretPosition(int position);
+    int getCaretPosition() const { return caret; }
+
+    void selectAll();
+    void deselect();
+    bool hasSelection() const { return selectionStart != caret; }
+    std::string getSelectedText() const;
+
+    std::function<void(const std::string&)> onTextChange = [](const std::string&) {};
+
+    // Return, and the escape that means "put it back". A field that commits on
+    // Return usually wants both, and neither is the same as losing focus.
+    std::function<void(const std::string&)> onReturnKey = [](const std::string&) {};
+    std::function<void()> onEscapeKey = [] {};
+
+    void paint(Graphics& g) override;
+
+    bool keyDown(const KeyEvent& event) override;
+
+    void mouseDown(const MouseEvent& event) override;
+    void mouseDrag(const MouseEvent& event) override;
+
+    void focusGained() override;
+    void focusLost() override;
+
+private:
+    Font fontToDrawIn() const;
+
+    // Byte offsets, moved a whole UTF-8 sequence at a time.
+    int nextCharacter(int from) const;
+    int previousCharacter(int from) const;
+
+    int selectionLeft() const { return std::min(selectionStart, caret); }
+    int selectionRight() const { return std::max(selectionStart, caret); }
+
+    void moveCaret(int position, bool extendSelection);
+    void replaceSelection(const std::string& with);
+    void deleteBackwards();
+    void deleteForwards();
+
+    // Which byte offset a click at `x` landed on, by walking characters until
+    // the measured width passes it. Linear in the string, which for one line of
+    // a field is nothing and would be the wrong shape for a document.
+    int positionAt(float x) const;
+
+    // Where the text starts drawing, once a long string has been scrolled to
+    // keep the caret in view.
+    float textOrigin() const;
+    void scrollToCaret();
+
+    bool handleClipboardKey(const KeyEvent& event);
+
+    std::string text;
+    std::string placeholder;
+
+    Color colour = defaultTheme().text;
+    Color accent = defaultTheme().accent;
+    std::optional<Font> font;
+
+    int caret = 0;
+
+    // The other end of the selection. Equal to the caret means none, which is
+    // why there is no separate flag to keep in step with it.
+    int selectionStart = 0;
+
+    float scrollOffset = 0.f;
+    bool readOnly = false;
+};
+
 // A linear fader, horizontal or vertical. Vertical runs bottom-to-top, which is
 // what a level control has to do however y is measured elsewhere.
 class Slider final : public Component

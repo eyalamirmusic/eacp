@@ -1,5 +1,7 @@
 #include "Widgets.h"
 
+#include <eacp/Core/App/Clipboard.h>
+
 #include <algorithm>
 
 namespace eacp::UI
@@ -9,6 +11,11 @@ namespace eacp::UI
 // site is how they stop agreeing.
 constexpr auto buttonCorner = 5.f;
 constexpr auto trackCorner = 4.f;
+
+// The gap between an editor's border and the first glyph. Also what the caret
+// has to stay clear of, which is why it is a constant rather than a literal in
+// the scrolling arithmetic.
+constexpr auto textInset = 6.f;
 
 const Theme& defaultTheme()
 {
@@ -169,6 +176,560 @@ void Button::mouseUp(const MouseEvent& event)
     }
 
     repaint();
+}
+
+namespace
+{
+// Whether this is the platform's "do the editing shortcut" modifier: Command on
+// Apple, Control everywhere else. Both are accepted rather than one chosen by
+// #if, so a Windows keyboard on a Mac and a Mac keyboard on Windows both work.
+bool isShortcutModifier(const ModifierKeys& modifiers)
+{
+    return modifiers.command || modifiers.control;
+}
+
+bool isContinuationByte(char byte)
+{
+    return (static_cast<unsigned char>(byte) & 0xC0) == 0x80;
+}
+} // namespace
+
+Checkbox::Checkbox(std::string textToUse)
+    : text(std::move(textToUse))
+{
+    setInterceptsMouseClicks(true);
+    setWantsKeyboardFocus(true);
+    setMouseCursor(eacp::Graphics::MouseCursor::PointingHand);
+}
+
+void Checkbox::setText(std::string newText)
+{
+    text = std::move(newText);
+    repaint();
+}
+
+void Checkbox::setChecked(bool shouldBeChecked, bool notify)
+{
+    if (checked == shouldBeChecked)
+        return;
+
+    checked = shouldBeChecked;
+    repaint();
+
+    if (notify)
+        onChange(checked);
+}
+
+void Checkbox::setAccentColour(const Color& colour)
+{
+    accent = colour;
+    repaint();
+}
+
+void Checkbox::mouseEnter(const MouseEvent&)
+{
+    repaint();
+}
+
+void Checkbox::mouseExit(const MouseEvent&)
+{
+    repaint();
+}
+
+void Checkbox::mouseUp(const MouseEvent& event)
+{
+    // Only a release inside counts, so a press dragged off the box is a change
+    // of mind rather than a toggle.
+    if (getLocalBounds().contains(event.position))
+        setChecked(!checked, true);
+}
+
+bool Checkbox::keyDown(const KeyEvent& event)
+{
+    if (event.keyCode != eacp::Graphics::KeyCode::Space
+        && event.keyCode != eacp::Graphics::KeyCode::Return)
+        return false;
+
+    setChecked(!checked, true);
+
+    return true;
+}
+
+void Checkbox::paint(Graphics& g)
+{
+    const auto& theme = defaultTheme();
+    auto bounds = getLocalBounds();
+
+    auto boxSize = std::min(18.f, bounds.h);
+    auto box = Rect {0.f, (bounds.h - boxSize) * 0.5f, boxSize, boxSize};
+
+    g.setColour(checked ? accent : theme.panel);
+    g.fillRoundedRect(box, 4.f);
+
+    g.setColour(isMouseOver() ? theme.text : theme.outline);
+    g.drawRoundedRect(box, 4.f, hasKeyboardFocus() ? 2.f : 1.f);
+
+    // A tick out of two strokes rather than a path: two lines are two quads in
+    // the batch the rest of the tree is drawing in, where a path would be a
+    // mask in the atlas for every checkbox on screen.
+    if (checked)
+    {
+        g.setColour(theme.background);
+
+        auto inset = boxSize * 0.26f;
+        auto left = Point {box.x + inset, box.y + boxSize * 0.52f};
+        auto middle = Point {box.x + boxSize * 0.42f, box.bottom() - inset};
+        auto right = Point {box.right() - inset, box.y + inset};
+
+        g.drawLine(left, middle, 2.f);
+        g.drawLine(middle, right, 2.f);
+    }
+
+    if (text.empty())
+        return;
+
+    auto textArea = bounds;
+    textArea.x = box.right() + 8.f;
+    textArea.w -= textArea.x;
+
+    g.setColour(theme.text);
+    g.drawText(text, textArea);
+}
+
+TextEditor::TextEditor(std::string textToUse)
+    : text(std::move(textToUse))
+{
+    setInterceptsMouseClicks(true);
+    setWantsKeyboardFocus(true);
+    setMouseCursor(eacp::Graphics::MouseCursor::IBeam);
+
+    caret = (int) text.size();
+    selectionStart = caret;
+}
+
+Font TextEditor::fontToDrawIn() const
+{
+    return font.has_value() ? *font : getHostFont();
+}
+
+void TextEditor::setText(std::string newText, bool notify)
+{
+    text = std::move(newText);
+
+    caret = (int) text.size();
+    selectionStart = caret;
+    scrollOffset = 0.f;
+
+    repaint();
+
+    if (notify)
+        onTextChange(text);
+}
+
+void TextEditor::setPlaceholder(std::string newPlaceholder)
+{
+    placeholder = std::move(newPlaceholder);
+    repaint();
+}
+
+void TextEditor::setReadOnly(bool shouldBeReadOnly)
+{
+    readOnly = shouldBeReadOnly;
+    repaint();
+}
+
+void TextEditor::setFont(const Font& fontToUse)
+{
+    font = fontToUse;
+    repaint();
+}
+
+void TextEditor::setColour(const Color& colourToUse)
+{
+    colour = colourToUse;
+    repaint();
+}
+
+void TextEditor::setAccentColour(const Color& colourToUse)
+{
+    accent = colourToUse;
+    repaint();
+}
+
+int TextEditor::nextCharacter(int from) const
+{
+    auto position = std::clamp(from, 0, (int) text.size());
+
+    if (position >= (int) text.size())
+        return (int) text.size();
+
+    ++position;
+
+    while (position < (int) text.size()
+           && isContinuationByte(text[(std::size_t) position]))
+        ++position;
+
+    return position;
+}
+
+int TextEditor::previousCharacter(int from) const
+{
+    auto position = std::clamp(from, 0, (int) text.size());
+
+    if (position <= 0)
+        return 0;
+
+    --position;
+
+    while (position > 0 && isContinuationByte(text[(std::size_t) position]))
+        --position;
+
+    return position;
+}
+
+void TextEditor::setCaretPosition(int position)
+{
+    moveCaret(position, false);
+}
+
+void TextEditor::moveCaret(int position, bool extendSelection)
+{
+    caret = std::clamp(position, 0, (int) text.size());
+
+    // Never left inside a UTF-8 sequence, so the caret is always a safe
+    // substring boundary for the measuring and the editing both.
+    while (caret > 0 && caret < (int) text.size()
+           && isContinuationByte(text[(std::size_t) caret]))
+        --caret;
+
+    if (!extendSelection)
+        selectionStart = caret;
+
+    scrollToCaret();
+    repaint();
+}
+
+void TextEditor::selectAll()
+{
+    selectionStart = 0;
+    caret = (int) text.size();
+
+    scrollToCaret();
+    repaint();
+}
+
+void TextEditor::deselect()
+{
+    selectionStart = caret;
+    repaint();
+}
+
+std::string TextEditor::getSelectedText() const
+{
+    if (!hasSelection())
+        return {};
+
+    return text.substr((std::size_t) selectionLeft(),
+                       (std::size_t) (selectionRight() - selectionLeft()));
+}
+
+void TextEditor::replaceSelection(const std::string& with)
+{
+    if (readOnly)
+        return;
+
+    auto left = selectionLeft();
+    auto right = selectionRight();
+
+    text.replace((std::size_t) left, (std::size_t) (right - left), with);
+
+    caret = left + (int) with.size();
+    selectionStart = caret;
+
+    scrollToCaret();
+    repaint();
+    onTextChange(text);
+}
+
+void TextEditor::deleteBackwards()
+{
+    if (readOnly)
+        return;
+
+    if (!hasSelection())
+    {
+        if (caret == 0)
+            return;
+
+        selectionStart = previousCharacter(caret);
+    }
+
+    replaceSelection({});
+}
+
+void TextEditor::deleteForwards()
+{
+    if (readOnly)
+        return;
+
+    if (!hasSelection())
+    {
+        if (caret >= (int) text.size())
+            return;
+
+        selectionStart = nextCharacter(caret);
+    }
+
+    replaceSelection({});
+}
+
+float TextEditor::textOrigin() const
+{
+    return textInset - scrollOffset;
+}
+
+void TextEditor::scrollToCaret()
+{
+    auto visible = getWidth() - textInset * 2.f;
+
+    if (visible <= 0.f)
+        return;
+
+    auto caretX = measureText(std::string_view {text}.substr(0, (std::size_t) caret),
+                              fontToDrawIn());
+
+    // Only ever as far as it has to be: the caret is pulled back into view from
+    // whichever edge it left, and a string that fits is never scrolled at all.
+    scrollOffset = std::clamp(scrollOffset, caretX - visible, caretX);
+    scrollOffset = std::max(0.f, scrollOffset);
+
+    auto full = measureText(text, fontToDrawIn());
+
+    if (full - scrollOffset < visible)
+        scrollOffset = std::max(0.f, full - visible);
+}
+
+int TextEditor::positionAt(float x) const
+{
+    auto target = x - textOrigin();
+
+    if (target <= 0.f)
+        return 0;
+
+    auto face = fontToDrawIn();
+    auto position = 0;
+
+    while (position < (int) text.size())
+    {
+        auto next = nextCharacter(position);
+
+        auto before = measureText(
+            std::string_view {text}.substr(0, (std::size_t) position), face);
+        auto after =
+            measureText(std::string_view {text}.substr(0, (std::size_t) next), face);
+
+        // Past the middle of a character means the one after it, which is what
+        // makes clicking the right-hand half of a letter put the caret behind
+        // it rather than in front.
+        if (target < (before + after) * 0.5f)
+            return position;
+
+        position = next;
+    }
+
+    return (int) text.size();
+}
+
+void TextEditor::mouseDown(const MouseEvent& event)
+{
+    grabKeyboardFocus();
+
+    auto position = positionAt(event.position.x);
+
+    // Shift-click extends rather than replaces, the way a second click with the
+    // modifier held means "to here" in every text field.
+    moveCaret(position, event.modifiers.shift);
+}
+
+void TextEditor::mouseDrag(const MouseEvent& event)
+{
+    moveCaret(positionAt(event.position.x), true);
+}
+
+void TextEditor::focusGained()
+{
+    repaint();
+}
+
+void TextEditor::focusLost()
+{
+    deselect();
+    repaint();
+}
+
+bool TextEditor::handleClipboardKey(const KeyEvent& event)
+{
+    if (!isShortcutModifier(event.modifiers))
+        return false;
+
+    const auto& pressed = event.charactersIgnoringModifiers;
+
+    if (pressed == "a")
+    {
+        selectAll();
+        return true;
+    }
+
+    if (pressed == "c" || pressed == "x")
+    {
+        if (hasSelection())
+            Clipboard::copyText(getSelectedText());
+
+        if (pressed == "x" && !readOnly)
+            replaceSelection({});
+
+        return true;
+    }
+
+    if (pressed == "v")
+    {
+        if (!readOnly && Clipboard::hasText())
+            replaceSelection(Clipboard::getText());
+
+        return true;
+    }
+
+    return false;
+}
+
+bool TextEditor::keyDown(const KeyEvent& event)
+{
+    using namespace eacp::Graphics;
+
+    if (handleClipboardKey(event))
+        return true;
+
+    // Anything else with the shortcut modifier held belongs to the window, not
+    // to this field: an editor that swallowed Cmd+S would be the reason a
+    // document could not be saved while a field had focus.
+    if (isShortcutModifier(event.modifiers))
+        return false;
+
+    const auto extend = event.modifiers.shift;
+
+    switch (event.keyCode)
+    {
+        case KeyCode::LeftArrow:
+            moveCaret(previousCharacter(caret), extend);
+            return true;
+
+        case KeyCode::RightArrow:
+            moveCaret(nextCharacter(caret), extend);
+            return true;
+
+        case KeyCode::Home:
+        case KeyCode::UpArrow:
+            moveCaret(0, extend);
+            return true;
+
+        case KeyCode::End:
+        case KeyCode::DownArrow:
+            moveCaret((int) text.size(), extend);
+            return true;
+
+        case KeyCode::Delete:
+            deleteBackwards();
+            return true;
+
+        case KeyCode::ForwardDelete:
+            deleteForwards();
+            return true;
+
+        case KeyCode::Return:
+        case KeyCode::KeypadEnter:
+            onReturnKey(text);
+            return true;
+
+        case KeyCode::Escape:
+            onEscapeKey();
+            return true;
+
+        default:
+            break;
+    }
+
+    // Typing, which is anything that produced a printable character. Control
+    // characters are excluded rather than listed: Tab has to reach the traversal
+    // above this, and a key that produced nothing has nothing to insert.
+    if (readOnly || event.characters.empty())
+        return false;
+
+    if (static_cast<unsigned char>(event.characters.front()) < 0x20)
+        return false;
+
+    replaceSelection(event.characters);
+
+    return true;
+}
+
+void TextEditor::paint(Graphics& g)
+{
+    const auto& theme = defaultTheme();
+    auto bounds = getLocalBounds();
+    auto focused = hasKeyboardFocus();
+
+    g.setColour(theme.panel);
+    g.fillRoundedRect(bounds, 4.f);
+
+    g.setColour(focused ? accent : theme.outline);
+    g.drawRoundedRect(bounds, 4.f, focused ? 2.f : 1.f);
+
+    auto face = fontToDrawIn();
+    g.setFont(face);
+
+    // Everything below is drawn against the text's own origin, which a long
+    // string has scrolled. Clipped to the inside of the border so a scrolled
+    // string is cut at the edge rather than running over it.
+    auto scope = Graphics::ScopedState {g};
+    g.reduceClipRegion(bounds.inset(textInset * 0.5f, 1.f));
+
+    auto baseline = (bounds.h - g.lineHeight()) * 0.5f + g.ascent();
+    auto origin = textOrigin();
+
+    if (text.empty() && !placeholder.empty())
+    {
+        g.setColour(theme.dimText);
+        g.drawText(placeholder, {origin, baseline});
+        return;
+    }
+
+    if (hasSelection() && focused)
+    {
+        auto left = g.measureText(
+            std::string_view {text}.substr(0, (std::size_t) selectionLeft()));
+        auto right = g.measureText(
+            std::string_view {text}.substr(0, (std::size_t) selectionRight()));
+
+        g.setColour(accent.withAlpha(0.35f));
+        g.fillRect({origin + left, 2.f, right - left, bounds.h - 4.f});
+    }
+
+    g.setColour(colour);
+    g.drawText(text, {origin, baseline});
+
+    if (!focused || readOnly)
+        return;
+
+    // Always on rather than blinking. A blink is a timer per editor and a
+    // repaint of the tree twice a second for as long as a field has focus,
+    // which is a real cost in a tier whose whole claim is that it draws nothing
+    // while nothing changes.
+    auto caretX =
+        origin
+        + g.measureText(std::string_view {text}.substr(0, (std::size_t) caret));
+
+    g.setColour(accent);
+    g.fillRect({caretX, 3.f, 1.5f, bounds.h - 6.f});
 }
 
 Slider::Slider(Orientation orientationToUse)

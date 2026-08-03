@@ -219,6 +219,20 @@ auto tRefusingFocusReleasesIt =
     check(harness.first.lost == 1);
 };
 
+// Asking does not get around the flag, or setWantsKeyboardFocus(false) would
+// mean two different things depending on which side of a grab it was called.
+auto tGrabbingIsRefusedWhenUnwanted =
+    test("Keyboard/aComponentThatWantsNoFocusCannotGrabIt") = []
+{
+    auto harness = Harness {};
+
+    harness.second.setWantsKeyboardFocus(false);
+    harness.second.grabKeyboardFocus();
+
+    check(harness.host.getFocusedComponent() == nullptr);
+    check(harness.second.gained == 0);
+};
+
 auto tPressMovesFocus = test("Keyboard/pressingSomethingFocusableFocusesIt") = []
 {
     auto harness = Harness {};

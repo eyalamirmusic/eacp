@@ -137,6 +137,13 @@ void Component::setWantsKeyboardFocus(bool shouldWantFocus)
 
 void Component::grabKeyboardFocus()
 {
+    // The flag is the single answer to "can this hold the keyboard", so asking
+    // does not get around it. Otherwise setWantsKeyboardFocus(false) would mean
+    // two different things depending on which side of a grab it was called, and
+    // a component could end up focused while reporting that it cannot be.
+    if (!wantsKeyboardFocus)
+        return;
+
     if (auto* found = findHost())
         found->setFocusedComponent(this);
 }
@@ -225,6 +232,20 @@ void Component::repaint()
 {
     if (auto* found = findHost())
         found->repaint();
+}
+
+float Component::measureText(std::string_view text, const Font& font) const
+{
+    auto* found = findHost();
+
+    return found != nullptr ? found->measureText(text, font) : 0.f;
+}
+
+Font Component::getHostFont() const
+{
+    auto* found = findHost();
+
+    return found != nullptr ? found->getFont() : Font {};
 }
 
 bool Component::hitTest(Point localPoint) const
