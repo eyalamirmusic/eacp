@@ -47,6 +47,7 @@ struct ProbeResult
 constexpr auto readySelector = R"([data-testid="ready"])";
 constexpr auto greetingSelector = R"([data-testid="greeting"])";
 constexpr auto tickSelector = R"([data-testid="tick-count"])";
+constexpr auto earlyTickSelector = R"([data-testid="early-tick-count"])";
 
 TestApp<MyApp>& testApp()
 {
@@ -101,16 +102,33 @@ auto tPrefixedSubscriptionReceivesNestedEvent =
     check(driver().text(tickSelector) == "7");
 };
 
+// The same subscribe path in the opposite order: this handler was registered
+// BEFORE configureBridge ran (see web/src/main.ts), so it bound to "ticks" and
+// would have stayed bound to it. configureBridge re-points live subscriptions
+// at the new prefix, which is what lets it receive "nested.ticks" anyway.
+//
+// The order matters because a page cannot always avoid it — an ES import is
+// fully evaluated before the importing module's body, so anything that
+// subscribes at module scope subscribes before the page can configure
+// anything. WebViewSubApiReact covers the case where that early subscriber is
+// eacp's own generated hooks module.
+auto tSubscriptionMadeBeforeConfigureIsRebound =
+    test("SubApi/subscriptionMadeBeforeConfigureIsRebound") = []
+{
+    app().root.nested.publishTick(9);
+
+    check(driver().waitFor(earlyTickSelector));
+    check(driver().text(earlyTickSelector) == "9");
+};
+
 // Pins the wire shape the prefix exists to bridge. Without these, the tests
 // above would still pass if Miro ever flattened sub-APIs onto the root — the
 // prefix would then be doing nothing, and nothing would say so.
 //
 // Both also depend on `expose` NOT being prefixed: probeCommand is registered
 // by the page through the generated expose() and called here by exact name.
-auto tRootNameIsNotServed = test("SubApi/unprefixedNameIsNotServed") = []
-{
-    check(! probe("greet").served);
-};
+auto tRootNameIsNotServed =
+    test("SubApi/unprefixedNameIsNotServed") = [] { check(!probe("greet").served); };
 
 auto tPrefixedNameIsServed = test("SubApi/prefixedNameIsServedOverTheWire") = []
 {
