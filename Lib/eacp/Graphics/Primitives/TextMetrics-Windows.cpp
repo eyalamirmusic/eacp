@@ -36,7 +36,10 @@ float TextMetrics::measureWidth(const std::string& text, const Font& font)
     auto metrics = DWRITE_TEXT_METRICS();
     textLayout->GetMetrics(&metrics);
 
-    return metrics.width;
+    // `width` stops at the last ink, so a trailing space — or a lone one, as a
+    // caller measuring codepoint by codepoint sends — measures zero and words
+    // fuse. CTLine's typographic width counts trailing whitespace; match it.
+    return metrics.widthIncludingTrailingWhitespace;
 }
 
 float TextMetrics::getOffsetForIndex(const std::string& text,
