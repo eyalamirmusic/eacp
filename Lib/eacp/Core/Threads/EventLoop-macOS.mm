@@ -14,20 +14,39 @@ bool s_inRootRunLoop = false;
 int s_nestedDepth = 0;
 bool s_quitRequested = false;
 
-// terminate: (Cmd+Q, Dock quit, quit Apple Events) calls exit() without
-// unwinding run<T>(); cancel it and stop the loop so the normal teardown runs.
+// terminate: (Cmd+Q, Dock ▸ Quit, quit Apple Events) calls exit() without
+// unwinding run<T>(); cancel it and put the request to the app instead
+// (Apps::requestQuit, which consults Apps::setQuitHandler and exempts a
+// logout) — by default that stops the loop so the normal teardown runs, or
+// refuses, leaving a tray-resident app alive. The reply is NSTerminateCancel
+// either way: accepting means unwinding the loop ourselves, never letting
+// Cocoa call exit() out from under run<T>().
 NSApplicationTerminateReply applicationShouldTerminate(id, SEL, NSApplication*)
 {
-    getEventLoop().quit();
+    Apps::requestQuit();
     return NSTerminateCancel;
 }
 
 // Dock-icon click while no window is visible. The app decides what "come
 // back" means (Apps::setReopenHandler); returning NO suppresses AppKit's
 // default un-miniaturize pass.
+//
+// Deferred rather than run here: showing a window is the least re-entrant
+// thing an app can be asked to do from inside an AppKit delegate callback,
+// and a handler that builds a WebView on first use has no business running
+// while AppKit is mid-activation.
 BOOL applicationShouldHandleReopen(id, SEL, NSApplication*, BOOL)
 {
-    Apps::getReopenHandler()();
+    callAsync([] { Apps::getReopenHandler()(); });
+    return NO;
+}
+
+// AppKit sends this on every FRESH launch ('oapp'), which is not a reopen —
+// dispatching the reopen handler here surfaces the window of an app that
+// deliberately started hidden. Answering NO is also what keeps AppKit from
+// following up with applicationOpenUntitledFile:.
+BOOL applicationShouldOpenUntitledFile(id, SEL, NSApplication*)
+{
     return NO;
 }
 
@@ -43,6 +62,8 @@ id createAppTerminationBridge()
         builder->addMethod(
             @selector(applicationShouldHandleReopen:hasVisibleWindows:),
             applicationShouldHandleReopen);
+        builder->addMethod(@selector(applicationShouldOpenUntitledFile:),
+                           applicationShouldOpenUntitledFile);
         builder->registerClass();
         return builder->get();
     }();
@@ -82,6 +103,8 @@ void configureAppForLoopOwnership()
 
         static auto delegate = ObjC::Ptr<NSObject>(createAppTerminationBridge());
         [application setDelegate:(id<NSApplicationDelegate>) delegate.get()];
+
+        Apps::Detail::observeSystemPowerOff();
 
         return 0;
     }();

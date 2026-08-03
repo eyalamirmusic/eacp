@@ -8,6 +8,15 @@ namespace eacp::Apps
 // iOS has no Dock / activation policy.
 void setDockIconVisible(bool) {}
 
+// No OS-level power-off announcement to watch for, so a quit request is
+// never the system's (see App.h).
+bool isSystemPoweringOff()
+{
+    return false;
+}
+
+void Detail::observeSystemPowerOff() {}
+
 // On iOS every binary is signed, so signature presence means nothing; what
 // distinguishes a dev build is the development provisioning profile Xcode
 // embeds. Store/TestFlight builds carry none.

@@ -38,10 +38,40 @@ struct QuitWithCodeApp
     }
 };
 
+// A tray-resident app's answer to Cmd+Q / Dock ▸ Quit: refuse, stay up, and
+// leave the tray's own Quit — Apps::quit(), which bypasses the handler — as
+// the real exit. Standing in for that click from inside the handler is also
+// the proof it bypasses: a quit() that re-entered here would never return.
+struct RefusingQuitApp
+{
+    RefusingQuitApp()
+    {
+        eacp::Apps::setQuitHandler(
+            []
+            {
+                std::puts("quit-refused");
+                std::fflush(stdout);
+                eacp::Apps::quit();
+                return false;
+            });
+
+        eacp::Threads::callAsync([] { [NSApp terminate:nil]; });
+    }
+
+    ~RefusingQuitApp()
+    {
+        std::puts("app-destroyed");
+        std::fflush(stdout);
+    }
+};
+
 int runHarnessApp(int argc, char* argv[])
 {
     if (argc > 1 && std::string_view(argv[1]) == "quit-code")
         return eacp::Apps::run<QuitWithCodeApp>();
+
+    if (argc > 1 && std::string_view(argv[1]) == "refuse-quit")
+        return eacp::Apps::run<RefusingQuitApp>();
 
     return eacp::Apps::run<TerminatingApp>();
 }

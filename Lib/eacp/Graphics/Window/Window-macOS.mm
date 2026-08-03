@@ -160,12 +160,20 @@ void windowWillClose(id self, SEL, NSNotification*)
 
 // hidesOnClose intercepts the close before it happens: the window orders
 // out (state intact, willClose never fires) and the app keeps running.
+// events->onHidden is the app's only sign that any of it happened.
 BOOL windowShouldClose(id self, SEL, NSWindow* sender)
 {
-    if (!getDelegateState(self)->hidesOnClose)
+    auto* state = getDelegateState(self);
+
+    if (!state->hidesOnClose)
         return YES;
 
     [sender orderOut:nil];
+
+    // After the orderOut, so a handler asking isVisible() is told the truth.
+    if (state->events != nullptr)
+        state->events->onHidden();
+
     return NO;
 }
 
