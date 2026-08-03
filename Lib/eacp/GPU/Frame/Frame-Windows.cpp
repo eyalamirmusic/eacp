@@ -26,7 +26,7 @@ struct Frame::Native
         , depth(static_cast<D3D12DepthTarget*>(depthTextureHandle))
     {
         if (deviceToUse.isValid() && drawable != nullptr)
-            commands = context().acquire();
+            open(context().acquire());
     }
 
     // Off-screen snapshot target (GPUView::renderNativeContent). The colour
@@ -42,7 +42,17 @@ struct Frame::Native
     {
         if (deviceToUse.isValid() && drawable != nullptr
             && drawable->backBuffer != nullptr)
-            commands = context().acquire();
+            open(context().acquire());
+    }
+
+    // Takes the recording and publishes it as the one a CPU upload may record
+    // onto, for as long as this frame is the thing recording. Withdrawn in
+    // ~Frame before anything is submitted, so an upload can never be handed a
+    // list that has already been closed.
+    void open(CommandContext* commandsToUse)
+    {
+        commands = commandsToUse;
+        context().setOpenRecording(commands);
     }
 
     // The frame belongs to its Device's context: the recording came out of that
@@ -150,6 +160,12 @@ Frame::Frame(Device& device, const OffscreenTarget& target)
 
 Frame::~Frame()
 {
+    // Nothing may record onto this list from here on: what follows closes it.
+    // Only where one was published — a frame on a device-less view never
+    // acquired a recording and has no context to withdraw it from.
+    if (impl->commands != nullptr)
+        impl->context().setOpenRecording(nullptr);
+
     if (impl->commands == nullptr || impl->drawable == nullptr)
         return;
 

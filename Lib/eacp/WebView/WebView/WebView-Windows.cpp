@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <memory>
 #include <queue>
 
 #include <objbase.h>
@@ -244,6 +245,10 @@ struct WebView::Native
 
     ~Native()
     {
+        // Fences the queued create retry (see retryWebView2Create) against a
+        // Native that went away before the event loop got to it.
+        *alive = false;
+
         // Unhook our event handlers before tearing the controller down
         // so any late callback from the browser process can't fire
         // back into a half-destroyed Native.
@@ -362,6 +367,10 @@ struct WebView::Native
                     {
                         LOG("WebView2: env create failed hr=0x"
                             + hresultHex(result));
+
+                        if (shouldRetryWebView2Create())
+                            return retryWebView2Create();
+
                         initInProgress = false;
                         return result;
                     }
@@ -379,25 +388,42 @@ struct WebView::Native
         }
     }
 
-    // Headless CI machines intermittently abort composition controller
-    // creation (E_ABORT) even though an immediate retry succeeds. Real
-    // sessions fail for real reasons (e.g. a missing runtime) and should
-    // surface the error right away.
-    bool shouldRetryCompositionControllerCreate() const
+    // Headless CI machines intermittently lose the first WebView2 launch: the
+    // browser process dies mid-creation (E_ABORT), which takes the environment
+    // down with it. Asking that environment again is what the old retry did,
+    // and it always failed instantly — the process backing it is gone. So a
+    // retry has to launch a fresh environment instead. Popups have to keep the
+    // opener's environment (put_NewWindow requires it), and real sessions fail
+    // for real reasons (e.g. a missing runtime), so both surface the error.
+    bool shouldRetryWebView2Create() const
     {
-        return Apps::getAppEnvironment().headless
-               && compositionCreateRetries < maxCompositionCreateRetries;
+        return Apps::getAppEnvironment().headless && !sharedEnvironment
+               && webView2CreateRetries < maxWebView2CreateRetries;
     }
 
-    HRESULT retryCompositionControllerCreate()
+    HRESULT retryWebView2Create()
     {
-        ++compositionCreateRetries;
-        LOG("WebView2: retrying composition controller create (",
-            compositionCreateRetries,
+        ++webView2CreateRetries;
+        LOG("WebView2: retrying create with a fresh environment (",
+            webView2CreateRetries,
             "/",
-            maxCompositionCreateRetries,
+            maxWebView2CreateRetries,
             ")");
-        return createCompositionController();
+
+        environment.Reset();
+
+        // Start the next attempt from the event loop rather than from inside
+        // the failed handler, so WebView2 finishes unwinding this one first.
+        // initInProgress stays set, which keeps ensureInitialized out until
+        // the retry settles.
+        Threads::callAsync(
+            [this, guard = alive]
+            {
+                if (*guard)
+                    createWebView2();
+            });
+
+        return S_OK;
     }
 
     // Creates the visual-hosting composition controller from `environment` (set
@@ -428,8 +454,8 @@ struct WebView::Native
                         LOG("WebView2: composition controller create failed hr=0x"
                             + hresultHex(result));
 
-                        if (shouldRetryCompositionControllerCreate())
-                            return retryCompositionControllerCreate();
+                        if (shouldRetryWebView2Create())
+                            return retryWebView2Create();
 
                         initInProgress = false;
                         return result;
@@ -1541,8 +1567,12 @@ struct WebView::Native
     // Whether the host window is showing. See setControllerVisible.
     bool hostVisible = true;
 
-    static constexpr int maxCompositionCreateRetries = 3;
-    int compositionCreateRetries = 0;
+    static constexpr int maxWebView2CreateRetries = 3;
+    int webView2CreateRetries = 0;
+
+    // Cleared by the destructor, so a queued create retry can tell whether the
+    // Native that scheduled it is still there.
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
 
     // Tracks navigation in flight (NavigationStarting -> Completed), so
     // isLoading() can answer like the macOS backend's webView.isLoading.

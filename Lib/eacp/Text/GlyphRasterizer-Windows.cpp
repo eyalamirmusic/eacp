@@ -1,6 +1,7 @@
 #include "GlyphRasterizer.h"
 
 #include <eacp/Core/Utils/WinInclude.h>
+#include <eacp/Graphics/D2D-Windows.h>
 #include <eacp/Graphics/Helpers/StringUtils-Windows.h>
 
 // d2d1.h first: DWRITE_COLOR_F is an alias for the D2D colour struct, and
@@ -10,7 +11,6 @@
 #include <wrl/client.h>
 
 #include <algorithm>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -60,121 +60,6 @@ IDWriteFactory2* dwriteFactory()
     }();
 
     return instance.Get();
-}
-
-// Only registerMemoryFont needs this newer interface, so a machine too old to
-// offer it still rasterizes installed fonts.
-IDWriteFactory5* memoryFontFactory()
-{
-    static auto instance = []
-    {
-        auto created = ComPtr<IDWriteFactory5>();
-
-        if (auto* factory = dwriteFactory())
-            factory->QueryInterface(
-                __uuidof(IDWriteFactory5),
-                reinterpret_cast<void**>(created.GetAddressOf()));
-
-        return created;
-    }();
-
-    return instance.Get();
-}
-
-// The collection rasterizers resolve family names against: the system one until
-// a font is registered from memory, and a rebuilt system-plus-embedded one
-// afterwards. DirectWrite has no process-wide registry the way CoreText does,
-// so the collection has to be threaded through explicitly.
-class FontRegistry
-{
-public:
-    ComPtr<IDWriteFontCollection> collection()
-    {
-        const auto lock = std::lock_guard {mutex};
-
-        if (!current)
-            if (auto* factory = dwriteFactory())
-                factory->GetSystemFontCollection(current.GetAddressOf(), FALSE);
-
-        return current;
-    }
-
-    bool add(const void* data, std::size_t size)
-    {
-        auto* factory = memoryFontFactory();
-
-        if (factory == nullptr || data == nullptr || size == 0)
-            return false;
-
-        const auto lock = std::lock_guard {mutex};
-
-        if (!loader)
-        {
-            if (FAILED(factory->CreateInMemoryFontFileLoader(loader.GetAddressOf()))
-                || FAILED(factory->RegisterFontFileLoader(loader.Get())))
-                return false;
-        }
-
-        auto file = ComPtr<IDWriteFontFile>();
-
-        // A null owner tells DirectWrite to copy the data, so the caller's
-        // buffer does not have to outlive the registration.
-        if (FAILED(loader->CreateInMemoryFontFileReference(factory,
-                                                           data,
-                                                           static_cast<UINT32>(size),
-                                                           nullptr,
-                                                           file.GetAddressOf())))
-            return false;
-
-        files.push_back(file);
-
-        return rebuild(factory);
-    }
-
-private:
-    // Called with the lock held. A font set is immutable once built, so adding a
-    // face means building a fresh one over every file plus the system set.
-    bool rebuild(IDWriteFactory5* factory)
-    {
-        auto builder = ComPtr<IDWriteFontSetBuilder1>();
-
-        if (FAILED(factory->CreateFontSetBuilder(builder.GetAddressOf())))
-            return false;
-
-        for (const auto& file: files)
-            builder->AddFontFile(file.Get());
-
-        auto systemSet = ComPtr<IDWriteFontSet>();
-
-        if (SUCCEEDED(factory->GetSystemFontSet(systemSet.GetAddressOf())))
-            builder->AddFontSet(systemSet.Get());
-
-        auto set = ComPtr<IDWriteFontSet>();
-
-        if (FAILED(builder->CreateFontSet(set.GetAddressOf())))
-            return false;
-
-        auto built = ComPtr<IDWriteFontCollection1>();
-
-        if (FAILED(factory->CreateFontCollectionFromFontSet(set.Get(),
-                                                            built.GetAddressOf())))
-            return false;
-
-        current = built;
-
-        return true;
-    }
-
-    std::mutex mutex;
-    ComPtr<IDWriteInMemoryFontFileLoader> loader;
-    std::vector<ComPtr<IDWriteFontFile>> files;
-    ComPtr<IDWriteFontCollection> current;
-};
-
-FontRegistry& fontRegistry()
-{
-    static auto registry = FontRegistry {};
-    return registry;
 }
 
 int encodeUtf16(char32_t codepoint, wchar_t* units)
@@ -309,7 +194,10 @@ struct GlyphRasterizer::Native
         if (factory == nullptr)
             return;
 
-        collection = fontRegistry().collection();
+        // The collection shared with eacp-graphics (FontRegistry-Windows.cpp):
+        // system fonts plus everything registerMemoryFont added, so the
+        // rasterizer and the Graphics text sites resolve the same faces.
+        collection = Graphics::getFontCollection();
 
         if (!collection)
             return;
@@ -333,10 +221,13 @@ struct GlyphRasterizer::Native
     // the platform ships.
     std::wstring resolveFamily() const
     {
-        const auto wanted = toWideString(request.family);
-
-        if (hasFamily(wanted))
-            return wanted;
+        // The shared resolver accepts family, PostScript and full names — the
+        // CoreText matching rules, so the one name callers ship works on both
+        // platforms.
+        if (auto resolved =
+                Graphics::resolveFontFamilyName(toWideString(request.family));
+            !resolved.empty())
+            return resolved;
 
         for (const auto* candidate: {L"Segoe UI", L"Arial", L"Consolas"})
             if (hasFamily(candidate))
@@ -865,6 +756,9 @@ const FontRequest& GlyphRasterizer::request() const
 
 bool registerMemoryFont(const void* data, std::size_t size)
 {
-    return fontRegistry().add(data, size);
+    // Registration lives in eacp-graphics so its text sites (Font,
+    // TextMetrics) see the face too — the same process-wide visibility
+    // CTFontManagerRegisterGraphicsFont gives the Apple side.
+    return Graphics::registerMemoryFontData(data, size);
 }
 } // namespace eacp::Text

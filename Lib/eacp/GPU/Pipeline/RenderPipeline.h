@@ -57,6 +57,25 @@ enum class BlendMode
 {
     None,
     AlphaBlend,
+
+    // AlphaBlend in the colour channels and (ONE, ONE_MINUS_SRC_ALPHA) in the
+    // alpha one, which is what a target whose own alpha will be read back needs.
+    //
+    // The difference is invisible on a drawable and decisive on a texture.
+    // AlphaBlend weights the source's alpha by itself, so a fragment at 50%
+    // coverage over nothing leaves 25% alpha behind rather than 50%: on an
+    // opaque surface nobody looks at that channel, and on a texture something is
+    // about to composite through it, and every antialiased edge in it comes out
+    // too transparent. This accumulates coverage the way the colour channels
+    // accumulate colour, so a texture rendered through it holds exactly the
+    // coverage that was drawn into it.
+    //
+    // Which makes it the mode to render a *layer* through -- a subtree drawn
+    // into a texture so it can be faded, masked or filtered as a unit -- and
+    // costs nothing to use on an opaque target, where the destination alpha is 1
+    // and both modes leave it 1.
+    AlphaBlendOntoTransparent,
+
     Additive
 };
 

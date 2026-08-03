@@ -1,5 +1,5 @@
 #include <eacp/Core/Utils/Environment.h>
-#include <eacp/Graphics/Graphics.h>
+#include <eacp/UI/UI.h>
 #include <eacp/Video/VideoRecorder.h>
 
 #include <cmath>
@@ -22,34 +22,51 @@ FilePath outputPath()
 }
 } // namespace
 
-// A dark view with a red box sliding left-to-right, driven by a display link, so
-// the recorded video shows visible motion.
-struct Animated final : View
+// A dark panel with a red box sliding left-to-right, driven by a display link,
+// so the recorded video shows visible motion.
+//
+// What the recorder captures is the component tree, and it needs to know nothing
+// about that: a ComponentHost is a GPUView, and a GPUView renders its content
+// off-screen for a snapshot the same way it renders it to the window. So the
+// capture path is the GPU one rather than the layer one, which is what makes it
+// exact rather than a re-run of paint().
+struct Animated final : UI::Component
 {
-    void paint(Context& g) override
+    void paint(UI::Graphics& g) override
     {
         auto bounds = getLocalBounds();
 
-        g.setColor({0.1f, 0.1f, 0.12f, 1.f});
-        g.fillRect(bounds);
+        g.fillAll({0.1f, 0.1f, 0.12f, 1.f});
 
         auto boxSize = 40.f;
         auto x = phase * (bounds.w - boxSize);
-        g.setColor({0.95f, 0.3f, 0.2f, 1.f});
+
+        g.setColour({0.95f, 0.3f, 0.2f, 1.f});
         g.fillRect({x, bounds.h / 2.f - boxSize / 2.f, boxSize, boxSize});
     }
 
     float phase = 0.f; // 0..1
 };
 
+struct Host final : UI::ComponentHost
+{
+    Host()
+    {
+        setBackgroundColour({0.1f, 0.1f, 0.12f, 1.f});
+        setRootComponent(animated);
+    }
+
+    Animated animated;
+};
+
 struct App
 {
-    App() { window.setContentView(view); }
+    App() { window.setContentView(host); }
 
     void tick(Threads::FrameTime time)
     {
-        view.phase = (float) (std::fmod(time.time, 2.0) / 2.0);
-        view.repaint();
+        host.animated.phase = (float) (std::fmod(time.time, 2.0) / 2.0);
+        host.animated.repaint();
 
         if (!started && time.time > 0.3)
         {
@@ -60,7 +77,7 @@ struct App
             options.mode =
                 screen ? Video::CaptureMode::Screen : Video::CaptureMode::Snapshot;
 
-            started = recorder.start(view, path, options);
+            started = recorder.start(host, path, options);
             startTime = time.time;
 
             LOG(std::string(screen ? "screen" : "snapshot") + " capture -> " + path);
@@ -80,7 +97,7 @@ struct App
         }
     }
 
-    Animated view;
+    Host host;
     Video::VideoRecorder recorder;
 
     WindowOptions options = []

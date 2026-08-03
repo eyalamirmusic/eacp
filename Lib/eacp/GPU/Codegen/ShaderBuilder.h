@@ -234,6 +234,51 @@ public:
         return {&graphData, graphData.addStorageBuffer(BufferAccess::Write)};
     }
 
+    // A buffer of unsigned integers threads share. It takes a slot from the same
+    // counter the other two do, and binds exactly as an output does - what
+    // differs is the element type, and that only the emitted declaration knows.
+    AtomicBuffer atomicBuffer()
+    {
+        return {&graphData, graphData.addStorageBuffer(BufferAccess::Atomic)};
+    }
+
+    // Adds to one element and yields what it held *before* - so every thread
+    // that adds one to the same counter gets a different number back, which is
+    // how a kernel hands out slots of a shared array without the threads
+    // agreeing on anything first.
+    //
+    // Relaxed ordering: this says the read-modify-write cannot be interleaved,
+    // and nothing about how other memory either side of it is ordered. That is
+    // all a counter needs and all this offers; a kernel that needs the second
+    // thing needs a barrier, not a stronger atomic.
+    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, const UInt& value)
+    {
+        auto previous = graphData.addAtomicAdd(buffer.slot, index.node, value.node);
+
+        auto result = UInt {};
+        result.graph = &graphData;
+        result.node = graphData.addVarRead(previous);
+        return result;
+    }
+
+    // Either argument as a literal, anchored on the buffer. Both are literals in
+    // the commonest call there is - one thread taking one ticket from one shared
+    // counter - so refusing them would make the plainest use the ugliest.
+    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, const UInt& value)
+    {
+        return atomicAdd(buffer, buffer.literal(index), value);
+    }
+
+    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, unsigned value)
+    {
+        return atomicAdd(buffer, index, buffer.literal(value));
+    }
+
+    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, unsigned value)
+    {
+        return atomicAdd(buffer, buffer.literal(index), buffer.literal(value));
+    }
+
     // A texture a kernel writes. It takes a slot from the same counter
     // texture() does, so a kernel reading one texture and writing another
     // binds them at distinct indices.
@@ -278,6 +323,34 @@ public:
         graphData.addStore(buffer.slot, (base + 1u).node, value.y().node);
         graphData.addStore(buffer.slot, (base + 2u).node, value.z().node);
         graphData.addStore(buffer.slot, (base + 3u).node, value.w().node);
+    }
+
+    // One element of an atomic buffer, set outright rather than added to. It
+    // completes the trio - add, load, store - and it is what a kernel computing
+    // a *dispatch size* needs: the threadgroup count an indirect dispatch reads
+    // is a number arrived at, not a number accumulated.
+    //
+    // Ordinary Store underneath, because the buffer's own access is what decides
+    // how it spells: only Metal needs anything, its atomic_uint having to be
+    // stored through rather than assigned.
+    void write(const AtomicBuffer& buffer, const UInt& index, const UInt& value)
+    {
+        graphData.addStore(buffer.slot, index.node, value.node);
+    }
+
+    void write(const AtomicBuffer& buffer, const UInt& index, unsigned value)
+    {
+        write(buffer, index, buffer.literal(value));
+    }
+
+    void write(const AtomicBuffer& buffer, unsigned index, const UInt& value)
+    {
+        write(buffer, buffer.literal(index), value);
+    }
+
+    void write(const AtomicBuffer& buffer, unsigned index, unsigned value)
+    {
+        write(buffer, buffer.literal(index), buffer.literal(value));
     }
 
     // One element of a threadgroup-shared array. A single wide store whatever

@@ -1,5 +1,5 @@
 add_executable(EmbeddedViewDemo Main.cpp)
-target_link_libraries(EmbeddedViewDemo PRIVATE eacp-graphics)
+target_link_libraries(EmbeddedViewDemo PRIVATE eacp-ui)
 
 set(BUNDLE_ID "com.eacp.embeddedviewdemo")
 

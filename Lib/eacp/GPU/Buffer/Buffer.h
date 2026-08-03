@@ -43,6 +43,11 @@ public:
     // into the buffer. Valid once the command buffer that wrote it has
     // committed (CommandBuffer::commit blocks until then). The copy is
     // clamped to the buffer's end; an offset past it reads nothing.
+    //
+    // Committed is also the rule for bytes the CPU wrote: a construction or
+    // update that happened while a Frame was recording put its copy on that
+    // frame's list, so it has not reached the buffer until the frame ends.
+    // Reading inside the frame that filled it reads what was there before.
     void read(void* dst, std::size_t bytes, std::size_t offset = 0) const;
 
     // Overwrites part of the buffer's contents from the CPU, starting at

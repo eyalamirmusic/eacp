@@ -1,5 +1,5 @@
 add_executable(CursorShapes Main.cpp)
-target_link_libraries(CursorShapes PRIVATE eacp-graphics)
+target_link_libraries(CursorShapes PRIVATE eacp-ui)
 
 set(BUNDLE_ID "com.eacp.cursorshapes")
 

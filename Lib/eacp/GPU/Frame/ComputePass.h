@@ -9,6 +9,21 @@ namespace eacp::GPU
 class ComputePipeline;
 class Buffer;
 
+// What an indirect dispatch reads out of a buffer: three threadgroup counts.
+// Both backends take exactly this, in this order and at this size - Metal's
+// MTLDispatchThreadgroupsIndirectArguments and D3D12's D3D12_DISPATCH_ARGUMENTS
+// are the same three 32-bit unsigned integers - so a kernel writing one is
+// writing the same three numbers whichever machine it runs on.
+//
+// **Threadgroups, not threads.** A kernel that has counted 1000 items writes
+// (1000 + threadGroupWidth - 1) / threadGroupWidth here, not 1000.
+struct DispatchArguments
+{
+    std::uint32_t groupsX = 1;
+    std::uint32_t groupsY = 1;
+    std::uint32_t groupsZ = 1;
+};
+
 // Records dispatch commands for a single compute pass (MTLComputeCommandEncoder
 // on Metal). Ends the encoder automatically on destruction. Obtained from
 // CommandBuffer::beginCompute.
@@ -66,6 +81,14 @@ public:
     // authored against threadPosition() needs.
     void dispatch(int width, int height);
 
+    // Runs the kernel over a grid the **GPU** decided: the threadgroup counts
+    // come from DispatchArguments living in a buffer an earlier kernel on this
+    // command buffer wrote, and the CPU never learns the number. That is the
+    // whole point - a stage whose size depends on what the stage before it found
+    // would otherwise need a readback, and a readback is a round trip through
+    // the host between two passes that were going to be adjacent.
+    void dispatchIndirect(const Buffer& arguments, int offsetInBytes = 0);
+
     // Binds and dispatches a prepared ComputeProgram in one call: its pipeline,
     // storage buffers and uniform block (including the implicit element count
     // its generated bounds guard reads), then a dispatch over count work items.
@@ -96,6 +119,35 @@ public:
         dispatch(width, height);
     }
 
+    // The indirect form of the program dispatch: same binding, and a grid that
+    // is not known here.
+    //
+    // guardCount is what the generated bounds guard compares against, and it
+    // cannot be the real count - nothing on this side of the wire knows it. Pass
+    // the **capacity**: the largest the count could be, which is usually the
+    // size of the buffer the kernel writes. The guard then stops nothing short,
+    // and a kernel that must not run past the real count reads it from a buffer
+    // and returns itself. Both guards matter and neither replaces the other -
+    // this one keeps threads inside the allocation, the kernel's own keeps them
+    // inside the data.
+    //
+    // 1D only. A 2D indirect dispatch would take a width and a height beside an
+    // offset and could not be told apart from this one, and nothing has needed
+    // it; bind by hand and use the raw form above if it ever does.
+    template <typename Program>
+    void dispatchIndirect(Program& program,
+                          const Buffer& arguments,
+                          int guardCount,
+                          int offsetInBytes = 0)
+    {
+        setPipeline(program.pipeline());
+        program.bindResources(*this);
+
+        const auto* uniforms = program.packedUniforms(guardCount);
+        setBytes(uniforms, (std::size_t) program.uniformByteSize());
+        dispatchIndirect(arguments, offsetInBytes);
+    }
+
     void end();
 
     // The Metal buffer index the first uniform block binds to. Storage buffers
@@ -111,13 +163,24 @@ public:
     // than a strip, which is what a kernel reading its neighbours wants.
     static constexpr int threadGroupSize2D = 8;
 
+    // How many storage buffers one kernel may bind. The D3D root signature
+    // declares a root SRV and a root UAV per slot below this and nothing above
+    // it, so a slot past the end binds nowhere at all - and a kernel reading an
+    // unbound buffer reads zeroes rather than failing, which is silent
+    // everywhere but in the picture. So the emitter asserts on a kernel that
+    // asks for more, rather than letting the last one fall off the end.
+    //
+    // Metal has no such ceiling short of uniformBase, its buffer indices being
+    // one flat space the uniform block sits on top of.
+    static constexpr int maxBufferSlots = 8;
+
     // The D3D shader register a kernel's first texture takes. A texture shares
     // the t/u register spaces with the storage buffers there, and the two slot
     // spaces are counted separately, so textures start above every buffer slot
     // - the emitter writes these registers and the root signature declares
     // them, and D3D12Types.h holds the two to the same number. Metal is
     // unaffected: its texture indices are a space of their own.
-    static constexpr int textureRegisterBase = 4;
+    static constexpr int textureRegisterBase = maxBufferSlots;
 
 private:
     struct Native;

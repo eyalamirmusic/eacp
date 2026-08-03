@@ -69,17 +69,13 @@ Vector<Point> cleanPolygon(const Vector<Point>& input)
     return polygon;
 }
 
-void earClip(const Vector<Point>& source, Vector<Point>& out)
+// Ear clipping proper, of a polygon already cleaned of duplicates and wound
+// counter-clockwise. Appends 3 points per triangle and nothing else, so a caller
+// can tell a polygon it consumed whole (n - 2 triangles) from one it gave up on.
+void earClipSimple(const Vector<Point>& polygon, Vector<Point>& out)
 {
-    auto polygon = cleanPolygon(source);
-
     if (polygon.size() < 3)
         return;
-
-    // Normalise to counter-clockwise so a convex (ear) corner is a positive cross
-    // product throughout.
-    if (signedArea(polygon) < 0.0f)
-        std::reverse(polygon.begin(), polygon.end());
 
     auto remaining = Vector<int> {};
 
@@ -147,6 +143,122 @@ void earClip(const Vector<Point>& source, Vector<Point>& out)
         out.add(polygon[remaining[1]]);
         out.add(polygon[remaining[2]]);
     }
+}
+
+void earClip(const Vector<Point>& source, Vector<Point>& out)
+{
+    auto polygon = cleanPolygon(source);
+
+    // Normalise to counter-clockwise so a convex (ear) corner is a positive cross
+    // product throughout.
+    if (signedArea(polygon) < 0.0f)
+        std::reverse(polygon.begin(), polygon.end());
+
+    earClipSimple(polygon, out);
+}
+
+// Past this many points a contour is left to the coverage kernel, which reads
+// segments in parallel on the GPU and does not care how many there are. Ear
+// clipping does: it rescans the remaining vertices for every triangle it finds,
+// so the work grows as the cube of the count on a contour full of reflex
+// corners, and the crossing test below is quadratic on top of that.
+constexpr int maxMeshPolygonPoints = 512;
+
+// Whether the polygon's edges cross one another.
+//
+// Ear clipping cannot answer this and does not notice: it tests a candidate
+// triangle against the other *vertices*, so a contour that crosses itself
+// between them comes back fully consumed and quietly wrong. A five-pointed star
+// written as five crossing edges -- which is how SVG documents write one -- would
+// fill as a pentagon, and nothing about the result would say so.
+bool edgesCross(const Point& a, const Point& b, const Point& c, const Point& d)
+{
+    auto side = [](float value)
+    { return value > epsilon ? 1 : (value < -epsilon ? -1 : 0); };
+
+    // Each segment strictly straddling the other's line. Touches are left alone:
+    // they read as zero here, and a contour that merely grazes itself
+    // triangulates well enough that refusing it would cost more than it saves.
+    return side(cross(c, d, a)) * side(cross(c, d, b)) < 0
+           && side(cross(a, b, c)) * side(cross(a, b, d)) < 0;
+}
+
+bool isSimplePolygon(const Vector<Point>& polygon)
+{
+    auto count = polygon.size();
+
+    for (auto i = 0; i < count; ++i)
+    {
+        // From the edge after the next one, and stopping short of the edge
+        // before this one at the wrap: adjacent edges share a point by
+        // construction and would read as a crossing for ever.
+        for (auto j = i + 2; j < count - (i == 0 ? 1 : 0); ++j)
+        {
+            if (edgesCross(polygon[i],
+                           polygon[(i + 1) % count],
+                           polygon[j],
+                           polygon[(j + 1) % count]))
+                return false;
+        }
+    }
+
+    return true;
+}
+
+// The outward normal of the edge from a to b, for a polygon wound so that
+// signedArea is positive.
+Point edgeNormal(const Point& a, const Point& b)
+{
+    auto dx = b.x - a.x;
+    auto dy = b.y - a.y;
+    auto length = std::sqrt(dx * dx + dy * dy);
+
+    if (length < epsilon)
+        return {};
+
+    return {dy / length, -dx / length};
+}
+
+// How far past its edges a mitred corner may reach. A corner approaching a spike
+// would otherwise grow a long spit of feather, which is more visible than the
+// corner it exists to soften.
+constexpr float maxMiterExtension = 4.0f;
+
+// Every vertex moved `distance` along its own outward miter -- positive away
+// from the interior, negative into it. Mitred rather than simply displaced along
+// the normals, because that is what keeps each offset edge parallel to the one
+// it came from, and therefore the band between them an even width round a
+// corner.
+Vector<Point> offsetRing(const Vector<Point>& polygon, float distance)
+{
+    auto count = polygon.size();
+    auto ring = Vector<Point> {};
+    ring.reserve(count);
+
+    for (auto i = 0; i < count; ++i)
+    {
+        auto before = edgeNormal(polygon[(i + count - 1) % count], polygon[i]);
+        auto after = edgeNormal(polygon[i], polygon[(i + 1) % count]);
+
+        auto sumX = before.x + after.x;
+        auto sumY = before.y + after.y;
+        auto length = std::sqrt(sumX * sumX + sumY * sumY);
+
+        // The two edges double back on one another, so there is no bisector to
+        // be had and the edge's own normal is the honest answer.
+        auto bisector =
+            length < epsilon ? after : Point {sumX / length, sumY / length};
+
+        auto cosHalfAngle = bisector.x * after.x + bisector.y * after.y;
+        auto extension = cosHalfAngle > 1.0f / maxMiterExtension
+                             ? 1.0f / cosHalfAngle
+                             : maxMiterExtension;
+
+        ring.add({polygon[i].x + bisector.x * distance * extension,
+                  polygon[i].y + bisector.y * distance * extension});
+    }
+
+    return ring;
 }
 
 // One segment as a quad offset perpendicular by half the stroke width on each
@@ -240,5 +352,63 @@ Vector<Graphics::Point> tessellateStroke(const Path& path, float width)
         strokeSubPath(sub.points, sub.closed, half, triangles);
 
     return triangles;
+}
+
+Vector<MeshVertex> tessellateAntialiasedFill(const Path& path, float featherWidth)
+{
+    const auto& subPaths = path.getSubPaths();
+
+    if (subPaths.size() != 1)
+        return {};
+
+    auto polygon = cleanPolygon(subPaths[0].points);
+
+    if (polygon.size() < 3 || polygon.size() > maxMeshPolygonPoints)
+        return {};
+
+    if (!isSimplePolygon(polygon))
+        return {};
+
+    if (signedArea(polygon) < 0.0f)
+        std::reverse(polygon.begin(), polygon.end());
+
+    // The outline ends up halfway between the two rings, which is where a mask
+    // would have put its 50% coverage: the shape neither grows nor shrinks by
+    // gaining an antialiased edge.
+    auto half = std::max(0.0f, featherWidth) * 0.5f;
+    auto inner = offsetRing(polygon, -half);
+    auto outer = offsetRing(polygon, half);
+
+    auto interior = Vector<Point> {};
+    earClipSimple(inner, interior);
+
+    // Ear clipping consumes a simple polygon whole -- n vertices become n - 2
+    // triangles -- so anything less is geometry it could not read. Pulling the
+    // ring inwards is its own test of that: a shape with a feature thinner than
+    // the feather folds through itself, and the fill that came back would have a
+    // bite out of it.
+    if (interior.size() != (inner.size() - 2) * 3)
+        return {};
+
+    auto mesh = Vector<MeshVertex> {};
+    mesh.reserve(interior.size() + inner.size() * 6);
+
+    for (const auto& point: interior)
+        mesh.add({point, 1.0f});
+
+    for (auto i = 0; i < inner.size(); ++i)
+    {
+        auto next = (i + 1) % inner.size();
+
+        mesh.add({inner[i], 1.0f});
+        mesh.add({outer[i], 0.0f});
+        mesh.add({outer[next], 0.0f});
+
+        mesh.add({inner[i], 1.0f});
+        mesh.add({outer[next], 0.0f});
+        mesh.add({inner[next], 1.0f});
+    }
+
+    return mesh;
 }
 } // namespace eacp::GPUWidgets

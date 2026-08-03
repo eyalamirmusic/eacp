@@ -1,4 +1,4 @@
-#include <eacp/Graphics/Graphics.h>
+#include <eacp/UI/UI.h>
 
 #include <string>
 
@@ -17,82 +17,95 @@ using namespace Graphics;
 // state change (AppKit may be tracking it at the time), or let items advertise
 // commands that quietly do nothing.
 
-struct StateView final : View
+struct StateContent final : UI::Component
 {
-    StateView()
+    StateContent()
     {
-        getProperties().handlesMouseEvents = true;
-        getProperties().grabsFocusOnMouseDown = true;
-
-        background->setFillColor({0.11f, 0.11f, 0.13f});
-
-        title->setFont(FontOptions().withName("Helvetica-Bold"));
-        title->setColor({0.95f, 0.95f, 0.95f});
+        title.setFontStyle(UI::FontStyle::Bold);
+        title.setColour({0.95f, 0.95f, 0.95f, 1.f});
 
         for (auto* line: {&documentLine, &counterLine, &hintLine})
-            (*line)->setColor({0.68f, 0.68f, 0.74f});
+            line->setColour({0.68f, 0.68f, 0.74f, 1.f});
 
-        addChildren({background, title, documentLine, counterLine, hintLine});
+        // The window's keys are this component's, so it says it wants them.
+        // Nothing else in the tree does, which is why nothing else has to.
+        setWantsKeyboardFocus(true);
+        setInterceptsMouseClicks(true);
+
+        addChildren({title, documentLine, counterLine, hintLine});
 
         refresh();
     }
 
     // Space toggles the document open, Up/Down move the counter — the two bits
-    // of state the Demo menu reads.
-    void keyDown(const KeyEvent& event) override
+    // of state the Demo menu reads. Anything else is returned unconsumed, so the
+    // keys this window does not use are still the window's.
+    bool keyDown(const UI::KeyEvent& event) override
     {
-        if (event.keyCode == KeyCode::Space)
+        if (event.keyCode == UI::KeyCode::Space)
             documentOpen = !documentOpen;
-        else if (event.keyCode == KeyCode::UpArrow)
+        else if (event.keyCode == UI::KeyCode::UpArrow)
             ++counter;
-        else if (event.keyCode == KeyCode::DownArrow && counter > 0)
+        else if (event.keyCode == UI::KeyCode::DownArrow && counter > 0)
             --counter;
         else
-            return;
+            return false;
 
         refresh();
+
+        return true;
     }
 
     void refresh()
     {
-        documentLine->setText(documentOpen ? "Document: open" : "Document: closed");
-
-        counterLine->setText("Counter: " + std::to_string(counter));
+        documentLine.setText(documentOpen ? "Document: open" : "Document: closed");
+        counterLine.setText("Counter: " + std::to_string(counter));
     }
+
+    void paint(UI::Graphics& g) override { g.fillAll({0.11f, 0.11f, 0.13f, 1.f}); }
 
     void resized() override
     {
-        auto bounds = getLocalBounds();
+        auto area = getLocalBounds().inset(24.f, 24.f);
 
-        auto path = Path();
-        path.addRect(bounds);
-        background->setPath(path);
+        title.setBounds(area.removeFromTop(26.f));
+        area.removeFromTop(18.f);
 
-        scaleToFit({background, title, documentLine, counterLine, hintLine});
+        documentLine.setBounds(area.removeFromTop(24.f));
+        counterLine.setBounds(area.removeFromTop(24.f));
+        area.removeFromTop(18.f);
 
-        // Layers are y-down, like the rest of the framework, so these run down
-        // the view rather than up it.
-        title->setPosition({24.f, 28.f});
-        documentLine->setPosition({24.f, 72.f});
-        counterLine->setPosition({24.f, 100.f});
-        hintLine->setPosition({24.f, 144.f});
+        hintLine.setBounds(area.removeFromTop(24.f));
     }
 
     bool documentOpen = false;
     int counter = 0;
 
-    ShapeLayerView background;
-    TextLayerView title {"Open the Demo menu, then change this state"};
-    TextLayerView documentLine;
-    TextLayerView counterLine;
-    TextLayerView hintLine {"Space toggles the document · Up/Down move the counter"};
+    UI::Label title {"Open the Demo menu, then change this state"};
+    UI::Label documentLine;
+    UI::Label counterLine;
+    UI::Label hintLine {
+        "Space toggles the document \u00b7 Up/Down move the counter"};
+};
+
+struct StateHost final : UI::ComponentHost
+{
+    StateHost()
+    {
+        setBackgroundColour({0.11f, 0.11f, 0.13f, 1.f});
+        setRootComponent(content);
+        content.grabKeyboardFocus();
+    }
+
+    StateContent content;
 };
 
 struct MenuBarApp
 {
     MenuBarApp()
     {
-        window.setContentView(view);
+        window.setContentView(host);
+        host.focus();
         installMenuBar();
     }
 
@@ -111,13 +124,13 @@ struct MenuBarApp
             "Close Document",
             [this] { toggleDocument(); },
             commandKey("w"),
-            [this] { return view.documentOpen; }));
+            [this] { return host.content.documentOpen; }));
 
         demo.add(MenuItem::withAction(
             "Reset Counter",
             [this] { resetCounter(); },
             {},
-            [this] { return view.counter > 0; }));
+            [this] { return host.content.counter > 0; }));
 
         demo.addSeparator();
 
@@ -135,23 +148,23 @@ struct MenuBarApp
 
     void toggleDocument()
     {
-        view.documentOpen = !view.documentOpen;
-        view.refresh();
+        host.content.documentOpen = !host.content.documentOpen;
+        host.content.refresh();
     }
 
     void incrementCounter()
     {
-        ++view.counter;
-        view.refresh();
+        ++host.content.counter;
+        host.content.refresh();
     }
 
     void resetCounter()
     {
-        view.counter = 0;
-        view.refresh();
+        host.content.counter = 0;
+        host.content.refresh();
     }
 
-    StateView view;
+    StateHost host;
     Window window {[]
                    {
                        auto options = WindowOptions {};

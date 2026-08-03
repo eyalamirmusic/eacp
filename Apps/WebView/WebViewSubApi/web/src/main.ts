@@ -7,14 +7,6 @@
 
 import { backend, configureBridge, expose } from './generated/backend';
 
-// This app's api is mounted as a sub-API named `nested` (see Types.h), so its
-// commands reach the wire as "nested.greet". This client was generated with
-// `greet` at the root, so without this line every call would miss.
-//
-// Called BEFORE the first subscribe / invoke below — the only ordering this
-// feature requires.
-configureBridge({ prefix: 'nested.' });
-
 // Results are CREATED on arrival rather than pre-rendered and filled, so the
 // test's waitFor(selector) gates on the value actually landing instead of
 // racing an empty placeholder.
@@ -25,9 +17,24 @@ function publish(id: string, text: string) {
   document.getElementById('app')?.appendChild(node);
 }
 
-// Subscribed after configureBridge ran but before anything is published. The
-// generated client builds its transport at module load and resolves the prefix
-// here, at subscribe time — which is what makes the ordering above sufficient.
+// Subscribed BEFORE the prefix is configured, which is the order a page falls
+// into as soon as anything it imports subscribes at module scope — an import is
+// fully evaluated before the importing module's own body runs, so the page
+// cannot configure first no matter where it puts the call.
+//
+// window.eacp.on takes a fully-resolved name, so this binds to "ticks" now and
+// would stay bound to it forever. configureBridge re-points live subscriptions
+// when the prefix changes, which is what lets this one still receive.
+backend.on?.('ticks', (tick) => publish('early-tick-count', String(tick.count)));
+
+// This app's api is mounted as a sub-API named `nested` (see Types.h), so its
+// commands reach the wire as "nested.greet". This client was generated with
+// `greet` at the root, so without this line every call would miss.
+configureBridge({ prefix: 'nested.' });
+
+// The ordinary order — subscribed after configureBridge ran. The prefix is read
+// at subscribe time, so this one is resolved correctly when it is made rather
+// than re-pointed afterwards.
 backend.on?.('ticks', (tick) => publish('tick-count', String(tick.count)));
 
 // The invoke path. A reply proves the command routed to "nested.greet".

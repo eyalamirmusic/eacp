@@ -125,7 +125,8 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   `all()`, compared with each other, and crossed into a number with `toInt` /
   `toFloat`. Comparing two vectors is the operator itself, componentwise,
   because that is what both shading languages give a pair of vectors
-- `UInt` for the compute thread id
+- `UInt` for the compute thread id, a buffer index, and the slot an atomic add
+  reserved — compared against each other and against unsigned literals
 - Every swizzle of up to four components, on all three families, as one node
 - The intrinsic set, spelled the way the languages underneath spell it —
   `rsqrt`, `atan2`, `mix` — rather than the way GLSL does, and taking a float
@@ -136,6 +137,8 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   opinion about
 - Statements: `var`, `select`, `ifThen`, `loop`, `breakLoop`, `continueLoop`.
   A `var` takes any handle and any matrix
+- Compute-only: `atomicAdd`, `sharedArray<T, N>`, `barrier`,
+  `threadIndexInGroup` — see the compute section
 - `Array<T, N>` with a subscript, at a literal or a computed index
 - Texture reads: `sample`, `sample` at a chosen level, and `fetch` at texel
   coordinates
@@ -374,6 +377,129 @@ own: the bytes a kernel wrote as a flat float array are read by the vertex stage
 at the per-instance stride `instanceInput()` declared. One buffer, two views of
 it, no copy.
 
+### Atomics
+
+`Uniform<AtomicBuffer>` is a storage buffer of **unsigned integers** every
+thread may read-modify-write at once. `atomicAdd` adds to one element and gives
+back what it held *before*, so threads that never meet come away with distinct
+numbers — which is how a kernel hands out slots of a shared array:
+
+```cpp
+struct Bin final : ComputeProgram
+{
+    void define() override
+    {
+        auto id = threadId();
+        auto slot = atomicAdd(counts, tileFor(id), 1u);
+
+        ifThen(slot < capacity, [&] { write(items, slot, toFloat(id)); });
+    }
+
+    Uniform<AtomicBuffer> counts;   // uint elements
+    Uniform<OutputBuffer> items;
+    Uniform<UInt> capacity;
+    EACP_SHADER(counts, items, capacity)
+};
+```
+
+It is spelled as a statement, not an expression, and that is the two languages
+rather than a choice: MSL's `atomic_fetch_add_explicit` returns the old value,
+but HLSL's `InterlockedAdd` writes it through an out parameter and cannot appear
+inside a larger expression. Naming the result is the only shape both can print.
+
+The ordering is relaxed — the read-modify-write cannot be interleaved, and
+nothing is said about how other memory either side of it is ordered. That is all
+a counter needs; a kernel needing the second thing needs a barrier.
+
+**The elements are integers.** The same `GPU::Buffer` bound to an `InputBuffer`
+in a later kernel reads those bits as floats and yields nonsense. Read it back
+with `counts.load(index)`, or have the kernel that finishes with it write the
+values somewhere a float buffer can be read from. It binds like an output
+otherwise, and takes a slot from the same counter.
+
+### A dispatch the GPU sized
+
+`dispatchIndirect` takes its threadgroup counts out of a buffer an earlier
+kernel wrote, so a stage whose size depends on what the stage before it found
+costs no readback — the number never reaches the CPU:
+
+```cpp
+{
+    auto pass = commands.beginCompute();
+    pass.dispatch(count, capacity);        // counts into `arguments`
+}
+{
+    auto pass = commands.beginCompute();
+    pass.dispatch(prepare, 1);             // count -> DispatchArguments
+}
+{
+    auto pass = commands.beginCompute();
+    pass.dispatchIndirect(consume, arguments, capacity);
+}
+```
+
+`DispatchArguments` is the three **threadgroup** counts both backends read, at
+the same size and in the same order. A kernel that counted 1000 items writes
+`(1000 + threadGroupWidth - 1) / threadGroupWidth`, not 1000. Writing them means
+writing integers, so the buffer is a `Uniform<AtomicBuffer>` and
+`write(arguments, 0u, groups)` is the store.
+
+The last argument is what the generated bounds guard compares against, and it
+cannot be the real count — nothing on the CPU knows it. Pass the **capacity**.
+The guard then stops nothing short, and a kernel that must not run past the real
+count reads it from a buffer and returns itself. Both guards matter: this one
+keeps threads inside the allocation, the kernel's own keeps them inside the
+data. The grid is rounded up to whole groups either way, so the tail of the last
+group runs and has to be harmless.
+
+Each stage is its own pass. Threads of one dispatch are ordered against each
+other by nothing but the end of that dispatch, so a kernel reading what the
+previous one counted has to be in a later pass.
+
+1D only. A 2D indirect dispatch would take a width and a height beside an offset
+and could not be told apart from this one; nothing has needed it.
+
+### Threadgroup memory
+
+`sharedArray<T, N>()` is memory one dispatch group has in common: every thread
+in the group reads and writes it, no thread outside sees it, and it is gone when
+the group is. `threadIndexInGroup()` is what indexes it, and `barrier()` is what
+makes one thread's writes visible to the rest:
+
+```cpp
+void define() override
+{
+    auto lane = threadIndexInGroup();
+    auto scratch = sharedArray<Float, 64>();
+
+    write(scratch, lane, input[threadId()]);
+    barrier();
+
+    // every thread now holds what all 64 of them fetched
+    write(output, threadId(), scratch[lane ^ 1u]);
+}
+```
+
+Nothing initialises it — what it holds before the group writes it is undefined,
+which is why every use starts by filling it and waiting. Reading is a subscript;
+writing goes through the same `write()` the buffers and textures use, because a
+write is a statement and has to land where it was written.
+
+**A barrier must be reached by every thread in the group or by none.** One
+inside an `ifThen` that some threads take and others do not is undefined in both
+languages, and undefined here means a hang rather than a wrong answer. Diverging
+*after* a barrier is ordinary control flow; diverging *around* one is not.
+
+That rule reaches the dispatch too: the emitted bounds guard returns early, so a
+kernel with a barrier may only be dispatched over a whole number of groups —
+`ComputeProgram` asserts rather than leaving it to the caller to remember. Round
+the count up to a multiple of `ComputePass::threadGroupWidth` (or of
+`threadGroupSize2D` in both axes) and guard the writes instead.
+
+The declaration is the one place the two backends are not the same shape twice:
+MSL's `threadgroup` is a local of the kernel function, HLSL's `groupshared` is a
+global, so the same array lands on opposite sides of the entry point.
+
 A buffer whose elements are records rather than single floats is read and
 written a record at a time. `read2`/`read3`/`read4` take N consecutive floats
 starting at `index * N`, and `write` has the matching `Float2`/`Float3`/`Float4`
@@ -393,6 +519,13 @@ A command buffer has one open encoder at a time, so let a pass end before
 beginning the one that reads what it wrote. `Apps/GPU/ComputeParticles` is the
 worked example, and `Apps/GPU/AsyncCompute` times the two commits against each
 other.
+
+A `write()` happens **where it is written**: one inside an `ifThen` runs only
+when the condition holds, and one inside a `loop` runs every iteration. That is
+worth stating because it was not always true — stores used to be collected and
+emitted after the body, so a guarded write ran unconditionally and a looped one
+ran once afterwards on the counter's final value. Both compiled and neither
+complained; `Tests/GPU/StorePlacementTests.cpp` is what now says otherwise.
 
 ### Textures a kernel writes
 

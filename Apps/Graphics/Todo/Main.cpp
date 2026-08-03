@@ -1,42 +1,53 @@
-#include <eacp/Graphics/Graphics.h>
+#include <eacp/UI/UI.h>
+
+#include <string>
+
+// Rows that check off, and edit in place on a double click.
+//
+// The editing is the point of the conversion. This app used to put a native
+// TextInput — an NSTextField — over the row being edited, which works and
+// teaches the tier nothing: the keystrokes, the caret and the selection all stay
+// on the other side of the boundary, and the first interface that wants a field
+// inside something that scrolls finds a native view that does not scroll with
+// it.
+//
+// So the editor is a component now. A row is a checkbox, a label and an editor
+// that swap places, all in the one native view the window holds, and the
+// keyboard reaches it by the ordinary route: the row takes focus, the key is
+// offered to the editor first and to its parents after.
 
 using namespace eacp;
-using namespace Graphics;
 
-struct TodoItemView final : View
+namespace
 {
-    TodoItemView(const std::string& text = "")
-        : itemText(text)
-        , textInput(FontOptions().withSize(14.f))
+constexpr auto rowHeight = 40.f;
+constexpr auto padding = 10.f;
+
+struct TodoRow final : UI::Component
+{
+    explicit TodoRow(std::string textToUse)
+        : itemText(std::move(textToUse))
     {
-        getProperties().handlesMouseEvents = true;
+        setInterceptsMouseClicks(true);
 
-        checkboxLayer->setStrokeColor({0.6f, 0.6f, 0.6f});
-        checkboxLayer->setStrokeWidth(2.f);
+        // A row is a tab stop, and what focus comes back to when an edit ends.
+        setWantsKeyboardFocus(true);
 
-        checkmarkLayer->setFillColor({0.3f, 0.8f, 0.4f});
-        checkmarkLayer->setOpacity(0.f);
+        tick.setText(itemText);
+        tick.onChange = [this](bool) { refresh(); };
 
-        textLayer->setText(text);
-        textLayer->setColor({0.9f, 0.9f, 0.9f});
+        editor.setText(itemText);
 
-        textInput.setText(text);
-        textInput.setTextColor({0.9f, 0.9f, 0.9f});
-        textInput.setBackgroundColor({0.f, 0.f, 0.f, 0.f});
-        textInput.setBorderColor({0.f, 0.f, 0.f, 0.f});
-        textInput.setPadding(0.f);
-        textInput.onSubmit([this](const std::string& newText)
-                           { finishEditing(newText); });
+        // Return commits, Escape puts it back. Losing focus commits too, which
+        // is what clicking away from a half-edited field should mean.
+        editor.onReturnKey = [this](const std::string& value)
+        { finishEditing(value); };
+        editor.onEscapeKey = [this] { finishEditing(itemText); };
 
-        addChildren({checkboxLayer, checkmarkLayer, textLayer});
-    }
+        addAndMakeVisible(tick);
+        addChildComponent(editor);
 
-    void setCompleted(bool value)
-    {
-        completed = value;
-        checkmarkLayer->setOpacity(completed ? 1.f : 0.f);
-        textLayer->setColor(completed ? Color {0.5f, 0.5f, 0.5f}
-                                      : Color {0.9f, 0.9f, 0.9f});
+        refresh();
     }
 
     void startEditing()
@@ -45,13 +56,15 @@ struct TodoItemView final : View
             return;
 
         editing = true;
-        textInput.setText(itemText);
-        textInput.setCursorPosition(itemText.length());
 
-        removeSubview(textLayer);
-        addSubview(textInput);
+        tick.setVisible(false);
+        editor.setVisible(true);
+        editor.setText(itemText);
+        editor.selectAll();
+        editor.grabKeyboardFocus();
+
         resized();
-        textInput.focus();
+        repaint();
     }
 
     void finishEditing(const std::string& newText)
@@ -61,190 +74,147 @@ struct TodoItemView final : View
 
         editing = false;
         itemText = newText;
-        textLayer->setText(itemText);
 
-        removeSubview(textInput);
-        addSubview(textLayer);
+        editor.setVisible(false);
+        tick.setVisible(true);
+        tick.setText(itemText);
+
+        // Back to the row, so the keyboard is not left on a hidden component.
+        grabKeyboardFocus();
+
+        refresh();
         resized();
+        repaint();
     }
 
-    void mouseDown(const MouseEvent& event) override
+    void refresh()
+    {
+        tick.setAccentColour({0.3f, 0.8f, 0.4f, 1.f});
+        repaint();
+    }
+
+    void mouseDown(const UI::MouseEvent& event) override
     {
         if (event.clickCount == 2)
-        {
             startEditing();
-        }
-        else if (!editing)
-        {
-            setCompleted(!completed);
-        }
     }
 
-    void keyDown(const KeyEvent& event) override
+    void paint(UI::Graphics& g) override
     {
-        if (editing && event.keyCode == KeyCode::Escape)
-        {
-            finishEditing(itemText);
-        }
+        if (!isMouseOver() && !editing)
+            return;
+
+        g.setColour(UI::defaultTheme().hover);
+        g.fillRoundedRect(getLocalBounds(), 6.f);
     }
 
-    void mouseEntered(const MouseEvent&) override
-    {
-        checkboxLayer->setStrokeColor({0.8f, 0.8f, 0.8f});
-    }
-
-    void mouseExited(const MouseEvent&) override
-    {
-        checkboxLayer->setStrokeColor({0.6f, 0.6f, 0.6f});
-    }
+    void mouseEnter(const UI::MouseEvent&) override { repaint(); }
+    void mouseExit(const UI::MouseEvent&) override { repaint(); }
 
     void resized() override
     {
-        auto bounds = getLocalBounds();
-        float checkboxSize = 20.f;
-        float padding = 10.f;
-
-        auto checkboxPath = Path();
-        checkboxPath.addRoundedRect(
-            {padding, (bounds.h - checkboxSize) / 2.f, checkboxSize, checkboxSize},
-            4.f);
-        checkboxLayer->setPath(checkboxPath);
-
-        auto checkmarkPath = Path();
-        float cx = padding + checkboxSize / 2.f;
-        float cy = bounds.h / 2.f;
-        checkmarkPath.addEllipse({cx - 6.f, cy - 6.f, 12.f, 12.f});
-        checkmarkLayer->setPath(checkmarkPath);
-
-        float textX = padding * 2 + checkboxSize + 10.f;
-        float textY = bounds.h / 2.f - 8.f;
+        auto area = getLocalBounds().inset(padding, 6.f);
 
         if (editing)
-        {
-            textInput.setBounds({textX, textY, bounds.w - textX - padding, 20.f});
-        }
+            editor.setBounds(area);
         else
-        {
-            scaleToFit({checkboxLayer, checkmarkLayer, textLayer});
-            textLayer->setPosition({textX, textY});
-        }
-
-        scaleToFit({checkboxLayer, checkmarkLayer});
+            tick.setBounds(area);
     }
 
-    bool completed = false;
+    // Struck through when done, which the checkbox's own caption cannot do.
+    void paintOverChildren(UI::Graphics& g) override
+    {
+        if (editing || !tick.isChecked())
+            return;
+
+        auto captionLeft = padding + 26.f;
+        auto width = measureText(itemText, getHostFont());
+
+        g.setColour(UI::defaultTheme().dimText);
+        g.drawLine({captionLeft, getHeight() * 0.5f},
+                   {captionLeft + width, getHeight() * 0.5f},
+                   1.f);
+    }
+
     bool editing = false;
     std::string itemText;
 
-    ShapeLayerView checkboxLayer;
-    ShapeLayerView checkmarkLayer;
-    TextLayerView textLayer;
-    TextInput textInput;
+    UI::Checkbox tick;
+    UI::TextEditor editor;
 };
 
-struct TodoHeaderView final : View
+struct TodoList final : UI::Component
 {
-    TodoHeaderView()
+    TodoList()
     {
-        titleLayer->setText("Todo List");
-        titleLayer->setFont(FontOptions().withName("Helvetica-Bold").withSize(24.f));
-        titleLayer->setColor({0.9f, 0.9f, 0.9f});
+        title.setFontSize(22.f);
+        title.setFontStyle(UI::FontStyle::Bold);
 
-        addChildren({titleLayer});
+        hint.setColour(UI::defaultTheme().dimText);
+
+        addChildren({title, hint});
+
+        for (auto* text: {"Learn eacp framework",
+                          "Build a todo app",
+                          "Add more features",
+                          "Test the application",
+                          "Ship it!"})
+        {
+            auto& row = rows.createNew(text);
+            addAndMakeVisible(row);
+        }
+    }
+
+    void paint(UI::Graphics& g) override
+    {
+        g.fillAll({0.08f, 0.08f, 0.1f, 1.f});
+
+        g.setColour({0.15f, 0.15f, 0.15f, 1.f});
+        g.fillRoundedRect(getLocalBounds().getRelative({0.05f, 0.05f, 0.9f, 0.9f}),
+                          12.f);
     }
 
     void resized() override
     {
-        scaleToFit({titleLayer});
-        titleLayer->setPosition({20.f, 15.f});
+        auto area =
+            getLocalBounds().getRelative({0.05f, 0.05f, 0.9f, 0.9f}).inset(20.f);
+
+        title.setBounds(area.removeFromTop(34.f));
+        hint.setBounds(area.removeFromTop(22.f));
+        area.removeFromTop(12.f);
+
+        for (auto& row: rows)
+            row->setBounds(area.removeFromTop(rowHeight));
     }
 
-    TextLayerView titleLayer;
+    UI::Label title {"Todo List"};
+    UI::Label hint {"Click to check off · double-click to edit · Tab to move"};
+    OwnedVector<TodoRow> rows;
 };
 
-struct TodoListView final : View
+struct Host final : UI::ComponentHost
 {
-    TodoListView()
+    Host()
     {
-        backgroundLayer->setFillColor({0.15f, 0.15f, 0.15f});
-
-        addChildren({backgroundLayer, header, item1, item2, item3, item4, item5});
+        setBackgroundColour({0.08f, 0.08f, 0.1f, 1.f});
+        setRootComponent(list);
     }
 
-    void resized() override
-    {
-        auto bounds = getLocalBounds();
-
-        auto bgPath = Path();
-        bgPath.addRoundedRect(bounds.getRelative({0.05f, 0.05f, 0.9f, 0.9f}), 12.f);
-        backgroundLayer->setPath(bgPath);
-        scaleToFit({backgroundLayer});
-
-        float contentX = bounds.w * 0.05f + 20.f;
-        float contentWidth = bounds.w * 0.9f - 40.f;
-
-        header.setBounds({contentX, bounds.h * 0.85f, contentWidth, 60.f});
-
-        float itemHeight = 40.f;
-        float startY = bounds.h * 0.8f - 20.f;
-
-        item1.setBounds(
-            {contentX, startY - 0.f * itemHeight, contentWidth, itemHeight});
-        item2.setBounds(
-            {contentX, startY - 1.f * itemHeight, contentWidth, itemHeight});
-        item3.setBounds(
-            {contentX, startY - 2.f * itemHeight, contentWidth, itemHeight});
-        item4.setBounds(
-            {contentX, startY - 3.f * itemHeight, contentWidth, itemHeight});
-        item5.setBounds(
-            {contentX, startY - 4.f * itemHeight, contentWidth, itemHeight});
-    }
-
-    ShapeLayerView backgroundLayer;
-    TodoHeaderView header;
-    TodoItemView item1 {"Learn eacp framework"};
-    TodoItemView item2 {"Build a todo app"};
-    TodoItemView item3 {"Add more features"};
-    TodoItemView item4 {"Test the application"};
-    TodoItemView item5 {"Ship it!"};
-};
-
-struct BackgroundView final : View
-{
-    BackgroundView()
-    {
-        layer->setFillColor({0.08f, 0.08f, 0.1f});
-        addChildren({layer});
-    }
-
-    void resized() override
-    {
-        auto path = Path();
-        path.addRect(getLocalBounds());
-        layer->setPath(path);
-        layer.scaleToFit();
-    }
-
-    ShapeLayerView layer;
-};
-
-struct ContentView final : View
-{
-    ContentView() { addChildren({background, todoList}); }
-
-    void resized() override { scaleToFit({background, todoList}); }
-
-    BackgroundView background;
-    TodoListView todoList;
+    TodoList list;
 };
 
 struct TodoApp
 {
-    TodoApp() { window.setContentView(contentView); }
+    TodoApp()
+    {
+        window.setContentView(host);
+        host.focus();
+    }
 
-    ContentView contentView;
-    Window window;
+    Host host;
+    eacp::Graphics::Window window;
 };
+} // namespace
 
 int main()
 {

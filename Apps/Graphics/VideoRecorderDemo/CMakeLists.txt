@@ -1,5 +1,5 @@
 add_executable(VideoRecorderDemo Main.cpp)
-target_link_libraries(VideoRecorderDemo PRIVATE eacp-graphics eacp-video)
+target_link_libraries(VideoRecorderDemo PRIVATE eacp-ui eacp-video)
 
 set(BUNDLE_ID "com.eacp.videorecorderdemo")
 

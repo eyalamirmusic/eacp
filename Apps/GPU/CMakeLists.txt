@@ -18,6 +18,22 @@ add_subdirectory(ComputeImage)
 # the CPU, measured against the blocking commit.
 add_subdirectory(AsyncCompute)
 add_subdirectory(Paths)
+
+# Analytic antialiasing in a kernel: coverage computed per pixel from a path's
+# segments, with no multisampling anywhere.
+add_subdirectory(PathCoverage)
+
+# The same shapes filled three ways side by side - that kernel, ear clipping
+# under 4x MSAA, and the platform's own rasterizer.
+add_subdirectory(PathQuality)
+
+# Strokes as fills: overlapping quads, joins and caps unioned by the non-zero
+# rule, next to the platform's own stroker.
+add_subdirectory(PathStroke)
+
+# Headless: what a rasterization costs on the CPU against what it costs on the
+# GPU, which is the split that decides what is worth moving between them.
+add_subdirectory(PathBench)
 add_subdirectory(Texture)
 add_subdirectory(Maze)
 add_subdirectory(Sprites)

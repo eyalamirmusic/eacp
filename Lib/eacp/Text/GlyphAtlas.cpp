@@ -39,8 +39,12 @@ void GlyphAtlas::Page::clearDirty()
     dirtyBottom = 0;
 }
 
-GlyphAtlas::GlyphAtlas(OwningPointer<GlyphSource> source, int initialSize, int maxSize)
-    : glyphSource(std::move(source))
+GlyphAtlas::GlyphAtlas(FaceFactory factoryToUse,
+                       const FontRequest& defaultFace,
+                       int initialSize,
+                       int maxSize)
+    : factory(std::move(factoryToUse))
+    , deviceScale(defaultFace.scale > 0.f ? defaultFace.scale : 1.f)
     , atlasSize(std::max(initialSize, 64))
     , maxAtlasSize(std::max(maxSize, std::max(initialSize, 64)))
     , maskPacker(atlasSize, atlasSize, glyphPadding)
@@ -48,21 +52,77 @@ GlyphAtlas::GlyphAtlas(OwningPointer<GlyphSource> source, int initialSize, int m
 {
     resizePage(maskPage, atlasSize, 1);
     resizePage(colorPage, atlasSize, 4);
+
+    findOrAddFace(defaultFace.family, defaultFace.pointSize);
 }
 
 GlyphAtlas::~GlyphAtlas() = default;
 
-std::uint32_t GlyphAtlas::keyFor(char32_t codepoint, FontStyle style)
+OwningPointer<GlyphSource> GlyphAtlas::makeSource(const std::string& family,
+                                                  float pointSize) const
 {
-    // Codepoints stop at 0x10FFFF, so the top bits are free for the style.
-    return static_cast<std::uint32_t>(codepoint)
-           | (static_cast<std::uint32_t>(style) << 24);
+    auto request = FontRequest {};
+    request.family = family;
+    request.pointSize = pointSize;
+    request.scale = deviceScale;
+
+    return factory(request);
 }
 
-FontMetrics GlyphAtlas::metrics(FontStyle style) const
+int GlyphAtlas::findOrAddFace(const std::string& family, float pointSize)
 {
-    auto pixels = glyphSource->metrics(style);
-    const auto scale = glyphSource->scale() > 0.f ? glyphSource->scale() : 1.f;
+    for (auto index = 0; index < faces.size(); ++index)
+        if (sameFace({faces[index].family, faces[index].pointSize},
+                     {family, pointSize}))
+            return index;
+
+    auto source = makeSource(family, pointSize);
+
+    // A factory that produced nothing leaves the caller drawing in the default
+    // face, which is a wrong family rather than an empty string.
+    if (source == nullptr)
+        return 0;
+
+    faces.emplace_back(Face {family, pointSize, std::move(source)});
+
+    return faces.size() - 1;
+}
+
+void GlyphAtlas::setScale(float newScale)
+{
+    const auto scale = newScale > 0.f ? newScale : 1.f;
+
+    if (scale == deviceScale)
+        return;
+
+    deviceScale = scale;
+
+    // Rebuilt in place, so every index a caller is holding still names the same
+    // family and size.
+    for (auto& face: faces)
+        face.source = makeSource(face.family, face.pointSize);
+
+    dropEverything();
+}
+
+std::uint64_t GlyphAtlas::keyFor(char32_t codepoint, FontStyle style, int face)
+{
+    // Codepoints stop at 0x10FFFF, so the top bits of the low word are free for
+    // the style and the face gets a word of its own.
+    return static_cast<std::uint64_t>(codepoint)
+           | (static_cast<std::uint64_t>(style) << 24)
+           | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(face)) << 32);
+}
+
+FontMetrics GlyphAtlas::metrics(FontStyle style, int face) const
+{
+    if (face < 0 || face >= faces.size())
+        return {};
+
+    const auto& source = faces[face].source;
+
+    auto pixels = source->metrics(style);
+    const auto scale = source->scale() > 0.f ? source->scale() : 1.f;
 
     // The rasterizer works in device pixels; callers lay out in points.
     return {pixels.ascent / scale,
@@ -71,28 +131,32 @@ FontMetrics GlyphAtlas::metrics(FontStyle style) const
             pixels.advance / scale};
 }
 
-GlyphSlot GlyphAtlas::glyph(char32_t codepoint, FontStyle style)
+GlyphSlot GlyphAtlas::glyph(char32_t codepoint, FontStyle style, int face)
 {
-    const auto key = keyFor(codepoint, style);
+    if (face < 0 || face >= faces.size())
+        return {};
+
+    const auto key = keyFor(codepoint, style, face);
     const auto found = slots.find(key);
 
     if (found != slots.end())
         return found->second;
 
-    const auto slot = insert(codepoint, style);
+    const auto slot = insert(codepoint, style, face);
     slots.emplace(key, slot);
 
     return slot;
 }
 
-GlyphSlot GlyphAtlas::insert(char32_t codepoint, FontStyle style)
+GlyphSlot GlyphAtlas::insert(char32_t codepoint, FontStyle style, int face)
 {
-    const auto bitmap = glyphSource->rasterize(codepoint, style);
+    const auto& source = faces[face].source;
+    const auto bitmap = source->rasterize(codepoint, style);
 
     if (!bitmap.valid)
         return {};
 
-    const auto scale = glyphSource->scale() > 0.f ? glyphSource->scale() : 1.f;
+    const auto scale = source->scale() > 0.f ? source->scale() : 1.f;
 
     auto slot = GlyphSlot {};
     slot.valid = true;
@@ -130,7 +194,9 @@ GlyphSlot GlyphAtlas::insert(char32_t codepoint, FontStyle style)
     return slot;
 }
 
-bool GlyphAtlas::place(ShelfPacker& packer, const GlyphBitmap& bitmap, PackedRect& out)
+bool GlyphAtlas::place(ShelfPacker& packer,
+                       const GlyphBitmap& bitmap,
+                       PackedRect& out)
 {
     if (const auto placed = packer.add(bitmap.width, bitmap.height))
     {
@@ -168,6 +234,11 @@ void GlyphAtlas::growOrReset()
     }
 
     // At the cap. Everything goes, and the generation tells callers so.
+    dropEverything();
+}
+
+void GlyphAtlas::dropEverything()
+{
     maskPacker.clear();
     colorPacker.clear();
     slots.clear();
@@ -186,9 +257,8 @@ void GlyphAtlas::growOrReset()
 void GlyphAtlas::resizePage(Page& page, int newSize, int stride)
 {
     const auto oldSize = atlasSize;
-    auto resized =
-        std::vector<std::uint8_t>(static_cast<std::size_t>(newSize) * newSize * stride,
-                                  std::uint8_t {0});
+    auto resized = std::vector<std::uint8_t>(
+        static_cast<std::size_t>(newSize) * newSize * stride, std::uint8_t {0});
 
     // Copy row by row: the old rows are shorter than the new ones, so the
     // contents keep their coordinates and every placement stays correct.
@@ -212,7 +282,10 @@ void GlyphAtlas::resizePage(Page& page, int newSize, int stride)
     page.clearDirty();
 }
 
-void GlyphAtlas::blit(Page& page, const GlyphBitmap& bitmap, const PackedRect& at, int stride)
+void GlyphAtlas::blit(Page& page,
+                      const GlyphBitmap& bitmap,
+                      const PackedRect& at,
+                      int stride)
 {
     const auto sourceRow = bitmap.bytesPerRow();
 
@@ -299,5 +372,11 @@ GPU::Texture& GlyphAtlas::colorTexture()
         commit();
 
     return *colorPage.texture;
+}
+
+GlyphAtlas::FaceFactory rasterizerFaceFactory()
+{
+    return [](const FontRequest& request)
+    { return OwningPointer<GlyphSource> {makeOwned<GlyphRasterizer>(request)}; };
 }
 } // namespace eacp::Text

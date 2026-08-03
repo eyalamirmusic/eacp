@@ -16,6 +16,7 @@ bool dependsOnMutableState(ExprKind kind)
     {
         case ExprKind::VarRead:
         case ExprKind::BufferRead:
+        case ExprKind::AtomicLoad:
         case ExprKind::Sample:
         case ExprKind::Fetch:
         case ExprKind::SharedRead:
@@ -507,6 +508,33 @@ void ShaderGraph::addStore(int slot, int index, int value)
     statement.index = index;
     statement.value = value;
     addStatement(statement);
+}
+
+int ShaderGraph::addAtomicAdd(int bufferSlot, int index, int value)
+{
+    atomicUsed = true;
+
+    auto slot = variableTypes.size();
+    variableTypes.add(ValueType::UInt);
+
+    auto operation = Statement {StatementKind::AtomicAdd};
+    operation.slot = slot;
+    operation.bufferSlot = bufferSlot;
+    operation.index = index;
+    operation.value = value;
+    addStatement(operation);
+
+    return slot;
+}
+
+int ShaderGraph::addAtomicLoad(int bufferSlot, int index)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::AtomicLoad;
+    node.type = ValueType::UInt;
+    node.index = bufferSlot;
+    node.args.add(index);
+    return add(std::move(node));
 }
 
 int ShaderGraph::addStatement(Statement newStatement)

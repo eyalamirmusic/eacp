@@ -21,7 +21,7 @@ namespace eacp::GPU
 // buffer slot n = u<n>, texture slot n = t<n>/s<n> — the same registers the
 // shader emitter and the hand-written HLSL in tests and examples declare.
 constexpr int maxUniformSlots = 2;
-constexpr int maxBufferSlots = 4;
+constexpr int maxBufferSlots = ComputePass::maxBufferSlots;
 constexpr int maxTextureSlots = 4;
 
 // Render root signature parameter layout: root CBVs per stage, then one

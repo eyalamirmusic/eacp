@@ -48,6 +48,10 @@ enum class ExprKind
     // index is the component: a 1D kernel has only 0 and prints the whole gid,
     // a 2D one prints gid.x or gid.y.
     BufferRead, // storage-buffer element read; index = buffer slot, args = {index}
+    AtomicLoad, // one element of an atomic buffer; index = buffer slot,
+    // args = {index}. An expression on both backends, unlike the add - MSL
+    // spells it atomic_load_explicit and HLSL is an ordinary subscript, since
+    // there a UAV element is already what an interlocked op works on.
     ArrayRead, // constant-array element read; index = array slot, args = {index}
     LocalId, // position within the threadgroup; index = component, like ThreadId
     GroupId, // the threadgroup's own index in the grid; index = component
@@ -59,11 +63,20 @@ enum class ExprKind
 };
 
 // How a kernel accesses a storage buffer: a read-only input (Metal device
-// const / D3D SRV) or a writable output (Metal device / D3D UAV).
+// const / D3D SRV), a writable output (Metal device / D3D UAV), or an atomic
+// one - unsigned integer elements every thread may read-modify-write at once.
+//
+// Atomic is a separate access rather than a flag on Write because it changes
+// the element type: MSL needs device atomic_uint* and HLSL an
+// RWStructuredBuffer<uint>, neither of which is the run of floats the other two
+// are. The bits in one are integers, so a buffer written atomically by one
+// kernel and read as floats by the next reads garbage; load it atomically, or
+// have the kernel that fills it convert.
 enum class BufferAccess
 {
     Read,
-    Write
+    Write,
+    Atomic
 };
 
 // How a shader accesses a texture: sampled and fetched (Metal
@@ -104,8 +117,19 @@ enum class StatementKind
     Store, // buffer[index] = value; slot = the storage slot
     TextureStore, // texture[index, indexY] = value; slot = the texture slot
     SharedStore, // shared[index] = value; slot = the threadgroup-array slot
-    Barrier // threadgroup barrier: every thread in the group arrives before
+    Barrier, // threadgroup barrier: every thread in the group arrives before
     // any proceeds, and threadgroup memory written before it is visible after
+    AtomicAdd // vN = atomicAdd(buffer[index], value), declaring vN. slot = the
+    // variable the value *before* the add lands in, bufferSlot / index = which
+    // element, value = what is added.
+    //
+    // A statement rather than an expression, and it is the one place the two
+    // languages force that: MSL's atomic_fetch_add_explicit returns the old
+    // value, but HLSL's InterlockedAdd writes it through an out parameter and
+    // cannot appear in the middle of one. Naming the result is the only shape
+    // both can print, and it is the shape a caller wants anyway - the old value
+    // is a slot reserved for this thread, which is what the whole operation is
+    // usually for.
 };
 
 // One statement. Which fields carry meaning depends on the kind above; the
@@ -118,8 +142,11 @@ struct Statement
     int value = -1; // Declare / Assign / stores: the value; If / Loop: the condition
     int body = -1; // If / Loop: the block that runs
     int elseBody = -1; // If: the block that runs when the condition is false
-    int index = -1; // Store: the element index; TextureStore: x
+    int index = -1; // Store: the element index; TextureStore: x; AtomicAdd: the
+    // element
     int indexY = -1; // TextureStore: y
+    int bufferSlot = -1; // AtomicAdd: the buffer, its slot field being taken by
+    // the variable the old value lands in
 };
 
 // A run of statements, held by index so a nested body is an int on the
@@ -306,6 +333,12 @@ public:
     int addBufferRead(int slot, int index);
     void addStore(int slot, int index, int value);
 
+    // The atomic pair. addAtomicAdd returns the *variable* slot holding the
+    // element's value from before the add, which addVarRead then reads - it is a
+    // statement, so unlike every other producer here it does not yield a node.
+    int addAtomicAdd(int bufferSlot, int index, int value);
+    int addAtomicLoad(int bufferSlot, int index);
+
     // The threadgroup pieces: where a thread sits inside its group and which
     // group it belongs to (components on the terms ThreadId sets - a 1D kernel
     // has only component 0), the implicit grid bound as a readable value, a
@@ -378,11 +411,16 @@ public:
     bool usesGroupId() const { return groupIdUsed; }
     bool usesBarrier() const { return barrierUsed; }
 
-    // Recording any store - to a buffer or to a texture - is what marks the
-    // graph as a kernel.
+    // Recording any store - to a buffer, to a texture, or an atomic add - is
+    // what marks the graph as a kernel.
+    //
+    // The atomic case is easy to leave out and impossible to miss afterwards: a
+    // kernel that only counts things writes nothing, so a graph judged by its
+    // stores alone would emit a vertex/fragment pair for it and fail to compile
+    // on a `gid` no render stage has.
     bool isCompute() const
     {
-        return storeList.size() > 0 || textureStoreList.size() > 0;
+        return storeList.size() > 0 || textureStoreList.size() > 0 || atomicUsed;
     }
 
     DispatchRank dispatchRank() const { return rank; }
@@ -437,6 +475,11 @@ private:
     bool localIdUsed = false;
     bool groupIdUsed = false;
     bool barrierUsed = false;
+
+    // Whether anything atomic was recorded. A kernel whose only output is a
+    // counter has no store to be recognised by, so this is what tells the
+    // emitter it is one - see isCompute.
+    bool atomicUsed = false;
 
     Vector<ValueType> variableTypes;
     Vector<Statement> statementList;

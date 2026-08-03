@@ -5,6 +5,7 @@
 #include "ShaderGraph.h"
 #include "UniformLayout.h"
 
+#include <cassert>
 #include <cstdio>
 
 // The single source-of-truth walker. MSL and HLSL differ only in the binding
@@ -330,6 +331,22 @@ struct ExprPrinter
                 return "buffer" + std::to_string(expr.index) + "["
                        + ref(expr.args[0]) + "]";
 
+            case ExprKind::AtomicLoad:
+            {
+                // HLSL has nothing to spell: a UAV element of an
+                // RWStructuredBuffer<uint> is already the thing an interlocked
+                // operation acts on, and reading one is a subscript. MSL wraps
+                // its atomic_uint, so the value has to be taken out of it.
+                auto element = "buffer" + std::to_string(expr.index) + "["
+                               + ref(expr.args[0]) + "]";
+
+                if (backend == Backend::Metal)
+                    return "atomic_load_explicit(&" + element
+                           + ", memory_order_relaxed)";
+
+                return element;
+            }
+
             case ExprKind::ArrayRead:
                 return "a" + std::to_string(expr.index) + "[" + ref(expr.args[0])
                        + "]";
@@ -386,6 +403,7 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Sample:
         case ExprKind::Fetch:
         case ExprKind::BufferRead:
+        case ExprKind::AtomicLoad:
         case ExprKind::ArrayRead:
         case ExprKind::SharedRead:
             return true;
@@ -488,6 +506,7 @@ void collectWrites(const ShaderGraph& graph,
     {
         case StatementKind::Declare:
         case StatementKind::Assign:
+        case StatementKind::AtomicAdd:
             written[statement.slot] = 1;
             return;
 
@@ -544,6 +563,7 @@ bool touchesShared(const ShaderGraph& graph, const Statement& statement)
         case StatementKind::Continue:
         case StatementKind::Store:
         case StatementKind::TextureStore:
+        case StatementKind::AtomicAdd:
             return false;
     }
 
@@ -790,12 +810,56 @@ struct StageEmitter
                 break;
 
             case StatementKind::Store:
+            {
                 source =
                     define({statement.index, statement.value}, indent, uses, open);
-                source += indent + "buffer" + std::to_string(statement.slot) + "["
-                          + printer.ref(statement.index)
-                          + "] = " + printer.ref(statement.value) + ";\n";
+
+                auto element = "buffer" + std::to_string(statement.slot) + "["
+                               + printer.ref(statement.index) + "]";
+                auto stored = printer.ref(statement.value);
+
+                // An atomic buffer's element is an atomic_uint on Metal and has
+                // to be stored through rather than assigned. HLSL's UAV element
+                // is an ordinary uint, so the plain assignment is already right
+                // there.
+                auto atomic =
+                    graph().storageBuffers()[statement.slot] == BufferAccess::Atomic;
+
+                if (atomic && printer.backend == Backend::Metal)
+                    source += indent + "atomic_store_explicit(&" + element + ", "
+                              + stored + ", memory_order_relaxed);\n";
+                else
+                    source += indent + element + " = " + stored + ";\n";
+
                 break;
+            }
+
+            case StatementKind::AtomicAdd:
+            {
+                source =
+                    define({statement.index, statement.value}, indent, uses, open);
+
+                auto name = "v" + std::to_string(statement.slot);
+                auto element = "buffer" + std::to_string(statement.bufferSlot) + "["
+                               + printer.ref(statement.index) + "]";
+                auto addend = printer.ref(statement.value);
+
+                if (printer.backend == Backend::Metal)
+                {
+                    source += indent + "uint " + name
+                              + " = atomic_fetch_add_explicit(&" + element + ", "
+                              + addend + ", memory_order_relaxed);\n";
+                    break;
+                }
+
+                // Two lines here rather than one: InterlockedAdd hands the old
+                // value back through an out parameter, so the name has to exist
+                // before the call that fills it.
+                source += indent + "uint " + name + ";\n";
+                source += indent + "InterlockedAdd(" + element + ", " + addend + ", "
+                          + name + ");\n";
+                break;
+            }
 
             case StatementKind::SharedStore:
                 source =
@@ -1162,6 +1226,40 @@ std::string uniformBlock(Backend backend,
     return source;
 }
 
+// How each access spells the buffer it declares. An atomic one is the only kind
+// whose *elements* differ - unsigned integers, wrapped in the type the language
+// requires an interlocked operation to act through - so it cannot be a
+// qualifier on the float declaration the other two share.
+const char* metalBufferType(BufferAccess access)
+{
+    switch (access)
+    {
+        case BufferAccess::Read:
+            return "device const float*";
+        case BufferAccess::Write:
+            return "device float*";
+        case BufferAccess::Atomic:
+            return "device atomic_uint*";
+    }
+
+    return "device const float*";
+}
+
+const char* hlslBufferType(BufferAccess access)
+{
+    switch (access)
+    {
+        case BufferAccess::Read:
+            return "StructuredBuffer<float>";
+        case BufferAccess::Write:
+            return "RWStructuredBuffer<float>";
+        case BufferAccess::Atomic:
+            return "RWStructuredBuffer<uint>";
+    }
+
+    return "StructuredBuffer<float>";
+}
+
 // Compute kernel emission. The expression printer is the render one; only the
 // scaffolding differs: storage buffers and the uniform block are MSL kernel
 // parameters but HLSL globals, and the work-item id arrives as a builtin
@@ -1203,15 +1301,18 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 
     const auto& buffers = graph.storageBuffers();
 
+    assert(buffers.size() <= ComputePass::maxBufferSlots
+           && "eacp: a kernel may bind ComputePass::maxBufferSlots storage "
+              "buffers. A slot past that has no register the root signature "
+              "declares, so it binds nowhere and reads zeroes.");
+
     if (backend == Backend::Metal)
     {
         source += "kernel void computeMain(";
 
         for (auto i = 0; i < buffers.size(); ++i)
         {
-            auto writable = buffers[i] == BufferAccess::Write;
-            source += std::string(writable ? "device float* buffer"
-                                           : "device const float* buffer")
+            source += std::string(metalBufferType(buffers[i])) + " buffer"
                       + std::to_string(i) + " [[buffer(" + std::to_string(i)
                       + ")]],\n    ";
         }
@@ -1270,12 +1371,12 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         for (auto i = 0; i < buffers.size(); ++i)
         {
             auto slot = std::to_string(i);
-            auto writable = buffers[i] == BufferAccess::Write;
+            auto readOnly = buffers[i] == BufferAccess::Read;
 
-            source += writable ? "RWStructuredBuffer<float> buffer"
-                               : "StructuredBuffer<float> buffer";
+            source += hlslBufferType(buffers[i]);
+            source += " buffer";
             source += slot;
-            source += writable ? " : register(u" : " : register(t";
+            source += readOnly ? " : register(t" : " : register(u";
             source += slot + ");\n";
         }
 

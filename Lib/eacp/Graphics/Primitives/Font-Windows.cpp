@@ -26,8 +26,14 @@ struct Font::Native
 
         auto wideName = toWideString(options.name);
 
-        factory->CreateTextFormat(wideName.c_str(),
-                                  nullptr,
+        // The shared collection carries fonts registered from memory, and the
+        // resolver accepts the PostScript/full names CoreText accepts — an
+        // unresolvable name keeps the caller's spelling and falls back below.
+        auto collection = getFontCollection();
+        auto family = resolveFontFamilyName(wideName);
+
+        factory->CreateTextFormat(family.empty() ? wideName.c_str() : family.c_str(),
+                                  collection.Get(),
                                   DWRITE_FONT_WEIGHT_NORMAL,
                                   DWRITE_FONT_STYLE_NORMAL,
                                   DWRITE_FONT_STRETCH_NORMAL,
