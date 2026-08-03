@@ -1,94 +1,74 @@
-#include <eacp/Graphics/Graphics.h>
 #include <eacp/Core/Platform/Platform.h>
+#include <eacp/UI/UI.h>
+
 #include <algorithm>
+#include <string>
+
+// The original tour of the drawing API, through the component tier.
+//
+// Every element here used to be a native view holding native layers: a
+// CAShapeLayer per rectangle, a CATextLayer per string, each one an object the
+// window server knows about. They are components now, and the whole window is a
+// single native view — so the tour is also a demonstration that the same picture
+// costs one view rather than a dozen.
+//
+// What is worth comparing against the old file is where the state lives. A
+// native layer holds its own colour and is *told* when to change, so a hover
+// meant an updatePathColor() reaching into three layers; a component holds the
+// state and paint() reads it, so a hover is a repaint and the colour is decided
+// in one place.
 
 using namespace eacp;
-using namespace Graphics;
 
-struct ColoredView final : View
+namespace
 {
-    ColoredView(Color colorToUse, const std::string& labelText)
-        : color(colorToUse)
-        , textLayer(labelText)
+struct ColouredBox final : UI::Component
+{
+    ColouredBox(const UI::Color& colourToUse, std::string labelToUse)
+        : colour(colourToUse)
+        , label(std::move(labelToUse))
     {
-        getProperties().handlesMouseEvents = true;
-        getProperties().grabsFocusOnMouseDown = true;
-        addChildren({backgroundLayer, textLayer});
-
-        textLayer->setText(labelText);
-        updatePathColor();
+        setInterceptsMouseClicks(true);
     }
 
-    Color getColor() const
+    UI::Color currentColour() const
     {
-        if (on)
-            return {0.9f, 0.9f, 0.9f};
+        auto base = on ? UI::Color {0.9f, 0.9f, 0.9f, 1.f} : colour;
 
-        return color;
+        return base.withAlpha(isMouseOver() ? 1.f : 0.5f);
     }
 
-    float getAlpha()
-    {
-        if (isHovering())
-            return 1.f;
+    void mouseEnter(const UI::MouseEvent&) override { repaint(); }
+    void mouseExit(const UI::MouseEvent&) override { repaint(); }
 
-        return 0.5f;
-    }
-
-    void updatePathColor()
-    {
-        backgroundLayer->setFillColor(getColor().withAlpha(getAlpha()));
-    }
-
-    void mouseEntered(const MouseEvent&) override { updatePathColor(); }
-    void mouseExited(const MouseEvent&) override { updatePathColor(); }
-    void mouseDown(const MouseEvent&) override
+    void mouseDown(const UI::MouseEvent&) override
     {
         on = !on;
-        updatePathColor();
+        repaint();
     }
 
-    void keyDown(const KeyEvent& event) override { LOG(event.characters); }
-
-    void resized() override
+    void paint(UI::Graphics& g) override
     {
-        auto bounds = getLocalBounds();
-        auto path = Path();
+        g.setColour(currentColour());
+        g.fillRoundedRect(getLocalBounds(), 10.f);
 
-        path.addRoundedRect(bounds, 10.f);
-        backgroundLayer->setPath(path);
-
-        scaleToFit({backgroundLayer, textLayer});
-        textLayer->setPosition({10.f, bounds.h / 2.f - 10.f});
+        g.setColour({0.05f, 0.05f, 0.07f, 1.f});
+        g.drawText(label, getLocalBounds().inset(10.f, 0.f));
     }
 
     bool on = false;
-    Color color;
-
-    ShapeLayerView backgroundLayer;
-    TextLayerView textLayer;
+    UI::Color colour;
+    std::string label;
 };
 
-struct AnimatedView final : View
+// A circle crossing the panel and fading as it goes, driven by a display link.
+//
+// The animation is the component's own two floats: the link advances them and
+// asks for a repaint, and paint() draws from them. Nothing is retained between
+// frames — there is no layer to move — so a frame of this costs the same quad
+// the static shapes around it cost.
+struct AnimatedDisc final : UI::Component
 {
-    AnimatedView()
-    {
-        ellipseLayer.setFillColor({1.f, 0.5f, 0.f});
-        ellipseLayer.setOpacity(0.5f);
-        addLayer(ellipseLayer);
-    }
-
-    void mouseDown(const MouseEvent&) override { LOG("Animated mouseDown!"); }
-
-    void resized() override
-    {
-        ellipseLayer.setBounds(getLocalBounds());
-
-        auto path = Path();
-        path.addEllipse(getLocalBounds().getRelative({0.f, 0.f, 0.1f, 0.1f}));
-        ellipseLayer.setPath(path);
-    }
-
     void update(Threads::FrameTime time)
     {
         auto delta = static_cast<float>(time.delta);
@@ -98,8 +78,6 @@ struct AnimatedView final : View
         if (opacity >= 0.9f)
             opacity = 0.1f;
 
-        ellipseLayer.setOpacity(opacity);
-
         x += dx * delta;
 
         if (x < 0.1f || x > 0.9f)
@@ -108,136 +86,133 @@ struct AnimatedView final : View
             dx = -dx;
         }
 
-        ellipseLayer.setPosition({x * getBounds().w, 0.f});
+        repaint();
     }
 
-    static constexpr float fadeSpeed = 1.2f;
+    void paint(UI::Graphics& g) override
+    {
+        auto bounds = getLocalBounds();
+        auto size = std::min(bounds.w, bounds.h) * 0.18f;
 
-    ShapeLayer ellipseLayer;
+        g.setColour(UI::Color {1.f, 0.5f, 0.f}.withAlpha(opacity));
+        g.fillRoundedRect(
+            {x * bounds.w - size * 0.5f, bounds.h * 0.5f - size * 0.5f, size, size},
+            size * 0.5f);
+    }
+
+    static constexpr auto fadeSpeed = 1.2f;
+
     float opacity = 0.5f;
     float x = 0.3f;
     float dx = 0.18f;
+
     Threads::DisplayLink link {[this](Threads::FrameTime time) { update(time); }};
 };
 
-struct FilledRect final : View
+struct GradientPanel final : UI::Component
 {
-    FilledRect(const Color& colorToUse)
+    void paint(UI::Graphics& g) override
     {
-        layer->setFillColor(colorToUse);
-        addChildren({layer});
+        auto bounds = getLocalBounds();
+
+        // Placed in this component's own points, and resolved once for the fill
+        // that follows: the ramp is shared, so a second panel with these colours
+        // would cost nothing more than this one.
+        auto gradient = UI::Gradient {};
+        gradient.start = {0.f, 0.f};
+        gradient.end = {bounds.w, bounds.h};
+        gradient.stops.add({{0.2f, 0.4f, 0.9f, 1.f}, 0.f});
+        gradient.stops.add({{0.9f, 0.2f, 0.5f, 1.f}, 0.5f});
+        gradient.stops.add({{0.9f, 0.6f, 0.1f, 1.f}, 1.f});
+
+        g.setGradient(gradient);
+        g.fillRoundedRect(bounds, 12.f);
+        g.clearGradient();
+    }
+};
+
+struct TextPanel final : UI::Component
+{
+    TextPanel()
+    {
+        title.setFontSize(18.f);
+        title.setColour({0.9f, 0.9f, 0.9f, 1.f});
+
+        // A second face, in the same atlas as the first and as every glyph in
+        // the tree: what used to be a CATextLayer with its own font is a size
+        // and a weight on the run being drawn.
+        subtitle.setFontStyle(UI::FontStyle::Bold);
+        subtitle.setColour({0.9f, 0.9f, 0.9f, 1.f});
+
+        addAndMakeVisible(title);
+        addAndMakeVisible(subtitle);
     }
 
     void resized() override
     {
-        path.clear();
-        path.addRect(getLocalBounds());
-        layer->setPath(path);
-        scaleToFit({layer});
+        auto area = getLocalBounds().inset(20.f, 0.f);
+
+        title.setBounds(area.removeFromTop(28.f));
+        subtitle.setBounds(area.removeFromTop(22.f));
     }
 
-    Path path;
-    ShapeLayerView layer;
+    UI::Label title {"Text at two faces"};
+    UI::Label subtitle {"Both out of one glyph atlas"};
 };
 
-struct GradientRect final : View
+struct DemoRoot final : UI::Component
 {
-    GradientRect() { addChildren({layer}); }
+    DemoRoot()
+    {
+        addAndMakeVisible(blue);
+        addAndMakeVisible(purple);
+        addAndMakeVisible(red);
+        addAndMakeVisible(gradient);
+        addAndMakeVisible(disc);
+        addAndMakeVisible(text);
+    }
+
+    void paint(UI::Graphics& g) override
+    {
+        g.fillAll({0.1f, 0.1f, 0.1f, 1.f});
+
+        // The stroked border the old StrokeRect was a whole view for.
+        g.setColour({0.5f, 0.5f, 0.5f, 1.f});
+        g.drawRect(getLocalBounds(), 2.f);
+    }
 
     void resized() override
     {
         auto bounds = getLocalBounds();
-        path.clear();
-        path.addRoundedRect(bounds, 12.f);
-        layer->setPath(path);
 
-        LinearGradient gradient({0.f, 0.f},
-                                {bounds.w, bounds.h},
-                                {{{0.2f, 0.4f, 0.9f}, 0.f},
-                                 {{0.9f, 0.2f, 0.5f}, 0.5f},
-                                 {{0.9f, 0.6f, 0.1f}, 1.f}});
+        blue.setBounds(bounds.getRelative({0.1f, 0.1f, 0.2f, 0.2f}));
+        purple.setBounds(bounds.getRelative({0.4f, 0.1f, 0.2f, 0.2f}));
+        red.setBounds(bounds.getRelative({0.7f, 0.1f, 0.2f, 0.2f}));
 
-        layer->setFillGradient(gradient);
-        layer.scaleToFit();
+        gradient.setBounds(bounds.getRelative({0.1f, 0.4f, 0.8f, 0.2f}));
+        disc.setBounds(bounds.getRelative({0.f, 0.65f, 1.f, 0.15f}));
+
+        text.setBounds(bounds.removeFromBottom(80.f));
     }
 
-    Path path;
-    ShapeLayerView layer;
+    ColouredBox blue {{0.2f, 0.4f, 0.8f, 1.f}, "Blue"};
+    ColouredBox purple {{0.4f, 0.1f, 0.3f, 0.5f}, "Purple"};
+    ColouredBox red {{1.0f, 0.f, 0.1f, 0.7f}, "Red"};
+
+    GradientPanel gradient;
+    AnimatedDisc disc;
+    TextPanel text;
 };
 
-struct StrokeRect final : View
+struct Host final : UI::ComponentHost
 {
-    StrokeRect()
+    Host()
     {
-        view->setStrokeColor({0.5f, 0.5f, 0.5f});
-        view->setStrokeWidth(2.f);
-        addChildren({view});
+        setBackgroundColour({0.1f, 0.1f, 0.1f, 1.f});
+        setRootComponent(root);
     }
 
-    void resized() override
-    {
-        auto path = Path();
-        path.addRect(getLocalBounds());
-        view->setPath(path);
-    }
-
-    ShapeLayerView view;
-};
-
-struct TextDisplay final : View
-{
-    TextDisplay()
-    {
-        auto color = Color(0.9f, 0.9f, 0.9f);
-        titleLayer->setColor(color);
-
-        subtitleLayer->setFont(FontOptions().withName("Helvetica-Bold"));
-        subtitleLayer->setColor(color);
-
-        addChildren({titleLayer, subtitleLayer});
-    }
-
-    void resized() override
-    {
-        scaleToFit({titleLayer, subtitleLayer});
-
-        auto bounds = getLocalBounds();
-
-        titleLayer->setPosition({20.f, bounds.h - 40.f});
-        subtitleLayer->setPosition({20.f, bounds.h - 65.f});
-    }
-
-    TextLayerView titleLayer {"TextLayer Demo"};
-    TextLayerView subtitleLayer {"Using cached CATextLayer"};
-};
-
-struct ParentView final : View
-{
-    ParentView()
-    {
-        addChildren(
-            {rec, stroke, child1, child2, child3, gradient, animatedChild, text});
-    }
-
-    void resized() override
-    {
-        child1.setBoundsRelative({0.1f, 0.1f, 0.2f, 0.2f});
-        child2.setBoundsRelative({0.4f, 0.1f, 0.2f, 0.2f});
-        child3.setBoundsRelative({0.7f, 0.1f, 0.2f, 0.2f});
-        gradient.setBoundsRelative({0.1f, 0.4f, 0.8f, 0.2f});
-
-        scaleToFit({animatedChild, rec, stroke});
-        text.setBounds({0, getLocalBounds().h - 30, 300, 30});
-    }
-
-    FilledRect rec {{0.1f, 0.1f, 0.1f}};
-    StrokeRect stroke;
-    ColoredView child1 {{0.2f, 0.4f, 0.8f}, "Blue"};
-    ColoredView child2 {{0.4f, 0.1f, 0.3f, 0.5f}, "Purple"};
-    ColoredView child3 {{1.0, 0.f, 0.1f, 0.7f}, "Red"};
-    GradientRect gradient;
-    AnimatedView animatedChild;
-    TextDisplay text;
+    DemoRoot root;
 };
 
 struct MyApp
@@ -245,12 +220,13 @@ struct MyApp
     MyApp()
     {
         LOG(Platform::getAppName(), " v", Platform::getAppVersion());
-        window.setContentView(parentView);
+        window.setContentView(host);
     }
 
-    ParentView parentView;
-    Window window;
+    Host host;
+    eacp::Graphics::Window window;
 };
+} // namespace
 
 int main()
 {
