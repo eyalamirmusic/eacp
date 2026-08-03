@@ -17,6 +17,7 @@ target_sources(eacp-ui PRIVATE
         Render/GradientRamps.cpp
         Render/Layer.cpp
         Render/LayerRenderer.cpp
+        Render/MaskCache.cpp
         Render/MeshBatch.cpp
         Render/PathShape.cpp
         Render/ShapeBatch.cpp

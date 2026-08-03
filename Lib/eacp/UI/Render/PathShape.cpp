@@ -1,11 +1,40 @@
 #include "PathShape.h"
 
 #include "../Component/Component.h"
+#include "ContentHash.h"
 
 namespace eacp::UI
 {
 namespace
 {
+// The geometry that reaches the kernel, and nothing else: the flattened points
+// and where the sub-paths end, plus the rule that says which side of them is
+// inside. Flatness is not in it because it is not a property of the result --
+// it decided how many points there are, and the points are what is hashed.
+std::uint64_t hashGeometry(const GPUWidgets::Path& path, GPUWidgets::FillRule rule)
+{
+    auto hash = ContentHash {};
+
+    hash.mix((int) rule);
+
+    for (const auto& subPath: path.getSubPaths())
+    {
+        // The count as well as the points, so that two sub-paths and one
+        // sub-path holding the same points in the same order are different
+        // shapes -- which they are, a fill closing each contour separately.
+        hash.mix((int) subPath.points.size());
+        hash.mix(subPath.closed);
+
+        for (const auto& point: subPath.points)
+        {
+            hash.mix(point.x);
+            hash.mix(point.y);
+        }
+    }
+
+    return hash.get();
+}
+
 // Where Backing::Automatic switches over, in device pixels of mask.
 //
 // It is a fraction of the atlas rather than a size in points, because what it
@@ -36,8 +65,30 @@ PathShape::~PathShape()
 
 void PathShape::setPath(const GPUWidgets::Path& newPath, GPUWidgets::FillRule rule)
 {
+    auto hash = hashGeometry(newPath, rule);
+
+    // The same shape, rebuilt. A resized() recomputes every path it owns from
+    // the new bounds, and most of them come out where they already were -- same
+    // arithmetic, same inputs, so the same bits. The mask in the atlas is still
+    // the right mask and the quad still samples the right rect, so there is
+    // nothing to rasterize and nothing to record again.
+    //
+    // Bit-identical rather than geometrically equivalent, which is the case
+    // worth catching: a path that was rebuilt came out of the same arithmetic.
+    //
+    // Whether the shape is already dirty does not come into it. A rasterization
+    // pending for any other reason -- a backing change, an atlas that moved --
+    // is pending for *this* geometry, since this geometry is what the shape
+    // holds, so it covers the call and there is nothing to add to it.
+    //
+    // An empty path is always taken, that being the one state a hash cannot
+    // describe: a shape that has never been given a path has nothing to compare.
+    if (!path.isEmpty() && hash == geometryHash)
+        return;
+
     path = newPath;
     fillRule = rule;
+    geometryHash = hash;
     dirty = true;
 
     // The component drew this shape as a quad of its bounds sampling a rect of
@@ -69,6 +120,7 @@ void PathShape::setBacking(Backing newBacking)
 void PathShape::clear()
 {
     path.clear();
+    geometryHash = 0;
     mesh.clear();
     dirty = true;
     ready = false;
@@ -119,12 +171,14 @@ bool PathShape::buildMesh(float scale)
 }
 
 void PathShape::rasterize(CoverageAtlas& atlas,
+                          MaskCache& cache,
                           float scale,
                           GPUWidgets::CoverageBatch& batch)
 {
     dirty = false;
     ready = false;
     dropped = false;
+    sharing = false;
     mesh.clear();
 
     if (path.isEmpty() || scale <= 0.f)
@@ -134,6 +188,35 @@ void PathShape::rasterize(CoverageAtlas& atlas,
     // the whole point of it, the atlas being the thing a large shape exhausts.
     if (backing != Backing::Mask && buildMesh(scale))
         return;
+
+    // What this shape published is no longer what it draws, and the slot behind
+    // that offer is the one it is about to rasterize into. Taken back while
+    // nobody else ever shared it; when somebody did, the slot is theirs for good
+    // and this shape starts again somewhere else.
+    if (publishedKey != 0 && publishedKey != geometryHash)
+    {
+        if (!cache.reclaim(publishedKey))
+            placed = false;
+
+        publishedKey = 0;
+        churning = true;
+    }
+
+    if (const auto* alreadyRasterized = cache.take(geometryHash, path, fillRule))
+    {
+        // Exactly this shape, at exactly this scale, already in the atlas. No
+        // room is asked for and no kernel is dispatched -- and the claim on the
+        // slot is dropped, because these are somebody else's texels and writing
+        // into them would draw this shape's coverage through their quad.
+        slot = alreadyRasterized->slot;
+        maskUV = alreadyRasterized->maskUV;
+        bounds = alreadyRasterized->bounds;
+        placed = false;
+        ready = true;
+        sharing = true;
+
+        return;
+    }
 
     rasterizer.setScale(scale);
     rasterizer.setPath(path, fillRule);
@@ -179,5 +262,14 @@ void PathShape::rasterize(CoverageAtlas& atlas,
     maskUV = atlas.uvFor(slot.x, slot.y, width, height);
     bounds = rasterizer.getCoveredBounds();
     ready = true;
+
+    // Offered for sharing only while this shape's geometry has stayed where it
+    // was put. A shape that animates wants this slot again next frame, and an
+    // offer somebody has taken is one it cannot get back.
+    if (!churning)
+    {
+        cache.publish(geometryHash, path, fillRule, {slot, maskUV, bounds});
+        publishedKey = geometryHash;
+    }
 }
 } // namespace eacp::UI

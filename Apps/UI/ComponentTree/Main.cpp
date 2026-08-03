@@ -145,7 +145,8 @@ struct StatsBar final : UI::Component
         auto text =
             std::to_string(host->getLastComponentCount()) + " components   "
             + std::to_string(host->getLastClipChangeCount()) + " batch breaks   "
-            + std::to_string(host->getLastPaintedComponentCount()) + " painted";
+            + std::to_string(host->getLastPaintedComponentCount()) + " painted   "
+            + std::to_string(host->getLastSharedMaskCount()) + " masks shared";
 
         g.setColour(UI::defaultTheme().dimText);
         g.drawText(text, getLocalBounds(), UI::Justification::Right);

@@ -47,6 +47,7 @@ void ComponentHost::componentDeleted(Component& component)
         lastPaintedComponents = 0;
         lastDroppedPaths = 0;
         lastMeshedPaths = 0;
+        lastSharedMasks = 0;
     }
 }
 
@@ -339,7 +340,7 @@ void ComponentHost::rasterizeDirtyPaths(Component& component,
     {
         if (shape->isDirty())
         {
-            shape->rasterize(*paths, backingScale(), batch);
+            shape->rasterize(*paths, masks, backingScale(), batch);
 
             // Growing or compacting the atlas relocates every slot already
             // handed out, so everything rasterized before this one now points
@@ -359,6 +360,9 @@ void ComponentHost::rasterizeDirtyPaths(Component& component,
 
         if (shape->isMeshed())
             ++walk.meshed;
+
+        if (shape->isSharingMask())
+            ++walk.shared;
     }
 
     for (auto* child: component.getChildren())
@@ -478,6 +482,12 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
     if (root == nullptr || !paths.has_value())
         return;
 
+    // Coverage is device pixels, so everything cached was rasterized at one
+    // scale and a move to another display drops the lot. Told before the walk
+    // rather than after the check below, so that the entries are gone by the
+    // time anything asks for one.
+    masks.setScale(backingScale());
+
     if (backingScale() != lastPathScale)
     {
         // Coverage is rasterized in device pixels, so a move to a display of a
@@ -524,6 +534,11 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
         // just fits -- where it decides whether the tree fits at all.
         markAllPathsDirty(*root);
         paths->forgetAllocations();
+
+        // With the shelf. Every entry names a slot that is about to be handed
+        // out again, so an entry that outlived the shelf would share texels
+        // belonging to whatever was placed there second.
+        masks.clear();
     }
 
     if (!pathBatch.isEmpty())
@@ -540,6 +555,8 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
         markTreeDirty(*root);
 
     lastMeshedPaths = walk.meshed;
+    lastSharedMasks = walk.shared;
+
     reportDroppedPaths(walk.dropped);
 }
 

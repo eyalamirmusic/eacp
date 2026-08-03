@@ -239,44 +239,147 @@ auto tRepaintDuringPaint =
     check(host.paintDirtyComponents() == 0, "and it settles when it stops asking");
 };
 
+namespace
+{
+struct Shaped final : Component
+{
+    Shaped()
+        : shape(*this)
+    {
+    }
+
+    void paint(UI::Graphics& g) override
+    {
+        ++paints;
+        g.fillPath(shape);
+    }
+
+    PathShape shape;
+    int paints = 0;
+};
+
+// A shape on a settled host, which is the state every question below is asked
+// from: whatever the call did, it did it to something that owed no paint.
+struct ShapedTree
+{
+    ShapedTree()
+    {
+        host.setRootComponent(shaped);
+        shaped.setBounds({0.f, 0.f, 50.f, 50.f});
+        host.paintDirtyComponents();
+    }
+
+    ComponentHost host;
+    Shaped shaped;
+};
+
+GPUWidgets::Path rect(const Rect& bounds)
+{
+    auto path = GPUWidgets::Path {};
+    path.addRect(bounds);
+
+    return path;
+}
+} // namespace
+
 auto tPathShapeRepaints =
     test("Repaint/settingAPathRepaintsTheComponentThatDrawsIt") = []
 {
     if (!hasDevice())
         return;
 
-    struct Shaped final : Component
-    {
-        Shaped()
-            : shape(*this)
-        {
-        }
+    auto tree = ShapedTree {};
 
-        void paint(UI::Graphics& g) override
-        {
-            ++paints;
-            g.fillPath(shape);
-        }
-
-        PathShape shape;
-        int paints = 0;
-    };
-
-    auto host = ComponentHost {};
-    auto shaped = Shaped {};
-
-    host.setRootComponent(shaped);
-    shaped.setBounds({0.f, 0.f, 50.f, 50.f});
-    host.paintDirtyComponents();
-
-    auto path = GPUWidgets::Path {};
-    path.addRect({0.f, 0.f, 10.f, 10.f});
-
-    shaped.shape.setPath(path);
+    tree.shaped.shape.setPath(rect({0.f, 0.f, 10.f, 10.f}));
 
     // The recorded quad carries the shape's bounds and its rect of the atlas,
     // and both are about to be different -- so the component that drew it has to
     // be asked again, and nothing but the shape itself knows that.
-    check(shaped.needsRepaint());
-    check(host.paintDirtyComponents() == 1);
+    check(tree.shaped.needsRepaint());
+    check(tree.host.paintDirtyComponents() == 1);
+};
+
+// The rung-3 claim, and the reason a layout may rebuild every path it owns
+// without first working out whether it had to: a shape set to the geometry it
+// already holds is not a shape that changed.
+auto tSamePathIsNotAChange =
+    test("Repaint/settingTheGeometryAShapeAlreadyHoldsDoesNothing") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto tree = ShapedTree {};
+
+    tree.shaped.shape.setPath(rect({0.f, 0.f, 10.f, 10.f}));
+    tree.host.paintDirtyComponents();
+
+    check(!tree.shaped.needsRepaint(), "settled");
+
+    // Built again from scratch rather than the same object handed back, which
+    // is what a resized() does: the same arithmetic over the same inputs, so
+    // the same bits.
+    tree.shaped.shape.setPath(rect({0.f, 0.f, 10.f, 10.f}));
+
+    check(!tree.shaped.needsRepaint(), "the same shape is not a new shape");
+    check(tree.host.paintDirtyComponents() == 0);
+};
+
+auto tDifferentPathIsAChange = test("Repaint/aShapeThatMovedOrGrewIsAChange") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto tree = ShapedTree {};
+
+    tree.shaped.shape.setPath(rect({0.f, 0.f, 10.f, 10.f}));
+    tree.host.paintDirtyComponents();
+
+    tree.shaped.shape.setPath(rect({0.f, 0.f, 10.f, 10.5f}));
+
+    check(tree.shaped.needsRepaint(), "half a point is still a different shape");
+    check(tree.host.paintDirtyComponents() == 1);
+};
+
+// The rule is not part of the geometry, but it decides what the geometry means,
+// so it is part of the key.
+auto tFillRuleIsPartOfTheKey =
+    test("Repaint/theSamePointsUnderADifferentRuleAreADifferentShape") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto tree = ShapedTree {};
+
+    auto ring = rect({0.f, 0.f, 10.f, 10.f});
+    ring.addRect({2.f, 2.f, 6.f, 6.f});
+
+    tree.shaped.shape.setPath(ring, GPUWidgets::FillRule::NonZero);
+    tree.host.paintDirtyComponents();
+
+    tree.shaped.shape.setPath(ring, GPUWidgets::FillRule::EvenOdd);
+
+    check(tree.shaped.needsRepaint(), "one of these has a hole in it");
+    check(tree.host.paintDirtyComponents() == 1);
+};
+
+// Clearing drops the geometry rather than remembering it, so the shape that was
+// there is not mistaken for the shape that is coming back.
+auto tClearedThenSetAgainRepaints =
+    test("Repaint/aClearedShapeGivenItsOldPathBackIsAChange") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto tree = ShapedTree {};
+
+    tree.shaped.shape.setPath(rect({0.f, 0.f, 10.f, 10.f}));
+    tree.host.paintDirtyComponents();
+
+    tree.shaped.shape.clear();
+    tree.host.paintDirtyComponents();
+
+    tree.shaped.shape.setPath(rect({0.f, 0.f, 10.f, 10.f}));
+
+    check(tree.shaped.needsRepaint());
+    check(tree.host.paintDirtyComponents() == 1);
 };
