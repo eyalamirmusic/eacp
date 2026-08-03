@@ -15,6 +15,7 @@
 #include "Render/GradientRamps.h"
 #include "Render/Layer.h"
 #include "Render/LayerRenderer.h"
+#include "Render/MaskCache.h"
 #include "Render/MeshBatch.h"
 #include "Render/PathShape.h"
 #include "Render/ShapeBatch.h"

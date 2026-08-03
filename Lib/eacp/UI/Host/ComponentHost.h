@@ -98,6 +98,13 @@ public:
     // the atlas. See PathShape::Backing.
     int getLastMeshedPathCount() const { return lastMeshedPaths; }
 
+    // Shapes in the tree drawing through a mask somebody else rasterized. A
+    // census like the meshed count beside it rather than a tally of what this
+    // frame did, since what is worth knowing is how much of the tree is costing
+    // the atlas nothing: an interface built out of repeated parts reports every
+    // copy but the first of each shape it repeats.
+    int getLastSharedMaskCount() const { return lastSharedMasks; }
+
     // How full the coverage atlas is, and how large it has grown, as the
     // distance to that ceiling while there is still distance to it. Room
     // reserved rather than room used: the shelf never gives space back.
@@ -179,6 +186,7 @@ private:
         bool atlasMoved = false;
         int dropped = 0;
         int meshed = 0;
+        int shared = 0;
     };
 
     // Rendering every Layer in the tree whose content changed, each into a pass
@@ -227,6 +235,13 @@ private:
     // Built on the first resize, once there is a size to build them against.
     // The atlas comes first and outlives the batch that reads it.
     std::optional<CoverageAtlas> paths;
+
+    // What is already in the atlas, by the geometry that put it there, so that
+    // a shape drawn in forty-eight places is rasterized once. Dropped with the
+    // atlas's allocations and never apart from them -- an entry naming a slot
+    // the shelf has given to somebody else is the one way this draws the wrong
+    // shape rather than merely too often.
+    MaskCache masks;
 
     // The ramps are not among them: painting resolves a gradient to a row, and a
     // tree can be painted before it is sized. Mutable for the same reason the
@@ -291,6 +306,9 @@ private:
     int paintedThisWalk = 0;
     int lastDroppedPaths = 0;
     int lastMeshedPaths = 0;
+
+    // Shapes that drew through a mask somebody else had already rasterized.
+    int lastSharedMasks = 0;
     int lastRenderedLayers = 0;
 };
 } // namespace eacp::UI
