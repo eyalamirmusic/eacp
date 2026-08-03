@@ -152,8 +152,7 @@ struct TodoList final : UI::Component
 
         hint.setColour(UI::defaultTheme().dimText);
 
-        addAndMakeVisible(title);
-        addAndMakeVisible(hint);
+        addChildren({title, hint});
 
         for (auto* text: {"Learn eacp framework",
                           "Build a todo app",

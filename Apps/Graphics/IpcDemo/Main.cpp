@@ -192,9 +192,7 @@ struct DemoContent final : UI::Component
 
         status.setColour({0.75f, 0.75f, 0.78f, 1.f});
 
-        addAndMakeVisible(field);
-        addAndMakeVisible(title);
-        addAndMakeVisible(status);
+        addChildren({field, title, status});
     }
 
     void setStatus(const std::string& text) { status.setText(text); }

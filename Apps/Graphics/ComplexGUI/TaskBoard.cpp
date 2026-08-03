@@ -296,8 +296,7 @@ struct Board final : UI::Component
         clearAll.onClick = [this] { removeEveryCard(); };
         addSample.onClick = [this] { addSampleCards(); };
 
-        addAndMakeVisible(clearAll);
-        addAndMakeVisible(addSample);
+        addChildren({clearAll, addSample});
 
         addSampleCards();
     }

@@ -144,8 +144,7 @@ struct TextPanel final : UI::Component
         subtitle.setFontStyle(UI::FontStyle::Bold);
         subtitle.setColour({0.9f, 0.9f, 0.9f, 1.f});
 
-        addAndMakeVisible(title);
-        addAndMakeVisible(subtitle);
+        addChildren({title, subtitle});
     }
 
     void resized() override
@@ -162,15 +161,7 @@ struct TextPanel final : UI::Component
 
 struct DemoRoot final : UI::Component
 {
-    DemoRoot()
-    {
-        addAndMakeVisible(blue);
-        addAndMakeVisible(purple);
-        addAndMakeVisible(red);
-        addAndMakeVisible(gradient);
-        addAndMakeVisible(disc);
-        addAndMakeVisible(text);
-    }
+    DemoRoot() { addChildren({blue, purple, red, gradient, disc, text}); }
 
     void paint(UI::Graphics& g) override
     {
@@ -183,16 +174,14 @@ struct DemoRoot final : UI::Component
 
     void resized() override
     {
-        auto bounds = getLocalBounds();
+        blue.setPos({0.1f, 0.1f, 0.2f, 0.2f});
+        purple.setPos({0.4f, 0.1f, 0.2f, 0.2f});
+        red.setPos({0.7f, 0.1f, 0.2f, 0.2f});
 
-        blue.setBounds(bounds.getRelative({0.1f, 0.1f, 0.2f, 0.2f}));
-        purple.setBounds(bounds.getRelative({0.4f, 0.1f, 0.2f, 0.2f}));
-        red.setBounds(bounds.getRelative({0.7f, 0.1f, 0.2f, 0.2f}));
+        gradient.setPos({0.1f, 0.4f, 0.8f, 0.2f});
+        disc.setPos({0.f, 0.65f, 1.f, 0.15f});
 
-        gradient.setBounds(bounds.getRelative({0.1f, 0.4f, 0.8f, 0.2f}));
-        disc.setBounds(bounds.getRelative({0.f, 0.65f, 1.f, 0.15f}));
-
-        text.setBounds(bounds.removeFromBottom(80.f));
+        text.setBounds(getLocalBounds().removeFromBottom(80.f));
     }
 
     ColouredBox blue {{0.2f, 0.4f, 0.8f, 1.f}, "Blue"};
