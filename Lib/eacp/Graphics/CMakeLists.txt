@@ -84,6 +84,7 @@ elseif (WIN32)
             Layers/TextLayer-Windows.cpp
             Menu/Menu-Windows.cpp
             Primitives/Font-Windows.cpp
+            Primitives/FontRegistry-Windows.cpp
             Primitives/Path-Windows.cpp
             Primitives/TextMetrics-Windows.cpp
             Tray/TrayIcon-Windows.cpp
