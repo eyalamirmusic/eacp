@@ -61,6 +61,34 @@ struct FontRequest
     float pixelSize() const { return pointSize * scale; }
 };
 
+// A face named completely: the family and size a FontStyle cannot vary, and the
+// style it can.
+//
+// Distinct from FontRequest, which is what a *rasterizer* is built from and
+// therefore carries the device scale. Nothing above the atlas rasterizes
+// anything, so nothing above the atlas has to know the scale — a caller asks
+// for 18pt Helvetica and gets 18 points on any display.
+struct Font
+{
+    std::string family = defaultMonospaceFamily();
+    float pointSize = 13.f;
+    FontStyle style = FontStyle::Regular;
+};
+
+// How close two sizes have to be to share a face. Matched with a tolerance
+// rather than exactly because two sizes a hundredth of a point apart rasterize
+// to the same glyphs: a document scaled by a drag asks for a slightly different
+// size every frame, and an exact match would give it a face and an atlas full
+// of glyphs per frame of the drag.
+constexpr float faceSizeTolerance = 0.01f;
+
+inline bool sameFace(const Font& a, const Font& b)
+{
+    return a.family == b.family
+           && (a.pointSize - b.pointSize) * (a.pointSize - b.pointSize)
+                  < faceSizeTolerance * faceSizeTolerance;
+}
+
 // Face metrics, in device pixels — the same space GlyphBitmap reports its
 // bearings in. GlyphAtlas divides by the scale before handing anything out.
 struct FontMetrics

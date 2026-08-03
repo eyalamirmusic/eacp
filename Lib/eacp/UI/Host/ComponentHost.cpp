@@ -65,24 +65,33 @@ void ComponentHost::setBackgroundColour(const Color& colour)
     repaint();
 }
 
-void ComponentHost::setFontPointSize(float points)
+void ComponentHost::setFont(const Font& fontToUse)
 {
-    fontPointSize = points;
+    font = fontToUse;
 
+    // Told rather than rebuilt. A family used to be baked into the renderer's
+    // atlas, so changing one meant throwing the renderer away; faces coexist in
+    // that atlas now, and a change is the default one moving.
     if (text.has_value())
-        text->setPointSize(points);
+        text->setFont(font);
 
     repaint();
 }
 
+void ComponentHost::setFontPointSize(float points)
+{
+    auto updated = font;
+    updated.pointSize = points;
+
+    setFont(updated);
+}
+
 void ComponentHost::setFontFamily(const std::string& family)
 {
-    fontFamily = family;
+    auto updated = font;
+    updated.family = family;
 
-    // The renderer bakes its family at construction, so a change rebuilds it
-    // rather than reaching in. Cheap, and it only happens on an explicit call.
-    text.reset();
-    repaint();
+    setFont(updated);
 }
 
 void ComponentHost::resized()
@@ -370,7 +379,10 @@ void ComponentHost::render(GPU::Frame& frame)
     }
 
     if (!text.has_value())
-        text.emplace(fontPointSize, fontFamily);
+    {
+        text.emplace(font.pointSize, font.family);
+        text->setFont(font);
+    }
 
     text->setViewport({bounds.w, bounds.h}, backingScale());
     text->begin();

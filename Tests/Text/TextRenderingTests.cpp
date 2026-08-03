@@ -41,13 +41,10 @@ struct TextView final : GPU::GPUView
         request.pointSize = 24.f;
         request.scale = 1.f;
 
-        auto rasterizer = makeOwned<GlyphRasterizer>(request);
-
-        if (!rasterizer->isValid())
+        if (!GlyphRasterizer {request}.isValid())
             return false;
 
-        atlas = makeOwned<GlyphAtlas>(
-            OwningPointer<GlyphSource> {std::move(rasterizer)}, 256, 1024);
+        atlas = makeOwned<GlyphAtlas>(rasterizerFaceFactory(), request, 256, 1024);
 
         return true;
     }

@@ -132,47 +132,27 @@ public:
     float lineHeight() const;
     float ascent() const;
 
-    // Draws the text that follows through `renderer` rather than the host's.
+    // The face the text calls draw and measure in, stacked with the rest of the
+    // state -- so a component drawing a heading sets one and its siblings are
+    // unaffected, the tree walk restoring it on the way out.
     //
-    // A ComponentHost carries one font: a TextRenderer bakes its family at
-    // construction and rebuilds its atlas when the size changes, so a family and
-    // a size are properties of the host and only FontStyle varies per call. That
-    // is right for an interface, whose whole point is that it looks like one
-    // thing, and wrong for a document, which mixes both in one tree - an SVG with
-    // an 18pt heading over 11pt labels is two fonts and there is no third
-    // renderer to ask.
+    // Faces cost nothing to mix. They share one glyph atlas and therefore one
+    // texture, so a heading, a caption and a monospace log go out as one
+    // instanced draw with no batch break between them; what a size costs is the
+    // glyphs of that size, once.
     //
-    // So a caller that needs one keeps its own renderer, per family and size,
-    // and swaps it in around the run. Measurement follows it, which is the part
-    // that matters: measureText, lineHeight and ascent all report the swapped-in
-    // font, so a centred string centres against the glyphs that will actually be
-    // drawn.
-    //
-    // It costs a batch break each way. Every renderer has its own glyph atlas
-    // and therefore its own texture, so the outgoing one's queue has to be drawn
-    // before the incoming one's - which is the same cost a clip change pays, and
-    // the reason to swap once per run rather than once per string.
-    void setTextRenderer(Text::TextRenderer& renderer);
-    void resetTextRenderer();
-    Text::TextRenderer& getTextRenderer() const { return *text; }
+    // Measurement follows the font, which is the part that matters: measureText,
+    // lineHeight and ascent all report the face in force, so a centred caption
+    // centres against the glyphs that will actually be drawn.
+    void setFont(const Font& font);
 
-    struct ScopedTextRenderer
-    {
-        ScopedTextRenderer(Graphics& graphicsToUse, Text::TextRenderer& renderer)
-            : graphics(graphicsToUse)
-            , previous(graphicsToUse.getTextRenderer())
-        {
-            graphics.setTextRenderer(renderer);
-        }
+    // The same face at another size or weight, which is what a heading usually
+    // is. Named separately because a component asking for "bigger" should not
+    // have to name the family the host happens to be using.
+    void setFontSize(float pointSize);
+    void setFontStyle(FontStyle style);
 
-        ~ScopedTextRenderer() { graphics.setTextRenderer(previous); }
-
-        ScopedTextRenderer(const ScopedTextRenderer&) = delete;
-        ScopedTextRenderer& operator=(const ScopedTextRenderer&) = delete;
-
-        Graphics& graphics;
-        Text::TextRenderer& previous;
-    };
+    const Font& getFont() const { return state.font; }
 
     void translate(float x, float y);
 
@@ -263,6 +243,8 @@ private:
         // component in the tree, the walk saving and restoring around every one.
         GradientFill gradient;
 
+        Font font;
+
         Point origin;
         Rect clip;
 
@@ -306,10 +288,9 @@ private:
     LayerRenderer& layers;
     GradientRamps& ramps;
 
-    // The host's renderer, and the one in force. They differ only inside a
-    // ScopedTextRenderer.
-    Text::TextRenderer& hostText;
-    Text::TextRenderer* text;
+    // One renderer for the whole tree, whatever faces it draws in: the atlas
+    // behind it holds them all.
+    Text::TextRenderer& text;
 
     GPU::RenderPass& pass;
 
