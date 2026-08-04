@@ -9,12 +9,49 @@ namespace
 {
 constexpr auto replacementChar = char32_t {0xFFFD};
 
-// A codepoint in D800..DFFF is a UTF-16 surrogate half. Those are unassigned as
-// scalar values, so any UTF-8 sequence that decodes to one is ill-formed
-// (CESU-8 and friends) and gets replaced rather than re-encoded.
+// D800..DBFF and DC00..DFFF are the two halves of a UTF-16 surrogate pair.
+// Neither is a scalar value on its own, so a UTF-8 sequence decoding to one is
+// ill-formed (CESU-8 and friends) and an unpaired half in wide input has nothing
+// to encode; both are replaced.
+bool isLeadSurrogate(char32_t unit)
+{
+    return unit >= 0xD800 && unit <= 0xDBFF;
+}
+
+bool isTrailSurrogate(char32_t unit)
+{
+    return unit >= 0xDC00 && unit <= 0xDFFF;
+}
+
 bool isSurrogate(char32_t unit)
 {
-    return unit >= 0xD800 && unit <= 0xDFFF;
+    return isLeadSurrogate(unit) || isTrailSurrogate(unit);
+}
+
+void appendUtf8(std::string& out, char32_t codepoint)
+{
+    if (codepoint < 0x80)
+    {
+        out += static_cast<char>(codepoint);
+    }
+    else if (codepoint < 0x800)
+    {
+        out += static_cast<char>(0xC0 | (codepoint >> 6));
+        out += static_cast<char>(0x80 | (codepoint & 0x3F));
+    }
+    else if (codepoint < 0x10000)
+    {
+        out += static_cast<char>(0xE0 | (codepoint >> 12));
+        out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (codepoint & 0x3F));
+    }
+    else
+    {
+        out += static_cast<char>(0xF0 | (codepoint >> 18));
+        out += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (codepoint & 0x3F));
+    }
 }
 
 // Where wchar_t is 16 bits the astral planes need a surrogate pair; where it is
@@ -110,16 +147,67 @@ std::wstring widen(std::string_view utf8)
     return out;
 }
 
-std::string trim(const std::string& s)
+std::string narrow(std::wstring_view wide)
 {
-    auto begin = s.find_first_not_of(" \t\r\n");
-    if (begin == std::string::npos)
-        return {};
-    auto end = s.find_last_not_of(" \t\r\n");
-    return s.substr(begin, end - begin + 1);
+    auto out = std::string {};
+    out.reserve(wide.size());
+
+    for (auto i = std::size_t {0}; i < wide.size(); ++i)
+    {
+        auto codepoint = static_cast<char32_t>(
+            static_cast<std::make_unsigned_t<wchar_t>>(wide[i]));
+
+        if constexpr (sizeof(wchar_t) == 2)
+        {
+            // A lead half only means something with its trail: take the pair
+            // together, and replace either one found on its own.
+            if (isLeadSurrogate(codepoint))
+            {
+                const auto next =
+                    i + 1 < wide.size()
+                        ? static_cast<char32_t>(
+                              static_cast<std::make_unsigned_t<wchar_t>>(
+                                  wide[i + 1]))
+                        : char32_t {0};
+
+                if (isTrailSurrogate(next))
+                {
+                    codepoint =
+                        0x10000 + ((codepoint - 0xD800) << 10) + (next - 0xDC00);
+                    ++i;
+                }
+                else
+                {
+                    codepoint = replacementChar;
+                }
+            }
+            else if (isTrailSurrogate(codepoint))
+            {
+                codepoint = replacementChar;
+            }
+        }
+        else
+        {
+            if (codepoint > 0x10FFFF || isSurrogate(codepoint))
+                codepoint = replacementChar;
+        }
+
+        appendUtf8(out, codepoint);
+    }
+
+    return out;
 }
 
-std::string toLower(const std::string& s)
+std::string trim(std::string_view s)
+{
+    auto begin = s.find_first_not_of(" \t\r\n");
+    if (begin == std::string_view::npos)
+        return {};
+    auto end = s.find_last_not_of(" \t\r\n");
+    return std::string {s.substr(begin, end - begin + 1)};
+}
+
+std::string toLower(std::string_view s)
 {
     auto result = std::string {};
     result.reserve(s.size());

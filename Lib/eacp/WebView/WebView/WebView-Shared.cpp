@@ -7,6 +7,7 @@
 #include "WebViewDetail.h"
 
 #include <eacp/Core/Utils/Singleton.h>
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Graphics/Image/Image.h>
 
 namespace eacp::Graphics
@@ -29,12 +30,7 @@ void WebView::captureAsyncContent(float, std::function<void(Image)> done)
 std::string mimeForPath(std::string_view path)
 {
     // Match on a lowercased copy so MyClip.WAV maps the same as .wav.
-    auto lower = std::string {path};
-    std::transform(lower.begin(),
-                   lower.end(),
-                   lower.begin(),
-                   [](unsigned char c)
-                   { return static_cast<char>(std::tolower(c)); });
+    auto lower = Strings::toLower(path);
 
     auto endsWith = [&](std::string_view ext) { return lower.ends_with(ext); };
 

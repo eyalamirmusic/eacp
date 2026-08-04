@@ -27,34 +27,6 @@ bool openClipboardWithRetry(HWND owner)
     return false;
 }
 
-// UTF-16 -> UTF-8, the reverse of Strings::widen. Bounded by the caller's
-// wcslen, so an unterminated handle cannot run away.
-std::string toUtf8(const wchar_t* text, int length)
-{
-    if (text == nullptr || length <= 0)
-        return {};
-
-    auto required = WideCharToMultiByte(
-        CP_UTF8, 0, text, length, nullptr, 0, nullptr, nullptr);
-
-    if (required <= 0)
-        return {};
-
-    auto result = std::string(static_cast<std::size_t>(required), '\0');
-
-    if (WideCharToMultiByte(CP_UTF8,
-                            0,
-                            text,
-                            length,
-                            result.data(),
-                            required,
-                            nullptr,
-                            nullptr)
-        != required)
-        return {};
-
-    return result;
-}
 } // namespace
 
 std::string getText()
@@ -77,7 +49,8 @@ std::string getText()
         // when done, and never free it.
         if (const auto* data = static_cast<const wchar_t*>(GlobalLock(handle)))
         {
-            result = toUtf8(data, static_cast<int>(std::wcslen(data)));
+            // Bounded by wcslen, so an unterminated handle cannot run away.
+            result = Strings::narrow({data, std::wcslen(data)});
             GlobalUnlock(handle);
         }
     }

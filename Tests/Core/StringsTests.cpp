@@ -81,3 +81,69 @@ auto tWidenNeverThrows = test("Strings/widen never throws on bad input") = []
     // The contract every caller now relies on: no exception, no failure code.
     check(widen("\xFF\xFE\xFD") == L"\uFFFD\uFFFD\uFFFD");
 };
+
+// narrow() is the reverse leg, and the failure it has to handle is the mirror
+// image: a surrogate half with no partner, which has no scalar value to encode.
+
+using eacp::Strings::narrow;
+
+auto tNarrowEmpty =
+    test("Strings/narrow empty") = [] { check(narrow(L"").empty()); };
+
+auto tNarrowAscii =
+    test("Strings/narrow ASCII") = [] { check(narrow(L"hello") == "hello"); };
+
+auto tNarrowMultiByteBmp = test("Strings/narrow multi-byte BMP") = []
+{
+    check(narrow(L"caf\u00E9") == "caf\xC3\xA9");
+    check(narrow(L"\u20AC") == "\xE2\x82\xAC");
+};
+
+auto tNarrowAstral = test("Strings/narrow astral codepoint") = []
+{ check(narrow(L"\U0001F600") == "\xF0\x9F\x98\x80"); };
+
+auto tNarrowUnpairedLead = test("Strings/narrow replaces an unpaired lead") = []
+{ check(narrow(std::wstring(1, wchar_t(0xD800))) == "\xEF\xBF\xBD"); };
+
+auto tNarrowUnpairedTrail = test("Strings/narrow replaces an unpaired trail") = []
+{ check(narrow(std::wstring(1, wchar_t(0xDC00))) == "\xEF\xBF\xBD"); };
+
+auto tNarrowLeadFollowedByText =
+    test("Strings/narrow keeps text after an unpaired lead") = []
+{
+    auto wide = std::wstring {};
+    wide.push_back(wchar_t(0xD83D));
+    wide.push_back(L'x');
+
+    check(narrow(wide)
+          == "\xEF\xBF\xBD"
+             "x");
+};
+
+auto tRoundTrip = test("Strings/widen and narrow round-trip valid UTF-8") = []
+{
+    const auto original = std::string {"caf\xC3\xA9 \xE2\x82\xAC "
+                                       "\xF0\x9F\x98\x80 ok"};
+
+    check(narrow(widen(original)) == original);
+};
+
+// trim() takes a string_view now, so it absorbs the callers that used to hand it
+// a substr of a view without materialising a string first.
+
+using eacp::Strings::trim;
+
+auto tTrim = test("Strings/trim") = []
+{
+    check(trim("  hello  ") == "hello");
+    check(trim("\t\r\nhello\n\r\t") == "hello");
+    check(trim("hello") == "hello");
+    check(trim("").empty());
+    check(trim("   ").empty());
+};
+
+auto tTrimAcceptsAView = test("Strings/trim accepts a string_view") = []
+{
+    const auto text = std::string_view {"[ padded ]"};
+    check(trim(text.substr(1, 8)) == "padded");
+};

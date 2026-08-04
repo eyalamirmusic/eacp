@@ -8,8 +8,10 @@
 
 namespace eacp::Strings
 {
-std::string trim(const std::string& s);
-std::string toLower(const std::string& s);
+// Strips leading and trailing spaces, tabs, CRs and LFs.
+std::string trim(std::string_view s);
+// ASCII-only lowercasing, for matching extensions, header names and the like.
+std::string toLower(std::string_view s);
 
 bool equalsCaseInsensitive(const std::string& a, const std::string& b);
 
@@ -27,6 +29,12 @@ int hexCharToInt(char c);
 // scan resumes at the next one, so this neither throws nor fails. Callers that
 // must reject bad UTF-8 have to check before converting.
 std::wstring widen(std::string_view utf8);
+
+// The reverse leg, on the same contract: unpaired surrogates and units past
+// U+10FFFF become U+FFFD, so it neither throws nor fails. Together these two are
+// the framework's only encoding conversions - nothing else should call
+// MultiByteToWideChar or WideCharToMultiByte.
+std::string narrow(std::wstring_view wide);
 
 // Number/bool → string. String-like and char inputs pass through unchanged so
 // callers can concatenate heterogeneous values without minding their types.

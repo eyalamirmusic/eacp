@@ -15,31 +15,6 @@ namespace eacp::HTTP
 namespace
 {
 
-std::string fromWide(const std::wstring& wide)
-{
-    if (wide.empty())
-        return {};
-
-    auto length = WideCharToMultiByte(CP_UTF8,
-                                      0,
-                                      wide.data(),
-                                      static_cast<int>(wide.size()),
-                                      nullptr,
-                                      0,
-                                      nullptr,
-                                      nullptr);
-    auto utf8 = std::string(static_cast<size_t>(length), '\0');
-    WideCharToMultiByte(CP_UTF8,
-                        0,
-                        wide.data(),
-                        static_cast<int>(wide.size()),
-                        utf8.data(),
-                        length,
-                        nullptr,
-                        nullptr);
-    return utf8;
-}
-
 [[noreturn]] void throwLastError(const std::string& what)
 {
     auto code = GetLastError();
@@ -56,7 +31,7 @@ std::string fromWide(const std::wstring& wide)
                    static_cast<DWORD>(std::size(text)),
                    nullptr);
 
-    auto message = Strings::trim(fromWide(text));
+    auto message = Strings::trim(Strings::narrow(text));
     if (message.empty())
         message = what + " failed (error " + std::to_string(code) + ")";
 
@@ -276,7 +251,7 @@ void copyResponseHeaders(HINTERNET request, Response& response)
                              WINHTTP_NO_HEADER_INDEX))
         return;
 
-    auto text = fromWide(raw);
+    auto text = Strings::narrow(raw);
     auto start = size_t {0};
 
     while (start < text.size())
@@ -315,7 +290,7 @@ std::int64_t queryContentLength(HINTERNET request)
 
     try
     {
-        return std::stoll(fromWide(text));
+        return std::stoll(Strings::narrow(text));
     }
     catch (...)
     {

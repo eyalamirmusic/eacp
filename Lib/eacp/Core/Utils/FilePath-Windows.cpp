@@ -11,26 +11,12 @@ namespace eacp
 {
 namespace
 {
-// Converts to UTF-8 and normalizes to forward slashes, matching the generic
-// style FilePath uses for std::filesystem::path input.
 FilePath toFilePath(const wchar_t* text)
 {
     if (text == nullptr || *text == L'\0')
         return {};
 
-    auto wideLength = (int) std::wcslen(text);
-    auto length = WideCharToMultiByte(
-        CP_UTF8, 0, text, wideLength, nullptr, 0, nullptr, nullptr);
-
-    auto result = std::string((std::size_t) length, '\0');
-    WideCharToMultiByte(
-        CP_UTF8, 0, text, wideLength, result.data(), length, nullptr, nullptr);
-
-    for (auto& character: result)
-        if (character == '\\')
-            character = '/';
-
-    return FilePath {std::move(result)};
+    return FilePath::fromWide({text, std::wcslen(text)});
 }
 
 FilePath knownFolder(const KNOWNFOLDERID& id)

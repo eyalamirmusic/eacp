@@ -7,47 +7,6 @@
 
 namespace eacp
 {
-namespace
-{
-constexpr auto replacementChar = char32_t {0xFFFD};
-
-void appendUtf8(std::string& out, char32_t codepoint)
-{
-    if (codepoint < 0x80)
-    {
-        out += static_cast<char>(codepoint);
-    }
-    else if (codepoint < 0x800)
-    {
-        out += static_cast<char>(0xC0 | (codepoint >> 6));
-        out += static_cast<char>(0x80 | (codepoint & 0x3F));
-    }
-    else if (codepoint < 0x10000)
-    {
-        out += static_cast<char>(0xE0 | (codepoint >> 12));
-        out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (codepoint & 0x3F));
-    }
-    else
-    {
-        out += static_cast<char>(0xF0 | (codepoint >> 18));
-        out += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
-        out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (codepoint & 0x3F));
-    }
-}
-
-bool isLeadSurrogate(char32_t unit)
-{
-    return unit >= 0xD800 && unit <= 0xDBFF;
-}
-
-bool isTrailSurrogate(char32_t unit)
-{
-    return unit >= 0xDC00 && unit <= 0xDFFF;
-}
-} // namespace
-
 FilePath::FilePath(std::string textToUse)
     : text(std::move(textToUse))
 {
@@ -108,54 +67,22 @@ std::wstring FilePath::wide() const
     return Strings::widen(text);
 }
 
+FilePath FilePath::fromWide(std::wstring_view wide)
+{
+    auto path = FilePath {};
+    path.assignFromWide(wide);
+    return path;
+}
+
 void FilePath::assignFromWide(std::wstring_view wide)
 {
-    text.clear();
-    text.reserve(wide.size());
+    text = Strings::narrow(wide);
 
-    for (auto i = std::size_t {0}; i < wide.size(); ++i)
-    {
-        auto codepoint = static_cast<char32_t>(
-            static_cast<std::make_unsigned_t<wchar_t>>(wide[i]));
-
-        if constexpr (sizeof(wchar_t) == 2)
-        {
-            if (isLeadSurrogate(codepoint))
-            {
-                const auto next =
-                    i + 1 < wide.size()
-                        ? static_cast<char32_t>(
-                              static_cast<std::make_unsigned_t<wchar_t>>(
-                                  wide[i + 1]))
-                        : char32_t {0};
-                if (isTrailSurrogate(next))
-                {
-                    codepoint =
-                        0x10000 + ((codepoint - 0xD800) << 10) + (next - 0xDC00);
-                    ++i;
-                }
-                else
-                {
-                    codepoint = replacementChar;
-                }
-            }
-            else if (isTrailSurrogate(codepoint))
-            {
-                codepoint = replacementChar;
-            }
-        }
-        else
-        {
-            if (codepoint > 0x10FFFF || isLeadSurrogate(codepoint)
-                || isTrailSurrogate(codepoint))
-                codepoint = replacementChar;
-        }
-
-        if (codepoint == U'\\')
-            codepoint = U'/';
-
-        appendUtf8(text, codepoint);
-    }
+    // '\' is ASCII and no UTF-8 continuation byte can be 0x5C, so swapping the
+    // byte hits exactly the separators and nothing inside a multi-byte sequence.
+    for (auto& character: text)
+        if (character == '\\')
+            character = '/';
 }
 
 FilePath FilePath::operator/(std::string_view part) const
