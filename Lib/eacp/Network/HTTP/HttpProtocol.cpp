@@ -103,18 +103,27 @@ void parseHeaderLines(std::stringstream& stream, Request& request)
         if (line.empty())
             break;
 
-        auto colon = line.find(':');
-
-        if (colon == std::string::npos)
-            continue;
-
-        auto name = Strings::trim(line.substr(0, colon));
-        auto value = Strings::trim(line.substr(colon + 1));
-        request.headers[name] = value;
+        addHeaderLine(line, request.headers);
     }
 }
 
 } // namespace
+
+void addHeaderLine(std::string_view line,
+                   std::map<std::string, std::string>& headers)
+{
+    auto colon = line.find(':');
+
+    if (colon == std::string_view::npos)
+        return;
+
+    auto name = Strings::trim(line.substr(0, colon));
+
+    if (name.empty())
+        return;
+
+    headers[std::move(name)] = Strings::trim(line.substr(colon + 1));
+}
 
 std::string findHeaderIgnoringCase(const std::map<std::string, std::string>& headers,
                                    const std::string& key)

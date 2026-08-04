@@ -36,30 +36,7 @@ FilePath getCurrentModulePath()
 
     buffer.resize(length);
 
-    auto utf8Length = WideCharToMultiByte(CP_UTF8,
-                                          0,
-                                          buffer.data(),
-                                          (int) buffer.size(),
-                                          nullptr,
-                                          0,
-                                          nullptr,
-                                          nullptr);
-
-    auto result = std::string((std::size_t) utf8Length, '\0');
-    WideCharToMultiByte(CP_UTF8,
-                        0,
-                        buffer.data(),
-                        (int) buffer.size(),
-                        result.data(),
-                        utf8Length,
-                        nullptr,
-                        nullptr);
-
-    for (auto& character: result)
-        if (character == '\\')
-            character = '/';
-
-    return FilePath {std::move(result)};
+    return FilePath::fromWide(buffer);
 }
 
 std::string getModuleIdentitySuffix()

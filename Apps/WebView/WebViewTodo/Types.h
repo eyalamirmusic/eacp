@@ -3,6 +3,8 @@
 #include <Miro/Bridge.h>
 #include <Miro/Reflect.h>
 
+#include <eacp/Core/Utils/Strings.h>
+
 #include <string>
 #include <utility>
 
@@ -47,19 +49,6 @@ struct EditTodoRequest
 namespace Api
 {
 
-namespace Detail
-{
-inline std::string trim(const std::string& input)
-{
-    auto start = input.find_first_not_of(" \t\n");
-    if (start == std::string::npos)
-        return {};
-
-    auto end = input.find_last_not_of(" \t\n");
-    return input.substr(start, end - start + 1);
-}
-} // namespace Detail
-
 // Replaces (TodoStore singleton + EACP_KEYED_STATE + the six free-fn
 // commands + MIRO_EXPORT_COMMANDS). reflect() lists the surface; each
 // method mutates the state and publishes a new snapshot.
@@ -98,7 +87,7 @@ public:
 
     void addTodo(const AddTodoRequest& req)
     {
-        auto trimmed = Detail::trim(req.text);
+        auto trimmed = eacp::Strings::trim(req.text);
         if (trimmed.empty())
             return;
 

@@ -3,6 +3,8 @@
 #include "App.h"
 #include "App-Windows-FilePicker.h"
 
+#include "../Utils/Strings.h"
+
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <wincrypt.h>
@@ -54,7 +56,7 @@ void openExternalURL(const std::string& url)
     if (url.empty())
         return;
 
-    auto wide = std::wstring(winrt::to_hstring(url));
+    auto wide = Strings::widen(url);
 
     ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
@@ -82,14 +84,10 @@ std::optional<std::string> shellResultToPath(const wchar_t* pickedWidePath)
     if (pickedWidePath == nullptr || pickedWidePath[0] == L'\0')
         return std::nullopt;
 
-    const auto size = WideCharToMultiByte(
-        CP_UTF8, 0, pickedWidePath, -1, nullptr, 0, nullptr, nullptr);
-    if (size <= 1)
+    auto out = Strings::narrow(pickedWidePath);
+    if (out.empty())
         return std::nullopt;
 
-    auto out = std::string(static_cast<size_t>(size - 1), '\0');
-    WideCharToMultiByte(
-        CP_UTF8, 0, pickedWidePath, -1, out.data(), size, nullptr, nullptr);
     return out;
 }
 
@@ -221,13 +219,13 @@ std::optional<std::wstring> showShellSaveDialog(const FileSaveOptions& options)
 
             // So a name typed without one still lands on the right extension.
             const auto defaultExtension =
-                std::wstring(winrt::to_hstring(options.allowedExtensions[0]));
+                Strings::widen(options.allowedExtensions[0]);
             dialog->SetDefaultExtension(defaultExtension.c_str());
         }
 
         if (!options.suggestedName.empty())
         {
-            const auto name = std::wstring(winrt::to_hstring(options.suggestedName));
+            const auto name = Strings::widen(options.suggestedName);
             dialog->SetFileName(name.c_str());
         }
 

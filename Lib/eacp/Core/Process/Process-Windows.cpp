@@ -1,6 +1,7 @@
 #include "Process.h"
 #include <algorithm>
 
+#include "../Utils/Strings.h"
 #include "../Utils/WinInclude.h"
 
 #include <cwctype>
@@ -12,20 +13,6 @@ namespace eacp::Processes
 {
 namespace
 {
-std::wstring toWide(const std::string& text)
-{
-    if (text.empty())
-        return {};
-
-    auto length =
-        MultiByteToWideChar(CP_UTF8, 0, text.data(), (int) text.size(), nullptr, 0);
-
-    auto result = std::wstring((std::size_t) length, L'\0');
-    MultiByteToWideChar(
-        CP_UTF8, 0, text.data(), (int) text.size(), result.data(), length);
-    return result;
-}
-
 // Quotes a single argument following the CommandLineToArgvW rules so that
 // callers pass plain argument strings rather than a pre-escaped line.
 std::wstring quoteArgument(const std::wstring& arg)
@@ -69,12 +56,12 @@ std::wstring quoteArgument(const std::wstring& arg)
 std::wstring buildCommandLine(const std::string& executable,
                               const Vector<std::string>& arguments)
 {
-    auto line = quoteArgument(toWide(executable));
+    auto line = quoteArgument(Strings::widen(executable));
 
     for (const auto& arg: arguments)
     {
         line.push_back(L' ');
-        line.append(quoteArgument(toWide(arg)));
+        line.append(quoteArgument(Strings::widen(arg)));
     }
 
     return line;
@@ -116,8 +103,8 @@ std::wstring buildEnvironmentBlock(const Vector<EnvironmentVariable>& overrides)
 
     for (const auto& var: overrides)
     {
-        auto combined = toWide(var.name) + L"=" + toWide(var.value);
-        auto key = upper(toWide(var.name));
+        auto combined = Strings::widen(var.name) + L"=" + Strings::widen(var.value);
+        auto key = upper(Strings::widen(var.name));
         auto replaced = false;
 
         for (auto& entry: entries)
@@ -295,7 +282,7 @@ private:
         auto commandLine = buildCommandLine(options.executable, options.arguments);
         commandLine.push_back(L'\0');
 
-        auto workingDir = toWide(options.workingDirectory);
+        auto workingDir = Strings::widen(options.workingDirectory);
         auto environment = buildEnvironmentBlock(options.environment);
 
         PROCESS_INFORMATION info {};
@@ -366,7 +353,7 @@ private:
         auto commandLine = buildCommandLine(options.executable, options.arguments);
         commandLine.push_back(L'\0');
 
-        auto workingDir = toWide(options.workingDirectory);
+        auto workingDir = Strings::widen(options.workingDirectory);
         auto environment = buildEnvironmentBlock(options.environment);
 
         PROCESS_INFORMATION info {};
@@ -402,7 +389,7 @@ private:
         auto commandLine = buildCommandLine(options.executable, options.arguments);
         commandLine.push_back(L'\0');
 
-        auto workingDir = toWide(options.workingDirectory);
+        auto workingDir = Strings::widen(options.workingDirectory);
         auto environment = buildEnvironmentBlock(options.environment);
 
         // DETACHED_PROCESS: no inherited console, so the child survives the

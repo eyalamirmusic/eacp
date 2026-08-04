@@ -1,5 +1,6 @@
 #include "Clipboard.h"
 
+#include "../Utils/Strings.h"
 #include "../Utils/WinInclude.h"
 
 #include <shellapi.h>
@@ -7,42 +8,12 @@
 
 #include <cstring>
 #include <cwchar>
-#include <limits>
 #include <vector>
 
 namespace eacp::Clipboard
 {
 namespace
 {
-bool toWideString(std::string_view text, std::wstring& result)
-{
-    result.clear();
-
-    if (text.empty())
-        return true;
-
-    if (text.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
-        return false;
-
-    auto required = MultiByteToWideChar(CP_UTF8,
-                                        MB_ERR_INVALID_CHARS,
-                                        text.data(),
-                                        static_cast<int>(text.size()),
-                                        nullptr,
-                                        0);
-    if (required <= 0)
-        return false;
-
-    result.assign(static_cast<std::size_t>(required), L'\0');
-    return MultiByteToWideChar(CP_UTF8,
-                               MB_ERR_INVALID_CHARS,
-                               text.data(),
-                               static_cast<int>(text.size()),
-                               result.data(),
-                               required)
-           == required;
-}
-
 bool openClipboardWithRetry(HWND owner)
 {
     for (auto attempt = 0; attempt < 5; ++attempt)
@@ -56,34 +27,6 @@ bool openClipboardWithRetry(HWND owner)
     return false;
 }
 
-// UTF-16 -> UTF-8, the reverse of toWideString. Bounded by the caller's
-// wcslen, so an unterminated handle cannot run away.
-std::string toUtf8(const wchar_t* text, int length)
-{
-    if (text == nullptr || length <= 0)
-        return {};
-
-    auto required = WideCharToMultiByte(
-        CP_UTF8, 0, text, length, nullptr, 0, nullptr, nullptr);
-
-    if (required <= 0)
-        return {};
-
-    auto result = std::string(static_cast<std::size_t>(required), '\0');
-
-    if (WideCharToMultiByte(CP_UTF8,
-                            0,
-                            text,
-                            length,
-                            result.data(),
-                            required,
-                            nullptr,
-                            nullptr)
-        != required)
-        return {};
-
-    return result;
-}
 } // namespace
 
 std::string getText()
@@ -106,7 +49,8 @@ std::string getText()
         // when done, and never free it.
         if (const auto* data = static_cast<const wchar_t*>(GlobalLock(handle)))
         {
-            result = toUtf8(data, static_cast<int>(std::wcslen(data)));
+            // Bounded by wcslen, so an unterminated handle cannot run away.
+            result = Strings::narrow({data, std::wcslen(data)});
             GlobalUnlock(handle);
         }
     }
@@ -122,9 +66,7 @@ bool hasText()
 
 bool copyText(std::string_view text)
 {
-    auto wide = std::wstring {};
-    if (!toWideString(text, wide))
-        return false;
+    auto wide = Strings::widen(text);
 
     auto bytes = (wide.size() + 1) * sizeof(wchar_t);
     auto handle = GlobalAlloc(GMEM_MOVEABLE, bytes);
@@ -167,9 +109,7 @@ bool copyFiles(const Vector<std::string>& paths)
 
     for (const auto& path: paths)
     {
-        auto wide = std::wstring {};
-        if (!toWideString(path, wide))
-            return false;
+        auto wide = Strings::widen(path);
 
         if (wide.empty())
             continue;

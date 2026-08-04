@@ -6,7 +6,7 @@
 #include "WebViewDetail.h"
 #include "FileDrag-Windows.h"
 #include <eacp/Graphics/DComp-Windows.h>
-#include <eacp/Graphics/Helpers/StringUtils-Windows.h>
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Threads/ThreadUtils.h>
 
 #include <atomic>
@@ -58,7 +58,7 @@ struct CoTaskMemString
     {
         if (!ptr)
             return "";
-        return fromWideString(ptr);
+        return Strings::narrow(ptr);
     }
 
     LPWSTR ptr = nullptr;
@@ -95,7 +95,7 @@ std::wstring defaultUserDataFolder(const std::string& suffix)
 
     auto leaf = std::wstring {L"WebView2"};
     if (!suffix.empty())
-        leaf += L"-" + toWideString(suffix);
+        leaf += L"-" + Strings::widen(suffix);
 
     return folder + L"\\" + moduleName + L"\\" + leaf;
 }
@@ -538,7 +538,7 @@ struct WebView::Native
 
         auto addRegistration = [&](const std::string& scheme)
         {
-            auto wide = toWideString(scheme);
+            auto wide = Strings::widen(scheme);
             auto registration =
                 Microsoft::WRL::Make<CoreWebView2CustomSchemeRegistration>(
                     wide.c_str());
@@ -601,7 +601,7 @@ struct WebView::Native
         // scheme reaches our handler.
         auto addFilter = [&](const std::string& scheme)
         {
-            auto pattern = toWideString(scheme + "://*");
+            auto pattern = Strings::widen(scheme + "://*");
             auto hr = webView->AddWebResourceRequestedFilter(
                 pattern.c_str(), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
 
@@ -647,7 +647,7 @@ struct WebView::Native
 
         ensureWebResourceHandler();
 
-        auto pattern = toWideString(baseURL);
+        auto pattern = Strings::widen(baseURL);
         auto hr = webView->AddWebResourceRequestedFilter(
             pattern.c_str(), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
         if (FAILED(hr))
@@ -726,7 +726,7 @@ struct WebView::Native
         // for our own scheme handler, so React's fetch() to a sibling
         // URL fails without an explicit allow-origin header.
         auto headers = std::wstring {L"Content-Type: "}
-                       + toWideString(response->mimeType)
+                       + Strings::widen(response->mimeType)
                        + L"\r\nAccess-Control-Allow-Origin: *";
 
         auto reason = (response->statusCode >= 200 && response->statusCode < 300)
@@ -800,7 +800,7 @@ struct WebView::Native
         {
             if (!headers.empty())
                 headers += L"\r\n";
-            headers += toWideString(name) + L": " + toWideString(value);
+            headers += Strings::widen(name) + L": " + Strings::widen(value);
         }
 
         ComPtr<IStream> body;
@@ -892,7 +892,7 @@ struct WebView::Native
             return;
         }
 
-        auto wideScript = toWideString(script);
+        auto wideScript = Strings::widen(script);
 
         webView->ExecuteScript(
             wideScript.c_str(),
@@ -916,7 +916,7 @@ struct WebView::Native
                             // when the value is a string so both backends look
                             // the same to callers; numbers / bools / objects
                             // pass through.
-                            auto rawJson = fromWideString(resultJson);
+                            auto rawJson = Strings::narrow(resultJson);
                             try
                             {
                                 auto value = Miro::Json::parse(rawJson);
@@ -1371,7 +1371,7 @@ struct WebView::Native
 
         for (auto& path: paths)
         {
-            auto widePath = toWideString(path);
+            auto widePath = Strings::widen(path);
             // SHParseDisplayName only accepts the OS-native separator: a path
             // with forward slashes (which is how cross-platform code, e.g.
             // std::filesystem generic paths, hands them over) fails to parse and
@@ -1652,7 +1652,7 @@ void WebView::loadURL(const std::string& url)
         {
             if (impl->webView)
             {
-                auto wideUrl = toWideString(url);
+                auto wideUrl = Strings::widen(url);
                 impl->webView->Navigate(wideUrl.c_str());
             }
         });
@@ -1679,7 +1679,7 @@ void WebView::loadHTML(const std::string& html, const std::string& baseURL)
                 return;
             }
 
-            auto wideHtml = toWideString(html);
+            auto wideHtml = Strings::widen(html);
             impl->webView->NavigateToString(wideHtml.c_str());
         });
 }
@@ -1876,7 +1876,7 @@ void WebView::addScriptMessageHandler(
     // WebKit `window.webkit.messageHandlers.<name>` form. macOS only offers the
     // latter, so mirroring it here lets the same page code post messages on
     // both platforms without branching.
-    auto script = toWideString(
+    auto script = Strings::widen(
         "(function(){var send=function(msg){window.chrome.webview.postMessage("
         "{name:'"
         + name
@@ -1904,7 +1904,7 @@ void WebView::addUserScript(const std::string& source, bool atDocumentStart)
 
     if (atDocumentStart)
     {
-        impl->queueDocStartScript(toWideString(source));
+        impl->queueDocStartScript(Strings::widen(source));
         return;
     }
 
