@@ -46,7 +46,8 @@ if (APPLE AND NOT IOS)
     list(APPEND graphics_test_sources
             CursorTests-macOS.mm
             MenuTests-macOS.mm
-            ScrollWheelTests-macOS.mm)
+            ScrollWheelTests-macOS.mm
+            WindowTests-macOS.mm)
 endif ()
 
 if (WIN32)

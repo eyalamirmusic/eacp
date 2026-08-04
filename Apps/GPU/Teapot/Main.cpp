@@ -197,6 +197,23 @@ struct TeapotShader final : ShaderProgram
 
     EACP_SHADER(angle, aspect, lightDir, baseColor)
 };
+
+// aspectRatio locks the window to 16:9, so the viewport the teapot is framed
+// for is the only shape the user can drag out. The initial size is already in
+// that ratio - the lock governs resizing, it does not retro-fit a size that
+// was asked for - and fullscreen, the one resize that would break it, is off
+// by default because the ratio is set.
+Graphics::WindowOptions windowOptions()
+{
+    auto options = Graphics::WindowOptions {};
+    options.width = 960;
+    options.height = 540;
+    options.minWidth = 480;
+    options.minHeight = 270;
+    options.title = "eacp GPU - Teapot";
+    options.aspectRatio = Graphics::Point {16.0f, 9.0f};
+    return options;
+}
 } // namespace
 
 struct TeapotView final : GPUView
@@ -242,7 +259,7 @@ struct MyApp
     MyApp() { window.setContentView(teapot); }
 
     TeapotView teapot;
-    Graphics::Window window;
+    Graphics::Window window {windowOptions()};
 };
 
 int main()

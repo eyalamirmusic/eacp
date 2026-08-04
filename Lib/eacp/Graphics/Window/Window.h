@@ -60,6 +60,18 @@ struct WindowOptions
         return isPrimary ? Callback {[] { Apps::quit(); }} : Callback {[] {}};
     }
 
+    // Whether aspectRatio carries a ratio worth enforcing - both sides have to
+    // be positive for it to describe a shape at all.
+    bool hasAspectRatio() const
+    {
+        return aspectRatio && aspectRatio->x > 0.f && aspectRatio->y > 0.f;
+    }
+
+    bool effectiveAllowsFullScreen() const
+    {
+        return allowsFullScreen.value_or(!hasAspectRatio());
+    }
+
     // When the user closes the window. If left empty, falls back to
     // Apps::quit when isPrimary is true, or a no-op otherwise.
     Callback onQuit {};
@@ -143,6 +155,23 @@ struct WindowOptions
     // constraint governs resizing, and neither platform retro-fits it to a size
     // that was already asked for. Unset lets the window take any shape.
     std::optional<Point> aspectRatio;
+
+    // Whether the user can send the window fullscreen - the green button, the
+    // Window menu's Enter Full Screen, ctrl-cmd-F. Mirrors Electron's
+    // fullscreenable.
+    //
+    // Unset allows it, EXCEPT when aspectRatio is set, because fullscreen is
+    // the one resize a locked ratio cannot survive: macOS hands the window the
+    // whole display and the shape it gets is the display's. A window that locks
+    // its proportions is saying it has no letterbox path, so by default the
+    // escape hatch goes with them. Set it to true to keep both.
+    //
+    // Denied, the green button zooms instead - which does respect aspectRatio -
+    // so the window keeps a maximise gesture. macOS only: Windows has no
+    // OS-level fullscreen mode for a window (an app that wants one builds it
+    // from a borderless monitor-sized window), and its maximise path honours
+    // aspectRatio on its own. No-op on iOS.
+    std::optional<bool> allowsFullScreen;
 
     // Keeps the window above normal windows (macOS NSFloatingWindowLevel,
     // Windows WS_EX_TOPMOST). Mirrors Electron's alwaysOnTop.
