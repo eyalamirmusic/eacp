@@ -1,6 +1,6 @@
 #include "MenuCommands.h"
 
-#include <cctype>
+#include <eacp/Core/Utils/Strings.h>
 
 namespace eacp::Graphics
 {
@@ -36,19 +36,11 @@ void collect(const Menu& menu, Vector<MenuCommand>& out, unsigned& nextId)
 
 std::string keyText(const std::string& key)
 {
-    if (key.empty())
-        return {};
-
     // A single character is a letter or punctuation and reads capitalised —
     // "Ctrl+S", not "Ctrl+s". Anything longer already names itself ("Escape",
-    // "F5") and is passed through, because uppercasing it would give "ESCAPE".
-    if (key.size() == 1)
-        return std::string {(char) std::toupper((unsigned char) key[0])};
-
-    auto text = key;
-    text[0] = (char) std::toupper((unsigned char) text[0]);
-
-    return text;
+    // "F5") and keeps the rest of its casing, because uppercasing the whole
+    // thing would give "ESCAPE".
+    return Strings::capitalize(key);
 }
 } // namespace
 

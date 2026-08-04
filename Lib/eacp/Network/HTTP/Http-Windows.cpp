@@ -2,6 +2,7 @@
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "Http.h"
+#include "HttpProtocol.h"
 
 #include <winhttp.h>
 
@@ -260,16 +261,8 @@ void copyResponseHeaders(HINTERNET request, Response& response)
         if (end == std::string::npos)
             end = text.size();
 
-        auto line = text.substr(start, end - start);
-        auto colon = line.find(':');
-
-        if (colon != std::string::npos)
-        {
-            auto key = Strings::trim(line.substr(0, colon));
-            auto value = Strings::trim(line.substr(colon + 1));
-            if (!key.empty())
-                response.headers[key] = value;
-        }
+        addHeaderLine(std::string_view {text}.substr(start, end - start),
+                      response.headers);
 
         start = end + 2;
     }

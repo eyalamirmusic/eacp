@@ -216,7 +216,27 @@ std::string toLower(std::string_view s)
     return result;
 }
 
-bool equalsCaseInsensitive(const std::string& a, const std::string& b)
+std::string capitalize(std::string_view s)
+{
+    auto result = std::string {s};
+
+    if (!result.empty())
+        result[0] = (char) std::toupper((unsigned char) result[0]);
+
+    return result;
+}
+
+std::string uncapitalize(std::string_view s)
+{
+    auto result = std::string {s};
+
+    if (!result.empty())
+        result[0] = (char) std::tolower((unsigned char) result[0]);
+
+    return result;
+}
+
+bool equalsCaseInsensitive(std::string_view a, std::string_view b)
 {
     if (a.size() != b.size())
         return false;
