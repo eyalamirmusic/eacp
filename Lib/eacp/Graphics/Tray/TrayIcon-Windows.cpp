@@ -1,7 +1,7 @@
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "TrayIcon.h"
-#include "../Helpers/StringUtils-Windows.h"
+#include <eacp/Core/Utils/Strings.h>
 #include "../Helpers/DarkMode-Windows.h"
 #include "../Helpers/ImageConversion-Windows.h"
 
@@ -127,7 +127,7 @@ struct TrayIcon::Native
         if (!messageWindow)
             return;
 
-        auto wide = toWideString(text);
+        auto wide = Strings::widen(text);
         lstrcpynW(nid.szTip, wide.c_str(), ARRAYSIZE(nid.szTip));
         nid.uFlags |= NIF_TIP;
         Shell_NotifyIconW(NIM_MODIFY, &nid);
@@ -163,7 +163,7 @@ struct TrayIcon::Native
             return;
         }
 
-        auto wide = toWideString(item.title);
+        auto wide = Strings::widen(item.title);
 
         if (item.submenu)
         {

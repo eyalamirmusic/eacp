@@ -1,5 +1,6 @@
 #include "ChannelInternal.h"
 
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include <aclapi.h>
@@ -13,23 +14,6 @@ namespace
 // Sized for bulk payloads (video frames run to megabytes): the quota is
 // advisory, but an undersized one forces writer/reader ping-pong.
 constexpr auto pipeBufferSize = DWORD {1} << 20;
-
-std::wstring widen(const std::string& text)
-{
-    if (text.empty())
-        return {};
-
-    auto length = ::MultiByteToWideChar(
-        CP_UTF8, 0, text.c_str(), (int) text.size(), nullptr, 0);
-
-    if (length <= 0)
-        throw Error("cannot convert '" + text + "' to UTF-16");
-
-    auto wide = std::wstring((std::size_t) length, L'\0');
-    ::MultiByteToWideChar(
-        CP_UTF8, 0, text.c_str(), (int) text.size(), wide.data(), length);
-    return wide;
-}
 
 [[noreturn]] void fail(const std::string& context, DWORD reason)
 {
@@ -89,7 +73,7 @@ bool completed(HANDLE pipe, Operation& operation, DWORD& transferred, DWORD& rea
 
 std::wstring pipePath(const std::string& safeName)
 {
-    return widen("\\\\.\\pipe\\eacp.channels." + safeName);
+    return Strings::widen("\\\\.\\pipe\\eacp.channels." + safeName);
 }
 
 // Pipe names share one machine-global namespace with no directory to guard

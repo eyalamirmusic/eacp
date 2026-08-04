@@ -7,22 +7,8 @@
 namespace eacp::Graphics
 {
 
-inline std::wstring toWideString(const std::string& utf8)
-{
-    if (utf8.empty())
-        return {};
-
-    auto length = MultiByteToWideChar(
-        CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-    if (length <= 0)
-        return {};
-
-    auto wide = std::wstring(static_cast<size_t>(length), L'\0');
-    MultiByteToWideChar(
-        CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(), length);
-    return wide;
-}
-
+// The UTF-8 -> UTF-16 direction lives in eacp::Strings::widen (Core/Utils/Strings.h),
+// which is portable; this is the Windows-only return leg.
 inline std::string fromWideString(const std::wstring& wide)
 {
     if (wide.empty())

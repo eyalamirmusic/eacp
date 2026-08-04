@@ -1,5 +1,7 @@
 #include "FilePath.h"
 
+#include "Strings.h"
+
 #include <cstddef>
 #include <type_traits>
 
@@ -33,22 +35,6 @@ void appendUtf8(std::string& out, char32_t codepoint)
         out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
         out += static_cast<char>(0x80 | (codepoint & 0x3F));
     }
-}
-
-void appendWide(std::wstring& out, char32_t codepoint)
-{
-    if constexpr (sizeof(wchar_t) == 2)
-    {
-        if (codepoint >= 0x10000)
-        {
-            codepoint -= 0x10000;
-            out += static_cast<wchar_t>(0xD800 + (codepoint >> 10));
-            out += static_cast<wchar_t>(0xDC00 + (codepoint & 0x3FF));
-            return;
-        }
-    }
-
-    out += static_cast<wchar_t>(codepoint);
 }
 
 bool isLeadSurrogate(char32_t unit)
@@ -119,71 +105,7 @@ FilePath FilePath::parentDirectory() const
 
 std::wstring FilePath::wide() const
 {
-    auto out = std::wstring {};
-    out.reserve(text.size());
-
-    const auto size = text.size();
-    for (auto i = std::size_t {0}; i < size;)
-    {
-        const auto lead = static_cast<unsigned char>(text[i]);
-
-        auto length = std::size_t {0};
-        auto codepoint = char32_t {};
-
-        if (lead < 0x80)
-        {
-            length = 1;
-            codepoint = lead;
-        }
-        else if ((lead & 0xE0) == 0xC0)
-        {
-            length = 2;
-            codepoint = lead & 0x1F;
-        }
-        else if ((lead & 0xF0) == 0xE0)
-        {
-            length = 3;
-            codepoint = lead & 0x0F;
-        }
-        else if ((lead & 0xF8) == 0xF0)
-        {
-            length = 4;
-            codepoint = lead & 0x07;
-        }
-        else
-        {
-            appendWide(out, replacementChar);
-            ++i;
-            continue;
-        }
-
-        auto valid = i + length <= size;
-        for (auto j = std::size_t {1}; valid && j < length; ++j)
-        {
-            const auto byte = static_cast<unsigned char>(text[i + j]);
-            if ((byte & 0xC0) != 0x80)
-                valid = false;
-            else
-                codepoint = (codepoint << 6) | (byte & 0x3F);
-        }
-
-        if (!valid)
-        {
-            appendWide(out, replacementChar);
-            ++i;
-            continue;
-        }
-
-        constexpr char32_t minima[] = {0, 0, 0x80, 0x800, 0x10000};
-        if (codepoint < minima[length] || codepoint > 0x10FFFF
-            || isLeadSurrogate(codepoint) || isTrailSurrogate(codepoint))
-            codepoint = replacementChar;
-
-        appendWide(out, codepoint);
-        i += length;
-    }
-
-    return out;
+    return Strings::widen(text);
 }
 
 void FilePath::assignFromWide(std::wstring_view wide)

@@ -2,7 +2,7 @@
 #include "TextLayer.h"
 #include "NativeLayer-Windows.h"
 
-#include "../Helpers/StringUtils-Windows.h"
+#include <eacp/Core/Utils/Strings.h>
 
 namespace eacp::Graphics
 {
@@ -101,7 +101,7 @@ TextLayer::TextLayer()
 
 void TextLayer::setText(const std::string& text)
 {
-    impl->text = toWideString(text);
+    impl->text = Strings::widen(text);
     impl->markContentDirty();
 }
 

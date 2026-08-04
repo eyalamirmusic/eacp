@@ -1,6 +1,6 @@
 #include "Font.h"
 #include "../D2D-Windows.h"
-#include "../Helpers/StringUtils-Windows.h"
+#include <eacp/Core/Utils/Strings.h>
 
 namespace eacp::Graphics
 {
@@ -24,7 +24,7 @@ struct Font::Native
         if (!factory)
             return;
 
-        auto wideName = toWideString(options.name);
+        auto wideName = Strings::widen(options.name);
 
         // The shared collection carries fonts registered from memory, and the
         // resolver accepts the PostScript/full names CoreText accepts — an
