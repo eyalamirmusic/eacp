@@ -56,7 +56,8 @@ struct Window::Native
         , events(&eventsToUse)
         , minWidth(options.minWidth)
         , minHeight(options.minHeight)
-        , aspectRatio(options.aspectRatio)
+        , aspectRatio(options.hasAspectRatio() ? options.aspectRatio
+                                               : std::optional<Point> {})
         , hidesOnClose(options.hidesOnClose)
     {
         // Process-wide DPI awareness (per-monitor v2) is established by
@@ -396,7 +397,7 @@ struct Window::Native
     // constrained, so the constraint has to be applied by hand here.
     void applyAspectRatio(int& widthInPoints, int& heightInPoints, WPARAM edge) const
     {
-        if (!aspectRatio || aspectRatio->x <= 0.f || aspectRatio->y <= 0.f)
+        if (!aspectRatio)
             return;
 
         const auto ratio = aspectRatio->x / aspectRatio->y;
@@ -457,6 +458,43 @@ struct Window::Native
         if (minHeight > 0)
             info->ptMinTrackSize.y =
                 static_cast<LONG>(minHeight * scale) + insets.height;
+    }
+
+    // A maximise never passes through WM_SIZING, so it is the one shape the
+    // ratio lock would otherwise miss - a click on the maximise button giving
+    // the user what no amount of dragging can. macOS closes the same hole by
+    // denying fullscreen (WindowOptions::allowsFullScreen) and letting the
+    // green button zoom, which AppKit shapes to the ratio; this is that zoom.
+    //
+    // The system arrives with the work area already filled in, so shrink it to
+    // the largest rect of the right shape that fits and re-centre what is left.
+    // ptMaxTrackSize is deliberately untouched: it bounds dragging, not this.
+    void applyMaximizedSize(MINMAXINFO* info) const
+    {
+        if (!aspectRatio)
+            return;
+
+        auto insets = nonClientInsets(host.hwnd);
+        auto ratio = aspectRatio->x / aspectRatio->y;
+
+        auto availableWidth = info->ptMaxSize.x - insets.width;
+        auto availableHeight = info->ptMaxSize.y - insets.height;
+
+        if (availableWidth <= 0 || availableHeight <= 0)
+            return;
+
+        auto width = static_cast<LONG>(std::lround(availableHeight * ratio));
+        auto height = availableHeight;
+
+        if (width > availableWidth)
+        {
+            width = availableWidth;
+            height = static_cast<LONG>(std::lround(availableWidth / ratio));
+        }
+
+        info->ptMaxPosition.x += (availableWidth - width) / 2;
+        info->ptMaxPosition.y += (availableHeight - height) / 2;
+        info->ptMaxSize = {width + insets.width, height + insets.height};
     }
 
     bool isKeyPressed(uint16_t vk) const { return host.isKeyPressed(vk); }
@@ -570,9 +608,11 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             return 0;
 
         case WM_GETMINMAXINFO:
-            if (self->minWidth > 0 || self->minHeight > 0)
+            if (self->minWidth > 0 || self->minHeight > 0 || self->aspectRatio)
             {
-                self->applyMinTrackSize(reinterpret_cast<MINMAXINFO*>(lParam));
+                auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
+                self->applyMinTrackSize(info);
+                self->applyMaximizedSize(info);
                 return 0;
             }
             break;

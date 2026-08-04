@@ -84,6 +84,44 @@ auto tWindowOptionsNewAffordancesDefaultOff =
 // The icons are bring-your-own, and the providers are never null: the
 // defaults are callable and return an invalid Image, which keeps the
 // system default without any null checks at the call sites.
+// Fullscreen is the one resize a locked ratio cannot survive, so setting a
+// ratio is also a statement about fullscreen - unless the app says otherwise.
+auto tFullScreenFollowsAspectRatio =
+    test("WindowOptions/fullScreenClosesWithTheRatioLock") = []
+{
+    auto options = WindowOptions {};
+    check(options.effectiveAllowsFullScreen());
+
+    options.aspectRatio = Point {16.f, 9.f};
+    check(!options.effectiveAllowsFullScreen());
+
+    options.allowsFullScreen = true;
+    check(options.effectiveAllowsFullScreen());
+
+    options.allowsFullScreen = false;
+    options.aspectRatio.reset();
+    check(!options.effectiveAllowsFullScreen());
+};
+
+// Both platforms skip a ratio that describes no shape, so the default has to
+// agree with them: a zero or negative side must not cost the window its
+// fullscreen on the strength of a constraint nobody is enforcing.
+auto tDegenerateAspectRatioIsNoRatio =
+    test("WindowOptions/degenerateAspectRatioIsNotALock") = []
+{
+    auto options = WindowOptions {};
+
+    for (auto ratio: {Point {0.f, 0.f}, Point {16.f, 0.f}, Point {-16.f, 9.f}})
+    {
+        options.aspectRatio = ratio;
+        check(!options.hasAspectRatio());
+        check(options.effectiveAllowsFullScreen());
+    }
+
+    options.aspectRatio = Point {1920.f, 1080.f};
+    check(options.hasAspectRatio());
+};
+
 auto tIconProvidersDefaultToInvalidImage =
     test("WindowOptions/iconProvidersDefaultToInvalidImage") = []
 {

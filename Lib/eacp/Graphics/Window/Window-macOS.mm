@@ -404,9 +404,9 @@ struct Window::Native
         // AppKit enforces this itself on every resize path there is - the edge
         // drag, the corner drag, zoom and the green button - so there is no
         // callback to write, and no moment where the window holds a shape the
-        // constraint forbids.
-        if (options.aspectRatio && options.aspectRatio->x > 0.f
-            && options.aspectRatio->y > 0.f)
+        // constraint forbids. Fullscreen is the exception, and the exception
+        // is what applyCollectionBehavior takes away.
+        if (options.hasAspectRatio())
             [getWindow()
                 setContentAspectRatio:NSMakeSize(options.aspectRatio->x,
                                                  options.aspectRatio->y)];
@@ -414,11 +414,7 @@ struct Window::Native
         if (options.alwaysOnTop)
             [getWindow() setLevel:NSFloatingWindowLevel];
 
-        if (options.visibleOnAllWorkspaces)
-            [getWindow()
-                setCollectionBehavior:
-                    NSWindowCollectionBehaviorCanJoinAllSpaces
-                    | NSWindowCollectionBehaviorFullScreenAuxiliary];
+        applyCollectionBehavior();
 
         if (options.initialPosition)
         {
@@ -530,6 +526,34 @@ struct Window::Native
         }
     }
 
+    // The Spaces and fullscreen behaviours share one mask, so they are set
+    // together, on top of whatever the window class already carries.
+    void applyCollectionBehavior()
+    {
+        auto behavior = [getWindow() collectionBehavior];
+
+        // FullScreenAuxiliary is already a denial: it is the behaviour of a
+        // palette riding along with someone else's fullscreen, which is not a
+        // window that takes the screen itself. So it doubles as the opt-out,
+        // and dropping it for FullScreenNone would cost the Spaces behaviour
+        // to buy something it already has.
+        if (opts.visibleOnAllWorkspaces)
+        {
+            behavior |= NSWindowCollectionBehaviorCanJoinAllSpaces
+                        | NSWindowCollectionBehaviorFullScreenAuxiliary;
+        }
+        else if (!opts.effectiveAllowsFullScreen())
+        {
+            // The three fullscreen behaviours are one either/or slot, so the
+            // opt-out replaces whatever is sitting in it.
+            behavior &= ~(NSWindowCollectionBehaviorFullScreenPrimary
+                          | NSWindowCollectionBehaviorFullScreenAuxiliary);
+            behavior |= NSWindowCollectionBehaviorFullScreenNone;
+        }
+
+        [getWindow() setCollectionBehavior:behavior];
+    }
+
     void setVisible(bool visible)
     {
         if (eacp::Apps::getAppEnvironment().headless)
@@ -556,11 +580,7 @@ struct Window::Native
         if (opts.alwaysOnTop)
             [getWindow() setLevel:NSFloatingWindowLevel];
 
-        if (opts.visibleOnAllWorkspaces)
-            [getWindow()
-                setCollectionBehavior:
-                    NSWindowCollectionBehaviorCanJoinAllSpaces
-                    | NSWindowCollectionBehaviorFullScreenAuxiliary];
+        applyCollectionBehavior();
 
         if (opts.showInactive)
             [getWindow() orderFront:nil];
