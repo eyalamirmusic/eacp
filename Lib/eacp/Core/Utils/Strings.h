@@ -13,7 +13,14 @@ std::string trim(std::string_view s);
 // ASCII-only lowercasing, for matching extensions, header names and the like.
 std::string toLower(std::string_view s);
 
-bool equalsCaseInsensitive(const std::string& a, const std::string& b);
+// Changes the case of the first character only, leaving the rest as written -
+// for identifiers and labels, where lowercasing the whole string would destroy
+// casing that is already meaningful ("Escape", not "ESCAPE"). Empty in, empty
+// out.
+std::string capitalize(std::string_view s);
+std::string uncapitalize(std::string_view s);
+
+bool equalsCaseInsensitive(std::string_view a, std::string_view b);
 
 int hexCharToInt(char c);
 

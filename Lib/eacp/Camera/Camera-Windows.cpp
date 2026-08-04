@@ -1,3 +1,4 @@
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/WinInclude.h>
 #include <chrono>
 
@@ -61,7 +62,7 @@ void ensureApartment()
 
 bool isUncompressedSubtype(const winrt::hstring& subtype)
 {
-    auto name = winrt::to_string(subtype);
+    auto name = Strings::narrow(subtype);
     return _stricmp(name.c_str(), "NV12") == 0
            || _stricmp(name.c_str(), "YUY2") == 0;
 }
@@ -407,8 +408,8 @@ Vector<CameraDevice> Camera::devices()
                 for (auto const& device: found)
                 {
                     auto info = CameraDevice {};
-                    info.id = winrt::to_string(device.Id());
-                    info.name = winrt::to_string(device.Name());
+                    info.id = Strings::narrow(device.Id());
+                    info.name = Strings::narrow(device.Name());
                     info.isFrontFacing = false;
                     result.push_back(std::move(info));
                 }

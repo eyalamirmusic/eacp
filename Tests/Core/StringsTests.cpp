@@ -147,3 +147,32 @@ auto tTrimAcceptsAView = test("Strings/trim accepts a string_view") = []
     const auto text = std::string_view {"[ padded ]"};
     check(trim(text.substr(1, 8)) == "padded");
 };
+
+// capitalize/uncapitalize touch the first character only — the whole point is
+// that "Escape" must not become "ESCAPE".
+
+auto tCapitalize = test("Strings/capitalize") = []
+{
+    check(eacp::Strings::capitalize("s") == "S");
+    check(eacp::Strings::capitalize("escape") == "Escape");
+    check(eacp::Strings::capitalize("Escape") == "Escape");
+    check(eacp::Strings::capitalize("F5") == "F5");
+    check(eacp::Strings::capitalize("myApiName") == "MyApiName");
+    check(eacp::Strings::capitalize("+") == "+");
+    check(eacp::Strings::capitalize("").empty());
+};
+
+auto tUncapitalize = test("Strings/uncapitalize") = []
+{
+    check(eacp::Strings::uncapitalize("Clock") == "clock");
+    check(eacp::Strings::uncapitalize("clock") == "clock");
+    check(eacp::Strings::uncapitalize("ABC") == "aBC");
+    check(eacp::Strings::uncapitalize("").empty());
+};
+
+auto tToLower = test("Strings/toLower") = []
+{
+    check(eacp::Strings::toLower(".WAV") == ".wav");
+    check(eacp::Strings::toLower("MiXeD") == "mixed");
+    check(eacp::Strings::toLower("").empty());
+};

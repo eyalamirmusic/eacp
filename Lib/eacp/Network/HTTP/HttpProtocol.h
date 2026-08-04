@@ -8,6 +8,14 @@ namespace eacp::HTTP
 std::string findHeaderIgnoringCase(const std::map<std::string, std::string>& headers,
                                    const std::string& key);
 
+// Splits one "Name: value" line on its first colon and stores the trimmed
+// halves. Lines with no colon, and lines whose name is empty, are ignored - both
+// are what a status line or a stray CRLF looks like. Every backend reads its
+// header block from somewhere different (curl callback, WinHTTP raw block, our
+// own socket parser) but they all arrive at this one line format.
+void addHeaderLine(std::string_view line,
+                   std::map<std::string, std::string>& headers);
+
 bool acceptsByteRanges(const std::string& acceptRangesHeaderValue);
 
 std::string serializeResponse(const Response& response);
