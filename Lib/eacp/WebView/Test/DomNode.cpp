@@ -1,5 +1,7 @@
 #include "DomNode.h"
 
+#include <eacp/Core/Utils/Strings.h>
+
 namespace eacp::WebView::Test
 {
 
@@ -32,16 +34,6 @@ bool isAsciiSpace(char c)
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
-std::string trimAscii(std::string_view input)
-{
-    auto begin = input.find_first_not_of(" \t\n\r");
-    if (begin == std::string_view::npos)
-        return {};
-
-    auto end = input.find_last_not_of(" \t\n\r");
-    return std::string {input.substr(begin, end - begin + 1)};
-}
-
 std::string stripQuotes(std::string_view input)
 {
     if (input.size() >= 2 && (input.front() == '"' || input.front() == '\'')
@@ -55,10 +47,10 @@ AttrCondition parseAttr(std::string_view body)
 {
     auto eq = body.find('=');
     if (eq == std::string_view::npos)
-        return AttrCondition {trimAscii(body), std::nullopt};
+        return AttrCondition {Strings::trim(body), std::nullopt};
 
-    auto name = trimAscii(body.substr(0, eq));
-    auto value = stripQuotes(trimAscii(body.substr(eq + 1)));
+    auto name = Strings::trim(body.substr(0, eq));
+    auto value = stripQuotes(Strings::trim(body.substr(eq + 1)));
     return AttrCondition {std::move(name), std::move(value)};
 }
 

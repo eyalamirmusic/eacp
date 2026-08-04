@@ -1,6 +1,6 @@
 #include "TextMetrics.h"
 #include "../D2D-Windows.h"
-#include "../Helpers/StringUtils-Windows.h"
+#include <eacp/Core/Utils/Strings.h>
 
 namespace eacp::Graphics
 {
@@ -20,7 +20,7 @@ float TextMetrics::measureWidth(const std::string& text, const Font& font)
     if (!textFormat || !factory)
         return 0.0f;
 
-    auto wideText = toWideString(text);
+    auto wideText = Strings::widen(text);
 
     auto textLayout = ComPtr<IDWriteTextLayout>();
     factory->CreateTextLayout(wideText.c_str(),
@@ -63,7 +63,7 @@ size_t TextMetrics::getIndexForOffset(const std::string& text,
     if (!textFormat || !factory)
         return 0;
 
-    auto wideText = toWideString(text);
+    auto wideText = Strings::widen(text);
     auto textLayout = ComPtr<IDWriteTextLayout>();
     factory->CreateTextLayout(wideText.c_str(),
                               static_cast<UINT32>(wideText.length()),

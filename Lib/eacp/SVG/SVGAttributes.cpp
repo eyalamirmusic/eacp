@@ -1,6 +1,8 @@
 #include "SVGAttributes.h"
 #include "NumberReader.h"
 
+#include <eacp/Core/Utils/Strings.h>
+
 #include <algorithm>
 #include <sstream>
 
@@ -331,15 +333,6 @@ void forEachToken(const std::string& value, Consumer&& consume)
     }
 }
 
-std::string trimmed(const std::string& value)
-{
-    auto first = value.find_first_not_of(" \t\r\n");
-
-    if (first == std::string::npos)
-        return {};
-
-    return value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
-}
 } // namespace
 
 PreserveAspectRatio parsePreserveAspectRatio(const std::string& value)
@@ -421,11 +414,11 @@ std::unordered_map<std::string, std::string>
 
         if (colon != std::string::npos && colon < end)
         {
-            auto property = trimmed(value.substr(pos, colon - pos));
+            auto property = Strings::trim(value.substr(pos, colon - pos));
 
             if (!property.empty())
                 declarations[property] =
-                    trimmed(value.substr(colon + 1, end - colon - 1));
+                    Strings::trim(value.substr(colon + 1, end - colon - 1));
         }
 
         pos = end + 1;
@@ -472,7 +465,7 @@ std::string parsePaintReference(const std::string& value)
     if (close == std::string::npos)
         return {};
 
-    auto reference = trimmed(value.substr(open + 4, close - open - 4));
+    auto reference = Strings::trim(value.substr(open + 4, close - open - 4));
 
     // Quoted is legal and common: url('#id') and url("#id") mean what url(#id)
     // does.

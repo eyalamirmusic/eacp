@@ -2,9 +2,9 @@
 
 #include "Encoder-Apple.h"
 
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Graphics/Graphics.h>
 
-#include <cctype>
 #include <cstdint>
 
 namespace eacp::Video
@@ -13,9 +13,7 @@ namespace
 {
 NSString* fileTypeForPath(const FilePath& path)
 {
-    auto extension = path.extension();
-    for (auto& c: extension)
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    auto extension = Strings::toLower(path.extension());
 
     if (extension == ".mp4" || extension == "mp4")
         return AVFileTypeMPEG4;

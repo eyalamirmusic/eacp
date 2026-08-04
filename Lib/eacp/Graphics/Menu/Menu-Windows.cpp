@@ -1,6 +1,6 @@
 #include "Menu.h"
 
-#include "../Helpers/StringUtils-Windows.h"
+#include <eacp/Core/Utils/Strings.h>
 #include "../Window/Window.h"
 #include "MenuCommands.h"
 #include "Win32Menu.h"
@@ -63,7 +63,7 @@ std::wstring toMenuText(const std::string& text)
             escaped += '&';
     }
 
-    return toWideString(escaped);
+    return Strings::widen(escaped);
 }
 
 void appendItem(HMENU parent, const MenuItem& item, unsigned& nextId)

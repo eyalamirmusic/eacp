@@ -1,5 +1,6 @@
 #include <eacp/WebView/WebView.h>
 #include <eacp/Core/Utils/StdPath.h>
+#include <eacp/Core/Utils/Strings.h>
 #include <WebResources.h>
 #include <algorithm>
 
@@ -25,13 +26,7 @@ constexpr std::array audioExtensions = {
 
 std::string lowerExtension(const std::filesystem::path& path)
 {
-    auto ext = path.extension().string();
-    std::transform(ext.begin(),
-                   ext.end(),
-                   ext.begin(),
-                   [](unsigned char c)
-                   { return static_cast<char>(std::tolower(c)); });
-    return ext;
+    return Strings::toLower(path.extension().string());
 }
 
 bool isAudioFile(const std::filesystem::path& path)

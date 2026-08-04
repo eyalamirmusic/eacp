@@ -1,6 +1,6 @@
 #include "View.h"
 #include "../Graphics/GraphicsContext.h"
-#include "../Helpers/StringUtils-Windows.h"
+#include <eacp/Core/Utils/Strings.h>
 #include "../Image/Image.h"
 #include "../Layers/NativeLayer-Windows.h"
 
@@ -226,7 +226,7 @@ public:
 
         applyTransform();
 
-        auto wide = toWideString(text);
+        auto wide = Strings::widen(text);
         auto fontSize = format->GetFontSize();
 
         // CoreGraphics positions text on the baseline; DWrite lays it out from

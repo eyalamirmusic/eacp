@@ -14,7 +14,8 @@ set(core_test_sources
         MemoryMappedFileTests.cpp
         PluginObjectTests.cpp
         ProcessInheritStdioTests.cpp
-        RangeTests.cpp)
+        RangeTests.cpp
+        StringsTests.cpp)
 
 # Cross-platform proof for captureOutput=false: redirect the test's own
 # stdout to a file and assert a non-capturing child writes through to it,

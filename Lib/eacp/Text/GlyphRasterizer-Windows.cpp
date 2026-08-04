@@ -2,7 +2,7 @@
 
 #include <eacp/Core/Utils/WinInclude.h>
 #include <eacp/Graphics/D2D-Windows.h>
-#include <eacp/Graphics/Helpers/StringUtils-Windows.h>
+#include <eacp/Core/Utils/Strings.h>
 
 // d2d1.h first: DWRITE_COLOR_F is an alias for the D2D colour struct, and
 // dwrite_3.h only picks up the C++ spelling when D2D's headers came before it.
@@ -33,7 +33,6 @@ namespace eacp::Text
 {
 namespace
 {
-using Graphics::toWideString;
 using Microsoft::WRL::ComPtr;
 
 // Grayscale, never ClearType. The atlas stores coverage and the colour arrives
@@ -225,7 +224,7 @@ struct GlyphRasterizer::Native
         // CoreText matching rules, so the one name callers ship works on both
         // platforms.
         if (auto resolved =
-                Graphics::resolveFontFamilyName(toWideString(request.family));
+                Graphics::resolveFontFamilyName(Strings::widen(request.family));
             !resolved.empty())
             return resolved;
 

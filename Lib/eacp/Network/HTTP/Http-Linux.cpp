@@ -1,4 +1,5 @@
 #include "Http.h"
+#include "HttpProtocol.h"
 
 #include <curl/curl.h>
 
@@ -30,17 +31,9 @@ size_t writeToString(void* contents, size_t size, size_t nmemb, void* userp)
 size_t headerCallback(char* buffer, size_t size, size_t nitems, void* userp)
 {
     auto total = size * nitems;
-    auto line = std::string(buffer, total);
     auto& headers = *static_cast<std::map<std::string, std::string>*>(userp);
 
-    auto colon = line.find(':');
-    if (colon != std::string::npos)
-    {
-        auto key = Strings::trim(line.substr(0, colon));
-        auto value = Strings::trim(line.substr(colon + 1));
-        if (!key.empty())
-            headers[key] = value;
-    }
+    addHeaderLine(std::string_view {buffer, total}, headers);
 
     return total;
 }

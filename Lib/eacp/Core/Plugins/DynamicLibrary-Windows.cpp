@@ -6,29 +6,11 @@
 
 namespace eacp::Plugins
 {
-namespace
-{
-std::wstring toWide(const std::string& text)
-{
-    if (text.empty())
-        return {};
-
-    auto length =
-        MultiByteToWideChar(CP_UTF8, 0, text.data(), (int) text.size(), nullptr, 0);
-
-    auto result = std::wstring((std::size_t) length, L'\0');
-    MultiByteToWideChar(
-        CP_UTF8, 0, text.data(), (int) text.size(), result.data(), length);
-
-    return result;
-}
-} // namespace
-
 namespace Detail
 {
 void* loadImage(const FilePath& path)
 {
-    return LoadLibraryW(toWide(path.str()).c_str());
+    return LoadLibraryW(path.wide().c_str());
 }
 
 void unloadImage(void* handle)

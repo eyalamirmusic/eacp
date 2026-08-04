@@ -1,5 +1,5 @@
 #include "CompositionHostWindow-Windows.h"
-#include "../Helpers/StringUtils-Windows.h"
+#include <eacp/Core/Utils/Strings.h>
 #include "../Helpers/SystemAppearance.h"
 #include "../Layers/NativeLayer-Windows.h"
 
@@ -817,7 +817,7 @@ std::string CompositionHostWindow::takePendingCharacters() const
            || PeekMessageW(&charMsg, hwnd, WM_SYSCHAR, WM_SYSCHAR, PM_REMOVE))
         wide.push_back(static_cast<wchar_t>(charMsg.wParam));
 
-    return fromWideString(wide);
+    return Strings::narrow(wide);
 }
 
 void CompositionHostWindow::synthesizeMouseUpOnCaptureLoss()

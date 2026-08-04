@@ -39,7 +39,7 @@ Vector<std::string> buildEnvironment(const Vector<EnvironmentVariable>& override
         auto replaced = false;
 
         for (auto& entry: entries)
-            if (entry.rfind(prefix, 0) == 0)
+            if (entry.starts_with(prefix))
             {
                 entry = prefix + var.value;
                 replaced = true;

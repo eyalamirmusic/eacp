@@ -1,6 +1,8 @@
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "Http.h"
+#include "HttpProtocol.h"
 
 #include <winhttp.h>
 
@@ -13,44 +15,6 @@ namespace eacp::HTTP
 
 namespace
 {
-
-std::wstring toWide(const std::string& utf8)
-{
-    if (utf8.empty())
-        return {};
-
-    auto length = MultiByteToWideChar(
-        CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-    auto wide = std::wstring(static_cast<size_t>(length), L'\0');
-    MultiByteToWideChar(
-        CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(), length);
-    return wide;
-}
-
-std::string fromWide(const std::wstring& wide)
-{
-    if (wide.empty())
-        return {};
-
-    auto length = WideCharToMultiByte(CP_UTF8,
-                                      0,
-                                      wide.data(),
-                                      static_cast<int>(wide.size()),
-                                      nullptr,
-                                      0,
-                                      nullptr,
-                                      nullptr);
-    auto utf8 = std::string(static_cast<size_t>(length), '\0');
-    WideCharToMultiByte(CP_UTF8,
-                        0,
-                        wide.data(),
-                        static_cast<int>(wide.size()),
-                        utf8.data(),
-                        length,
-                        nullptr,
-                        nullptr);
-    return utf8;
-}
 
 [[noreturn]] void throwLastError(const std::string& what)
 {
@@ -68,7 +32,7 @@ std::string fromWide(const std::wstring& wide)
                    static_cast<DWORD>(std::size(text)),
                    nullptr);
 
-    auto message = Strings::trim(fromWide(text));
+    auto message = Strings::trim(Strings::narrow(text));
     if (message.empty())
         message = what + " failed (error " + std::to_string(code) + ")";
 
@@ -144,7 +108,7 @@ struct CrackedUrl
 
 CrackedUrl crackUrl(const std::string& url)
 {
-    auto wide = toWide(url);
+    auto wide = Strings::widen(url);
 
     auto parts = URL_COMPONENTS {};
     parts.dwStructSize = sizeof(parts);
@@ -196,7 +160,7 @@ OpenedRequest sendRequest(const Request& req)
 
     opened.request =
         Handle(WinHttpOpenRequest(opened.connection.handle,
-                                  toWide(req.type).c_str(),
+                                  Strings::widen(req.type).c_str(),
                                   cracked.pathWithQuery.c_str(),
                                   nullptr,
                                   WINHTTP_NO_REFERER,
@@ -223,7 +187,7 @@ OpenedRequest sendRequest(const Request& req)
         headerLines.append("\r\n");
     }
 
-    auto headerBlock = toWide(headerLines);
+    auto headerBlock = Strings::widen(headerLines);
 
     if (!headerBlock.empty())
         WinHttpAddRequestHeaders(opened.request.handle,
@@ -288,7 +252,7 @@ void copyResponseHeaders(HINTERNET request, Response& response)
                              WINHTTP_NO_HEADER_INDEX))
         return;
 
-    auto text = fromWide(raw);
+    auto text = Strings::narrow(raw);
     auto start = size_t {0};
 
     while (start < text.size())
@@ -297,16 +261,8 @@ void copyResponseHeaders(HINTERNET request, Response& response)
         if (end == std::string::npos)
             end = text.size();
 
-        auto line = text.substr(start, end - start);
-        auto colon = line.find(':');
-
-        if (colon != std::string::npos)
-        {
-            auto key = Strings::trim(line.substr(0, colon));
-            auto value = Strings::trim(line.substr(colon + 1));
-            if (!key.empty())
-                response.headers[key] = value;
-        }
+        addHeaderLine(std::string_view {text}.substr(start, end - start),
+                      response.headers);
 
         start = end + 2;
     }
@@ -327,7 +283,7 @@ std::int64_t queryContentLength(HINTERNET request)
 
     try
     {
-        return std::stoll(fromWide(text));
+        return std::stoll(Strings::narrow(text));
     }
     catch (...)
     {
@@ -364,7 +320,7 @@ std::string readBodyToString(HINTERNET request)
 
 HANDLE openDestinationFileForWrite(const std::string& filePath)
 {
-    auto handle = CreateFileW(toWide(filePath).c_str(),
+    auto handle = CreateFileW(Strings::widen(filePath).c_str(),
                               GENERIC_WRITE,
                               0,
                               nullptr,

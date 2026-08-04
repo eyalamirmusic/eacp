@@ -2,7 +2,8 @@
 
 #include <Miro/CommandExport/ResolvedTypes.h>
 
-#include <cctype>
+#include <eacp/Core/Utils/Strings.h>
+
 #include <sstream>
 
 namespace eacp::Graphics::Codegen
@@ -31,26 +32,6 @@ std::string_view tsPrimitiveLocal(PrimitiveKind kind)
             return "number";
     }
     return "unknown";
-}
-
-std::string capitalizeFirst(std::string_view s)
-{
-    if (s.empty())
-        return {};
-
-    auto r = std::string {s};
-    r[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(r[0])));
-    return r;
-}
-
-std::string lowerFirst(std::string_view s)
-{
-    if (s.empty())
-        return {};
-
-    auto r = std::string {s};
-    r[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(r[0])));
-    return r;
 }
 
 // Wire-name segmentation. ApiReflector::joinedName joins sub-API
@@ -83,7 +64,7 @@ std::string toPascalConcat(std::string_view name)
 {
     auto out = std::string {};
     for (auto seg: splitOnDot(name))
-        out += capitalizeFirst(seg);
+        out += Strings::capitalize(seg);
     return out;
 }
 
@@ -96,9 +77,9 @@ std::string toCamelConcat(std::string_view name)
     if (segments.empty())
         return {};
 
-    auto out = std::string {lowerFirst(segments.front())};
+    auto out = std::string {Strings::uncapitalize(segments.front())};
     for (auto i = 1; i < segments.size(); ++i)
-        out += capitalizeFirst(segments[i]);
+        out += Strings::capitalize(segments[i]);
     return out;
 }
 
@@ -119,7 +100,7 @@ std::string getCommandNameFor(std::string_view eventName)
         out += '.';
     }
     out += "get";
-    out += capitalizeFirst(segments.back());
+    out += Strings::capitalize(segments.back());
     return out;
 }
 
