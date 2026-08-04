@@ -7,6 +7,7 @@
 #include "../Device/Device.h"
 
 #include <eacp/Core/Threads/ThreadUtils.h>
+#include <eacp/Core/Utils/Strings.h>
 
 #include <algorithm>
 #include <cassert>
@@ -133,7 +134,7 @@ std::string describeAdapter(ID3D12Device* device)
     if (FAILED(adapter->GetDesc1(&description)))
         return "unknown adapter";
 
-    return winrt::to_string(std::wstring_view {description.Description});
+    return Strings::narrow(description.Description);
 }
 
 winrt::com_ptr<ID3D12RootSignature>

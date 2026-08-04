@@ -7,7 +7,6 @@
 #include "FileDrag-Windows.h"
 #include <eacp/Graphics/DComp-Windows.h>
 #include <eacp/Core/Utils/Strings.h>
-#include <eacp/Graphics/Helpers/StringUtils-Windows.h>
 #include <eacp/Core/Threads/ThreadUtils.h>
 
 #include <atomic>
@@ -59,7 +58,7 @@ struct CoTaskMemString
     {
         if (!ptr)
             return "";
-        return fromWideString(ptr);
+        return Strings::narrow(ptr);
     }
 
     LPWSTR ptr = nullptr;
@@ -917,7 +916,7 @@ struct WebView::Native
                             // when the value is a string so both backends look
                             // the same to callers; numbers / bools / objects
                             // pass through.
-                            auto rawJson = fromWideString(resultJson);
+                            auto rawJson = Strings::narrow(resultJson);
                             try
                             {
                                 auto value = Miro::Json::parse(rawJson);

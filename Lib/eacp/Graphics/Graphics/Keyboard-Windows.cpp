@@ -2,7 +2,7 @@
 
 #include "Keyboard.h"
 #include "../Window/Window.h"
-#include "../Helpers/StringUtils-Windows.h"
+#include <eacp/Core/Utils/Strings.h>
 
 namespace eacp::Graphics
 {
@@ -144,7 +144,7 @@ std::string characterForVirtualKey(int vk)
     int result = ToUnicode(vk, 0, keyState, buffer, 4, 0);
 
     if (result > 0)
-        return fromWideString(std::wstring(buffer, result));
+        return Strings::narrow(std::wstring(buffer, result));
 
     return "";
 }

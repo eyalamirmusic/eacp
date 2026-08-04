@@ -59,6 +59,11 @@ public:
     static FilePath appDataDirectory();
     static FilePath cacheDirectory();
 
+    // Builds a path from a native wide string — a Win32 out-parameter, a
+    // GetModuleFileNameW buffer. Converts to UTF-8 and normalizes '\' to '/',
+    // the same treatment the std::filesystem::path constructor above gets.
+    static FilePath fromWide(std::wstring_view wide);
+
     const std::string& str() const;
     const char* c_str() const;
     bool empty() const;
