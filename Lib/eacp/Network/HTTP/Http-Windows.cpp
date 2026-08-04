@@ -1,3 +1,4 @@
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include "Http.h"
@@ -13,19 +14,6 @@ namespace eacp::HTTP
 
 namespace
 {
-
-std::wstring toWide(const std::string& utf8)
-{
-    if (utf8.empty())
-        return {};
-
-    auto length = MultiByteToWideChar(
-        CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-    auto wide = std::wstring(static_cast<size_t>(length), L'\0');
-    MultiByteToWideChar(
-        CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(), length);
-    return wide;
-}
 
 std::string fromWide(const std::wstring& wide)
 {
@@ -144,7 +132,7 @@ struct CrackedUrl
 
 CrackedUrl crackUrl(const std::string& url)
 {
-    auto wide = toWide(url);
+    auto wide = Strings::widen(url);
 
     auto parts = URL_COMPONENTS {};
     parts.dwStructSize = sizeof(parts);
@@ -196,7 +184,7 @@ OpenedRequest sendRequest(const Request& req)
 
     opened.request =
         Handle(WinHttpOpenRequest(opened.connection.handle,
-                                  toWide(req.type).c_str(),
+                                  Strings::widen(req.type).c_str(),
                                   cracked.pathWithQuery.c_str(),
                                   nullptr,
                                   WINHTTP_NO_REFERER,
@@ -223,7 +211,7 @@ OpenedRequest sendRequest(const Request& req)
         headerLines.append("\r\n");
     }
 
-    auto headerBlock = toWide(headerLines);
+    auto headerBlock = Strings::widen(headerLines);
 
     if (!headerBlock.empty())
         WinHttpAddRequestHeaders(opened.request.handle,
@@ -364,7 +352,7 @@ std::string readBodyToString(HINTERNET request)
 
 HANDLE openDestinationFileForWrite(const std::string& filePath)
 {
-    auto handle = CreateFileW(toWide(filePath).c_str(),
+    auto handle = CreateFileW(Strings::widen(filePath).c_str(),
                               GENERIC_WRITE,
                               0,
                               nullptr,

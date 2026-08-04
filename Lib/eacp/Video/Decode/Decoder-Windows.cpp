@@ -40,21 +40,6 @@ using Microsoft::WRL::ComPtr;
 
 constexpr auto hundredNanosPerSecond = 10'000'000.0;
 
-// FilePath carries UTF-8; Media Foundation wants a wide URL.
-std::wstring widen(const char* utf8)
-{
-    auto length = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, nullptr, 0);
-    if (length <= 0)
-        return {};
-
-    std::wstring wide(static_cast<std::size_t>(length), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wide.data(), length);
-    if (!wide.empty() && wide.back() == L'\0')
-        wide.pop_back();
-
-    return wide;
-}
-
 // COM is per-thread state: initialised on every thread that calls into Media
 // Foundation and released on that same thread. This decoder is driven from two
 // — open() by whoever opened the stream, nextFrame() and seek() by FrameStream's
@@ -213,7 +198,8 @@ struct WindowsDecoder final : Decoder
         attributes->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
                               TRUE);
 
-        auto url = widen(path.c_str());
+        // FilePath carries UTF-8; Media Foundation wants a wide URL.
+        auto url = path.wide();
         if (FAILED(
                 MFCreateSourceReaderFromURL(url.c_str(), attributes.Get(), &reader)))
             return false;

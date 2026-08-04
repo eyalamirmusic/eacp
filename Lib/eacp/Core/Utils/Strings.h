@@ -15,6 +15,19 @@ bool equalsCaseInsensitive(const std::string& a, const std::string& b);
 
 int hexCharToInt(char c);
 
+// UTF-8 -> the platform's wide encoding: UTF-16 where wchar_t is 16 bits
+// (Windows), UTF-32 where it is 32 (Linux, macOS). This is the single place the
+// framework crosses that boundary - every Win32 -W call, Media Foundation URL
+// and DirectWrite string goes through here.
+//
+// Hand-rolled rather than MultiByteToWideChar so one implementation serves every
+// platform, and so the answer never depends on a code page or a locale.
+//
+// Malformed input is not an error: each ill-formed byte becomes U+FFFD and the
+// scan resumes at the next one, so this neither throws nor fails. Callers that
+// must reject bad UTF-8 have to check before converting.
+std::wstring widen(std::string_view utf8);
+
 // Number/bool → string. String-like and char inputs pass through unchanged so
 // callers can concatenate heterogeneous values without minding their types.
 // This is the single place the framework turns a value into text (see LOG).

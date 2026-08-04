@@ -3,6 +3,8 @@
 #include "App.h"
 #include "App-Windows-FilePicker.h"
 
+#include "../Utils/Strings.h"
+
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <wincrypt.h>
@@ -54,7 +56,7 @@ void openExternalURL(const std::string& url)
     if (url.empty())
         return;
 
-    auto wide = std::wstring(winrt::to_hstring(url));
+    auto wide = Strings::widen(url);
 
     ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
@@ -221,13 +223,13 @@ std::optional<std::wstring> showShellSaveDialog(const FileSaveOptions& options)
 
             // So a name typed without one still lands on the right extension.
             const auto defaultExtension =
-                std::wstring(winrt::to_hstring(options.allowedExtensions[0]));
+                Strings::widen(options.allowedExtensions[0]);
             dialog->SetDefaultExtension(defaultExtension.c_str());
         }
 
         if (!options.suggestedName.empty())
         {
-            const auto name = std::wstring(winrt::to_hstring(options.suggestedName));
+            const auto name = Strings::widen(options.suggestedName);
             dialog->SetFileName(name.c_str());
         }
 

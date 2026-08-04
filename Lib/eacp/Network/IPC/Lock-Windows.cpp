@@ -6,23 +6,6 @@ namespace eacp::IPC::detail
 {
 namespace
 {
-std::wstring toWide(const std::string& text)
-{
-    if (text.empty())
-        return {};
-
-    auto length = ::MultiByteToWideChar(
-        CP_UTF8, 0, text.c_str(), (int) text.size(), nullptr, 0);
-
-    if (length <= 0)
-        throw Error("cannot convert '" + text + "' to UTF-16");
-
-    auto wide = std::wstring((std::size_t) length, L'\0');
-    ::MultiByteToWideChar(
-        CP_UTF8, 0, text.c_str(), (int) text.size(), wide.data(), length);
-    return wide;
-}
-
 [[noreturn]] void throwLastError(const std::string& context)
 {
     throw Error(context + ": Windows error " + std::to_string(::GetLastError()));
@@ -36,7 +19,7 @@ NativeFile lockFileOpen(const FilePath& path)
     // here, or losing the race would throw instead of returning false. The
     // null security attributes leave the handle uninheritable, matching what
     // O_CLOEXEC buys on POSIX.
-    auto handle = ::CreateFileW(toWide(path.str()).c_str(),
+    auto handle = ::CreateFileW(path.wide().c_str(),
                                 GENERIC_READ | GENERIC_WRITE,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE,
                                 nullptr,

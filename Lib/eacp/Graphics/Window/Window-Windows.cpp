@@ -2,7 +2,7 @@
 
 #include "Window.h"
 #include "CompositionHostWindow-Windows.h"
-#include "../Helpers/StringUtils-Windows.h"
+#include <eacp/Core/Utils/Strings.h>
 #include "../Helpers/DarkMode-Windows.h"
 #include "../Helpers/ImageConversion-Windows.h"
 #include "../Helpers/SystemAppearance.h"
@@ -147,7 +147,7 @@ struct Window::Native
         }
 
         std::wstring wideTitle =
-            options.showTitle ? toWideString(options.title) : std::wstring {};
+            options.showTitle ? Strings::widen(options.title) : std::wstring {};
 
         auto dpi = GetDpiForSystem();
         auto dpiScale = static_cast<float>(dpi) / 96.f;
@@ -367,7 +367,7 @@ struct Window::Native
 
     void setTitle(const std::string& title) const
     {
-        auto wideTitle = toWideString(title);
+        auto wideTitle = Strings::widen(title);
         SetWindowTextW(host.hwnd, wideTitle.c_str());
     }
 
