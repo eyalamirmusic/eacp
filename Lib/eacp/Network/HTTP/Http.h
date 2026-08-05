@@ -3,10 +3,21 @@
 #include "../Common.h"
 
 #include <atomic>
+#include <functional>
 #include <map>
+#include <string_view>
 
 namespace eacp::HTTP
 {
+
+// Receives the response body in the pieces it arrives in.
+//
+// Called on whichever thread the platform's transport delivers on, which is
+// not the caller's. What is guaranteed is the lifetime: the calling thread
+// stays blocked inside stream() until the body ends, and no chunk is
+// delivered after it returns - so a callback capturing a local is safe, and
+// one touching shared state needs its own synchronisation.
+using ChunkCallback = std::function<void(std::string_view)>;
 
 struct Response
 {
@@ -58,6 +69,17 @@ struct Request
     Response perform() const;
     Response downloadTo(const std::string& filePath) const;
 
+    // Hands the body to onChunk as it arrives rather than buffering it,
+    // and leaves Response::content empty. Returns once the body ends, so
+    // the headers and status on the result are final. This is what a
+    // long-lived response - an SSE subscription, a token stream - needs:
+    // perform() would not return until the server finished, which for
+    // those is the point at which the answer is no longer useful.
+    //
+    // Set progress to stop a stream that has no end of its own: cancel is
+    // checked as each chunk arrives, and bytesReceived counts the body.
+    Response stream(const ChunkCallback& onChunk) const;
+
     bool hasHeader(const std::string& key) const;
     std::string getHeader(const std::string& key) const;
 
@@ -83,6 +105,7 @@ struct Request
 
 Response httpRequest(const Request& req);
 Response downloadFile(const Request& req, const std::string& filePath);
+Response httpStreamRequest(const Request& req, const ChunkCallback& onChunk);
 
 std::string urlDecode(const std::string& encoded);
 std::map<std::string, std::string> parseQueryString(const std::string& query);

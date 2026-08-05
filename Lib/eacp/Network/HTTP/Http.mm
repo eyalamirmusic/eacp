@@ -297,4 +297,175 @@ Response downloadFile(const Request& req,
     return res;
 }
 
+struct StreamContext
+{
+    const ChunkCallback* onChunk = nullptr;
+    Threads::TaskSemaphore* semaphore = nullptr;
+    DownloadProgress* progress = nullptr;
+    std::int64_t received = 0;
+    ObjC::Ptr<NSURLResponse> response;
+    ObjC::Ptr<NSError> error;
+};
+
+namespace
+{
+StreamContext* streamDelegateContext(id self)
+{
+    return (StreamContext*) ObjC::getIvar<void*>(self, "ctx");
+}
+
+void streamDelegateDidReceiveResponse(
+    id self,
+    SEL,
+    NSURLSession*,
+    NSURLSessionDataTask*,
+    NSURLResponse* response,
+    void (^completion)(NSURLSessionResponseDisposition))
+{
+    streamDelegateContext(self)->response.reset(response);
+    completion(NSURLSessionResponseAllow);
+}
+
+void streamDelegateDidReceiveData(id self,
+                                  SEL,
+                                  NSURLSession*,
+                                  NSURLSessionDataTask* task,
+                                  NSData* data)
+{
+    auto* ctx = streamDelegateContext(self);
+
+    if (data.length == 0)
+        return;
+
+    // A stream with no natural end - an event subscription, a firehose -
+    // is stopped the same way a download is, so callers have one mechanism
+    // rather than two.
+    if (auto* p = ctx->progress)
+    {
+        ctx->received += (std::int64_t) data.length;
+        p->bytesReceived.store(ctx->received);
+
+        if (p->cancel.load())
+        {
+            [task cancel];
+            return;
+        }
+    }
+
+    // enumerateByteRangesUsingBlock rather than reading .bytes: an NSData
+    // handed over by the loader can be discontiguous, and .bytes would
+    // flatten it into a fresh allocation on every chunk.
+    [data enumerateByteRangesUsingBlock:^(const void* bytes, NSRange range, BOOL*) {
+      (*ctx->onChunk)(std::string_view((const char*) bytes, range.length));
+    }];
+}
+
+void streamDelegateDidComplete(id self,
+                               SEL,
+                               NSURLSession*,
+                               NSURLSessionTask* task,
+                               NSError* error)
+{
+    auto* ctx = streamDelegateContext(self);
+
+    if (!ctx->response)
+        ctx->response.reset(task.response);
+
+    ctx->error.reset(error);
+    ctx->semaphore->signal();
+}
+
+Class getStreamDelegateClass()
+{
+    static auto instance = []
+    {
+        auto builder = new ObjC::RuntimeClass<NSObject>("EacpHttpStreamDelegate");
+
+        builder->addIvar<void*>("ctx");
+        builder->addProtocol(@protocol(NSURLSessionDataDelegate));
+
+        builder->addMethod(
+            @selector(URLSession:dataTask:didReceiveResponse:completionHandler:),
+            streamDelegateDidReceiveResponse);
+        builder->addMethod(@selector(URLSession:dataTask:didReceiveData:),
+                           streamDelegateDidReceiveData);
+        builder->addMethod(@selector(URLSession:task:didCompleteWithError:),
+                           streamDelegateDidComplete);
+
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+
+Response httpStreamRequestInternal(const Request& req, const ChunkCallback& onChunk)
+{
+    auto request = getRequest(req);
+    auto semaphore = Threads::TaskSemaphore();
+
+    auto ctx = StreamContext();
+    ctx.onChunk = &onChunk;
+    ctx.semaphore = &semaphore;
+    ctx.progress = req.progress;
+
+    auto delegate = ObjC::Ptr<NSObject>([[getStreamDelegateClass() alloc] init]);
+    ObjC::getIvar<void*>(delegate.get(), "ctx") = &ctx;
+
+    auto config = [NSURLSessionConfiguration defaultSessionConfiguration];
+    auto session = ObjC::attachPtr([NSURLSession
+        sessionWithConfiguration:config
+                        delegate:(id<NSURLSessionDelegate>) delegate.get()
+                   delegateQueue:nil]);
+
+    [[session.get() dataTaskWithRequest:request] resume];
+
+    semaphore.wait();
+
+    // Invalidated before the context goes out of scope: the delegate holds
+    // a raw pointer to it, so the session has to be finished with it first.
+    [session.get() finishTasksAndInvalidate];
+
+    auto response = Response();
+
+    // Filled in before the error is considered: a stream the caller stopped
+    // on purpose still answered, and reporting status 0 for it would be
+    // indistinguishable from never having reached the server.
+    if (ctx.response.isKindOfClass<NSHTTPURLResponse>())
+    {
+        auto httpResponse = (NSHTTPURLResponse*) ctx.response.get();
+        response.statusCode = (int) httpResponse.statusCode;
+        copyResponseHeaders(httpResponse, response);
+    }
+
+    if (ctx.error)
+    {
+        auto cancelled = req.progress && req.progress->cancel.load();
+
+        response.error = cancelled ? "cancelled"
+                                   : Strings::toStdString(ctx.error.get());
+    }
+
+    return response;
+}
+} // namespace
+
+Response httpStreamRequest(const Request& req, const ChunkCallback& onChunk)
+{
+    auto res = Response();
+    auto pool = ObjC::AutoReleasePool();
+
+    try
+    {
+        return httpStreamRequestInternal(req, onChunk);
+    }
+    catch (const std::exception& e)
+    {
+        res.error = e.what();
+        res.statusCode = 0;
+    }
+
+    return res;
+}
+
 } // namespace eacp::HTTP

@@ -383,6 +383,58 @@ Response httpRequestInternal(const Request& req)
     return response;
 }
 
+// Returns true when the caller asked to stop, so the status and headers
+// already read stay on the response rather than being replaced by a
+// failure that did not happen.
+bool streamBodyToCallback(HINTERNET request,
+                          const Request& req,
+                          const ChunkCallback& onChunk)
+{
+    auto buffer = std::string(64 * 1024, '\0');
+    auto received = std::int64_t {0};
+
+    while (true)
+    {
+        if (req.progress && req.progress->cancel.load())
+            return true;
+
+        auto available = DWORD {0};
+        if (!WinHttpQueryDataAvailable(request, &available))
+            throwLastError("Reading the response");
+
+        if (available == 0)
+            return false;
+
+        auto toRead = std::min(available, static_cast<DWORD>(buffer.size()));
+        auto read = DWORD {0};
+        if (!WinHttpReadData(request, buffer.data(), toRead, &read))
+            throwLastError("Reading the response");
+
+        if (read == 0)
+            return false;
+
+        received += read;
+        if (req.progress)
+            req.progress->bytesReceived.store(received);
+
+        onChunk(std::string_view {buffer.data(), read});
+    }
+}
+
+Response httpStreamRequestInternal(const Request& req, const ChunkCallback& onChunk)
+{
+    auto opened = sendRequest(req);
+
+    auto response = Response();
+    response.statusCode = queryStatusCode(opened.request.handle);
+    copyResponseHeaders(opened.request.handle, response);
+
+    if (streamBodyToCallback(opened.request.handle, req, onChunk))
+        response.error = "cancelled";
+
+    return response;
+}
+
 Response downloadFileInternal(const Request& req, const std::string& filePath)
 {
     auto opened = sendRequest(req);
@@ -419,6 +471,23 @@ Response httpRequest(const Request& req)
     try
     {
         return httpRequestInternal(req);
+    }
+    catch (const std::exception& e)
+    {
+        res.error = e.what();
+        res.statusCode = 0;
+    }
+
+    return res;
+}
+
+Response httpStreamRequest(const Request& req, const ChunkCallback& onChunk)
+{
+    auto res = Response();
+
+    try
+    {
+        return httpStreamRequestInternal(req, onChunk);
     }
     catch (const std::exception& e)
     {

@@ -165,6 +165,13 @@ Response Request::perform() const
     return httpRequest(prepared);
 }
 
+Response Request::stream(const ChunkCallback& onChunk) const
+{
+    auto prepared = *this;
+    buildMultipartBody(prepared);
+    return httpStreamRequest(prepared, onChunk);
+}
+
 namespace
 {
 constexpr std::int64_t kMinParallelTotal = 1024 * 1024;

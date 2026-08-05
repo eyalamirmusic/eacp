@@ -3,6 +3,7 @@ add_library(eacp-network STATIC)
 target_sources(eacp-network PRIVATE
         HTTP/Http.cpp
         HTTP/HttpProtocol.cpp
+        HTTP/ServerSentEvents.cpp
         HTTPServer/HttpServer.cpp
         HTTPServer/HttpServerDispatcher.cpp
         HTTPServer/ResponseBuilders.cpp
@@ -10,7 +11,8 @@ target_sources(eacp-network PRIVATE
         IPC/Lock.cpp
         IPC/Messenger.cpp
         TCP/Connection.cpp
-        TCP/Listener.cpp)
+        TCP/Listener.cpp
+        WebSocket/WebSocket.cpp)
 
 target_link_libraries(eacp-network PUBLIC eacp-core)
 
@@ -21,7 +23,8 @@ if (APPLE)
             IPC/Channel-Apple.cpp
             IPC/Channel-Posix.cpp
             IPC/Lock-Posix.cpp
-            TCP/Connection-Posix.cpp)
+            TCP/Connection-Posix.cpp
+            WebSocket/WebSocket.mm)
     target_link_libraries(eacp-network PRIVATE
             "-framework Foundation"
             "-framework CoreFoundation")
@@ -31,7 +34,8 @@ elseif (WIN32)
             HTTPServer/HttpServer-Windows.cpp
             IPC/Channel-Windows.cpp
             IPC/Lock-Windows.cpp
-            TCP/Connection-Windows.cpp)
+            TCP/Connection-Windows.cpp
+            WebSocket/WebSocket-Unsupported.cpp)
     target_link_libraries(eacp-network PRIVATE winhttp ws2_32 advapi32)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-network PRIVATE
@@ -40,7 +44,8 @@ elseif (UNIX AND NOT APPLE)
             IPC/Channel-Linux.cpp
             IPC/Channel-Posix.cpp
             IPC/Lock-Posix.cpp
-            TCP/Connection-Posix.cpp)
+            TCP/Connection-Posix.cpp
+            WebSocket/WebSocket-Unsupported.cpp)
     find_package(CURL REQUIRED)
     target_link_libraries(eacp-network PRIVATE CURL::libcurl)
 endif ()

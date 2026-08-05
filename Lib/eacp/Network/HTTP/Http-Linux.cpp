@@ -169,7 +169,78 @@ Response downloadFileInternal(const Request& req, const std::string& filePath)
     return response;
 }
 
+size_t writeToCallback(void* contents, size_t size, size_t nmemb, void* userp)
+{
+    auto total = size * nmemb;
+    auto& onChunk = *static_cast<const ChunkCallback*>(userp);
+
+    onChunk(std::string_view {static_cast<char*>(contents), total});
+
+    return total;
+}
+
+Response httpStreamRequestInternal(const Request& req, const ChunkCallback& onChunk)
+{
+    initCurlOnce();
+
+    auto curl = CurlEasy();
+    if (!curl.handle)
+        throw std::runtime_error("Failed to initialise curl");
+
+    auto headers = CurlSlist();
+    applyCommonOptions(curl.handle, req, headers);
+
+    curl_easy_setopt(curl.handle, CURLOPT_WRITEFUNCTION, writeToCallback);
+    curl_easy_setopt(curl.handle, CURLOPT_WRITEDATA, &onChunk);
+
+    auto response = Response();
+    curl_easy_setopt(curl.handle, CURLOPT_HEADERFUNCTION, headerCallback);
+    curl_easy_setopt(curl.handle, CURLOPT_HEADERDATA, &response.headers);
+
+    // The progress callback rather than the write callback carries
+    // cancellation: it fires on curl's own schedule, so a stream that has
+    // gone quiet still stops, where a write-side check would wait for
+    // bytes that are not coming.
+    if (req.progress)
+    {
+        curl_easy_setopt(curl.handle, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl.handle, CURLOPT_XFERINFOFUNCTION, progressCallback);
+        curl_easy_setopt(curl.handle, CURLOPT_XFERINFODATA, req.progress);
+    }
+
+    auto rc = curl_easy_perform(curl.handle);
+
+    long status = 0;
+    curl_easy_getinfo(curl.handle, CURLINFO_RESPONSE_CODE, &status);
+    response.statusCode = (int) status;
+
+    if (rc != CURLE_OK)
+    {
+        auto cancelled = rc == CURLE_ABORTED_BY_CALLBACK && req.progress
+                         && req.progress->cancel.load();
+
+        response.error = cancelled ? "cancelled" : curl_easy_strerror(rc);
+    }
+
+    return response;
+}
+
 } // namespace
+
+Response httpStreamRequest(const Request& req, const ChunkCallback& onChunk)
+{
+    auto res = Response();
+    try
+    {
+        return httpStreamRequestInternal(req, onChunk);
+    }
+    catch (const std::exception& e)
+    {
+        res.error = e.what();
+        res.statusCode = 0;
+    }
+    return res;
+}
 
 Response httpRequest(const Request& req)
 {
