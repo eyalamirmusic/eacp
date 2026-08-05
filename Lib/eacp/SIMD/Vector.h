@@ -58,6 +58,15 @@ horizontal sum. That is everything a convolution, a depthwise pass, a fused
 activation and a fully-connected head need, and every one of them maps to a
 single instruction on every backend below.
 
+`loadBroadcast` is the one that looks redundant next to `broadcast` and is not.
+An outer-product microkernel - the shape a convolution takes once its weights
+are packed with the output channel innermost - spends one of these per input
+element and nothing else on that operand, and every backend has a single
+instruction that loads and splats in one go (`ld1r`, `vbroadcastss`). Written as
+`broadcast(*p)` it is a scalar load into the wrong register file followed by a
+cross-file move, which on some cores is a dozen cycles of latency in the middle
+of the reduction.
+
 Loads and stores are UNALIGNED. A tensor slice starts at whatever channel
 offset the graph gave it, so alignment cannot be assumed; on every CPU this
 targets an unaligned load of an aligned address costs nothing.
@@ -68,9 +77,12 @@ struct F32
     static constexpr std::size_t lanes = 16;
     using Native = __m512;
 
+    static constexpr std::size_t registers = 32;
+
     static F32 zero() { return {_mm512_setzero_ps()}; }
     static F32 broadcast(float x) { return {_mm512_set1_ps(x)}; }
     static F32 load(const float* p) { return {_mm512_loadu_ps(p)}; }
+    static F32 loadBroadcast(const float* p) { return {_mm512_set1_ps(*p)}; }
     static void store(float* p, F32 a) { _mm512_storeu_ps(p, a.v); }
 
     F32 operator+(F32 o) const { return {_mm512_add_ps(v, o.v)}; }
@@ -89,9 +101,12 @@ struct F32
     static constexpr std::size_t lanes = 8;
     using Native = __m256;
 
+    static constexpr std::size_t registers = 16;
+
     static F32 zero() { return {_mm256_setzero_ps()}; }
     static F32 broadcast(float x) { return {_mm256_set1_ps(x)}; }
     static F32 load(const float* p) { return {_mm256_loadu_ps(p)}; }
+    static F32 loadBroadcast(const float* p) { return {_mm256_broadcast_ss(p)}; }
     static void store(float* p, F32 a) { _mm256_storeu_ps(p, a.v); }
 
     F32 operator+(F32 o) const { return {_mm256_add_ps(v, o.v)}; }
@@ -126,9 +141,12 @@ struct F32
     static constexpr std::size_t lanes = 4;
     using Native = __m128;
 
+    static constexpr std::size_t registers = 16;
+
     static F32 zero() { return {_mm_setzero_ps()}; }
     static F32 broadcast(float x) { return {_mm_set1_ps(x)}; }
     static F32 load(const float* p) { return {_mm_loadu_ps(p)}; }
+    static F32 loadBroadcast(const float* p) { return {_mm_load1_ps(p)}; }
     static void store(float* p, F32 a) { _mm_storeu_ps(p, a.v); }
 
     F32 operator+(F32 o) const { return {_mm_add_ps(v, o.v)}; }
@@ -151,9 +169,12 @@ struct F32
     static constexpr std::size_t lanes = 4;
     using Native = float32x4_t;
 
+    static constexpr std::size_t registers = 32;
+
     static F32 zero() { return {vdupq_n_f32(0.f)}; }
     static F32 broadcast(float x) { return {vdupq_n_f32(x)}; }
     static F32 load(const float* p) { return {vld1q_f32(p)}; }
+    static F32 loadBroadcast(const float* p) { return {vld1q_dup_f32(p)}; }
     static void store(float* p, F32 a) { vst1q_f32(p, a.v); }
 
     F32 operator+(F32 o) const { return {vaddq_f32(v, o.v)}; }
@@ -172,6 +193,7 @@ struct F32
     // still COMPILES and still gives the right answer everywhere; it is not
     // expected to be fast, and no shipping target reaches it.
     static constexpr std::size_t lanes = 4;
+    static constexpr std::size_t registers = 16;
     using Native = float[lanes];
 
     static F32 zero() { return broadcast(0.f); }
@@ -191,6 +213,8 @@ struct F32
             result.v[i] = p[i];
         return result;
     }
+
+    static F32 loadBroadcast(const float* p) { return broadcast(*p); }
 
     static void store(float* p, F32 a)
     {
@@ -264,6 +288,13 @@ struct F32
 // How many floats one F32 holds, for the loop bounds and the tile constants
 // that have to agree with it.
 inline constexpr std::size_t floatLanes = F32::lanes;
+
+// How many vector registers the target architecture has. A microkernel sizes
+// its register tile from this: the whole point of holding accumulators across a
+// reduction is lost the moment there are more of them than the register file
+// holds, and a tile that spills is slower than the smaller tile that does not.
+// 32 on NEON and AVX-512, 16 on SSE2 and AVX2.
+inline constexpr std::size_t vectorRegisters = F32::registers;
 
 /*
 A partial load / store, for the ragged tail of a channel axis that is not a
