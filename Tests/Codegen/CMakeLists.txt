@@ -9,5 +9,9 @@ nano_add_executable(InversionCodegenTests
 target_link_libraries(InversionCodegenTests PRIVATE MiroFormats)
 
 if (TARGET eacp-webview-codegen)
-    target_link_libraries(InversionCodegenTests PRIVATE eacp-webview-codegen)
+    # eacp-core alongside it, exactly as eacp_add_webview_app links the
+    # app's Schema_Codegen executable: the formatters call into
+    # eacp::Strings, which the object lib only sees the headers of.
+    target_link_libraries(InversionCodegenTests PRIVATE
+            eacp-webview-codegen eacp-core)
 endif ()
