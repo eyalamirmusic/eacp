@@ -62,6 +62,9 @@ void WebViewBridge::registerBuiltins()
 
 WebViewBridge::~WebViewBridge()
 {
+    // Before anything else: the command hops already sitting on the loop read
+    // this and stand down rather than dispatch into the wreckage. See `alive`.
+    alive->store(false);
     webView.removeScriptMessageHandler(bridgeChannel);
 }
 
@@ -129,9 +132,19 @@ void WebViewBridge::onMessage(const std::string& body)
     // the shim is awaiting, keyed by the envelope id. Miro reports the
     // outcome (result or error) purely through the Resolve std::function —
     // it never touches the event loop.
-    auto invoke = [this, command = envelope->command, payload = envelope->payload](
-                      Miro::Resolve resolve)
-    { bridge.dispatchAsync(command, payload, resolve); };
+    //
+    // Both hops carry `alive` because both outlive the bridge if the WebView is
+    // destroyed while a command is in flight: the dispatch below is queued, and
+    // the delivery below that is queued behind it. A dead bridge simply drops
+    // the command — the page it would have answered is going away with it.
+    auto invoke = [this, alive = alive, command = envelope->command,
+                   payload = envelope->payload](const Miro::Resolve& resolve)
+    {
+        if (!alive->load())
+            return;
+
+        bridge.dispatchAsync(command, payload, resolve);
+    };
 
     auto mode = commandExecution;
 
@@ -141,8 +154,14 @@ void WebViewBridge::onMessage(const std::string& body)
     auto work = runCommand(mode, std::move(invoke));
 
     resolveWith(std::move(work),
-                [this, id](const Miro::Json::Value& result, const std::string* error)
-                { deliver(id, result, error); });
+                [this, alive = alive, id](const Miro::Json::Value& result,
+                                          const std::string* error)
+                {
+                    if (!alive->load())
+                        return;
+
+                    deliver(id, result, error);
+                });
 }
 
 Threads::Async<Miro::Json::Value>
