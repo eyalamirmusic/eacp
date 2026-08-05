@@ -5,6 +5,9 @@
 
 #include <ea_data_structures/Pointers/Broadcaster.h>
 
+#include <atomic>
+#include <memory>
+
 namespace eacp::Graphics
 {
 
@@ -99,6 +102,22 @@ private:
                  const std::string* error);
     bool handleCallReply(const Miro::Json::Value& message);
     void broadcast();
+
+    // False once this bridge is gone. Every command hop reads it before
+    // touching the bridge, because a command outlives the object it was
+    // addressed to more easily than it looks: onMessage does not run the
+    // handler, it QUEUES it (Rpc::runCommand, MainThreadDeferred) and queues
+    // the reply behind that. A WebView destroyed in between — an app that
+    // makes and unmakes windows on demand, rather than hiding them — leaves
+    // those blocks pointing at a freed Bridge, and the page goes on posting
+    // commands right up to the moment it is freed, so no amount of deferring
+    // the destruction gets ahead of it.
+    //
+    // shared_ptr so the queued blocks can hold the flag itself rather than a
+    // pointer into this object (the same guard HubAuthApi uses for its own
+    // deferred fetch hops).
+    std::shared_ptr<std::atomic<bool>> alive =
+        std::make_shared<std::atomic<bool>>(true);
 
     WebView& webView;
     Miro::Bridge bridge;
