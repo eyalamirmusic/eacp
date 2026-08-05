@@ -2,6 +2,8 @@
 
 #include "Encoder.h"
 
+#include "WideString-Windows.h"
+
 #include <mfapi.h>
 #include <mferror.h>
 #include <mfidl.h>
