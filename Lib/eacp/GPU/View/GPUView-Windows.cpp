@@ -510,6 +510,7 @@ struct GPUView::Native : DeviceResourceHolder
             };
 
             displayLink.create(func);
+            displayLink->setMaxFps(maxFps);
         }
     }
 
@@ -517,6 +518,7 @@ struct GPUView::Native : DeviceResourceHolder
 
     GPUView& view;
     int sampleCount = 4;
+    int maxFps = 0;
 
     // Two by default, so a hand is answered a refresh sooner than DXGI's own
     // three would allow. See GPUView::setFramesInFlight.
@@ -591,6 +593,19 @@ void GPUView::setContinuous(bool continuous)
 bool GPUView::isContinuous() const
 {
     return impl->continuous;
+}
+
+void GPUView::setMaxFps(int fps)
+{
+    impl->maxFps = fps;
+
+    if (impl->displayLink != nullptr)
+        impl->displayLink->setMaxFps(fps);
+}
+
+int GPUView::maxFps() const
+{
+    return impl->maxFps;
 }
 
 void GPUView::setFramesInFlight(int count)

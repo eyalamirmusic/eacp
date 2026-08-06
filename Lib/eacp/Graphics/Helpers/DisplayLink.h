@@ -2,6 +2,9 @@
 
 #include "../Common.h"
 
+#include <atomic>
+#include <memory>
+
 namespace eacp::Threads
 {
 // Timing for one DisplayLink frame: `time` is seconds since the link started,
@@ -37,7 +40,34 @@ public:
     // camera frame arriving — with the link's timing semantics.
     static Callback timedTick(const FrameCallback& cb);
 
+    // Caps how often the callback fires. The link still wakes at every
+    // refresh — that is all the platform offers — but ticks are skipped so
+    // the callback runs at most `fps` times a second: 60 on a 120Hz panel
+    // means every second vsync. FrameTime.delta spans the skipped ticks, so
+    // delta-scaled animation steps exactly as far as it would on a native
+    // 60Hz display. A cap the refresh rate does not divide evenly is paced
+    // to the nearest tick and holds as an average. Zero (the default) fires
+    // on every refresh. Retune any time; takes effect on the next tick.
+    void setMaxFps(int fps);
+    int maxFps() const;
+
 private:
+    // Shared with the wrapper rateLimited() builds, which runs on the main
+    // thread; the atomics only make setMaxFps safe to call while a tick is
+    // in flight.
+    struct RateLimit
+    {
+        std::atomic<int> fps {0};
+        std::atomic<double> minInterval {0.0};
+    };
+
+    // Wraps a tick callback in the divider that skips ticks until `limit`'s
+    // interval has accumulated (the pacing state lives inside the returned
+    // callback, exactly like timedTick's).
+    static Callback rateLimited(const std::shared_ptr<RateLimit>& limit,
+                                const Callback& tick);
+
+    std::shared_ptr<RateLimit> rateLimit;
     Callback callback;
 
     struct Native;

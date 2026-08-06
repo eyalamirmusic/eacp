@@ -144,18 +144,22 @@ struct GPUView::Native
     void startContinuous()
     {
         if (displayLink == nullptr)
+        {
             displayLink = makeOwned<Threads::DisplayLink>(
                 [this](Threads::FrameTime time)
                 {
                     view.update(time);
                     view.renderNow();
                 });
+            displayLink->setMaxFps(maxFps);
+        }
     }
 
     void stopContinuous() { displayLink = nullptr; }
 
     GPUView& view;
     int sampleCount = 4;
+    int maxFps = 0;
 
     // The layer's pool of drawables, not a queue of finished frames: three keeps
     // a free buffer ready so nextDrawable never blocks. Lowering it costs
@@ -215,6 +219,19 @@ void GPUView::setContinuous(bool continuous)
 bool GPUView::isContinuous() const
 {
     return impl->continuous;
+}
+
+void GPUView::setMaxFps(int fps)
+{
+    impl->maxFps = fps;
+
+    if (impl->displayLink != nullptr)
+        impl->displayLink->setMaxFps(fps);
+}
+
+int GPUView::maxFps() const
+{
+    return impl->maxFps;
 }
 
 void GPUView::setFramesInFlight(int count)
