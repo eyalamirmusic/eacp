@@ -123,6 +123,12 @@ struct WebView::Native
 
         config = [[WKWebViewConfiguration alloc] init];
 
+        if (options.ephemeralSession)
+        {
+            config.get().websiteDataStore =
+                [WKWebsiteDataStore nonPersistentDataStore];
+        }
+
         if (options.debugConsole)
         {
             [config.get().preferences setValue:@YES
