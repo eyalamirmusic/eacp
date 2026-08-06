@@ -46,6 +46,17 @@ public:
     void setContinuous(bool continuous);
     bool isContinuous() const;
 
+    // Caps how often continuous mode renders. The display link still wakes
+    // at every refresh, but update()/render() run at most `fps` times a
+    // second — the frame's delta time spans the skipped ticks, so
+    // delta-scaled animation is unaffected. For content that changes slower
+    // than the display refreshes (a 30fps camera on a 120Hz panel), this is
+    // most of continuous mode's GPU cost back. Zero (the default) renders
+    // at the refresh rate. On-demand rendering (repaint()/renderNow()) is
+    // not throttled. Survives setContinuous toggles; retune any time.
+    void setMaxFps(int fps);
+    int maxFps() const;
+
     // How many frames the renderer may have on the go at once.
     //
     // The two backends mean different things by that, and only one of them is a

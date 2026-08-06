@@ -124,7 +124,8 @@ struct DisplayLink::Native
 };
 
 DisplayLink::DisplayLink(const FrameCallback& cb)
-    : callback(timedTick(cb))
+    : rateLimit(std::make_shared<RateLimit>())
+    , callback(rateLimited(rateLimit, timedTick(cb)))
     , impl(callback)
 {
 }

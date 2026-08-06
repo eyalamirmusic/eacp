@@ -388,9 +388,33 @@ struct Camera::Native
         [session.get() addInput:input];
 
         output = [[AVCaptureVideoDataOutput alloc] init];
-        output.get().videoSettings = @{
-            (id) kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA)
-        };
+
+        // The dimensions belong here, not only in the session preset. A
+        // videoSettings dictionary that names a pixel format but no size lets
+        // the output negotiate native-size buffers, and startRunning then
+        // reconfigures the device to the bigger format — overriding BOTH the
+        // preset and any activeFormat pinned beforehand, silently and without
+        // error.
+        //
+        // Asking a MacBook Pro camera for 1280x720 @ 30 delivered 1920x1080:
+        // 2.25x the pixels through every downstream copy, on a device whose
+        // format list contains 1280x720 @ 15-30, with sessionPreset still
+        // reading AVCaptureSessionPreset1280x720 the whole time. Naming the
+        // size makes the delivered buffer match the request on any camera.
+        //
+        // A zero width or height keeps the old negotiation: the caller asked
+        // for "whatever the camera does", which IS the native-size behavior.
+        auto* settings = [NSMutableDictionary<NSString*, id> dictionary];
+        settings[(id) kCVPixelBufferPixelFormatTypeKey] =
+            @(kCVPixelFormatType_32BGRA);
+
+        if (config.width > 0 && config.height > 0)
+        {
+            settings[(id) kCVPixelBufferWidthKey] = @(config.width);
+            settings[(id) kCVPixelBufferHeightKey] = @(config.height);
+        }
+
+        output.get().videoSettings = settings;
         output.get().alwaysDiscardsLateVideoFrames =
             config.discardLateFrames ? YES : NO;
 
