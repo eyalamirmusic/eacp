@@ -227,6 +227,13 @@ struct WebView::Native
             [controller removeScriptMessageHandlerForName:Strings::toNSString(name)];
         }
 
+        // The map lives in this object, and the delegate can outlive it — a
+        // script message already delivered has a hop sitting on the loop
+        // holding the delegate alive (see didReceiveScriptMessage). Cut the
+        // pointer so that hop finds nothing to call rather than reading a map
+        // that is about to be freed.
+        getWebViewDelegateState(delegate.get())->messageHandlers = nullptr;
+
         if (observingTitle)
             [webView.get() removeObserver:delegate.get() forKeyPath:@"title"];
 
@@ -460,8 +467,35 @@ void webViewDelegateDidReceiveScriptMessage(id self,
                 }
             }
 
-            auto handler = it->second;
-            eacp::Threads::callAsync([handler, body]() { handler(body); });
+            // Deferred, because a handler that calls back into WebKit would
+            // otherwise re-enter it in the middle of delivering this message.
+            //
+            // Looked up AGAIN when the hop runs rather than copied now: the
+            // handler is a std::function owning a pointer into whatever
+            // registered it, and an app that UNMAKES a window — rather than
+            // hiding it — can free that between the message arriving and the
+            // hop running. A copy taken here would then call into the wreckage.
+            // The delegate is held for the length of the hop instead — a
+            // retaining Ptr, since a C++ lambda capturing a bare id retains
+            // nothing here — and ~Native clears its map pointer before letting
+            // go, so a message addressed to a window that has since gone finds
+            // a live delegate with nothing to call and is simply dropped.
+            eacp::Threads::callAsync(
+                [delegate = eacp::ObjC::attachPtr<NSObject>((NSObject*) self),
+                 name,
+                 body]() mutable
+                {
+                    auto* handlers =
+                        getWebViewDelegateState(delegate.get())->messageHandlers;
+
+                    if (handlers == nullptr)
+                        return;
+
+                    auto found = handlers->find(name);
+
+                    if (found != handlers->end())
+                        found->second(body);
+                });
         }
     }
 }
