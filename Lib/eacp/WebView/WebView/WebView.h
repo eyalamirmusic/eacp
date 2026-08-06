@@ -133,6 +133,20 @@ public:
         // where WKWebView has no status bar. No-op on Apple platforms.
         bool statusBar = false;
 
+        // macOS/iOS: back this WebView with a non-persistent (in-memory)
+        // WKWebsiteDataStore instead of the app-wide default store. Two
+        // effects: nothing the page stores (cookies, localStorage, caches)
+        // survives the WebView, and the session's Networking helper process
+        // is torn down with it — the default store is an app-lifetime
+        // singleton whose network process lingers in Activity Monitor until
+        // the app exits. The WebContent process dies with the WebView either
+        // way, and the GPU helper always stays for the app's lifetime.
+        // Opt-in because losing persisted page storage is the wrong default
+        // for a long-lived embedded UI. No-op on Windows, where the WebView2
+        // process tree already exits with the last controller for its
+        // user-data folder.
+        bool ephemeralSession = false;
+
         // macOS: deliver the first click on an unfocused window to the page
         // instead of swallowing it as activation (NSView acceptsFirstMouse).
         // Without it, app-region drag handles need one click to focus and a
