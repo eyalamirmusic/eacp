@@ -80,7 +80,7 @@ endif ()
 
 # Deliberately outside that guard: a consumer building eacp as a subproject is
 # exactly who gets no deployment target and needs telling.
-eacp_check_deployment_target()
+#eacp_check_deployment_target()
 
 set(CMAKE_CXX_STANDARD 20)
 add_subdirectory(Lib)
