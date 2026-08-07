@@ -17,8 +17,13 @@ target_link_libraries(eacp-webview PUBLIC eacp-graphics eacp-network-rpc ResEmbe
 # macOS deployment target is older, opt into WebKit's private _WK SPI so
 # getUserMedia still works on macOS 11. iOS uses a different SPI we don't
 # implement here, so this is macOS-only.
-if (APPLE AND NOT IOS AND CMAKE_OSX_DEPLOYMENT_TARGET
-        AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "12.0")
+#
+# An unset deployment target counts as older: it means the consumer declared no
+# floor, not that they raised one, and eacp's own floor is macOS 11. Requiring a
+# value here used to disable the SPI silently in exactly that case, leaving
+# getUserMedia on macOS 11 with no way to answer a permission request at all.
+if (APPLE AND NOT IOS AND (NOT CMAKE_OSX_DEPLOYMENT_TARGET
+        OR CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "12.0"))
     target_compile_definitions(eacp-webview PRIVATE
             EACP_WEBVIEW_PRIVATE_MEDIA_CAPTURE_SPI=1)
 endif ()

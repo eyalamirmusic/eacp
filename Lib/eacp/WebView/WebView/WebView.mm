@@ -22,6 +22,45 @@ std::string safeString(const char* str, const char* fallback = "")
 {
     return str != nullptr ? str : fallback;
 }
+
+// Clang folds away an @available whose floor the build's deployment target
+// already clears, leaving the guarded call to run unconditionally. A consuming
+// app that never sets CMAKE_OSX_DEPLOYMENT_TARGET inherits the build SDK's
+// version and so loses these guards entirely — on macOS 11 the calls below then
+// reach a WKWebView that never had them. Asking the object what it implements
+// is the one question no deployment target can constant-fold, so both guards
+// stand: @available keeps the SDK-versioned property access legal to compile,
+// respondsToSelector: decides whether it actually happens.
+void setWebViewInspectable(WKWebView* webView, bool inspectable)
+{
+    if (@available(macOS 13.3, iOS 16.4, *))
+    {
+        if ([webView respondsToSelector:@selector(setInspectable:)])
+            webView.inspectable = inspectable;
+    }
+}
+
+bool isWebViewInspectable(WKWebView* webView)
+{
+    if (@available(macOS 13.3, iOS 16.4, *))
+    {
+        if ([webView respondsToSelector:@selector(isInspectable)])
+            return webView.inspectable;
+    }
+
+    return false;
+}
+
+#if !TARGET_OS_IPHONE
+void setWebViewUnderPageBackground(WKWebView* webView, NSColor* color)
+{
+    if (@available(macOS 12.0, *))
+    {
+        if ([webView respondsToSelector:@selector(setUnderPageBackgroundColor:)])
+            webView.underPageBackgroundColor = color;
+    }
+}
+#endif
 } // namespace
 
 #if EACP_WEBVIEW_PRIVATE_MEDIA_CAPTURE_SPI
@@ -172,8 +211,7 @@ struct WebView::Native
             [webView.get() setValue:@NO forKey:@"drawsBackground"];
             webView.get().wantsLayer = YES;
             webView.get().layer.backgroundColor = NSColor.clearColor.CGColor;
-            if (@available(macOS 12.0, *))
-                webView.get().underPageBackgroundColor = NSColor.clearColor;
+            setWebViewUnderPageBackground(webView.get(), NSColor.clearColor);
 #endif
         }
         detail::setFileDragStartedCallback(
@@ -191,10 +229,7 @@ struct WebView::Native
         observingTitle = true;
 
         if (options.debugConsole)
-        {
-            if (@available(macOS 13.3, iOS 16.4, *))
-                webView.get().inspectable = YES;
-        }
+            setWebViewInspectable(webView.get(), true);
     }
 
     Native(WebView& ownerToUse, WebView::PopupInit init)
@@ -219,10 +254,7 @@ struct WebView::Native
         observingTitle = true;
 
         if (init.inspectable)
-        {
-            if (@available(macOS 13.3, iOS 16.4, *))
-                webView.get().inspectable = YES;
-        }
+            setWebViewInspectable(webView.get(), true);
     }
     ~Native()
     {
@@ -372,9 +404,7 @@ WKWebView* webViewDelegateCreateWebView(id self,
 {
     auto url = safeString([navigationAction.request.URL.absoluteString UTF8String]);
 
-    auto inspectable = NO;
-    if (@available(macOS 13.3, iOS 16.4, *))
-        inspectable = webView.inspectable;
+    auto inspectable = isWebViewInspectable(webView);
 
     auto native = getWebViewDelegateState(self)->nativeWeak.lock();
     if (! native)
@@ -420,10 +450,13 @@ void webViewDelegateRequestMediaCapture(
 
 #if EACP_WEBVIEW_PRIVATE_MEDIA_CAPTURE_SPI
 // macOS 11 fallback. WebKit on macOS 12+ prefers the public selector above;
-// macOS 11 has no public selector and calls this one instead. The availability
-// guard makes the preference explicit: if some future WebKit ever dispatched
-// both, the public path still wins and we'd no-op here. handler() is always
-// invoked so the request never hangs.
+// macOS 11 has no public selector and calls this one instead. It grants
+// unconditionally rather than deferring to the public path on 12+, because the
+// @available that used to express that preference folds to a constant under a
+// deployment target of 12 or newer — which would have turned the deferral into
+// a blanket denial on exactly the macOS 11 systems this exists to serve. Both
+// paths now answer the same way, so whichever WebKit dispatches, the decision
+// matches and the request never hangs.
 void webViewDelegateRequestUserMediaSPI(id,
                                         SEL,
                                         WKWebView*,
@@ -432,11 +465,6 @@ void webViewDelegateRequestUserMediaSPI(id,
                                         NSURL*,
                                         void (^handler)(BOOL authorized))
 {
-    if (@available(macOS 12.0, *))
-    {
-        handler(NO);
-        return;
-    }
     handler(YES);
 }
 #endif

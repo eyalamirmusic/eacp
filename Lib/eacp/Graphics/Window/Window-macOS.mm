@@ -40,12 +40,23 @@ void repositionTrafficLights(NSWindow* window, NSPoint inset)
     }
 }
 
+// respondsToSelector: rather than @available alone, for the reason spelled out
+// over setWebViewInspectable in WebView.mm: clang folds an @available whose
+// floor the deployment target already clears, and a consumer that sets no
+// target inherits the build SDK's. Without the second guard this sends macOS
+// 14's activate to an NSApplication on macOS 11 that has only the older call.
 void requestCooperativeActivation()
 {
     if (@available(macOS 14.0, *))
-        [NSApp activate];
-    else
-        [NSApp activateIgnoringOtherApps:YES];
+    {
+        if ([NSApp respondsToSelector:@selector(activate)])
+        {
+            [NSApp activate];
+            return;
+        }
+    }
+
+    [NSApp activateIgnoringOtherApps:YES];
 }
 
 // Ask LaunchServices to "open" this app. An open of an already-running app is
