@@ -53,6 +53,12 @@ if (TARGET eacp-webview-test-main)
     # instead of OS key injection (see the file headers).
     if (APPLE)
         list(APPEND webview_test_sources KeyForwardingTests.mm)
+
+        # Kills the live WebContent process (SIGKILL, as the jetsam does) and
+        # requires the page to recover — WKWebView-specific by nature; the
+        # WebView2 backend restarts its browser process through a different
+        # channel (ProcessFailed).
+        list(APPEND webview_test_sources ContentProcessTerminationTests.mm)
     endif ()
 
     if (WIN32)
