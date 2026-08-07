@@ -29,3 +29,26 @@ macro(eacp_setup_apple)
                 CACHE INTERNAL "eacp macOS bundle Info.plist template")
     endif ()
 endmacro()
+
+# The floor an app supports is the app's policy, not this library's, so eacp
+# only claims CMAKE_OSX_DEPLOYMENT_TARGET for its own top-level builds and
+# never reaches into a consumer's. It does have to say something when the
+# consumer set no floor at all, because that is not neutral: clang then targets
+# the build machine's SDK, and every @available guard whose floor that version
+# already clears is folded out of the binary. The guarded call runs
+# unconditionally and throws on an older system.
+function(eacp_check_deployment_target)
+    if (NOT APPLE OR IOS OR CMAKE_OSX_DEPLOYMENT_TARGET)
+        return()
+    endif ()
+
+    message(WARNING
+            "eacp: CMAKE_OSX_DEPLOYMENT_TARGET is not set, so this build takes "
+            "the build machine's SDK version as its minimum macOS. eacp guards "
+            "every API it calls that is newer than macOS 11, but clang removes "
+            "an @available guard once the deployment target already clears it, "
+            "and the call then runs unconditionally — an app built this way "
+            "throws 'unrecognized selector' on an older macOS instead of taking "
+            "the fallback path. Pass -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0, or "
+            "whatever floor this app actually supports.")
+endfunction()
