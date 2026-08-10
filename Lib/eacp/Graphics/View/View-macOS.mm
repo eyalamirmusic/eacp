@@ -395,6 +395,11 @@ NSView* createNativeView(View* view)
 }
 } // namespace
 
+bool isFrameworkNativeView(NSView* view)
+{
+    return view != nil && [view isKindOfClass:getNativeViewClass()];
+}
+
 struct View::Native
 {
     Native(View& view) { nativeView = createNativeView(&view); }
