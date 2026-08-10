@@ -1,11 +1,13 @@
 #include <eacp/CameraView/CameraView.h>
 #include <eacp/GPU/GPU.h>
+#include <eacp/Graphics/Menu/Menu.h>
 #include <eacp/Network/Network.h>
 
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
 #include <optional>
+#include <string>
 
 // One camera, two processes. The first instance claims the channel name,
 // opens the camera and shows it locally through CameraView's zero-copy
@@ -228,7 +230,59 @@ struct IpcCameraApp
         window.emplace(windowOptionsFor(true));
         window->setContentView(*cameraView);
 
+        installMenuBar();
         beginCapture();
+    }
+
+    // The same Camera menu CameraViewDemo builds: every device the system
+    // reports, checkable, the mark following selectedDeviceId live. Only the
+    // capturing instance installs it — the viewer owns no camera to pick.
+    void installMenuBar()
+    {
+        auto cameraMenu = Menu {"Camera"};
+
+        cameraMenu.add(MenuItem::withCheckableAction(
+            "System Default",
+            [this] { selectDevice({}); },
+            [this] { return !selectedDeviceId.has_value(); }));
+
+        cameraMenu.addSeparator();
+
+        for (const auto& device: Cameras::Camera::devices())
+            cameraMenu.add(MenuItem::withCheckableAction(
+                device.name,
+                [this, id = device.id] { selectDevice(id); },
+                [this, id = device.id] { return selectedDeviceId == id; }));
+
+        auto bar = MenuBar {};
+        bar.add(standardApplicationMenu("IPC Camera"));
+        bar.add(std::move(cameraMenu));
+
+        setApplicationMenuBar(bar, *window);
+    }
+
+    // Restarting the session leaves everything downstream of it alone: the
+    // view follows the Camera object, and the frame callback shipping to the
+    // viewers outlives the session too — so the feed picks straight back up on
+    // the new device without the client noticing a switch happened.
+    void selectDevice(std::optional<std::string> deviceId)
+    {
+        if (selectedDeviceId == deviceId)
+            return;
+
+        selectedDeviceId = std::move(deviceId);
+        std::printf("switching camera to %s\n",
+                    selectedDeviceId ? selectedDeviceId->c_str() : "system default");
+
+        if (camera->isRunning())
+        {
+            camera->stop();
+            startCamera();
+        }
+        else
+        {
+            beginCapture();
+        }
     }
 
     void becomeViewer()
@@ -319,6 +373,7 @@ struct IpcCameraApp
         auto config = Cameras::CameraConfig {};
         config.width = 1280;
         config.height = 720;
+        config.deviceId = selectedDeviceId;
         camera->start(config);
     }
 
@@ -364,6 +419,8 @@ struct IpcCameraApp
     Vector<IPC::Messenger*> viewers;
     std::optional<Cameras::Camera> camera;
     std::optional<Cameras::CameraView> cameraView;
+    // nullopt = system default. What the Camera menu's checkmarks read.
+    std::optional<std::string> selectedDeviceId;
     int framesSent = 0;
 
     std::optional<IPC::Messenger> link;
