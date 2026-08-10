@@ -13,6 +13,7 @@
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
 #if !TARGET_OS_IPHONE
 #include <eacp/Graphics/Graphics/Keyboard-MacOS.h>
+#include <eacp/Graphics/View/View-MacOS.h>
 #endif
 #include <atomic>
 
@@ -1133,7 +1134,26 @@ void WebView::installKeyEventSupport()
                 return;
 
             auto* webView = impl->webView.get();
-            NSResponder* next = webView.superview.nextResponder;
+
+            // Past EVERY framework view above the page, not just the one
+            // hosting it. An EacpNativeView's keyDown: feeds the C++ View and
+            // never calls super (see isFrameworkNativeView), so handing the
+            // event to the first one up ends the chain in a view tree that has
+            // nowhere to put it — silently, which is exactly how a plugin
+            // editor swallows a DAW's spacebar.
+            //
+            // Where the page IS the content view — an eacp Window, and every
+            // case this shipped against — nothing framework-owned sits above
+            // it and the walk is the single hop it always was. It only does
+            // more in a composition: the plugin editor's overlay lives in a
+            // container view above a GPU view, and the responder that has to
+            // hear the key is the embedder's, two levels up.
+            NSView* outermost = webView.superview;
+            while (outermost.superview != nil
+                   && isFrameworkNativeView(outermost.superview))
+                outermost = outermost.superview;
+
+            NSResponder* next = outermost.nextResponder;
             if (next == nil)
                 return;
 
