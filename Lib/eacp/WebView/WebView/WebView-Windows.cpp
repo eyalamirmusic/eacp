@@ -865,6 +865,8 @@ struct WebView::Native
         if (settings)
         {
             settings->put_AreDevToolsEnabled(options.debugConsole ? TRUE : FALSE);
+            settings->put_AreDefaultContextMenusEnabled(
+                options.defaultContextMenu ? TRUE : FALSE);
             settings->put_IsStatusBarEnabled(options.statusBar ? TRUE : FALSE);
         }
     }
