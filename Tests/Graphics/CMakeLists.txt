@@ -51,7 +51,9 @@ if (APPLE AND NOT IOS)
 endif ()
 
 if (WIN32)
-    list(APPEND graphics_test_sources CompositionPixelTests-Windows.cpp)
+    list(APPEND graphics_test_sources
+            CompositionPixelTests-Windows.cpp
+            WindowGeometryTests-Windows.cpp)
 endif ()
 
 nano_add_executable(GraphicsTests

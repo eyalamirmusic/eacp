@@ -2,6 +2,7 @@
 
 #include "Window.h"
 #include "CompositionHostWindow-Windows.h"
+#include "WindowGeometry-Windows.h"
 #include <eacp/Core/Utils/Strings.h>
 #include "../Helpers/DarkMode-Windows.h"
 #include "../Helpers/ImageConversion-Windows.h"
@@ -14,6 +15,9 @@
 
 // std::lround, for snapping a dragged size to a locked aspect ratio.
 #include <cmath>
+
+// std::min, for capping a window's minimum size at its display's work area.
+#include <algorithm>
 
 namespace eacp::Graphics
 {
@@ -34,8 +38,16 @@ struct NonClientInsets
 // The border + title-bar thickness in physical pixels for this window's style,
 // used to convert between window-frame and content sizes for the resize and
 // minimum-size parity handlers.
-NonClientInsets nonClientInsets(HWND hwnd)
+//
+// frameEaten is the frameless case: the style still carries WS_THICKFRAME (see
+// createWindow) but WM_NCCALCSIZE hands the whole window rect to the client, so
+// the thickness the style implies is not one the window actually has. Measuring
+// it from the style anyway would put every content size out by the frame.
+NonClientInsets nonClientInsets(HWND hwnd, bool frameEaten = false)
 {
+    if (frameEaten)
+        return {0, 0};
+
     auto dpi = GetDpiForWindow(hwnd);
     auto style = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_STYLE));
     auto exStyle = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_EXSTYLE));
@@ -43,6 +55,52 @@ NonClientInsets nonClientInsets(HWND hwnd)
     RECT rect = {0, 0, 0, 0};
     AdjustWindowRectExForDpi(&rect, style, GetMenu(hwnd) != nullptr, exStyle, dpi);
     return {rect.right - rect.left, rect.bottom - rect.top};
+}
+
+// WM_NCHITTEST's screen coordinates. The halves are signed: a window on a
+// monitor left of or above the primary one is hit-tested at negative
+// coordinates, which an unsigned LOWORD reads as somewhere near 65535.
+POINT screenPointFromLParam(LPARAM lParam)
+{
+    return {static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))};
+}
+
+// The work area — the monitor minus the taskbar and any registered appbars — of
+// the display a window rect mostly sits on, in physical pixels.
+RECT workAreaForRect(const RECT& rect)
+{
+    auto monitor = MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST);
+
+    auto info = MONITORINFO {};
+    info.cbSize = sizeof(info);
+
+    if (monitor != nullptr && GetMonitorInfoW(monitor, &info))
+        return info.rcWork;
+
+    return RECT {0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
+}
+
+RECT workAreaForWindow(HWND hwnd)
+{
+    auto frame = RECT {};
+    GetWindowRect(hwnd, &frame);
+    return workAreaForRect(frame);
+}
+
+// The thickness of the band a window's sizing frame reserves for resize
+// hit-testing, in physical pixels at this window's DPI.
+LONG resizeBandThickness(HWND hwnd)
+{
+    auto dpi = GetDpiForWindow(hwnd);
+    return GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi)
+           + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+}
+
+// Whether a window is in a state whose size is the system's to choose, so
+// containment has neither anything to fix nor any business overruling it.
+bool hasSystemManagedSize(HWND hwnd)
+{
+    return IsZoomed(hwnd) || IsIconic(hwnd);
 }
 
 } // namespace
@@ -140,11 +198,13 @@ struct Window::Native
             // A transparent window is shaped by its content, so it takes no
             // frame at all: the frame DWM rounds is also the frame it drops a
             // rectangular shadow around, and that shadow would trace the
-            // see-through surplus the window exists to hide.
+            // see-through surplus the window exists to hide. It is likewise
+            // the frame a resize drag grabs, so a transparent window is not
+            // resizable from its edges either.
             framelessRounded =
                 options.cornerRadius.has_value() && !options.transparentBackground;
-            framelessResizable =
-                framelessRounded && options.flags.contains(WindowFlags::Resizable);
+            framelessResizable = options.flags.contains(WindowFlags::Resizable)
+                                 && !options.transparentBackground;
         }
 
         std::wstring wideTitle =
@@ -159,11 +219,13 @@ struct Window::Native
         AdjustWindowRectExForDpi(&rect, style, FALSE, 0, dpi);
 
         // DWM only rounds windows that carry a frame style — a bare
-        // WS_POPUP is silently left square even with DWMWCP_ROUND. Keep
-        // WS_THICKFRAME so rounding (and the system shadow) apply; the
-        // visible frame is removed again in WM_NCCALCSIZE, after the rect
-        // above was computed without it so the client size stays exact.
-        if (framelessRounded)
+        // WS_POPUP is silently left square even with DWMWCP_ROUND — and a
+        // window with no frame has no sizing border to drag. Keep
+        // WS_THICKFRAME so rounding, the system shadow and resizing all
+        // apply; the visible frame is removed again in WM_NCCALCSIZE, after
+        // the rect above was computed without it so the client size stays
+        // exact.
+        if (framelessRounded || framelessResizable)
             style |= WS_THICKFRAME;
 
         DWORD exStyle = options.alwaysOnTop ? WS_EX_TOPMOST : 0;
@@ -183,18 +245,36 @@ struct Window::Native
         auto windowWidth = rect.right - rect.left;
         auto windowHeight = rect.bottom - rect.top;
 
-        auto x = CW_USEDEFAULT;
-        auto y = CW_USEDEFAULT;
+        // The display the window is about to open on: the one the requested
+        // position lands on, or the one the user is working on.
+        auto x = 0L;
+        auto y = 0L;
+        auto area = RECT {};
+
         if (options.initialPosition)
         {
-            x = static_cast<int>(options.initialPosition->x * dpiScale);
-            y = static_cast<int>(options.initialPosition->y * dpiScale);
+            x = static_cast<LONG>(options.initialPosition->x * dpiScale);
+            y = static_cast<LONG>(options.initialPosition->y * dpiScale);
+            area = workAreaForRect(RECT {x, y, x + windowWidth, y + windowHeight});
         }
         else
         {
-            auto area = activeMonitorWorkArea();
-            x = area.left + ((area.right - area.left) - windowWidth) / 2;
-            y = area.top + ((area.bottom - area.top) - windowHeight) / 2;
+            area = activeMonitorWorkArea();
+        }
+
+        auto frame = RECT {x, y, x + windowWidth, y + windowHeight};
+        detail::containWithinWorkArea(frame, area, options.hasAspectRatio());
+
+        windowWidth = frame.right - frame.left;
+        windowHeight = frame.bottom - frame.top;
+
+        // Centred on what containment left, not on what was asked for: a
+        // window trimmed to the work area would otherwise sit off to one side
+        // by half of what came off it.
+        if (!options.initialPosition)
+        {
+            frame.left = area.left + ((area.right - area.left) - windowWidth) / 2;
+            frame.top = area.top + ((area.bottom - area.top) - windowHeight) / 2;
         }
 
         host.hwnd =
@@ -202,10 +282,10 @@ struct Window::Native
                             WINDOW_CLASS_NAME,
                             wideTitle.c_str(),
                             style,
-                            x,
-                            y,
-                            rect.right - rect.left,
-                            rect.bottom - rect.top,
+                            frame.left,
+                            frame.top,
+                            windowWidth,
+                            windowHeight,
                             nullptr,
                             nullptr,
                             (HINSTANCE) eacp::Plugins::getCurrentModuleHandle(),
@@ -311,21 +391,6 @@ struct Window::Native
         ShowWindow(host.hwnd, IsZoomed(host.hwnd) ? SW_RESTORE : SW_MAXIMIZE);
     }
 
-    // A maximized window overhangs the monitor by its resize frame on every
-    // side. With the frame eaten by WM_NCCALCSIZE the client area would
-    // inherit that overhang and the content edges would land offscreen, so
-    // inset the proposed rect back to the visible area.
-    static void clampMaximizedClientRect(HWND hwnd, RECT& rect)
-    {
-        if (!IsZoomed(hwnd))
-            return;
-
-        auto dpi = GetDpiForWindow(hwnd);
-        auto frame = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi)
-                     + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
-        InflateRect(&rect, -frame, -frame);
-    }
-
     void showWindow() const
     {
         if (host.hwnd)
@@ -414,7 +479,7 @@ struct Window::Native
     // dragging).
     void dispatchWillResize(RECT* windowRect, WPARAM edge) const
     {
-        auto insets = nonClientInsets(host.hwnd);
+        auto insets = nonClientInsets(host.hwnd, eatsFrame());
         auto scale = host.getDpiScale();
 
         auto clientWidth = (windowRect->right - windowRect->left) - insets.width;
@@ -447,17 +512,108 @@ struct Window::Native
 
     // Honour WindowOptions::minWidth/minHeight (content points) by setting the
     // window's minimum track size in physical pixels for WM_GETMINMAXINFO.
+    //
+    // Capped at the work area, because a minimum larger than the screen is a
+    // minimum the user cannot escape: the window opens with its bottom right
+    // — the resize corner — off the display, and the floor that put it there
+    // is also what refuses every attempt to drag it back. A window can always
+    // be made to fit the display it is on.
     void applyMinTrackSize(MINMAXINFO* info) const
     {
-        auto insets = nonClientInsets(host.hwnd);
+        if (minWidth <= 0 && minHeight <= 0)
+            return;
+
+        auto insets = nonClientInsets(host.hwnd, eatsFrame());
         auto scale = host.getDpiScale();
+        auto work = workAreaForWindow(host.hwnd);
 
         if (minWidth > 0)
             info->ptMinTrackSize.x =
-                static_cast<LONG>(minWidth * scale) + insets.width;
+                std::min(static_cast<LONG>(minWidth * scale) + insets.width,
+                         work.right - work.left);
         if (minHeight > 0)
             info->ptMinTrackSize.y =
-                static_cast<LONG>(minHeight * scale) + insets.height;
+                std::min(static_cast<LONG>(minHeight * scale) + insets.height,
+                         work.bottom - work.top);
+    }
+
+    // Where a point lands on this window's own resize band (see
+    // detail::resizeBandHitTest), as an HT* code.
+    LRESULT hitTestResizeBand(POINT screenPoint) const
+    {
+        // A maximized window has no edges to drag, and a band left live along
+        // the screen edge would let a stray drag pull it out of shape.
+        if (hasSystemManagedSize(host.hwnd))
+            return HTCLIENT;
+
+        auto frame = RECT {};
+        GetWindowRect(host.hwnd, &frame);
+
+        return detail::resizeBandHitTest(
+            frame, screenPoint, resizeBandThickness(host.hwnd));
+    }
+
+    // Brings a window that ended up larger than its display, or hanging off
+    // the side of it, back within reach — the repair for the states creation
+    // cannot pre-empt: a monitor unplugged, a resolution dropped, a window
+    // dragged to a smaller screen and rescaled to it.
+    void containWithinDisplay() const
+    {
+        if (!host.hwnd || hasSystemManagedSize(host.hwnd))
+            return;
+
+        auto frame = RECT {};
+        GetWindowRect(host.hwnd, &frame);
+
+        auto contained = frame;
+        detail::containWithinWorkArea(
+            contained, workAreaForRect(frame), aspectRatio.has_value());
+
+        if (EqualRect(&contained, &frame))
+            return;
+
+        SetWindowPos(host.hwnd,
+                     nullptr,
+                     contained.left,
+                     contained.top,
+                     contained.right - contained.left,
+                     contained.bottom - contained.top,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
+    // Whether WM_NCCALCSIZE hands this window's whole rect to its client area,
+    // leaving the WS_THICKFRAME the style carries with nothing to draw or
+    // reserve. See createWindow.
+    bool eatsFrame() const { return framelessRounded || framelessResizable; }
+
+    // Maximise a frameless window onto the work area rather than over the
+    // whole monitor.
+    //
+    // Win32 maximises a window to the monitor and lets the frame overhang it,
+    // trusting the frame to be trimmed back to the work area - which works
+    // because a normal window's frame is where the overhang goes. A frameless
+    // window ate its frame (WM_NCCALCSIZE), so the overhang lands on content
+    // instead and the bottom of the window goes behind the taskbar, taking the
+    // maximise button and everything beside it with it.
+    void applyMaximizedWorkArea(MINMAXINFO* info) const
+    {
+        if (!eatsFrame())
+            return;
+
+        auto monitor = MonitorFromWindow(host.hwnd, MONITOR_DEFAULTTONEAREST);
+
+        auto display = MONITORINFO {};
+        display.cbSize = sizeof(display);
+
+        if (monitor == nullptr || !GetMonitorInfoW(monitor, &display))
+            return;
+
+        // A maximised window's position is measured from its monitor's
+        // top-left, not from the desktop's.
+        info->ptMaxPosition = {display.rcWork.left - display.rcMonitor.left,
+                               display.rcWork.top - display.rcMonitor.top};
+        info->ptMaxSize = {display.rcWork.right - display.rcWork.left,
+                           display.rcWork.bottom - display.rcWork.top};
     }
 
     // A maximise never passes through WM_SIZING, so it is the one shape the
@@ -466,15 +622,15 @@ struct Window::Native
     // denying fullscreen (WindowOptions::allowsFullScreen) and letting the
     // green button zoom, which AppKit shapes to the ratio; this is that zoom.
     //
-    // The system arrives with the work area already filled in, so shrink it to
-    // the largest rect of the right shape that fits and re-centre what is left.
+    // Runs on the maximised size settled above, so shrink that to the largest
+    // rect of the right shape that fits and re-centre what is left.
     // ptMaxTrackSize is deliberately untouched: it bounds dragging, not this.
-    void applyMaximizedSize(MINMAXINFO* info) const
+    void applyMaximizedAspectRatio(MINMAXINFO* info) const
     {
         if (!aspectRatio)
             return;
 
-        auto insets = nonClientInsets(host.hwnd);
+        auto insets = nonClientInsets(host.hwnd, eatsFrame());
         auto ratio = aspectRatio->x / aspectRatio->y;
 
         auto availableWidth = info->ptMaxSize.x - insets.width;
@@ -550,27 +706,28 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
 
     switch (msg)
     {
-        // The WS_THICKFRAME a frameless-rounded window keeps for DWM
-        // rounding must not produce a visible frame: claim the whole
-        // window rect as client area...
+        // The WS_THICKFRAME a frameless window keeps for DWM rounding and
+        // resizing must not produce a visible frame: claim the whole window
+        // rect as client area. Maximised included — applyMaximizedWorkArea
+        // hands such a window a rect with no overhang to trim.
         case WM_NCCALCSIZE:
-            if (wParam && self->framelessRounded)
-            {
-                auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam);
-                clampMaximizedClientRect(hwnd, params->rgrc[0]);
+            if (wParam && self->eatsFrame())
                 return 0;
-            }
             break;
 
-        // ...and for fixed-size windows, keep the edge band the frame would
-        // reserve for resize hit-testing behaving as ordinary content. With
-        // WindowFlags::Resizable the band stays live, so a frameless window
-        // still resizes from its edges (Electron-style).
+        // ...which leaves the edges to be hit-tested by hand, since a client
+        // area covering the window is a window DefWindowProc calls HTCLIENT
+        // all over. With WindowFlags::Resizable the band comes back as a
+        // resize grip (Electron-style); without it the edges stay ordinary
+        // content.
         case WM_NCHITTEST:
             if (self->ignoresMouseEvents)
                 return HTTRANSPARENT;
 
-            if (self->framelessRounded && !self->framelessResizable)
+            if (self->framelessResizable)
+                return self->hitTestResizeBand(screenPointFromLParam(lParam));
+
+            if (self->eatsFrame())
                 return HTCLIENT;
             break;
 
@@ -608,13 +765,20 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             return 0;
 
         case WM_GETMINMAXINFO:
-            if (self->minWidth > 0 || self->minHeight > 0 || self->aspectRatio)
-            {
-                auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
-                self->applyMinTrackSize(info);
-                self->applyMaximizedSize(info);
-                return 0;
-            }
+        {
+            // The system arrives with defaults already filled in, so what none
+            // of these three overrides still holds.
+            auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
+            self->applyMinTrackSize(info);
+            self->applyMaximizedWorkArea(info);
+            self->applyMaximizedAspectRatio(info);
+            return 0;
+        }
+
+        // A display went away, changed resolution, or gave up room to a
+        // taskbar: whatever that leaves hanging off the screen comes back.
+        case WM_DISPLAYCHANGE:
+            self->containWithinDisplay();
             break;
 
         case WM_SIZING:
@@ -637,13 +801,19 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
 
         case WM_DPICHANGED:
         {
-            auto* suggested = reinterpret_cast<RECT*>(lParam);
+            // The suggested rect scales the window by the DPI ratio, so a
+            // window that fitted a 100% display can be handed a size half
+            // again too big for the 150% one it just moved to.
+            auto frame = *reinterpret_cast<RECT*>(lParam);
+            detail::containWithinWorkArea(
+                frame, workAreaForRect(frame), self->aspectRatio.has_value());
+
             SetWindowPos(hwnd,
                          nullptr,
-                         suggested->left,
-                         suggested->top,
-                         suggested->right - suggested->left,
-                         suggested->bottom - suggested->top,
+                         frame.left,
+                         frame.top,
+                         frame.right - frame.left,
+                         frame.bottom - frame.top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
 
             // The new scale recreates every layer surface (setDpiScale marks
