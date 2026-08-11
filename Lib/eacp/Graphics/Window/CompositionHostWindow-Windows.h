@@ -115,6 +115,13 @@ private:
     void ensureMouseLeaveTracking();
     void dispatchMouseToContentView(MouseEvent event);
 
+    POINT toScreenPixels(Point position) const;
+    Point fromScreenPixels(POINT screenPixels) const;
+
+    // Where the held button went down, in screen pixels — see
+    // dispatchMouseToContentView for why it is not kept in client points.
+    POINT mouseDownScreenPosition {};
+
     // The mouse's own movement, which the ordinary pointer messages cannot
     // report: they carry the pointer's position after the system's acceleration
     // curve has shaped it, and after it has been rounded to whole pixels and

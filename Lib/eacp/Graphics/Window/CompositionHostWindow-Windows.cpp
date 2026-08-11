@@ -551,8 +551,47 @@ void CompositionHostWindow::accumulateRawMouseMovement(LPARAM lParam)
     rawMouseMovement.y += static_cast<float>(input.data.mouse.lLastY);
 }
 
+POINT CompositionHostWindow::toScreenPixels(Point position) const
+{
+    const auto scale = getDpiScale();
+
+    POINT pixels {static_cast<LONG>(position.x * scale),
+                  static_cast<LONG>(position.y * scale)};
+
+    ClientToScreen(hwnd, &pixels);
+    return pixels;
+}
+
+Point CompositionHostWindow::fromScreenPixels(POINT screenPixels) const
+{
+    auto pixels = screenPixels;
+    ScreenToClient(hwnd, &pixels);
+
+    const auto scale = getDpiScale();
+
+    return {static_cast<float>(pixels.x) / scale,
+            static_cast<float>(pixels.y) / scale};
+}
+
 void CompositionHostWindow::dispatchMouseToContentView(MouseEvent event)
 {
+    // Where the drag began, kept in SCREEN pixels and converted back on every
+    // event — the client area can move under a stationary pointer (the window
+    // dragged, an embedded editor a plugin host is resizing), and a start point
+    // kept in client space would report that movement as pointer travel. A
+    // wheel event has no drag behind it, so it reports itself.
+    if (event.type == MouseEventType::Wheel)
+    {
+        event.downPos = event.pos;
+    }
+    else
+    {
+        if (event.type == MouseEventType::Down)
+            mouseDownScreenPosition = toScreenPixels(event.pos);
+
+        event.downPos = fromScreenPixels(mouseDownScreenPosition);
+    }
+
     if (event.type == MouseEventType::Moved || event.type == MouseEventType::Dragged)
     {
         // Whatever Raw Input has gathered since the last movement was reported.
