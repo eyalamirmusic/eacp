@@ -1036,7 +1036,18 @@ void WebView::takeSnapshot(SnapshotCallback callback)
 void WebView::addScriptMessageHandler(
     const std::string& name, std::function<void(const std::string& message)> handler)
 {
+    // -[WKUserContentController addScriptMessageHandler:name:] RAISES on a name
+    // it already holds, and the controller outlives every page this WebView
+    // loads — so a caller attaching a channel per page (or per editor-open) hits
+    // it on the second attach. The map mirrors the controller's registrations
+    // exactly (see ~Native), and one delegate serves every name, so a name we
+    // already know is already routed: only the handler needs replacing.
+    const auto alreadyRouted = impl->messageHandlers.contains(name);
+
     impl->messageHandlers[name] = std::move(handler);
+
+    if (alreadyRouted)
+        return;
 
     auto* controller = impl->config.get().userContentController;
     auto* nsName = [NSString stringWithUTF8String:name.c_str()];
