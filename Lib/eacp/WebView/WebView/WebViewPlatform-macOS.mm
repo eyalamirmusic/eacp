@@ -136,6 +136,7 @@ struct DragWebViewState
     bool dragStarted = false;
     bool windowDragArmed = false;
     bool acceptFirstMouse = false;
+    bool defaultContextMenu = true;
 };
 
 DragWebViewState* getDragWebViewState(id self)
@@ -153,6 +154,22 @@ BOOL dragWebViewAcceptsFirstMouse(id self, SEL, NSEvent* event)
 
     return ObjC::sendSuper<BOOL>(
         self, [WKWebView class], @selector(acceptsFirstMouse:), event);
+}
+
+// WKWebView has no equivalent of WebView2's AreDefaultContextMenusEnabled, and
+// WebKit builds the menu itself after an async hit test, so menuForEvent: never
+// sees it. Emptying the menu in the hook WebKit calls just before showing it is
+// the public way to suppress it — AppKit displays nothing for an empty menu.
+void dragWebViewWillOpenMenu(id self, SEL, NSMenu* menu, NSEvent* event)
+{
+    ObjC::sendSuper<void>(self,
+                          [WKWebView class],
+                          @selector(willOpenMenu:withEvent:),
+                          menu,
+                          event);
+
+    if (! getDragWebViewState(self)->defaultContextMenu)
+        [menu removeAllItems];
 }
 
 void dragWebViewMouseDown(id self, SEL, NSEvent* event)
@@ -306,6 +323,8 @@ Class getDragWebViewClass()
         builder->addMethod(@selector(mouseUp:), dragWebViewMouseUp);
         builder->addMethod(@selector(keyDown:), dragWebViewKeyDown);
         builder->addMethod(@selector(keyUp:), dragWebViewKeyUp);
+        builder->addMethod(@selector(willOpenMenu:withEvent:),
+                           dragWebViewWillOpenMenu);
         builder->addMethod(@selector(dealloc), deallocDragWebView);
 
         builder->registerClass();
@@ -325,6 +344,7 @@ WKWebView* createWebView(WKWebViewConfiguration* config,
         configuration:config];
     ObjC::getIvar<void*>(webView, "state") = new DragWebViewState();
     getDragWebViewState(webView)->acceptFirstMouse = options.acceptFirstMouse;
+    getDragWebViewState(webView)->defaultContextMenu = options.defaultContextMenu;
     return webView;
 }
 

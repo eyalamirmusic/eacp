@@ -199,7 +199,8 @@ struct WebView::Native
         webView = detail::createWebView(
             config.get(),
             detail::WebKitOptions {
-              .acceptFirstMouse = options.acceptFirstMouse
+              .acceptFirstMouse = options.acceptFirstMouse,
+              .defaultContextMenu = options.defaultContextMenu
             }
         );
         if (options.transparentBackground)

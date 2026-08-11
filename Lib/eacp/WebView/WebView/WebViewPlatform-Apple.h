@@ -30,6 +30,10 @@ struct WebKitOptions
     // (NSView acceptsFirstMouse) so drag regions work without a focusing
     // click first. Ignored on iOS.
     bool acceptFirstMouse = false;
+
+    // macOS: WebKit's right-click menu. WKWebView has no settings switch for
+    // it, so false empties the menu in willOpenMenu:withEvent:. Ignored on iOS.
+    bool defaultContextMenu = true;
 };
 
 // Creates the platform WKWebView. On macOS this is a subclass that owns native

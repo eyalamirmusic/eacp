@@ -133,6 +133,14 @@ public:
         // where WKWebView has no status bar. No-op on Apple platforms.
         bool statusBar = false;
 
+        // The built-in right-click menu: WebView2's on Windows (Back, Reload,
+        // Save as, Print), WebKit's on macOS. Separate from debugConsole,
+        // which only governs the DevTools window — turning that off drops
+        // Inspect but leaves the rest of the menu standing. Windows has a
+        // settings switch for this; macOS has none, so the menu is emptied as
+        // WebKit opens it. No-op on iOS.
+        bool defaultContextMenu = true;
+
         // macOS/iOS: back this WebView with a non-persistent (in-memory)
         // WKWebsiteDataStore instead of the app-wide default store. Two
         // effects: nothing the page stores (cookies, localStorage, caches)
