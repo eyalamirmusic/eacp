@@ -6,6 +6,9 @@
 #include <eacp/Core/ObjC/RuntimeClass.h>
 #import <Cocoa/Cocoa.h>
 
+// std::min, for holding a window inside its screen's visible frame.
+#include <algorithm>
+
 namespace
 {
 // Reposition the standard window controls to sit `inset` points from the
@@ -445,6 +448,8 @@ struct Window::Native
             [getWindow() center];
         }
 
+        containWithinVisibleFrame(options);
+
         [getWindow() setDelegate:(id<NSWindowDelegate>) delegate.get()];
 
         if (options.showInactive)
@@ -464,6 +469,66 @@ struct Window::Native
                             options.trafficLightPosition->y));
 
         applyApplicationIcon(options.applicationIcon());
+    }
+
+    // Whatever size was asked for, the window that opens is one the user can
+    // reach all of.
+    //
+    // A window is sized for the display it was designed on, and 1360x860 is
+    // wider than a 13" laptop's whole screen — so it opens with its bottom
+    // right past the edge, and what is out there is the resize corner: the way
+    // out of the shape is the part that went missing with it. AppKit's own
+    // constraint keeps the title bar reachable and the height within the
+    // screen; the width it leaves alone.
+    //
+    // Only windows that do not already fit are touched, so the placement
+    // AppKit chose for every window that does is left exactly as it was.
+    void containWithinVisibleFrame(const WindowOptions& options)
+    {
+        NSWindow* window = getWindow();
+        NSScreen* screen = window.screen != nil ? window.screen
+                                                : NSScreen.mainScreen;
+
+        if (screen == nil)
+            return;
+
+        auto visible = screen.visibleFrame;
+        auto frame = window.frame;
+
+        if (NSContainsRect(visible, frame))
+            return;
+
+        auto width = std::min(frame.size.width, visible.size.width);
+        auto height = std::min(frame.size.height, visible.size.height);
+
+        if (options.hasAspectRatio() && frame.size.width > 0.0
+            && frame.size.height > 0.0)
+        {
+            // Trimming the sides independently would hand a ratio-locked
+            // window the one shape it exists to refuse.
+            auto factor = std::min(width / frame.size.width,
+                                   height / frame.size.height);
+            width = frame.size.width * factor;
+            height = frame.size.height * factor;
+        }
+
+        frame = NSMakeRect(NSMinX(visible) + (visible.size.width - width) / 2.0,
+                           NSMinY(visible) + (visible.size.height - height) / 2.0,
+                           width,
+                           height);
+
+        // Before the frame, or AppKit clamps the window straight back up to a
+        // minimum that is itself bigger than the screen — a floor the user
+        // cannot escape, since every drag back into shape is refused by the
+        // same constraint that put the window off the edge.
+        auto minSize = window.contentMinSize;
+        auto content = [window contentRectForFrameRect:frame].size;
+        [window setContentMinSize:NSMakeSize(std::min(minSize.width,
+                                                      content.width),
+                                             std::min(minSize.height,
+                                                      content.height))];
+
+        [window setFrame:frame display:NO];
     }
 
     // macOS has no per-window icons; the icon is the app's Dock tile,
