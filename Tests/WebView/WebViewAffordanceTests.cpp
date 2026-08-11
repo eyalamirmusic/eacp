@@ -56,3 +56,30 @@ auto tFocusContentIsSafeBeforeNavigation =
     webView.focusContent();
     check(true);
 };
+
+// -[WKUserContentController addScriptMessageHandler:name:] RAISES on a name it
+// already holds, and the controller outlives every page the WebView loads — so
+// a caller that attaches a channel per editor-open sees the raise on the second
+// open. Uncaught in an AU view service, that is a dead host process.
+auto tDuplicateScriptMessageHandlerNameIsSafe =
+    test("WebView/duplicateScriptMessageHandlerNameIsSafe") = []
+{
+    auto webView = WebView {};
+
+    webView.addScriptMessageHandler("host", [](const std::string&) {});
+    webView.addScriptMessageHandler("host", [](const std::string&) {});
+
+    check(true);
+};
+
+auto tScriptMessageHandlerReattachesAfterRemove =
+    test("WebView/scriptMessageHandlerReattachesAfterRemove") = []
+{
+    auto webView = WebView {};
+
+    webView.addScriptMessageHandler("host", [](const std::string&) {});
+    webView.removeScriptMessageHandler("host");
+    webView.addScriptMessageHandler("host", [](const std::string&) {});
+
+    check(true);
+};
