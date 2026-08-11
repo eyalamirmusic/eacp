@@ -52,6 +52,23 @@ MouseButton mouseButtonFromEvent(NSEvent* event)
     }
 }
 
+// The screen is the one frame of reference a drag can be measured against. A
+// view's own space is not: it can move under a stationary pointer — a scrolled
+// container, or an editor a plugin host is resizing around the very drag that
+// asked for it — and a start point captured in that space and then reused would
+// report the view's movement as pointer travel that never happened.
+NSPoint toScreen(NSView* view, NSPoint windowPoint)
+{
+    NSWindow* window = view.window;
+    return window != nil ? [window convertPointToScreen:windowPoint] : windowPoint;
+}
+
+NSPoint fromScreen(NSView* view, NSPoint screenPoint)
+{
+    NSWindow* window = view.window;
+    return window != nil ? [window convertPointFromScreen:screenPoint] : screenPoint;
+}
+
 void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
 {
     auto* root = getRootView(self);
@@ -94,12 +111,16 @@ void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
         e.clickCount = (int) event.clickCount;
     }
 
-    auto& mouseDownPosition = ObjC::getIvar<NSPoint>(root, "mouseDownPosition");
+    auto& mouseDownScreenPosition =
+        ObjC::getIvar<NSPoint>(root, "mouseDownScreenPosition");
 
     if (type == MouseEventType::Down)
-        mouseDownPosition = localPos;
+        mouseDownScreenPosition = toScreen(root, windowPos);
 
-    e.downPos = {(float) mouseDownPosition.x, (float) mouseDownPosition.y};
+    auto downPos =
+        [root convertPoint:fromScreen(root, mouseDownScreenPosition) fromView:nil];
+
+    e.downPos = {(float) downPos.x, (float) downPos.y};
 
     if (auto* view = getView(root))
         view->dispatchMouseEvent(e);
@@ -338,7 +359,7 @@ Class getNativeViewClass()
         auto builder = new ObjC::RuntimeClass<NSView>("EacpNativeView");
 
         builder->addIvar<void*>("cppView");
-        builder->addIvar<NSPoint>("mouseDownPosition");
+        builder->addIvar<NSPoint>("mouseDownScreenPosition");
 
         builder->addProtocol(@protocol(CALayerDelegate));
 
