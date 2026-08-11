@@ -10,10 +10,8 @@ class Context
 public:
     virtual ~Context() = default;
 
-    // True when this context draws an off-screen View snapshot (renderToImage)
-    // rather than a live on-screen frame. Lets paint() skip work that only makes
-    // sense on screen -- a GPUView renders its content via renderNativeContent
-    // and must not present a live frame while being snapshotted.
+    // True for an off-screen renderToImage snapshot rather than a live frame,
+    // so paint() can skip work that only makes sense on screen.
     bool isSnapshot() const { return snapshotMode; }
 
     virtual void saveState() = 0;

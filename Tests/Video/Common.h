@@ -9,10 +9,6 @@ namespace VideoTests
 {
 using namespace eacp;
 
-// A decoder that makes frames up. The entire queueing, playhead and clock layer
-// above Decoder is portable C++, so it can be exercised end to end without a
-// file, a codec or an OS anywhere in the test.
-//
 // Each frame carries its own index in pixel byte 0, so a test can assert which
 // frame it was handed rather than inferring it from the timestamp.
 struct FakeDecoder final : Video::Decoder
@@ -74,15 +70,12 @@ struct FakeDecoder final : Video::Decoder
     std::atomic<int> seekCount {0};
 };
 
-// The index a frame was made with, or -1 for an invalid frame.
 inline int indexOf(const Video::VideoFrame& frame)
 {
     const auto* pixels = frame.pixels();
     return pixels != nullptr ? (int) pixels[0] : -1;
 }
 
-// A stream over `frameCount` synthetic frames at `frameRate`, plus the decoder
-// so a test can inspect how much work it was actually asked to do.
 struct FakeStream
 {
     FakeStream(int frameCount, double frameRate = 10.0, int queueDepth = 4)

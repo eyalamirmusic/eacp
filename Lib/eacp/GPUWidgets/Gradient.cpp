@@ -26,7 +26,6 @@ Graphics::Color colorAt(const Graphics::LinearGradient& gradient,
     if (stops.size() == 1)
         return stops[0].color;
 
-    // Project the point onto the gradient axis to a parameter in [0, 1].
     auto axisX = gradient.end.x - gradient.start.x;
     auto axisY = gradient.end.y - gradient.start.y;
     auto lengthSquared = axisX * axisX + axisY * axisY;

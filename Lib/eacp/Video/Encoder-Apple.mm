@@ -23,8 +23,8 @@ NSString* fileTypeForPath(const FilePath& path)
     return AVFileTypeQuickTimeMovie;
 }
 
-// A standalone IOSurface-backed, Metal-compatible BGRA buffer (for the GpuDirect
-// support probe, before the encoder's pool exists). Caller releases.
+// An IOSurface-backed, Metal-compatible BGRA buffer for the GpuDirect probe,
+// which runs before the encoder's pool exists. Caller releases.
 CVPixelBufferRef makeMetalPixelBuffer(int width, int height)
 {
     NSDictionary* attributes = @{
@@ -45,8 +45,7 @@ CVPixelBufferRef makeMetalPixelBuffer(int width, int height)
 
 bool AppleEncoder::begin(const FilePath& path, int w, int h, int bitrate, int)
 {
-    // fps is unused here: AVAssetWriter derives timing from each frame's
-    // presentation timestamp (expectsMediaDataInRealTime + PTS).
+    // fps is unused: AVAssetWriter derives timing from each frame's PTS.
     width = w;
     height = h;
 
@@ -72,8 +71,8 @@ bool AppleEncoder::begin(const FilePath& path, int w, int h, int bitrate, int)
                                               outputSettings:settings];
     in.expectsMediaDataInRealTime = YES;
 
-    // IOSurface + Metal compatibility so the GpuDirect tier can render straight
-    // into pool buffers; harmless for the CPU-filled snapshot tier.
+    // IOSurface + Metal compatibility lets the GpuDirect tier render straight
+    // into pool buffers.
     NSDictionary* pixelAttributes = @{
         (id) kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
         (id) kCVPixelBufferWidthKey : @(width),
@@ -129,10 +128,7 @@ void AppleEncoder::waitUntilReady(Time::MS timeout)
     if (!input)
         return;
 
-    // AVAssetWriterInput has no blocking form, so this polls. The wait is short
-    // in practice — the H.264 encoder drains a frame in well under a
-    // millisecond — and the deadline keeps a stalled writer from hanging the
-    // caller outright.
+    // AVAssetWriterInput has no blocking form, so this polls.
     auto deadline = Time::Deadline {timeout};
 
     while (![input.get() isReadyForMoreMediaData] && !deadline.expired())

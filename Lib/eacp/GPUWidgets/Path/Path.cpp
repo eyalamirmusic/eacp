@@ -7,8 +7,7 @@ namespace eacp::GPUWidgets
 {
 namespace
 {
-// A ceiling on subdivision, so a degenerate control polygon or an absurd
-// flatness cannot turn one curve into an unbounded point list.
+// Bounds the point list for degenerate control polygons.
 constexpr int maxCurveSegments = 512;
 
 Graphics::Point lerp(const Graphics::Point& a, const Graphics::Point& b, float t)
@@ -21,8 +20,7 @@ float length(const Graphics::Point& point)
     return std::sqrt(point.x * point.x + point.y * point.y);
 }
 
-// The second difference of three control points: what bounds how far a Bezier
-// bows away from the chord across them.
+// Bounds how far a Bezier bows away from the chord across the three points.
 float secondDifference(const Graphics::Point& a,
                        const Graphics::Point& b,
                        const Graphics::Point& c)
@@ -36,18 +34,14 @@ void Path::setFlatness(float toleranceInPathUnits)
     flatness = std::max(toleranceInPathUnits, epsilon);
 }
 
-// A Bezier split into n uniform pieces strays from its polyline by at most
-// d / (8 n^2), where d is the largest second difference of its control points.
-// Turned around, that is the count which holds the error to flatness.
+// A Bezier in n uniform pieces strays by at most difference / (8 n^2).
 int Path::segmentsForCurve(float difference) const
 {
     auto needed = std::ceil(std::sqrt(difference / (8.0f * flatness)));
     return std::clamp((int) needed, 1, maxCurveSegments);
 }
 
-// The same question for an arc, where the deviation is the sagitta of one
-// segment's chord: r (1 - cos(halfAngle)). Solving it for the angle gives the
-// widest segment allowed, and the sweep divided by that gives the count.
+// An arc strays by its chord's sagitta, radius * (1 - cos(halfAngle)).
 int Path::segmentsForArc(float radius, float sweep) const
 {
     if (radius <= flatness)
@@ -70,8 +64,7 @@ bool Path::isEmpty() const
 
 Path::SubPath& Path::currentSubPath()
 {
-    // A line/curve before any moveTo seeds a sub-path at the current point so its
-    // first vertex is not lost.
+    // A line or curve before any moveTo starts at the current point.
     if (subPaths.empty())
     {
         auto seeded = SubPath {};
@@ -128,8 +121,7 @@ void Path::cubicTo(float control1X,
     auto p3 = Graphics::Point {endX, endY};
     auto& points = currentSubPath().points;
 
-    // A cubic bows about either of its two second differences, so the tighter
-    // of the two decides the count.
+    // A cubic bows about either second difference, so the larger decides.
     auto steps = segmentsForCurve(
         std::max(secondDifference(p0, p1, p2), secondDifference(p1, p2, p3)));
 
@@ -179,9 +171,8 @@ void Path::addRoundedRect(const Graphics::Rect& rect, float cornerRadius)
     auto sub = SubPath {};
     auto cornerSegments = segmentsForArc(radius, pi * 0.5f);
 
-    // Sweeps a quarter-circle of the given corner, appending its points. Angles
-    // run in a y-down screen space, so the four corners trace the outline in
-    // order with the straight edges formed implicitly between them.
+    // Angles are y-down, so sweeping the corners in order traces the outline
+    // with the straight edges implied between arcs.
     auto addArc = [&](float centerX, float centerY, float startAngle)
     {
         for (auto i = 0; i <= cornerSegments; ++i)
@@ -215,16 +206,12 @@ void Path::addEllipse(const Graphics::Rect& rect)
     auto radiusX = rect.w * 0.5f;
     auto radiusY = rect.h * 0.5f;
 
-    // The flatter axis bows least, so the longer one sets the count for the
-    // whole sweep - subdividing an ellipse per quadrant would put a seam where
-    // the counts changed.
+    // One count for the whole sweep, from the longer axis: a per-quadrant count
+    // would seam where it changed.
     auto segments = segmentsForArc(std::max(radiusX, radiusY), 2.0f * pi);
 
-    // Vertices placed straight on the ellipse make a polygon wholly inside it,
-    // small by the full sagitta everywhere between them. Pushed out by half of
-    // it the polygon straddles the real curve instead: the same error, but
-    // signed both ways and averaging to nothing, which is what keeps a filled
-    // circle the size it was asked for rather than reliably a little under.
+    // Outset by half the sagitta so the polygon straddles the true curve rather
+    // than sitting wholly inside it, which would fill reliably undersized.
     auto sagitta = 1.0f - std::cos(pi / (float) segments);
     auto outsetX = radiusX * (1.0f + sagitta * 0.5f);
     auto outsetY = radiusY * (1.0f + sagitta * 0.5f);

@@ -25,11 +25,8 @@ std::string safeString(const char* str, const char* fallback = "")
 } // namespace
 
 #if EACP_WEBVIEW_PRIVATE_MEDIA_CAPTURE_SPI
-// Private WebKit SPI forward declaration. WKUIDelegate didn't expose a public
-// camera/microphone permission selector until macOS 12 — on macOS 11 WebKit
-// only calls this underscored variant. Mirrors the enum WebKit ships in its
-// _WKWebsiteDataStore / WKUIDelegatePrivate headers; bit values are part of
-// the ABI and must not change.
+// Private WebKit SPI: macOS 11 has no public camera/microphone permission
+// selector and calls this underscored variant instead. The bit values are ABI.
 typedef NS_OPTIONS(NSUInteger, _WKCaptureDevices) {
     _WKCaptureDeviceMicrophone = 1 << 0,
     _WKCaptureDeviceCamera = 1 << 1,
@@ -47,12 +44,8 @@ using MessageHandlerMap =
 
 namespace
 {
-// Runtime classes (see RuntimeClass.h) get no automatic C++ ivar
-// construction, so each instance's C++ members live behind one raw "state"
-// pointer, created next to the instance and deleted in its dealloc.
-//
-// State of the runtime-built delegate class implementing
-// WKNavigationDelegate, WKScriptMessageHandler and WKUIDelegate.
+// Runtime classes construct no C++ ivars, so each instance's C++ members live
+// behind one raw "state" pointer, created alongside it and deleted in dealloc.
 struct WebViewDelegateState
 {
     std::weak_ptr<eacp::Graphics::WebView::Native> nativeWeak;
@@ -64,14 +57,12 @@ WebViewDelegateState* getWebViewDelegateState(id self)
     return (WebViewDelegateState*) eacp::ObjC::getIvar<void*>(self, "state");
 }
 
-// Defined below WebView::Native — the delegate's methods need its complete
-// type. Returns a +1 (alloc'd) instance with a fresh state.
+// Returns a +1 instance with a fresh state; defined below WebView::Native,
+// whose complete type the delegate's methods need.
 NSObject* createWebViewDelegate();
 
-// Per-request streaming state: the resource being pulled, how far we've read,
-// how much is left to deliver, and a reusable chunk buffer. The buffer is
-// filled on a background queue and consumed on the main thread, but never
-// concurrently -- the two hand off across a single chunk.
+// The buffer is filled on a background queue and consumed on the main thread,
+// but never concurrently — the two hand off across a single chunk.
 struct StreamContext
 {
     eacp::Graphics::StreamingResource resource;
@@ -82,14 +73,13 @@ struct StreamContext
 
 constexpr int streamChunkSize = 256 * 1024;
 
-// State of the runtime-built WKURLSchemeHandler class.
 struct ResourceSchemeHandlerState
 {
     eacp::Graphics::ResourceProvider provider;
     eacp::Graphics::StreamingProvider streamingProvider;
-    // Live flags for in-flight streaming tasks, keyed by the task pointer.
-    // Touched only on the main thread (start / stop / chunk delivery), so it
-    // needs no locking; flipping a flag to false stops further delivery.
+
+    // Live flags for in-flight streaming tasks, keyed by task pointer. Main
+    // thread only, so unlocked; clearing a flag stops further delivery.
     std::unordered_map<const void*, std::shared_ptr<std::atomic<bool>>>
         streamingTasks;
 };
@@ -374,8 +364,7 @@ WKWebView* webViewDelegateCreateWebView(id self,
     if (native->owner.onNewWindowRequested(std::move(popup), url))
         return popupWKWebView;
 
-    // Embedder declined. Load the URL inline so target="_blank"-style
-    // navigations still reach the user.
+    // Embedder declined, so load inline rather than dropping the navigation.
     if (navigationAction.targetFrame == nil)
         [webView loadRequest:navigationAction.request];
 
@@ -406,11 +395,9 @@ void webViewDelegateRequestMediaCapture(
 }
 
 #if EACP_WEBVIEW_PRIVATE_MEDIA_CAPTURE_SPI
-// macOS 11 fallback. WebKit on macOS 12+ prefers the public selector above;
-// macOS 11 has no public selector and calls this one instead. The availability
-// guard makes the preference explicit: if some future WebKit ever dispatched
-// both, the public path still wins and we'd no-op here. handler() is always
-// invoked so the request never hangs.
+// macOS 11 fallback for the public selector above. The availability guard keeps
+// the public path winning if a future WebKit ever dispatched both. handler() is
+// always invoked so the request cannot hang.
 void webViewDelegateRequestUserMediaSPI(id,
                                         SEL,
                                         WKWebView*,
@@ -446,8 +433,8 @@ void webViewDelegateDidReceiveScriptMessage(id self,
             {
                 body = [message.body UTF8String];
             }
-            // Guard: dataWithJSONObject: throws (uncaught -> app crash) on a
-            // non-array/dict top level, e.g. a bare number posted from JS.
+            // dataWithJSONObject: throws, uncaught, on a non-array/dict top
+            // level — e.g. a bare number posted from JS.
             else if ([NSJSONSerialization isValidJSONObject:message.body])
             {
                 NSError* error = nil;
@@ -502,10 +489,8 @@ Class getWebViewDelegateClass()
             webViewDelegateCreateWebView);
         builder->addMethod(@selector(webViewDidClose:), webViewDelegateDidClose);
 
-        // The public media-capture selector (and the WKMediaCaptureType /
-        // WKPermissionDecision types in its signature) only exists on
-        // macOS 12 / iOS 15+, so registration is gated the same way. Older
-        // systems never dispatch it; they use the SPI fallback below.
+        // The types in this selector's signature only exist on macOS 12 /
+        // iOS 15+; older systems take the SPI fallback below.
         if (@available(macOS 12.0, iOS 15.0, *))
             builder->addMethod(
                 @selector(webView:
@@ -543,10 +528,8 @@ NSObject* createWebViewDelegate()
 
 namespace
 {
-// Reads one chunk off a background queue, then hops to the main thread to feed
-// it to the task and schedule the next chunk. WKURLSchemeTask methods must run
-// on the thread that started the task and must not run after it's stopped, so
-// every task call sits behind the main thread plus the `live` guard.
+// WKURLSchemeTask methods must run on the thread that started the task and
+// never after it stops, hence the main-thread hop and the `live` guard.
 void schemeHandlerPumpTask(id self,
                            id<WKURLSchemeTask> task,
                            std::shared_ptr<StreamContext> context,
@@ -594,8 +577,6 @@ void schemeHandlerPumpTask(id self,
     });
 }
 
-// Resolves the request's Range header against the resource size, sends the
-// matching 200 / 206 / 416 headers, then kicks off the chunked body pump.
 void schemeHandlerBeginStreamingTask(id self,
                                      id<WKURLSchemeTask> task,
                                      const std::string& url)
@@ -773,7 +754,6 @@ void WebView::initNative(Options options)
             installKeyEventSupport();
     }
 
-    // Not chrome — applies on every platform, including iOS.
     if (driveOffscreen)
         installOffscreenAnimationSupport();
 }
@@ -908,10 +888,8 @@ void WebView::evaluateJavaScript(const std::string& script, const JSCallback& ca
         return;
     }
 
-    // The block must capture its own copy of the callback: a block captures
-    // a C++ reference AS a reference, and `callback` may bind to a caller
-    // temporary (callJS passes one) that is gone by the time the async
-    // completion handler fires.
+    // Blocks capture a C++ reference as a reference, and `callback` may bind
+    // to a caller temporary that dies before the completion handler fires.
     auto ownedCallback = callback;
 
     [impl->webView.get()
@@ -1013,12 +991,8 @@ void WebView::performWindowControl(const std::string& action)
     detail::performWindowControl(impl->webView.get(), action);
 }
 
-// Injects key-events.js + its verdict handler, and points the platform view's
-// unhandled-key callback at us: keys the page leaves unconsumed go first to
-// onUnhandledKeyEvent, then — unless that claims them — up the responder chain
-// PAST the framework container view, so they reach whatever hosts the web view
-// (a DAW's plugin window, our own NSWindow, …). macOS-only: the Windows
-// backend doesn't implement forwarding yet, and iOS has no key chain to feed.
+// Keys the page leaves unconsumed go to onUnhandledKeyEvent, then, unless it
+// claims them, up the responder chain PAST the framework container view.
 void WebView::installKeyEventSupport()
 {
 #if !TARGET_OS_IPHONE
@@ -1029,10 +1003,8 @@ void WebView::installKeyEventSupport()
 
     addUserScript(shim.toString(), true);
 
-    // The page posts "<down|up>:<0|1>:..." once each key event's dispatch has
-    // finished; 1 means the page consumed it. Trailing fields carry the key's
-    // identity for the Windows backend (which has no native stash); here we only
-    // need the verdict, since we re-dispatch the NSEvent we stashed ourselves.
+    // The page posts "<down|up>:<0|1>:...", 1 meaning it consumed the key. The
+    // trailing fields are for Windows, which has no native event stash.
     addScriptMessageHandler("__eacpKeyEvent",
                             [this](const std::string& message)
                             {
@@ -1091,9 +1063,8 @@ void* WebView::nativeFocusTarget()
     return View::nativeFocusTarget();
 }
 
-// The native WKWebView is a real subview that receives input directly, so the
-// framework never routes these to us; they exist only to satisfy the shared
-// declaration the Windows composition-hosted backend needs.
+// The WKWebView is a real subview and receives input directly, so these exist
+// only for the composition-hosted Windows backend's sake.
 void WebView::mouseDown(const MouseEvent&) {}
 void WebView::mouseUp(const MouseEvent&) {}
 void WebView::mouseDragged(const MouseEvent&) {}
@@ -1101,8 +1072,7 @@ void WebView::mouseMoved(const MouseEvent&) {}
 void WebView::mouseExited(const MouseEvent&) {}
 void WebView::mouseWheel(const MouseEvent&) {}
 
-// The WKWebView is an ordinary subview, so it follows the window's placement
-// and visibility on its own.
+// An ordinary subview follows the window's placement and visibility already.
 void WebView::hostWindowMoved() {}
 void WebView::hostWindowVisibilityChanged(bool) {}
 } // namespace eacp::Graphics

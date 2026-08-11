@@ -23,11 +23,9 @@ namespace
     throw Error(context + ": " + std::strerror(errno));
 }
 
-// FD_CLOEXEC is load-bearing, as it is for the lock: a child inheriting the
-// descriptor would keep the stream (or the listening endpoint) alive after
-// its parent died, and eacp spawns children. SO_NOSIGPIPE turns a macOS
-// send-to-dead-peer into an error return instead of a process-killing
-// signal; Linux spells the same thing MSG_NOSIGNAL on each send.
+// FD_CLOEXEC is load-bearing: a child inheriting the descriptor would keep the
+// stream alive after its parent died. SO_NOSIGPIPE turns a macOS
+// send-to-dead-peer into an error return; Linux uses MSG_NOSIGNAL per send.
 void configureDescriptor(int fd)
 {
     ::fcntl(fd, F_SETFD, FD_CLOEXEC);
@@ -37,10 +35,8 @@ void configureDescriptor(int fd)
     ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
 #endif
 
-    // The default AF_UNIX buffers (8KB on macOS) chop a multi-megabyte
-    // message into hundreds of send/recv round trips, a context switch
-    // each; a wider window moves it in a handful. Best effort - the
-    // kernel clamps what it won't grant.
+    // The default AF_UNIX buffers (8KB on macOS) chop a multi-megabyte message
+    // into hundreds of round trips. Best effort - the kernel clamps this.
     auto bufferSize = 1 << 20;
     ::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &bufferSize, sizeof(bufferSize));
     ::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &bufferSize, sizeof(bufferSize));
@@ -55,8 +51,7 @@ int sendFlags()
 #endif
 }
 
-// Resolves (and when asked, creates) the directory the endpoints live in,
-// refusing one this user does not own: a socket in a directory someone else
+// Refuses a directory this user does not own: a socket in one someone else
 // controls is a connection someone else can intercept.
 FilePath channelDirectory(bool create)
 {
@@ -132,8 +127,7 @@ NativeChannel channelTryConnect(const std::string& safeName)
     auto reason = errno;
     ::close(fd);
 
-    // Nobody serving yet: no endpoint, or a bound-but-dead one. The portable
-    // retry loop owns what happens next.
+    // Nobody serving yet: no endpoint, or a bound-but-dead one.
     if (reason == ENOENT || reason == ECONNREFUSED)
         return invalidChannel;
 
@@ -151,8 +145,7 @@ NativeChannel channelBind(const std::string& safeName)
 
     configureDescriptor(fd);
 
-    // A leftover endpoint here is always a corpse: the caller holds the
-    // server lock, so no live server owns this name.
+    // The caller holds the server lock, so a leftover endpoint is a corpse.
     ::unlink(path.c_str());
 
     auto address = toAddress(path);
@@ -245,7 +238,7 @@ std::size_t channelReceive(NativeChannel channel, char* buffer, std::size_t leng
 void channelCancel(NativeChannel channel) noexcept
 {
     // Permanent by design: every blocked and future recv on this socket
-    // returns 0, so a teardown can never lose the race with its reader.
+    // returns 0, so a teardown cannot lose the race with its reader.
     if (channel != invalidChannel)
         ::shutdown((int) channel, SHUT_RDWR);
 }
@@ -263,10 +256,8 @@ void channelServerClose(NativeChannel listener, const std::string& safeName) noe
 
     ::close((int) listener);
 
-    // Retiring the file makes the next connect() fail fast with "nobody
-    // here" instead of a dangling refusal. Still under the server lock, so
-    // no successor can be mid-bind. Swallows everything: destructors land
-    // here.
+    // Retiring the file makes the next connect() fail fast with "nobody here".
+    // Swallows everything: destructors land here.
     try
     {
         ::unlink(endpointPath(safeName, false).c_str());

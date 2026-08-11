@@ -6,14 +6,9 @@
 
 namespace eacp::GPUWidgets
 {
-// The consumer half of PathRasterizer: a quad, placed in device pixels, that
-// paints a solid colour through a coverage mask.
-//
-// The quad is the mask's own size, so one texel lands on exactly one pixel and
-// the sampler is Nearest - filtering a 1:1 mapping can only blur what the
-// kernel already got right. It blends, because coverage *is* an alpha: without
-// that an antialiased edge would punch its partial pixels straight through
-// whatever is behind it.
+// Paints a solid colour through a PathRasterizer coverage mask. The quad is the
+// mask's own size, so sampling is Nearest at 1:1, and it must blend: coverage is
+// an alpha.
 struct CoverageShader final : GPU::ShaderProgram
 {
     CoverageShader()
@@ -39,9 +34,7 @@ struct CoverageShader final : GPU::ShaderProgram
         setFragment(float4(color.xyz(), color.w() * sample(mask, uv).x()));
     }
 
-    // Uploads the unit quad and builds the pipeline. Spelled apart from the
-    // base prepare() because the geometry and the blend mode are not the
-    // caller's to choose: a coverage quad that does not blend is not one.
+    // Apart from the base prepare(): the geometry and blend mode are fixed.
     void prepareQuad(int sampleCount)
     {
         static const FillVertex quad[] = {
@@ -60,9 +53,8 @@ struct CoverageShader final : GPU::ShaderProgram
                 GPU::BlendMode::AlphaBlend);
     }
 
-    // Draws one rasterized path. pixelRect is where the mask lands in device
-    // pixels, top-left origin - PathRasterizer::getCoveredBounds() times the
-    // scale it rasterized at. Set viewport once per frame first.
+    // pixelRect is in device pixels, top-left origin: getCoveredBounds() times
+    // the scale it rasterized at. setViewport must have run this frame.
     void drawMask(GPU::RenderPass& pass,
                   const GPU::Texture& maskToDraw,
                   const Graphics::Rect& pixelRect,

@@ -10,79 +10,41 @@
 namespace eacp::UI
 {
 // Which corner of its triangle a vertex is: 0, 1 or 2. The whole per-vertex
-// stream, because the geometry itself is per-instance -- see MeshTriangle.
+// stream, the geometry itself being per-instance.
 struct MeshCorner
 {
     float index;
 };
 
-// One triangle of a filled shape. Per-instance rather than per-vertex, and that
-// is the reason this renderer looks the way it does: a program's vertex buffer
-// is one buffer it owns and overwrites, so a second upload in a frame would land
-// on geometry the first draw has not read yet, while the per-instance path
-// streams through a pool that hands out a buffer nothing in flight is using. A
-// batch has to be able to flush many times in one frame -- on every clip change
-// and every time a masked shape is drawn between two meshed ones -- so the
-// geometry goes down the path that allows it.
+// One triangle of a filled shape. Per-instance rather than per-vertex, so that
+// one batch can flush many times per frame: a program's single vertex buffer
+// would be overwritten under a draw that had not read it yet.
 struct MeshTriangle
 {
     float positionA[2];
     float positionB[2];
     float positionC[2];
 
-    // How much of the shape reaches each of the three corners, with which kind
-    // of gradient fills it in the fourth. A shape's interior carries 1
-    // throughout and its feather ring fades to 0, so interpolating the first
-    // three across the triangle is the whole of the antialiasing: no distance
-    // field, and no multisampling to ask a single-sample pass for.
+    // Per corner, with the gradient kind in the fourth slot. Interpolating these
+    // is the whole of the antialiasing - no distance field, no multisampling.
     float coverage[4];
 
     float color[4];
 
-    // The same two the quad renderer carries, meaning the same things: the map
-    // into the gradient's own space, its translation, the row of the ramp
-    // texture and the spread mode.
-    //
-    // Per triangle rather than per shape, which is what this costs: a meshed
-    // shape is a few hundred triangles, and every one of them repeats its
-    // gradient. It is 32 bytes a triangle against an indirection through a
-    // buffer the fragment stage would have to read, and the cheaper of those two
-    // is not obvious enough to build the harder one first.
+    // The same two the quad renderer carries, repeated per triangle rather than
+    // indirected through a buffer the fragment stage would read.
     float gradient[4];
     float gradientRamp[4];
 };
 
-// Draws filled shapes as triangles, batched and instanced.
-//
-// The sibling of ShapeBatch, and what a shape too large for the coverage atlas
-// is drawn by instead. A mask is rasterized per device pixel and stored, so it
-// costs the atlas the shape's own area on screen; a mesh is a few hundred
-// triangles whatever size the shape is drawn at. Which is what a document of
-// large stacked artwork needs, that being the case the atlas cannot hold -- see
-// GPUWidgets::tessellateAntialiasedFill for the geometry and PathShape for the
-// choice between the two.
-//
-// Ordering with ShapeBatch is the caller's business and cannot be dodged: two
-// renderers queueing into one pass draw in flush order and not in call order, so
-// whoever issues into both has to flush one before queueing into the other. That
-// is what Graphics does, and the cost is one draw per alternation -- nothing at
-// all for a document whose large shapes are all meshed, and a draw apiece for
-// one that alternates.
-//
-// Joins the pass as a Participant, like every other batcher here, so whatever is
-// still queued when the pass ends is drawn without a flush call to forget.
+// Draws shapes too large for the coverage atlas as triangles. The caller must
+// flush this or ShapeBatch before queueing into the other, two renderers sharing
+// a pass drawing in flush order rather than call order.
 class MeshBatch : public GPU::RenderPass::Participant
 {
 public:
-    // logicalSize is the space draws are expressed in -- the same points
-    // ShapeBatch works in -- so a resize sets it rather than rebuilding
-    // anything.
-    //
-    // The coverage atlas is here for the clip alone. A mesh carries its own
-    // antialiasing in its vertices and needs no mask of its own, but a clip is a
-    // mask however the shape under it was drawn -- and it has to be the same
-    // atlas the quads read, so that one clip covers a document drawn out of both
-    // renderers.
+    // `logicalSizeToUse` is in the same points ShapeBatch works in. The atlas is
+    // needed for the clip alone, and has to be the one the quads read.
     MeshBatch(const CoverageAtlas& atlasToUse,
               GradientRamps& rampsToUse,
               Point logicalSizeToUse,
@@ -97,16 +59,12 @@ public:
 
     void setLogicalSize(Point size);
 
-    // The same clip the quad renderer takes, meaning the same thing and drawing
-    // what is queued for the same reason. Both are told, so that a clipped group
-    // holding shapes of both kinds is cut identically wherever the threshold
-    // happened to send each one.
+    // Draws what is queued. Both renderers must be told, so a clipped group
+    // holding shapes of both kinds is cut identically.
     void setClipMask(const ClipMask& mask);
 
-    // A tessellated shape, in the batch's own space: `mesh` is a flat triangle
-    // list authored in some component's points and `offset` is where that
-    // component sits, so one tessellation serves a component wherever it moves
-    // to. The colour multiplies each vertex's own coverage.
+    // `mesh` is a flat triangle list in some component's points and `offset` is
+    // where that component sits. The colour multiplies each vertex's coverage.
     void addMesh(const Vector<GPUWidgets::MeshVertex>& mesh,
                  Point offset,
                  const Color& color,

@@ -12,25 +12,9 @@ class ComponentHost;
 class DragAndDropTarget;
 class DragAndDropContainer;
 
-// A lightweight UI element: bounds, children, paint, and mouse events.
-//
-// The deliberate difference from eacp::Graphics::View is that this is *not* a
-// native object. A View is an NSView on macOS and a DirectComposition visual on
-// Windows -- the right weight for a window's content, a web view or a GPU
-// surface, and the wrong weight for a slider. A real interface has hundreds to
-// thousands of elements, and one native view apiece would pay AppKit for
-// layout, tracking and hit testing on every one, and would defeat the batching
-// that makes drawing them cheap in the first place.
-//
-// So a whole tree of these lives inside a single ComponentHost, which is one
-// GPUView, and is drawn in one pass. That is the same shape JUCE uses -- one
-// peer per window, lightweight components inside it -- and it is what lets a
-// component cost an allocation rather than a window-server object.
-//
-// Coordinates are logical points, and a component's bounds are relative to its
-// parent. paint() is handed a Graphics already translated to this component's
-// origin and clipped to its bounds, so a paint() body only ever thinks in
-// getLocalBounds().
+// A lightweight (non-native) UI element; a whole tree lives inside one
+// ComponentHost. Bounds are logical points relative to the parent, and paint()
+// is handed a Graphics already translated and clipped to getLocalBounds().
 class Component
 {
     using Children = std::initializer_list<std::reference_wrapper<Component>>;
@@ -44,33 +28,22 @@ public:
 
     void setBounds(const Rect& newBounds);
 
-    // Bounds as fractions of the parent's local bounds, so
-    // setPos({0.1f, 0.1f, 0.2f, 0.2f}) is a fifth-sized box a tenth of the way
-    // in. A layout written this way survives a resize without arithmetic, which
-    // is what most resized() bodies actually want.
-    //
-    // Does nothing while there is no parent, there being nothing to be a
-    // fraction of.
+    // Bounds as fractions of the parent's local bounds. Does nothing while
+    // there is no parent.
     void setPos(const Rect& ratio);
 
     const Rect& getBounds() const { return bounds; }
 
-    // The bounds with the origin moved to zero -- what to lay children out
-    // against, and what paint() draws in.
     Rect getLocalBounds() const { return {0.f, 0.f, bounds.w, bounds.h}; }
 
     float getWidth() const { return bounds.w; }
     float getHeight() const { return bounds.h; }
 
-    // Adds `child` on top of the existing children and shows it. The child is
-    // not owned: it has to outlive this component, which is what holding
-    // children as members gets you for free.
+    // Children are not owned: each must outlive its parent.
     void addAndMakeVisible(Component& child);
-
-    // The same for a whole row of them: addChildren({title, subtitle}).
     void addChildren(Children childrenToAdd);
 
-    // Adds without showing, for a child whose visibility the caller drives.
+    // Adds without showing.
     void addChildComponent(Component& child);
 
     void removeChildComponent(Component& child);
@@ -81,69 +54,34 @@ public:
     void setVisible(bool shouldBeVisible);
     bool isVisible() const { return visible; }
 
-    // Z-order among siblings. Last painted is on top, and hit testing walks the
-    // same order reversed, so the two can never disagree.
+    // Z-order among siblings; last painted is on top.
     void toFront();
     void toBack();
 
-    // Whether this component is a mouse target at all. Off by default: a panel
-    // that only holds children should not swallow clicks meant for them, and
-    // making that the default means a decorative component is inert without
-    // anyone remembering to say so.
+    // Whether this component is a mouse target at all. Off by default.
     void setInterceptsMouseClicks(bool shouldIntercept);
     bool getInterceptsMouseClicks() const { return interceptsMouseClicks; }
 
     void setMouseCursor(eacp::Graphics::MouseCursor cursorToUse);
     eacp::Graphics::MouseCursor getMouseCursor() const { return cursor; }
 
-    // Says that what this component draws has changed, so paint() has to be
-    // asked again before the next frame.
-    //
-    // It is the *only* thing that makes paint() run. A component's drawing is
-    // recorded the first time and kept (see DrawList), and every later frame
-    // replays what it has -- so a component that does not call this is not
-    // painted, however many frames go by and however busy the rest of the tree
-    // is. An animation next to it costs its own repaint and nothing more.
-    //
-    // What it is not: a redraw of a region. A component is the whole unit of
-    // invalidation, and the frame still draws the tree -- what this decides is
-    // which components have to work out what they draw, not which pixels are
-    // touched.
-    //
-    // Moving a component does not need one. The recording is in the component's
-    // own space and the frame applies its position as it replays, so a
-    // component that is dragged, scrolled or laid out somewhere else replays
-    // what it already has. A *resize* does need one, and setBounds does it.
-    //
-    // Called from inside a paint() it marks this component for the *next* frame
-    // rather than being lost, which is what a component drawing something
-    // derived from the frame it is in needs. What it cannot do from there is
-    // bring that frame about: asking the native view to draw while it is drawing
-    // is coalesced into the cycle already running, so a component that has no
-    // other reason to be redrawn should post the ask (Threads::callAsync) rather
-    // than make it in place.
+    // The only thing that makes paint() run again: otherwise the recorded
+    // DrawList is replayed. A move needs none (recordings are in local space), a
+    // resize does - setBounds calls it. Called from paint(), marks the next frame.
     void repaint();
 
-    // Whether this component still owes a paint(): true from the moment
-    // repaint() is called until the frame that answers it, and true of a
-    // component that has never been painted at all.
-    //
-    // What the tier's redrawing policy looks like from outside, and the thing to
-    // read when a change is not showing up: a component that reports false after
-    // a frame and still looks wrong did not ask.
+    // True from repaint() until the frame that answers it, and before the first
+    // paint.
     bool needsRepaint() const { return selfDirty; }
 
     virtual void paint(Graphics&) {}
 
-    // Drawn after the children, in this component's space -- a focus ring, a
-    // drag overlay, anything that has to sit above a child.
+    // Drawn after the children, in this component's space.
     virtual void paintOverChildren(Graphics&) {}
 
     virtual void resized() {}
 
-    // Whether `localPoint` counts as inside. Rectangular by default; override
-    // for a round knob, or for a component with a transparent margin that
-    // should let clicks through to what is behind it.
+    // Rectangular by default.
     virtual bool hitTest(Point localPoint) const;
 
     virtual void mouseEnter(const MouseEvent&) {}
@@ -153,31 +91,18 @@ public:
     virtual void mouseUp(const MouseEvent&) {}
     virtual void mouseMove(const MouseEvent&) {}
 
-    // Return true to consume the wheel event. Unconsumed, it carries on up the
-    // tree, which is what a list needs: the pointer is over a row, and the row
-    // does not scroll but the list holding it does. Returning a verdict rather
-    // than forwarding by hand means a component that ignores the wheel needs no
-    // code at all to let its parent have it.
+    // Return true to consume; unconsumed events carry on up the tree.
     virtual bool mouseWheelMove(const MouseEvent&) { return false; }
 
-    // Whether this component can hold keyboard focus. Off by default, the same
-    // way mouse interception is and for the same reason: a panel that holds an
-    // editor should not be able to take the keyboard away from it by accident.
+    // Off by default.
     void setWantsKeyboardFocus(bool shouldWantFocus);
     bool getWantsKeyboardFocus() const { return wantsKeyboardFocus; }
 
-    // Makes this the host's focused component, and asks the native view for the
-    // keyboard while it is at it -- a component tree only sees a key event if the
-    // one view it lives in is the window's first responder.
-    //
-    // Does nothing on a component that does not want focus, so the flag above is
-    // the single answer to whether one can hold the keyboard rather than one of
-    // two depending on how it was asked.
+    // Also asks the native view for the keyboard. Does nothing on a component
+    // that does not want focus.
     void grabKeyboardFocus();
 
-    // Gives it up, leaving the host with none. A tree with nothing focused sends
-    // its keys to the root, which is what makes a shortcut work before anything
-    // has been clicked.
+    // Leaves the host with no focus, which sends keys to the root.
     void giveAwayKeyboardFocus();
 
     bool hasKeyboardFocus() const;
@@ -185,78 +110,50 @@ public:
     virtual void focusGained() {}
     virtual void focusLost() {}
 
-    // Return true to consume. Unconsumed, a key carries on up the parent chain
-    // exactly as the wheel does -- so a shortcut on a root works while an editor
-    // deep inside it holds focus, and a component that ignores the keyboard
-    // needs no code to pass one on.
-    //
-    // The reply matters more here than it looks: an editor consuming everything
-    // it types must *not* consume the keys it ignores, or the tab that should
-    // move focus and the shortcut that should reach the window die in it.
+    // Return true to consume; unconsumed keys carry on up the parent chain, so
+    // consuming a key an editor ignores kills Tab and window shortcuts.
     virtual bool keyDown(const KeyEvent&) { return false; }
     virtual bool keyUp(const KeyEvent&) { return false; }
 
     // The deepest visible, intercepting component under `localPoint`, or null.
-    // Front-to-back, so the topmost sibling wins.
     Component* getComponentAt(Point localPoint);
 
     Point localPointToRoot(Point localPoint) const;
     Point rootPointToLocal(Point rootPoint) const;
 
-    // The host this subtree is in, or null while it is not in one -- which is
-    // the normal state of a component under construction, so a caller has to
-    // check rather than assume.
+    // Null while this subtree is not in a host, the normal state during
+    // construction.
     ComponentHost* getHost() const { return findHost(); }
 
-    // What `text` would take, in points, without a paint() to ask.
-    //
-    // The painter is only in hand while painting, and the two places that most
-    // need a width are not: laying a component out against its own text, and
-    // working out which character a click landed on. Both go to the same
-    // renderer the painting does, so the answer agrees with what is drawn.
-    //
-    // Zero while this component is not in a host, there being no font to measure
-    // against.
+    // Width of `text` in points, outside paint(). Zero while there is no host.
     float measureText(std::string_view text, const Font& font) const;
 
-    // The font a component with nothing to say about its own draws in: the
-    // host's. Zero-initialized while there is no host.
+    // The host's font, zero-initialized while there is no host.
     Font getHostFont() const;
 
     bool isMouseOver() const { return mouseOver; }
 
-    // The next component after this one that would take focus, in the order
-    // children were added, wrapping at the end of the tree. What Tab moves to,
-    // and null when nothing in the tree wants the keyboard at all.
+    // In the order children were added, wrapping at the end of the tree. Null
+    // when nothing in the tree wants the keyboard.
     Component* nextComponentWantingFocus(bool forwards = true);
 
-    // Every component in this subtree, including this one. The demo reports it
-    // next to the draw count, since the claim being tested is that the second
-    // does not grow with the first.
+    // Including this one.
     int countComponentsInTree() const;
 
-    // The vector shapes this component draws. A PathShape adds itself here in
-    // its constructor, so the host can find every one in the tree and rasterize
-    // the dirty ones before the frame opens its render pass - which is the only
-    // point in a frame where a compute pass can run. See PathShape.
+    // Registered by PathShape's constructor; the host rasterizes the dirty ones
+    // before the frame opens its render pass. Not owned.
     const Vector<PathShape*>& getPathShapes() const { return pathShapes; }
 
-    // Where a drag can be dropped on this component, or null. Registered by a
-    // DragAndDropTarget member in its constructor, the same way a PathShape
-    // registers -- so a drag finds one by walking up from whatever the pointer
-    // is over, and nothing has to be cast to find out what a component is.
+    // Registered by a DragAndDropTarget member's constructor; not owned, and
+    // must outlive this component. Null when nothing can be dropped here.
     DragAndDropTarget* getDropTarget() const { return dropTarget; }
 
-    // The nearest ancestor running drags, including this one. Null in a tree
-    // that has no DragAndDropContainer in it, which is most trees.
+    // The nearest ancestor running drags, including this one, or null.
     DragAndDropContainer* findDragContainer() const;
 
-    // The layers this component composites, found by the host the same way and
-    // for the same reason: a layer's content is rendered into a texture of its
-    // own before the frame's pass opens, a pass not being able to begin inside
-    // another one. See Layer, and note its ordering rule -- these are rendered
-    // in the order they registered, so a layer holding another has to be
-    // constructed after it.
+    // Rendered into their own textures before the frame's pass opens, in
+    // registration order - so a layer holding another must be constructed after
+    // it. Not owned.
     const Vector<Layer*>& getLayers() const { return layers; }
 
 private:
@@ -280,38 +177,25 @@ private:
 
     ComponentHost* findHost() const;
 
-    // Asks the host for a frame without saying that anything this component
-    // draws has changed -- what a move, a reorder or a visibility change needs,
-    // all of which change the picture without changing any recording in it.
+    // Asks the host for a frame without marking any recording stale - for a
+    // move, a reorder or a visibility change.
     void invalidateHost();
 
-    // Every ancestor is told that something below it has to be recorded, which
-    // is what lets the frame skip a clean subtree without visiting it. Stops at
-    // the first that already knows: it and everything above it were marked when
-    // whatever told it was marked.
+    // Stops at the first ancestor already marked; everything above it is too.
     void markAncestorsDirty();
 
-    // Whether the frame still has recording to do in this subtree. Only ever
-    // true for a hidden one on its way in -- a visible subtree is recorded on
-    // the frame it is marked.
     bool needsRecording() const { return selfDirty || descendantDirty; }
 
     Rect bounds;
 
     // What paint() and paintOverChildren produced, in this component's own
-    // points. Kept until repaint() says they are stale, which is the whole of
-    // the tier's redrawing policy.
+    // points. Kept until repaint() says they are stale.
     DrawList paintList;
     DrawList overList;
 
-    // Whether this component's own drawing is stale, and whether anything below
-    // it is. Both start true, a component that has never painted being stale by
-    // definition.
-    //
-    // The invariant the frame relies on: a component with either bit set has
-    // descendantDirty set on every one of its ancestors. repaint() maintains it
-    // going in, and the recording walk maintains it coming out -- which is why
-    // that walk recomputes the second bit rather than simply clearing it.
+    // Invariant: a component with either bit set has descendantDirty set on
+    // every one of its ancestors. repaint() maintains it going in, the recording
+    // walk coming out - which is why that walk recomputes descendantDirty.
     bool selfDirty = true;
     bool descendantDirty = true;
 
@@ -323,8 +207,8 @@ private:
     DragAndDropTarget* dropTarget = nullptr;
     DragAndDropContainer* dragContainer = nullptr;
 
-    // Set on a root only, by ComponentHost::setRootComponent. Everything else
-    // walks up to find it, so a subtree moved between hosts needs no fixing up.
+    // Set on a root only, by ComponentHost::setRootComponent; everything else
+    // walks up to find it.
     ComponentHost* host = nullptr;
 
     bool visible = true;

@@ -16,9 +16,7 @@ Display primaryDisplay()
                               (float) CGRectGetWidth(screen.bounds),
                               (float) CGRectGetHeight(screen.bounds)};
 
-    // A window is the screen here, so there is no work area distinct from the
-    // frame: the safe-area insets an app has to respect belong to the view, not
-    // to the display, and are reported where a view can act on them.
+    // A window is the screen here; safe-area insets belong to the view.
     return {bounds, bounds, (float) screen.scale};
 }
 } // namespace eacp::Graphics

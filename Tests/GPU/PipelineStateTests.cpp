@@ -1,25 +1,8 @@
 #include "Common.h"
 
-// RenderPipelineDescriptor's face culling and depth state, checked by drawing
-// through them and reading the pixels back.
-//
-// None of these settings has a CPU-side observable. Each is a field copied into
-// one of two very different structures - MTLDepthStencilDescriptor and encoder
-// calls on one backend, D3D12_RASTERIZER_DESC and D3D12_DEPTH_STENCIL_DESC on
-// the other - and a field mapped to the wrong constant still builds, still
-// draws, and produces a different picture. So the assertions are pixels.
-//
-// Every case here is written as a *pair* that differs in one field: the same
-// geometry drawn the same way twice, changing only the setting under test, with
-// opposite expected results. That is what separates "this field works" from
-// "something in this pipeline happens to draw green", which a single-outcome
-// case cannot tell apart - and it is the shape that catches a field ignored
-// outright, since ignoring it makes both halves agree.
-//
-// Everything renders off-screen through View::renderToImage, so it runs in CI
-// on both backends. Which matters more here than usual: whether Metal and D3D12
-// call the same triangle front-facing is a convention this code assumes and
-// cannot check on one machine.
+// Every case is a pair differing in one field, because a field ignored outright
+// makes both halves agree. Worth running on both backends: whether Metal and
+// D3D12 call the same triangle front-facing cannot be checked on one machine.
 
 using namespace nano;
 using namespace eacp;
@@ -37,9 +20,8 @@ bool isRed(const Graphics::Color& c)
     return c.r > 0.5f && c.g < 0.5f && c.b < 0.5f;
 }
 
-// The clear colour, and so "nothing was drawn here". A third colour rather than
-// one of the two the geometry uses, so a culled triangle and an occluded quad
-// read as themselves instead of as each other.
+// A third colour, so a culled triangle and an occluded quad do not read as
+// each other.
 bool isBlue(const Graphics::Color& c)
 {
     return c.b > 0.5f && c.r < 0.5f && c.g < 0.5f;
@@ -118,21 +100,9 @@ constexpr Vertex red(float x, float y, float z)
     return {x, y, z, 1.f, 0.f, 0.f, 1.f};
 }
 
-// Vertices 0..2 and 3..5 are one triangle listed both ways round; 6..11 and
-// 12..17 are two full-target quads at different depths.
-//
-// The triangle's first ordering is clockwise *on the image*: in clip space its
-// vertices run top-centre, bottom-right, bottom-left, and both APIs decide
-// facing after the viewport transform - where y increases downwards - so that
-// traversal appears clockwise on the rendered pixels. Which is the whole
-// question this file exists to settle, and the reason the cases below assert an
-// absolute answer rather than only that the two orderings differ: if the two
-// backends disagreed about it, a relative assertion would pass on both.
-//
-// The quads run bottom-left, bottom-right, top-right - counter-clockwise on the
-// image, the other way from the triangle. That is not incidental: it is what
-// lets a quad detect a cull mode leaking off the triangle's pipeline onto the
-// draw after it.
+// The triangle is listed both ways round, the first ordering clockwise *on the
+// image* since both APIs decide facing after the viewport transform. The quads
+// are deliberately wound the other way, to detect a cull mode leaking onto them.
 constexpr float nearDepth = 0.25f;
 constexpr float farDepth = 0.75f;
 
@@ -154,9 +124,8 @@ constexpr auto counterClockwiseTriangle = 3;
 constexpr auto nearQuad = 6;
 constexpr auto farQuad = 12;
 
-// One draw, and the pipeline state it is drawn with. A case is a list of these,
-// because half of what is under test is what a *second* draw sees of what the
-// first one left in the depth buffer.
+// A case is a list of these, because half of what is under test is what a
+// second draw sees of what the first left in the depth buffer.
 struct Step
 {
     int firstVertex = 0;
@@ -169,11 +138,8 @@ struct Step
     bool depthWrite = true;
 };
 
-// Builds a pipeline per step inside render(), rather than holding them: the
-// cases vary state the pipeline bakes in, so one view shape has to cover a
-// dozen different pipelines. Both backends already allow a pipeline created and
-// dropped inside a frame - the D3D12 one defers its release until the command
-// list that referenced it has run.
+// A pipeline per step inside render(), since the cases vary state the pipeline
+// bakes in. Both backends allow one created and dropped inside a frame.
 struct StateView final : GPUView
 {
     StateView()
@@ -181,9 +147,8 @@ struct StateView final : GPUView
               shaderSource().withVertex("vertexMain").withFragment("fragmentMain")))
         , vertexBuffer(Device::shared().makeBuffer(geometry))
     {
-        // MSAA would feather the culled triangle's edges and average two quads
-        // along the boundary, turning exact pixel assertions into approximate
-        // ones for no gain here.
+        // MSAA would feather the culled edges and make the assertions
+        // approximate.
         setSampleCount(1);
     }
 
@@ -202,9 +167,8 @@ struct StateView final : GPUView
             descriptor.cullMode = step.cullMode;
             descriptor.frontFace = step.frontFace;
 
-            // Whether there is a depth attachment is the view's decision and
-            // every pipeline in a pass has to agree with it - a Metal pipeline
-            // that disagrees is rejected outright.
+            // Every pipeline in a pass has to agree with the view about the
+            // depth attachment; Metal rejects one that does not.
             descriptor.depth = hasDepth();
             descriptor.depthCompare = step.depthCompare;
             descriptor.depthWrite = step.depthWrite;
@@ -226,7 +190,7 @@ struct StateView final : GPUView
     Buffer vertexBuffer;
 };
 
-// The centre pixel, where every triangle and quad in this file overlaps.
+// Where every triangle and quad in this file overlaps.
 Graphics::Color centreOf(const Graphics::Image& image)
 {
     return image.at(image.width() / 2, image.height() / 2);
@@ -243,8 +207,7 @@ Graphics::Image renderSteps(const Vector<Step>& steps, bool depth = false)
 }
 } // namespace
 
-// The baseline. Both orderings of the triangle cover the centre when nothing is
-// culled, so a later case finding one of them missing found culling and not a
+// The baseline: a later case finding one ordering missing found culling, not a
 // broken vertex buffer.
 auto tNoCullingDrawsEitherWinding = test("PipelineState/noCullingDrawsEither") = []
 {
@@ -261,10 +224,8 @@ auto tNoCullingDrawsEitherWinding = test("PipelineState/noCullingDrawsEither") =
     check(isGreen(centreOf(other)));
 };
 
-// The absolute statement, and the one that has to hold on both backends for
-// anything built on culling to be portable: with the default Clockwise front
-// face, a triangle wound clockwise on the image survives back-face culling and
-// the same triangle listed the other way round does not.
+// With the default Clockwise front face, the triangle wound clockwise on the
+// image survives back-face culling.
 auto tBackCullingKeepsTheFrontFace = test("PipelineState/backCullingKeepsFront") = []
 {
     if (!Device::shared().isValid())
@@ -282,11 +243,8 @@ auto tBackCullingKeepsTheFrontFace = test("PipelineState/backCullingKeepsFront")
     check(isBlue(centreOf(culled)));
 };
 
-// frontFace is the other half of the pair, and the half a backend can drop
-// silently: D3D12 spells it as a BOOL on the rasterizer state and Metal as a
-// separate encoder call, so it is easy for one of them to keep its default
-// while the other follows the descriptor. Flipping it must flip which ordering
-// survives - the exact inverse of the case above, same geometry, same cull mode.
+// D3D12 spells frontFace as a BOOL on the rasterizer state and Metal as a
+// separate encoder call, so it is easy for one to keep its default.
 auto tFrontFaceChoosesWhichSideIsFront =
     test("PipelineState/frontFaceChoosesTheSide") = []
 {
@@ -307,8 +265,6 @@ auto tFrontFaceChoosesWhichSideIsFront =
     check(isGreen(centreOf(kept)));
 };
 
-// Front culling, which is the setting a mirror or an inside-out skybox uses,
-// and which must throw away exactly what back culling keeps.
 auto tFrontCullingIsTheOpposite = test("PipelineState/frontCullingIsOpposite") = []
 {
     if (!Device::shared().isValid())
@@ -326,11 +282,8 @@ auto tFrontCullingIsTheOpposite = test("PipelineState/frontCullingIsOpposite") =
     check(isGreen(centreOf(kept)));
 };
 
-// Culling is encoder state on Metal and pipeline state on D3D12, and this is
-// the case that difference can break: a pass that binds a culling pipeline and
-// then a non-culling one leaves the cull mode set on Metal unless setPipeline
-// applies it every time. The second draw covers the whole target, so if it were
-// culled the centre would still be the first triangle's green.
+// Culling is encoder state on Metal and pipeline state on D3D12: the mode stays
+// set unless setPipeline applies it every time.
 auto tCullingDoesNotLeakToTheNextPipeline =
     test("PipelineState/cullingDoesNotLeak") = []
 {
@@ -340,8 +293,7 @@ auto tCullingDoesNotLeakToTheNextPipeline =
     const auto image = renderSteps({
         {.firstVertex = clockwiseTriangle, .cullMode = CullMode::Back},
 
-        // Wound the other way, so it is precisely what the pipeline before it
-        // was culling.
+        // Wound the other way: precisely what the pipeline before it culled.
         {.firstVertex = farQuad, .vertexCount = 6, .cullMode = CullMode::None},
     });
 
@@ -352,10 +304,7 @@ auto tCullingDoesNotLeakToTheNextPipeline =
     check(isGreen(image.at(2, 2)));
 };
 
-// Depth, starting with the baseline: with the test running and writes on, the
-// nearer quad wins whichever order the two are drawn in. Both orders, because
-// one of them would come out red with no depth buffer at all and the assertion
-// has to be the one that cannot.
+// Both orders, because one of them comes out red with no depth buffer at all.
 auto tNearerGeometryWins = test("PipelineState/nearerGeometryWins") = []
 {
     if (!Device::shared().isValid())
@@ -368,8 +317,7 @@ auto tNearerGeometryWins = test("PipelineState/nearerGeometryWins") = []
         },
         true);
 
-    // The order that says something: without a depth test the last draw wins
-    // and this reads green.
+    // The order that says something: with no depth test this reads green.
     const auto nearFirst = renderSteps(
         {
             {.firstVertex = nearQuad, .vertexCount = 6},
@@ -384,11 +332,8 @@ auto tNearerGeometryWins = test("PipelineState/nearerGeometryWins") = []
     check(isRed(centreOf(nearFirst)));
 };
 
-// depthWrite on its own. Both halves draw the near quad first and the far quad
-// second with an unchanged LessEqual test; the only difference is whether the
-// near one recorded its depth. When it did not, the buffer is still at its
-// cleared 1.0 and the further quad passes - which is exactly how translucent
-// geometry has to behave over the top of other translucent geometry.
+// Both halves draw near then far under one test: only whether the near quad
+// recorded its depth differs, and unrecorded the buffer is still at its 1.0.
 auto tDepthWriteOffLeavesTheBufferAlone =
     test("PipelineState/depthWriteOffLeavesBuffer") = []
 {
@@ -416,11 +361,8 @@ auto tDepthWriteOffLeavesTheBufferAlone =
     check(isGreen(centreOf(notWriting)));
 };
 
-// The comparison on its own, by the same construction: the far quad goes down
-// first and writes its depth, then the near quad is drawn twice with the two
-// tests that disagree about it. Less passes - it is nearer - and Greater does
-// not. A backend mapping the enum to the wrong constant, or ignoring it and
-// keeping less-equal, fails the second half.
+// Less passes for the nearer quad and Greater does not, so a backend mapping
+// the enum wrongly - or keeping less-equal - fails the second half.
 auto tCompareFunctionDecidesWhatPasses =
     test("PipelineState/compareFunctionDecides") = []
 {
@@ -452,13 +394,8 @@ auto tCompareFunctionDecidesWhatPasses =
     check(isGreen(centreOf(greater)));
 };
 
-// The two ends of the enum, on identical draws. The near quad goes down first
-// and writes 0.25; the far quad follows with a test that either always fails or
-// always passes, and nothing else about the two halves differs. Always is what
-// a pass draws with when it wants the depth attachment present and the test out
-// of the way, and it is the one that has to keep a fragment less-equal would
-// have thrown out - so the pair pins both ends of a switch an off-by-one would
-// shift.
+// Both ends of the enum on identical draws, which an off-by-one in the switch
+// would shift.
 auto tNeverAndAlwaysAreTheExtremes = test("PipelineState/neverAndAlwaysAgree") = []
 {
     if (!Device::shared().isValid())

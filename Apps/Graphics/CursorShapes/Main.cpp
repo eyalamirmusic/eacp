@@ -2,22 +2,6 @@
 
 #include <string>
 
-// The pointer changing shape per *region* of one view.
-//
-// That is the case the API exists for, and the one a per-view cursor cannot do.
-// A GPU-drawn UI is a single native view with a whole widget tree painted into
-// it — an editor is one view holding a splitter, a text area and a file list —
-// so the shape has to follow the pointer inside a view rather than being fixed
-// for it.
-//
-// Which is why this is now a component per band rather than one view doing
-// arithmetic on the pointer's x. A component says what its cursor is and the
-// host applies whichever one the pointer is over, so the regions are the
-// ordinary tree and there is no hit testing to write: the same walk that decides
-// who gets a click decides what the pointer looks like.
-//
-// Move across the bands and watch the pointer.
-
 using namespace eacp;
 
 namespace
@@ -32,8 +16,8 @@ struct Band final : UI::Component
     {
         setMouseCursor(cursorToUse);
 
-        // Without this the band is decorative and the pointer never enters it,
-        // so the host has nothing to take a cursor from.
+        // Without this the pointer never enters the band, so the host has no
+        // cursor to take.
         setInterceptsMouseClicks(true);
     }
 

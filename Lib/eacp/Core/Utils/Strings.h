@@ -15,9 +15,7 @@ bool equalsCaseInsensitive(const std::string& a, const std::string& b);
 
 int hexCharToInt(char c);
 
-// Number/bool → string. String-like and char inputs pass through unchanged so
-// callers can concatenate heterogeneous values without minding their types.
-// This is the single place the framework turns a value into text (see LOG).
+// Number/bool → string; string-like and char inputs pass through unchanged.
 inline std::string toString(const std::string& s)
 {
     return s;
@@ -56,16 +54,14 @@ std::string toString(const T& value)
     }
 }
 
-// Concatenates any mix of the above into one string, left to right.
 template <typename... Args>
 std::string concat(const Args&... args)
 {
     return (std::string {} + ... + toString(args));
 }
 
-// string → number, the counterpart to toString. Uses from_chars, so it neither
-// throws nor depends on the locale, and it rejects trailing junk. Returns
-// nullopt unless the whole string is a valid T.
+// Neither throws nor depends on the locale. Returns nullopt unless the whole
+// string is a valid T; trailing junk is rejected.
 template <typename T>
 std::optional<T> tryParse(std::string_view s)
 {

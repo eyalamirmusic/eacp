@@ -71,12 +71,8 @@ constexpr uint16_t F10 = 0x6D;
 constexpr uint16_t F11 = 0x67;
 constexpr uint16_t F12 = 0x6F;
 
-// Punctuation, named for the *unshifted* key. Shift arrives separately in
-// ModifierKeys, so Quote is the same key whether it produced ' or ".
-//
-// These matter for shortcuts, where the character a key produced is the wrong
-// thing to match on: Cmd+[ and Cmd+] should navigate on any layout, but which
-// character that key emits depends on the layout.
+// Punctuation, named for the UNSHIFTED key: Quote is the same key whether it
+// produced ' or ". Shift arrives separately in ModifierKeys.
 constexpr uint16_t Minus = 0x1B;
 constexpr uint16_t Equals = 0x18;
 constexpr uint16_t LeftBracket = 0x21;
@@ -89,22 +85,17 @@ constexpr uint16_t Period = 0x2F;
 constexpr uint16_t Slash = 0x2C;
 constexpr uint16_t Grave = 0x32;
 
-// Navigation. An editor needs every one of these, and their absence is why
-// downstream apps end up hand-defining raw platform virtual key codes — which
-// then only work on the platform they were lifted from.
 constexpr uint16_t Home = 0x73;
 constexpr uint16_t End = 0x77;
 constexpr uint16_t PageUp = 0x74;
 constexpr uint16_t PageDown = 0x79;
 
-// Forward delete, as against Delete above, which is backspace. The names here
-// follow what the key does rather than what the platform calls it.
+// Forward delete, as against Delete above, which is backspace.
 constexpr uint16_t ForwardDelete = 0x75;
 
 constexpr uint16_t CapsLock = 0x39;
 
-// Keypad, distinct from the number row: a numeric keypad reports its own codes,
-// and an app that folds them together cannot bind them separately.
+// Keypad, distinct from the number row.
 constexpr uint16_t KeypadEnter = 0x4C;
 constexpr uint16_t Keypad0 = 0x52;
 constexpr uint16_t Keypad1 = 0x53;
@@ -124,8 +115,7 @@ constexpr uint16_t KeypadDivide = 0x4B;
 constexpr uint16_t KeypadClear = 0x47;
 constexpr uint16_t KeypadEquals = 0x51;
 
-// A platform key with no framework mapping. Backends that translate native
-// codes (Windows) report it for keys outside the table above.
+// A platform key with no framework mapping.
 constexpr uint16_t Unknown = 0xFFFF;
 } // namespace KeyCode
 
@@ -162,8 +152,7 @@ struct Key
 
 struct Keyboard
 {
-    // Window-scoped keyboard state. Preferred over the global variants below
-    // when a window reference is available.
+    // Preferred over the global variants below when a window is available.
     static bool isKeyPressed(const Window& window, uint16_t keyCode);
     static bool isShiftPressed(const Window& window);
     static bool isControlPressed(const Window& window);
@@ -171,7 +160,7 @@ struct Keyboard
     static bool isCommandPressed(const Window& window);
     static ModifierKeys getModifiers(const Window& window);
 
-    // Global keyboard state, for when no window reference is available.
+    // For when no window reference is available.
     static bool isKeyPressed(uint16_t keyCode);
     static bool isShiftPressed();
     static bool isControlPressed();

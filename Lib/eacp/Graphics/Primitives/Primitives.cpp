@@ -68,8 +68,7 @@ Rect Rect::intersection(const Rect& other) const
     const auto newRight = std::min(right(), other.right());
     const auto newBottom = std::min(bottom(), other.bottom());
 
-    // Disjoint rects give a negative extent here. Collapsed to zero so the
-    // result is an ordinary empty rect rather than one that draws inside out.
+    // Disjoint rects give a negative extent; collapse to an ordinary empty rect.
     return {
         newX, newY, std::max(newRight - newX, 0.f), std::max(newBottom - newY, 0.f)};
 }

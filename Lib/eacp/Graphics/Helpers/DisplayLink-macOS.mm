@@ -10,20 +10,12 @@
 namespace eacp::Threads
 {
 
-// Posts each vsync to the main thread. Ticks coalesce: while one is still
-// queued behind a busy main thread, further vsyncs are skipped rather than
-// piling up. Without that, a callback that takes longer than a refresh leaves a
-// tick behind every time it runs, and since the link keeps firing on its own
-// thread regardless, the queue grows without bound — the main thread ends up
-// working through an ever longer run of stale ticks, never idle long enough to
-// catch back up. Dropping instead lets a handler that cannot keep up simply run
-// at a lower rate.
+// Posts each vsync to the main thread. Ticks coalesce rather than piling up, so
+// a handler slower than a refresh simply runs at a lower rate.
 struct DisplayLink::Native
 {
-    // Ticks dispatched to the main queue can still be pending when the link is
-    // destroyed; they share ownership of this state and check `alive` (touched
-    // on the main thread only) before invoking, instead of pointing back into
-    // the destroyed Native.
+    // Queued ticks share ownership of this and check `alive` (main thread only)
+    // rather than pointing back into a destroyed Native.
     struct State
     {
         explicit State(const Callback& cb)
@@ -46,8 +38,7 @@ struct DisplayLink::Native
 
         CVDisplayLinkCreateWithActiveCGDisplays(&displayLink);
 
-        // Captured by value, so the handler shares ownership of the state rather
-        // than reaching back through a `this` that may already be gone.
+        // Captured by value so the handler shares ownership of the state.
         auto pending = state;
 
         CVDisplayLinkSetOutputHandler(

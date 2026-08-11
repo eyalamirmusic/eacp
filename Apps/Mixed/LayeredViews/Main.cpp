@@ -4,10 +4,6 @@
 using namespace eacp;
 using namespace eacp::Graphics;
 
-// ---------------------------------------------------------------------------
-// 1. A GPU surface: a Metal/D3D triangle that spins, built with the shader EDSL.
-// ---------------------------------------------------------------------------
-
 struct GpuVec2
 {
     float x, y;
@@ -93,10 +89,6 @@ struct GpuSurface final : GPU::GPUView
     float spin = 1.2f;
 };
 
-// ---------------------------------------------------------------------------
-// 2. A plain View drawn entirely with immediate-mode Core Graphics primitives.
-// ---------------------------------------------------------------------------
-
 struct PrimitiveSurface final : View
 {
     struct Ripple
@@ -135,8 +127,7 @@ struct PrimitiveSurface final : View
     {
         auto bounds = getLocalBounds();
 
-        // A translucent wash rather than a solid fill, so panels stacked behind
-        // this one show through and blend with the primitives drawn on top.
+        // A wash rather than a solid fill, so panels behind show through.
         g.setColor(Color {0.07f, 0.08f, 0.11f, 0.55f});
         g.fillRect(bounds);
 
@@ -242,11 +233,6 @@ struct PrimitiveSurface final : View
     Threads::DisplayLink link {[this](Threads::FrameTime time) { advance(time); }};
 };
 
-// ---------------------------------------------------------------------------
-// 3. A draggable window-like Panel that frames any surface with primitive chrome
-//    (a shape-layer border and a text-layer title bar) and routes mouse events.
-// ---------------------------------------------------------------------------
-
 struct Panel : View
 {
     Panel(const std::string& titleToUse, const Color& accentToUse)
@@ -254,8 +240,7 @@ struct Panel : View
     {
         setHandlesMouseEvents(true);
 
-        // Group opacity makes the whole panel — chrome plus its GPU / web /
-        // primitive content — blend over the panels stacked behind it.
+        // Group opacity: chrome plus GPU / web / primitive content, faded once.
         setOpacity(panelOpacity);
 
         frame->setFillColor(Color {0.12f, 0.13f, 0.17f, 0.7f});
@@ -277,8 +262,8 @@ struct Panel : View
 
     void attachContent() { addSubview(getContent()); }
 
-    // Grabbing the title bar starts a drag; releasing raises the panel so it is
-    // never reordered mid-drag (which would drop the mouse capture).
+    // Raised on release rather than on press: reordering mid-drag would drop the
+    // mouse capture.
     void mouseDown(const MouseEvent&) override
     {
         auto* host = getParent();
@@ -379,8 +364,6 @@ struct GpuPanel final : Panel
 
     View& getContent() override { return surface; }
 
-    // A shape + text layer parked on top of the Metal surface proves primitives
-    // can be layered above native GPU content within one panel.
     void layoutOverlay(const Rect& content) override
     {
         auto box = Rect {content.x + 10.0f,
@@ -450,11 +433,6 @@ struct WebPanel final : Panel
 
     WebView surface;
 };
-
-// ---------------------------------------------------------------------------
-// 4. The root view: an animated primitive backdrop with the three panels layered
-//    on top, each raisable to the front.
-// ---------------------------------------------------------------------------
 
 struct LayeredRoot final : View
 {

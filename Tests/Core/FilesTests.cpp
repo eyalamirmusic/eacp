@@ -84,7 +84,6 @@ auto tAtomicReplacesWholeFile = test("Files/atomicReplacesWholeFile") = []
     write(path, "a much longer previous version of the file");
     writeAtomically(path, "short");
 
-    // A truncating write that stopped early would leave the old tail behind.
     check(read(path) == "short");
 
     std::filesystem::remove_all(dir);
@@ -99,8 +98,7 @@ auto tAtomicLeavesNoTemporaries = test("Files/atomicLeavesNoTemporaries") = []
     writeAtomically(path, "two");
     writeAtomically(path, "three");
 
-    // The temporary is renamed onto the target rather than left beside it, so
-    // repeated saves must not accumulate files in the directory.
+    // The temporary is renamed onto the target, not left beside it.
     check(entryCount(dir) == 1);
     check(read(path) == "three");
 
@@ -155,14 +153,12 @@ auto tAtomicThrowsOnUnwritableTarget =
 
     check(threw);
 
-    // And the failed attempt cleans up after itself.
     check(entryCount(dir) == 1);
 
     std::filesystem::remove_all(dir);
 };
 
-// Permission bits and symlinks are POSIX concepts; Windows has neither in the
-// form these assert on.
+// Permission bits and symlinks are POSIX concepts.
 #ifndef _WIN32
 
 auto tAtomicKeepsPermissions = test("Files/atomicKeepsPermissions") = []
@@ -180,8 +176,7 @@ auto tAtomicKeepsPermissions = test("Files/atomicKeepsPermissions") = []
 
     writeAtomically(path, "#!/bin/sh\necho new\n");
 
-    // Without the copy, the renamed-in file arrives with the process umask and
-    // the script stops being runnable.
+    // Without the copy the renamed-in file arrives with the process umask.
     check(std::filesystem::status(path).permissions() == executable);
 
     std::filesystem::remove_all(dir);
@@ -198,9 +193,8 @@ auto tAtomicFollowsSymlinks = test("Files/atomicFollowsSymlinks") = []
 
     writeAtomically(link, "through the link");
 
-    // The link must still be a link, pointing at a file that now has the new
-    // contents -- renaming over it would have made it a regular file and left
-    // the real one stale.
+    // Renaming over the link would have made it a regular file and left the
+    // real one stale.
     check(std::filesystem::is_symlink(link));
     check(read(real) == "through the link");
 
@@ -220,9 +214,8 @@ auto tModificationTimeMoves = test("File/modificationTimeMoves") = []
     check(first != 0);
     check(File {path}.modificationTime() == first);
 
-    // Filesystem timestamp granularity is coarse enough on some filesystems
-    // that two writes in the same millisecond share a stamp, so this stamps the
-    // file explicitly rather than racing the clock.
+    // Filesystem timestamp granularity is coarse enough that two writes in one
+    // millisecond can share a stamp, so stamp explicitly rather than race it.
     std::filesystem::last_write_time(
         path, std::filesystem::last_write_time(path) + std::chrono::seconds {2});
 
@@ -239,11 +232,6 @@ auto tModificationTimeMissing = test("File/modificationTimeMissing") = []
 
     std::filesystem::remove_all(dir);
 };
-
-// --- reading ----------------------------------------------------------------
-//
-// Everything above uses readFile as a helper for checking what a write produced,
-// so none of it asserts anything about the read.
 
 // A doubling buffer plus a copy out measured 4.00x the file; reading into one
 // sized allocation is 1.0x. Anything under 2x separates them with room to spare.
@@ -294,7 +282,6 @@ auto tReadsWithoutATrailingNewline =
     check(read(path) == "one\ntwo");
 };
 
-// A file is a length and some bytes, not a C string.
 auto tReadsEmbeddedNulBytes = test("Files/readsEmbeddedNulBytes") = []
 {
     const auto dir = scratchDirectory("read-nuls");
@@ -328,9 +315,7 @@ auto tReadsAStreamWithNoKnownSize = test("Files/readsAStreamWhoseSizeIsUnknown")
     const auto contents = std::string(16 * 1024, 'p');
 
     // A reader that gives up without draining closes its end, and the write
-    // below then raises SIGPIPE — killing the binary before any test can
-    // report, so a broken readFile looks like the suite vanishing rather than
-    // like one assertion failing.
+    // below then raises SIGPIPE, killing the binary before any test can report.
     struct IgnoreSigPipe
     {
         IgnoreSigPipe() { previous = std::signal(SIGPIPE, SIG_IGN); }
@@ -339,9 +324,8 @@ auto tReadsAStreamWithNoKnownSize = test("Files/readsAStreamWhoseSizeIsUnknown")
         void (*previous)(int) = nullptr;
     } ignoreSigPipe;
 
-    // Another thread, because opening either end of a FIFO blocks until the
-    // other is open. jthread so that a readFile which throws does not destroy it
-    // while joinable and terminate the whole suite.
+    // Opening either end of a FIFO blocks until the other is open. jthread so a
+    // readFile that throws does not destroy it while joinable.
     auto writer =
         std::jthread {[&]
                       {

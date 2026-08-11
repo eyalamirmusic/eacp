@@ -4,17 +4,6 @@
 
 #include <set>
 
-// GlyphRenderer: the piece that makes a GlyphAtlas drawable.
-//
-// The case that matters most is the one that motivated it. The mask atlas is
-// R8Unorm, which samples as (coverage, 0, 0, 1) — coverage in red, alpha
-// pinned to 1. Drawn through a general sprite shader, which multiplies the
-// sample by a tint, text comes out opaque red instead of tinted. So these tests
-// assert on the *colour* that reaches the target, not merely that something was
-// drawn.
-//
-// Self-skips without a GPU device or a resolvable font.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Text;
@@ -38,8 +27,6 @@ struct GlyphView final : GPU::GPUView
         request.pointSize = 48.f;
         request.scale = 1.f;
 
-        // Built once to find out whether this machine can resolve the family at
-        // all; the atlas makes its own, per face.
         if (!GlyphRasterizer {request}.isValid())
             return false;
 
@@ -85,8 +72,6 @@ struct GlyphView final : GPU::GPUView
     std::optional<GlyphRenderer> renderer;
 };
 
-// The brightest pixel, which for a glyph drawn on black is its own colour at
-// full coverage.
 Graphics::Color brightest(const Graphics::Image& image)
 {
     auto best = Graphics::Color {0.f, 0.f, 0.f, 1.f};
@@ -139,9 +124,8 @@ auto tDrawsAGlyph = test("GlyphRenderer/drawsAGlyphFromTheAtlas") = []
     check(inkPixels(image) > 20);
 };
 
-// The regression this class exists to prevent. A mask drawn through a general
-// sprite shader arrives opaque red; drawn correctly it takes the colour asked
-// for. Anything that reintroduces `sample * tint` fails here.
+// Regression: a mask drawn through a general sprite shader arrives opaque red.
+// Anything that reintroduces `sample * tint` fails here.
 auto tMaskTakesTheRequestedColour =
     test("GlyphRenderer/maskGlyphsTakeTheRequestedColour") = []
 {
@@ -153,7 +137,6 @@ auto tMaskTakesTheRequestedColour =
     if (!view.build())
         return;
 
-    // A colour no channel of a red-bug artefact could produce.
     view.color = {0.25f, 0.85f, 0.35f};
 
     auto image = view.renderToImage(1.f);
@@ -166,8 +149,6 @@ auto tMaskTakesTheRequestedColour =
     check(ink.b < ink.g);
 };
 
-// Colour is per glyph, so a run of text can change colour mid-line without a
-// separate draw call.
 auto tColourIsPerGlyph =
     test("GlyphRenderer/differentColoursProduceDifferentPixels") = []
 {
@@ -192,8 +173,6 @@ auto tColourIsPerGlyph =
     check(brightest(redImage).r > brightest(redImage).b);
 };
 
-// Coverage has to blend, or antialiased glyph edges punch holes in the
-// background instead of easing into it.
 auto tEdgesBlend = test("GlyphRenderer/antialiasedEdgesBlend") = []
 {
     if (!GPU::Device::shared().isValid())
@@ -209,8 +188,6 @@ auto tEdgesBlend = test("GlyphRenderer/antialiasedEdgesBlend") = []
     auto image = view.renderToImage(1.f);
     check(image.isValid());
 
-    // Partly covered pixels: neither background nor full coverage. Their
-    // existence is what proves the alpha ramp survived to the target.
     auto partial = 0;
 
     for (auto y = 0; y < image.height(); ++y)
@@ -265,7 +242,6 @@ auto tQueueTracksAdds = test("GlyphRenderer/queueCountsWhatWasAdded") = []
     check(renderer.queuedGlyphs() == 0);
 };
 
-// A degenerate destination is dropped rather than queued as a zero-area quad.
 auto tSkipsEmptyRects = test("GlyphRenderer/emptyDestinationsAreSkipped") = []
 {
     auto renderer = GlyphRenderer {};

@@ -6,24 +6,16 @@
 
 namespace eacp::Graphics
 {
-// An NSMenuItem's target is held weakly (assign), so the forwarding targets
-// must outlive the menu. Build a menu into one of these and keep it alive for
-// as long as the menu is in use. Each target is a runtime-built object (see
-// AppKitMenu.mm) whose trigger: action forwards to a C++ MenuAction.
+// An NSMenuItem's target is held weakly, so keep this alive for as long as the
+// menu is in use.
 using MenuTargets = Vector<ObjC::Ptr<NSObject>>;
 
-// Builds an NSMenu mirroring `menu`, appending every action-forwarding target
-// it creates to `targets`.
+// Appends every action-forwarding target it creates to `targets`.
 NSMenu* buildAppKitMenu(const Menu& menu, MenuTargets& targets);
 
-// Wraps a single MenuAction in a target so a plain NSButton (e.g. a status
-// item's button) can forward its click to C++ via @selector(trigger:). The
-// returned target must be kept alive for as long as the button references it.
-//
-// The target also answers validateMenuItem:, so a menu item built on one greys
-// itself out from `isEnabled` and refreshes its checkmark from `isChecked`. A
-// null enabled predicate means always enabled and a null checked predicate
-// means no checkmark management — which is what a plain button wants.
+// Lets a plain NSButton forward its click to C++ via @selector(trigger:); must
+// outlive the button. Also answers validateMenuItem:, where a null isEnabled
+// means always enabled and a null isChecked means no checkmark management.
 ObjC::Ptr<NSObject> makeActionTarget(const MenuAction& action,
                                      const MenuEnabled& isEnabled = {},
                                      const MenuChecked& isChecked = {});

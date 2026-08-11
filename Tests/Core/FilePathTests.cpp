@@ -44,10 +44,8 @@ auto tParentDirectory = test("FilePath/parentDirectory") = []
     check(FilePath {}.parentDirectory().empty());
 };
 
-// Escapes rather than literal characters, so the tests don't depend on the
-// compiler's source-encoding assumptions. U+FFFD in a folder name is the
-// real-world case: sync tools drop it into names they fail to transcode,
-// and path::string()/generic_u8string() then throw on Windows.
+// Escapes, not literal characters, so the tests do not depend on the source
+// encoding. U+FFFD is the real case: string() then throws on Windows.
 auto tStdPathRoundTripsNonAnsiNames =
     test("FilePath/std path round-trips non-ANSI names") = []
 {

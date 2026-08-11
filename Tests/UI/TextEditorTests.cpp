@@ -4,18 +4,6 @@
 
 #include <string>
 
-// What an editor does to its own string, which is the half that has nothing to
-// do with drawing.
-//
-// Caret arithmetic is where a text field is actually wrong: a caret left inside
-// a UTF-8 sequence splits a character the next time the string is cut at it, and
-// a selection that forgets which end it grew from deletes the wrong side. Both
-// are invisible until someone types an accent, so they are pinned here rather
-// than tried by hand.
-//
-// The editor is put in a host so it can hold focus and measure text; nothing is
-// rendered.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
@@ -101,8 +89,6 @@ auto tControlCharactersAreNotTyped =
 {
     auto harness = Harness {};
 
-    // Tab produces a character, and an editor that inserted it would swallow
-    // the key that moves focus out of the field.
     check(!harness.editor.keyDown(keyOf(eacp::Graphics::KeyCode::Tab, "\t")));
     check(harness.editor.getText().empty());
 };
@@ -144,8 +130,6 @@ auto tBackspaceAtTheStartDoesNothing =
     check(changes == 0, "and reports nothing, so a listener sees only real edits");
 };
 
-// The whole reason the caret is moved a sequence at a time: one backspace takes
-// one character, not one byte of one.
 auto tDeletesWholeCharacters =
     test("TextEditor/backspaceTakesAWholeUtf8Character") = []
 {
@@ -161,8 +145,7 @@ auto tCaretNeverLandsInsideACharacter =
 {
     auto harness = Harness {accented};
 
-    // Straight into the middle of the two-byte accent, which is what a click
-    // measured against the wrong metrics would ask for.
+    // Into the middle of the two-byte accent.
     harness.editor.setCaretPosition((int) accented.size() - 1);
 
     check(harness.editor.getCaretPosition() == (int) accented.size() - 2);
@@ -209,8 +192,6 @@ auto tShiftArrowSelects = test("TextEditor/shiftAndAnArrowGrowsASelection") = []
     check(harness.editor.getSelectedText() == "bc");
 };
 
-// A selection grown leftwards has its caret at the *left* end, so what it
-// replaces is still the range between them and not one side of it.
 auto tTypingReplacesASelection =
     test("TextEditor/typingOverASelectionReplacesIt") = []
 {
@@ -306,13 +287,10 @@ auto tReadOnlyRefusesEdits = test("TextEditor/aReadOnlyEditorTakesNoEdits") = []
 
     check(harness.editor.getText() == "abc");
 
-    // Still navigable, which is what makes read-only different from disabled.
     harness.press(keyOf(eacp::Graphics::KeyCode::Home));
     check(harness.editor.getCaretPosition() == 0);
 };
 
-// An editor that swallowed Cmd+S would be why a document could not be saved
-// while a field had focus.
 auto tUnknownShortcutsAreLeftAlone =
     test("TextEditor/aShortcutTheEditorDoesNotUseCarriesOn") = []
 {
@@ -336,8 +314,6 @@ auto tSelectAllShortcut = test("TextEditor/theSelectAllShortcutIsTaken") = []
     check(harness.editor.getSelectedText() == "abc");
 };
 
-// Focus is what the caret and the selection are drawn from, so losing it has to
-// leave the editor in the state it will be painted in.
 auto tLosingFocusDropsTheSelection =
     test("TextEditor/losingFocusDropsTheSelection") = []
 {

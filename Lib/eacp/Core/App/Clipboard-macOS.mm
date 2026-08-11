@@ -20,7 +20,6 @@ std::string getText()
     auto* pasteboard = [NSPasteboard generalPasteboard];
     auto* text = [pasteboard stringForType:NSPasteboardTypeString];
 
-    // nil when the pasteboard holds something that is not text, or nothing.
     if (text == nil)
         return {};
 
@@ -31,8 +30,7 @@ bool hasText()
 {
     auto* pasteboard = [NSPasteboard generalPasteboard];
 
-    // Asks what types are available rather than fetching the payload, so a
-    // menu can enable Paste without copying a large clipboard.
+    // Asks what types are available rather than fetching the payload.
     return [pasteboard availableTypeFromArray:@[NSPasteboardTypeString]] != nil;
 }
 

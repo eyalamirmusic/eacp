@@ -2,20 +2,6 @@
 
 #include <string>
 
-// Rows that check off, and edit in place on a double click.
-//
-// The editing is the point of the conversion. This app used to put a native
-// TextInput — an NSTextField — over the row being edited, which works and
-// teaches the tier nothing: the keystrokes, the caret and the selection all stay
-// on the other side of the boundary, and the first interface that wants a field
-// inside something that scrolls finds a native view that does not scroll with
-// it.
-//
-// So the editor is a component now. A row is a checkbox, a label and an editor
-// that swap places, all in the one native view the window holds, and the
-// keyboard reaches it by the ordinary route: the row takes focus, the key is
-// offered to the editor first and to its parents after.
-
 using namespace eacp;
 
 namespace
@@ -30,7 +16,6 @@ struct TodoRow final : UI::Component
     {
         setInterceptsMouseClicks(true);
 
-        // A row is a tab stop, and what focus comes back to when an edit ends.
         setWantsKeyboardFocus(true);
 
         tick.setText(itemText);
@@ -38,8 +23,8 @@ struct TodoRow final : UI::Component
 
         editor.setText(itemText);
 
-        // Return commits, Escape puts it back. Losing focus commits too, which
-        // is what clicking away from a half-edited field should mean.
+        // Losing focus commits too, which is what clicking away from a
+        // half-edited field should mean.
         editor.onReturnKey = [this](const std::string& value)
         { finishEditing(value); };
         editor.onEscapeKey = [this] { finishEditing(itemText); };

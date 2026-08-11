@@ -13,9 +13,7 @@ namespace eacp::Plugins
 {
 namespace
 {
-// One process-wide entry per opened path: every DynamicLibrary on that path
-// shares one OS handle, and the count tracks how many are alive. The last
-// close() unloads the image and drops the entry.
+// One entry per opened path; the last close() unloads the image.
 struct LoadedImage
 {
     void* handle = nullptr;
@@ -28,9 +26,8 @@ struct ImageRegistry
     std::map<std::string, LoadedImage> images;
 };
 
-// Immortal because ~DynamicLibrary closes into this, and keeping an instance
-// alive for the whole process is the documented way to pin a module resident —
-// one opened after first use constructed the registry is destroyed after it.
+// Immortal because ~DynamicLibrary closes into this, and a library pinned for
+// the whole process is destroyed after the registry that first created it.
 ImageRegistry& registry()
 {
     return Singleton::getImmortal<ImageRegistry>();
@@ -125,21 +122,18 @@ void* DynamicLibrary::findSymbol(const std::string& name) const
 void unload(DynamicLibrary library, const Callback& quiesce)
 {
     {
-        // The pool is the drain: whatever the teardown autoreleases is
-        // released when this scope ends, not at the end of the loop turn —
-        // which may be after the image is gone.
+        // Drains what the teardown autoreleases before the image can go.
         auto pool = ScopedAutoReleasePool {};
         quiesce();
     }
 
-    // No loop left to defer to (this is app teardown): the drain above is all
-    // we get, and the unmap happens here as `library` goes out of scope.
+    // App teardown: nothing left to defer to, so `library` unmaps as it goes
+    // out of scope here.
     if (!Threads::isEventLoopRunning())
         return;
 
-    // A loop is running, so give it a turn before unmapping: work the OS
-    // queued during the teardown runs first, and the turn's own pool drains,
-    // by which point nothing points into the image.
+    // Give the loop a turn first, so work the OS queued during the teardown
+    // runs while the image is still mapped.
     auto shared = std::make_shared<DynamicLibrary>(std::move(library));
     Threads::callAsync([shared] { shared->close(); });
 }

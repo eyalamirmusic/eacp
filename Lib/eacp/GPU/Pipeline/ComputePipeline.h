@@ -7,10 +7,8 @@ namespace eacp::GPU
 class Device;
 class ShaderLibrary;
 
-// A compiled compute pipeline state (MTLComputePipelineState on Metal). The
-// compute sibling of RenderPipeline, built from a library's kernel entry point;
-// it carries none of the render fixed-function state. Create via
-// Device::makeComputePipeline.
+// A compiled pipeline state built from a library's kernel entry point; create
+// via Device::makeComputePipeline.
 class ComputePipeline
 {
 public:
@@ -18,7 +16,6 @@ public:
 
     bool isValid() const;
 
-    // Opaque native handle for cross-translation-unit use by the compute pass.
     void* nativeState() const;
 
 private:

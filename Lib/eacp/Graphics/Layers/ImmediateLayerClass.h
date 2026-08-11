@@ -11,8 +11,7 @@ inline id<CAAction> immediateActionForKey(id, SEL, NSString*)
     return (id<CAAction>) [NSNull null];
 }
 
-// Runtime-registered CALayer subclass (process-unique name, see
-// RuntimeClass) whose only override is the immediate actionForKey:.
+// Runtime-registered CALayer subclass whose only override is actionForKey:.
 template <typename LayerType>
 Class makeImmediateLayerClass(const char* nameRoot)
 {

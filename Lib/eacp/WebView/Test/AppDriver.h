@@ -14,18 +14,15 @@ namespace eacp::WebView::Test
 
 struct CallOptions
 {
-    // Per-call timeout override. Empty -> driver default; if that's
-    // also empty, defaultTimeoutMs constant below.
+    // Empty -> the driver default, else the built-in 5s.
     std::optional<int> timeoutMs;
 };
 
 struct AppDriverOptions
 {
-    // Default per-command timeout for this driver. Empty -> the
-    // built-in 5s applies.
+    // Empty -> the built-in 5s.
     std::optional<int> defaultTimeoutMs;
 
-    // Directory snapshot() writes <name>.html + <name>.png into.
     // Empty -> "<cwd>/test-results/snapshots". Created lazily.
     std::string snapshotDir;
 };
@@ -34,15 +31,14 @@ struct ScreenshotOptions
 {
     std::optional<int> timeoutMs;
 
-    // Write the screenshot to this path; the image format is inferred
-    // from the extension (.png / .jpg / .jpeg). Empty -> do not write.
+    // Format inferred from the extension (.png/.jpg/.jpeg). Empty -> no write.
     std::string path;
 };
 
 struct ScreenshotResult
 {
-    // Decoded snapshot pixels. Re-encode via image.toPng()/toJpeg().
     Graphics::Image image;
+
     // Set only when ScreenshotOptions::path was non-empty.
     std::string path;
 };
@@ -51,10 +47,10 @@ struct SnapshotOptions
 {
     std::optional<int> timeoutMs;
 
-    // Override the driver's configured snapshot directory.
+    // Overrides the driver's configured snapshot directory.
     std::string dir;
 
-    // DOM selector to scope the HTML snapshot to. Empty -> whole doc.
+    // Empty -> the whole document.
     std::string selector;
 };
 
@@ -67,15 +63,9 @@ struct SnapshotResult
     std::string screenshotPath;
 };
 
-// In-process driver for a WebView app. Lives on the main thread
-// (same thread the WebView and its bridge run on). Each operation
-// schedules work on the WebView, then pumps the event loop via
-// runEventLoopFor() until the callback completes. No threading,
-// no HTTP — everything is direct calls.
-//
-// Methods throw std::runtime_error on JS exceptions, timeouts, or
-// missing selectors. Use exists()/waitFor() to gate optional
-// behaviour instead of catching.
+// In-process driver for a WebView app; main-thread only. The blocking
+// methods pump the event loop until their callback completes, and throw
+// std::runtime_error on JS exceptions, timeouts, or missing selectors.
 class AppDriver
 {
 public:
@@ -89,7 +79,7 @@ public:
     AppDriver(AppDriver&&) = delete;
     AppDriver& operator=(AppDriver&&) = delete;
 
-    // Application bridge commands — direct dispatch, no JS hop.
+    // Dispatches straight to the bridge, without a JS hop.
     Miro::JSON invoke(const std::string& command, const Miro::JSON& payload = {});
 
     template <typename Resp, typename Req>
@@ -126,14 +116,9 @@ public:
     int count(const std::string& selector, CallOptions opts = {});
     bool waitFor(const std::string& selector, CallOptions opts = {});
 
-    // Polls until exactly `count` elements match the selector (or the
-    // timeout elapses). A readiness gate for lists that stream their
-    // items in over several renders: waitFor(selector) returns on the
-    // first match, which can race a count() of the still-growing list.
+    // Unlike waitFor(), does not return early on a list that is still growing.
     bool waitForCount(const std::string& selector, int count, CallOptions opts = {});
 
-    // Evaluates an arbitrary JS expression. Wrapped so the result is
-    // round-trip JSON-shaped; the unwrapped value is returned.
     Miro::JSON evaluate(const std::string& expression, CallOptions opts = {});
 
     template <typename T>
@@ -147,21 +132,14 @@ public:
 
     std::string dom(std::string_view selector = {}, CallOptions opts = {});
 
-    // Structured DOM capture. query()/queryAll() serialise the matched
-    // element(s) and their element subtree into DomNode values that can
-    // be inspected in C++ without further round-trips — tag(), attr(),
-    // hasClass(), children, find()/findAll(), etc. query() throws when
-    // nothing matches; tryQuery() returns nullopt; queryAll() returns
-    // every match (empty when there are none).
+    // query() throws when nothing matches; tryQuery() returns nullopt.
     DomNode query(const std::string& selector, CallOptions opts = {});
     std::optional<DomNode> tryQuery(const std::string& selector,
                                     CallOptions opts = {});
     Vector<DomNode> queryAll(const std::string& selector, CallOptions opts = {});
 
-    // Async siblings of the above. Each returns an Async that resolves
-    // on the main thread; use with co_await inside a coroutine test
-    // body. Rejection surfaces as an AsyncError (same message the
-    // sync variant would throw as std::runtime_error).
+    // Resolve on the main thread; failures reject with AsyncError instead
+    // of throwing.
     Threads::Async<bool> clickAsync(const std::string& selector,
                                     CallOptions opts = {});
     Threads::Async<bool> fillAsync(const std::string& selector,

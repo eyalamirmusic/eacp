@@ -7,24 +7,16 @@
 namespace eacp::Graphics
 {
 
-// Auto-bind registry.
-//
-// EACP_STATE(...) registers a binder into a process-wide list at static init;
-// each transport subscribes to all registered states at once and unsubscribes
-// when it dies.
-//
-// A "store" is any user-defined class the macro can attach a Listener to (it
-// derives from EA::Broadcaster or exposes `getBroadcaster()`) and that exposes
-// a `get()` returning the payload by const-ref. The store owns its state, its
-// mutators, and when to call trigger() — the macro only wires it to the bridge.
+// Process-wide auto-bind registry: EACP_STATE adds a binder at static init and
+// every transport subscribes to all of them, unsubscribing when it dies.
 
 using StateBinder = std::function<OwningPointer<EA::Listener>(Miro::Bridge&)>;
 
 namespace Detail
 {
 
-// Inline so static initializers in any TU using EACP_STATE can call it without
-// linking the eacp-webview library (the Miro codegen executable doesn't).
+// Inline so EACP_STATE works without linking eacp-webview, which the Miro
+// codegen executable does not.
 inline Vector<StateBinder>& stateBinderRegistry()
 {
     static auto registry = Vector<StateBinder> {};
@@ -56,28 +48,9 @@ Vector<OwningPointer<EA::Listener>> attachStaticStateBinders(Miro::Bridge& bridg
 #define EACP_STATE_CAT2(a, b) a##b
 #define EACP_STATE_CAT(a, b) EACP_STATE_CAT2(a, b)
 
-// EACP_STATE — expose a user-defined store to the bridge.
-//
-// The user declares the store class and its accessor themselves; this
-// macro only wires an auto-bind so any transport built later subscribes
-// to the store and re-emits store.get() under `eventName` whenever the
-// store's broadcaster fires.
-//
-// Usage (must be in a TU, not a header):
-//   ParametersStore& parametersStore();   // user-defined
-//   EACP_STATE(Parameters, parametersStore, parameters)
-//
-// The store class is responsible for:
-//   - exposing a Broadcaster (inherit EA::Broadcaster or implement
-//     `EA::Broadcaster& getBroadcaster()`)
-//   - exposing `const T& get() const`
-//   - calling trigger() on its broadcaster after each mutation
-//   - providing whatever setters/mutators its callers need
-//
-// Two registries are populated on static init: the event registry
-// (header-only, drives codegen — emits the Events type map and the
-// React hooks module) and the binder registry (drives runtime — every
-// transport auto-subscribes to broadcast changes to clients).
+// Re-emits accessor().get() under `eventName` whenever the store broadcasts.
+// The store must expose an EA::Broadcaster and a `const T& get() const`, and
+// trigger() after each mutation. Expands in a TU only, never a header.
 #define EACP_STATE(T, accessor, eventName)                                          \
     namespace                                                                       \
     {                                                                               \
@@ -89,16 +62,9 @@ Vector<OwningPointer<EA::Listener>> attachStaticStateBinders(Miro::Bridge& bridg
     }();                                                                            \
     }
 
-// EACP_KEYED_STATE — same as EACP_STATE but additionally declares the
-// payload as a keyed collection (a vector field on the payload, each
-// element identified by an id field). React-hooks codegen can read
-// this metadata to emit `useXxx` / `useXxxIds` / `useXxxItem` hooks
-// backed by `makeKeyedStore`, so the user gets per-id selector
-// re-renders for free.
-//
-//   EACP_KEYED_STATE(TodoState, todoStore, todos,
-//                    items,            // collection field on TodoState
-//                    id)               // key field on TodoItem
+// EACP_STATE plus keyed-collection metadata, so hooks codegen can emit
+// per-id selector hooks:
+//   EACP_KEYED_STATE(TodoState, todoStore, todos, items, id)
 #define EACP_KEYED_STATE(T, accessor, eventName, collectionField, keyField)         \
     namespace                                                                       \
     {                                                                               \
@@ -111,21 +77,9 @@ Vector<OwningPointer<EA::Listener>> attachStaticStateBinders(Miro::Bridge& bridg
     }();                                                                            \
     }
 
-// EACP_EVENT — push-only event with no C++-side store and no auto-
-// binder. Use for patterns where the C++ side fires bridge.emit()
-// directly (e.g. a timer or a callback) and the frontend only needs
-// the typed `Events[name]` mapping for `backend.on(name, ...)`.
-//
-// Hooks codegen still emits a `use<Name>` factory backed by
-// `makeNativeEvent` (initial value = toJSON(T{})). If the matching
-// `get<Name>` command also exists, the formatter promotes it to
-// `makeBridgeStore` automatically — but no get-command is required.
-//
-//   EACP_EVENT(tick, Tick)
-//
-// __VA_ARGS__ on the type slot so callers can pass templated types
-// with commas without breaking macro expansion (e.g.
-// `EACP_EVENT(prices, std::map<std::string, double>)`).
+// Push-only event with no store and no auto-binder — the C++ side calls
+// bridge.emit() itself. The type slot is variadic so templated types with
+// commas survive macro expansion: EACP_EVENT(prices, std::map<K, V>)
 #define EACP_EVENT(name, ...)                                                       \
     namespace                                                                       \
     {                                                                               \

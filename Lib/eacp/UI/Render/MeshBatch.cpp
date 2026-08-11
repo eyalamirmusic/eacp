@@ -16,9 +16,8 @@ struct MeshBatch::Program final : GPU::ShaderProgram
 {
     Program()
     {
-        // Nearest for the clip and linear for the ramp, each for the reason
-        // ShapeBatch gives: a mask is read at the size it was rasterized, a ramp
-        // is 256 texels stretched over a shape.
+        // A mask is read at the size it was rasterized; a ramp is 256 texels
+        // stretched over a shape.
         maskAtlas.sampling = {GPU::TextureFilter::Nearest,
                               GPU::TextureAddressMode::Clamp};
 
@@ -39,10 +38,7 @@ struct MeshBatch::Program final : GPU::ShaderProgram
         auto gradient = instanceInput(&MeshTriangle::gradient, 1);
         auto gradientRamp = instanceInput(&MeshTriangle::gradientRamp, 1);
 
-        // Which of the three this vertex is, selected rather than indexed: the
-        // vertex stream is three constants and everything that varies is
-        // per-instance, which is what lets a document's whole geometry go out as
-        // one draw.
+        // Selected rather than indexed: the vertex stream is three constants.
         auto secondOrLater = step(0.5f, corner);
         auto third = step(1.5f, corner);
 
@@ -73,9 +69,8 @@ struct MeshBatch::Program final : GPU::ShaderProgram
                                  fragKind,
                                  gradientRamps);
 
-        // The vertex coverage is the shape's own edge; the clip is a mask over
-        // it, sampled exactly as the quad renderer samples it -- which is what
-        // makes one clip cut a document drawn out of both.
+        // Sampled exactly as the quad renderer samples it, so one clip cuts a
+        // document drawn out of both.
         auto clipped = fragCoverage
                        * clipCoverage(fragPosition, clipRegion, clipMask, maskAtlas);
 
@@ -105,10 +100,8 @@ MeshBatch::MeshBatch(const CoverageAtlas& atlasToUse,
     program.create();
     program->setVertices(triangleCorners);
 
-    // Always blended, for the same reason ShapeBatch is: the feather ring is a
-    // coverage ramp, and without blending the antialiasing would punch holes in
-    // whatever is behind it. And the same mode, so that a shape drawn into a
-    // layer leaves the coverage it drew rather than the square of it.
+    // Always blended, the feather ring being a coverage ramp, and in the same
+    // mode as ShapeBatch so a shape drawn into a layer leaves the right alpha.
     program->prepare(sampleCount,
                      false,
                      GPU::PrimitiveTopology::Triangles,
@@ -201,14 +194,11 @@ void MeshBatch::addMesh(const Vector<GPUWidgets::MeshVertex>& mesh,
     if (color.a <= 0.f)
         return;
 
-    // Resolved once for the whole shape and copied into every triangle of it,
-    // which is what the fields cost here.
+    // Resolved once and copied into every triangle of the shape.
     auto packedGradient = MeshTriangle {};
     auto kind =
         packGradient(gradient, packedGradient.gradient, packedGradient.gradientRamp);
 
-    // A flat triangle list, so three vertices are one triangle and a remainder
-    // is geometry nobody built.
     auto count = mesh.size() / 3;
     triangles.reserve(triangles.size() + count);
 

@@ -6,8 +6,8 @@
 
 #include <emmintrin.h>
 
-// SSE2 backend. SSE2 is part of the x86-64 baseline, so this header needs no
-// special compile flag and lives in the ordinary (un-flagged) translation unit.
+// SSE2 backend (128-bit). Part of the x86-64 baseline, so it needs no special
+// compile flag and lives in the ordinary translation unit.
 namespace eacp::simd::backend
 {
 
@@ -58,7 +58,6 @@ struct Sse2
 
         static F4 broadcast(float x) { return {_mm_set1_ps(x)}; }
 
-        // Load four packed bytes (one RGBA pixel) and widen to four floats.
         static F4 loadPixel(const std::uint8_t* p)
         {
             int packed;
@@ -70,8 +69,7 @@ struct Sse2
             return {_mm_cvtepi32_ps(dwords)};
         }
 
-        // Round each (non-negative) lane with floor(v + 0.5) -- equal to lround
-        // here -- saturate to [0, 255], and store the four bytes.
+        // floor(v + 0.5) equals lround for the non-negative lanes reaching here.
         static void storePixel(std::uint8_t* out, F4 a)
         {
             const auto rounded =

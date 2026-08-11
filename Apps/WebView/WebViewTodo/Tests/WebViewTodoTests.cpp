@@ -34,13 +34,9 @@ std::string firstItemDescendant(const std::string& child)
 
 TestApp<MyApp>& testApp()
 {
-    // Gate readiness on ALL three seed todos rendering, not just the
-    // first. useTodoIds() and useTodoItem(id) are separate bridge
-    // subscriptions (see web/src/App.tsx), so each TodoRow renders null
-    // until its own item round-trips — the list briefly shows fewer
-    // todo-items than ids. Waiting on the first todo-item would let a
-    // test's one-shot count()/query() race the still-growing list;
-    // waiting on the full seeded count guarantees it has settled.
+    // useTodoIds() and useTodoItem(id) are separate subscriptions, so rows
+    // appear one by one; gating on the full seeded count keeps a one-shot
+    // count()/query() from racing the still-growing list.
     static auto& instance = []() -> TestApp<MyApp>&
     {
         auto& self = createTestApp<MyApp>();
@@ -109,10 +105,6 @@ auto tRemovingTodo = test("WebViewTodo/removingTodoDecrementsCount") = []
 auto tDomainRpcsReachable =
     test("WebViewTodo/domainRpcsReachableThroughSameBridge") = []
 {
-    // The bridge is shared with WebViewBridge, so the production
-    // commands the React app calls (addTodo / getTodos) are also
-    // reachable from the harness — handy for setting up state
-    // without going through the UI.
     auto before = driver().invoke<TodoState>("getTodos");
 
     auto req = AddTodoRequest {};
@@ -124,10 +116,6 @@ auto tDomainRpcsReachable =
     check(after.items.size() == before.items.size() + 1);
     check(after.items[after.items.size() - 1].text == "Direct add via bridge");
 };
-
-// The tests below inspect the DOM the "traditional" way: capture an
-// element subtree as a DomNode and walk it in C++ (tag/attr/class/
-// children/find) instead of issuing one round-trip per assertion.
 
 auto tInspectsItemStructure = test("WebViewTodo/inspectsItemStructureAsDomNode") = []
 {
@@ -228,10 +216,8 @@ auto tCallJsRejectsOnError = test("WebViewTodo/callJsRejectsOnJsException") = []
     catch (const AsyncError& e)
     {
         threw = true;
-        // evaluateJavaScript surfaces NSError::localizedDescription, which
-        // for WKWebView JS exceptions is a generic phrase rather than the
-        // thrown message itself. We just verify that a non-empty error
-        // text reached us.
+        // WKWebView reports a generic NSError description rather than the
+        // thrown message, so only assert that some error text arrived.
         check(!std::string {e.what()}.empty());
     }
     check(threw);
@@ -245,11 +231,8 @@ auto tCallJsChainsViaCoroutine =
     check(wrapped == "val:3");
 };
 
-// The reverse direction: the page registered `getRenderedTodos` via
-// window.eacp.expose(...) (see web/src/main.tsx), and C++ calls it
-// through the shared WebViewBridge. Unlike callJS — which evaluates a
-// snippet and can't await — bridge.call awaits the page function's
-// Promise and deserializes the resolved value into a typed struct.
+// The page registers `getRenderedTodos` via window.eacp.expose (see
+// web/src/main.tsx); unlike callJS, bridge.call awaits its Promise.
 namespace
 {
 struct RenderedTodos

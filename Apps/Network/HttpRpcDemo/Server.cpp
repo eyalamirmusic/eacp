@@ -10,8 +10,7 @@ int main(int argc, char** argv)
     if (argc > 1)
         port = std::atoi(argv[1]);
 
-    // Lifetime contract: api declared first → destructed last (after
-    // the bridge's listeners and handlers have torn down).
+    // Declared before the bridge, so it outlives the bridge's handlers.
     auto api = Api::PingApi {};
     auto bridge = Miro::Bridge {};
     bridge.use(api);

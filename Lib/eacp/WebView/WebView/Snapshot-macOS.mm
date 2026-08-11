@@ -9,9 +9,8 @@ namespace
 {
 Bytes encodeAsPng(NSImage* image, std::string& error)
 {
-    // NSImage may wrap a vector representation (PDF, EPS); round-tripping
-    // through TIFF guarantees a bitmap rep that representationUsingType:
-    // accepts.
+    // NSImage may wrap a vector rep (PDF, EPS); the TIFF round-trip guarantees
+    // the bitmap rep that representationUsingType: needs.
     auto* tiff = [image TIFFRepresentation];
     if (tiff == nil)
     {

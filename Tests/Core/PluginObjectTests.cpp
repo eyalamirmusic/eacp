@@ -48,7 +48,6 @@ auto tStartStop = test("PluginObject/startStop") = []
     check(Counted::liveCount == 0);
     check(Plugins::get<Counted>() == nullptr);
 
-    // Stopping what was never started, and stopping twice, are both no-ops.
     Plugins::stop<Counted>();
     check(Plugins::get<Counted>() == nullptr);
 };
@@ -58,7 +57,6 @@ auto tStartReplaces = test("PluginObject/startReplaces") = []
     check(Plugins::start<Counted>(1) == 0);
     check(Plugins::start<Counted>(2) == 0);
 
-    // The second start replaced the first — one live object, not two.
     check(Counted::liveCount == 1);
     check(Plugins::get<Counted>()->value == 2);
 
@@ -68,8 +66,7 @@ auto tStartReplaces = test("PluginObject/startReplaces") = []
 
 auto tConstructorThrow = test("PluginObject/constructorThrowIsAReturnCode") = []
 {
-    // Reported to the host as a non-zero return, never as an exception across
-    // the C boundary.
+    // Reported as a non-zero return, never as an exception across the C boundary.
     check(Plugins::start<ThrowsOnConstruction>() != 0);
     check(Plugins::get<ThrowsOnConstruction>() == nullptr);
 };

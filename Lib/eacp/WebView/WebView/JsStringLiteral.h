@@ -5,11 +5,8 @@
 namespace eacp::Graphics
 {
 
-// Escapes a string as a double-quoted JS/JSON literal so it can be
-// injected safely into evaluated script. Shared by the bridge wiring
-// (Bridge.cpp) and the platform WebView glue (WebView-Shared.cpp);
-// kept in one inline definition so unity builds don't merge two
-// identical anonymous-namespace copies into an ODR clash.
+// Escapes a string for safe injection into evaluated script. Defined once
+// here so unity builds can't ODR-clash on duplicate local copies.
 inline std::string jsStringLiteral(std::string_view value)
 {
     auto out = std::string {"\""};

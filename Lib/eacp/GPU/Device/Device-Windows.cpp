@@ -4,11 +4,6 @@
 
 #include "../Windows/D3D12Context.h"
 
-// Windows/D3D12 backend. The GPU device is the process-wide D3D12 device and
-// direct queue owned by getD3D12Context(). The 2D graphics layer keeps its own
-// D3D11 device for Direct2D; the compositor composes output from both, so the
-// devices never need to be shared. nativeQueue() is the direct command queue.
-
 namespace eacp::Graphics
 {
 // Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
@@ -25,11 +20,9 @@ struct Device::Native
 {
     Native()
     {
-        // A GPU reset kills the 2D layer's D3D11 device and this D3D12 device
-        // together. The graphics layer's recovery fires this listener after it
-        // re-established its own device; if ours died too (or never existed),
-        // rebuild it and every GPUView swapchain. The 2D layer also replaces
-        // its device voluntarily, so a healthy D3D12 device is left alone.
+        // A GPU reset kills the 2D layer's D3D11 device and this one together,
+        // but the 2D layer also replaces its device voluntarily — so rebuild
+        // only when ours is actually gone.
         Graphics::addRenderingDeviceReplacedListener(
             []
             {
@@ -73,23 +66,20 @@ void* Device::nativeQueue() const
 
 void* Device::nativeTextureCache() const
 {
-    // No zero-copy pixel-buffer cache on the D3D12 backend yet; the camera/video
-    // path uploads frames through Texture::update instead.
+    // No zero-copy pixel-buffer cache on D3D12; use Texture::update.
     return nullptr;
 }
 
 void* Device::nativeSampler(TextureSampling) const
 {
-    // D3D12 never binds a sampler: every configuration is a static sampler in
-    // the root signature, and the shader picks one by the register it declares
-    // its SamplerState on. See TextureSampling.
+    // D3D12 never binds a sampler: each configuration is a static sampler the
+    // shader picks by its SamplerState register. See TextureSampling.
     return nullptr;
 }
 
 void Device::trackSubmittedWork(void*)
 {
-    // Nothing to record: every submit already stamps the queue's fence, and
-    // lastSubmitted() is the value the wait below needs.
+    // Every submit already stamps the queue's fence.
 }
 
 void Device::waitForSubmittedWork()

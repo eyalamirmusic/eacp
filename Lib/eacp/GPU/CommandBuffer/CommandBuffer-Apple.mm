@@ -18,9 +18,8 @@ struct CommandBuffer::Native
             commandBuffer.reset((NSObject<MTLCommandBuffer>*) [queue commandBuffer]);
     }
 
-    // The buffer to submit, or nil once something already submitted it. Both
-    // commit paths go through here, so the second call on one buffer is the
-    // no-op the header promises rather than a Metal assertion.
+    // Nil once already submitted, keeping a second commit a no-op rather than a
+    // Metal assertion.
     id<MTLCommandBuffer> takeForCommit()
     {
         auto buffer = (id<MTLCommandBuffer>) commandBuffer.get();

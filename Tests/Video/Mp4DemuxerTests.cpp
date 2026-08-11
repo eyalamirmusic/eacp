@@ -13,9 +13,6 @@ using namespace eacp;
 
 namespace
 {
-// The same small clip RoundTripTests uses: what the Media Foundation /
-// AVFoundation encoder actually writes, as opposed to the hand-built
-// structures below, which pin down every byte.
 Video::SyntheticClipOptions demuxClipOptions()
 {
     auto options = Video::SyntheticClipOptions {};
@@ -92,10 +89,8 @@ Bytes mp4FullBox(const char* type, std::uint8_t version, const Bytes& payload)
     return mp4Box(type, body);
 }
 
-// Builds a minimal but structurally complete MP4 in memory, with knobs for
-// every variation the demuxer must handle. Sample i is filled with the byte
-// i + 1, so a resolved byte range can be checked against the sample it is
-// supposed to cover, not just against being in bounds.
+// Sample i is filled with the byte i + 1, so a resolved byte range can be
+// checked against the sample it is supposed to cover.
 struct TestMp4Builder
 {
     Vector<std::uint32_t> sampleSizes {10, 20, 30, 40, 50};
@@ -459,9 +454,6 @@ struct TestMp4Builder
     }
 };
 
-// Every resolved byte range points at the bytes the builder wrote for that
-// sample — the strongest possible check that chunk mapping, sizes and
-// offsets all agree, with no offset arithmetic repeated in the test.
 bool sampleContentMatches(const Video::Mp4Demuxer& demuxer)
 {
     for (auto i = 0; i < demuxer.samples().size(); ++i)
@@ -480,10 +472,6 @@ bool sampleContentMatches(const Video::Mp4Demuxer& demuxer)
 }
 } // namespace
 
-// ---- Against the clip the platform encoder actually writes ----
-
-// The demuxer opens a real encoder-written file and reads the track the
-// same way the platform decoder does.
 auto tOpensSyntheticClip = test("Mp4Demuxer/opensSyntheticClip") = []
 {
     check(!demuxTestClip().empty());
@@ -503,7 +491,6 @@ auto tOpensSyntheticClip = test("Mp4Demuxer/opensSyntheticClip") = []
     check(track.codecConfig.front() == 0x01);
 };
 
-// The sample tables account for every frame the encoder produced.
 auto tSampleCount = test("Mp4Demuxer/sampleCountMatchesEncoder") = []
 {
     auto demuxer = Video::Mp4Demuxer {};
@@ -512,9 +499,7 @@ auto tSampleCount = test("Mp4Demuxer/sampleCountMatchesEncoder") = []
           == Video::syntheticFrameCount(demuxClipOptions()));
 };
 
-// Decode times rise monotonically and the durations add up to the clip
-// length. Nothing here assumes a specific timescale or GOP structure —
-// the encoder does not pin those.
+// Nothing here assumes a specific timescale or GOP structure.
 auto tDecodeTimesRise = test("Mp4Demuxer/decodeTimesRise") = []
 {
     auto demuxer = Video::Mp4Demuxer {};
@@ -535,8 +520,6 @@ auto tDecodeTimesRise = test("Mp4Demuxer/decodeTimesRise") = []
     check(std::abs(demuxer.toSeconds(totalDuration) - 1.6) < 0.15);
 };
 
-// The stream must start on a sync sample; whether later frames are
-// keyframes is the encoder's business.
 auto tFirstSampleKeyframe = test("Mp4Demuxer/firstSampleIsKeyframe") = []
 {
     auto demuxer = Video::Mp4Demuxer {};
@@ -544,9 +527,6 @@ auto tFirstSampleKeyframe = test("Mp4Demuxer/firstSampleIsKeyframe") = []
     check(demuxer.samples().front().keyframe);
 };
 
-// Every byte range lands inside the file, sampleBytes agrees with it, and
-// the first sample starts with a plausible length-prefixed NAL unit — the
-// shape avcC's lengthSizeMinusOne promises.
 auto tSampleRangesInsideFile = test("Mp4Demuxer/sampleRangesInsideFile") = []
 {
     auto demuxer = Video::Mp4Demuxer {};
@@ -571,10 +551,6 @@ auto tSampleRangesInsideFile = test("Mp4Demuxer/sampleRangesInsideFile") = []
     check(nalLength + 4 <= first.size());
 };
 
-// ---- Against hand-built structures, where every byte is pinned ----
-
-// The baseline builder file round-trips exactly: sizes, contiguous
-// offsets, stts-derived decode times, and the codec config verbatim.
 auto tParsesHandBuiltFile = test("Mp4Demuxer/parsesHandBuiltFile") = []
 {
     auto builder = TestMp4Builder {};
@@ -612,8 +588,7 @@ auto tParsesHandBuiltFile = test("Mp4Demuxer/parsesHandBuiltFile") = []
     check(std::abs(demuxer.toSeconds(500) - 0.5) < 1e-9);
 };
 
-// ctts offsets shift presentation times off decode times: v0 unsigned, v1
-// signed, where a negative offset legally drives PTS below DTS.
+// ctts v0 is unsigned, v1 signed, where a negative offset drives PTS below DTS.
 auto tAppliesCttsOffsets = test("Mp4Demuxer/appliesCttsOffsets") = []
 {
     auto builder = TestMp4Builder {};
@@ -638,7 +613,6 @@ auto tAppliesCttsOffsets = test("Mp4Demuxer/appliesCttsOffsets") = []
               == demuxer.samples()[i].decodeTime + builder.cttsOffsets[i]);
 };
 
-// co64 carries the same offsets in 64-bit form.
 auto tReadsCo64 = test("Mp4Demuxer/readsCo64Offsets") = []
 {
     auto builder = TestMp4Builder {};
@@ -651,8 +625,6 @@ auto tReadsCo64 = test("Mp4Demuxer/readsCo64Offsets") = []
     check(sampleContentMatches(demuxer));
 };
 
-// A varying samples-per-chunk pattern exercises the stsc run expansion:
-// offsets accumulate within a chunk and jump the gap at chunk boundaries.
 auto tMapsChunks = test("Mp4Demuxer/mapsChunksThroughStsc") = []
 {
     auto builder = TestMp4Builder {};
@@ -672,8 +644,6 @@ auto tMapsChunks = test("Mp4Demuxer/mapsChunksThroughStsc") = []
     check(sampleContentMatches(demuxer));
 };
 
-// stss flags exactly the listed samples; a file without stss is legally
-// all keyframes.
 auto tStssSubset = test("Mp4Demuxer/stssMarksKeyframeSubset") = []
 {
     auto builder = TestMp4Builder {};
@@ -694,7 +664,6 @@ auto tStssSubset = test("Mp4Demuxer/stssMarksKeyframeSubset") = []
         check(sample.keyframe);
 };
 
-// A constant stsz sample size stands in for the whole table.
 auto tConstantSampleSize = test("Mp4Demuxer/constantSampleSize") = []
 {
     auto builder = TestMp4Builder {};
@@ -713,7 +682,6 @@ auto tConstantSampleSize = test("Mp4Demuxer/constantSampleSize") = []
     check(sampleContentMatches(demuxer));
 };
 
-// A version 1 mdhd carries 64-bit times around a 32-bit timescale.
 auto tVersion1Mdhd = test("Mp4Demuxer/readsVersion1Mdhd") = []
 {
     auto builder = TestMp4Builder {};
@@ -725,8 +693,6 @@ auto tVersion1Mdhd = test("Mp4Demuxer/readsVersion1Mdhd") = []
     check(demuxer.track().duration == 500);
 };
 
-// moov after mdat is how most muxers finalize; the parser walks past mdat
-// to reach it.
 auto tMoovAfterMdat = test("Mp4Demuxer/moovAfterMdat") = []
 {
     auto builder = TestMp4Builder {};
@@ -739,8 +705,6 @@ auto tMoovAfterMdat = test("Mp4Demuxer/moovAfterMdat") = []
     check(sampleContentMatches(demuxer));
 };
 
-// The two special size encodings: size 1 with a 64-bit largesize, and a
-// trailing size 0 that runs to the end of the file.
 auto tSpecialBoxSizes = test("Mp4Demuxer/largesizeAndSizeZeroBoxes") = []
 {
     auto builder = TestMp4Builder {};
@@ -759,7 +723,6 @@ auto tSpecialBoxSizes = test("Mp4Demuxer/largesizeAndSizeZeroBoxes") = []
     check(sampleContentMatches(demuxer));
 };
 
-// An hvc1 entry with an hvcC record is reported as HEVC.
 auto tHevcTrack = test("Mp4Demuxer/hevcTrack") = []
 {
     auto builder = TestMp4Builder {};
@@ -772,8 +735,6 @@ auto tHevcTrack = test("Mp4Demuxer/hevcTrack") = []
     check(demuxer.track().codecConfig == builder.codecConfig);
 };
 
-// free, udta, edts/elst and moof are present but out of scope: the parser
-// steps over them and still finds the track.
 auto tSkipsUnknownBoxes = test("Mp4Demuxer/skipsUnknownBoxes") = []
 {
     auto builder = TestMp4Builder {};
@@ -787,9 +748,6 @@ auto tSkipsUnknownBoxes = test("Mp4Demuxer/skipsUnknownBoxes") = []
     check(sampleContentMatches(demuxer));
 };
 
-// ---- Malformed input ----
-
-// Not-MP4 bytes of every small size fail cleanly.
 auto tRejectsGarbage = test("Mp4Demuxer/rejectsEmptyAndGarbage") = []
 {
     auto demuxer = Video::Mp4Demuxer {};
@@ -808,9 +766,7 @@ auto tRejectsGarbage = test("Mp4Demuxer/rejectsEmptyAndGarbage") = []
     check(!demuxer.isValid());
 };
 
-// Every possible truncation of a valid file fails without crashing. This
-// sweeps each interesting boundary — mid-header, mid-table, missing mdat
-// bytes — in one pass, since the whole file is only a few hundred bytes.
+// One pass over every truncation: the whole file is only a few hundred bytes.
 auto tTruncationSweep = test("Mp4Demuxer/survivesTruncationEverywhere") = []
 {
     auto bytes = TestMp4Builder {}.build();
@@ -830,8 +786,7 @@ auto tTruncationSweep = test("Mp4Demuxer/survivesTruncationEverywhere") = []
     check(!anyPrefixParsed);
 };
 
-// Box sizes that lie: a child claiming more bytes than its parent holds,
-// and 32/64-bit sizes chosen to overflow naive end arithmetic.
+// Sizes chosen to overflow naive end arithmetic.
 auto tRejectsOversizedBoxes = test("Mp4Demuxer/rejectsOversizedChildBox") = []
 {
     auto ftyp = Bytes {};
@@ -868,8 +823,6 @@ auto tRejectsOversizedBoxes = test("Mp4Demuxer/rejectsOversizedChildBox") = []
     check(!parseBytes(demuxer, shortLargesize));
 };
 
-// A track missing any required sample table, or its codec configuration,
-// does not half-parse.
 auto tRejectsMissingTables = test("Mp4Demuxer/rejectsMissingSampleTables") = []
 {
     auto demuxer = Video::Mp4Demuxer {};
@@ -886,9 +839,6 @@ auto tRejectsMissingTables = test("Mp4Demuxer/rejectsMissingSampleTables") = []
     check(!parseBytes(demuxer, builder.build()));
 };
 
-// Tables that contradict each other or the file: an offset past the end,
-// an stts that covers fewer samples than stsz declares, an stsc that
-// cannot be 1-based, and one that leaves samples without a chunk.
 auto tRejectsBadTables = test("Mp4Demuxer/rejectsBadTables") = []
 {
     auto demuxer = Video::Mp4Demuxer {};
@@ -911,7 +861,6 @@ auto tRejectsBadTables = test("Mp4Demuxer/rejectsBadTables") = []
     check(!parseBytes(demuxer, uncoveredSamples.build()));
 };
 
-// Accessors stay safe on an empty demuxer and off the end of a full one.
 auto tOutOfRangeAccess = test("Mp4Demuxer/sampleBytesOutOfRange") = []
 {
     auto demuxer = Video::Mp4Demuxer {};

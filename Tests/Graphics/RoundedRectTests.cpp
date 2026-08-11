@@ -5,11 +5,8 @@ using eacp::Graphics::clampedCornerRadius;
 using eacp::Graphics::Path;
 using eacp::Graphics::Rect;
 
-// A rounded rect whose corners don't fit inside it is out of contract for every
-// backend: CGPathAddRoundedRect asserted on it until macOS clamped it away, and
-// the Windows path builder still runs its top edge backwards. Callers scaling a
-// rect down to zero -- a progress bar filling from empty -- hit this on frame
-// one, so the radius has to be fitted to the rect before it leaves eacp.
+// Regression: CGPathAddRoundedRect asserted on corners too big for the rect and
+// the Windows path builder runs its top edge backwards, so eacp clamps first.
 auto tRadiusFitsTheShortestEdge = test("RoundedRect/radiusIsFittedToTheRect") = []
 {
     check(clampedCornerRadius({0.f, 0.f, 100.f, 20.f}, 6.f) == 6.f);
@@ -34,8 +31,7 @@ auto tRadiusOfAnEmptyRect = test("RoundedRect/emptyRectHasNoCorners") = []
 auto tNegativeRadius = test("RoundedRect/negativeRadiusHasNoCorners") = []
 { check(clampedCornerRadius({0.f, 0.f, 40.f, 20.f}, -6.f) == 0.f); };
 
-// The shape the Librarian crash came in as: a 4pt progress bar whose fill keeps
-// the track's 2pt radius while its width is still a fraction of a point.
+// The shape the Librarian crash came in as.
 auto tProgressBarFillFromEmpty =
     test("RoundedRect/progressBarFillFromEmptyIsDrawable") = []
 {

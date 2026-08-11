@@ -11,10 +11,6 @@ namespace
 {
 constexpr auto twoPi = 2.0f * std::numbers::pi_v<float>;
 
-// A small additive synth: three harmonics with 1/n amplitudes, evaluated per
-// sample index. A generator kernel - no input buffer, the sample clock is
-// toFloat(threadId()). The shared phase term feeds all three sin() calls, so
-// the emitter hoists it into one named local.
 struct ToneKernel final : ComputeProgram
 {
     ToneKernel() { compile(); }
@@ -33,8 +29,8 @@ struct ToneKernel final : ComputeProgram
     EACP_SHADER(output, frequency, sampleRate)
 };
 
-// Crossfades two rendered tones, then soft-clips the blend with x / (1 + |x|)
-// so the harmonic stacks stay inside [-1, 1] without a hard clamp.
+// Soft-clips with x / (1 + |x|), so the harmonic stack stays inside [-1, 1]
+// without a hard clamp.
 struct CrossfadeKernel final : ComputeProgram
 {
     CrossfadeKernel() { compile(); }
@@ -55,10 +51,8 @@ struct CrossfadeKernel final : ComputeProgram
     EACP_SHADER(toneA, toneB, output, blend, gain)
 };
 
-// A 3-tap smoothing filter using index arithmetic: each sample averaged with
-// its neighbours, found with uint +, -, % and the buffer length uniform. The
-// blend holds whole cycles of both tones, so wrapping around the ends reads
-// the periodic signal seamlessly - no edge clamping needed.
+// The blend holds whole cycles of both tones, so the wrap-around taps read the
+// periodic signal seamlessly and no edge clamping is needed.
 struct SmoothKernel final : ComputeProgram
 {
     SmoothKernel() { compile(); }
@@ -98,12 +92,8 @@ void printWave(const char* name, const float* samples, int count)
     std::printf("\n");
 }
 
-// Compute with the shader EDSL: two struct-authored kernels chained over
-// storage buffers, no native shader strings anywhere. The tone kernel is
-// dispatched twice with different uniforms and output buffers; the crossfade
-// kernel then reads both renders. Each stage gets its own pass, because the
-// encoder boundary is what orders a write before the read that consumes it on
-// both backends (and lets D3D rebind the outputs as inputs).
+// Each stage gets its own pass: the encoder boundary is what orders a write
+// before the read that consumes it on both backends.
 void runCompute()
 {
     auto& device = Device::shared();

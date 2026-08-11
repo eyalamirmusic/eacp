@@ -13,18 +13,12 @@
 #include <cstring>
 #include <mutex>
 
-// macOS capture backend (AVFoundation). One AVCaptureVideoDataOutput delivers
-// 32-bit BGRA frames on a dedicated serial queue; the delegate wraps each
-// CVPixelBuffer in a CameraFrame view (valid only for the callback) and hands it
-// to the user callback, and also stashes the buffer as the latest frame for the
-// display path. alwaysDiscardsLateVideoFrames provides the drop-stale
-// backpressure. MRC throughout — every alloc/init is owned by an ObjC::Ptr.
+// AVFoundation capture backend. MRC throughout — every alloc/init is owned by
+// an ObjC::Ptr.
 
 namespace eacp::Cameras
 {
-// Thread-safe holder for the most recent frame's pixel buffer: the capture
-// thread sets it, the render thread acquires it. Each access is a tiny critical
-// section guarding a retained CVPixelBuffer.
+// Set on the capture thread, acquired on the render thread.
 struct LatestFrame
 {
     ~LatestFrame()
@@ -60,9 +54,8 @@ struct LatestFrame
         return current;
     }
 
-    // Copies the current frame into `out` as tightly packed BGRA when it is
-    // newer than out.sequence. The buffer is retained under the lock and copied
-    // outside it so the capture thread is never blocked on the memcpy.
+    // Tightly packed BGRA, copied outside the lock so the capture thread never
+    // blocks on the memcpy.
     bool copyInto(FramePixels& out)
     {
         CVPixelBufferRef buffer = nullptr;
@@ -109,9 +102,8 @@ struct LatestFrame
     std::uint64_t sequence = 0;
 };
 
-// The capture queue calls back into this; Camera::Native owns it and points the
-// delegate at it. The callback is set before start(), so the capture thread only
-// reads it.
+// Owned by Camera::Native, pointed at by the delegate. `callback` is set before
+// start(), so the capture thread only ever reads it.
 struct CaptureContext
 {
     void setFrameArrived(Callback callbackToUse)
@@ -135,9 +127,7 @@ struct CaptureContext
     FrameCallback callback;
     LatestFrame latest;
 
-    // Unlike `callback` this may be rewired while capture runs (CameraView
-    // attaching and detaching), so access is fenced; it is copied out before
-    // invoking so it never runs under the lock.
+    // Rewired while capture runs as CameraView attaches and detaches.
     std::mutex arrivedMutex;
     Callback frameArrived = [] {};
 };
@@ -162,8 +152,8 @@ void cameraDelegateCaptureOutput(id self,
 
     auto pixelBuffer = (CVPixelBufferRef) imageBuffer;
 
-    // The display path only needs the buffer (it wraps the IOSurface on the GPU),
-    // so stash it before the CPU-side lock the raw callback needs.
+    // The display path wraps the IOSurface on the GPU, so publish the buffer
+    // before taking the CPU-side lock the raw callback needs.
     context->latest.set(pixelBuffer);
     context->notifyFrameArrived();
 
@@ -260,11 +250,8 @@ CGSize formatDimensions(AVCaptureDeviceFormat* format)
     return CGSizeMake(dims.width, dims.height);
 }
 
-// The session preset fixes the active format, and macOS 720p/1080p presets
-// usually cap at 30fps — so a higher requested rate needs an explicit format
-// that actually supports it. Prefer the smallest format that still covers the
-// requested resolution (we downscale anyway); if none is large enough, take the
-// largest available. Returns nil when no format supports the rate.
+// Smallest format covering the requested size, else the largest available; nil
+// when no format supports the rate.
 AVCaptureDeviceFormat*
     bestFormatForRate(AVCaptureDevice* device, int width, int height, double frameRate)
 {
@@ -295,10 +282,8 @@ AVCaptureDeviceFormat*
     return smallestCovering != nil ? smallestCovering : largest;
 }
 
-// Pick a format that supports the requested rate (only when the preset's active
-// format doesn't), then pin min == max frame duration so the device runs at
-// exactly that rate. If nothing supports it, the active format's default rate
-// stands — no regression for the common 30fps path.
+// macOS 720p/1080p presets usually cap at 30fps, so a higher requested rate
+// needs an explicit format. Falls back to the active format's default rate.
 void configureFormatAndFrameRate(AVCaptureDevice* device,
                                  int width,
                                  int height,
@@ -417,9 +402,8 @@ struct Camera::Native
         configureFormatAndFrameRate(
             device, config.width, config.height, config.frameRate);
 
-        // startRunning blocks while the device warms up, so run it on a serial
-        // session queue rather than the caller's (often the main) thread. stop()
-        // serialises with it on the same queue.
+        // startRunning blocks while the device warms up, so keep it off the
+        // caller's thread; stop() serialises with it on the same queue.
         sessionQueue =
             dispatch_queue_create("com.eacp.camera.session", DISPATCH_QUEUE_SERIAL);
 
@@ -438,8 +422,7 @@ struct Camera::Native
     {
         ObjC::AutoReleasePool pool;
 
-        // Serialise with the pending startRunning, then stop, on the session
-        // queue before tearing anything down.
+        // Serialise with a pending startRunning before tearing anything down.
         if (sessionQueue != nullptr && session)
         {
             auto* sessionPtr = session.get();
@@ -459,8 +442,7 @@ struct Camera::Native
         if (output)
             [output.get() setSampleBufferDelegate:nil queue:nullptr];
 
-        // Drain any delegate call still in flight before the context it points
-        // at goes away.
+        // Drain any in-flight delegate call before its context goes away.
         if (captureQueue != nullptr)
             dispatch_sync(captureQueue, ^ {
             });

@@ -15,8 +15,7 @@ struct MyApp
         window.setContentView(webView);
     }
 
-    // params declared first → destructed last (after the transport's
-    // bridge has torn down its listeners and handlers).
+    // Declared before the transport, so it outlives the bridge's listeners.
     Api::ParametersApi params;
     WebView webView {embeddedOptions("WebApp")};
     WebViewBridge transport {webView};

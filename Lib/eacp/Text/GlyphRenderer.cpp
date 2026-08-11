@@ -1,8 +1,7 @@
 #include "GlyphRenderer.h"
 
-// No EACP_SHADER_VALUE declarations here: every field the shader reads is a
-// plain float[N], which the EDSL already maps to FloatN. The macro is only
-// needed for structs with named components (a Vec2 with .x and .y).
+// No EACP_SHADER_VALUE declarations: every field the shader reads is a plain
+// float[N], which the EDSL already maps to FloatN.
 
 namespace eacp::Text
 {
@@ -20,18 +19,15 @@ constexpr GlyphQuadCorner unitQuad[] = {
 };
 } // namespace
 
-// One shader body for both atlases, with the coverage handling switched at
-// build time: a mask supplies alpha from its single channel, a colour glyph
-// carries its own RGBA.
+// One shader body for both atlases, the coverage handling switched at build
+// time.
 struct GlyphRenderer::Program final : ShaderProgram
 {
     explicit Program(bool coloredToUse)
         : colored(coloredToUse)
     {
-        // Linear so a glyph drawn at a fractional position or a non-integer
-        // zoom resamples smoothly rather than shimmering. Declared here rather
-        // than on the atlas texture because the shader is what decides how it
-        // samples - see GPU::TextureSampling.
+        // Linear, so a glyph at a fractional position resamples smoothly rather
+        // than shimmering. On the shader, not the texture: see TextureSampling.
         atlas.sampling = {TextureFilter::Linear, TextureAddressMode::Clamp};
         compile();
     }
@@ -43,18 +39,17 @@ struct GlyphRenderer::Program final : ShaderProgram
         auto source = instanceInput(&GlyphInstance::source, 1);
         auto color = instanceInput(&GlyphInstance::color, 1);
 
-        // Unit corner -> destination rect, in logical points.
+        // In logical points.
         auto position = float2(rect.x() + corner.x() * rect.z(),
                                rect.y() + corner.y() * rect.w());
 
-        // Points -> clip space. Y is flipped because the geometry is authored
-        // y-down, matching Graphics::Rect and every layout calculation above.
+        // Points to clip space, Y flipped: the geometry is authored y-down.
         auto clipX = position.x() / screenSize.x() * 2.0f - 1.0f;
         auto clipY = 1.0f - position.y() / screenSize.y() * 2.0f;
 
         setPosition(float4(clipX, clipY, 0.0f, 1.0f));
 
-        // Texel rect -> normalised UV.
+        // Texels to normalised UV.
         auto uv = float2((source.x() + corner.x() * source.z()) / atlasSize.x(),
                          (source.y() + corner.y() * source.w()) / atlasSize.y());
 
@@ -63,18 +58,14 @@ struct GlyphRenderer::Program final : ShaderProgram
 
         if (colored)
         {
-            // A colour glyph carries its own colour; the instance colour only
-            // supplies alpha, so a faded emoji is still possible.
+            // The instance colour supplies alpha only, so a faded emoji works.
             setFragment(float4(
                 sampled.x(), sampled.y(), sampled.z(), sampled.w() * tint.w()));
         }
         else
         {
-            // The whole reason this shader exists. An R8Unorm sample arrives as
-            // (coverage, 0, 0, 1): the coverage is in red and the alpha is a
-            // meaningless 1. Multiplying that by a tint — which is what a
-            // general sprite shader does — yields opaque red. Coverage has to
-            // become *alpha* instead, leaving the colour untouched.
+            // An R8Unorm sample arrives as (coverage, 0, 0, 1), so multiplying
+            // it by the tint would give opaque red: coverage becomes the alpha.
             auto coverage = sampled.x();
 
             setFragment(float4(tint.x(), tint.y(), tint.z(), tint.w() * coverage));
@@ -161,15 +152,9 @@ void GlyphRenderer::flush(RenderPass& pass, GlyphAtlas& atlas)
 {
     if (!prepared)
     {
-        // Blending is required: glyph coverage is an alpha ramp, and without it
-        // the antialiased edges punch holes in whatever is behind them.
-        //
-        // The mode that accumulates the destination's alpha rather than
-        // weighting the source's by itself, which is what a target something
-        // will composite through needs -- a string drawn into a texture, and
-        // then that texture faded, otherwise loses the coverage of every edge it
-        // has. On a window's own drawable, where the destination is opaque
-        // already, the two are the same picture.
+        // Glyph coverage is an alpha ramp, so without blending the antialiased
+        // edges punch holes in what is behind them. The mode accumulates the
+        // destination's alpha, for text drawn into a texture that is then faded.
         maskProgram->prepare(1,
                              false,
                              PrimitiveTopology::Triangles,
@@ -179,11 +164,8 @@ void GlyphRenderer::flush(RenderPass& pass, GlyphAtlas& atlas)
                               PrimitiveTopology::Triangles,
                               BlendMode::AlphaBlendOntoTransparent);
 
-        // The quad every glyph is instanced over never changes, so it is
-        // uploaded once here rather than per draw. Per draw it was a buffer
-        // built and thrown away for six vertices that were already on the GPU -
-        // cheap on Metal, and two committed resources and a queue submission
-        // on D3D12.
+        // The quad never changes, so it is uploaded once rather than per draw --
+        // where it cost two committed resources and a queue submission on D3D12.
         maskProgram->setVertices(unitQuad);
         colorProgram->setVertices(unitQuad);
 

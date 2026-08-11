@@ -133,8 +133,7 @@ std::string_view readFunctionName(const std::string& value, size_t& pos)
     return std::string_view {value}.substr(start, pos - start);
 }
 
-// Hands each function of a transform list, in the order written, to `consume` as
-// its name and a reader positioned on its arguments.
+// `consume` is handed each function's name and a reader on its arguments.
 template <typename Consumer>
 void forEachTransformFunction(const std::string& value, Consumer&& consume)
 {
@@ -165,8 +164,7 @@ void forEachTransformFunction(const std::string& value, Consumer&& consume)
     }
 }
 
-// The second of a pair that may be written once for both, which is how scale and
-// translate are allowed to be spelled.
+// The second of a pair scale and translate may write once for both.
 float readOptionalFloat(NumberReader& reader, float fallback)
 {
     return reader.hasNumber() ? reader.readFloat() : fallback;
@@ -232,9 +230,7 @@ GPUWidgets::AffineTransform readTransformFunction(std::string_view name,
         if (!reader.hasNumber())
             return Affine::rotation(radians);
 
-        // The three-argument form rotates about a point rather than the origin,
-        // which is how a document spins a shape in place without first working
-        // out where the origin put it.
+        // The three-argument form rotates about a point, not the origin.
         auto centreX = reader.readFloat();
         auto centreY = readOptionalFloat(reader, 0.f);
 
@@ -272,11 +268,8 @@ GPUWidgets::AffineTransform parseTransformMatrix(const std::string& value)
         value,
         [&result](std::string_view name, NumberReader& reader)
         {
-            // A list composes right to left: each function transforms the
-            // coordinate system the next one is written in, so
-            // translate(..) rotate(..) rotates first and then translates. Which
-            // makes a newly read function the one applied *before* everything
-            // read so far.
+            // A list composes right to left, so a newly read function applies
+            // *before* everything read so far.
             result = readTransformFunction(name, reader).then(result);
         });
 
@@ -296,9 +289,8 @@ PreserveAspectRatio::Align alignFromKeyword(std::string_view keyword)
     return PreserveAspectRatio::Align::Mid;
 }
 
-// "xMidYMax" and its eight siblings, which are the only alignment words the
-// grammar has: an x keyword and a y keyword run together, eight characters,
-// always in that order.
+// "xMidYMax" and its eight siblings: an x keyword then a y keyword, always
+// eight characters, which is the whole of the grammar's alignment words.
 bool readAlignKeyword(const std::string& token, PreserveAspectRatio& result)
 {
     if (token.size() != 8 || token[0] != 'x' || token[4] != 'Y')
@@ -349,8 +341,8 @@ PreserveAspectRatio parsePreserveAspectRatio(const std::string& value)
     forEachToken(value,
                  [&result](const std::string& token)
                  {
-                     // "defer" is a legacy word that only ever meant anything on
-                     // an <image>, so it is read past rather than acted on.
+                     // "defer" only ever meant anything on an <image>, so it is
+                     // read past rather than acted on.
                      if (token == "none")
                          result.uniform = false;
                      else if (token == "meet")
@@ -378,9 +370,8 @@ GPUWidgets::AffineTransform viewBoxTransform(const Graphics::Rect& viewBox,
 
     if (fit.uniform)
     {
-        // The smaller scale fits the box inside the viewport and the larger one
-        // covers it, which is the whole of the difference between meet and
-        // slice.
+        // The smaller scale fits the box inside the viewport, the larger covers
+        // it: the whole of the difference between meet and slice.
         auto both = fit.slice ? std::max(scaleX, scaleY) : std::min(scaleX, scaleY);
 
         scaleX = both;
@@ -474,8 +465,7 @@ std::string parsePaintReference(const std::string& value)
 
     auto reference = trimmed(value.substr(open + 4, close - open - 4));
 
-    // Quoted is legal and common: url('#id') and url("#id") mean what url(#id)
-    // does.
+    // url('#id') and url("#id") are legal, and mean what url(#id) does.
     if (reference.size() >= 2
         && (reference.front() == '\'' || reference.front() == '"')
         && reference.back() == reference.front())

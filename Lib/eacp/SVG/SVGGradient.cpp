@@ -6,8 +6,7 @@ namespace eacp::SVG
 {
 namespace
 {
-// An href chain may be a cycle, which a document should not write and nothing
-// stops it writing. Eight levels is past anything an honest file nests.
+// An href chain may be a cycle, which nothing stops a document writing.
 constexpr int maxReferenceDepth = 8;
 
 const SVGElement* findById(const ElementsById& byId, const std::string& id)
@@ -20,13 +19,9 @@ const SVGElement* findById(const ElementsById& byId, const std::string& id)
     return found != byId.end() ? found->second : nullptr;
 }
 
-// An attribute, following href to whatever the gradient inherits it from.
-//
-// Documents from every drawing program do this: one gradient carries the stops
-// and a handful of others carry only a position and point at it. An attribute is
-// answered by the first element in the chain that has it, which is what the
-// specification says and the only reading under which those files come out
-// right.
+// Answered by the first element in the href chain that has the attribute, as
+// the specification says: drawing programs write the stops on one gradient and
+// point others at it.
 std::string inheritedAttribute(const SVGElement& gradient,
                                const ElementsById& byId,
                                const std::string& name)
@@ -98,8 +93,6 @@ Vector<UI::GradientStop> parseGradientStops(const SVGElement& gradient)
 
         auto stop = UI::GradientStop {};
 
-        // A percentage where a fraction is meant is common enough that it is not
-        // worth telling the two apart anywhere but here.
         auto offset = child.attr("offset", "0");
 
         stop.position = Strings::parseFloatOr(offset, 0.f);
@@ -109,8 +102,7 @@ Vector<UI::GradientStop> parseGradientStops(const SVGElement& gradient)
 
         auto colour = parseColor(read("stop-color"));
 
-        // A stop that says nothing is black, which is the format's answer and
-        // not what an empty parse gives.
+        // A stop that says nothing is black, per the format.
         stop.color = colour.isNone ? Graphics::Color::black() : colour.color;
 
         auto opacity = read("stop-opacity");
@@ -154,10 +146,9 @@ UI::Gradient resolveGradient(const std::string& id,
     auto boundingBoxUnits =
         inheritedAttribute(*element, byId, "gradientUnits") != "userSpaceOnUse";
 
-    // What a percentage is a percentage *of*. In bounding-box units the
-    // coordinates are already fractions, so it is one; in user space it is the
-    // viewport's own extent, and for a radius the diagonal over root two, which
-    // is the length the specification names for a value with no axis of its own.
+    // What a percentage is a percentage *of*: one in bounding-box units, and in
+    // user space the viewport's extent -- for a radius the diagonal over root
+    // two, the length the specification names for a value with no axis.
     auto acrossX = boundingBoxUnits ? 1.f : viewport.w;
     auto acrossY = boundingBoxUnits ? 1.f : viewport.h;
     auto diagonal =
@@ -165,10 +156,9 @@ UI::Gradient resolveGradient(const std::string& id,
             ? 1.f
             : std::sqrt((viewport.w * viewport.w + viewport.h * viewport.h) * 0.5f);
 
-    // Every one of these defaults is written as a percentage in the
-    // specification -- 0%, 100%, 50% -- which is why the fallback is a fraction
-    // of the same extent rather than a number: in user space an `x2` left out
-    // means the viewport's right edge, not one unit across.
+    // The specification writes these defaults as percentages -- 0%, 100%, 50%
+    // -- so the fallback is a fraction of the extent and not a number: in user
+    // space an omitted `x2` means the viewport's right edge, not one unit.
     auto number = [&](const std::string& name, float defaultFraction, float across)
     {
         auto value = inheritedAttribute(*element, byId, name);
@@ -197,8 +187,8 @@ UI::Gradient resolveGradient(const std::string& id,
     if (!gradientTransform.empty())
         gradient.transform = parseTransformMatrix(gradientTransform);
 
-    // The bounding box goes on after gradientTransform, because with these units
-    // the box *is* the space that transform was written in.
+    // After gradientTransform: with these units the box *is* the space that
+    // transform was written in.
     if (boundingBoxUnits)
         gradient.transform =
             gradient.transform.then(GPUWidgets::AffineTransform {objectBounds.w,

@@ -2,23 +2,9 @@
 
 #include <cmath>
 
-// Packed vertex formats, checked by rendering the same picture twice - once
-// with the attribute unpacked to floats, once packed - and comparing the two
-// images to each other.
-//
-// Against each other rather than against expected colours, deliberately. The
-// snapshot path returns premultiplied pixels, so absolute values are a trap the
-// README already warns about; and the question here is not what a red quad
-// looks like, it is whether the packed path draws the same thing the float path
-// does. A wrong format mapping is not a build error on either backend - the
-// pipeline is built, the draw happens, and the geometry or the colour is simply
-// wrong - so a comparison is the only thing that catches it.
-//
-// The two mapping tables are hand-written per backend and cannot be checked
-// against each other from one machine, which is what makes this the file to run
-// on both.
-//
-// Self-skips without a GPU device.
+// The same picture is rendered packed and unpacked and the two images compared
+// against each other rather than against expected colours, because the snapshot
+// path returns premultiplied pixels.
 
 using namespace nano;
 using namespace eacp;
@@ -28,9 +14,8 @@ namespace
 {
 constexpr auto viewSize = 32.f;
 
-// Wide enough to absorb the difference between interpolating a float attribute
-// and interpolating one the hardware just widened, narrow enough that a wrong
-// format - which misreads the bytes entirely - cannot slip through.
+// Wide enough to absorb the widening of a packed attribute, narrow enough that
+// a wrong format - which misreads the bytes entirely - cannot slip through.
 constexpr auto tolerance = 3.0f / 255.0f;
 
 bool matches(const Graphics::Image& a, const Graphics::Image& b)
@@ -56,9 +41,7 @@ bool matches(const Graphics::Image& a, const Graphics::Image& b)
     return true;
 }
 
-// Not every pair of images that matches proves anything: two black frames match
-// too. Every case below checks this first, so a comparison that passed because
-// nothing was drawn fails instead.
+// Two black frames match too, so every case checks this first.
 bool hasColour(const Graphics::Image& image)
 {
     for (auto y = 0; y < image.height(); ++y)
@@ -70,8 +53,8 @@ bool hasColour(const Graphics::Image& image)
     return false;
 }
 
-// A quad covering the whole target, so every pixel of the comparison carries a
-// different interpolated attribute value rather than one flat colour.
+// Covers the whole target, so every pixel carries a different interpolated
+// attribute value rather than one flat colour.
 constexpr float quadCorners[6][2] = {
     {-1.f, -1.f},
     {1.f, -1.f},
@@ -99,8 +82,7 @@ constexpr float cornerUVs[6][2] = {
     {0.f, 1.f},
 };
 
-// One program per storage type, with identical define() bodies. That the bodies
-// are identical is the point: only the CPU struct differs, so anything that
+// The define() bodies are identical across storage types, so anything that
 // shows up in the pixels came from the wire format.
 template <typename Vertex>
 struct ColourProgram final : ShaderProgram
@@ -116,8 +98,8 @@ struct ColourProgram final : ShaderProgram
         setFragment(varying(colour));
     }
 
-    // No uniforms at all - the attribute is the whole shader. reflectMembers is
-    // pure virtual, so it still needs the macro, with nothing in it.
+    // reflectMembers is pure virtual, so the macro is needed even with no
+    // uniforms.
     EACP_SHADER()
 };
 
@@ -206,8 +188,6 @@ struct HalfUVVertex
 };
 } // namespace
 
-// The headline case, and the one this repo's ImGui backend needs: a colour is
-// four bytes, not four floats, and the shader must not be able to tell.
 auto tUNorm8MatchesFloat4 = test("VertexFormat/uNorm8x4MatchesFloat4") = []
 {
     if (!Device::shared().isValid())
@@ -249,8 +229,6 @@ auto tUNorm8MatchesFloat4 = test("VertexFormat/uNorm8x4MatchesFloat4") = []
     check(matches(expected, packed));
 };
 
-// The vertex shrinks, which is the entire reason for any of this. Stated as a
-// compile-time fact so it cannot quietly regress.
 auto tPackedVertexIsSmaller = test("VertexFormat/packingShrinksTheVertex") = []
 {
     static_assert(sizeof(PackedColourVertex) == 12);
@@ -261,9 +239,7 @@ auto tPackedVertexIsSmaller = test("VertexFormat/packingShrinksTheVertex") = []
     check(true);
 };
 
-// Signed normalized shorts, the storage a normal or a tangent wants. Drawn with
-// positive values only, so the comparison is against the same picture the float
-// path draws rather than a differently-scaled one.
+// Deliberately positive values only, so the float path draws the same picture.
 auto tSNorm16MatchesFloat4 = test("VertexFormat/sNorm16x4MatchesFloat4") = []
 {
     if (!Device::shared().isValid())
@@ -305,9 +281,6 @@ auto tSNorm16MatchesFloat4 = test("VertexFormat/sNorm16x4MatchesFloat4") = []
     check(matches(expected, packed));
 };
 
-// Half UVs against float UVs, sampling a texture whose four texels are far
-// apart in colour - so a UV that lands in the wrong quadrant is a large,
-// obvious difference rather than a rounding one.
 auto tHalfUVsMatchFloatUVs = test("VertexFormat/half2UVsMatchFloat2") = []
 {
     if (!Device::shared().isValid())
@@ -349,9 +322,6 @@ auto tHalfUVsMatchFloatUVs = test("VertexFormat/half2UVsMatchFloat2") = []
     check(matches(expected, packed));
 };
 
-// The half conversion itself, away from any GPU. It is the one piece of this
-// that is arithmetic rather than a table lookup, so it is worth pinning
-// directly rather than only through what a shader made of it.
 auto tHalfRoundTrips = test("VertexFormat/halfRoundTripsExactValues") = []
 {
     // Exactly representable in half, so the round trip has to be exact.
@@ -360,8 +330,7 @@ auto tHalfRoundTrips = test("VertexFormat/halfRoundTripsExactValues") = []
     for (auto value: exact)
         check(halfToFloat(halfFromFloat(value)) == value);
 
-    // Ten bits of mantissa, so anything in range survives to about one part in
-    // a thousand - the precision a UV needs and a position does not.
+    // Ten bits of mantissa: about one part in a thousand.
     const float approximate[] = {0.1f, 0.333f, 12.345f, -678.9f};
 
     for (auto value: approximate)
@@ -369,9 +338,6 @@ auto tHalfRoundTrips = test("VertexFormat/halfRoundTripsExactValues") = []
               <= std::abs(value) * 0.001f);
 };
 
-// The edges, where a naive conversion goes wrong quietly: too large should
-// saturate rather than wrap to zero, and too small should reach zero through
-// the subnormals rather than falling off a cliff.
 auto tHalfHandlesTheEdges = test("VertexFormat/halfSaturatesAndUnderflows") = []
 {
     check(std::isinf(halfToFloat(halfFromFloat(70000.f))));
@@ -384,8 +350,7 @@ auto tHalfHandlesTheEdges = test("VertexFormat/halfSaturatesAndUnderflows") = []
     check(halfToFloat(halfFromFloat(smallestSubnormal)) == smallestSubnormal);
     check(halfToFloat(halfFromFloat(smallestSubnormal / 2.f)) == 0.f);
 
-    // Below the smallest normal but well inside subnormal range, so it must
-    // come back as something rather than being flushed to zero.
+    // Inside subnormal range, so it must not be flushed to zero.
     check(halfToFloat(halfFromFloat(std::ldexp(1.f, -20))) > 0.f);
 
     check(std::isnan(halfToFloat(halfFromFloat(std::nanf("")))));

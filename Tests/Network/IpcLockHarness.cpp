@@ -4,14 +4,9 @@
 #include <cstdlib>
 #include <string>
 
-// A standalone holder of an IPC::Lock, so the tests can watch one behave
-// across a real process boundary - including a holder that is killed rather
-// than asked to leave, which is the only way to prove the kernel releases a
-// lock nobody unlocked.
-//
-//   IpcLockHarness <name> try
-//   IpcLockHarness <name> wait <milliseconds>
-//   IpcLockHarness <name> hold <milliseconds>
+// A standalone holder of an IPC::Lock, killable so the tests can prove the
+// kernel releases a lock nobody unlocked:
+//   IpcLockHarness <name> try | wait <ms> | hold <ms>
 namespace
 {
 constexpr auto acquired = 0;
@@ -51,8 +46,8 @@ int main(int argc, char** argv)
             if (!guard)
                 return contended;
 
-            // The parent waits to see this before acting, so a test is timing
-            // the lock rather than racing this process's startup.
+            // The parent waits for this before acting, so a test times the lock
+            // rather than this process's startup.
             std::puts("locked");
             std::fflush(stdout);
 

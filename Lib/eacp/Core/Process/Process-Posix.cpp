@@ -23,9 +23,8 @@ void ignoreSigPipeOnce()
     std::call_once(flag, [] { std::signal(SIGPIPE, SIG_IGN); });
 }
 
-// Copies the parent environment and applies overrides (replaced by name, else
-// appended). Built in the parent: posix_spawn execs without running arbitrary
-// code in the child, so there is no fork/setenv-in-child deadlock hazard.
+// Built in the parent: posix_spawn runs no arbitrary code in the child, so
+// there is no fork/setenv-in-child deadlock hazard.
 Vector<std::string> buildEnvironment(const Vector<EnvironmentVariable>& overrides)
 {
     auto entries = Vector<std::string> {};
@@ -53,8 +52,7 @@ Vector<std::string> buildEnvironment(const Vector<EnvironmentVariable>& override
     return entries;
 }
 
-// Null-terminated char* view over `strings` for the argv/envp the spawn syscall
-// requires. The backing strings must outlive the returned pointers.
+// `strings` must outlive the returned pointers.
 Vector<char*> toCArray(Vector<std::string>& strings)
 {
     auto pointers = Vector<char*> {};
@@ -82,8 +80,7 @@ struct Process::Native
 
     ~Native()
     {
-        // A detached child is deliberately left running and unreaped — it
-        // outlives this object (and typically this process).
+        // A detached child is deliberately left running and unreaped.
         if (detached)
             return;
 
@@ -173,10 +170,8 @@ struct Process::Native
     }
 
 private:
-    // Spawns the child with posix_spawn: the env/argv are built in the parent
-    // and stdio is wired through file actions, so no arbitrary code (and no
-    // allocation) runs in the child — avoiding the fork-in-a-threaded-process
-    // deadlock. posix_spawnp keeps PATH lookup for bare executables.
+    // posix_spawn, not fork+exec: no arbitrary code runs in the child, avoiding
+    // the fork-in-a-threaded-process deadlock. spawnp keeps PATH lookup.
     void launch(const ProcessOptions& options)
     {
         auto argStrings = Vector<std::string> {options.executable};
@@ -215,8 +210,7 @@ private:
 
         if (!options.workingDirectory.empty())
         {
-            // _np is the only variant available at our deployment target; the
-            // non-suffixed addchdir is macOS 26+ only.
+            // The non-suffixed addchdir is macOS 26+ only.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
             posix_spawn_file_actions_addchdir_np(&actions,
@@ -228,8 +222,7 @@ private:
         posix_spawnattr_init(&attr);
 
 #if defined(POSIX_SPAWN_SETSID)
-        // A detached child becomes its own session leader so it survives the
-        // launcher's terminal/session, not just the launcher process.
+        // Its own session leader, so it survives the launcher's session.
         if (options.detached)
             posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
 #endif
@@ -246,9 +239,8 @@ private:
 
         if (result != 0)
         {
-            // posix_spawn reports a missing/non-executable file as a launch error
-            // (no child), where fork+execvp produced a child that exited 127.
-            // Preserve that 127 "command not found" contract for callers.
+            // posix_spawn reports a missing executable as a launch error rather
+            // than a child exiting 127; preserve the 127 contract for callers.
             pid = -1;
             execFailed = true;
             closeAllPipes(inPipe, outPipe, errPipe);
@@ -290,8 +282,7 @@ private:
                 ::close(fd);
     }
 
-    // Keep the parent ends and stream the child's output; the child's ends were
-    // dup'd onto its stdio by the file actions.
+    // The child's ends were already dup'd onto its stdio by the file actions.
     void adoptPipes(int (&in)[2], int (&out)[2], int (&err)[2])
     {
         ::close(in[0]);

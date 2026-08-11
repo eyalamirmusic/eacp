@@ -4,16 +4,13 @@ namespace eacp::GPU
 {
 void FrameTimer::beginFrame(std::uint64_t frameIndex)
 {
-    // Before the new frame takes a slot, so that the one it is about to take is
-    // read first if the GPU has since finished with it.
+    // Before taking a slot, so this frame's own is read first if it is ready.
     drainCompleted();
 
     const auto next = (int) (frameIndex % (std::uint64_t) GpuTimestamps::slotCount);
 
-    // A slot whose frame has not come back yet is still owed a read, and
-    // recording over it would lose that frame's numbers and read a mixture of
-    // two frames' timestamps for this one. Leaving the new frame untimed costs
-    // a gap in the graph, which is the version that is not wrong.
+    // Recording over a pending slot would mix two frames' timestamps; leaving
+    // this frame untimed only costs a gap.
     if (slots[next].pending)
     {
         current = -1;
@@ -62,10 +59,8 @@ void FrameTimer::endFrame(void* nativeCommandBuffer)
     if (current < 0)
         return;
 
-    // Pending only if the backend will actually have an answer. A slot left
-    // waiting on one that never comes is never recycled, and four of those is
-    // the timer switched off for the rest of the process - which is exactly
-    // what a device with no counter support used to do.
+    // Pending only if an answer is coming: a slot waiting on one that never
+    // arrives is never recycled, and slotCount of those stop the timer.
     slots[current].passCount = passCount;
     slots[current].pending =
         timestamps.endSlot(current, passCount, nativeCommandBuffer);
@@ -92,10 +87,8 @@ void FrameTimer::drainCompleted()
 
         entry.pending = false;
 
-        // Two slots can complete in one drain - a frame that was never
-        // presented, a stall - and the newer of them is the answer. Without
-        // this the reported frame would go backwards, which reads as the
-        // profiler being wrong rather than the frames arriving together.
+        // Two slots can complete in one drain; keep the newer so the reported
+        // frame never goes backwards.
         if (entry.frameIndex < latest.frameIndex)
             continue;
 

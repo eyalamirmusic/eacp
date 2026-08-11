@@ -5,21 +5,6 @@
 #include <algorithm>
 #include <cmath>
 
-// tessellateAntialiasedFill is the route a shape too large for the coverage
-// atlas takes, and it has to answer for itself in two directions.
-//
-// What it returns has to be the shape. There is no reference rasterizer to
-// compare against here and none is needed: a triangle list carrying a coverage
-// per vertex *is* a coverage function, so it can be evaluated at a point and
-// checked against the polygon it came from. Well inside must be 1, well outside
-// must be nothing at all, and the band between them is where the antialiasing
-// lives and is left alone - the same shape of check PathStroker's tests make.
-//
-// And what it refuses matters as much, because a refusal is answered by the mask
-// route and a wrong acceptance is not answered by anything. Ear clipping cannot
-// see a contour crossing itself and cannot tell a hole from a second blob, so
-// those have to be caught before it runs or the fill is quietly the wrong shape.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPUWidgets;
@@ -30,8 +15,8 @@ using Graphics::Point;
 
 constexpr auto feather = 1.f;
 
-// How far from an edge a point has to be before its coverage is called, in
-// feathers. Anything closer is inside the ramp, which is not what these check.
+// Points within this many feathers of an edge are inside the antialiasing ramp
+// and are left unjudged.
 constexpr auto margin = 1.5f;
 
 Path rectangle()
@@ -48,8 +33,7 @@ Path circle()
     return path;
 }
 
-// A convex shape with one deep reflex corner, which is what makes ear clipping
-// work for its living rather than take the first vertex every time.
+// One deep reflex corner, so ear clipping cannot just take the first vertex.
 Path arrow()
 {
     auto path = Path {};
@@ -75,10 +59,7 @@ float cross(const Point& a, const Point& b, const Point& c)
     return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 }
 
-// What the mesh says about a point: the coverage of whichever triangle contains
-// it, interpolated the way the rasterizer would, and zero where none does. The
-// triangles do not overlap - the interior stops exactly where the feather ring
-// starts - so the first hit is the answer.
+// The triangles do not overlap, so the first hit is the answer.
 float coverageAt(const Vector<MeshVertex>& mesh, const Point& at)
 {
     for (auto index = 0; index + 2 < mesh.size(); index += 3)
@@ -163,8 +144,6 @@ bool isInside(const Point& p, const Path& path)
     return crossings % 2 == 1;
 }
 
-// The coverage-weighted area of the mesh: what it would put on the screen if
-// every pixel of it were sampled.
 float inkedArea(const Vector<MeshVertex>& mesh)
 {
     auto total = 0.f;
@@ -211,10 +190,8 @@ Graphics::Rect grownBounds(const Path& path, float by)
 }
 } // namespace
 
-// The mesh evaluated as the coverage function it is, against the polygon it came
-// from. Sampled on a grid over the shape's bounds and a margin beyond them, so
-// the outside is checked as thoroughly as the inside - a mesh that filled the
-// whole bounding box would pass every interior check there is.
+// Sampled beyond the bounds as well as inside them: a mesh that filled the whole
+// bounding box would pass every interior check there is.
 auto tCoversTheShape = test("PathTessellator/meshCoversExactlyTheShape") = []
 {
     for (const auto& shape: everyShape())
@@ -257,13 +234,9 @@ auto tCoversTheShape = test("PathTessellator/meshCoversExactlyTheShape") = []
     }
 };
 
-// The feather has to be centred on the outline rather than added to it, or every
-// meshed shape would be half a pixel fatter than the same shape drawn from a
-// mask - which is the sort of difference nobody sees until two of them abut.
-//
-// The check is on the ink: the ring gives back exactly what pulling the interior
-// in took away. What is left over is the mitred corners, which no polygon has
-// more than a feather squared of.
+// A feather added to the outline rather than centred on it would make every
+// meshed shape half a pixel fatter than the same shape drawn from a mask. The
+// slack is the mitred corners, at most a feather squared of area.
 auto tInkMatchesTheArea = test("PathTessellator/featherIsCentredOnTheOutline") = []
 {
     for (const auto& shape: everyShape())
@@ -276,10 +249,8 @@ auto tInkMatchesTheArea = test("PathTessellator/featherIsCentredOnTheOutline") =
     }
 };
 
-// Nothing is drawn twice. The interior stops where the ring begins, so a
-// translucent shape composites once - and a mesh that overlapped itself would
-// look right in every opaque test and wrong the moment a document set an
-// opacity, which is what the one that broke the atlas does.
+// A mesh that overlapped itself looks right in every opaque test and wrong the
+// moment a document sets an opacity.
 auto tDoesNotOverlapItself = test("PathTessellator/trianglesDoNotOverlap") = []
 {
     for (const auto& shape: everyShape())
@@ -306,8 +277,8 @@ auto tDoesNotOverlapItself = test("PathTessellator/trianglesDoNotOverlap") = []
                     auto w =
                         cross(mesh[index].position, mesh[index + 1].position, at);
 
-                    // Strictly inside, so a point landing on a shared edge is
-                    // not counted twice for touching both sides of it.
+                    // Strictly inside, so a point on a shared edge is not
+                    // counted twice.
                     if ((u > 0.f && v > 0.f && w > 0.f)
                         || (u < 0.f && v < 0.f && w < 0.f))
                         ++hits;
@@ -325,9 +296,7 @@ auto tDoesNotOverlapItself = test("PathTessellator/trianglesDoNotOverlap") = []
     }
 };
 
-// A hole and a second blob are two contours either way round, and the
-// tessellator has no fill rule to tell them apart with. Filling a hole solid is
-// a wrong picture; spending the atlas is only an expensive one.
+// The tessellator has no fill rule to tell a hole from a second blob with.
 auto tRefusesTwoContours = test("PathTessellator/refusesMoreThanOneContour") = []
 {
     auto donut = Path {};
@@ -343,18 +312,15 @@ auto tRefusesTwoContours = test("PathTessellator/refusesMoreThanOneContour") = [
     check(tessellateAntialiasedFill(two, feather).empty());
 };
 
-// The one ear clipping cannot catch for itself. It tests a candidate triangle
-// against the other vertices, so a contour that crosses itself between them
-// comes back fully consumed - a five-pointed star, which is how SVG writes one,
-// would fill as a pentagon with nothing to say it had.
+// Ear clipping consumes a self-crossing contour without complaint, so an SVG
+// five-pointed star would fill as a pentagon with nothing to say it had.
 auto tRefusesSelfCrossing = test("PathTessellator/refusesACrossingContour") = []
 {
     auto star = Path {};
 
     for (auto i = 0; i < 5; ++i)
     {
-        // Every second point of a pentagon, which is the star polygon: five
-        // vertices, five edges, and five crossings.
+        // Every second point of a pentagon: five vertices, five crossings.
         auto angle = (float) (i * 2) / 5.f * 2.f * 3.14159265358979323846f;
         auto at =
             Point {120.f + std::cos(angle) * 100.f, 120.f + std::sin(angle) * 100.f};
@@ -390,10 +356,8 @@ auto tRefusesDegenerate = test("PathTessellator/refusesWhatIsNotAPolygon") = []
     check(tessellateAntialiasedFill(line, feather).empty());
 };
 
-// A shape whose narrowest part is thinner than the feather cannot carry one: the
-// ring pulled inwards folds through itself, and the fill that came back would
-// have a bite out of it. Ear clipping refusing to consume the folded ring is
-// what catches it, which is why the completeness check is not merely defensive.
+// A ring pulled inwards further than the shape is thick folds through itself,
+// and the fill that came back would have a bite out of it.
 auto tRefusesThinnerThanTheFeather =
     test("PathTessellator/refusesAShapeThinnerThanItsFeather") = []
 {
@@ -405,9 +369,8 @@ auto tRefusesThinnerThanTheFeather =
     check(mesh.empty() || inkedArea(mesh) < 200.f * feather);
 };
 
-// The cost of ear clipping grows faster than the contour does, and the kernel it
-// would replace reads segments in parallel and does not care how many there are.
-// So past a point the mesh is not the cheaper answer and is not offered.
+// Ear clipping costs more than linearly, while the kernel it replaces reads
+// segments in parallel -- so past a point the mesh is not the cheaper answer.
 auto tRefusesTooManyPoints =
     test("PathTessellator/refusesAnUnreasonableContour") = []
 {

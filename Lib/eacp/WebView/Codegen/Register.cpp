@@ -1,13 +1,5 @@
-// Static-init registration of eacp's WebView codegen formats with the
-// Miro type-export runner.
-//
-// This TU lives in the eacp-webview-codegen OBJECT library. The
-// library is spliced into ${TARGET}Schema_Codegen by
-// eacp_add_webview_app, so the initializers below fire whenever an
-// app's codegen executable launches.
-//
-// The `events` format is owned by Miro upstream; only the React-hooks
-// format is registered here.
+// Static-init registration of the React-hooks codegen format; the `events`
+// format is owned by Miro upstream.
 
 #include "HooksFormat.h"
 
@@ -22,12 +14,7 @@ using Miro::TypeExport::Context;
 using Miro::TypeExport::Format;
 using Miro::TypeExport::registerFormat;
 
-// Source-agnostic event view: prefer ctx.events (the inversion path's
-// DescribeReflector walk filled it) and fall back to the static-init
-// global eventRegistry when ctx.events is empty (Miro Main.cpp doesn't
-// know about events, so it leaves them empty for downstream resolvers).
-// EventEntry is a Miro::EventInfo alias, so both sides feed the same
-// formatter signature.
+// Miro's Main.cpp leaves ctx.events empty, so fall back to the global registry.
 std::span<const eacp::Graphics::EventEntry>
     eventsFor(const Miro::TypeExport::Context& ctx)
 {

@@ -8,11 +8,8 @@
 
 namespace
 {
-// Reposition the standard window controls to sit `inset` points from the
-// window's top-left, preserving the system spacing between them. Mirrors how
-// Electron implements trafficLightPosition — there is no NSWindow API for it,
-// so we move the buttons directly. Skipped in fullscreen, where macOS owns
-// their placement.
+// `inset` is in points from the window's top-left. There is no NSWindow API
+// for this, so the buttons are moved directly. Skipped in fullscreen.
 void repositionTrafficLights(NSWindow* window, NSPoint inset)
 {
     if (window.styleMask & NSWindowStyleMaskFullScreen)
@@ -48,11 +45,8 @@ void requestCooperativeActivation()
         [NSApp activateIgnoringOtherApps:YES];
 }
 
-// Ask LaunchServices to "open" this app. An open of an already-running app is
-// a user-level activation the system honours even while another app is
-// receiving input — unlike the cooperative requests below, which measurably
-// stay denied for our apps once refused at launch. Bundled apps only:
-// "opening" a bare dev executable would misfire.
+// A user-level activation the system honours even while another app has
+// input, unlike the cooperative request. Bundled apps only.
 void reopenSelfViaLaunchServices()
 {
     auto* bundle = [NSBundle mainBundle];
@@ -66,15 +60,9 @@ void reopenSelfViaLaunchServices()
                                       completionHandler:nil];
 }
 
-// Bring the app to the foreground. Activation is COOPERATIVE since macOS 14:
-// activateIgnoringOtherApps: is deprecated and demoted to a plain -activate,
-// which the system declines while the user is actively working in another
-// app — exactly the launched-from-a-terminal / IDE case. The cooperative
-// request wins instantly when the user is idle, so try it first; if it is
-// still being denied a second in, escalate to the LaunchServices re-open,
-// which restores the pre-macOS-14 launch-to-front behaviour. One shared
-// poller — toFront() is called once per window at startup, and overlapping
-// retry chains would just spam the denial.
+// Activation is cooperative since macOS 14, so the system declines it while
+// the user is working elsewhere; escalate to the LaunchServices re-open if it
+// is still denied a second in. One shared poller across all windows.
 void ensureAppBecomesActive()
 {
     static auto polling = false;
@@ -110,8 +98,7 @@ namespace eacp::Graphics
 namespace
 {
 // Borderless NSWindows refuse key status by default, which would make a
-// frameless overlay's text inputs untypeable. Same override Electron ships
-// for frame:false windows.
+// frameless overlay's text inputs untypeable.
 BOOL canBecomeKeyWindow(id, SEL)
 {
     return YES;
@@ -131,9 +118,8 @@ Class getKeyableBorderlessWindowClass()
     return instance->get();
 }
 
-// Runtime classes get no automatic C++ ivar construction, so the delegate's
-// C++ state lives behind one raw pointer, created with the delegate and
-// deleted in its dealloc.
+// Runtime classes get no automatic C++ ivar construction, so this lives behind
+// one raw pointer, created with the delegate and deleted in its dealloc.
 struct WindowDelegateState
 {
     Callback cb = [] {};
@@ -141,8 +127,7 @@ struct WindowDelegateState
     WillResizeCallback onWillResize;
     bool hidesOnClose = false;
     WindowEvents* events = nullptr;
-    // Internal key-focus listener (mouse lock suspend/resume), invoked
-    // alongside the user-facing events->onActivationChanged.
+    // Internal listener, invoked alongside events->onActivationChanged.
     std::function<void(bool)> onKeyStateChanged;
     bool keepTrafficLightsPositioned = false;
     NSPoint trafficLightInset {};
@@ -158,8 +143,7 @@ void windowWillClose(id self, SEL, NSNotification*)
     getDelegateState(self)->cb();
 }
 
-// hidesOnClose intercepts the close before it happens: the window orders
-// out (state intact, willClose never fires) and the app keeps running.
+// hidesOnClose orders out instead, so willClose never fires.
 BOOL windowShouldClose(id self, SEL, NSWindow* sender)
 {
     if (!getDelegateState(self)->hidesOnClose)
@@ -325,8 +309,7 @@ struct Window::Native
         auto style = getStyle(options);
         auto contentRect = NSMakeRect(0, 0, options.width, options.height);
 
-        // NSWindowStyleMaskBorderless is 0 — "borderless" is the absence of
-        // the Titled bit, so that's what selects the keyable subclass.
+        // NSWindowStyleMaskBorderless is 0, so the Titled bit is what selects.
         auto windowClass = (style & NSWindowStyleMaskTitled) != 0
                                ? [NSWindow class]
                                : getKeyableBorderlessWindowClass();
@@ -342,11 +325,8 @@ struct Window::Native
         {
             keyStateChanged(isKey);
 
-            // Becoming key is the moment to hand keyboard focus to the content.
             // AppKit would otherwise park first responder on the content view
-            // itself; for a WebView that is the empty container, leaving the
-            // page unfocused until clicked. Re-run on every activation so focus
-            // is restored after a sibling window (settings / keyboard) took it.
+            // itself, which for a WebView is the empty container.
             if (isKey)
                 focusContentView();
         };
@@ -377,12 +357,8 @@ struct Window::Native
                                                                 alpha:c.a]];
         }
 
-        // An opaque window paints its background square into the corners, and
-        // over everything a see-through content view was meant to reveal. Make
-        // the window itself clear and let the content — clipped to the radius
-        // in setContentView — define the visible shape; the shadow follows it
-        // automatically. This wins over backgroundColor by design; see
-        // WindowOptions.
+        // An opaque window would paint its background square into the corners,
+        // so let the content define the visible shape. Beats backgroundColor.
         if (options.cornerRadius || options.transparentBackground)
         {
             [getWindow() setOpaque:NO];
@@ -393,10 +369,6 @@ struct Window::Native
             [getWindow() setContentMinSize:NSMakeSize(options.minWidth,
                                                       options.minHeight)];
 
-        // AppKit enforces this itself on every resize path there is - the edge
-        // drag, the corner drag, zoom and the green button - so there is no
-        // callback to write, and no moment where the window holds a shape the
-        // constraint forbids.
         if (options.aspectRatio && options.aspectRatio->x > 0.f
             && options.aspectRatio->y > 0.f)
             [getWindow()
@@ -414,9 +386,7 @@ struct Window::Native
 
         if (options.initialPosition)
         {
-            // initialPosition is top-left from the primary display's top-left
-            // (Electron convention); AppKit's origin is the bottom-left of
-            // the primary screen, so flip y against its height.
+            // initialPosition is top-left-origin; AppKit's is bottom-left.
             NSScreen* primary = NSScreen.screens.firstObject;
             auto screenTop = primary != nil ? NSMaxY(primary.frame) : 0.0;
             [getWindow()
@@ -451,11 +421,8 @@ struct Window::Native
         applyApplicationIcon(options.applicationIcon());
     }
 
-    // macOS has no per-window icons; the icon is the app's Dock tile,
-    // shared by every window. An invalid image leaves the bundle's .icns
-    // showing — the same icon Finder uses at rest — so this only fires for
-    // dynamic runtime icons. When neither exists, say so: a silently
-    // generic Dock tile otherwise looks like a rendering bug.
+    // macOS has no per-window icons: this swaps the app's Dock tile. An
+    // invalid image leaves the bundle's .icns showing.
     static void applyApplicationIcon(const Image& image)
     {
         if (auto* icon = toNSImage(image))
@@ -483,10 +450,8 @@ struct Window::Native
 
         [getWindow() makeKeyAndOrderFront:nil];
 
-        // While activation is pending (see ensureAppBecomesActive), still
-        // show the window above other apps' windows — visible immediately,
-        // and a click into it completes the activation. Raised once, not on
-        // the retries: re-raising would fight the user's window arrangement.
+        // Show above other apps while activation is still pending; raised
+        // once only, so the retries do not fight the user's arrangement.
         if (! NSApp.active)
             [getWindow() orderFrontRegardless];
 
@@ -513,9 +478,6 @@ struct Window::Native
 
         if (opts.cornerRadius)
         {
-            // Pairs with the clear window background set in the ctor: the
-            // rounded, clipped content view is what defines the window's
-            // visible shape.
             v.wantsLayer = YES;
             v.layer.cornerRadius = *opts.cornerRadius;
             v.layer.masksToBounds = YES;
@@ -527,12 +489,9 @@ struct Window::Native
         if (eacp::Apps::getAppEnvironment().headless)
             return;
 
-        // The contentView.hidden toggle is for WKWebView's benefit: WebKit
-        // gates a page's timers, rAF and painting on view visibility, and
-        // for ordered-out windows it relies on occlusion notifications that
-        // don't always re-fire on a plain orderFront of a non-key window.
-        // Explicitly hiding/unhiding the content view makes the transition
-        // unambiguous, so a re-shown page reliably wakes back up.
+        // The contentView.hidden toggle is for WKWebView: it gates timers and
+        // painting on visibility, and its occlusion notifications do not always
+        // re-fire on a plain orderFront of a non-key window.
         if (!visible)
         {
             [getWindow() orderOut:nil];
@@ -542,9 +501,6 @@ struct Window::Native
 
         getWindow().contentView.hidden = NO;
 
-        // Re-assert the float level + Spaces behaviour on every show —
-        // cheap, and guards against anything having knocked them off while
-        // the window was ordered out.
         if (opts.alwaysOnTop)
             [getWindow() setLevel:NSFloatingWindowLevel];
 
@@ -573,8 +529,7 @@ struct Window::Native
         if (eacp::Apps::getAppEnvironment().headless)
             return;
 
-        // zoom: is itself a toggle — it restores the saved frame when the
-        // window is already zoomed, matching the Windows caption button.
+        // zoom: is itself a toggle, restoring the saved frame when zoomed.
         [getWindow() zoom:nil];
     }
 
@@ -602,8 +557,8 @@ struct Window::Native
         if (target == nil)
             return;
 
-        // Leave focus alone when it already lives inside the target (e.g. a
-        // text field the user is editing), so re-activating doesn't blur it.
+        // Leave focus alone when it already lives inside the target, so
+        // re-activating does not blur an edited text field.
         id current = [getWindow() firstResponder];
         if ([current isKindOfClass:[NSView class]]
             && [(NSView*) current isDescendantOf:target])
@@ -651,15 +606,12 @@ struct Window::Native
             [getWindow() contentRectForFrameRect:[getWindow() frame]];
         auto center = NSMakePoint(NSMidX(content), NSMidY(content));
 
-        // AppKit screen coordinates have their origin at the primary
-        // screen's bottom-left; the CG warp wants top-left.
+        // AppKit screen coordinates are bottom-left origin; CG wants top-left.
         auto primaryHeight = NSMaxY([[NSScreen screens] firstObject].frame);
         CGWarpMouseCursorPosition(
             CGPointMake(center.x, primaryHeight - center.y));
 
-        // The warp is not motion, but the next mouse event reports it as
-        // though it were: it carries the whole jump as its delta. Left alone
-        // that arrives as one huge movement and spins a locked camera round.
+        // The next mouse event would otherwise carry the whole jump as delta.
         detail::cursorWasWarped = true;
     }
 
@@ -667,10 +619,8 @@ struct Window::Native
     {
         disengageMouseLock();
 
-        // Mirror Window-Windows.cpp's WM_DESTROY: programmatic destruction
-        // must not fire the quit callback — only a user-initiated close may.
-        // The delegate's windowWillClose: would invoke it during [close], so
-        // detach the delegate first.
+        // Detach first: windowWillClose: would fire the quit callback during
+        // [close], and only a user-initiated close may do that.
         [handle.get() setDelegate:nil];
         [handle.get() close];
     }

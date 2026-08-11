@@ -56,7 +56,6 @@ int main()
         performAndPrint(req);
     }
 
-    // 6. GET user agent info
     {
         auto req = HTTP::Request("https://httpbin.org/user-agent");
         req.headers["User-Agent"] = "eacp-http-client/1.0";
@@ -65,14 +64,12 @@ int main()
 
     getAndPrint("https://httpbin.org/ip");
 
-    // 8. GET with authentication header (Bearer token simulation)
     {
         auto req = HTTP::Request("https://httpbin.org/bearer");
         req.headers["Authorization"] = "Bearer my-fake-jwt-token-12345";
         performAndPrint(req);
     }
 
-    // 9. Download a file to disk
     {
         auto req = HTTP::Request("https://jsonplaceholder.typicode.com/posts/1");
         auto res = req.downloadTo("/tmp/eacp-download-test.json");
@@ -87,7 +84,6 @@ int main()
         LOG("");
     }
 
-    // 10. Upload the downloaded file via multipart form-data
     {
         auto req = HTTP::Request("https://httpbin.org/post");
         req.addFormField("description", "Uploaded via eacp")

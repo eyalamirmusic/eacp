@@ -6,15 +6,7 @@
 #include <string>
 #include <vector>
 
-// Text drawn from a glyph atlas: rasterize on demand, cache, upload only what
-// changed, then draw each glyph as a textured quad.
-//
-// The layout here is a real one, not a grid — each glyph is placed by its own
-// bearings and steps the pen by its own advance, which is what the atlas gained
-// over the fixed-cell version it grew out of. Proportional text, a monospace
-// block, and mixed styles all come out of the same path.
-//
-// Press a key to append it; the atlas rasterizes anything new on the spot.
+// Typing appends to the last line; the atlas rasterizes new glyphs on the spot.
 
 using namespace eacp;
 
@@ -30,7 +22,6 @@ struct Line
     Graphics::Color color = Graphics::Color::gray(0.86f);
 };
 
-// Minimal UTF-8 decode, enough to walk the sample text and typed input.
 char32_t nextCodepoint(const std::string& text, std::size_t& index)
 {
     const auto lead = (unsigned char) text[index];
@@ -89,9 +80,8 @@ struct AtlasTextView final : GPU::GPUView
         };
     }
 
-    // The atlas has to rasterize at the display's real scale, so it is built
-    // once the view knows what that is — and rebuilt if the window moves to a
-    // display with a different one.
+    // The atlas rasterizes at the display's real scale, so it is built once the
+    // view knows what that is, and rescaled if the window changes display.
     void ensureAtlas()
     {
         const auto scale = backingScale();
@@ -104,9 +94,6 @@ struct AtlasTextView final : GPU::GPUView
         request.pointSize = 22.f;
         request.scale = scale;
 
-        // A display change is the atlas's own business now: it rebuilds each
-        // face at the new scale and drops what was rasterized for the old one,
-        // which is what replacing the whole object used to do from out here.
         if (atlas)
         {
             atlas->setScale(scale);
@@ -131,8 +118,6 @@ struct AtlasTextView final : GPU::GPUView
 
         if (bounds.w > 0 && bounds.h > 0)
         {
-            // Both renderers take the new size the same cheap way: it is a
-            // uniform on each, not anything either of them compiled.
             if (sprites)
                 sprites->setLogicalSize({bounds.w, bounds.h});
             else
@@ -151,7 +136,6 @@ struct AtlasTextView final : GPU::GPUView
     {
         GPUView::backingScaleChanged();
 
-        // Glyphs cached for the old display are the wrong size now.
         ensureAtlas();
         repaint();
     }
@@ -183,8 +167,6 @@ struct AtlasTextView final : GPU::GPUView
         repaint();
     }
 
-    // Walks one line, asking the atlas for each glyph and placing it by its own
-    // bearings. Returns the pen position it ended at.
     float layOutLine(const Line& line, float x, float baseline, bool collectOnly)
     {
         auto pen = x;
@@ -199,8 +181,8 @@ struct AtlasTextView final : GPU::GPUView
 
             if (!glyph.empty && !collectOnly)
             {
-                // offset is measured from the pen and the baseline, so this is
-                // the destination rect's top-left directly.
+                // offset is measured from the pen and the baseline, so it is
+                // the destination's top-left directly.
                 const auto destination = Graphics::Rect {pen + glyph.offset.x,
                                                          baseline + glyph.offset.y,
                                                          glyph.src.w / builtAtScale,
@@ -208,9 +190,7 @@ struct AtlasTextView final : GPU::GPUView
 
                 // Masks carry coverage only and take the line's colour; colour
                 // glyphs carry their own and are drawn untinted. GlyphRenderer
-                // keeps the two in separate queues and shades each correctly —
-                // a general sprite shader would multiply the mask's coverage
-                // into RGB and draw opaque red boxes instead of text.
+                // keeps the two in separate queues and shades each correctly.
                 const auto colored = glyph.format == Text::GlyphFormat::Color;
 
                 glyphs->add(destination, glyph.src, line.color, colored);
@@ -236,9 +216,8 @@ struct AtlasTextView final : GPU::GPUView
         const auto left = 32.f;
         auto baseline = 56.f + metrics.ascent;
 
-        // Every glyph the frame needs is requested before the first draw, then
-        // committed once. Uploading mid-pass would mutate a texture the earlier
-        // draws have already bound.
+        // Every glyph the frame needs is requested and committed before the
+        // first draw: uploading mid-pass would mutate an already-bound texture.
         for (const auto& line: lines)
             layOutLine(line, left, baseline, true);
 
@@ -257,14 +236,10 @@ struct AtlasTextView final : GPU::GPUView
             baseline += lineHeight;
         }
 
-        // The gutter fills are queued rather than drawn, and the pass would not
-        // collect them until it ends - by which time the glyphs below would
-        // already be under them. This is the one thing batching still asks of a
-        // caller: say when, if the order matters before the pass is over.
+        // The gutter fills are queued, not drawn, and the pass would not collect
+        // them until it ends - by which time the glyphs would be under them.
         sprites->flush();
 
-        // Every glyph in one or two draw calls, issued after the gutter fills so
-        // the text lands on top of them.
         glyphs->flush(pass, *atlas);
     }
 

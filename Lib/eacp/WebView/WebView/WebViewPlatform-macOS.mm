@@ -11,10 +11,8 @@ namespace eacp::Graphics::detail
 {
 namespace
 {
-// NSDraggingSource for native file drag-out. We drag real on-disk files as
-// public.file-url pasteboard items (NSURL is an NSPasteboardWriting), which is
-// the representation Finder, DAWs, and virtually every drop target understand
-// -- unlike a file promise, which apps that read only file-urls silently drop.
+// Files travel as public.file-url pasteboard items, not file promises, which
+// targets that read only file-urls silently drop.
 NSDragOperation dragSourceOperationMask(id, SEL, NSDraggingSession*, NSDraggingContext)
 {
     return NSDragOperationCopy;
@@ -38,8 +36,7 @@ Class getDragSourceClass()
     return instance->get();
 }
 
-// One shared drag source for the whole app -- it is stateless apart from the
-// work queue, so a singleton is safe and outlives every drag session.
+// Stateless, so one instance safely outlives every drag session.
 id<NSDraggingSource> sharedDragSource()
 {
     static id<NSDraggingSource> source =
@@ -77,8 +74,7 @@ bool beginFileDrag(WKWebView* webView,
         auto* icon = [workspace iconForFile:nsPath];
         icon.size = NSMakeSize(iconSize, iconSize);
 
-        // Fan the stack out a few px per item so a multi-file drag reads as
-        // multiple items rather than one.
+        // Fanned out, so a multi-file drag reads as multiple items.
         auto offset = (CGFloat) index * stackOffset;
         [item setDraggingFrame:NSMakeRect(anchor.x - iconSize / 2 + offset,
                                           anchor.y - iconSize / 2 - offset,
@@ -100,9 +96,8 @@ bool beginFileDrag(WKWebView* webView,
 
 namespace
 {
-// Stashed key events older than this have lost their page verdict (a
-// navigation raced the report, or WebKit never dispatched a DOM event for
-// them) and are dropped rather than mispaired with a later verdict.
+// Stashed events this old never got a page verdict; dropping them beats
+// mispairing them with a later one.
 constexpr NSTimeInterval keyEventExpirySeconds = 2.0;
 constexpr int maxPendingKeyEvents = 64;
 
@@ -113,17 +108,9 @@ void dropExpiredKeyEvents(Vector<ObjC::Ptr<NSEvent>>& queue)
                   { return now - event.get().timestamp > keyEventExpirySeconds; });
 }
 
-// WKWebView subclass that owns native file drag-out. The page arms a drag on
-// mousedown (via window.eacp.armFileDrag); by the time the pointer crosses the
-// drag threshold the armed paths have arrived over the message channel, so we
-// start the session from the genuine NSEventTypeLeftMouseDragged event. That
-// real, OS-delivered event is what lets the drag escape the app -- a session
-// started from the async script-message callback is confined to the app
-// (NSDraggingContextWithinApplication) and never reaches Finder.
-//
-// Runtime classes get no automatic C++ ivar construction, so the view's C++
-// state lives behind one raw "state" pointer, created with the view and
-// deleted in its dealloc.
+// State of the drag-out WKWebView subclass, behind a raw pointer because
+// runtime classes construct no C++ ivars. The drag must start from a genuine
+// NSEventTypeLeftMouseDragged, or it stays confined to the app.
 struct DragWebViewState
 {
     Vector<std::string> armedPaths;
@@ -143,9 +130,6 @@ DragWebViewState* getDragWebViewState(id self)
     return (DragWebViewState*) ObjC::getIvar<void*>(self, "state");
 }
 
-// With acceptFirstMouse set, the click that activates an unfocused
-// window also reaches the page — so a drag region starts moving the window
-// on the FIRST click-drag instead of needing one click to focus first.
 BOOL dragWebViewAcceptsFirstMouse(id self, SEL, NSEvent* event)
 {
     if (getDragWebViewState(self)->acceptFirstMouse)
@@ -160,11 +144,8 @@ void dragWebViewMouseDown(id self, SEL, NSEvent* event)
     auto* view = (WKWebView*) self;
     auto* state = getDragWebViewState(self);
 
-    // WKWebView takes part in AppKit's delayed-window-ordering protocol (for
-    // dragging content out of background windows), which suppresses the
-    // click-to-focus a plain NSView gets for free — without this, a click on
-    // an unfocused window only landed focus after a drag or a second click.
-    // Claim key status explicitly before the page sees the click.
+    // WKWebView joins AppKit's delayed-window-ordering protocol, which
+    // suppresses the click-to-focus a plain NSView gets for free.
     if (view.window != nil && !view.window.keyWindow
         && view.window.canBecomeKeyWindow)
         [view.window makeKeyWindow];
@@ -227,12 +208,8 @@ void dragWebViewMouseUp(id self, SEL, NSEvent* event)
     ObjC::sendSuper<void>(self, [WKWebView class], @selector(mouseUp:), event);
 }
 
-// The same NSEvent can hit the keyDown: override twice: when the page leaves
-// a key unhandled, WebKit re-sends the original event through the responder
-// chain (_resendKeyDownEvent), and the re-send lands back on this view first.
-// The page shim only reports ONE verdict per event, so stashing the re-send
-// would leave a stale entry that desyncs every later verdict — key-downs then
-// pop the wrong stashed event, while key-ups (never re-sent) stay aligned.
+// WebKit re-sends an unhandled key-down through the responder chain, so the
+// same NSEvent hits keyDown: twice while the page reports only one verdict.
 bool isAlreadyStashed(NSEvent* event, const Vector<ObjC::Ptr<NSEvent>>& queue)
 {
     for (auto& stashed: queue)
@@ -333,9 +310,6 @@ void armFileDrag(WKWebView* webView, const Vector<std::string>& paths)
     if (![webView isKindOfClass:getDragWebViewClass()])
         return;
 
-    // Always lands after this gesture's mouseDown: (the page's JS mousedown is
-    // dispatched only once our mouseDown: forwards to super), so there is
-    // nothing stale to guard against here.
     auto* state = getDragWebViewState(webView);
     state->armedPaths = paths;
     state->dragArmed = ! paths.empty();
@@ -398,9 +372,7 @@ void performWindowControl(WKWebView* webView, const std::string& action)
 
     if (action == "maximize")
     {
-        // zoom: is itself a toggle — it restores the saved frame when the
-        // window is already zoomed. Report the resulting state back so the
-        // page's data-eacp-maximized attribute tracks reality.
+        // zoom: is itself a toggle, so report the resulting state back.
         [window zoom:nil];
         auto* script = window.zoomed ? @"window.__eacpSetMaximized(true)"
                                      : @"window.__eacpSetMaximized(false)";
@@ -410,11 +382,8 @@ void performWindowControl(WKWebView* webView, const std::string& action)
 
     if (action == "close")
     {
-        // performClose: respects windowShouldClose:, but beeps and refuses
-        // on windows without a close button — exactly the frameless windows
-        // that need web-rendered controls — so those close directly.
-        // windowWillClose still fires either way, so the window's quit
-        // policy runs.
+        // performClose: beeps and refuses on windows without a close button —
+        // exactly the frameless ones needing web-rendered controls.
         if ((window.styleMask & NSWindowStyleMaskClosable) != 0)
             [window performClose:nil];
         else

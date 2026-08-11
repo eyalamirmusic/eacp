@@ -9,9 +9,7 @@ namespace eacp::SVG
 {
 namespace
 {
-// A <use> inside a clipPath may name something that contains it, the same way
-// one in the document may. Shallower than the document's limit because a clip
-// that nests at all is already unusual.
+// A <use> inside a clipPath may name something that contains it.
 constexpr int maxClipUseDepth = 4;
 
 GPUWidgets::FillRule parseClipRule(const std::string& value)
@@ -51,9 +49,6 @@ void addClipChild(const SVGElement& element,
     if (!own.empty())
         transform = parseTransformMatrix(own).then(transform);
 
-    // A <use> in a clipPath is what a document writes when the same outline
-    // clips several things; the referenced element is built here rather than
-    // shared, since it is being flattened into one region either way.
     if (element.tag == "use")
     {
         if (depth >= maxClipUseDepth)
@@ -75,8 +70,8 @@ void addClipChild(const SVGElement& element,
     if (!isShapeTag(element.tag))
         return;
 
-    // A degenerate transform has no geometry to flatten against, and dividing
-    // the tolerance by it would ask for an unbounded number of segments.
+    // Dividing the tolerance by a degenerate scale would ask for unboundedly
+    // many segments.
     auto scale = transform.getScaleFactor();
 
     if (scale <= 0.f)
@@ -112,8 +107,7 @@ ClipRegion resolveClipPath(const std::string& reference,
 
     auto base = contentTransform(clipPath, objectBounds);
 
-    // The clipPath's own clip-rule, which its children inherit in the CSS sense
-    // -- a document setting it once on the container is the usual spelling.
+    // The clipPath's own clip-rule, which its children inherit.
     auto container = PropertyReader {clipPath}("clip-rule");
 
     auto contributed = 0;
@@ -134,9 +128,8 @@ ClipRegion resolveClipPath(const std::string& reference,
         lastRule = parseClipRule(own.empty() ? container : own);
     }
 
-    // One child's rule is its own; several children are a union, and a union is
-    // what non-zero computes -- under even-odd every overlap between two of them
-    // would read as a hole in the clip.
+    // One child's rule is its own; several are a union, which is what non-zero
+    // computes -- under even-odd their overlaps would read as holes.
     result.rule = contributed == 1 ? lastRule : GPUWidgets::FillRule::NonZero;
 
     return result;
@@ -165,17 +158,15 @@ std::optional<Graphics::Rect> asAxisAlignedRect(const GPUWidgets::Path& path)
     if (bounds.w <= 0.f || bounds.h <= 0.f)
         return {};
 
-    // Relative, because these points have been through a transform: a rectangle
-    // mapped by a matrix built from a translate and a scale lands a few ulps off
-    // the corners it was authored at, and at a document's scale that is a
-    // fraction of a millionth of the shape.
+    // Relative, these points having been through a transform that leaves them a
+    // few ulps off the corners they were authored at.
     auto tolerance = std::max(bounds.w, bounds.h) * 1e-4f;
 
     auto isNear = [tolerance](float a, float b)
     { return std::abs(a - b) <= tolerance; };
 
-    // Four corners, or the five a document writes when it closes the outline by
-    // repeating the first point rather than by saying so.
+    // Four corners, or the five a document writes by repeating the first point
+    // rather than closing the outline.
     if (count == 5 && isNear(points[0].x, points[4].x)
         && isNear(points[0].y, points[4].y))
         count = 4;
@@ -194,10 +185,8 @@ std::optional<Graphics::Rect> asAxisAlignedRect(const GPUWidgets::Path& path)
         if (!onCorner)
             return {};
 
-        // Each edge along one axis and not the other. Four points that are all
-        // corners and whose every edge moves in exactly one direction can only
-        // be the rectangle they bound -- and the "not the other" is what rejects
-        // a degenerate outline that visits one corner twice.
+        // Each edge along one axis and not the other, which is what rejects a
+        // degenerate outline visiting one corner twice.
         const auto& next = points[(index + 1) % 4];
 
         if (isNear(point.x, next.x) == isNear(point.y, next.y))

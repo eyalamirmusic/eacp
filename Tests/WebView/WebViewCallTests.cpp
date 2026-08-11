@@ -1,11 +1,4 @@
 #include "Common.h"
-// Drives the C++ -> page call path on a real WKWebView: the page registers
-// functions with window.eacp.expose(...), and the native side calls them via
-// WebViewBridge::call(...), awaiting the resolved value. Covers a synchronous
-// exposed function, an async (Promise-returning) one, the typed overload, and
-// the error path — proving Miro/eacp can call async JavaScript from C++ and
-// get the result back as an eacp Async.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
@@ -19,9 +12,7 @@ struct Message
     MIRO_REFLECT(text)
 };
 
-// Registers three exposed functions and signals readiness so the test
-// only calls once window.eacp.expose has run. `echoAsync` returns a
-// Promise that settles on a later tick — the case that plain
+// `echoAsync` returns a Promise that settles on a later tick, the case plain
 // evaluateJavaScript could never await.
 const std::string pageHtml = R"HTML(<!doctype html><html><body><script>
   window.eacp.expose('echo', function (p) {
@@ -38,8 +29,6 @@ const std::string pageHtml = R"HTML(<!doctype html><html><body><script>
   window.webkit.messageHandlers.ready.postMessage('ready');
 </script></body></html>)HTML";
 
-// Builds a live WebView + bridge, loads the page, and pumps until the
-// page has registered its exposed functions.
 struct Fixture
 {
     WebView webView {};

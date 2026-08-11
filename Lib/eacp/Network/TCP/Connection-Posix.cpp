@@ -66,8 +66,8 @@ void armTimeouts(int fd, Time::MS ioTimeout)
 #endif
 }
 
-// Connects a single resolved address. Returns a ready fd, or -1 with why
-// filled in so the caller can report the last failure across candidates.
+// Returns a ready fd, or -1 with why filled in so the caller can report the
+// last failure across candidates.
 int tryConnect(const addrinfo& candidate,
                Time::MS connectTimeout,
                Time::MS ioTimeout,

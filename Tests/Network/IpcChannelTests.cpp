@@ -13,8 +13,7 @@ namespace
 // Mirrors IpcChannelHarness's exit codes.
 constexpr auto succeeded = 0;
 
-// Long enough that a slow CI box is not the thing being tested; a wedged
-// test still fails in seconds rather than hanging on accept-forever.
+// Long enough that a slow CI box is not the thing being tested.
 constexpr auto testWait = eacp::Time::MS {10000};
 
 bool waitForOutput(Proc::Process& harness, const std::string& text)
@@ -180,9 +179,8 @@ auto tChannelLargePayload = test("Ipc/Channel/carriesAPayloadPastTheBuffers") = 
     check(received == payload);
 };
 
-// A name is folded into a filename, so a separator must not survive to steer
-// the endpoint out of its directory. Both spellings land on one endpoint,
-// which is what proves the folding happened.
+// A name is folded into a filename, so a separator must not steer the endpoint
+// out of its directory.
 auto tChannelFoldsSeparators = test("Ipc/Channel/foldsPathSeparatorsInNames") = []
 {
     auto server = ChannelServer {"../eacp.tests.ch.escape"};
@@ -198,10 +196,9 @@ auto tChannelFoldsSeparators = test("Ipc/Channel/foldsPathSeparatorsInNames") = 
     check(client.isOpen());
 };
 
-// The teardown story: a reader blocked in receive() has no timeout, so
-// interrupt() from another thread must wake it with a clean end of stream.
-// The interrupt is repeated the way a real teardown loop would - required
-// on Windows, where a cancel only reaches a read already in flight.
+// A reader blocked in receive() has no timeout. The interrupt is repeated the
+// way a real teardown loop would: required on Windows, where a cancel only
+// reaches a read already in flight.
 auto tInterruptWakesABlockedReceive =
     test("Ipc/Channel/interruptWakesABlockedReceive") = []
 {
@@ -253,7 +250,7 @@ auto tChannelEmptyNameThrows = test("Ipc/Channel/emptyNameThrows") = []
 auto tCrossProcessClient = test("Ipc/Channel/echoesAcrossAProcessBoundary") = []
 {
     // The client launches before the server exists, so this also proves
-    // connect()'s retry loop across a genuine process boundary.
+    // connect()'s retry loop across a process boundary.
     auto client = Proc::Process {EACP_IPC_CHANNEL_HARNESS,
                                  {"eacp.tests.ch.crossProc", "client", "ping"}};
     check(client.launched());
@@ -282,9 +279,8 @@ auto tCrossProcessServer = test("Ipc/Channel/dialsAServerInAnotherProcess") = []
     check(harness.wait() == succeeded);
 };
 
-// The headline claim: a server that dies without cleaning up strands
-// nothing. Its endpoint is a corpse, not a live rival, and claiming the
-// name must sweep it aside.
+// A dead server's endpoint is a corpse, not a live rival, and claiming the name
+// must sweep it aside.
 auto tReclaimsAbandonedName = test("Ipc/Channel/reclaimsANameItsDeadOwnerLeft") = []
 {
     auto harness = Proc::Process {EACP_IPC_CHANNEL_HARNESS,

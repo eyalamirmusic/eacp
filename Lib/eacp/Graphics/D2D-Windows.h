@@ -1,8 +1,7 @@
 #pragma once
 
-// Direct2D / DirectWrite only, for the drawing primitives (Path, Font,
-// TextMetrics, Image) that never touch the compositor. Anything that builds a
-// visual tree wants DComp-Windows.h, which includes this.
+// Direct2D / DirectWrite only, for the drawing primitives that never touch the
+// compositor. A visual tree wants DComp-Windows.h, which includes this.
 
 #include <eacp/Core/Utils/WinInclude.h>
 
@@ -14,19 +13,14 @@
 
 namespace eacp::Graphics
 {
-// The shared font collection (FontRegistry-Windows.cpp) — the Windows stand-in
-// for CoreText's process-wide registry: the system fonts plus every font
-// registered from memory. Font, TextMetrics and the eacp-text rasterizer all
-// resolve against this one collection so an embedded face is visible
-// everywhere at once.
+// The system fonts plus every font registered from memory; everything resolves
+// against this one collection. See FontRegistry-Windows.cpp.
 Microsoft::WRL::ComPtr<IDWriteFontCollection> getFontCollection();
 
-// Registers in-memory OTF/TTF bytes with the shared collection (the bytes are
-// copied). The Windows half of eacp::Text::registerMemoryFont.
+// Copies the bytes. The Windows half of eacp::Text::registerMemoryFont.
 bool registerMemoryFontData(const void* data, std::size_t size);
 
-// Resolves `name` the way CTFontCreateWithName does — as a family name, then a
-// PostScript or full face name — so the one name a caller ships works on both
-// platforms. Empty when nothing in the collection matches.
+// Resolves `name` the way CTFontCreateWithName does: family name first, then
+// PostScript or full face name. Empty when nothing matches.
 std::wstring resolveFontFamilyName(const std::wstring& name);
 } // namespace eacp::Graphics

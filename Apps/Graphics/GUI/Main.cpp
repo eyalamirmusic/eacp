@@ -4,20 +4,6 @@
 #include <algorithm>
 #include <string>
 
-// The original tour of the drawing API, through the component tier.
-//
-// Every element here used to be a native view holding native layers: a
-// CAShapeLayer per rectangle, a CATextLayer per string, each one an object the
-// window server knows about. They are components now, and the whole window is a
-// single native view — so the tour is also a demonstration that the same picture
-// costs one view rather than a dozen.
-//
-// What is worth comparing against the old file is where the state lives. A
-// native layer holds its own colour and is *told* when to change, so a hover
-// meant an updatePathColor() reaching into three layers; a component holds the
-// state and paint() reads it, so a hover is a repaint and the colour is decided
-// in one place.
-
 using namespace eacp;
 
 namespace
@@ -61,12 +47,6 @@ struct ColouredBox final : UI::Component
     std::string label;
 };
 
-// A circle crossing the panel and fading as it goes, driven by a display link.
-//
-// The animation is the component's own two floats: the link advances them and
-// asks for a repaint, and paint() draws from them. Nothing is retained between
-// frames — there is no layer to move — so a frame of this costs the same quad
-// the static shapes around it cost.
 struct AnimatedDisc final : UI::Component
 {
     void update(Threads::FrameTime time)
@@ -115,9 +95,6 @@ struct GradientPanel final : UI::Component
     {
         auto bounds = getLocalBounds();
 
-        // Placed in this component's own points, and resolved once for the fill
-        // that follows: the ramp is shared, so a second panel with these colours
-        // would cost nothing more than this one.
         auto gradient = UI::Gradient {};
         gradient.start = {0.f, 0.f};
         gradient.end = {bounds.w, bounds.h};
@@ -138,9 +115,6 @@ struct TextPanel final : UI::Component
         title.setFontSize(18.f);
         title.setColour({0.9f, 0.9f, 0.9f, 1.f});
 
-        // A second face, in the same atlas as the first and as every glyph in
-        // the tree: what used to be a CATextLayer with its own font is a size
-        // and a weight on the run being drawn.
         subtitle.setFontStyle(UI::FontStyle::Bold);
         subtitle.setColour({0.9f, 0.9f, 0.9f, 1.f});
 
@@ -167,7 +141,6 @@ struct DemoRoot final : UI::Component
     {
         g.fillAll({0.1f, 0.1f, 0.1f, 1.f});
 
-        // The stroked border the old StrokeRect was a whole view for.
         g.setColour({0.5f, 0.5f, 0.5f, 1.f});
         g.drawRect(getLocalBounds(), 2.f);
     }

@@ -9,16 +9,13 @@ namespace eacp::GPU
 {
 namespace detail
 {
-// Emits the native shader source for the platform's backend (MSL on Apple, HLSL
-// on Windows). Defined per-platform in ShaderBuilder-macOS.cpp / -Windows.cpp,
-// mirroring the rest of the GPU module, so build() needs no preprocessor branch.
+// MSL on Apple, HLSL on Windows; defined per-platform so build() needs no
+// preprocessor branch.
 ShaderSource nativeShaderSource(const ShaderGraph& graph);
 } // namespace detail
 
-// The string-free authoring entry point. Declare vertex inputs, uniforms and
-// varyings by call order, write the position and fragment outputs with value-type
-// expressions, then build() emits the current backend's source and the matching
-// vertex layout. No native shader files, no string literals at the call site.
+// The string-free authoring entry point. Vertex inputs, uniforms and varyings
+// are assigned slots in call order.
 class ShaderBuilder
 {
 public:
@@ -31,16 +28,9 @@ public:
         return value;
     }
 
-    // Per-instance sibling of vertexInput<T>. The returned handle behaves
-    // identically in shader expressions; the emitted VertexLayout routes
-    // instance inputs to a dedicated buffer slot with PerInstance step rate,
-    // so the caller binds a separate per-instance buffer at that slot.
-    //
-    // The zero-arg form auto-assigns slot 1 (the common case: one per-instance
-    // buffer alongside the per-vertex buffer at slot 0). Pass an explicit
-    // bufferIndex when a shader needs multiple per-instance streams in
-    // distinct buffers (e.g. per-instance transform in slot 1, per-instance
-    // colour in slot 2).
+    // Per-instance sibling of vertexInput<T>: the emitted VertexLayout routes
+    // it to its own buffer slot with PerInstance step rate, which the caller
+    // binds separately. The zero-arg form auto-assigns slot 1.
     template <typename T>
     T instanceInput()
     {
@@ -68,17 +58,9 @@ public:
         return value;
     }
 
-    // A per-frame constant. Every value type crosses from the CPU except a
-    // Float2x2 or a Float3x3: MSL and HLSL pack those to different sizes inside
-    // the value itself, so one block of bytes would read back as two different
-    // matrices on the two backends (see UniformLayout.h). Send a Float4x4, or
-    // send the columns as vectors and assemble the matrix in the shader.
-    //
-    // A Bool is refused for the same reason at a smaller scale: MSL packs one
-    // into a byte and an HLSL cbuffer gives it four. Send the flag as a float
-    // and compare it, which is what the block already knows how to carry. The
-    // boolean vectors go with it; the integer ones do not, since both languages
-    // pack an intN exactly where they pack a floatN.
+    // A per-frame constant. Every value type crosses from the CPU except
+    // Float2x2, Float3x3 and the booleans, which MSL and HLSL size differently
+    // (see UniformLayout.h).
     template <typename T>
     T uniform()
     {
@@ -98,17 +80,15 @@ public:
         return value;
     }
 
-    // A 2D texture sampled by the fragment expression. Returns the slot-indexed
-    // handle sample() reads; bind the matching GPU::Texture at the same slot.
+    // Bind the matching GPU::Texture at the same slot.
     Texture2D texture(TextureSampling sampling = {})
     {
         return {&graphData, graphData.addTexture(sampling)};
     }
 
-    // Compute kernel authoring. Declaring buffers assigns slots in call order
-    // (inputs and outputs share one slot space, matching Metal's flat buffer
-    // indices); threadId() is the 1D work-item index; write() records a kernel
-    // output, which is what marks the built shader as compute.
+    // Compute kernel authoring. Buffers take slots in call order, inputs and
+    // outputs sharing one slot space; recording a write() is what marks the
+    // built shader as compute.
     UInt threadId()
     {
         auto value = UInt {};
@@ -117,10 +97,8 @@ public:
         return value;
     }
 
-    // The 2D work item, for a kernel over a grid rather than a flat count -
-    // which is what anything image-shaped is. Asking for this is what makes the
-    // kernel a 2D one, and it is dispatched with ComputePass::dispatch(width,
-    // height) accordingly; a kernel takes this or threadId(), never both.
+    // Asking for this makes the kernel a 2D one, dispatched with
+    // ComputePass::dispatch(width, height). Take this or threadId(), not both.
     ThreadPosition threadPosition()
     {
         auto position = ThreadPosition {};
@@ -134,11 +112,7 @@ public:
     }
 
     // Where a thread sits inside its threadgroup, and which group it belongs
-    // to - the pair every shared-memory algorithm indexes with: the local id
-    // subscripts the shared tile, the group id decides which slice of the
-    // problem the group owns. 1D forms beside threadId(), 2D siblings beside
-    // threadPosition(); asking for one fixes the dispatch rank exactly as the
-    // global ids do.
+    // to. Asking for one fixes the dispatch rank as the global ids do.
     UInt localId()
     {
         auto value = UInt {};
@@ -179,9 +153,8 @@ public:
         return position;
     }
 
-    // The implicit grid bound the dispatch supplied, readable in the body: the
-    // very value the generated guard tests. A kernel that barriers has no such
-    // guard - see barrier() - so this is what it bounds its own stores with.
+    // The implicit grid bound the dispatch supplied, readable in the body: what
+    // a barriering kernel, which gets no generated guard, bounds its stores by.
     UInt gridCount()
     {
         auto value = UInt {};
@@ -206,9 +179,8 @@ public:
         return value;
     }
 
-    // A threadgroup-shared array of count elements, its size a compile-time
-    // constant in the emitted kernel. Size it against the fixed group shape
-    // the dispatch uses (ComputePass::threadGroupWidth wide in 1D,
+    // A compile-time constant in the emitted kernel: size it against the group
+    // shape the dispatch uses (ComputePass::threadGroupWidth in 1D,
     // threadGroupSize2D squared in 2D).
     template <typename T>
     Shared<T> shared(int count)
@@ -216,12 +188,9 @@ public:
         return {&graphData, graphData.addSharedArray(ValueTypeOf<T>::value, count)};
     }
 
-    // The threadgroup barrier: every thread of the group arrives before any
-    // continues, and shared elements written before it are visible after.
-    // Recording one removes the kernel's early-return bounds guard - a
-    // barrier below a return some threads took is undefined on both backends,
-    // so every thread runs the whole body and the kernel bounds its own
-    // stores instead, typically with ifThen(id < gridCount(), ...).
+    // Recording one removes the kernel's early-return bounds guard - a barrier
+    // below a return some threads took is undefined on both backends - so the
+    // kernel must bound its own stores, typically with ifThen(id < gridCount()).
     void barrier() { graphData.addBarrier(); }
 
     InputBuffer inputBuffer()
@@ -234,23 +203,16 @@ public:
         return {&graphData, graphData.addStorageBuffer(BufferAccess::Write)};
     }
 
-    // A buffer of unsigned integers threads share. It takes a slot from the same
-    // counter the other two do, and binds exactly as an output does - what
-    // differs is the element type, and that only the emitted declaration knows.
+    // A buffer of unsigned integers, taking a slot from the same counter the
+    // other two do and binding exactly as an output does.
     AtomicBuffer atomicBuffer()
     {
         return {&graphData, graphData.addStorageBuffer(BufferAccess::Atomic)};
     }
 
-    // Adds to one element and yields what it held *before* - so every thread
-    // that adds one to the same counter gets a different number back, which is
-    // how a kernel hands out slots of a shared array without the threads
-    // agreeing on anything first.
-    //
-    // Relaxed ordering: this says the read-modify-write cannot be interleaved,
-    // and nothing about how other memory either side of it is ordered. That is
-    // all a counter needs and all this offers; a kernel that needs the second
-    // thing needs a barrier, not a stronger atomic.
+    // Adds to one element and yields what it held *before*. Relaxed ordering:
+    // the read-modify-write cannot be interleaved, and nothing is promised
+    // about other memory either side of it.
     UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, const UInt& value)
     {
         auto previous = graphData.addAtomicAdd(buffer.slot, index.node, value.node);
@@ -261,9 +223,6 @@ public:
         return result;
     }
 
-    // Either argument as a literal, anchored on the buffer. Both are literals in
-    // the commonest call there is - one thread taking one ticket from one shared
-    // counter - so refusing them would make the plainest use the ugliest.
     UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, const UInt& value)
     {
         return atomicAdd(buffer, buffer.literal(index), value);
@@ -279,9 +238,8 @@ public:
         return atomicAdd(buffer, buffer.literal(index), buffer.literal(value));
     }
 
-    // A texture a kernel writes. It takes a slot from the same counter
-    // texture() does, so a kernel reading one texture and writing another
-    // binds them at distinct indices.
+    // Takes a slot from the same counter texture() does, so a kernel reading
+    // one texture and writing another binds them at distinct indices.
     WritableTexture2D writableTexture()
     {
         return {&graphData, graphData.addWritableTexture()};
@@ -292,15 +250,9 @@ public:
         graphData.addStore(buffer.slot, index.node, value.node);
     }
 
-    // The vector writes, laying a record of N floats down at index * N - the
-    // layout InputBuffer::read2/3/4 reads back, and the one a CPU struct of N
-    // floats already has. The index is in records rather than in floats, so a
-    // kernel writing a struct of four never spells the stride itself.
-    //
-    // N scalar stores rather than one wide one: the buffer stays a run of
-    // floats on both backends, which is what keeps a kernel's output bindable
-    // as a per-instance vertex stream with no CPU-side element size to agree
-    // on. Retyping the binding would buy one 16-byte store and cost that.
+    // The vector writes lay a record of N floats down at index * N, matching
+    // InputBuffer::read2/3/4. The index is in records, not floats. N scalar
+    // stores, so the buffer stays a run of floats bindable as a vertex stream.
     void write(const OutputBuffer& buffer, const UInt& index, const Float2& value)
     {
         auto base = index * 2u;
@@ -325,14 +277,7 @@ public:
         graphData.addStore(buffer.slot, (base + 3u).node, value.w().node);
     }
 
-    // One element of an atomic buffer, set outright rather than added to. It
-    // completes the trio - add, load, store - and it is what a kernel computing
-    // a *dispatch size* needs: the threadgroup count an indirect dispatch reads
-    // is a number arrived at, not a number accumulated.
-    //
-    // Ordinary Store underneath, because the buffer's own access is what decides
-    // how it spells: only Metal needs anything, its atomic_uint having to be
-    // stored through rather than assigned.
+    // One element of an atomic buffer, set outright rather than added to.
     void write(const AtomicBuffer& buffer, const UInt& index, const UInt& value)
     {
         graphData.addStore(buffer.slot, index.node, value.node);
@@ -353,18 +298,15 @@ public:
         write(buffer, buffer.literal(index), buffer.literal(value));
     }
 
-    // One element of a threadgroup-shared array. A single wide store whatever
-    // the element type - the array never crosses the CPU boundary, so there
-    // is no layout contract to keep and nothing to decompose.
+    // A single wide store whatever the element type: the array never crosses
+    // the CPU boundary, so there is no layout contract to keep.
     template <typename T>
     void write(const Shared<T>& array, const UInt& index, const T& value)
     {
         graphData.addSharedStore(array.slot, index.node, value.node);
     }
 
-    // One texel of a kernel's output image. The coordinates are the pair a 2D
-    // kernel already has in hand from threadPosition(), and the colour is the
-    // four channels both backends store in one go.
+    // One texel of a kernel's output image.
     void write(const WritableTexture2D& texture,
                const UInt& x,
                const UInt& y,
@@ -374,17 +316,12 @@ public:
     }
 
     // Non-templated siblings of vertexInput()/uniform() keyed on a runtime
-    // ValueType. The reflection-driven ShaderProgram visitor walks erased member
-    // handles, so it needs to add a slot from a ValueType it carries rather than a
-    // compile-time T. The returned handle is adopted by the declaring member.
+    // ValueType, for the reflection-driven ShaderProgram visitor.
     detail::ValueHandle addVertexInput(ValueType type)
     {
         return {&graphData, graphData.addInput(type)};
     }
 
-    // Per-instance sibling of addVertexInput, keyed on a runtime ValueType for
-    // the reflection-driven ShaderProgram path. Routes the input to the given
-    // buffer slot with PerInstance step rate (see the templated instanceInput).
     detail::ValueHandle addInstanceInput(ValueType type, int bufferIndex)
     {
         return {&graphData, graphData.addInstanceInput(type, bufferIndex)};
@@ -395,7 +332,6 @@ public:
         return {&graphData, graphData.addUniform(type)};
     }
 
-    // A scalar literal usable in expressions (e.g. an ambient term).
     Float constant(float value)
     {
         auto result = Float {};
@@ -404,10 +340,8 @@ public:
         return result;
     }
 
-    // Its boolean sibling, for a flag a shader sets and later tests. Spelled
-    // apart from constant() rather than overloaded on it: an integer literal
-    // converts to both float and bool, so one name would make constant(1)
-    // ambiguous.
+    // Named apart from constant() because an integer literal converts to both
+    // float and bool, which would make constant(1) ambiguous.
     Bool boolean(bool value)
     {
         auto result = Bool {};
@@ -416,8 +350,6 @@ public:
         return result;
     }
 
-    // And its integer one, for an index a shader starts from. Spelled apart for
-    // the same reason: constant(1) would otherwise be ambiguous.
     Int integer(int value)
     {
         auto result = Int {};
@@ -426,11 +358,9 @@ public:
         return result;
     }
 
-    // A constant array, its size taken from the pack. Every element is an
-    // ordinary value - a literal vector, or something built from a uniform -
-    // and all of them are evaluated once at the top of the shader body, which
-    // is why a mutable local cannot be one. See ConstantArray for what a
-    // subscript of one costs and what bounds it.
+    // A constant array, its size taken from the pack. Elements are evaluated
+    // once at the top of the shader body, so none of them may be a mutable
+    // local.
     template <ShaderHandleLike T, SameShaderHandle<T>... Rest>
     ConstantArray<ShaderHandle<T>, 1 + (int) sizeof...(Rest)>
         array(const T& first, const Rest&... rest)
@@ -444,16 +374,9 @@ public:
                                    std::move(elements))};
     }
 
-    // A mutable local, initialised from a value or from a literal. This is what
-    // makes a loop worth having: something the body can write that the code
-    // after it reads. Its type follows the initialiser.
-    //
-    // Control flow is a fragment-stage (or kernel) facility, like sampling: the
-    // statements a shader records are emitted into the fragment function, so a
-    // variable must not feed the position expression or a varying.
-    // Constrained on the handle rather than on the float vocabulary, so the
-    // flag a shader sets and later tests and the cell it walks a grid with are
-    // variables on the same terms a colour is.
+    // A mutable local, its type following the initialiser. Statements are
+    // emitted into the fragment (or kernel) function, so a variable must not
+    // feed the position expression or a varying.
     template <ShaderHandleLike T>
     Var<ShaderHandle<T>> var(const T& initialValue)
     {
@@ -482,10 +405,7 @@ public:
         return {graphData, ValueType::UInt, graphData.addUIntConstant(initialValue)};
     }
 
-    // A matrix is a mutable local on the same terms - the orientation a shader
-    // builds up over several steps before it goes through it - and it needs an
-    // overload of its own for the reason it needs one everywhere here: it is
-    // outside all three handle families, none of whose operators it has.
+    // A matrix needs its own overload: it is outside all three handle families.
     template <typename T>
         requires(isMatrix(ValueTypeOf<T>::value))
     Var<T> var(const T& initialValue)
@@ -493,9 +413,8 @@ public:
         return {graphData, ValueTypeOf<T>::value, initialValue.node};
     }
 
-    // The statements. Each body is a callable recording into a block of its
-    // own, so what it declares is scoped to it in the emitted source exactly as
-    // it is in the C++ lambda that wrote it.
+    // Each body records into a block of its own, so what it declares is scoped
+    // to it in the emitted source as it is in the C++ lambda that wrote it.
     template <typename Body>
     void ifThen(const Bool& condition, Body&& body)
     {
@@ -520,11 +439,8 @@ public:
         graphData.addIf(condition.node, thenBlock, elseBlock);
     }
 
-    // The condition is a value built before the loop, and it is still re-tested
-    // every iteration: what the emitter writes into the while header is the
-    // expression, printed in place, not a name bound to it beforehand. That is
-    // why a condition never becomes one of the emitter's shared locals - a loop
-    // testing a value computed once before it started would never end.
+    // The condition is built before the loop but printed into the while header
+    // in place, so it is re-evaluated every iteration rather than hoisted.
     template <typename Body>
     void loop(const Bool& condition, Body&& body)
     {

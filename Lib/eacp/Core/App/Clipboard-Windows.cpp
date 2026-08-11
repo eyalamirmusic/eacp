@@ -56,29 +56,22 @@ bool openClipboardWithRetry(HWND owner)
     return false;
 }
 
-// UTF-16 -> UTF-8, the reverse of toWideString. Bounded by the caller's
-// wcslen, so an unterminated handle cannot run away.
+// Bounded by `length`, so an unterminated handle cannot run away.
 std::string toUtf8(const wchar_t* text, int length)
 {
     if (text == nullptr || length <= 0)
         return {};
 
-    auto required = WideCharToMultiByte(
-        CP_UTF8, 0, text, length, nullptr, 0, nullptr, nullptr);
+    auto required =
+        WideCharToMultiByte(CP_UTF8, 0, text, length, nullptr, 0, nullptr, nullptr);
 
     if (required <= 0)
         return {};
 
     auto result = std::string(static_cast<std::size_t>(required), '\0');
 
-    if (WideCharToMultiByte(CP_UTF8,
-                            0,
-                            text,
-                            length,
-                            result.data(),
-                            required,
-                            nullptr,
-                            nullptr)
+    if (WideCharToMultiByte(
+            CP_UTF8, 0, text, length, result.data(), required, nullptr, nullptr)
         != required)
         return {};
 
@@ -88,9 +81,8 @@ std::string toUtf8(const wchar_t* text, int length)
 
 std::string getText()
 {
-    // IsClipboardFormatAvailable first: opening the clipboard takes a global
-    // lock that blocks every other application, so it is not worth taking when
-    // there is no text to read.
+    // Opening the clipboard takes a lock that blocks every other application,
+    // so check availability before taking it.
     if (!IsClipboardFormatAvailable(CF_UNICODETEXT))
         return {};
 
@@ -102,8 +94,7 @@ std::string getText()
 
     if (handle != nullptr)
     {
-        // The handle belongs to the clipboard, not to us: lock to read, unlock
-        // when done, and never free it.
+        // The handle belongs to the clipboard: lock to read, never free it.
         if (const auto* data = static_cast<const wchar_t*>(GlobalLock(handle)))
         {
             result = toUtf8(data, static_cast<int>(std::wcslen(data)));

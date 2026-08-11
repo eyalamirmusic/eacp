@@ -17,9 +17,7 @@ CFRef<CGColorSpaceRef> deviceRGB()
     return {CGColorSpaceCreateDeviceRGB()};
 }
 
-// CGBitmapContext only produces premultiplied alpha. Straighten it so
-// the stored RGBA matches what PNG/WIC consider canonical. Opaque and
-// fully transparent pixels are left untouched.
+// CGBitmapContext only produces premultiplied alpha; Image holds straight.
 void unpremultiply(ImageData& rgba)
 {
     auto count = rgba.size();
@@ -38,12 +36,8 @@ void unpremultiply(ImageData& rgba)
     }
 }
 
-// Fast, lossless path: when the decoded image is already 8-bit straight
-// RGBA (or RGBX) in R,G,B,A byte order, copy its pixels straight out of
-// the data provider instead of redrawing through a premultiplied bitmap
-// context (which quantizes non-opaque pixels). Row padding is stripped.
-// Returns false when the layout needs conversion, leaving the slow path
-// to handle it.
+// Lossless path for a source already in 8-bit straight RGBA/RGBX: copies out
+// of the data provider, stripping row padding. False when it needs conversion.
 bool extractStraightRGBA(CGImageRef image, int width, int height, ImageData& out)
 {
     if (CGImageGetBitsPerComponent(image) != 8
@@ -151,9 +145,8 @@ Image imageFromCGImage(CGImageRef image, std::string& error)
     if (extractStraightRGBA(image, width, height, rgba))
         return Image(width, height, std::move(rgba));
 
-    // Slow path: redraw through a premultiplied RGBA context and undo
-    // the premultiplication. Handles any source layout (CMYK, grayscale,
-    // 16-bit, premultiplied) at the cost of 8-bit precision on alpha.
+    // Handles any source layout (CMYK, grayscale, 16-bit) at the cost of
+    // 8-bit precision on alpha.
     rgba.resize(width * height * 4);
 
     auto colorSpace = deviceRGB();
@@ -192,8 +185,8 @@ ImageData encodeImageBytes(const std::uint8_t* rgba,
     auto byteCount = static_cast<std::size_t>(width)
                      * static_cast<std::size_t>(height) * 4;
 
-    // CGDataProviderCreateWithData does not copy; the buffer must stay
-    // alive until the CGImage is finalized, which all happens below.
+    // CGDataProviderCreateWithData does not copy, so the buffer must outlive
+    // the CGImage.
     auto provider = CFRef<CGDataProviderRef>(
         CGDataProviderCreateWithData(nullptr, rgba, byteCount, nullptr));
     if (!provider)

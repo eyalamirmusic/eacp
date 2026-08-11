@@ -11,18 +11,10 @@ constexpr int viewWidth = 900;
 constexpr int viewHeight = 360;
 constexpr float pi = 3.14159265358979323846f;
 
-// A Venn-triangle of three overlapping RGB circles, drawn as real triangle-list
-// geometry (no shader masking) so the None mode has no outside-the-circle
-// alpha=0 pixels to worry about. The alpha and clear colour are tuned so each
-// panel is visually distinct from the others at a glance:
-//   None:       Blue circle (drawn last) overwrites everything it touches.
-//   AlphaBlend: Straight-alpha over: overlaps mix murkily, blue-tinted.
-//   Additive:   Two-way overlaps saturate into secondaries (yellow / magenta /
-//               cyan); the three-way overlap brightens toward white.
 constexpr float circleRadius = 0.20f;
 constexpr float circleAlpha = 0.75f;
 constexpr int circleSegments = 64;
-constexpr float centerDistance = 0.15f; // origin to each circle centre
+constexpr float centerDistance = 0.15f;
 
 struct Vertex
 {
@@ -44,9 +36,7 @@ struct CircleSpec
     float b;
 };
 
-// Equilateral triangle around the origin: R at the top, G bottom-left, B
-// bottom-right. sin(120 deg) = sqrt(3)/2, cos(120 deg) = -1/2. Precomputed so
-// `circles` stays constexpr and dodges runtime static init.
+// Precomputed so `circles` stays constexpr and dodges runtime static init.
 constexpr float sin120 = 0.8660254f;
 constexpr float cos120 = -0.5f;
 
@@ -56,8 +46,6 @@ constexpr CircleSpec circles[] = {
     {+centerDistance * sin120, +centerDistance * cos120, 0.f, 0.f, 1.f},
 };
 
-// Real triangle-list mesh per circle: segments triangles of shape
-// (centre, rim[i], rim[i+1]). No fragment discard, no shader masking.
 void appendCircle(std::vector<Vertex>& out, const CircleSpec& c)
 {
     for (auto i = 0; i < circleSegments; ++i)
@@ -88,8 +76,6 @@ std::vector<Vertex> buildCircleMesh()
     return out;
 }
 
-// Trivial passthrough that translates by the uniform. Fragment emits the vertex
-// colour untouched - the pipeline's blend mode does the compositing.
 GeneratedShader makeBlendingShader()
 {
     auto builder = ShaderBuilder {};
@@ -115,8 +101,6 @@ Graphics::WindowOptions windowOptions()
 } // namespace
 
 // Three panels, one per BlendMode, sharing one vertex buffer and one shader.
-// The visual difference is the whole point of the example: identical geometry,
-// identical fragment output, three different composition rules.
 struct BlendingView final : GPUView
 {
     BlendingView()
@@ -154,9 +138,8 @@ struct BlendingView final : GPUView
 
     void render(Frame& frame) override
     {
-        // Near-black clear so additive's overlap has room to brighten toward
-        // white without the single-circle regions saturating. Contrast for the
-        // labels is fine at the top and bottom margins where no circles land.
+        // Near-black clear so additive's overlaps have room to brighten toward
+        // white without the single-circle regions saturating.
         auto pass = frame.beginPass({Graphics::Color {0.05f, 0.05f, 0.07f}});
         drawPanel(pass, none, -2.0f / 3.0f);
         drawPanel(pass, alphaBlend, 0.0f);
@@ -172,9 +155,8 @@ struct BlendingView final : GPUView
     RenderPipeline additive;
 };
 
-// Sibling view drawn on top of the GPU output via the platform 2D pipeline.
-// The View's paint surface is transparent except where drawText lands, so the
-// GPU pixels show through. Same pattern as any HUD label over a GPUView.
+// The 2D paint surface is transparent except where drawText lands, so the GPU
+// pixels underneath show through.
 struct LabelStripView final : Graphics::View
 {
     void paint(Graphics::Context& g) override
@@ -190,14 +172,11 @@ struct LabelStripView final : Graphics::View
             {"Additive", "overlaps -> WHITE"},
         };
 
-        // Menlo is monospaced. These halve-widths are approximate but good
-        // enough to keep each label visually centred inside its panel.
+        // Approximate half-widths for monospaced Menlo, enough to centre a label.
         constexpr float nameHalfCharWidth = 4.5f;
         constexpr float expectedHalfCharWidth = 3.3f;
         constexpr float topBaselineY = 24.f;
 
-        // Layout tracks the view's current bounds so the labels stay pinned to
-        // the panel centres and window edges through live resizes.
         const auto bounds = getLocalBounds();
         const auto currentPanelWidth = bounds.w / 3.f;
         const auto bottomBaselineY = bounds.h - 18.f;
@@ -228,9 +207,7 @@ struct LabelStripView final : Graphics::View
         Graphics::FontOptions().withName("Menlo").withSize(11.f)};
 };
 
-// Root container: fills the window and stretches both children to the same
-// bounds. eacp z-order is insertion order, so BlendingView (added first) sits
-// underneath LabelStripView (added second).
+// z-order is insertion order, so the labels added second sit on top.
 struct RootView final : Graphics::View
 {
     void resized() override

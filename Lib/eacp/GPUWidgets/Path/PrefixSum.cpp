@@ -16,9 +16,7 @@ int groupsFor(int count)
     return (count + perGroup - 1) / perGroup;
 }
 
-// Grown when a batch needs more than the last one did, and never uploaded: the
-// scan writes every element it reads, so what these hold on the way in is
-// nobody's business.
+// Never uploaded: the scan writes every element it reads.
 void ensureRoom(std::optional<GPU::Buffer>& buffer, int count)
 {
     auto bytes = sizeof(std::uint32_t) * (std::size_t) std::max(1, count);
@@ -40,9 +38,7 @@ void PrefixSum::run(GPU::ComputePass& pass,
     if (count <= 0)
         return;
 
-    // How deep this one goes, decided before anything is dispatched: each level
-    // is a thousandth of the one below it, so two of them reach a million
-    // elements and three reach a billion.
+    // The depth is settled before anything is dispatched.
     for (auto size = count; levelCount < maxLevels;
          size = levels[levelCount - 1].groups)
     {
@@ -63,8 +59,7 @@ void PrefixSum::run(GPU::ComputePass& pass,
     assert(levels[levelCount - 1].groups <= 1
            && "eacp: a prefix sum too large for its levels");
 
-    // What each level sums, and where it puts the result. The bottom one is the
-    // caller's pair; every one above sums the totals the level below left.
+    // Level zero is the caller's pair; each one above sums the totals below it.
     auto sourceOf = [&](int level) -> const GPU::Buffer&
     { return level == 0 ? counts : *levels[level - 1].totals; };
 
@@ -80,16 +75,14 @@ void PrefixSum::run(GPU::ComputePass& pass,
         block.groupTotals = *levels[level].totals;
         block.elementCount = (std::uint32_t) levels[level].count;
 
-        // Whole groups, because the kernel waits at a barrier and therefore has
-        // no generated bounds guard of its own.
+        // Whole groups: a kernel with a barrier gets no generated bounds guard.
         pass.dispatch(block, levels[level].groups * lanes);
         ++dispatches;
     }
 
     auto& add = sharedKernel<ScanAddKernel>();
 
-    // Down again, each level taking what the one above it summed. The top level
-    // is a single group and is already the whole answer, so it starts below it.
+    // The top level is one group and already complete, so the walk down skips it.
     for (auto level = levelCount - 2; level >= 0; --level)
     {
         add.offsets = destinationOf(level);

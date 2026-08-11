@@ -1,16 +1,7 @@
 #include "Common.h"
 
-// A dispatch whose size the GPU decided.
-//
-// The point is not that a grid can be read out of a buffer - it is that the
-// number never reaches the CPU. A stage sized by what the stage before it found
-// would otherwise need a readback between two passes that were going to be
-// adjacent, and a readback is a round trip through the host.
-//
-// So the test never reads the count. It reads only the *effect*: a second kernel
-// that ran exactly as many times as the first kernel decided it should. The
-// count is derived from buffer contents the test writes, so the answer is known
-// here without ever having been transferred back.
+// The count is never read back: only its effect, a second kernel that ran as
+// many times as the first decided it should.
 
 using namespace nano;
 using namespace eacp;
@@ -20,18 +11,13 @@ namespace
 {
 constexpr auto capacity = 512;
 
-// How many of the candidates are marked. Deliberately not a multiple of the
-// threadgroup width, so the rounding up to whole groups is exercised and the
-// guard has something to stop.
+// Deliberately not a multiple of the threadgroup width, so the rounding up to
+// whole groups is exercised and the guard has something to stop.
 constexpr auto marked = 137;
 
-// Counts the marked candidates and turns that into a threadgroup count, which
-// is what an indirect dispatch reads. Element 0 is the count of groups; 1 and 2
-// are the other two axes, and are set to one because this is a 1D grid.
-//
-// Element 3 is past the arguments and holds the exact item count - the
-// arguments themselves are rounded up to whole groups, so the kernel that runs
-// next needs the unrounded number to know where to stop.
+// Elements 0..2 are the per-axis group counts an indirect dispatch reads; 1 and
+// 2 are one because this is a 1D grid. Element 3 sits past the arguments and
+// holds the unrounded item count.
 struct CountKernel final : ComputeProgram
 {
     CountKernel() { compile(); }
@@ -49,10 +35,8 @@ struct CountKernel final : ComputeProgram
     EACP_SHADER(candidates, arguments)
 };
 
-// One thread, turning the count into the grid. Separate from the counting
-// kernel because it has to run after every thread of it has finished, and the
-// only thing that orders threads of one dispatch against each other is the end
-// of the dispatch.
+// Separate from the counting kernel because it has to run after every thread of
+// it has finished, and only the end of a dispatch says so.
 struct PrepareKernel final : ComputeProgram
 {
     PrepareKernel() { compile(); }
@@ -72,15 +56,9 @@ struct PrepareKernel final : ComputeProgram
     EACP_SHADER(arguments)
 };
 
-// The indirectly dispatched stage, writing at its own index and guarding
-// nothing. Unguarded on purpose: what has to be observable is **how many
-// threads ran**, and a kernel that guards itself writes the same output however
-// large the grid was. The first cut of this test did guard, and it passed
-// against a dispatch that ignored the argument buffer outright - which is how
-// this one came to be written the other way round.
-//
-// So the mark left behind is the grid itself. A dispatch of n groups writes
-// exactly n * threadGroupWidth elements, and nothing else produces that number.
+// Unguarded on purpose: what has to be observable is how many threads ran, and
+// a guarded kernel writes the same output however large the grid was. A guarded
+// first cut passed against a dispatch that ignored the argument buffer.
 struct ConsumeKernel final : ComputeProgram
 {
     ConsumeKernel() { compile(); }
@@ -96,9 +74,7 @@ struct ConsumeKernel final : ComputeProgram
     EACP_SHADER(output)
 };
 
-// The same stage as a pipeline would really write it: guarded against the exact
-// count, so the tail of the last group does nothing. The one above is the
-// instrument; this is the pattern.
+// Guarded against the exact count, the way a real stage is written.
 struct GuardedConsumeKernel final : ComputeProgram
 {
     GuardedConsumeKernel() { compile(); }
@@ -117,9 +93,8 @@ struct GuardedConsumeKernel final : ComputeProgram
     EACP_SHADER(arguments, output)
 };
 
-// What an element of the output holds if nothing wrote it. Not zero, because a
-// kernel that ran and wrote zero and a kernel that never ran have to be
-// distinguishable - counting how many threads ran is the whole measurement.
+// Not zero: a thread that ran and a thread that never ran must be
+// distinguishable.
 constexpr auto untouched = -1.f;
 
 Buffer makeCandidates(int howMany)
@@ -144,9 +119,7 @@ Buffer makeArguments()
     return Buffer {Device::shared(), initial, sizeof(initial), BufferUsage::Storage};
 }
 
-// The three stages, with whatever consumer is being observed dispatched
-// indirectly at the end. Every count stays on the GPU: the only thing that
-// crosses back is the output buffer.
+// Every count stays on the GPU: only the output buffer crosses back.
 template <typename Consumer>
 Vector<float> runPipeline(const Buffer& candidates, Consumer& consume)
 {
@@ -179,8 +152,6 @@ Vector<float> runPipeline(const Buffer& candidates, Consumer& consume)
         pass.dispatch(counter, capacity);
     }
 
-    // Its own pass, because it has to see every thread of the counting kernel
-    // finished, and the end of a dispatch is the only thing that says so.
     {
         auto pass = commands.beginCompute();
         pass.dispatch(prepare, 1);
@@ -211,14 +182,8 @@ int countWritten(const Vector<float>& values)
 }
 } // namespace
 
-// How many threads ran, read off what they wrote. The counting kernel found 137
-// items and asked for ceil(137/64) = 3 groups, so exactly 192 threads ran - a
-// number that is neither the count, nor the capacity, nor anything the CPU
-// passed in.
-//
-// That last part is the test. `capacity` is what the CPU handed the dispatch as
-// a guard, and a dispatch that ignored the argument buffer would have run all
-// 512; a grid of 192 could only have come from the buffer.
+// 137 items ask for ceil(137/64) = 3 groups, so 192 threads run - neither the
+// count nor the capacity the CPU handed the dispatch as a guard.
 auto tIndirectGridComesFromTheGpu =
     test("IndirectDispatch/theGridComesFromAKernel") = []
 {
@@ -236,10 +201,6 @@ auto tIndirectGridComesFromTheGpu =
     check(countWritten(values) != marked);
 };
 
-// A grid of zero. The counting kernel finds nothing, so the prepared group count
-// is zero and the consuming kernel must not run at all - the case a pipeline
-// hits whenever the thing it was looking for is absent, and the one where "no
-// groups" has to mean no work rather than all of it.
 auto tIndirectZeroGridRunsNothing =
     test("IndirectDispatch/anEmptyCountRunsNoThreads") = []
 {
@@ -252,9 +213,7 @@ auto tIndirectZeroGridRunsNothing =
     check(countWritten(values) == 0);
 };
 
-// And the pattern a real stage uses: the grid is rounded up to whole groups, so
-// the consumer guards against the exact count and the tail of the last group
-// does nothing. 192 threads run and 137 of them write.
+// The grid is rounded up to whole groups: 192 threads run, 137 of them write.
 auto tGuardedConsumerStopsAtTheCount =
     test("IndirectDispatch/aGuardedStageStopsAtTheExactCount") = []
 {

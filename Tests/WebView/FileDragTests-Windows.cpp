@@ -1,9 +1,3 @@
-// The Windows file drag-out runs inside SHDoDragDrop's blocking modal loop, so
-// the streaming callbacks (onFileDragMoved / onFileDragEnded) hang off the
-// FileDragSource / FileDragTarget COM objects that loop talks to. These tests
-// drive those objects directly — the cursor reader is injected, so no live
-// drag, cursor, or window is needed.
-
 #include <eacp/WebView/WebView/FileDrag-Windows.h>
 #include <NanoTest/NanoTest.h>
 
@@ -48,7 +42,8 @@ auto tPointOutsideClientRect = test("FileDrag/pointOutsideClientRectIsOutside") 
     check(toFileDragPoint({.x = 0, .y = 0}, rect, 1.f).inside);
 };
 
-auto tZeroDpiFallsBackUnscaled = test("FileDrag/zeroDpiScaleFallsBackToUnscaled") = []
+auto tZeroDpiFallsBackUnscaled =
+    test("FileDrag/zeroDpiScaleFallsBackToUnscaled") = []
 {
     auto mapped = toFileDragPoint({.x = 40, .y = 30}, clientRect(200, 100), 0.f);
 
@@ -60,9 +55,9 @@ auto tHeldButtonStreamsCursor =
     test("FileDrag/heldLeftButtonContinuesAndStreamsCursor") = []
 {
     auto moves = std::vector<WebView::FileDragPoint> {};
-    auto source = FileDragSource {[] { return point(12, 34, true); },
-                                  [&](WebView::FileDragPoint p)
-                                  { moves.push_back(p); }};
+    auto source =
+        FileDragSource {[] { return point(12, 34, true); },
+                        [&](WebView::FileDragPoint p) { moves.push_back(p); }};
 
     check(source.QueryContinueDrag(FALSE, MK_LBUTTON) == S_OK);
     check(source.QueryContinueDrag(FALSE, MK_LBUTTON) == S_OK);
@@ -110,9 +105,8 @@ auto tSourceUsesDefaultCursors = test("FileDrag/sourceUsesDefaultCursors") = []
 
 auto tTargetReportsCopy = test("FileDrag/targetReportsCopyForCursorFeedback") = []
 {
-    // Without a registered target the shell paints the ⊘ "no drop" badge over
-    // our own window; the target's one job is to report COPY everywhere so the
-    // cursor matches what the page will actually do with the drop.
+    // The target's one job is to report COPY everywhere, or the shell paints
+    // its "no drop" badge over our own window.
     auto target = FileDragTarget {};
 
     auto effect = DWORD {DROPEFFECT_NONE};
@@ -142,8 +136,7 @@ auto tComContract = test("FileDrag/comIdentityAndRefCount") = []
     check(asDropSource == static_cast<IDropSource*>(source));
 
     void* asDropTarget = nullptr;
-    check(source->QueryInterface(IID_IDropTarget, &asDropTarget)
-          == E_NOINTERFACE);
+    check(source->QueryInterface(IID_IDropTarget, &asDropTarget) == E_NOINTERFACE);
     check(asDropTarget == nullptr);
 
     // QueryInterface took a ref: 2 total. Releases count down to deletion.

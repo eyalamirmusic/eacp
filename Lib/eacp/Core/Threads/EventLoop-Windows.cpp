@@ -15,32 +15,22 @@
 namespace eacp::Threads
 {
 
-// Custom message that stopEventLoop posts to wake / break the
-// innermost runFor. Independent of WM_QUIT (which signals "exit the
-// whole process / outer run") so an inner pump can settle without
-// tearing down the program.
+// Breaks the innermost runFor. Separate from WM_QUIT — which exits the whole
+// process — so an inner pump can settle without tearing the program down.
 constexpr UINT WM_EACP_STOP_LOOP = WM_APP + 0x42E0;
 
-// Wake-up posted by EventLoop::call to make the pump drain its
-// pending-callback queue. Posted to a dedicated message-only window
-// (see messageWindow) rather than the thread or the WinRT
-// DispatcherQueue: a window message is caught by our PeekMessage loop
-// (so nested runFor pumps and co_awaited callAsync continuations still
-// work) AND is dispatched by foreign modal loops — the move/size loop,
-// menus, modal dialogs — so deferred work doesn't starve while one of
-// those is on screen.
+// Drains the pending-callback queue. Goes to a message-only window rather than
+// the thread queue, so foreign modal loops (move/size, menus, dialogs) dispatch
+// it too and deferred work doesn't starve while one is on screen.
 constexpr UINT WM_EACP_RUN_PENDING = WM_APP + 0x42E1;
 
 struct EventLoopState
 {
-    // Loop-ownership marker: non-zero only while run()/runFor owns the pump.
-    // quit()/stopEventLoop() post WM_QUIT through it, so a hosted plugin
-    // (which never sets it) can't quit the host's loop.
+    // Loop-ownership marker: non-zero only while run()/runFor owns the pump, so
+    // a hosted plugin (which never sets it) can't quit the host's loop.
     std::atomic<DWORD> loopThreadId {0};
 
-    // Message-only window that EventLoop::call posts WM_EACP_RUN_PENDING to.
-    // Owned by the loop thread (created in initLoopThread, destroyed in
-    // run()'s teardown). Read from worker threads in EventLoop::call —
+    // Owned by the loop thread, but read from worker threads in EventLoop::call.
     // PostMessage is thread-safe, so an atomic handle is enough.
     std::atomic<HWND> messageWindow {nullptr};
 };
@@ -56,10 +46,8 @@ struct PendingCallbacks
 {
     void run()
     {
-        // Snap the queue under the lock, then run callbacks outside it
-        // so user code can re-enter (e.g. callAsync from inside a
-        // callback won't deadlock on the recursive_mutex but also
-        // won't be processed in this pass).
+        // Snapped under the lock and run outside it, so a callAsync from inside
+        // a callback lands in the next pass rather than deadlocking.
         auto fired = Vector<Callback> {};
         {
             auto guard = std::lock_guard {mutex};
@@ -139,16 +127,9 @@ static void destroyMessageWindow()
         DestroyWindow(hwnd);
 }
 
-// An IDE like CLion, when NOT emulating a terminal, launches the app under a
-// helper process and — on "Stop" — kills that helper rather than the app. That
-// orphans the app: it gets no WM_CLOSE and no console event (a WebView app in
-// particular just keeps running, since WebView2 keeps a message pump alive). So
-// tie our lifetime to the launching process: when it exits, quit as if the
-// window had been closed.
-//
-// Gated to non-distribution builds at the call site: a shipped app must never
-// quit just because whatever launched it exited — an updater that launches-and-
-// exits, or even Explorer restarting after a crash, would otherwise take it down.
+// An IDE that kills its launcher helper rather than the app on "Stop" orphans
+// the app, so tie our lifetime to the launching process. Gated to
+// non-distribution builds at the call site.
 static DWORD getParentProcessId()
 {
     auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -184,9 +165,8 @@ static void installParentDeathWatchdog()
     if (!parent)
         return;
 
-    // If the parent has already exited (e.g. a spawn-and-exit launcher), the
-    // process the IDE actually tracks is elsewhere — don't watch, or we'd quit a
-    // legitimately-running app immediately.
+    // An already-exited parent means the IDE tracks some other process; watching
+    // it would quit a legitimately-running app immediately.
     if (WaitForSingleObject(parent, 0) != WAIT_TIMEOUT)
     {
         CloseHandle(parent);
@@ -198,9 +178,7 @@ static void installParentDeathWatchdog()
         {
             WaitForSingleObject(parent, INFINITE);
             CloseHandle(parent);
-            // Same graceful quit the window's close button drives; callAsync
-            // posts to the message-only window (thread-safe) so teardown runs on
-            // the main thread.
+            // Via callAsync, so teardown runs on the main thread.
             callAsync([] { getEventLoop().quit(); });
         })
         .detach();
@@ -212,24 +190,20 @@ void initLoopThread()
 {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-    // A single-threaded (STA) apartment, as WebView2, the shell dialogs and
-    // DirectComposition all expect. This was winrt::init_apartment; plain COM
-    // now that the compositor no longer pulls cppwinrt into Core.
+    // A single-threaded apartment, as WebView2, the shell dialogs and
+    // DirectComposition all expect.
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     initMainThread();
     getEventLoopState().loopThreadId = GetCurrentThreadId();
     ensureMessageWindow();
 
-    // Dev convenience only, never in a signed/shipped build (see the watchdog's
-    // note): quit when the process that launched us exits, so an IDE "Stop" that
-    // kills its launcher helper rather than the app still takes the app down.
+    // Dev convenience only: a shipped app must never quit merely because
+    // whatever launched it exited.
     if (!Apps::isDistributionSigned())
         installParentDeathWatchdog();
 
-    // Any callbacks queued before the loop existed will have been buffered
-    // in PendingCallbacks; nudge the pump to drain them on the next
-    // iteration.
+    // Drain callbacks buffered before the loop existed.
     PostMessageW(
         getEventLoopState().messageWindow.load(), WM_EACP_RUN_PENDING, 0, 0);
 }
@@ -239,16 +213,13 @@ void EventLoop::run()
 {
     initLoopThread();
 
-    // Loop ownership is advertised through the process environment so it
-    // crosses eacp copies: a plugin-hosted app's quit reads it to know the
-    // running loop is eacp's to stop (see stopProcessRootLoop). The thread
-    // id rides along because WM_QUIT must target the pumping thread.
+    // Advertised through the process environment so it crosses eacp copies (see
+    // stopProcessRootLoop). WM_QUIT must target the pumping thread, hence the id.
     setEnv("EACP_ROOT_LOOP", "1");
     setEnv("EACP_ROOT_LOOP_THREAD", std::to_string(GetCurrentThreadId()));
 
-    // Outer run exits only on WM_QUIT — never on WM_EACP_STOP_LOOP, so
-    // nested runFor calls can settle without taking the whole process
-    // down with them.
+    // Exits only on WM_QUIT, never on WM_EACP_STOP_LOOP, so a nested runFor can
+    // settle without taking the process down with it.
     while (true)
     {
         auto msg = MSG();
@@ -312,9 +283,7 @@ bool EventLoop::runFor(Time::MS timeout)
         {
             if (msg.message == WM_QUIT)
             {
-                // Re-post so the outer run() also sees it and shuts the
-                // process down cleanly; meanwhile break out of this
-                // inner pump.
+                // Re-posted so the outer run() sees it too.
                 PostQuitMessage(static_cast<int>(msg.wParam));
                 running = false;
                 break;
@@ -342,10 +311,8 @@ bool EventLoop::runFor(Time::MS timeout)
 
 void EventLoop::quit()
 {
-    // Outer-run quit: post WM_QUIT so GetMessage in run() returns 0
-    // and the loop exits. Inner runFor calls will also see it (via
-    // PeekMessage) and unwind, re-posting WM_QUIT on their way out so
-    // the outer run still gets it.
+    // Nested runFor calls see the WM_QUIT too and unwind, re-posting it on their
+    // way out so the outer run still gets it.
     auto id = getEventLoopState().loopThreadId.load();
     if (id != 0)
         PostThreadMessageW(id, WM_QUIT, 0, 0);
@@ -371,33 +338,21 @@ void EventLoop::call(Callback func)
 {
     getPendingCallbacks().add(func);
 
-    // Hosted copy (eacp inside a dlopen'd plugin — no run()/initLoopThread
-    // ever happens): the first callAsync on the UI thread creates the
-    // message-only window, whose messages the HOST's pump then dispatches
-    // into this copy's messageWindowProc. Off-thread first use stays
-    // buffered until attachCurrentThreadAsMain or a Window/EmbeddedView
-    // brings the window up.
+    // A hosted copy never runs initLoopThread, so the first main-thread
+    // callAsync creates the window the host's pump then dispatches into.
     if (getEventLoopState().messageWindow.load() == nullptr && isMainThread())
         ensureMessageWindow();
 
-    // Wake the pump so it drains the callback list on the next tick.
-    // Posting to our message-only window means the wake survives foreign
-    // modal loops. Before the window exists we fall back to a thread
-    // message; if neither is up yet the callback stays buffered and
-    // initLoopThread() drains it once the loop starts.
+    // Falls back to a thread message before the window exists; with neither up
+    // the callback stays buffered until initLoopThread() drains it.
     if (auto hwnd = getEventLoopState().messageWindow.load())
         PostMessageW(hwnd, WM_EACP_RUN_PENDING, 0, 0);
     else if (auto id = getEventLoopState().loopThreadId.load())
         PostThreadMessageW(id, WM_EACP_RUN_PENDING, 0, 0);
 }
 
-// Consumed by async callbacks that want to unblock the blocking caller
-// of runEventLoopFor (e.g. an evaluateJavaScript completion handler
-// signalling that the result is ready). When called from inside a
-// nested runFor we only unwind that inner pump, leaving the outer
-// run() alive so Apps::quit's queued stop still has a chance to run;
-// when called from outside any runFor we PostQuitMessage so the
-// outer run exits.
+// Inside a nested runFor this unwinds only that inner pump, leaving the outer
+// run() alive; outside any runFor it quits the outer run.
 void stopEventLoop()
 {
     auto id = getEventLoopState().loopThreadId.load();
@@ -415,9 +370,8 @@ void scheduleStartup(const Callback& func)
     callAsync(func);
 }
 
-// Deliberately does NOT touch loopThreadId: that is the loop-ownership
-// marker quit()/stopEventLoop() post WM_QUIT through, and a hosted plugin
-// must never be able to quit the host's loop.
+// Deliberately does NOT set loopThreadId: a hosted plugin must never be able to
+// quit the host's loop.
 void attachCurrentThreadAsMain()
 {
     setCurrentThreadAsMainFallback();

@@ -6,12 +6,8 @@
 #include <string>
 #include <vector>
 
-// The shared font collection — the Windows stand-in for CoreText's process-wide
-// registry. CTFontManagerRegisterGraphicsFont makes an embedded font visible to
-// every CoreText call site at once; DirectWrite has no such registry, so the
-// one collection lives here and Font, TextMetrics and the eacp-text rasterizer
-// all resolve against it. Needs no device, render target or window, so it is
-// as happy in a headless test as in a frame.
+// DirectWrite has no process-wide font registry like CoreText's, so the one
+// shared collection lives here. Needs no device, render target or window.
 
 namespace eacp::Graphics
 {
@@ -89,8 +85,7 @@ public:
     }
 
 private:
-    // Called with the lock held. A font set is immutable once built, so adding a
-    // face means building a fresh one over every file plus the system set.
+    // Called with the lock held. A font set is immutable once built.
     bool rebuild(IDWriteFactory5* factory)
     {
         auto builder = ComPtr<IDWriteFontSetBuilder1>();
@@ -145,9 +140,8 @@ bool hasFamily(const ComPtr<IDWriteFontCollection>& collection,
            && exists;
 }
 
-// Resolves a PostScript or full face name to its family name through the
-// collection's font set, empty when nothing matches (or the collection
-// predates IDWriteFontCollection1 — registered memory fonts never do).
+// Empty when nothing matches, or when the collection predates
+// IDWriteFontCollection1.
 std::wstring familyOfNamedFace(const ComPtr<IDWriteFontCollection>& collection,
                                const std::wstring& name)
 {
@@ -213,9 +207,8 @@ std::wstring resolveFontFamilyName(const std::wstring& name)
     if (hasFamily(collection, name))
         return name;
 
-    // CTFontCreateWithName also matches PostScript and full names
-    // ("ABCDiatypeMono-Regular"), so a name that works on the Apple side must
-    // find the same face here rather than silently substituting.
+    // CTFontCreateWithName also matches PostScript and full names, so the same
+    // name must find the same face here rather than silently substituting.
     return familyOfNamedFace(collection, name);
 }
 

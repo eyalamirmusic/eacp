@@ -1,19 +1,12 @@
 #include "Common.h"
-// window-controls.js (auto-injected) exposes window.__eacpResolveWindowButton,
-// which classifies an element as a caption-button role (minimize / maximize /
-// close). These assert that classification on a real engine, plus the
-// attributes the shim mirrors onto <html> so pages can drive their chrome
-// from pure CSS: data-eacp-platform and data-eacp-maximized.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
 
 namespace
 {
-// One button per role, a glyph child inside one of them (the custom property
-// inherits, so a click landing on the glyph still resolves), and an unmarked
-// sibling. `ready` gates queries until document-start injection has run.
+// A glyph child inside one button: the custom property inherits, so a click
+// landing on the glyph still resolves.
 const std::string pageHtml = R"HTML(
 <!doctype html>
 <html>
@@ -73,7 +66,6 @@ auto tRolesResolve = test("WindowControl/buttonRolesResolve") = []
 auto tGlyphChildResolves = test("WindowControl/childOfButtonResolves") = []
 {
     auto fix = Fixture {};
-    // Inherits -> a glyph inside the button is still a hit.
     check(fix.buttonOf("#glyph") == "maximize");
 };
 
@@ -95,8 +87,6 @@ auto tPlatformAttribute = test("WindowControl/platformAttributeMirrorsNative") =
 
 auto tMaximizedAttribute = test("WindowControl/maximizedAttributeTracksNative") = []
 {
-    // Native reports maximize toggles through __eacpSetMaximized; the page
-    // keys its restore glyph off the resulting <html> attribute.
     auto fix = Fixture {};
 
     auto hasAttribute = [&fix]

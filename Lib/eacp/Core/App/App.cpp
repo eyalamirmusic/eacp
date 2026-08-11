@@ -79,16 +79,10 @@ void Detail::runAsPlugin(const AppFactory& createFunc)
     Threads::scheduleStartup(createFunc);
 }
 
-// Quitting only stops the loop. The app is destroyed by run<T>() after the
-// loop has fully unwound, never from inside a runloop callback: a callback
-// can fire from a nested native pump (a window resize/drag tracking loop, a
-// modal), and destroying views while the platform is mid-event-delivery on
-// them is a use-after-free.
+// Only stops the loop; run<T>() destroys the app once the loop has unwound.
 static void quitSync()
 {
-    // A plugin-hosted app (run<T> in a DLL) has no loop of its own; its
-    // quit stops the process root loop — reachable only when an eacp copy
-    // runs it (the thin-host case). Under a foreign host (a DAW),
+    // A plugin-hosted app has no loop of its own. Under a foreign host
     // stopProcessRootLoop is a no-op: quitting is the host's decision.
     if (isRunningAsPlugin())
         Threads::stopProcessRootLoop();

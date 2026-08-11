@@ -7,16 +7,13 @@ namespace eacp::Cameras
 {
 namespace
 {
-// A camera frame is fitted to the view by an arbitrary factor, so it has to be
-// filtered smoothly; SpriteRenderer's default Nearest would alias it badly.
+// Frames are fitted by an arbitrary factor, so the default Nearest aliases.
 constexpr auto frameSampling = GPU::TextureSampling {GPU::TextureFilter::Linear,
                                                      GPU::TextureAddressMode::Clamp};
 } // namespace
 
 CameraView::CameraView()
 {
-    // The camera feed is already smooth video, so MSAA buys nothing; keep it at
-    // one sample.
     setSampleCount(1);
 
     arrivalTick = Threads::DisplayLink::timedTick(
@@ -85,8 +82,7 @@ void CameraView::applyRenderMode()
         return;
     }
 
-    // Fires on the capture thread; the render is marshalled to the main
-    // thread, where the alive token fences it against a torn-down view.
+    // Fires on the capture thread; the render is marshalled to the main one.
     camera->setFrameArrivedCallback(
         [this, guard = alive]
         {
@@ -140,8 +136,7 @@ bool CameraView::renderZeroCopy(Graphics::Rect& imageArea)
         drew = true;
     }
 
-    // The wrapped texture holds its own reference to the frame's surface, so the
-    // buffer can be released now.
+    // The wrapped texture holds its own reference to the frame's surface.
     Camera::releasePixelBuffer(buffer);
     return drew;
 }

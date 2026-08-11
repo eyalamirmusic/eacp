@@ -9,10 +9,8 @@ namespace
 {
 constexpr const char* bridgeChannel = "__eacpBridge";
 
-// The bidirectional JSON-RPC bridge installed into every page as a user
-// script. Authored as a real .js file (Resources/bridge-shim.js) and
-// embedded via ResEmbed so it gets editor tooling and lives outside the
-// C++ string-literal escaping rules.
+// The JSON-RPC shim installed into every page, authored as a real .js file
+// (Resources/bridge-shim.js) so it keeps editor tooling.
 std::string loadBridgeShim()
 {
     auto view = ResEmbed::get("bridge-shim.js", "EacpWebView");
@@ -39,10 +37,6 @@ WebViewBridge::WebViewBridge(WebView& webViewToUse)
 
 void WebViewBridge::registerBuiltins()
 {
-    // Native file drag-out as a first-class bridge command. The page invokes
-    // `armFileDrag` with a DraggableFileList from a mousedown handler; Miro
-    // deserializes the payload into the typed struct (no hand-rolled JSON),
-    // and we arm the WebView so the next mouseDragged: starts the OS drag.
     using DraggableFileList = WebView::DraggableFileList;
 
     auto arm = std::function<void(const DraggableFileList&)> {
@@ -110,8 +104,6 @@ void WebViewBridge::onMessage(const std::string& body)
         return;
     }
 
-    // A reply to a C++ -> page call (window.__eacp.callFunction) carries a
-    // "reply" id; everything else is a command invocation from the page.
     if (handleCallReply(value))
         return;
 
@@ -121,14 +113,8 @@ void WebViewBridge::onMessage(const std::string& body)
 
     auto id = envelope->id;
 
-    // The C++ handlers are plain synchronous functions; the bridge is what
-    // makes the call async. runCommand executes the Miro dispatch under the
-    // configured execution mode (deferred on the main loop by default, or
-    // on a worker thread) and yields an Async that settles on the main
-    // thread; resolveWith then delivers the result back to the JS Promise
-    // the shim is awaiting, keyed by the envelope id. Miro reports the
-    // outcome (result or error) purely through the Resolve std::function —
-    // it never touches the event loop.
+    // Handlers are synchronous; runCommand is what makes the call async, and
+    // its Async always settles on the main thread.
     auto invoke = [this, command = envelope->command, payload = envelope->payload](
                       Miro::Resolve resolve)
     { bridge.dispatchAsync(command, payload, resolve); };

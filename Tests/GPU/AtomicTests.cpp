@@ -2,34 +2,17 @@
 
 #include <eacp/GPU/Codegen/ShaderEmitter.h>
 
-// Atomics: what a thread can do to memory another thread is touching at the
-// same moment.
-//
-// Every test here has to be one a non-atomic version would fail, which is a
-// higher bar than it sounds: `counter = counter + 1` across a thousand threads
-// still lands on a plausible-looking number, just a smaller one, and a test
-// checking the counter is "about right" would pass on a broken build. So the
-// property checked is the one that cannot survive a lost update - that the
-// values handed back are a *permutation* of 0..n-1, every one distinct and none
-// skipped. That is also exactly what the operation is for: a thread that is
-// given a number nobody else has is a thread that has been given a slot of a
-// shared array.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
 namespace
 {
-// Large enough that threads genuinely collide - a handful would run far enough
-// apart to pass without any atomicity at all - and a multiple of nothing, so a
-// group-size assumption shows up as a short answer.
+// Large enough that threads genuinely collide, and a multiple of no group size.
 constexpr auto threadCount = 4099;
 constexpr auto bucketCount = 7;
 
-// Every thread adds one to the same counter and keeps what it got back.
-// Deliberately one counter rather than many: it is the maximum-contention case,
-// and it is the one the binner's allocation stage is.
+// One counter deliberately: the maximum-contention case.
 struct TicketKernel final : ComputeProgram
 {
     TicketKernel() { compile(); }
@@ -48,10 +31,7 @@ struct TicketKernel final : ComputeProgram
     EACP_SHADER(counter, tickets)
 };
 
-// The same thing spread over several counters, each thread adding to the bucket
-// its id falls in. What this adds over the ticket kernel is the index being an
-// expression rather than a literal, and the totals being checkable in closed
-// form.
+// Adds an index that is an expression rather than a literal.
 struct HistogramKernel final : ComputeProgram
 {
     HistogramKernel() { compile(); }
@@ -69,9 +49,8 @@ struct HistogramKernel final : ComputeProgram
     EACP_SHADER(counts)
 };
 
-// Reads the counters back out through load(), which is the only way to see an
-// atomic buffer's contents as numbers - the bits are integers, so binding the
-// same buffer as an InputBuffer and reading floats gives nonsense.
+// load() is the only way to read an atomic buffer: the bits are integers, so
+// binding it as an InputBuffer and reading floats gives nonsense.
 struct CountReadKernel final : ComputeProgram
 {
     CountReadKernel() { compile(); }
@@ -108,10 +87,8 @@ Vector<float> readFloats(const Buffer& buffer, int elements)
 }
 } // namespace
 
-// The property a lost update cannot fake. If two threads ever read the same
-// counter value, two tickets are equal and one number in 0..n-1 is missing -
-// so checking that every number appears exactly once checks atomicity itself
-// rather than checking a total that a broken build would merely undershoot.
+// A lost update merely undershoots a total, so the permutation of 0..n-1 is
+// what pins atomicity.
 auto tTicketsArePermutation = test("Atomic/everyThreadGetsADistinctTicket") = []
 {
     if (!Device::shared().isValid())
@@ -167,8 +144,6 @@ auto tTicketsArePermutation = test("Atomic/everyThreadGetsADistinctTicket") = []
     check(distinct == threadCount);
 };
 
-// The counter is left holding exactly the number of threads that touched it -
-// the total the tickets were drawn from - and load() is what reads it.
 auto tHistogramTotalsAreExact = test("Atomic/bucketCountsAreExact") = []
 {
     if (!Device::shared().isValid())
@@ -196,9 +171,7 @@ auto tHistogramTotalsAreExact = test("Atomic/bucketCountsAreExact") = []
         pass.dispatch(histogram, threadCount);
     }
 
-    // A second pass rather than a second kernel in the same one: the read has to
-    // see every add, and passes on one command buffer are ordered where threads
-    // within a pass are not.
+    // A second pass, not a second dispatch: passes are ordered, threads are not.
     {
         auto pass = commands.beginCompute();
         pass.dispatch(reader, bucketCount);
@@ -212,8 +185,7 @@ auto tHistogramTotalsAreExact = test("Atomic/bucketCountsAreExact") = []
 
     for (auto bucket = 0; bucket < bucketCount; ++bucket)
     {
-        // Thread i lands in bucket i % bucketCount, so the bucket's height is
-        // how many of 0..threadCount-1 have that residue.
+        // Thread i lands in bucket i % bucketCount.
         auto expected =
             threadCount / bucketCount + (bucket < threadCount % bucketCount ? 1 : 0);
 
@@ -227,11 +199,8 @@ auto tHistogramTotalsAreExact = test("Atomic/bucketCountsAreExact") = []
     check(total == threadCount);
 };
 
-// Both backends' source, generated on whichever host runs the suite. The
-// Windows half of this cannot be executed here, and it is the half most likely
-// to be wrong: the two languages do not agree on whether an atomic add is an
-// expression, so the shapes they emit are genuinely different rather than the
-// same text with different keywords.
+// Both backends' source, generated on whichever host runs the suite: the HLSL
+// half cannot be executed here, and the two languages emit different shapes.
 auto tAtomicSourceIsRight = test("Atomic/bothBackendsDeclareAndAddAtomically") = []
 {
     auto builder = ShaderBuilder {};
@@ -250,20 +219,15 @@ auto tAtomicSourceIsRight = test("Atomic/bothBackendsDeclareAndAddAtomically") =
     auto has = [](const std::string& source, const char* text)
     { return source.find(text) != std::string::npos; };
 
-    // Metal: an atomic_uint buffer, the fetch-add returning the old value into
-    // a name, and a load that unwraps the atomic to read it.
     check(has(metal, "device atomic_uint* buffer0"));
     check(has(metal,
               "atomic_fetch_add_explicit(&buffer0[0u], 1u, memory_order_relaxed)"));
     check(has(metal, "atomic_load_explicit(&buffer0[0u], memory_order_relaxed)"));
 
-    // HLSL: a uint UAV, and InterlockedAdd - which returns nothing and writes
-    // the old value through its third argument, so the name is declared first.
+    // InterlockedAdd returns nothing: the old value comes back through arg 3.
     check(has(hlsl, "RWStructuredBuffer<uint> buffer0 : register(u0)"));
     check(has(hlsl, "InterlockedAdd(buffer0[0u], 1u,"));
 
-    // And the buffer that is not atomic stays a run of floats on both, so
-    // declaring one atomic buffer does not retype the rest.
     check(has(metal, "device float* buffer1"));
     check(has(hlsl, "RWStructuredBuffer<float> buffer1 : register(u1)"));
 };

@@ -2,10 +2,8 @@
 
 #include <eacp/Core/Utils/Logging.h>
 
-// The Screen tier on Windows will tap the compositor via Windows.Graphics.Capture
-// (GraphicsCaptureItem from the host HWND -> Direct3D11CaptureFramePool -> encoder).
-// Until that lands, start() returns false so callers fall back to the Snapshot
-// tier, mirroring how the macOS path fails when Screen Recording is unavailable.
+// A stub until Windows.Graphics.Capture is wired up: start() returns false so
+// callers fall back to the Snapshot tier.
 
 namespace eacp::Video
 {

@@ -4,15 +4,11 @@
 
 namespace eacp::Plugins::Detail
 {
-// Platform-provided primitives behind DynamicLibrary, implemented in
-// DynamicLibrary-Posix.cpp and DynamicLibrary-Windows.cpp so the refcounted
-// registry in DynamicLibrary.cpp carries no platform switches.
-
 // dlopen/LoadLibrary with local, eager binding. Returns nullptr on failure.
 void* loadImage(const FilePath& path);
 
-// dlclose/FreeLibrary. The registry calls loadImage once per path and
-// unloadImage once at the last close, so the image genuinely unmaps here.
+// dlclose/FreeLibrary. Called once at the last close, so the image really
+// unmaps here.
 void unloadImage(void* handle);
 
 // dlsym/GetProcAddress. `handle` must be a live loadImage result.

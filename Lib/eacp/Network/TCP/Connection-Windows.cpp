@@ -36,12 +36,9 @@ bool waitWritable(SOCKET socket, Time::MS timeout)
     FD_ZERO(&writable);
     FD_SET(socket, &writable);
 
-    // Winsock signals a FAILED non-blocking connect (e.g. connection refused by a
-    // closed port) ONLY in the exception set — never as writable, unlike POSIX.
-    // Without watching it, select() ignores the refusal and blocks for the entire
-    // connectTimeout (15 s for the Ableton probe), stalling whatever thread the
-    // connect runs on. The caller distinguishes success from failure right after
-    // via pendingSocketError(), so reporting "ready" on either event is correct.
+    // Winsock signals a FAILED non-blocking connect ONLY in the exception set,
+    // never as writable, unlike POSIX; without watching it select() blocks for
+    // the whole connectTimeout. pendingSocketError() sorts them out after.
     auto failed = fd_set {};
     FD_ZERO(&failed);
     FD_SET(socket, &failed);
@@ -75,9 +72,8 @@ void armTimeouts(SOCKET socket, Time::MS ioTimeout)
         socket, SOL_SOCKET, SO_SNDTIMEO, (const char*) &millis, sizeof(millis));
 }
 
-// Connects a single resolved address. Returns a ready socket, or
-// INVALID_SOCKET with why filled in so the caller can report the last
-// failure across candidates.
+// Returns a ready socket, or INVALID_SOCKET with why filled in so the caller
+// can report the last failure across candidates.
 SOCKET tryConnect(const addrinfo& candidate,
                   Time::MS connectTimeout,
                   Time::MS ioTimeout,

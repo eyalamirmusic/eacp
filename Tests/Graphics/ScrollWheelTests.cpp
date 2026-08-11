@@ -1,16 +1,10 @@
 #include "Common.h"
 
-// Wheel-event delivery: the contract an editor's scroll views rely on. The
-// platform side (NSView scrollWheel:) is checked separately in
-// ScrollWheelTests-macOS.mm; these cover the portable half -- the event's shape
-// and the routing that carries it to the right view with the right coordinates.
-
 using namespace nano;
 using namespace eacp::Graphics;
 
 namespace
 {
-// Records the wheel events it receives, in the coordinates it received them.
 struct WheelRecorder final : View
 {
     WheelRecorder() { setHandlesMouseEvents(true); }
@@ -36,9 +30,6 @@ MouseEvent wheelEvent(Point position, Point delta)
 }
 } // namespace
 
-// A fresh event describes a notched wheel: no gesture, no precise deltas. Views
-// that never look at these fields keep the behaviour they had before the fields
-// existed.
 auto tWheelDefaults = test("ScrollWheel/eventDefaultsToNonPreciseNoPhase") = []
 {
     auto event = MouseEvent {};
@@ -63,9 +54,6 @@ auto tWheelReachesView = test("ScrollWheel/reachesTheViewUnderTheCursor") = []
     check(child.last.delta.y == -12.f);
 };
 
-// The position arrives in the receiving view's own coordinates, so a scroll view
-// can tell which of its rows the pointer is over without walking back up the
-// tree.
 auto tWheelPositionIsLocal = test("ScrollWheel/positionIsViewLocal") = []
 {
     auto root = View {};
@@ -82,8 +70,6 @@ auto tWheelPositionIsLocal = test("ScrollWheel/positionIsViewLocal") = []
     check(child.last.pos.y == 20.f);
 };
 
-// A wheel event outside every interested view is dropped rather than delivered
-// to the nearest one.
 auto tWheelOutsideIsDropped = test("ScrollWheel/outsideChildIsNotDelivered") = []
 {
     auto root = View {};
@@ -98,11 +84,8 @@ auto tWheelOutsideIsDropped = test("ScrollWheel/outsideChildIsNotDelivered") = [
     check(child.wheels == 0);
 };
 
-// Routing copies the whole event, so the precise/phase fields survive the trip
-// down the tree. They are what a view uses to decide whether a delta is points
-// or lines -- losing them silently would scroll by the wrong amount rather than
-// not at all, which is the kind of bug that survives a long time.
-auto tWheelPreservesScrollFields = test("ScrollWheel/routingPreservesScrollFields") = []
+auto tWheelPreservesScrollFields =
+    test("ScrollWheel/routingPreservesScrollFields") = []
 {
     auto root = View {};
     auto child = WheelRecorder {};
@@ -124,9 +107,6 @@ auto tWheelPreservesScrollFields = test("ScrollWheel/routingPreservesScrollField
     check(child.last.modifiers.command);
 };
 
-// A wheel event is not a drag: it must go to whatever is under the cursor now,
-// not to the view that last captured a mouse-down. Otherwise scrolling after a
-// click in another pane moves the wrong pane.
 auto tWheelIgnoresMouseCapture = test("ScrollWheel/ignoresMouseDownCapture") = []
 {
     auto root = View {};

@@ -3,19 +3,12 @@
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/SIMD/SIMD.h>
 
-// Portable Camera members. The platform backends (Camera-macOS.mm /
-// Camera-Windows.cpp) own the capture session and frame delivery; conversions
-// that only touch the public frame fields live here so they compile once for
-// every platform.
-
 namespace eacp::Cameras
 {
 namespace
 {
-// BGRA (camera byte order) → RGBA (Graphics::Image byte order), into `out`'s
-// reused storage. The per-pixel swap + row-unpad runs in eacp-simd (always
-// optimized); prepareForOverwrite recycles the buffer so a per-frame capture
-// loop neither reallocates nor zero-fills. `out` is left empty on a bad size.
+// BGRA (camera order) to RGBA (Image order), unpadding rows into `out`'s
+// recycled storage. `out` is left empty on a bad size.
 void bgraToImage(const std::uint8_t* data,
                  int width,
                  int height,
@@ -59,8 +52,6 @@ void CameraFrame::toImage(Graphics::Image& reuse) const
     if (pixels == nullptr || frameWidth <= 0 || frameHeight <= 0
         || pixelFormat != PixelFormat::BGRA8)
     {
-        // NV12 / other planar formats land in a later phase; until then an
-        // unreadable or unsupported frame yields an empty image.
         reuse = {};
         return;
     }

@@ -5,29 +5,12 @@
 #include <cmath>
 #include <string>
 
-// What the shelf hands out, and what it does when it cannot.
-//
-// The interesting half is the second one. An atlas that runs out has two ways to
-// make room and both of them move every slot already handed out, so a caller can
-// only survive one while it can still rasterize the whole tree again. On the
-// pass whose layout is the one being drawn through it cannot -- and a move there
-// is not a shape going missing, it is a shape drawing through texels that now
-// belong to somebody else. Nothing crashes, nothing is logged, and the picture
-// is wrong.
-//
-// So these check the two outcomes apart: with relocation allowed, an allocation
-// that does not fit moves everything and says so; with it forbidden, the same
-// allocation is refused, counted, and leaves every existing slot exactly where
-// it was. The second is the one that could not previously be asked for.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
 namespace
 {
-// The atlas owns a texture, so it needs a device - but no window, no pass and no
-// dispatch: allocation is arithmetic over a rect.
 bool hasDevice()
 {
     return GPU::Device::shared().isValid();
@@ -45,9 +28,8 @@ bool insideAtlas(const CoverageAtlas& atlas, const CoverageAtlas::Slot& slot)
            && slot.y + slot.height <= atlas.getHeight();
 }
 
-// The opaque texel every unmasked shape samples lives at the origin. A slot
-// handed out over it would make every plain rectangle in the interface multiply
-// by whatever coverage landed there instead of by one.
+// Every unmasked shape samples the opaque texel at the origin; a slot over it
+// would multiply plain rectangles by stale coverage.
 bool coversOpaqueCorner(const CoverageAtlas& atlas, const CoverageAtlas::Slot& slot)
 {
     auto opaque = atlas.getOpaqueUV();
@@ -60,17 +42,12 @@ bool coversOpaqueCorner(const CoverageAtlas& atlas, const CoverageAtlas::Slot& s
            && y >= (float) slot.y && y < (float) (slot.y + slot.height);
 }
 
-// Leaves the atlas at its largest with the shelf past its last row, which is
-// the only state the ceiling can be reached from. Deliberately not written
-// against the size constants: it asks the atlas how large it is, and finds the
-// largest by asking for masks that do not fit until it stops growing.
+// Leaves the atlas at its largest with the shelf past its last row, found by
+// asking for masks that do not fit until it stops growing.
 void fillToTheCeiling(CoverageAtlas& atlas)
 {
     atlas.setRelocationAllowed(true);
 
-    // A mask as large as the whole atlas never fits one, the opaque corner
-    // owning the left-hand end of the first row - so this grows it by a doubling
-    // a time and stops when a doubling stops happening.
     while (true)
     {
         auto size = atlas.getWidth();
@@ -82,8 +59,6 @@ void fillToTheCeiling(CoverageAtlas& atlas)
             break;
     }
 
-    // Then one mask that does fit, and fills it: the row it is on has eight
-    // texels of width left and nothing can start below it.
     auto size = atlas.getWidth();
 
     atlas.allocate(size - 8, size - 8);
@@ -92,7 +67,6 @@ void fillToTheCeiling(CoverageAtlas& atlas)
 }
 } // namespace
 
-// The plain case, and the one every frame that does not run out is made of.
 auto tPacksWithoutOverlap = test("CoverageAtlas/packsSlotsWithoutOverlapping") = []
 {
     if (!hasDevice())
@@ -103,16 +77,14 @@ auto tPacksWithoutOverlap = test("CoverageAtlas/packsSlotsWithoutOverlapping") =
 
     for (auto i = 0; i < 200; ++i)
     {
-        // Varied enough that rows end at different places, since a shelf whose
-        // slots are all one size packs correctly by accident.
+        // Varied so rows end at different places: uniform slots pack correctly
+        // by accident.
         auto width = 6 + (i * 13) % 37;
         auto height = 5 + (i * 7) % 23;
 
         auto slot = atlas.allocate(width, height);
 
-        // A move relocates everything handed out before it, so the record
-        // starts again rather than comparing against slots that no longer mean
-        // anything - which is what a caller has to do too.
+        // A move invalidates every slot handed out before it.
         if (atlas.takeMovedFlag())
             placed.clear();
 
@@ -128,9 +100,6 @@ auto tPacksWithoutOverlap = test("CoverageAtlas/packsSlotsWithoutOverlapping") =
     }
 };
 
-// The uv is what the quad samples, so a slot whose rect and uv disagree draws
-// the right shape through the wrong texels - and after a grow the same rect
-// means a different uv, which is the case that is easy to get wrong.
 auto tUVMatchesSlot = test("CoverageAtlas/uvAddressesTheSlotItDescribes") = []
 {
     if (!hasDevice())
@@ -152,8 +121,6 @@ auto tUVMatchesSlot = test("CoverageAtlas/uvAddressesTheSlotItDescribes") = []
     }
 };
 
-// Growing is the first answer to running out, and it is only sound because it
-// admits to it: the caller re-rasterizes everything against the new size.
 auto tGrowsAndSaysSo = test("CoverageAtlas/growingReportsThatEverythingMoved") = []
 {
     if (!hasDevice())
@@ -172,9 +139,6 @@ auto tGrowsAndSaysSo = test("CoverageAtlas/growingReportsThatEverythingMoved") =
     check(slot.width == size * 2);
 };
 
-// The ceiling, with a move still permitted: the atlas is as large as it goes, so
-// it compacts, which is the other move and equally something the caller has to
-// hear about.
 auto tCompactsAtTheCeiling = test("CoverageAtlas/compactsWhenItCannotGrow") = []
 {
     if (!hasDevice())
@@ -192,9 +156,6 @@ auto tCompactsAtTheCeiling = test("CoverageAtlas/compactsWhenItCannotGrow") = []
     check(insideAtlas(atlas, slot));
 };
 
-// The one this file exists for. On the pass that has to end with a consistent
-// atlas, an allocation that would move something is refused - so what is already
-// placed stays exactly where the shapes holding it think it is.
 auto tRefusesRatherThanMoving =
     test("CoverageAtlas/refusesRatherThanMovingWhenRelocationIsForbidden") = []
 {
@@ -217,17 +178,12 @@ auto tRefusesRatherThanMoving =
     check(!atlas.takeMovedFlag(), "nothing moved, so nothing may say it did");
     check(atlas.getWidth() == size, "the atlas may not grow on this pass");
 
-    // And the proof that it did not: a slot handed out afterwards still avoids
-    // the one handed out before. A grow or a compact here would have restarted
-    // the shelf on top of it, and both shapes would sample the same texels.
     auto next = atlas.allocate(16, 16);
 
     check(next.width == 16);
     check(!overlaps(first, next), "a refusal must not restart the shelf");
 };
 
-// The tree that genuinely does not fit: the atlas is at its largest, already
-// full, and may not compact because compacting is what the pass before it did.
 auto tCeilingIsCounted = test("CoverageAtlas/countsEveryMaskItHasNoRoomFor") = []
 {
     if (!hasDevice())
@@ -246,9 +202,6 @@ auto tCeilingIsCounted = test("CoverageAtlas/countsEveryMaskItHasNoRoomFor") = [
     check(!atlas.takeMovedFlag());
 };
 
-// A single mask no atlas could hold. Refused even with a move allowed, since
-// there is no move that would help, and counted like any other thing missing
-// from the picture.
 auto tMaskLargerThanAnyAtlas =
     test("CoverageAtlas/refusesAndCountsAMaskLargerThanTheLargestAtlas") = []
 {
@@ -265,11 +218,8 @@ auto tMaskLargerThanAnyAtlas =
     check(atlas.getDroppedCount() == 1);
 };
 
-// The mask that did not come back. Exactly as large as the atlas itself, so
-// room is made for it, it still does not fit the first row - the opaque corner
-// owning four texels of it - and making room again is what the shelf did next,
-// for ever. It is a refusal, and there is no arrangement of this atlas under
-// which it is anything else.
+// A mask exactly as large as the atlas can never fit row one (the opaque corner
+// owns four texels of it), so growing would loop for ever: it must be refused.
 auto tMaskAsLargeAsTheAtlas =
     test("CoverageAtlas/refusesAMaskAsLargeAsTheAtlasRatherThanLoopingOnIt") = []
 {
@@ -291,9 +241,6 @@ auto tMaskAsLargeAsTheAtlas =
     check(atlas.getWidth() == size);
 };
 
-// What the caller does between the two passes: everything is about to be
-// rasterized again, so nothing holds a slot and the shelf starts empty. Without
-// it the second pass allocates beside what the first one abandoned.
 auto tForgettingMakesRoom = test("CoverageAtlas/forgettingAllocationsMakesRoom") = []
 {
     if (!hasDevice())
@@ -316,9 +263,6 @@ auto tForgettingMakesRoom = test("CoverageAtlas/forgettingAllocationsMakesRoom")
     check(atlas.getWidth() == size, "and no move was needed to find it");
 };
 
-// The distance to the ceiling, while there is still distance to it. Room
-// reserved rather than room drawn into, because it is the reservation that runs
-// out - and the shelf never gives any of it back.
 auto tFillFraction = test("CoverageAtlas/fillFractionCountsTheRoomReserved") = []
 {
     if (!hasDevice())

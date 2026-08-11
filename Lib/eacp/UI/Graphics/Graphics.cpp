@@ -17,8 +17,6 @@ Graphics::Graphics(DrawList& listToUse,
 {
     state.clip = bounds;
 
-    // The host's face is where every component starts, so a tree that never
-    // mentions a font looks like one thing.
     state.font = text.getFont();
 }
 
@@ -29,14 +27,9 @@ void Graphics::setColour(const Color& colour)
 
 namespace
 {
-// The gradient's own space onto the space it is drawn in: what maps the unit
-// segment from (0, 0) to (1, 0) onto a linear gradient's two ends, or the unit
-// circle onto a radial one.
-//
-// The linear case's second axis is the first one turned a quarter, which makes
-// the matrix a similarity and therefore invertible for any gradient with two
-// distinct ends. Nothing reads the second coordinate afterwards, so what it is
-// does not matter -- only that the matrix does not collapse.
+// Maps the unit segment (0,0)-(1,0) onto a linear gradient's ends, or the unit
+// circle onto a radial one. The linear case's unused second axis is the first
+// turned a quarter, keeping the matrix invertible for distinct ends.
 GPUWidgets::AffineTransform placementOf(const Gradient& gradient)
 {
     if (gradient.kind == Gradient::Kind::Radial)
@@ -64,21 +57,17 @@ void Graphics::setGradient(const Gradient& gradient)
         return;
     }
 
-    // Placed and inverted here rather than at each draw, which is the whole
-    // reason this is a state call: a gradient set once and filled twenty times
-    // is one lookup and one inversion.
-    //
-    // The origin goes on the end, so the caller places the gradient in its own
-    // component's points like everything else it draws.
+    // The origin goes on the end, placing the gradient in the caller's points.
     auto placement = placementOf(gradient)
                          .then(gradient.transform)
                          .then(GPUWidgets::AffineTransform::translation(
                              state.origin.x, state.origin.y));
 
-    // A gradient whose ends coincide, or whose radius is zero, or that a
-    // transform flattened: there is no space to map a fragment into, so it draws
-    // as the flat colour rather than as a division by nothing.
-    if (std::abs(placement.getDeterminant()) < 1e-12f)
+    constexpr auto smallestInvertibleDeterminant = 1e-12f;
+    auto isDegenerate =
+        std::abs(placement.getDeterminant()) < smallestInvertibleDeterminant;
+
+    if (isDegenerate)
     {
         clearGradient();
         return;
@@ -225,11 +214,7 @@ float Graphics::drawText(std::string_view textToDraw, Point baselineLeft)
 {
     recordClip();
 
-    // One walk of the string for both the glyphs and the advance, and it happens
-    // here rather than at every frame that draws them -- which is the largest
-    // single thing recording buys. A label used to be laid out three times a
-    // frame: once to measure for the justification, once to measure for the clip
-    // rect, and once to emit.
+    // One walk of the string for both the glyphs and the advance.
     auto& glyphs = list.glyphStorage();
     auto first = glyphs.size();
 
@@ -247,9 +232,7 @@ void Graphics::drawText(std::string_view textToDraw,
 {
     auto x = area.x;
 
-    // Measured only where the answer is used. A left-justified caption is the
-    // common case and its pen is the box's own edge, so the walk that would work
-    // out how wide it is has nothing to decide.
+    // Measured only where the answer is used.
     if (justification != Justification::Left)
     {
         auto width = text.measure(textToDraw, state.font);
@@ -259,8 +242,6 @@ void Graphics::drawText(std::string_view textToDraw,
                 : area.right() - width;
     }
 
-    // Centre the line box on the area, then step down to the baseline, so a
-    // caption sits optically centred rather than hanging off the top edge.
     auto baseline = area.y + (area.h - lineHeight()) * 0.5f + ascent();
 
     drawText(textToDraw, {x, baseline});
@@ -311,20 +292,16 @@ void Graphics::reduceClipToShape(const PathShape& shape)
 {
     auto bounds = shape.getBounds();
 
-    // A shape that has no coverage has no bounds either -- it was never
-    // rasterized, or the atlas had no room for it -- and a clip that knows
-    // nothing about where it is cannot narrow anything. Whatever rectangle the
-    // caller reduced to before this stands, which is how a refused clip comes
-    // out as the region's own box rather than as nothing at all.
+    // Never rasterized, or the atlas had no room: leave the caller's clip alone
+    // rather than narrowing to nothing.
     if (bounds.isEmpty())
     {
         state.clipMask = {};
         return;
     }
 
-    // Narrowed by the bounds whether or not the mask itself can be used: they
-    // are what a meshed clip comes to, and they are what the glyphs are cut by,
-    // there being no way to sample a mask from the text pipeline.
+    // Narrowed by the bounds whether or not the mask is usable: that is all a
+    // meshed clip comes to, and all the text pipeline can be cut by.
     reduceClipRegion(bounds);
 
     if (shape.isEmpty() || shape.isMeshed())

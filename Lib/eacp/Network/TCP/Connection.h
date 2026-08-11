@@ -21,34 +21,28 @@ struct Timeouts
     Time::MS io {20000};
 };
 
-// Every failure - name resolution, refused connect, timeout, peer hangup -
-// surfaces as this one exception type, with a message ready to log or show.
 struct Error : std::runtime_error
 {
     using std::runtime_error::runtime_error;
 };
 
-// A send or receive that ran past its timeout. Distinct from Error so "the
-// peer went quiet" can be told apart from "the connection broke".
+// Distinct from Error so "the peer went quiet" is distinguishable from "the
+// connection broke".
 struct TimeoutError : Error
 {
     using Error::Error;
 };
 
-// A live, connected TCP stream.
-//
-// Move-only: holding a Connection means the socket is open. connect() either
-// yields an open stream or throws (no half-built state); the destructor
-// closes. Reconnect via a fresh connect().
+// A live, connected TCP stream. Move-only: holding a Connection means the
+// socket is open, and the destructor closes it.
 class Connection
 {
 public:
-    // Opens a stream to address, or throws TCP::Error trying.
+    // Blocks; throws TCP::Error rather than yielding a half-built stream.
     static Connection connect(Address address, Timeouts timeouts = {});
 
-    // Wraps an already-connected native socket (an int fd or a SOCKET, passed
-    // as intptr_t) in a Connection that owns it. Listener::accept() is the
-    // caller that matters; reach for connect() to open a stream yourself.
+    // Takes ownership of an already-connected native socket (an int fd or a
+    // SOCKET, passed as intptr_t).
     static Connection adopt(std::intptr_t nativeSocket, Address peer);
 
     ~Connection();
@@ -67,18 +61,15 @@ public:
     // Writes every byte, looping past partial writes. Throws on failure.
     void send(std::string_view bytes);
 
-    // Returns the bytes up to (and consuming) the next delimiter, keeping
-    // any overshoot for the following call. Throws if the peer closes
-    // before the delimiter arrives.
+    // Blocks for the bytes up to (and consuming) the next delimiter, keeping
+    // any overshoot for the following call. Throws if the peer closes first.
     std::string receiveUntil(char delimiter);
 
-    // receiveUntil('\n') with a trailing carriage return trimmed - the
-    // common case for line-oriented protocols.
+    // receiveUntil('\n') with a trailing carriage return trimmed.
     std::string receiveLine();
 
-    // Returns whatever a single read yields, up to maxBytes (draining any
-    // bytes already buffered by receiveUntil first). An empty string means
-    // the peer closed the stream cleanly.
+    // Whatever a single read yields, up to maxBytes, draining the
+    // receiveUntil overshoot first. Empty means the peer closed cleanly.
     std::string receive(std::size_t maxBytes = 4096);
 
 private:

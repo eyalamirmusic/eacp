@@ -11,10 +11,8 @@
 
 namespace eacp::Apps
 {
-// "Apple-issued" (anchor apple: App Store + system binaries) or Developer ID
-// (the leaf marker OID Apple stamps into Developer ID Application certs).
-// Plain "anchor apple generic" would be too loose — Xcode development
-// certificates chain to it too, and those are dev builds.
+// Apple-issued (App Store / system) or the Developer ID leaf marker OID. Not
+// plain "anchor apple generic": Xcode development certificates chain to it too.
 static const auto distributionRequirement =
     CFSTR("anchor apple or (anchor apple generic and "
           "certificate leaf[field.1.2.840.113635.100.6.1.13] exists)");
@@ -63,10 +61,7 @@ bool isDistributionSigned()
 
     auto requirement = CFRef(requirementRef);
 
-    // Validates the signature against the requirement without enforcing
-    // expiry or online revocation (see App.h). Resources are skipped too: the
-    // question is who signed this binary, not whether the bundle is intact —
-    // and hashing every bundle resource on each call would be slow.
+    // Deliberately enforces neither expiry nor online revocation (see App.h).
     return SecStaticCodeCheckValidity(code.get(),
                                       kSecCSDoNotValidateResources,
                                       requirement.get())
@@ -94,8 +89,7 @@ void openExternalURL(const std::string& url)
     [[NSWorkspace sharedWorkspace] openURL:nsUrl];
 }
 
-// Extensions ("wav", "gestures") as the content types both panels filter by.
-// An extension the system knows no type for is skipped rather than dropping
+// An extension the system knows no type for is skipped, rather than dropping
 // the whole filter.
 static NSArray<UTType*>* contentTypesFor(const Vector<std::string>& extensions)
 {
@@ -141,8 +135,6 @@ std::optional<std::string> chooseSaveFile(const FileSaveOptions& options)
 {
     auto* panel = [NSSavePanel savePanel];
     panel.canCreateDirectories = YES;
-    // The panel's own overwrite confirmation is the only one there is — the
-    // caller writes the returned path unconditionally.
     panel.extensionHidden = NO;
 
     if (! options.allowedExtensions.empty())

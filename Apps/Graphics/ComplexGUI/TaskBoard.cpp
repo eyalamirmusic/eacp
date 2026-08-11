@@ -2,22 +2,6 @@
 
 #include <string>
 
-// Cards dragged between columns, which is the one thing the component tier had
-// no answer for at all.
-//
-// The two halves were already there: a press captures the mouse to a component,
-// so drags and the release reach it wherever the pointer has since travelled,
-// and toFront orders siblings. What was missing is the part between — something
-// to carry, somewhere to say "I will take that", and an image that follows the
-// pointer above every column rather than clipped inside the one the drag started
-// in. That is UI::DragAndDropContainer and UI::DragAndDropTarget, and this app is
-// what they were built for.
-//
-// Note what a card being dragged is *not*: a component that moves. The card
-// stays where it is and a small image follows the pointer, because a drop
-// destroys the card and builds another one in the column that took it — which is
-// also why a drag carries an id rather than a pointer.
-
 using namespace eacp;
 
 namespace
@@ -25,6 +9,7 @@ namespace
 constexpr auto cardHeight = 62.f;
 constexpr auto cardGap = 8.f;
 constexpr auto headerHeight = 44.f;
+constexpr auto dragStartDistance = 4.f;
 
 Random randomGen {};
 
@@ -47,8 +32,6 @@ struct TaskData
     UI::Color colour;
 };
 
-// The card as it sits in a column, and the same card as the image under the
-// pointer: one painter, so the two cannot drift apart.
 void paintCard(UI::Graphics& g,
                const UI::Rect& bounds,
                const TaskData& data,
@@ -114,13 +97,11 @@ struct TaskCard final : UI::Component
         if (container == nullptr)
             return;
 
-        // Not on the first pixel: a drag that starts the moment the pointer
-        // twitches makes a card impossible to click.
         if (!container->isDragging())
         {
             auto travelled = event.position - event.downPosition;
 
-            if (std::abs(travelled.x) + std::abs(travelled.y) < 4.f)
+            if (std::abs(travelled.x) + std::abs(travelled.y) < dragStartDistance)
                 return;
 
             auto info = UI::DragInfo {};
@@ -163,8 +144,6 @@ struct Column final : UI::Component
     {
         add.onClick = [this] { onAddCard(); };
 
-        // Only cards, and only from somewhere else: a column that took its own
-        // card back would rebuild it for nothing and lose its place in the list.
         dropTarget.isInterestedIn = [this](const UI::DragInfo& info)
         { return info.type == "card" && findCard(info.itemId) == nullptr; };
 
@@ -370,10 +349,8 @@ struct Board final : UI::Component
         return nullptr;
     }
 
-    // The card is rebuilt rather than reparented, which is why the drag carries
-    // an id: what arrives in the new column is a different component with the
-    // same data, and the one the drag started from is gone by the time this
-    // returns.
+    // The card is rebuilt rather than reparented, which is why a drag carries an
+    // id rather than a pointer.
     void moveCard(int id, Column& into)
     {
         auto* from = columnHolding(id);
@@ -518,9 +495,8 @@ struct Board final : UI::Component
     TaskCard* selected = nullptr;
     int nextId = 1;
 
-    // Last, so it is destroyed first: a drag holds pointers into the tree above
-    // it, and the tree going first would leave it cancelling drags on components
-    // that have already gone.
+    // Declared last so it is destroyed first: a drag holds pointers into the
+    // tree above it.
     UI::DragAndDropContainer dragging {*this};
 };
 

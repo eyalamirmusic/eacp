@@ -1,8 +1,5 @@
-// Simplest possible TCP client: connect to an echo server, send a line,
-// print what comes back. Defaults to tcpbin.com:4242 (a public echo server);
-// point it at the local TcpServer with:
-//
-//   TcpClient --host 127.0.0.1 --port 5050
+// Defaults to the public echo server tcpbin.com:4242; point it at the local
+// TcpServer with `TcpClient --host 127.0.0.1 --port 5050`.
 
 #include <eacp/Network/Network.h>
 

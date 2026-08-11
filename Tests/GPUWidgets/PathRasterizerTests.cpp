@@ -5,21 +5,6 @@
 #include <cmath>
 #include <string>
 
-// What the kernel computes, against what the same arithmetic gives when nothing
-// is binned at all.
-//
-// PathRasterizer bins segments into tiles and hands each thread its own tile's
-// list plus one number for everything left of it. That is a rewrite of which
-// segments a pixel sees, not of what a segment contributes, so the answer must
-// not move - and the ways it can move are all silent. A tile short of a segment
-// loses a sliver of an edge. A backdrop off by one winding turns a region inside
-// out, and under the non-zero rule saturation hides it. Neither shows up as a
-// crash and both are a few pixels wide.
-//
-// So the reference here walks every segment for every pixel, the way the kernel
-// did before binning, and the two are compared pixel by pixel. It is deliberately
-// the slow obvious loop: it is the definition the binned version has to meet.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPUWidgets;
@@ -32,18 +17,12 @@ using Graphics::Rect;
 
 constexpr auto pi = 3.14159265358979323846f;
 
-// The mask is an 8-bit texture and the two sides sum a pixel's segments in a
-// different order, so exact equality is not on offer. A step and a half of an
-// 8-bit channel is: anything structurally wrong with the binning is a whole edge
-// or a whole region out, which is orders of magnitude above this.
+// A step and a half of the 8-bit channel the mask lives in: the two sides sum a
+// pixel's segments in a different order, so exact equality is not on offer.
 constexpr auto tolerance = 1.5f / 255.f;
 
-// ---------------------------------------------------------------- reference
-
-// The segments a fill sees: every sub-path closed, horizontal ones dropped,
-// scaled into the coverage rect's own pixel space. Written out again here rather
-// than borrowed from the rasterizer, because a reference that shares code with
-// what it checks checks nothing.
+// Written out again here rather than borrowed from the rasterizer, because a
+// reference that shares code with what it checks checks nothing.
 Vector<float> referenceSegments(const Path& path, float scale, const Rect& covered)
 {
     auto left = covered.x * scale;
@@ -128,17 +107,13 @@ float referenceCoverage(const Vector<float>& segments, int x, int y, FillRule ru
     return std::min(folded, 2.f - folded);
 }
 
-// ------------------------------------------------------------------- shapes
-
 Point onCircle(const Point& centre, float radius, float angle)
 {
     return {centre.x + std::cos(angle) * radius,
             centre.y + std::sin(angle) * radius};
 }
 
-// UI::Knob's indicator: an arc and a pointer as two contours of one path, wound
-// the same way round. The shape the component tier actually draws, and the one
-// whose two contours overlap - so it is also where a lost segment shows as a
+// UI::Knob's indicator: two overlapping contours, so a lost segment shows as a
 // seam through the join rather than as a nick in an outline.
 Path knobIndicator(float size, float value)
 {
@@ -175,9 +150,8 @@ Path knobIndicator(float size, float value)
     return path;
 }
 
-// Wound through itself, so the middle is covered twice: non-zero fills it and
-// even-odd leaves a hole. A backdrop out by one winding cannot hide behind
-// saturation here, which is what makes this the shape worth checking the rule on.
+// Wound through itself, so the middle is covered twice and a backdrop out by one
+// winding cannot hide behind non-zero saturation.
 Path selfIntersectingStar(const Rect& bounds)
 {
     auto centre = Point {bounds.x + bounds.w * 0.5f, bounds.y + bounds.h * 0.5f};
@@ -200,9 +174,8 @@ Path selfIntersectingStar(const Rect& bounds)
     return path;
 }
 
-// A long thin diagonal: many tile rows, two tile columns in each. Binning by a
-// segment's bounding box would file it under every tile of a square instead, so
-// this is the shape that says the clip to the tile row is really happening.
+// Many tile rows, two tile columns in each: binning by a segment's bounding box
+// would file it under every tile of a square instead.
 Path thinDiagonal(float width, float height)
 {
     auto path = Path {};
@@ -213,8 +186,6 @@ Path thinDiagonal(float width, float height)
     path.close();
     return path;
 }
-
-// -------------------------------------------------------------------- harness
 
 struct Comparison
 {
@@ -293,9 +264,6 @@ void expectMatchesReference(const Path& path, float scale, FillRule rule)
 }
 } // namespace
 
-// A circle is the shape whose outline crosses a tile boundary at every angle, so
-// it is where a clip that is right for axis-aligned edges and wrong for the rest
-// would show.
 auto tEllipse = test("PathRasterizer/ellipseMatchesUnbinned") = []
 {
     auto path = Path {};
@@ -305,7 +273,6 @@ auto tEllipse = test("PathRasterizer/ellipseMatchesUnbinned") = []
     expectMatchesReference(path, 2.f, FillRule::NonZero);
 };
 
-// Straight edges, and corners where four tiles meet an outline at once.
 auto tRoundedRect = test("PathRasterizer/roundedRectMatchesUnbinned") = []
 {
     auto path = Path {};
@@ -314,9 +281,6 @@ auto tRoundedRect = test("PathRasterizer/roundedRectMatchesUnbinned") = []
     expectMatchesReference(path, 1.f, FillRule::NonZero);
 };
 
-// Both rules on the shape that tells them apart. Under even-odd the doubly-wound
-// middle folds back to empty, so a backdrop out by one winding inverts a region
-// instead of hiding under saturation.
 auto tStarRules = test("PathRasterizer/selfIntersectingStarMatchesUnbinned") = []
 {
     auto path = selfIntersectingStar({2.f, 2.f, 180.f, 180.f});
@@ -326,16 +290,12 @@ auto tStarRules = test("PathRasterizer/selfIntersectingStarMatchesUnbinned") = [
     expectMatchesReference(path, 2.f, FillRule::EvenOdd);
 };
 
-// The component tier's own shape, at the sizes a knob is actually laid out at -
-// which is also the resize case, since a re-laid-out knob rebuilds its mask from
-// scratch at the new size.
 auto tKnobSizes = test("PathRasterizer/knobIndicatorMatchesUnbinnedAtEverySize") = []
 {
     for (auto size: {18.f, 24.f, 33.f, 40.f, 57.f, 64.f, 96.f, 129.f, 160.f})
         expectMatchesReference(knobIndicator(size, 0.7f), 2.f, FillRule::NonZero);
 };
 
-// And through its travel, which is what a knob being dragged does to its mask.
 auto tKnobValues =
     test("PathRasterizer/knobIndicatorMatchesUnbinnedThroughTravel") = []
 {
@@ -343,13 +303,9 @@ auto tKnobValues =
         expectMatchesReference(knobIndicator(64.f, value), 2.f, FillRule::NonZero);
 };
 
-// Bounding-box binning would file this segment under every tile of a square.
 auto tDiagonal = test("PathRasterizer/thinDiagonalMatchesUnbinned") = []
 { expectMatchesReference(thinDiagonal(240.f, 180.f), 1.f, FillRule::NonZero); };
 
-// The point of the exercise: a path is priced by its outline, not by its area.
-// A circle's outline grows with its radius while its box grows with the square,
-// so doubling the size must not double the ratio's denominator.
 auto tBinningCutsWork = test("PathRasterizer/binningCutsWorkWithArea") = []
 {
     if (!GPU::Device::shared().isValid())
@@ -368,15 +324,8 @@ auto tBinningCutsWork = test("PathRasterizer/binningCutsWorkWithArea") = []
     check(result.segmentTests * 20 < result.unbinnedTests);
 };
 
-// The array the counting sort fills is sized to a bound, because the count is
-// what the clip finds and the clip is on the GPU. A bound that came up short
-// would be the quietest failure in the rasterizer: the write is guarded, so what
-// happens is that some tile silently loses a segment and an edge goes soft in
-// one place.
-//
-// So it is checked directly, on the shapes that stretch the two terms it is made
-// of - a segment crossing many rows, one crossing many columns, and one doing
-// both - rather than only where a picture happens to notice.
+// The counting sort's array is sized to a bound and its writes are guarded, so a
+// bound that came up short loses a tile's segment and softens one edge silently.
 auto tEntryBoundHolds = test("PathRasterizer/theEntryBoundIsOne") = []
 {
     auto paths = Vector<Path> {};
@@ -392,8 +341,8 @@ auto tEntryBoundHolds = test("PathRasterizer/theEntryBoundIsOne") = []
     tall.addEllipse({0.f, 0.f, 40.f, 900.f});
     paths.add(tall);
 
-    // A single segment running corner to corner, which is the shape the bound's
-    // "twice the rows it crosses" term exists for.
+    // Corner to corner, which is what the bound's "twice the rows it crosses"
+    // term exists for.
     auto slash = Path {};
     slash.moveTo({4.f, 4.f});
     slash.lineTo({500.f, 400.f});
@@ -416,9 +365,8 @@ auto tEntryBoundHolds = test("PathRasterizer/theEntryBoundIsOne") = []
                   std::to_string(counted) + " entries in room for "
                       + std::to_string(reserved));
 
-            // And a bound rather than a shrug. Loose enough that the derivation
-            // has room to be conservative, tight enough that reserving the whole
-            // tile grid per segment would not pass.
+            // Loose enough for a conservative derivation, tight enough that
+            // reserving the whole tile grid per segment would not pass.
             check(reserved <= counted * 2 + 64,
                   std::to_string(reserved) + " reserved for "
                       + std::to_string(counted));

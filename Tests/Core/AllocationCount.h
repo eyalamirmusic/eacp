@@ -3,10 +3,8 @@
 #include <atomic>
 #include <cstddef>
 
-// What an operation costs in allocations has no other observable: the bytes are
-// the same however they were assembled, and unlike timing the count does not
-// depend on the machine or the build. The global operator new that feeds these
-// lives in AllocationCount.cpp, so the test binary replaces it exactly once.
+// Unlike timing, an allocation count does not depend on the machine or build.
+// The global operator new lives in AllocationCount.cpp, replaced exactly once.
 extern std::atomic<bool> countingAllocations;
 extern std::atomic<std::size_t> allocatedBytes;
 

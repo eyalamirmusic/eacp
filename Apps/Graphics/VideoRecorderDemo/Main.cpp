@@ -10,8 +10,8 @@ using namespace Graphics;
 
 namespace
 {
-// A stable path in the user's Downloads folder so the clip is easy to find; the
-// recorder deletes any existing file there first, so only one ever accumulates.
+// The recorder deletes any existing file at this path first, so only one clip
+// ever accumulates.
 FilePath outputPath()
 {
     auto dir = FilePath::downloadsDirectory();
@@ -22,14 +22,6 @@ FilePath outputPath()
 }
 } // namespace
 
-// A dark panel with a red box sliding left-to-right, driven by a display link,
-// so the recorded video shows visible motion.
-//
-// What the recorder captures is the component tree, and it needs to know nothing
-// about that: a ComponentHost is a GPUView, and a GPUView renders its content
-// off-screen for a snapshot the same way it renders it to the window. So the
-// capture path is the GPU one rather than the layer one, which is what makes it
-// exact rather than a re-run of paint().
 struct Animated final : UI::Component
 {
     void paint(UI::Graphics& g) override

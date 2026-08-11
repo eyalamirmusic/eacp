@@ -2,15 +2,9 @@
 
 #include <eacp/GPUWidgets/GPUWidgets.h>
 
-// The coverage a rasterized path actually got, texel for texel, with nothing in
-// between.
-//
-// Drawing the mask and reading the pixels back instead would put a whole
-// compositor in the way - an alpha blend, a premultiply, and the display's
-// transfer function, which alone bends a coverage of 0.61 into 0.80. So this
-// takes a second compute pass to copy the texture into a buffer instead: the
-// fetch reads the texel the kernel wrote, commit() blocks until it exists, and
-// no window is involved, which is what lets it run wherever the suite does.
+// Reads mask coverage through a compute pass rather than by drawing: a
+// compositor in the way would premultiply and gamma-encode the value, bending a
+// coverage of 0.61 into 0.80.
 namespace eacp::GPUWidgets::probe
 {
 struct MaskReadKernel final : GPU::ComputeProgram
@@ -30,16 +24,14 @@ struct MaskReadKernel final : GPU::ComputeProgram
     GPU::Uniform<GPU::OutputBuffer> coverage;
     GPU::Uniform<GPU::UInt> maskWidth;
 
-    // Where in the texture the rect being read starts, so one path's mask can be
-    // read out of a texture several of them share.
     GPU::Uniform<GPU::UInt> originX;
     GPU::Uniform<GPU::UInt> originY;
 
     EACP_SHADER(mask, coverage, maskWidth, originX, originY)
 };
 
-// One per process, like the coverage kernel itself: building a library and a
-// pipeline per test would be most of the suite's time.
+// One per process: building a library and a pipeline per test would be most of
+// the suite's time.
 inline MaskReadKernel& maskReader()
 {
     struct Prepared
@@ -53,8 +45,7 @@ inline MaskReadKernel& maskReader()
     return prepared.kernel;
 }
 
-// One rect of a mask texture, row-major, one float per texel. What reads a
-// single path's coverage out of a texture a whole batch of them wrote into.
+// One rect of a mask texture, row-major, one float per texel.
 inline Vector<float>
     readRegion(const GPU::Texture& texture, int x, int y, int width, int height)
 {
@@ -88,9 +79,8 @@ inline Vector<float>
     return values;
 }
 
-// Row-major, one float per coverage pixel. Empty when there is no device, or
-// nothing to rasterize - so a caller checks that before reading anything into
-// the result.
+// Row-major, one float per coverage pixel. Empty when there is no device or
+// nothing to rasterize, so callers check that before reading it.
 inline Vector<float> rasterize(PathRasterizer& rasterizer,
                                const Path& path,
                                float scale,

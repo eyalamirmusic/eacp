@@ -2,32 +2,12 @@
 
 using namespace eacp;
 
-// The same two shapes, filled three ways, in one window:
-//
-//   left    PathRasterizer - coverage computed per pixel in a kernel, drawn
-//           through a single-sampled quad, so nothing but the arithmetic is
-//           smoothing those edges
-//   middle  PathView - the path ear-clipped into triangles and rasterized with
-//           4x MSAA, which is what eacp had before this
-//   right   Graphics::Context::fillPath - the platform's own path rasterizer
-//           (CoreGraphics here, Direct2D on Windows), the standard to beat
-//
-// A rounded rectangle and an ellipse, because between them they cover every
-// case a UI actually asks for: long straight edges, near-horizontal and
-// near-vertical curvature where quantisation shows worst, and everything in
-// between. Both are simple polygons, so the ear clipper handles them and the
-// comparison stays about antialiasing rather than about which renderer can
-// tessellate what.
-
 namespace
 {
 constexpr auto background = Graphics::Color::gray(0.09f);
 constexpr auto fill = Graphics::Color {0.98f, 0.72f, 0.24f};
 constexpr auto headerHeight = 34.f;
 
-// Panel-local geometry, identical in all three, so a screenshot lines the
-// shapes up column to column and the difference on screen is the difference in
-// rasterization.
 Graphics::Rect roundedRectFor(const Graphics::Rect& panel)
 {
     return {panel.w * 0.08f, panel.h * 0.05f, panel.w * 0.84f, panel.h * 0.30f};
@@ -62,9 +42,7 @@ Graphics::WindowOptions windowOptions()
 }
 } // namespace
 
-// The kernel's panel. Single-sampled on purpose: MSAA on this view would be
-// smoothing the quad's own four straight edges, which are axis-aligned and need
-// nothing, while taking credit for the mask's.
+// Single-sampled: MSAA would smooth the quad's own edges, not the mask's.
 struct CoveragePanel final : GPU::GPUView
 {
     CoveragePanel()
@@ -122,8 +100,6 @@ struct CoveragePanel final : GPU::GPUView
     float builtScale = 0.f;
 };
 
-// The platform's panel. An ordinary View, so its pixels come from the same
-// CoreGraphics that draws every other non-GPU eacp view.
 struct PlatformPanel final : Graphics::View
 {
     void paint(Graphics::Context& g) override

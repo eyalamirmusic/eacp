@@ -6,10 +6,8 @@ namespace eacp::Graphics
 {
 namespace
 {
-// Win32 reports monitor rectangles in physical pixels; every eacp screen point
-// is a 96-DPI unit, which is the same conversion Window::createWindow makes on
-// the way in (GetDpiForSystem, not GetDpiForWindow - there is no window here
-// yet, and a size read from this is about to become one).
+// Win32 reports monitor rects in physical pixels; an eacp screen point is a
+// 96-DPI unit. GetDpiForSystem, not GetDpiForWindow: there is no window yet.
 float systemScale()
 {
     const auto dpi = GetDpiForSystem();
@@ -39,8 +37,7 @@ Display primaryDisplay()
     if (monitor == nullptr || !GetMonitorInfoW(monitor, &info))
         return {{0.f, 0.f, 1280.f, 800.f}, {0.f, 0.f, 1280.f, 800.f}, scale};
 
-    // rcWork is rcMonitor minus the taskbar and any registered appbars, which
-    // is the whole point of asking Win32 rather than SM_CXSCREEN.
+    // rcWork is rcMonitor minus the taskbar and any registered appbars.
     return {toScreenPoints(info.rcMonitor, scale),
             toScreenPoints(info.rcWork, scale),
             scale};

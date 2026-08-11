@@ -11,8 +11,7 @@ namespace eacp
 {
 namespace
 {
-// Converts to UTF-8 and normalizes to forward slashes, matching the generic
-// style FilePath uses for std::filesystem::path input.
+// UTF-8 with forward slashes, matching the style FilePath uses elsewhere.
 FilePath toFilePath(const wchar_t* text)
 {
     if (text == nullptr || *text == L'\0')

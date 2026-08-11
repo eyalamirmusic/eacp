@@ -1,10 +1,7 @@
 #include "Process.h"
 
-// iOS sandboxes third-party apps and forbids process creation: posix_spawn,
-// fork and exec are all denied at runtime (EPERM), so the POSIX implementation
-// cannot function here regardless of what compiles. This stub fails loudly in
-// debug if a launch is attempted and otherwise reports a clean not-launched
-// result, so run() returns ProcessResult{launched = false}.
+// The iOS sandbox denies posix_spawn, fork and exec at runtime, so this stub
+// asserts in debug and otherwise reports ProcessResult {launched = false}.
 namespace eacp::Processes
 {
 struct Process::Native

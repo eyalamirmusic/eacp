@@ -6,15 +6,12 @@
 
 namespace eacp::UI
 {
-// Corner radii, in points. Kept together because what makes a set of controls
-// look like a set is that they agree about this, and a literal at each call
-// site is how they stop agreeing.
+// Corner radii, in points.
 constexpr auto buttonCorner = 5.f;
 constexpr auto trackCorner = 4.f;
 
-// The gap between an editor's border and the first glyph. Also what the caret
-// has to stay clear of, which is why it is a constant rather than a literal in
-// the scrolling arithmetic.
+// The gap between an editor's border and the first glyph, which the caret also
+// has to stay clear of.
 constexpr auto textInset = 6.f;
 
 const Theme& defaultTheme()
@@ -69,8 +66,7 @@ void Label::paint(Graphics& g)
     if (font.has_value())
         g.setFont(*font);
 
-    // After the whole face, so a label given both keeps the size it was told
-    // last -- and so setFontSize on its own means "the host's, bigger".
+    // After the whole face, so a label given both keeps this size.
     if (pointSize.has_value())
         g.setFontSize(*pointSize);
 
@@ -137,8 +133,7 @@ void Button::paint(Graphics& g)
     g.setColour(theme.outline);
     g.drawRoundedRect(bounds, buttonCorner);
 
-    // A lit toggle carries a dark caption, so it stays legible against the
-    // accent rather than sitting light-on-light.
+    // A lit toggle carries a dark caption, to stay legible on the accent.
     g.setColour(toggledOn ? Color {0.08f, 0.09f, 0.12f, 1.f} : theme.text);
     g.drawText(text, bounds, Justification::Centred);
 }
@@ -165,8 +160,7 @@ void Button::mouseUp(const MouseEvent& event)
     auto wasDown = down;
     down = false;
 
-    // Only a release still inside the button counts, so a press dragged away
-    // and let go is a cancel -- what every platform's buttons do.
+    // A press dragged away and released is a cancel.
     if (wasDown && hitTest(event.position))
     {
         if (toggleable)
@@ -180,9 +174,8 @@ void Button::mouseUp(const MouseEvent& event)
 
 namespace
 {
-// Whether this is the platform's "do the editing shortcut" modifier: Command on
-// Apple, Control everywhere else. Both are accepted rather than one chosen by
-// #if, so a Windows keyboard on a Mac and a Mac keyboard on Windows both work.
+// Both are accepted rather than one chosen by #if, so a Windows keyboard on a
+// Mac and a Mac keyboard on Windows both work.
 bool isShortcutModifier(const ModifierKeys& modifiers)
 {
     return modifiers.command || modifiers.control;
@@ -238,8 +231,7 @@ void Checkbox::mouseExit(const MouseEvent&)
 
 void Checkbox::mouseUp(const MouseEvent& event)
 {
-    // Only a release inside counts, so a press dragged off the box is a change
-    // of mind rather than a toggle.
+    // A press dragged off the box is a change of mind.
     if (getLocalBounds().contains(event.position))
         setChecked(!checked, true);
 }
@@ -269,9 +261,7 @@ void Checkbox::paint(Graphics& g)
     g.setColour(isMouseOver() ? theme.text : theme.outline);
     g.drawRoundedRect(box, 4.f, hasKeyboardFocus() ? 2.f : 1.f);
 
-    // A tick out of two strokes rather than a path: two lines are two quads in
-    // the batch the rest of the tree is drawing in, where a path would be a
-    // mask in the atlas for every checkbox on screen.
+    // Two strokes rather than a path, which would cost an atlas mask apiece.
     if (checked)
     {
         g.setColour(theme.background);
@@ -396,8 +386,7 @@ void TextEditor::moveCaret(int position, bool extendSelection)
 {
     caret = std::clamp(position, 0, (int) text.size());
 
-    // Never left inside a UTF-8 sequence, so the caret is always a safe
-    // substring boundary for the measuring and the editing both.
+    // Never left inside a UTF-8 sequence, so it stays a safe substring boundary.
     while (caret > 0 && caret < (int) text.size()
            && isContinuationByte(text[(std::size_t) caret]))
         --caret;
@@ -498,8 +487,7 @@ void TextEditor::scrollToCaret()
     auto caretX = measureText(std::string_view {text}.substr(0, (std::size_t) caret),
                               fontToDrawIn());
 
-    // Only ever as far as it has to be: the caret is pulled back into view from
-    // whichever edge it left, and a string that fits is never scrolled at all.
+    // Pulled back only as far as the edge the caret left.
     scrollOffset = std::clamp(scrollOffset, caretX - visible, caretX);
     scrollOffset = std::max(0.f, scrollOffset);
 
@@ -528,9 +516,7 @@ int TextEditor::positionAt(float x) const
         auto after =
             measureText(std::string_view {text}.substr(0, (std::size_t) next), face);
 
-        // Past the middle of a character means the one after it, which is what
-        // makes clicking the right-hand half of a letter put the caret behind
-        // it rather than in front.
+        // Past the middle of a character means the one after it.
         if (target < (before + after) * 0.5f)
             return position;
 
@@ -546,8 +532,7 @@ void TextEditor::mouseDown(const MouseEvent& event)
 
     auto position = positionAt(event.position.x);
 
-    // Shift-click extends rather than replaces, the way a second click with the
-    // modifier held means "to here" in every text field.
+    // Shift-click extends rather than replaces.
     moveCaret(position, event.modifiers.shift);
 }
 
@@ -609,9 +594,7 @@ bool TextEditor::keyDown(const KeyEvent& event)
     if (handleClipboardKey(event))
         return true;
 
-    // Anything else with the shortcut modifier held belongs to the window, not
-    // to this field: an editor that swallowed Cmd+S would be the reason a
-    // document could not be saved while a field had focus.
+    // Anything else with the shortcut modifier held belongs to the window.
     if (isShortcutModifier(event.modifiers))
         return false;
 
@@ -658,9 +641,7 @@ bool TextEditor::keyDown(const KeyEvent& event)
             break;
     }
 
-    // Typing, which is anything that produced a printable character. Control
-    // characters are excluded rather than listed: Tab has to reach the traversal
-    // above this, and a key that produced nothing has nothing to insert.
+    // Typing. Control characters are excluded so Tab reaches focus traversal.
     if (readOnly || event.characters.empty())
         return false;
 
@@ -687,9 +668,8 @@ void TextEditor::paint(Graphics& g)
     auto face = fontToDrawIn();
     g.setFont(face);
 
-    // Everything below is drawn against the text's own origin, which a long
-    // string has scrolled. Clipped to the inside of the border so a scrolled
-    // string is cut at the edge rather than running over it.
+    // Everything below is drawn against the scrolled text origin, clipped to
+    // the inside of the border.
     auto scope = Graphics::ScopedState {g};
     g.reduceClipRegion(bounds.inset(textInset * 0.5f, 1.f));
 
@@ -720,10 +700,8 @@ void TextEditor::paint(Graphics& g)
     if (!focused || readOnly)
         return;
 
-    // Always on rather than blinking. A blink is a timer per editor and a
-    // repaint of the tree twice a second for as long as a field has focus,
-    // which is a real cost in a tier whose whole claim is that it draws nothing
-    // while nothing changes.
+    // Always on rather than blinking, a blink costing a timer and a repaint
+    // twice a second for as long as a field has focus.
     auto caretX =
         origin
         + g.measureText(std::string_view {text}.substr(0, (std::size_t) caret));
@@ -839,15 +817,12 @@ void Slider::mouseUp(const MouseEvent&)
 
 namespace
 {
-// Where the arc starts and how far it sweeps: the usual rotary gap at the
-// bottom, so full and empty are visibly different positions rather than the
-// same one. Measured clockwise from straight up, in the y-down space paths are
-// authored in.
+// Clockwise from straight up, in the y-down space paths are authored in, with
+// the usual rotary gap at the bottom.
 constexpr auto knobStartAngle = -0.75f * GPUWidgets::pi;
 constexpr auto knobSweepAngle = 1.5f * GPUWidgets::pi;
 
-// Points per unit of drag. A full sweep in about two hundred pixels of travel,
-// which is fine enough to set a value and coarse enough to reach both ends.
+// Points of vertical travel for a full sweep.
 constexpr auto knobDragRange = 200.f;
 
 Point onCircle(Point centre, float radius, float angle)
@@ -856,8 +831,7 @@ Point onCircle(Point centre, float radius, float angle)
             centre.y - std::cos(angle) * radius};
 }
 
-// A ring segment as a closed contour: out along the start radius, round the
-// outside, back down the end radius, and round the inside the other way.
+// A ring segment as one closed contour.
 void addArc(GPUWidgets::Path& path,
             Point centre,
             float innerRadius,
@@ -870,9 +844,8 @@ void addArc(GPUWidgets::Path& path,
     if (sweep <= 0.f || outerRadius <= innerRadius)
         return;
 
-    // Enough steps that the flattening tolerance decides the smoothness rather
-    // than this does - Path subdivides curves adaptively, but an arc built out
-    // of lineTo has only what it is given.
+    // Path subdivides curves adaptively, but an arc of lineTo has only what it
+    // is given.
     auto steps = std::max(8, (int) std::ceil(sweep * outerRadius * 0.5f));
 
     path.moveTo(onCircle(centre, outerRadius, fromAngle));
@@ -919,11 +892,8 @@ void Knob::resized()
     rebuildIndicator();
 }
 
-// Built here rather than in paint(), because rasterizing coverage is a compute
-// dispatch and a compute pass cannot be opened inside the render pass paint()
-// draws into. Called whenever the geometry changes -- which is what the value
-// changing means for a rotary control -- so the mask the next frame samples is
-// always the current one. See PathShape.
+// Built outside paint(), rasterizing coverage being a compute dispatch that
+// cannot be recorded inside a render pass. See PathShape.
 void Knob::rebuildIndicator()
 {
     auto bounds = getLocalBounds();
@@ -948,14 +918,9 @@ void Knob::rebuildIndicator()
            knobStartAngle,
            knobStartAngle + knobSweepAngle * value);
 
-    // The pointer, as a second contour of the same path: one shape, one mask,
-    // one quad -- and no seam where it crosses the arc, since coverage
-    // accumulates within a path rather than between two draws of one.
-    //
-    // Wound the same way round as the arc, and that is load-bearing rather than
-    // tidy: under the non-zero rule two contours that disagree *subtract* where
-    // they overlap, so the wrong order here punches a hole through the join
-    // instead of merging with it.
+    // The pointer, as a second contour of the same path so there is no seam.
+    // Must be wound the same way round as the arc: under the non-zero rule two
+    // contours that disagree subtract where they overlap.
     auto pointerWidth = std::max(1.5f, size * 0.045f);
     auto angle = knobStartAngle + knobSweepAngle * value;
     auto tip = onCircle(centre, outer - thickness * 0.5f, angle);
@@ -979,9 +944,7 @@ void Knob::paint(Graphics& g)
     auto centre = Point {bounds.w * 0.5f, bounds.h * 0.5f};
     auto outer = size * 0.5f - 1.f;
 
-    // The unfilled track is a ring, which the distance field draws as a
-    // bordered circle for nothing -- so only the part that actually needs a
-    // path becomes one.
+    // The unfilled track is a bordered circle, so it needs no path.
     auto thickness = std::max(2.f, size * 0.12f);
 
     g.setColour(theme.outline);
@@ -1010,8 +973,7 @@ void Knob::mouseDown(const MouseEvent&)
     repaint();
 }
 
-// Against where the drag started rather than against the last event, so the
-// value cannot drift from accumulated rounding over a long drag.
+// Measured from where the drag started, so the value cannot drift.
 void Knob::mouseDrag(const MouseEvent& event)
 {
     auto travel = event.downPosition.y - event.position.y;
@@ -1099,9 +1061,10 @@ bool ScrollPanel::mouseWheelMove(const MouseEvent& event)
     if (maximumScroll() <= 0.f)
         return false;
 
-    // A trackpad reports points and is applied as it comes; a notched wheel
-    // reports lines, and only this component knows what a line is worth here.
-    auto step = event.preciseWheel ? event.wheelDelta.y : event.wheelDelta.y * 40.f;
+    constexpr auto pointsPerWheelLine = 40.f;
+
+    auto step = event.preciseWheel ? event.wheelDelta.y
+                                   : event.wheelDelta.y * pointsPerWheelLine;
 
     setScrollPosition(scrollOffset - step);
     return true;

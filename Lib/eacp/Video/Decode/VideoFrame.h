@@ -4,9 +4,6 @@
 
 namespace eacp::Video
 {
-// The pixel layout a decoded frame arrives in. The Windows backend hands back
-// NV12, straight from the decoder; the Apple zero-copy path still wraps a BGRA
-// CVPixelBuffer.
 enum class FramePixelFormat
 {
     BGRA8,
@@ -14,12 +11,6 @@ enum class FramePixelFormat
     // Two planes in one buffer: `height` rows of 8-bit luma, then `height / 2`
     // rows of interleaved Cb/Cr at half resolution on both axes. Both planes
     // share `bytesPerRow`, so the chroma plane starts at bytesPerRow * height.
-    //
-    // What every video decoder produces natively. Taking it as-is rather than
-    // asking the platform for BGRA skips a colour-conversion pass over every
-    // frame and carries 1.5 bytes per pixel instead of 4 — at 8K that is 50 MB
-    // a frame rather than 133 MB, through both the copy and the upload. The
-    // conversion happens in the shader, where it is free.
     NV12
 };
 
@@ -30,26 +21,16 @@ constexpr std::size_t framePixelBytes(FramePixelFormat format, int width, int he
     return format == FramePixelFormat::NV12 ? pixels + pixels / 2 : pixels * 4;
 }
 
-// Which YCbCr matrix a track's chroma was coded with. Not a detail that can be
-// assumed: BT.601 was defined for standard definition and BT.709 for high, and
-// decoding one as the other is a visible error — a saturated green comes back
-// about 15% dark, which is enough to fail a round-trip comparison.
+// Which YCbCr matrix a track's chroma was coded with; decoding one as the other
+// is a visible error.
 enum class YuvMatrix
 {
     BT601,
     BT709
 };
 
-// The constants that turn NV12 samples into RGB. Derived from the matrix rather
-// than written out, so the CPU path in toImage and the shader in SpriteRenderer
-// are provably the same arithmetic.
-//
-//     R = y + redV * v
-//     G = y - greenU * u - greenV * v
-//     B = y + blueU * u
-//
-// where y, u and v are the raw 0-1 samples with the offsets subtracted and the
-// scales applied.
+// Turns NV12 samples into RGB, with y/u/v the raw 0-1 samples after offset and
+// scale: R = y + redV * v, G = y - greenU * u - greenV * v, B = y + blueU * u.
 struct YuvTransform
 {
     float lumaOffset = 0.0f;
@@ -67,8 +48,6 @@ struct YuvTransform
 // full 0-255 that JPEG-style and some camera sources use.
 constexpr YuvTransform yuvTransformFor(YuvMatrix matrix, bool fullRange)
 {
-    // The red and blue luma weights each matrix is defined by; everything else
-    // follows from them.
     auto kr = matrix == YuvMatrix::BT709 ? 0.2126f : 0.299f;
     auto kb = matrix == YuvMatrix::BT709 ? 0.0722f : 0.114f;
     auto kg = 1.0f - kr - kb;
@@ -88,29 +67,25 @@ constexpr YuvTransform yuvTransformFor(YuvMatrix matrix, bool fullRange)
     return transform;
 }
 
-// What to assume when a track does not signal its matrix, which is the common
-// case: the definition each standard was written for. 576 is the tallest
-// standard-definition frame.
+// What to assume when a track does not signal its matrix. 576 is the tallest
+// standard-definition frame, which BT.601 was written for.
 constexpr YuvMatrix yuvMatrixForHeight(int height)
 {
     return height > 576 ? YuvMatrix::BT709 : YuvMatrix::BT601;
 }
 
-// Everything about a decoded frame except its pixels.
 struct FrameInfo
 {
     int width = 0;
     int height = 0;
 
     // Presentation time and on-screen duration, in seconds from the start of
-    // the file. A duration of 0 means the container did not say; FrameStream
-    // then falls back to the track's nominal frame rate.
+    // the file. Duration 0 means the container did not say.
     double seconds = 0.0;
     double duration = 0.0;
 
-    // Distance between rows, which may exceed width * 4 on a padded buffer.
-    // Only meaningful for the CPU path; the zero-copy path reads it from the
-    // platform buffer.
+    // May exceed width * 4 on a padded buffer. CPU path only; the zero-copy
+    // path reads it from the platform buffer.
     std::size_t bytesPerRow = 0;
 
     FramePixelFormat format = FramePixelFormat::BGRA8;
@@ -120,20 +95,9 @@ struct FrameInfo
     bool fullRangeYuv = false;
 };
 
-// One decoded frame: a timestamp plus pixels, either as a platform buffer the
-// GPU can wrap without copying (a CVPixelBuffer on Apple) or as a CPU-side
-// BGRA8 copy.
-//
-// Unlike Cameras::CameraFrame — a non-owning view valid only inside the capture
-// callback — this owns its pixels and is reference counted, because a video
-// stream keeps several frames alive at once: the decoder runs ahead of the
-// playhead, and the renderer holds the one it is drawing for the length of a
-// render pass while the decode thread carries on filling the queue behind it.
-// Copies are cheap and share the same pixels.
-//
-// The platform's release call reaches this class as a std::function handed over
-// at construction, so the frame owns a native buffer without the portable layer
-// naming a platform type.
+// A timestamp plus pixels, either as a platform buffer the GPU can wrap without
+// copying or as a CPU-side copy. Owns its pixels and is reference counted, so
+// copies are cheap and share the same pixels.
 class VideoFrame
 {
 public:
@@ -141,9 +105,8 @@ public:
 
     VideoFrame() = default;
 
-    // Takes ownership of a platform pixel buffer; `release` runs once the last
-    // VideoFrame sharing it is destroyed. The backend passes its own retain
-    // already applied (CFRetain on Apple) and CFRelease as the releaser.
+    // Takes ownership of a platform pixel buffer with the backend's retain
+    // already applied; `release` runs once the last sharing frame is destroyed.
     static VideoFrame
         fromNativeBuffer(void* buffer, Releaser release, const FrameInfo& info)
     {
@@ -152,22 +115,17 @@ public:
         return frame;
     }
 
-    // Takes ownership of a CPU-side BGRA8 copy, for backends without a
-    // GPU-wrappable buffer (Media Foundation today).
+    // Takes ownership of a CPU-side copy, for backends without a GPU-wrappable
+    // buffer.
     static VideoFrame fromPixels(Vector<std::uint8_t> pixels, const FrameInfo& info)
     {
         return fromPixelBuffer(
             std::make_shared<Vector<std::uint8_t>>(std::move(pixels)), info);
     }
 
-    // Shares an existing pixel buffer rather than handing over a fresh one, so a
-    // backend can recycle buffers across frames instead of allocating one per
-    // frame. At 4K that allocation is 33 MB and at 8K 133 MB, and a fresh one
-    // costs a page fault and a kernel zero-fill for every page before the decoder
-    // even starts copying into it.
-    //
-    // The buffer must not be written again until every VideoFrame sharing it is
-    // gone; a backend checks that with use_count() before reusing one.
+    // Shares a recycled buffer instead of handing over a fresh one. It must not
+    // be written again until every VideoFrame sharing it is gone, which a
+    // backend checks with use_count().
     static VideoFrame fromPixelBuffer(std::shared_ptr<Vector<std::uint8_t>> pixels,
                                       const FrameInfo& info)
     {
@@ -196,9 +154,8 @@ public:
         return yuvTransformFor(info().yuvMatrix, info().fullRangeYuv);
     }
 
-    // Whether `time` falls in this frame's presentation interval. A frame with
-    // no duration covers everything from its own timestamp on, so the last
-    // frame of a stream keeps being shown rather than blinking out.
+    // A frame with no duration covers everything from its timestamp on, so the
+    // last frame of a stream keeps being shown.
     bool covers(double time) const
     {
         if (!isValid() || time < seconds())
@@ -207,15 +164,14 @@ public:
         return duration() <= 0.0 || time < seconds() + duration();
     }
 
-    // The platform pixel buffer for a zero-copy GPU wrap, or null when this
-    // frame carries CPU pixels instead. Valid for as long as this VideoFrame
-    // (or any copy of it) is alive.
+    // For a zero-copy GPU wrap; null when this frame carries CPU pixels. Valid
+    // while this VideoFrame or any copy of it is alive.
     void* nativeBuffer() const
     {
         return payload != nullptr ? payload->buffer : nullptr;
     }
 
-    // The CPU-side BGRA8 pixels, or null on the zero-copy path.
+    // Null on the zero-copy path.
     const std::uint8_t* pixels() const
     {
         if (payload == nullptr || payload->pixels == nullptr
@@ -225,9 +181,8 @@ public:
         return payload->pixels->data();
     }
 
-    // The interleaved Cb/Cr plane of an NV12 frame, or null for any other
-    // format. It shares bytesPerRow() with the luma plane and has half as many
-    // rows, each covering two pixels' worth of chroma.
+    // Null for any format but NV12. Shares bytesPerRow() with the luma plane
+    // and has half as many rows.
     const std::uint8_t* chromaPlane() const
     {
         if (format() != FramePixelFormat::NV12)

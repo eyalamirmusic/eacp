@@ -53,12 +53,6 @@ std::string lowerFirst(std::string_view s)
     return r;
 }
 
-// Wire-name segmentation. ApiReflector::joinedName joins sub-API
-// prefixes with '.' (matching CommandExport's nesting separator), so a
-// reflect() that does r.use("clock", clock); r.event<&Clock::tick>();
-// produces wire name "clock.tick". Hook codegen splits on the same '.'
-// to project that onto valid TS identifiers (which can't contain '.')
-// and onto the matching backend access path.
 Vector<std::string_view> splitOnDot(std::string_view name)
 {
     auto out = Vector<std::string_view> {};
@@ -77,8 +71,7 @@ Vector<std::string_view> splitOnDot(std::string_view name)
     return out;
 }
 
-// "clock.tick" → "ClockTick"; "tick" → "Tick". Used to build the
-// useXxx identifier slot from a dotted wire event name.
+// "clock.tick" → "ClockTick"
 std::string toPascalConcat(std::string_view name)
 {
     auto out = std::string {};
@@ -87,9 +80,7 @@ std::string toPascalConcat(std::string_view name)
     return out;
 }
 
-// "clock.tick" → "clockTick"; "tick" → "tick". Used for the internal
-// store variable name in the keyed-event path (needs to be a valid JS
-// identifier but conventionally lower-camel).
+// "clock.tick" → "clockTick"
 std::string toCamelConcat(std::string_view name)
 {
     auto segments = splitOnDot(name);
@@ -102,10 +93,7 @@ std::string toCamelConcat(std::string_view name)
     return out;
 }
 
-// For an event named "prefix.local" the matching get<Name> command on
-// the wire is "prefix.getLocal" — capitalize only the last segment and
-// glue "get" in front of it. Single-segment names ("tick") still
-// produce "getTick", preserving the original behaviour.
+// "prefix.local" → "prefix.getLocal"
 std::string getCommandNameFor(std::string_view eventName)
 {
     auto segments = splitOnDot(eventName);
@@ -224,15 +212,7 @@ std::string formatHooksModule(std::span<TypeNode> typeRoots,
         if (payloadNode == nullptr)
             continue;
 
-        // Wire name (event.name) may contain dots from sub-API
-        // recursion. Project it onto:
-        //  - getCmdName: the wire command we look for, "prefix.getLocal"
-        //  - fetchAccess: the JS access path into backend, where the
-        //    nested object the CommandExport tree builds shows up at
-        //    backend.prefix.getLocal (dotted name appends directly
-        //    after "backend.")
-        //  - stateHookName: the exported TS identifier, which can't
-        //    contain dots — concatenate Pascal-cased segments.
+        // Wire names may be dotted ("clock.tick"); TS identifiers may not.
         auto getCmdName = getCommandNameFor(event.name);
         auto hasGetCmd = commandExists(commands, getCmdName);
         auto fetchAccess = std::string {"backend."} + getCmdName;

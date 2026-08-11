@@ -1,17 +1,8 @@
 #include "Common.h"
 
-// The portable half of menu enablement: the model that every backend reads.
-// Whether an item actually greys out is an AppKit question and lives in
-// MenuTests-macOS.mm; what is checkable everywhere is that the predicate
-// survives construction and is never null, because the platform code calls it
-// without asking.
-
 using namespace nano;
 using namespace eacp::Graphics;
 
-// An item that says nothing about availability is available. This is the case
-// every existing call site is in, so the default is what stops enablement from
-// being a breaking change.
 auto tDefaultItemIsEnabled = test("Menu/defaultItemIsEnabled") = []
 {
     const auto item = MenuItem::withAction("Save");
@@ -29,15 +20,11 @@ auto tPredicateIsKept = test("Menu/predicateIsKept") = []
 
     check(!item.isEnabled());
 
-    // Read live rather than sampled at construction: the whole point is that
-    // the app never rebuilds the bar to change what is greyed.
     available = true;
     check(item.isEnabled());
 };
 
-// A null predicate assigned directly to the field is replaced on the way in,
-// so the platform code can call it unconditionally. withAction fills the same
-// hole; this covers the aggregate-initialisation path that skips it.
+// Covers the aggregate-initialisation path, which skips withAction's fill-in.
 auto tNullPredicateIsReplaced = test("Menu/nullPredicateIsReplaced") = []
 {
     auto item = MenuItem {};
@@ -67,9 +54,6 @@ auto tNullActionIsReplaced = test("Menu/nullActionIsReplaced") = []
     menu.items[0].action();
 };
 
-// A responder-selector item defers to the focused view for both what it does
-// and whether it can be done, so it carries no predicate of its own — but the
-// field still has to be callable, since nothing downstream special-cases it.
 auto tResponderItemHasCallablePredicate =
     test("Menu/responderItemHasCallablePredicate") = []
 {

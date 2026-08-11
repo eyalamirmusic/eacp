@@ -9,19 +9,13 @@ struct MyApp
 {
     MyApp()
     {
-        // Binds clock.getCurrentTick to the bridge's command table and
-        // subscribes a listener to clock.tick that re-emits each
-        // published snapshot over the WebView wire.
         transport.getBridge().use(clock);
 
         setApplicationMenuBar(buildDefaultWebViewMenuBar(), window);
         window.setContentView(webView);
     }
 
-    // Declaration order matters: clock comes first so it's destructed
-    // *last*, after the transport's bound listeners have torn down.
-    // (EA::Broadcaster's destructor also nulls listener back-pointers
-    // as a defence-in-depth, but the right ordering is the contract.)
+    // Declared before the transport, so it outlives the bound listeners.
     Api::Clock clock;
     WebView webView {embeddedOptions("ReactAnimApp")};
     WebViewBridge transport {webView};

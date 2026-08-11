@@ -8,17 +8,9 @@ namespace eacp::GPU
 {
 namespace
 {
-// The four source texels that average into one destination texel. At an odd
-// extent the chain has already halved down past the last pair, so the second
-// row or column clamps back onto the first and the block is a 2x1, 1x2 or 1x1 -
-// which is the same rule both APIs' own generators use.
-//
-// Named for what it holds rather than just `Block`, and that is not a style
-// preference: eacp builds as a unity build by default, so every .cpp in a
-// target is concatenated into one translation unit and an anonymous namespace
-// does not separate this file from ShaderGraph.cpp, which has a `Block` of its
-// own. The collision is invisible in the non-unity build CLAUDE.md tells you to
-// configure locally, and is a compile error in CI.
+// The four source texels averaging into one destination texel; at an odd extent
+// the second row or column clamps onto the first, as both APIs' generators do.
+// Not named `Block`: the default unity build would collide with ShaderGraph.cpp.
 struct TexelBlock
 {
     int x0, x1, y0, y1;
@@ -35,10 +27,7 @@ TexelBlock texelBlockFor(int x, int y, int sourceWidth, int sourceHeight)
             y0 + 1 < sourceHeight ? y0 + 1 : y0};
 }
 
-// Byte channels - R8, RG8, RGBA8 and BGRA8 alike. The channel order does not
-// matter to an average, which is why one function covers both RGBA and BGRA:
-// averaging four texels channel by channel gives the same answer whichever
-// order those channels are stored in.
+// R8, RG8, RGBA8 and BGRA8 alike: a per-channel average is order-independent.
 void halveBytes(const std::uint8_t* source,
                 std::size_t sourcePitch,
                 int sourceWidth,
@@ -65,9 +54,7 @@ void halveBytes(const std::uint8_t* source,
                 const auto sum = at(block.x0, block.y0) + at(block.x1, block.y0)
                                  + at(block.x0, block.y1) + at(block.x1, block.y1);
 
-                // +2 before the shift rounds to nearest rather than always
-                // down, which over a ten-level chain is the difference between
-                // a mip that holds its brightness and one that drifts dark.
+                // +2 rounds to nearest, so a long chain does not drift dark.
                 destination[(std::size_t) y
                                 * (std::size_t) (destinationWidth * channels)
                             + (std::size_t) (x * channels + channel)] =
@@ -114,9 +101,7 @@ void halveFloats(const std::uint8_t* source,
         }
 }
 
-// Halves through float and stores back as bits. Averaging the raw 16-bit
-// patterns would be meaningless - they are a sign, an exponent and a mantissa,
-// not a number - which is the trap this exists to avoid.
+// Halves through float: averaging raw half bit patterns is meaningless.
 void halveHalves(const std::uint8_t* source,
                  std::size_t sourcePitch,
                  int sourceWidth,
@@ -199,8 +184,7 @@ MipChain buildMipChain(const void* pixels,
     const auto levels = mipLevelCount(width, height);
     chain.levels.resize(levels);
 
-    // Level 0, repacked to a tight stride so every level below it reads the
-    // same way and the backends upload them all through one loop.
+    // Level 0, repacked tight so every level reads the same way.
     auto& base = chain.levels[0];
     base.resize((int) ((std::size_t) width * (std::size_t) height
                        * (std::size_t) texelBytes));

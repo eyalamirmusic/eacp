@@ -8,8 +8,8 @@ using namespace eacp;
 
 namespace
 {
-// Bumped by the fixture plugin's static initializer on every genuine load
-// (see DynamicLibraryTestPlugin.cpp), so it counts real map/unmap cycles.
+// Bumped by the fixture plugin's static initializer on every genuine load, so
+// it counts real map/unmap cycles.
 int pluginLoadCount()
 {
     auto value = getEnvValue("EACP_TEST_PLUGIN_LOADS");
@@ -31,12 +31,9 @@ auto tSharedUntilLastClose = test("DynamicLibrary/sharedUntilLastClose") = []
     check(add != nullptr);
     check(add(2, 3) == 5);
 
-    // The image survives the first close: `second` still holds it.
     first.close();
     check(add(4, 4) == 8);
 
-    // The last close unloads for real — a fresh open re-runs the plugin's
-    // static initializers.
     second.close();
     auto reopened = Plugins::DynamicLibrary(EACP_TEST_PLUGIN);
     check(reopened.isOpen());
@@ -52,8 +49,6 @@ auto tMoveKeepsTheImage = test("DynamicLibrary/moveKeepsTheImage") = []
     check(moved.isOpen());
     check(!library.isOpen());
 
-    // The moved-from instance's destruction must not drop the reference:
-    // closing `moved` is what unloads.
     moved.close();
     auto reopened = Plugins::DynamicLibrary(EACP_TEST_PLUGIN);
     check(pluginLoadCount() == 2);
@@ -66,8 +61,6 @@ auto tOpenFailure = test("DynamicLibrary/openFailure") = []
     check(library.findSymbol("anything") == nullptr);
 };
 
-// With no loop to defer to, unload runs the quiesce callback and unmaps
-// before it returns — the app-teardown path.
 auto tUnloadWithNoLoop = test("DynamicLibrary/unloadWithNoLoop") = []
 {
     setEnv("EACP_TEST_PLUGIN_LOADS", "0");
@@ -85,13 +78,10 @@ auto tUnloadWithNoLoop = test("DynamicLibrary/unloadWithNoLoop") = []
 
     check(quiesced);
 
-    // Unmapped already: reopening re-runs the plugin's static initializers.
     auto reopened = Plugins::DynamicLibrary(EACP_TEST_PLUGIN);
     check(pluginLoadCount() == 2);
 };
 
-// With a loop running, the unmap is deferred to a later turn — the module's
-// code must outlive the turn its teardown ran in.
 auto tUnloadDefersWhileLooping = test("DynamicLibrary/unloadDefersWhileLooping") = []
 {
     setEnv("EACP_TEST_PLUGIN_LOADS", "0");
@@ -109,14 +99,11 @@ auto tUnloadDefersWhileLooping = test("DynamicLibrary/unloadDefersWhileLooping")
                                  check(Threads::isEventLoopRunning());
                                  Plugins::unload(std::move(library));
 
-                                 // Same turn: the image is still mapped, so
-                                 // calling into it is safe.
                                  stillMappedInsideTurn = add(2, 3) == 5;
                              });
 
     check(stillMappedInsideTurn);
 
-    // The loop has since run the deferred close, so this is a genuine reload.
     auto reopened = Plugins::DynamicLibrary(EACP_TEST_PLUGIN);
     check(pluginLoadCount() == 2);
 };

@@ -8,8 +8,7 @@ namespace
 {
 Catalogue loadCatalogue()
 {
-    // Embedded at build time by res_embed_add, so the app carries its own data
-    // and there is no file to ship alongside the binary or find at runtime.
+    // Embedded at build time by res_embed_add; nothing to ship alongside.
     if (auto resource = ResEmbed::get("Clips.json", "Clips"))
         return Miro::createFromJSONString<Catalogue>(resource.toStringView());
 

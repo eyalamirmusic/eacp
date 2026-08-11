@@ -1,18 +1,8 @@
 #include "Common.h"
 
-// RenderPass::setViewport / clearViewport, checked by drawing through them and
-// reading the pixels back.
-//
-// The property that matters is the one that separates a viewport from a
-// scissor, and it is easy to write a case that cannot tell them apart: a
-// full-screen quad drawn through a half-target viewport and a full-screen quad
-// drawn through a half-target scissor produce the same picture. So the geometry
-// here deliberately covers only *half of clip space* - a viewport moves it and
-// a scissor at the same rectangle would delete it, which is a difference no
-// implementation can fake.
-//
-// Everything renders off-screen through View::renderToImage, so it runs in CI
-// on both backends.
+// The geometry deliberately covers only half of clip space: a viewport moves it
+// where a scissor at the same rectangle would delete it, which is a difference
+// no implementation can fake.
 
 using namespace nano;
 using namespace eacp;
@@ -109,10 +99,8 @@ constexpr Vertex red(float x, float y, float z)
     return {x, y, z, 1.f, 0.f, 0.f, 1.f};
 }
 
-// The first quad is the whole point: it covers x from -1 to 0 in clip space -
-// the left half - and nothing else. Where it lands on the target is the answer
-// to every question in this file. The other two fill clip space at two depths,
-// for the near/far range.
+// The first quad covers x from -1 to 0 in clip space and nothing else; the
+// other two fill clip space at two depths, for the near/far range.
 // clang-format off
 constexpr Vertex geometry[] = {
     green(-1.f, -1.f, 0.f), green(0.f, -1.f, 0.f), green(0.f, 1.f, 0.f),
@@ -130,9 +118,8 @@ constexpr auto leftHalfOfClipSpace = 0;
 constexpr auto atTheNearPlane = 6;
 constexpr auto aQuarterBack = 12;
 
-// One draw and the viewport it is drawn through. `viewport` is applied when the
-// rect is non-empty, `clearViewport` restores the whole target, and neither
-// happening is what "the default" means.
+// `viewport` is applied when the rect is non-empty; neither field set means the
+// default.
 struct Step
 {
     int firstVertex = 0;
@@ -144,9 +131,8 @@ struct Step
     bool clearViewport = false;
 };
 
-// The target is 40x40, so a half is 20 pixels and the quarters fall on 10, 20
-// and 30 - every assertion below is a whole number of pixels rather than a
-// rounding argument.
+// 40 so a half is 20 pixels and the quarters land on 10, 20 and 30: every
+// assertion is a whole number of pixels rather than a rounding argument.
 constexpr auto targetSize = 40.f;
 
 struct ViewportView final : GPUView
@@ -161,12 +147,9 @@ struct ViewportView final : GPUView
 
     RenderPipeline makePipeline(bool depth)
     {
-        // Both settings belong here rather than in the constructor body: the
-        // pipeline is built in the initialiser list and has to agree with the
-        // target it will draw into, so the target has to be configured first.
-        //
-        // Single-sampled because MSAA would feather the boundary a moved quad
-        // lands on and make every "which pixel" assertion approximate.
+        // Set here, not in the constructor body: the pipeline is built in the
+        // initialiser list and has to agree with the target. Single-sampled
+        // because MSAA would feather the boundary a moved quad lands on.
         setSampleCount(1);
         setDepth(depth);
 
@@ -214,13 +197,9 @@ Graphics::Image renderSteps(const Vector<Step>& steps, bool depth = false)
     return view.renderToImage(1.f);
 }
 
-// The row every case samples: halfway down, where all this geometry is solid.
 constexpr auto middleRow = 20;
 } // namespace
 
-// The baseline, and the thing every other case is measured against: with no
-// viewport set, clip space maps onto the whole target, so geometry covering the
-// left half of clip space covers the left half of the target.
 auto tDefaultViewportIsTheWholeTarget = test("Viewport/defaultIsTheWholeTarget") = []
 {
     if (!Device::shared().isValid())
@@ -237,13 +216,8 @@ auto tDefaultViewportIsTheWholeTarget = test("Viewport/defaultIsTheWholeTarget")
     check(isBlue(image.at(35, middleRow)));
 };
 
-// The case this file exists for. The viewport is the target's right half, and
-// the geometry is the left half of clip space - so it lands in the left half of
-// the *viewport*, which is the target's third quarter, x from 20 to 30.
-//
-// A scissor set to the same rectangle would have produced an empty image: the
-// geometry it would be clipping against is entirely on the other side. Nothing
-// but a real viewport transform puts green at x = 25.
+// A scissor at the same rectangle would have produced an empty image, since the
+// geometry is entirely on the other side. Only a viewport puts green at x = 25.
 auto tViewportMovesGeometryRatherThanClipping =
     test("Viewport/movesGeometryRatherThanClipping") = []
 {
@@ -264,11 +238,8 @@ auto tViewportMovesGeometryRatherThanClipping =
     check(isBlue(image.at(38, middleRow)));
 };
 
-// The y axis too, and in the same direction as everything else in this library:
-// a viewport at the top half puts geometry filling clip space in the top half
-// of the target, because a viewport rect is y-down like Graphics::Rect and like
-// setScissorRect. A backend that took y from the bottom would put it at the
-// other end and no x-axis case would notice.
+// A viewport rect is y-down, like Graphics::Rect and setScissorRect: a backend
+// taking y from the bottom would put the geometry at the other end.
 auto tViewportYIsMeasuredFromTheTop = test("Viewport/yIsMeasuredFromTheTop") = []
 {
     if (!Device::shared().isValid())
@@ -286,10 +257,7 @@ auto tViewportYIsMeasuredFromTheTop = test("Viewport/yIsMeasuredFromTheTop") = [
     check(isBlue(image.at(20, 35)));
 };
 
-// Two draws, one pass: the viewport is state that stays set until something
-// changes it, and clearViewport is what changes it back. Both halves of the
-// picture have to be there at the end - the moved quad from the first draw and
-// the unmoved one from the second.
+// The viewport is state that stays set until clearViewport changes it back.
 auto tClearViewportRestoresTheWholeTarget =
     test("Viewport/clearRestoresTheWholeTarget") = []
 {
@@ -304,25 +272,16 @@ auto tClearViewportRestoresTheWholeTarget =
     if (!image.isValid())
         return;
 
-    // The two land side by side rather than with a gap: the restored draw
-    // covers 0..20 and the moved one 20..30, so the assertion that carries the
-    // case is x = 5, which only the second draw can reach - without
+    // x = 5 carries the case: only the second draw reaches it, and without
     // clearViewport it would have gone to 20..30 as well and left this blue.
     check(isGreen(image.at(5, middleRow))); // the second draw, unmoved
     check(isGreen(image.at(25, middleRow))); // the first draw, still there
     check(isBlue(image.at(35, middleRow))); // and neither reached past 30
 };
 
-// The documented refusal, and the reason it is a refusal rather than a clamp: a
-// viewport hanging ten pixels off the right edge is ignored outright, so the
-// draw lands where the default puts it. Clamped instead, it would have drawn -
-// squashed into the clamped rectangle, at a scale nobody asked for, looking
-// exactly like a bug in the caller's own maths.
-//
-// This is eacp's decision rather than something a backend forces: with the
-// bounds check removed, Metal took the out-of-target viewport without
-// complaint and drew through it. So there is nothing but this case keeping the
-// two backends from quietly diverging on what such a rect means.
+// Ignored rather than clamped: a clamped rect would draw squashed, at a scale
+// nobody asked for. eacp's decision, not the backend's - Metal took an
+// out-of-target viewport without complaint and drew through it.
 auto tViewportOutsideTheTargetIsIgnored =
     test("Viewport/outsideTheTargetIsIgnored") = []
 {
@@ -340,10 +299,8 @@ auto tViewportOutsideTheTargetIsIgnored =
     check(isBlue(image.at(25, middleRow)));
 };
 
-// An empty rect is the other half of that rule, and the one a caller reaches by
-// accident - a pane collapsed to zero width, a layout before its first
-// measurement. It is ignored too, rather than being handed to a backend that
-// would either reject it or rasterize nothing at all for the rest of the pass.
+// The rect a caller reaches by accident: a pane collapsed to zero width, or a
+// layout before its first measurement.
 auto tEmptyViewportIsIgnored = test("Viewport/emptyIsIgnored") = []
 {
     if (!Device::shared().isValid())
@@ -359,16 +316,9 @@ auto tEmptyViewportIsIgnored = test("Viewport/emptyIsIgnored") = []
     check(isBlue(image.at(25, middleRow)));
 };
 
-// near/far, which share the call and are otherwise untested by anything above:
-// both halves draw a red quad at the near plane and then a green one a quarter
-// of the way back, with the default less-equal test between them. The only
-// difference is the depth range the red one was drawn through.
-//
-// At the default [0, 1] the red quad writes 0 and the green one at 0.25 fails
-// behind it. Pushed to [0.5, 1] the same red quad writes 0.5 instead - its
-// geometry unchanged, its depth remapped - and the green quad now passes in
-// front of it. Which is the whole use for the parameter: putting a layer
-// behind, or in front of, something it does not otherwise sort against.
+// The red quad at the near plane writes 0 through the default range and 0.5
+// through [0.5, 1], so the green quad a quarter back fails behind it in the
+// first and passes in front of it in the second.
 auto tDepthRangeRemapsWhatIsWritten = test("Viewport/depthRangeRemapsWrites") = []
 {
     if (!Device::shared().isValid())

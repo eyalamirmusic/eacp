@@ -8,10 +8,6 @@
 
 #include <winrt/base.h>
 
-// Windows/D3D12 backend. Bakes the library's compute bytecode and the shared
-// compute root signature into a pipeline-state object; nativeState() hands it
-// to the pass, which binds it with SetPipelineState.
-
 namespace eacp::GPU
 {
 struct ComputePipeline::Native

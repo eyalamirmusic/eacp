@@ -9,9 +9,8 @@ DisplayLink::DisplayLink(const Callback& cb)
 {
 }
 
-// Stamps each tick with the time since the link started and since the
-// previous tick. The state lives in the returned callback itself, so the
-// platform Natives stay timing-agnostic.
+// The timing state lives in the returned callback, so the platform Natives stay
+// timing-agnostic.
 Callback DisplayLink::timedTick(const FrameCallback& cb)
 {
     using Clock = std::chrono::steady_clock;
@@ -36,9 +35,7 @@ Callback DisplayLink::timedTick(const FrameCallback& cb)
             state->started = true;
         }
 
-        // Across a stall (paused links, a blocked main thread) the gap can be
-        // arbitrarily long; clamping keeps the first frame after it a normal
-        // animation step instead of a jump.
+        // Clamped so the first frame after a stall is a step, not a jump.
         constexpr auto maxDelta = 0.1;
 
         auto frame = FrameTime {};

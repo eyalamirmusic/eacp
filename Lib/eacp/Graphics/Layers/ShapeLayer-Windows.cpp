@@ -1,4 +1,3 @@
-// Windows implementation of ShapeLayer using DirectComposition surfaces
 #include "ShapeLayer.h"
 #include "NativeLayer-Windows.h"
 
@@ -125,16 +124,13 @@ struct ShapeLayer::Native : NativeLayerBase
         }
     }
 
-    // Path geometry (owned - AddRef'd to keep alive)
     ComPtr<ID2D1PathGeometry> pathGeometry;
 
-    // Fill settings
     Color fillColor;
     LinearGradient gradient;
     bool useGradient = false;
     bool hasFill = false;
 
-    // Stroke settings
     Color strokeColor;
     float strokeWidth = 1.0f;
     bool hasStroke = false;
@@ -150,7 +146,7 @@ void ShapeLayer::setPath(const Path& path)
     auto* geometry = static_cast<ID2D1PathGeometry*>(path.getHandle());
     if (geometry)
     {
-        // AddRef to keep geometry alive even after Path object is destroyed
+        // AddRef so the geometry outlives the Path object.
         geometry->AddRef();
         impl->pathGeometry.Attach(geometry);
     }

@@ -255,12 +255,8 @@ private:
 
         state->continuations.push_back([] { stopEventLoop(); });
 
-        // Other code (e.g. a Window's onQuit-via-callAsync) may call
-        // stopEventLoop from a queued callback that has nothing to do
-        // with this Async. If that happens, runEventLoopFor returns
-        // before our state has settled — re-enter and keep pumping
-        // until either the state actually settles or the deadline
-        // expires.
+        // Unrelated code may stopEventLoop from a queued callback, returning
+        // from runEventLoopFor before our state settles, so keep re-entering.
         auto deadline = Time::Deadline {timeout};
         while (state->status == detail::AsyncState<T>::Status::Pending
                && !deadline.expired())

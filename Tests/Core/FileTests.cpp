@@ -109,10 +109,8 @@ auto tIsUnderRoot = test("File/isUnder") = []
     check(File {inside}.isUnder(dir));
     check(File {inside}.isUnder(std::filesystem::temp_directory_path()));
 
-    // A sibling/child directory is not a containing root.
     check(!File {inside}.isUnder(dir / "sub"));
 
-    // Escapes (a path outside the root) are rejected.
     check(
         !File {std::filesystem::temp_directory_path() / "eacp-outside.bin"}.isUnder(
             dir));

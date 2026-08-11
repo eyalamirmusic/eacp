@@ -34,9 +34,6 @@ fragment float4 fragmentMain() { return float4(1.0, 1.0, 1.0, 1.0); }
 )";
 } // namespace
 
-// A white triangle over a clear colour that cycles with `phase`. Recording it in
-// GpuDirect mode proves each frame reflects live GPU state -- the background
-// colour differs frame to frame.
 struct SpinView final : GPUView
 {
     SpinView()
@@ -71,7 +68,7 @@ struct SpinView final : GPUView
 
     static constexpr float triangle[] = {0.f, 0.7f, -0.7f, -0.7f, 0.7f, -0.7f};
 
-    float phase = 0.f; // 0..1
+    float phase = 0.f;
     Buffer vertexBuffer;
     ShaderLibrary library;
     RenderPipeline pipeline;

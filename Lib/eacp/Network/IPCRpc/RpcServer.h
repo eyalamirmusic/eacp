@@ -6,21 +6,14 @@
 namespace eacp::IPC
 {
 
-// Typed RPC between this user's processes: a Miro::Bridge mounted on the
-// message channel. The server side turns each incoming envelope into a
-// bridge dispatch and answers by id; every bridge emit fans out to all
-// connected clients as an event. The wire shapes are the WebView bridge's
-// - {id, command, payload} up, {reply, result | error} back, {event,
-// payload} pushed - so one Bridge can serve a window and a sibling
-// process with the same handlers.
-//
-// Main-thread objects, like the Messenger they ride on.
+// A Miro::Bridge mounted on the message channel. The wire shapes match the
+// WebView bridge's - {id, command, payload} up, {reply, result | error} back,
+// {event, payload} pushed. A main-thread object, like its Messenger.
 class RpcServer
 {
 public:
-    // Claims name (the ChannelServer rules apply) and serves bridgeToUse's
-    // commands to every client that dials in. The bridge must outlive
-    // this server, the same contract every Miro transport has.
+    // Claims name (the ChannelServer rules apply). bridgeToUse must outlive
+    // this server.
     RpcServer(std::string_view name, Miro::Bridge& bridgeToUse);
 
     RpcServer(const RpcServer&) = delete;
@@ -47,8 +40,8 @@ private:
     Vector<Messenger*> clients;
     EA::Listener emitListener;
 
-    // Last member on purpose: destroying the MessageServer first is what
-    // retires the sessions - and with them every handler capturing this.
+    // Last member on purpose: destroying it first retires the sessions, and
+    // with them every handler capturing this.
     MessageServer server;
 };
 

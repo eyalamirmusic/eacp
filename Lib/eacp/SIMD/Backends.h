@@ -2,11 +2,9 @@
 
 #include "Common.h"
 
-// Internal header: the per-backend entry points for the image kernels, used by
-// the runtime dispatcher, the unit tests and the benchmark. This is NOT the
-// public eacp-simd API -- include <eacp/SIMD/SIMD.h> for that. It is the one
-// header where per-architecture / per-feature conditionals are allowed; the
-// public interface stays free of them.
+// Internal per-backend entry points, and the one header where
+// per-architecture / per-feature conditionals are allowed. Not the public API:
+// include <eacp/SIMD/SIMD.h> for that.
 
 #include "Dispatch/Cpu.h"
 

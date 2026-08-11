@@ -19,9 +19,7 @@ struct Buffer::Native
         if (metalDevice == nil || bytes == 0)
             return;
 
-        // Shared storage keeps the buffer CPU-visible, so read() is a memcpy and
-        // a compute output needs no staging copy. The usage flag is a Metal no-op:
-        // a plain MTLBuffer already serves as a vertex or a device storage buffer.
+        // Shared storage keeps the buffer CPU-visible, so read() is a memcpy.
         if (data != nullptr)
             buffer = [metalDevice newBufferWithBytes:data
                                               length:bytes
@@ -39,8 +37,7 @@ struct Buffer::Native
 Buffer::Buffer(Device& device, const void* data, std::size_t bytes, BufferUsage usage)
     : impl(device, data, bytes, usage)
 {
-    // Only the ones that got storage, so the count means GPU allocations rather
-    // than calls - a zero-byte or device-less Buffer allocated nothing.
+    // Counts GPU allocations, not calls: an invalid Buffer allocated nothing.
     if (isValid())
         device.noteBufferCreated();
 }
@@ -60,11 +57,8 @@ void Buffer::read(void* dst, std::size_t bytes, std::size_t offset) const
     if (offset >= impl->length)
         return;
 
-    // Shared storage makes the copy itself a memcpy, but the kernel that filled
-    // the buffer may still be running: commitAsync returns before the GPU has
-    // done anything at all. Waiting for the newest submission waits for every
-    // earlier one too, which is the same ordering the D3D12 read gets from the
-    // queue's fence — and costs nothing once the work has landed.
+    // commitAsync returns before the GPU has run, so a kernel that fills this
+    // buffer may still be in flight; the newest submission implies all earlier.
     if (impl->device != nullptr)
         impl->device->waitForSubmittedWork();
 

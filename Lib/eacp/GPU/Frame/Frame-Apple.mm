@@ -44,12 +44,8 @@ struct Frame::Native
             commandBuffer.reset((NSObject<MTLCommandBuffer>*) [queue commandBuffer]);
     }
 
-    // Points a pass descriptor's samples at this frame's slot in the timer.
-    //
-    // Only the two outer stage boundaries are sampled: a render pass starts at
-    // the top of its vertex work and ends at the bottom of its fragment work,
-    // and the two in between would say where the middle was rather than how
-    // long the whole took.
+    // Samples only the outer stage boundaries — start of vertex, end of
+    // fragment — so the pair spans the whole pass.
     void timeRenderPass(MTLRenderPassDescriptor* passDescriptor,
                         std::string_view label) const
     {
@@ -76,8 +72,6 @@ struct Frame::Native
         attachment.endOfFragmentSampleIndex = (NSUInteger) (pass * 2 + 1);
     }
 
-    // The texture the pass stores into: the drawable's on-screen texture, or the
-    // app-owned off-screen colour texture for a snapshot.
     id<MTLTexture> storeTexture() const
     {
         if (auto d = drawable.get())
@@ -114,31 +108,25 @@ Frame::~Frame()
     if (buffer == nil)
         return;
 
-    // Recorded before the commit, so a Buffer::read that follows this frame
-    // waits for it. A presented frame only waits to be *scheduled*, which says
-    // nothing about a compute pass on it having run.
+    // Both must precede the commit: presenting only waits for the buffer to be
+    // scheduled, and once committed it may finish at any moment.
     if (impl->device != nullptr)
     {
         impl->device->trackSubmittedWork((__bridge void*) buffer);
-
-        // Also before the commit, though for a different reason: the timer
-        // retains the command buffer here, and once committed it may finish -
-        // and be asked for its GPU times - at any moment.
         impl->device->frameTimer().endFrame((__bridge void*) buffer);
     }
 
     if (target != nil)
     {
-        // The layer presents with transaction, so commit, wait for the buffer to
-        // be scheduled, then present the drawable inside the CATransaction.
+        // The layer presents with transaction, so the drawable must be presented
+        // inside the CATransaction, once the buffer is scheduled.
         [buffer commit];
         [buffer waitUntilScheduled];
         [(id<CAMetalDrawable>) target present];
     }
     else
     {
-        // Off-screen: block until the GPU finishes so the colour texture can be
-        // read back on return.
+        // Blocks so the colour texture can be read back on return.
         [buffer commit];
         [buffer waitUntilCompleted];
     }
@@ -187,18 +175,12 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
 
     auto encoder = [buffer renderCommandEncoderWithDescriptor:passDescriptor];
 
-    // The pass carries the target's pixel size so it can clamp scissor rects;
-    // the MSAA texture, when there is one, matches the resolve target's size.
+    // The pass carries the target's pixel size so it can clamp scissor rects.
     return RenderPass((__bridge void*) encoder,
                       (int) target.width,
                       (int) target.height);
 }
 
-// Rendering into an app-owned texture: one attachment, stored, and no resolve.
-// Depth comes from the target when it was created with one, cleared and
-// discarded exactly as the drawable pass does it. Passes on one command buffer
-// are ordered by the queue, so nothing here has to say that a later pass may
-// sample what this one wrote.
 RenderPass Frame::beginPass(const Texture& target,
                             const RenderPassDescriptor& descriptor)
 {
@@ -238,9 +220,8 @@ RenderPass Frame::beginPass(const Texture& target,
                       (int) texture.height);
 }
 
-// A compute pass samples at the encoder's own boundaries rather than at a
-// vertex and a fragment stage, which is the same pair of numbers by another
-// name: when the work started and when it finished.
+// Samples at the encoder's own boundaries, there being no vertex or fragment
+// stage to bracket.
 ComputePass Frame::beginCompute(std::string_view label)
 {
     auto buffer = impl->commandBuffer.get();

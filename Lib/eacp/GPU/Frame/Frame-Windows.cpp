@@ -5,13 +5,6 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 
-// Windows/D3D12 backend. The drawable and msaaTexture handles point at the
-// D3D12Drawable / D3D12MsaaTarget owned by GPUView. The frame owns one
-// CommandContext recording: beginPass transitions and clears the target, the
-// pass records draws onto it, and the destructor resolves any multisample
-// target, returns the back buffer to PRESENT, executes the recording and
-// presents the swapchain (mirroring the Metal frame's present-on-destroy).
-
 namespace eacp::GPU
 {
 struct Frame::Native
@@ -29,10 +22,8 @@ struct Frame::Native
             open(getD3D12Context().acquire());
     }
 
-    // Off-screen snapshot target (GPUView::renderNativeContent). The colour
-    // target is passed as a D3D12Drawable with a null swapChain, so beginPass
-    // renders into it exactly like a back buffer but the destructor resolves and
-    // hands it back for read-back instead of presenting.
+    // The colour target arrives as a D3D12Drawable with a null swapChain, so it
+    // renders like a back buffer but is read back instead of presented.
     Native(Device& deviceToUse, const OffscreenTarget& target)
         : device(&deviceToUse)
         , drawable(static_cast<D3D12Drawable*>(target.colorTexture))
@@ -45,32 +36,22 @@ struct Frame::Native
             open(getD3D12Context().acquire());
     }
 
-    // Takes the recording and publishes it as the one a CPU upload may record
-    // onto, for as long as this frame is the thing recording. Withdrawn in
-    // ~Frame before anything is submitted, so an upload can never be handed a
-    // list that has already been closed.
+    // Publishes the recording so CPU uploads join it; ~Frame withdraws it
+    // before submitting, so no upload is handed a closed list.
     void open(CommandContext* commandsToUse)
     {
         commands = commandsToUse;
         getD3D12Context().setOpenRecording(commands);
     }
 
-    // The frame's opening timestamp, which has to be the first thing on the
-    // list for the total to mean the frame. Metal takes this off the command
-    // buffer afterwards and records nothing here.
-    //
-    // Called from Frame's constructor body rather than from this one, and the
-    // order is the whole point: Device::beginFrame() is what gives the timer
-    // the slot to write into, and it runs after every member is built. Recorded
-    // from here it would go into the previous frame's query heap.
+    // Must run after Device::beginFrame(), which gives the timer its slot -
+    // hence the call from Frame's constructor body, not from Native's.
     void beginTiming()
     {
         if (commands != nullptr)
             device->frameTimer().beginRecording(commands->list.get());
     }
 
-    // Opens a timed pass on the list and hands the encoder what it needs to
-    // close it when the pass ends.
     void timePass(D3D12Encoder& encoder, std::string_view label)
     {
         auto& timer = device->frameTimer();
@@ -93,34 +74,18 @@ struct Frame::Native
 
     bool useMsaa() const { return msaa != nullptr && msaa->texture != nullptr; }
 
-    // The state every render pass needs bound before it can draw, whether it
-    // targets the back buffer or an app-owned texture. Shared so the two paths
-    // cannot drift apart on the platform I cannot test.
+    // Root signature and heaps are fixed for every render pipeline, so binding
+    // here frees the pass from call ordering.
     void bindRootState(D3D12Context& context, ID3D12GraphicsCommandList* list)
     {
-        // The root signature and heaps are fixed for every render pipeline, so
-        // binding them here frees the pass from caring about call ordering.
         ID3D12DescriptorHeap* heaps[] = {context.getTextureHeap(),
                                          context.getSamplerHeap()};
         list->SetDescriptorHeaps(2, heaps);
         list->SetGraphicsRootSignature(context.getRenderRootSignature());
 
-        // Resource Binding Tier 1 hardware requires *every* descriptor table the
-        // root signature declares to be populated before a draw, even the ones
-        // the shader never reads — an unset table drops the draw entirely rather
-        // than failing loudly. The signature is shared and declares
-        // maxTextureSlots of them, while a typical shader binds one, so the rest
-        // are seeded with the null descriptor here; setFragmentTexture
-        // overwrites the slots that carry a real texture.
-        //
-        // Tier 2+ hardware ignores unset tables, which is why this only ever
-        // showed up on an Arm laptop: no text drew, and nothing was logged
-        // without the D3D12 validation layer installed.
-        //
-        // Only the SRV tables need this. The root signature declares no sampler
-        // tables at all any more - samplers are static samplers baked into it,
-        // picked by the register the shader emitted its sampler at. See
-        // TextureSampling.
+        // Resource Binding Tier 1 hardware silently drops a draw if any
+        // descriptor table the root signature declares is unset, even ones the
+        // shader never reads, so seed every SRV table with a null descriptor.
         const auto nullTexture = context.getNullTextureDescriptor();
 
         if (nullTexture.ptr == 0)
@@ -167,10 +132,8 @@ Frame::~Frame()
 
     if (impl->offscreen)
     {
-        // Off-screen snapshot: resolve any MSAA into the colour texture, leave it
-        // in COPY_SOURCE for GPUView's read-back, then run the GPU to completion
-        // (no swapchain to present). The colour texture was created in
-        // RESOLVE_DEST when multisampling and RENDER_TARGET otherwise.
+        // Left in COPY_SOURCE for GPUView's read-back. The colour texture was
+        // created in RESOLVE_DEST when multisampling, RENDER_TARGET otherwise.
         if (impl->useMsaa() && backBuffer != nullptr)
         {
             transition(list,
@@ -205,9 +168,8 @@ Frame::~Frame()
 
     if (impl->useMsaa() && backBuffer != nullptr)
     {
-        // The MSAA target lives in RENDER_TARGET state between frames; the
-        // back buffer never left PRESENT (the pass rendered into the MSAA
-        // target), so both transition just around the resolve.
+        // The MSAA target rests in RENDER_TARGET between frames and the back
+        // buffer never left PRESENT, so both transition around the resolve only.
         transition(list,
                    impl->msaa->texture,
                    D3D12_RESOURCE_STATE_RENDER_TARGET,
@@ -237,9 +199,6 @@ Frame::~Frame()
                    D3D12_RESOURCE_STATE_PRESENT);
     }
 
-    // The closing timestamp and the query resolve go onto the list while it is
-    // still open; the fence value they will be read against only exists once it
-    // has been executed.
     impl->device->frameTimer().endFrame(list);
     impl->device->frameTimer().noteSubmitted(
         getD3D12Context().submit(impl->commands));
@@ -259,8 +218,8 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
 
     impl->bindRootState(context, list);
 
-    // The off-screen colour texture is created already in RENDER_TARGET; only a
-    // swapchain back buffer starts in PRESENT and needs promoting here.
+    // Only a swapchain back buffer starts in PRESENT; the off-screen colour
+    // texture is created in RENDER_TARGET already.
     if (!impl->useMsaa() && !impl->passBegun && !impl->offscreen)
         transition(list,
                    impl->drawable->backBuffer,
@@ -296,8 +255,7 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
         list->ClearRenderTargetView(target, clearColor, 0, nullptr);
     }
 
-    // Depth is cleared to the far plane (1.0) whenever a depth buffer is
-    // bound, matching the Metal pass's unconditional depth clear.
+    // Cleared to the far plane, matching Metal's unconditional depth clear.
     if (hasDepth)
         list->ClearDepthStencilView(
             impl->depth->view, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
@@ -305,24 +263,14 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     auto* encoder = new D3D12Encoder {impl->commands, {}};
     impl->timePass(*encoder, descriptor.label);
 
-    // The pass carries the target's pixel size so it can clamp scissor rects.
     return RenderPass(encoder,
                       static_cast<int>(impl->drawable->width),
                       static_cast<int>(impl->drawable->height));
 }
 
-// Rendering into an app-owned texture: one attachment and no resolve. Depth is
-// the target's own, from TextureDescriptor::depth, and rests in DEPTH_WRITE for
-// its lifetime, so it costs a clear here and no barrier.
-//
-// Deliberately does not touch passBegun, which records whether the *back
-// buffer* was moved out of PRESENT - a frame whose only passes were into
-// textures must not have one transitioned back on the way out.
-//
-// The texture is moved into RENDER_TARGET here and moved back the moment
-// something samples it, in RenderPass::setFragmentTexture, rather than at the
-// end of the pass: a target written by one pass and read by the next then costs
-// exactly the two barriers it needs, and one written and never read costs one.
+// Leaves passBegun alone: it tracks the back buffer leaving PRESENT, and a
+// texture-only frame must not transition one back. The texture stays in
+// RENDER_TARGET until RenderPass::setFragmentTexture samples it.
 RenderPass Frame::beginPass(const Texture& target,
                             const RenderPassDescriptor& descriptor)
 {
@@ -360,8 +308,7 @@ RenderPass Frame::beginPass(const Texture& target,
         list->ClearRenderTargetView(data->rtv, clearColor, 0, nullptr);
     }
 
-    // Cleared to the far plane whenever there is one, matching both the
-    // drawable pass here and the Metal pass's unconditional depth clear.
+    // Cleared to the far plane, matching Metal's unconditional depth clear.
     if (hasDepth)
         list->ClearDepthStencilView(
             data->dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
@@ -372,14 +319,8 @@ RenderPass Frame::beginPass(const Texture& target,
     return RenderPass(encoder, width, height);
 }
 
-// A compute pass on the frame's own recording. The graphics and compute root
-// signatures occupy separate slots on a command list, so binding one here does
-// not disturb the render state beginPass set - the two kinds of pass interleave
-// on one list without either having to restore anything.
-//
-// A buffer this pass writes as a UAV and a later pass binds as vertex data is
-// transitioned by RenderPass::setVertexBuffer: same recording, so the per-
-// recording state tracking sees the UAV state and emits the barrier.
+// Graphics and compute root signatures occupy separate command-list slots, so
+// binding one here leaves the render state beginPass set alone.
 ComputePass Frame::beginCompute(std::string_view label)
 {
     if (impl->commands == nullptr)
@@ -389,8 +330,6 @@ ComputePass Frame::beginCompute(std::string_view label)
 
     auto* encoder = new D3D12ComputeEncoder {impl->commands};
 
-    // Same two queries as a render pass, on the same list, in the order the
-    // work was recorded — a compute pass is not special here.
     auto& timer = impl->device->frameTimer();
     const auto pass = timer.beginPass(label);
 

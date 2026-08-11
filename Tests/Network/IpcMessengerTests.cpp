@@ -43,9 +43,8 @@ auto tRoundTrip = test("Ipc/Messenger/roundTripsBothDirections") = []
     check(reply == "pong:ping");
 };
 
-// Length-prefixed framing is the difference between "messages" and "lines":
-// a payload full of delimiters and NULs - and bigger than any socket
-// buffer - must arrive as the one message it left as.
+// A payload full of delimiters and NULs, bigger than any socket buffer, must
+// arrive as the one message it left as.
 auto tMessengerBinaryPayload = test("Ipc/Messenger/carriesArbitraryBytesIntact") = []
 {
     auto payload = std::string {"lines\nand\r\nmore"};
@@ -137,8 +136,6 @@ auto tNameTaken = test("Ipc/Messenger/secondServerOnANameIsRefused") = []
     check(threw);
 };
 
-// Sessions are served in turn: a finished one is swept when the next client
-// arrives, and each gets its own working conversation.
 auto tServesClientsInTurn = test("Ipc/Messenger/servesClientsInTurn") = []
 {
     auto server = MessageServer {"eacp.tests.msgr.turns"};

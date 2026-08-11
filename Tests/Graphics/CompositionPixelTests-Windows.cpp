@@ -11,18 +11,13 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
 
-// The rest of the suite exercises the composition backend without ever
-// looking at a pixel — it once passed 386/387 against a backend whose windows
-// showed nothing (every visual tree was covered by its own first-attached
-// child; see DCOMP-PORT-STATUS.md). These tests capture what DWM actually
-// composes for the window and assert on the colors, so "renders at all" and
-// "siblings stack in add order" are both pinned by observable output.
+// Regression: the suite once passed 386/387 against a backend whose windows
+// showed nothing, so these assert on what DWM actually composes.
 
 namespace
 {
-// Asks DWM to render the window's full composed content into the DC —
-// including the DirectComposition visual tree, which a plain BitBlt or
-// default PrintWindow miss. Defined locally: not every SDK header names it.
+// PW_RENDERFULLCONTENT: renders the DirectComposition visual tree, which BitBlt
+// and default PrintWindow miss. Defined locally: not every SDK header names it.
 constexpr auto printWindowFullContent = UINT {0x00000002};
 
 struct FilledView final : View
@@ -44,8 +39,6 @@ struct FilledView final : View
     ShapeLayer layer;
 };
 
-// Two full-size siblings: red attached first, green attached second. The
-// later sibling must win the pixels, matching macOS and the WinRT backend.
 struct StackedViews final : View
 {
     StackedViews() { addChildren({bottom, top}); }
@@ -115,8 +108,7 @@ bool isGreen(const Rgb& pixel)
 
 auto tLaterSiblingWinsPixels = test("Composition/laterSiblingWinsPixels") = []
 {
-    // No desktop compositor (headless CI session, remote host): there is
-    // nothing to compose or capture, so there is nothing to assert.
+    // No desktop compositor (headless CI session, remote host).
     if (!isCompositorInitialized())
     {
         check(true);
@@ -138,9 +130,7 @@ auto tLaterSiblingWinsPixels = test("Composition/laterSiblingWinsPixels") = []
         auto hwnd = static_cast<HWND>(window.getHandle());
         auto pixel = Rgb {};
 
-        // DWM picks the committed visual tree up asynchronously, so poll —
-        // the loop exits on the first green frame, and the deadline only
-        // matters when the backend is genuinely broken.
+        // DWM picks the committed visual tree up asynchronously, so poll.
         for (auto attempt = 0; attempt < 60 && !isGreen(pixel); ++attempt)
         {
             pumpPendingMessages();

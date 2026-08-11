@@ -27,8 +27,8 @@ Proc::Process holdInAnotherProcess(const std::string& name, int ms)
     return Proc::Process {EACP_IPC_LOCK_HARNESS, {name, "hold", std::to_string(ms)}};
 }
 
-// The harness prints "locked" once it genuinely holds the lock; until then a
-// test that acted would be racing process startup rather than the lock.
+// The harness prints "locked" once it genuinely holds the lock; acting before
+// that would race process startup rather than the lock.
 bool waitUntilHeld(Proc::Process& harness)
 {
     auto deadline = eacp::Time::Deadline {eacp::Time::MS {5000}};
@@ -72,8 +72,7 @@ auto tNoRecursion = test("Ipc/Lock/secondGuardOnOneLockIsRefused") = []
         check(!second.isLocked());
     }
 
-    // The refused guard must not have released the winner's lock on its way
-    // out - the whole point of tracking who actually holds it.
+    // The refused guard must not release the winner's lock on its way out.
     check(runHarness("eacp.tests.ipc.noRecursion", "try").exitCode == contended);
 };
 
@@ -125,7 +124,6 @@ auto tReleasedIsAvailable =
     check(runHarness("eacp.tests.ipc.released", "try").exitCode == acquired);
 };
 
-// The headline claim: a holder that dies without unlocking strands nothing.
 auto tKilledHolderReleases = test("Ipc/Lock/killedHolderReleases") = []
 {
     auto name = std::string {"eacp.tests.ipc.killed"};
@@ -187,9 +185,8 @@ auto tEmptyNameThrows = test("Ipc/Lock/emptyNameThrows") = []
     check(threw);
 };
 
-// A name is folded into a filename, so a separator must not survive to steer
-// the lock file out of the lock directory. Both names fold to one file, which
-// is what proves the folding happened.
+// A name is folded into a filename, so a separator must not steer the lock file
+// out of the lock directory.
 auto tFoldsSeparators = test("Ipc/Lock/foldsPathSeparatorsInNames") = []
 {
     auto escaping = Lock {"../eacp.tests.ipc.escape"};

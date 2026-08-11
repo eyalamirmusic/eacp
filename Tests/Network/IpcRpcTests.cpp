@@ -41,8 +41,8 @@ public:
 };
 } // namespace
 
-// The call is issued while the dial is still in the air, so this also
-// proves the outbox: nothing is lost to the connection race.
+// The call is issued while the dial is still in the air, so this also proves
+// the outbox.
 auto tTypedCall = test("Ipc/Rpc/typedCallRoundTrips") = []
 {
     auto api = MathApi {};
@@ -98,8 +98,6 @@ auto tEventsReachEveryClient = test("Ipc/Rpc/eventsReachEveryClient") = []
                             pumpTimeout));
 };
 
-// A call must never hang forever: when the dial finds nobody, the pending
-// promise is rejected rather than orphaned.
 auto tCallsFailWhenNobodyServes = test("Ipc/Rpc/callsFailWhenNobodyServes") = []
 {
     auto client = RpcClient {"eacp.tests.rpc.nobody", eacp::Time::MS {150}};

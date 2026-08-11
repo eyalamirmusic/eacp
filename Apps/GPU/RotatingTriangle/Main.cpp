@@ -4,9 +4,6 @@
 using namespace eacp;
 using namespace GPU;
 
-// Reusable value sub-types instead of raw float arrays. EACP_SHADER_VALUE teaches
-// the shader layer their shape once, so they stand in for float2 / float3 wherever
-// a vertex field or uniform is expected.
 struct Vec2
 {
     float x, y;
@@ -34,10 +31,6 @@ const Vertex triangleVertices[] = {
     {{0.8f, -0.8f}, {0.2f, 0.2f, 1.0f}},
 };
 
-// The shader is an object. The angle is a named uniform you set; the vertex inputs
-// are pulled straight out of the Vertex struct in define(), so that struct is the
-// single source of the vertex layout - no separate input declarations to keep in
-// sync, and the layout reads the fields' real offsets.
 struct RotatingShader final : ShaderProgram
 {
     RotatingShader() { compile(); }
@@ -64,9 +57,6 @@ struct RotatingShader final : ShaderProgram
 };
 } // namespace
 
-// Continuous mode renders every display refresh, synchronized with vsync.
-// update() advances the animation by the frame's delta time, so the rotation
-// speed is the same on any refresh rate and unaffected by skipped frames.
 struct RotatingTriangleView final : GPUView
 {
     RotatingTriangleView()

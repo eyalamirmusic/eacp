@@ -5,22 +5,6 @@
 #include <cmath>
 #include <string>
 
-// What a clip-path resolves to, with no renderer involved.
-//
-// A clip is the one feature here whose failures are invisible in the right way:
-// a region that came out slightly too large draws a picture that looks finished,
-// and one that came out empty draws nothing at all with nothing to say why. Both
-// are arithmetic on a path, so both are pinned here.
-//
-// The cases are the ones a document actually writes. A clipPath of several
-// shapes is their union rather than their intersection. clipPathUnits are
-// fractions of the clipped element's own box, so one definition means a
-// different region for every element naming it -- which is also what decides
-// whether two of them can share a mask. clip-rule is the region's fill rule and
-// belongs to the child rather than to the container. And a rectangle has to be
-// recognised as one, because that is the clip that costs nothing: a scissor rect
-// rather than a mask, exact under nesting, and the only kind that reaches text.
-
 using namespace nano;
 using namespace eacp;
 
@@ -57,8 +41,7 @@ void collectClipIds(const SVG::SVGElement& element, SVG::ElementsById& byId)
         collectClipIds(child, byId);
 }
 
-// The flatness a document's own units are built at here. Nothing in these tests
-// depends on the segment count, only on where the points are.
+// Nothing here depends on the segment count, only on where the points are.
 constexpr auto clipFlatness = 0.05f;
 
 const auto anyBox = Graphics::Rect {0.f, 0.f, 10.f, 10.f};
@@ -90,18 +73,12 @@ auto tClipReference = test("SVGClip/aClipPathNamesARegionOrIsNotThere") = []
     check(!region.isEmpty());
     check(isNearRect(region.path.getBounds(), 10.f, 20.f, 30.f, 40.f));
 
-    // An id that names nothing is ignored and the element draws unclipped, which
-    // is not the same answer as a region of nothing -- so the two have to be
-    // distinguishable and this is what distinguishes them.
     auto missing = SVG::resolveClipPath("nothing", byId, anyBox, clipFlatness);
 
     check(!missing.resolved);
     check(missing.isEmpty());
 };
 
-// A <clipPath> that exists and holds nothing clips everything away. It is the
-// opposite outcome from a reference that resolves to nothing, and both are an
-// empty path.
 auto tEmptyClipPath = test("SVGClip/aClipPathHoldingNothingIsStillAClipPath") = []
 {
     auto document = clipDocumentFrom(
@@ -116,8 +93,6 @@ auto tEmptyClipPath = test("SVGClip/aClipPathHoldingNothingIsStillAClipPath") = 
     check(region.isEmpty(), "which holds no region at all");
 };
 
-// Several children are the *union* of their regions, which is what the format
-// says and what the non-zero rule computes for contours wound the same way.
 auto tClipUnion = test("SVGClip/severalShapesInAClipPathAreTheirUnion") = []
 {
     auto document = clipDocumentFrom(
@@ -135,14 +110,10 @@ auto tClipUnion = test("SVGClip/severalShapesInAClipPathAreTheirUnion") = []
     check(isNearRect(region.path.getBounds(), 0.f, 0.f, 60.f, 50.f),
           "which spans both of them");
 
-    // Two children disagreeing about clip-rule cannot both be honoured by one
-    // path, and their union is what non-zero computes -- under even-odd every
-    // overlap between them would read as a hole.
+    // Under even-odd every overlap between the two would read as a hole.
     check(region.rule == GPUWidgets::FillRule::NonZero);
 };
 
-// A child's own transform is inside the clipPath's space, exactly as it is
-// anywhere else in a document.
 auto tClipChildTransform =
     test("SVGClip/aChildOfAClipPathCarriesItsOwnTransform") = []
 {
@@ -177,9 +148,6 @@ auto tClipUse = test("SVGClip/aUseInsideAClipPathIsTheShapeItNames") = []
           "x and y translate what the use names");
 };
 
-// The default units are the element's own coordinates; objectBoundingBox is
-// fractions of the box it is about to cut, so the same definition is a different
-// region for every element that names it.
 auto tClipUnits = test("SVGClip/objectBoundingBoxIsFractionsOfTheClippedShape") = []
 {
     auto document = clipDocumentFrom(
@@ -202,15 +170,11 @@ auto tClipUnits = test("SVGClip/objectBoundingBoxIsFractionsOfTheClippedShape") 
     check(isNearRect(region.path.getBounds(), 100.f, 200.f, 20.f, 60.f),
           "half the box, placed on the box");
 
-    // The same numbers in user space are the numbers themselves, and the box is
-    // not read at all.
     auto plain = SVG::resolveClipPath("user", byId, box, clipFlatness);
 
     check(isNearRect(plain.path.getBounds(), 0.f, 0.f, 0.5f, 1.f));
 };
 
-// One child, so its own rule stands: the inner rectangle is a hole in the region
-// rather than a second piece of it.
 auto tClipRule = test("SVGClip/clipRuleIsTheRegionsFillRule") = []
 {
     auto document = clipDocumentFrom(
@@ -232,8 +196,7 @@ auto tClipRule = test("SVGClip/clipRuleIsTheRegionsFillRule") = []
     check(SVG::resolveClipPath("frame", byId, anyBox, clipFlatness).rule
           == GPUWidgets::FillRule::EvenOdd);
 
-    // A clipPath's own clip-rule is inherited by its children in the CSS sense,
-    // which is how most documents write it.
+    // A clipPath's own clip-rule is inherited by its children in the CSS sense.
     check(SVG::resolveClipPath("onTheContainer", byId, anyBox, clipFlatness).rule
           == GPUWidgets::FillRule::EvenOdd);
 
@@ -241,8 +204,6 @@ auto tClipRule = test("SVGClip/clipRuleIsTheRegionsFillRule") = []
           == GPUWidgets::FillRule::NonZero);
 };
 
-// The one shape worth telling apart from every other, because it is the clip
-// that costs nothing.
 auto tRectangleClip = test("SVGClip/aRectangularRegionIsRecognisedAsOne") = []
 {
     auto rectangle = GPUWidgets::Path {};
@@ -253,8 +214,7 @@ auto tRectangleClip = test("SVGClip/aRectangularRegionIsRecognisedAsOne") = []
     check(found.has_value());
     check(isNearRect(*found, 10.f, 20.f, 30.f, 40.f));
 
-    // A rectangle a document wrote as a path, closing it by repeating the first
-    // point rather than by saying so.
+    // Closed by repeating the first point rather than by saying so.
     auto written = GPUWidgets::Path {};
     written.moveTo({0.f, 0.f});
     written.lineTo({10.f, 0.f});
@@ -264,8 +224,6 @@ auto tRectangleClip = test("SVGClip/aRectangularRegionIsRecognisedAsOne") = []
 
     check(SVG::asAxisAlignedRect(written).has_value());
 
-    // And the ones that are not, each of which would draw too much if it were
-    // taken for one.
     auto rotated =
         rectangle.transformed(GPUWidgets::AffineTransform::rotation(0.3f));
 
@@ -291,9 +249,6 @@ auto tRectangleClip = test("SVGClip/aRectangularRegionIsRecognisedAsOne") = []
     check(!SVG::asAxisAlignedRect(triangle).has_value());
 };
 
-// A group's clip is one region however many children it cuts. Without this a
-// clipped group of twenty shapes is twenty identical masks, which is the atlas
-// cost the whole thing exists to keep small.
 auto tSharedClip = test("SVGComponent/oneClipRegionServesAWholeClippedGroup") = []
 {
     auto component = clippedComponent(
@@ -311,7 +266,6 @@ auto tSharedClip = test("SVGComponent/oneClipRegionServesAWholeClippedGroup") = 
     check(component->getClipMaskCount() == 1, "a circle is a mask");
 };
 
-// And a rectangular one is not a mask at all.
 auto tRectangleCostsNoMask = test("SVGComponent/aRectangularClipTakesNoMask") = []
 {
     auto component = clippedComponent(
@@ -324,8 +278,6 @@ auto tRectangleCostsNoMask = test("SVGComponent/aRectangularClipTakesNoMask") = 
     check(component->getClipMaskCount() == 0, "a scissor rect, not a mask");
 };
 
-// In bounding-box units the region is placed against each element, so two
-// elements naming one clipPath cannot share what it comes to.
 auto tPerElementUnits =
     test("SVGComponent/aBoundingBoxClipIsPlacedAgainstEachElement") = []
 {
@@ -341,8 +293,6 @@ auto tPerElementUnits =
     check(component->getClipCount() == 2, "one definition, two regions");
 };
 
-// An element whose clip resolved to a region of nothing is not drawn, which is
-// the difference between an empty clipPath and no clipPath.
 auto tEmptyClipDrawsNothing =
     test("SVGComponent/anEmptyClipRegionRemovesTheShape") = []
 {
@@ -354,8 +304,7 @@ auto tEmptyClipDrawsNothing =
 
     check(clipped->getShapeCount() == 0);
 
-    // Where the reference names nothing at all, the property is ignored instead
-    // and the element draws unclipped.
+    // A reference naming nothing is ignored, so the element draws unclipped.
     auto unclipped = clippedComponent(
         R"SVG(<svg width="100" height="100">
              <rect x="10" y="10" width="50" height="50" clip-path="url(#missing)"/>
@@ -365,10 +314,8 @@ auto tEmptyClipDrawsNothing =
     check(unclipped->getClipCount() == 0);
 };
 
-// Nesting: a clip on a group and another on a child. One mask reaches a shape,
-// so the inner region is the mask and the outer contributes its rectangle --
-// which is exact whenever the outer clip is a rectangle, and a viewport clip
-// always is.
+// One mask reaches a shape, so the inner region takes it and the outer
+// contributes its rectangle -- exact only while the outer clip is rectangular.
 auto tNestedClips = test("SVGComponent/aClipInsideAClipKeepsBoth") = []
 {
     auto component = clippedComponent(

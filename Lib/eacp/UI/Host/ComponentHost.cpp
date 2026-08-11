@@ -4,19 +4,12 @@ namespace eacp::UI
 {
 ComponentHost::ComponentHost()
 {
-    // No multisampling, for two reasons that point the same way. The clip is a
-    // scissor rect, and MSAA would feather its edge across a pixel -- exactly
-    // what clipping exists to avoid. And the glyph pipeline in eacp-text is
-    // built for a single sample, so a multisampled pass could not draw text at
-    // all. Neither is a loss here: a component interface is axis-aligned
-    // rectangles and glyphs, both of which land crisper without it.
+    // No MSAA: it would feather the scissor clip, and the eacp-text glyph
+    // pipeline is single-sample only.
     setSampleCount(1);
     setHandlesMouseEvents(true);
 
-    // A component tree is one native view, so that view has to become the
-    // window's first responder for anything inside it to hear a key. Which is
-    // what a press on any part of the tree should do anyway -- clicking an
-    // interface is how a user says the keyboard belongs to it.
+    // The tree only hears keys while this one view is the first responder.
     setGrabsFocusOnMouseDown(true);
 }
 
@@ -34,9 +27,8 @@ void ComponentHost::componentDeleted(Component& component)
     if (mouseDownTarget == &component)
         mouseDownTarget = nullptr;
 
-    // Dropped rather than moved on. Telling the next component in the focus
-    // order that it has the keyboard while a subtree is halfway through being
-    // destroyed is how a focusGained lands on something already gone.
+    // Dropped rather than moved on: a focusGained during a subtree's destruction
+    // could land on something already gone.
     if (focusedComponent == &component)
         focusedComponent = nullptr;
 
@@ -83,14 +75,10 @@ void ComponentHost::setFont(const Font& fontToUse)
 {
     font = fontToUse;
 
-    // Told rather than rebuilt. A family used to be baked into the renderer's
-    // atlas, so changing one meant throwing the renderer away; faces coexist in
-    // that atlas now, and a change is the default one moving.
     if (text.has_value())
         text->setFont(font);
 
-    // Every component that never named a face of its own recorded glyphs of this
-    // one, so all of them have to be laid out again.
+    // Components that never named a face recorded glyphs of the old one.
     if (root != nullptr)
         markTreeDirty(*root);
 
@@ -99,10 +87,8 @@ void ComponentHost::setFont(const Font& fontToUse)
 
 GradientRamps& ComponentHost::gradientRamps() const
 {
-    // Built on the first ask rather than with the batches, because painting
-    // needs it and drawing is what the batches are for: a tree can be painted
-    // before it has ever been sized, and a gradient resolved then has to have
-    // somewhere to bake its row.
+    // Built on the first ask, not with the batches: a tree can be painted before
+    // it has ever been sized.
     if (!ramps.has_value())
         ramps.emplace();
 
@@ -161,8 +147,7 @@ void ComponentHost::resized()
     if (bounds.w <= 0.f || bounds.h <= 0.f)
         return;
 
-    // A resize only moves the logical space the shaders map from, so the
-    // renderer is told rather than rebuilt -- its pipelines are unaffected.
+    // A resize only moves the logical space, leaving the pipelines untouched.
     if (shapes.has_value())
     {
         shapes->setLogicalSize({bounds.w, bounds.h});
@@ -205,10 +190,8 @@ void ComponentHost::record(Component& component)
     component.paintList.clear();
     component.overList.clear();
 
-    // Cleared before the paint rather than after it, so a component that asks
-    // for a repaint from inside its own paint() is marked for the *next* frame
-    // rather than having the request cleared out from under it. Bringing that
-    // frame about is a separate matter -- see Component::repaint.
+    // Cleared before the paint, so a repaint() from inside paint() marks the
+    // next frame instead of being cleared out from under it.
     component.selfDirty = false;
 
     {
@@ -226,9 +209,8 @@ void ComponentHost::record(Component& component)
 
 bool ComponentHost::recordComponent(Component& component)
 {
-    // A hidden subtree is not painted, and what it owes is carried rather than
-    // forgotten: the walk above it needs to know there is still something down
-    // here, or nothing would reach it on the frame it is shown again.
+    // A hidden subtree is not painted, but what it owes is carried up so it is
+    // reached on the frame it is shown again.
     if (!component.isVisible())
         return component.needsRecording();
 
@@ -242,8 +224,7 @@ bool ComponentHost::recordComponent(Component& component)
             pending = recordComponent(*child) || pending;
 
     // Recomputed rather than cleared, which is what keeps repaint()'s early-out
-    // sound: a component below here that is still owed a recording leaves the
-    // chain of ancestors marked all the way to the root.
+    // sound - see the invariant on Component::descendantDirty.
     component.descendantDirty = pending;
 
     return pending;
@@ -264,8 +245,7 @@ void ComponentHost::recordTree()
     paintedThisWalk = 0;
 
     // Published only once the walk is over, so a component painting the figure
-    // reads the last completed frame's rather than however much of this one had
-    // happened before it was reached.
+    // reads the last completed frame's.
     struct Publish
     {
         ~Publish() { host.lastPaintedComponents = host.paintedThisWalk; }
@@ -282,14 +262,8 @@ void ComponentHost::recordTree()
     if (renderer().generation() == before)
         return;
 
-    // A glyph rasterized during the walk filled the atlas and cleared it, so
-    // every glyph recorded before that names texels that have been handed to
-    // somebody else. Once more, against the atlas that came out of it.
-    //
-    // Once, and not until it settles. If it ticks again the frame draws as it
-    // stands and the next one puts it right, which is the same judgement
-    // rasterizePaths makes about its two attempts: a frame with one stale glyph
-    // in it is better than a frame that never ends.
+    // The glyph atlas was cleared mid-walk, so earlier recordings name texels
+    // handed to somebody else. Retried once only; a third tick waits a frame.
     markTreeDirty(*root);
     recordComponent(*root);
 }
@@ -305,13 +279,10 @@ void ComponentHost::playComponent(Component& component,
     auto bounds = component.getBounds();
     auto position = Point {origin.x + bounds.x, origin.y + bounds.y};
 
-    // Where this component may draw, in surface points: its own bounds, narrowed
-    // by everything its ancestors left of them.
+    // Where this component may draw, in surface points.
     auto visible = clip.intersection({position.x, position.y, bounds.w, bounds.h});
 
-    // A component scrolled out of its parent, or entirely behind an opaque
-    // ancestor's clip, costs nothing at all. The whole subtree goes with it,
-    // since a child cannot escape this clip.
+    // The whole subtree goes with it, a child not being able to escape the clip.
     if (visible.isEmpty())
         return;
 
@@ -342,19 +313,14 @@ void ComponentHost::rasterizeDirtyPaths(Component& component,
         {
             shape->rasterize(*paths, masks, backingScale(), batch);
 
-            // Growing or compacting the atlas relocates every slot already
-            // handed out, so everything rasterized before this one now points
-            // at the wrong texels. Reported up rather than fixed here, because
-            // the fix is to start the whole walk again against the new layout.
+            // Growing or compacting relocates every slot already handed out, so
+            // the whole walk has to start again against the new layout.
             if (paths->takeMovedFlag())
                 walk.atlasMoved = true;
         }
 
-        // Counted whether or not it was rasterized this frame. A shape the
-        // atlas had no room for is missing from every frame until there is room
-        // for it, and the frame after the one that dropped it rasterizes
-        // nothing at all -- so counting refusals would report the ceiling once
-        // and then say the interface was fine while half of it was blank.
+        // A census, not a tally of this frame: a dropped shape stays missing
+        // over frames that rasterize nothing.
         if (shape->wasDropped())
             ++walk.dropped;
 
@@ -369,18 +335,8 @@ void ComponentHost::rasterizeDirtyPaths(Component& component,
         rasterizeDirtyPaths(*child, batch, walk);
 }
 
-// Every layer whose content changed, each rendered into its own texture on this
-// frame's command buffer, before the pass that draws the tree.
-//
-// It has to be here for the same reason the compute dispatch does: a pass cannot
-// begin while another is open, so a texture the tree samples has to be finished
-// before the tree is drawn. Passes on one frame are ordered by the queue, so a
-// layer written here is legal to sample later in the same frame with nothing
-// waiting in between.
-//
-// Children before parents, and a component's own layers in the order they
-// registered -- which together are what lets a layer hold another one. See
-// Layer's ordering rule, which is the only thing a caller has to obey.
+// Children before parents, and a component's own layers in registration order,
+// which together are what lets one layer hold another.
 void ComponentHost::renderLayers(GPU::Frame& frame)
 {
     if (root == nullptr || !shapes.has_value())
@@ -407,10 +363,8 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
     if (!layer.ensureTexture(backingScale()))
         return;
 
-    // The renderers are the tree's own, pointed at this pass and told the
-    // layer's size. One set rather than a second, because a pipeline is
-    // unaffected by what it draws into: the target's format and sample count are
-    // the drawable's, which is what a layer texture is made to match.
+    // The tree's own renderers, reused: a layer texture is made to match the
+    // drawable's format and sample count.
     auto descriptor = GPU::RenderPassDescriptor {};
     descriptor.clearColor = Color::black(0.f);
 
@@ -427,18 +381,15 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
     text->begin();
 
     {
-        // Recorded and played straight away rather than kept. A layer already
-        // has a cache -- its own texture, which is only rebuilt when the layer
-        // is dirty -- so a second one for the drawing that fills it would be a
-        // list that is written and read once.
+        // Not kept: the layer's texture is already the cache.
         auto list = DrawList {};
 
         {
             auto g =
                 Graphics {list, *ramps, renderer(), {0.f, 0.f, bounds.w, bounds.h}};
 
-            // So the content draws in the coordinates it was authored in and the
-            // layer's own top-left lands on the texture's.
+            // Puts the layer's top-left on the texture's, so content draws in
+            // the coordinates it was authored in.
             g.translate(-bounds.x, -bounds.y);
 
             layer.onPaint(g);
@@ -469,29 +420,19 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
     ++lastRenderedLayers;
 }
 
-// Every path whose geometry changed since the last frame, drawn into the shared
-// atlas on this frame's own command buffer.
-//
-// It has to be here, before beginPass: a compute pass and a render pass cannot
-// be open at once, and the render pass is what samples the atlas. Which is also
-// why a path is set from resized() or a value change and never from paint() --
-// by the time this runs, everything dirty for this frame is already known, so
-// the mask a component draws is this frame's rather than the last one's.
+// Must run before beginPass: a compute pass and a render pass cannot be open at
+// once, and the render pass is what samples the atlas.
 void ComponentHost::rasterizePaths(GPU::Frame& frame)
 {
     if (root == nullptr || !paths.has_value())
         return;
 
-    // Coverage is device pixels, so everything cached was rasterized at one
-    // scale and a move to another display drops the lot. Told before the walk
-    // rather than after the check below, so that the entries are gone by the
-    // time anything asks for one.
+    // Coverage is device pixels, so a scale change invalidates every mask. Told
+    // before the walk, so entries are gone before anything asks for one.
     masks.setScale(backingScale());
 
     if (backingScale() != lastPathScale)
     {
-        // Coverage is rasterized in device pixels, so a move to a display of a
-        // different scale makes every mask the wrong size for what samples it.
         lastPathScale = backingScale();
         markAllPathsDirty(*root);
     }
@@ -500,44 +441,32 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
 
     auto walk = PathWalk {};
 
-    // Twice at most. The first pass may move the atlas under what it has already
-    // placed, and the second runs against the layout that came out of it. A
-    // third would only be needed if the whole tree's masks could not fit in one
-    // atlas at all, and then the honest outcome is that the ones that did not
-    // fit are missing rather than that the frame never ends.
-    for (auto attempt = 0; attempt < 2; ++attempt)
+    // The first pass may move the atlas under what it has already placed; the
+    // second runs against the layout that came out of it.
+    constexpr auto maxPlacementAttempts = 2;
+
+    for (auto attempt = 0; attempt < maxPlacementAttempts; ++attempt)
     {
-        // Which is only the honest outcome if the second pass is forbidden to
-        // move anything. A move there is unanswerable -- there is no third pass
-        // to rebuild what it displaced -- so a shape placed early would keep a
-        // uv into texels a later shape has since been handed, and draw that
-        // shape's coverage instead of its own. Wrong rather than missing, and
-        // silent either way. Refused, the mask is simply absent and counted.
-        paths->setRelocationAllowed(attempt == 0);
+        // A move on the last attempt is unanswerable - a shape placed early
+        // would keep a uv into texels since handed to another shape, and draw
+        // its coverage. Refused, the mask is merely absent and counted.
+        auto isLastAttempt = attempt == maxPlacementAttempts - 1;
+        paths->setRelocationAllowed(!isLastAttempt);
 
         walk = PathWalk {};
 
-        // Gathered rather than dispatched, so a first pass the atlas moved under
-        // costs no GPU work at all: beginning the batch again is what throws it
-        // away, where recording a dispatch per shape meant every one of them had
-        // already been issued against a layout that no longer held.
+        // Gathered rather than dispatched, so a pass the atlas moved under
+        // costs no GPU work: beginning the batch again throws it away.
         pathBatch.begin(paths->getTexture());
         rasterizeDirtyPaths(*root, pathBatch, walk);
 
         if (!walk.atlasMoved)
             break;
 
-        // Everything is about to be rasterized again, so no shape holds a slot
-        // and the shelf can start empty. It has to: the first pass kept placing
-        // after the move, and those slots belong to nobody now. Left in place
-        // they are an atlas-sized leak in the one situation -- a tree that only
-        // just fits -- where it decides whether the tree fits at all.
+        // The slots placed after the move belong to nobody, and everything is
+        // about to be rasterized again, so the shelf and its cache start empty.
         markAllPathsDirty(*root);
         paths->forgetAllocations();
-
-        // With the shelf. Every entry names a slot that is about to be handed
-        // out again, so an entry that outlived the shelf would share texels
-        // belonging to whatever was placed there second.
         masks.clear();
     }
 
@@ -547,10 +476,8 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
         pathBatch.dispatch(compute);
     }
 
-    // The atlas grew or compacted, so every uv a component recorded points at
-    // texels that belong to somebody else now -- including the components that
-    // have nothing else stale about them. They have to be painted again, which
-    // is why this happens before the recording walk rather than after it.
+    // Every recorded uv now points at texels belonging to somebody else, so this
+    // has to happen before the recording walk rather than after it.
     if (paths->generation() != generationBefore)
         markTreeDirty(*root);
 
@@ -560,9 +487,7 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
     reportDroppedPaths(walk.dropped);
 }
 
-// The atlas ran out and some masks are not on screen. Reported on the change
-// rather than every frame, so a client that logs it says so once when an
-// interface reaches the ceiling and once when it comes back under it.
+// Reported on the change rather than every frame.
 void ComponentHost::reportDroppedPaths(int count)
 {
     if (count == lastDroppedPaths)
@@ -586,34 +511,24 @@ void ComponentHost::render(GPU::Frame& frame)
 
     text->setViewport({bounds.w, bounds.h}, backingScale());
 
-    // Counted before the walk rather than after it, so a component painting the
-    // figure reads this frame's rather than the last one's.
+    // Counted before the walk, so a component painting the figure reads this
+    // frame's rather than the last one's.
     lastComponentCount = root->countComponentsInTree();
 
-    // A glyph's source rect and a mask's uv are both in the pixels of the
-    // display they were built for, so a move to one of a different scale makes
-    // every recording in the tree wrong at once.
+    // Glyph source rects and mask uvs are in the pixels of the display they
+    // were built for.
     if (backingScale() != lastRecordScale)
     {
         lastRecordScale = backingScale();
         markTreeDirty(*root);
     }
 
-    // Before the recording walk, and that is the order rather than an accident:
-    // a path is set from resized() or from a value changing, never from paint(),
-    // so everything dirty is already known -- and a walk that moved the atlas
-    // has to be answered by re-recording the uvs before anything records them.
+    // Before recording, so a walk that moved the atlas is answered by
+    // re-recording the uvs before anything records them.
     rasterizePaths(frame);
 
-    // After the masks: a layer's content is drawn out of the same atlas
-    // everything else is, so the coverage has to exist before the layer's own
-    // pass runs.
-    //
-    // And before the tree is recorded, which is the part that is easy to get
-    // wrong. A component draws a layer as a quad of a texture, and a layer with
-    // no texture yet draws as nothing -- so a tree recorded first would record
-    // *nothing* for a layer about to be rendered, and then never look again,
-    // there being nothing to tell it the layer had arrived.
+    // After the masks, which a layer's content is drawn out of, and before the
+    // recording walk: a layer with no texture yet would record as nothing.
     renderLayers(frame);
 
     recordTree();
@@ -630,10 +545,8 @@ void ComponentHost::render(GPU::Frame& frame)
 
     playComponent(*root, player, {}, bounds);
 
-    // Drains both queues while the pass is still open. The shape batch would
-    // drain itself when the pass ends, but that is after this point, so the last
-    // run of quads would land on top of the last run of glyphs rather than
-    // under it.
+    // Drains both queues in order while the pass is open; the shape batch would
+    // otherwise self-drain after it, landing quads on top of the last glyphs.
     player.flush();
 
     lastClipChanges = player.getClipChangeCount();
@@ -699,8 +612,8 @@ void ComponentHost::setFocusedComponent(Component* component)
 
     auto* previous = focusedComponent;
 
-    // Assigned before either callback, so a component asking whether it has
-    // focus from inside focusLost or focusGained is told the truth.
+    // Assigned before either callback, so hasKeyboardFocus() answers correctly
+    // from inside focusLost and focusGained.
     focusedComponent = component;
 
     if (previous != nullptr)
@@ -708,8 +621,7 @@ void ComponentHost::setFocusedComponent(Component* component)
 
     if (focusedComponent != nullptr)
     {
-        // The native view, not the component: what the window hands keys to is
-        // this one view, and it can only pass them on if it has them.
+        // The native view, which is what the window hands keys to.
         focus();
         focusedComponent->focusGained();
     }
@@ -732,8 +644,7 @@ void ComponentHost::moveFocusToPressed(Component* pressed)
 
 bool ComponentHost::dispatchKey(const eacp::Graphics::KeyEvent& event, bool isDown)
 {
-    // The focused component, or the root when there is none -- so a tree that
-    // has never been clicked still hears its shortcuts.
+    // The root when nothing is focused, so a tree never clicked hears shortcuts.
     auto* target = focusedComponent != nullptr ? focusedComponent : root;
 
     for (auto* current = target; current != nullptr;
@@ -771,9 +682,7 @@ void ComponentHost::keyDown(const eacp::Graphics::KeyEvent& event)
     if (root == nullptr)
         return;
 
-    // The tree first, traversal second: a component that wants Tab for itself
-    // says so by consuming it, which is the same verdict every other key is
-    // decided by rather than a second mechanism.
+    // The tree first, traversal second: consuming Tab keeps it.
     if (dispatchKey(event, true))
         return;
 
@@ -821,8 +730,7 @@ void ComponentHost::mouseUp(const eacp::Graphics::MouseEvent& event)
 
     mouseDownTarget = nullptr;
 
-    // The pointer may have left the pressed component during the drag, so the
-    // hover has to be recomputed from where it actually ended up.
+    // The pointer may have left the pressed component during the drag.
     if (root != nullptr)
         setHoveredComponent(root->getComponentAt(event.pos), event);
 }
@@ -846,9 +754,7 @@ void ComponentHost::mouseWheel(const eacp::Graphics::MouseEvent& event)
     if (root == nullptr)
         return;
 
-    // To whatever is under the pointer, then up the tree until something
-    // consumes it -- a row inside a list does not scroll, but the list holding
-    // it does, and the pointer is over the row.
+    // Up the tree from the pointer until something consumes it.
     auto* target = root->getComponentAt(event.pos);
 
     while (target != nullptr)

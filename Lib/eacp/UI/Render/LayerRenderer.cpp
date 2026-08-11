@@ -22,9 +22,7 @@ constexpr LayerVertex layerUnitQuad[] = {
     {{0.f, 1.f}},
 };
 
-// Below this a pixel of the layer held no coverage at all, so there is no colour
-// in it to divide back out and any answer is as good as any other. Above it the
-// division is exact.
+// Below this a pixel held no coverage, so there is no colour to divide out.
 constexpr auto smallestCoverage = 1.f / 512.f;
 } // namespace
 
@@ -32,10 +30,8 @@ struct LayerRenderer::Program final : GPU::ShaderProgram
 {
     Program()
     {
-        // Linear, unlike the coverage atlas beside it: a layer is drawn at the
-        // size it was rendered, but its bounds are points and its texels are
-        // device pixels, so the two grids need not line up to the texel the way
-        // a mask's do.
+        // Linear, unlike the coverage atlas: a layer's point bounds and device
+        // texels need not line up.
         content.sampling = {GPU::TextureFilter::Linear,
                             GPU::TextureAddressMode::Clamp};
 
@@ -62,9 +58,7 @@ struct LayerRenderer::Program final : GPU::ShaderProgram
 
         auto sampled = sample(content, fragUV);
 
-        // The colour, weighted by the coverage the layer pass left in the alpha
-        // channel. Divided out here and multiplied back by the blend, which is
-        // exact wherever there is any coverage to divide by.
+        // Un-premultiplies; the blend multiplies it back.
         auto coverage = max(sampled.w(), smallestCoverage);
         auto colour = sampled.xyz() / coverage;
 
@@ -103,9 +97,8 @@ LayerRenderer::LayerRenderer(Point logicalSizeToUse,
     program.create();
     program->setVertices(layerUnitQuad);
 
-    // The same blend every renderer in this tier uses, so that a layer drawn
-    // into another layer accumulates coverage as correctly as one drawn onto the
-    // window.
+    // The same blend every renderer in this tier uses, so a layer inside another
+    // layer accumulates coverage correctly.
     program->prepare(sampleCount,
                      false,
                      GPU::PrimitiveTopology::Triangles,

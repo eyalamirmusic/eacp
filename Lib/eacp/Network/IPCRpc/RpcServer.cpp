@@ -100,8 +100,8 @@ void RpcServer::handle(Messenger& client, const std::string& body)
 
     auto work = Rpc::runCommand(commandExecution, std::move(invoke));
 
-    // The reply lands back on the main thread, where the client may
-    // already have hung up - a departed session is simply not written to.
+    // The reply lands back on the main thread, where the client may already
+    // have hung up.
     Rpc::resolveWith(std::move(work),
                      [this, id = envelope->id, target = &client](
                          const Miro::Json::Value& result, const std::string* error)

@@ -7,10 +7,8 @@ bool copyText(std::string_view)
     return false;
 }
 
-// Linux has no clipboard backend yet: there is no windowing layer here to own
-// an X11 or Wayland connection, and the clipboard requires one. Empty is the
-// documented answer for a platform without a clipboard, so callers need no
-// special case.
+// No clipboard backend yet: there is no windowing layer here to own an X11 or
+// Wayland connection. Empty is the documented answer for such a platform.
 std::string getText()
 {
     return {};

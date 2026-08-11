@@ -2,26 +2,9 @@
 
 #include <string>
 
-// A lightweight component tree in a single GPUView.
-//
-// What it is here to show is the cost model. Every strip below is five
-// components -- a name, a rotary knob, a fader and two toggles -- inside a
-// scrolling panel inside a root, and the footer reports how many components
-// that came to and how many times the renderer had to break its batch to draw
-// them. The second number stays in single figures while the first runs into the
-// hundreds, because a component is not a native view and drawing one is queueing
-// a quad.
-//
-// The knobs are the interesting ones. A knob's arc and pointer are a vector
-// path, rasterized to exact per-pixel coverage by a compute kernel into a shared
-// atlas -- so drawing one is also just a quad, and adding forty-eight of them to
-// this tree does not add a single batch break. That is what the shared atlas
-// buys: a coverage texture per path would have made each knob its own texture
-// bind and its own draw.
-//
-// Scroll the list to see clipping: rows are cut at the panel's edge without the
-// panel doing anything about it, since paint() is handed a Graphics already
-// clipped to the component's own bounds.
+// A component tree in a single GPUView: 48 strips of five components each. The
+// footer reports how many components the frame drew against how few batch breaks
+// that cost, since every knob's vector path is one quad out of a shared atlas.
 
 using namespace eacp;
 
@@ -94,8 +77,6 @@ struct ChannelStrip final : UI::Component
     UI::Button solo {"Solo"};
 };
 
-// The scrolled content: every strip, stacked. Its height is the sum, which is
-// what makes it taller than the panel and therefore scrollable.
 struct StripList final : UI::Component
 {
     StripList()
@@ -125,16 +106,9 @@ struct StripList final : UI::Component
     OwnedVector<ChannelStrip> strips;
 };
 
-// Reads the host's figures at paint time rather than being told them.
-//
-// A component told the numbers would have to repaint to show a change, and the
-// figures are only complete once the walk that produced them is over -- so the
-// label paints the last frame's and asks for one more to catch up.
-//
-// The count worth watching is the third. It is how many components the frame
-// painted, against how many it drew: it settles at zero on a tree that is
-// sitting still, and reports one while a strip's meter is moving, whatever the
-// two hundred components around it are doing.
+// Reads the host's figures at paint time rather than being told them: they are
+// only complete once the walk that produced them is over, so the label paints
+// the last frame's and asks for one more to catch up.
 struct StatsBar final : UI::Component
 {
     void paint(UI::Graphics& g) override
@@ -151,13 +125,8 @@ struct StatsBar final : UI::Component
         g.setColour(UI::defaultTheme().dimText);
         g.drawText(text, getLocalBounds(), UI::Justification::Right);
 
-        // The request itself would survive -- the recording walk clears a
-        // component's flag before painting it, so a repaint from inside a paint
-        // marks it for the next frame rather than being cleared on the way out.
-        // What does not survive is the *frame*: asking the native view for one
-        // from inside its own draw cycle is coalesced into the cycle already
-        // running. So the ask is posted to the loop, which puts it after the
-        // frame. Self-limiting -- once the figure stops changing, so does this.
+        // Posted to the loop rather than asked for here: a frame requested from
+        // inside the native view's own draw cycle is coalesced into it.
         if (text != lastPainted)
         {
             lastPainted = text;

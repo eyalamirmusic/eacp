@@ -6,11 +6,6 @@
 
 #include <eacp/Core/ObjC/ObjC.h>
 
-// Apple-only header (ObjC++), shared by Encoder-Apple.mm and ScreenCapture-Apple.
-// The Screen tier appends IOSurface-backed CVPixelBuffers straight from
-// ScreenCaptureKit, so it needs the concrete AppleEncoder's pool()/append(), not
-// just the portable Encoder interface.
-
 namespace eacp::Video
 {
 
@@ -31,8 +26,7 @@ struct AppleEncoder final : Encoder
 
     bool valid() const { return writer && input && adaptor; }
 
-    // Apple-only, used by the Screen tier: the pool the adaptor sources buffers
-    // from, and a raw CVPixelBuffer append with an explicit PTS.
+    // Used by the Screen tier to append ScreenCaptureKit's buffers directly.
     CVPixelBufferPoolRef pool() const;
     void append(CVPixelBufferRef buffer, CMTime pts);
 

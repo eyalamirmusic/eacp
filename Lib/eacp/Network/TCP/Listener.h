@@ -5,19 +5,14 @@
 namespace eacp::TCP
 {
 
-// A bound, listening TCP socket - the receiving end.
-//
-// Move-only RAII, like Connection: if you are holding a Listener it is
-// listening. accept() blocks for the next inbound client (up to the connect
-// timeout) and hands back a Connection already wired to that peer.
+// A bound, listening TCP socket. Move-only RAII, like Connection: holding a
+// Listener means it is listening.
 class Listener
 {
 public:
-    // Binds and listens on port, or throws TCP::Error. Port 0 asks the OS for
-    // an ephemeral port - read it back from port() afterwards. The Timeouts'
-    // connect bounds how long accept() waits; io is inherited by every
-    // accepted Connection. Pass BindInterface::any to serve other machines,
-    // which a host firewall will want the user to approve.
+    // Throws TCP::Error on failure. Port 0 asks for an ephemeral port, read
+    // back from port(). timeouts.connect bounds accept(); timeouts.io is
+    // inherited by every accepted Connection.
     static Listener bind(std::uint16_t port,
                          Timeouts timeouts = {},
                          BindInterface bindTo = BindInterface::loopback);
@@ -36,8 +31,8 @@ public:
     // The actually-bound port, resolved even when bind(0) was used.
     [[nodiscard]] std::uint16_t port() const;
 
-    // Blocks until a client connects (or the connect timeout elapses, which
-    // throws), returning the connected stream.
+    // Blocks until a client connects, or throws when the connect timeout
+    // elapses.
     Connection accept();
 
 private:

@@ -6,9 +6,6 @@ using namespace eacp::GPU;
 
 namespace
 {
-// Minimal shader whose vertex input matches the single Float4 attribute below,
-// so pipeline creation exercises the full vertex-descriptor path. Provided in
-// the backend the platform compiles (MSL on Metal, HLSL on D3D12).
 const char* hlslSmokeShader = R"(
 struct VertexIn { float4 position : TEXCOORD0; };
 struct VertexOut { float4 position : SV_Position; };
@@ -27,16 +24,13 @@ vertex float4 vertexMain(VertexIn in [[stage_in]]) { return in.position; }
 fragment float4 fragmentMain() { return float4(1.0, 1.0, 1.0, 1.0); }
 )";
 
-// Both branches name both strings, so neither is an unused-variable warning on
-// the platform whose backend isn't selected.
+// Both branches name both strings, so neither is unused on either platform.
 ShaderSource smokeShaderSource()
 {
     return Platform::isWindows() ? ShaderSource::hlsl(hlslSmokeShader)
                                  : ShaderSource::msl(mslSmokeShader);
 }
 
-// A compute kernel writing output[i] = input[i] * scale, exercising a storage
-// input, a storage output and a uniform block. Mirrors the Compute example.
 const char* hlslComputeShader = R"(
 StructuredBuffer<float> input : register(t0);
 RWStructuredBuffer<float> output : register(u1);
@@ -79,9 +73,7 @@ struct ComputeParams
     std::uint32_t count;
 };
 
-// The same scale kernel authored as a ComputeProgram struct: buffers and the
-// uniform are named members, define() writes the body, and the implicit count
-// guard replaces the hand-written one above.
+// The same scale kernel authored as a ComputeProgram struct.
 struct ScaleKernel final : ComputeProgram
 {
     Uniform<InputBuffer> input;
@@ -98,8 +90,6 @@ struct ScaleKernel final : ComputeProgram
     }
 };
 
-// Averages each element with its two neighbours, wrapping at the ends:
-// index arithmetic with uint operators, integer literals and a uint uniform.
 struct WrapAverageKernel final : ComputeProgram
 {
     Uniform<InputBuffer> input;
@@ -119,8 +109,6 @@ struct WrapAverageKernel final : ComputeProgram
 };
 } // namespace
 
-// Builds every resource type without a window or drawable. On a host with no
-// Metal device (e.g. some headless CI VMs) it self-skips rather than fail.
 auto tDeviceBuildsResources = test("GPU/deviceBuildsResources") = []
 {
     auto& device = Device::shared();
@@ -146,9 +134,6 @@ auto tDeviceBuildsResources = test("GPU/deviceBuildsResources") = []
     check(pipeline.isValid());
 };
 
-// An Index-usage buffer builds (D3D11 needs the index bind flag), and the
-// pipeline carries its topology through for the render pass to read at draw
-// time. Self-skips without a GPU device.
 auto tDeviceBuildsIndexBuffer = test("GPU/deviceBuildsIndexBuffer") = []
 {
     auto& device = Device::shared();
@@ -175,10 +160,6 @@ auto tDeviceBuildsIndexBuffer = test("GPU/deviceBuildsIndexBuffer") = []
     check(pipeline.topology() == PrimitiveTopology::TriangleStrip);
 };
 
-// An EDSL shader with an instanceInput<T> emits a two-slot VertexLayout
-// (slot 0 per-vertex, slot 1 per-instance) whose stride sums the byte size
-// of the inputs at each rate. Pipeline builds against the generated layout.
-// Self-skips without a GPU device.
 auto tShaderBuilderEmitsInstancedLayout =
     test("GPU/shaderBuilderEmitsInstancedLayout") = []
 {
@@ -195,8 +176,7 @@ auto tShaderBuilderEmitsInstancedLayout =
     auto varyingUv = builder.varying(vertexUv);
     auto zero = builder.constant(0.f);
     auto one = builder.constant(1.f);
-    // Simple math that references every input so the emitted layout covers
-    // all of them; the exact math is placeholder.
+    // References every input so the emitted layout covers all of them.
     auto shiftedX = vertexPos.x() + instanceCentre.x() * instanceScale;
     auto shiftedY = vertexPos.y() + instanceCentre.y();
     builder.position(float4(shiftedX, shiftedY, zero, one));
@@ -204,14 +184,12 @@ auto tShaderBuilderEmitsInstancedLayout =
 
     auto shader = builder.build();
 
-    // Two slots, right strides, right step rates.
     check(shader.vertexLayout.buffers.size() == 2);
     check(shader.vertexLayout.buffers[0].stride == 16);
     check(shader.vertexLayout.buffers[0].stepRate == StepRate::PerVertex);
     check(shader.vertexLayout.buffers[1].stride == 12);
     check(shader.vertexLayout.buffers[1].stepRate == StepRate::PerInstance);
 
-    // Attributes route to their slots.
     auto& attrs = shader.vertexLayout.attributes;
     check(attrs.size() == 4);
     check(attrs[0].bufferIndex == 0);
@@ -230,9 +208,6 @@ auto tShaderBuilderEmitsInstancedLayout =
     check(pipeline.isValid());
 };
 
-// A shader without any instanceInput calls still emits the legacy
-// single-buffer shape (buffers empty, stride populated). Guards against
-// silently changing the layout for pre-instancing consumers.
 auto tShaderBuilderPreservesSingleBufferShape =
     test("GPU/shaderBuilderPreservesSingleBufferShape") = []
 {
@@ -250,10 +225,8 @@ auto tShaderBuilderPreservesSingleBufferShape =
     check(shader.vertexLayout.attributes[0].bufferIndex == 0);
 };
 
-// An indexed-instanced draw's resource shape - Index buffer + a pipeline whose
-// layout carries a PerInstance slot - all builds cleanly. The draw itself
-// requires a live frame + drawable, so this test only guards the resource path
-// that drawIndexedInstanced consumes at call time. Self-skips without a GPU.
+// The draw itself needs a live frame and drawable, so only the resource path
+// drawIndexedInstanced consumes is built here.
 auto tDeviceBuildsIndexedInstancedResources =
     test("GPU/deviceBuildsIndexedInstancedResources") = []
 {
@@ -286,9 +259,6 @@ auto tDeviceBuildsIndexedInstancedResources =
     check(pipeline.isValid());
 };
 
-// Every BlendMode value produces a valid pipeline - the switch in the backend
-// covers every case, and the D3D12 blend descriptor path is populated for the
-// modes that need it. Self-skips without a GPU device.
 auto tDeviceBuildsPipelineForEachBlendMode =
     test("GPU/deviceBuildsPipelineForEachBlendMode") = []
 {
@@ -312,8 +282,6 @@ auto tDeviceBuildsPipelineForEachBlendMode =
     }
 };
 
-// A texture builds from raw pixels and reports its size; both filter modes and
-// a null-pixel (uninitialised) texture build too. Self-skips without a device.
 auto tDeviceBuildsTexture = test("GPU/deviceBuildsTexture") = []
 {
     auto& device = Device::shared();
@@ -339,9 +307,6 @@ auto tDeviceBuildsTexture = test("GPU/deviceBuildsTexture") = []
     check(!invalid.isValid());
 };
 
-// A texture builds straight from a decoded Graphics::Image: the bridge sizes
-// the texture from the image and uploads its RGBA8 pixels. Self-skips without a
-// device.
 auto tDeviceBuildsTextureFromImage = test("GPU/deviceBuildsTextureFromImage") = []
 {
     auto& device = Device::shared();
@@ -357,9 +322,6 @@ auto tDeviceBuildsTextureFromImage = test("GPU/deviceBuildsTextureFromImage") = 
     check(texture.height() == 2);
 };
 
-// Runs a compute kernel end to end - storage buffers in and out, a uniform, a
-// dispatch and a readback - without a window or drawable. Self-skips on a host
-// with no GPU device, like the test above.
 auto tComputeRunsKernel = test("GPU/computeRunsKernel") = []
 {
     auto& device = Device::shared();
@@ -401,9 +363,6 @@ auto tComputeRunsKernel = test("GPU/computeRunsKernel") = []
         check(result[i] == input[i] * 3.f);
 };
 
-// Runs the struct-authored EDSL kernel end to end: dispatch(kernel, count)
-// binds the pipeline, the buffer members and the uniform block (with the
-// implicit element count) in one call. Self-skips without a GPU device.
 auto tComputeProgramRunsKernel = test("GPU/computeProgramRunsKernel") = []
 {
     auto& device = Device::shared();
@@ -442,9 +401,6 @@ auto tComputeProgramRunsKernel = test("GPU/computeProgramRunsKernel") = []
         check(result[i] == input[i] * 3.f);
 };
 
-// Runs the index-arithmetic kernel end to end and checks the wrap-around
-// neighbour average against the same expression on the CPU. Self-skips
-// without a GPU device.
 auto tComputeProgramIndexArithmetic = test("GPU/computeProgramIndexArithmetic") = []
 {
     auto& device = Device::shared();
@@ -477,9 +433,8 @@ auto tComputeProgramIndexArithmetic = test("GPU/computeProgramIndexArithmetic") 
     float result[count] = {};
     outputBuffer.read(result, sizeof(result));
 
-    // The platform shader compiler may turn the division into a reciprocal
-    // multiply (Metal compiles fast-math by default), so compare within a ULP
-    // budget rather than exactly.
+    // Metal compiles fast-math by default and may turn the division into a
+    // reciprocal multiply, so compare within a tolerance rather than exactly.
     for (auto i = 0; i < count; ++i)
     {
         auto expected =

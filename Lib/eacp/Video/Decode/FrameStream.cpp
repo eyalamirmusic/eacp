@@ -132,8 +132,7 @@ void FrameStream::decodeLoop()
         }
 
         // The decoder is only ever touched from this thread, so both calls run
-        // outside the lock: seeking and decoding hit the disk, and holding the
-        // lock across either would stall every frameAt() on the render thread.
+        // outside the lock rather than stalling frameAt() on disk access.
         if (seekTo.has_value())
         {
             decoder->seek(*seekTo, seekMode);
@@ -146,8 +145,7 @@ void FrameStream::decodeLoop()
         {
             auto lock = std::lock_guard {mutex};
 
-            // A seek arrived while this frame was decoding: it belongs to the
-            // old position, so drop it and let the loop top handle the seek.
+            // A frame decoded across a seek belongs to the old position.
             if (pendingSeek.has_value())
                 continue;
 
@@ -184,9 +182,7 @@ void FrameStream::advanceTo(double seconds)
 
     while (!queue.empty() && queue.front().seconds() <= seconds)
     {
-        // Every frame this loop passes over except the last is one that was
-        // decoded and then never shown. `dropped` being set means the frame
-        // about to be replaced was itself taken by this same call.
+        // Every frame this call passes over but the last was never shown.
         if (dropped)
             ++framesSkipped;
 
@@ -195,10 +191,9 @@ void FrameStream::advanceTo(double seconds)
         dropped = true;
     }
 
-    // Waking the decode thread belongs here rather than at the call sites,
-    // because waitForFrameAt runs this from inside its condition predicate: a
-    // wait that needs more frames than the queue holds would otherwise drain
-    // the queue and then block against a producer still convinced it is full.
+    // Waking the producer belongs here, not at the call sites: waitForFrameAt
+    // runs this inside its predicate and would otherwise drain the queue and
+    // then block against a producer still convinced it is full.
     if (dropped)
         spaceAvailable.notify_all();
 }
@@ -208,9 +203,7 @@ VideoFrame FrameStream::frameAt(double seconds)
     auto lock = std::lock_guard {mutex};
     advanceTo(seconds);
 
-    // Nothing covering this moment, and the file has not ended: the caller is
-    // about to redraw a frame it has already drawn because the decoder has not
-    // produced the next one yet.
+    // The caller is about to redraw a frame it has already drawn.
     if (!atEnd() && !current.covers(seconds))
         ++framesStarved;
 
@@ -239,10 +232,8 @@ void FrameStream::seek(double seconds, SeekMode mode)
         pendingSeek = std::max(0.0, seconds);
         pendingSeekMode = mode;
 
-        // Clearing this here rather than leaving it to the decode thread
-        // matters: a caller that seeks and then immediately waits for a frame
-        // would otherwise see the end-of-stream left over from before the jump
-        // and give up at once, handing back the frame it was already showing.
+        // Cleared here, not on the decode thread: a caller that seeks and
+        // immediately waits would otherwise see the stale end-of-stream.
         endOfStream = false;
     }
 
@@ -251,8 +242,8 @@ void FrameStream::seek(double seconds, SeekMode mode)
 
 bool FrameStream::atEnd() const
 {
-    // A pending seek has not been carried out yet, so whatever the decoder
-    // reported before it says nothing about where the stream is going.
+    // What the decoder reported before a pending seek says nothing about where
+    // the stream is going.
     return endOfStream && !pendingSeek.has_value() && queue.empty();
 }
 

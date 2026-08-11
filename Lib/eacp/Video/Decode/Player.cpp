@@ -6,9 +6,8 @@ namespace eacp::Video
 {
 namespace
 {
-// How far ahead of the playhead a jump is still cheaper to reach by decoding
-// through than by seeking: a seek throws away the whole queue and restarts the
-// decoder, so a small nudge forward should not pay for one.
+// A seek throws away the queue and restarts the decoder, so a small nudge
+// forward decodes through the gap instead.
 constexpr auto decodeThroughSeconds = 0.5;
 } // namespace
 
@@ -19,8 +18,6 @@ Player::Player(FrameStream& streamToUse)
 
 void Player::play()
 {
-    // Playing again after running off the end restarts from the beginning,
-    // which is what a play button is expected to do.
     if (finished)
         setPosition(0.0);
 
@@ -87,8 +84,7 @@ void Player::advance(double delta)
 
     playhead = next;
 
-    // A file whose duration the container never reported ends when the decoder
-    // runs dry rather than at a known time.
+    // A file with no reported duration ends when the decoder runs dry.
     if (duration <= 0.0 && source.hasReachedEnd())
     {
         if (looping)

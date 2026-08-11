@@ -21,9 +21,8 @@ CFRef<CGGradientRef> toCGGradient(const LinearGradient& gradient);
 
 namespace detail
 {
-// Converts a CGImage into a straight-alpha 8-bit RGBA Image. Sets error and
-// returns an invalid Image on failure. Shared by the PNG/JPEG decode path and
-// by off-screen View rendering (both hand it a CGImage to unpack).
+// Converts a CGImage into a straight-alpha 8-bit RGBA Image; sets error and
+// returns an invalid Image on failure.
 Image imageFromCGImage(CGImageRef image, std::string& error);
 } // namespace detail
 

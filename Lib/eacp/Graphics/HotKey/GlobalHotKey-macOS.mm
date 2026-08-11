@@ -10,9 +10,8 @@ namespace eacp::Graphics
 {
 namespace
 {
-// Derived from the module identity: hotkey events are delivered to every
-// installed application handler, so each eacp copy needs its own signature
-// to claim only its own registrations.
+// Hotkey events reach every installed application handler, so each eacp copy
+// needs its own signature to claim only its own registrations.
 OSType hotKeySignature()
 {
     static const auto signature = []
@@ -28,8 +27,8 @@ OSType hotKeySignature()
     return signature;
 }
 
-// Immortal because ~Native erases itself here, and a GlobalHotKey at namespace
-// scope outlives a registry that first use constructed after it.
+// Immortal because a GlobalHotKey at namespace scope can outlive it and
+// ~Native erases itself here.
 std::map<UInt32, Callback*>& registry()
 {
     return Singleton::getImmortal<std::map<UInt32, Callback*>>();

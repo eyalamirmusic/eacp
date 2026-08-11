@@ -5,10 +5,8 @@ namespace eacp::Detail
 {
 MappingFile openForMapping(const FilePath& path)
 {
-    // Shared every way a POSIX open is, so mapping a file is no more
-    // restrictive here than there. Truncation stays impossible regardless:
-    // that is refused for as long as a section is open on the file, not
-    // arranged by the share mode.
+    // Shared every way a POSIX open is. Truncation stays impossible regardless:
+    // it is refused for as long as a section is open on the file.
     auto* handle =
         ::CreateFileW(path.wide().c_str(),
                       GENERIC_READ,
@@ -21,8 +19,7 @@ MappingFile openForMapping(const FilePath& path)
     if (handle == INVALID_HANDLE_VALUE)
         return {};
 
-    // The FILE_TYPE_DISK test is what S_ISREG does on the other side: a pipe
-    // or a console opens perfectly well and has no size to map.
+    // The FILE_TYPE_DISK test is what S_ISREG does on the other side.
     auto size = LARGE_INTEGER {};
 
     if (::GetFileType(handle) != FILE_TYPE_DISK || !::GetFileSizeEx(handle, &size))
@@ -63,8 +60,7 @@ MappedRegion mapRegion(const MappingFile& file,
                        std::uint64_t alignedOffset,
                        std::size_t length)
 {
-    // A zero maximum size means the size of the file, which is what every
-    // window here fits inside.
+    // A zero maximum size means the size of the file.
     auto* section = ::CreateFileMappingW(reinterpret_cast<HANDLE>(file.handle),
                                          nullptr,
                                          PAGE_READONLY,
@@ -81,8 +77,7 @@ MappedRegion mapRegion(const MappingFile& file,
     auto* address = ::MapViewOfFile(
         section, FILE_MAP_READ, offset.HighPart, offset.LowPart, length);
 
-    // The view holds its own reference to the section, so the handle has done
-    // its job the moment the mapping exists.
+    // The view holds its own reference to the section.
     ::CloseHandle(section);
 
     if (address == nullptr)

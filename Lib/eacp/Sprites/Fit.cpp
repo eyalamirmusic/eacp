@@ -13,8 +13,6 @@ Rect fitRect(
     auto areaAspect = areaWidth / areaHeight;
     auto imageWider = imageAspect > areaAspect;
 
-    // Contain fits inside, so the wider dimension becomes the limit; Cover fills,
-    // so the narrower one does and the other overflows.
     auto widthLimited = fit == Fit::Contain ? imageWider : !imageWider;
 
     auto width = widthLimited ? areaWidth : areaHeight * imageAspect;

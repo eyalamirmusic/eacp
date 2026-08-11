@@ -193,8 +193,7 @@ struct View::Native
 
     Point getMousePosition() const
     {
-        // On iOS, we don't have a persistent mouse position
-        // Return the last known touch position or center of view
+        // iOS has no persistent pointer, so fall back to the last touch.
         return {0.f, 0.f};
     }
 
@@ -256,9 +255,7 @@ Point View::getMousePosition() const
     return impl->getMousePosition();
 }
 
-// Stored and never shown: iOS draws no pointer for a touch. Kept rather than
-// ignored so portable code can set a shape unconditionally, and so an iPad with
-// a trackpad has one obvious place to grow a real implementation.
+// Stored and never shown: iOS draws no pointer for a touch.
 void View::setMouseCursor(MouseCursor cursor)
 {
     currentCursor = cursor;

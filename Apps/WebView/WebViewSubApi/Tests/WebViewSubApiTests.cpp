@@ -2,23 +2,9 @@
 
 #include <eacp/WebView/Test/TestApp.h>
 
-// Covers the namespace-prefix escape hatch in the generated backend template
-// (WebView/Resources/EacpBackend.ts.template).
-//
-// A generated TS client bakes in the command names of the api it was generated
-// from. Mount that same api as a SUB-API of a larger one and every name gains a
-// prefix on the wire, so the client can no longer reach it — which is why an
-// embedded editor used to need its own WebView per api shape. configureBridge
-// ({prefix}) lets one page host a client whose api hangs off a member of the
-// root api instead.
-//
-// This app is that arrangement end to end: Api::RootApi exposes GreeterApi as
-// `nested`, so its commands arrive as "nested.greet", while web/src/main.ts
-// calls a plain backend.greet() after configureBridge({prefix: 'nested.'}).
-//
-// The DEFAULT (empty prefix) is not re-tested here — every other webview app
-// and test in this repo generates the same template and would fail if the
-// default ever stopped being a plain pass-through.
+// Covers configureBridge({prefix}) in WebView/Resources/EacpBackend.ts.template:
+// RootApi mounts GreeterApi as `nested`, so commands arrive as "nested.greet",
+// while web/src/main.ts calls a plain backend.greet().
 
 using namespace eacp::WebView::Test;
 
@@ -26,9 +12,8 @@ using nano::check;
 
 namespace
 {
-// Asks the page to invoke one RAW command name and report what happened, so a
-// test can assert the wire shape rather than infer it. See probeCommand in
-// web/src/main.ts.
+// Asks the page to invoke one raw command name and report what happened
+// (probeCommand in web/src/main.ts).
 struct ProbeRequest
 {
     std::string command;
@@ -78,10 +63,6 @@ ProbeResult probe(const std::string& command)
 }
 } // namespace
 
-// The invoke path: the page calls backend.greet(), which must arrive as
-// "nested.greet". Asserted from both ends — the page gets its reply, and the
-// C++ handler recorded the argument, so this cannot pass on a resolved-but-
-// unhandled command.
 auto tPrefixedInvokeReachesNestedCommand =
     test("SubApi/prefixedInvokeReachesNestedCommand") = []
 {
@@ -90,8 +71,7 @@ auto tPrefixedInvokeReachesNestedCommand =
     check(app().root.nested.greetedName() == "world");
 };
 
-// The subscribe path, driven from C++ so it is independent of the invoke path:
-// the page subscribed to 'ticks', which must have registered as "nested.ticks"
+// The page subscribed to 'ticks', which must have registered as "nested.ticks"
 // or this event would never reach it.
 auto tPrefixedSubscriptionReceivesNestedEvent =
     test("SubApi/prefixedSubscriptionReceivesNestedEvent") = []
@@ -102,16 +82,9 @@ auto tPrefixedSubscriptionReceivesNestedEvent =
     check(driver().text(tickSelector) == "7");
 };
 
-// The same subscribe path in the opposite order: this handler was registered
-// BEFORE configureBridge ran (see web/src/main.ts), so it bound to "ticks" and
-// would have stayed bound to it. configureBridge re-points live subscriptions
-// at the new prefix, which is what lets it receive "nested.ticks" anyway.
-//
-// The order matters because a page cannot always avoid it — an ES import is
-// fully evaluated before the importing module's body, so anything that
-// subscribes at module scope subscribes before the page can configure
-// anything. WebViewSubApiReact covers the case where that early subscriber is
-// eacp's own generated hooks module.
+// This handler bound to "ticks" before configureBridge ran (see
+// web/src/main.ts); configureBridge re-points live subscriptions at the new
+// prefix, which is what lets the event still arrive.
 auto tSubscriptionMadeBeforeConfigureIsRebound =
     test("SubApi/subscriptionMadeBeforeConfigureIsRebound") = []
 {
@@ -121,12 +94,8 @@ auto tSubscriptionMadeBeforeConfigureIsRebound =
     check(driver().text(earlyTickSelector) == "9");
 };
 
-// Pins the wire shape the prefix exists to bridge. Without these, the tests
-// above would still pass if Miro ever flattened sub-APIs onto the root — the
-// prefix would then be doing nothing, and nothing would say so.
-//
-// Both also depend on `expose` NOT being prefixed: probeCommand is registered
-// by the page through the generated expose() and called here by exact name.
+// Both pin the wire shape by exact name, which works because `expose` is not
+// prefixed: the page registers probeCommand through the generated expose().
 auto tRootNameIsNotServed =
     test("SubApi/unprefixedNameIsNotServed") = [] { check(!probe("greet").served); };
 

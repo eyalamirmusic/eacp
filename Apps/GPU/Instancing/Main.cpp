@@ -6,75 +6,54 @@
 using namespace eacp;
 using namespace GPU;
 
-// One window, three side-by-side panels - each a GPUView with its own render
-// pass, so a break in any one panel isolates to that panel's plumbing (shader /
-// drawInstanced / firstInstance) rather than something upstream.
-//
-// All three panels are authored as ShaderPrograms sharing one shader body
-// (SpinProgram::emitBody). The panels differ only in where the per-triangle
-// center / speed / colour come from: pulled per-vertex for the non-instanced
-// baseline, or per-instance for the two instanced panels. The body never knows
-// the difference.
-
 namespace
 {
-// Per-panel width the window opens at (three panels side by side); the layout
-// re-flows to equal thirds on resize, so this is only the initial size.
+// Per-panel size the window opens at; the layout re-flows on resize.
 constexpr int windowW = 480;
 constexpr int windowH = 750;
 
-// The GPU render's Y range in NDC. Labels sit above and below this band; the
-// GPU view fills its panel and the labels overlay as a sibling paint surface,
-// so keeping the geometry within [gpuBotY, gpuTopY] keeps triangles clear of
-// the label text.
+// The NDC band the geometry stays inside, clear of the overlaid labels.
 constexpr float gpuTopY = +0.72f;
 constexpr float gpuBotY = -0.72f;
 
-// Non-instanced grid (panel 1).
 constexpr int nonInstCols = 3;
 constexpr int nonInstRows = 12;
-constexpr int nonInstCount = nonInstCols * nonInstRows; // 36
+constexpr int nonInstCount = nonInstCols * nonInstRows;
 constexpr float nonInstTriRadius = 0.055f;
 
-// Instanced grid (panels 2 and 3 share the same 40x25 layout).
 constexpr int gridCols = 40;
 constexpr int gridRows = 25;
-constexpr int instanceCount = gridCols * gridRows; // 1000
+constexpr int instanceCount = gridCols * gridRows;
 constexpr float instTriRadius = 0.020f;
 constexpr float rowScanTriRadius = 0.028f;
 
 constexpr float gridLeftX = -0.9f;
 constexpr float gridRightX = +0.9f;
 
-// Row-scan cadence for panel 3: each row of 40 stays visible for rowSeconds,
-// so a full top-to-bottom scan takes ~gridRows * rowSeconds seconds.
 constexpr float rowScanRowSeconds = 0.2f;
 
-// Slot 0 (both instanced pipelines): unit triangle corner + UV. Same 3 verts
-// drive every triangle; the non-instanced pipeline expands these into 3 verts
-// per triangle in its fat vertex buffer.
+// Slot 0: the unit triangle every instance is drawn from.
 struct PerVertex
 {
     float position[2];
     float uv[2];
 };
 
-// Slot 1 in the instanced pipeline: placement + spin rate per instance.
+// Slot 1: placement + spin rate per instance.
 struct PerInstanceTransform
 {
     float center[2];
     float rotationSpeed;
 };
 
-// Slot 2 in the instanced pipeline: colour per instance.
+// Slot 2: colour per instance.
 struct PerInstanceColor
 {
     float color[3];
 };
 
-// The non-instanced pipeline's one and only vertex stream. Each corner of
-// each triangle carries the full set - centre / speed / colour values are
-// duplicated three times per triangle. Exactly what instancing eliminates.
+// The non-instanced stream: centre / speed / colour duplicated on every corner,
+// which is exactly what instancing eliminates.
 struct FatVertex
 {
     float position[2];
@@ -139,8 +118,7 @@ Graphics::Color hueColor(float hueTurns)
     return {r, g, b};
 }
 
-// Grid cell centre for a `cols x rows` layout inside `[leftX, rightX] x [botY,
-// topY]`. `index` is row-major.
+// `index` is row-major.
 void cellCentre(int index,
                 int cols,
                 int rows,
@@ -195,8 +173,6 @@ std::vector<PerInstanceColor> buildInstancedColors()
     return out;
 }
 
-// Non-instanced expansion: 3 fat verts per triangle, each carrying the
-// triangle's centre / speed / colour on top of its own corner + uv.
 std::vector<FatVertex> buildNonInstancedVerts()
 {
     auto out = std::vector<FatVertex> {};
@@ -224,10 +200,8 @@ std::vector<FatVertex> buildNonInstancedVerts()
     return out;
 }
 
-// ─── Shaders: one body, three input sources ─────────────────────────────
-
-// The handles emitBody() reads. Each panel's define() fills them from either a
-// per-vertex or a per-instance source, then hands them to the shared body.
+// The handles emitBody() reads, filled from a per-vertex or a per-instance
+// source by each panel's define().
 struct SpinInputs
 {
     Float2 position;
@@ -237,10 +211,7 @@ struct SpinInputs
     Float3 color;
 };
 
-// The shared shader math: spin the unit triangle by time*rotationSpeed, scale
-// it, place it at its center, shade it by UV. Authored once here; the three
-// panels reuse it verbatim. `time` and `scale` are named uniform members set
-// per frame from render().
+// The shared shader math, reused verbatim by all three panels.
 struct SpinProgram : ShaderProgram
 {
     void emitBody(const SpinInputs& in)
@@ -287,8 +258,7 @@ struct NonInstancedProgram final : SpinProgram
     }
 };
 
-// Panels 2 and 3: geometry + UV per-vertex at slot 0; transform per-instance at
-// slot 1; colour per-instance at slot 2. Same body, three buffers.
+// Panels 2 and 3: slot 0 per-vertex, slots 1 and 2 per-instance.
 struct InstancedProgram final : SpinProgram
 {
     InstancedProgram() { compile(); }
@@ -308,7 +278,6 @@ struct InstancedProgram final : SpinProgram
 Graphics::WindowOptions windowOptions()
 {
     auto options = Graphics::WindowOptions {};
-    // Three panels side by side; the layout re-flows to equal thirds on resize.
     options.width = 3 * windowW;
     options.height = windowH;
     options.title = "eacp - Instancing";
@@ -317,8 +286,6 @@ Graphics::WindowOptions windowOptions()
     return options;
 }
 } // namespace
-
-// ─── Views ──────────────────────────────────────────────────────────────
 
 struct NonInstancedView final : GPUView
 {
@@ -376,10 +343,8 @@ struct InstancedView final : GPUView
     float elapsed = 0.f;
 };
 
-// Same buffers and program shape as InstancedView, but draws only ONE row's
-// worth (gridCols instances) each frame, walking `firstInstance` down the
-// buffer so a single horizontal strip of triangles scans through the panel
-// top-to-bottom.
+// Draws one row of instances per frame, walking `firstInstance` down the buffer
+// so a single strip of triangles scans through the panel.
 struct RowScanView final : GPUView
 {
     static constexpr std::uint16_t indices[3] = {0, 1, 2};
@@ -400,8 +365,7 @@ struct RowScanView final : GPUView
 
     void render(Frame& frame) override
     {
-        // Row 0 sits at the bottom of the grid; scan visually top-to-bottom
-        // by inverting the row index.
+        // Row 0 sits at the bottom, so the index is inverted to scan downwards.
         auto stepIndex = (int) (elapsed / rowScanRowSeconds);
         auto rowFromBottom = (gridRows - 1) - (stepIndex % gridRows);
         auto firstInstance = rowFromBottom * gridCols;
@@ -418,8 +382,6 @@ struct RowScanView final : GPUView
     InstancedProgram shader;
     float elapsed = 0.f;
 };
-
-// ─── Chrome: title + bottom "what you see / what this tests" ────────────
 
 struct LabelView final : Graphics::View
 {
@@ -441,9 +403,8 @@ struct LabelView final : Graphics::View
         const auto bounds = getLocalBounds();
         const auto cx = bounds.w * 0.5f;
 
-        // Centre each line, but never start it left of a small margin, so a
-        // line wider than the panel stays readable from its start instead of
-        // being clipped off the left edge.
+        // Centred, but never left of the margin, so a line wider than the panel
+        // stays readable from its start.
         constexpr float leftMargin = 8.f;
         const auto startX = [&](const std::string& text, float halfChar)
         { return std::max(leftMargin, cx - (float) text.size() * halfChar); };
@@ -469,10 +430,7 @@ struct LabelView final : Graphics::View
         Graphics::FontOptions().withName("Menlo").withSize(11.f)};
 };
 
-// ─── Layout: one window, three panels side by side ──────────────────────
-
-// One panel: the GPU view fills it, the label overlays it. Insertion order is
-// z-order, so the label (added second) sits on top of the GPU view.
+// Insertion order is z-order, so the label added second sits on top.
 struct PanelView final : Graphics::View
 {
     void resized() override
@@ -482,8 +440,6 @@ struct PanelView final : Graphics::View
     }
 };
 
-// Tiles its panel children left-to-right in equal columns, so the three test
-// surfaces share one window and re-flow on resize.
 struct RootView final : Graphics::View
 {
     void resized() override
@@ -499,8 +455,6 @@ struct RootView final : Graphics::View
                 {bounds.x + (float) i * panelW, bounds.y, panelW, bounds.h});
     }
 };
-
-// ─── App: one window, three panels ──────────────────────────────────────
 
 struct InstancingApp
 {
@@ -524,7 +478,6 @@ struct InstancingApp
 
     RootView root;
 
-    // Panel A - baseline (no instancing).
     PanelView panelA;
     NonInstancedView gpuA;
     LabelView labelA {
@@ -533,7 +486,6 @@ struct InstancingApp
         "tests: the shared shader math without instancing (baseline)",
     };
 
-    // Panel B - drawInstanced.
     PanelView panelB;
     InstancedView gpuB;
     LabelView labelB {
@@ -542,7 +494,6 @@ struct InstancingApp
         "tests: multi-buffer layout (slots 0/1/2) and drawInstanced(program, 1000)",
     };
 
-    // Panel C - drawIndexedInstanced + firstInstance.
     PanelView panelC;
     RowScanView gpuC;
     LabelView labelC {

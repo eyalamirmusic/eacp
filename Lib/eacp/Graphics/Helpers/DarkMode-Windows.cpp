@@ -13,9 +13,8 @@ namespace eacp::Graphics
 {
 namespace
 {
-// The dark-mode app-mode controls are exported from uxtheme.dll only by
-// ordinal (no public header). The ordinals below are stable across Windows 10
-// 1809+ and Windows 11; resolve them once and degrade to no-ops if missing.
+// uxtheme.dll exports these only by ordinal. The ordinals are stable across
+// Windows 10 1809+ and Windows 11; missing ones degrade to no-ops.
 enum class PreferredAppMode
 {
     Default = 0,
@@ -53,8 +52,7 @@ const UxThemeDarkMode& uxTheme()
     return instance;
 }
 
-// DWMWA_USE_IMMERSIVE_DARK_MODE moved from 19 to 20 in Windows 10 20H1. Try
-// the modern id first and fall back so 1809-1909 still get the dark caption.
+// DWMWA_USE_IMMERSIVE_DARK_MODE moved from 19 to 20 in Windows 10 20H1.
 constexpr DWORD immersiveDarkModeAttribute = 20;
 constexpr DWORD immersiveDarkModeAttributeLegacy = 19;
 } // namespace

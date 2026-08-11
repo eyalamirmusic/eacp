@@ -4,25 +4,13 @@
 
 namespace eacp::GPUWidgets
 {
-// A 2D vector path built from lines, Bezier curves and primitive shapes, ready to
-// fill on the GPU. The geometry-owning sibling of eacp::Graphics::Path: where that
-// class wraps an opaque native CGPath / Direct2D handle, this one stores its
-// sub-paths as flattened polylines, so a tessellator can read the actual points.
-// Curves and arcs are flattened to line segments as the path is built.
-//
-//   Path path;
-//   path.addRoundedRect ({10, 10, 200, 120}, 16.0f);
-//   path.moveTo ({20, 20});
-//   path.cubicTo (40, 0, 80, 120, 120, 40);
-//   path.close();
-//
-// Method names mirror eacp::Graphics::Path so the two read as siblings.
+// The geometry-owning sibling of eacp::Graphics::Path: stores readable flattened
+// polylines rather than an opaque CGPath / Direct2D handle.
 class Path
 {
 public:
-    // One flattened sub-path: a polyline, optionally marked closed. A fill always
-    // treats a sub-path as closed; the flag is kept for correctness and future
-    // stroking work.
+    // A fill treats every sub-path as closed regardless of `closed`, which only
+    // stroking honours.
     struct SubPath
     {
         Vector<Graphics::Point> points;
@@ -34,24 +22,16 @@ public:
     void clear();
     bool isEmpty() const;
 
-    // How far a flattened polyline may stray from the curve it replaces, in path
-    // units. Curves are subdivided until they hold to it, so a big shape gets
-    // more segments than a small one instead of every shape getting the same
-    // fixed count - which is what made a large circle read as the polygon it was.
-    //
-    // The default keeps the error under a tenth of a device pixel at the usual
-    // 2x backing scale, which is below anything an 8-bit coverage channel can
-    // express. Segment count grows as 1/sqrt of this, so loosening it to save
-    // work buys little and costs visibly; tighten it only for a shape rasterized
-    // far above its authored size. Set before the curves are added.
+    // Maximum deviation of a flattened polyline from its curve, in path units.
+    // Only affects curves added after the call.
     void setFlatness(float toleranceInPathUnits);
     float getFlatness() const { return flatness; }
 
-    // Starts a new sub-path at target. Subsequent line/curve calls extend it.
+    // Starts a new sub-path; line and curve calls extend the current one.
     void moveTo(const Graphics::Point& target);
     void lineTo(const Graphics::Point& target);
 
-    // Quadratic / cubic Bezier from the current point, flattened to line segments.
+    // Flattened to line segments as they are added.
     void quadTo(float controlX, float controlY, float endX, float endY);
     void cubicTo(float control1X,
                  float control1Y,
@@ -62,32 +42,21 @@ public:
 
     void close();
 
-    // Primitive shapes, each added as its own closed sub-path.
+    // Each added as its own closed sub-path.
     void addRect(const Graphics::Rect& rect);
     void addRoundedRect(const Graphics::Rect& rect, float cornerRadius);
     void addEllipse(const Graphics::Rect& rect);
 
-    // The same geometry with every point mapped through `transform`.
-    //
-    // It maps the polyline, not the curves it was flattened from, so the segment
-    // count is whatever the flatness in force when the curves were added asked
-    // for. Scaling a path up afterwards therefore magnifies the flattening error
-    // with it, and a circle built at its authored size and then scaled by ten
-    // reads as the polygon it always was. Set setFlatness to the tolerance the
-    // *result* needs - the authored tolerance divided by
-    // transform.getScaleFactor() - before building anything meant to be
-    // transformed.
-    // Another path's sub-paths added to this one's, which under the non-zero
-    // rule is the union of the two regions -- what a clip path made of several
-    // shapes is, and what a stroke and the shape it outlines are not, those
-    // being wound against each other on purpose.
+    // Sub-paths are merged, not combined: under the non-zero rule that unions
+    // same-wound regions and subtracts oppositely wound ones.
     void append(const Path& other);
 
+    // Transforms the already-flattened points, so scaling up magnifies the
+    // flattening error; set flatness for the final scale before adding curves.
     Path transformed(const AffineTransform& transform) const;
     Path scaled(float scaleX, float scaleY) const;
 
-    // The smallest rectangle containing every point; an empty rect for an empty
-    // path.
+    // An empty rect for an empty path.
     Graphics::Rect getBounds() const;
 
     const Vector<SubPath>& getSubPaths() const { return subPaths; }
@@ -95,9 +64,6 @@ public:
 private:
     SubPath& currentSubPath();
 
-    // Segments a curve or an arc needs to stay within flatness of the real
-    // thing. Both fall out of the same fact: uniform subdivision cuts the
-    // deviation by the square of the count.
     int segmentsForCurve(float secondDifference) const;
     int segmentsForArc(float radius, float sweep) const;
 

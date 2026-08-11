@@ -7,17 +7,9 @@
 namespace eacp::Graphics
 {
 
-// DComp has no SpriteVisual/ContainerVisual split — one visual type both holds
-// content and parents children — and no surface *brush*: a surface is set as the
-// visual's content directly.
-//
-// It also has no visual Size, and no stretch: SetContent draws the surface 1:1
-// in the visual's local space. The root visual is scaled by the DPI factor (see
-// CompositionHostWindow::rescaleRootVisualToDpi), so a content visual would show
-// its already-DPI-sized surface scaled a second time. Counter-scaling the
-// content visual by 1/dpiScale cancels that, which keeps offsets and bounds in
-// logical points exactly as the WinRT backend had them — DComp applies offsets
-// in parent space, so they are unaffected by the visual's own transform.
+// SetContent draws a surface 1:1 in the visual's local space, and the root is
+// already scaled by the DPI factor, so content visuals counter-scale by
+// 1/dpiScale. Offsets and bounds therefore stay in logical points.
 struct NativeLayerBase
 {
     virtual ~NativeLayerBase() = default;
@@ -66,8 +58,8 @@ struct NativeLayerBase
 
         parentVisual = parent;
 
-        // ensureVisual() parents the visual itself when parentVisual is already
-        // set, so do not AddVisual again here — DComp reparents on a second add.
+        // ensureVisual() already parents when parentVisual is set, and DComp
+        // reparents on a second add.
         if (!ensureVisual())
             return;
 
@@ -95,10 +87,8 @@ struct NativeLayerBase
 
     float getDpiScale() const { return dpiScale; }
 
-    // The host window's DPI scale, pushed before each render pass by
-    // CompositionHostWindow::ensureAllLayersRendered. A change (the window
-    // moved to a monitor with different scaling) recreates the surface at
-    // the new pixel size.
+    // Pushed before each render pass by ensureAllLayersRendered; a change
+    // recreates the surface at the new pixel size.
     void setDpiScale(float scale)
     {
         if (dpiScale == scale)
@@ -151,12 +141,9 @@ struct NativeLayerBase
 
     virtual void renderContent() = 0;
 
-    // Draws this layer's content straight into an arbitrary device context under
-    // `transform` (points -> device pixels), instead of into its own DComp
-    // surface. This is the off-screen View->Image snapshot's analog of macOS
-    // renderInContext:, which cannot reach a DComp visual. `pointScale` is the
-    // point-to-pixel factor baked into `transform`, so stroke widths (specified
-    // in points) match the on-screen surface. Default draws nothing.
+    // Draws into an arbitrary device context instead of this layer's own DComp
+    // surface, for the off-screen snapshot. `transform` maps points -> device
+    // pixels and `pointScale` is the factor baked into it, for stroke widths.
     virtual void drawInto(ID2D1DeviceContext*, const D2D1::Matrix3x2F&, float) {}
 
     void updateVisualPosition()
@@ -204,9 +191,8 @@ struct NativeLayerBase
 
     void markContentDirty() { contentDirty = true; }
 
-    // Rebuilds the visual after a device loss moved the generation, and creates
-    // it on first use. Everything downstream (surface, content, position) is
-    // re-derived by ensureContent, so dropping them here is enough.
+    // Creates the visual on first use and rebuilds it when a device loss moved
+    // the generation; ensureContent re-derives everything downstream.
     bool ensureVisual()
     {
         auto current = getCompositionGeneration();
@@ -235,7 +221,7 @@ struct NativeLayerBase
             return false;
         }
 
-        // Opacity lives on IDCompositionVisual3; the QI is done once and cached.
+        // Opacity lives on IDCompositionVisual3; the QI is cached.
         visual.As(&visual3);
 
         if (parentVisual)
@@ -253,8 +239,7 @@ struct NativeLayerBase
         commitComposition();
     }
 
-    // Undoes the root visual's DPI scale for this visual's physical-pixel
-    // surface — see the note at the top of the struct.
+    // Undoes the root visual's DPI scale; see the note at the top of the file.
     void applyContentScale()
     {
         if (!visual || dpiScale <= 0.f)

@@ -44,8 +44,7 @@ eacp::Processes::ProcessOptions echoCommand(const std::string& text)
 }
 
 // A single process, deliberately: a cmd.exe one-liner would linger via a
-// grandchild, which kill() cannot reach — and an orphan holding the
-// inherited file handle keeps the test's cleanup from deleting it.
+// grandchild kill() cannot reach, holding the inherited file handle.
 eacp::Processes::ProcessOptions echoThenLinger(const std::string& text)
 {
     return {"powershell.exe",

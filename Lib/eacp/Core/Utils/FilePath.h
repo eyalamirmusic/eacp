@@ -13,9 +13,8 @@ concept FilesystemPathLike = requires(const T& path) {
 };
 
 // A filesystem path carried as UTF-8 text, so public headers never need
-// <filesystem>. Deliberately minimal: it stores, joins and inspects text;
-// everything that touches the filesystem converts at the boundary via
-// StdPath.h.
+// <filesystem>. It only stores, joins and inspects text; anything that touches
+// the filesystem converts at the boundary via StdPath.h.
 class FilePath
 {
 public:
@@ -24,12 +23,9 @@ public:
     FilePath(std::string_view textToUse);
     FilePath(const char* textToUse);
 
-    // Accepts std::filesystem::path without this header naming it: the
-    // template only instantiates at call sites that already include
-    // <filesystem>. Not generic_u8string(), which throws on names that are
-    // not valid UTF-16 (NTFS permits unpaired surrogates): this conversion
-    // never throws, mapping invalid units to U+FFFD, and keeps non-ASCII
-    // intact on Windows.
+    // Accepts std::filesystem::path without this header naming it. Not via
+    // generic_u8string(), which throws on the unpaired surrogates NTFS permits;
+    // this never throws, mapping invalid units to U+FFFD.
     template <FilesystemPathLike P>
     FilePath(const P& path)
     {
@@ -41,9 +37,7 @@ public:
             assignFromWide({native.data(), native.size()});
     }
 
-    // Well-known user directories, resolved through the native platform API
-    // (NSSearchPathForDirectoriesInDomains, SHGetKnownFolderPath, the XDG
-    // user dirs on Linux). Empty when the platform can't resolve them.
+    // Resolved through the native platform API. Empty when it can't resolve them.
     static FilePath homeDirectory();
     static FilePath documentsDirectory();
     static FilePath downloadsDirectory();
@@ -53,9 +47,8 @@ public:
     static FilePath desktopDirectory();
     static FilePath tempDirectory();
 
-    // Per-user application data and cache roots: Application Support and
-    // Caches on Apple platforms, Roaming and Local AppData on Windows, the
-    // XDG data and cache homes on Linux.
+    // Per-user roots: Application Support and Caches on Apple, Roaming and Local
+    // AppData on Windows, the XDG data and cache homes on Linux.
     static FilePath appDataDirectory();
     static FilePath cacheDirectory();
 
@@ -63,16 +56,13 @@ public:
     const char* c_str() const;
     bool empty() const;
 
-    // The path as a wide string, for native APIs and std::filesystem on
-    // Windows. Never throws: bytes that are not valid UTF-8 decode to U+FFFD.
+    // Never throws: bytes that are not valid UTF-8 decode to U+FFFD.
     std::wstring wide() const;
 
-    // ".png" for "dir/image.png"; empty for dotfiles and extension-less
-    // names, mirroring std::filesystem::path::extension().
+    // ".png" for "dir/image.png"; empty for dotfiles and extension-less names.
     std::string extension() const;
 
-    // "dir/sub" for "dir/sub/image.png"; empty when there is no directory
-    // part, mirroring std::filesystem::path::parent_path().
+    // "dir/sub" for "dir/sub/image.png"; empty when there is no directory part.
     FilePath parentDirectory() const;
 
     FilePath operator/(std::string_view part) const;
@@ -80,8 +70,7 @@ public:
     bool operator==(const FilePath& other) const = default;
 
 private:
-    // UTF-16 or UTF-32 (by wchar_t width) to UTF-8, with '\' normalized to
-    // '/' and invalid units mapped to U+FFFD — never throws.
+    // Normalizes '\' to '/' and maps invalid units to U+FFFD; never throws.
     void assignFromWide(std::wstring_view wide);
 
     std::string text;

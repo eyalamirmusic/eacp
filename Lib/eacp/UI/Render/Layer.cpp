@@ -8,12 +8,7 @@ namespace eacp::UI
 {
 namespace
 {
-// The largest layer worth making, per side, in device pixels. A layer is a
-// texture of its own rather than room in a shared atlas, so nothing here packs
-// or compacts and nothing gives space back but the destructor -- which makes an
-// absurd one a straightforward waste of memory rather than a ceiling anything
-// negotiates. Past this the layer draws as nothing, which is visible, rather
-// than as a hundred megabytes nobody asked for.
+// Per side, in device pixels. Past this the layer draws as nothing.
 constexpr int maxLayerSize = 4096;
 
 int devicePixels(float points, float scale)
@@ -32,10 +27,7 @@ Layer::~Layer()
 {
     owner.removeLayer(*this);
 
-    // Whatever drew it is holding a pointer to it. The owner is the component
-    // that draws a layer -- that is the arrangement the class documents -- so
-    // dropping its recording here is what stops the next frame replaying a quad
-    // of a texture that has gone.
+    // The owner's recording holds a pointer to this layer.
     owner.repaint();
 }
 
@@ -50,13 +42,9 @@ void Layer::setBounds(const Rect& newBounds)
 
 void Layer::setOpacity(float newOpacity)
 {
-    // Not dirty: what the layer holds is the content at full strength, and the
-    // opacity is applied where it is composited. Fading one is therefore a
-    // repaint and not a re-render, which is what makes a layer worth animating.
+    // Neither dirty nor a repaint: the texture holds the content at full
+    // strength, and the opacity is read off the layer as it is composited.
     opacity = std::clamp(newOpacity, 0.f, 1.f);
-
-    // And not a paint either: the opacity is read off the layer as it is drawn,
-    // so what the owner recorded still holds and only the frame has to happen.
     owner.invalidateHost();
 }
 
@@ -65,8 +53,7 @@ void Layer::setDirty()
     dirty = true;
     ready = false;
 
-    // The owner drew this layer as a quad of its bounds, so a change of what is
-    // in it -- or of where it is -- is a change to what the owner recorded.
+    // The owner recorded this layer as a quad of its bounds.
     owner.repaint();
 }
 

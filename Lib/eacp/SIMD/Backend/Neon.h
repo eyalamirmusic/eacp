@@ -6,8 +6,8 @@
 
 #include <arm_neon.h>
 
-// NEON backend (128-bit). NEON is mandatory on AArch64, so it is the
-// unconditional baseline there and needs no runtime dispatch or compile flag.
+// NEON backend (128-bit). Mandatory on AArch64, so it is the unconditional
+// baseline there and needs no runtime dispatch or compile flag.
 namespace eacp::simd::backend
 {
 
@@ -55,7 +55,6 @@ struct Neon
 
         static F4 broadcast(float x) { return {vdupq_n_f32(x)}; }
 
-        // Load four packed bytes (one RGBA pixel) and widen to four floats.
         static F4 loadPixel(const std::uint8_t* p)
         {
             std::uint32_t packed;
@@ -65,8 +64,7 @@ struct Neon
             return {vcvtq_f32_u32(vmovl_u16(words))};
         }
 
-        // Round each (non-negative) lane with floor(v + 0.5) -- equal to lround
-        // here -- saturate to [0, 255], and store the four bytes.
+        // floor(v + 0.5) equals lround for the non-negative lanes reaching here.
         static void storePixel(std::uint8_t* out, F4 a)
         {
             const auto rounded = vcvtq_s32_f32(vaddq_f32(a.v, vdupq_n_f32(0.5f)));

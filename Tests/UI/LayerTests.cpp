@@ -2,15 +2,6 @@
 
 #include <NanoTest/NanoTest.h>
 
-// A layer's contract with the component that owns it and the host that renders
-// it, which is the part nothing on screen would report.
-//
-// It finds its way into a frame the way a PathShape does: by registering with
-// its component in its constructor, so the host can walk the tree and fill every
-// one of them before the frame's own pass opens. Miss that and the layer is
-// simply never rendered -- there is no texture to draw, so the group it holds is
-// absent and nothing says why.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
@@ -44,8 +35,6 @@ auto tLayerStartsEmpty = test("Layer/aLayerHasNothingInItUntilItIsRendered") = [
     check(layer.isEmpty());
 };
 
-// The fade is applied where the layer is composited, so changing it is a repaint
-// and not a re-render -- which is what makes an animated opacity affordable.
 auto tOpacityDoesNotDirty = test("Layer/fadingALayerDoesNotRebuildIt") = []
 {
     auto component = Component {};
@@ -64,9 +53,6 @@ auto tOpacityDoesNotDirty = test("Layer/fadingALayerDoesNotRebuildIt") = []
     check(layer.getOpacity() == 0.f);
 };
 
-// Bounds it already has are not a change, because setting them asks for the
-// content again and a layer re-rendered every frame for nothing is a render pass
-// per frame for nothing.
 auto tSameBoundsAreNotAChange = test("Layer/settingTheSameBoundsAsksForNothing") = []
 {
     auto component = Component {};

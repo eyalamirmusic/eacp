@@ -5,17 +5,6 @@
 #include <optional>
 #include <string>
 
-// The whole path, end to end: rasterize -> pack -> upload -> sample -> pixels.
-//
-// The atlas tests above stop at the CPU boundary and the rasterizer tests stop
-// at the bitmap. Everything between — that the sub-region upload puts coverage
-// where the slot says it is, that the mask atlas samples as coverage rather
-// than colour, that bearings and advances place glyphs correctly — only shows
-// up once something is actually drawn. So these render off-screen through a
-// GPUView and read the pixels back.
-//
-// Self-skips without a GPU device or a resolvable font.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Text;
@@ -25,7 +14,6 @@ namespace
 constexpr auto viewWidth = 320.f;
 constexpr auto viewHeight = 64.f;
 
-// Draws a string from the atlas, laying each glyph out by its own bearings.
 struct TextView final : GPU::GPUView
 {
     TextView()
@@ -118,7 +106,6 @@ int inkPixels(const Graphics::Image& image)
     return total;
 }
 
-// Rightmost column carrying ink — how far the text actually reached.
 int rightmostInk(const Graphics::Image& image)
 {
     for (auto x = image.width() - 1; x >= 0; --x)
@@ -130,9 +117,6 @@ int rightmostInk(const Graphics::Image& image)
 }
 } // namespace
 
-// Text drawn through the atlas actually puts ink on the target. If the mask
-// atlas were uploaded wrong, sampled wrong, or the slot rects were stale, this
-// comes back black.
 auto tDrawsInk = test("TextRendering/drawsGlyphsFromTheAtlas") = []
 {
     if (!GPU::Device::shared().isValid())
@@ -151,8 +135,6 @@ auto tDrawsInk = test("TextRendering/drawsGlyphsFromTheAtlas") = []
     check(inkPixels(image) > 20);
 };
 
-// Nothing drawn means nothing lit — the control that stops the test above from
-// passing on a background that happens to be bright.
 auto tEmptyTextDrawsNothing =
     test("TextRendering/emptyTextLeavesTheTargetClear") = []
 {
@@ -172,8 +154,6 @@ auto tEmptyTextDrawsNothing =
     check(inkPixels(image) == 0);
 };
 
-// Whitespace advances the pen without drawing, so two words reach further right
-// than one while putting down the same amount of ink.
 auto tSpacesAdvanceWithoutInk =
     test("TextRendering/spacesAdvanceThePenWithoutDrawing") = []
 {
@@ -194,7 +174,6 @@ auto tSpacesAdvanceWithoutInk =
 
     check(tight.isValid() && spaced.isValid());
 
-    // Same glyphs, so comparable ink; spaces push the second 'b' further right.
     check(rightmostInk(spaced) > rightmostInk(tight));
 
     const auto tightInk = inkPixels(tight);
@@ -204,8 +183,6 @@ auto tSpacesAdvanceWithoutInk =
     check(spacedInk < tightInk * 2);
 };
 
-// Advances accumulate: more characters reach further right. This is what fails
-// if every glyph is drawn at the pen without stepping it.
 auto tAdvancesAccumulate = test("TextRendering/penAdvancesAcrossGlyphs") = []
 {
     if (!GPU::Device::shared().isValid())
@@ -228,8 +205,6 @@ auto tAdvancesAccumulate = test("TextRendering/penAdvancesAcrossGlyphs") = []
     check(inkPixels(longImage) > inkPixels(shortImage));
 };
 
-// Glyphs sit on a shared baseline rather than at the top of the view, which is
-// what the bearing offsets are for. Ink must avoid the very top of the target.
 auto tGlyphsSitOnTheBaseline = test("TextRendering/glyphsSitOnABaseline") = []
 {
     if (!GPU::Device::shared().isValid())
@@ -257,9 +232,6 @@ auto tGlyphsSitOnTheBaseline = test("TextRendering/glyphsSitOnABaseline") = []
     check(inkPixels(image) > 20);
 };
 
-// Drawing the same text twice must produce the same picture: the second frame
-// hits the cache and uploads nothing, and any staleness in the dirty-region
-// bookkeeping would show as a difference.
 auto tSecondFrameMatchesFirst =
     test("TextRendering/cachedSecondFrameIsIdentical") = []
 {
@@ -289,9 +261,6 @@ auto tSecondFrameMatchesFirst =
     check(differing == 0);
 };
 
-// A glyph rasterized *after* the atlas has already uploaded once must still
-// appear — the case that exercises the incremental sub-region upload rather
-// than the initial full one.
 auto tLaterGlyphsStillUpload =
     test("TextRendering/glyphsAddedAfterFirstUploadStillDraw") = []
 {
@@ -307,13 +276,11 @@ auto tLaterGlyphsStillUpload =
     auto first = view.renderToImage(1.f);
     check(first.isValid());
 
-    // Entirely new glyphs, so the atlas grows and re-uploads incrementally.
     view.text = "WWW";
     auto second = view.renderToImage(1.f);
 
     check(second.isValid());
     check(inkPixels(second) > 20);
 
-    // 'W' is much wider than 'a', so the picture genuinely changed.
     check(rightmostInk(second) > rightmostInk(first));
 };

@@ -4,23 +4,6 @@
 
 #include <cmath>
 
-// strokeToFill turns a stroke into a fill by emitting the pieces of the stroke
-// as overlapping closed contours and letting the non-zero rule union them. Two
-// things have to hold for that to be a stroke rather than a mess, and both are
-// silent when they break.
-//
-// Every contour must wind the same way. Two that disagree subtract where they
-// overlap, so a join wound backwards does not merely look wrong - it removes the
-// corner it was there to fill. That is checked directly, on the geometry.
-//
-// And the union has to be the right region. With round joins and round caps the
-// stroke is exactly the set of points within half the width of the source
-// polyline, which is a predicate a test can evaluate per pixel without knowing
-// anything about how the stroker got there. So the coverage is checked against
-// that distance instead of against a reference implementation - a well-inside
-// pixel must be full, a well-outside pixel must be empty, and the band between
-// them is left alone because that is where antialiasing lives.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPUWidgets;
@@ -32,12 +15,9 @@ using Graphics::Point;
 
 constexpr auto pi = 3.14159265358979323846f;
 
-// How far from the ideal edge a pixel has to be before its coverage is called.
-// One pixel each way covers the antialiased band; the checks are about which
-// region got filled, not about how its edge is shaded.
+// Pixels within this of the ideal edge are in the antialiased band and are left
+// unjudged; the checks are about which region got filled, not how it is shaded.
 constexpr auto margin = 1.5f;
-
-// ------------------------------------------------------------------ geometry
 
 float signedArea(const Vector<Point>& contour)
 {
@@ -95,8 +75,6 @@ float distanceToPath(const Point& p, const Path& path)
     return best;
 }
 
-// -------------------------------------------------------------------- shapes
-
 Path openPolyline()
 {
     auto path = Path {};
@@ -121,8 +99,6 @@ Path circle()
     return path;
 }
 
-// A hairpin: the sharpest corner a miter can be asked for, and the one the
-// miter limit exists to refuse.
 Path hairpin()
 {
     auto path = Path {};
@@ -165,10 +141,6 @@ Vector<StrokeStyle> everyStyle(float width)
     return styles;
 }
 
-// --------------------------------------------------------------------- checks
-
-// Coverage against the distance predicate, which is exact for a round-joined,
-// round-capped stroke.
 struct Verdict
 {
     bool ran = false;
@@ -199,7 +171,6 @@ Verdict checkAgainstDistance(const Path& source, float width, float scale)
     {
         for (auto x = 0; x < pixelWidth; ++x)
         {
-            // The centre of the pixel, back in the path's own units.
             auto at = Point {covered.x + ((float) x + 0.5f) / scale,
                              covered.y + ((float) y + 0.5f) / scale};
 
@@ -223,8 +194,8 @@ Verdict checkAgainstDistance(const Path& source, float width, float scale)
 }
 } // namespace
 
-// The invariant the whole approach rests on. Every contour of every stroke of
-// every shape has to agree, or the pieces subtract instead of uniting.
+// Contours that disagree subtract where they overlap, so a join wound backwards
+// removes the corner it was there to fill.
 auto tWinding = test("PathStroker/everyContourWindsTheSameWay") = []
 {
     for (const auto& shape: everyShape())
@@ -252,9 +223,8 @@ auto tWinding = test("PathStroker/everyContourWindsTheSameWay") = []
     }
 };
 
-// Every piece is a closed contour, and a fill treats an unclosed one as closed
-// anyway - so an unclosed piece would still fill, and the mistake would only
-// show up somewhere else. Pinned here instead.
+// A fill treats an unclosed contour as closed anyway, so an unclosed piece
+// would only show up somewhere else.
 auto tClosed = test("PathStroker/everyContourIsClosed") = []
 {
     for (const auto& shape: everyShape())
@@ -272,7 +242,8 @@ auto tClosed = test("PathStroker/everyContourIsClosed") = []
     }
 };
 
-// The region, for the join and cap the distance predicate describes exactly.
+// A round-joined, round-capped stroke is exactly the points within half the
+// width of the source polyline, so the distance predicate is the reference.
 auto tCoversTheRibbon = test("PathStroker/roundStrokeIsTheDistanceField") = []
 {
     for (const auto& shape: everyShape())
@@ -297,9 +268,6 @@ auto tCoversTheRibbon = test("PathStroker/roundStrokeIsTheDistanceField") = []
     }
 };
 
-// A butt cap stops on the last point. A square one goes half a width past it,
-// and a round one the same but curved - so of the three only butt keeps the
-// stroke inside the path's own bounds.
 auto tCapsReach = test("PathStroker/capsReachAsFarAsTheyShould") = []
 {
     auto line = Path {};
@@ -323,13 +291,11 @@ auto tCapsReach = test("PathStroker/capsReachAsFarAsTheyShould") = []
     check(std::abs(square.x - 35.f) < 0.01f);
     check(std::abs(square.w - 90.f) < 0.01f);
 
-    // A round cap is a polygon, so it reaches half a width past the end only to
-    // within the flattening tolerance - which is the same promise every other
-    // curve in a Path makes.
+    // A round cap is a polygon, so it only reaches to within the flattening
+    // tolerance rather than to 0.01 like the other two.
     check(std::abs(round.x - 35.f) < line.getFlatness());
 };
 
-// A closed sub-path has no ends, so no cap style may change it.
 auto tClosedHasNoCaps = test("PathStroker/aClosedPathIgnoresTheCap") = []
 {
     auto style = StrokeStyle {8.f, LineCap::Butt, LineJoin::Miter, 4.f};
@@ -343,8 +309,6 @@ auto tClosedHasNoCaps = test("PathStroker/aClosedPathIgnoresTheCap") = []
     check(std::abs(butt.h - square.h) < 0.01f);
 };
 
-// The miter limit is the whole reason miter is safe to default to: without it a
-// hairpin's corner runs away to many times the stroke width.
 auto tMiterLimit = test("PathStroker/theMiterLimitCapsTheCorner") = []
 {
     auto width = 10.f;
@@ -357,24 +321,16 @@ auto tMiterLimit = test("PathStroker/theMiterLimitCapsTheCorner") = []
     auto generous = reachOf(40.f);
     auto strict = reachOf(1.f);
 
-    // The hairpin turns at x = 140; a generous limit lets the corner run well
-    // past it and a strict one bevels it back to the offset points.
+    // The hairpin turns at x = 140.
     check(generous.x + generous.w > 175.f);
     check(strict.x + strict.w < 150.f);
 
-    // And the default has to be one of the safe ones.
     auto byDefault = strokeToFill(hairpin(), StrokeStyle {width}).getBounds();
     check(byDefault.x + byDefault.w < 160.f);
 };
 
-// Flattening a curve makes hundreds of corners that turn by almost nothing.
-// A disc at each would be most of the stroke's segments for a corner a triangle
-// covers to within the flattening error - so a smooth corner is beveled whatever
-// join was asked for.
-//
-// What it must not do is leave the corner out. Two quads meeting at a vertex
-// gap on the outside of the turn, and that gap runs from the outer edge down to
-// the vertex: as deep as the stroke is wide, however gently the path turns.
+// A smooth corner is beveled whatever join was asked for, since a disc at each
+// flattened vertex would be most of the stroke's segments.
 auto tSmoothCurveBevels = test("PathStroker/aFlattenedCurveGetsCheapJoins") = []
 {
     auto style = StrokeStyle {6.f, LineCap::Butt, LineJoin::Round, 4.f};
@@ -382,7 +338,7 @@ auto tSmoothCurveBevels = test("PathStroker/aFlattenedCurveGetsCheapJoins") = []
 
     auto sourceSegments = circle().getSubPaths()[0].points.size();
 
-    // A quad and a join for every segment, and the join is the three-point one.
+    // A quad and a three-point join for every segment.
     check(outline.getSubPaths().size() == sourceSegments * 2,
           std::to_string(outline.getSubPaths().size()) + " contours for "
               + std::to_string(sourceSegments) + " segments");
@@ -397,7 +353,6 @@ auto tSmoothCurveBevels = test("PathStroker/aFlattenedCurveGetsCheapJoins") = []
           std::to_string(triangles) + " beveled corners of "
               + std::to_string(sourceSegments));
 
-    // A real corner still gets the join it asked for, which is a whole disc.
     auto square = strokeToFill(closedSquare(), style);
     auto discs = 0;
 
@@ -408,8 +363,6 @@ auto tSmoothCurveBevels = test("PathStroker/aFlattenedCurveGetsCheapJoins") = []
     check(discs == 4, std::to_string(discs) + " round joins on a square");
 };
 
-// A zero-length sub-path is the "dot" a moveTo and a lineTo to the same place
-// mean. Round and square caps draw one; a butt cap has nothing to extend.
 auto tDot = test("PathStroker/aZeroLengthPathIsADot") = []
 {
     auto dot = Path {};
@@ -431,16 +384,6 @@ auto tDegenerate = test("PathStroker/nothingToStrokeIsNoPath") = []
     check(strokeToFill(closedSquare(), StrokeStyle {0.f}).isEmpty());
     check(strokeToFill(closedSquare(), StrokeStyle {-2.f}).isEmpty());
 };
-
-// ----------------------------------------------------------------- dashing
-//
-// Dashing is a separate operation applied *before* stroking, and the order is
-// not a preference: a dash cuts the centre line, and by the time strokeToFill
-// has run the centre line has been replaced by the region around it. Cutting
-// afterwards would have nothing with a length left to cut.
-//
-// So what dashPath produces is readable geometry - open sub-paths along the
-// original polyline - and that is what these check, rather than coverage.
 
 namespace
 {
@@ -479,9 +422,7 @@ auto tDashCutsIntoOnLengths = test("PathStroker/aDashPatternCutsThePolylineUp") 
           "the second starts where the first off-length ends");
 };
 
-// The one thing about dashing that reliably surprises: an odd list is written
-// out twice, so the entries alternate on and off rather than repeating. "3"
-// alone is three on and three off, not three on for ever.
+// An odd list is written out twice, so "3" is three on and three off.
 auto tOddPatternIsDoubled = test("PathStroker/anOddDashListIsWrittenOutTwice") = []
 {
     auto dashes = dashPath(straightLine(12.f), {{3.f}, 0.f});
@@ -492,20 +433,15 @@ auto tOddPatternIsDoubled = test("PathStroker/anOddDashListIsWrittenOutTwice") =
 
 auto tDashOffset = test("PathStroker/theOffsetStartsPartWayIntoThePattern") = []
 {
-    // Two units into "2 on 2 off" is the start of an off-length, so the line
-    // begins in a gap.
+    // Two units into "2 on 2 off" is an off-length, so the line begins in a gap.
     auto dashes = dashPath(straightLine(10.f), {{2.f, 2.f}, 2.f});
 
     check(std::abs(dashes.getSubPaths()[0].points[0].x - 2.f) < 0.01f);
     check(std::abs(lengthOf(dashes) - 4.f) < 0.01f, "two on-lengths, not three");
 
-    // A negative offset is the same walk from the other end of the cycle, and
-    // has to land somewhere in it rather than off it.
     check(!dashPath(straightLine(10.f), {{2.f, 2.f}, -3.f}).isEmpty());
 };
 
-// The closing edge is a segment like any other, which is what makes a dashed
-// outline go round the corner it started at instead of stopping short of it.
 auto tClosedPathDashesRound =
     test("PathStroker/aClosedSubPathDashesThroughItsJoin") = []
 {
@@ -514,8 +450,8 @@ auto tClosedPathDashesRound =
 
     auto dashes = dashPath(square, {{20.f, 20.f}, 0.f});
 
-    // Forty units of perimeter under "20 on 20 off" is one dash of twenty, and
-    // it can only be twenty if the closing edge was walked.
+    // The 40-unit perimeter under "20 on 20 off" is one dash of twenty, which is
+    // only twenty if the closing edge was walked.
     check(std::abs(lengthOf(dashes) - 20.f) < 0.01f,
           std::to_string(lengthOf(dashes)) + " of a 40-unit perimeter");
 
@@ -533,14 +469,10 @@ auto tNothingToDashBy =
     check(std::abs(lengthOf(dashPath(line, {{0.f, 0.f}, 0.f})) - 10.f) < 0.01f,
           "lengths adding to nothing");
 
-    // A negative entry invalidates the whole list rather than being clamped
-    // away, because a document that wrote one did not mean any of it.
+    // A negative entry invalidates the whole list rather than being clamped.
     check(std::abs(lengthOf(dashPath(line, {{4.f, -2.f}, 0.f})) - 10.f) < 0.01f);
 };
 
-// The whole reason it is a path operation and not a stroke option: what comes
-// out is something strokeToFill can take, and each dash is a piece with two open
-// ends and therefore two caps.
 auto tDashesStroke = test("PathStroker/dashesAreStrokedLikeAnyOtherPath") = []
 {
     auto dashes = dashPath(straightLine(10.f), {{2.f, 2.f}, 0.f});

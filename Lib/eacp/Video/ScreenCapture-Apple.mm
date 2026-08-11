@@ -9,13 +9,11 @@
 #include <cmath>
 #include <functional>
 
-// The Screen tier on macOS: ScreenCaptureKit taps the WindowServer's live
-// composite of the view's host window (2D + GPU + WebView) and delivers
-// IOSurface-backed CVPixelBuffers straight to the shared AppleEncoder. Real-time,
-// GPU-side; needs the window on-screen and Screen Recording permission.
+// ScreenCaptureKit delivers IOSurface-backed CVPixelBuffers straight to the
+// encoder. Needs the window on-screen and Screen Recording permission.
 
-// ScreenCaptureKit sample sink. Forwards each complete frame's CVPixelBuffer +
-// PTS to a C++ callback (set right after construction).
+// Forwards each complete frame to onFrame, which is set right after
+// construction, on the sample queue.
 API_AVAILABLE(macos(12.3))
 @interface EacpScreenSink : NSObject <SCStreamOutput, SCStreamDelegate>
 @end
@@ -208,7 +206,7 @@ struct AppleScreenCapture final : ScreenCapture
             if (stream)
             {
                 [(SCStream*) stream.get() stopCaptureWithCompletionHandler:^(NSError*) {
-                    // No more samples arrive after this; finalize on the main thread.
+                    // No more samples arrive after this.
                     Threads::callAsync([self, promise] {
                         self->encoder->finish().then([promise] { promise.resolve(); });
                     });
@@ -218,16 +216,13 @@ struct AppleScreenCapture final : ScreenCapture
             }
         }
 
-        // Stream never started (permission/off-screen): finalize whatever exists.
+        // Stream never started: permission denied, or off-screen.
         return encoder->finish();
     }
 
-    // An availability attribute on a member does not satisfy clang — it wants
-    // the whole enclosing struct annotated, which this one cannot be: it is
-    // constructed on every macOS version and answers false from start() on the
-    // ones without ScreenCaptureKit. Storing the two 12.3-only objects as their
-    // common base keeps the declarations version-free, and every use of them
-    // already sits inside an @available guard that can cast back.
+    // Clang wants the whole enclosing struct annotated for availability, which
+    // this one cannot be, so the two 12.3-only objects are stored as their
+    // common base and cast back inside the @available guards.
     ObjC::Ptr<NSObject> stream;
     ObjC::Ptr<NSObject> sink;
     dispatch_queue_t sampleQueue = nullptr;

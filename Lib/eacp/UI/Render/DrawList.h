@@ -10,48 +10,23 @@ namespace eacp::UI
 {
 class Layer;
 
-// What one paint() produced: the primitives it issued, in the order it issued
-// them, in the painting component's own points.
-//
-// Recorded rather than drawn, so that a component whose drawing has not changed
-// is replayed instead of being asked again. That is the whole difference from
-// what this tier used to do -- every paint() in the tree ran on every frame,
-// because the only record of what a component drew was the frame it drew it
-// into, and a frame is thrown away.
-//
-// What that buys is not the primitives, which are cheap; it is everything a
-// paint() does *around* them. A string is laid out glyph by glyph, a gradient is
-// resolved against the ramp table, a widget works out its own colours and
-// positions. None of it changes while the component does not, and all of it used
-// to happen sixty times a second.
-//
-// **Recorded in the component's own points**, which is what makes a move cheap:
-// replay adds the component's origin as it goes, so a component that is dragged
-// or scrolled replays the list it already has rather than painting again. The
-// only things in here that are not local are the atlas coordinates -- a mask uv
-// and a glyph's source rect -- and those move only when an atlas is rebuilt,
-// which the host notices and answers by re-recording the tree.
-//
-// The parameters rather than the finished instances, deliberately: building a
-// ShapeInstance is ShapeBatch's business, and a second copy of that arithmetic
-// living here is a second place for the antialiasing margin and the corner
-// clamp to be got wrong.
+// One primitive a paint() issued, in the painting component's own points - the
+// only exception being atlas coordinates, which the host re-records when an
+// atlas is rebuilt. Parameters rather than finished ShapeBatch instances.
 struct ShapeDraw
 {
     enum class Kind
     {
-        // A rounded box. A radius of zero is a plain rectangle, which is the
-        // same primitive and the same batch.
+        // A rounded box; a radius of zero is a plain rectangle.
         Fill,
 
         // The same box's outline, drawn inside its edges.
         Border,
 
-        // A line of any orientation, from `from` to `to`, with round caps.
+        // From `from` to `to`, with round caps.
         Line,
 
-        // A box painted through a rect of the coverage atlas: what a vector path
-        // draws as.
+        // A box painted through a rect of the coverage atlas.
         Mask
     };
 
@@ -68,12 +43,11 @@ struct ShapeDraw
     float cornerRadius = 0.f;
     float thickness = 0.f;
 
-    // Where in the coverage atlas this shape's own mask is, for Kind::Mask.
+    // Kind::Mask only.
     Rect maskUV;
 
-    // Already resolved against the ramp table, and expressed as a map from this
-    // list's *own* space -- so replay composes the component's origin into it
-    // rather than the recording having to know where the component sits.
+    // Already resolved against the ramp table, and mapped from this list's own
+    // space - replay composes the component's origin into it.
     GradientFill gradient;
 };
 
@@ -85,29 +59,24 @@ struct GlyphRun
     Color colour;
 };
 
-// A tessellated shape: the triangles, copied rather than pointed at, because a
-// list outlives the frame it was recorded in and a shape that has since been
-// re-tessellated would leave the pointer aimed at nothing.
+// A tessellated shape. The triangles are copied, not pointed at: the list
+// outlives the frame, and the shape may be re-tessellated.
 struct MeshDraw
 {
     Vector<GPUWidgets::MeshVertex> vertices;
 
-    // Where the triangles sit in this list's space. They are authored in the
-    // points of the component that owns the shape, so a paint() that translated
-    // before filling has an offset to carry and the replay adds its own to it.
+    // Where the triangles sit in this list's space; replay adds its own.
     Point offset;
 
-    // The shape's own reach, for the clip to be elided against. The triangles
-    // carry it too, but a bound the recording already knows is cheaper than one
-    // the replay works out per frame.
+    // The shape's own reach, for the clip to be elided against.
     Rect bounds;
 
     Color colour;
     GradientFill gradient;
 };
 
-// A layer composited as one quad. The layer itself is pointed at, its texture
-// and opacity being read at replay -- so an animated opacity re-records nothing.
+// A layer composited as one quad, pointed at rather than copied so that texture
+// and opacity are read at replay. The layer must outlive the list.
 struct LayerDraw
 {
     const Layer* layer = nullptr;
@@ -115,19 +84,13 @@ struct LayerDraw
 };
 
 // The clip in force for everything issued after it, as an absolute state rather
-// than a change: what a paint() narrowed the region to, and the mask it narrowed
-// it with. Recorded whenever it differs from the last one recorded, which is the
-// same laziness the renderers apply -- a paint() that saves and restores around
-// a run costs two of these however much state the save carried.
+// than a change. Recorded only when it differs from the last one recorded.
 struct ClipDraw
 {
     Rect region;
     ClipMask mask;
 };
 
-// One entry of the list: what kind of thing, and where its data is. Consecutive
-// primitives of one kind share a command, so replaying a component is a walk
-// over a handful of these rather than over its primitives.
 struct DrawCommand
 {
     enum class Kind
@@ -150,20 +113,14 @@ struct DrawCommand
 class DrawList
 {
 public:
-    // Keeps the storage. A component re-recording its own drawing writes over
-    // what was there, so a repaint every frame allocates nothing after the first
-    // one -- which is the case that has to be cheap, an animation being exactly
-    // that.
+    // Keeps the storage, so re-recording every frame allocates nothing.
     void clear();
 
     bool isEmpty() const { return commands.empty(); }
 
     void addShape(const ShapeDraw& shape);
 
-    // The glyphs go straight into the list's own storage, so a layout writes
-    // where it will be replayed from rather than into a scratch buffer that is
-    // then copied. The pair is one call in practice: take the size, lay out,
-    // and close the run.
+    // Lay out directly into this, then close the run with the size taken first.
     Vector<Text::PlacedGlyph>& glyphStorage() { return glyphs; }
     void addGlyphRun(int first, const Color& colour);
 
@@ -187,9 +144,6 @@ public:
 
 private:
     // Extends the last command when it is of `kind`, and starts one otherwise.
-    // Which is what collapses a component's twenty rectangles into one command,
-    // and what keeps a component that alternates rectangles and glyphs honest
-    // about the order it drew them in.
     void append(DrawCommand::Kind kind, int first);
 
     Vector<DrawCommand> commands;

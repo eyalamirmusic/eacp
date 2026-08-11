@@ -29,8 +29,7 @@ struct SVGElement
     std::string textContent;
 };
 
-// Every element in a document that named itself, which is what a reference has
-// to be looked up in: a <use>, a gradient's href chain, a clip-path.
+// Every element in a document that named itself, for a reference to resolve in.
 using ElementsById = std::unordered_map<std::string, const SVGElement*>;
 
 } // namespace eacp::SVG

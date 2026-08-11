@@ -2,24 +2,18 @@
 
 #include <cmath>
 
-// RenderPass::setScissorRect / clearScissorRect, checked by rendering off-screen
-// and reading the pixels back. A scissor rect is one of the few pieces of GPU
-// state with no CPU-side observable at all -- nothing to query, nothing
-// returned -- so the only honest test is to draw through it and look at what
-// came out.
-//
-// Every case draws one full-viewport triangle over a contrasting clear colour,
-// so a pixel is green exactly where the scissor let the fragment through and the
-// clear's red everywhere else.
-//
-// Runs on both backends, and self-skips without a GPU device.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
 namespace
 {
+constexpr auto insideRect = 2;
+constexpr auto lastColumnInside = 19;
+constexpr auto firstColumnOutside = 20;
+constexpr auto wellOutside = 38;
+constexpr auto midRow = 20;
+
 bool isGreen(const Graphics::Color& c)
 {
     return c.g > 0.5f && c.r < 0.5f;
@@ -64,9 +58,7 @@ ShaderSource shaderSource()
                                  : ShaderSource::msl(mslShader);
 }
 
-// Fills the viewport with green over a red clear, through whatever scissor the
-// test installs. `scissor` is in render-target pixels; when `useScissor` is
-// false the pass is left alone, which is the control case.
+// `scissor` is in render-target pixels.
 struct ScissorView final : GPUView
 {
     ScissorView()
@@ -79,12 +71,9 @@ struct ScissorView final : GPUView
 
     RenderPipeline makePipeline()
     {
-        // MSAA would feather the scissor boundary across a pixel and make the
-        // edge assertions ambiguous. It has to be set here rather than in the
-        // constructor body: the pipeline is built in the member initialiser
-        // list, which runs first, so a body call would leave the pipeline
-        // multisampled while the target is not -- a mismatch D3D12 answers by
-        // dropping the draw, with no error and nothing rendered at all.
+        // MSAA would feather the scissor boundary. Set here, not in the
+        // constructor body: the pipeline is built in the initialiser list, and
+        // D3D12 answers a sample-count mismatch by silently dropping the draw.
         setSampleCount(1);
 
         auto descriptor = RenderPipelineDescriptor {};
@@ -122,9 +111,7 @@ struct ScissorView final : GPUView
     RenderPipeline pipeline;
 };
 
-// Counts green pixels across the whole image, for assertions that care how much
-// survived rather than exactly where -- those stay correct whichever way up the
-// backend hands the read-back back.
+// Assertions by area stay correct whichever way up the read-back arrives.
 int countGreen(const Graphics::Image& image)
 {
     auto total = 0;
@@ -138,8 +125,6 @@ int countGreen(const Graphics::Image& image)
 }
 } // namespace
 
-// The baseline the rest of the file leans on: with no scissor set, the triangle
-// covers everything. If this ever fails the other cases prove nothing.
 auto tNoScissorFillsTarget = test("Scissor/withoutScissorFillsWholeTarget") = []
 {
     if (!Device::shared().isValid())
@@ -158,8 +143,7 @@ auto tNoScissorFillsTarget = test("Scissor/withoutScissorFillsWholeTarget") = []
     check(countGreen(image) == image.width() * image.height());
 };
 
-// The x axis needs no orientation assumption -- neither backend mirrors
-// horizontally -- so a left-half scissor pins down the geometry exactly.
+// The x axis carries the assertion: neither backend mirrors horizontally.
 auto tClipsToRect = test("Scissor/clipsDrawingToRect") = []
 {
     if (!Device::shared().isValid())
@@ -179,16 +163,14 @@ auto tClipsToRect = test("Scissor/clipsDrawingToRect") = []
     check(image.isValid());
     check(image.width() == 40);
 
-    check(isGreen(image.at(2, 20)));   // inside
-    check(isGreen(image.at(19, 20)));  // last column inside
-    check(isRed(image.at(20, 20)));    // first column outside
-    check(isRed(image.at(38, 20)));    // well outside
+    check(isGreen(image.at(insideRect, midRow)));
+    check(isGreen(image.at(lastColumnInside, midRow)));
+    check(isRed(image.at(firstColumnOutside, midRow)));
+    check(isRed(image.at(wellOutside, midRow)));
 
     check(countGreen(image) == 20 * 40);
 };
 
-// Clipping on the other axis, asserted by area so the test does not depend on
-// which way up the read-back arrives.
 auto tClipsVertically = test("Scissor/clipsOnTheVerticalAxis") = []
 {
     if (!Device::shared().isValid())
@@ -201,7 +183,7 @@ auto tClipsVertically = test("Scissor/clipsOnTheVerticalAxis") = []
 
     view.setBounds({0.f, 0.f, 40.f, 40.f});
     view.useScissor = true;
-    view.scissor = {0.f, 10.f, 40.f, 20.f}; // a horizontal band
+    view.scissor = {0.f, 10.f, 40.f, 20.f};
 
     auto image = view.renderToImage(1.f);
 
@@ -209,10 +191,8 @@ auto tClipsVertically = test("Scissor/clipsOnTheVerticalAxis") = []
     check(countGreen(image) == 40 * 20);
 };
 
-// The clamp is the reason this API is safe to call from a scrolled view. Metal
-// aborts under API validation on a scissor that leaves the render target, so a
-// region scrolled half off-screen would otherwise have to be clamped by every
-// caller. Reaching the checks at all is most of the result here.
+// Metal aborts under API validation on a scissor that leaves the render target,
+// so reaching the checks at all is most of the result here.
 auto tClampsToTarget = test("Scissor/clampsRectToRenderTarget") = []
 {
     if (!Device::shared().isValid())
@@ -226,7 +206,6 @@ auto tClampsToTarget = test("Scissor/clampsRectToRenderTarget") = []
     view.setBounds({0.f, 0.f, 40.f, 40.f});
     view.useScissor = true;
 
-    // Starts above and left of the target and runs well past its far corner.
     view.scissor = {-1000.f, -1000.f, 5000.f, 5000.f};
 
     auto image = view.renderToImage(1.f);
@@ -235,8 +214,7 @@ auto tClampsToTarget = test("Scissor/clampsRectToRenderTarget") = []
     check(countGreen(image) == image.width() * image.height());
 };
 
-// A scrolled-away pane collapses to an empty rect rather than a negative one;
-// it must discard every fragment instead of clamping up to something visible.
+// Must discard every fragment rather than clamp up to something visible.
 auto tEmptyRectDiscardsEverything = test("Scissor/emptyRectDrawsNothing") = []
 {
     if (!Device::shared().isValid())
@@ -257,8 +235,7 @@ auto tEmptyRectDiscardsEverything = test("Scissor/emptyRectDrawsNothing") = []
     check(countGreen(image) == 0);
 };
 
-// A rect entirely past the far edge clamps to empty, not back into view -- the
-// difference between a pane scrolled out of sight and one that reappears.
+// Clamps to empty, not back into view.
 auto tFullyOutsideDrawsNothing = test("Scissor/fullyOutsideRectDrawsNothing") = []
 {
     if (!Device::shared().isValid())
@@ -279,8 +256,6 @@ auto tFullyOutsideDrawsNothing = test("Scissor/fullyOutsideRectDrawsNothing") = 
     check(countGreen(image) == 0);
 };
 
-// clearScissorRect puts the whole target back, so a widget tree can restore
-// state after drawing a clipped child.
 auto tClearRestoresFullTarget = test("Scissor/clearRestoresFullTarget") = []
 {
     if (!Device::shared().isValid())
@@ -302,9 +277,8 @@ auto tClearRestoresFullTarget = test("Scissor/clearRestoresFullTarget") = []
     check(countGreen(image) == image.width() * image.height());
 };
 
-// The rect is in render-target pixels, not logical points, so the same rect
-// covers half as much of a 2x target. Catches anyone "helpfully" folding the
-// backing scale into the backend.
+// Pixels, not logical points, so the same rect covers half as much of a 2x
+// target. Catches anyone folding the backing scale into the backend.
 auto tRectIsInPixels = test("Scissor/rectIsInRenderTargetPixels") = []
 {
     if (!Device::shared().isValid())

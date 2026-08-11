@@ -2,11 +2,6 @@
 
 #include <cmath>
 
-// Drives View::renderToImageAsync end to end on a real WebView: the page paints
-// a known colour, the async snapshot is awaited with waitFor (the pattern a unit
-// test uses instead of a production sync path), and the resulting pixels are
-// checked.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
@@ -21,9 +16,8 @@ bool near(const Color& c, int r, int g, int b, int tolerance = 12)
     return within(c.r, r) && within(c.g, g) && within(c.b, b);
 }
 
-// Solid red page. A short setTimeout defers the ready signal to let layout
-// settle -- requestAnimationFrame would not fire for an off-screen (headless)
-// web view, but timers do.
+// A short setTimeout defers ready: rAF would not fire for an off-screen web
+// view, but timers do.
 const std::string pageHtml = R"HTML(<!doctype html><html><head><style>
   html,body{margin:0;height:100%;background:#e01010}
 </style></head><body><script>
@@ -51,8 +45,6 @@ struct Fixture
 };
 } // namespace
 
-// renderToImageAsync folds the WebView's page into the snapshot; the whole image
-// is the page's red background.
 auto tAsyncSnapshotCapturesWebContent =
     test("RenderToImageAsync/capturesWebContent") = []
 {
@@ -66,8 +58,6 @@ auto tAsyncSnapshotCapturesWebContent =
     check(near(image.at(60, 40), 224, 16, 16)); // page red at the centre
 };
 
-// A subtree with no web content still resolves (immediately) through the async
-// path, matching the synchronous renderToImage.
 auto tAsyncResolvesWithoutWebContent =
     test("RenderToImageAsync/resolvesWithoutWebContent") = []
 {

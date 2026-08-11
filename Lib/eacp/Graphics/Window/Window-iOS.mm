@@ -95,28 +95,23 @@ void Window::setContentView(View& view)
 
 void Window::toFront()
 {
-    // iOS apps are single-window; there's nothing to bring to the front.
 }
 
 void Window::setVisible(bool)
 {
-    // iOS apps are single-window; there's nothing to hide or show.
 }
 
 bool Window::isVisible()
 {
-    // iOS apps are single-window; the window is always on screen.
     return true;
 }
 
 void Window::minimize()
 {
-    // iOS apps are single-window; there's nothing to minimize.
 }
 
 void Window::toggleMaximize()
 {
-    // iOS windows always fill the screen; there's nothing to toggle.
 }
 
 void* Window::getHandle()
@@ -126,7 +121,6 @@ void* Window::getHandle()
 
 Window::~Window() = default;
 
-// No pointer on iOS; mouse lock is meaningless there.
 void Window::setMouseLocked(bool) {}
 
 bool Window::isMouseLocked() const

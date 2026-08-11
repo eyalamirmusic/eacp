@@ -17,45 +17,35 @@ namespace eacp::GPU
 {
 namespace
 {
-// A buffer for each frame the swapchain may have in flight — the one being
-// shown, the one queued, and the one being drawn. The per-buffer fence in
-// render() stops the CPU from reusing a buffer the GPU still reads, and
-// DXGI is never asked to hold more frames than there are buffers to hold them.
-// See GPUView::setFramesInFlight for what the frames themselves cost.
+// One buffer per in-flight frame: shown, queued and being drawn. DXGI is never
+// asked to hold more frames than there are buffers for.
 constexpr int maxFramesInFlight = 3;
 constexpr UINT bufferCount = maxFramesInFlight;
 
 // Lets the device-loss refresh reach every live GPUView without naming the
-// private GPUView::Native type (same pattern as View-Windows' PaintTarget).
+// private GPUView::Native type.
 struct DeviceResourceHolder
 {
     virtual ~DeviceResourceHolder() = default;
     virtual void recreateDeviceResources() = 0;
 };
 
-// Main-thread only, so no locking is needed. Immortal because ~Native erases
-// itself here, and a GPUView at namespace scope outlives a registry that first
-// use constructed after it.
+// Main-thread only, so no locking. Immortal because ~Native erases itself here
+// and a namespace-scope GPUView outlives a lazily constructed registry.
 std::unordered_set<DeviceResourceHolder*>& liveGPUViews()
 {
     return Singleton::getImmortal<std::unordered_set<DeviceResourceHolder*>>();
 }
 } // namespace
 
-// Called by Device::Native after the D3D12 device was rebuilt following
-// device removal: every swapchain was created on the dead device, so each
-// view rebuilds.
+// Called by Device::Native after a device rebuild: every swapchain was created
+// on the dead device.
 void refreshAllGPUViewsForNewDevice()
 {
     for (auto* view: liveGPUViews())
         view->recreateDeviceResources();
 }
 
-// Backs the GPUView with a SpriteVisual whose brush samples a composition
-// swapchain created from the D3D12 direct queue, added under the standard
-// View ContainerVisual so it lives in the normal Windows.UI.Composition
-// visual tree. Renders into the swapchain back buffer (resolving an MSAA
-// target into it when enabled) and presents.
 struct GPUView::Native : DeviceResourceHolder
 {
     explicit Native(GPUView& viewToUse)
@@ -85,8 +75,7 @@ struct GPUView::Native : DeviceResourceHolder
         liveGPUViews().erase(this);
         stopContinuous();
 
-        // The last frames may still reference the back buffers and targets
-        // about to be released.
+        // In-flight frames may still reference the buffers about to be released.
         getD3D12Context().waitIdle();
 
         if (spriteVisual)
@@ -97,9 +86,7 @@ struct GPUView::Native : DeviceResourceHolder
         Graphics::commitComposition();
     }
 
-    // Drops every resource created on the lost device, re-acquires the
-    // replacement and rebuilds the swapchain at the current size. App-owned
-    // resources rebuild through the view's onDeviceRestored hook.
+    // App-owned resources rebuild through the view's onDeviceRestored hook.
     void recreateDeviceResources() override
     {
         for (auto& buffer: backBuffers)
@@ -121,8 +108,7 @@ struct GPUView::Native : DeviceResourceHolder
         if (spriteVisual)
             spriteVisual->SetContent(nullptr);
 
-        // The DComp device is replaced along with the rendering device, so
-        // re-acquire it and rebuild the visual before the swapchain reattaches.
+        // The DComp device is replaced along with the rendering device.
         compositionDevice = Graphics::getCompositionDevice();
         spriteVisual.Reset();
 
@@ -191,19 +177,15 @@ struct GPUView::Native : DeviceResourceHolder
         descriptor.BufferCount = bufferCount;
         descriptor.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
 
-        // In a transparentBackground window the swapchain composites straight
-        // to the screen, so its alpha must reach DWM — IGNORE would fill the
-        // window with an opaque black box. Opaque windows keep IGNORE: their
-        // GPU content never meant its alpha for the desktop behind the window.
+        // A transparent window composites straight to the screen, so its alpha
+        // must reach DWM; IGNORE would fill it with an opaque black box.
         descriptor.AlphaMode =
             Graphics::isHostWindowTransparent(Graphics::findHostHwndForView(&view))
                 ? DXGI_ALPHA_MODE_PREMULTIPLIED
                 : DXGI_ALPHA_MODE_IGNORE;
 
-        // A waitable swapchain is what makes the present queue's depth ours to
-        // choose. Without it DXGI queues up to three frames of its own accord,
-        // and the picture on screen can be three refreshes behind the hand that
-        // moved. See GPUView::setFramesInFlight.
+        // Waitable, so the present queue's depth is ours to choose; otherwise
+        // DXGI queues three frames. See GPUView::setFramesInFlight.
         descriptor.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
 
         // A D3D12 swapchain is created from the command queue, not the device.
@@ -225,11 +207,9 @@ struct GPUView::Native : DeviceResourceHolder
         createBackBufferViews();
     }
 
-    // DComp takes a swapchain as visual content directly — no interop surface and
-    // no surface brush, which is what WinRT needed CreateCompositionSurfaceForSwap
-    // Chain + CompositionStretch::Fill for. The swapchain is already sized in
-    // physical pixels, so the visual counter-scales by 1/dpiScale to cancel the
-    // root's DPI transform (see NativeLayer-Windows.h).
+    // The swapchain is already sized in physical pixels, so the visual
+    // counter-scales by 1/dpiScale to cancel the root's DPI transform (see
+    // NativeLayer-Windows.h).
     void attachSwapChainToVisual()
     {
         if (!spriteVisual || !swapChain)
@@ -304,8 +284,7 @@ struct GPUView::Native : DeviceResourceHolder
 
     void resizeSwapChain()
     {
-        // The buffers being replaced may still be referenced by an in-flight
-        // frame, and ResizeBuffers requires every outstanding reference gone.
+        // ResizeBuffers requires every outstanding buffer reference gone.
         getD3D12Context().waitIdle();
 
         for (auto& buffer: backBuffers)
@@ -367,9 +346,8 @@ struct GPUView::Native : DeviceResourceHolder
         device->CreateRenderTargetView(msaaTexture.get(), nullptr, msaaViewHandle);
     }
 
-    // Depth buffer sized to the target. Its sample count must match the colour
-    // target actually in use (the MSAA texture, or the back buffer), so it
-    // keys off the same condition render() uses to pick the colour target.
+    // Keys off the same condition render() picks the colour target with, the
+    // sample counts having to match.
     void updateDepthTexture()
     {
         getD3D12Context().deferRelease(std::move(depthTexture));
@@ -409,11 +387,8 @@ struct GPUView::Native : DeviceResourceHolder
         device->CreateDepthStencilView(depthTexture.get(), nullptr, depthViewHandle);
     }
 
-    // How many frames DXGI may hold, presented but not yet shown. A waitable
-    // swapchain defaults to one, which is the least latency there is but leaves
-    // the GPU waiting on the CPU between frames; Microsoft's own guidance is
-    // that two is what keeps the two working in parallel. It is the same number
-    // Metal is given, so the backends queue alike.
+    // A waitable swapchain defaults to one frame, which stalls the GPU on the
+    // CPU between frames; Microsoft's guidance is two.
     void applyFrameLatency()
     {
         if (swapChain)
@@ -427,8 +402,8 @@ struct GPUView::Native : DeviceResourceHolder
         if (!swapChain || !context.isValid() || width == 0 || height == 0)
             return;
 
-        // Blocks until the swapchain is ready for another frame, so the CPU
-        // runs no further ahead of the display than it was told it may.
+        // Blocks until the swapchain is ready, keeping the CPU no further ahead
+        // of the display than framesInFlight allows.
         if (frameLatencyWaitable != nullptr)
             WaitForSingleObjectEx(frameLatencyWaitable, 1000, TRUE);
 
@@ -437,8 +412,7 @@ struct GPUView::Native : DeviceResourceHolder
         if (index >= bufferCount || backBuffers[index] == nullptr)
             return;
 
-        // Block until the GPU released this buffer's previous frame, keeping
-        // at most one frame in flight per buffer.
+        // At most one frame in flight per buffer.
         context.waitFor(frameFences[index]);
 
         D3D12Drawable drawable = {};
@@ -480,20 +454,15 @@ struct GPUView::Native : DeviceResourceHolder
         if (device == nullptr || SUCCEEDED(device->GetDeviceRemovedReason()))
             return;
 
-        // Recovery rebuilds this view's swapchain, so run it from a fresh
-        // stack frame instead of re-entering while render() is live. The 2D
-        // layer's recovery fires the listener that rebuilds the GPU device.
+        // Recovery rebuilds this view's swapchain, so it runs from a fresh
+        // stack frame rather than re-entering while render() is live.
         Threads::callAsync(
             [] { Graphics::handleDeviceLossIfNeeded(DXGI_ERROR_DEVICE_REMOVED); });
     }
 
-    // The tick only advances animation state and invalidates; the render
-    // itself runs from the WM_PAINT this schedules. WM_PAINT is delivered
-    // only when the message queue is otherwise empty, so the heavy work
-    // (rendering, and a Present that can block on the compositor) can never
-    // starve input or other queued work, no matter how slow frames get —
-    // modal size/move loops included, where paints keep flowing between
-    // mouse moves and the animation keeps running during a live resize.
+    // The tick only advances state and invalidates; rendering runs from the
+    // WM_PAINT it schedules, which is delivered only on an empty message queue,
+    // so slow frames can never starve input.
     void startContinuous()
     {
         if (displayLink == nullptr)
@@ -513,8 +482,7 @@ struct GPUView::Native : DeviceResourceHolder
     GPUView& view;
     int sampleCount = 4;
 
-    // Two by default, so a hand is answered a refresh sooner than DXGI's own
-    // three would allow. See GPUView::setFramesInFlight.
+    // Two, a refresh sooner than DXGI's own three. See setFramesInFlight.
     int framesInFlight = 2;
     HANDLE frameLatencyWaitable = nullptr;
 
@@ -611,8 +579,7 @@ void GPUView::backingScaleChanged()
 {
     Graphics::View::backingScaleChanged();
 
-    // Resize the swapchain to the new scale (same logical bounds, different
-    // pixel count), then redraw: the presented frame was built for the old one.
+    // Redrawn because the presented frame was built for the old scale.
     impl->updateSize();
     onBackingScaleChanged(backingScale());
     repaint();
@@ -625,8 +592,8 @@ float GPUView::backingScale() const
 
 void GPUView::paint(Graphics::Context& context)
 {
-    // A snapshot captures GPU content via renderNativeContent (off-screen); the
-    // live renderNow() here would present an on-screen frame as a side effect.
+    // A snapshot goes through renderNativeContent; renderNow() would present an
+    // on-screen frame as a side effect.
     if (context.isSnapshot())
         return;
 
@@ -640,8 +607,6 @@ void GPUView::renderNow()
 
 namespace
 {
-// A committed default-heap texture for the off-screen snapshot, mirroring
-// GPUView-Apple.mm's makeTarget: a colour/MSAA render target or a depth target.
 winrt::com_ptr<ID3D12Resource>
     makeSnapshotTexture(ID3D12Device* device,
                         UINT width,
@@ -679,11 +644,7 @@ winrt::com_ptr<ID3D12Resource>
 }
 } // namespace
 
-// Off-screen GPU snapshot for View::renderToImage, mirroring GPUView-Apple.mm:
-// render() draws into an app-owned colour texture (resolving from an MSAA target
-// when multisampling) through an off-screen Frame that waits instead of
-// presenting, then the colour texture is copied to a read-back buffer and
-// swizzled from BGRA to the straight RGBA an Image holds.
+// Off-screen GPU snapshot for View::renderToImage.
 Graphics::Image GPUView::renderNativeContent(float scale)
 {
     auto bounds = getLocalBounds();
@@ -704,7 +665,6 @@ Graphics::Image GPUView::renderNativeContent(float scale)
 
     constexpr auto colorFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
 
-    // One RTV heap (colour + optional MSAA target), one DSV heap.
     winrt::com_ptr<ID3D12DescriptorHeap> rtvHeap;
     D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
     rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
@@ -719,10 +679,7 @@ Graphics::Image GPUView::renderNativeContent(float scale)
     auto msaaRtv = colorRtv;
     msaaRtv.ptr += rtvSize;
 
-    // The colour texture is single-sampled: the render target when not
-    // multisampling (RENDER_TARGET), or the resolve destination when the pass
-    // renders into the MSAA target (RESOLVE_DEST). The Frame destructor keys off
-    // the same distinction.
+    // The Frame destructor keys off the same distinction.
     auto colorInitial = useMsaa ? D3D12_RESOURCE_STATE_RESOLVE_DEST
                                 : D3D12_RESOURCE_STATE_RENDER_TARGET;
     auto colorTexture = makeSnapshotTexture(device,
@@ -820,7 +777,6 @@ Graphics::Image GPUView::renderNativeContent(float scale)
     }
     // The Frame destructor left the colour texture in COPY_SOURCE and ran the
     // GPU to completion.
-
     auto colorDesc = colorTexture->GetDesc();
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
     UINT64 totalBytes = 0;
@@ -884,9 +840,8 @@ Graphics::Image GPUView::renderNativeContent(float scale)
     auto rowPitch = footprint.Footprint.RowPitch;
     auto* base = static_cast<const std::uint8_t*>(mappedPtr);
 
-    // BGRA8 premultiplied (how the compositor treats the swapchain) -> straight
-    // RGBA (what Image holds), row by row past the 256-byte read-back pitch
-    // alignment.
+    // Premultiplied BGRA8, as the compositor treats the swapchain, to the
+    // straight RGBA Image holds, row by row past the read-back pitch alignment.
     for (auto y = UINT {0}; y < pixelHeight; ++y)
     {
         auto* srcRow = base + static_cast<std::size_t>(y) * rowPitch;
@@ -926,9 +881,8 @@ Graphics::Image GPUView::renderNativeContent(float scale)
 
 bool GPUView::renderNativeContentToTarget(void*, float)
 {
-    // Zero-copy video capture (render straight into a shared D3D/DXGI surface)
-    // is not wired on the D3D12 backend yet; callers fall back to the read-back
-    // path (renderNativeContent) or the screen-capture tier.
+    // No zero-copy capture on D3D12 yet; callers fall back to
+    // renderNativeContent or the screen-capture tier.
     return false;
 }
 } // namespace eacp::GPU

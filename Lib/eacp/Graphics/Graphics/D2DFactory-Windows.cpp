@@ -10,11 +10,7 @@
 namespace eacp::Graphics
 {
 
-// Defined in CompositionHostWindow-Windows.cpp. DirectComposition binds its
-// rendering device at creation and cannot swap it, so a lost device invalidates
-// every target, visual and surface — the hosts rebuild theirs, then redraw.
-// (Windows.UI.Composition could hot-swap the device via SetRenderingDevice and
-// only had to repaint; DComp has no equivalent.)
+// Defined in CompositionHostWindow-Windows.cpp.
 void rebuildAllCompositionHosts();
 
 namespace
@@ -25,10 +21,7 @@ Vector<std::function<void()>>& renderingDeviceReplacedListeners()
     return listeners;
 }
 
-// Everything that has to happen once a replacement rendering device is live:
-// rebuild and re-render the 2D composition content, then let other modules (the
-// GPU device and its swapchains) re-acquire. Listeners must tolerate being
-// called with an unchanged device.
+// Listeners must tolerate being called with an unchanged device.
 void handleRenderingDeviceReplaced()
 {
     rebuildAllCompositionHosts();
@@ -38,10 +31,8 @@ void handleRenderingDeviceReplaced()
 }
 } // namespace
 
-// Registers a callback for after the shared D3D/D2D device was replaced
-// following device loss. Used by eacp-gpu to re-acquire the device and rebuild
-// swapchains. Listeners are never unregistered, so only register from
-// process-lifetime objects. Main-thread only.
+// Fires after the shared D3D/D2D device was replaced. Listeners are never
+// unregistered, so register only from process-lifetime objects. Main thread.
 void addRenderingDeviceReplacedListener(std::function<void()> listener)
 {
     renderingDeviceReplacedListeners().add(std::move(listener));
@@ -75,9 +66,7 @@ public:
     uint64_t getGeneration() const { return generation; }
     bool isInitialized() const { return initialized; }
 
-    // A failed Commit is itself a device-loss signal, so route it through
-    // recovery rather than dropping it: otherwise the tree silently stops
-    // updating until something else happens to fail.
+    // A failed Commit is itself a device-loss signal.
     void commit()
     {
         if (!device)
@@ -88,12 +77,9 @@ public:
     }
 
 private:
-    // A headless or hosted context — most notably a plugin editor opened on a
-    // CI runner or in a session with no accessible desktop compositor — can fail
-    // to create the D3D / DComp device, typically with E_ACCESSDENIED. Every
-    // consumer already guards a null device and degrades to no GPU compositing,
-    // so failure must NOT escape into a host (a DAW, a validator) that installed
-    // no handler. Log it and leave the singleton uninitialised instead.
+    // Device creation fails (usually E_ACCESSDENIED) with no accessible desktop
+    // compositor. Must not throw into a host that installed no handler: every
+    // consumer guards a null device and degrades to no GPU compositing.
     DCompCompositor()
     {
         if (auto hr = create(); FAILED(hr))
@@ -137,8 +123,6 @@ private:
         return createCompositionDevice();
     }
 
-    // Creates (or re-creates, after device loss) the D3D + D2D device pair the
-    // factories stay independent of.
     HRESULT createRenderingDevice()
     {
         d2dDevice.Reset();
@@ -152,8 +136,7 @@ private:
                                D3D_FEATURE_LEVEL_10_0};
         D3D_FEATURE_LEVEL featureLevel;
 
-        // No SINGLETHREADED: the device is shared with the composition engine,
-        // which may touch it off-thread.
+        // No SINGLETHREADED: the composition engine may touch this off-thread.
         auto hr = D3D11CreateDevice(nullptr,
                                     D3D_DRIVER_TYPE_HARDWARE,
                                     nullptr,
@@ -167,7 +150,6 @@ private:
 
         if (FAILED(hr))
         {
-            // Fallback to WARP software renderer
             hr = D3D11CreateDevice(nullptr,
                                    D3D_DRIVER_TYPE_WARP,
                                    nullptr,
@@ -190,8 +172,6 @@ private:
         return d2dFactory->CreateDevice(dxgiDevice.Get(), d2dDevice.GetAddressOf());
     }
 
-    // The DComp device takes the D2D device straight in — no separate
-    // CompositionGraphicsDevice, and no ICompositorInterop dance to build one.
     HRESULT createCompositionDevice()
     {
         device.Reset();
@@ -212,8 +192,8 @@ private:
 
         initialized = true;
 
-        // Everything built against the old device — targets, visuals, surfaces —
-        // is dead. Moving the generation is what tells every holder to rebuild.
+        // Everything built against the old device is dead; moving the
+        // generation tells every holder to rebuild.
         ++generation;
         handleRenderingDeviceReplaced();
 

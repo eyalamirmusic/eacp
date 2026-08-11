@@ -8,9 +8,8 @@ namespace eacp::Video
 {
 namespace
 {
-// Saturated primaries and secondaries, plus black and white. Eight colours far
-// enough apart in RGB that H.264's chroma subsampling and quantisation cannot
-// turn one into another.
+// Far enough apart in RGB that H.264's chroma subsampling and quantisation
+// cannot turn one into another.
 constexpr Graphics::Color clipPalette[] = {{1.0f, 0.0f, 0.0f},
                                            {0.0f, 1.0f, 0.0f},
                                            {0.0f, 0.0f, 1.0f},
@@ -22,17 +21,15 @@ constexpr Graphics::Color clipPalette[] = {{1.0f, 0.0f, 0.0f},
 
 constexpr auto paletteSize = (int) (sizeof(clipPalette) / sizeof(clipPalette[0]));
 
-// H.264 wants even dimensions; an odd one either fails to encode or is silently
-// rounded, and a silently rounded size would then disagree with the decoded
-// frames a test compares against.
+// H.264 wants even dimensions; an odd one fails to encode or is silently
+// rounded, leaving the requested size disagreeing with the decoded frames.
 int toEven(int value)
 {
     return std::max(2, value - (value % 2));
 }
 
-// The pale bar sweeping across the middle third, which gives the clip motion to
-// decode. Confined to the middle band vertically so the corners stay flat
-// palette colour for a test to sample.
+// Confined to the middle band vertically, so the corners stay flat palette
+// colour for a test to sample.
 void drawSweep(Graphics::Image& image, int index, int frameCount)
 {
     auto width = image.width();
@@ -68,8 +65,7 @@ bool writeSyntheticClip(const FilePath& path, const SyntheticClipOptions& option
     auto fps = std::max(1, options.fps);
     auto frameCount = syntheticFrameCount(options);
 
-    // Roughly 0.1 bits per pixel per second, which is generous for flat colour
-    // and keeps the encoder from inventing its own answer.
+    // Roughly 0.1 bits per pixel per second, generous for flat colour.
     auto bitrate = options.bitrate > 0 ? options.bitrate : width * height * fps / 10;
 
     auto encoder = makeEncoder();
@@ -89,14 +85,12 @@ bool writeSyntheticClip(const FilePath& path, const SyntheticClipOptions& option
 
         drawSweep(image, index, frameCount);
 
-        // Offline: every frame has to land in the file, so wait rather than let
-        // the encoder drop the ones it is too busy for.
+        // Every frame has to land in the file, so wait rather than be dropped.
         encoder->waitUntilReady(Time::MS {5000});
         encoder->appendImage(image, (double) index / fps);
     }
 
-    // finish() finalises the file asynchronously and resolves on the main
-    // thread, so this pumps the loop until the file is fully written.
+    // finish() resolves on the main thread, so this pumps the loop.
     try
     {
         encoder->finish().waitFor(Time::MS {60'000});

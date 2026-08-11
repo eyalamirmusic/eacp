@@ -5,14 +5,9 @@
 namespace eacp::simd::kernels
 {
 
-// Swap the red and blue channels of `pixelCount` tightly-packed 8-bit pixels
-// (RGBA <-> BGRA), leaving green and alpha in place. Written once over a
-// backend B; the main loop processes B::U32::lanes pixels at a time and the
-// remainder is finished through the Scalar backend so it stays bit-identical.
-//
-// On the little-endian targets eacp builds for, a [R,G,B,A] pixel reads as the
-// u32 R | G<<8 | B<<16 | A<<24, so the swap is: red (bits 0..7) -> bits 16..23,
-// blue (bits 16..23) -> bits 0..7, green/alpha untouched.
+// Main loop does B::U32::lanes pixels at a time; the remainder goes through the
+// Scalar backend so it stays bit-identical. Little-endian only: a [R,G,B,A]
+// pixel reads as the u32 R | G<<8 | B<<16 | A<<24.
 template <class B>
 void swapRedBlueImpl(const std::uint8_t* in,
                      std::uint8_t* out,

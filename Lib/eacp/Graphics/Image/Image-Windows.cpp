@@ -11,9 +11,8 @@ namespace
 {
 using Microsoft::WRL::ComPtr;
 
-// WIC needs an initialized COM apartment. Tolerate a thread that was
-// already initialized with a different concurrency model, and only
-// balance the call that actually initialized.
+// WIC needs an initialized COM apartment. Tolerates a thread already
+// initialized with a different concurrency model.
 class ComScope
 {
 public:
@@ -238,8 +237,8 @@ ImageData encodeImageBytes(const std::uint8_t* rgba,
         return {};
     }
 
-    // The HGLOBAL behind the stream is rounded up past the bytes actually
-    // written, so read the stream's logical length rather than GlobalSize.
+    // The HGLOBAL is rounded up past the bytes written, so use the stream's
+    // logical length rather than GlobalSize.
     auto info = STATSTG {};
     if (FAILED(stream->Stat(&info, STATFLAG_NONAME)))
     {

@@ -24,9 +24,6 @@ Graphics::WindowOptions makeOptions()
     return options;
 }
 
-// The camera view plus an animated overlay drawn in the same GPU pass — standing
-// in for AI results (landmarks, boxes). It also self-reports render progress so
-// the display path can be checked without eyes on the window.
 struct DemoCameraView final : Cameras::CameraView
 {
     void update(Threads::FrameTime frameTime) override { elapsed = frameTime.time; }
@@ -43,8 +40,6 @@ struct DemoCameraView final : Cameras::CameraView
         auto center = bounds.center();
         auto radius = 0.25f * std::min(bounds.w, bounds.h);
 
-        // A box orbiting the centre: animated, proving the overlay composites
-        // over the live camera texture in one pass.
         auto bx = center.x + std::cos((float) elapsed) * radius;
         auto by = center.y + std::sin((float) elapsed) * radius;
         renderer.fillRect({bx - 12.0f, by - 12.0f, 24.0f, 24.0f},
@@ -79,7 +74,7 @@ struct CameraApp
         if (getEnvValue("EACP_DEMO_UPLOAD_MODE") == "copy")
             view.setUploadMode(Cameras::CameraView::UploadMode::Copy);
 
-        view.setMirrored(true); // front-camera-style preview
+        view.setMirrored(true);
         view.attach(camera);
         window.setContentView(view);
         installMenuBar();
@@ -89,9 +84,6 @@ struct CameraApp
 
     ~CameraApp() { camera.stop(); }
 
-    // The Camera menu: every device the system reports, checkable, with the
-    // mark following selectedDeviceId live (no rebuild on switch). Exercises
-    // MenuItem::withCheckableAction against real hardware.
     void installMenuBar()
     {
         auto cameraMenu = Graphics::Menu {"Camera"};
@@ -123,11 +115,10 @@ struct CameraApp
 
         selectedDeviceId = std::move(deviceId);
         std::printf("switching camera to %s\n",
-                    selectedDeviceId ? selectedDeviceId->c_str()
-                                     : "system default");
+                    selectedDeviceId ? selectedDeviceId->c_str() : "system default");
 
-        // The view stays attached across the restart: it follows the Camera
-        // object, not the capture session.
+        // The view follows the Camera object, not the capture session, so it
+        // stays attached across the restart.
         if (camera.isRunning())
         {
             camera.stop();
@@ -148,8 +139,7 @@ struct CameraApp
         camera.start(config);
     }
 
-    // Without frames the default on-arrival mode never renders; fall back to
-    // the display link so the overlay still animates.
+    // Without frames the default on-arrival render mode never fires.
     void showOverlayOnly()
     {
         std::printf("Camera access not granted; showing overlay only.\n");
@@ -179,8 +169,7 @@ struct CameraApp
         }
     }
 
-    // Timer-driven, not render-driven, so it fires even when no camera ever
-    // delivers a frame.
+    // Timer-driven, not render-driven, so it fires even with no camera frames.
     void armAutoQuit()
     {
         auto seconds = std::atof(getEnvValue("EACP_DEMO_AUTOQUIT_SECONDS").c_str());
@@ -206,7 +195,7 @@ struct CameraApp
     Cameras::Camera camera;
     DemoCameraView view;
     Graphics::Window window {makeOptions()};
-    // nullopt = system default. What the Camera menu's checkmarks read.
+    // nullopt = system default.
     std::optional<std::string> selectedDeviceId;
     std::optional<Threads::Timer> quitTimer;
     std::optional<Time::Deadline> quitDeadline;

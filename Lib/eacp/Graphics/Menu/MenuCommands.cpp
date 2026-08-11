@@ -39,9 +39,8 @@ std::string keyText(const std::string& key)
     if (key.empty())
         return {};
 
-    // A single character is a letter or punctuation and reads capitalised —
-    // "Ctrl+S", not "Ctrl+s". Anything longer already names itself ("Escape",
-    // "F5") and is passed through, because uppercasing it would give "ESCAPE".
+    // "Ctrl+S", not "Ctrl+s". Longer names already read correctly, and
+    // uppercasing them would give "ESCAPE".
     if (key.size() == 1)
         return std::string {(char) std::toupper((unsigned char) key[0])};
 
@@ -54,8 +53,7 @@ std::string keyText(const std::string& key)
 
 MenuEntryKind classifyMenuEntry(const MenuItem& item)
 {
-    // Separator first, because an item carrying both flags has to resolve one
-    // way and only one — which walk asked first is exactly what used to differ.
+    // Separator first, so an item carrying both flags resolves one way only.
     if (item.isSeparator)
         return MenuEntryKind::Separator;
 
@@ -95,13 +93,11 @@ std::string acceleratorText(const KeyEquivalent& shortcut)
     if (key.empty())
         return {};
 
-    // Ctrl, Alt, Shift — the order Windows itself prints, so the column reads
-    // the same as every other application's.
+    // Ctrl, Alt, Shift is the order Windows itself prints.
     auto text = std::string {};
 
-    // Both spellings collapse to one "Ctrl+". A chord that set control *and*
-    // command would otherwise print "Ctrl+Ctrl+S", and the two mean the same
-    // thing here — the primary accelerator modifier.
+    // Control and command both mean the primary accelerator modifier here, so
+    // they collapse to one "Ctrl+".
     if (shortcut.modifiers.control || shortcut.modifiers.command)
         text += "Ctrl+";
 

@@ -5,9 +5,7 @@
 
 namespace eacp::Time
 {
-// A duration in milliseconds. The framework's time currency: public APIs take
-// this instead of std::chrono types so headers stay free of <chrono> (the
-// same boundary FilePath draws around <filesystem>).
+// The framework's duration type, so public headers stay free of <chrono>.
 struct MS
 {
     std::int64_t count = 0;
@@ -15,8 +13,6 @@ struct MS
     friend constexpr auto operator<=>(MS, MS) = default;
 };
 
-// Blocks the calling thread, keeping <thread> and <chrono> out of callers
-// that just need to sleep.
 void sleep(MS duration);
 
 inline void sleepMS(int ms)
@@ -24,8 +20,7 @@ inline void sleepMS(int ms)
     sleep(MS {ms});
 }
 
-// A point in the future, for pump-until loops. Wraps the steady clock behind
-// out-of-line methods so headers using it stay free of <chrono>.
+// A point on the steady clock, for pump-until loops.
 class Deadline
 {
 public:
@@ -33,7 +28,7 @@ public:
 
     bool expired() const;
 
-    // Time left until the deadline, clamped to zero.
+    // Clamped to zero once expired.
     MS remaining() const;
 
 private:

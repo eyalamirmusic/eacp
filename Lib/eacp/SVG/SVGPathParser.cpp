@@ -182,13 +182,9 @@ void handleSmoothQuadratic(NumberReader& reader,
     } while (reader.hasNumber());
 }
 
-// An elliptical arc as its centre and the two angles across it, which is what
-// every renderer wants and the one thing the `d` attribute does not give.
-//
-// SVG writes an arc as where it ends up plus a description of the ellipse to get
-// there on, because that is what survives being edited: move the endpoint and
-// the arc still joins what follows it. The cost is the conversion below, which
-// is the specification's own (F.6.5, with the radius correction of F.6.6).
+// An elliptical arc as its centre and the two angles across it, converted from
+// the endpoint form a `d` attribute writes. The conversion below is the
+// specification's own: F.6.5, with the radius correction of F.6.6.
 struct CentredArc
 {
     Graphics::Point pointAt(float angle) const
@@ -200,8 +196,6 @@ struct CentredArc
                 centre.y + x * sinRotation + y * cosRotation};
     }
 
-    // The tangent, which is what the cubic approximation hangs its control
-    // points off.
     Graphics::Point tangentAt(float angle) const
     {
         auto x = -radiusX * std::sin(angle);
@@ -225,9 +219,8 @@ float angleBetween(const Graphics::Point& from, const Graphics::Point& to)
     return std::atan2(from.x * to.y - from.y * to.x, from.x * to.x + from.y * to.y);
 }
 
-// The endpoint form as the centred one. Returns nothing where the arc is
-// degenerate - a zero radius, or an endpoint the start is already at - which the
-// format says to draw as a straight line or as nothing at all.
+// Nothing where the arc is degenerate -- a zero radius, or an endpoint the
+// start is already at -- which the format says to draw as a line or not at all.
 std::optional<CentredArc> centreArc(const Graphics::Point& start,
                                     const Graphics::Point& end,
                                     float radiusX,
@@ -257,8 +250,7 @@ std::optional<CentredArc> centreArc(const Graphics::Point& start,
         return std::nullopt;
 
     // Radii too small to reach across the chord are grown until they just do,
-    // rather than the arc being dropped. Documents get this wrong constantly,
-    // usually by rounding the radii down.
+    // rather than the arc being dropped.
     auto overshoot = (x1 * x1) / (arc.radiusX * arc.radiusX)
                      + (y1 * y1) / (arc.radiusY * arc.radiusY);
 
@@ -275,9 +267,8 @@ std::optional<CentredArc> centreArc(const Graphics::Point& start,
     auto denominator = rxSquared * y1 * y1 + rySquared * x1 * x1;
     auto numerator = rxSquared * rySquared - denominator;
 
-    // Which of the two circles through the endpoints, and which way round it:
-    // the four combinations of the two flags are what pick one of the four arcs
-    // any pair of points and radii admit.
+    // The two flags pick one of the four arcs any pair of points and radii
+    // admit: which circle through the endpoints, and which way round it.
     auto distance = std::sqrt(std::max(0.f, numerator / denominator))
                     * (largeArc != sweep ? 1.f : -1.f);
 
@@ -307,14 +298,9 @@ std::optional<CentredArc> centreArc(const Graphics::Point& start,
     return arc;
 }
 
-// The arc as cubics, which is what lets one body serve both path types: neither
-// has an arc call, and Graphics::Path could not be given a portable one, but
-// both take a cubic and the GPU one then flattens it to whatever tolerance it
-// was told to hold.
-//
-// A quarter turn at a time, where a cubic hugging the ellipse at both ends and
-// matching its tangents is within about a ten-thousandth of the radius - two
-// orders below anything the flattening afterwards will preserve.
+// The arc as cubics, neither path type having an arc call. A quarter turn at a
+// time, where a cubic matching the ellipse's ends and tangents is within about
+// a ten-thousandth of the radius.
 template <typename PathType>
 void addArcSegments(PathType& path, const CentredArc& arc)
 {
@@ -323,9 +309,8 @@ void addArcSegments(PathType& path, const CentredArc& arc)
 
     auto step = arc.sweepAngle / (float) quarters;
 
-    // The control points sit a fixed fraction of the tangent away, and this is
-    // that fraction: the value which makes the cubic pass through the arc's
-    // midpoint as well as its ends.
+    // The fraction of the tangent that puts the control points where the cubic
+    // passes through the arc's midpoint as well as its ends.
     auto reach = 4.f / 3.f * std::tan(step * 0.25f);
 
     for (auto i = 0; i < quarters; ++i)
@@ -366,8 +351,7 @@ void handleArc(NumberReader& reader, PathType& path, PathState& state, bool rela
         auto arc = centreArc(
             state.current, end, radiusX, radiusY, rotation, largeArc, sweep);
 
-        // A degenerate arc is the straight line to its endpoint, which is what
-        // the format says and what keeps the sub-path connected.
+        // A degenerate arc is the straight line to its endpoint, per the format.
         if (arc.has_value())
             addArcSegments(path, *arc);
         else

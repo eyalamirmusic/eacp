@@ -13,37 +13,20 @@
 #include <cstdint>
 #include <optional>
 
-// Process-wide D3D12 plumbing shared by every Windows GPU translation unit:
-// the device and direct queue, the fence that orders CPU/GPU work, a pool of
-// command allocator/list pairs recycled once their fence value passes, and the
-// shader-visible descriptor heaps textures allocate their SRV/sampler slots
-// from. The 2D graphics layer keeps its own D3D11 device for Direct2D; the two
-// stacks only meet in the compositor, which composes swapchains from either
-// device. Not part of GPU.h.
+// Process-wide D3D12 plumbing shared by every Windows GPU translation unit.
+// The 2D graphics layer keeps its own D3D11 device; the two stacks meet only in
+// the compositor. Not part of GPU.h.
 
 namespace eacp::GPU
 {
 // One recording in flight: an allocator/list pair plus the transient upload
-// resources (per-draw constant buffers, staging copies) the recorded commands
-// reference. Everything is released together once fenceValue has passed.
+// resources the recorded commands reference, all released once fenceValue
+// passes.
 struct CommandContext
 {
-    // Where everything this recording uploads from the CPU is bump-allocated:
-    // an upload-heap buffer left mapped for its whole life, handed out a range
-    // at a time. Root constants read straight out of it, and a buffer's
-    // CopyBufferRegion sources from it.
-    //
-    // One resource per *recording* rather than per upload, which is the whole
-    // point. A committed resource costs a quarter of a millisecond to create on
-    // some adapters, and a frame uploads a couple of hundred times - every
-    // uniform set and every batch flush - so creating one each was by far the
-    // most expensive thing a frame did.
-    //
-    // A chain rather than one buffer because a recording that wants more than the
-    // chunk holds cannot be given a larger one: the commands already recorded
-    // point into the old resource. So a second chunk is added and both are kept,
-    // which also means the chain settles at the peak a frame actually uses and
-    // then stops growing.
+    // A permanently mapped upload-heap buffer, bump-allocated a range at a time:
+    // one resource per recording, not per upload. A chain rather than one
+    // buffer, already-recorded commands pointing into the old resource.
     struct UploadChunk
     {
         winrt::com_ptr<ID3D12Resource> resource;
@@ -52,9 +35,8 @@ struct CommandContext
         std::size_t used = 0;
     };
 
-    // Ready to be filled from the start again. Only sound once the recording's
-    // fence has passed, which is the same condition that lets the allocator be
-    // reset -- the GPU has read everything these chunks carried.
+    // Only sound once the recording's fence has passed, the same condition that
+    // lets the allocator be reset.
     void rewindUploads()
     {
         for (auto& chunk: uploads)
@@ -71,20 +53,17 @@ struct CommandContext
     Vector<UploadChunk> uploads;
     int uploadCursor = 0;
 
-    // Staging-pool slots this recording is copying out of. Unlike transients
-    // these are not released when the recording is recycled — they go back to
-    // the pool, stamped at submit with the fence that frees them again.
+    // Unlike transients these go back to the staging pool when the recording is
+    // recycled, stamped at submit with the fence that frees them.
     Vector<int> stagingTaken;
 
-    // Identifies the recording for buffer state tracking: a buffer first
-    // touched under a new id was implicitly promoted from COMMON, so no
-    // barrier is needed (buffers decay back to COMMON after every execute).
+    // Identifies the recording for buffer state tracking: a buffer first touched
+    // under a new id was implicitly promoted from COMMON and needs no barrier.
     std::uint64_t recordingId = 0;
 };
 
-// A range of a recording's upload arena: what a copy sources from, where the
-// CPU writes, and the address a root descriptor binds to. Valid until the
-// recording it came from has completed on the GPU.
+// A range of a recording's upload arena, valid until that recording has
+// completed on the GPU.
 struct UploadRange
 {
     bool isValid() const { return mapped != nullptr; }
@@ -95,8 +74,8 @@ struct UploadRange
     D3D12_GPU_VIRTUAL_ADDRESS address = 0;
 };
 
-// A slot in one of the shader-visible heaps. The generation guards frees that
-// arrive after device loss rebuilt the heaps: a stale slot is simply ignored.
+// A slot in a shader-visible heap. The generation guards frees arriving after
+// device loss rebuilt the heaps: a stale slot is ignored.
 struct DescriptorSlot
 {
     UINT index = 0;
@@ -124,11 +103,8 @@ public:
         return computeRootSignature.get();
     }
 
-    // The command signature ExecuteIndirect needs to read a dispatch out of a
-    // buffer. One argument, of type Dispatch, which is the case D3D12 lets a
-    // signature carry a null root signature for: nothing about the bindings
-    // changes per command, only the grid. Built on first use and shared, since
-    // it depends on nothing but the device.
+    // For ExecuteIndirect. One Dispatch argument, which is the case D3D12 lets a
+    // signature carry a null root signature for. Built on first use.
     ID3D12CommandSignature* getDispatchSignature();
     ID3D12DescriptorHeap* getTextureHeap() const
     {
@@ -140,16 +116,13 @@ public:
     }
 
     // Permanently valid descriptors for the table slots a shader leaves unused,
-    // which Tier 1 hardware still requires to be bound. See
-    // createNullDescriptors.
+    // which Tier 1 hardware still requires bound. See createNullDescriptors.
     D3D12_GPU_DESCRIPTOR_HANDLE getNullTextureDescriptor() const
     {
         return nullTexture.gpu;
     }
 
-    // Its write-side sibling, for the compute signature's UAV tables. A table
-    // declared as a UAV range will not take an SRV descriptor, so the two
-    // cannot share one.
+    // A UAV range will not take an SRV descriptor, so the two cannot share one.
     D3D12_GPU_DESCRIPTOR_HANDLE getNullTextureUAVDescriptor() const
     {
         return nullTextureUAV.gpu;
@@ -163,16 +136,9 @@ public:
     // is handed back through submit() or discard().
     CommandContext* acquire();
 
-    // The recording a frame currently has open, or null outside one. A CPU
-    // upload that happens while a frame is being recorded puts its copy on this
-    // list instead of acquiring and submitting one of its own: same queue, in
-    // order ahead of the draw or dispatch that wanted the bytes, and no
-    // submission per buffer.
-    //
-    // Set by Frame for as long as it is recording, which is what makes it safe
-    // for an upload to assume the list is still open and still ahead of the work
-    // that reads it. The one thing it is not safe for is a read-back of bytes
-    // uploaded this way before the frame submits -- see Buffer::read.
+    // The recording a frame has open, or null outside one. CPU uploads join it
+    // instead of submitting per buffer, landing in order ahead of the work that
+    // reads them - but not readable before the frame submits. See Buffer::read.
     void setOpenRecording(CommandContext* commands) { openRecording = commands; }
     CommandContext* getOpenRecording() const { return openRecording; }
 
@@ -188,15 +154,9 @@ public:
     void waitFor(std::uint64_t value);
     void waitIdle();
 
-    // Calls `done` once `value` has passed on the GPU, without blocking — the
-    // non-blocking sibling of waitFor, and what CommandBuffer::commitAsync is
-    // built on. Fires inline when the value has already passed; otherwise from
-    // a poll on the event loop, so `done` always runs on the main thread.
-    //
-    // A poll rather than a waiter thread because the whole backend is
-    // main-thread only: a fence event would need a thread whose only job is to
-    // hand the result straight back here. The cost is a completion latency of
-    // up to one poll interval, against a dispatch measured in milliseconds.
+    // Non-blocking sibling of waitFor. Fires inline if `value` already passed,
+    // otherwise from an event-loop poll, so `done` always runs on the main
+    // thread - the backend being main-thread only.
     void notifyWhenCompleted(std::uint64_t value, Callback done);
 
     // Copies bytes into the recording's upload arena (so they outlive GPU
@@ -206,17 +166,9 @@ public:
                                               const void* data,
                                               std::size_t bytes);
 
-    // Room for `bytes` on the recording's upload arena, for a caller that wants
-    // to copy out of it rather than have the GPU read it in place — the source
-    // of a buffer or texture upload. The CPU writes through `mapped` and the
-    // copy sources from `resource` at `offset`. Invalid on failure.
-    //
-    // Not acquireStagingBuffer, which lends whole pooled resources and is right
-    // for the handful of very large uploads a video frame makes. A frame of a
-    // component interface makes hundreds of small ones, all of which must hold
-    // their bytes until the one recording carrying them submits, so a pool would
-    // need a slot per upload — measured at 2068 committed resources on the frame
-    // a path-heavy interface builds its masks.
+    // Room for `bytes` on the recording's upload arena; the CPU writes through
+    // `mapped` and the copy sources from `resource` at `offset`. For the many
+    // small uploads a frame makes; acquireStagingBuffer would need a slot each.
     UploadRange allocateUpload(CommandContext& commands, std::size_t bytes);
 
     // A standalone upload-heap buffer pre-filled with the bytes, for staging
@@ -224,38 +176,20 @@ public:
     winrt::com_ptr<ID3D12Resource> makeUploadBuffer(const void* data,
                                                     std::size_t bytes);
 
-    // An upload-heap buffer of at least `bytes`, borrowed from a pool and
-    // returned once `commands` completes on the GPU. Null on failure.
-    //
-    // For staging that repeats every frame at a size worth pooling — a video
-    // frame is a 33 MB upload at 4K and 133 MB at 8K — where creating and
-    // destroying a committed resource that large per frame costs considerably
-    // more than the copy it exists for. The caller must not park the result in
-    // transients; the pool owns it.
+    // An upload-heap buffer of at least `bytes`, borrowed from the pool and
+    // returned once `commands` completes; for the few very large per-frame
+    // uploads. The pool owns it, so do not park it in transients.
     ID3D12Resource* acquireStagingBuffer(CommandContext& commands,
                                          std::size_t bytes);
 
-    // A default-heap buffer of at least `bytes` with these flags: one the GPU has
-    // finished with when there is a spare, and a fresh committed resource
-    // otherwise. Handed back through recycleDefaultBuffer.
-    //
-    // This exists because a buffer has to be *replaced* rather than refilled to
-    // stay correct -- two draws in one frame each read their own instances, so
-    // the second cannot overwrite what the first is going to read (see
-    // ShaderProgram::uploadIndices). Replacing it is therefore the hot path, and
-    // a committed resource is far too expensive to create per draw. Reusing the
-    // resource underneath keeps the semantics and drops the cost.
-    //
-    // Only for a buffer that arrives with data to fill it. A fresh committed
-    // resource is zero-filled by the runtime and a recycled one holds whatever
-    // was last in it, so a buffer created empty -- a compute output target --
-    // must not be given one.
+    // A spare the GPU has finished with, or a fresh committed resource; handed
+    // back through recycleDefaultBuffer. Only for a buffer arriving with data to
+    // fill it, a recycled one holding whatever was last in it.
     winrt::com_ptr<ID3D12Resource> takeDefaultBuffer(std::size_t bytes,
                                                      D3D12_RESOURCE_FLAGS flags);
 
-    // Offers a default-heap buffer up for reuse. Held until its fence has
-    // passed, on the same terms as deferRelease, and released rather than kept
-    // if the free list is already carrying enough.
+    // Held until its fence has passed, on the same terms as deferRelease, and
+    // released rather than kept once the free list is carrying enough.
     void recycleDefaultBuffer(winrt::com_ptr<ID3D12Resource> resource,
                               std::size_t capacity,
                               D3D12_RESOURCE_FLAGS flags);
@@ -265,14 +199,9 @@ public:
     DescriptorSlot allocateSamplerDescriptor();
     void freeSamplerDescriptor(const DescriptorSlot& slot);
 
-    // Keeps an object alive until the GPU finished all work submitted so far
-    // and no recording is still open. D3D11's bind ref-counting did this
-    // implicitly; buffer, texture and pipeline destructors route their objects
-    // through here instead of releasing something still in flight.
-    //
-    // Templated rather than fixed to ID3D12Resource because a command list
-    // references a pipeline state exactly as it does a resource, and a renderer
-    // constructed inside render() destroys its PSO while that list is open.
+    // Keeps an object alive until the GPU finished all submitted work and no
+    // recording is open. Resource, texture and pipeline destructors route
+    // through here rather than releasing something a command list still names.
     template <typename T>
     void deferRelease(winrt::com_ptr<T> object)
     {
@@ -282,10 +211,8 @@ public:
         deferReleaseUnknown(object.template as<IUnknown>());
     }
 
-    // Tears everything down and rebuilds on a fresh device after device
-    // removal. Resources created on the old device (app buffers, textures,
-    // pipelines) stay dead; their owners rebuild via GPUView::onDeviceRestored,
-    // mirroring the D3D11 backend's recovery contract.
+    // Resources created on the old device stay dead; their owners rebuild via
+    // GPUView::onDeviceRestored.
     void recreateAfterDeviceLoss();
 
 private:
@@ -308,8 +235,7 @@ private:
     void freeFrom(DescriptorAllocator& allocator, const DescriptorSlot& slot);
     std::uint64_t signal();
 
-    // A chunk of this recording's upload arena with room for `bytes`, adding one
-    // to the chain if nothing already there has it. Null on failure.
+    // Adds a chunk to the chain if nothing already there fits. Null on failure.
     CommandContext::UploadChunk* uploadRoomFor(CommandContext& commands,
                                                std::size_t bytes);
 
@@ -318,9 +244,8 @@ private:
     void pollCompletions();
     void deferReleaseUnknown(winrt::com_ptr<IUnknown> object);
 
-    // Hands a recording's staging slots back to the pool. `freeAt` is the fence
-    // value that must pass before they can be lent out again — 0 for a
-    // recording that never reached the GPU, so its slots are free at once.
+    // `freeAt` is the fence value that must pass before the slots can be lent
+    // again; 0 for a recording that never reached the GPU.
     void returnStaging(CommandContext& commands, std::uint64_t freeAt);
 
     winrt::com_ptr<ID3D12Device> device;
@@ -348,9 +273,8 @@ private:
     Vector<CommandContext*> available;
     CommandContext* openRecording = nullptr;
 
-    // An object whose owner is gone but which a command list may still
-    // reference. `stamped` marks the ones a fence value has been worked out for;
-    // until then there is no bound on when they are free. See purgeRetired.
+    // An object whose owner is gone but which a command list may still name.
+    // `stamped` marks those a fence value is known for. See purgeRetired.
     struct Retired
     {
         winrt::com_ptr<IUnknown> object;
@@ -360,9 +284,8 @@ private:
 
     Vector<Retired> retired;
 
-    // A default-heap buffer offered back for reuse. `stamped` and `fenceValue`
-    // work exactly as Retired's do -- the resource cannot be handed out again
-    // until every list that named it has completed.
+    // `stamped` and `fenceValue` work as Retired's do: the resource cannot be
+    // handed out again until every list that named it has completed.
     struct PooledBuffer
     {
         winrt::com_ptr<ID3D12Resource> resource;
@@ -372,19 +295,17 @@ private:
         bool stamped = false;
     };
 
-    // How much the free list will hold. Past it a returned buffer is released
-    // instead of kept, so an interface that allocates in a burst and then
-    // settles does not carry the burst's worth of memory for the rest of the run.
+    // Past this a returned buffer is released rather than kept, so an allocation
+    // burst is not carried for the rest of the run.
     static constexpr std::size_t reusableBudget = 32 * 1024 * 1024;
 
     Vector<PooledBuffer> recycling;
     Vector<PooledBuffer> reusable;
     std::size_t reusableBytes = 0;
 
-    // Upload-heap buffers kept for reuse. `freeAt` is the fence value that must
-    // pass before a slot can be lent out again; `lent` marks the window between
-    // acquireStagingBuffer and the submit that stamps the real fence, during
-    // which the slot must not be handed to a second recording.
+    // `freeAt` is the fence value that must pass before a slot is lent again;
+    // `lent` covers the window before submit stamps the real fence, during which
+    // the slot must not reach a second recording.
     struct StagingBuffer
     {
         winrt::com_ptr<ID3D12Resource> resource;
@@ -395,9 +316,8 @@ private:
 
     Vector<StagingBuffer> staging;
 
-    // Callbacks owed to submissions still running, and the poll that settles
-    // them. The timer only exists while something is pending, so an app that
-    // never calls commitAsync never pays for it.
+    // The timer only exists while something is pending, so an app that never
+    // calls commitAsync never pays for it.
     struct PendingCompletion
     {
         std::uint64_t fenceValue = 0;
@@ -410,7 +330,6 @@ private:
     std::optional<Threads::Timer> completionPoll;
 };
 
-// The process-wide context, created on first use. Main-thread only, like the
-// rest of the GPU backend.
+// Created on first use. Main-thread only, like the rest of the GPU backend.
 D3D12Context& getD3D12Context();
 } // namespace eacp::GPU

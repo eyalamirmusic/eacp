@@ -6,9 +6,8 @@ namespace eacp::Threads
 {
 namespace
 {
-// The app's startup callback, deferred until a UIScene connects so the window is
-// created with a live scene after activation (not from an early run-loop source,
-// which iOS warns about and, under the debugger on recent iOS, asserts on).
+// Deferred until a UIScene connects, so the window is created with a live scene
+// rather than from an early run-loop source, which recent iOS asserts on.
 Callback pendingLaunch;
 bool launched = false;
 bool appInitialized = false;
@@ -26,8 +25,8 @@ void runPendingLaunch()
 }
 } // namespace eacp::Threads
 
-// The scene lifecycle eacp adopts (declared in the bundle's
-// UIApplicationSceneManifest). The window is created here, once the scene exists.
+// The scene lifecycle eacp adopts, declared in the bundle's
+// UIApplicationSceneManifest.
 @interface EACPSceneDelegate : UIResponder <UIWindowSceneDelegate>
 @end
 
@@ -50,11 +49,8 @@ void runPendingLaunch()
     return YES;
 }
 
-// Fallback for bundles that declare no UIScene manifest (apps with a custom
-// Info.plist): the scene delegate's willConnect never fires, so launch here once
-// the app delegate activates. UIKit only delivers this in the legacy lifecycle —
-// scene-based apps get sceneDidBecomeActive instead — so the two paths never both
-// run, and runPendingLaunch is guarded to fire once regardless.
+// Fallback for bundles with no UIScene manifest in Info.plist, where the scene
+// delegate's willConnect never fires. UIKit delivers only one of the two.
 - (void)applicationDidBecomeActive:(UIApplication*)application
 {
     eacp::Threads::runPendingLaunch();
@@ -65,8 +61,6 @@ namespace eacp::Threads
 {
 void scheduleStartup(const Callback& func)
 {
-    // Defer to the scene delegate's willConnect rather than posting to the loop,
-    // so the app's window is created after the scene activates.
     pendingLaunch = func;
 }
 
@@ -97,16 +91,12 @@ bool EventLoop::runFor(Time::MS timeout)
 
 void EventLoop::quit()
 {
-    // Mirror the CFRunLoop semantics of the macOS backend: stop only the
-    // innermost pump, so stopEventLoop() unwinds a nested runFor (Async::waitFor,
-    // runEventLoopUntil) without terminating the app. Never call exit() on iOS —
-    // the system and the debugger report it as a crash, and iOS apps are not
-    // meant to terminate themselves.
+    // Stops only the innermost pump, so a nested runFor unwinds without
+    // terminating the app. Never exit() on iOS: it is reported as a crash.
     CFRunLoopStop(CFRunLoopGetCurrent());
 }
 
-// UIApplicationMain runs the loop for the rest of the process's life, so once
-// it has started there is always a loop for callAsync to reach.
+// UIApplicationMain runs the loop for the rest of the process's life.
 bool isEventLoopRunning()
 {
     return appInitialized;

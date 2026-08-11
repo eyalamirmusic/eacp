@@ -6,29 +6,20 @@
 #include "../Frame/ComputePass.h"
 #include "../Frame/RenderPass.h"
 
-// Internal shared types for the Windows/D3D12 GPU backend. The public GPU
-// classes expose opaque void* handles (nativeBuffer/nativeLibrary/nativeState/
-// ...); these structs are what those handles point to, so the separate
-// translation units (Shader, Pipeline, Frame, RenderPass, View) agree on the
-// concrete layout without leaking D3D types into the public headers. Not part
-// of GPU.h.
+// What the public GPU classes' opaque void* handles point to. Internal to the
+// D3D12 backend; not part of GPU.h.
 
 namespace eacp::GPU
 {
 
-// The binding model both root signatures implement. Slots map straight onto
-// shader registers: uniform slot n = b<n>, input buffer slot n = t<n>, output
-// buffer slot n = u<n>, texture slot n = t<n>/s<n> — the same registers the
-// shader emitter and the hand-written HLSL in tests and examples declare.
+// Slots map straight onto shader registers: uniform slot n = b<n>, input buffer
+// slot n = t<n>, output buffer slot n = u<n>, texture slot n = t<n>/s<n>.
 constexpr int maxUniformSlots = 2;
 constexpr int maxBufferSlots = ComputePass::maxBufferSlots;
 constexpr int maxTextureSlots = 4;
 
-// Render root signature parameter layout: root CBVs per stage, then one
-// single-descriptor table per texture slot (SRV, then sampler — tables cannot
-// mix heap types), then per-stage root SRVs for the storage buffers a shader
-// subscripts. Single-descriptor tables let each texture bind its persistent
-// heap slot directly, with no per-frame descriptor copying.
+// Render root signature layout: root CBVs per stage, one single-descriptor
+// table per texture slot, then per-stage root SRVs for storage buffers.
 constexpr UINT renderVertexCBVParam(int slot)
 {
     return static_cast<UINT>(slot);
@@ -42,11 +33,8 @@ constexpr UINT renderTextureParam(int slot)
     return static_cast<UINT>(2 * maxUniformSlots + slot);
 }
 
-// A storage buffer read by a shader stage is a root descriptor, not a table:
-// unlike a texture, a buffer SRV *is* a buffer view, so it binds by GPU address
-// and needs no heap. Per stage, like the CBVs and for the same reason - one
-// HLSL global is visible to both functions, so each stage names its own root
-// parameter at the same register.
+// A root descriptor, not a table: a buffer SRV *is* a buffer view, so it binds
+// by GPU address. Per stage, one HLSL global being visible to both functions.
 constexpr UINT renderVertexSRVParam(int slot)
 {
     return static_cast<UINT>(2 * maxUniformSlots + maxTextureSlots + slot);
@@ -57,9 +45,7 @@ constexpr UINT renderPixelSRVParam(int slot)
                              + slot);
 }
 
-// The render signature's mirror of computeTextureRegister: a shader's textures
-// hold the low t registers, so its storage buffers start above every texture
-// slot. The emitter writes these from RenderPass::bufferRegisterBase.
+// Textures hold the low t registers, so storage buffers start above them.
 static_assert(maxTextureSlots <= RenderPass::bufferRegisterBase,
               "render buffer registers must start above every texture slot");
 
@@ -71,14 +57,8 @@ constexpr UINT renderBufferRegister(int slot)
 // There is deliberately no renderSamplerParam: samplers are static samplers in
 // the root signature, not descriptor tables. See TextureSampling.
 
-// Compute root signature parameter layout: root CBVs, then root SRVs and root
-// UAVs for the storage buffers, then one single-descriptor table per texture
-// slot for reads and another for writes.
-//
-// Buffers are root descriptors, which bind by GPU address and need no heap at
-// all. Textures cannot be: a root descriptor is a buffer view and nothing else,
-// so a texture - read or written - goes through a table, which is why the
-// compute path binds descriptor heaps the way the render path does.
+// Compute root signature layout: root CBVs, root SRVs and UAVs for storage
+// buffers, then a single-descriptor table per texture slot, read and write.
 constexpr UINT computeCBVParam(int slot)
 {
     return static_cast<UINT>(slot);
@@ -101,10 +81,8 @@ constexpr UINT computeTextureUAVParam(int slot)
                              + slot);
 }
 
-// A kernel's textures share the t/u register spaces with its storage buffers,
-// and the two slot spaces are counted separately, so a texture's registers
-// start above every buffer slot's. The emitter writes the same registers from
-// ComputePass::textureRegisterBase, which this holds it to.
+// Textures share the t/u register spaces with storage buffers, so their
+// registers start above every buffer slot's.
 static_assert(maxBufferSlots <= ComputePass::textureRegisterBase,
               "compute texture registers must start above every buffer slot");
 
@@ -113,9 +91,8 @@ constexpr UINT computeTextureRegister(int slot)
     return static_cast<UINT>(ComputePass::textureRegisterBase + slot);
 }
 
-// Result of compiling a ShaderSource. D3D12 consumes raw bytecode at pipeline
-// creation, so the library stores blobs rather than shader objects. Pointed to
-// by ShaderLibrary::nativeLibrary().
+// What ShaderLibrary::nativeLibrary() points to: D3D12 consumes raw bytecode at
+// pipeline creation, so there are no shader objects.
 struct D3D12ShaderProgram
 {
     winrt::com_ptr<ID3DBlob> vertexBytecode;
@@ -123,26 +100,20 @@ struct D3D12ShaderProgram
     winrt::com_ptr<ID3DBlob> computeBytecode;
 };
 
-// A compiled pipeline plus the draw-time state D3D12 keeps outside the PSO.
-// Pointed to by RenderPipeline::nativeState().
+// What RenderPipeline::nativeState() points to: the PSO plus the draw-time
+// state D3D12 keeps outside it.
 struct D3D12Pipeline
 {
     winrt::com_ptr<ID3D12PipelineState> state;
     D3D12_PRIMITIVE_TOPOLOGY topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-    // Per-slot strides so multi-buffer draws (e.g. instancing) know the
-    // stride at each bound slot when setVertexBuffer wires the D3D12 view.
-    // Legacy single-buffer pipelines carry one entry at index 0.
+
+    // One entry per bound slot; a single-buffer pipeline carries one at index 0.
     Vector<UINT> strides;
     bool depth = false;
 };
 
-// The single "stride for a bound slot" rule shared by RenderPipeline (which
-// builds the table) and RenderPass::setVertexBuffer (which reads it): if the
-// slot has an explicit stride use it; otherwise fall back to slot 0's stride
-// so legacy single-buffer pipelines (which build a one-entry table for
-// slot 0) still bind correctly when the caller happens to pass a non-zero
-// slot index. Kept in one place so the two sites can't drift apart on the
-// platform I can't test.
+// Falls back to slot 0's stride, so a single-buffer pipeline still binds when
+// the caller passes a non-zero slot index.
 inline UINT strideForSlot(const Vector<UINT>& strides, int slot)
 {
     if (slot >= 0 && slot < strides.size())
@@ -152,10 +123,9 @@ inline UINT strideForSlot(const Vector<UINT>& strides, int slot)
     return 0;
 }
 
-// What Buffer::nativeBuffer() points to. Tracks the resource's state within
-// the current recording: buffers decay to COMMON after every
-// ExecuteCommandLists and are implicitly promoted on first use, so a barrier
-// is only needed when one recording uses the same buffer in two states.
+// What Buffer::nativeBuffer() points to. State is tracked per recording:
+// buffers decay to COMMON at every ExecuteCommandLists and are promoted on
+// first use, so only two states within one recording need a barrier.
 struct D3D12BufferData
 {
     winrt::com_ptr<ID3D12Resource> resource;
@@ -165,42 +135,30 @@ struct D3D12BufferData
 };
 
 // What Texture::nativeTexture()/nativeReadView() point to. The SRV slot lives
-// in the context's shader-visible heap for the texture's whole lifetime;
-// binding is just a root-table pointer update. There is no sampler slot: every
-// sampler is static in the root signature. See TextureSampling.
+// in the context's shader-visible heap for the texture's whole lifetime. There
+// is no sampler slot: every sampler is static. See TextureSampling.
 struct D3D12TextureData
 {
     winrt::com_ptr<ID3D12Resource> resource;
     DescriptorSlot srv;
 
-    // A compute-writable texture also owns a UAV, from the same heap the SRV
-    // came from (the allocator is CBV_SRV_UAV). A texture UAV cannot be a root
-    // descriptor the way a buffer UAV is - root descriptors are buffers only -
-    // so this is what the compute descriptor table points at.
+    // From the same CBV_SRV_UAV heap as the SRV. Root descriptors are buffers
+    // only, so a texture UAV binds through the compute descriptor table.
     DescriptorSlot uav;
 
-    // A render-target texture also owns one RTV, in a heap of its own: RTV
-    // descriptors are not shader-visible, so there is no shared heap to take one
-    // from the way the SRV does, and one descriptor per target is cheap.
+    // RTV descriptors are not shader-visible, so a render target owns its own
+    // one-descriptor heap rather than taking a slot from a shared one.
     winrt::com_ptr<ID3D12DescriptorHeap> rtvHeap;
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = {};
 
-    // A target created with TextureDescriptor::depth owns its depth buffer and
-    // that buffer's DSV, on the same terms as the RTV above and for the same
-    // reason: DSV descriptors are not shader-visible either. The resource rests
-    // in DEPTH_WRITE for its whole lifetime - nothing else ever touches it - so
-    // unlike the colour resource it needs no state tracking and no barriers,
-    // which is what D3D12DepthTarget below already relies on for the drawable.
+    // Likewise for the DSV. The depth resource rests in DEPTH_WRITE for its
+    // whole lifetime, so it needs no state tracking and no barriers.
     winrt::com_ptr<ID3D12Resource> depthResource;
     winrt::com_ptr<ID3D12DescriptorHeap> dsvHeap;
     D3D12_CPU_DESCRIPTOR_HANDLE dsv = {};
 
-    // A plain texture rests in PIXEL_SHADER_RESOURCE forever - it is only ever
-    // sampled - and a render target moves between that and RENDER_TARGET as the
-    // passes go by. Unlike a buffer this does not decay to COMMON at
-    // ExecuteCommandLists, so the state is tracked for the resource's lifetime
-    // rather than per recording, and both sites that use one go through the
-    // helper below rather than reasoning about it locally.
+    // Tracked for the resource's lifetime, not per recording: unlike a buffer a
+    // texture does not decay to COMMON at ExecuteCommandLists.
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 
     bool isRenderTarget() const { return rtv.ptr != 0; }
@@ -208,10 +166,9 @@ struct D3D12TextureData
     bool hasDepth() const { return dsv.ptr != 0; }
 };
 
-// The frame's color target. All members are owned by GPUView and stay valid
-// for the lifetime of the Frame. Pointed to by the drawable handle passed to
-// Frame. The back buffer is in PRESENT state on entry and must be returned to
-// it before the frame's submit.
+// The frame's colour target, owned by GPUView and valid for the Frame's
+// lifetime. The back buffer arrives in PRESENT and must be returned to it
+// before the frame's submit.
 struct D3D12Drawable
 {
     IDXGISwapChain3* swapChain = nullptr;
@@ -221,9 +178,8 @@ struct D3D12Drawable
     UINT height = 0;
 };
 
-// Optional multisample target, kept in RENDER_TARGET state between frames.
-// When present the pass renders into it and the frame resolves it into the
-// swapchain back buffer. Owned by GPUView.
+// Owned by GPUView, kept in RENDER_TARGET between frames. When present the pass
+// renders into it and the frame resolves it into the back buffer.
 struct D3D12MsaaTarget
 {
     ID3D12Resource* texture = nullptr;
@@ -231,45 +187,35 @@ struct D3D12MsaaTarget
     DXGI_FORMAT format = DXGI_FORMAT_B8G8R8A8_UNORM;
 };
 
-// Optional depth buffer, kept in DEPTH_WRITE state for its whole lifetime so
-// it never needs barriers. Owned by GPUView.
+// Owned by GPUView, kept in DEPTH_WRITE for life so it never needs barriers.
 struct D3D12DepthTarget
 {
     D3D12_CPU_DESCRIPTOR_HANDLE view = {};
 };
 
-// Carries the frame's recording (and the active pipeline's per-slot strides)
-// from beginPass to the RenderPass. The CommandContext stays owned by the
-// Frame, which submits and presents on destruction; the encoder is owned by
-// the pass. Strides are per-slot so multi-buffer draws (e.g. instancing)
-// bind each slot with its own stride.
+// Carries beginPass's recording to the RenderPass. The CommandContext stays
+// owned by the Frame; the encoder is owned by the pass.
 struct D3D12Encoder
 {
     CommandContext* commands = nullptr;
     Vector<UINT> strides;
 
-    // Where a timed pass writes its closing timestamp. The opening one is
-    // recorded by beginPass; this one has to wait for the pass to end, which is
-    // the pass's own business and not the frame's. Null and -1 when the pass
-    // carries no label and is therefore not timed.
+    // Where a timed pass writes its closing timestamp, beginPass having
+    // recorded the opening one. Null and -1 when the pass is not timed.
     ID3D12QueryHeap* queryHeap = nullptr;
     int endQuery = -1;
 };
 
-// The compute sibling of D3D12Encoder. The CommandContext stays owned by the
-// CommandBuffer, which submits on commit().
+// The compute sibling, its CommandContext owned by the CommandBuffer. A pass on
+// a CommandBuffer is never timed, there being no frame to attribute it to.
 struct D3D12ComputeEncoder
 {
     CommandContext* commands = nullptr;
 
-    // See D3D12Encoder. A compute pass on a Frame can be timed the same way; one
-    // on a CommandBuffer cannot, there being no frame to attribute it to.
     ID3D12QueryHeap* queryHeap = nullptr;
     int endQuery = -1;
 };
 
-// Closes a timed pass, wherever the pass happens to end. Both encoders carry
-// the same two fields for it, so both end the same way.
 template <typename Encoder>
 inline void endTimedPass(const Encoder& encoder)
 {
@@ -282,9 +228,8 @@ inline void endTimedPass(const Encoder& encoder)
                                      static_cast<UINT>(encoder.endQuery));
 }
 
-// Records the barrier a buffer needs before being used in the target state.
-// First use in a recording is free: the buffer was in COMMON (they decay
-// there after every execute) and promotion covers any first state.
+// First use in a recording is free: the buffer decayed to COMMON at the last
+// execute, and promotion covers any first state.
 inline void transitionForUse(CommandContext& commands,
                              D3D12BufferData& buffer,
                              D3D12_RESOURCE_STATES target)
@@ -310,14 +255,8 @@ inline void transitionForUse(CommandContext& commands,
     buffer.state = target;
 }
 
-// The texture sibling of transitionForUse: records the barrier a texture needs
-// before being used in the target state, and remembers what it is now in.
-//
-// There is no first-use-is-free case here, because a texture does not decay to
-// COMMON when a recording executes the way a buffer does - what it was left in
-// by the previous frame's last pass is what it is still in. Getting that wrong
-// is a barrier the debug layer rejects rather than anything visible, which is
-// exactly why the tracking lives here and not at the two call sites.
+// No first-use-is-free case: a texture does not decay to COMMON on execute, so
+// it stays in whatever the previous frame's last pass left it in.
 inline void transitionTextureForUse(ID3D12GraphicsCommandList* list,
                                     D3D12TextureData& texture,
                                     D3D12_RESOURCE_STATES target)
@@ -336,18 +275,9 @@ inline void transitionTextureForUse(ID3D12GraphicsCommandList* list,
     texture.state = target;
 }
 
-// The state every compute pass needs bound before it can dispatch. Shared by
-// Frame::beginCompute and CommandBuffer::beginCompute so the two cannot drift
-// apart on the platform I cannot test - the compute sibling of
-// Frame::Native::bindRootState.
-//
-// The heaps are here because a kernel's textures bind through descriptor
-// tables: buffers are root descriptors and need no heap, which is why the
-// compute path bound none until textures arrived. The same two the render path
-// binds, so whichever pass ran last leaves the same set behind - the compute
-// signature declares no sampler table (every sampler in it is a static sampler,
-// see TextureSampling), but binding one heap here and two there would make the
-// bound heaps depend on the order the passes happened to run in.
+// The state every compute pass needs before it can dispatch. Binds the same two
+// heaps the render path does, so the bound set does not depend on which pass ran
+// last, even though the compute signature declares no sampler table.
 inline void bindComputeRootState(D3D12Context& context,
                                  ID3D12GraphicsCommandList* list)
 {
@@ -356,12 +286,9 @@ inline void bindComputeRootState(D3D12Context& context,
     list->SetDescriptorHeaps(2, heaps);
     list->SetComputeRootSignature(context.getComputeRootSignature());
 
-    // Resource Binding Tier 1 hardware requires every descriptor table the root
-    // signature declares to be populated before a dispatch, even the ones the
-    // kernel never touches - an unset table drops the dispatch rather than
-    // failing loudly. The signature is shared and declares maxTextureSlots of
-    // each; setInputTexture / setOutputTexture overwrite the slots that carry a
-    // real texture. Same rule, and the same fix, as the render path's.
+    // Resource Binding Tier 1 hardware silently drops a dispatch if any
+    // descriptor table the root signature declares is unset, even ones the
+    // kernel never touches, so seed every table with a null descriptor.
     const auto nullSrv = context.getNullTextureDescriptor();
     const auto nullUav = context.getNullTextureUAVDescriptor();
 

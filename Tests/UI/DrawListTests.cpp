@@ -2,30 +2,17 @@
 
 #include <NanoTest/NanoTest.h>
 
-// What a paint() leaves behind, and the rule that makes keeping it worthwhile.
-//
-// The rule is that a list is recorded in the painting component's *own* points
-// and knows nothing about where that component sits. Everything follows from it:
-// a component that moves replays what it has, a scrolled list costs no paints at
-// all, and the frame is free to draw the same recording at two positions. Break
-// it -- record one coordinate in surface space -- and the failure is a component
-// that draws in the right place until the first time it is moved.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
 namespace
 {
-// The ramps own a texture and the glyph atlas owns two, so a painter needs a
-// device -- but no window, no pass and no drawable. Recording touches none of
-// them, which is the point being tested.
 bool hasDevice()
 {
     return GPU::Device::shared().isValid();
 }
 
-// A painter with nowhere to draw, which is all a recording needs.
 struct Recorder
 {
     explicit Recorder(const Rect& bounds = {0.f, 0.f, 100.f, 50.f})
@@ -74,8 +61,6 @@ auto tRunsMerge = test("DrawList/aRunOfShapesIsOneCommand") = []
 
     check(recorder.list.getShapes().size() == 5);
 
-    // Which is what makes replaying a component a walk over a handful of
-    // commands rather than over its primitives.
     check(recorder.list.getCommands().size() == 1);
     check(recorder.list.getCommands()[0].count == 5);
 };
@@ -91,9 +76,6 @@ auto tTranslationIsRecorded =
     recorder.g.translate(7.f, 11.f);
     recorder.g.fillRect({1.f, 2.f, 3.f, 4.f});
 
-    // The painter's own origin is resolved at the call, so what is kept is where
-    // the shape sits in the component. Only the component's own position is left
-    // for the frame to apply.
     check(sameRect(recorder.list.getShapes()[0].rect, {8.f, 13.f, 3.f, 4.f}));
 };
 
@@ -108,8 +90,6 @@ auto tClipIsRecordedLazily =
     {
         auto scope = UI::Graphics::ScopedState {recorder.g};
         recorder.g.reduceClipRegion({0.f, 0.f, 10.f, 10.f});
-
-        // Nothing drawn under it, so there is nothing for it to have cut.
     }
 
     check(recorder.list.getClips().empty(), "a clip nothing was drawn under");
@@ -156,8 +136,6 @@ auto tTextIsLaidOutOnce =
     check(runs[0].count == 5, "one glyph apiece, kept rather than laid out again");
     check(runs[0].colour.b == blue.b);
 
-    // In the component's own points, like everything else: the pen was placed at
-    // the baseline and the glyphs sit around it.
     check(recorder.list.getGlyphs()[0].destination.x >= 0.f);
 };
 
@@ -166,11 +144,8 @@ auto tGradientIsLocal = test("DrawList/aGradientIsResolvedIntoTheListsOwnSpace")
     if (!hasDevice())
         return;
 
-    // The same gradient, placed at the same point of two paintings whose origins
-    // differ. The recorded map takes a point of the list's own space, so both
-    // have to send their own local (10, 0) to the same place along the ramp --
-    // which is what lets the frame compose a component's position into it and
-    // get the same picture wherever the component has moved to.
+    // Two paintings whose origins differ must map their own local (10, 0) to
+    // the same place along the ramp.
     auto plain = Recorder {};
     auto shifted = Recorder {};
 

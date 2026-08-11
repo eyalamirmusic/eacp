@@ -9,18 +9,16 @@ namespace
 {
 using Graphics::Point;
 
-// Round joins / caps are discs of this many triangles. Modest is plenty at
-// stroke-width scale.
 constexpr int joinSegments = 12;
 
-// Twice the signed area of triangle abc. Positive when abc winds
-// counter-clockwise (in a y-up sense), negative when clockwise.
+// Twice the signed area of abc: positive when it winds counter-clockwise in a
+// y-up sense.
 float cross(const Point& a, const Point& b, const Point& c)
 {
     return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 }
 
-// Twice the signed area of the polygon; its sign gives the winding order.
+// Twice the area; the sign gives the winding order.
 float signedArea(const Vector<Point>& polygon)
 {
     auto sum = 0.0f;
@@ -48,8 +46,7 @@ bool pointInTriangle(const Point& p, const Point& a, const Point& b, const Point
     return !(hasNegative && hasPositive);
 }
 
-// Drops consecutive duplicate points and a trailing repeat of the first point, so
-// the polygon ear clipping sees has no zero-length edges to stall on.
+// Drops duplicate and wrap-around points, leaving no zero-length edges.
 Vector<Point> cleanPolygon(const Vector<Point>& input)
 {
     auto coincident = [](const Point& a, const Point& b)
@@ -69,9 +66,8 @@ Vector<Point> cleanPolygon(const Vector<Point>& input)
     return polygon;
 }
 
-// Ear clipping proper, of a polygon already cleaned of duplicates and wound
-// counter-clockwise. Appends 3 points per triangle and nothing else, so a caller
-// can tell a polygon it consumed whole (n - 2 triangles) from one it gave up on.
+// Takes a cleaned, counter-clockwise polygon. Appends exactly 3 points per
+// triangle, so the count tells a whole triangulation from an abandoned one.
 void earClipSimple(const Vector<Point>& polygon, Vector<Point>& out)
 {
     if (polygon.size() < 3)
@@ -82,9 +78,7 @@ void earClipSimple(const Vector<Point>& polygon, Vector<Point>& out)
     for (auto i = 0; i < polygon.size(); ++i)
         remaining.add(i);
 
-    // A simple polygon of n vertices triangulates into n - 2 triangles, each
-    // found within one sweep, so n sweeps is a safe ceiling against a stall on
-    // degenerate input.
+    // One sweep finds at least one ear, so n sweeps cannot stall.
     auto sweepLimit = polygon.size();
 
     while (remaining.size() > 3 && sweepLimit-- > 0)
@@ -149,36 +143,25 @@ void earClip(const Vector<Point>& source, Vector<Point>& out)
 {
     auto polygon = cleanPolygon(source);
 
-    // Normalise to counter-clockwise so a convex (ear) corner is a positive cross
-    // product throughout.
+    // Counter-clockwise makes an ear corner a positive cross product.
     if (signedArea(polygon) < 0.0f)
         std::reverse(polygon.begin(), polygon.end());
 
     earClipSimple(polygon, out);
 }
 
-// Past this many points a contour is left to the coverage kernel, which reads
-// segments in parallel on the GPU and does not care how many there are. Ear
-// clipping does: it rescans the remaining vertices for every triangle it finds,
-// so the work grows as the cube of the count on a contour full of reflex
-// corners, and the crossing test below is quadratic on top of that.
+// Ear clipping is cubic and the crossing test quadratic; past this the coverage
+// kernel is the cheaper route.
 constexpr int maxMeshPolygonPoints = 512;
 
-// Whether the polygon's edges cross one another.
-//
-// Ear clipping cannot answer this and does not notice: it tests a candidate
-// triangle against the other *vertices*, so a contour that crosses itself
-// between them comes back fully consumed and quietly wrong. A five-pointed star
-// written as five crossing edges -- which is how SVG documents write one -- would
-// fill as a pentagon, and nothing about the result would say so.
+// Ear clipping tests candidate triangles against vertices, not edges, so a
+// self-crossing contour is consumed whole and filled as the wrong shape.
 bool edgesCross(const Point& a, const Point& b, const Point& c, const Point& d)
 {
     auto side = [](float value)
     { return value > epsilon ? 1 : (value < -epsilon ? -1 : 0); };
 
-    // Each segment strictly straddling the other's line. Touches are left alone:
-    // they read as zero here, and a contour that merely grazes itself
-    // triangulates well enough that refusing it would cost more than it saves.
+    // Strict straddle only: a contour that merely grazes itself is accepted.
     return side(cross(c, d, a)) * side(cross(c, d, b)) < 0
            && side(cross(a, b, c)) * side(cross(a, b, d)) < 0;
 }
@@ -189,9 +172,7 @@ bool isSimplePolygon(const Vector<Point>& polygon)
 
     for (auto i = 0; i < count; ++i)
     {
-        // From the edge after the next one, and stopping short of the edge
-        // before this one at the wrap: adjacent edges share a point by
-        // construction and would read as a crossing for ever.
+        // Skips adjacent edges, which share a point by construction.
         for (auto j = i + 2; j < count - (i == 0 ? 1 : 0); ++j)
         {
             if (edgesCross(polygon[i],
@@ -205,8 +186,7 @@ bool isSimplePolygon(const Vector<Point>& polygon)
     return true;
 }
 
-// The outward normal of the edge from a to b, for a polygon wound so that
-// signedArea is positive.
+// Outward only for a polygon whose signedArea is positive.
 Point edgeNormal(const Point& a, const Point& b)
 {
     auto dx = b.x - a.x;
@@ -219,16 +199,11 @@ Point edgeNormal(const Point& a, const Point& b)
     return {dy / length, -dx / length};
 }
 
-// How far past its edges a mitred corner may reach. A corner approaching a spike
-// would otherwise grow a long spit of feather, which is more visible than the
-// corner it exists to soften.
+// Bounds the feather spit a near-spike corner would otherwise grow.
 constexpr float maxMiterExtension = 4.0f;
 
-// Every vertex moved `distance` along its own outward miter -- positive away
-// from the interior, negative into it. Mitred rather than simply displaced along
-// the normals, because that is what keeps each offset edge parallel to the one
-// it came from, and therefore the band between them an even width round a
-// corner.
+// Positive distance moves outward, negative into the interior. Mitred, so the
+// offset edges stay parallel and the band keeps an even width round a corner.
 Vector<Point> offsetRing(const Vector<Point>& polygon, float distance)
 {
     auto count = polygon.size();
@@ -244,8 +219,7 @@ Vector<Point> offsetRing(const Vector<Point>& polygon, float distance)
         auto sumY = before.y + after.y;
         auto length = std::sqrt(sumX * sumX + sumY * sumY);
 
-        // The two edges double back on one another, so there is no bisector to
-        // be had and the edge's own normal is the honest answer.
+        // The edges double back, leaving no bisector; use the edge's normal.
         auto bisector =
             length < epsilon ? after : Point {sumX / length, sumY / length};
 
@@ -261,8 +235,6 @@ Vector<Point> offsetRing(const Vector<Point>& polygon, float distance)
     return ring;
 }
 
-// One segment as a quad offset perpendicular by half the stroke width on each
-// side, emitted as two triangles.
 void addSegment(Vector<Point>& out, const Point& a, const Point& b, float half)
 {
     auto dx = b.x - a.x;
@@ -288,9 +260,7 @@ void addSegment(Vector<Point>& out, const Point& a, const Point& b, float half)
     out.add(b0);
 }
 
-// A filled disc as a triangle fan, used for round joins and round caps. Its
-// outer half fills the wedge gap on the outside of a turn; on straight runs it
-// sits inside the segment quad and shows nothing.
+// Fills the wedge left outside a turn; hidden inside the quad on straight runs.
 void addDisc(Vector<Point>& out, const Point& center, float radius)
 {
     for (auto i = 0; i < joinSegments; ++i)
@@ -322,8 +292,7 @@ void strokeSubPath(const Vector<Point>& source,
     for (auto i = 0; i < segments; ++i)
         addSegment(out, points[i], points[(i + 1) % count], half);
 
-    // A disc at every vertex: a round join at interior vertices, a round cap at
-    // the ends of an open sub-path.
+    // Round joins inside, round caps at the ends of an open sub-path.
     for (auto i = 0; i < count; ++i)
         addDisc(out, points[i], half);
 }
@@ -372,9 +341,8 @@ Vector<MeshVertex> tessellateAntialiasedFill(const Path& path, float featherWidt
     if (signedArea(polygon) < 0.0f)
         std::reverse(polygon.begin(), polygon.end());
 
-    // The outline ends up halfway between the two rings, which is where a mask
-    // would have put its 50% coverage: the shape neither grows nor shrinks by
-    // gaining an antialiased edge.
+    // The outline lands halfway between the rings, so the antialiased edge
+    // neither grows nor shrinks the shape.
     auto half = std::max(0.0f, featherWidth) * 0.5f;
     auto inner = offsetRing(polygon, -half);
     auto outer = offsetRing(polygon, half);
@@ -382,11 +350,8 @@ Vector<MeshVertex> tessellateAntialiasedFill(const Path& path, float featherWidt
     auto interior = Vector<Point> {};
     earClipSimple(inner, interior);
 
-    // Ear clipping consumes a simple polygon whole -- n vertices become n - 2
-    // triangles -- so anything less is geometry it could not read. Pulling the
-    // ring inwards is its own test of that: a shape with a feature thinner than
-    // the feather folds through itself, and the fill that came back would have a
-    // bite out of it.
+    // Fewer than n - 2 triangles means the inward ring self-folded, which a
+    // feature thinner than the feather does.
     if (interior.size() != (inner.size() - 2) * 3)
         return {};
 

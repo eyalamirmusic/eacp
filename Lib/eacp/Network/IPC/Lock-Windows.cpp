@@ -31,11 +31,9 @@ std::wstring toWide(const std::string& text)
 
 NativeFile lockFileOpen(const FilePath& path)
 {
-    // Sharing both ways is what lets a second holder open the file at all:
-    // contention has to surface from LockFileEx, not as a sharing violation
-    // here, or losing the race would throw instead of returning false. The
-    // null security attributes leave the handle uninheritable, matching what
-    // O_CLOEXEC buys on POSIX.
+    // Sharing both ways lets a second holder open the file at all, so
+    // contention surfaces from LockFileEx rather than as a throwing sharing
+    // violation here. Null security attributes leave the handle uninheritable.
     auto handle = ::CreateFileW(toWide(path.str()).c_str(),
                                 GENERIC_READ | GENERIC_WRITE,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE,

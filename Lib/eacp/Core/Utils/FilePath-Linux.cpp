@@ -17,9 +17,8 @@ FilePath configHome()
     return FilePath::homeDirectory() / ".config";
 }
 
-// Resolves one entry of ~/.config/user-dirs.dirs (the XDG user-dirs
-// mechanism), e.g. XDG_MUSIC_DIR="$HOME/Music". Falls back to
-// $HOME/<fallback> when the file or the entry is missing.
+// Resolves one entry of ~/.config/user-dirs.dirs, e.g. XDG_MUSIC_DIR="$HOME/
+// Music", falling back to $HOME/<fallback> when the file or entry is missing.
 FilePath xdgUserDirectory(std::string_view key, std::string_view fallback)
 {
     auto fallbackPath = FilePath::homeDirectory() / fallback;

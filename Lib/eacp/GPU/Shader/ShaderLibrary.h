@@ -7,8 +7,7 @@ namespace eacp::GPU
 class Device;
 struct ShaderSource;
 
-// A compiled shader library (MTLLibrary on Metal). Holds the entry-point names
-// it was built with so a pipeline only needs to reference the library.
+// A compiled shader library, holding the entry-point names it was built with.
 class ShaderLibrary
 {
 public:
@@ -20,7 +19,6 @@ public:
 
     bool isValid() const;
 
-    // Opaque native handle for cross-translation-unit use by the pipeline.
     void* nativeLibrary() const;
 
 private:

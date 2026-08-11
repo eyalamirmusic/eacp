@@ -25,8 +25,6 @@ const char* toString(Cameras::PermissionStatus status)
     return "Unknown";
 }
 
-// A cheap content hash over the readable pixels: proves data()/bytesPerRow map a
-// live buffer (and that successive frames differ).
 std::uint64_t checksum(const Cameras::CameraFrame& frame)
 {
     const auto* data = frame.data();

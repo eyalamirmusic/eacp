@@ -9,141 +9,68 @@ namespace eacp::GPU
 {
 class RenderPipeline;
 
-// Records draw commands for a single render pass (MTLRenderCommandEncoder on
-// Metal). Ends the encoder automatically on destruction. Obtained from
-// Frame::beginPass.
+// Records draw commands for a single render pass, obtained from
+// Frame::beginPass. Ends the encoder on destruction.
 class RenderPass
 {
 public:
-    // Something holding drawing back that the pass has to collect before it
-    // closes.
-    //
-    // A batching renderer does not draw when it is told to; it queues, so that
-    // quads sharing a texture can go out as one draw. That leaves a queue only
-    // it knows about, and the encoder closing is the deadline for it. Making
-    // that the pass's business rather than the caller's is the difference
-    // between an app forgetting a flush call and there being no call to forget:
-    // the alternative fails by drawing nothing at all, silently, which is the
-    // worst way for a renderer to fail.
-    //
-    // A participant must outlive the pass it joins - which is already the rule
-    // for anything drawing into one, since its pipelines and buffers have to
-    // survive until the command list is submitted.
+    // A batching renderer that queues its draws; must outlive the pass it joins.
     struct Participant
     {
         virtual ~Participant() = default;
 
-        // Draw whatever is still queued. Called once, as the pass ends, and
-        // before the encoder closes - so drawing from here is still legal.
+        // Called once as the pass ends, before the encoder closes, so drawing
+        // from here is still legal.
         virtual void flushInto(RenderPass& pass) = 0;
     };
 
-    // Joins this pass, to be flushed when it ends. Leaving is only needed by a
-    // participant that stops drawing before the pass is over; one that simply
-    // outlives it has already been dropped by then.
+    // Leaving is only needed by a participant that stops drawing early.
     void addParticipant(Participant& participant);
     void removeParticipant(Participant& participant);
 
-    // targetWidth/targetHeight are the render target's size in *pixels*. The
-    // pass needs them to clamp scissor rects: both backends reject a scissor
-    // that leaves the render target (Metal API validation aborts), so a caller
-    // scrolling a region partly off-screen would otherwise have to clamp by
-    // hand at every call site.
+    // targetWidth/targetHeight are in pixels; the pass clamps scissor rects to
+    // them, since both backends reject a scissor leaving the render target.
     explicit RenderPass(void* encoder, int targetWidth = 0, int targetHeight = 0);
     ~RenderPass();
 
     RenderPass(const RenderPass&) = delete;
     RenderPass& operator=(const RenderPass&) = delete;
 
-    // Restricts rasterization to rect, in render-target *pixels* with the origin
-    // at the top-left - the same orientation Metal's MTLScissorRect and D3D12's
-    // D3D12_RECT use, and the same y-down sense as Graphics::Rect. Callers
-    // working in logical points multiply by GPUView::backingScale() first.
-    //
-    // The rect is clamped to the render target, so a partly off-screen region
-    // clips correctly instead of aborting. An empty or fully off-screen rect
-    // discards every subsequent fragment, which is the useful behaviour for a
-    // scrolled-away pane.
-    //
-    // Scissor state persists for the rest of the pass; call clearScissorRect to
-    // go back to the full target. Nesting is the caller's job - the GPU has one
-    // scissor rect, so a widget tree intersects rects on the way down.
+    // rect is in render-target pixels, origin top-left, y-down. Clamped to the
+    // target; an empty or off-screen rect discards every later fragment. State
+    // persists for the pass, and nesting/intersection is the caller's job.
     void setScissorRect(const Graphics::Rect& rect);
 
-    // Restores rasterization to the whole render target.
     void clearScissorRect();
 
-    // Maps clip space onto rect instead of onto the whole render target, in
-    // render-target *pixels* with the origin at the top-left - the same units
-    // and orientation setScissorRect uses.
-    //
-    // This is not a scissor and does not clip: it moves and scales what is
-    // drawn. Geometry filling clip space fills rect; geometry covering the left
-    // half of clip space covers the left half of rect, wherever rect is. That
-    // is what renders a scene into one pane of a split screen, or a shadow map
-    // into one tile of an atlas, without touching a single vertex - and it is
-    // why a scissor cannot do the job, since a scissor set to the same
-    // rectangle would simply throw that geometry away.
-    //
-    // near/far remap the depth a fragment writes: a viewport of [0.5, 1] puts
-    // everything it draws behind everything drawn at the default [0, 1],
-    // whatever its own geometry says. Both backends take the same range and
-    // mean the same thing by it.
-    //
-    // A rect that is empty, or not wholly inside the render target, is a no-op
-    // - deliberately not clamped, for the reason Texture::update gives about
-    // regions. Clamping a scissor is right because the clipped picture is the
-    // one the caller wanted; clamping a *viewport* would keep drawing and
-    // silently squash the image into the clamped rectangle, which looks like a
-    // rendering bug anywhere but here. Nothing appearing is easier to find.
-    //
-    // Viewport state persists for the rest of the pass; call clearViewport to
-    // go back to the whole target.
+    // Maps clip space onto rect (same units as setScissorRect) rather than
+    // clipping to it; near/far remap written depth. A rect that is empty or not
+    // wholly inside the target is a no-op, clamping it squashing the image.
     void setViewport(const Graphics::Rect& rect,
                      float nearDepth = 0.f,
                      float farDepth = 1.f);
 
-    // Restores the viewport to the whole render target at depth [0, 1].
     void clearViewport();
 
     void setPipeline(const RenderPipeline& pipeline);
     void setVertexBuffer(const Buffer& buffer, int index = 0);
 
-    // Binds a texture to the fragment stage, sampled the way `sampling` says.
-    // slot maps to Metal texture(slot) and to D3D t<slot>.
-    //
-    // The sampling comes from the caller rather than the texture because on
-    // D3D12 it is baked into the shader (see TextureSampling), so it must be
-    // the same value the shader was compiled with or the two backends draw
-    // differently. Callers using the codegen layer get this for free —
-    // ShaderProgram::bindTextures passes each member's declared sampling — and
-    // only a hand-rolled bind has to supply it.
+    // slot maps to Metal texture(slot) and D3D t<slot>. sampling must match what
+    // the shader was compiled with, since D3D12 bakes it in (see
+    // TextureSampling); ShaderProgram::bindTextures supplies it automatically.
     void setFragmentTexture(const Texture& texture,
                             int slot = 0,
                             TextureSampling sampling = {});
 
-    // Binds a Storage buffer for indexed reads in a shader stage - the thing a
-    // vertex attribute stream is not. setVertexBuffer feeds the input assembler,
-    // one element per vertex or per instance; this binds the whole buffer so the
-    // shader can subscript it at an index it computed, which is what reading a
-    // record a kernel produced by an id the shader worked out needs.
-    //
-    // slot maps to Metal buffer(bufferBase + slot) and to D3D
-    // t(bufferRegisterBase + slot), above the texture registers the same way a
-    // kernel's textures sit above its buffers. Read-only in both stages: a
-    // render stage has no UAV here, so writing stays the compute path's job.
+    // Whole-buffer binding for shader-computed indexing, as against
+    // setVertexBuffer's per-vertex stream. Read-only in both stages; slot maps
+    // to Metal buffer(bufferBase + slot) and D3D t(bufferRegisterBase + slot).
     void setVertexStorageBuffer(const Buffer& buffer, int slot = 0);
     void setFragmentStorageBuffer(const Buffer& buffer, int slot = 0);
 
-    // Uploads small per-draw constant data to the vertex stage without a buffer
-    // object (Metal setVertexBytes; a transient constant buffer on D3D12). slot
-    // is the
-    // uniform-block slot the generated shader declares (slot 0 = the first
-    // uniform block). Ideal for values that change every frame, e.g. a transform.
+    // Per-draw constants without a buffer object. slot is the uniform-block slot
+    // the generated shader declares.
     void setVertexBytes(const void* data, std::size_t bytes, int slot = 0);
-
-    // The fragment-stage sibling of setVertexBytes, with the same slot mapping,
-    // so one uniform block can be bound to both stages.
     void setFragmentBytes(const void* data, std::size_t bytes, int slot = 0);
 
     template <typename T>
@@ -158,10 +85,8 @@ public:
         setFragmentBytes(&value, sizeof(T), slot);
     }
 
-    // Uploads a ShaderProgram's uniform block in one call: packs the program's
-    // current member values and binds them. Templated so this header stays
-    // independent of the codegen layer; any type exposing packedUniforms() and
-    // uniformByteSize() works.
+    // Any type exposing packedUniforms() and uniformByteSize() works, keeping
+    // this header independent of the codegen layer.
     template <typename Program>
     void setVertexUniforms(Program& program, int slot = 0)
     {
@@ -176,34 +101,22 @@ public:
 
     void draw(int vertexCount, int firstVertex = 0);
 
-    // Instanced sibling of draw: runs the vertex shader vertexCount times per
-    // instance, for instanceCount instances. Per-vertex buffers (slots with
-    // StepRate::PerVertex) rewind each instance; per-instance buffers
-    // (StepRate::PerInstance) advance once per instance. firstInstance is a
-    // constant added to the shader's instance-id lookup, useful for drawing a
-    // subrange of a shared instance buffer.
+    // StepRate::PerVertex slots rewind each instance; StepRate::PerInstance
+    // slots advance once per instance. firstInstance offsets the instance-id.
     void drawInstanced(int vertexCount,
                        int instanceCount,
                        int firstVertex = 0,
                        int firstInstance = 0);
 
-    // Draws indexCount indices from an Index-usage buffer, assembling with the
-    // pipeline's topology. firstIndex is an offset into the index buffer.
-    //
-    // baseVertex is added to every index before the vertex is fetched, which is
-    // what lets one vertex buffer hold many meshes while each keeps indices
-    // starting from zero. Without it a caller packing meshes together has to
-    // bake the offset into the index values as it copies them in - a pass over
-    // every index, and one that forces 32-bit indices as soon as the shared
-    // buffer passes 65536 vertices even when no single mesh is near that.
+    // firstIndex offsets into the index buffer; baseVertex is added to every
+    // index before the fetch, so meshes sharing one vertex buffer can each keep
+    // indices starting at zero.
     void drawIndexed(const Buffer& indices,
                      int indexCount,
                      IndexFormat format = IndexFormat::UInt32,
                      int firstIndex = 0,
                      int baseVertex = 0);
 
-    // Instanced sibling of drawIndexed: reuses the index buffer per instance.
-    // Same step-rate semantics as drawInstanced, and the same baseVertex.
     void drawIndexedInstanced(const Buffer& indices,
                               int indexCount,
                               int instanceCount,
@@ -212,14 +125,8 @@ public:
                               int firstInstance = 0,
                               int baseVertex = 0);
 
-    // Binds a program's uniform block to the stage that reads it, and to no
-    // other. The program answers per stage from the same walk that decided
-    // whether to declare the block in that stage's generated function, so the
-    // bind cannot disagree with the signature it is aimed at - and a stage that
-    // never declared it is not bound at all, which is what the validation layer
-    // reports as an unused binding. A program whose uniforms neither stage
-    // reads binds nothing. draw(program) calls this; app code hand-rolling a
-    // draw over its own geometry should call it rather than the two setters.
+    // Binds the uniform block only to the stages that declared it, so the
+    // validation layer sees no unused binding. Prefer this to the two setters.
     template <typename Program>
     void setUniforms(Program& program, int slot = 0)
     {
@@ -230,10 +137,6 @@ public:
             setFragmentUniforms(program, slot);
     }
 
-    // Binds and draws a prepared ShaderProgram in one call: its pipeline, vertex
-    // buffer, uniform block and textures, then an indexed draw when the program
-    // owns indices and a plain one otherwise. Templated so this header stays
-    // independent of the codegen layer.
     template <typename Program>
     void draw(Program& program)
     {
@@ -251,13 +154,8 @@ public:
             draw(program.vertexCount());
     }
 
-    // Instanced sibling of draw(program): binds the program's pipeline, its
-    // per-vertex buffer (slot 0), every per-instance buffer, the uniform block
-    // and textures, then issues an instanced draw - indexed when the program
-    // owns indices, otherwise a plain instanced draw. firstInstance offsets into
-    // the per-instance buffers, for drawing a subrange of a shared instance set
-    // (e.g. one row at a time). Templated so this header stays independent of
-    // the codegen layer.
+    // firstInstance offsets into the per-instance buffers, for drawing a
+    // subrange of a shared instance set.
     template <typename Program>
     void drawInstanced(Program& program, int instanceCount, int firstInstance = 0)
     {
@@ -282,35 +180,18 @@ public:
 
     void end();
 
-    // The Metal buffer index the first uniform block binds to. Vertex buffers
-    // take the low indices, so uniforms start above them - matching how
-    // ComputePass reserves buffer(uniformBase) for its own uniforms. Reserving
-    // a high slot lets multi-slot vertex layouts (e.g. instancing with a
-    // per-vertex slot + N per-instance slots) coexist with uniforms without
-    // the two paths clobbering each other's buffer(N).
+    // Metal buffer indices: vertex buffers, then uniforms, then storage buffers
+    // share one index space, each range wide enough that no layout overruns it.
     static constexpr int uniformBase = 16;
-
-    // The Metal buffer index the first storage buffer binds to, above the
-    // uniform blocks for the same reason those sit above the vertex buffers:
-    // three kinds of binding share one index space, so each gets a range wide
-    // enough that no layout can push one into the next.
     static constexpr int bufferBase = 24;
 
-    // The D3D shader register a storage buffer takes. Textures hold t0.. on the
-    // render signature, so buffers start above every texture slot - the mirror
-    // of ComputePass::textureRegisterBase, where a kernel's buffers hold the low
-    // registers and its textures start above them. D3D12Types.h holds the
-    // emitter and the root signature to this number.
+    // D3D register for the first storage buffer, above the texture slots at
+    // t0... D3D12Types.h holds the emitter and root signature to this number.
     static constexpr int bufferRegisterBase = 4;
 
 private:
-    // Flushes every participant, once. Called by end() on both backends before
-    // the encoder closes, so a participant's draws still land on this pass.
     void drainParticipants();
 
-    // Held here rather than in Native so both backends inherit one
-    // implementation of this, and neither can drift from the other on when a
-    // participant gets its last chance to draw.
     Vector<Participant*> participants;
     bool drained = false;
 

@@ -41,9 +41,7 @@ bool sameStops(const Vector<GradientStop>& a, const Vector<GradientStop>& b)
     return true;
 }
 
-// The colour at t along the ramp, from stops already sorted by position. Outside
-// the first and last stop it is that stop's own colour, which is what every
-// spread mode reduces to once the coordinate has been wrapped into range.
+// `stops` must already be sorted by position.
 Color colourAt(const Vector<GradientStop>& stops, float t)
 {
     if (t <= stops.front().position)
@@ -62,8 +60,7 @@ Color colourAt(const Vector<GradientStop>& stops, float t)
 
         auto span = after.position - before.position;
 
-        // Two stops at one position is a hard edge, and the specification says
-        // the later one wins there.
+        // A hard edge, where the spec says the later stop wins.
         if (span <= 0.f)
             return after.color;
 
@@ -83,9 +80,7 @@ std::uint8_t toByte(float value)
     return (std::uint8_t) std::lround(std::clamp(value, 0.f, 1.f) * 255.f);
 }
 
-// Sorted and clamped, so the baking above can assume both. A stable sort,
-// because two stops at one position are a hard edge whose side the document
-// chose by writing them in that order.
+// Stable, two stops at one position being a hard edge the document ordered.
 Vector<GradientStop> sortedAndClamped(const Vector<GradientStop>& stops)
 {
     auto sorted = stops;
@@ -121,11 +116,7 @@ float GradientRamps::rowFor(const Gradient& gradient)
     auto stops = sortedAndClamped(gradient.stops);
     auto key = hashStops(stops);
 
-    // The key is compared first and the stops only when it matches, so a miss
-    // costs an integer per row rather than a walk of somebody else's stop list.
-    // The comparison stays because a key is a summary: two stop lists that
-    // collide on one are still two different gradients, and the row is theirs
-    // only if the colours agree.
+    // The stop comparison stays: a key is a summary, and two lists can collide.
     for (auto i = 0; i < rows.size(); ++i)
         if (rows[i].key == key && sameStops(rows[i].stops, stops))
             return vForRow(i);
@@ -149,9 +140,7 @@ void GradientRamps::bake(const Row& source, int row)
 
     for (auto x = 0; x < rampWidth; ++x)
     {
-        // Texel centres, so that sampling at x + t * w with w spanning centre to
-        // centre lands a t of 0 exactly on the first stop and a t of 1 exactly
-        // on the last.
+        // Spans centre to centre, so t of 0 and 1 land exactly on the end stops.
         auto colour = colourAt(source.stops, (float) x / (float) (rampWidth - 1));
 
         out[x * 4] = toByte(colour.r);

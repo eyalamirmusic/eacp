@@ -21,9 +21,8 @@ std::filesystem::path writeTempFile(const std::filesystem::path& dir,
 
 std::string fileURL(const std::filesystem::path& path)
 {
-    // Use forward slashes so the URL is well-formed on every platform. POSIX
-    // abs paths already start with '/' (audiofile:///abs/...); Windows drive
-    // paths (C:/...) get a leading slash too (audiofile:///C:/...).
+    // Forward slashes so the URL is well-formed on every platform; Windows
+    // drive paths get a leading slash too (audiofile:///C:/...).
     auto generic = path.generic_string();
     if (!generic.starts_with('/'))
         generic.insert(generic.begin(), '/');
@@ -41,19 +40,16 @@ auto tFileURLToPath = test("FileProvider/fileURLToPath") = []
 
 auto tPathFromURL = test("FileProvider/pathFromURL") = []
 {
-    // scheme://host/<path> -> resource key, ignoring any query + fragment.
     check(pathFromURL("app://local/index.html", "index.html") == "index.html");
     check(pathFromURL("app://local/assets/x.js", "index.html") == "assets/x.js");
 
-    // Hash-routed SPA: WebKit hands the fragment to the custom-scheme handler,
-    // so the key must drop it — without this the document 404s (NSURLError
-    // -1008) and the page never loads.
+    // WebKit hands the fragment to the custom-scheme handler, so the key must
+    // drop it or a hash-routed SPA 404s (NSURLError -1008).
     check(pathFromURL("app://local/index.html#/overlays/tamby-avatar", "index.html")
           == "index.html");
     check(pathFromURL("app://local/index.html?v=1#/route", "index.html")
           == "index.html");
 
-    // Bare host / trailing slash fall back to the index file.
     check(pathFromURL("app://local/", "index.html") == "index.html");
     check(pathFromURL("app://local", "index.html") == "index.html");
 };

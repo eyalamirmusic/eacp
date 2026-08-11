@@ -6,12 +6,6 @@
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/Graphics/Helpers/DisplayLink.h>
 
-// The portable half of the recorder: tier dispatch and the two DisplayLink-driven
-// off-screen tiers (Snapshot and GpuDirect), which are identical on every
-// platform. Everything platform-specific sits behind the Encoder interface
-// (AVFoundation / Media Foundation) and the ScreenCapture interface
-// (ScreenCaptureKit / Windows.Graphics.Capture).
-
 namespace eacp::Video
 {
 namespace
@@ -24,9 +18,8 @@ int roundDownToEven(int value)
 
 struct VideoRecorder::Native
 {
-    // Holds the target frame rate against a faster display: returns true only
-    // when the next scheduled slot is due, advancing on an ideal grid so it does
-    // not drift. Resyncs if a slow frame put us behind.
+    // Holds the target rate against a faster display, advancing on an ideal
+    // grid so it does not drift, and resyncing when a slow frame falls behind.
     bool paceAllows(double time)
     {
         if (frameInterval <= 0.0)
@@ -42,9 +35,7 @@ struct VideoRecorder::Native
         return true;
     }
 
-    // GpuDirect: hand the encoder the view so it can render the GPU content
-    // straight into a shared GPU frame and append it -- the pixels never touch
-    // the CPU. A no-op on encoders without native support.
+    // A no-op on encoders without native support.
     void captureGpuDirectFrame(Threads::FrameTime frameTime)
     {
         if (!recording || !paceAllows(frameTime.time))
@@ -72,8 +63,7 @@ struct VideoRecorder::Native
         view = &viewToUse;
         scale = options.scale;
 
-        // Probe one frame to size the video; renderToImage resolves the backing
-        // scale itself when options.scale is 0.
+        // renderToImage resolves the backing scale itself when scale is 0.
         auto probe = viewToUse.renderToImage(options.scale);
         width = roundDownToEven(probe.width());
         height = roundDownToEven(probe.height());
@@ -104,17 +94,13 @@ struct VideoRecorder::Native
         view = &viewToUse;
         scale = options.scale;
 
-        // Probe for size (renderToImage resolves the backing scale when scale is
-        // 0). GPU content itself is captured zero-copy below.
+        // Probe for size only; the GPU content is captured zero-copy below.
         auto probe = viewToUse.renderToImage(options.scale);
         width = roundDownToEven(probe.width());
         height = roundDownToEven(probe.height());
         if (width <= 0 || height <= 0)
             return false;
 
-        // Confirm the view actually renders native GPU content this encoder can
-        // capture before committing; a plain 2D/WebView view has none, and no
-        // encoder supports it on some platforms, so GpuDirect does not apply.
         if (!encoder->canCaptureNativeContent(viewToUse, scale, width, height))
             return false;
 

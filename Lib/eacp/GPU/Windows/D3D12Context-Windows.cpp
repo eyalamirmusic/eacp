@@ -16,11 +16,7 @@ constexpr UINT samplerHeapCapacity = 256;
 // Root CBVs read in 256-byte units, so transient constant uploads round up.
 constexpr std::size_t constantAlignment = 256;
 
-// How much upload space a recording is given at a time. A frame of a component
-// interface uses well under a megabyte between its uniforms and its instance
-// data, so the common case is one chunk created once and refilled for the rest
-// of the run; the frame that builds a path-heavy interface's masks takes a
-// handful more and then stops.
+// Enough that a typical frame uses one chunk, created once and refilled.
 constexpr std::size_t uploadChunkBytes = 1024 * 1024;
 
 winrt::com_ptr<ID3D12Device> createHardwareOrWarpDevice()
@@ -28,8 +24,8 @@ winrt::com_ptr<ID3D12Device> createHardwareOrWarpDevice()
     auto device = winrt::com_ptr<ID3D12Device>();
 
 #ifndef NDEBUG
-    // Best effort: the SDK layers are only present with Graphics Tools
-    // installed, so a failure here just means no validation.
+    // The SDK layers need Graphics Tools installed; failure just means no
+    // validation.
     auto debug = winrt::com_ptr<ID3D12Debug>();
     if (SUCCEEDED(D3D12GetDebugInterface(__uuidof(ID3D12Debug), debug.put_void())))
         debug->EnableDebugLayer();
@@ -67,9 +63,8 @@ D3D12_ROOT_PARAMETER rootCBV(UINT shaderRegister, D3D12_SHADER_VISIBILITY visibi
     return parameter;
 }
 
-// The visibility defaults to ALL for the compute signature, which accepts
-// nothing else; the render signature names a stage, the way its CBVs do, so one
-// register can carry a separate binding per stage.
+// Visibility defaults to ALL, the only thing a compute signature takes; the
+// render signature names a stage so one register can bind per stage.
 D3D12_ROOT_PARAMETER
 rootBufferView(D3D12_ROOT_PARAMETER_TYPE type,
                UINT shaderRegister,
@@ -82,9 +77,8 @@ rootBufferView(D3D12_ROOT_PARAMETER_TYPE type,
     return parameter;
 }
 
-// The visibility is a parameter rather than baked in because a compute root
-// signature takes only ALL: naming a stage in one is not a narrowing, it is a
-// serialisation failure, and the whole signature is refused.
+// Visibility is a parameter because a compute root signature takes only ALL:
+// naming a stage in one fails serialisation rather than narrowing.
 D3D12_ROOT_PARAMETER
 rootTable(const D3D12_DESCRIPTOR_RANGE* range,
           D3D12_SHADER_VISIBILITY visibility = D3D12_SHADER_VISIBILITY_PIXEL)
@@ -166,17 +160,9 @@ void D3D12Context::createAll()
     createNullDescriptors();
 }
 
-// Tier 1 hardware requires every descriptor table the root signature declares
-// to be populated, so the slots a shader does not use still need something
-// bound. It has to be something permanently valid: the obvious candidate — the
-// heap's first descriptor — belongs to whichever texture allocated it, and
-// descriptor slots are recycled through a free list, so that descriptor can
-// come to describe a destroyed resource. Binding it then points the GPU at
-// freed memory, which hangs the device rather than failing cleanly.
-//
-// A null SRV is the case D3D12 provides for exactly this: reads return zero
-// and nothing is dereferenced. These two slots are allocated once and never
-// freed.
+// Tier 1 hardware requires every declared descriptor table populated, and the
+// binding must stay valid: a recycled heap slot can come to describe a
+// destroyed resource, and binding that hangs the device. Never freed.
 void D3D12Context::createNullDescriptors()
 {
     if (device == nullptr)
@@ -197,9 +183,8 @@ void D3D12Context::createNullDescriptors()
         device->CreateShaderResourceView(nullptr, &srv, nullTexture.cpu);
     }
 
-    // The compute signature's UAV tables need their own: a range declared UAV
-    // will not take the SRV descriptor above, so the two are separate slots
-    // even though both describe nothing.
+    // A UAV range will not take the SRV descriptor above, so the compute
+    // signature's UAV tables need their own.
     if (nullTextureUAV.cpu.ptr != 0)
     {
         D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
@@ -251,10 +236,8 @@ void D3D12Context::createRootSignatures()
         renderParams[renderTextureParam(slot)] = rootTable(&srvRanges[slot]);
     }
 
-    // The storage buffers a vertex or fragment stage subscripts. Root
-    // descriptors rather than tables, at registers above every texture slot,
-    // and declared per stage at the same register - one HLSL global is visible
-    // to both functions, so each stage binds its own.
+    // Root descriptors rather than tables, at registers above every texture
+    // slot, declared per stage at the same register.
     for (auto slot = 0; slot < maxBufferSlots; ++slot)
     {
         renderParams[renderVertexSRVParam(slot)] =
@@ -267,16 +250,9 @@ void D3D12Context::createRootSignatures()
                            D3D12_SHADER_VISIBILITY_PIXEL);
     }
 
-    // A static sampler for every (texture slot, sampling configuration) pair, at
-    // register s(slot * samplingConfigurations + configuration) - the register
-    // ShaderEmitter points each texture's sampler at.
-    //
-    // Samplers are declared here rather than bound per draw from a descriptor
-    // heap because a sampler descriptor table cannot be relied on: a
-    // Windows-on-Arm driver ignores the table's offset and resolves every sampler
-    // to descriptor 0 of the bound heap, so all textures in the process sample
-    // through whichever sampler happens to be first. Static samplers never reach
-    // a heap and are unaffected. See TextureSampling.
+    // One per (texture slot, sampling configuration), at the register
+    // ShaderEmitter emits. Static, not heap-bound: a Windows-on-Arm driver
+    // ignores sampler table offsets. See TextureSampling.
     D3D12_STATIC_SAMPLER_DESC
     staticSamplers[maxTextureSlots * samplingConfigurations] = {};
 
@@ -300,9 +276,8 @@ void D3D12Context::createRootSignatures()
             sampler.AddressW = address;
             sampler.MaxLOD = D3D12_FLOAT32_MAX;
 
-            // Not left at 0: zero is not a legal D3D12_COMPARISON_FUNC (they run
-            // 1..8), and a static sampler is validated when the root signature is
-            // serialised rather than quietly ignored.
+            // Zero is not a legal D3D12_COMPARISON_FUNC (they run 1..8), and
+            // serialising the root signature validates static samplers.
             sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
             sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
             sampler.ShaderRegister =
@@ -337,10 +312,9 @@ void D3D12Context::createRootSignatures()
             rootBufferView(D3D12_ROOT_PARAMETER_TYPE_UAV, static_cast<UINT>(slot));
     }
 
-    // A texture is not a root descriptor on either side of the read/write
-    // split: root descriptors are buffer views, so both go through
-    // single-descriptor tables. Their registers start above the buffers' — the
-    // two slot spaces share t and u. See computeTextureRegister.
+    // Root descriptors are buffer views, so a texture goes through a
+    // single-descriptor table either direction, at registers above the buffers'
+    // - the two slot spaces share t and u. See computeTextureRegister.
     for (auto slot = 0; slot < maxTextureSlots; ++slot)
     {
         computeSrvRanges[slot].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -357,11 +331,9 @@ void D3D12Context::createRootSignatures()
             rootTable(&computeUavRanges[slot], D3D12_SHADER_VISIBILITY_ALL);
     }
 
-    // The same static samplers the render signature declares, at the same
-    // registers, so a kernel sampling a texture and a fragment shader sampling
-    // one read the identical emitted source. Only the visibility differs, for
-    // the reason rootTable takes one: a compute root signature accepts nothing
-    // but ALL.
+    // The render signature's samplers at the same registers, so a kernel and a
+    // fragment shader read identical emitted source. Only visibility differs, a
+    // compute root signature accepting nothing but ALL.
     constexpr auto samplerCount = maxTextureSlots * samplingConfigurations;
     D3D12_STATIC_SAMPLER_DESC computeSamplers[samplerCount] = {};
 
@@ -380,14 +352,8 @@ void D3D12Context::createRootSignatures()
     computeRootSignature = makeRootSignature(device.get(), computeDesc);
 }
 
-// Built on first use rather than beside the root signatures: a process that
-// never dispatches indirectly never makes one, and it depends on nothing that
-// could have changed since the device was created.
-//
 // pRootSignature stays null, which D3D12 allows exactly when every argument is
-// a Draw or a Dispatch - nothing about the bindings varies per command here,
-// only the grid, so there is no root-argument layout for the signature to
-// describe.
+// a Draw or a Dispatch: no root-argument layout varies per command.
 ID3D12CommandSignature* D3D12Context::getDispatchSignature()
 {
     if (dispatchSignature != nullptr || device == nullptr)
@@ -495,34 +461,17 @@ void D3D12Context::deferReleaseUnknown(winrt::com_ptr<IUnknown> object)
     if (object == nullptr)
         return;
 
-    // Unstamped, because the value that frees it is not knowable yet. Every list
-    // that can reference the object from here on is one that already exists: no
-    // new command can name it, its owner is gone. But one of those lists may
-    // still be open, and an open list's fence value is not assigned until it
-    // submits — so there is nothing sound to stamp it with until nothing is
-    // recording. purgeRetired does that.
-    //
-    // Stamping it here with the value the *next* signal will carry is what this
-    // used to do, and it assumed the open recording submits next. A frame issues
-    // uploads of its own, and each used to acquire a second list that signalled
-    // *ahead* of the frame's; the frame's list then submitted with a higher value
-    // than the stamp, so the stamp completed while the list still referencing the
-    // object was open or executing. Releasing there is a use-after-free the debug
-    // layer raises on, and it crashed the editor a few keystrokes in.
+    // Unstamped: an open list may still name the object and has no fence value
+    // until it submits, so there is nothing sound to stamp with until nothing
+    // is recording. purgeRetired does that.
     retired.add({std::move(object), 0, false});
 }
 
 void D3D12Context::purgeRetired()
 {
-    // Nothing is recording, so every list that could name anything retired so
-    // far has been submitted, and lastSubmittedValue is at or past all of their
-    // fences. That is the first moment an entry can be given a value that is
-    // sound, and it is the whole reason the stamping is here rather than at the
-    // point of retirement.
-    //
-    // Called from the top of acquire(), before the caller's context is taken out
-    // of the pool, so the first acquire of a frame sees the previous frame closed
-    // and stamps everything it retired.
+    // Nothing recording means every list that could name a retired object has
+    // submitted, so lastSubmittedValue is a sound stamp. Called from the top of
+    // acquire(), before the caller's context leaves the pool.
     if (available.size() == pool.size())
     {
         for (auto& entry: retired)
@@ -535,21 +484,15 @@ void D3D12Context::purgeRetired()
         }
     }
 
-    // Each goes as its own value passes. Waiting instead for the fence to be
-    // past *everything* ever submitted is what this used to do, and under
-    // continuous rendering the fence is always a frame or two behind, so it
-    // freed nothing at all: a scrolling interface held on to every buffer it had
-    // replaced -- thousands of them -- and grew its working set by megabytes a
-    // second until it happened to fall idle.
+    // Each goes as its own value passes: waiting for the fence to pass
+    // everything ever submitted frees nothing under continuous rendering.
     retired.eraseIf([this](const Retired& entry)
                     { return entry.stamped && hasCompleted(entry.fenceValue); });
 
     releaseRecycledBuffers();
 }
 
-// The same two steps as purgeRetired, for buffers that are to be handed out
-// again rather than dropped: stamp them once nothing is recording, and move them
-// to the free list once their value passes.
+// purgeRetired's two steps, for buffers handed out again rather than dropped.
 void D3D12Context::releaseRecycledBuffers()
 {
     if (available.size() == pool.size())
@@ -583,8 +526,7 @@ void D3D12Context::releaseRecycledBuffers()
 winrt::com_ptr<ID3D12Resource>
     D3D12Context::takeDefaultBuffer(std::size_t bytes, D3D12_RESOURCE_FLAGS flags)
 {
-    // Best fit rather than first, so a request for a few hundred bytes does not
-    // take the megabyte-sized spare and leave the next large one to allocate.
+    // Best fit, so a small request does not take the megabyte-sized spare.
     auto best = reusable.end();
 
     for (auto it = reusable.begin(); it != reusable.end(); ++it)
@@ -671,9 +613,7 @@ std::uint64_t D3D12Context::submit(CommandContext* commands)
 
     if (FAILED(commands->list->Close()))
     {
-        // An invalid recording (or removed device) must not execute; recycle
-        // the context with its transients released. Nothing reached the GPU, so
-        // its staging slots are free at once rather than behind a fence.
+        // Nothing reached the GPU, so the staging slots are free at once.
         commands->transients.clear();
         returnStaging(*commands, 0);
         available.push_back(commands);
@@ -714,8 +654,8 @@ bool D3D12Context::hasCompleted(std::uint64_t value) const
     if (fence == nullptr)
         return true;
 
-    // On device removal the completed value jumps to UINT64_MAX, so every
-    // wait unblocks and recovery can proceed.
+    // On device removal the completed value jumps to UINT64_MAX, unblocking
+    // every wait so recovery can proceed.
     return fence->GetCompletedValue() >= value;
 }
 
@@ -752,9 +692,8 @@ void D3D12Context::notifyWhenCompleted(std::uint64_t value, Callback done)
 
 void D3D12Context::pollCompletions()
 {
-    // The callbacks fire after the pending list has been rebuilt rather than
-    // during the walk: one of them is free to commit more work, which appends
-    // to the very vector being walked.
+    // Fired after the pending list is rebuilt, a callback being free to commit
+    // more work and append to the vector being walked.
     auto ready = Vector<Callback> {};
     auto stillPending = Vector<PendingCompletion> {};
 
@@ -778,9 +717,8 @@ void D3D12Context::pollCompletions()
 CommandContext::UploadChunk* D3D12Context::uploadRoomFor(CommandContext& commands,
                                                          std::size_t bytes)
 {
-    // Forward only. A chunk the cursor has passed was too full for an earlier
-    // request, and going back to check it again on every upload would make this
-    // linear in the uploads a frame has already made.
+    // Forward only: rechecking passed chunks would make this linear in the
+    // uploads a frame has already made.
     while (commands.uploadCursor < commands.uploads.size())
     {
         auto& chunk = commands.uploads[commands.uploadCursor];
@@ -798,9 +736,8 @@ CommandContext::UploadChunk* D3D12Context::uploadRoomFor(CommandContext& command
     if (chunk.resource == nullptr)
         return nullptr;
 
-    // Left mapped for the resource's whole life. An upload heap is CPU-visible
-    // memory, and mapping it per write would be a page-table round trip per
-    // draw for a pointer that never changes.
+    // Left mapped for life: an upload heap is CPU-visible memory, so mapping
+    // per write is a page-table round trip for a pointer that never changes.
     void* mapped = nullptr;
     const D3D12_RANGE noRead = {0, 0};
 
@@ -814,9 +751,8 @@ CommandContext::UploadChunk* D3D12Context::uploadRoomFor(CommandContext& command
 
 UploadRange D3D12Context::allocateUpload(CommandContext& commands, std::size_t bytes)
 {
-    // Aligned to the constant requirement whatever the caller wants it for, so
-    // that a copy source and a root CBV can share one arena without a copy's
-    // odd length pushing the next constant off its 256-byte boundary.
+    // Always constant-aligned, so a copy source and a root CBV can share one
+    // arena without an odd length pushing the next constant off its boundary.
     auto aligned = (bytes + constantAlignment - 1) & ~(constantAlignment - 1);
     auto* chunk = uploadRoomFor(commands, aligned);
 
@@ -857,8 +793,6 @@ ID3D12Resource* D3D12Context::acquireStagingBuffer(CommandContext& commands,
     auto isFree = [this](const StagingBuffer& slot)
     { return !slot.lent && hasCompleted(slot.freeAt); };
 
-    // A free slot already big enough is the common case once playback settles:
-    // every frame of a given clip stages exactly the same number of bytes.
     for (auto index = 0; index < staging.size(); ++index)
     {
         auto& slot = staging[index];
@@ -871,8 +805,8 @@ ID3D12Resource* D3D12Context::acquireStagingBuffer(CommandContext& commands,
         }
     }
 
-    // Otherwise grow a free slot rather than adding one, so a stream that
-    // switches to a larger frame size does not strand the old buffers.
+    // Grow a free slot rather than adding one, so a stream switching to a
+    // larger frame size does not strand the old buffers.
     for (auto index = 0; index < staging.size(); ++index)
     {
         auto& slot = staging[index];

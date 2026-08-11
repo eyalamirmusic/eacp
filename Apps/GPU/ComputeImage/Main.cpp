@@ -3,19 +3,6 @@
 using namespace eacp;
 using namespace GPU;
 
-// Compute to fragment: a kernel paints an image, the very next render pass
-// samples it, and the pixels never touch the CPU.
-//
-// The kernel is dispatched over a grid rather than a flat count -
-// threadPosition() gives it the x and y of the texel it owns - and its output
-// is a Texture created with computeWrite, not a buffer. That is the whole
-// difference from ComputeParticles, whose kernel writes a float buffer the
-// vertex stage reads as a per-instance stream.
-//
-// The texture is a fixed 512 x 512 and the quad stretches it over whatever the
-// window is, so resizing costs nothing: no resource is recreated, and the
-// kernel dispatches the same grid every frame.
-
 namespace
 {
 constexpr int imageSize = 512;
@@ -30,8 +17,6 @@ EACP_SHADER_VALUE(QuadVertex, Float2)
 
 namespace
 {
-// Two triangles covering clip space, so the fragment stage runs once per pixel
-// of the window.
 constexpr QuadVertex fullQuad[] = {
     {{-1.f, -1.f}},
     {{+1.f, -1.f}},
@@ -41,9 +26,7 @@ constexpr QuadVertex fullQuad[] = {
     {{-1.f, +1.f}},
 };
 
-// A plasma: four travelling waves summed and mapped through a two-colour ramp.
-// One work item per texel, so the whole image is one dispatch and the CPU
-// contributes a single scalar - what time it is.
+// One work item per texel: four travelling waves through a two-colour ramp.
 struct PaintPlasma final : ComputeProgram
 {
     PaintPlasma() { compile(); }
@@ -77,15 +60,12 @@ struct PaintPlasma final : ComputeProgram
     EACP_SHADER(target, time, texelSize)
 };
 
-// The consumer: an ordinary textured full-screen quad. Nothing here knows the
-// texture came from a kernel - it is bound and sampled exactly as an uploaded
-// one is, which is the point.
+// The kernel's texture is bound and sampled exactly as an uploaded one is.
 struct DrawImage final : ShaderProgram
 {
     DrawImage()
     {
-        // Linear, so the 512-texel image stays smooth when the window is
-        // larger than it is.
+        // Linear, so the fixed 512-texel image stays smooth when stretched.
         image.sampling = {TextureFilter::Linear, TextureAddressMode::Clamp};
         compile();
     }
@@ -98,8 +78,6 @@ struct DrawImage final : ShaderProgram
 
         setPosition(float4(position, 0.f, 1.f));
 
-        // A vignette, so it is visible that a fragment stage is doing its own
-        // work with what the kernel handed it rather than blitting it through.
         auto falloff = 1.f - smoothstep(0.6f, 1.5f, length(centred));
 
         setFragment(float4(sample(image, uv).xyz() * falloff, 1.f));
@@ -116,9 +94,8 @@ TextureDescriptor describeTarget()
     descriptor.width = imageSize;
     descriptor.height = imageSize;
 
-    // Only the formats a typed UAV store is guaranteed for may ask for this;
-    // BGRA8Unorm - the drawable's own format - is not one of them. See
-    // supportsComputeWrite.
+    // computeWrite needs a format guaranteed for typed UAV stores; BGRA8Unorm -
+    // the drawable's own format - is not one of them. See supportsComputeWrite.
     descriptor.format = TextureFormat::RGBA8Unorm;
     descriptor.computeWrite = true;
     return descriptor;
@@ -165,9 +142,8 @@ struct ComputeImageView final : GPUView
         pass.draw(renderer);
     }
 
-    // The compute pass. Its encoder ends when this returns, which is what
-    // orders the kernel's writes before the sample the render pass takes of
-    // them - the same rule two render passes on a frame follow.
+    // The encoder ends when this returns, which is what orders the kernel's
+    // writes before the render pass samples them.
     void paintImage(Frame& frame)
     {
         auto pass = frame.beginCompute();

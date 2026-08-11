@@ -4,29 +4,12 @@
 
 #include <string>
 
-// What the ramp texture shares, and what it does when it cannot share any more.
-//
-// Sharing is the whole point of it. A gradient evaluated from its stops in the
-// fragment stage would be a uniform block per gradient and a batch break between
-// two shapes filled differently; baked into a row of one texture it is a fetch,
-// and a document painting fifty shapes from one definition costs one row. So the
-// key has to be the colours and nothing else -- not the shape, not the axis, and
-// not the spread, which the shader folds into the coordinate before it reads.
-//
-// And the ceiling matters for the same reason CoverageAtlas's does: the texture
-// cannot grow, because a draw already recorded this frame would be holding the
-// one it replaced. Past it a gradient falls back to its flat colour, which is a
-// picture missing its shading rather than missing a shape -- and still something
-// that happened silently, so it is counted.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
 namespace
 {
-// The ramps own a texture, so they need a device - but no window, no pass and no
-// draw: baking a row is arithmetic over a stop list.
 bool hasDevice()
 {
     return GPU::Device::shared().isValid();
@@ -66,9 +49,6 @@ auto tSharesByColour = test("GradientRamps/oneRowPerDistinctStopList") = []
     check(ramps.getRowCount() == 2);
 };
 
-// The axis and the spread are not part of what a row holds, so two gradients
-// that differ only in those share one. Which is the case a document hits
-// constantly: one set of colours, laid out a dozen ways.
 auto tSharesAcrossPlacement =
     test("GradientRamps/theRowIsTheColoursAndNothingElse") = []
 {
@@ -94,8 +74,6 @@ auto tSharesAcrossPlacement =
     check(ramps.getRowCount() == 1);
 };
 
-// Sorting is the baking's business, so two stop lists that describe the same
-// ramp in a different order are still one row.
 auto tOrderDoesNotMatter =
     test("GradientRamps/stopsAreNormalisedBeforeTheyAreKeyed") = []
 {
@@ -132,9 +110,7 @@ auto tCeiling = test("GradientRamps/pastTheCeilingAGradientIsRefusedAndCounted")
 
     auto ramps = GradientRamps {};
 
-    // One distinct stop list per row, so the last one asked for has nowhere to
-    // go. The green channel is what makes them differ, and 256 shades of it are
-    // 256 different ramps.
+    // The green channel is what makes each stop list distinct.
     for (auto i = 0; i < GradientRamps::maxRows; ++i)
         check(ramps.rowFor(twoStop(red, {0.f, (float) i / 512.f, 0.f, 1.f})) >= 0.f);
 
@@ -144,13 +120,9 @@ auto tCeiling = test("GradientRamps/pastTheCeilingAGradientIsRefusedAndCounted")
     check(ramps.rowFor(twoStop(blue, green)) < 0.f, "and the next one has no room");
     check(ramps.getDroppedCount() == 1);
 
-    // A gradient already baked is still found, which is what stops a full
-    // texture from taking the whole document down with it.
     check(ramps.rowFor(twoStop(red, {0.f, 0.f, 0.f, 1.f})) >= 0.f);
 };
 
-// Committing twice with nothing in between must not re-upload, and committing
-// with nothing at all must not touch a texture that was never made.
 auto tCommitIsIdempotent = test("GradientRamps/commitUploadsOnlyWhatIsNew") = []
 {
     if (!hasDevice())

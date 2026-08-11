@@ -1,19 +1,8 @@
 #include "Common.h"
 
-// Where a kernel's writes actually happen.
-//
-// A store used to be a *root* of the compute graph rather than a statement in
-// it - collected into a list and emitted after the body, whatever block the
-// write() call had been made in. So a store inside an ifThen ran regardless of
-// the condition, and one inside a loop ran once after it, on the counter's
-// final value. Both compiled, both produced plausible output, and neither said
-// anything.
-//
-// The shipped kernels never hit it because all of them write at the top level,
-// which is exactly why it survived. These are the two shapes that catch it, and
-// they check the values rather than the source: what matters is not that the
-// emitted text has a brace in the right place but that the elements the kernel
-// was told to leave alone still hold what they held.
+// Regression: a store was a root of the compute graph rather than a statement,
+// emitted after the body whatever block write() was called in - so a store
+// inside an ifThen ran unconditionally and one inside a loop ran once, after it.
 
 using namespace nano;
 using namespace eacp;
@@ -24,12 +13,10 @@ namespace
 constexpr auto elementCount = 64;
 constexpr auto perThread = 4;
 
-// The value every element starts at, and which no kernel here ever writes. An
-// element still holding it was not written; one holding anything else was.
+// No kernel here ever writes it, so an element still holding it was not written.
 constexpr auto untouched = -1.f;
 
-// Writes only where the thread index is even. The odd elements are the
-// evidence: a store hoisted out of the ifThen writes all of them.
+// The odd elements are the evidence: a hoisted store writes all of them.
 struct GuardedStoreKernel final : ComputeProgram
 {
     GuardedStoreKernel() { compile(); }
@@ -46,10 +33,8 @@ struct GuardedStoreKernel final : ComputeProgram
     EACP_SHADER(output)
 };
 
-// Each thread fills its own run of consecutive elements from inside a loop. A
-// store emitted after the loop writes one element instead of perThread, at the
-// index the counter finished on - so both how many were written and which ones
-// are wrong, and neither is a crash.
+// A store emitted after the loop writes one element instead of perThread, at
+// the index the counter finished on.
 struct LoopStoreKernel final : ComputeProgram
 {
     LoopStoreKernel() { compile(); }
@@ -112,9 +97,6 @@ Vector<float>
 }
 } // namespace
 
-// The odd elements must come back untouched. Before stores were statements they
-// came back written, because the ifThen emitted an empty body and the store
-// followed it unconditionally.
 auto tGuardedStoreRespectsTheGuard = test("StorePlacement/aStoreObeysItsIfThen") = []
 {
     if (!Device::shared().isValid())
@@ -145,8 +127,6 @@ auto tGuardedStoreRespectsTheGuard = test("StorePlacement/aStoreObeysItsIfThen")
     check(skipped == elementCount / 2);
 };
 
-// Every element of every thread's run, written from inside the loop body. A
-// store emitted after the loop leaves perThread - 1 of every run untouched.
 auto tLoopStoreRunsEveryIteration =
     test("StorePlacement/aStoreInsideALoopRepeats") = []
 {

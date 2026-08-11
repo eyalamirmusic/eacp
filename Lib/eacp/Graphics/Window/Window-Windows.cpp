@@ -8,11 +8,9 @@
 #include "../Helpers/SystemAppearance.h"
 #include "../Menu/Win32Menu.h"
 
-// DwmSetWindowAttribute, used for Win11 rounded corners.
 #include <dwmapi.h>
 #pragma comment(lib, "Dwmapi.lib")
 
-// std::lround, for snapping a dragged size to a locked aspect ratio.
 #include <cmath>
 
 namespace eacp::Graphics
@@ -31,9 +29,8 @@ struct NonClientInsets
     int height;
 };
 
-// The border + title-bar thickness in physical pixels for this window's style,
-// used to convert between window-frame and content sizes for the resize and
-// minimum-size parity handlers.
+// Border + title-bar thickness in physical pixels, for converting between
+// window-frame and content sizes.
 NonClientInsets nonClientInsets(HWND hwnd)
 {
     auto dpi = GetDpiForWindow(hwnd);
@@ -59,10 +56,8 @@ struct Window::Native
         , aspectRatio(options.aspectRatio)
         , hidesOnClose(options.hidesOnClose)
     {
-        // Process-wide DPI awareness (per-monitor v2) is established by
-        // initLoopThread() before any app code runs. In a hosted plugin no
-        // loop bootstrap ever ran, so adopt the (host UI) thread creating
-        // the first window as this copy's main thread.
+        // A hosted plugin never ran initLoopThread, so adopt the host UI
+        // thread creating the first window as this copy's main thread.
         Threads::attachCurrentThreadAsMain();
         registerWindowClass();
         createWindow(options);
@@ -72,9 +67,8 @@ struct Window::Native
 
     ~Native()
     {
-        // Before teardown, while the handle is still valid — and it must happen
-        // at all, or a later window landing on the same HWND address would
-        // inherit this one's menu commands.
+        // While the handle is still valid, or a later window reusing this HWND
+        // address inherits these menu commands.
         detail::removeWin32MenuBar(host.hwnd);
 
         host.teardown();
@@ -100,11 +94,8 @@ struct Window::Native
         wc.hbrBackground = nullptr;
         wc.lpszClassName = WINDOW_CLASS_NAME;
 
-        // The class icon is what every window falls back to when no runtime
-        // WindowOptions::applicationIcon is stamped via WM_SETICON. It is
-        // the executable's embedded icon (see embeddedApplicationIcon), so
-        // the running window matches the at-rest Explorer icon by default;
-        // null (no resource) keeps the system default.
+        // Fallback for windows that stamp no WM_SETICON; null keeps the
+        // system default.
         wc.hIcon = embeddedApplicationIcon();
 
         windowClassRegistered = RegisterClassExW(&wc) != 0;
@@ -136,10 +127,8 @@ struct Window::Native
         {
             style = WS_POPUP;
 
-            // A transparent window is shaped by its content, so it takes no
-            // frame at all: the frame DWM rounds is also the frame it drops a
-            // rectangular shadow around, and that shadow would trace the
-            // see-through surplus the window exists to hide.
+            // The frame DWM rounds is also the one it shadows rectangularly,
+            // which would trace a transparent window's see-through surplus.
             framelessRounded =
                 options.cornerRadius.has_value() && !options.transparentBackground;
             framelessResizable =
@@ -157,11 +146,8 @@ struct Window::Native
         RECT rect = {0, 0, physicalWidth, physicalHeight};
         AdjustWindowRectExForDpi(&rect, style, FALSE, 0, dpi);
 
-        // DWM only rounds windows that carry a frame style — a bare
-        // WS_POPUP is silently left square even with DWMWCP_ROUND. Keep
-        // WS_THICKFRAME so rounding (and the system shadow) apply; the
-        // visible frame is removed again in WM_NCCALCSIZE, after the rect
-        // above was computed without it so the client size stays exact.
+        // DWM leaves a bare WS_POPUP square even with DWMWCP_ROUND, so keep
+        // WS_THICKFRAME here and drop the visible frame in WM_NCCALCSIZE.
         if (framelessRounded)
             style |= WS_THICKFRAME;
 
@@ -169,10 +155,8 @@ struct Window::Native
         if (options.ignoresMouseEvents)
             exStyle |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
 
-        // Without a redirection surface the composition tree is all there is:
-        // DWM has no opaque GDI bitmap of the client area to composite the
-        // visuals over, so the content's own alpha reaches the screen. It
-        // cannot be turned on after creation.
+        // Without a redirection bitmap the content's own alpha reaches the
+        // screen. Cannot be turned on after creation.
         if (options.transparentBackground)
             exStyle |= WS_EX_NOREDIRECTIONBITMAP;
 
@@ -213,8 +197,6 @@ struct Window::Native
         if (host.hwnd && options.cornerRadius && !options.transparentBackground)
             applyRoundedCorners();
 
-        // Match the title bar to the system theme and opt the process into
-        // dark menus so any popup the app shows follows suit.
         if (host.hwnd)
         {
             ensureDarkModeAppInitialised();
@@ -225,11 +207,8 @@ struct Window::Native
             applyApplicationIcons(options);
     }
 
-    // The ICON resource eacp_set_app_icon compiles into the executable
-    // under id 1 — the icon Explorer shows at rest. Icons loaded from a
-    // module's resources with LoadIconW are shared and must NOT be passed
-    // to DestroyIcon, unlike the CreateIconIndirect-built ones the
-    // destructor releases.
+    // The ICON resource eacp_set_app_icon compiles in under id 1. Shared, so
+    // the result must never be passed to DestroyIcon.
     static HICON embeddedApplicationIcon()
     {
         return LoadIconW((HINSTANCE) eacp::Plugins::getCurrentModuleHandle(),
@@ -237,12 +216,7 @@ struct Window::Native
     }
 
     // ICON_SMALL drives the title bar and taskbar, ICON_BIG the Alt-Tab
-    // switcher; the system scales as needed. The Alt-Tab override wins the
-    // big slot when present, otherwise applicationIcon serves both. Both
-    // are runtime overrides for dynamic icons (badges, theme changes);
-    // when unset, the class icon — the executable's embedded icon — serves
-    // every slot. When neither exists, say so: a silently generic taskbar
-    // icon otherwise looks like a rendering bug.
+    // switcher. Unset slots fall back to the class icon.
     void applyApplicationIcons(const WindowOptions& options)
     {
         applicationIcon = toHIcon(options.applicationIcon());
@@ -267,10 +241,9 @@ struct Window::Native
             "dynamic one. The taskbar and Explorer show the generic icon.");
     }
 
-    // Windows 11+: ask DWM to round the window at the system radius (the
-    // requested radius value isn't configurable). Constants declared
-    // locally so older SDKs still compile; pre-Win11 DWM ignores the
-    // attribute and the window stays square.
+    // Windows 11+ rounds at the system radius, which is not configurable.
+    // Constants declared locally so older SDKs still compile; pre-Win11 DWM
+    // ignores the attribute.
     void applyRoundedCorners() const
     {
         const DWORD attrWindowCornerPreference =
@@ -310,10 +283,8 @@ struct Window::Native
         ShowWindow(host.hwnd, IsZoomed(host.hwnd) ? SW_RESTORE : SW_MAXIMIZE);
     }
 
-    // A maximized window overhangs the monitor by its resize frame on every
-    // side. With the frame eaten by WM_NCCALCSIZE the client area would
-    // inherit that overhang and the content edges would land offscreen, so
-    // inset the proposed rect back to the visible area.
+    // A maximized window overhangs the monitor by its resize frame; with that
+    // frame eaten by WM_NCCALCSIZE the content edges would land offscreen.
     static void clampMaximizedClientRect(HWND hwnd, RECT& rect)
     {
         if (!IsZoomed(hwnd))
@@ -329,9 +300,6 @@ struct Window::Native
     {
         if (host.hwnd)
         {
-            // showInactive: reveal without stealing focus (counterpart of
-            // macOS orderFront). visibleOnAllWorkspaces has no Windows
-            // analogue. The window still activates normally when clicked.
             ShowWindow(host.hwnd,
                        showWithoutActivating ? SW_SHOWNOACTIVATE : SW_SHOW);
             UpdateWindow(host.hwnd);
@@ -375,25 +343,14 @@ struct Window::Native
     {
         host.attachContentView(view);
 
-        // Skip ShowWindow under headless mode (CI without an active session).
-        // The HWND + child visual tree are still set up, so WebView2 can
-        // initialize and load its page; only the visible surface is suppressed.
+        // Headless still builds the HWND and visual tree so WebView2 can load;
+        // only the visible surface is suppressed.
         if (host.hwnd && view && !eacp::Apps::getAppEnvironment().headless)
             showWindow();
     }
 
-    // Snaps a content size to WindowOptions::aspectRatio.
-    //
-    // Which side gives way follows the edge under the cursor: dragging a
-    // vertical edge sets the width and the height follows, a horizontal edge
-    // the reverse, and a corner is driven by its width. That is what every
-    // fixed-aspect window does, and it matters — deriving the width from the
-    // height while the user drags the right edge makes the window appear to
-    // resist the cursor.
-    //
-    // Unlike macOS, where AppKit owns this (setContentAspectRatio), Win32 has
-    // no such attribute: WM_SIZING is the only place a resize can be
-    // constrained, so the constraint has to be applied by hand here.
+    // Which side gives way follows the dragged edge, so the window never
+    // appears to resist the cursor. Win32 has no setContentAspectRatio.
     void applyAspectRatio(int& widthInPoints, int& heightInPoints, WPARAM edge) const
     {
         if (!aspectRatio || aspectRatio->x <= 0.f || aspectRatio->y <= 0.f)
@@ -407,10 +364,8 @@ struct Window::Native
             heightInPoints = static_cast<int>(std::lround(widthInPoints / ratio));
     }
 
-    // Honour WindowOptions::onWillResize and ::aspectRatio by clamping the
-    // dragged window rect (WM_SIZING gives a frame rect; convert to content
-    // points, constrain, convert back, then re-anchor the edge the user is not
-    // dragging).
+    // WM_SIZING gives a frame rect; constrain in content points, convert back,
+    // then re-anchor the edge the user is not dragging.
     void dispatchWillResize(RECT* windowRect, WPARAM edge) const
     {
         auto insets = nonClientInsets(host.hwnd);
@@ -425,8 +380,7 @@ struct Window::Native
         if (onWillResize)
             onWillResize(widthInPoints, heightInPoints);
 
-        // Last, so the shape the window ends up with is the locked one however
-        // the callback moved the size around.
+        // Last, so the locked shape wins over whatever the callback did.
         applyAspectRatio(widthInPoints, heightInPoints, edge);
 
         auto newWindowWidth = static_cast<int>(widthInPoints * scale) + insets.width;
@@ -444,8 +398,8 @@ struct Window::Native
             windowRect->bottom = windowRect->top + newWindowHeight;
     }
 
-    // Honour WindowOptions::minWidth/minHeight (content points) by setting the
-    // window's minimum track size in physical pixels for WM_GETMINMAXINFO.
+    // Converts WindowOptions::minWidth/minHeight from content points to the
+    // physical-pixel track size WM_GETMINMAXINFO wants.
     void applyMinTrackSize(MINMAXINFO* info) const
     {
         auto insets = nonClientInsets(host.hwnd);
@@ -512,9 +466,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
 
     switch (msg)
     {
-        // The WS_THICKFRAME a frameless-rounded window keeps for DWM
-        // rounding must not produce a visible frame: claim the whole
-        // window rect as client area...
+        // Claim the whole window rect as client area, so the WS_THICKFRAME a
+        // frameless-rounded window keeps for DWM never draws.
         case WM_NCCALCSIZE:
             if (wParam && self->framelessRounded)
             {
@@ -524,10 +477,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             }
             break;
 
-        // ...and for fixed-size windows, keep the edge band the frame would
-        // reserve for resize hit-testing behaving as ordinary content. With
-        // WindowFlags::Resizable the band stays live, so a frameless window
-        // still resizes from its edges (Electron-style).
+        // For fixed-size windows the frame's resize band behaves as ordinary
+        // content; with WindowFlags::Resizable it stays live.
         case WM_NCHITTEST:
             if (self->ignoresMouseEvents)
                 return HTTRANSPARENT;
@@ -542,8 +493,6 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             break;
 
         case WM_CLOSE:
-            // See WindowOptions::hidesOnClose: hide instead of destroy, the
-            // app keeps running and setVisible(true) brings it back.
             if (self->hidesOnClose)
             {
                 ShowWindow(hwnd, SW_HIDE);
@@ -554,12 +503,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             return 0;
 
         case WM_DESTROY:
-            // Intentionally no PostQuitMessage here. The application's shutdown
-            // is driven by Apps::quit() (which is what quitCallback() triggers
-            // on the user-initiated WM_CLOSE). Destroying a Window
-            // programmatically — e.g. during test teardown — must NOT terminate
-            // the event loop, because its pending quit callback would never get
-            // a chance to run.
+            // No PostQuitMessage: shutdown is driven by Apps::quit, so
+            // destroying a Window programmatically must not end the loop.
             return 0;
 
         case WM_GETMINMAXINFO:
@@ -578,8 +523,6 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             }
             break;
 
-        // The user toggled the OS light/dark setting while we are running;
-        // recolour the caption and re-erase the window background to match.
         case WM_SETTINGCHANGE:
             if (isThemeChangeMessage(lParam))
             {
@@ -599,9 +542,6 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
                          suggested->bottom - suggested->top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
 
-            // The new scale recreates every layer surface (setDpiScale marks
-            // them dirty); painting views re-render from the repaint pass,
-            // which recreates their surfaces at the new pixel size.
             self->host.rescaleRootVisualToDpi();
             self->host.ensureAllLayersRendered(self->host.contentView);
             repaintViewTree(self->host.contentView);
@@ -609,22 +549,13 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
         }
     }
 
-    // The menu bar reports through the owning window's message loop, so its two
-    // messages are routed here rather than in handleCommonMessage — an embedded
-    // view shares that handler and never carries a menu.
-    // lParam == 0 is the documented test for "this came from a menu". HIWORD
-    // alone is not: for a control notification it is the notification code, and
-    // BN_CLICKED is also 0 — with lParam carrying the control's HWND. eacp does
-    // host child windows (EmbeddedView, WebView2), so an id collision is a live
-    // hazard rather than a theoretical one. HIWORD == 1 is an accelerator
-    // table, which eacp has none of.
+    // lParam == 0 is the documented test for "came from a menu"; HIWORD alone
+    // is not, since BN_CLICKED is also 0 and eacp hosts child windows.
     if (msg == WM_COMMAND && HIWORD(wParam) == 0 && lParam == 0)
         if (detail::handleWin32MenuCommand(hwnd, LOWORD(wParam)))
             return 0;
 
-    // Asked just before a popup is drawn. This is where Win32 puts the question
-    // NSMenuValidation answers with validateMenuItem:, and doing it here is what
-    // lets an app install its bar once and still grey items from live state.
+    // Win32's equivalent of NSMenuValidation, asked just before a popup draws.
     if (msg == WM_INITMENUPOPUP && HIWORD(lParam) == FALSE)
         detail::updateWin32MenuEnabledState(hwnd);
 

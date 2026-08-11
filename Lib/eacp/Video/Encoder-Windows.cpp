@@ -12,12 +12,9 @@
 #include <cstdint>
 #include <string>
 
-// The Windows encoder: a Media Foundation IMFSinkWriter writing H.264 into an
-// .mp4. Each snapshot frame is composited over black into a BGRA (RGB32) sample
-// and written with a real-time presentation timestamp; the SinkWriter's implicit
-// converter feeds the H.264 encoder, so playback runs at capture speed. The
-// GpuDirect tier is not wired here yet (no D3D->MF zero-copy), so those hooks
-// keep the base's "unsupported" default and callers fall back to Snapshot.
+// Media Foundation IMFSinkWriter writing H.264 into an .mp4. Frames go in as
+// BGRA (RGB32) samples; the SinkWriter's implicit converter feeds the encoder.
+// The GpuDirect tier is not wired up here, so callers fall back to Snapshot.
 
 namespace eacp::Video
 {
@@ -67,9 +64,8 @@ struct WindowsEncoder final : Encoder
         height = h;
         fps = fpsToUse > 0 ? fpsToUse : 60;
 
-        // MF needs COM up on this thread. The GUI thread is usually already
-        // apartment-initialized; a matching re-init returns S_FALSE (still ours
-        // to balance), only a conflicting mode fails -- then we do not un-init.
+        // A matching re-init returns S_FALSE and is still ours to balance; only
+        // a conflicting mode fails, and then we do not un-init.
         auto comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         comInitialized = SUCCEEDED(comResult);
 
@@ -83,8 +79,8 @@ struct WindowsEncoder final : Encoder
         ComPtr<IMFAttributes> attributes;
         if (SUCCEEDED(MFCreateAttributes(&attributes, 2)))
         {
-            // We pace frames ourselves, so let the writer accept them as fast as
-            // they arrive, and allow a hardware encoder when one is present.
+            // Frames are paced by the caller, so let the writer take them as
+            // fast as they arrive.
             attributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE);
             attributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
         }
@@ -123,9 +119,8 @@ struct WindowsEncoder final : Encoder
         if (FAILED(writer->AddStream(outputType.Get(), &streamIndex)))
             return false;
 
-        // BGRA input, top-down (positive stride): the SinkWriter inserts the
-        // colour converter that feeds the H.264 encoder. Matches the straight
-        // premultiplied-over-black BGRA compositeOverBlackBGRA writes.
+        // BGRA input, top-down (positive stride), matching what
+        // compositeOverBlackBGRA writes.
         ComPtr<IMFMediaType> inputType;
         if (FAILED(MFCreateMediaType(&inputType)))
             return false;

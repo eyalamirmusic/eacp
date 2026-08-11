@@ -3,10 +3,8 @@
 using namespace nano;
 using namespace eacp::Graphics;
 
-// Mouse lock is intent-based: setMouseLocked records the desired state and
-// the OS-level lock only engages while the window has key focus, so the
-// intent must be togglable (and readable) on a window that never becomes
-// key, like here.
+// The OS-level lock only engages while the window has key focus, so the intent
+// must stay togglable on a window that never becomes key, like here.
 auto tMouseLockIntent = test("Window/mouseLockIntentToggles") = []
 {
     auto window = Window {};
@@ -64,9 +62,7 @@ auto tWindowOptionsNewAffordancesDefaultOff =
     check(!options.visibleOnAllWorkspaces);
 };
 
-// The icons are bring-your-own, and the providers are never null: the
-// defaults are callable and return an invalid Image, which keeps the
-// system default without any null checks at the call sites.
+// Never null: the defaults return an invalid Image, so call sites need no check.
 auto tIconProvidersDefaultToInvalidImage =
     test("WindowOptions/iconProvidersDefaultToInvalidImage") = []
 {
@@ -74,9 +70,8 @@ auto tIconProvidersDefaultToInvalidImage =
     check(!WindowOptions {}.altTabIcon());
 };
 
-// Live behaviour (the icon actually landing on the window / Dock) is
-// demonstrated by Apps/WebView/Browser; a provided icon just has to be
-// safe on a window that never materializes.
+// Live behaviour is demonstrated by Apps/WebView/Browser; this only pins that a
+// provided icon is safe on a window that never materializes.
 auto tApplicationIconConstructsUnderHeadless =
     test("WindowOptions/applicationIconConstructsUnderHeadless") = []
 {

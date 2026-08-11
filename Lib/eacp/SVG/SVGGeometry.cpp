@@ -22,7 +22,7 @@ void addRectGeometry(GPUWidgets::Path& path, const SVGElement& element)
     auto rx = element.numAttr("rx");
     auto ry = element.numAttr("ry");
 
-    // Either radius alone stands for both, which is what the format says.
+    // Either radius alone stands for both, per the format.
     if (rx <= 0.f)
         rx = ry;
     if (ry <= 0.f)

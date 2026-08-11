@@ -5,13 +5,6 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 
-// Windows/D3D12 backend. Every buffer is a default-heap resource (a Storage
-// buffer additionally allows unordered access); initial data goes through a
-// transient upload buffer submitted at construction, and read() copies into a
-// readback buffer and blocks on the fence, preserving the contract that a read
-// after commit() sees the kernel's output. State is tracked per recording in
-// D3D12BufferData; cross-submit ordering comes from the single direct queue.
-
 namespace eacp::GPU
 {
 namespace
@@ -67,11 +60,8 @@ struct Buffer::Native
         flags = toResourceFlags(usage);
         capacity = bytes;
 
-        // A spare of the right shape only when this buffer arrives with the data
-        // to fill it. Created empty, it has to be the zero-filled resource the
-        // runtime hands back rather than one still holding somebody else's
-        // numbers -- a compute output target read before it is written would
-        // otherwise see them.
+        // Only recycle when data overwrites it: a fresh resource is zero-filled,
+        // a recycled one still holds the previous owner's bytes.
         if (data != nullptr)
             if (auto spare = context.takeDefaultBuffer(bytes, flags))
             {
@@ -83,45 +73,23 @@ struct Buffer::Native
             bufferData.resource =
                 makeDefaultBuffer(context.getDevice(), bytes, flags);
 
-        // A buffer whose initial data never reached it is not a buffer, and
-        // isValid() is how the caller finds out rather than drawing from
-        // whatever the heap happened to hold.
+        // Failed upload invalidates the buffer rather than leaving heap garbage.
         if (bufferData.resource != nullptr && data != nullptr
             && !stage(context, data, bytes))
             bufferData.resource = nullptr;
     }
 
-    // Handed to the context rather than released here, the same way a Texture
-    // is. A buffer is routinely replaced mid-frame — every ShaderProgram
-    // setInstances/setVertices makes a new one — and the command list still
-    // recording holds references to the old resource. Releasing it now makes
-    // Close() fail with OBJECT_DELETED_WHILE_STILL_IN_USE, which invalidates
-    // the whole list: not just the draw that used the buffer, but every draw
-    // recorded after it silently disappears.
-    //
-    // Offered up for reuse rather than dropped, on the same terms: it is exactly
-    // the buffer the replacement is about to ask for.
+    // Handed to the context, not released: a still-recording list may reference
+    // it, and releasing now fails Close() with OBJECT_DELETED_WHILE_STILL_IN_USE,
+    // silently dropping every draw on that list.
     ~Native()
     {
         getD3D12Context().recycleDefaultBuffer(
             std::move(bufferData.resource), capacity, flags);
     }
 
-    // The copy that fills the buffer from CPU bytes, and the whole of what makes
-    // a buffer cheap enough to create per draw.
-    //
-    // Two things, of the same order of cost. The staging bytes are bump-allocated
-    // from the recording's upload arena instead of a committed resource made for
-    // this one copy, and the copy goes onto whatever recording is already open
-    // instead of one acquired and submitted for it alone. A batching renderer
-    // builds a buffer per batch flush, and paying a CreateCommittedResource and a
-    // queue submission for each is what made a frame of eacp-ui cost sixty
-    // milliseconds of driver time on Windows and nothing measurable on Metal.
-    //
-    // Recording onto the frame's list rather than ahead of it is also what keeps
-    // it correct: the copy lands in order, before the draw or dispatch that
-    // wanted the bytes, so two flushes of the same program in one frame each read
-    // what they were given.
+    // Joins the already-open recording when there is one, so the copy lands in
+    // order before the draw that wants the bytes, and costs no extra submission.
     bool stage(D3D12Context& context,
                const void* data,
                std::size_t bytes,
@@ -175,13 +143,10 @@ struct Buffer::Native
         return true;
     }
 
-    // Mutable because the state tracking advances inside the const read():
-    // the copy to the readback buffer is a use like any other.
+    // Mutable because const read() advances the resource state tracking.
     mutable D3D12BufferData bufferData;
 
-    // What the resource actually is, as against what the caller asked for: a
-    // recycled one is at least the requested size and often larger, and it is
-    // the real size that decides who it can be handed to next.
+    // Real allocated size, which a recycled resource may exceed the request by.
     std::size_t capacity = 0;
     D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE;
 };
@@ -192,8 +157,7 @@ Buffer::Buffer(Device& device,
                BufferUsage usage)
     : impl(device, data, bytes, usage)
 {
-    // Only the ones that got storage, so the count means GPU allocations rather
-    // than calls - a zero-byte or device-less Buffer allocated nothing.
+    // Counts GPU allocations, not calls: an invalid Buffer allocated nothing.
     if (isValid())
         device.noteBufferCreated();
 }

@@ -6,10 +6,8 @@
 #include <algorithm>
 #include <cmath>
 
-// Parameters stays at file scope so its qualifiedName matches the
-// baseline TS exactly. Defaults double as the hook's initial value
-// (toJSON(Parameters{}) is what defaultPayloadJson feeds the hooks
-// codegen).
+// File scope keeps qualifiedName matching the generated TS; the defaults are
+// also what the codegen feeds the hooks as their initial value.
 struct Parameters
 {
     double level = 0.5;
@@ -22,14 +20,8 @@ struct Parameters
 namespace Api
 {
 
-// Replaces the (ParametersStore singleton + parametersStore() accessor +
-// EACP_STATE macro + getParameters/setParameters/advanceTick free fns +
-// MIRO_EXPORT_COMMANDS macro) tangle from the static-init flow with one
-// class. reflect() lists the wire surface; the methods do the work.
-//
-// All method bodies are inline because the codegen executable ODR-uses
-// the pmfs through the makePmfHandler lambda chain — and the codegen
-// exe doesn't compile any .cpp in this app.
+// Method bodies must stay inline: the codegen executable ODR-uses these pmfs
+// but compiles none of this app's .cpp files.
 class ParametersApi
 {
 public:
@@ -52,7 +44,6 @@ public:
         parameters.publish(next);
     }
 
-    // Called from MyApp's timer — not exposed as a bridge command.
     void advanceTick()
     {
         auto next = parameters.snapshot();

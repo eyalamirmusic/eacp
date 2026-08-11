@@ -9,17 +9,13 @@ namespace eacp::Detail
 {
 MappingFile openForMapping(const FilePath& path)
 {
-    // O_NONBLOCK so that the open itself cannot hang: opening a FIFO for
-    // reading otherwise waits for a writer to arrive, and this call has to be
-    // able to reject one. It costs a regular file nothing — the flag governs
-    // reads through the descriptor, and the bytes here come from the mapping.
+    // O_NONBLOCK so the open cannot hang waiting for a FIFO's writer. It costs a
+    // regular file nothing, since the bytes come from the mapping.
     auto descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
 
     if (descriptor < 0)
         return {};
 
-    // fstat rather than stat: it answers for the file that was opened, and
-    // that is the one about to be mapped.
     struct stat info = {};
 
     if (::fstat(descriptor, &info) != 0 || !S_ISREG(info.st_mode))
@@ -47,20 +43,17 @@ std::size_t mappingGranularity()
 {
     static const auto pageSize = []
     {
+        constexpr auto fallbackPageSize = std::size_t {4096};
         auto reported = ::sysconf(_SC_PAGESIZE);
 
-        // sysconf answers -1 when it cannot tell. 4KB is the page size
-        // everywhere this runs, and any multiple of the real one is a legal
-        // mmap offset regardless.
-        return reported > 0 ? static_cast<std::size_t>(reported)
-                            : std::size_t {4096};
+        return reported > 0 ? static_cast<std::size_t>(reported) : fallbackPageSize;
     }();
 
     return pageSize;
 }
 
-// MAP_PRIVATE, not MAP_SHARED: nothing here can write through the mapping, and
-// a private one asks the kernel for no write-back bookkeeping at all.
+// MAP_PRIVATE, not MAP_SHARED: nothing writes through, so the kernel is asked
+// for no write-back bookkeeping.
 MappedRegion mapRegion(const MappingFile& file,
                        std::uint64_t alignedOffset,
                        std::size_t length)

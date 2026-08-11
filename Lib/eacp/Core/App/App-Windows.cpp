@@ -10,13 +10,11 @@
 
 namespace eacp::Apps
 {
-// No Dock concept on Windows; an app with no Window already has no taskbar
-// button, so there is nothing to toggle.
+// No Dock concept on Windows.
 void setDockIconVisible(bool) {}
 
-// Presence-only check for an embedded Authenticode signature — deliberately
-// not WinVerifyTrust, whose full chain validation is sensitive to expiry,
-// revocation and network availability (see App.h).
+// Presence-only check for an embedded Authenticode signature, deliberately not
+// WinVerifyTrust: its chain validation depends on expiry and the network.
 bool isDistributionSigned()
 {
     wchar_t path[MAX_PATH] = {};
@@ -108,7 +106,6 @@ std::optional<std::string> chooseSaveWithDialog(const FileSaveOptions& options,
 
 namespace
 {
-// Real IFileOpenDialog behind the detail:: seam; tests substitute a fake.
 std::optional<std::wstring> showShellOpenDialog(bool pickFolders,
                                                 const FilePickerOptions& options)
 {
@@ -116,8 +113,8 @@ std::optional<std::wstring> showShellOpenDialog(bool pickFolders,
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     const bool shouldUninitialize = SUCCEEDED(coInit);
 
-    // COM objects must release before CoUninitialize, so the dialog lives in
-    // this lambda — its com_ptrs unwind before the uninit below.
+    // The dialog lives in this lambda so its com_ptrs release before the
+    // CoUninitialize below.
     const auto result = [&]() -> std::optional<std::wstring>
     {
         auto dialog = winrt::com_ptr<IFileOpenDialog> {};
@@ -170,17 +167,14 @@ std::optional<std::wstring> showShellOpenDialog(bool pickFolders,
 
     return result;
 }
-// Real IFileSaveDialog behind the detail:: seam; tests substitute a fake.
-// FOS_OVERWRITEPROMPT is the dialog's own confirmation — the caller writes the
-// returned path unconditionally.
 std::optional<std::wstring> showShellSaveDialog(const FileSaveOptions& options)
 {
     const auto coInit =
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     const bool shouldUninitialize = SUCCEEDED(coInit);
 
-    // COM objects must release before CoUninitialize, so the dialog lives in
-    // this lambda — its com_ptrs unwind before the uninit below.
+    // The dialog lives in this lambda so its com_ptrs release before the
+    // CoUninitialize below.
     const auto result = [&]() -> std::optional<std::wstring>
     {
         auto dialog = winrt::com_ptr<IFileSaveDialog> {};
@@ -193,9 +187,9 @@ std::optional<std::wstring> showShellSaveDialog(const FileSaveOptions& options)
         auto flags = FILEOPENDIALOGOPTIONS {};
         if (SUCCEEDED(dialog->GetOptions(&flags)))
         {
-            flags = static_cast<FILEOPENDIALOGOPTIONS>(
-                flags | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST
-                | FOS_OVERWRITEPROMPT);
+            flags = static_cast<FILEOPENDIALOGOPTIONS>(flags | FOS_FORCEFILESYSTEM
+                                                       | FOS_PATHMUSTEXIST
+                                                       | FOS_OVERWRITEPROMPT);
             dialog->SetOptions(flags);
         }
 
@@ -210,7 +204,6 @@ std::optional<std::wstring> showShellSaveDialog(const FileSaveOptions& options)
             dialog->SetFileTypes(2, specs);
             dialog->SetFileTypeIndex(1);
 
-            // So a name typed without one still lands on the right extension.
             const auto defaultExtension =
                 std::wstring(winrt::to_hstring(options.allowedExtensions[0]));
             dialog->SetDefaultExtension(defaultExtension.c_str());

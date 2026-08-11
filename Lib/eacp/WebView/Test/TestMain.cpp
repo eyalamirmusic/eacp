@@ -3,20 +3,9 @@
 
 #include <NanoTest/NanoTest.h>
 
-// Prebuilt main() for in-process WebView test binaries (linked via
-// eacp-webview-test-main).
-//
-// Tests run on the same main thread that hosts the WebView's event
-// loop. Reusing Apps::run<T> for the entry point gives the tests a
-// fully bootstrapped runloop (NSApplication on Apple; the COM
-// apartment on Windows) before any test touches a Window or WebView —
-// same as a normal app would have.
-//
-// The TestRunner construction is dispatched onto the runloop's first
-// tick by Apps::run<T>; nano::run() blocks the main thread on that
-// tick while iterating tests. Per-driver-operation runEventLoopFor()
-// calls re-enter the runloop synchronously, returning when the
-// matching WebView callback fires stopEventLoop().
+// Prebuilt main() for in-process WebView test binaries. Going through
+// Apps::run<T> gives tests a bootstrapped runloop (NSApplication on Apple,
+// the COM apartment on Windows) on the same thread the WebView runs on.
 namespace
 {
 
@@ -27,9 +16,7 @@ nano::RunOptions parseRunOptions()
     auto& args = eacp::Apps::getAppEnvironment().commandLineArgs;
     auto opts = nano::RunOptions {};
 
-    // Mirror NanoTest's argv parsing — same surface, sourced from
-    // AppEnvironment::commandLineArgs (populated in main()) instead
-    // of taking argc/argv from a global.
+    // Mirrors NanoTest's own argv parsing.
     for (auto i = 1; i < args.size(); ++i)
     {
         if (args[i] == "--list-tests")
@@ -47,8 +34,7 @@ struct TestRunner
     {
         gExitCode = nano::run(parseRunOptions());
 
-        // Let the platform crash guard know the real result before WebView2
-        // teardown can fault during process shutdown (see TestCrashGuard).
+        // Record the real result before WebView2 teardown can fault.
         eacp::WebView::Test::markTestShutdown(gExitCode);
         eacp::Apps::quit();
     }
@@ -60,9 +46,7 @@ int main(int argc, char* argv[])
 {
     eacp::WebView::Test::installShutdownCrashGuard();
 
-    // Skip Window's show/activate calls so test binaries can run on
-    // CI machines without an active windowing session. WebView/JS
-    // still functions; only the visible surface is suppressed.
+    // Suppresses show/activate so CI runners need no windowing session.
     eacp::Apps::getAppEnvironment().headless = true;
 
     eacp::Apps::run<TestRunner>(argc, argv);

@@ -12,9 +12,7 @@ namespace
 {
 constexpr auto blockSize = CoverageKernel::blockSize;
 
-// Grown by reallocation and refilled in place otherwise: a canvas whose paths all
-// move re-uploads the same buffers every frame and allocates nothing after the
-// first.
+// Reallocates only to grow; otherwise refills in place.
 void uploadTo(std::optional<GPU::Buffer>& buffer,
               const Vector<float>& values,
               int& updates)
@@ -30,18 +28,15 @@ void uploadTo(std::optional<GPU::Buffer>& buffer,
     ++updates;
 }
 
-// A buffer no path in this batch filled still binds, the kernel declaring all of
-// them, and a zero-length buffer is not a buffer. One float rather than a shape:
-// no thread reads it, because no record points into it.
+// The kernel binds every buffer it declares, and a zero-length one is invalid.
+// No thread reads the pad, since no record points into it.
 void padEmpty(Vector<float>& values)
 {
     if (values.empty())
         values.add(0.f);
 }
 
-// The arrays the binning and backdrop stages work in. Never uploaded and never
-// read back - a kernel is what puts a value in one - so these are allocations
-// and nothing else, grown when a batch needs more than the last one did.
+// An allocation and nothing else: these buffers are never uploaded or read back.
 void ensureRoom(std::optional<GPU::Buffer>& buffer, std::size_t bytes)
 {
     if (!buffer.has_value() || buffer->size() < bytes)
@@ -51,10 +46,7 @@ void ensureRoom(std::optional<GPU::Buffer>& buffer, std::size_t bytes)
                        GPU::BufferUsage::Storage);
 }
 
-// One path's run onto the end of the batch's. In bulk rather than value by
-// value: gathering a canvas is a couple of million floats, and the batch is only
-// worth having if putting them together is cheaper than the per-path overhead it
-// removes.
+// In bulk: gathering a canvas is a couple of million floats.
 void appendAll(Vector<float>& into, const Vector<float>& from)
 {
     if (from.empty())
@@ -105,11 +97,7 @@ void CoverageBatch::add(const PathRasterizer& rasterizer)
     segmentStarts.add((float) (segments.size() / 4));
     scanStarts.add((float) scanRows);
 
-    // The shape read, which is the only one four of the six stages take: a
-    // thread of any of them wants where this path's cells and tiles begin and
-    // how big its coverage is, and wants nothing else at all. The binner reads
-    // it once per segment, which is why the record is laid out this way round
-    // rather than by what the fields mean.
+    // Ordered by what the binner reads once per segment, not by meaning.
     records.add((float) cells);
     records.add((float) width);
     records.add((float) height);
@@ -127,21 +115,14 @@ void CoverageBatch::add(const PathRasterizer& rasterizer)
     entries += rasterizer.getEntryBound();
     scanRows += height;
 
-    // Every base in a record is a float, which holds an integer exactly to
-    // sixteen million and silently rounds one past it. The cells and the tiles
-    // are the two that grow with *area* - the rest grow with the outline and
-    // would need a batch nothing could draw - and a canvas of a hundred and
-    // twenty-eight full-width lanes is already at seven million cells.
+    // A record base is a float, exact to 2^24 and silently rounded past it.
     assert(cells <= (1 << 24) && tiles <= (1 << 24)
            && "eacp: a batch's binning outgrew what a float index holds");
 
     ++paths;
     blocks += blocksWide * blocksHigh;
 
-    // The one place the record's shape is written rather than read, held to the
-    // constant every stage reads it through. A field added here and nowhere else
-    // does not misread - it shifts every field of every later path by one, which
-    // is a picture that looks almost right.
+    // A field added here alone shifts every later path's record by one.
     assert(records.size() == paths * CoverageKernel::recordFloats
            && "eacp: a path record is not CoverageKernel::recordFloats long");
 }
@@ -150,8 +131,7 @@ void CoverageBatch::upload()
 {
     bufferUpdates = 0;
 
-    // The last entry is the total, which is what makes the search's upper bound
-    // a read rather than a special case.
+    // A terminating total, so the last path's run end is a read like any other.
     blockOffsets.add((float) blocks);
     segmentStarts.add((float) (segments.size() / 4));
     scanStarts.add((float) scanRows);
@@ -166,17 +146,13 @@ void CoverageBatch::upload()
 
     ensureRoom(cellBuffer, sizeof(std::uint32_t) * (std::size_t) cells);
 
-    // One past the last tile, holding the total: it is what makes the last
-    // tile's run end a read of the same array rather than a special case, and
-    // what the prefix sum leaves the entry count in.
+    // One past the last tile holds the total the prefix sum ends with.
     ensureRoom(tileCountBuffer, sizeof(std::uint32_t) * (std::size_t) (tiles + 1));
     ensureRoom(tileOffsetBuffer, sizeof(std::uint32_t) * (std::size_t) (tiles + 1));
     ensureRoom(entryBuffer, sizeof(float) * 4 * (std::size_t) entries);
 }
 
-// Zero, count, sum, sort - the tiles, for every path in the batch, and the
-// backdrop along the way. Each stage orders against the next by the pass itself;
-// nothing here needs a fence, and nothing here reaches the CPU.
+// Zero, count, sum, sort. The pass orders each stage against the next.
 void CoverageBatch::buildTiles(GPU::ComputePass& pass)
 {
     auto& clear = sharedKernel<ClearKernel>();
@@ -204,8 +180,7 @@ void CoverageBatch::buildTiles(GPU::ComputePass& pass)
     pass.dispatch(bin, segmentCount);
     ++dispatches;
 
-    // The backdrop's crossings landed in the cells on that pass, so this is all
-    // that is left of it: the running sum along each pixel row.
+    // The count pass left the backdrop's crossings in the cells; sum each row.
     auto& scan = sharedKernel<BackdropScanKernel>();
     scan.records = *recordBuffer;
     scan.cells = *cellBuffer;
@@ -214,8 +189,7 @@ void CoverageBatch::buildTiles(GPU::ComputePass& pass)
     pass.dispatch(scan, scanRows);
     ++dispatches;
 
-    // Counts into offsets, and the counts themselves back to zero - which is
-    // what the sort below hands its slots out with.
+    // Counts become offsets and the counts reset to zero, the sort's cursors.
     tileSum.run(pass, *tileCountBuffer, *tileOffsetBuffer, tiles + 1);
     dispatches += tileSum.getDispatchCount();
 
@@ -240,12 +214,8 @@ void CoverageBatch::dispatch(GPU::ComputePass& pass)
 
     buildTiles(pass);
 
-    // The blocks laid out as a rectangle rather than a row. A dimension of a
-    // dispatch may have 65,535 threadgroups, and a canvas of a hundred and
-    // twenty-eight full-width lanes is a million and a half blocks - so a single
-    // row of them would not be dispatchable at all. Square keeps both sides
-    // small and wastes at most one row of blocks past the end, which the guard
-    // in the kernel retires.
+    // Square rather than a row: a dispatch dimension holds 65,535 threadgroups.
+    // The kernel's guard retires the blocks past the end.
     gridColumns = (int) std::ceil(std::sqrt((double) blocks));
     auto gridRows = (blocks + gridColumns - 1) / gridColumns;
 

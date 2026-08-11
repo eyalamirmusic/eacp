@@ -8,23 +8,16 @@
 
 #include <cmath>
 
-// Apple decode backend (AVFoundation). AVAssetReader does demux, hardware
-// decode, presentation reordering and the conversion to BGRA in one object, so
-// this file is only the mapping between that and the portable Decoder
-// interface: no timing, no queueing, no policy.
-//
-// Frames come out as IOSurface-backed, Metal-compatible CVPixelBuffers, which
-// is exactly what GPU::Device::wrapPixelBuffer already turns into a texture
-// without copying — the same path Cameras::CameraView uses for live capture.
+// AVAssetReader hands back IOSurface-backed, Metal-compatible CVPixelBuffers,
+// which wrapPixelBuffer turns into a texture without copying.
 
 namespace eacp::Video
 {
 namespace
 {
-// The reader's timeRange is the seek: AVAssetReader starts from the sync sample
-// preceding the requested time and drops what precedes it, so a range starting
-// mid-file yields the frame covering that time. That makes SeekMode::Accurate
-// the natural behaviour and leaves Keyframe with nothing cheaper to do.
+// The reader's timeRange is the seek: it starts from the preceding sync sample
+// and drops what precedes the requested time, so Accurate comes for free and
+// Keyframe has nothing cheaper to do.
 constexpr auto seekTimescale = 600;
 
 int rotationFromTransform(CGAffineTransform transform)
@@ -34,10 +27,8 @@ int rotationFromTransform(CGAffineTransform transform)
     return ((degrees % 360) + 360) % 360;
 }
 
-// The track load is asynchronous since macOS 15, but opening a decoder is a
-// blocking operation by contract (Decoder::open returns success or failure), so
-// the wait happens here. AVFoundation runs the completion on its own queue, so
-// this is safe on any thread including the main one.
+// Blocks. AVFoundation runs the completion on its own queue, so this is safe on
+// any thread including the main one.
 API_AVAILABLE(macos(12.0), ios(15.0))
 AVAssetTrack* awaitFirstVideoTrack(AVURLAsset* asset)
 {
@@ -62,8 +53,6 @@ AVAssetTrack* firstVideoTrack(AVURLAsset* asset)
     if (@available(macOS 12.0, iOS 15.0, *))
         return awaitFirstVideoTrack(asset);
 
-    // The loader above does not exist below macOS 12 / iOS 15, where the only
-    // way in is the synchronous accessor it eventually replaced.
     return [[asset tracksWithMediaType:AVMediaTypeVideo] firstObject];
 }
 } // namespace
@@ -127,16 +116,13 @@ struct AppleDecoder final : Decoder
         frameInfo.seconds = secondsOf(CMSampleBufferGetPresentationTimeStamp(sample));
         frameInfo.duration = secondsOf(CMSampleBufferGetOutputDuration(sample));
 
-        // A container that gives no per-sample duration leaves the frame with no
-        // presentation interval, which FrameStream needs to decide what belongs
-        // on screen. The track's nominal rate is the decoder's own best answer,
-        // so it is filled in here rather than guessed at higher up.
+        // FrameStream needs a presentation interval even when the container
+        // gives no per-sample duration.
         if (frameInfo.duration <= 0.0 && videoInfo.frameRate > 0.0)
             frameInfo.duration = 1.0 / videoInfo.frameRate;
 
-        // The frame owns the buffer from here: retained now, released by the
-        // last VideoFrame sharing it. Retaining is also what stops the decoder's
-        // pool recycling it underneath us while alwaysCopiesSampleData is off.
+        // The retain hands ownership to the frame and stops the decoder's pool
+        // recycling the buffer while alwaysCopiesSampleData is off.
         CFRetain(pixelBuffer);
         out = VideoFrame::fromNativeBuffer(pixelBuffer,
                                            [](void* buffer) { CFRelease(buffer); },
@@ -146,14 +132,8 @@ struct AppleDecoder final : Decoder
         return true;
     }
 
-    // Note on timestamps: the reader clips its output to the range, so the
-    // first frame after a seek reports the *seek time* rather than its own
-    // position — seeking to 0.35 in a 10fps clip yields the frame covering
-    // [0.3, 0.4) stamped 0.35. Its pixels are the right ones and playback is
-    // unaffected, but a caller that needs a frame's true position (an editor
-    // matching a cut to a source timestamp) cannot read it back off the first
-    // frame after a seek. Fixing that means indexing sync samples ourselves,
-    // which belongs with the keyframe-index work rather than here.
+    // The reader clips output to the range, so the first frame after a seek has
+    // the right pixels but reports the seek time as its own timestamp.
     void seek(double seconds, SeekMode) override
     {
         if (reader)
@@ -172,8 +152,8 @@ private:
         return std::isfinite(value) ? value : 0.0;
     }
 
-    // Builds a reader over [from, end of file). Called for open() and for every
-    // seek — AVAssetReader is single-pass, so repositioning means a new one.
+    // AVAssetReader is single-pass, so repositioning means a new one over
+    // [from, end of file).
     bool startReading(CMTime from)
     {
         reader.release();
@@ -201,8 +181,7 @@ private:
         if (newOutput == nil || ![newReader canAddOutput:newOutput])
             return false;
 
-        // Each frame's CVPixelBuffer is retained and outlives its sample buffer,
-        // so there is nothing to gain from AVFoundation copying it as well.
+        // nextFrame retains each buffer, so it outlives its sample buffer.
         newOutput.alwaysCopiesSampleData = NO;
 
         [newReader addOutput:newOutput];

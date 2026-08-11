@@ -32,19 +32,8 @@ ObjC::Ptr<NSObject<MTLSamplerState>> makeSampler(id<MTLDevice> metalDevice,
     samplerDescriptor.get().sAddressMode = toMetalAddressMode(sampling.addressMode);
     samplerDescriptor.get().tAddressMode = toMetalAddressMode(sampling.addressMode);
 
-    // Set rather than left at its default, which is NotMipmapped - "sample level
-    // 0, whatever other levels exist".
-    //
-    // D3D12's static samplers have declared MIN_MAG_MIP_LINEAR and
-    // MIN_MAG_MIP_POINT since they were written, so the two backends have
-    // disagreed here from the start and nothing could tell: no texture had a
-    // second level to sample. The first mipmapped one would have been filtered
-    // across levels on Windows and read at full size on Apple, from the same
-    // TextureSampling and with no way to see it but the picture.
-    //
-    // This needs no new sampling configuration, which is why the count stays at
-    // four: mip filtering on a single-level texture is what both APIs do anyway,
-    // so it is invisible to every texture without a chain.
+    // Set explicitly: the Metal default is NotMipmapped, which would disagree
+    // with D3D12's MIN_MAG_MIP_* static samplers on any mipmapped texture.
     samplerDescriptor.get().mipFilter = sampling.filter == TextureFilter::Linear
                                             ? MTLSamplerMipFilterLinear
                                             : MTLSamplerMipFilterNearest;
@@ -72,9 +61,7 @@ struct Device::Native
         }
     }
 
-    // Every sampling configuration gets its state up front: there are four of
-    // them, they are cheap, and building them here keeps nativeSampler() a
-    // const lookup that any thread can make without a lazy-init race.
+    // Built up front so nativeSampler() stays a race-free const lookup.
     void buildSamplers()
     {
         for (auto filter : {TextureFilter::Nearest, TextureFilter::Linear})
@@ -91,8 +78,8 @@ struct Device::Native
     CFRef<CVMetalTextureCacheRef> textureCache;
     Array<ObjC::Ptr<NSObject<MTLSamplerState>>, samplingConfigurations> samplers;
 
-    // Retained rather than held weakly: the command buffer is autoreleased, and
-    // the pool it came from may well have drained by the time a read waits.
+    // Retained: the command buffer is autoreleased and its pool may drain
+    // before a read waits on it.
     ObjC::Ptr<NSObject<MTLCommandBuffer>> lastSubmitted;
 };
 
@@ -140,8 +127,6 @@ void Device::trackSubmittedWork(void* nativeCommandBuffer)
 
 void Device::waitForSubmittedWork()
 {
-    // waitUntilCompleted on a command buffer that already finished returns at
-    // once, so this costs nothing when there is nothing outstanding.
     if (auto buffer = impl->lastSubmitted.get())
         [(id<MTLCommandBuffer>) buffer waitUntilCompleted];
 }

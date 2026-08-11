@@ -4,20 +4,6 @@
 
 #include <string>
 
-// Which `opacity` a document meant, which is a question about the element it is
-// written on rather than about the number.
-//
-// On a shape it is the colour's alpha and costs nothing. On a container it is
-// the *group's*, and the two are the same picture until the group overlaps
-// itself -- where multiplying it into each child stacks two half-transparent
-// shapes and darkens the join, and compositing the group draws them solid and
-// fades the result once. Only the second is what the format says, and it needs a
-// texture and a render pass to do.
-//
-// So what is pinned here is which elements take one. A texture per faded group
-// is the cost, and a document that fades a hundred shapes one at a time should
-// pay none of it.
-
 using namespace nano;
 using namespace eacp;
 
@@ -65,8 +51,6 @@ auto tGroupOpacityIsALayer =
     check(component->getOpacityGroupCount() == 1, "one group, one texture");
 };
 
-// The common case, and the one that must stay free: a container that says
-// nothing about its opacity, or says it is opaque, is not a group.
 auto tOpaqueGroupCostsNothing =
     test("SVGComponent/anOpaqueContainerTakesNoTexture") = []
 {
@@ -85,10 +69,6 @@ auto tOpaqueGroupCostsNothing =
     check(stated->getOpacityGroupCount() == 0);
 };
 
-// A group inside a group is two textures, and the inner one has to be rendered
-// before the outer one it is drawn into -- which is why the builder makes them
-// innermost-first. Nothing here can watch the order, but the count is what says
-// both exist to be ordered.
 auto tNestedGroups = test("SVGComponent/aFadedGroupInsideAFadedGroupIsTwo") = []
 {
     auto component = opacityComponent(
@@ -105,8 +85,6 @@ auto tNestedGroups = test("SVGComponent/aFadedGroupInsideAFadedGroupIsTwo") = []
     check(component->getOpacityGroupCount() == 2);
 };
 
-// The style attribute spells it too, and beats the presentation attribute of the
-// same name as every other property does.
 auto tOpacityThroughStyle = test("SVGComponent/opacityIsReadFromStyleToo") = []
 {
     auto component = opacityComponent(
@@ -120,8 +98,6 @@ auto tOpacityThroughStyle = test("SVGComponent/opacityIsReadFromStyleToo") = []
           "the declaration wins, so this group is faded");
 };
 
-// A container that drew nothing has nothing to composite, and a texture for it
-// would be a render pass over no pixels.
 auto tEmptyGroup =
     test("SVGComponent/aFadedContainerWithNoContentTakesNoTexture") = []
 {
@@ -131,9 +107,6 @@ auto tEmptyGroup =
     check(component->getOpacityGroupCount() == 0);
 };
 
-// Nothing about a group changes what its children are: the shapes, their clips
-// and their gradients are built exactly as they would have been, and only where
-// they are drawn to differs.
 auto tGroupKeepsItsContent =
     test("SVGComponent/compositingAGroupChangesNothingInsideIt") = []
 {

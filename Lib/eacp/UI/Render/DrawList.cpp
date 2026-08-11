@@ -15,9 +15,8 @@ void DrawList::clear()
 
 void DrawList::append(DrawCommand::Kind kind, int first)
 {
-    // Only a run of primitives merges. An entry that carries its own range --
-    // a mesh, a layer, a clip -- is one command apiece, since a command holding
-    // two of them would have to say which, and the range is already in the entry.
+    // Entries carrying their own range - mesh, layer, clip - get one command
+    // apiece.
     auto mergeable = kind == DrawCommand::Kind::Shapes;
 
     if (mergeable && !commands.empty())
@@ -44,8 +43,7 @@ void DrawList::addGlyphRun(int first, const Color& colour)
 {
     auto count = glyphs.size() - first;
 
-    // A string of spaces, or one whose every glyph the face has nothing to draw
-    // for. It advanced the pen and drew nothing, so there is nothing to replay.
+    // A string of spaces advanced the pen and drew nothing.
     if (count <= 0)
         return;
 

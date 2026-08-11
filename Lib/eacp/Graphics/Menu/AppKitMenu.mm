@@ -7,11 +7,9 @@ namespace eacp::Graphics
 {
 namespace
 {
-// Objective-C target that forwards an NSMenuItem (or NSButton) action to a
-// C++ MenuAction. Shared by the application menu bar and the tray icon.
-// Runtime classes get no automatic C++ ivar construction, so the action
-// lives behind one raw "state" pointer, created with the target and deleted
-// in its dealloc.
+// Forwards an NSMenuItem or NSButton action to a C++ MenuAction. Runtime
+// classes get no automatic C++ ivar construction, so the state lives behind one
+// raw pointer, created with the target and deleted in its dealloc.
 struct MenuTargetState
 {
     MenuAction action;
@@ -32,16 +30,9 @@ void menuTargetTrigger(id self, SEL, id)
         action();
 }
 
-// NSMenuValidation. An NSMenu autoenables its items by default, which means it
-// asks each item's target this question every time the menu is about to be
-// drawn — so the predicate is read from live state rather than sampled when the
-// bar was built, and an app never has to rebuild a menu to grey something out.
-//
-// The checkmark is refreshed here too, because this is the one hook AppKit
-// gives a target that fires just before every item is drawn — the same moment
-// the greying question is asked. The argument is the NSMenuItem being
-// validated, so a target shared with a plain NSButton (the tray icon) never
-// reaches the state line: buttons carry no isChecked.
+// NSMenuValidation, asked just before every item is drawn, so both the enabled
+// state and the checkmark follow live state. A target shared with a plain
+// NSButton never reaches the checkmark line, since buttons carry no isChecked.
 BOOL menuTargetValidate(id self, SEL, id item)
 {
     auto* state = getMenuTargetState(self);
@@ -122,9 +113,8 @@ NSMenuItem* buildAppKitMenuItem(const MenuItem& item, MenuTargets& targets)
 
     if (! item.responderSelector.empty())
     {
-        // Leaving the target nil is what makes this work: AppKit then sends the
-        // selector down the responder chain to the focused view, and asks that
-        // same view whether to enable the item.
+        // A nil target makes AppKit send the selector down the responder chain
+        // to the focused view, and ask that view whether to enable the item.
         nsItem.action =
             NSSelectorFromString(Strings::toNSString(item.responderSelector));
         return nsItem;

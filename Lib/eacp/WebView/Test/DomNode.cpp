@@ -12,8 +12,7 @@ struct AttrCondition
     std::optional<std::string> value;
 };
 
-// One compound selector — e.g. "li.todo-item[data-testid='x']". A full
-// selector is a sequence of these separated by the descendant combinator.
+// One space-separated step of a selector, e.g. "li.todo[data-testid='x']".
 struct Compound
 {
     std::string tag; // empty or "*" -> any tag

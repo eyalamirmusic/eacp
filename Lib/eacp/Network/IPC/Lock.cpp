@@ -38,10 +38,9 @@ FilePath lockFilePath(std::string_view name)
 }
 } // namespace
 
-// The handle lives here for the Lock's whole life: opened once, then locked
-// and unlocked by each guard in turn. held is what keeps the platforms
-// honest - flock() re-locking a handle it already owns quietly succeeds while
-// LockFileEx() reports a violation, so neither is asked twice.
+// held keeps the platforms honest: flock() re-locking a handle it already owns
+// quietly succeeds while LockFileEx() reports a violation, so neither is asked
+// twice.
 struct Lock::Impl
 {
     ~Impl() { detail::lockFileClose(file); }

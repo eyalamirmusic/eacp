@@ -2,8 +2,6 @@
 
 #include "ShaderEmitter.h"
 
-// Windows backend selection: the native shader source is HLSL.
-
 namespace eacp::GPU::detail
 {
 ShaderSource nativeShaderSource(const ShaderGraph& graph)

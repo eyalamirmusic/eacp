@@ -12,8 +12,7 @@ using Pixels = EA::Vector<std::uint8_t>;
 using SwapFn = void (*)(const std::uint8_t*, std::uint8_t*, std::size_t);
 using ResizeFn = void (*)(const std::uint8_t*, int, int, std::uint8_t*, int, int);
 
-// Pixel counts chosen to straddle every backend's lane width (SSE2/NEON = 4,
-// AVX2 = 8): zero, sub-lane, exact multiples, and odd remainders.
+// Straddles every backend's lane width (SSE2/NEON = 4, AVX2 = 8).
 constexpr std::size_t kSwapSizes[] = {
     0, 1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 64, 1000};
 
@@ -25,7 +24,6 @@ Pixels makePixels(std::size_t pixelCount)
     return data;
 }
 
-// Independent reference: swap byte 0 and byte 2 of every 4-byte pixel.
 Pixels swapReference(const Pixels& in)
 {
     auto out = in;
@@ -57,8 +55,7 @@ struct ResizeCase
     int srcW, srcH, dstW, dstH;
 };
 
-// Up, down, identity, extreme aspect, and prime sizes to stress edge clamping
-// and the per-pixel coordinate math in both directions.
+// Up, down, identity, extreme aspect and prime sizes, to stress edge clamping.
 constexpr ResizeCase kResizeCases[] = {
     {1, 1, 4, 4},
     {4, 4, 1, 1},
@@ -169,8 +166,7 @@ struct WarpCase
     float m[6];
 };
 
-// Identity, scale+translate, rotate-ish, shear, a degenerate source width, and
-// odd sizes -- exercising edge clamping and the affine coordinate math.
+// Identity, scale+translate, rotation, shear and a degenerate source width.
 constexpr WarpCase kWarpCases[] = {
     {16, 16, 16, 16, {1.f, 0.f, 0.f, 0.f, 1.f, 0.f}},
     {16, 16, 20, 12, {0.7f, 0.f, 1.f, 0.f, 0.7f, 1.f}},
@@ -211,8 +207,7 @@ auto tBaselineWarpMatchesScalar = test("SIMD/baselineWarpMatchesScalar") = []
 
 auto tResizeIdentityReturnsSource = test("SIMD/resizeIdentityReturnsSource") = []
 {
-    // Same-size bilinear with half-pixel centers samples each pixel exactly, so
-    // every backend must return the source untouched.
+    // Half-pixel centers make same-size bilinear sample each pixel exactly.
     const ResizeCase cases[] = {{5, 4, 5, 4}, {16, 9, 16, 9}};
     for (const auto& c: cases)
     {
@@ -226,9 +221,8 @@ auto tResizeIdentityReturnsSource = test("SIMD/resizeIdentityReturnsSource") = [
 
 namespace
 {
-// A length that is not a multiple of any backend's vector width, to exercise the
-// scalar tail. Integer-valued data keeps every result exact (so the comparison
-// is fusion-agnostic for multiplyAdd).
+// Not a multiple of any vector width, so the scalar tail runs. Integer-valued
+// data keeps results exact even if the compiler contracts a multiply-add.
 constexpr int kArrayCount = 1003;
 
 EA::Vector<float> ramp(int stride, int offset)
@@ -303,7 +297,6 @@ auto tArrayMultiplyAddScalarMatchesReference =
         check(out[i] == a[i] * 3.f + c[i]);
 };
 
-// out == c is the accumulate-in-place shape the docs promise (out[i] += a[i]*b).
 auto tArrayMultiplyAddScalarAccumulatesInPlace =
     test("SIMD/arrayMultiplyAddScalarAccumulatesInPlace") = []
 {
@@ -315,8 +308,7 @@ auto tArrayMultiplyAddScalarAccumulatesInPlace =
         check(out[i] == before[i] + a[i] * 2.f);
 };
 
-// t = 0.25 keeps every intermediate exactly representable, so the comparison
-// stays exact whether or not the compiler contracts the multiply-add.
+// t = 0.25 keeps every intermediate exactly representable.
 auto tArrayLerpMatchesReference = test("SIMD/arrayLerpMatchesReference") = []
 {
     const auto a = ramp(17, 1);
@@ -327,12 +319,11 @@ auto tArrayLerpMatchesReference = test("SIMD/arrayLerpMatchesReference") = []
         check(out[i] == a[i] + 0.25f * (b[i] - a[i]));
 };
 
-// Integer-valued data keeps the double accumulation exact regardless of the
-// four-lane interleave, so the comparison against a sequential sum is exact.
+// Integer-valued data keeps the accumulation exact despite the lane interleave.
 auto tArraySumOfSquaresMatchesReference =
     test("SIMD/arraySumOfSquaresMatchesReference") = []
 {
-    const auto a = ramp(17, -8); // mixed signs
+    const auto a = ramp(17, -8);
     auto expected = 0.0;
     for (int i = 0; i < kArrayCount; ++i)
         expected += (double) a[i] * (double) a[i];
@@ -340,7 +331,6 @@ auto tArraySumOfSquaresMatchesReference =
     check(eacp::simd::sumOfSquares(a.data(), kArrayCount) == expected);
     check(eacp::simd::sumOfSquares(a.data(), 0) == 0.0);
 
-    // Counts around the four-lane width exercise the tail loop.
     for (auto count: {1, 2, 3, 4, 5, 7, 8, 9})
     {
         auto partial = 0.0;
@@ -352,19 +342,16 @@ auto tArraySumOfSquaresMatchesReference =
 
 auto tArrayPeakAbsMatchesReference = test("SIMD/arrayPeakAbsMatchesReference") = []
 {
-    auto a = ramp(29, -14); // mixed signs; peak is a negative value's magnitude
+    auto a = ramp(29, -14); // peak is |-14|
     check(eacp::simd::peakAbs(a.data(), kArrayCount) == 14.f);
     check(eacp::simd::peakAbs(a.data(), 0) == 0.f);
 
-    // The peak can land in any lane, including the tail.
     a[kArrayCount - 1] = -99.f;
     check(eacp::simd::peakAbs(a.data(), kArrayCount) == 99.f);
     a[2] = 200.f;
     check(eacp::simd::peakAbs(a.data(), kArrayCount) == 200.f);
 };
 
-// The buffer-level helpers in Ops.h: each forwards to the raw primitive, in
-// place on its first argument.
 auto tOpsHelpersForwardToPrimitives = test("SIMD/opsHelpersForwardToPrimitives") = []
 {
     const auto a = ramp(17, 1);
@@ -410,7 +397,6 @@ auto tOpsHelpersForwardToPrimitives = test("SIMD/opsHelpersForwardToPrimitives")
     check(eacp::simd::peakAbs(a) == eacp::simd::peakAbs(a.data(), kArrayCount));
 };
 
-// Mismatched sizes process the common prefix and never touch the tail.
 auto tOpsHelpersStopAtShortestBuffer =
     test("SIMD/opsHelpersStopAtShortestBuffer") = []
 {

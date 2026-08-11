@@ -1,11 +1,9 @@
 #include "../Backends.h"
 #include "../SIMD.h"
 
-// Public image-kernel entry points. Each resolves the best available backend
-// once (CPUID on x86-64, fixed on every other architecture) and calls it through
-// a function pointer -- a deliberate, non-inlinable boundary between baseline and
-// AVX2 code. (The float-array primitives live in Tu/ArrayOps.cpp; being
-// memory-bound and auto-vectorized, they need no runtime dispatch.)
+// Each entry point resolves the best backend once (CPUID on x86-64, fixed
+// elsewhere) and calls it through a function pointer - a deliberate,
+// non-inlinable boundary between baseline and AVX2 code.
 namespace eacp::simd
 {
 namespace
@@ -32,9 +30,7 @@ using ResizeFn = void (*)(const std::uint8_t*, int, int, std::uint8_t*, int, int
 
 ResizeFn pickResizeBilinear() noexcept
 {
-    // Bilinear blends one pixel's four channels per 128-bit step, so AVX2's
-    // 256-bit width adds nothing yet; x86 uses SSE2 until a 2-pixel AVX2 path
-    // lands.
+    // One pixel's four channels fill a 128-bit step, so AVX2 adds nothing yet.
 #if defined(__x86_64__) || defined(_M_X64)
     return &backends::resizeBilinear_sse2;
 #elif defined(__aarch64__) || defined(_M_ARM64)
@@ -79,9 +75,6 @@ void convertBgraToRgba(const std::uint8_t* src,
     const auto rowPixels = static_cast<std::size_t>(width);
     const auto tightRowBytes = rowPixels * 4;
 
-    // Tightly-packed frames swap in a single pass; padded rows go one by one.
-    // Either way the per-pixel work runs through the dispatched swapRedBlue, and
-    // this whole routine is compiled at the SIMD module's forced optimization.
     if (srcBytesPerRow == tightRowBytes)
     {
         swapRedBlue(src, dst, rowPixels * static_cast<std::size_t>(height));

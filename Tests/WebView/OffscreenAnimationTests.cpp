@@ -2,11 +2,6 @@
 
 #include <cmath>
 
-// Options::driveOffscreenAnimation keeps a requestAnimationFrame loop running
-// while the view is off-screen. Without it, rAF never fires off-screen, so a
-// canvas that paints on rAF stays blank; with it, rAF is redirected onto a timer
-// and the canvas paints — the difference the two tests below capture.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
@@ -21,10 +16,8 @@ bool near(const Color& c, int r, int g, int b, int tolerance = 16)
     return within(c.r, r) && within(c.g, g) && within(c.b, b);
 }
 
-// A red page with a full-bleed canvas that an rAF loop paints green. Until rAF
-// fires, the canvas is transparent and the red body shows through. A timer (which
-// fires off-screen even when rAF does not) signals ready, so the test can snapshot
-// regardless of whether the animation ran.
+// Red page, canvas painted green by an rAF loop; a timer (which fires
+// off-screen even when rAF does not) signals ready so a snapshot is possible.
 const std::string pageHtml = R"HTML(<!doctype html><html><head><style>
   html,body{margin:0;height:100%;background:#e01010}
   canvas{display:block;width:100%;height:100%}
@@ -76,23 +69,15 @@ struct Fixture
 };
 } // namespace
 
-// With the flag, the rAF loop runs off-screen and paints the canvas green.
 auto tDrivesAnimationOffscreen = test("OffscreenAnimation/paintsWhenEnabled") = []
 {
     auto fix = Fixture {/*driveOffscreen*/ true};
     check(near(fix.centre(), 16, 192, 32)); // #10c020, the painted green
 };
 
-// Without the flag, whether an off-screen rAF loop keeps running is left to the
-// platform, and the two desktop backends genuinely differ:
-//   - WKWebView has no display link off-screen, so rAF never fires: the canvas
-//     stays transparent and the red body shows through.
-//   - WebView2 is composition-hosted and always reports itself visible (so that
-//     renderToImageAsync can snapshot it at all), so its rAF keeps firing and
-//     paints the canvas green even off-screen — the flag is redundant there.
-// Either way the default is not "paints regardless": on macOS it establishes
-// that paintsWhenEnabled's green comes from the flag, and on Windows it pins the
-// native-rAF behaviour the flag harmlessly mirrors.
+// The two desktop backends genuinely differ: WKWebView has no display link
+// off-screen so rAF never fires, while composition-hosted WebView2 always
+// reports itself visible and keeps painting.
 auto tAnimationDefaultMatchesPlatform =
     test("OffscreenAnimation/frozenByDefault") = []
 {

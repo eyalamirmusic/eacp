@@ -5,21 +5,6 @@
 #include <algorithm>
 #include <optional>
 
-// Scrolling, clipped panes: SpriteRenderer::setScissorRect, wheel events, and
-// GPUView::backingScale working together, which is the combination every
-// scrollable region needs.
-//
-// Two panes side by side, each holding a list taller than it is. Point at one
-// and scroll: only that pane moves, and its rows are cut at its edge rather
-// than spilling into its neighbour. The rows are deliberately drawn wider than
-// their pane, so without a scissor rect the two lists would overlap in the
-// middle of the window.
-//
-// The wheel handler shows the delta convention: a trackpad reports points and
-// is applied as-is, a notched wheel reports lines and only the view knows what
-// a line is worth. The right edge of each pane carries a scrollbar so the
-// position is visible while dragging.
-
 using namespace eacp;
 
 namespace
@@ -45,8 +30,7 @@ struct ClippingView final : GPU::GPUView
 {
     ClippingView()
     {
-        // A crisp scissor edge: multisampling would feather the boundary across
-        // a pixel, which is exactly what clipping is meant to avoid.
+        // Multisampling would feather the scissor edge across a pixel.
         setSampleCount(1);
         setHandlesMouseEvents(true);
 
@@ -60,8 +44,6 @@ struct ClippingView final : GPU::GPUView
 
         const auto bounds = getLocalBounds();
 
-        // A resize only moves the logical space; the pipelines the renderer
-        // compiled are unaffected, so it is set rather than rebuilt.
         if (bounds.w > 0 && bounds.h > 0)
         {
             if (sprites)
@@ -92,17 +74,14 @@ struct ClippingView final : GPU::GPUView
         return (float) pane.rowCount * (rowHeight + rowGap);
     }
 
-    // Scroll runs from 0 (top) down to a negative offset that puts the last row
-    // at the bottom; a list shorter than its pane cannot scroll at all.
+    // Scroll runs from 0 at the top down to a negative offset at the bottom.
     static float clampScroll(const Pane& pane, float value)
     {
         const auto lowest = std::min(0.f, pane.bounds.h - contentHeight(pane));
         return std::clamp(value, lowest, 0.f);
     }
 
-    // Logical points -> render-target pixels. setScissorRect works in pixels
-    // because that is what both backends' scissor state means; everything else
-    // in this file is in points.
+    // setScissorRect works in pixels; everything else in this file is in points.
     Graphics::Rect toPixels(const Graphics::Rect& rect) const
     {
         const auto scale = backingScale();
@@ -113,13 +92,9 @@ struct ClippingView final : GPU::GPUView
     {
         sprites->fillRect(pane.bounds, paneColor);
 
-        // Everything from here to clearScissorRect is confined to the pane, so
-        // the rows below can be laid out as if the pane were unbounded.
-        //
         // Set through the renderer rather than on the pass: draws are batched,
-        // so the pane background queued just above has to reach the pass before
-        // the clip that must not catch it. The wrapper does that; setting the
-        // scissor on the pass by hand would clip the background too.
+        // so the background queued just above has to reach the pass before the
+        // clip that must not catch it.
         sprites->setScissorRect(toPixels(pane.bounds));
 
         for (auto row = 0; row < pane.rowCount; ++row)
@@ -127,12 +102,11 @@ struct ClippingView final : GPU::GPUView
             const auto y =
                 pane.bounds.y + pane.scroll + (float) row * (rowHeight + rowGap);
 
-            // Wider than the pane on purpose: the overhang is what proves the
-            // scissor rect is doing the work.
+            // Wider than the pane on purpose: the overhang is what the scissor
+            // rect has to cut off.
             const auto rowRect = Graphics::Rect {
                 pane.bounds.x + 10.f, y + rowGap, pane.bounds.w * 1.4f, rowHeight};
 
-            // Alternate rows shade slightly so scrolling is legible.
             const auto color =
                 row % 2 == 0 ? pane.rowColor : pane.rowColor.darker(0.12f);
 
@@ -184,9 +158,8 @@ struct ClippingView final : GPU::GPUView
             if (!pane.bounds.contains(event.pos))
                 continue;
 
-            // The delta's unit depends on the device: a trackpad's precise
-            // delta is already in points, a notched wheel's is in lines, and
-            // only this view knows how tall a line is.
+            // A precise delta is already in points; a notched wheel reports
+            // lines, and only this view knows how tall a line is.
             const auto points = event.preciseScrolling
                                     ? event.delta.y
                                     : event.delta.y * (rowHeight + rowGap);

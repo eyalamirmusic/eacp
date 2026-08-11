@@ -10,11 +10,6 @@
 #include <algorithm>
 #include <cmath>
 
-// Windows/D3D12 backend. Records draw commands onto the frame's recording via
-// the D3D12Encoder. The encoder is owned here so it is freed when the pass
-// goes out of scope; the CommandContext it points at stays owned by the Frame,
-// which submits and presents on destruction.
-
 namespace eacp::GPU
 {
 struct RenderPass::Native
@@ -32,9 +27,8 @@ struct RenderPass::Native
     int targetWidth = 0;
     int targetHeight = 0;
 
-    // Whether a valid pipeline state is currently bound. A pipeline whose
-    // compilation failed has a null state; drawing without one is flagged by the
-    // D3D12 debug layer, so draws are skipped when false.
+    // A failed pipeline has a null state, which the D3D12 debug layer flags on
+    // a draw, so draws are skipped when false.
     bool pipelineBound = false;
 };
 
@@ -178,21 +172,17 @@ void RenderPass::setFragmentTexture(const Texture& texture,
 
     auto* list = impl->encoder->commands->list.get();
 
-    // A render target an earlier pass on this frame drew into is still in
-    // RENDER_TARGET, and this is where it goes back. A plain texture is already
-    // in the state this asks for and the helper records nothing.
     transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-    // Only the SRV: the sampler is a static sampler in the root signature, chosen
-    // by the register the shader's sampler was emitted at. See TextureSampling.
+    // Only the SRV: samplers are static in the root signature, picked by the
+    // register the shader emitted them at. See TextureSampling.
     list->SetGraphicsRootDescriptorTable(renderTextureParam(slot), data->srv.gpu);
 }
 
 namespace
 {
-// The address a stage's root SRV binds to, with the buffer moved into the state
-// a shader read needs. A kernel that wrote this buffer left it in
-// UNORDERED_ACCESS; the barrier here is what orders the draw behind that write.
+// The barrier here is what orders the draw behind a kernel that left this
+// buffer in UNORDERED_ACCESS.
 D3D12_GPU_VIRTUAL_ADDRESS storageBufferAddress(CommandContext& commands,
                                                const Buffer& buffer)
 {
@@ -201,9 +191,8 @@ D3D12_GPU_VIRTUAL_ADDRESS storageBufferAddress(CommandContext& commands,
     if (data == nullptr || data->resource == nullptr)
         return 0;
 
-    // The union of the two read states rather than one: the same buffer may be
-    // bound to both stages, and asking for each in turn would barrier it back
-    // and forth between two states that are both just "a shader is reading it".
+    // The union of both read states, so a buffer bound to both stages is not
+    // barriered back and forth between them.
     transitionForUse(commands,
                      *data,
                      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
@@ -352,17 +341,13 @@ void RenderPass::drawIndexedInstanced(const Buffer& indices,
 
 void RenderPass::end()
 {
-    // Before the encoder goes, so a batching renderer's queued draws still get
-    // recorded. See RenderPass::Participant.
+    // Before the encoder goes, so queued draws still get recorded — and before
+    // the timestamp, so what they flushed lands inside the timed pass.
     drainParticipants();
 
-    // After them, so what a participant flushed is inside the pass being timed
-    // rather than after it.
     if (impl->encoder)
         endTimedPass(*impl->encoder);
 
-    // Commands are recorded onto the frame's list, which submits when the
-    // frame is destroyed; releasing the encoder marks the pass finished.
     impl->encoder.reset();
 }
 } // namespace eacp::GPU

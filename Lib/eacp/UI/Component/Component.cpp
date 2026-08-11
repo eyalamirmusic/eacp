@@ -11,15 +11,11 @@ Component::Component() = default;
 
 Component::~Component()
 {
-    // Before unlinking, while walking up to the host still reaches it: the host
-    // may be holding this as its root, its hover or its press capture, and any
-    // of those outliving the component is a dangling write later.
+    // Both must run before unlinking, while walking up still reaches them: each
+    // may hold this component (root, hover, press capture, drag source).
     if (auto* found = findHost())
         found->componentDeleted(*this);
 
-    // And the same for a drag in progress, which holds the component it started
-    // from. A card destroyed mid-drag is the ordinary case rather than a strange
-    // one: a drop is what destroys it.
     if (auto* container = findDragContainer())
         container->componentDeleted(*this);
 
@@ -39,17 +35,11 @@ void Component::setBounds(const Rect& newBounds)
     if (sizeChanged)
     {
         resized();
-
-        // A paint() draws in local bounds, so a component that is now a
-        // different size is drawing the wrong picture until it is asked again.
         repaint();
         return;
     }
 
-    // Moved rather than resized: the recording is in this component's own space
-    // and the frame applies the position as it replays, so what it has is still
-    // right. A dragged card and a scrolled list therefore cost a frame and no
-    // paint at all.
+    // Moved rather than resized: the recording is in local space, so it stands.
     invalidateHost();
 }
 
@@ -70,10 +60,8 @@ void Component::addChildComponent(Component& child)
     child.parent = this;
     children.add(&child);
 
-    // The child is the thing that is new, not this component's own drawing. It
-    // was born stale and nothing above it knew, so the chain is joined up here
-    // -- otherwise a component added to a tree that is otherwise settled would
-    // never be reached by the recording walk.
+    // The child was born stale with nothing above it knowing, so restore the
+    // descendantDirty invariant.
     if (child.needsRecording())
         child.markAncestorsDirty();
 
@@ -130,13 +118,10 @@ void Component::setVisible(bool shouldBeVisible)
 
     visible = shouldBeVisible;
 
-    // Nothing this component draws has changed -- only whether the frame draws
-    // it. A component shown again replays the list it was hidden with.
     invalidateHost();
 
-    // Unless it never had one. A subtree hidden before it was ever recorded is
-    // skipped by the walk, so its ancestors may have forgotten it; being shown
-    // is the point at which that has to be put right.
+    // A subtree hidden before it was ever recorded is skipped by the walk, so
+    // its ancestors may have forgotten it.
     if (visible && needsRecording())
         markAncestorsDirty();
 }
@@ -149,9 +134,7 @@ void Component::toFront()
     parent->children.removeAllMatches(this);
     parent->children.add(this);
 
-    // Order is structure rather than content: the frame walks the child list as
-    // it stands, so a reordered sibling is drawn in its new place without either
-    // of them painting again.
+    // Order is structure, not content: no recording goes stale.
     invalidateHost();
 }
 
@@ -180,18 +163,12 @@ void Component::setWantsKeyboardFocus(bool shouldWantFocus)
 {
     wantsKeyboardFocus = shouldWantFocus;
 
-    // Losing it on the way out, because a component that has stopped wanting the
-    // keyboard and is still holding it swallows every key the tree sends.
     if (!wantsKeyboardFocus && hasKeyboardFocus())
         giveAwayKeyboardFocus();
 }
 
 void Component::grabKeyboardFocus()
 {
-    // The flag is the single answer to "can this hold the keyboard", so asking
-    // does not get around it. Otherwise setWantsKeyboardFocus(false) would mean
-    // two different things depending on which side of a grab it was called, and
-    // a component could end up focused while reporting that it cannot be.
     if (!wantsKeyboardFocus)
         return;
 
@@ -217,9 +194,7 @@ bool Component::hasKeyboardFocus() const
 
 namespace
 {
-// The tree flattened into the order children were added, which is also the order
-// they are painted in. Depth first and parents before children, so a panel that
-// wants focus is reached before what it holds.
+// Depth first, parents before children - the order they were added and painted.
 void gatherFocusOrder(Component& component, Vector<Component*>& into)
 {
     if (!component.isVisible())
@@ -252,15 +227,12 @@ Component* Component::nextComponentWantingFocus(bool forwards)
         if (order[i] == this)
             index = i;
 
-    // Nothing focused yet, or focus on something that has stopped wanting it:
-    // start at whichever end the direction implies rather than nowhere.
+    // Nothing focused yet, or focus on something that has stopped wanting it.
     if (index < 0)
         return forwards ? order[0] : order[order.size() - 1];
 
     auto next = forwards ? index + 1 : index - 1;
 
-    // Wrapping, so Tab off the last field returns to the first rather than
-    // trapping the keyboard at the end of the tree.
     if (next >= order.size())
         next = 0;
     else if (next < 0)
@@ -290,20 +262,15 @@ ComponentHost* Component::findHost() const
 
 void Component::repaint()
 {
-    // The ancestor walk only where the bit was not already set. If it was, they
-    // were marked when it was set and nothing has cleared them since -- the
-    // recording walk cannot, because it recomputes descendantDirty from what is
-    // still pending below rather than clearing it on the way out.
+    // Already-set means the ancestors were marked then and nothing clears them.
     if (!selfDirty)
     {
         selfDirty = true;
         markAncestorsDirty();
     }
 
-    // And always the host, even for a component already stale: a repaint asked
-    // for after this frame's recording walk has run has to bring about the next
-    // frame, or the change waits for whatever happens to invalidate the view
-    // next.
+    // Always, even when already stale: a repaint after this frame's recording
+    // walk still has to bring about the next frame.
     invalidateHost();
 }
 

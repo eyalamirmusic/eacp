@@ -13,13 +13,8 @@ struct NumberReader
     bool hasNumber();
     float readFloat();
 
-    // One of an arc command's two flags, which is a single '0' or '1' and not a
-    // number.
-    //
-    // The distinction is not pedantry: the grammar lets a flag run straight into
-    // whatever follows it, so "a5 5 0 0110 0" is largeArc 0, sweep 1, then the
-    // point (10, 0). Read as numbers those four characters are one value of 110,
-    // and every minified path in the world is written that way.
+    // An arc flag is a single '0' or '1', not a number: the grammar lets it run
+    // into what follows, so "a5 5 0 0110 0" is 0, 1, then the point (10, 0).
     bool readFlag();
 
     std::string_view src;

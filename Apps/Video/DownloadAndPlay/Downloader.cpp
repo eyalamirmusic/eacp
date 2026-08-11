@@ -8,8 +8,7 @@ using namespace eacp;
 
 Downloader::~Downloader()
 {
-    // The worker writes through `progress`, which this owns, so it has to be
-    // gone before we are.
+    // The worker writes through `progress`, so it must be gone before we are.
     cancel();
     join();
 
@@ -60,8 +59,7 @@ bool Downloader::start(std::string url,
     // A finished-but-unjoined worker from a previous transfer.
     join();
 
-    // A fresh progress block per transfer: the old one may still be being read
-    // by a UI that has not noticed the previous download ended.
+    // A fresh block per transfer: a UI may still be reading the old one.
     progress = std::make_shared<HTTP::DownloadProgress>();
     running = true;
 
@@ -76,8 +74,6 @@ bool Downloader::start(std::string url,
             auto request = HTTP::Request {url};
             request.progress = tracker.get();
 
-            // Written aside and renamed on success, so an interrupted transfer
-            // cannot leave a truncated file that later passes for a whole one.
             auto partial = FilePath {path.str() + ".part"};
             auto response = request.downloadTo(partial.str());
 

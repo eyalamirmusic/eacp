@@ -13,10 +13,7 @@ namespace eacp::Graphics
 {
 namespace
 {
-// One window's menu bar: the native handle, and the table that turns a
-// WM_COMMAND id back into something to run.
-//
-// Keyed by HWND rather than held on the Window, because the messages that need
+// Keyed by HWND rather than held on the Window, because the messages needing
 // it arrive at the WndProc with nothing but the handle.
 struct InstalledBar
 {
@@ -24,8 +21,8 @@ struct InstalledBar
     Vector<MenuCommand> commands;
 };
 
-// Immortal because ~Native() reaches in here to remove its bar, and a Window at
-// namespace scope is constructed before this registry and so destroyed after it.
+// Immortal because a Window at namespace scope can outlive it and ~Native()
+// reaches in here to remove its bar.
 std::unordered_map<HWND, InstalledBar>& installedBars()
 {
     return Singleton::getImmortal<std::unordered_map<HWND, InstalledBar>>();
@@ -43,13 +40,8 @@ HMENU buildPopup(const Menu& menu, unsigned& nextId)
     return popup;
 }
 
-// AppendMenuW reads '&' as the mnemonic prefix, so a title containing one draws
-// as an underscore and eats the next character — "Find & Replace" becomes
-// "Find _Replace". Doubling escapes it.
-//
-// Done here rather than in menuItemLabel because it is this API's convention,
-// not the model's: macOS wants the raw string, and the same MenuBar is built
-// for both.
+// AppendMenuW reads '&' as the mnemonic prefix; doubling escapes it. Done here
+// rather than in menuItemLabel because macOS wants the raw string.
 std::wstring toMenuText(const std::string& text)
 {
     auto escaped = std::string {};
@@ -68,8 +60,7 @@ std::wstring toMenuText(const std::string& text)
 
 void appendItem(HMENU parent, const MenuItem& item, unsigned& nextId)
 {
-    // Switches on the shared classification rather than asking its own
-    // questions, so its ids cannot drift out of step with flattenCommands.
+    // Shares classifyMenuEntry with flattenCommands so ids cannot drift.
     switch (classifyMenuEntry(item))
     {
         case MenuEntryKind::Separator:
@@ -87,8 +78,6 @@ void appendItem(HMENU parent, const MenuItem& item, unsigned& nextId)
             return;
         }
 
-        // Present in the model, absent from this backend. Skipped rather than
-        // added dead — and flattenCommands skips it too.
         case MenuEntryKind::Skipped:
             return;
 
@@ -113,21 +102,14 @@ void installWin32MenuBar(HWND hwnd, const MenuBar& bar)
     auto installed = InstalledBar {};
     installed.menu = CreateMenu();
 
-    // Both this walk and flattenCommands assign ids by switching on
-    // classifyMenuEntry, so they agree structurally rather than by two
-    // functions having been written to match. MenuCommandsTests covers that
-    // classification, which is the half of the agreement a Mac can check.
     auto nextId = 1u;
 
     for (const auto& menu: bar.menus)
     {
         auto* popup = buildPopup(menu, nextId);
 
-        // A menu that came out empty is left off the bar entirely. macOS's
-        // standardApplicationMenu is empty here by design — Windows has no
-        // About/Hide/Quit block — and buildDefaultWebViewMenuBar adds it
-        // regardless, so without this five shipped examples grow a top-level
-        // title that opens onto nothing.
+        // An empty menu is left off the bar rather than opening onto nothing;
+        // standardApplicationMenu is empty on Windows by design.
         if (GetMenuItemCount(popup) <= 0)
         {
             DestroyMenu(popup);
@@ -142,12 +124,8 @@ void installWin32MenuBar(HWND hwnd, const MenuBar& bar)
 
     installed.commands = flattenCommands(bar);
 
-    // The window was sized before it had a menu — AdjustWindowRectExForDpi was
-    // told bMenu = FALSE, because at creation time it was true — and SetMenu
-    // takes the bar's height straight out of the client area. So the content
-    // would silently come up a menu-bar shorter than the size it asked for.
-    // Measured rather than calculated: the bar can wrap to two rows on a narrow
-    // window, and GetSystemMetrics(SM_CYMENU) only ever describes one.
+    // SetMenu takes the bar's height out of the client area, so measure and
+    // give it back. Measured, not calculated: the bar can wrap to two rows.
     RECT client {};
     GetClientRect(hwnd, &client);
 
@@ -155,9 +133,7 @@ void installWin32MenuBar(HWND hwnd, const MenuBar& bar)
 
     SetMenu(hwnd, installed.menu);
 
-    // The bar is non-client area, so the window has to be told to redraw it:
-    // without this the menu exists and simply is not painted until something
-    // else forces a frame.
+    // The bar is non-client area, so it is not painted until asked.
     DrawMenuBar(hwnd);
 
     GetClientRect(hwnd, &client);
@@ -192,8 +168,7 @@ bool handleWin32MenuCommand(HWND hwnd, unsigned id)
     if (command == nullptr)
         return false;
 
-    // Copied before running: the action may install a new menu bar, which would
-    // free the table this pointer is into while it is still being called.
+    // Copied: the action may install a new bar, freeing the table it points to.
     const auto action = command->action;
 
     if (action)
@@ -210,14 +185,11 @@ void updateWin32MenuEnabledState(HWND hwnd)
     if (found == bars.end())
         return;
 
-    // Copied before asking, for the same reason handleWin32MenuCommand copies
-    // the action: a predicate that reinstalls the menu bar would rehash the map
-    // and free this vector while it is still being walked.
+    // Copied: a predicate that reinstalls the bar would free this vector.
     auto* menu = found->second.menu;
     const auto commands = found->second.commands;
 
-    // MF_BYCOMMAND searches the whole tree from the root, so every item can be
-    // updated from the top without tracking which popup is opening.
+    // MF_BYCOMMAND searches the whole tree, so the opening popup is irrelevant.
     for (const auto& command: commands)
     {
         const auto enabled = command.isEnabled && command.isEnabled();
@@ -225,9 +197,7 @@ void updateWin32MenuEnabledState(HWND hwnd)
         EnableMenuItem(
             menu, command.id, MF_BYCOMMAND | (enabled ? MF_ENABLED : MF_GRAYED));
 
-        // Same moment macOS refreshes the checkmark (validateMenuItem:). A
-        // command with no predicate is left alone rather than force-unchecked,
-        // so this stays "not checkable", not "unchecked".
+        // A command with no predicate is left alone rather than unchecked.
         if (command.isChecked)
             CheckMenuItem(menu,
                           command.id,
@@ -257,27 +227,16 @@ void removeWin32MenuBar(HWND hwnd)
 
 void setApplicationMenuBar(const MenuBar& bar, Window& window)
 {
-    // Windows has no application menu bar — a menu belongs to a window and is
-    // drawn inside its frame. An app with several windows installs one per
-    // window; on macOS the same call installs it once and ignores which window
-    // was passed.
-    //
-    // Worth knowing about the accelerator column this prints: Win32 menu
-    // accelerators are decorative text and nothing more, so an item reading
-    // "Ctrl+S" does not make Ctrl+S work. The keystroke still has to arrive
-    // through the application's own keymap — and eacp's Keyboard reports
-    // `command` for the *Windows* key here, so an app binding cmd+S prints
-    // Ctrl+S and responds to Win+S until that mapping is settled. See
-    // acceleratorText in MenuCommands.h.
+    // Windows menus belong to a window, so an app with several installs one
+    // per window. Win32 menu accelerators are decorative text only: the
+    // keystroke still has to arrive through the app's own keymap.
     detail::installWin32MenuBar(static_cast<HWND>(window.getHandle()), bar);
 }
 
 Menu standardApplicationMenu(std::string applicationName)
 {
-    // Windows puts no About/Hide/Quit block in a menu bar — the window's system
-    // menu and close button do that job — so this stays an empty menu carrying
-    // the name, and an app is expected to leave it out. Kept rather than
-    // removed so portable code can build one bar for both platforms.
+    // Windows puts no About/Hide/Quit block in a menu bar; kept empty so
+    // portable code can build one bar for both platforms.
     return Menu {std::move(applicationName)};
 }
 
@@ -285,13 +244,9 @@ Menu standardEditMenu()
 {
     auto menu = Menu {"Edit"};
 
-    // The macOS version routes these down the responder chain with selectors,
-    // which Windows has no equivalent for — so nothing here can actually run.
-    //
-    // Greyed rather than left looking available: an item that draws enabled,
-    // prints "Ctrl+V" and silently does nothing on click is worse than one that
-    // visibly cannot be used. An app wanting working entries builds them from
-    // its own commands, which is what ECode does.
+    // Windows has no responder chain, so these cannot run; greyed rather than
+    // left looking available. Apps build working entries from their own
+    // commands.
     const auto unavailable = [] { return false; };
 
     menu.add(MenuItem::withAction("Undo", [] {}, commandKey("z"), unavailable));

@@ -7,18 +7,6 @@
 #include <mutex>
 #include <optional>
 
-// One camera, two processes. The first instance claims the channel name,
-// opens the camera and shows it locally through CameraView's zero-copy
-// path, then launches this same executable again; the second instance
-// loses the claim and dials in as a viewer. Every fresh frame is shipped
-// over the message channel as [u32 width][u32 height][BGRA bytes] and
-// drawn on the viewer's GPU view with the same CPU-upload path Windows
-// display uses. The pair exercises the whole pipeline: capture, zero-copy
-// local display, IPC transport, remote texture upload.
-//
-// Frames ride the raw Messenger, not the RPC bridge: megabytes of pixels
-// are exactly what the length-prefixed binary framing is for, and exactly
-// what JSON is not.
 using namespace eacp;
 using namespace Graphics;
 
@@ -77,10 +65,6 @@ WindowOptions windowOptionsFor(bool isCamera)
 }
 } // namespace
 
-// The receiving end of the feed: whole BGRA frames arrive on the main
-// thread and the next vsync uploads them into a persistent texture - the
-// render body is CameraView::renderCpuUpload with the camera swapped for
-// a remote peer.
 struct RemoteFrameView final : GPU::GPUView
 {
     RemoteFrameView()
@@ -106,8 +90,6 @@ struct RemoteFrameView final : GPU::GPUView
         auto bounds = getLocalBounds();
         auto size = Point {bounds.w, bounds.h};
 
-        // A resize is a new logical size and nothing more: the pipelines the
-        // renderer compiled are unaffected by it.
         if (!renderer.has_value())
             renderer.emplace(size, sampleCount());
         else
@@ -140,8 +122,7 @@ struct RemoteFrameView final : GPU::GPUView
 
         auto imageArea = Cameras::CameraView::computeImageArea(
             bounds.w, bounds.h, width, height, Cameras::CameraView::Fit::Contain);
-        // Linear: the frame is fitted to the window by an arbitrary factor, so
-        // the default Nearest would alias it.
+        // Fitted by an arbitrary factor, so the default Nearest would alias.
         renderer->drawTexture(
             *texture,
             imageArea,
@@ -156,8 +137,7 @@ struct RemoteFrameView final : GPU::GPUView
     int width = 0;
     int height = 0;
 
-    // The whole framed message, kept as it arrived - taking it uncut is
-    // what makes the handoff copy-free. Pixels start frameHeaderBytes in.
+    // Kept whole so the handoff stays copy-free; pixels start after the header.
     std::string framed;
     bool fresh = false;
     int framesShown = 0;
@@ -168,7 +148,7 @@ struct RemoteFrameView final : GPU::GPUView
 
 struct IpcCameraApp
 {
-    // Claiming the name is the role decision: winner captures, loser views.
+    // Claiming the channel name is the role decision: winner captures, loser views.
     IpcCameraApp()
     {
         try
@@ -246,12 +226,8 @@ struct IpcCameraApp
         { showFrame(std::move(message)); };
     }
 
-    // Runs on the capture thread the moment a frame lands, so nothing
-    // waits on a poll tick. Messenger::send is safe from any thread; the
-    // mutex only fences the viewer list against arrivals and departures
-    // on the main thread. A viewer that stops draining stalls this thread,
-    // and the camera's discardLateFrames turns the stall into dropped
-    // frames - latest wins.
+    // Runs on the capture thread; send is thread-safe, the mutex only fences
+    // the viewer list against main-thread arrivals and departures.
     void ship(const Cameras::CameraFrame& frame)
     {
         if (frame.data() == nullptr || frame.width() <= 0 || frame.height() <= 0)
@@ -298,8 +274,7 @@ struct IpcCameraApp
                 startCamera();
                 break;
             case Cameras::PermissionStatus::NotDetermined:
-                // Headless runs (CI) must not summon the system permission
-                // dialog; they simply show no image.
+                // Headless runs must not summon the system permission dialog.
                 if (!Apps::getAppEnvironment().headless)
                     Cameras::Camera::requestPermission(
                         [this](bool granted)

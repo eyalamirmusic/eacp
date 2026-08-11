@@ -6,10 +6,8 @@ namespace eacp::GPU
 {
 namespace
 {
-// Whether a node evaluates to something other than a function of its arguments:
-// a mutable local, or a resource the kernel may have written since. Two such
-// nodes spelled identically are not the same value, so neither they nor
-// anything built over them may be shared.
+// Two such nodes spelled identically are not the same value, so neither they
+// nor anything built over them may be shared.
 bool dependsOnMutableState(ExprKind kind)
 {
     switch (kind)
@@ -63,12 +61,8 @@ bool ShaderGraph::purityOf(const Expr& node) const
     return true;
 }
 
-// Constants and pure binaries are shared by structure rather than by the call
-// that built them, so a base index two separate calls arrive at - the write's
-// `gid * 4u` and the read's - is one node and prints under one name. Only these
-// two kinds: every other add() registers a slot in a parallel vector before it
-// gets here, and returning an existing node would leave that registration
-// stranded.
+// Only constants and pure binaries: every other add() registers a slot in a
+// parallel vector first, which returning an existing node would strand.
 int ShaderGraph::findShared(const Expr& node) const
 {
     if (node.kind == ExprKind::Constant)
@@ -328,10 +322,8 @@ int ShaderGraph::addTexture(TextureSampling sampling)
 
 int ShaderGraph::addWritableTexture()
 {
-    // The sampling is recorded to keep the two lists parallel and is never
-    // read: a written texture has no sampler on either backend. Spelled out
-    // rather than braced - `add({})` is Vector's initializer-list overload with
-    // an empty list, which adds nothing at all.
+    // Never read - a written texture has no sampler - but keeps the two lists
+    // parallel. Spelled out because `add({})` is Vector's empty-list overload.
     textureSamplings.add(TextureSampling {});
     textureAccesses.add(TextureAccess::Write);
     return textureSamplings.size() - 1;

@@ -9,9 +9,6 @@ namespace
 constexpr int viewWidth = 800;
 constexpr int viewHeight = 448;
 
-// A procedural 16x16 sprite (a cyan diamond with a magenta rim on a transparent
-// field) authored as a Graphics::Image, so the view exercises the Image -> GPU
-// texture bridge - Device::makeTexture(const Image&) - alongside the renderer.
 Graphics::Image makeSpriteImage()
 {
     constexpr int size = 16;
@@ -44,9 +41,6 @@ Graphics::WindowOptions windowOptions()
 }
 } // namespace
 
-// Exercises every SpriteRenderer entry point: a textured quad and its three
-// flips, tinted source-rect crops, a translucent fill with an outline, and grid
-// lines - all in the fixed logical pixel space.
 struct SpritesView final : GPU::GPUView
 {
     SpritesView()
@@ -90,8 +84,6 @@ struct SpritesView final : GPU::GPUView
         for (auto y = 0; y <= viewHeight; y += 32)
             sprites->drawLine({0.0f, (float) y}, {viewWidth, (float) y}, gridColor);
 
-        // A thick diagonal: arbitrary orientation, only expressible now that the
-        // renderer draws a rotated quad rather than axis-aligned pixel rows.
         sprites->drawLine({100, 300}, {600, 130}, {1.0f, 0.85f, 0.2f, 0.85f}, 4.0f);
     }
 

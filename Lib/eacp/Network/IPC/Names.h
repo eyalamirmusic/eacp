@@ -3,14 +3,12 @@
 #include <string>
 #include <string_view>
 
-// Shared by the lock and the channel so one name always folds to one file,
-// whichever primitive spelled it.
+// Shared by the lock and the channel so one name always folds to one file.
 namespace eacp::IPC::detail
 {
 
-// Folds anything a filename cannot carry, so a name can never reach outside
-// the directory it is planted in. Separators go too, which is what makes
-// traversal impossible rather than merely unlikely.
+// Folds anything a filename cannot carry, separators included, so a name can
+// never reach outside the directory it is planted in.
 inline std::string foldToFileName(std::string_view name)
 {
     auto result = std::string {};

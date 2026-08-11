@@ -11,8 +11,7 @@ struct Vertex
 
 namespace
 {
-// A full quad as two triangles. Texture coordinates put row 0 at the top, so v
-// runs 0 -> 1 from the quad's top edge down.
+// v runs 0 -> 1 from the quad's top edge down, so texture row 0 is at the top.
 constexpr Vertex quad[] = {
     {{-0.8f, -0.8f}, {0.0f, 1.0f}},
     {{0.8f, -0.8f}, {1.0f, 1.0f}},
@@ -22,8 +21,6 @@ constexpr Vertex quad[] = {
     {{-0.8f, 0.8f}, {0.0f, 0.0f}},
 };
 
-// A procedural checkerboard, sampled with nearest filtering so the cells stay
-// crisp however large the quad is drawn.
 Texture makeCheckerboard(Device& device)
 {
     constexpr auto size = 8;
@@ -40,9 +37,6 @@ Texture makeCheckerboard(Device& device)
     return device.makeTexture(descriptor, pixels);
 }
 
-// The textured quad authored as a struct: the texture is a member you assign a
-// GPU::Texture to, and the fragment colour is a sample of it at the
-// interpolated vertex UV.
 struct TexturedShader final : ShaderProgram
 {
     TexturedShader() { compile(); }

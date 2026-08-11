@@ -1,18 +1,6 @@
 #include "Common.h"
 
 #include <thread>
-// Drives the page -> C++ command path on a real WebView (window.eacp.invoke
-// -> WebViewBridge::onMessage -> Miro dispatch). Covers the two features
-// layered on top of the basic sync dispatch:
-//
-//   1. per-command execution mode — setCommandExecution(name, WorkerThread)
-//      pushes a single command off the main thread while the rest stay on it
-//   2. async Completer handlers — void(Req, Completer<Res>) that settle later
-//      from a worker thread, resolving the page's invoke() Promise
-//
-// Both run end to end through the injected JS bridge shim, so they also
-// exercise the wire round-trip, not just the C++ seam.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;

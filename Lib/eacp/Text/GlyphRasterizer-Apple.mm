@@ -8,11 +8,9 @@
 #include <algorithm>
 #include <cmath>
 
-// CoreText rasterizer, shared by macOS and iOS — CoreText and CoreGraphics are
-// present on both, so nothing here is macOS-specific. Draws each glyph into a bitmap sized to its own bounding
-// box and reports where that box sits relative to the pen and baseline, rather
-// than centring it in a fixed cell — that is what lets the atlas serve
-// proportional text and ligatures, not just a monospace grid.
+// CoreText rasterizer, shared by macOS and iOS. Each glyph gets a bitmap sized
+// to its own bounding box, reported relative to the pen and baseline rather
+// than centred in a fixed cell.
 
 namespace eacp::Text
 {
@@ -85,8 +83,6 @@ struct GlyphRasterizer::Native
         result.descent = (float) CTFontGetDescent(font);
         result.leading = (float) CTFontGetLeading(font);
 
-        // 'M' is the conventional width probe; on a monospace face every glyph
-        // shares this advance, and on a proportional one it is only a hint.
         const UniChar reference = 'M';
         auto glyph = CGGlyph {};
 
@@ -97,9 +93,8 @@ struct GlyphRasterizer::Native
         return result;
     }
 
-    // Resolves the codepoint to a glyph, falling back to another face when the
-    // requested one cannot draw it — how a Latin family still renders CJK and
-    // emoji. Returns the font that owns the glyph.
+    // Returns the font owning the glyph, falling back to another face when the
+    // requested one cannot draw the codepoint.
     CFRef<CTFontRef> resolve(char32_t codepoint, FontStyle style, CGGlyph& glyph) const
     {
         UniChar units[2] = {};
@@ -159,8 +154,7 @@ struct GlyphRasterizer::Native
         if (CGRectIsNull(bounds) || CGRectIsEmpty(bounds))
             return result; // valid but nothing to draw — a space
 
-        // Snap the box outwards to whole pixels so antialiased edges are not
-        // clipped, then rasterize at exactly that size.
+        // Snapped outwards to whole pixels, so antialiased edges are not cut.
         const auto left = (int) std::floor(bounds.origin.x);
         const auto bottom = (int) std::floor(bounds.origin.y);
         const auto right = (int) std::ceil(bounds.origin.x + bounds.size.width);
@@ -176,8 +170,8 @@ struct GlyphRasterizer::Native
 
         CFRef<CGColorSpaceRef> space(colored ? CGColorSpaceCreateDeviceRGB() : nullptr);
 
-        // A mask needs one byte per pixel and no colour space: alpha-only is
-        // exactly the coverage the atlas wants, with no channel to discard.
+        // Alpha-only, with no colour space, is exactly the coverage a mask
+        // wants: one byte per pixel and no channel to discard.
         CFRef<CGContextRef> context(CGBitmapContextCreate(
             result.pixels.data(),
             (std::size_t) result.width,
@@ -192,20 +186,20 @@ struct GlyphRasterizer::Native
 
         CGContextSetShouldAntialias(context, true);
 
-        // Grayscale, never LCD: the atlas is tinted at draw time, and subpixel
-        // antialiasing would bake one text colour into the cached coverage.
+        // Grayscale, never LCD: subpixel antialiasing would bake one text
+        // colour into coverage the atlas tints at draw time.
         CGContextSetShouldSmoothFonts(context, false);
         CGContextSetRGBFillColor(context, 1, 1, 1, 1);
 
-        // Shift the glyph so its bounding box lands at the bitmap's origin.
-        // CoreGraphics is y-up, so this is measured from the bottom.
+        // Shifted so the bounding box lands at the bitmap's origin, measured
+        // from the bottom, CoreGraphics being y-up.
         auto position = CGPointMake((CGFloat) -left, (CGFloat) -bottom);
         CTFontDrawGlyphs(font, &glyph, &position, 1, context);
 
         if (colored)
         {
-            // The atlas stores straight alpha so a colour glyph can be blended
-            // like any other; CoreGraphics hands back premultiplied.
+            // CoreGraphics hands back premultiplied; the atlas stores straight
+            // alpha, so a colour glyph blends like any other.
             for (std::size_t i = 0; i + 3 < result.pixels.size(); i += 4)
             {
                 const auto alpha = result.pixels[i + 3];
@@ -276,9 +270,8 @@ bool registerMemoryFont(const void* data, std::size_t size)
     if (!font)
         return false;
 
-    // Deprecated, but the only API that registers an in-memory font for
-    // process-wide name lookup — the replacements want file URLs, and spilling
-    // an embedded font to disk to load it back defeats the point of embedding.
+    // Deprecated, but the only API registering an in-memory font for
+    // process-wide name lookup: the replacements want file URLs.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     const auto registered = CTFontManagerRegisterGraphicsFont(font, nullptr);

@@ -4,8 +4,8 @@
 #include "../Kernels/SwapRedBlue.h"
 #include "../Kernels/WarpAffine.h"
 
-// Scalar backend entry points. Always compiled, on every architecture: it is
-// the correctness oracle and the SIMD kernels' tail fallback.
+// Always compiled, on every architecture: the correctness oracle and the SIMD
+// kernels' tail fallback.
 namespace eacp::simd::backends
 {
 

@@ -3,32 +3,17 @@
 #include "Common.h"
 #include <eacp/Graphics/Menu/Menu.h>
 
-// The platform half of menu enablement. The model half is in MenuTests.cpp;
-// what cannot be reached from there is whether AppKit is ever *told* about the
-// predicate.
-//
-// Worth its own test because the failure is silent in the direction that costs
-// something: a target that does not answer validateMenuItem: leaves every item
-// enabled, so a menu of unavailable commands looks entirely normal and clicking
-// one does nothing. Nothing else fails. That was the state of the framework
-// before this method was registered — and NSObject does not implement
-// validateMenuItem: itself, so unlike the scrollWheel: case, respondsToSelector:
-// is a real signal here rather than one inheritance satisfies for free.
-
 using namespace nano;
 using namespace eacp::Graphics;
 
 namespace
 {
-// The menu bar is installed on NSApp, so there has to be one. Apps::run creates
-// it, but forcing it here keeps the test honest if that ever stops being true.
 NSMenuItem* installAndFind(const MenuBar& bar, NSString* menuTitle, NSString* itemTitle)
 {
     [NSApplication sharedApplication];
 
-    // The menu bar is installed per window now, so the platforms that own menus
-    // per window have one to attach to. macOS ignores it — the bar belongs to
-    // the application — but the argument still has to be a real window.
+    // macOS owns the bar per application, but setApplicationMenuBar still
+    // needs a real window for the platforms that own menus per window.
     auto window = Window {};
 
     setApplicationMenuBar(bar, window);
@@ -57,9 +42,6 @@ MenuBar barWith(MenuItem item)
 }
 } // namespace
 
-// The item's target answers validateMenuItem:, which is the one thing that has
-// to be true for AppKit to consult the predicate at all. An NSMenu autoenables
-// its items by default, and that default is what asks this question.
 auto tTargetAnswersValidation = test("Menu/targetAnswersValidation") = []
 {
     const auto bar = barWith(MenuItem::withAction("Undo"));
@@ -71,7 +53,6 @@ auto tTargetAnswersValidation = test("Menu/targetAnswersValidation") = []
     check([item.target respondsToSelector:@selector(validateMenuItem:)]);
 };
 
-// A disabled command's item validates NO, which is what greys it.
 auto tDisabledItemValidatesFalse = test("Menu/disabledItemValidatesFalse") = []
 {
     const auto bar = barWith(
@@ -94,8 +75,6 @@ auto tEnabledItemValidatesTrue = test("Menu/enabledItemValidatesTrue") = []
     check([item.target validateMenuItem:item]);
 };
 
-// An item that said nothing about availability stays available. Every call site
-// that predates enablement is in this case.
 auto tUnspecifiedItemValidatesTrue = test("Menu/unspecifiedItemValidatesTrue") = []
 {
     const auto bar = barWith(MenuItem::withAction("Paste"));
@@ -106,10 +85,8 @@ auto tUnspecifiedItemValidatesTrue = test("Menu/unspecifiedItemValidatesTrue") =
     check([item.target validateMenuItem:item]);
 };
 
-// The predicate is asked each time rather than sampled when the bar was built.
-// This is the property that lets an app install its menus once at startup:
-// without it, greying would need a rebuild on every state change, during which
-// AppKit may well be tracking the menu.
+// Read live rather than sampled at build time, so an app can install its menus
+// once at startup.
 auto tValidationIsReadLive = test("Menu/validationIsReadLive") = []
 {
     auto available = false;
@@ -126,13 +103,9 @@ auto tValidationIsReadLive = test("Menu/validationIsReadLive") = []
 
     available = true;
 
-    // Same item, same target, no rebuild.
     check([item.target validateMenuItem:item]);
 };
 
-// Validation is also when the checkmark is refreshed — the same read-live
-// property as greying, for the same reason: a device picker whose selection
-// changes must not need a rebuild for the mark to move.
 auto tValidationRefreshesTheCheckmark =
     test("Menu/validationRefreshesTheCheckmark") = []
 {
@@ -154,9 +127,6 @@ auto tValidationRefreshesTheCheckmark =
     check(item.state == NSControlStateValueOn);
 };
 
-// An item that said nothing about checking is left alone: its state is not
-// forced off by validation, so "not checkable" and "unchecked" stay distinct
-// at the AppKit boundary too.
 auto tUncheckableItemStateIsUntouched =
     test("Menu/uncheckableItemStateIsUntouched") = []
 {
@@ -172,10 +142,6 @@ auto tUncheckableItemStateIsUntouched =
     check(item.state == NSControlStateValueOn);
 };
 
-// A responder-selector item keeps its nil target, so validation goes down the
-// responder chain to the focused view instead. Enablement must not have
-// captured these — the focused view is the only thing that knows whether it can
-// copy, and a C++ predicate here would override it.
 auto tResponderItemKeepsNilTarget = test("Menu/responderItemKeepsNilTarget") = []
 {
     const auto bar =
@@ -188,8 +154,6 @@ auto tResponderItemKeepsNilTarget = test("Menu/responderItemKeepsNilTarget") = [
     check(item.action == @selector(copy:));
 };
 
-// The action still runs. Adding a second method to the runtime class must not
-// disturb the one that was already there.
 auto tActionStillFires = test("Menu/actionStillFires") = []
 {
     auto fired = false;

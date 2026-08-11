@@ -28,8 +28,7 @@ void ShelfPacker::reset(int width, int height)
 
 void ShelfPacker::grow(int width, int height)
 {
-    // Existing placements keep their coordinates, so the shelves carry over
-    // untouched and no glyph needs re-rasterizing.
+    // Existing placements keep their coordinates, so the shelves carry over.
     atlasWidth = std::max(atlasWidth, width);
     atlasHeight = std::max(atlasHeight, height);
 }
@@ -39,8 +38,7 @@ std::optional<PackedRect> ShelfPacker::add(int width, int height)
     if (width <= 0 || height <= 0)
         return std::nullopt;
 
-    // Padding is reserved on the right and below each placement, so a glyph
-    // needs its own size plus one gap to fit.
+    // Padding is reserved right of and below each placement.
     const auto neededWidth = width + padding;
     const auto neededHeight = height + padding;
 

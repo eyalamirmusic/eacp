@@ -37,41 +37,18 @@ enum class MouseButton
     Other = 3
 };
 
-// The shape the pointer takes over a view.
-//
-// Deliberately a small set of the shapes every platform names the same way. An
-// app wanting something else is asking for a custom image, which is a different
-// feature with a different lifetime problem — and none of these needs it: the
-// point of a cursor shape is that it is a convention the person already knows.
 enum class MouseCursor
 {
-    // The arrow. What a view has until it says otherwise.
     Default,
-
-    // Over text that can be selected.
     IBeam,
-
-    // Over something clickable that is not a control — a link.
     PointingHand,
-
-    // Over a vertical splitter, so a draggable divider reads as draggable
-    // before anyone tries dragging it. This is the one an IDE cannot do without.
     ResizeLeftRight,
-
-    // Over a horizontal splitter.
     ResizeUpDown,
-
     Crosshair
 };
 
-// Where a wheel event sits in a scroll gesture. A notched wheel has no gesture
-// to speak of and always reports None; a trackpad runs Began -> Changed -> Ended
-// while the fingers are down, and the system then keeps sending Momentum events
-// as the motion coasts to a stop.
-//
-// Worth distinguishing because momentum is not intent: a view should stop an
-// in-flight animation when a gesture Begins, and may let a scroll rubber-band
-// past its limit during Momentum where a direct drag would clamp.
+// A trackpad runs Began -> Changed -> Ended while the fingers are down, then
+// Momentum while the motion coasts; a notched wheel always reports None.
 enum class ScrollPhase
 {
     None,
@@ -87,23 +64,11 @@ struct MouseEvent
     Point pos;
     Point downPos;
 
-    // How far the pointer moved, in points — the movement the system would
-    // have given the cursor, shaped by its acceleration curve. That curve
-    // exists so a cursor can cross a screen and still land on a target, and it
-    // is what a widget dragged by the pointer should follow: an infinite-drag
-    // knob or scrubber moves with the hand's *pointer*, not its device.
+    // Pointer movement in points, with the system acceleration curve applied.
     Point delta;
 
-    // How far the device itself moved, with no acceleration curve applied.
-    // Linear: the same physical movement always reports the same figure,
-    // however fast it was made, which is what a camera needs — an FPS look, a
-    // 3D orbit. Applying the pointer's curve to a camera makes an identical
-    // flick of the hand turn different amounts depending on its speed, which
-    // reads as the aim being unpredictable.
-    //
-    // In the device's own units (mouse counts), not points: it does not scale
-    // with the display, so a sensitivity tuned against it stays put across
-    // monitors. Falls back to `delta` where the platform cannot report it.
+    // Unaccelerated device movement in mouse counts, not points. Falls back to
+    // `delta` where the platform cannot report it.
     Point rawDelta;
 
     MouseEventType type = MouseEventType::Down;
@@ -113,22 +78,12 @@ struct MouseEvent
     float pressure = 1.0f;
     double timestamp = 0.0;
 
-    // Wheel events only: what `delta` is measured in.
-    //
-    // A trackpad or a Magic Mouse reports a precise delta already in points, so
-    // it can be applied as-is and the content tracks the fingers exactly. A
-    // notched wheel instead reports *lines* — usually +/-1 per detent — and the
-    // view has to multiply by whatever a line means to it. There is no single
-    // right conversion for the framework to pick, because only the view knows
-    // its line height, so both forms are passed through and this flag says which
-    // arrived.
-    //
-    // Positive y means the content should move down, i.e. toward the start of
-    // the document. The platform has already applied the user's natural-scroll
-    // preference, so this is intent, not raw device motion — do not invert it.
+    // Wheel events only: true when `delta` is in points (trackpad), false when
+    // in lines (notched wheel). Positive y means the content moves down; the
+    // user's natural-scroll preference is already applied, so do not invert it.
     bool preciseScrolling = false;
 
-    // Wheel events only. See ScrollPhase.
+    // Wheel events only.
     ScrollPhase scrollPhase = ScrollPhase::None;
 };
 
@@ -148,24 +103,15 @@ public:
 
     void repaint();
 
-    // Renders this view and its child views into an off-screen image, stacked
-    // front-to-back the way the compositor draws them on screen: paint() chrome,
-    // attached shape/text layers, GPU (Metal) content, and descendant views.
-    // Embedded web content is async and NOT captured here (it comes out blank) --
-    // use renderToImageAsync for that. scale is the pixels-per-point factor (2 on
-    // a Retina display); pass 0 to use the view's current backing scale. Returns
-    // an invalid Image for a non-positive size.
+    // Off-screen snapshot of this view's subtree. `scale` is pixels per point
+    // (0 = the view's current backing scale). Embedded WebView content comes
+    // out blank here; use renderToImageAsync for that.
     Image renderToImage(float scale = 0.0f);
 
-    // Like renderToImage, but also folds in embedded WebView content, which the
-    // web runtime only yields asynchronously. Resolves on the main thread once
-    // every descendant WebView has been snapshotted. Prefer the synchronous
-    // renderToImage when the subtree has no web content.
+    // renderToImage plus embedded WebView content; resolves on the main thread.
     Threads::Async<Image> renderToImageAsync(float scale = 0.0f);
 
-    // Group opacity for the whole view subtree (chrome, child views and any
-    // native GPU/web content), composited over whatever sits behind it. Sibling
-    // of Layer::setOpacity, but for an entire View rather than a single layer.
+    // Group opacity for the whole subtree, including native GPU/web content.
     void setOpacity(float opacity);
     float getOpacity() const { return opacity; }
 
@@ -173,26 +119,17 @@ public:
 
     virtual void paint(Context&) {};
 
-    // Native, non-paint content this view renders itself (a GPUView's Metal
-    // layer), returned as a straight-alpha Image sized to the view's bounds at
-    // `scale` pixels per point. The snapshot compositor draws the result over
-    // paint()/layers, since renderInContext: cannot reach such content. Default
-    // is none (invalid Image). WebView content is async and handled separately.
+    // Native GPU content (a GPUView's Metal layer) as a straight-alpha Image
+    // sized to the view's bounds at `scale` pixels per point; invalid when the
+    // view has none.
     virtual Image renderNativeContent(float scale);
 
-    // Zero-copy variant of renderNativeContent for video capture: renders this
-    // view's native GPU content straight into a platform frame target instead of
-    // reading it back to an Image. On Apple `nativeTarget` is a CVPixelBufferRef
-    // whose IOSurface the view renders into; the pixels never leave the GPU.
-    // Returns false when the view has no such content (the default) -- GPUView
-    // overrides it. `scale` matches renderToImage's.
+    // Zero-copy variant for video capture: `nativeTarget` is a CVPixelBufferRef
+    // on Apple. False when the view has no native GPU content.
     virtual bool renderNativeContentToTarget(void* nativeTarget, float scale);
 
-    // Async native content (a WebView's page), which the web runtime only yields
-    // via a callback. hasAsyncContent() reports whether this view has any;
-    // captureAsyncContent() delivers it as a straight-alpha Image sized to the
-    // view's bounds at `scale`, invoking done on the main thread (with an invalid
-    // Image on failure). renderToImageAsync folds the result into the snapshot.
+    // A WebView's page, which the web runtime only yields via a callback.
+    // `done` runs on the main thread, with an invalid Image on failure.
     virtual bool hasAsyncContent() const { return false; }
     virtual void captureAsyncContent(float scale, std::function<void(Image)> done);
 
@@ -203,24 +140,18 @@ public:
     virtual void mouseEntered(const MouseEvent&) {}
     virtual void mouseExited(const MouseEvent&) {}
 
-    // Scroll wheel. event.delta carries the wheel movement (y vertical,
-    // x horizontal) in WHEEL_DELTA units.
+    // event.delta carries the wheel movement in WHEEL_DELTA units.
     virtual void mouseWheel(const MouseEvent&) {}
     virtual void keyDown(const KeyEvent&) {}
     virtual void keyUp(const KeyEvent&) {}
     virtual void resized();
 
-    // The view moved to a display with a different backing scale (a window
-    // dragged between a Retina and a non-Retina screen), or that display's scale
-    // changed. Anything sized in device pixels rather than logical points is now
-    // wrong and must be rebuilt — a glyph atlas rasterized at 2x is blurry at 1x.
+    // The display's pixels-per-point changed; rebuild anything sized in device
+    // pixels rather than logical points.
     virtual void backingScaleChanged() {}
 
-    // The window hosting this view moved on screen, or was shown/hidden.
-    // Views drawn by the composition tree need neither: it follows the window
-    // for free. A view backed by a native surface the OS places in screen
-    // coordinates (a WebView) does — that surface keeps whatever placement and
-    // visibility it was given until it is told otherwise.
+    // Only views backed by a native surface the OS places in screen coordinates
+    // (a WebView) need these; composited views follow the window for free.
     virtual void hostWindowMoved() {}
     virtual void hostWindowVisibilityChanged(bool) {}
 
@@ -250,16 +181,8 @@ public:
 
     Point getMousePosition() const;
 
-    // The pointer's shape while it is over this view.
-    //
-    // Settable at any time, including from inside a mouseMoved handler, and
-    // that is the case it is designed for rather than an afterthought: an app
-    // that draws its own widgets into one view — which is what any GPU-drawn UI
-    // is — has one view and many regions, so the shape has to follow the
-    // pointer. A cursor fixed per view would be useless to it.
-    //
-    // Setting the same shape twice is free, so a handler can call this on every
-    // move without checking first.
+    // Settable at any time, including from inside mouseMoved; setting the same
+    // shape twice is free.
     void setMouseCursor(MouseCursor cursor);
     MouseCursor getMouseCursor() const { return currentCursor; }
 
@@ -272,40 +195,23 @@ public:
     void focus();
     bool hasFocus() const;
 
-    // The native view that should receive keyboard focus when this view is a
-    // window's content view and the window becomes key. Defaults to this
-    // view's own backing view. WebView overrides it so the nested platform web
-    // view is focused rather than the empty container that hosts it — without
-    // that, the page never gets key focus and its inputs stay dead until
-    // clicked directly. See Window's key-activation handling.
+    // Native view to focus when this view is a window's content view and the
+    // window becomes key; defaults to this view's own backing view.
     virtual void* nativeFocusTarget();
 
     const Vector<View*>& getSubviews() const { return subviews; }
     const Vector<Layer*>& getLayers() const { return layers; }
     View* getParent() const { return parent; }
 
-    // The window this view is in, or null while it is in none - before
-    // Window::setContentView, inside an EmbeddedView (whose host window belongs
-    // to another framework), or once the window has been destroyed.
-    //
-    // What it is for is a view that needs something only its window can give it:
-    // the mouse lock, the modifier keys, the title. Without this the app has to
-    // hand the window to the view, which means constructing the two in that
-    // order forever and threading a reference through every view that wants one.
-    //
-    // A pointer rather than a reference given at construction, because a view
-    // can precede its window, outlive it, or never have one, and a reference
-    // cannot say so. Walks up to the root: the window adopts the content view,
-    // and everything under it is in the same window by definition.
+    // Walks up to the root. Null before Window::setContentView, inside an
+    // EmbeddedView, or once the window has been destroyed.
     Window* getWindow() const;
 
     void* getNativeLayer();
 
 private:
-    // Set by Window::setContentView on the view it adopts, and cleared when
-    // that window is destroyed - which is what keeps getWindow() from handing
-    // back a window that is gone. Only ever set on a root view; every other
-    // view finds it by walking up. See Window::ContentViewLink.
+    // Only ever set on a root view, by Window::setContentView, and cleared when
+    // that window is destroyed. See Window::ContentViewLink.
     friend class Window;
     Window* ownerWindow = nullptr;
 

@@ -14,8 +14,6 @@ namespace
 {
 constexpr auto windowWidth = 980;
 
-// Tall enough for the whole catalogue: the rows are laid out from the top with
-// no scrolling, so this has to keep up as clips are added to Clips.json.
 constexpr auto windowHeight = 700;
 
 constexpr auto margin = 24.0f;
@@ -54,12 +52,6 @@ Graphics::WindowOptions windowOptions()
 }
 } // namespace
 
-// Offers the clips listed in the embedded Clips.json, fetches the one you pick,
-// and plays it through the same VideoView as the local-file sample.
-//
-// This class is only the UI: the catalogue is parsed by Catalogue.h out of a
-// resource embedded at build time, and the transfer — thread, progress,
-// cancellation, the partial-file dance — belongs to Downloader.
 struct BrowserView final : Video::VideoView
 {
     enum class Mode
@@ -72,8 +64,7 @@ struct BrowserView final : Video::VideoView
 
     BrowserView() { setHandlesMouseEvents(true); }
 
-    // Unhooks from the stream while it is still alive. The base destructor
-    // cannot do this: by the time it runs, `stream` below has already gone.
+    // The base destructor cannot do this: by then `stream` below has gone.
     ~BrowserView() override { detach(); }
 
     const Vector<Clip>& clips() const { return catalogue().clips; }
@@ -114,8 +105,6 @@ struct BrowserView final : Video::VideoView
         startUrl(clip.url, clip.name, cachePathFor(clip.fileName));
     }
 
-    // Any H.264 MP4 the platform decoder can read. The catalogue is a
-    // convenience, not a limit — a 4K clip is one command-line argument away.
     void startUrl(const std::string& url,
                   const std::string& name,
                   const FilePath& path)
@@ -133,7 +122,7 @@ struct BrowserView final : Video::VideoView
 
         mode = Mode::Downloading;
         message = "Downloading " + name;
-        setContinuous(true); // keep the progress bar moving
+        setContinuous(true);
 
         downloader.start(url,
                          path,
@@ -251,8 +240,7 @@ struct BrowserView final : Video::VideoView
 
         text.draw(message, {margin, bar.y - 16.0f}, {0.95f, 0.97f, 1.0f});
 
-        // A server that declares no length gives no percentage to show, only
-        // how much has arrived.
+        // A server that declares no length gives no percentage, only bytes.
         auto status = fraction >= 0.0f
                           ? formatted("%s of %s  (%.0f%%)",
                                       megabytes(received).c_str(),
@@ -424,9 +412,8 @@ struct DownloadApp
         startFromCommandLine();
     }
 
-    // `DownloadAndPlay <index>` picks a catalogue entry, `DownloadAndPlay <url>`
-    // fetches anything else — which is how to point this at a 4K clip, since no
-    // free 4K H.264 source was dependable enough to put in the list.
+    // `DownloadAndPlay <index>` picks a catalogue entry; `DownloadAndPlay <url>`
+    // fetches any other H.264 MP4.
     void startFromCommandLine()
     {
         const auto& args = Apps::getAppEnvironment().commandLineArgs;

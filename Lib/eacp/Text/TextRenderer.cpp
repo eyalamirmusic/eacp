@@ -6,9 +6,8 @@ namespace eacp::Text
 {
 namespace
 {
-// Decodes one UTF-8 sequence starting at `index`, advancing it past what was
-// consumed. Malformed bytes yield U+FFFD and advance by one, so a bad byte
-// costs one replacement glyph rather than desynchronising the rest of the line.
+// Advances `index` past what it consumed. A malformed byte yields U+FFFD and
+// advances one, costing a replacement glyph rather than the rest of the line.
 char32_t nextCodepoint(std::string_view text, std::size_t& index)
 {
     auto lead = (unsigned char) text[index];
@@ -83,9 +82,8 @@ void TextRenderer::rebuildIfNeeded()
     }
     else
     {
-        // Only the scale rebuilds anything now. A changed size is a face the
-        // atlas did not have, which the next request adds beside the others
-        // rather than in place of them.
+        // Only the scale rebuilds anything: a changed size is just a face the
+        // next request adds beside the others.
         atlas->setScale(deviceScale);
     }
 
@@ -106,9 +104,8 @@ float TextRenderer::lineHeight()
 
 float TextRenderer::lineHeight(const Font& font)
 {
-    // The face first, in its own statement: resolving it is what builds the
-    // atlas, so reading the pointer in the same expression would read it before
-    // there was one.
+    // In its own statement: resolving the face is what builds the atlas, so
+    // reading the pointer in one expression would read it before there is one.
     const auto face = faceFor(font);
 
     return atlas->metrics(font.style, face).lineHeight();
@@ -158,8 +155,8 @@ float TextRenderer::layout(std::string_view text,
 
         if (emit && !glyph.empty)
         {
-            // The slot's src is in atlas texels but its offset and advance are
-            // already in points, so only the size needs dividing by the scale.
+            // src is in atlas texels while offset and advance are in points, so
+            // only the size needs dividing by the scale.
             auto placed = PlacedGlyph {{pen.x + advance + glyph.offset.x,
                                         pen.y + glyph.offset.y,
                                         glyph.src.w / builtAtScale,
@@ -207,9 +204,8 @@ float TextRenderer::layoutInto(Vector<PlacedGlyph>& into,
                                Graphics::Point baselineLeft,
                                const Font& font)
 {
-    // No begin() here, unlike draw(): nothing is being queued, so there is no
-    // queue to have started. A recorded layout is legal outside a frame
-    // entirely, which is what lets a component be painted with no pass open.
+    // No begin(), unlike draw(): nothing is queued, so a recorded layout is
+    // legal outside a frame entirely, with no pass open.
     return layout(text, baselineLeft, Graphics::Color::white(), font, true, &into);
 }
 
@@ -244,8 +240,8 @@ void TextRenderer::flush(GPU::RenderPass& pass)
     if (!glyphs.has_value() || atlas == nullptr)
         return;
 
-    // Everything the frame asked for has been rasterized by now; upload it
-    // before the pass samples the atlas.
+    // Everything the frame asked for is rasterized by now, so upload it before
+    // the pass samples the atlas.
     atlas->commit();
     glyphs->flush(pass, *atlas);
 }

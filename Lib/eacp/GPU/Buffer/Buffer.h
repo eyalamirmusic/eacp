@@ -6,10 +6,7 @@ namespace eacp::GPU
 {
 class Device;
 
-// What a buffer is bound as. A Vertex buffer feeds the vertex stage; an Index
-// buffer feeds drawIndexed; a Storage buffer is read/written by a compute
-// kernel and can be read back to the CPU. On Metal all are plain MTLBuffers;
-// on D3D12 the usage picks the resource flags (a Storage buffer allows
+// Metal ignores this; on D3D12 it picks the resource flags (Storage allows
 // unordered access so a kernel can write it).
 enum class BufferUsage
 {
@@ -18,15 +15,13 @@ enum class BufferUsage
     Storage
 };
 
-// The width of the indices in an Index buffer, told to drawIndexed.
 enum class IndexFormat
 {
     UInt16,
     UInt32
 };
 
-// RAII wrapper around a GPU buffer (MTLBuffer on Metal). Create via
-// Device::makeBuffer. Pass null data with a byte count to allocate an
+// Create via Device::makeBuffer. Null data with a byte count allocates an
 // uninitialised buffer (e.g. a compute output target).
 class Buffer
 {
@@ -39,32 +34,17 @@ public:
     std::size_t size() const;
     bool isValid() const;
 
-    // Copies bytes back from the buffer into dst, starting at offset bytes
-    // into the buffer. Valid once the command buffer that wrote it has
-    // committed (CommandBuffer::commit blocks until then). The copy is
-    // clamped to the buffer's end; an offset past it reads nothing.
-    //
-    // Committed is also the rule for bytes the CPU wrote: a construction or
-    // update that happened while a Frame was recording put its copy on that
-    // frame's list, so it has not reached the buffer until the frame ends.
-    // Reading inside the frame that filled it reads what was there before.
+    // Clamped to the buffer's end. Only sees writes from command buffers that
+    // have committed — a write issued during an open Frame lands at frame end.
     void read(void* dst, std::size_t bytes, std::size_t offset = 0) const;
 
-    // Overwrites part of the buffer's contents from the CPU, starting at
-    // offset bytes into the buffer — the per-frame path for dynamic
-    // geometry, reusing the GPU resource instead of allocating a new one.
-    // The copy is clamped to the buffer's end; a no-op on an invalid buffer,
-    // null data or an offset past the end. The new contents are seen by
-    // commands encoded after the call; update at most once per displayed
-    // frame, as pacing against frames still in flight is not synchronised
-    // here.
+    // Clamped to the buffer's end; seen by commands encoded after the call.
+    // Not synchronised against frames still in flight, so call at most once
+    // per displayed frame.
     void update(const void* data, std::size_t bytes, std::size_t offset = 0);
 
-    // Opaque native handle for cross-translation-unit use by other GPU types.
     void* nativeBuffer() const;
 
-    // The read and write handles a compute pass binds on D3D12 (the same
-    // handle as nativeBuffer; the pass binds by GPU address and direction).
     // Null on Metal, where the buffer is bound directly.
     void* nativeReadView() const;
     void* nativeWriteView() const;

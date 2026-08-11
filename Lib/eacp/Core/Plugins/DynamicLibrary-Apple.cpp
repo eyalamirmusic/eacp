@@ -17,9 +17,8 @@ struct ImageLocation
     intptr_t slide = 0;
 };
 
-// dlopen returns the same handle for an already-loaded image, so probing
-// every image with RTLD_NOLOAD and comparing handles finds ours without
-// fragile path canonicalisation.
+// dlopen returns the same handle for an already-loaded image, so comparing
+// handles avoids fragile path canonicalisation.
 ImageLocation findImage(void* handleToUse)
 {
     for (auto i = uint32_t {0}; i < _dyld_image_count(); ++i)

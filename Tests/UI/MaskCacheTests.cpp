@@ -2,21 +2,6 @@
 
 #include <NanoTest/NanoTest.h>
 
-// Who is allowed to write into a slot, which is the whole of this class.
-//
-// Sharing a mask is easy; sharing one that somebody is still allowed to
-// rasterize over is a picture where one shape draws through another's quad, and
-// it fails silently. So the rule is that publishing an entry is an offer to give
-// up the slot, and taking one accepts it for good: after a take, the publisher
-// cannot have it back and has to allocate elsewhere.
-//
-// That is what makes the animated case survivable. A shape whose geometry
-// changes takes its own offer back on the first change -- costing nothing at all
-// while nobody shared it -- and stops publishing, so it goes on rewriting one
-// private slot the way it did before any of this existed.
-//
-// None of it needs a GPU: an entry is a rect, a uv and a claim.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
@@ -73,8 +58,6 @@ auto tPublishedIsFound = test("MaskCache/aPublishedMaskIsHandedToTheNextAsker") 
     check(cache.getSharedCount() == 1, "and that is one mask not rasterized");
 };
 
-// The key is a summary, so a match on it is checked against the geometry before
-// anything is shared. Two shapes colliding on a key is not two shapes.
 auto tCollisionIsAMiss = test("MaskCache/aKeyThatMatchesTheWrongShapeIsAMiss") = []
 {
     auto cache = MaskCache {};
@@ -84,8 +67,6 @@ auto tCollisionIsAMiss = test("MaskCache/aKeyThatMatchesTheWrongShapeIsAMiss") =
                   GPUWidgets::FillRule::NonZero,
                   entryAt(4, 8));
 
-    // The same key presented with different geometry, which is what a collision
-    // looks like from in here.
     check(cache.take(
               someKey, rect({0.f, 0.f, 10.f, 20.f}), GPUWidgets::FillRule::NonZero)
           == nullptr);
@@ -105,9 +86,6 @@ auto tFillRuleIsCompared =
     check(cache.take(someKey, shape, GPUWidgets::FillRule::EvenOdd) == nullptr);
 };
 
-// The offer, taken back. Nobody shared it, so the publisher may rasterize over
-// the slot again -- which is the whole of what keeps an animating shape on one
-// slot instead of one per frame.
 auto tReclaimUntaken = test("MaskCache/anOfferNobodyTookCanBeWithdrawn") = []
 {
     auto cache = MaskCache {};
@@ -130,8 +108,6 @@ auto tReclaimTaken = test("MaskCache/anOfferSomebodyTookCannotBeWithdrawn") = []
     cache.publish(someKey, shape, GPUWidgets::FillRule::NonZero, entryAt(4, 8));
     cache.take(someKey, shape, GPUWidgets::FillRule::NonZero);
 
-    // The taker recorded that uv into its own draw list and there is no asking
-    // for it back, so the slot is theirs and the publisher has to move.
     check(!cache.reclaim(someKey));
     check(cache.getEntryCount() == 1);
 
@@ -146,9 +122,6 @@ auto tReclaimUnknown = test("MaskCache/withdrawingSomethingNeverOfferedFails") =
     check(!cache.reclaim(someKey));
 };
 
-// A second offer under a key already spoken for is the publisher offering the
-// same thing twice, or a collision. Either way the entry already there is the
-// one with holders, so it is the one to keep.
 auto tPublishDoesNotOverwrite =
     test("MaskCache/anOfferDoesNotDisplaceTheOneAlreadyThere") = []
 {
@@ -188,9 +161,6 @@ auto tDistinctShapes = test("MaskCache/twoShapesAreTwoEntries") = []
     check(hit->slot.x == 20);
 };
 
-// Coverage is device pixels, so a mask rasterized at one scale is the wrong
-// size for a shape drawn at another. Nothing is keyed by scale; the cache is
-// simply dropped, which is also what the atlas behind it does.
 auto tScaleDropsEverything =
     test("MaskCache/aChangeOfDeviceScaleDropsEveryMask") = []
 {
@@ -234,8 +204,6 @@ auto tSharedCount = test("MaskCache/theSharedCountIsWhatWasNotRasterized") = []
     for (auto i = 0; i < 47; ++i)
         check(cache.take(someKey, shape, GPUWidgets::FillRule::NonZero) != nullptr);
 
-    // Forty-eight channel strips drawing one knob arc: one rasterization, and
-    // forty-seven quads sampling what it wrote.
     check(cache.getSharedCount() == 47);
     check(cache.getEntryCount() == 1);
 

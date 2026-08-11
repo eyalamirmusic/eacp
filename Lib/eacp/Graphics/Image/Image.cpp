@@ -14,8 +14,7 @@ std::uint8_t toByte(float value)
     return static_cast<std::uint8_t>(scaled);
 }
 
-// Byte count for the given dimensions, or -1 when they are negative or
-// the result would overflow an int (ImageData is int-sized).
+// -1 when the dimensions are negative or the result overflows an int.
 int byteCountFor(int width, int height)
 {
     if (width < 0 || height < 0)
@@ -194,9 +193,8 @@ std::uint8_t* Image::prepareForOverwrite(int width, int height)
 
     w = width;
     h = height;
-    // Resize only on a size change: a same-size call is a no-op, so a recycled
-    // image skips both the reallocation and std::vector's zero-fill of the new
-    // bytes -- which the writer would immediately overwrite anyway.
+    // A same-size call is a no-op, so a recycled image skips both the
+    // reallocation and the zero-fill the writer would overwrite anyway.
     if (rgba.size() != bytes)
         rgba.resize(bytes);
     return rgba.data();

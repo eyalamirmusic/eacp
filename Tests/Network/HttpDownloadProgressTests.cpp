@@ -163,11 +163,8 @@ auto tDoneOnError = test("HttpDownloadProgress/setsDoneEvenOnError") = []
 
 auto tCancelHaltsTransfer = test("HttpDownloadProgress/cancelHaltsTransfer") = []
 {
-    // Pre-set cancel before the request runs — deterministic, no
-    // race against transfer speed. Verifies the framework consults
-    // the flag without depending on when the canceller thread
-    // observes mid-flight bytes (which is unreliable on fast
-    // loopback / CI runners).
+    // Pre-set rather than raced mid-flight: observing partial bytes is
+    // unreliable on fast loopback and CI runners.
     auto server = Server();
     auto body = std::string(4096, 'q');
 

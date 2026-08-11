@@ -8,7 +8,6 @@
 using namespace eacp;
 using namespace GPU;
 
-// A 3-float value used for both CPU mesh math and as a Float3 vertex attribute.
 struct Vec3
 {
     float x, y, z;
@@ -56,7 +55,6 @@ Vec3 normalize(Vec3 v)
     return length > 1.0e-6f ? v * (1.0f / length) : Vec3 {0.0f, 0.0f, 1.0f};
 }
 
-// Cubic Bernstein basis and its derivative, for evaluating a bicubic patch.
 void bernstein(float t, float* basis, float* derivative)
 {
     auto it = 1.0f - t;
@@ -83,10 +81,6 @@ struct TeapotMesh
     Vector<std::uint32_t> indices;
 };
 
-// Tessellates the 32 Bezier patches into a centred, unit-scaled indexed mesh
-// with per-vertex normals (from the surface partial derivatives). Each patch
-// shares its grid vertices between quads through the index buffer, so the
-// upload is a fraction of the unindexed triangle list.
 TeapotMesh buildTeapot()
 {
     auto low = Vec3 {1e9f, 1e9f, 1e9f};
@@ -160,10 +154,6 @@ TeapotMesh buildTeapot()
     return mesh;
 }
 
-// Per-vertex (Gouraud) shaded teapot. The whole transform pipeline - model spin,
-// view, perspective - is built in the shader from two scalar uniforms (angle and
-// aspect); the CPU uploads no matrices at all. Lighting is computed in the vertex
-// stage and handed to the fragment as a varying.
 struct TeapotShader final : ShaderProgram
 {
     TeapotShader() { compile(); }
@@ -183,7 +173,7 @@ struct TeapotShader final : ShaderProgram
         auto worldNormal = normalize((modelView * float4(normal, 0.0f)).xyz());
         auto toLight = normalize(lightDir);
 
-        // Two-sided diffuse term: |N . L|, so inward-facing patches still light.
+        // Two-sided: abs() so inward-facing patches still light.
         auto diffuse = abs(dot(worldNormal, toLight));
         auto shade = diffuse * 0.8f + 0.2f;
 
@@ -220,7 +210,6 @@ struct TeapotView final : GPUView
     {
         auto bounds = getLocalBounds();
 
-        // The CPU uploads only scalars now; the shader builds every matrix.
         shader.angle = spin;
         shader.aspect = bounds.h > 0.0f ? bounds.w / bounds.h : 1.0f;
         shader.lightDir = Array {0.4f, 0.5f, 0.8f};

@@ -10,11 +10,9 @@ inline int clampi(int v, int lo, int hi)
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-// The shared bilinear blend: combine four RGBA taps with four weights as one
-// B::F4 (the pixel's four channels), in a fixed per-channel reduction order, and
-// round/saturate/store the result. resizeBilinear and warpAffineInverse differ
-// only in how they derive the taps and weights -- the blend itself is this
-// primitive, bit-exact across every backend when the TU is -ffp-contract=off.
+// Combines four RGBA taps with four weights in a fixed per-channel reduction
+// order, so it is bit-exact across every backend when the TU is compiled
+// -ffp-contract=off.
 template <class B>
 void blendTaps(const std::uint8_t* p00,
                const std::uint8_t* p10,

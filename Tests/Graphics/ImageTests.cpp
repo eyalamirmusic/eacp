@@ -9,8 +9,8 @@ using eacp::Graphics::ImageFormat;
 
 namespace
 {
-// Deterministic, fully opaque RGBA pattern. Opaque alpha keeps the PNG
-// round-trip byte-exact (no premultiplied-alpha precision loss).
+// Opaque alpha keeps the PNG round-trip byte-exact (no premultiplied-alpha
+// precision loss).
 Image makeOpaquePattern(int width, int height)
 {
     auto rgba = ImageData {};
@@ -28,9 +28,8 @@ Image makeOpaquePattern(int width, int height)
     return Image(width, height, std::move(rgba));
 }
 
-// Deterministic pattern with varying (non-opaque) alpha. Exercises the
-// straight-alpha decode path, which must not quantize through a
-// premultiplied bitmap context.
+// Varying alpha exercises the straight-alpha decode path, which must not
+// quantize through a premultiplied bitmap context.
 Image makeTranslucentPattern(int width, int height)
 {
     auto rgba = ImageData {};
@@ -89,7 +88,6 @@ auto tSetAndAtRoundTrip = test("Image/setAndAtRoundTripChannels") = []
     check(std::abs(read.g - 0.4f) < 0.01f);
     check(std::abs(read.b - 0.6f) < 0.01f);
     check(std::abs(read.a - 1.f) < 0.01f);
-    // Untouched neighbour stays transparent.
     check(image.at(0, 0).a == 0.f);
 };
 
@@ -99,7 +97,6 @@ auto tOutOfRangeAccessIsSafe = test("Image/outOfRangeAccessIsSafe") = []
 
     check(image.at(-1, 0).a == 0.f);
     check(image.at(0, 5).a == 0.f);
-    // Out-of-range write is ignored, not a crash or corruption.
     image.set(10, 10, eacp::Graphics::Color::white());
     check(image.pixels().size() == 2 * 2 * 4);
 };
@@ -139,9 +136,8 @@ auto tPngRoundTripPreservesAlpha = test("Image/pngRoundTripPreservesAlpha") = []
 
     auto decoded = Image::decode(original.toPng());
     check(static_cast<bool>(decoded));
-    // PNG is lossless and decode must keep straight (non-premultiplied)
-    // alpha, so the bytes survive exactly even for partially transparent
-    // pixels.
+    // Decode keeps straight (non-premultiplied) alpha, so the bytes survive
+    // exactly even for partially transparent pixels.
     check(decoded == original);
 };
 

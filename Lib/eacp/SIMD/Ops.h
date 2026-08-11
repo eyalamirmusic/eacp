@@ -5,14 +5,9 @@
 #include <algorithm>
 #include <concepts>
 
-// Header-only, buffer-level conveniences over the raw float-array primitives in
-// SIMD.h. Anything contiguous with data()/size() qualifies (EA::Vector,
-// std::vector, std::span, std::array, ...), so call sites can write
-// `multiply(buffer, gain)` instead of spelling out pointers and counts.
-//
-// Every helper is elementwise and in place on its first argument. When the
-// buffers disagree on size, the common prefix is processed -- never past the
-// end of the shortest one.
+// Buffer-level conveniences over the float-array primitives in SIMD.h. Every
+// helper is elementwise and in place on its first argument; when buffers
+// disagree on size, only the common prefix is processed.
 namespace eacp::simd
 {
 

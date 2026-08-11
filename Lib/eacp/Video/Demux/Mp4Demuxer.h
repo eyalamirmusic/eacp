@@ -15,11 +15,9 @@ enum class Mp4Codec
     Hevc
 };
 
-// One sample of the video track, in decode order. Times are exact integers
-// in the track's timescale units; Mp4Demuxer::toSeconds converts.
+// Times are exact integers in the track's timescale units; toSeconds converts.
 struct Mp4Sample
 {
-    // The sample's bytes within the file.
     Range<std::uint64_t> byteRange;
 
     std::int64_t decodeTime = 0;
@@ -48,34 +46,26 @@ struct Mp4TrackInfo
     std::uint64_t duration = 0;
 };
 
-// Parses the sample tables of one MP4/ISOBMFF video track: per-sample byte
-// ranges, timestamps and keyframe flags, without touching the bitstream.
-// This is the container half of a decode path — what a hardware decoder
-// needs handed to it, per WindowsDecoder.md.
-//
-// Edit lists (elst) and fragmented files (moof) are out of scope: their
-// boxes are skipped, and a file whose samples live only in fragments fails
-// to parse. Malformed input of any kind makes open()/parse() return false;
-// nothing here throws or reads out of bounds.
+// Parses one MP4/ISOBMFF video track's sample tables, never the bitstream and
+// never out of bounds. Edit lists (elst) and fragments (moof) are out of scope:
+// a file whose samples live only in fragments fails to parse.
 class Mp4Demuxer
 {
 public:
-    // Maps the file and parses it. False on I/O failure or malformed data,
-    // leaving the demuxer empty.
+    // Maps and parses the file, leaving the demuxer empty on failure.
     bool open(const FilePath& path);
 
-    // Parses caller-owned bytes, which must outlive every later call to
-    // sampleBytes(). For tests and in-memory sources.
+    // `fileBytes` is caller-owned and must outlive every later sampleBytes().
     bool parse(std::span<const std::uint8_t> fileBytes);
 
     bool isValid() const { return valid; }
 
     const Mp4TrackInfo& track() const { return trackInfo; }
 
-    // Every sample of the track, in decode order.
+    // In decode order.
     const Vector<Mp4Sample>& samples() const { return sampleList; }
 
-    // The mapped bytes of one sample; empty for an out-of-range index.
+    // Empty for an out-of-range index.
     std::span<const std::uint8_t> sampleBytes(int index) const;
 
     double toSeconds(std::int64_t timeUnits) const;

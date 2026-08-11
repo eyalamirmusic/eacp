@@ -25,8 +25,7 @@ std::string getText()
 
 bool hasText()
 {
-    // UIPasteboard answers this without materialising the string, which on iOS
-    // also avoids the paste-notification banner a read would trigger.
+    // Avoids the paste-notification banner a read would trigger.
     return [UIPasteboard generalPasteboard].hasStrings == YES;
 }
 

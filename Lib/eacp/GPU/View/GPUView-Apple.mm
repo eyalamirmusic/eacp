@@ -22,8 +22,7 @@ namespace eacp::GPU
 namespace
 {
 // Suppresses implicit Core Animation actions so the layer tracks the view's
-// size instantly during live resize instead of animating to it (matches the
-// Immediate* layer convention in eacp::Graphics).
+// size instantly during live resize instead of animating to it.
 Class getImmediateMetalLayerClass()
 {
     static auto cls = Graphics::makeImmediateLayerClass<CAMetalLayer>(
@@ -44,9 +43,8 @@ struct GPUView::Native
         metalLayer.get().pixelFormat = MTLPixelFormatBGRA8Unorm;
         metalLayer.get().framebufferOnly = YES;
 
-        // Present the drawable inside the current CATransaction so new content
-        // lands atomically with the layer's new size during live resize, rather
-        // than the old drawable being stretched until the next async present.
+        // Presents inside the current CATransaction, so new content lands
+        // atomically with the layer's new size during live resize.
         metalLayer.get().presentsWithTransaction = YES;
 
         metalLayer.get().maximumDrawableCount = framesInFlight;
@@ -72,10 +70,8 @@ struct GPUView::Native
         updateMultisampleTexture(pixelWidth, pixelHeight);
         updateDepthTexture(pixelWidth, pixelHeight);
 
-        // Notify after the layer is consistent at the new scale, so a handler
-        // rebuilding pixel-sized resources sees the size it will draw into.
-        // Skipped on the first pass: there is no previous scale to differ from,
-        // and backingScale() already reports the initial value.
+        // Notified after the layer is consistent at the new scale, so a handler
+        // sees the size it will draw into. Skipped on the first pass.
         const auto newScale = (float) scale;
 
         if (backingScale > 0.f && newScale != backingScale)
@@ -157,15 +153,14 @@ struct GPUView::Native
     GPUView& view;
     int sampleCount = 4;
 
-    // The layer's pool of drawables, not a queue of finished frames: three keeps
-    // a free buffer ready so nextDrawable never blocks. Lowering it costs
-    // latency rather than saving it. See GPUView::setFramesInFlight.
+    // A drawable pool, not a queue: three keeps nextDrawable from blocking, and
+    // lowering it costs latency. See GPUView::setFramesInFlight.
     int framesInFlight = 3;
     bool continuous = false;
     bool depthEnabled = false;
 
-    // Device pixels per logical point, refreshed by updateSize(). Zero until the
-    // first update, which is how the initial scale is told apart from a change.
+    // Zero until the first updateSize(), which tells the initial scale apart
+    // from a change.
     float backingScale = 0.f;
 
     ObjC::Ptr<CAMetalLayer> metalLayer;
@@ -219,8 +214,7 @@ bool GPUView::isContinuous() const
 
 void GPUView::setFramesInFlight(int count)
 {
-    // Metal accepts two or three; one would leave the GPU idle waiting on the
-    // display.
+    // Metal accepts two or three.
     impl->framesInFlight = count < 2 ? 2 : (count > 3 ? 3 : count);
     impl->metalLayer.get().maximumDrawableCount = impl->framesInFlight;
 }
@@ -235,8 +229,7 @@ void GPUView::resized()
     Graphics::View::resized();
     impl->updateSize();
 
-    // Draw at the new size now, synchronously within the layout/resize pass,
-    // instead of waiting for the async display link a frame or more later.
+    // Synchronously within the resize pass, not a display link tick later.
     renderNow();
 }
 
@@ -244,17 +237,14 @@ void GPUView::backingScaleChanged()
 {
     Graphics::View::backingScaleChanged();
 
-    // Resize the drawable to the new scale (same logical bounds, different pixel
-    // count) and fire onBackingScaleChanged, then redraw: the presented frame
-    // was rasterized for the old scale.
+    // Redrawn because the presented frame was rasterized for the old scale.
     impl->updateSize();
     renderNow();
 }
 
 float GPUView::backingScale() const
 {
-    // updateSize() has not run before the view is first laid out, so fall back to
-    // asking the platform rather than reporting a nonsense zero.
+    // updateSize() has not run before the view is first laid out.
     if (impl->backingScale > 0.f)
         return impl->backingScale;
 
@@ -263,8 +253,8 @@ float GPUView::backingScale() const
 
 void GPUView::paint(Graphics::Context& context)
 {
-    // A snapshot captures GPU content via renderNativeContent (off-screen); the
-    // live renderNow() here would present an on-screen frame as a side effect.
+    // A snapshot goes through renderNativeContent; renderNow() would present an
+    // on-screen frame as a side effect.
     if (context.isSnapshot())
         return;
 
@@ -326,8 +316,6 @@ Graphics::Image GPUView::renderNativeContent(float scale)
             return [device newTextureWithDescriptor:descriptor];
         };
 
-        // The resolve/store target is single-sampled; content renders into the
-        // MSAA texture and resolves into it, mirroring the on-screen path.
         auto colorTexture = makeTarget(MTLPixelFormatBGRA8Unorm, false);
         auto msaaTexture =
             samples > 1 ? makeTarget(MTLPixelFormatBGRA8Unorm, true) : nil;
@@ -343,8 +331,8 @@ Graphics::Image GPUView::renderNativeContent(float scale)
             render(frame);
         }
 
-        // Copy the private colour texture into a shared buffer so the CPU can
-        // read it (robust across unified and discrete GPUs).
+        // Via a shared buffer so the CPU can read the private colour texture on
+        // unified and discrete GPUs alike.
         auto rowBytes = (NSUInteger) pixelWidth * 4;
         auto readback = [device newBufferWithLength:rowBytes * pixelHeight
                                             options:MTLResourceStorageModeShared];
@@ -370,8 +358,8 @@ Graphics::Image GPUView::renderNativeContent(float scale)
         if (dst == nullptr)
             return {};
 
-        // BGRA8 premultiplied (how Core Animation composites the Metal layer) ->
-        // straight-alpha RGBA (what Image holds).
+        // Premultiplied BGRA8, as Core Animation composites it, to the
+        // straight-alpha RGBA Image holds.
         auto* src = (const std::uint8_t*) readback.contents;
         auto count = (std::size_t) pixelWidth * pixelHeight;
         for (std::size_t i = 0; i < count; ++i)
@@ -420,8 +408,8 @@ bool GPUView::renderNativeContentToTarget(void* nativeTarget, float)
 
     @autoreleasepool
     {
-        // The colour target aliases the CVPixelBuffer's IOSurface, so render()
-        // writes straight into the buffer the encoder will read -- no read-back.
+        // Aliases the CVPixelBuffer's IOSurface, so render() writes straight
+        // into the buffer the encoder reads.
         auto colorDescriptor = [MTLTextureDescriptor
             texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                                          width:pixelWidth

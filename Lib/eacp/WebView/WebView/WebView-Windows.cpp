@@ -23,8 +23,6 @@
 #include <WebView2.h>
 #include <WebView2EnvironmentOptions.h>
 
-
-
 namespace eacp::Graphics
 {
 
@@ -32,12 +30,8 @@ using Microsoft::WRL::ComPtr;
 
 HWND findHostHwndForView(View* view);
 
-// Defined in Graphics/Keyboard-Windows.cpp: Windows virtual key -> framework
-// KeyCode (KeyCode::Unknown when unmapped). Lets forwarded keys carry the same
-// keyCode the host window's own WM_KEYDOWN path would produce.
+// Defined in Graphics/Keyboard-Windows.cpp; KeyCode::Unknown when unmapped.
 uint16_t keyCodeFromVirtualKey(int vk);
-
-// Defined in Graphics/D2DFactory-Windows.cpp (linked via eacp-graphics).
 
 using MessageHandlerMap =
     std::unordered_map<std::string, std::function<void(const std::string&)>>;
@@ -66,13 +60,9 @@ struct CoTaskMemString
 
 namespace
 {
-// WebView2's default user data folder sits next to the executable, which is
-// read-only for installed apps (e.g. Program Files) and makes environment
-// creation fail outright. Use %LOCALAPPDATA%\<exe name>\WebView2 instead;
-// WebView2 creates the directories on demand. A non-empty `suffix`
-// (Options::userDataFolderSuffix) isolates a WebView into its own folder
-// (WebView2-<suffix>) so views with different custom-scheme registrations in
-// the same executable don't collide on a shared folder — see the option's doc.
+// WebView2 defaults to a folder next to the executable, which is read-only for
+// installed apps and fails environment creation outright. See
+// Options::userDataFolderSuffix for what the suffix isolates.
 std::wstring defaultUserDataFolder(const std::string& suffix)
 {
     PWSTR localAppData = nullptr;
@@ -100,11 +90,8 @@ std::wstring defaultUserDataFolder(const std::string& suffix)
     return folder + L"\\" + moduleName + L"\\" + leaf;
 }
 
-// A read-only IStream over a bounded byte range of a StreamingResource.
-// WebView2 pulls the response body from this stream, so bytes are fetched
-// lazily through ResourceReader::read instead of buffering the whole resource
-// up front. The stream owns the resource, so its reader (e.g. an open file)
-// stays alive exactly as long as WebView2 keeps reading.
+// Read-only IStream over a byte range, pulled lazily as WebView2 reads the
+// response body. Owns the resource, keeping its reader alive meanwhile.
 class ReaderStream
     : public Microsoft::WRL::RuntimeClass<
           Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
@@ -224,10 +211,8 @@ private:
 };
 } // namespace
 
-// Carries what a window.open popup needs to splice into WebView2's
-// NewWindowRequested flow: the opener's environment (the adopted CoreWebView2
-// must share it), the opener's options (so the popup serves the same schemes),
-// and the callback that hands our CoreWebView2 back once it is live.
+// What a window.open popup needs to splice into NewWindowRequested. The
+// adopted CoreWebView2 must share the opener's environment.
 struct WebView::PopupInit
 {
     ComPtr<ICoreWebView2Environment> environment;
@@ -245,13 +230,10 @@ struct WebView::Native
 
     ~Native()
     {
-        // Fences the queued create retry (see retryWebView2Create) against a
-        // Native that went away before the event loop got to it.
         *alive = false;
 
-        // Unhook our event handlers before tearing the controller down
-        // so any late callback from the browser process can't fire
-        // back into a half-destroyed Native.
+        // Unhook first, so a late callback from the browser process cannot
+        // fire back into a half-destroyed Native.
         if (webView)
         {
             if (navigationStartingToken.value)
@@ -275,20 +257,18 @@ struct WebView::Native
         if (controller)
             controller->Close();
 
-        // Drop our COM references so the WebView2 browser-process IPC threads
-        // release their connection while the heap is still valid. The shared
-        // environment (popup mode) is owned by the opener; just drop our ref.
+        // Let the WebView2 IPC threads release their connection while this
+        // heap is still valid.
         webView.Reset();
         compositionController.Reset();
         controller.Reset();
         environment.Reset();
         sharedEnvironment.Reset();
 
-        // Remove the render visual from the View's composition tree.
         if (webViewVisual)
         {
-            if (auto* container = static_cast<IDCompositionVisual2*>(
-                    owner.getNativeLayer()))
+            if (auto* container =
+                    static_cast<IDCompositionVisual2*>(owner.getNativeLayer()))
                 container->RemoveVisual(webViewVisual.Get());
 
             webViewVisual.Reset();
@@ -305,8 +285,7 @@ struct WebView::Native
         if (!hostHwnd)
             return;
 
-        // In visual hosting mode WebView2 is not an HWND, so it receives no
-        // native input. Route the framework's mouse events to it instead.
+        // A visual-hosted WebView2 is not an HWND and receives no native input.
         owner.setHandlesMouseEvents(true);
 
         createRenderVisual();
@@ -342,9 +321,7 @@ struct WebView::Native
         if (!hostHwnd || !webViewVisual)
             return;
 
-        // Popup mode reuses the opener's environment (put_NewWindow requires the
-        // adopted CoreWebView2 to share the opener's environment), so skip
-        // environment creation and go straight to the controller.
+        // put_NewWindow requires a popup to share the opener's environment.
         if (sharedEnvironment)
         {
             environment = sharedEnvironment;
@@ -388,13 +365,9 @@ struct WebView::Native
         }
     }
 
-    // Headless CI machines intermittently lose the first WebView2 launch: the
-    // browser process dies mid-creation (E_ABORT), which takes the environment
-    // down with it. Asking that environment again is what the old retry did,
-    // and it always failed instantly — the process backing it is gone. So a
-    // retry has to launch a fresh environment instead. Popups have to keep the
-    // opener's environment (put_NewWindow requires it), and real sessions fail
-    // for real reasons (e.g. a missing runtime), so both surface the error.
+    // On headless CI the browser process intermittently dies mid-creation,
+    // taking its environment with it, so only a fresh environment can retry.
+    // Popups must keep the opener's, and real sessions fail for real reasons.
     bool shouldRetryWebView2Create() const
     {
         return Apps::getAppEnvironment().headless && !sharedEnvironment
@@ -412,10 +385,8 @@ struct WebView::Native
 
         environment.Reset();
 
-        // Start the next attempt from the event loop rather than from inside
-        // the failed handler, so WebView2 finishes unwinding this one first.
-        // initInProgress stays set, which keeps ensureInitialized out until
-        // the retry settles.
+        // Retry from the event loop, so WebView2 unwinds this handler first.
+        // initInProgress stays set, keeping ensureInitialized out meanwhile.
         Threads::callAsync(
             [this, guard = alive]
             {
@@ -426,13 +397,9 @@ struct WebView::Native
         return S_OK;
     }
 
-    // Creates the visual-hosting composition controller from `environment` (set
-    // by either the normal env-creation path or popup mode) and wires the
-    // CoreWebView2 up. Shared by both so popups don't duplicate the setup.
     HRESULT createCompositionController()
     {
-        // Visual hosting needs the composition-controller factory on
-        // ICoreWebView2Environment3.
+        // Visual hosting needs the factory on ICoreWebView2Environment3.
         ComPtr<ICoreWebView2Environment3> env3;
         if (FAILED(environment->QueryInterface(IID_PPV_ARGS(&env3))) || !env3)
         {
@@ -463,9 +430,6 @@ struct WebView::Native
 
                     compositionController = ctrl;
 
-                    // The composition controller also implements the base
-                    // controller interface (bounds, settings, visibility, the
-                    // CoreWebView2 itself).
                     if (FAILED(ctrl->QueryInterface(IID_PPV_ARGS(&controller)))
                         || !controller)
                     {
@@ -477,19 +441,15 @@ struct WebView::Native
                     controller->get_CoreWebView2(&webView);
                     applyBackground();
 
-                    // Render into our composition visual.
-                    compositionController->put_RootVisualTarget(
-                        webViewVisual.Get());
+                    compositionController->put_RootVisualTarget(webViewVisual.Get());
 
                     applySettings();
                     setupEventHandlers();
                     registerSchemeHandlers();
                     updateBounds();
 
-                    // A window hidden while the controller was still
-                    // initializing (a tray app's panel, hidden right after it
-                    // is constructed) must not have the browser's window come
-                    // up on screen now.
+                    // A host hidden mid-initialization must not have the
+                    // browser's window surface now.
                     setControllerVisible(hostVisible);
 
                     initialized = true;
@@ -497,10 +457,8 @@ struct WebView::Native
 
                     processPendingOperations();
 
-                    // Popup mode: hand our freshly-created (un-navigated)
-                    // CoreWebView2 back to the opener so it can adopt it via
-                    // put_NewWindow before WebView2 navigates window.open's
-                    // target into it.
+                    // Popup mode: the opener adopts this un-navigated
+                    // CoreWebView2 via put_NewWindow.
                     if (onCoreWebViewReady)
                     {
                         auto ready = std::move(onCoreWebViewReady);
@@ -522,13 +480,9 @@ struct WebView::Native
 
     Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions> buildEnvironmentOptions()
     {
-        // Custom URL schemes (anything other than http/https/file) won't
-        // navigate at all unless registered here. macOS handles this via
-        // WKWebView's setURLSchemeHandler; WebView2 requires both an env-
-        // level registration (so the scheme is "real") AND a per-CoreWebView2
-        // WebResourceRequested filter (where we actually serve the bytes).
-        // Treat the scheme as secure + with an authority component so URLs
-        // like app://local/index.html parse the way React / fetch expect.
+        // Custom schemes need this env-level registration to navigate at all,
+        // plus the per-CoreWebView2 filter that serves the bytes. Secure with
+        // an authority so app://local/index.html parses as React expects.
         auto envOptions = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
 
         auto registrations =
@@ -585,10 +539,7 @@ struct WebView::Native
             || (options.schemes.empty() && options.streamingSchemes.empty()))
             return;
 
-        // Stable owners for the per-scheme provider tables. The
-        // WebResourceRequested callback captures `this`, looks the request
-        // URL's scheme up here, and dispatches to the matching provider --
-        // a one-shot ResourceProvider or a chunked StreamingProvider.
+        // Stable owners for the tables the WebResourceRequested callback reads.
         for (auto& [scheme, provider]: options.schemes)
             schemeProviders.emplace(scheme, provider);
         for (auto& [scheme, provider]: options.streamingSchemes)
@@ -596,9 +547,7 @@ struct WebView::Native
 
         ensureWebResourceHandler();
 
-        // AddWebResourceRequestedFilter only intercepts URLs that match
-        // the filter pattern. Use "scheme://*" so every path under the
-        // scheme reaches our handler.
+        // Only URLs matching a registered filter reach the handler at all.
         auto addFilter = [&](const std::string& scheme)
         {
             auto pattern = toWideString(scheme + "://*");
@@ -616,9 +565,8 @@ struct WebView::Native
             addFilter(scheme);
     }
 
-    // Attach the WebResourceRequested handler once. Both custom-scheme serving
-    // and loadHTML's base-URL interception route through it, so it must exist
-    // even when no custom schemes were registered.
+    // Needed even without custom schemes: loadHTML's base-URL interception
+    // routes through the same handler.
     void ensureWebResourceHandler()
     {
         if (webResourceToken.value || !webView)
@@ -633,11 +581,8 @@ struct WebView::Native
             &webResourceToken);
     }
 
-    // Serves an in-memory HTML document for a real (http/https) base URL so the
-    // page gets that URL's origin -- and, for https, a secure context. macOS's
-    // loadHTMLString:baseURL: gives the document a trustworthy origin directly;
-    // WebView2's NavigateToString can't, leaving the page at about:blank where
-    // secure-context-only APIs (e.g. navigator.mediaDevices) are unavailable.
+    // Gives an in-memory document the base URL's origin, and for https a secure
+    // context. NavigateToString cannot: it leaves the page at about:blank.
     void serveInlineHtml(const std::string& baseURL, std::string html)
     {
         if (!webView)
@@ -722,9 +667,8 @@ struct WebView::Native
             return S_OK;
         }
 
-        // CORS bypass: WebView2 enforces cross-origin restrictions even
-        // for our own scheme handler, so React's fetch() to a sibling
-        // URL fails without an explicit allow-origin header.
+        // WebView2 enforces cross-origin rules even on our own scheme, so
+        // fetch() to a sibling URL fails without an allow-origin header.
         auto headers = std::wstring {L"Content-Type: "}
                        + toWideString(response->mimeType)
                        + L"\r\nAccess-Control-Allow-Origin: *";
@@ -767,11 +711,6 @@ struct WebView::Native
         return S_OK;
     }
 
-    // Serves a custom-scheme request from a StreamingProvider: resolves the
-    // request's Range header against the resource size and answers 200 / 206 /
-    // 416 with the matching Accept-Ranges / Content-Range / Content-Length
-    // headers, streaming the body lazily through a ReaderStream. Mirrors the
-    // macOS WKURLSchemeTask streaming path.
     HRESULT handleStreamingRequest(ICoreWebView2WebResourceRequestedEventArgs* args,
                                    ICoreWebView2WebResourceRequest* request,
                                    const std::string& url,
@@ -910,12 +849,8 @@ struct WebView::Native
                         }
                         else if (resultJson)
                         {
-                            // WebView2 always returns JSON-encoded values, so a
-                            // JS string like "abc" arrives as "\"abc\"". macOS
-                            // hands back the raw string. Decode one JSON layer
-                            // when the value is a string so both backends look
-                            // the same to callers; numbers / bools / objects
-                            // pass through.
+                            // WebView2 JSON-encodes results, so "abc" arrives
+                            // as "\"abc\"". Strip one layer to match macOS.
                             auto rawJson = fromWideString(resultJson);
                             try
                             {
@@ -1013,13 +948,9 @@ struct WebView::Native
                     if (!messageRaw)
                         return S_OK;
 
-                    // The envelope is {"name": "...", "body": ...}. `body` is
-                    // usually a JSON-encoded string, handed to the handler
-                    // unchanged. A page may also post an object/array
-                    // (e.g. postMessage({type:'ready'})); mirror the macOS
-                    // handler and serialise those back to JSON so they arrive
-                    // intact. A bare scalar (number/bool/null) drops to an
-                    // empty body, matching macOS's isValidJSONObject guard.
+                    // The envelope is {"name": ..., "body": ...}. Objects and
+                    // arrays are re-serialised, and bare scalars dropped, the
+                    // way macOS's isValidJSONObject guard does.
                     auto name = std::string {};
                     auto body = std::string {};
                     try
@@ -1049,25 +980,17 @@ struct WebView::Native
                     if (it == messageHandlers.end())
                         return S_OK;
 
-                    // Invoke directly on the UI thread (where this
-                    // callback already runs). Going through callAsync
-                    // would post onto the dispatcher queue, which on
-                    // Windows doesn't get drained while a nested
-                    // runEventLoopFor is pumping — so bridge messages
-                    // would never reach the handler and tests that
-                    // depend on bridge round-trips would silently see
-                    // no data.
+                    // Directly, on the UI thread this already runs on: the
+                    // dispatcher queue callAsync posts to is not drained
+                    // while a nested runEventLoopFor is pumping.
                     it->second(body);
                     return S_OK;
                 })
                 .Get(),
             &webMessageToken);
 
-        // Auto-grant camera / microphone the way the macOS backend does via its
-        // requestMediaCapturePermissionForOrigin UIDelegate. Without a handler
-        // WebView2 leaves the request in its default state, so getUserMedia from
-        // a page loaded here would never be allowed. Other permission kinds fall
-        // through to WebView2's default (prompt) behaviour.
+        // Auto-grant camera / microphone as the macOS backend does; without a
+        // handler WebView2 never allows getUserMedia. Other kinds still prompt.
         webView->add_PermissionRequested(
             Microsoft::WRL::Callback<ICoreWebView2PermissionRequestedEventHandler>(
                 [](ICoreWebView2*,
@@ -1085,8 +1008,6 @@ struct WebView::Native
                 .Get(),
             &permissionRequestedToken);
 
-        // window.open / target="_blank" -> hand the embedder a new app-owned
-        // WebView, mirroring the macOS createWebViewWithConfiguration delegate.
         webView->add_NewWindowRequested(
             Microsoft::WRL::Callback<ICoreWebView2NewWindowRequestedEventHandler>(
                 [this](ICoreWebView2*,
@@ -1095,8 +1016,6 @@ struct WebView::Native
                 .Get(),
             &newWindowRequestedToken);
 
-        // JS window.close() -> notify the embedder (e.g. so it tears the popup
-        // window down). Matches the macOS webViewDidClose delegate.
         webView->add_WindowCloseRequested(
             Microsoft::WRL::Callback<ICoreWebView2WindowCloseRequestedEventHandler>(
                 [this](ICoreWebView2*, IUnknown*) -> HRESULT
@@ -1108,12 +1027,9 @@ struct WebView::Native
             &windowCloseRequestedToken);
     }
 
-    // Adopts WebView2's window.open into an app-owned WebView so window.opener /
-    // postMessage between the two keep working. WebView2's contract: hand it an
-    // un-navigated CoreWebView2 created from this same environment via
-    // put_NewWindow, completing the event's deferral once that popup exists.
-    // Our WebView builds its CoreWebView2 lazily (once the embedder parents it
-    // into a window), so we defer and complete from the popup's ready callback.
+    // WebView2 wants an un-navigated CoreWebView2 from this environment via
+    // put_NewWindow, but ours is built lazily once the embedder parents it into
+    // a window — hence the deferral, completed from the popup's ready callback.
     HRESULT
     handleNewWindowRequested(ICoreWebView2NewWindowRequestedEventArgs* args)
     {
@@ -1130,8 +1046,7 @@ struct WebView::Native
         auto init = WebView::PopupInit {};
         init.environment = environment;
         init.options = options;
-        // WebView2 navigates the popup to the requested URL itself, so the popup
-        // must not auto-load its embedded index over it.
+        // WebView2 navigates the popup itself; an embedded index would race it.
         init.options.embedded.autoLoad = false;
         init.onReady = [argsHold, deferral](ICoreWebView2* popupWebView)
         {
@@ -1144,8 +1059,7 @@ struct WebView::Native
 
         if (!owner.onNewWindowRequested(std::move(popup), url))
         {
-            // Embedder declined and let the popup be destroyed, so onReady will
-            // never fire. Hand the request back to WebView2's default handling.
+            // The declined popup is destroyed, so onReady will never fire.
             args->put_Handled(FALSE);
             deferral->Complete();
         }
@@ -1164,17 +1078,9 @@ struct WebView::Native
         auto widthPx = bounds.w * dpiScale;
         auto heightPx = bounds.h * dpiScale;
 
-        // The render visual lives inside the WebView's own View container, which
-        // the View tree already positions and (via the Panel) applies opacity
-        // to. So it only needs to sit at the container origin.
-        //
-        // WebView2 treats the RootVisualTarget's coordinate space as physical
-        // pixels, but our composition root is already DPI-scaled. Counter-scale
-        // the visual by 1/dpi so the browser's pixel-space content maps back to
-        // the correct logical size on screen (without this it renders dpi-times
-        // too large on high-DPI displays). DComp visuals carry no size — the
-        // extent comes from the content WebView2 renders, and from the bounds
-        // handed to put_Bounds below.
+        // The View container already positions the visual, so it sits at the
+        // origin. WebView2 treats RootVisualTarget space as physical pixels
+        // while our composition root is DPI-scaled, hence the 1/dpi transform.
         webViewVisual->SetOffsetX(0.0f);
         webViewVisual->SetOffsetY(0.0f);
 
@@ -1187,10 +1093,9 @@ struct WebView::Native
         if (!controller)
             return;
 
-        // Bounds are in raw pixels (the default bounds mode); RasterizationScale
-        // tells WebView2 the DPI so the page lays out at the right CSS size and
-        // renders crisply. Needs ICoreWebView2Controller3; without it the
-        // WebView still works (just softer).
+        // Bounds are raw pixels, so RasterizationScale is what gets the page
+        // laid out at the right CSS size. Without Controller3 it just looks
+        // softer.
         ComPtr<ICoreWebView2Controller3> controller3;
         if (SUCCEEDED(controller->QueryInterface(IID_PPV_ARGS(&controller3)))
             && controller3)
@@ -1210,24 +1115,18 @@ struct WebView::Native
         return 1.f;
     }
 
-    // Visual hosting still leaves WebView2 a top-level window of its own for
-    // input, IME and accessibility, which it places in screen coordinates
-    // derived from the parent HWND. It re-derives that placement only when
-    // told: without this the window keeps the position the host had when the
-    // controller was created, so it is left behind wherever the window opened.
+    // Visual hosting still leaves WebView2 its own top-level window for input,
+    // IME and accessibility, placed in screen coordinates it only re-derives
+    // when told — otherwise it stays where the host was at creation.
     void notifyParentWindowMoved()
     {
         if (controller)
             controller->NotifyParentWindowPositionChanged();
     }
 
-    // That same window is shown and hidden independently of the host, so a
-    // hidden window (a tray app's panel, a minimized window) otherwise leaves
-    // it behind on screen — still hit-testable, and still compositing a page
-    // nobody can see. The host's visibility is remembered rather than read
-    // back, because it can change while the controller is still initializing —
-    // and because a window that has never been shown is not thereby hidden:
-    // an offscreen snapshot of one still needs the page rendering.
+    // That window is shown and hidden independently of the host, so a hidden
+    // host would otherwise leave it on screen, hit-testable. Visibility is
+    // remembered, as it can change while the controller still initializes.
     void setControllerVisible(bool visible)
     {
         hostVisible = visible;
@@ -1236,9 +1135,8 @@ struct WebView::Native
             controller->put_IsVisible(visible ? TRUE : FALSE);
     }
 
-    // --- Input forwarding ---------------------------------------------------
     // A visual-hosted WebView2 has no input HWND, so the framework forwards the
-    // mouse events it routed to this View (see the WebView::mouse* overrides).
+    // mouse events it routed to this View.
     void sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND kind,
                    const Point& localPos,
                    uint32_t mouseData = 0,
@@ -1248,9 +1146,8 @@ struct WebView::Native
         if (!compositionController)
             return;
 
-        // Bounds are in physical pixels (see updateBounds), so input points must
-        // be too. The framework hands us positions local to this View in logical
-        // units, so scale them up by the DPI factor.
+        // Bounds are physical pixels (see updateBounds), but the framework
+        // hands us logical units.
         auto scale = getDpiScale();
         POINT pt = {static_cast<LONG>(std::lround(localPos.x * scale)),
                     static_cast<LONG>(std::lround(localPos.y * scale))};
@@ -1258,9 +1155,8 @@ struct WebView::Native
         compositionController->SendMouseInput(kind, virtualKeys, mouseData, pt);
     }
 
-    // The button held during a drag. WebView2 treats a MOVE whose virtualKeys
-    // report no button as a plain hover, so without this a scrollbar-thumb (or
-    // any in-page) drag is dropped the moment the pointer moves.
+    // WebView2 reads a MOVE whose virtualKeys report no button as a hover, and
+    // would drop an in-page drag the moment the pointer moves.
     static COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS
         heldButtonFor(const MouseEvent& event)
     {
@@ -1323,8 +1219,7 @@ struct WebView::Native
 
     void handleMouseWheel(const MouseEvent& event)
     {
-        // event.delta is in WHEEL_DELTA units; WebView2 expects the same value
-        // packed into mouseData. y drives the vertical wheel, x the horizontal.
+        // event.delta is already in the WHEEL_DELTA units mouseData wants.
         if (event.delta.y != 0.f)
             sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND_WHEEL,
                       event.pos,
@@ -1336,11 +1231,8 @@ struct WebView::Native
                       static_cast<uint32_t>(static_cast<int32_t>(event.delta.x)));
     }
 
-    // --- Native file drag-out -----------------------------------------------
-    // The page arms a drag on mousedown (via the armFileDrag bridge command);
-    // by the time the pointer starts dragging the armed paths have arrived over
-    // the message channel, so the first mouseDragged after arming kicks off the
-    // OS drag. Mirrors the macOS EacpDragWebView gesture.
+    // The page arms a drag on mousedown, so the armed paths have arrived over
+    // the message channel by the time the pointer starts dragging.
     bool startArmedFileDragIfNeeded()
     {
         if (!dragArmed)
@@ -1372,10 +1264,8 @@ struct WebView::Native
         for (auto& path: paths)
         {
             auto widePath = toWideString(path);
-            // SHParseDisplayName only accepts the OS-native separator: a path
-            // with forward slashes (which is how cross-platform code, e.g.
-            // std::filesystem generic paths, hands them over) fails to parse and
-            // yields no PIDL, so the drag silently never starts. Normalize first.
+            // SHParseDisplayName yields no PIDL for forward slashes, and the
+            // drag then silently never starts.
             std::replace(widePath.begin(), widePath.end(), L'/', L'\\');
             PIDLIST_ABSOLUTE pidl = nullptr;
             if (SUCCEEDED(
@@ -1403,9 +1293,8 @@ struct WebView::Native
 
                     if (IsWindow(ownerWindow))
                     {
-                        // Attach (not construct-from-raw) so the source keeps the
-                        // single ref it is born with; the ComPtr releases it — and
-                        // deletes the object — when the drag returns.
+                        // Attach, not construct-from-raw, so the source keeps
+                        // the single ref it is born with.
                         ComPtr<IDropSource> dropSource;
                         dropSource.Attach(new FileDragSource(
                             [ownerWindow, dpiScale]
@@ -1415,15 +1304,12 @@ struct WebView::Native
                             },
                             onDragMoved));
 
-                        // Register our own window as a drop target for the length
-                        // of the drag purely for cursor feedback (see
-                        // FileDragTarget) — without it the shell shows ⊘ over our
-                        // own window. Fails harmlessly (leaving the old ⊘) if
-                        // something else already owns the window's drop slot.
+                        // Purely for cursor feedback; see FileDragTarget. Fails
+                        // harmlessly if something else owns the drop slot.
                         ComPtr<IDropTarget> dropTarget;
                         dropTarget.Attach(new FileDragTarget());
-                        auto registered =
-                            SUCCEEDED(RegisterDragDrop(ownerWindow, dropTarget.Get()));
+                        auto registered = SUCCEEDED(
+                            RegisterDragDrop(ownerWindow, dropTarget.Get()));
 
                         DWORD effect = DROPEFFECT_NONE;
                         SHDoDragDrop(ownerWindow,
@@ -1435,8 +1321,7 @@ struct WebView::Native
                         if (registered)
                             RevokeDragDrop(ownerWindow);
 
-                        // The modal loop is over: report the release point so the
-                        // app can file the drop (or stand its filing UI down).
+                        // The modal loop is over; report the release point.
                         onDragEnded(fileDragPointFromCursor(ownerWindow, dpiScale));
                     }
                 }
@@ -1450,10 +1335,8 @@ struct WebView::Native
             OleUninitialize();
     }
 
-    // --- Native window drag -------------------------------------------------
     // window-drag.js posts __eacpWindowDrag on a drag-region mousedown, which
-    // arms this; the next mouseDragged hands the gesture to the OS. Mirrors the
-    // macOS performWindowDragWithEvent: path.
+    // arms this; the next mouseDragged hands the gesture to the OS.
     bool startArmedWindowDragIfNeeded()
     {
         if (!windowDragArmed)
@@ -1469,17 +1352,13 @@ struct WebView::Native
         if (!hostHwnd)
             return;
 
-        // The canonical borderless-window drag: drop the capture the host has
-        // from the button press, then tell the window the user grabbed its
-        // caption. DefWindowProc then runs a modal move loop that follows the
-        // still-down mouse until release.
+        // The canonical borderless-window drag: drop the button-press capture,
+        // then let DefWindowProc run its modal caption-move loop.
         ReleaseCapture();
         SendMessageW(hostHwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
     }
 
-    // Clear any arming left from a previous gesture, before the page sees this
-    // mousedown and (asynchronously) re-arms for the new one. Without this a
-    // click that armed but never dragged would leak its arm into a later drag.
+    // Otherwise a click that armed but never dragged leaks into a later drag.
     void resetDragArming()
     {
         dragArmed = false;
@@ -1504,12 +1383,8 @@ struct WebView::Native
         }
     }
 
-    // Document-start scripts have to be registered with WebView2 *before*
-    // Navigate(), otherwise they won't fire for the first document load.
-    // Keep them in their own bucket so processPendingOperations() can
-    // drain them ahead of the queued Navigate() — fixes the case where
-    // the WebView constructor's auto-load enqueues a Navigate before
-    // anyone has a chance to attach a user script.
+    // Kept in their own bucket because they must reach WebView2 before the
+    // queued Navigate(), or they miss the first document load.
     void queueDocStartScript(std::wstring script)
     {
         if (initialized && webView)
@@ -1548,23 +1423,20 @@ struct WebView::Native
     ComPtr<ICoreWebView2CompositionController> compositionController;
     ComPtr<ICoreWebView2> webView;
 
-    // The composition visual the browser renders into. It is a child of the
-    // WebView's own View ContainerVisual, so it inherits the View tree's
-    // position, opacity and z-order — letting the WebView layer, blend and
-    // overlap with GPU and primitive content (impossible with a child HWND).
+    // A child of the View's ContainerVisual, so it inherits position, opacity
+    // and z-order and can blend with other content — a child HWND could not.
     Microsoft::WRL::ComPtr<IDCompositionVisual2> webViewVisual;
     MessageHandlerMap messageHandlers;
     std::unordered_map<std::string, ResourceProvider> schemeProviders;
     std::unordered_map<std::string, StreamingProvider> streamingProviders;
 
-    // base URL -> HTML body, for loadHTML() calls that carry a base URL (see
-    // serveInlineHtml). Keyed by the exact URL the navigation requests.
+    // Keyed by the exact base URL the navigation requests. See serveInlineHtml.
     std::unordered_map<std::string, std::string> inlineDocuments;
 
     bool initialized = false;
     bool initInProgress = false;
 
-    // Whether the host window is showing. See setControllerVisible.
+    // See setControllerVisible.
     bool hostVisible = true;
 
     static constexpr int maxWebView2CreateRetries = 3;
@@ -1574,23 +1446,16 @@ struct WebView::Native
     // Native that scheduled it is still there.
     std::shared_ptr<bool> alive = std::make_shared<bool>(true);
 
-    // Tracks navigation in flight (NavigationStarting -> Completed), so
-    // isLoading() can answer like the macOS backend's webView.isLoading.
+    // Navigation in flight: NavigationStarting -> NavigationCompleted.
     bool loading = false;
 
-    // Popup mode (set via PopupInit when adopting a window.open): reuse the
-    // opener's environment and, once our CoreWebView2 is live, hand it back to
-    // the opener through onCoreWebViewReady so it can call put_NewWindow.
+    // Popup mode, set via PopupInit when adopting a window.open.
     ComPtr<ICoreWebView2Environment> sharedEnvironment;
     std::function<void(ICoreWebView2*)> onCoreWebViewReady;
 
-    // Set by armFileDrag (the bridge command); consumed by the next
-    // mouseDragged, which starts the OS drag for these paths.
+    // Set by armFileDrag / armWindowDrag; consumed by the next mouseDragged.
     bool dragArmed = false;
     Vector<std::string> armedDragPaths;
-
-    // Set by armWindowDrag (the __eacpWindowDrag bridge command); consumed by
-    // the next mouseDragged, which hands the gesture to the OS move loop.
     bool windowDragArmed = false;
 
     std::queue<std::function<void()>> pendingOperations;
@@ -1620,11 +1485,9 @@ void WebView::initNative(Options options)
         installOffscreenAnimationSupport();
 }
 
-// Popup constructor (window.open). Builds the Native in popup mode: it adopts
-// the opener's environment and fires init.onReady once its CoreWebView2 is live,
-// so the opener can hand it to WebView2 via put_NewWindow. Created by the
-// opener's NewWindowRequested handler; the embedder receives it through
-// onNewWindowRequested and parents it into a window, which drives the lazy init.
+// Popup constructor (window.open): adopts the opener's environment and fires
+// init.onReady once its CoreWebView2 is live. Init stays lazy until the
+// embedder parents it into a window.
 WebView::WebView(PopupInit init)
 {
     impl = std::make_shared<Native>(*this, std::move(init.options));
@@ -1637,10 +1500,8 @@ WebView::WebView(PopupInit init)
 
 WebView::~WebView()
 {
-    // Controller Close + visual teardown happens in ~Native (driven by impl
-    // going out of scope). Calling controller->Close() here too would
-    // double-close, which the WebView2 docs say is a no-op but in
-    // practice has been observed to trip late callbacks on Native.
+    // ~Native does the controller Close and visual teardown. Closing here too
+    // is documented as a no-op, but has been seen to trip late callbacks.
     detail::unregisterWebView(this);
 }
 
@@ -1667,12 +1528,8 @@ void WebView::loadHTML(const std::string& html, const std::string& baseURL)
             if (!impl->webView)
                 return;
 
-            // A base URL gives the document a real origin (and, for https, a
-            // secure context). NavigateToString can't carry one -- it lands the
-            // page at about:blank -- so serve the HTML for the base URL through
-            // an intercepted navigation instead. This matches macOS's
-            // loadHTMLString:baseURL: and is what lets secure-context APIs such
-            // as navigator.mediaDevices.getUserMedia work.
+            // NavigateToString carries no base URL and lands the page at
+            // about:blank, so serve it through an intercepted navigation.
             if (!baseURL.empty())
             {
                 impl->serveInlineHtml(baseURL, html);
@@ -1684,9 +1541,8 @@ void WebView::loadHTML(const std::string& html, const std::string& baseURL)
         });
 }
 
-// Like loadURL/loadHTML, the navigation commands queue until the lazily
-// created CoreWebView2 exists, so e.g. loadURL() + reload() issued back to
-// back both take effect instead of the latter being dropped.
+// Queued until the lazily created CoreWebView2 exists, so loadURL() + reload()
+// back to back both take effect.
 void WebView::goBack()
 {
     impl->ensureInitialized();
@@ -1776,9 +1632,7 @@ std::string WebView::getTitle() const
     return title.toString();
 }
 
-// Queues like loadURL/loadHTML, so a script evaluated right after loadURL() on
-// a not-yet-initialized WebView runs once the CoreWebView2 exists instead of
-// being silently dropped.
+// Queued, so a script evaluated on a not-yet-initialized WebView still runs.
 void WebView::evaluateJavaScript(const std::string& script,
                                  const JSCallback& callback)
 {
@@ -1837,8 +1691,7 @@ void WebView::takeSnapshot(SnapshotCallback callback)
                         }
                         else
                         {
-                            // Stream is at end-of-write — rewind and
-                            // read the full buffer back into bytes.
+                            // The stream is at end-of-write; rewind to read.
                             LARGE_INTEGER zero = {};
                             stream->Seek(zero, STREAM_SEEK_SET, nullptr);
 
@@ -1872,10 +1725,8 @@ void WebView::addScriptMessageHandler(
 {
     impl->messageHandlers[name] = std::move(handler);
 
-    // Expose the handler under both the plain `window.<name>` form and the
-    // WebKit `window.webkit.messageHandlers.<name>` form. macOS only offers the
-    // latter, so mirroring it here lets the same page code post messages on
-    // both platforms without branching.
+    // Exposed under the WebKit `window.webkit.messageHandlers.<name>` form as
+    // well, so page code posts messages the same way on both platforms.
     auto script = toWideString(
         "(function(){var send=function(msg){window.chrome.webview.postMessage("
         "{name:'"
@@ -1928,17 +1779,15 @@ void WebView::hostWindowVisibilityChanged(bool visible)
     impl->setControllerVisible(visible);
 }
 
-// Visual hosting gives the WebView no input HWND of its own, and the key-focus
-// routing that needs this is macOS-only, so the host view is the right target.
+// The WebView has no input HWND of its own, and the routing that would need
+// one is macOS-only.
 void* WebView::nativeFocusTarget()
 {
     return View::nativeFocusTarget();
 }
 
-// In visual hosting mode the WebView is a composition visual with no input
-// HWND, so the framework's routed mouse events are forwarded to the WebView2
-// composition controller. (On macOS the native WKWebView receives input
-// directly, so the equivalents there are no-ops.)
+// A composition visual receives no input of its own, so routed mouse events
+// are forwarded to the WebView2 composition controller.
 void WebView::mouseDown(const MouseEvent& event)
 {
     impl->handleMouseDown(event);
@@ -1951,9 +1800,7 @@ void WebView::mouseUp(const MouseEvent& event)
 
 void WebView::mouseDragged(const MouseEvent& event)
 {
-    // A drag armed by the page takes over the gesture: starting it here, from
-    // the genuine drag, is what lets a file drag escape to Explorer / a window
-    // drag enter the OS move loop.
+    // Only a drag started from the genuine gesture can escape the app.
     if (impl->startArmedFileDragIfNeeded())
         return;
 
@@ -1980,18 +1827,15 @@ void WebView::mouseWheel(const MouseEvent& event)
 
 void WebView::armFileDrag(const Vector<std::string>& paths)
 {
-    // Defer the actual OS drag to the next mouseDragged (see
-    // startArmedFileDragIfNeeded): a drag started straight from this async
-    // bridge callback wouldn't be tied to the live mouse gesture.
+    // Deferred to the next mouseDragged: a drag started from this async bridge
+    // callback would not be tied to the live mouse gesture.
     impl->armedDragPaths = paths;
     impl->dragArmed = true;
 }
 
 void WebView::armWindowDrag()
 {
-    // Defer to the next mouseDragged (see startArmedWindowDragIfNeeded): a move
-    // loop started straight from this async bridge callback wouldn't be tied to
-    // the live mouse gesture, and a mere click would start dragging the window.
+    // Deferred to the next mouseDragged, or a mere click would start dragging.
     impl->windowDragArmed = true;
 }
 
@@ -2011,8 +1855,7 @@ void WebView::performWindowControl(const std::string& action)
     {
         ShowWindow(root, IsZoomed(root) ? SW_RESTORE : SW_MAXIMIZE);
 
-        // Report the resulting state back so the page's data-eacp-maximized
-        // attribute tracks reality instead of guessing.
+        // Report the resulting state, so the page never has to guess it.
         evaluateJavaScript(IsZoomed(root) ? "window.__eacpSetMaximized(true)"
                                           : "window.__eacpSetMaximized(false)");
         return;
@@ -2035,8 +1878,7 @@ struct KeyVerdict
 };
 
 // Parses key-events.js's "<down|up>:<0|1>:<keyCode>:<mods>:<repeat>:<key>".
-// event.key sits last so a literal ':' key can't split the message. Returns
-// false only when the kind/verdict prefix is missing or malformed.
+// event.key sits last so a literal ':' key cannot split the message.
 bool parseKeyVerdict(const std::string& message, KeyVerdict& out)
 {
     auto pos = std::size_t {0};
@@ -2070,9 +1912,8 @@ bool parseKeyVerdict(const std::string& message, KeyVerdict& out)
 
     out.isRepeat = next() == "1";
 
-    // The remainder is event.key. Treat it as typed text only when it is a
-    // single code point; named keys ("Enter", "ArrowUp") are multi-char ASCII
-    // and carry no characters, matching the host window's WM_CHAR-derived text.
+    // Only a single code point is typed text; named keys ("Enter", "ArrowUp")
+    // are multi-char ASCII and carry no characters, as WM_CHAR would.
     auto key = pos == std::string::npos ? std::string {} : message.substr(pos);
     if (!key.empty()
         && (key.size() == 1 || static_cast<unsigned char>(key[0]) >= 0x80))
@@ -2081,11 +1922,8 @@ bool parseKeyVerdict(const std::string& message, KeyVerdict& out)
     return true;
 }
 
-// Re-injects an unconsumed key into the host window's normal keyboard path
-// (CompositionHostWindow turns it back into a framework KeyEvent). Always a
-// plain key message -- never WM_SYSKEYDOWN, whose DefWindowProc would poke the
-// window menu. Bit 30 of lParam marks an auto-repeat keydown, the one field the
-// host actually reads back.
+// Always a plain key message, never WM_SYSKEYDOWN, whose DefWindowProc would
+// poke the window menu. Bit 30 of lParam marks an auto-repeat keydown.
 void forwardKeyToHost(HWND host, const KeyVerdict& verdict)
 {
     if (!host || verdict.virtualKey == 0)
@@ -2098,15 +1936,9 @@ void forwardKeyToHost(HWND host, const KeyVerdict& verdict)
 }
 } // namespace
 
-// Windows counterpart to the macOS installKeyEventSupport (see WebView.mm).
-// WebView2 exposes no native hook for plain character keys -- its
-// AcceleratorKeyPressed event only fires for Ctrl/Alt combos and non-character
-// keys, never a bare Space -- so we make the injected key-events.js the single
-// source of truth: it reports every key the page saw, whether the page consumed
-// it, and the key's identity. Unconsumed keys go to onUnhandledKeyEvent and,
-// unless it claims them, are re-injected into the host window's WM_KEYDOWN path
-// -- the Windows analog of macOS's walk up the responder chain past the
-// framework container.
+// WebView2's AcceleratorKeyPressed never fires for plain character keys, so the
+// injected key-events.js is the only source of verdicts. Unconsumed keys go to
+// onUnhandledKeyEvent, then back into the host window's WM_KEYDOWN path.
 void WebView::installKeyEventSupport()
 {
     auto shim = ResEmbed::get("key-events.js", "EacpWebView");
@@ -2172,8 +2004,6 @@ WebView* WebView::focused()
         if (!view->impl || !view->impl->hostHwnd)
             continue;
 
-        // The host HWND is the top-level window the visual-hosted WebView lives
-        // in; the focused WebView is the one whose window is in the foreground.
         if (view->impl->hostHwnd == foreground)
             return view;
     }

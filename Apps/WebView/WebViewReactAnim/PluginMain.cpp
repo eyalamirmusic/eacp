@@ -2,9 +2,8 @@
 
 #include <eacp/WebView/WebView.h>
 
-// The same app as Main.cpp, packaged as a runtime-loaded plugin: the host
-// owns the event loop, so the window is created and destroyed through the
-// exported entry points instead of Apps::run<MyApp>().
+// Main.cpp's app as a runtime-loaded plugin: the host owns the event loop, so
+// the window lives and dies with the exported entry points.
 namespace
 {
 using namespace eacp;

@@ -3,27 +3,13 @@
 using namespace eacp;
 using namespace GPU;
 
-// Analytic coverage, computed in a kernel: PathRasterizer walks a path's
-// segments once per pixel and writes the exact fraction of that pixel the path
-// covers, which CoverageShader then paints a colour through.
-//
-// The same self-intersecting star is rasterized twice, under each fill rule -
-// non-zero on the left, where the winding never cancels and the middle is
-// solid; even-odd on the right, where it does and the middle is a pentagonal
-// hole. That is the fill rule doing something no amount of tessellation quality
-// would show.
-//
-// The view is deliberately single-sampled: every smooth edge here is the
-// kernel's arithmetic, with no multisampling anywhere in the pipeline to
-// flatter it.
-
 namespace
 {
 constexpr auto background = Graphics::Color::gray(0.09f);
 constexpr auto fill = Graphics::Color {0.98f, 0.72f, 0.24f};
 
-// A five-pointed star traced in one stroke, every second vertex - so the
-// outline crosses itself and the two fill rules disagree about the middle.
+// Every second vertex, so the outline crosses itself and the two fill rules
+// disagree about the middle.
 GPUWidgets::Path makeStar(const Graphics::Point& centre, float radius)
 {
     constexpr auto points = 5;
@@ -63,6 +49,8 @@ struct PathCoverageView final : GPUView
 {
     PathCoverageView()
     {
+        // Single-sampled: every smooth edge here is the kernel's arithmetic,
+        // with no multisampling in the pipeline to flatter it.
         setSampleCount(1);
         quad.prepareQuad(sampleCount());
     }
@@ -102,9 +90,8 @@ struct PathCoverageView final : GPUView
                       fill);
     }
 
-    // The path is authored in logical points and rasterized at the device
-    // scale, so the coverage texture is one texel per physical pixel however
-    // the window is sized or whichever display it is on.
+    // Authored in logical points but rasterized at the device scale, so the
+    // coverage texture is one texel per physical pixel.
     void rasterizeIfNeeded()
     {
         auto bounds = getLocalBounds();

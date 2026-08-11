@@ -1,9 +1,7 @@
-// Windows implementation of Path using Direct2D
 
 #include "Path.h"
 #include "../D2D-Windows.h"
 
-// Forward declaration of factory access
 namespace eacp::Graphics
 {
 ID2D1Factory1* getD2DFactory();
@@ -61,7 +59,7 @@ struct Path::Native
 
     ID2D1PathGeometry* getGeometry() const
     {
-        // Note: This cast away const is safe because we're just finalizing the geometry
+        // Casting away const is safe: this only finalizes the geometry.
         const_cast<Native*>(this)->closeSinkIfNeeded();
         return geometry.Get();
     }
@@ -156,13 +154,10 @@ void Path::addRoundedRect(const Rect& rect, float radius)
     float w = rect.w;
     float h = rect.h;
 
-    // Start at top-left after the arc
     moveTo({x + r, y});
 
-    // Top edge
     lineTo({x + w - r, y});
 
-    // Top-right arc
     if (impl->sink)
     {
         impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(x + w, y + r),
@@ -173,10 +168,8 @@ void Path::addRoundedRect(const Rect& rect, float radius)
     }
     impl->lastPoint = {x + w, y + r};
 
-    // Right edge
     lineTo({x + w, y + h - r});
 
-    // Bottom-right arc
     if (impl->sink)
     {
         impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(x + w - r, y + h),
@@ -187,10 +180,8 @@ void Path::addRoundedRect(const Rect& rect, float radius)
     }
     impl->lastPoint = {x + w - r, y + h};
 
-    // Bottom edge
     lineTo({x + r, y + h});
 
-    // Bottom-left arc
     if (impl->sink)
     {
         impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(x, y + h - r),
@@ -201,10 +192,8 @@ void Path::addRoundedRect(const Rect& rect, float radius)
     }
     impl->lastPoint = {x, y + h - r};
 
-    // Left edge
     lineTo({x, y + r});
 
-    // Top-left arc
     if (impl->sink)
     {
         impl->sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(x + r, y),

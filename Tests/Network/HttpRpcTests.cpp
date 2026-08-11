@@ -15,10 +15,9 @@ namespace Rpc = eacp::HTTP::Rpc;
 namespace
 {
 
-// Every server here binds port 0 and reports back what it got. Fixed ports do
-// not survive this suite: NanoTest's CTest discovery runs each case in its own
-// process, so a per-process counter hands every concurrent case the same number,
-// and SO_REUSEADDR lets them all bind it and steal each other's connections.
+// Port 0 throughout: CTest runs each case in its own process, so a per-process
+// counter hands concurrent cases the same fixed port and SO_REUSEADDR lets them
+// steal each other's connections.
 std::string baseUrl(int port)
 {
     return "http://127.0.0.1:" + std::to_string(port);
@@ -205,8 +204,6 @@ auto tRpcMalformedBodyReturns400 =
     check(exchange.clientResponse.content.find("Invalid JSON body")
           != std::string::npos);
 };
-
-// ---------- Client side ----------
 
 namespace
 {

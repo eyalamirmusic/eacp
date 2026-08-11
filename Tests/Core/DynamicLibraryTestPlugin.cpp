@@ -1,7 +1,5 @@
-// Fixture for DynamicLibraryTests: a minimal plugin whose static initializer
-// bumps EACP_TEST_PLUGIN_LOADS in the process environment. Statics only
-// re-run on a genuine load, so the counter observes real unmaps — a resident
-// image reopened does not re-initialize.
+// Fixture for DynamicLibraryTests: statics only re-run on a genuine load, so
+// bumping EACP_TEST_PLUGIN_LOADS here observes real unmaps.
 #include <eacp/Core/Plugins/PluginExport.h>
 #include <eacp/Core/Utils/Environment.h>
 

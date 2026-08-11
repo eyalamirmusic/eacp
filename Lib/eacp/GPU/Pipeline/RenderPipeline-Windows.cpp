@@ -8,11 +8,6 @@
 
 #include <winrt/base.h>
 
-// Windows/D3D12 backend. Everything the D3D11 backend kept as five separate
-// state objects bakes into a single pipeline-state object against the shared
-// render root signature; only the topology and vertex stride stay outside the
-// PSO, read by the render pass at draw time.
-
 namespace eacp::GPU
 {
 namespace
@@ -66,11 +61,8 @@ DXGI_FORMAT toDXGIFormat(VertexFormat format)
         case VertexFormat::Float4:
             return DXGI_FORMAT_R32G32B32A32_FLOAT;
 
-        // UNORM and SNORM rather than UINT and SINT: the shader reads these as
-        // 0..1 and -1..1, which is what the Normalized Metal formats give. The
-        // integer variants would deliver raw 0..255 and disagree with the other
-        // backend rather than fail, which is why VertexFormatTests compares a
-        // packed render against an unpacked one instead of trusting either.
+        // UNORM/SNORM rather than UINT/SINT, so the shader reads 0..1 and -1..1
+        // as Metal's Normalized formats do.
         case VertexFormat::UByte4Norm:
             return DXGI_FORMAT_R8G8B8A8_UNORM;
         case VertexFormat::Half2:
@@ -86,9 +78,6 @@ DXGI_FORMAT toDXGIFormat(VertexFormat format)
     return DXGI_FORMAT_R32G32B32_FLOAT;
 }
 
-// The attachment the pipeline writes. It has to match whatever the pass binds
-// as its render target - the swapchain back buffer, or a texture created with
-// TextureDescriptor::renderTarget.
 DXGI_FORMAT toDXGIFormat(PixelFormat format)
 {
     switch (format)
@@ -106,11 +95,8 @@ DXGI_FORMAT toDXGIFormat(PixelFormat format)
     return DXGI_FORMAT_B8G8R8A8_UNORM;
 }
 
-// Vertex attributes are matched to the HLSL input by a TEXCOORD semantic
-// indexed by attribute position, mirroring Metal's [[attribute(n)]] binding.
-// Reads the step rate for a given slot from the layout. Multi-buffer layouts
-// carry per-slot metadata; legacy single-buffer layouts (buffers empty) are
-// always PerVertex at slot 0.
+// Attributes match the HLSL input by a TEXCOORD semantic indexed by attribute
+// position, mirroring Metal's [[attribute(n)]].
 StepRate stepRateForSlot(const VertexLayout& layout, int slot)
 {
     if (slot >= 0 && slot < (int) layout.buffers.size())
@@ -145,9 +131,7 @@ Vector<D3D12_INPUT_ELEMENT_DESC> makeInputLayout(const VertexLayout& layout)
     return elements;
 }
 
-// Builds the per-slot stride table the RenderPass reads at setVertexBuffer
-// time. Populated from layout.buffers when present; falls back to a single
-// slot with layout.stride so single-buffer callers see no behavioural change.
+// The per-slot stride table RenderPass reads at setVertexBuffer time.
 Vector<UINT> makeStrideTable(const VertexLayout& layout)
 {
     if (!layout.buffers.empty())
@@ -202,22 +186,9 @@ D3D12_COMPARISON_FUNC toD3DComparison(DepthCompare compare)
     return D3D12_COMPARISON_FUNC_LESS_EQUAL;
 }
 
-// Culling here is pipeline state, where Metal makes it encoder state - the one
-// place in this file where the two APIs disagree about *when* a setting is
-// fixed rather than about what it is called. eacp resolves that the way it
-// already resolves topology: the descriptor owns it, and the Metal backend
-// applies it when the pipeline is bound.
-//
-// FrontCounterClockwise is TRUE for Winding::CounterClockwise, which is not the
-// D3D12 default and is what delivers the convention CullMode promises.
-//
-// The tempting reading is that D3D12 needs the opposite of Metal because it
-// decides facing in screen space, after a y flip Metal does not have. It has no
-// such extra flip: both APIs put clip-space y up and the framebuffer origin at
-// the top left, so the NDC-to-screen mapping reverses winding by exactly the
-// same amount on each, and one convention is spelled the same way on both.
-// Measured, not reasoned - it was FALSE on that reasoning and
-// Tests/GPU/CullModeTests.cpp culled the opposite face.
+// FrontCounterClockwise is TRUE for Winding::CounterClockwise - not the D3D12
+// default, and the same spelling Metal uses, both APIs reversing winding by the
+// same amount on the way to screen space (Tests/GPU/CullModeTests.cpp).
 D3D12_RASTERIZER_DESC makeRasterizerDesc(const RenderPipelineDescriptor& from)
 {
     D3D12_RASTERIZER_DESC desc = {};
@@ -267,18 +238,14 @@ D3D12_BLEND_DESC makeBlendDesc(BlendMode mode)
             target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
             return desc;
         default:
-            // Guards against a future BlendMode value that this backend was
-            // never taught to handle - would otherwise silently produce a
-            // no-blend pipeline (that's what the zero-initialised desc is).
-            // Loud in Debug, degrades to None in Release (both backends
-            // match this behaviour).
+            // An unhandled BlendMode would silently give a no-blend pipeline;
+            // loud in Debug, degrades to None in Release.
             assert(false && "eacp: unhandled BlendMode in D3D12 backend");
             return desc;
     }
 }
 
-// The [0,1] depth range is shared by both APIs, so no convention flip is needed
-// and the comparison means the same thing on each.
+// Both APIs share the [0,1] depth range, so the comparison needs no flip.
 D3D12_DEPTH_STENCIL_DESC makeDepthStencilDesc(const RenderPipelineDescriptor& from)
 {
     D3D12_DEPTH_STENCIL_DESC desc = {};
@@ -345,10 +312,8 @@ struct RenderPipeline::Native
             &desc, __uuidof(ID3D12PipelineState), pipeline.state.put_void());
     }
 
-    // A command list holds a reference to every pipeline state it binds, so a
-    // PSO built and dropped inside one frame — which is what constructing a
-    // SpriteRenderer in render() does — has to outlive the recording rather
-    // than release here. See D3D12Context::deferRelease.
+    // A command list references every PSO it binds, so one built and dropped
+    // inside a frame must outlive the recording. See D3D12Context::deferRelease.
     ~Native() { getD3D12Context().deferRelease(std::move(pipeline.state)); }
 
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
@@ -373,8 +338,7 @@ PrimitiveTopology RenderPipeline::topology() const
     return impl->topology;
 }
 
-// Both are already inside the PSO here. Reported anyway so the class reads the
-// same on either backend, and so a caller can ask a pipeline what it does.
+// Already inside the PSO here; reported for parity with the Metal backend.
 CullMode RenderPipeline::cullMode() const
 {
     return impl->cullMode;
@@ -392,8 +356,8 @@ void* RenderPipeline::nativeState() const
 
 void* RenderPipeline::nativeDepthState() const
 {
-    // Depth state is baked into the PSO on D3D12; the handle exists for the
-    // Metal backend, which binds it separately.
+    // Baked into the PSO on D3D12; the handle exists for Metal, which binds it
+    // separately.
     return impl->pipeline.depth ? const_cast<D3D12Pipeline*>(&impl->pipeline)
                                 : nullptr;
 }

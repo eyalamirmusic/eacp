@@ -4,13 +4,8 @@
 #include <cstdlib>
 #include <string>
 
-// A standalone peer for the channel tests, so a stream can be watched
-// crossing a real process boundary - including a server that dies without
-// cleaning up, which is the only way to prove a successor reclaims the name.
-//
-//   IpcChannelHarness <name> client <message>
-//   IpcChannelHarness <name> serve
-//   IpcChannelHarness <name> abandon
+// A standalone peer for the channel tests:
+//   IpcChannelHarness <name> client <message> | serve | abandon
 namespace
 {
 constexpr auto succeeded = 0;
@@ -44,8 +39,8 @@ int main(int argc, char** argv)
         {
             auto server = eacp::IPC::ChannelServer {name};
 
-            // The parent waits to see this before dialing, so a test is
-            // timing the channel rather than racing this process's startup.
+            // The parent waits for this before dialing, so a test times the
+            // channel rather than this process's startup.
             std::puts("listening");
             std::fflush(stdout);
 
@@ -65,8 +60,7 @@ int main(int argc, char** argv)
             std::puts("listening");
             std::fflush(stdout);
 
-            // Skips every destructor, leaving the endpoint and the lock
-            // handle to the kernel - a stand-in for a crash.
+            // Skips every destructor: a stand-in for a crash.
             std::_Exit(succeeded);
         }
     }

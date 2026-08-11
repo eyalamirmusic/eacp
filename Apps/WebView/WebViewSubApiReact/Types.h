@@ -20,33 +20,19 @@ struct Pulse
 namespace Api
 {
 
-// Same nesting as WebViewSubApi — CounterApi is mounted under `nested`, so it
-// reaches the wire as "nested.getCounter" / "nested.counter" while the client
-// generated from it is written against the bare names. What differs is the
-// page: this one is React and consumes the GENERATED hooks module, so its
-// subscriptions are set up by eacp's own codegen rather than by hand.
-//
-// The two events are chosen to cover both hook shapes HooksFormat.cpp picks
-// between, because they subscribe at different times:
-//
-//   counter — has a matching getCounter command, so it becomes a
-//             makeBridgeStore. That factory runs its fetch and its
-//             backend.on() in its own body, which the generated hooks module
-//             calls at MODULE SCOPE.
-//   pulse   — has no matching getter, so it becomes a makeNativeEvent, which
-//             subscribes inside a useEffect — i.e. after render.
+// Mounted under `nested`, so the wire names gain that prefix. The two events
+// cover both generated hook shapes: counter has a getter, so it becomes a
+// module-scope makeBridgeStore; pulse a makeNativeEvent bound in a useEffect.
 class CounterApi
 {
 public:
-    // Seeded away from Counter{} so a rendered initial fetch is
-    // distinguishable from the hook's generated initial value, which comes
-    // from toJSON(Counter{}) and is 0.
+    // Away from Counter{} so a rendered fetch is distinguishable from the
+    // hook's generated initial value of 0.
     static constexpr auto seededCounter = 42;
 
     Counter getCounter() const { return counter.snapshot(); }
 
-    // Driven from C++ so the subscribe path is covered independently of the
-    // fetch path.
+    // Lets a test drive the subscribe path independently of the fetch path.
     void publishCounter(int value) { counter.publish(Counter {value}); }
 
     void publishPulse(int beat) { pulse.publish(Pulse {beat}); }

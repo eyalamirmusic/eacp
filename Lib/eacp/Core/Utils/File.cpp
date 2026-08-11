@@ -37,8 +37,8 @@ bool File::isRegularFile() const
 
 bool File::isUnder(const FilePath& root) const
 {
-    // Canonicalise both sides so the check is symlink-consistent (e.g. macOS
-    // /var -> /private/var) regardless of whether the caller pre-normalised.
+    // Both sides canonicalised, so the check is symlink-consistent whether or
+    // not the caller pre-normalised.
     auto ec = std::error_code {};
     auto canonicalRoot = std::filesystem::weakly_canonical(toStdPath(root), ec);
     auto canonicalFile = std::filesystem::weakly_canonical(impl->fsPath, ec);
@@ -47,8 +47,7 @@ bool File::isUnder(const FilePath& root) const
     if (ec || rel.empty())
         return false;
 
-    // A path that escapes the root resolves to a relative path starting with
-    // "..". Anything else (including ".") is contained.
+    // Only an escaping path resolves to a relative one starting with "..".
     return rel.generic_string().rfind("..", 0) != 0;
 }
 

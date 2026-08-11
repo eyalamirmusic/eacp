@@ -15,9 +15,7 @@ namespace
 {
 constexpr auto category = "DragOutApp";
 
-// The custom URL scheme this app serves its on-disk files over. The page
-// references files as `audiofile:///abs/path.wav`; the app registers and owns
-// the provider for it below (see diskFileProvider / dragOutOptions).
+// The page references its files as `audiofile:///abs/path.wav`.
 constexpr auto audioScheme = "audiofile";
 
 constexpr std::array audioExtensions = {
@@ -51,11 +49,8 @@ std::filesystem::path bundledAssetDir()
     return std::filesystem::temp_directory_path() / "eacp-dragout";
 }
 
-// Embedded app resources + the `audiofile` scheme that streams the listed
-// files off disk into the page's inline players, in bounded chunks with Range
-// support (fileStreamProvider does the disk reading, MIME, and sandboxing).
-// The roots bound which directories the page may read: only ~/Downloads and
-// the extracted bundled assets, nothing else on disk.
+// The roots bound what the page may read over the scheme: nothing on disk
+// outside ~/Downloads and the extracted bundled assets.
 WebView::Options dragOutOptions()
 {
     auto options = embeddedOptions(category);
@@ -64,8 +59,8 @@ WebView::Options dragOutOptions()
     return options;
 }
 
-// Materialise an embedded resource to a temp file so it has a real path the OS
-// can copy when dragged out. Returns the absolute path, or empty if missing.
+// A dragged-out file needs a real path the OS can copy, so embedded resources
+// are materialised to temp files first.
 std::string extractBundledAsset(const std::string& name)
 {
     auto asset = ResEmbed::get(name, category);
@@ -88,7 +83,6 @@ WebView::DraggableFileList buildFileList()
 {
     auto list = WebView::DraggableFileList {};
 
-    // Bundled ResEmbed assets first, to show embedded resources drag out too.
     for (const auto* name: {"sample.png", "sample.mp3"})
     {
         auto path = extractBundledAsset(name);
@@ -96,7 +90,6 @@ WebView::DraggableFileList buildFileList()
             list.files.push_back({path, name});
     }
 
-    // Then real audio files from ~/Downloads.
     auto ec = std::error_code {};
     auto downloads = std::vector<std::string> {};
 
@@ -116,9 +109,8 @@ WebView::DraggableFileList buildFileList()
 }
 } // namespace
 
-// App API exposed over the bridge. `listFiles` is the only app-specific
-// command; `armFileDrag` is a built-in the WebViewBridge registers for every
-// app. The page invokes both via window.eacp.invoke(...).
+// The page invokes listFiles plus armFileDrag, a built-in every WebViewBridge
+// registers, through window.eacp.invoke(...).
 class DragOutApi
 {
 public:
@@ -143,8 +135,7 @@ struct MyApp
         window.setContentView(webView);
     }
 
-    // api declared first -> destructed last (after the bridge tears down its
-    // handlers/listeners, which hold &api).
+    // Declared before the bridge, so it outlives the handlers holding &api.
     DragOutApi api;
     WebView webView {dragOutOptions()};
     WebViewBridge transport {webView, api};

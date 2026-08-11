@@ -1,17 +1,12 @@
 #include "Common.h"
-// window-drag.js (auto-injected) exposes window.__eacpResolveAppRegion, which
-// classifies a point as drag / no-drag. These assert that classification on a
-// real WKWebView -- which also pins down that the `--eacp-app-region` custom
-// property is readable via getComputedStyle (the native one is not).
-
+// Also pins that `--eacp-app-region` is readable via getComputedStyle, which
+// the native -webkit-app-region is not.
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
 
 namespace
 {
-// Drag bar with an opt-out button and an unmarked label, plus an unmarked
-// sibling. `ready` gates queries until document-start injection has run.
 const std::string pageHtml = R"HTML(
 <!doctype html>
 <html>
@@ -75,7 +70,6 @@ auto tNoDragOptsOut = test("WindowDrag/noDragDescendantOptsOut") = []
 auto tUnmarkedChildInherits = test("WindowDrag/unmarkedChildInheritsDrag") = []
 {
     auto fix = Fixture {};
-    // Inherits -> the whole bar is a handle, not just its background.
     check(fix.regionOf("#label") == "drag");
 };
 
@@ -85,10 +79,8 @@ auto tOutsideIsNotDraggable = test("WindowDrag/unmarkedRegionIsEmpty") = []
     check(fix.regionOf("#outside").empty());
 };
 
-// Regression: a non-string message body (a bare number) once threw in
-// didReceiveScriptMessage's NSJSONSerialization and aborted the app. Without the
-// isValidJSONObject guard this crashes the process; with it the handler fires
-// with an empty body.
+// Regression: a non-string message body once threw in didReceiveScriptMessage's
+// NSJSONSerialization and aborted the app.
 struct NumberMessageProbe
 {
     WebView webView {};
@@ -120,13 +112,9 @@ auto tNumberBodyDoesNotCrash = test("WindowDrag/numberMessageBodyDoesNotCrash") 
     check(probe.body.empty()); // invalid JSON top level -> empty body, no throw
 };
 
-// Why the marker is a custom property and not the standard -webkit-app-region:
-// WKWebView drops the unknown native prop, so getComputedStyle can't read it,
-// while the custom property IS exposed. Chromium (WebView2) supports
-// app-region natively, so there the standard prop reads back too -- the custom
-// property is the one readable on BOTH engines, which is why window-drag.js
-// keys on it. If a future WebKit exposes -webkit-app-region, the Apple branch
-// fails -- prompting a simplification.
+// The custom property is the one readable on BOTH engines, which is why
+// window-drag.js keys on it. If a future WebKit exposes -webkit-app-region the
+// Apple branch fails, prompting a simplification.
 struct MarkerProbe
 {
     WebView webView {};

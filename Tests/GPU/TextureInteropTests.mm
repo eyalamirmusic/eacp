@@ -7,11 +7,6 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
-// Device::wrapPixelBuffer maps an IOSurface-backed CVPixelBuffer straight into a
-// sampleable Metal texture with no copy — the camera/video display path. The
-// buffer is created Metal-compatible and IOSurface-backed, the same shape an
-// AVFoundation capture frame carries. Self-skips on a host with no Metal device
-// (some headless CI VMs), like the other GPU tests.
 auto tWrapsPixelBuffer = test("GPU/wrapsPixelBuffer") = []
 {
     ObjC::AutoReleasePool pool;

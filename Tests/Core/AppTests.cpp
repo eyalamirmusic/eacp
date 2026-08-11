@@ -30,9 +30,8 @@ void resetCounters()
     CountedPayload::dtorCount = 0;
 }
 
-// App + factory live in process-wide singletons, so leaking state
-// between cases would let earlier tests poison later ones. Each test
-// calls this on entry to start from a known-empty baseline.
+// App + factory live in process-wide singletons, so each test starts from a
+// known-empty baseline.
 void resetAppState()
 {
     getGlobalApp().reset();
@@ -107,9 +106,8 @@ auto tRestartReplacesInstance =
 
                                     restart();
 
-                                    // restart() posts its destroy+recreate via callAsync;
-                                    // this callAsync is queued right after and runs once
-                                    // that work is done (FIFO ordering on the runloop).
+                                    // Queued after restart()'s own callAsync,
+                                    // so it runs once that work is done.
                                     callAsync(
                                         []
                                         {
@@ -177,9 +175,8 @@ auto tRestartFromAnyThread = test("App/restartIsSafeFromBackgroundThread") = []
     resetAppState();
 };
 
-// quit() only stops the loop; the app must survive until the loop has fully
-// unwound and is destroyed afterwards (run<T>()'s destroyApp call), so no
-// nested native pump can still be delivering events to its views.
+// quit() only stops the loop; the app is destroyed afterwards by run<T>(), so
+// no nested native pump can still be delivering events to its views.
 auto tQuitStopsLoopAndKeepsAppUntilTeardown =
     test("App/quitStopsLoopWithoutDestroyingApp") = []
 {
@@ -226,9 +223,8 @@ auto tQuitWithReturnValueStoresIt = test("App/quitWithReturnValueStoresIt") = []
     resetAppState();
 };
 
-// Test binaries are local builds — unsigned or linker ad-hoc signed — so the
-// distribution check must say no. (The positive case needs a Developer
-// ID/Authenticode-signed binary, which a local test run can't produce.)
+// Test binaries are local builds, unsigned or ad-hoc signed, so the check must
+// say no; the positive case needs a Developer ID/Authenticode signature.
 auto tLocalBuildIsNotDistributionSigned =
     test("App/localBuildIsNotDistributionSigned") = []
 { check(!eacp::Apps::isDistributionSigned()); };

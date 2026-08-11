@@ -38,16 +38,9 @@ static void addShapeLayer(SVGView& view,
     auto& layer = view.ownedLayers.createNew();
     layer.setPath(path);
 
-    // The surface the path is drawn into, in surface-local coordinates. A
-    // CAShapeLayer sizes itself to its path and needs none of this; a
-    // DirectComposition surface has to be told its size, and a layer left at
-    // zero draws nothing at all - which is why this builder has never rendered a
-    // single shape on Windows, only its text, which sets its own bounds below.
-    //
-    // Sized to the whole view rather than to the path, because the geometry is
-    // in the view's coordinates and there is no way to translate a native path.
-    // So every shape in a document costs a surface the size of the document,
-    // which is exactly the cost the component tier exists to avoid.
+    // Sized to the whole view, the geometry being in the view's coordinates and
+    // a native path not being translatable. A DirectComposition surface left at
+    // zero size draws nothing, unlike a CAShapeLayer, which sizes to its path.
     layer.setBounds(view.getLocalBounds());
 
     applyFillAndStroke(layer, element);
@@ -199,10 +192,8 @@ static void
 {
     auto& child = parent.ownedChildren.createNew();
 
-    // Sized whether or not the group is moved, because its layers are sized to
-    // it and a zero-sized native layer draws nothing. Only the translation of
-    // the transform is used: a child view can be moved and not rotated, which is
-    // the whole ceiling of what this builder can express.
+    // Sized whether or not the group moves, a zero-sized native layer drawing
+    // nothing. Only the translation is used: a child view cannot be rotated.
     auto t = parseTransform(element.attr("transform"));
     child.setBounds({t.translateX * sx,
                      t.translateY * sy,

@@ -16,8 +16,7 @@ struct TrayIcon::Native
         if (eacp::Apps::getAppEnvironment().headless)
             return;
 
-        // statusItemWithLength: hands back an item owned by the status bar.
-        // Retain it so it survives past this call, and remove it on destruction.
+        // The status bar owns the item, so retain it and remove it on destruction.
         auto* item = [[NSStatusBar systemStatusBar]
             statusItemWithLength:NSVariableStatusItemLength];
         statusItem = ObjC::Ptr<NSStatusItem> {item, ObjC::RetainMode {}};
@@ -38,8 +37,7 @@ struct TrayIcon::Native
         if (nsImage == nil)
             return;
 
-        // Menu-bar icons read best at ~18pt tall; scale preserving aspect so
-        // a high-resolution source still renders crisply on Retina.
+        // Menu-bar icons read best at ~18pt tall.
         constexpr CGFloat menuBarHeight = 18.0;
         auto scale = menuBarHeight / icon.height();
         [nsImage setSize:NSMakeSize(icon.width() * scale, menuBarHeight)];
@@ -75,7 +73,7 @@ struct TrayIcon::Native
             return;
 
         // A status item with a menu opens it on click and never calls the
-        // button action, so this only takes effect when no menu is set.
+        // button action, so this only applies when no menu is set.
         clickTarget = makeActionTarget(onClick);
         auto* button = statusItem.get().button;
         [button setTarget:clickTarget.get()];

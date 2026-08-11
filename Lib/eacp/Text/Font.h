@@ -7,9 +7,8 @@
 
 namespace eacp::Text
 {
-// The four faces a code editor or terminal actually switches between mid-line.
-// Deliberately not a general weight axis: the atlas keys on this, and a
-// two-bit style keeps one glyph to one cache entry per face.
+// Not a general weight axis: the atlas keys on this, and two bits keep one
+// glyph to one cache entry per face.
 enum class FontStyle : std::uint8_t
 {
     Regular = 0,
@@ -34,9 +33,7 @@ constexpr bool isItalic(FontStyle style)
 }
 
 // The platform's stock fixed-pitch face. No family name ships on both systems,
-// so asking for a literal one gets you a substitute on the other platform —
-// a proportional substitute, which quietly loses the property most callers of a
-// monospace family wanted in the first place.
+// and a literal one substitutes to a proportional face on the other.
 constexpr const char* defaultMonospaceFamily()
 {
 #if defined(_WIN32)
@@ -46,12 +43,9 @@ constexpr const char* defaultMonospaceFamily()
 #endif
 }
 
-// What to rasterize with.
-//
-// pointSize is in logical points and scale is device pixels per point, so the
-// rasterizer works at pointSize * scale and everything the caller sees comes
-// back in points. That split is why glyphs land 1:1 on a Retina panel instead
-// of being magnified from a 1x bitmap.
+// What to rasterize with: pointSize in logical points, scale in device pixels
+// per point, so the rasterizer works at pointSize * scale and the caller still
+// sees points.
 struct FontRequest
 {
     std::string family = defaultMonospaceFamily();
@@ -61,13 +55,8 @@ struct FontRequest
     float pixelSize() const { return pointSize * scale; }
 };
 
-// A face named completely: the family and size a FontStyle cannot vary, and the
-// style it can.
-//
-// Distinct from FontRequest, which is what a *rasterizer* is built from and
-// therefore carries the device scale. Nothing above the atlas rasterizes
-// anything, so nothing above the atlas has to know the scale — a caller asks
-// for 18pt Helvetica and gets 18 points on any display.
+// A face named completely, in points. Unlike FontRequest it carries no device
+// scale: nothing above the atlas rasterizes, so nothing above it needs one.
 struct Font
 {
     std::string family = defaultMonospaceFamily();
@@ -75,11 +64,9 @@ struct Font
     FontStyle style = FontStyle::Regular;
 };
 
-// How close two sizes have to be to share a face. Matched with a tolerance
-// rather than exactly because two sizes a hundredth of a point apart rasterize
-// to the same glyphs: a document scaled by a drag asks for a slightly different
-// size every frame, and an exact match would give it a face and an atlas full
-// of glyphs per frame of the drag.
+// How close two sizes have to be to share a face. A tolerance and not an exact
+// match, or a document resized by a drag would take a face and an atlas full of
+// glyphs per frame of it.
 constexpr float faceSizeTolerance = 0.01f;
 
 inline bool sameFace(const Font& a, const Font& b)
@@ -97,8 +84,8 @@ struct FontMetrics
     float descent = 0.f;
     float leading = 0.f;
 
-    // The advance of 'M'. A monospace grid steps by this; a proportional face
-    // reports it only as a reasonable column guess.
+    // The advance of 'M': a monospace grid steps by it, a proportional face
+    // reports it only as a column guess.
     float advance = 0.f;
 
     float lineHeight() const { return ascent + descent + leading; }

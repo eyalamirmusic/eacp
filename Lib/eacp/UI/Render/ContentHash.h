@@ -5,21 +5,9 @@
 
 namespace eacp::UI
 {
-// FNV-1a over whatever a cached thing is made of, which is how everything in
-// this tier that is worth keeping is keyed: a gradient by its stops, a path by
-// its points. Never by anything the caller supplies -- a key somebody types is a
-// key somebody gets wrong, and two different things sharing one entry is a
-// failure that looks like corruption rather than like a mistake.
-//
-// A key is a summary and not a proof, so every user of one compares the content
-// as well before it treats a match as a match. That turns a collision into a
-// comparison instead of into a wrong picture.
-//
-// Floats go in as their bit patterns, which is what makes a thing rebuilt by the
-// same arithmetic key the same way. The one place bits and values disagree about
-// equality is zero, and that one is folded, so a stop list carrying a negative
-// zero keys as the list it compares equal to rather than taking a second entry
-// for colours that are already there.
+// FNV-1a over a cached thing's own content - never over a caller-supplied key.
+// A summary, not a proof: every user must compare the content before treating a
+// match as a match. Floats are hashed by their bit patterns.
 class ContentHash
 {
 public:
@@ -34,6 +22,7 @@ public:
 
     void mix(float value)
     {
+        // Folds negative zero, the one value whose bits disagree with ==.
         if (value == 0.f)
             value = 0.f;
 

@@ -34,8 +34,7 @@ void write(const std::filesystem::path& path, std::string_view contents)
     out.write(contents.data(), static_cast<std::streamsize>(contents.size()));
 }
 
-// Distinct in every byte, so a window that lands one page early or late is a
-// failed comparison rather than a run of identical filler that matches anyway.
+// Distinct in every byte, so a window a page out is a failed comparison.
 std::string countingPattern(std::size_t size)
 {
     auto contents = std::string(size, '\0');
@@ -83,9 +82,8 @@ auto tMapsBinaryContent = test("MemoryMappedFile/mapsBinaryContent") = []
     std::filesystem::remove_all(dir);
 };
 
-// Valid and empty are separate answers. Both platforms refuse a zero-length
-// mapping, so without this the commonest degenerate input would be reported
-// the same way as a missing file.
+// Both platforms refuse a zero-length mapping, so valid and empty have to be
+// separate answers.
 auto tMapsAnEmptyFile = test("MemoryMappedFile/mapsAnEmptyFile") = []
 {
     const auto dir = scratchDirectory("empty");
@@ -143,8 +141,6 @@ auto tKeepsThePath = test("MemoryMappedFile/keepsThePath") = []
     std::filesystem::remove_all(dir);
 };
 
-// --- windows -----------------------------------------------------------------
-
 auto tMapsAWindow = test("MemoryMappedFile/mapsAWindow") = []
 {
     const auto dir = scratchDirectory("window");
@@ -161,12 +157,8 @@ auto tMapsAWindow = test("MemoryMappedFile/mapsAWindow") = []
     std::filesystem::remove_all(dir);
 };
 
-// The offset a caller gives and the offset a platform will accept are not the
-// same number: mmap wants a multiple of the page size and MapViewOfFile a
-// multiple of 64KB. The mapping therefore starts below the requested byte, and
-// this is the test that the returned pointer is moved back up to it. 65536 +
-// 1234 is a multiple of neither granularity, and far enough in that the
-// aligned base is a different page.
+// mmap wants a page-size multiple and MapViewOfFile a 64KB one, so the mapping
+// starts below the requested byte. 65536 + 1234 is a multiple of neither.
 auto tMapsAnUnalignedWindow = test("MemoryMappedFile/mapsAnUnalignedWindow") = []
 {
     const auto dir = scratchDirectory("unaligned");
@@ -203,8 +195,6 @@ auto tMapsToTheEndFromAnOffset =
     std::filesystem::remove_all(dir);
 };
 
-// A length running past the end is clamped rather than refused, so a caller
-// walking a file in fixed-size windows does not have to shorten the last one.
 auto tClampsALengthPastTheEnd = test("MemoryMappedFile/clampsALengthPastTheEnd") = []
 {
     const auto dir = scratchDirectory("clamp");
@@ -268,11 +258,7 @@ auto tZeroLengthWindowIsValid = test("MemoryMappedFile/zeroLengthWindowIsValid")
     std::filesystem::remove_all(dir);
 };
 
-// --- lifetime ----------------------------------------------------------------
-
-// The mapping outlives the descriptor it was made from, which is why the
-// implementation closes the file as soon as the map exists. If that reference
-// were not held, these reads would be of freed pages.
+// The mapping outlives the descriptor it was made from.
 auto tOutlivesTheOpenFile = test("MemoryMappedFile/outlivesTheOpenFile") = []
 {
     const auto dir = scratchDirectory("lifetime");
@@ -293,9 +279,8 @@ auto tOutlivesTheOpenFile = test("MemoryMappedFile/outlivesTheOpenFile") = []
 };
 
 #if !defined(_WIN32)
-// A FIFO has no size and no pages to map. It is here for the open rather than
-// the rejection: opening one for reading waits for a writer, so a plain
-// O_RDONLY would not fail this test, it would hang it forever.
+// Opening a FIFO for reading waits for a writer, so a plain O_RDONLY would hang
+// this test rather than fail it.
 auto tFifoIsInvalid = test("MemoryMappedFile/fifoIsInvalid") = []
 {
     const auto dir = scratchDirectory("fifo");
@@ -312,11 +297,8 @@ auto tFifoIsInvalid = test("MemoryMappedFile/fifoIsInvalid") = []
 };
 #endif
 
-// --- cost --------------------------------------------------------------------
-
-// readFile costs one copy of the file. A mapping costs the path and the Pimpl,
-// whatever the file's size — 4KB is far above what those need and far below
-// the 4MB being mapped.
+// A mapping costs the path and the Pimpl whatever the file's size: 4KB is far
+// above that and far below the 4MB being mapped.
 auto tMappingDoesNotAllocateTheFile =
     test("MemoryMappedFile/mappingDoesNotAllocateTheFile") = []
 {
@@ -336,8 +318,7 @@ auto tMappingDoesNotAllocateTheFile =
     check(file.size() == size);
     check(bytes < 4096);
 
-    // Touching the pages is not an allocation either: they come from the page
-    // cache, not the heap.
+    // The pages come from the page cache, not the heap.
     check(std::accumulate(file.bytes().begin(), file.bytes().end(), std::size_t {0})
           == size * std::size_t {'x'});
 

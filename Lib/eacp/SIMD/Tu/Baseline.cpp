@@ -3,8 +3,7 @@
 #include "../Kernels/SwapRedBlue.h"
 #include "../Kernels/WarpAffine.h"
 
-// The per-architecture baseline backend, reached without a special compile
-// flag: SSE2 on x86-64 (guaranteed by the ABI), NEON on AArch64 (mandatory).
+// Baseline backend, no special compile flag: SSE2 on x86-64, NEON on AArch64.
 // Arch-guarded so a wrong-architecture slice of a multi-arch build is a no-op.
 
 #if defined(__x86_64__) || defined(_M_X64)

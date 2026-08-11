@@ -2,18 +2,13 @@
 
 #include "Image.h"
 
-// Internal seam between the cross-platform Image logic (Image.cpp) and
-// the per-platform codecs (Image-Apple.mm, Image-Windows.cpp). Not part
-// of the public Graphics surface.
+// Internal seam between Image.cpp and the per-platform codecs. Not public.
 namespace eacp::Graphics::detail
 {
 
-// Decode PNG/JPEG bytes into a straight-alpha 8-bit RGBA Image. On
-// malformed or unsupported input returns an invalid image (see
-// Image::operator bool) and sets error.
+// Returns an invalid image and sets error on malformed input.
 Image decodeImageBytes(const std::uint8_t* data, int size, std::string& error);
 
-// Encode tightly packed straight-alpha 8-bit RGBA to PNG/JPEG bytes.
 // Returns an empty buffer and sets error on failure.
 ImageData encodeImageBytes(const std::uint8_t* rgba,
                            int width,

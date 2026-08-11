@@ -9,20 +9,16 @@ namespace eacp::IPC
 {
 namespace
 {
-// The slices are what keep every blocking wait interruptible: a worker
-// checks its stop flag between slices, so no teardown waits longer than
-// one of these.
+// A worker checks its stop flag between slices, so no teardown waits longer
+// than one of these.
 constexpr auto dialSlice = Time::MS {200};
 constexpr auto acceptSlice = Time::MS {200};
 constexpr auto interruptRetry = Time::MS {5};
 
-// A frame is a 32-bit little-endian byte count, then that many bytes. The
-// prefix is what frees payloads to carry anything - newlines, NULs, whole
-// files.
+// A frame is a 32-bit little-endian byte count, then that many bytes.
 constexpr auto headerSize = std::size_t {4};
 
-// Refuses lengths no honest peer would send, so a framing bug surfaces as
-// an error instead of a gigabyte allocation.
+// Turns a framing bug into an error rather than a gigabyte allocation.
 constexpr auto maxMessageSize = std::size_t {1} << 30;
 
 Array<char, headerSize> encodeHeader(std::size_t size)
@@ -45,8 +41,8 @@ std::size_t decodeLength(const std::string& header)
     return size;
 }
 
-// Fills result with exactly count bytes, sized once and written in place;
-// false means the stream ended first, leaving what did arrive in result.
+// Blocks for exactly count bytes; false means the stream ended first, leaving
+// what did arrive in result.
 bool receiveExactly(Channel& channel, std::size_t count, std::string& result)
 {
     result.resize(count);
@@ -68,8 +64,8 @@ bool receiveExactly(Channel& channel, std::size_t count, std::string& result)
     return true;
 }
 
-// One whole message, or nullopt when the stream ended cleanly between
-// frames. A stream that ends mid-frame throws, like any other broken read.
+// Nullopt when the stream ended cleanly between frames; a stream that ends
+// mid-frame throws.
 std::optional<std::string> receiveFrame(Channel& channel)
 {
     auto header = std::string {};
@@ -96,11 +92,9 @@ std::optional<std::string> receiveFrame(Channel& channel)
 }
 } // namespace
 
-// Shared with every delivery queued onto the main thread: a delivery that
-// fires after the Messenger died still finds the stop flag (and backs off)
-// instead of dangling. The mutex guards the channel's existence for
-// senders; the reader uses it without locking, which the Channel's
-// one-sender-one-receiver contract allows.
+// Shared with every delivery queued onto the main thread, so a late delivery
+// finds the stop flag instead of dangling. The mutex guards the channel for
+// senders; the reader skips it, as Channel's contract allows.
 struct Messenger::Impl
 {
     std::string name;
@@ -132,9 +126,8 @@ Messenger::~Messenger()
 {
     impl->stop = true;
 
-    // Interrupt until the reader acknowledges: on POSIX the first pass
-    // wakes it for good; on Windows a cancel only reaches a read already
-    // in flight, so keep knocking (see Channel::interrupt).
+    // Interrupt until the reader acknowledges: on Windows a cancel only
+    // reaches a read already in flight, so keep knocking.
     while (impl->worker.joinable() && !impl->workerDone)
     {
         {
@@ -179,8 +172,8 @@ void Messenger::send(const std::string& message)
 
     try
     {
-        // Header and payload go out as two writes so framing never copies
-        // the payload - the mutex keeps them adjacent on the stream.
+        // Two writes so framing never copies the payload; the mutex keeps
+        // them adjacent on the stream.
         auto header = encodeHeader(message.size());
         impl->channel->send({header.data(), headerSize});
         impl->channel->send(message);
@@ -246,8 +239,8 @@ void Messenger::readUntilGone()
         {
             auto message = receiveFrame(*impl->channel);
 
-            // An interrupted read surfaces as end of stream; the flag is
-            // what tells a teardown apart from the peer leaving.
+            // An interrupted read surfaces as end of stream; the flag tells a
+            // teardown apart from the peer leaving.
             if (impl->stop)
                 return;
 
@@ -260,8 +253,7 @@ void Messenger::readUntilGone()
     }
     catch (const Error&)
     {
-        // A broken stream ends the conversation the same way a clean
-        // close does.
+        // A broken stream ends the conversation like a clean close.
     }
 
     if (impl->stop)
@@ -285,8 +277,7 @@ void Messenger::notifyMain(Callback callback)
         });
 }
 
-// sessions is touched only on the main thread - the adoption closures run
-// there, and so does the destructor - so it needs no lock.
+// sessions is touched only on the main thread, so it needs no lock.
 struct MessageServer::Impl
 {
     std::optional<ChannelServer> server;
@@ -310,9 +301,8 @@ MessageServer::~MessageServer()
     if (impl->acceptor.joinable())
         impl->acceptor.join();
 
-    // The sessions die here, on the main thread, not whenever the last
-    // queued delivery lets go of impl: each Messenger destructor is what
-    // guarantees its callbacks never fire again.
+    // On the main thread, not whenever the last queued delivery lets go of
+    // impl: each Messenger destructor stops its callbacks firing again.
     impl->sessions.clear();
 }
 
@@ -334,12 +324,9 @@ void MessageServer::acceptLoop()
         if (!accepted)
             continue;
 
-        // The session reads from birth, on this thread's say-so: adoption
-        // must not wait for a main-thread tick, because the main thread
-        // may itself be blocked in a send() this reader has to drain (a
-        // same-process peer greeting us with more than a socket buffer).
-        // The wiring closure is queued BEFORE reading begins, so anything
-        // the session hears lands behind it - onClient always runs first.
+        // Adoption must not wait for a main-thread tick: that thread may be
+        // blocked in a send() this reader has to drain. The wiring closure is
+        // queued BEFORE reading begins, so onClient always runs first.
         auto* session = new Messenger(std::move(*accepted));
 
         Threads::callAsync(
@@ -350,9 +337,8 @@ void MessageServer::acceptLoop()
                 if (impl->stop)
                     return; // owned reaps the never-delivered session
 
-                // Finished sessions have already delivered their
-                // onDisconnected - a session finishes only after queueing
-                // it, and this runs later - so sweeping cannot eat news.
+                // A finished session queued its onDisconnected before this
+                // ran, so sweeping cannot eat news.
                 impl->sessions.eraseIf([](const OwningPointer<Messenger>& candidate)
                                        { return candidate->finished(); });
 

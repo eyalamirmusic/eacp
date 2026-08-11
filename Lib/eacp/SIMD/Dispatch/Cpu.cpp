@@ -1,8 +1,8 @@
 #include "Cpu.h"
 #include "../Common.h"
 
-// Runtime CPU feature detection. Compiled at baseline (no -mavx2), since it must
-// run on any CPU to decide whether the AVX2 path is safe to call.
+// Compiled at baseline (no -mavx2): must run on any CPU to decide whether the
+// AVX2 path is safe to call.
 
 #if defined(__x86_64__) || defined(_M_X64)
 
@@ -20,9 +20,8 @@ std::uint64_t readXcr0()
 #if defined(_MSC_VER)
     return _xgetbv(0);
 #else
-    // Read XCR0 directly; we only reach here after confirming the OSXSAVE bit,
-    // so xgetbv is guaranteed to be available. Using inline asm avoids depending
-    // on the _xgetbv intrinsic being enabled at baseline.
+    // Inline asm avoids depending on _xgetbv being enabled at baseline; only
+    // reached after confirming OSXSAVE, so xgetbv is available.
     std::uint32_t eax, edx;
     __asm__ volatile("xgetbv" : "=a"(eax), "=d"(edx) : "c"(0));
     return (static_cast<std::uint64_t>(edx) << 32) | eax;
@@ -31,9 +30,8 @@ std::uint64_t readXcr0()
 
 bool detectAvx2Fma() noexcept
 {
-    // Only ecx (leaf 1) and ebx (leaf 7) are consumed; eax/edx exist solely as
-    // __get_cpuid_count out-params, so they live on the non-MSVC path only --
-    // declaring them on the MSVC path (which reads regs[]) would warn C4189.
+    // eax/edx exist solely as __get_cpuid_count out-params, so they live on the
+    // non-MSVC path only; declaring them on the MSVC path would warn C4189.
     std::uint32_t ebx = 0, ecx = 0;
 
 #if defined(_MSC_VER)

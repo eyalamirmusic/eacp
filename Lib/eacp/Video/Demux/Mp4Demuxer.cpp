@@ -29,8 +29,7 @@ constexpr auto boxStss = fourcc("stss");
 // configuration boxes start here.
 constexpr auto visualSampleEntrySize = std::size_t {78};
 
-// Far beyond any real file, and keeps a hostile count from asking a table
-// for gigabytes before its bytes are ever read.
+// Far beyond any real file; stops a hostile count sizing a table in gigabytes.
 constexpr auto maxTableEntries = std::uint64_t {1} << 30;
 
 struct Mp4SttsEntry

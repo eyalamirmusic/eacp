@@ -9,8 +9,6 @@ using namespace VideoTests;
 
 namespace
 {
-// Small and short: these tests are about the platform decoder agreeing with the
-// platform encoder, not about throughput.
 Video::SyntheticClipOptions testClipOptions()
 {
     auto options = Video::SyntheticClipOptions {};
@@ -21,21 +19,14 @@ Video::SyntheticClipOptions testClipOptions()
     return options;
 }
 
-// Encodes the clip once for the whole file rather than per test — it is the
-// slow part, and every test here wants the same one.
 const FilePath& testClip()
 {
     static const auto path = Video::cachedSyntheticClip(testClipOptions());
     return path;
 }
 
-// A decoded frame's colour, read from the top-left corner. The sweeping bar is
-// confined to the middle band, so the corner is always the flat frame colour —
-// and being flat, it survives H.264 well enough to compare against.
-//
-// Goes through Video::toImage rather than frame.pixels(), because on the
-// zero-copy backends a decoded frame carries a platform buffer and no CPU
-// pixels at all; that is the whole reason toImage exists.
+// Read from the top-left corner, which the sweeping bar never touches. Via
+// toImage because a zero-copy backend's frame carries no CPU pixels.
 Graphics::Color cornerColor(const Video::VideoFrame& frame)
 {
     auto image = Video::toImage(frame);
@@ -44,9 +35,8 @@ Graphics::Color cornerColor(const Video::VideoFrame& frame)
 
 bool colorsMatch(const Graphics::Color& a, const Graphics::Color& b)
 {
-    // H.264 at this bitrate moves a flat field by a few levels at most; the
-    // palette is far enough apart that a generous tolerance still identifies
-    // the frame uniquely.
+    // H.264 moves a flat field by a few levels at most, and the palette is far
+    // enough apart that a generous tolerance still identifies the frame.
     constexpr auto tolerance = 0.15f;
 
     return std::abs(a.r - b.r) < tolerance && std::abs(a.g - b.g) < tolerance
@@ -54,8 +44,6 @@ bool colorsMatch(const Graphics::Color& a, const Graphics::Color& b)
 }
 } // namespace
 
-// The encoder wrote a file the platform decoder can open, and it agrees about
-// the dimensions and the duration.
 auto tOpensEncodedFile = test("Decoder/opensEncodedFile") = []
 {
     check(!testClip().empty());
@@ -69,7 +57,6 @@ auto tOpensEncodedFile = test("Decoder/opensEncodedFile") = []
     check(std::abs(info.duration - 1.6) < 0.15);
 };
 
-// Every frame comes out, in presentation order, with rising timestamps.
 auto tDecodesEveryFrame = test("Decoder/decodesEveryFrameInOrder") = []
 {
     auto decoder = Video::makeDecoder();
@@ -92,10 +79,6 @@ auto tDecodesEveryFrame = test("Decoder/decodesEveryFrameInOrder") = []
     check(count == Video::syntheticFrameCount(testClipOptions()));
 };
 
-// The decoded pixels are the ones that were encoded: frame N carries the colour
-// writeSyntheticClip painted it with. This is the end-to-end check that the
-// backend's pixel format, stride and row order are all right — get any of them
-// wrong and the corner is the wrong colour.
 auto tDecodesCorrectPixels = test("Decoder/decodesEncodedPixels") = []
 {
     auto stream = Video::FrameStream {};
@@ -111,8 +94,6 @@ auto tDecodesCorrectPixels = test("Decoder/decodesEncodedPixels") = []
     }
 };
 
-// Seeking lands on the frame covering the requested time, which the frame's own
-// colour proves rather than its timestamp.
 auto tSeekLandsOnRightFrame = test("Decoder/seekLandsOnRequestedFrame") = []
 {
     auto stream = Video::FrameStream {};
@@ -125,7 +106,6 @@ auto tSeekLandsOnRightFrame = test("Decoder/seekLandsOnRequestedFrame") = []
     check(frame.isValid());
     check(colorsMatch(cornerColor(frame), Video::syntheticFrameColor(12)));
 
-    // And back to a frame before it, which is the scrub-backwards path.
     stream.seek(0.35);
     frame = stream.waitForFrameAt(0.35, waitTimeout);
 
@@ -133,7 +113,6 @@ auto tSeekLandsOnRightFrame = test("Decoder/seekLandsOnRequestedFrame") = []
     check(colorsMatch(cornerColor(frame), Video::syntheticFrameColor(3)));
 };
 
-// Opening a file that is not there fails rather than half-succeeding.
 auto tMissingFile = test("Decoder/missingFileFailsToOpen") = []
 {
     auto decoder = Video::makeDecoder();

@@ -5,31 +5,6 @@
 #include <cmath>
 #include <string>
 
-// Many paths in one dispatch, against the same paths one dispatch each.
-//
-// Every other test of this rasterizer is a batch of one, which is exactly the
-// case a batch cannot get wrong: with one path every base is zero, the search
-// for which path a thread belongs to has one answer, and the record it reads is
-// the first. So none of them can fail on a wrong base, a search off by one, or a
-// field of the record read out of the neighbouring one - and those are the whole
-// of what batching added.
-//
-// The reference here is therefore the unbatched rasterization of the same path,
-// which PathRasterizerTests has already held to the segment-by-segment CPU
-// definition. What is checked is that gathering paths together does not move
-// any of them.
-//
-// The failures worth ruling out are all silent and all specific:
-//
-//  - a base off by a path: one path draws another's outline
-//  - the fill rule read from a neighbouring record: a star fills its own hole
-//  - the origin dropped: every mask lands on top of the first
-//  - the block search off by one: a strip along one path's edge belongs to the
-//    path before it
-//
-// So the batches below are deliberately mixed: different sizes, both fill rules,
-// and origins that are not multiples of the block.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPUWidgets;
@@ -41,12 +16,8 @@ using Graphics::Rect;
 
 constexpr auto pi = 3.14159265358979323846f;
 
-// The two sides sum a pixel's segments in the same order here - it is the same
-// kernel - so this is looser than it needs to be for anything but the 8-bit
-// texture the mask lives in.
+// A step and a half of the 8-bit channel the mask lives in.
 constexpr auto tolerance = 1.5f / 255.f;
-
-// ------------------------------------------------------------------ the paths
 
 Path star(Rect bounds, int points)
 {
@@ -55,8 +26,8 @@ Path star(Rect bounds, int points)
 
     auto path = Path {};
 
-    // Every other vertex, which is what makes the outline cross itself and the
-    // two fill rules disagree about the middle.
+    // Every other vertex, so the outline crosses itself and the two fill rules
+    // disagree about the middle.
     for (auto i = 0; i < points; ++i)
     {
         auto angle = 2.f * pi * (float) (i * 2 % points) / (float) points;
@@ -87,8 +58,6 @@ Path roundedRect(Rect bounds, float radius)
     return path;
 }
 
-// ------------------------------------------------------------------ the batch
-
 struct Entry
 {
     Path path;
@@ -112,11 +81,8 @@ GPU::Texture makeTarget(int width, int height)
     return {GPU::Device::shared(), descriptor, nullptr};
 }
 
-// Lays the entries out in a row of shelves and rasterizes the lot in one
-// dispatch. The origins are deliberately not multiples of the eight-pixel block
-// a threadgroup covers: a mask whose corner happened to line up with the grid
-// would hide an origin the kernel applied at block granularity rather than at
-// pixel granularity.
+// Deliberately not a multiple of the eight-pixel block a threadgroup covers: an
+// origin lined up with the grid would hide one applied at block granularity.
 constexpr auto gap = 3;
 
 GPU::Texture rasterizeTogether(Vector<Entry>& entries, CoverageBatch& batch)
@@ -162,17 +128,14 @@ GPU::Texture rasterizeTogether(Vector<Entry>& entries, CoverageBatch& batch)
 
     commands.commit();
 
-    // Waited for before the texture goes anywhere. commit() returns as soon as
-    // the list is on the queue on D3D12, so a test that dispatched into a
-    // texture and then let it go took the device down with it - a read is what
-    // both backends wait for, and it costs one texel.
+    // commit() returns as soon as the list is on the queue on D3D12, and a
+    // texture released before then takes the device down. A read waits on both
+    // backends and costs one texel.
     (void) probe::readRegion(target, 0, 0, 1, 1);
 
     return target;
 }
 
-// The same path on its own, which is what every other test in this directory
-// has already checked against the definition.
 Vector<float> rasterizeAlone(const Entry& entry)
 {
     auto rasterizer = PathRasterizer {};
@@ -216,8 +179,6 @@ Difference compare(const Vector<float>& batched,
     return result;
 }
 
-// Every entry read back out of the shared texture and held against its own solo
-// rasterization.
 void checkEachMatchesAlone(Vector<Entry>& entries, const GPU::Texture& target)
 {
     for (auto i = 0; i < entries.size(); ++i)
@@ -259,9 +220,8 @@ void checkBatchMatchesAlone(Vector<Entry>& entries)
 }
 } // namespace
 
-// The mixed batch. Sizes an order of magnitude apart, so the paths do not all
-// have the same block count and a base that ignored one of them would still be
-// right for the others.
+// Sizes an order of magnitude apart, so the paths do not share a block count and
+// a base that ignored one of them would still be right for the others.
 auto tMixedBatchMatchesAlone =
     test("CoverageBatch/everyPathMatchesItsOwnDispatch") = []
 {
@@ -274,10 +234,6 @@ auto tMixedBatchMatchesAlone =
     checkBatchMatchesAlone(entries);
 };
 
-// Both fill rules in one batch, on the same geometry. Under non-zero the star is
-// solid and under even-odd it has a pentagonal hole, so a kernel reading the
-// rule out of the wrong record does not produce a slightly different picture -
-// it produces the other one.
 auto tFillRulesDoNotCross = test("CoverageBatch/eachPathKeepsItsOwnFillRule") = []
 {
     if (!GPU::Device::shared().isValid())
@@ -292,8 +248,8 @@ auto tFillRulesDoNotCross = test("CoverageBatch/eachPathKeepsItsOwnFillRule") = 
     auto batch = CoverageBatch {};
     auto target = rasterizeTogether(entries, batch);
 
-    // And the two really are different pictures, so the check above could have
-    // failed. The centre is the hole under even-odd and solid under non-zero.
+    // The centre is the hole under even-odd and solid under non-zero, so the
+    // comparison above could have failed.
     auto hollow = probe::readRegion(target,
                                     entries[0].originX,
                                     entries[0].originY,
@@ -311,12 +267,8 @@ auto tFillRulesDoNotCross = test("CoverageBatch/eachPathKeepsItsOwnFillRule") = 
     check(solid[centre] > 0.99f);
 };
 
-// Backdrops of wildly different sizes in one batch. The cell base is the one
-// base that grows with a path's *area*, so an ellipse covering a third of a
-// million cells beside a star covering a few hundred is where a base taken from
-// the wrong path lands somewhere else entirely rather than a few rows off - and
-// the small path between the two large ones is the one whose own base is
-// smallest and whose neighbours' are not.
+// The cell base is the one base that grows with a path's area, so a small path
+// between two huge ones is where a base taken from the wrong record shows.
 auto tCellBasesDoNotCross = test("CoverageBatch/backdropsOfVeryDifferentSizes") = []
 {
     auto entries = Vector<Entry> {};
@@ -327,15 +279,8 @@ auto tCellBasesDoNotCross = test("CoverageBatch/backdropsOfVeryDifferentSizes") 
     checkBatchMatchesAlone(entries);
 };
 
-// The same batch dispatched a second time without being gathered again, which is
-// what a static path redrawn every frame is - and what the solo rasterizer does
-// on every dispatch after its first.
-//
-// It is the one thing the backdrop can get wrong that a single dispatch cannot.
-// Its cells are *added* into, so a second scatter landing on what the first
-// one's sums left behind is a backdrop twice over - and the stage that keeps it
-// from happening writes nothing but zeroes, which no picture taken once will
-// ever miss.
+// Backdrop cells are added into, so a second dispatch that did not clear them
+// would double the backdrop -- invisible to any picture taken only once.
 auto tSecondDispatchDrawsTheSame =
     test("CoverageBatch/dispatchingTwiceDrawsTheSameThing") = []
 {
@@ -361,9 +306,8 @@ auto tSecondDispatchDrawsTheSame =
     checkEachMatchesAlone(entries, target);
 };
 
-// A batch big enough that the block grid is a rectangle rather than a row, which
-// is the layout the dispatch has to use at all - a dimension may have 65,535
-// threadgroups and a canvas has more blocks than that.
+// Big enough that the block grid is a rectangle rather than a row, since a
+// dimension may have only 65,535 threadgroups.
 auto tManyPathsInOneDispatch = test("CoverageBatch/manyPathsStillOneDispatch") = []
 {
     auto entries = Vector<Entry> {};
@@ -379,9 +323,6 @@ auto tManyPathsInOneDispatch = test("CoverageBatch/manyPathsStillOneDispatch") =
     checkBatchMatchesAlone(entries);
 };
 
-// An empty batch is not a dispatch. A frame in which nothing changed geometry
-// should cost nothing at all, which is the steady state of every interface that
-// is not being dragged.
 auto tEmptyBatchDispatchesNothing =
     test("CoverageBatch/nothingGatheredIsNoDispatch") = []
 {
@@ -407,14 +348,8 @@ auto tEmptyBatchDispatchesNothing =
     check(batch.getBufferUpdateCount() == 0);
 };
 
-// What the batch is for: the same dispatches and the same buffer updates however
-// many paths went into it. Unbatched, the same frame was one dispatch and three
-// or four updates per path.
-//
-// Held against a batch of one of the same path rather than against a written-out
-// number. A constant would say what the count is and not what it must not depend
-// on, and it would have to be edited whenever a stage is added - which is
-// exactly the edit that would quietly absorb a per-path dispatch.
+// Held against a batch of one rather than a written-out number, so adding a
+// stage does not need an edit that could quietly absorb a per-path dispatch.
 auto tOneDispatchWhateverTheCount =
     test("CoverageBatch/costIsPerFrameNotPerPath") = []
 {

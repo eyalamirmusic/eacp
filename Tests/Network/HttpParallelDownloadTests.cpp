@@ -247,12 +247,9 @@ auto tParallelReportsIntermediateProgress =
             auto rest = rangeHeader.substr(std::string("bytes=").size());
             auto start = std::stoll(rest.substr(0, rest.find('-')));
             auto chunkIndex = start / chunkBytes;
-            // Stagger each chunk's completion so the aggregate progress
-            // climbs in visible steps. The plateau between steps must
-            // comfortably outlast the progress aggregator's publish
-            // interval (25ms, see launchProgressAggregator) or a loaded
-            // CI runner can collapse several steps into one sample and
-            // starve the >=3 distinct-values check below.
+            // The plateau between steps must outlast the aggregator's 25ms
+            // publish interval, or a loaded CI runner collapses several steps
+            // into one sample and starves the >=3 distinct-values check.
             eacp::Time::sleepMS(100 * (int) chunkIndex);
         }
         return res;

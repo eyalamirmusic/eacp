@@ -45,8 +45,6 @@ void DragAndDropContainer::startDragging(
 
     owner.addAndMakeVisible(image);
 
-    // Last among the owner's children, so it is painted after the columns it is
-    // being dragged over rather than under them.
     image.toFront();
 
     dragging = true;
@@ -70,8 +68,7 @@ DragAndDropTarget* DragAndDropContainer::findTargetIn(Component& component,
     if (!component.isVisible() || !component.getLocalBounds().contains(localPoint))
         return nullptr;
 
-    // Front to back, so the topmost thing under the pointer is asked first --
-    // the same order a click is resolved in, and for the same reason.
+    // Front to back, the same order a click is resolved in.
     for (auto* child: std::ranges::reverse_view(component.getChildren()))
     {
         auto childBounds = child->getBounds();
@@ -89,12 +86,8 @@ DragAndDropTarget* DragAndDropContainer::findTargetIn(Component& component,
 
 DragAndDropTarget* DragAndDropContainer::findTargetAt(Point positionInRoot) const
 {
-    // Deliberately not getComponentAt, which answers a different question.
-    // Taking a drop and taking a *click* are separate: a column that holds
-    // cards without wanting clicks of its own still wants what is dropped on
-    // it, and the image being dragged sits over everything while wanting
-    // neither. A component with no target of its own is transparent here, so
-    // the search falls through it to whatever is behind.
+    // Deliberately not getComponentAt: taking a drop is independent of taking a
+    // click, and a component with no drop target is transparent here.
     return findTargetIn(owner, owner.rootPointToLocal(positionInRoot));
 }
 
@@ -145,15 +138,12 @@ void DragAndDropContainer::drop(Point positionInRoot)
 
     auto* target = findTargetAt(positionInRoot);
 
-    // Exited before the drop, so a target that highlights itself has one place
-    // to turn it off rather than two.
+    // Exit before the drop, so a highlight has one place to be turned off.
     setTarget(nullptr, positionInRoot);
 
     auto info = current;
 
-    // The image goes first: the drop is free to destroy the thing that was
-    // being dragged, and clearing up afterwards would be clearing up around
-    // whatever it did.
+    // Clean up first: itemDropped is free to destroy what was being dragged.
     finishDrag();
 
     if (target != nullptr)
@@ -189,9 +179,6 @@ void DragAndDropContainer::componentDeleted(Component& component)
     if (current.source != &component)
         return;
 
-    // The thing being dragged has gone. Nothing can be dropped, and the info
-    // still holds a pointer to it, so the drag ends here rather than carrying on
-    // with a dangling source.
     current.source = nullptr;
     cancelDrag();
 }

@@ -4,15 +4,12 @@
 using namespace eacp;
 using namespace GPU;
 
-// A Wolfenstein3D-style first-person walk through a grid maze. The map below
-// extrudes into textured wall quads once at startup; the camera is two scalar
-// uniforms (position and yaw) the shader builds the view matrix from each
-// frame. Move with W/A/S/D, turn with the arrow keys — or click to lock the
-// mouse for mouse look; Escape releases it.
+// W/A/S/D moves, the arrow keys turn, a click locks the mouse for mouse look
+// and Escape releases it.
 namespace
 {
-// One character per cell: '.' is walkable, anything else is a wall whose
-// character picks the texture. Rows run along Z, columns along X.
+// '.' is walkable; any other character is a wall and picks its texture. Rows
+// run along Z, columns along X.
 constexpr std::string_view worldMap[] = {
     "########################",
     "#......#.......%.......%",
@@ -54,8 +51,7 @@ bool isSolid(int x, int z)
     return row[x] != '.';
 }
 
-// Atlas tile per wall character; the last two tiles are the flat floor and
-// ceiling colours.
+// The last two tiles are the flat floor and ceiling colours.
 constexpr auto brickTile = 0;
 constexpr auto stoneTile = 1;
 constexpr auto plankTile = 2;
@@ -151,8 +147,6 @@ std::uint32_t tilePixel(int tile, int x, int y)
     }
 }
 
-// All tiles side by side in one texture, sampled with nearest filtering for
-// the chunky retro look.
 Texture makeAtlas(Device& device)
 {
     static std::uint32_t pixels[tileSize * tileSize * tileCount];
@@ -183,8 +177,7 @@ struct MazeMesh
     Vector<std::uint32_t> indices;
 };
 
-// Maps a 0..1 coordinate across a face into the tile's strip of the atlas,
-// inset by half a texel so neighbouring tiles never bleed in.
+// Inset by half a texel so neighbouring atlas tiles never bleed in.
 float tileU(int tile, float u)
 {
     constexpr auto inset = 0.5f / tileSize;
@@ -208,9 +201,8 @@ void addQuad(MazeMesh& mesh,
         mesh.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
 }
 
-// One unit-square wall face per solid cell edge that borders a walkable cell.
-// North/south faces are fully lit and east/west ones darker, the classic
-// Wolfenstein two-level shading that keeps corners readable.
+// East/west faces are darker than north/south, the classic two-level shading
+// that keeps corners readable.
 void addWallFaces(MazeMesh& mesh, int x, int z)
 {
     auto tile = wallTile(worldMap[z][(std::size_t) x]);
@@ -252,8 +244,6 @@ void addWallFaces(MazeMesh& mesh, int x, int z)
                 {{fx + 1.0f, 0.0f, fz}, {u0, 1.0f}, dark});
 }
 
-// The floor and ceiling are single flat-coloured quads under and over the
-// whole map, sampling the centre of their solid atlas tiles.
 void addFloorAndCeiling(MazeMesh& mesh, float width, float depth)
 {
     auto floorUV = Graphics::Point {tileU(floorTile, 0.5f), 0.5f};
@@ -290,9 +280,8 @@ MazeMesh buildMaze()
     return mesh;
 }
 
-// The whole camera is three scalar uniforms; the shader assembles the view
-// matrix (yaw spin around the eye, then the eye translation) and projection
-// itself, so the CPU never touches a matrix.
+// The camera is three scalar uniforms; the shader builds the view and
+// projection matrices itself, so the CPU never touches a matrix.
 struct MazeShader final : ShaderProgram
 {
     MazeShader() { compile(); }

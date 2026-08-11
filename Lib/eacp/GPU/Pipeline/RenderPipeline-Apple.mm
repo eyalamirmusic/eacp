@@ -22,11 +22,8 @@ static MTLVertexFormat toMetalVertexFormat(VertexFormat format)
         case VertexFormat::Float4:
             return MTLVertexFormatFloat4;
 
-        // The Normalized variants, not the plain integer ones: an attribute
-        // declared UByte4Norm reads as 0..1 in the shader, where plain
-        // MTLVertexFormatUChar4 would hand it 0..255. The same choice on D3D12
-        // is UNORM against UINT, and the two backends have to agree on it or a
-        // colour comes out 255 times too bright on one of them.
+        // Normalized variants, so the shader reads 0..1 rather than 0..255 -
+        // matching D3D12's UNORM formats.
         case VertexFormat::UByte4Norm:
             return MTLVertexFormatUChar4Normalized;
         case VertexFormat::Half2:
@@ -111,9 +108,8 @@ static MTLVertexDescriptor* makeVertexDescriptor(const VertexLayout& layout)
         descriptor.attributes[i].bufferIndex = (NSUInteger) attribute.bufferIndex;
     }
 
-    // Multi-slot when `buffers` is populated; single-slot fallback otherwise
-    // (pre-instancing shape). Metal needs stride and step function per bound
-    // slot; a slot without an entry defaults to PerVertex with stride 0.
+    // Metal needs stride and step function per bound slot; a slot without an
+    // entry defaults to PerVertex with stride 0.
     if (! layout.buffers.empty())
     {
         for (auto slot = 0; slot < layout.buffers.size(); ++slot)
@@ -211,10 +207,8 @@ struct RenderPipeline::Native
                 colorAttachment.destinationAlphaBlendFactor = MTLBlendFactorOne;
                 break;
             default:
-                // Guards against a future BlendMode value that this backend
-                // was never taught to handle - would otherwise silently
-                // produce a no-blend pipeline. Loud in Debug, degrades to
-                // None in Release (both backends match this behaviour).
+                // An unhandled BlendMode would silently give a no-blend
+                // pipeline; loud in Debug, degrades to None in Release.
                 assert(false && "eacp: unhandled BlendMode in Metal backend");
                 break;
         }

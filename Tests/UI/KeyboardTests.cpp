@@ -4,24 +4,12 @@
 
 #include <string>
 
-// Where a key goes, which is the only question the keyboard tier has to answer.
-//
-// A component tree lives in one native view, so the window hands every keystroke
-// to the same object however deep the thing that should hear it is. What decides
-// the rest is focus and the verdict a component returns -- and both are the kind
-// of routing that looks obviously right and is wrong in one direction, so it is
-// worth pinning down rather than trying by hand.
-//
-// No GPU here: the host is constructed but never rendered, and the events are
-// synthesized. Focus, bubbling and traversal are all plain tree logic.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
 namespace
 {
-// Records what it was given and consumes what it was told to.
 struct Recorder final : Component
 {
     explicit Recorder(std::string nameToUse, bool consumes = false)
@@ -42,9 +30,6 @@ struct Recorder final : Component
     {
         ++gained;
 
-        // Asked from inside the callback on purpose: a component told it has
-        // focus and then finding hasKeyboardFocus() false would be the kind of
-        // half-applied state a caret blinks wrongly against.
         hadFocusWhenTold = hasKeyboardFocus();
     }
 
@@ -87,8 +72,6 @@ eacp::Graphics::MouseEvent clickAt(Point position)
     return event;
 }
 
-// A host with a root and two focusable children, sized so a click can be aimed
-// at either of them.
 struct Harness
 {
     Harness()
@@ -135,8 +118,6 @@ auto tFocusedComponentGetsTheKey =
     check(harness.first.keysSeen == "a");
 };
 
-// The verdict is the whole mechanism: unconsumed, a key carries on up, which is
-// what lets a root hold a shortcut while a field deep inside it has focus.
 auto tUnconsumedKeysBubble = test("Keyboard/anUnconsumedKeyCarriesOnUpTheTree") = []
 {
     auto harness = Harness {};
@@ -205,8 +186,6 @@ auto tGivingAwayFocus = test("Keyboard/focusCanBeGivenBackToNothing") = []
     check(harness.first.keysSeen.empty());
 };
 
-// A component that has stopped wanting the keyboard and is still holding it
-// swallows every key the tree sends, so it gives it up on the way out.
 auto tRefusingFocusReleasesIt =
     test("Keyboard/aComponentThatStopsWantingFocusLosesIt") = []
 {
@@ -219,8 +198,6 @@ auto tRefusingFocusReleasesIt =
     check(harness.first.lost == 1);
 };
 
-// Asking does not get around the flag, or setWantsKeyboardFocus(false) would
-// mean two different things depending on which side of a grab it was called.
 auto tGrabbingIsRefusedWhenUnwanted =
     test("Keyboard/aComponentThatWantsNoFocusCannotGrabIt") = []
 {
@@ -242,14 +219,8 @@ auto tPressMovesFocus = test("Keyboard/pressingSomethingFocusableFocusesIt") = [
     check(harness.host.getFocusedComponent() == &harness.second);
 };
 
-// A press with nothing focusable anywhere above it leaves focus where it was,
-// rather than clearing it -- otherwise clicking a decorative panel silently
-// disarms the field beside it.
-//
-// Note what this takes to arrange: the *root* has to want nothing either, since
-// the walk below finds the nearest focusable ancestor and a focusable root is an
-// ancestor of everything. Which is the honest description of the rule -- a tree
-// whose root takes focus has no unfocusable clicks in it at all.
+// The root must want no focus either: the walk finds the nearest focusable
+// ancestor, and a focusable root is an ancestor of everything.
 auto tPressOnUnfocusableKeepsFocus =
     test("Keyboard/pressingWithNothingFocusableUnderThePointerLeavesFocusAlone") = []
 {
@@ -264,9 +235,6 @@ auto tPressOnUnfocusableKeepsFocus =
     check(harness.host.getFocusedComponent() == &harness.first);
 };
 
-// The nearest ancestor that wants it, not the deepest thing hit: a label inside
-// a focusable row is what the pointer lands on and the row is what should end up
-// holding the keyboard.
 auto tPressFocusesTheNearestAncestor =
     test("Keyboard/pressingAChildFocusesTheAncestorThatWantsIt") = []
 {
@@ -294,7 +262,6 @@ auto tTabMovesFocus = test("Keyboard/tabMovesThroughTheTreeInAddOrder") = []
     harness.host.keyDown(tabKey());
     check(harness.host.getFocusedComponent() == &harness.second);
 
-    // Wrapping, rather than trapping the keyboard at the end of the tree.
     harness.host.keyDown(tabKey());
     check(harness.host.getFocusedComponent() == &harness.root);
 };
@@ -310,8 +277,6 @@ auto tShiftTabGoesBack = test("Keyboard/shiftTabMovesTheOtherWay") = []
     check(harness.host.getFocusedComponent() == &harness.first);
 };
 
-// Traversal is a fallback and not a rule, so a component wanting Tab for itself
-// takes it the same way it takes any other key.
 auto tConsumedTabDoesNotTraverse = test("Keyboard/aConsumedTabDoesNotMoveFocus") = []
 {
     auto harness = Harness {};
@@ -337,8 +302,6 @@ auto tTraversalCanBeTurnedOff = test("Keyboard/aTreeCanKeepTabForItself") = []
     check(harness.host.getFocusedComponent() == &harness.first);
 };
 
-// A host outliving its focused component by even one destructor is the normal
-// case, so the pointer has to go with it.
 auto tDeletedComponentLosesFocus =
     test("Keyboard/deletingTheFocusedComponentClearsIt") = []
 {
@@ -354,14 +317,11 @@ auto tDeletedComponentLosesFocus =
 
     check(harness.host.getFocusedComponent() == nullptr);
 
-    // And the tree still works afterwards rather than writing through it.
     harness.host.keyDown(keyOf("a"));
 
     check(harness.root.keysSeen == "a");
 };
 
-// An invisible component is not a tab stop: focus landing on something that
-// cannot be seen is a keyboard that has vanished as far as the user knows.
 auto tHiddenComponentsAreSkipped = test("Keyboard/tabSkipsWhatIsNotVisible") = []
 {
     auto harness = Harness {};

@@ -7,13 +7,9 @@
 #include <chrono>
 #include <cstdio>
 
-// Micro-benchmark comparing the scalar reference against the active SIMD backend
-// for the eacp-simd kernels, plus the float-array primitives (auto-vectorized vs
-// a non-vectorized scalar reference). eacp-simd and this harness are always built
-// -O3, so any build config is fine.
+// eacp-simd and this harness are always built -O3, so any build config is fine.
 
-// Disable auto-vectorization for the array primitives' scalar reference, so the
-// comparison shows the vectorization win rather than vectorized-vs-vectorized.
+// Keeps the scalar reference unvectorized, so a row shows the vectorization win.
 #if defined(__clang__)
 #define EACP_NO_VECTORIZE                                                           \
     _Pragma("clang loop vectorize(disable) interleave(disable)")
@@ -32,9 +28,7 @@ using SwapFn = void (*)(const std::uint8_t*, std::uint8_t*, std::size_t);
 using WarpFn =
     void (*)(const std::uint8_t*, int, int, const float*, std::uint8_t*, int, int);
 
-// A volatile sink that consumes one output byte per iteration so the optimizer
-// cannot elide the calls. Combined with perturbing an input byte per iteration
-// (below) it also prevents hoisting the loop-invariant call out of the loop.
+// Consumed once per iteration so the optimizer cannot elide the calls.
 volatile std::uint64_t gSink = 0;
 
 Pixels makeBuffer(int byteCount)
@@ -58,9 +52,8 @@ std::uint8_t* bytes(Floats& v)
     return reinterpret_cast<std::uint8_t*>(v.data());
 }
 
-// Returns milliseconds per iteration. One input byte is perturbed each iteration
-// so the call is not loop-invariant; one output byte is observed so the stores
-// are not dead. Both are O(1) and negligible against a whole-buffer op.
+// Milliseconds per iteration. Perturbing an input byte keeps the call from being
+// loop-invariant; observing an output byte keeps the stores from being dead.
 template <class Run>
 double timeMs(int iters,
               std::uint8_t* perturb,
@@ -101,7 +94,6 @@ void report(
                 scalarMs / ms);
 }
 
-// Non-vectorized scalar references for the array primitives.
 void scalarAdd(const float* a, const float* b, float* out, std::size_t n)
 {
     EACP_NO_VECTORIZE
@@ -226,7 +218,7 @@ void benchWarp(const ResizeConfig& c)
 {
     auto src = makeBuffer(c.srcW * c.srcH * 4);
     auto dst = Pixels(c.dstW * c.dstH * 4);
-    // A rotate + scale + translate inverse matrix (the values don't affect timing).
+    // Any invertible affine; the values do not affect timing.
     const float m[6] = {0.8f, -0.2f, 8.f, 0.2f, 0.8f, 5.f};
     const long long outPixels = static_cast<long long>(c.dstW) * c.dstH;
     const int iters =
@@ -370,11 +362,11 @@ int main()
     std::printf("\n\nresizeBilinear:\n");
 
     const ResizeConfig resizes[] = {
-        {1920, 1080, 640, 360}, // 3x downscale
-        {1280, 720, 1280, 720}, // identity
-        {640, 360, 1920, 1080}, // 3x upscale
-        {1280, 720, 213, 120}, // thumbnail
-        {512, 512, 1024, 1024}, // 2x upscale
+        {1920, 1080, 640, 360},
+        {1280, 720, 1280, 720},
+        {640, 360, 1920, 1080},
+        {1280, 720, 213, 120},
+        {512, 512, 1024, 1024},
     };
     for (const auto& cfg: resizes)
         benchResize(cfg);
@@ -389,8 +381,8 @@ int main()
 
     std::printf("\narray primitives (non-vectorized scalar vs %s):\n",
                 baselineName());
-    benchArrayOps(4096); // cache-resident: shows the vectorization win
-    benchArrayOps(4'000'000); // larger than cache: memory-bandwidth-bound
+    benchArrayOps(4096); // cache-resident
+    benchArrayOps(4'000'000); // memory-bandwidth-bound
 
     std::printf("\nchecksum %llu\n", static_cast<unsigned long long>(gSink));
     return 0;

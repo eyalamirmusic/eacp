@@ -1,4 +1,3 @@
-// Windows implementation of TextLayer using DirectComposition surfaces
 #include "TextLayer.h"
 #include "NativeLayer-Windows.h"
 
@@ -110,7 +109,7 @@ void TextLayer::setFont(const Font& font)
     auto* textFormat = static_cast<IDWriteTextFormat*>(font.getHandle());
     if (textFormat)
     {
-        // AddRef to keep the text format alive
+        // AddRef so the format outlives the Font object.
         textFormat->AddRef();
         impl->textFormat.Attach(textFormat);
     }

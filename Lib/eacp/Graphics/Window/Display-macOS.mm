@@ -6,13 +6,9 @@ namespace eacp::Graphics
 {
 namespace
 {
-// AppKit screen coordinates put the origin at the *primary* screen's
-// bottom-left and grow upward; every eacp screen point is measured from the
-// primary screen's top-left and grows downward, which is what
-// WindowOptions::initialPosition already means. The flip is therefore about the
-// primary screen's own frame, not about the screen being converted - otherwise
-// a display sitting above or below the primary one would come back in the wrong
-// place, which is exactly the multi-monitor case this exists to serve.
+// AppKit is bottom-left origin on the PRIMARY screen; eacp is top-left origin
+// on the same screen. So the flip is about the primary screen's own frame, not
+// the screen being converted.
 Rect toScreenPoints(NSRect rect)
 {
     const auto primaryTop = NSMaxY(NSScreen.screens.firstObject.frame);
@@ -26,9 +22,8 @@ Rect toScreenPoints(NSRect rect)
 
 Display primaryDisplay()
 {
-    // firstObject, not mainScreen: "main" is the screen holding the key window,
-    // which moves with the user, while the first is the one carrying the menu
-    // bar and the one every coordinate here is measured from.
+    // firstObject, not mainScreen: "main" holds the key window and moves with
+    // the user, while the first carries the menu bar.
     NSScreen* screen = NSScreen.screens.firstObject;
 
     if (screen == nil)

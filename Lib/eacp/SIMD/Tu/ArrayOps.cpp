@@ -3,15 +3,9 @@
 
 #include <algorithm>
 
-// Elementwise float-array primitives. These are plain loops that the compiler
-// auto-vectorizes to the module's target ISA at -O3 (SSE2 on x86-64, NEON on
-// arm64). They are memory-bandwidth-bound, so a runtime-dispatched AVX2 variant
-// would add essentially nothing (the same lesson as swapRedBlue at ~1.0x); a
-// wider, dispatched path can be introduced later if a compute-bound primitive
-// needs it. Being elementwise, the results are deterministic on every build.
-//
-// multiplyAdd is intentionally non-fused (the module is built -ffp-contract=off),
-// keeping it consistent with the bit-exact image kernels.
+// Plain loops the compiler auto-vectorizes to the module's target ISA at -O3;
+// memory-bandwidth-bound, so runtime-dispatched AVX2 would add nothing.
+// multiplyAdd is non-fused (-ffp-contract=off), matching the image kernels.
 namespace eacp::simd
 {
 
@@ -59,10 +53,9 @@ void lerp(const float* a, const float* b, float t, float* out, std::size_t count
         out[i] = a[i] + t * (b[i] - a[i]);
 }
 
-// The reductions below keep four independent accumulators in a fixed
-// interleave: the explicit reassociation is what lets the compiler map them
-// onto vector lanes without fast-math, while keeping the accumulation order
-// (and therefore the result) identical on every build.
+// Four accumulators in a fixed interleave: explicit reassociation lets the
+// compiler use vector lanes without fast-math, while keeping the accumulation
+// order (and so the result) identical on every build.
 
 double sumOfSquares(const float* a, std::size_t count)
 {

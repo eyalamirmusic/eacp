@@ -1,15 +1,5 @@
 #include "Common.h"
 
-// The one thing a reduction cannot rule out.
-//
-// FrameCompute/sharedMemoryGroupSums folds a tile in half per barrier, which
-// says the memory is shared and the barrier orders it - but a tree reduction
-// reads slots this thread's own half of the tile wrote, so a lane that read
-// only itself would still fold to something. What is left to check is the flat
-// case: every thread reads the lane **opposite** its own, so no thread reads
-// anything it wrote. On per-thread scratch that comes back as the identity
-// rather than as a reversal, which no amount of arithmetic can disguise.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
@@ -33,10 +23,8 @@ struct ExchangeKernel final : ComputeProgram
         write(scratch, lane, toFloat(id));
         barrier();
 
-        // A kernel that barriers has no bounds guard, so the store is what
-        // holds the tail of the last group inside the buffer. The dispatch is a
-        // whole number of groups here, but writing it any other way would be
-        // relying on that.
+        // A kernel that barriers has no bounds guard, so this store is what
+        // keeps the last group's tail inside the buffer.
         auto opposite = scratch[(unsigned) (groupSize - 1) - lane];
         ifThen(id < gridCount(), [&] { write(output, id, opposite); });
     }
@@ -47,8 +35,6 @@ struct ExchangeKernel final : ComputeProgram
 };
 } // namespace
 
-// Thread `lane` of a group comes back holding what thread `groupSize - 1 - lane`
-// wrote.
 auto tExchangeCrossesLanes = test("SharedMemory/everyThreadReadsAnotherLane") = []
 {
     auto& device = Device::shared();
@@ -90,7 +76,6 @@ auto tExchangeCrossesLanes = test("SharedMemory/everyThreadReadsAnotherLane") = 
 
     check(correct == threadCount);
 
-    // And it is genuinely a reversal rather than the identity, which is what a
-    // kernel with unshared scratch would have produced.
+    // Unshared scratch would come back as the identity rather than a reversal.
     check(values[0] != 0.f);
 };

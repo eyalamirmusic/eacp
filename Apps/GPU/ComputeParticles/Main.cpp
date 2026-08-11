@@ -8,28 +8,12 @@
 using namespace eacp;
 using namespace GPU;
 
-// Frame::beginCompute: a kernel and the draw that consumes it, on one command
-// buffer, in one frame.
-//
-// 40,000 particles are integrated by a compute pass and drawn by the very next
-// render pass, out of the buffer the kernel just wrote. The state is uploaded
-// once at startup and is never read back, never re-uploaded, and never seen by
-// the CPU again - each frame the CPU contributes four scalars (where the
-// attractor is, how long the step was) and nothing else.
-//
-// Without beginCompute the integration would have to run on a separate
-// CommandBuffer whose commit() blocks until the GPU is finished, every frame,
-// before the draw could touch a byte of it. Here the two passes are ordered by
-// the queue, exactly as two render passes on a frame are, and nothing waits.
-
 namespace
 {
 constexpr int particleCount = 40000;
 
-// The one layout the two stages agree on. The kernel reads and writes it as a
-// four-float record with read4/write; the vertex shader reads the same memory
-// as a per-instance stream with this struct's stride. Nothing converts between
-// the two views - there is only ever one copy.
+// The kernel reads and writes this as a four-float record; the vertex shader
+// reads the same memory as a per-instance stream with this struct's stride.
 struct Particle
 {
     float position[2];
@@ -41,9 +25,7 @@ static_assert(floatsPerParticle == 4, "the kernel reads state with read4");
 
 constexpr auto stateBytes = sizeof(Particle) * (std::size_t) particleCount;
 
-// The quad every particle is drawn as: two triangles of corners in [-1, 1],
-// scaled to the particle radius by the vertex shader. One instance per
-// particle, so this is the only per-vertex data in the program.
+// Corners in [-1, 1], scaled to the particle radius by the vertex shader.
 struct Corner
 {
     float offset[2];
@@ -65,8 +47,7 @@ Vector<Particle> makeInitialParticles()
     auto particles = Vector<Particle> {};
     particles.reserve(particleCount);
 
-    // The golden angle spreads successive indices evenly over the disc rather
-    // than into the arms a constant angle step would leave.
+    // Spreads successive indices over the disc rather than into arms.
     constexpr auto goldenAngle = 2.39996323f;
 
     for (auto i = 0; i < particleCount; ++i)
@@ -83,19 +64,14 @@ Vector<Particle> makeInitialParticles()
     return particles;
 }
 
-// The state buffer, uploaded with that starting disc. A function rather than a
-// member holding the vector: the CPU copy is scaffolding for one upload and has
-// no reason to outlive the constructor.
 Buffer makeStateBuffer()
 {
     auto particles = makeInitialParticles();
     return {Device::shared(), particles.data(), stateBytes, BufferUsage::Storage};
 }
 
-// One Euler step per particle: a damped spring towards the attractor. Reads the
-// whole state from one buffer and writes it to another, because a kernel may
-// not read the buffer it is writing - which is what the two buffers the view
-// swaps between are for.
+// One Euler step per particle: a damped spring towards the attractor. A kernel
+// may not read the buffer it is writing, hence the two buffers the view swaps.
 struct IntegrateParticles final : ComputeProgram
 {
     IntegrateParticles() { compile(); }
@@ -104,9 +80,7 @@ struct IntegrateParticles final : ComputeProgram
     {
         auto index = threadId();
 
-        // One Particle, read and written as the record it is: the index is in
-        // particles rather than in floats, so the struct's four-float stride
-        // lives in read4/write and nowhere in the body.
+        // read4 and write index in particles, not in floats.
         auto particle = state.read4(index);
 
         auto px = particle.x();
@@ -114,17 +88,11 @@ struct IntegrateParticles final : ComputeProgram
         auto vx = particle.z();
         auto vy = particle.w();
 
-        // A per-particle stiffness, spread by the golden ratio so neighbouring
-        // indices land far apart rather than in bands. Without it every
-        // particle feels the same force, follows the same path, and 40,000 of
-        // them draw one dot. The spread is wide because it is the only thing
-        // keeping the swarm a cloud rather than a trail.
+        // Spread by the golden ratio: at one shared stiffness all 40,000
+        // particles follow the same path and draw a single dot.
         auto stiffness =
             pull * (0.25f + fract(toFloat(index) * 0.6180339887f) * 2.f);
 
-        // Bounded by construction: a damped oscillator driven by a bounded
-        // target cannot run away, which an inverse-square attraction very much
-        // can as soon as a particle passes close to the centre.
         auto nvx = (vx + (attractorX - px) * stiffness * timeStep) * damping;
         auto nvy = (vy + (attractorY - py) * stiffness * timeStep) * damping;
 
@@ -143,9 +111,6 @@ struct IntegrateParticles final : ComputeProgram
     EACP_SHADER(state, next, attractorX, attractorY, pull, damping, timeStep)
 };
 
-// Draws the state buffer without owning it: the per-vertex stream is the six
-// quad corners, and slot 1 is pointed straight at whichever buffer the kernel
-// wrote this frame (see setInstanceBuffer in render()).
 struct DrawParticles final : ShaderProgram
 {
     DrawParticles() { compile(); }
@@ -165,8 +130,6 @@ struct DrawParticles final : ShaderProgram
         auto acrossQuad = varying(corner);
         auto speed = varying(length(velocity));
 
-        // A round, soft dot: bright at the centre, gone by the quad's edge, so
-        // the square the quad actually is never shows.
         auto glow = 1.f - smoothstep(0.f, 1.f, length(acrossQuad));
 
         auto slow = float3(constant(0.10f), constant(0.35f), constant(1.00f));
@@ -174,8 +137,7 @@ struct DrawParticles final : ShaderProgram
         auto tint = mix(slow, fast, clamp(speed * speedScale, 0.f, 1.f));
 
         // Dim, because additive blending accumulates: at full brightness the
-        // first few overlapping particles clip to white and the density the
-        // blend mode exists to show is lost.
+        // first few overlapping particles already clip to white.
         setFragment(float4(tint * glow * brightness, glow * brightness));
     }
 
@@ -210,8 +172,7 @@ struct ParticleView final : GPUView
         renderer.setVertices(quadCorners);
 
         // Slot 1 is fed by the kernel rather than by setInstances, so it is
-        // pointed at a buffer instead of given CPU data. Additive blending is
-        // what makes overlapping particles read as density.
+        // pointed at a buffer instead of given CPU data.
         renderer.setInstanceBuffer(1, bufferB, particleCount);
         renderer.prepare(
             sampleCount(), false, PrimitiveTopology::Triangles, BlendMode::Additive);
@@ -223,18 +184,16 @@ struct ParticleView final : GPUView
     {
         elapsed += (float) time.delta;
 
-        // Clamped, because a stalled frame would otherwise hand the integrator
-        // a step long enough to throw the whole swarm off screen in one go.
+        // Clamped: a stalled frame would otherwise hand the integrator a step
+        // long enough to throw the whole swarm off screen in one go.
         step = std::min((float) time.delta, 1.f / 30.f);
     }
 
     void render(Frame& frame) override
     {
-        // The two buffers alternate roles every frame: what the kernel wrote
-        // last frame is what it reads this frame. Both are only ever touched by
-        // GPU commands on one queue, which executes them in submission order,
-        // so the alternation needs no fence and no CPU synchronisation - the
-        // frames-in-flight pipelining is on the CPU side and cannot reorder it.
+        // The two buffers alternate roles every frame. Both are only ever
+        // touched by GPU commands on one queue, which runs them in submission
+        // order, so the alternation needs no fence and no CPU synchronisation.
         auto& source = front ? bufferA : bufferB;
         auto& target = front ? bufferB : bufferA;
 
@@ -244,8 +203,8 @@ struct ParticleView final : GPUView
         front = !front;
     }
 
-    // The compute pass. Its encoder ends when this returns, which is what
-    // orders the kernel's writes before anything the render pass reads.
+    // The encoder ends when this returns, which is what orders the kernel's
+    // writes before anything the render pass reads.
     void integrate(Frame& frame, const Buffer& source, const Buffer& target)
     {
         auto pass = frame.beginCompute();
@@ -253,22 +212,16 @@ struct ParticleView final : GPUView
         integrator.state = source;
         integrator.next = target;
 
-        // The attractor traces a Lissajous figure, so the swarm is chasing a
-        // target that never quite repeats the same sweep.
         integrator.attractorX = 0.55f * std::cos(elapsed * 0.7f);
         integrator.attractorY = 0.45f * std::sin(elapsed * 1.1f);
         integrator.pull = 6.0f;
 
-        // Barely damped: enough to keep the integrator from gaining energy, not
-        // enough to pull the swarm into the attractor and leave a trail.
         integrator.damping = 0.999f;
         integrator.timeStep = step;
 
         pass.dispatch(integrator, particleCount);
     }
 
-    // The render pass, reading the buffer the compute pass above just wrote.
-    // This is the whole point: no readback, no second command buffer, no wait.
     void drawParticles(Frame& frame, const Buffer& particles)
     {
         auto pass = frame.beginPass({Graphics::Color {0.02f, 0.02f, 0.05f}});

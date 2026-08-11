@@ -60,12 +60,8 @@ inline std::string trim(const std::string& input)
 }
 } // namespace Detail
 
-// Replaces (TodoStore singleton + EACP_KEYED_STATE + the six free-fn
-// commands + MIRO_EXPORT_COMMANDS). reflect() lists the surface; each
-// method mutates the state and publishes a new snapshot.
-//
-// All method bodies are inline because the codegen executable ODR-uses
-// these pmfs through the makePmfHandler lambda chain.
+// Method bodies must stay inline: the codegen executable ODR-uses these pmfs
+// but compiles none of this app's .cpp files.
 class TodosApi
 {
 public:
@@ -87,10 +83,8 @@ public:
                    &T::editTodo,
                    &T::removeTodo,
                    &T::clearCompleted>();
-        // keyedEvent matches the old EACP_KEYED_STATE: tells the hooks
-        // codegen that this state's payload is a collection (items)
-        // indexed by id, so useTodos / useTodoIds / useTodoItem get
-        // emitted with per-id selector semantics.
+        // Tells the hooks codegen that items is a collection keyed by id, so
+        // useTodos / useTodoIds / useTodoItem get per-id selector semantics.
         r.keyedEvent(&T::todos, "todos", "items", "id");
     }
 

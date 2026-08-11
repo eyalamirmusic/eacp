@@ -7,17 +7,9 @@
 
 namespace eacp::Text
 {
-// One rasterized glyph, before it goes into an atlas.
-//
-// Two pixel formats, because glyphs come in two kinds and they cannot share a
-// texture format usefully:
-//
-//  - Mask: one byte of coverage per pixel. Almost every glyph. Stored as
-//    coverage alone rather than white-plus-alpha so the atlas can be R8Unorm,
-//    a quarter the memory of RGBA8, with the colour supplied per cell at draw
-//    time.
-//  - Color: four bytes per pixel, straight (un-premultiplied) alpha. Emoji and
-//    other colour fonts, which carry their own colour and must not be tinted.
+// Mask is one byte of coverage per pixel, tinted at draw time. Color is four
+// bytes with straight (un-premultiplied) alpha, for colour fonts, which carry
+// their own colour and must not be tinted.
 enum class GlyphFormat : std::uint8_t
 {
     Mask,
@@ -31,11 +23,6 @@ constexpr int bytesPerPixel(GlyphFormat format)
 
 // Pixels plus the geometry needed to place them. Every measurement is in device
 // pixels, matching FontMetrics.
-//
-// The bearings are what CowTerm's atlas lacked, and the reason it could only
-// ever draw a fixed monospace grid: without them a glyph can only be centred in
-// a cell, so ligatures, proportional text and kerned pairs are all out of
-// reach.
 struct GlyphBitmap
 {
     std::vector<std::uint8_t> pixels;
@@ -51,12 +38,10 @@ struct GlyphBitmap
     // descender's top is still positive and its bottom falls below the line.
     float bearingY = 0.f;
 
-    // How far the pen advances after this glyph.
     float advance = 0.f;
 
-    // False when the face has no glyph for the codepoint and no fallback
-    // supplied one. An empty-but-valid bitmap is different: a space is valid
-    // and advances the pen while rasterizing to nothing.
+    // False when nothing, face or fallback, had a glyph for the codepoint. A
+    // valid bitmap may still be empty: a space advances and draws nothing.
     bool valid = false;
 
     bool isEmpty() const { return width <= 0 || height <= 0; }

@@ -10,11 +10,7 @@
 
 #include <winrt/base.h>
 
-// Windows/D3D12 backend. Compiles the HLSL source with FXC into vertex/pixel
-// (or compute) bytecode; D3D12 consumes the blobs directly at pipeline
-// creation, so no shader objects exist at this level. SM 5.0 DXBC remains
-// valid input for D3D12 pipelines, which keeps the hand-written HLSL in tests
-// and examples working unchanged.
+// Compiles HLSL with FXC to SM 5.0 DXBC, which D3D12 pipelines still accept.
 
 namespace eacp::GPU
 {

@@ -13,38 +13,28 @@ namespace eacp::Video
 
 enum class CaptureMode
 {
-    // Off-screen compositing via View::renderToImage: captures any content
-    // (paint, layers, GPU, and -- through the async path -- WebView), works
-    // headless with no permission, but re-composites every frame on the CPU so
-    // it is not meant for real-time heavy-GPU capture.
+    // Off-screen compositing via View::renderToImage. Captures any content and
+    // needs no permission, but re-composites every frame on the CPU.
     Snapshot,
 
-    // Taps the system compositor for this view's host window (ScreenCaptureKit on
-    // macOS, Windows.Graphics.Capture on Windows): the live composited window --
-    // 2D, GPU and WebView together -- delivered GPU-side, in real time. Requires
-    // the window to be on-screen, plus Screen Recording permission on macOS.
+    // Taps the system compositor for this view's host window, GPU-side and in
+    // real time. Needs the window on-screen, and permission on macOS.
     Screen,
 
-    // Renders a GPUView straight into an IOSurface-backed CVPixelBuffer (shared
-    // GPU memory) and hands it to the encoder -- no GPU->CPU read-back. Real-time,
-    // off-screen, no permission, but GPU content only (start() fails if the view
-    // has no native GPU content). For a GPUView; not for 2D/paint/WebView.
+    // Renders a GPUView straight into shared GPU memory, with no read-back.
+    // start() fails when the view has no native GPU content.
     GpuDirect,
 };
 
 struct VideoOptions
 {
-    // How frames are captured. Snapshot is the portable, permission-free default;
-    // Screen is the real-time full-composite path (see CaptureMode).
     CaptureMode mode = CaptureMode::Snapshot;
 
-    // Pixels per point. 0 uses the view's backing scale, exactly as
-    // View::renderToImage does.
+    // Pixels per point; 0 uses the view's backing scale.
     float scale = 0.0f;
 
-    // Target frames per second. Frames arriving faster than this (a 120 Hz
-    // display, say) are dropped to hold the rate; presentation timestamps use
-    // real elapsed time, so playback speed stays correct. 0 captures at the
+    // Frames arriving faster than this are dropped, but presentation timestamps
+    // use real elapsed time so playback speed stays correct. 0 follows the
     // display's refresh rate.
     int fps = 60;
 
@@ -52,32 +42,23 @@ struct VideoOptions
     int bitrate = 0;
 };
 
-// Records a View to an H.264 video (.mov / .mp4, chosen by the path extension)
-// by snapshotting it every display refresh with View::renderToImage and encoding
-// the frames with real-time presentation timestamps, so playback runs at the
-// speed it was captured. start(), the per-frame capture, and stop() all run on
-// the main thread; the file is finalized asynchronously.
-//
-// A first cut built on the snapshot mechanism: well-suited to 2D / layer /
-// moderate-GPU views. Each frame does a full off-screen recomposite (and, for a
-// GPUView, a GPU read-back), so it is not intended for real-time capture of
-// heavy GPU content. Apple (AVFoundation) only for now.
+// Records a View to H.264 (.mov / .mp4, chosen by the path extension) with
+// real-time presentation timestamps. start(), the per-frame capture and stop()
+// all run on the main thread; the file is finalized asynchronously.
 class VideoRecorder
 {
 public:
     VideoRecorder();
     ~VideoRecorder();
 
-    // Begins recording `view` into `path`, overwriting any existing file.
-    // Returns false if the writer could not be set up (unwritable path,
-    // non-positive view size, or no available codec).
+    // Overwrites any existing file. False when the writer could not be set up:
+    // unwritable path, non-positive view size, or no available codec.
     bool start(Graphics::View& view,
                const FilePath& path,
                const VideoOptions& options = {});
 
-    // Stops capturing and finalizes the file. The returned Async resolves on the
-    // main thread once the file is fully written (immediately if not recording).
-    // Keep this VideoRecorder alive until it resolves.
+    // The Async resolves on the main thread once the file is fully written,
+    // immediately if not recording. Keep this recorder alive until it does.
     Threads::Async<void> stop();
 
     bool isRecording() const;

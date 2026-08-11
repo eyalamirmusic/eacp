@@ -72,10 +72,8 @@ float parseFloat(const std::string& text, float fallback)
     return end == text.c_str() ? fallback : value;
 }
 
-// The native GPU camera view, with overlay parameters driven live from the web
-// sliders. tint washes the frame like a colour filter; the reticle is an
-// AR-style marker whose size and orbit speed track their sliders. setMirrored
-// (the camera view's own native control) is toggled from the web checkbox.
+// The native GPU camera view, with its overlay parameters driven live from the
+// web sliders.
 struct ControlledCameraView final : Cameras::CameraView
 {
     void update(Threads::FrameTime frameTime) override
@@ -117,7 +115,7 @@ struct ControlledCameraView final : Cameras::CameraView
     // Written from the web bridge (main thread), read here while rendering.
     float tintHue = 200.0f; // degrees
     float tintStrength = 0.0f; // overlay alpha, 0..1
-    float reticleSize = 28.0f; // logical units
+    float reticleSize = 28.0f;
     float orbitSpeed = 1.2f; // radians / second
     float orbitPhase = 0.0f;
     double autoQuitSeconds = 0.0;
@@ -214,16 +212,16 @@ Graphics::WebView::Options transparentOptions()
     return options;
 }
 
-// Stacks the native camera view under a full-window transparent WebView: the
-// camera shows through everywhere the page is transparent, and the page's
-// floating slider panel is the only opaque region.
+// The native camera view under a full-window transparent WebView: the camera
+// shows through everywhere the page is, and the slider panel is its only opaque
+// region.
 struct MixedRoot final : Graphics::View
 {
     MixedRoot()
     {
         addChildren({cameraView, controls});
 
-        cameraView.setMirrored(true); // front-camera-style preview by default
+        cameraView.setMirrored(true);
         wireBridge();
     }
 

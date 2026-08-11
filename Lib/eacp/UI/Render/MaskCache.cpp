@@ -17,9 +17,6 @@ bool samePoints(const GPUWidgets::Path::SubPath& a,
     return true;
 }
 
-// What the key claims, checked. Compared point by point rather than by hashing
-// again, since the whole purpose of it is to be the thing the hash could be
-// wrong about.
 bool sameGeometry(const GPUWidgets::Path& a,
                   GPUWidgets::FillRule ruleA,
                   const GPUWidgets::Path& b,
@@ -67,10 +64,8 @@ const MaskCache::Entry* MaskCache::take(std::uint64_t key,
 
     auto& record = found->second;
 
-    // A collision reads as a miss. The shape rasterizes its own mask and does
-    // not publish over the entry that is already there, so the two coexist with
-    // one of them shareable -- which is the cheap half of being wrong about a
-    // key, and the other half never happens.
+    // A collision reads as a miss: the shape rasterizes its own mask and does
+    // not publish over the entry already there.
     if (!sameGeometry(record.path, record.rule, path, rule))
         return nullptr;
 

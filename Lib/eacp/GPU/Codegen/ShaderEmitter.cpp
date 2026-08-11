@@ -8,10 +8,8 @@
 #include <cassert>
 #include <cstdio>
 
-// The single source-of-truth walker. MSL and HLSL differ only in the binding
-// syntax and the stage scaffolding captured by the helpers below; the expression
-// printer is fully shared because vector constructors, swizzles, operators and
-// the float2/3/4 type names spell identically in both languages.
+// MSL and HLSL differ only in the binding syntax and the stage scaffolding
+// captured by the helpers below; the expression printer is fully shared.
 
 namespace eacp::GPU
 {
@@ -83,10 +81,9 @@ std::string callName(Backend backend, const std::string& name)
     return name;
 }
 
-// Prints one stage's expressions. Nodes the stage plan named as locals print
-// as tN references; everything else prints inline. print() spells out a node's
-// own expression (used for both inline nodes and local definitions), ref() is
-// what children and outputs go through, so shared subtrees collapse to a name.
+// print() spells out a node's own expression, for inline nodes and local
+// definitions alike; ref() is what children and outputs go through, so a node
+// the stage plan named as a local collapses to its tN name.
 struct ExprPrinter
 {
     std::string ref(int node) const
@@ -113,9 +110,7 @@ struct ExprPrinter
                 return "uniforms.u" + std::to_string(expr.index);
 
             case ExprKind::Constant:
-                // The uint, int and bool spellings are shared by MSL and HLSL,
-                // like floatN. A signed literal needs no suffix at all: an
-                // integer literal is already an int in both languages.
+                // The uint, int and bool spellings are shared by MSL and HLSL.
                 if (expr.type == ValueType::UInt)
                     return std::to_string(expr.index) + "u";
 
@@ -141,11 +136,8 @@ struct ExprPrinter
 
                 text += ")";
 
-                // float2x2/float3x3/float4x4(c0..) pass the columns. MSL fills a
-                // matrix from columns, but HLSL fills it from rows, so the same
-                // call yields the transpose there; transpose() restores the
-                // column-major value, so the mul() paths stay identical across
-                // both backends.
+                // A matrix construction passes columns, but HLSL fills a matrix
+                // from rows, so transpose() restores the column-major value.
                 if (backend == Backend::DirectX && isMatrix(expr.type))
                     return "transpose(" + text + ")";
 
@@ -172,8 +164,7 @@ struct ExprPrinter
 
             case ExprKind::Unary:
                 // The operand gets its own parentheses: negating a negative
-                // constant must print (-(-1.0)), never the pre-decrement
-                // (--1.0).
+                // constant must print (-(-1.0)), never the decrement (--1.0).
                 return "(" + std::string(1, expr.op) + "(" + ref(expr.args[0])
                        + "))";
 
@@ -192,8 +183,6 @@ struct ExprPrinter
                        + ref(expr.args[1]) + ")";
 
             case ExprKind::Select:
-                // Both languages spell the conditional operator the same way,
-                // and both evaluate it without branching for scalar operands.
                 return "(" + ref(expr.args[0]) + " ? " + ref(expr.args[1]) + " : "
                        + ref(expr.args[2]) + ")";
 
@@ -202,11 +191,8 @@ struct ExprPrinter
 
             case ExprKind::Mul:
             {
-                // A matrix product, in the order it was written. MSL spells it
-                // with the * operator; HLSL multiplies a matrix by anything
-                // with mul(). Both read a vector on the left of one as a row
-                // and one on the right as a column, so the order is the whole
-                // of what tells the three products apart.
+                // In the order it was written: both languages read a vector on
+                // the left as a row and one on the right as a column.
                 auto left = ref(expr.args[0]);
                 auto right = ref(expr.args[1]);
 
@@ -218,11 +204,9 @@ struct ExprPrinter
 
             case ExprKind::Sample:
             {
-                // Texture sample at a float2 coordinate, through the sampler
-                // declared at the same index as the texture. A second argument
-                // is the mip level the shader picked, which each backend spells
-                // its own way: Metal as an extra argument to the same call,
-                // HLSL as a different method.
+                // Through the sampler declared at the same index as the
+                // texture. A second argument is the mip level the shader
+                // picked, which Metal and HLSL spell differently.
                 auto name = "texture" + std::to_string(expr.index);
                 auto sampler = "sampler" + std::to_string(expr.index);
                 auto uv = ref(expr.args[0]);
@@ -247,12 +231,9 @@ struct ExprPrinter
 
             case ExprKind::Fetch:
             {
-                // A texel read at integer coordinates. Metal takes them
-                // unsigned, so anything not already signed-integer goes through
-                // int2 first: a negative coordinate then wraps to a large
-                // unsigned one and reads as zero, which is what HLSL's Load does
-                // with it directly. The level is 0 - GPU::Texture has no mips -
-                // and D3D carries it in the coordinate's third component.
+                // Metal takes texel coordinates unsigned, so a negative one
+                // wraps to a large unsigned value and reads as zero, matching
+                // HLSL's Load. D3D's mip level rides in the third component.
                 auto name = "texture" + std::to_string(expr.index);
                 auto given = ref(expr.args[0]);
                 auto coordinates = graph.expr(expr.args[0]).type == ValueType::Int2
@@ -266,10 +247,7 @@ struct ExprPrinter
             }
 
             case ExprKind::ThreadId:
-                // Both kernel scaffoldings declare the work-item id as gid: a
-                // uint over the flat count in a 1D kernel, a uint2 over the
-                // grid in a 2D one, where the node carries which component it
-                // asked for.
+                // Both kernel scaffoldings declare the work-item id as gid.
                 if (graph.dispatchRank() == DispatchRank::OneD)
                     return "gid";
 
@@ -281,9 +259,7 @@ struct ExprPrinter
 
             case ExprKind::AtomicLoad:
             {
-                // HLSL has nothing to spell: a UAV element of an
-                // RWStructuredBuffer<uint> is already the thing an interlocked
-                // operation acts on, and reading one is a subscript. MSL wraps
+                // Reading an HLSL UAV element is a plain subscript; MSL wraps
                 // its atomic_uint, so the value has to be taken out of it.
                 auto element = "buffer" + std::to_string(expr.index) + "["
                                + ref(expr.args[0]) + "]";
@@ -299,9 +275,7 @@ struct ExprPrinter
                 return "a" + std::to_string(expr.index) + "[" + ref(expr.args[0])
                        + "]";
 
-            // The threadgroup indices ride the same scaffolding as gid: both
-            // backends' entry points bind them to these names, a scalar in a
-            // 1D kernel and a pair in a 2D one.
+            // The threadgroup indices ride the same scaffolding as gid.
             case ExprKind::LocalId:
                 if (graph.dispatchRank() == DispatchRank::OneD)
                     return "lid";
@@ -314,8 +288,7 @@ struct ExprPrinter
 
                 return expr.index == 0 ? "tgid.x" : "tgid.y";
 
-            // The implicit bound the dispatch appended to the uniform block,
-            // under the names the block declares it with.
+            // The implicit bound the dispatch appended to the uniform block.
             case ExprKind::GridExtent:
                 if (graph.dispatchRank() == DispatchRank::OneD)
                     return "uniforms.count";
@@ -336,7 +309,7 @@ struct ExprPrinter
 };
 
 // Operation nodes are worth naming when evaluated more than once; leaf reads
-// and swizzles stay inline - naming them saves nothing and hurts readability.
+// and swizzles stay inline.
 bool wantsLocal(ExprKind kind)
 {
     switch (kind)
@@ -395,7 +368,7 @@ void countUses(const ShaderGraph& graph,
 
 // Which nodes a run of expressions evaluates more than once, in dependency
 // (post) order so every definition precedes its uses. A node that already holds
-// a name is left alone, and so is everything under it: it is already computed.
+// a name is left alone, and so is everything under it.
 void orderLocals(const ShaderGraph& graph,
                  int node,
                  const Vector<int>& uses,
@@ -441,9 +414,8 @@ void collectArrays(const ShaderGraph& graph,
         collectArrays(graph, argument, used, seen);
 }
 
-// Which variables running a statement can leave holding something else -
-// following the bodies of an if or a loop, since what they write is written
-// just the same.
+// Which variables running a statement can leave holding something else,
+// following the bodies of an if or a loop.
 void collectWrites(const ShaderGraph& graph, int block, Vector<char>& written);
 
 void collectWrites(const ShaderGraph& graph,
@@ -481,10 +453,8 @@ void collectWrites(const ShaderGraph& graph,
 }
 
 // Whether running a statement can change what threadgroup memory holds: a
-// store to it, or the barrier that publishes what other threads stored -
-// following nested bodies the way collectWrites does. What this feeds is the
-// same rule variables get: a name computed from shared memory is given up the
-// moment shared memory may have moved on.
+// store to it, or the barrier that publishes what other threads stored. A name
+// computed from shared memory is given up the moment this says yes.
 bool touchesShared(const ShaderGraph& graph, int block);
 
 bool touchesShared(const ShaderGraph& graph, const Statement& statement)
@@ -533,15 +503,9 @@ void collectWrites(const ShaderGraph& graph, int block, Vector<char>& written)
         collectWrites(graph, graph.statement(index), written);
 }
 
-// A visited set a walk can have a fresh one of without paying for one. Marking
-// is a stamp rather than a flag, so starting over is a counter increment
-// instead of clearing a buffer the size of the graph.
-//
-// It exists because the walk below runs per open name per statement, and a
-// buffer allocated and zeroed each time costs the whole graph however small the
-// subtree walked turns out to be. On an ordinary shader that is invisible; on a
-// large one it is the difference between a shader that compiles and an app that
-// hangs.
+// Marking is a stamp rather than a flag, so restarting is a counter increment
+// instead of clearing a buffer the size of the graph - which matters because
+// the walk below runs once per open name per statement.
 struct VisitSet
 {
     explicit VisitSet(int nodeCount) { stamps.resize(nodeCount, 0); }
@@ -559,10 +523,8 @@ struct VisitSet
 
     Vector<int> stamps;
 
-    // Ahead of the stamps a fresh buffer holds, so nothing counts as visited
-    // until something visits it. Starting level with them makes every node of a
-    // new set look already seen - which is not a walk that gives the wrong
-    // answer slowly, it is one that gives it immediately.
+    // Ahead of the zeroes a fresh stamp buffer holds, so nothing counts as
+    // visited until something visits it.
     int generation = 1;
 };
 
@@ -593,21 +555,9 @@ bool readsStale(const ShaderGraph& graph,
     return false;
 }
 
-// Emits one stage: its statements, then the expressions its outputs are.
-//
-// Any operation evaluated more than once becomes a tN local, so a shared
-// subtree is computed - and printed - once instead of being inlined at every
-// use. Control flow is what bounds that sharing, and the two rules it imposes
-// are the whole of what makes this different from printing an expression tree:
-//
-// A name is given up the moment a statement writes a variable the value behind
-// it read - which is what stops `d` computed before an `if` from standing for
-// the same thing after a body that moved what it was computed from.
-//
-// A loop condition takes no name at all. It is printed into the while header,
-// so binding it to a local ahead of the loop would test a value that never
-// changes again; every name open in the enclosing block is given up there too,
-// since the header is re-evaluated after the body has run.
+// Emits one stage: its statements, then the expressions its outputs are. Any
+// operation evaluated more than once becomes a tN local; a name is given up
+// when a statement writes a variable it read, and a loop condition takes none.
 struct StageEmitter
 {
     StageEmitter(const ShaderGraph& graphToUse, Backend backend)
@@ -628,14 +578,8 @@ struct StageEmitter
     }
 
     // The constant arrays a stage subscripts, declared at the top of its
-    // function. Both languages spell a const array of a floatN the same way, so
-    // this needs no per-backend form; what it does need is to run before any
-    // name has been handed out, which is why it is the first thing a stage
-    // emits. That is also why an element may read a uniform or a varying but
-    // not a mutable local: no local has been declared yet at that point.
-    //
-    // Emitted in slot order, so an array whose elements read another one finds
-    // it already there.
+    // function before any name has been handed out, in slot order so an array
+    // whose elements read another one finds it already there.
     std::string declareArrays(const Vector<int>& roots, const std::string& indent)
     {
         const auto& arrays = graph().arrays();
@@ -707,10 +651,8 @@ struct StageEmitter
         }
 
         // An if is emitted only after the names its bodies invalidate are given
-        // up, so nothing inside stands for a value one of them has moved on
-        // from. An assignment needs no such pass first: its right-hand side is
-        // what the variable held before it, which is exactly what the open
-        // names still stand for.
+        // up. An assignment needs no such pass first: its right-hand side is
+        // what the variable held before it.
         if (statement.kind == StatementKind::If)
             dropStale(statement, open);
 
@@ -767,9 +709,7 @@ struct StageEmitter
                 auto stored = printer.ref(statement.value);
 
                 // An atomic buffer's element is an atomic_uint on Metal and has
-                // to be stored through rather than assigned. HLSL's UAV element
-                // is an ordinary uint, so the plain assignment is already right
-                // there.
+                // to be stored through; HLSL's UAV element is an ordinary uint.
                 auto atomic =
                     graph().storageBuffers()[statement.slot] == BufferAccess::Atomic;
 
@@ -800,9 +740,8 @@ struct StageEmitter
                     break;
                 }
 
-                // Two lines here rather than one: InterlockedAdd hands the old
-                // value back through an out parameter, so the name has to exist
-                // before the call that fills it.
+                // InterlockedAdd hands the old value back through an out
+                // parameter, so the name must exist before the call fills it.
                 source += indent + "uint " + name + ";\n";
                 source += indent + "InterlockedAdd(" + element + ", " + addend + ", "
                           + name + ");\n";
@@ -817,10 +756,8 @@ struct StageEmitter
                           + "] = " + printer.ref(statement.value) + ";\n";
                 break;
 
-            // The synchronisation point itself. The names it invalidates -
-            // anything computed from shared memory - are given up by the
-            // dropStale below, the same pass an assignment retires its
-            // variable's readers through.
+            // The names it invalidates - anything computed from shared memory -
+            // are given up by the dropStale below.
             case StatementKind::Barrier:
                 source =
                     indent
@@ -829,8 +766,7 @@ struct StageEmitter
                            : "GroupMemoryBarrierWithGroupSync();\n");
                 break;
 
-            // The one place the two languages spell a write differently: MSL
-            // takes the colour first and the coordinate second, HLSL
+            // MSL takes the colour first and the coordinate second; HLSL
             // subscripts the texture like an array.
             case StatementKind::TextureStore:
             {
@@ -858,7 +794,7 @@ struct StageEmitter
                 break;
         }
 
-        // Afterwards either way, for the names this statement's own expressions
+        // Again afterwards, for the names this statement's own expressions
         // introduced: a value read out of the variable it then wrote.
         dropStale(statement, open);
         return source;
@@ -880,9 +816,8 @@ private:
         return uses;
     }
 
-    // How often the statements of one block reach each node - the block's own
-    // statements only, since a nested body counts its own when it is emitted.
-    // A loop's condition is left out deliberately: see the note above.
+    // The block's own statements only; a nested body counts its own when it is
+    // emitted, and a loop's condition is deliberately left out.
     Vector<int> blockUses(int block) const
     {
         auto roots = Vector<int> {};
@@ -948,11 +883,8 @@ private:
         written.assign(graph().variables().size(), 0);
         collectWrites(graph(), statement, written);
 
-        // A statement that leaves no variable holding something else and
-        // moves no shared memory cannot have staled a name, and most do not:
-        // a break, a continue, and an if whose bodies only compute. Asking
-        // each open name about an empty set is the same walk for a
-        // guaranteed no.
+        // A statement that leaves no variable holding something else and moves
+        // no shared memory cannot have staled a name.
         if (!written.contains(1) && !sharedMoved)
             return;
 
@@ -977,27 +909,14 @@ public:
     int localCount = 0;
 
 private:
-    // Held by the emitter rather than by the walk, so that naming a stage costs
-    // one buffer instead of one per name per statement.
+    // Held here so naming a stage costs one buffer, not one per name.
     VisitSet visited;
     Vector<char> written;
 };
 
-// Whether the expression tree under node reads a uniform. A Varying read is the
-// fragment-stage boundary: its vertex-stage source tree is walked separately as
-// part of the vertex stage, so the walk stops there.
-//
-// The visited set is not an optimisation here, it is what makes the walk
-// finite in practice. What this walks is a graph rather than a tree - the
-// emitter's whole reason for existing is that a shared subtree is stored once -
-// and a walk that revisits a shared node once per path through it is
-// exponential in the sharing, not quadratic. It went unnoticed for as long as
-// every shader was small enough that the exponent did not matter.
-//
-// A node reached twice is a node whose answer is already in the result: either
-// the walk that reached it first found a uniform, in which case it returned
-// true and this one is unreachable, or it did not, in which case there is none
-// under there to find.
+// Whether the expression tree under node reads a uniform, stopping at a Varying
+// read - the vertex stage walks its source tree. The visited set is not an
+// optimisation: over a shared graph, revisiting is exponential in the sharing.
 bool referencesUniform(const ShaderGraph& graph, int node, VisitSet& seen)
 {
     if (node < 0 || !seen.visit(node))
@@ -1018,10 +937,9 @@ bool referencesUniform(const ShaderGraph& graph, int node, VisitSet& seen)
     return false;
 }
 
-// Every expression a block's statements evaluate, gathered so a stage sees what
-// its statements read and not only what its output expression does. Without
-// this a uniform read only from inside a loop would go undeclared: the
-// expression walk starts at the fragment colour and never reaches it.
+// Every expression a block's statements evaluate, so a stage sees what its
+// statements read and not only what its output expression does - otherwise a
+// uniform read only from inside a loop would go undeclared.
 void collectStatementRoots(const ShaderGraph& graph, int block, Vector<int>& roots)
 {
     for (auto index: graph.block(block).statements)
@@ -1039,9 +957,8 @@ void collectStatementRoots(const ShaderGraph& graph, int block, Vector<int>& roo
     }
 }
 
-// One visited set across every root, not one per root: a stage's roots share
-// most of their graph, and a node already known to hold no uniform holds none
-// whichever root reached it.
+// One visited set across every root: a node already known to hold no uniform
+// holds none whichever root reached it.
 bool anyReferencesUniform(const ShaderGraph& graph, const Vector<int>& roots)
 {
     auto seen = VisitSet {graph.nodeCount()};
@@ -1068,8 +985,7 @@ Vector<int> vertexStageRoots(const ShaderGraph& graph)
 
 // Its fragment sibling: the colour, the alpha test when there is one, and what
 // the statements evaluate. Wider than the roots the colour's locals are planned
-// from, which is why emit() keeps both - a value a statement reads is declared
-// by the stage but named where the statement is emitted.
+// from, which is why emit() keeps both.
 Vector<int> fragmentStageRoots(const ShaderGraph& graph)
 {
     auto roots = Vector<int> {graph.fragment()};
@@ -1081,10 +997,8 @@ Vector<int> fragmentStageRoots(const ShaderGraph& graph)
     return roots;
 }
 
-// Which storage-buffer slots a run of expressions subscripts. A render stage
-// declares only the buffers it reads - unlike a kernel, where every slot is a
-// parameter of the one entry point - so the vertex and fragment functions each
-// need their own answer.
+// A render stage declares only the buffers it reads, unlike a kernel where
+// every slot is a parameter, so each function needs its own answer.
 void collectBufferSlots(const ShaderGraph& graph,
                         int node,
                         Vector<char>& used,
@@ -1115,9 +1029,7 @@ Vector<char> bufferSlotsUsedBy(const ShaderGraph& graph, const Vector<int>& root
     return used;
 }
 
-// The MSL parameters for the storage buffers a render stage reads, always read
-// only: a vertex or fragment function has no writable buffer here, which is the
-// whole of what separates this from the kernel signature above.
+// Always read-only: a vertex or fragment function has no writable buffer.
 std::string bufferParameters(const ShaderGraph& graph, const Vector<int>& roots)
 {
     auto used = bufferSlotsUsedBy(graph, roots);
@@ -1132,11 +1044,9 @@ std::string bufferParameters(const ShaderGraph& graph, const Vector<int>& roots)
     return source;
 }
 
-// The Uniforms struct shared by both stages (and the HLSL cbuffer wrapping it).
-// The CPU block is packed with MSL struct alignment (UniformLayout.h); HLSL
-// cbuffer packing only forbids straddling a 16-byte register, so a vector after
-// a scalar would land lower than the CPU wrote it - explicit pad scalars are
-// emitted wherever the two rule sets disagree.
+// The CPU block is packed with MSL struct alignment (UniformLayout.h), so
+// explicit pad scalars are emitted wherever HLSL cbuffer packing - which only
+// forbids straddling a 16-byte register - would place a field lower.
 std::string uniformBlock(Backend backend,
                          const Vector<ValueType>& types,
                          const Vector<std::string>& names)
@@ -1174,9 +1084,7 @@ std::string uniformBlock(Backend backend,
     return source;
 }
 
-// How each access spells the buffer it declares. An atomic one is the only kind
-// whose *elements* differ - unsigned integers, wrapped in the type the language
-// requires an interlocked operation to act through - so it cannot be a
+// An atomic buffer is the only kind whose *elements* differ, so it cannot be a
 // qualifier on the float declaration the other two share.
 const char* metalBufferType(BufferAccess access)
 {
@@ -1208,14 +1116,9 @@ const char* hlslBufferType(BufferAccess access)
     return "StructuredBuffer<float>";
 }
 
-// Compute kernel emission. The expression printer is the render one; only the
-// scaffolding differs: storage buffers and the uniform block are MSL kernel
-// parameters but HLSL globals, and the work-item id arrives as a builtin
-// parameter on Metal and as SV_DispatchThreadID on D3D. The block always ends
-// with the implicit grid extents the bounds guard reads - one count for a 1D
-// kernel, a width and a height for a 2D one - and the kernel opens with the
-// guard the rounded-up dispatch needs; ComputeProgram appends the matching CPU
-// values.
+// Compute kernel emission, sharing the render expression printer. The uniform
+// block always ends with the implicit grid extents the bounds guard reads, for
+// which ComputeProgram appends the matching CPU values.
 std::string emitCompute(const ShaderGraph& graph, Backend backend)
 {
     auto source = std::string {};
@@ -1264,8 +1167,7 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         }
 
         // Textures are kernel parameters like the buffers, on an index space of
-        // their own. A written one takes the write access qualifier and no
-        // sampler: there is nothing to sample it with and nothing to read.
+        // their own. A written one takes no sampler.
         for (auto i = 0; i < graph.textureCount(); ++i)
         {
             auto slot = std::to_string(i);
@@ -1329,10 +1231,9 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         if (buffers.size() > 0)
             source += "\n";
 
-        // Textures are globals here, and their registers start above every
-        // buffer slot's: a texture and a storage buffer share the t and u
-        // spaces on this backend, while their slots are counted separately. See
-        // ComputePass::textureRegisterBase.
+        // Textures are globals here, their registers starting above every
+        // buffer slot's because the two share the t and u spaces on this
+        // backend. See ComputePass::textureRegisterBase.
         for (auto i = 0; i < graph.textureCount(); ++i)
         {
             auto slot = std::to_string(i);
@@ -1396,19 +1297,16 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                            : "    uint tgid = groupIndex.x;\n";
     }
 
-    // The early-return bounds guard the rounded-up dispatch needs - except in
-    // a kernel that barriers, where a return some threads take ahead of a
-    // barrier the rest sit at is undefined on both backends. There every
-    // thread runs the whole body, and the kernel bounds its own stores
-    // against gridCount()/gridWidth()/gridHeight() instead.
+    // The bounds guard the rounded-up dispatch needs - except in a kernel that
+    // barriers, where a return some threads take ahead of a barrier the rest
+    // sit at is undefined on both backends, so it bounds its own stores.
     if (!graph.usesBarrier())
         source += is2D ? "    if (gid.x >= uniforms.width || gid.y >= "
                          "uniforms.height)\n        return;\n"
                        : "    if (gid >= uniforms.count)\n        return;\n";
 
-    // Stores ride the statement stream like everything else, so the body is
-    // one block walk: a write records where it was made, inside whatever
-    // loop or branch was open, and the emitter has no end-of-kernel step.
+    // Stores ride the statement stream, so the body is one block walk: a write
+    // is emitted where it was made, inside whatever loop or branch was open.
     auto stageRoots = Vector<int> {};
     collectStatementRoots(graph, ShaderGraph::rootBlock, stageRoots);
 
@@ -1448,9 +1346,8 @@ std::string emit(const ShaderGraph& graph, Backend backend)
 
     auto hasUniforms = !graph.uniforms().empty();
 
-    // One uniform block aggregates every uniform<>() call. Both backends expose
-    // it as "uniforms.uN" (HLSL wraps the struct in a cbuffer) so the expression
-    // printer stays backend-agnostic.
+    // Both backends expose the block as "uniforms.uN" - HLSL wrapping the
+    // struct in a cbuffer - so the expression printer stays backend-agnostic.
     if (hasUniforms)
     {
         auto names = Vector<std::string> {};
@@ -1466,11 +1363,8 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     // share an index, matching RenderPass::setFragmentTexture.
     if (backend == Backend::DirectX)
     {
-        // The texture lands on t<slot>, but its sampler lands on a register
-        // chosen by how the shader declared the texture should be sampled: the
-        // root signature declares a static sampler for every (slot,
-        // configuration) pair, so picking the register picks the sampler. See
-        // TextureSampling for why samplers cannot come from a descriptor table.
+        // The root signature declares a static sampler for every (slot,
+        // configuration) pair, so picking the register picks the sampler.
         for (auto i = 0; i < graph.textureCount(); ++i)
         {
             auto samplerRegister =
@@ -1486,9 +1380,7 @@ std::string emit(const ShaderGraph& graph, Backend backend)
             source += "\n";
 
         // Storage buffers are globals here like the textures, at registers
-        // above every texture slot - the render signature's mirror of the way
-        // a kernel's textures sit above its buffers. See
-        // RenderPass::bufferRegisterBase.
+        // above every texture slot. See RenderPass::bufferRegisterBase.
         for (auto i = 0; i < graph.storageBuffers().size(); ++i)
             source += "StructuredBuffer<float> buffer" + std::to_string(i)
                       + " : register(t"
@@ -1499,12 +1391,8 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     }
 
     // On Metal each stage declares the uniform block as a function parameter,
-    // and only when that stage's expressions read one; the HLSL cbuffer is a
-    // global both functions already see. Slot 0 maps to buffer(uniformBase)
-    // in both stages, matching what RenderPass::setVertexBytes /
-    // setFragmentBytes bind. Uniforms live at buffer(uniformBase..) so a
-    // vertex layout with multiple per-instance slots (0..N) never collides
-    // with them.
+    // and only when its expressions read one, at buffer(uniformBase) so the
+    // per-instance vertex slots (0..N) never collide with it.
     auto vertexRoots = vertexStageRoots(graph);
 
     if (backend == Backend::Metal)
@@ -1523,9 +1411,8 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         source += "VertexOut vertexMain(VertexIn input)\n{\n";
     }
 
-    // The vertex stage takes no statements: a mutable local and the control flow
-    // driving it belong to the fragment expression, the way sampling does. See
-    // ShaderBuilder::var.
+    // The vertex stage takes no statements: a mutable local and the control
+    // flow driving it belong to the fragment expression, the way sampling does.
     auto vertexStage = StageEmitter {graph, backend};
 
     source += vertexStage.declareArrays(vertexRoots, "    ");
@@ -1540,17 +1427,15 @@ std::string emit(const ShaderGraph& graph, Backend backend)
 
     source += "    return output;\n}\n\n";
 
-    // The alpha test is a fragment root like the colour is: its subtree is
-    // planned with the colour's, so a value both of them read (the texture
-    // sample, typically) is computed once and shared.
+    // The alpha test is a fragment root like the colour, so a value both read
+    // is computed once and shared.
     auto fragmentRoots = Vector<int> {graph.fragment()};
 
     if (graph.discard() >= 0)
         fragmentRoots.add(graph.discard());
 
     // What the statements read counts towards the stage's uniform declaration,
-    // but not towards the colour's locals: a statement's own expressions are
-    // named where that statement is emitted, above.
+    // but not towards the colour's locals.
     auto stageRoots = fragmentStageRoots(graph);
 
     if (backend == Backend::Metal)
@@ -1575,8 +1460,8 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         source += "float4 fragmentMain(VertexOut input) : SV_Target\n{\n";
     }
 
-    // The shader's statements run first - they are what the fragment expression
-    // then reads a mutable local out of - and the colour is planned after them.
+    // The statements run first, the fragment expression reading a mutable local
+    // out of them, so the colour is planned after them.
     auto fragmentStage = StageEmitter {graph, backend};
 
     source += fragmentStage.declareArrays(stageRoots, "    ");

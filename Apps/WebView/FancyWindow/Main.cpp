@@ -3,19 +3,6 @@
 using namespace eacp;
 using namespace Graphics;
 
-// Self-contained page demonstrating frameless-window chrome, all declared in
-// CSS — no message handlers, no platform sniffing, no window-state JS:
-//
-//   --eacp-app-region: drag       the title bar moves the window
-//   --eacp-window-button: ...     min / max / close caption buttons
-//   [data-eacp-platform="..."]    which chrome to render (set by the library)
-//   [data-eacp-maximized]         maximize vs restore glyph (kept in sync
-//                                 by the library, so it can't drift)
-//
-// The WebView opts into acceptFirstMouse, so the drag works even when the
-// window is in the background: the click that activates the window also
-// reaches the page, instead of needing one click to focus and a second to
-// drag. Switch to another app and drag this window's title bar to see it.
 static const char* kDemoHtml = R"HTML(
 <!doctype html>
 <html>
@@ -136,8 +123,7 @@ struct RootView final : View
 
     void resized() override { scaleToFit({webView}); }
 
-    // acceptFirstMouse lets the title-bar drag start from an unfocused
-    // window in a single gesture (see the page comment above).
+    // Lets a title-bar drag start from an unfocused window in one gesture.
     static WebView::Options getWebViewOptions()
     {
         auto options = WebView::Options();
@@ -156,16 +142,8 @@ struct MyApp
         window.setContentView(rootView);
     }
 
-    // Mirrors the Electron window's titleBarStyle: 'hidden' + backgroundColor
-    // + trafficLightPosition so the native window's chrome matches the web
-    // app. A FullSizeContentView with a transparent, separator-less titlebar
-    // lets the web app's own header render under the traffic lights as one
-    // seamless black bar.
-    //
-    // Windows has no chrome to integrate with, so there the demo is a
-    // frameless rounded window whose web title bar IS the chrome: drag
-    // region, demo button, and the caption buttons. Resizable keeps the
-    // invisible frame's edge band live, so the window still resizes.
+    // Windows has no chrome to integrate with, so the page's title bar is the
+    // chrome there; Resizable keeps the borderless frame's edge band live.
     static WindowOptions getOptions()
     {
         auto options = WindowOptions();
@@ -187,8 +165,8 @@ struct MyApp
 
         options.titlebarTransparent = true;
         options.showTitlebarSeparator = false;
-        // Centers the ~54x16pt button cluster in the 88px-wide, 52px-tall
-        // corner the web title bar reserves for it (padding-left: 88).
+        // Centers the button cluster in the corner the page reserves for it
+        // (.titlebar padding-left: 88px, height: 52px).
         options.trafficLightPosition = Point {17.f, 18.f};
         options.backgroundColor = Color::black();
 

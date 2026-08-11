@@ -17,9 +17,6 @@ const Vertex triangleVertices[] = {
     {{0.8f, -0.8f}, {0.2f, 0.2f, 1.0f}},
 };
 
-// The same triangle as the Triangle demo, but the shader is described in C++ and
-// the Metal/HLSL source plus the vertex layout are generated. No .metal/.hlsl
-// files, no ResEmbed.
 GeneratedShader makeTriangleShader()
 {
     auto builder = ShaderBuilder {};

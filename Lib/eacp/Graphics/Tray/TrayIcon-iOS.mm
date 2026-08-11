@@ -1,8 +1,6 @@
 #include "TrayIcon.h"
 
-// iOS has no menu bar / notification area, so a tray icon has nothing to
-// attach to. The type still exists so cross-platform code compiles; every
-// operation is a no-op.
+// iOS has no menu bar or notification area, so every operation is a no-op.
 
 namespace eacp::Graphics
 {

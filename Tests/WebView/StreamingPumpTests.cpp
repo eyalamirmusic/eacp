@@ -1,12 +1,5 @@
 #include "Common.h"
 #include <algorithm>
-// Drives the macOS streaming scheme handler end-to-end on a real WKWebView:
-// a page loaded from a custom streaming scheme issues a ranged fetch() against
-// a sibling URL on the same scheme, and posts the status / headers / body back
-// over a script message handler. This exercises the actual chunked pump (the
-// background read -> main-thread didReceiveData loop) and the 206 / Range
-// header path, not just the pure resolveRangeHeader logic.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
@@ -67,11 +60,9 @@ auto tStreamingRangeFetch = test("StreamingPump/rangeFetchReturns206Slice") = []
     auto options = WebView::Options {};
     options.streamingSchemes["teststream"] = testProvider();
 
-    // This is the only suite in the binary that registers a custom scheme, and
-    // WebView2 fails any later environment that shares a user-data folder with
-    // one registering a different set (ERROR_INVALID_STATE). Without its own
-    // folder this passes alone and fails whenever a plain WebView test ran
-    // first — i.e. every time the whole binary is run in one process.
+    // The only suite registering a custom scheme: WebView2 fails any later
+    // environment sharing a user-data folder with a different scheme set
+    // (ERROR_INVALID_STATE), so this one needs its own folder.
     options.userDataFolderSuffix = "streamingpump";
 
     auto webView = WebView {options};

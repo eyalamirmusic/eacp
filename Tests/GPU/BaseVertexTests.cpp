@@ -2,28 +2,18 @@
 
 #include <cstdint>
 
-// RenderPass::drawIndexed / drawIndexedInstanced's baseVertex, checked by
-// rendering off-screen and reading the pixels back.
-//
-// baseVertex has no CPU-side observable at all -- nothing to query, nothing
-// returned -- and it is threaded through two backends by hand, so the only
-// honest test is to draw through it and look at what came out. A wrong mapping
-// is a silent one: the draw still happens, it just fetches the wrong vertices.
-//
-// Every case binds the same six-vertex buffer and the same index buffer of
-// {0, 1, 2}. Vertices 0..2 make a triangle covering the target's left half,
-// 3..5 the same shape mirrored onto the right, so the half that comes back
-// green is decided by baseVertex and by nothing else -- neither firstIndex nor
-// firstInstance can produce it.
-//
-// Runs on both backends, and self-skips without a GPU device.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
 namespace
 {
+constexpr auto insideLeftHalf = 2;
+constexpr auto lastLeftColumn = 19;
+constexpr auto firstRightColumn = 20;
+constexpr auto insideRightHalf = 38;
+constexpr auto midRow = 20;
+
 bool isGreen(const Graphics::Color& c)
 {
     return c.g > 0.5f && c.r < 0.5f;
@@ -81,11 +71,8 @@ struct BaseVertexView final : GPUView
 
     RenderPipeline makePipeline()
     {
-        // MSAA would feather the boundary between the two halves across a pixel
-        // and make the edge assertions ambiguous. Set here rather than in the
-        // constructor body for the reason ScissorTests spells out: the pipeline
-        // is built in the member initialiser list, so a body call would leave it
-        // multisampled while the target is not.
+        // MSAA would feather the boundary between the halves. Set here, not in
+        // the constructor body: the pipeline is built in the initialiser list.
         setSampleCount(1);
 
         auto descriptor = RenderPipelineDescriptor {};
@@ -111,10 +98,8 @@ struct BaseVertexView final : GPUView
             pass.drawIndexed(indexBuffer, 3, IndexFormat::UInt16, 0, baseVertex);
     }
 
-    // Both triangles overhang the target far enough that each covers its whole
-    // half at every row, so a coverage count is an exact number rather than a
-    // rasterisation coin-flip at the corners. Their shared edge sits on x = 0,
-    // which falls between two pixel centres at any even width.
+    // Both triangles deliberately overhang the target, so each covers its whole
+    // half at every row and their shared edge falls between two pixel centres.
     // clang-format off
     static constexpr float halfCoveringTriangles[] = {
         0.f, -3.f,  0.f,  3.f, -4.f, 0.f,  // 0..2: the left half
@@ -122,9 +107,6 @@ struct BaseVertexView final : GPUView
     };
     // clang-format on
 
-    // 16-bit deliberately: this is the width a renderer moves to once it no
-    // longer has to bake a vertex offset into the index values, so it is the
-    // combination worth proving works.
     static constexpr std::uint16_t firstTriangle[] = {0, 1, 2};
 
     int baseVertex = 0;
@@ -149,8 +131,6 @@ int countGreen(const Graphics::Image& image)
 }
 } // namespace
 
-// The baseline the rest of the file leans on: at zero, the parameter is not
-// there. If this fails, the offset cases prove nothing.
 auto tZeroDrawsTheFirstTriangle = test("BaseVertex/zeroDrawsTheFirstTriangle") = []
 {
     if (!Device::shared().isValid())
@@ -168,20 +148,16 @@ auto tZeroDrawsTheFirstTriangle = test("BaseVertex/zeroDrawsTheFirstTriangle") =
     check(image.isValid());
     check(image.width() == 40);
 
-    check(isGreen(image.at(2, 20))); // inside the left half
-    check(isGreen(image.at(19, 20))); // its last column
-    check(isRed(image.at(20, 20))); // first column of the right half
-    check(isRed(image.at(38, 20)));
+    check(isGreen(image.at(insideLeftHalf, midRow)));
+    check(isGreen(image.at(lastLeftColumn, midRow)));
+    check(isRed(image.at(firstRightColumn, midRow)));
+    check(isRed(image.at(insideRightHalf, midRow)));
 
     check(countGreen(image) == 20 * 40);
 };
 
-// The whole point of the parameter. Same buffer, same indices, same everything
-// else -- only the fetched vertices move, so the triangle changes sides.
-//
-// The x axis carries the assertion because neither backend mirrors
-// horizontally, so this needs no assumption about which way up the read-back
-// arrives.
+// The x axis carries the assertion: neither backend mirrors horizontally, so
+// this assumes nothing about which way up the read-back arrives.
 auto tOffsetSelectsLaterVertices = test("BaseVertex/offsetSelectsLaterVertices") = []
 {
     if (!Device::shared().isValid())
@@ -200,18 +176,15 @@ auto tOffsetSelectsLaterVertices = test("BaseVertex/offsetSelectsLaterVertices")
     check(image.isValid());
     check(image.width() == 40);
 
-    check(isRed(image.at(2, 20))); // the left half is now the clear colour
-    check(isRed(image.at(19, 20)));
-    check(isGreen(image.at(20, 20))); // and the right half is drawn
-    check(isGreen(image.at(38, 20)));
+    check(isRed(image.at(insideLeftHalf, midRow)));
+    check(isRed(image.at(lastLeftColumn, midRow)));
+    check(isGreen(image.at(firstRightColumn, midRow)));
+    check(isGreen(image.at(insideRightHalf, midRow)));
 
     check(countGreen(image) == 20 * 40);
 };
 
-// The instanced path takes the offset in a different argument position on both
-// backends, and on Metal it was the one selector already passing a hardcoded
-// zero -- exactly the kind of place a parameter gets added to the signature and
-// forgotten in the call.
+// Metal's instanced selector previously passed a hardcoded baseVertex of 0.
 auto tInstancedTakesTheSameOffset =
     test("BaseVertex/instancedTakesTheSameOffset") = []
 {
@@ -230,15 +203,11 @@ auto tInstancedTakesTheSameOffset =
     auto image = view.renderToImage(1.f);
 
     check(image.isValid());
-    check(isRed(image.at(2, 20)));
-    check(isGreen(image.at(38, 20)));
+    check(isRed(image.at(insideLeftHalf, midRow)));
+    check(isGreen(image.at(insideRightHalf, midRow)));
     check(countGreen(image) == 20 * 40);
 };
 
-// The instanced path with no offset still draws what it did before the
-// parameter existed. Its Metal call moved from a hardcoded baseVertex:0 to a
-// threaded one, so the defaulted case is a real regression risk rather than a
-// tautology.
 auto tInstancedZeroIsUnchanged = test("BaseVertex/instancedZeroDrawsTheFirst") = []
 {
     if (!Device::shared().isValid())
@@ -255,7 +224,7 @@ auto tInstancedZeroIsUnchanged = test("BaseVertex/instancedZeroDrawsTheFirst") =
     auto image = view.renderToImage(1.f);
 
     check(image.isValid());
-    check(isGreen(image.at(2, 20)));
-    check(isRed(image.at(38, 20)));
+    check(isGreen(image.at(insideLeftHalf, midRow)));
+    check(isRed(image.at(insideRightHalf, midRow)));
     check(countGreen(image) == 20 * 40);
 };

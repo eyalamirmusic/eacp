@@ -5,13 +5,9 @@
 namespace eacp::simd::kernels
 {
 
-// Inverse affine warp of a tightly-packed RGBA8 image: for each destination
-// pixel, map it back through the 2x3 row-major inverse matrix `m`
-// ([m0 m1 m2; m3 m4 m5]) to a source position, then bilinearly sample with edge
-// clamping. Same structure (and the same shared blendTaps blend) as
-// resizeBilinear -- only the per-pixel source coordinate differs (affine instead
-// of a regular grid). Instantiating with the Scalar backend is the oracle;
-// bit-exact across backends when the TU is -ffp-contract=off. No heap allocation.
+// `m` is the 2x3 row-major inverse matrix [m0 m1 m2; m3 m4 m5]; sampling is
+// bilinear with edge clamping, no heap allocation. Instantiating with the
+// Scalar backend gives the oracle; blendTaps keeps backends bit-exact.
 template <class B>
 void warpAffineInverseImpl(const std::uint8_t* in,
                            int srcW,

@@ -16,12 +16,11 @@ struct PathView::Impl
         Gradient
     };
 
-    // Distinct shader instances so fill and stroke each own their own vertex
-    // buffer: re-uploading one shader's buffer must not disturb a draw already
-    // recorded from another in the same pass.
-    PathFillShader fillSolidShader; // solid fill
-    VertexColorShader gradientShader; // gradient fill (per-vertex colour)
-    PathFillShader strokeShader; // solid stroke
+    // One instance each, so re-uploading one's vertex buffer cannot disturb a
+    // draw already recorded from another in the same pass.
+    PathFillShader fillSolidShader;
+    VertexColorShader gradientShader;
+    PathFillShader strokeShader;
 
     Path path;
 

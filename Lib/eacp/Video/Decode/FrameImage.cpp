@@ -8,8 +8,7 @@ using Graphics::Color;
 
 namespace
 {
-// The same arithmetic the NV12 shader runs, from the same constants, so a frame
-// looks identical whether it went to the screen or through toImage.
+// The same arithmetic the NV12 shader runs, from the same constants.
 Color yuvToColor(const YuvTransform& transform,
                  std::uint8_t luma,
                  std::uint8_t cb,

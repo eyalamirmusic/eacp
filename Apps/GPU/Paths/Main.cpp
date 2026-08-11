@@ -7,13 +7,9 @@ namespace
 {
 constexpr float pi = 3.14159265358979323846f;
 
-// The paths below are authored in a fixed 800 x 520 design space (see
-// setCoordinateSpace), so they keep filling the window whatever its size.
 constexpr float designWidth = 800.0f;
 constexpr float designHeight = 520.0f;
 
-// A concave star: a moveTo / lineTo polygon that only fills correctly once the
-// tessellator handles reflex corners, so it exercises the ear clipper.
 void addStar(
     Path& path, float centerX, float centerY, float outerRadius, float innerRadius)
 {
@@ -35,8 +31,6 @@ void addStar(
     path.close();
 }
 
-// A smooth organic blob built from four cubic Beziers, exercising curve
-// flattening.
 void addBlob(Path& path, float centerX, float centerY, float radius)
 {
     path.moveTo({centerX + radius, centerY});
@@ -84,8 +78,6 @@ struct PathsApp
 {
     PathsApp()
     {
-        // A vertical gradient across the whole design space, so shapes higher in
-        // the window read warm and lower ones cool.
         auto gradient = Graphics::LinearGradient {
             {0.0f, 0.0f},
             {0.0f, designHeight},

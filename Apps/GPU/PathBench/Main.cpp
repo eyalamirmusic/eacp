@@ -9,24 +9,9 @@ using namespace eacp;
 using Graphics::Point;
 using Graphics::Rect;
 
-// What a rasterization costs on each side of the wire.
-//
-// Rung two priced a path by its outline instead of by its area, and the numbers
-// it reported were segment-pixel tests - the GPU's work. That was the right unit
-// then, because the GPU's work was the whole of it. It is not any more: binning
-// happens on the CPU, and every path that moves is re-binned, prefix-summed and
-// re-uploaded before the frame it appears in.
-//
-// So this measures the two sides against each other rather than either alone.
-// setPath is the CPU: emit the segments, bin them into tiles, sum the backdrops.
-// The dispatch is the GPU, and it is also where the bytes go up - a batch
-// gathers and uploads when the work is recorded, not when the path was set, so
-// that a frame sends every path's at once. A rung above this one moves work from
-// the first column to the second, and it is only worth building if the first
-// column is where the time is.
-//
 // Headless on purpose - no window, no swapchain, no compositor - so what is
-// timed is the rasterizer and not a frame.
+// timed is the rasterizer and not a frame. setPath is the CPU side (emit, bin,
+// prefix-sum the backdrops); the dispatch is the GPU side and the upload.
 
 namespace
 {
@@ -41,16 +26,14 @@ double millisecondsSince(Clock::time_point start)
     return std::chrono::duration<double, std::milli>(elapsed).count();
 }
 
-// ------------------------------------------------------------------ the paths
-
 Point onCircle(Point centre, float radius, float angle)
 {
     return {centre.x + std::sin(angle) * radius,
             centre.y - std::cos(angle) * radius};
 }
 
-// UI::Knob's indicator, geometry for geometry: a ring segment as a closed
-// contour, and the pointer as a second one wound the same way.
+// UI::Knob's indicator: a ring segment as a closed contour, and the pointer as
+// a second one wound the same way.
 GPUWidgets::Path knobIndicator(float size, float value)
 {
     constexpr auto startAngle = -2.356194f;
@@ -91,9 +74,8 @@ GPUWidgets::Path knobIndicator(float size, float value)
     return path;
 }
 
-// Apps/GPU/PathQuality's panel: a rounded rectangle and an ellipse, which
-// between them cover the straight edges and the near-tangent curvature a UI
-// actually asks for.
+// Apps/GPU/PathQuality's panel: straight edges plus the near-tangent curvature
+// a UI actually asks for.
 GPUWidgets::Path qualityPanel(const Rect& panel)
 {
     auto rounded =
@@ -107,10 +89,8 @@ GPUWidgets::Path qualityPanel(const Rect& panel)
     return path;
 }
 
-// The case the whole rasterizer is aimed at: a wide, shallow, curve-heavy region
-// of the kind a DAW draws under an automation lane. Long in x, thin in y, and
-// nearly all outline - the shape for which area-priced rasterization was
-// hopeless and outline-priced rasterization is ordinary.
+// A wide, shallow, curve-heavy region of the kind a DAW draws under an
+// automation lane: long in x, thin in y, and nearly all outline.
 GPUWidgets::Path automationCurve(float width, float height, int lobes)
 {
     auto path = GPUWidgets::Path {};
@@ -128,8 +108,7 @@ GPUWidgets::Path automationCurve(float width, float height, int lobes)
         path.cubicTo(x + span * 0.35f, from, x + span * 0.65f, to, x + span, to);
     }
 
-    // Closed back along the lane's floor, so it is a filled region rather than a
-    // ribbon - which is what an automation lane draws.
+    // Closed along the lane's floor, so this fills a region rather than a ribbon.
     path.lineTo({width, height});
     path.lineTo({0.f, height});
     path.close();
@@ -137,10 +116,8 @@ GPUWidgets::Path automationCurve(float width, float height, int lobes)
     return path;
 }
 
-// An outline with a real segment count behind it: the map layer, the SVG
-// document, the vector editor's artwork. Concentric rings rather than one
-// enormous contour, because that is the shape those actually have - many
-// contours over one area, which is also what makes them overlap.
+// A map layer or SVG document: many concentric contours over one area, which is
+// the shape real artwork has and what makes it overlap.
 GPUWidgets::Path denseArtwork(float extent, int rings, int sides)
 {
     auto path = GPUWidgets::Path {};
@@ -157,8 +134,8 @@ GPUWidgets::Path denseArtwork(float extent, int rings, int sides)
             constexpr auto tau = 6.2831853f;
             auto angle = tau * (float) i / (float) sides;
 
-            // A wobble on the radius, so no two rings are the same polygon and
-            // no segment is exactly horizontal.
+            // So no two rings are the same polygon and no segment is exactly
+            // horizontal.
             auto wobble = 1.f + 0.06f * std::sin(angle * 7.f + (float) ring);
             path.lineTo(onCircle(centre, radius * wobble, angle));
         }
@@ -176,8 +153,6 @@ GPUWidgets::Path fullWindowEllipse(float width, float height)
     return path;
 }
 
-// ------------------------------------------------------------------ the timing
-
 struct Case
 {
     const char* name;
@@ -185,10 +160,9 @@ struct Case
     float scale;
 };
 
-// setPath does the whole CPU side: emit, bin, prefix-sum the backdrops, upload.
-// Timed with the buffers already grown, because that is the steady state - a
-// path that moves every frame reallocates nothing after its first frame, and
-// timing the first would be measuring the allocator.
+// Warmed up first, so the buffers are already grown: that is the steady state a
+// path that moves every frame is in, and timing the first would time the
+// allocator.
 double cpuMilliseconds(GPUWidgets::PathRasterizer& rasterizer,
                        const GPUWidgets::Path& path)
 {
@@ -203,16 +177,9 @@ double cpuMilliseconds(GPUWidgets::PathRasterizer& rasterizer,
     return millisecondsSince(start) / (double) repetitions;
 }
 
-// Blocks until everything submitted so far has run.
-//
-// It has to be spelled out, because commit() does not do it on every backend:
-// Metal's waits for completion, D3D12's returns as soon as the list is on the
-// queue. Left alone, every GPU figure here would be submission time on Windows -
-// which reads as a rasterization of thirty-seven million segment tests costing
-// nothing at all, and is the sort of number a document gets built on.
-//
-// A read is what both backends do wait for. The bytes are irrelevant; the queue
-// is in order, so waiting for a read submitted after the work waits for the work.
+// Blocks until everything submitted so far has run. commit() only waits for
+// completion on Metal; D3D12 returns as soon as the list is on the queue. A read
+// is what both backends wait for, and the queue is in order.
 void waitForGpu()
 {
     static auto fence = GPU::Buffer {
@@ -222,10 +189,8 @@ void waitForGpu()
     fence.read(&value, sizeof(value));
 }
 
-// One command buffer submitted and waited on with nothing in it. Every GPU
-// figure below rides on top of this, and at UI scale it is most of what a naive
-// reading would call the GPU's time - so it is measured and subtracted rather
-// than left to flatter the comparison.
+// An empty submit and wait. At UI scale this is most of what a naive reading
+// would call the GPU's time, so it is measured and subtracted.
 double submitFloor()
 {
     auto once = []
@@ -253,10 +218,8 @@ double submitFloor()
     return millisecondsSince(start) / (double) passes;
 }
 
-// Many dispatches on one command buffer, committed once. Submitting each one on
-// its own and waiting measures the round trip instead of the kernel - at UI
-// scale that is several times the work itself, and it made a 40pt knob look
-// dearer than a 96pt one. Batching is also what a frame does.
+// Many dispatches on one command buffer, as a frame does: submitting each on its
+// own and waiting would measure the round trip instead of the kernel.
 double gpuMilliseconds(GPUWidgets::PathRasterizer& rasterizer, double floor)
 {
     constexpr auto passes = 20;
@@ -315,19 +278,8 @@ void report(Case& item, double floor)
                 100.0 * cpu / (cpu + gpu));
 }
 
-// The workload rung 3 is actually for: a canvas of paths, all of them moving, so
-// every one is re-binned and re-uploaded every frame. One rasterizer each, the
-// way a tree of widgets holds one PathShape each, and the whole set timed
-// together - because what a frame has to fit in is the sum.
-//
-// Both ways round, because that is what the batch changed. Unbatched, each path
-// is a dispatch of its own and its own buffers; batched, they are gathered into
-// one set and one dispatch. The binning is identical either way - it is the same
-// setPath - so the difference is the per-path overhead and nothing else.
-//
-// A target every path writes into, the way an interface's atlas is. Sized to
-// hold the lot side by side, since what is being timed is the dispatch and not
-// the packing.
+// One target every path writes into, sized to hold the lot side by side: what is
+// being timed is the dispatch and not the packing.
 GPU::Texture makeCanvasTarget(int width, int height)
 {
     auto descriptor = GPU::TextureDescriptor {};
@@ -338,14 +290,9 @@ GPU::Texture makeCanvasTarget(int width, int height)
     return {GPU::Device::shared(), descriptor, nullptr};
 }
 
-// Where a canvas's paths sit in the one target they all write into. As many side
-// by side as a texture may be wide and as many down as a device will make, and
-// past that they share a slot rather than being placed beyond the edge.
-//
-// Sharing rather than overflowing is the point: a store outside a texture is
-// dropped by the hardware without a word, so a canvas laid out past its target
-// silently stops writing the pixels of exactly the paths the count was raised to
-// measure. The work is identical either way - what overlaps is where it lands.
+// Past the target's edge, paths share a slot rather than being placed outside
+// it: a store outside a texture is dropped by the hardware without a word, which
+// would silently skip exactly the paths the count was raised to measure.
 struct CanvasLayout
 {
     CanvasLayout(int pathWidth, int pathHeight, int count)
@@ -463,11 +410,8 @@ void reportCanvas(const char* name,
 
     auto cpu = millisecondsSince(cpuStart) / (double) rounds;
 
-    // A whole frame each way, binning included, because the bytes go up when the
-    // work is recorded now: timing the two dispatches alone would give the
-    // unbatched side buffers that were already filled and the batched side a
-    // gather it does every time. Re-binning before each is what makes both send
-    // what a canvas whose paths all move sends.
+    // A whole frame each way, binning included: the bytes go up when the work is
+    // recorded, so timing the dispatches alone would flatter the unbatched side.
     auto unbatchedStart = Clock::now();
 
     for (auto i = 0; i < rounds; ++i)

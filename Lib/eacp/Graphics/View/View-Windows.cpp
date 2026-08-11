@@ -22,15 +22,9 @@ namespace
 {
 using Microsoft::WRL::ComPtr;
 
-// Immediate-mode 2D drawing for View::paint(Context&) on Windows. macOS backs
-// paint() with a CGContext; here each painting View owns a Direct2D drawing
-// surface composited behind its children, and this context issues D2D calls
-// into it. It mirrors the retained Layer path (ShapeLayer/TextLayer) but driven
-// imperatively from the cross-platform paint() callback.
-
-// Lets the context drive a view's backing surface without naming the private
-// View::Native type. The view creates/sizes its surface lazily on the first
-// draw, so container views that paint nothing allocate nothing.
+// Lets D2DContext drive a view's backing surface without naming the private
+// View::Native type. Created lazily on the first draw, so container views that
+// paint nothing allocate nothing.
 struct BackingSurface
 {
     virtual ~BackingSurface() = default;
@@ -49,11 +43,9 @@ public:
     {
     }
 
-    // Off-screen snapshot mode: draw straight into a device context the caller
-    // already opened (BeginDraw) and will close, under `baseToUse` (points ->
-    // device pixels). Unlike the surface path this neither clears (that would
-    // wipe already-composited content) nor calls EndDraw (the caller owns the
-    // target), so paint() from many views can share one context.
+    // Snapshot mode: the caller owns dcToUse (already BeginDraw'n), so this
+    // neither clears nor calls EndDraw and many views can share one context.
+    // `baseToUse` maps points -> device pixels.
     D2DContext(ID2D1DeviceContext* dcToUse, const D2D1::Matrix3x2F& baseToUse)
         : dc(dcToUse)
         , baseTransform(baseToUse)
@@ -67,8 +59,7 @@ public:
 
     ~D2DContext() override { finish(); }
 
-    // Opens the underlying surface for drawing if it has not been already.
-    // Returns false when the view has nothing to draw into (zero size or no
+    // False when the view has nothing to draw into (zero size or no
     // compositor), in which case every draw call becomes a no-op.
     bool ensureDrawing()
     {
@@ -88,9 +79,7 @@ public:
         dc->Clear(D2D1::ColorF(0, 0, 0, 0));
         dc->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), brush.GetAddressOf());
 
-        // setColor() is usually called before the first draw op, while the brush
-        // does not yet exist; adopt that colour now so the first fill is not
-        // stuck on the default white.
+        // setColor() usually runs before the brush exists; adopt that colour now.
         applyColor();
 
         drawing = true;
@@ -229,10 +218,9 @@ public:
         auto wide = toWideString(text);
         auto fontSize = format->GetFontSize();
 
-        // CoreGraphics positions text on the baseline; DWrite lays it out from
-        // the top of the layout box. Lift the box by roughly the ascent so both
-        // backends place a line of text at the same spot.
-        auto top = position.y - fontSize * 0.8f;
+        // position.y is a baseline; DWrite lays out from the top of the box.
+        constexpr auto approximateAscentRatio = 0.8f;
+        auto top = position.y - fontSize * approximateAscentRatio;
         auto layout = D2D1::RectF(
             position.x, top, position.x + 100000.0f, top + fontSize * 4.0f);
 
@@ -282,7 +270,7 @@ private:
 };
 
 // Bridges the TU-local dirty set to a view's painter without naming the private
-// View::Native type. Each View::Native implements this.
+// View::Native type.
 struct PaintTarget
 {
     virtual ~PaintTarget() = default;
@@ -290,22 +278,16 @@ struct PaintTarget
     virtual HWND paintHost() const = 0;
 };
 
-// Views that called repaint() since their last paint. Windows merges the
-// per-view InvalidateRect calls into a single WM_PAINT for the host window;
-// the handler then paints exactly the views that asked. Main-thread only,
-// so no locking is needed.
-// Immortal because ~Native erases itself here, and a View at namespace scope
-// outlives a registry that first use constructed after it.
+// Views that called repaint() since their last paint. Main thread only, so no
+// locking. Immortal because a View at namespace scope can outlive it and
+// ~Native erases itself here.
 std::unordered_set<PaintTarget*>& dirtyViews()
 {
     return Singleton::getImmortal<std::unordered_set<PaintTarget*>>();
 }
 } // namespace
 
-// Paints every dirty view hosted by `host`, then clears them. Driven from
-// that window's WM_PAINT, mirroring how macOS setNeedsDisplay drives
-// drawRect:. A plain View paints into its Direct2D backing surface; GPUView
-// renders its swapchain.
+// Called from the host window's WM_PAINT.
 void paintDirtyViewsForHost(HWND host)
 {
     auto toPaint = Vector<PaintTarget*> {};
@@ -340,10 +322,8 @@ struct View::Native
         visual.Reset();
     }
 
-    // Creates the container visual, and rebuilds it after a device loss moved the
-    // composition generation (DComp visuals do not survive their device — see
-    // DComp-Windows.h). The paint visual and surface are rebuilt lazily by
-    // ensurePaintSurface once the generation matches again.
+    // Rebuilds after a device loss moved the composition generation: DComp
+    // visuals do not survive their device. See DComp-Windows.h.
     bool ensureVisual()
     {
         auto current = getCompositionGeneration();
@@ -376,11 +356,8 @@ struct View::Native
         return true;
     }
 
-    // Mirrors macOS setNeedsDisplay: mark the view dirty and let Windows
-    // coalesce a single WM_PAINT for the host window. The paint itself runs
-    // from that WM_PAINT (paintDirtyViewsForHost) — unlike a queued
-    // callAsync it rides the OS dirty-region machinery, which is delivered
-    // even inside the modal resize/move loop, so animation never wedges.
+    // Goes through the OS dirty-region machinery rather than a queued callAsync
+    // because WM_PAINT is still delivered inside the modal resize/move loop.
     void repaint()
     {
         dirtyViews().insert(this);
@@ -397,9 +374,6 @@ struct View::Native
         updateVisualPosition();
         ownerView->resized();
 
-        // Repaint at the new size, so a view that draws shows up on its initial
-        // layout and on resize without waiting for an external repaint(). Views
-        // that paint nothing allocate no surface, so this stays cheap.
         repaint();
     }
 
@@ -459,12 +433,8 @@ struct View::Native
         POINT pt;
         GetCursorPos(&pt);
 
-        // View-local logical coordinates, matching the macOS implementation
-        // (convertPoint:fromView:nil) — isHovering() compares this against
-        // getLocalBounds(). GetCursorPos is in physical screen pixels, so map
-        // to the client area, back out the DPI factor (otherwise callers move
-        // at DPI-times speed on high-DPI displays), then subtract the view's
-        // accumulated origin within the window.
+        // Returns view-local logical points; GetCursorPos is in physical screen
+        // pixels, so map to the client area and back out the DPI factor.
         auto host = findHostHwndForView(ownerView);
         if (!host)
             return Point(static_cast<float>(pt.x), static_cast<float>(pt.y));
@@ -487,9 +457,7 @@ struct View::Native
     void focus() { hasFocusFlag = true; }
     bool hasFocus() const { return hasFocusFlag; }
 
-    // The DPI scale of the window hosting this view, so paint surfaces stay
-    // crisp on a monitor whose scaling differs from the system DPI. Falls back
-    // to the system DPI while the view is not yet parented into a window.
+    // Falls back to the system DPI while the view has no host window.
     float hostDpiScale() const
     {
         if (auto host = findHostHwndForView(ownerView))
@@ -498,14 +466,12 @@ struct View::Native
         return NativeLayerBase::systemDpiScale();
     }
 
-    // --- PaintTarget: invoked from the host window's WM_PAINT ----------------
     void renderBackingStore() override
     {
         D2DContext context(*this);
 
-        // A surface that already exists must be cleared even on a frame that
-        // draws nothing, so stale pixels do not linger. The first-ever paint is
-        // opened lazily by the context's first draw call instead.
+        // An existing surface must be cleared even on a frame that draws
+        // nothing, or stale pixels linger.
         if (hasSurface())
             context.ensureDrawing();
 
@@ -515,7 +481,6 @@ struct View::Native
 
     HWND paintHost() const override { return findHostHwndForView(ownerView); }
 
-    // --- BackingSurface: the Direct2D drawing surface paint() renders into ---
     bool hasSurface() const override { return paintSurface != nullptr; }
 
     ID2D1DeviceContext* beginDraw(D2D1::Matrix3x2F& baseTransform) override
@@ -555,9 +520,6 @@ struct View::Native
         paintDc.Reset();
     }
 
-    // Lazily creates the backing SpriteVisual (behind every child view and
-    // layer) and a drawing surface sized to the view's bounds. Recreated when
-    // the bounds change, mirroring NativeLayerBase::createSurface for layers.
     bool ensurePaintSurface()
     {
         if (!ensureVisual())
@@ -602,7 +564,6 @@ struct View::Native
 
             if (FAILED(hr))
             {
-                // The post-recovery redraw re-enters here with a live device.
                 handleDeviceLossIfNeeded(hr);
                 paintSurface.Reset();
                 return false;
@@ -614,9 +575,7 @@ struct View::Native
         }
 
         // DComp draws the surface's physical pixels 1:1 in the visual's local
-        // space, and the root already scales the tree by the DPI factor, so undo
-        // it here. This is what WinRT's SpriteVisual.Size() + stretching brush
-        // did implicitly.
+        // space, and the root already scales the tree by the DPI factor.
         if (dpiScale > 0.f)
             paintVisual->SetTransform(
                 D2D1::Matrix3x2F::Scale(1.f / dpiScale, 1.f / dpiScale));
@@ -685,16 +644,8 @@ Point View::getMousePosition() const
     return impl->getMousePosition();
 }
 
-// Stored but not yet applied. Windows re-asks for the pointer on every
-// WM_SETCURSOR, so a bare SetCursor here would be overwritten by the default on
-// the very next mouse move; doing it properly means handling WM_SETCURSOR in the
-// host window and resolving the view under the pointer there, which is a change
-// to CompositionHostWindow rather than to this file.
-//
-// Left undone deliberately rather than written blind: there is no Windows
-// machine in the loop to see the result on, and a cursor that flickers between
-// two shapes is worse than one that never changes. getMouseCursor() still
-// answers, so everything portable about the feature is testable here.
+// Stored but not applied: Windows re-asks on every WM_SETCURSOR, so applying it
+// needs the host window to resolve the view under the pointer there.
 void View::setMouseCursor(MouseCursor cursor)
 {
     currentCursor = cursor;
@@ -717,17 +668,9 @@ void* View::getNativeLayer()
 
 namespace
 {
-// ---- Off-screen View->Image snapshot (Direct2D) -------------------------
-//
-// The Windows counterpart of the CoreGraphics compositor (GraphicsContextImpl.mm):
-// draw a view's paint() chrome, its shape/text layers, its native GPU content and
-// its child views into an app-owned Direct2D bitmap, then read it back as a
-// straight-alpha RGBA Image. Web content is folded in asynchronously by the
-// caller. Direct2D bitmaps share the on-screen surfaces' top-left origin, so --
-// unlike the flipped CGBitmapContext -- no vertical flip is needed. All
-// compositing runs premultiplied; the read-back un-premultiplies to match the
-// straight-alpha Image contract.
-
+// Off-screen View->Image snapshot. Direct2D bitmaps share the on-screen
+// surfaces' top-left origin, so no vertical flip is needed. Compositing runs
+// premultiplied; the read-back un-premultiplies for Image's straight alpha.
 struct OffscreenComposite
 {
     ComPtr<ID2D1DeviceContext> dc;
@@ -738,10 +681,8 @@ struct OffscreenComposite
     bool valid() const { return dc && target; }
 };
 
-// Builds the off-screen device context + render-target bitmap and opens it for
-// drawing (BeginDraw + transparent clear). The caller composites into dc, then
-// hands the whole thing to readbackComposite. Returns an invalid composite for a
-// non-positive size or when the shared D2D device is unavailable.
+// Returns an open (BeginDraw'n, cleared) composite the caller draws into and
+// then hands to readbackComposite; invalid for a non-positive size or no device.
 OffscreenComposite makeOffscreenComposite(const Rect& bounds, float scale)
 {
     auto composite = OffscreenComposite {};
@@ -777,9 +718,7 @@ OffscreenComposite makeOffscreenComposite(const Rect& bounds, float scale)
     return composite;
 }
 
-// Draws a straight-alpha Image into dc at dest (points), under `transform` and
-// faded by `opacity`. Used for a view's GPU content and for the async web
-// overlay, mirroring drawImageInContext on macOS.
+// `dest` is in points.
 void drawImageIntoContext(ID2D1DeviceContext* dc,
                           const Image& image,
                           const Rect& dest,
@@ -793,8 +732,7 @@ void drawImageIntoContext(ID2D1DeviceContext* dc,
     auto height = image.height();
     const auto& pixels = image.pixels();
 
-    // Straight RGBA -> premultiplied BGRA, the byte order a B8G8R8A8 D2D bitmap
-    // composites with.
+    // Straight RGBA -> premultiplied BGRA, what a B8G8R8A8 D2D bitmap wants.
     auto bgra = std::vector<std::uint32_t>(static_cast<std::size_t>(width)
                                            * static_cast<std::size_t>(height));
 
@@ -829,9 +767,7 @@ void drawImageIntoContext(ID2D1DeviceContext* dc,
     dc->DrawBitmap(bitmap.Get(), d, opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
-// Pushes a device-managed opacity layer, so a subtree (or a single faded layer)
-// flattens and fades as one -- the Direct2D equivalent of the transparency layer
-// macOS uses for group opacity. Balanced by a PopLayer.
+// Flattens a subtree so it fades as one. Caller must balance with PopLayer.
 void pushOpacityLayer(ID2D1DeviceContext* dc,
                       const D2D1::Matrix3x2F& transform,
                       float opacity)
@@ -842,11 +778,8 @@ void pushOpacityLayer(ID2D1DeviceContext* dc,
     dc->PushLayer(params, nullptr);
 }
 
-// Composites view and its descendants into dc under `transform` (points ->
-// device pixels), stacked front-to-back the way the compositor draws them on
-// screen: paint() backdrop, attached shape/text layers, native GPU content, then
-// child views (each translated and clipped to its frame). Web content is drawn
-// later, asynchronously, by the caller.
+// `transform` maps points -> device pixels. Web content is drawn later, by the
+// caller.
 void compositeView(ID2D1DeviceContext* dc,
                    View& view,
                    const D2D1::Matrix3x2F& transform,
@@ -902,8 +835,7 @@ void compositeView(ID2D1DeviceContext* dc,
         dc->PopLayer();
 }
 
-// Closes the context and copies the render target into a CPU-readable bitmap,
-// un-premultiplying BGRA back to the straight-alpha RGBA an Image holds.
+// Closes the context and un-premultiplies BGRA back to Image's straight RGBA.
 Image readbackComposite(OffscreenComposite& composite)
 {
     if (!composite.valid())
@@ -985,9 +917,8 @@ Image readbackComposite(OffscreenComposite& composite)
     return image;
 }
 
-// A descendant view with async (web) content, tagged with its origin in the
-// root's coordinate space and the product of group opacities down to it -- so
-// each snapshot lands where, and as faded as, it sits on screen.
+// `offset` is in the root's coordinate space; `opacity` is the product of the
+// group opacities down to this view.
 struct AsyncTarget
 {
     View* view = nullptr;
@@ -1015,8 +946,8 @@ void collectAsyncContent(View& view,
     }
 }
 
-// Shared across the pending web snapshots: owns the open composite and counts
-// completions, resolving the promise once the last snapshot lands.
+// Shared across the pending web snapshots; the promise resolves once the last
+// one lands.
 struct AsyncComposite
 {
     OffscreenComposite composite;

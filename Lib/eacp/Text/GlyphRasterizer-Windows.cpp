@@ -14,20 +14,9 @@
 #include <string>
 #include <vector>
 
-// DirectWrite rasterizer, the Windows counterpart to GlyphRasterizer-Apple.mm.
-//
-// Rasterizing goes through IDWriteGlyphRunAnalysis rather than through Direct2D:
-// the analysis hands back a coverage texture straight out of DirectWrite, which
-// is exactly what the atlas stores, and it needs no device, no render target and
-// no window. That is what lets this run in a headless test as happily as in a
-// frame.
-//
-// The texture type names bytes per pixel, not whether antialiasing happened —
-// which reads exactly backwards. DWRITE_TEXTURE_ALIASED_1x1 is one byte per
-// pixel and is what grayscale antialiasing fills, at full coverage resolution;
-// DWRITE_TEXTURE_CLEARTYPE_3x1 is the three-byte subpixel layout and reports
-// *empty bounds* under grayscale. Aliasing is chosen by the rendering mode
-// (DWRITE_RENDERING_MODE_ALIASED), never by the texture type.
+// DirectWrite rasterizer, via IDWriteGlyphRunAnalysis rather than Direct2D: no
+// device, target or window needed. DWRITE_TEXTURE_* names bytes per pixel, not
+// antialiasing -- CLEARTYPE_3x1 reports empty bounds under grayscale.
 
 namespace eacp::Text
 {
@@ -36,16 +25,13 @@ namespace
 using Graphics::toWideString;
 using Microsoft::WRL::ComPtr;
 
-// Grayscale, never ClearType. The atlas stores coverage and the colour arrives
-// at draw time, so subpixel antialiasing would bake one particular text colour
-// into every cached glyph. The matching texture is the one-byte-per-pixel one,
-// which is already the mask layout the atlas wants.
+// Grayscale, never ClearType: subpixel antialiasing would bake one text colour
+// into coverage the atlas tints at draw time.
 constexpr auto antialiasMode = DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE;
 constexpr auto textureType = DWRITE_TEXTURE_ALIASED_1x1;
 
-// Shared, so this is the same underlying factory the Graphics module creates —
-// eacp-text deliberately does not reach into eacp-graphics for it, and with
-// DWRITE_FACTORY_TYPE_SHARED it does not need to.
+// DWRITE_FACTORY_TYPE_SHARED, so this is the factory the Graphics module made,
+// without eacp-text having to reach into eacp-graphics for it.
 IDWriteFactory2* dwriteFactory()
 {
     static auto instance = []
@@ -87,8 +73,8 @@ DWRITE_FONT_STYLE slantFor(FontStyle style)
     return isItalic(style) ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL;
 }
 
-// The text MapCharacters analyses. It is a single codepoint on the stack that
-// never outlives the call, so the reference counting is deliberately inert.
+// The text MapCharacters analyses: one codepoint on the stack that never
+// outlives the call, so the reference counting is deliberately inert.
 class SingleGlyphSource final : public IDWriteTextAnalysisSource
 {
 public:
@@ -169,8 +155,8 @@ private:
     UINT32 length;
 };
 
-// One layer of a colour glyph, already measured. COLR fonts describe an emoji
-// as a stack of monochrome glyphs each painted in its own palette colour.
+// A COLR font describes an emoji as a stack of monochrome glyphs, each painted
+// in its own palette colour.
 struct ColorLayer
 {
     ComPtr<IDWriteGlyphRunAnalysis> analysis;
@@ -194,9 +180,9 @@ struct GlyphRasterizer::Native
         if (factory == nullptr)
             return;
 
-        // The collection shared with eacp-graphics (FontRegistry-Windows.cpp):
-        // system fonts plus everything registerMemoryFont added, so the
-        // rasterizer and the Graphics text sites resolve the same faces.
+        // Shared with eacp-graphics (FontRegistry-Windows.cpp): system fonts
+        // plus whatever registerMemoryFont added, so both resolve the same
+        // faces.
         collection = Graphics::getFontCollection();
 
         if (!collection)
@@ -215,15 +201,11 @@ struct GlyphRasterizer::Native
         valid = faces[0] != nullptr;
     }
 
-    // Nothing on Windows is called Menlo or SF Mono. Rather than refuse to draw,
-    // substitute the way CoreText does for an unknown name — a face that exists
-    // beats no text at all, and callers wanting a specific one ask for a family
-    // the platform ships.
+    // Nothing on Windows is called Menlo or SF Mono, so an unknown name
+    // substitutes the way CoreText does rather than refusing to draw. The
+    // shared resolver accepts family, PostScript and full names, as CoreText.
     std::wstring resolveFamily() const
     {
-        // The shared resolver accepts family, PostScript and full names — the
-        // CoreText matching rules, so the one name callers ship works on both
-        // platforms.
         if (auto resolved =
                 Graphics::resolveFontFamilyName(toWideString(request.family));
             !resolved.empty())
@@ -276,9 +258,8 @@ struct GlyphRasterizer::Native
     }
 
     // GetFirstMatchingFont returns the nearest face rather than failing, so a
-    // family shipping only Regular answers a bold request with Regular. Ask
-    // DirectWrite to synthesize whatever the family does not have, which is what
-    // CTFontCreateCopyWithSymbolicTraits does on the Apple side.
+    // family shipping only Regular answers a bold request with Regular:
+    // DirectWrite synthesizes whatever the family does not have.
     static DWRITE_FONT_SIMULATIONS missingTraits(IDWriteFont* font, FontStyle style)
     {
         auto simulations = int {DWRITE_FONT_SIMULATIONS_NONE};
@@ -308,7 +289,7 @@ struct GlyphRasterizer::Native
         if (FAILED(face->GetFiles(&fileCount, raw.data())))
             return face;
 
-        // GetFiles hands back references the caller owns; adopt them so they are
+        // GetFiles hands back references the caller owns; adopted so they are
         // released however this returns.
         auto owned = std::vector<ComPtr<IDWriteFontFile>>(fileCount);
 
@@ -351,13 +332,11 @@ struct GlyphRasterizer::Native
         result.ascent = fontMetrics.ascent * perUnit;
         result.descent = fontMetrics.descent * perUnit;
 
-        // lineGap is signed in DirectWrite and a few faces report it negative.
-        // CoreText never returns negative leading and the atlas adds it straight
-        // into line height, so clamp rather than let lines overlap.
+        // lineGap is signed in DirectWrite and a few faces report it negative,
+        // where CoreText never does, so it is clamped rather than shortening
+        // the line height the atlas adds it into.
         result.leading = std::max(0.f, fontMetrics.lineGap * perUnit);
 
-        // 'M' is the conventional width probe; on a monospace face every glyph
-        // shares this advance, and on a proportional one it is only a hint.
         const auto reference = UINT32 {'M'};
         auto glyph = UINT16 {};
 
@@ -378,13 +357,11 @@ struct GlyphRasterizer::Native
             return 0.f;
 
         // Design metrics, not the hinted ones the analysis would produce: the
-        // atlas lays text out in a continuous space, and CoreText reports
-        // unhinted advances too, so this keeps the two platforms in step.
+        // atlas lays out in a continuous space, and CoreText is unhinted too.
         return glyphMetrics.advanceWidth * emSize
                / static_cast<float>(fontMetrics.designUnitsPerEm);
     }
 
-    // A codepoint resolved to the face that can actually draw it.
     struct Resolved
     {
         ComPtr<IDWriteFontFace> face;
@@ -415,8 +392,8 @@ struct GlyphRasterizer::Native
         return mapThroughFallback(codepoint, style);
     }
 
-    // How a Latin family still renders CJK and emoji: hand the codepoint to the
-    // system fallback and use whichever face it names.
+    // Whichever face the system fallback names, which is how a Latin family
+    // still renders CJK and emoji.
     Resolved mapThroughFallback(char32_t codepoint, FontStyle style) const
     {
         auto result = Resolved {};
@@ -461,8 +438,8 @@ struct GlyphRasterizer::Native
         result.face = face;
         result.glyph = glyph;
 
-        // The fallback face can be drawn at a different em to stay visually
-        // matched to the base font; MapCharacters reports the factor.
+        // A fallback face may need a different em to stay visually matched to
+        // the base font; MapCharacters reports the factor.
         result.emSize = request.pixelSize() * scale;
 
         return result;
@@ -539,7 +516,7 @@ struct GlyphRasterizer::Native
         takeBounds(bounds, bitmap);
 
         // One byte of coverage per pixel is already the mask format, so the
-        // texture is filled straight into the bitmap with nothing in between.
+        // texture fills the bitmap directly.
         bitmap.pixels.resize(static_cast<std::size_t>(bitmap.width) * bitmap.height);
 
         if (FAILED(analysis->CreateAlphaTexture(
@@ -561,12 +538,12 @@ struct GlyphRasterizer::Native
         bitmap.bearingX = static_cast<float>(bounds.left);
 
         // DirectWrite measures the texture box downwards from the baseline;
-        // GlyphBitmap measures its top edge upwards from it.
+        // GlyphBitmap measures its top edge upwards from it, hence the sign.
         bitmap.bearingY = static_cast<float>(-bounds.top);
     }
 
-    // Returns false for the overwhelmingly common case of a glyph that is not
-    // from a COLR font, which then takes the mask path.
+    // False for a glyph that is not from a COLR font, which then takes the mask
+    // path.
     bool drawColorGlyph(const DWRITE_GLYPH_RUN& run, GlyphBitmap& bitmap) const
     {
         auto* factory = dwriteFactory();
@@ -615,9 +592,8 @@ struct GlyphRasterizer::Native
             entry.analysis = analyse(
                 layer->glyphRun, layer->baselineOriginX, layer->baselineOriginY);
 
-            // A palette index of 0xffff means "paint this layer in the text
-            // colour". Colour glyphs are drawn untinted, so white is the only
-            // colour that leaves the result unchanged.
+            // Palette index 0xffff means "paint in the text colour", and colour
+            // glyphs draw untinted, so only white leaves the result unchanged.
             entry.color = layer->paletteIndex == 0xffff
                               ? DWRITE_COLOR_F {1.f, 1.f, 1.f, 1.f}
                               : layer->runColor;
@@ -756,9 +732,7 @@ const FontRequest& GlyphRasterizer::request() const
 
 bool registerMemoryFont(const void* data, std::size_t size)
 {
-    // Registration lives in eacp-graphics so its text sites (Font,
-    // TextMetrics) see the face too — the same process-wide visibility
-    // CTFontManagerRegisterGraphicsFont gives the Apple side.
+    // In eacp-graphics, so its own text sites see the face too.
     return Graphics::registerMemoryFontData(data, size);
 }
 } // namespace eacp::Text

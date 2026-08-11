@@ -38,7 +38,6 @@ std::string mimeForPath(std::string_view path)
 
     auto endsWith = [&](std::string_view ext) { return lower.ends_with(ext); };
 
-    // Text / web
     if (endsWith(".html"))
         return "text/html; charset=utf-8";
     if (endsWith(".js") || endsWith(".mjs") || endsWith(".cjs"))
@@ -50,7 +49,6 @@ std::string mimeForPath(std::string_view path)
     if (endsWith(".wasm"))
         return "application/wasm";
 
-    // Images
     if (endsWith(".svg"))
         return "image/svg+xml";
     if (endsWith(".png"))
@@ -62,11 +60,9 @@ std::string mimeForPath(std::string_view path)
     if (endsWith(".webp"))
         return "image/webp";
 
-    // Fonts
     if (endsWith(".woff2"))
         return "font/woff2";
 
-    // Audio
     if (endsWith(".mp3"))
         return "audio/mpeg";
     if (endsWith(".wav"))
@@ -99,10 +95,8 @@ std::string pathFromURL(std::string_view url, std::string_view indexFile)
 
     auto path = url.substr(afterHost + 1);
 
-    // WebKit hands custom-scheme handlers the full URL including any fragment
-    // (it only strips fragments for standard schemes like http). A hash-routed
-    // SPA loads e.g. app://local/index.html#/route — strip the fragment so the
-    // resource key stays "index.html". Strip the query string the same way.
+    // WebKit only strips fragments for standard schemes, so a hash-routed SPA
+    // arrives here as app://local/index.html#/route.
     auto fragment = path.find('#');
 
     if (fragment != std::string_view::npos)
@@ -192,7 +186,6 @@ ResolvedRange resolveRangeHeader(std::string_view headerValue, RangeSize size)
     if (spec.find(',') != std::string_view::npos || dash == std::string_view::npos)
         return full;
 
-    // Any byte range over an empty resource is unsatisfiable.
     if (size == 0)
         return unsatisfiable;
 
@@ -304,9 +297,7 @@ std::string fileURLToPath(std::string_view url)
 
     auto decoded = percentDecode(rest.substr(slash));
 
-    // A Windows drive path arrives as "/C:/dir/file"; drop the leading slash
-    // so it parses as the native "C:/dir/file". POSIX paths ("/var/...") have
-    // no drive letter and are left untouched.
+    // A Windows drive path arrives as "/C:/dir/file"; drop the leading slash.
     if (decoded.size() >= 3 && decoded[0] == '/'
         && std::isalpha(static_cast<unsigned char>(decoded[1])) && decoded[2] == ':')
         decoded.erase(0, 1);
@@ -340,9 +331,8 @@ StreamingProvider
         if (pathStr.empty())
             return std::nullopt;
 
-        // Kept open behind a shared_ptr so the reader can pull chunks across
-        // many scheme-task callbacks, then closes when the last reader drops.
-        // File::isUnder canonicalises, so a raw path is fine here.
+        // Shared so it stays open across scheme-task callbacks, closing when
+        // the last reader drops. File::isUnder canonicalises the raw path.
         auto file = std::make_shared<eacp::File>(pathStr);
 
         auto allowed =
@@ -423,12 +413,8 @@ WebView::WebView(Options options)
                             : embedded.scheme + "://" + embedded.host + "/"
                                   + embedded.indexFile;
 
-    // Headless test harnesses install user scripts and navigation
-    // callbacks AFTER construction (TestApp wires the agent script
-    // and AppDriver hook once the WebView already exists). Loading
-    // inline would race those — the first navigation could fire
-    // before the agent is registered. Defer to the next runloop
-    // tick so the harness finishes wiring before the load starts.
+    // Test harnesses add user scripts and navigation callbacks after
+    // construction, so defer a tick and let them finish wiring first.
     if (Apps::getAppEnvironment().headless)
     {
         auto weak = std::weak_ptr<Native> {impl};
@@ -445,8 +431,6 @@ WebView::WebView(Options options)
     }
 }
 
-// Injects window-drag.js + its message handler. Shared by both desktop
-// backends, so it lives here once rather than in each initNative.
 void WebView::installWindowDragSupport()
 {
     auto shim = ResEmbed::get("window-drag.js", "EacpWebView");
@@ -459,11 +443,9 @@ void WebView::installWindowDragSupport()
                             [this](const std::string&) { armWindowDrag(); });
 }
 
-// Injects window-controls.js + its message handler: any element marked
-// `--eacp-window-button: minimize | maximize | close` becomes a working
-// caption button, and pages key their chrome CSS off the data-eacp-platform /
-// data-eacp-maximized attributes the shim keeps on <html>. Shared by both
-// desktop backends, like installWindowDragSupport above.
+// The injected shim turns any element with `--eacp-window-button: minimize |
+// maximize | close` into a caption button, and keeps data-eacp-platform and
+// data-eacp-maximized on <html> for chrome CSS to key off.
 void WebView::installWindowControlSupport()
 {
     auto shim = ResEmbed::get("window-controls.js", "EacpWebView");
@@ -479,11 +461,8 @@ void WebView::installWindowControlSupport()
                             { performWindowControl(action); });
 }
 
-// Redirects requestAnimationFrame onto a ~60 Hz timer at document-start, so an
-// rAF loop keeps running while the view is off-screen (where the platform fires
-// no animation frames) and each snapshot reflects live content. Gated on
-// Options::driveOffscreenAnimation — see that flag. The script is tiny, so it is
-// inlined rather than carried as an embedded resource.
+// Redirects requestAnimationFrame onto a ~60 Hz timer at document-start, which
+// keeps firing off-screen. See Options::driveOffscreenAnimation.
 void WebView::installOffscreenAnimationSupport()
 {
     addUserScript(
@@ -551,10 +530,7 @@ Threads::Async<std::string> WebView::callJS(const std::string& script)
     if (Platform::isWindows())
     {
         // WebView2's ExecuteScript reports JS exceptions as a "null" result
-        // with HRESULT S_OK — there's no native error path, unlike WKWebView's
-        // NSError-on-throw. Wrap the user script in a try/catch IIFE that
-        // prefixes its return value with "OK"/"ER" so we can route failures
-        // into promise.reject() the way macOS callers already expect.
+        // with S_OK, so the "OK"/"ER" prefix is the only failure channel.
         auto wrapped = std::string {"(function() { try { var __r = eval("}
                        + jsStringLiteral(script)
                        + "); return 'OK' + (typeof __r === 'string' ? __r :"

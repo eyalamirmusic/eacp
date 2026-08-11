@@ -17,80 +17,44 @@ struct ShapeVertex
 // them is a single instanced draw rather than a draw apiece.
 struct ShapeInstance
 {
-    // The destination parallelogram, already grown by the antialiasing margin:
-    // where the box's top-left lands, and where its two axes go from there. A
-    // parallelogram rather than a rect so one primitive covers both axis-aligned
-    // boxes and arbitrarily oriented ones, which is what a line of any angle is.
+    // The destination parallelogram, already grown by the antialiasing margin -
+    // a parallelogram so one primitive also covers a line of any angle.
     float origin[2];
     float edgeX[2];
     float edgeY[2];
 
-    // Half the box's *undrawn* size, in points -- what the distance field is
-    // measured against -- and half the grown size the quad actually spans. The
-    // two differ by the margin, which is what gives the edge somewhere to fade.
+    // Half the box's undrawn size in points, what the distance field measures
+    // against, and half the grown size the quad spans. They differ by the margin.
     float halfSize[2];
     float halfExtent[2];
 
     float color[4];
 
-    // Corner radius, border width (both in points), and whether this is a
-    // border at all. The last is a flag the CPU already knows rather than
-    // something the shader rederives from the width: comparing a float against
-    // zero per fragment to answer a question settled per shape is work, and the
-    // fourth slot was going spare anyway.
-    //
-    // The fourth is no longer spare: it carries which kind of gradient fills
-    // this shape, 0 for none.
+    // Corner radius, border width (both points), whether this is a border, and
+    // which kind of gradient fills it (0 for none).
     float shape[4];
 
-    // The four of the affine that takes a fragment into the gradient's own
-    // space, its translation living in the first two of the next field. See
-    // GradientFill for why a whole matrix and not an axis.
+    // The four of the affine into the gradient's own space, its translation
+    // living in the first two of the next field.
     float gradient[4];
 
-    // That translation, then the row of the ramp texture this shape's colours
-    // were baked into, then the spread mode. See GradientRamps: every gradient
-    // in the interface is a row of one texture, so a gradient-filled shape joins
-    // the same instanced draw as a flat one.
+    // That translation, then the ramp texture row, then the spread mode.
     float gradientRamp[4];
 
-    // The rect of the coverage atlas this shape's own coverage is multiplied
-    // by, as u, v, width, height. A vector path is a box masked by the coverage
-    // a kernel computed for it; everything else points at the atlas's opaque
-    // texel and is multiplied by one. See CoverageAtlas for why one pipeline
-    // does both.
+    // The coverage atlas rect this shape is multiplied by, as u, v, width,
+    // height. Everything but a path points at the atlas's opaque texel.
     float mask[4];
 };
 
-// Draws rounded rectangles, borders and lines, batched and instanced.
-//
-// One primitive covers all of them, because to a signed distance field they are
-// the same shape read three ways: a rounded box, the same box's outline, and a
-// box whose corner radius is half its thickness. That matters more than the
-// tidiness -- it means a fill, an outline and a line all share one pipeline, so
-// a widget that draws all three does not break the batch between them.
-//
-// Antialiasing is analytic: the fragment's distance from the shape's edge
-// becomes its coverage, so a corner is smooth at any radius and any scale
-// without multisampling. Which is the point -- the pass cannot use MSAA (the
-// glyph pipeline is single-sample, and a multisampled scissor edge feathers),
-// so the shapes have to bring their own.
-//
-// Batching works the way SpriteRenderer's does, and deliberately: begin(pass)
-// joins the pass as a Participant, so whatever is still queued is drawn when the
-// pass ends and there is no flush call to forget.
+// Draws rounded rectangles, borders and lines, batched and instanced - one
+// primitive and one pipeline, all three being one signed distance field read
+// three ways. Antialiasing is analytic, the pass being unable to use MSAA.
 class ShapeBatch : public GPU::RenderPass::Participant
 {
 public:
-    // atlas is the coverage texture every shape samples -- a path for its own
-    // mask, everything else for the opaque texel that multiplies by one. Taken
-    // by reference rather than settable, because the fragment stage always
-    // reads it: a batch without one could not draw at all, so there is no
-    // useful state in which it is absent.
-    //
-    // logicalSize is the space draws are expressed in; pixelScale is device
-    // pixels per point, which sets how wide the antialiasing ramp is. Both are
-    // uniforms, so a resize sets them rather than rebuilding anything.
+    // `logicalSizeToUse` is the space draws are expressed in; `pixelScaleToUse`
+    // is device pixels per point, setting how wide the antialiasing ramp is.
+    // Both are uniforms, so a resize sets them rather than rebuilding anything.
     ShapeBatch(const CoverageAtlas& atlasToUse,
                GradientRamps& rampsToUse,
                Point logicalSizeToUse,
@@ -104,34 +68,27 @@ public:
     void end();
     void flush();
 
-    // Whether a flush would draw anything, which is what a caller ordering this
-    // renderer against another one has to know: see MeshBatch.
+    // Whether a flush would draw anything, which a caller ordering this renderer
+    // against another one has to know.
     bool isEmpty() const { return instances.empty(); }
 
-    // The texture every shape's coverage lives in, which a caller drawing
-    // something else under the same clip needs: a clip is a rect of this atlas
-    // however the thing it cuts was drawn. See LayerRenderer.
+    // A clip is a rect of this atlas however the thing it cuts was drawn.
     const CoverageAtlas& getAtlas() const { return atlas; }
 
     void setLogicalSize(Point size);
     void setPixelScale(float scale);
 
-    // Draws what is queued and then clips the pass, so that what was issued
-    // before the call escapes the new clip. Render-target *pixels*, matching
-    // RenderPass::setScissorRect.
+    // Draws what is queued first, so it escapes the new clip. Render-target
+    // pixels, matching RenderPass::setScissorRect.
     void setScissorRect(const Rect& rectInPixels);
     void clearScissorRect();
 
-    // Multiplies everything queued after the call by a second mask out of the
-    // same atlas, in the batch's own space. Draws what is queued first, for the
-    // reason the scissor does: the clip is one uniform for the whole draw, so a
-    // change of it is a batch break. An empty mask is no clip at all.
+    // A second mask out of the same atlas, in the batch's own space; empty is no
+    // clip at all. Draws what is queued first, being one uniform per draw.
     void setClipMask(const ClipMask& mask);
 
-    // Every call below takes the fill twice over: a colour, and a gradient that
-    // replaces it where there is one. Both rather than one of the two, because
-    // a gradient the ramps had no room for falls back to the colour beside it --
-    // so a shape always has something to be drawn in.
+    // The gradient replaces the colour where there is one; a gradient the ramps
+    // had no room for falls back to it.
     void fillRect(const Rect& rect,
                   const Color& color,
                   float cornerRadius = 0.f,
@@ -144,22 +101,15 @@ public:
                   float cornerRadius = 0.f,
                   const GradientFill& gradient = {});
 
-    // A line of any orientation, with round caps -- which the distance field
-    // gives for nothing, the cap being the corner radius of a box one thickness
-    // tall.
+    // With round caps.
     void drawLine(Point a,
                   Point b,
                   const Color& color,
                   float thickness = 1.f,
                   const GradientFill& gradient = {});
 
-    // A rect painted through a coverage mask: the atlas rect `maskUV` decides
-    // how much of `color` each pixel gets. This is how a vector path draws, and
-    // it joins the same batch as everything above it -- which is the whole
-    // reason the mask lives in a shared atlas rather than a texture of its own.
-    //
-    // The rect is the mask's own footprint and takes no antialiasing margin: the
-    // mask already carries its own soft edge, and the box around it is square.
+    // A rect painted through the atlas rect `maskUV`, which is how a vector path
+    // draws. `rect` is the mask's own footprint and takes no margin.
     void fillMask(const Rect& rect,
                   const Color& color,
                   const Rect& maskUV,
@@ -171,8 +121,8 @@ private:
     void flushInto(GPU::RenderPass& endingPass) override;
     void detach();
 
-    // The core primitive every call above becomes: a parallelogram carrying a
-    // rounded-box field of `halfSize`, grown by the antialiasing margin.
+    // A parallelogram carrying a rounded-box field of `halfSize`, grown by the
+    // antialiasing margin.
     void addShape(Point origin,
                   Point edgeX,
                   Point edgeY,

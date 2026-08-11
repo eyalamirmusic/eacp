@@ -2,10 +2,6 @@
 
 namespace eacp::Sprites
 {
-// No EACP_SHADER_VALUE declaration for SpriteInstance: every field the shader
-// pulls from it is a plain float[N], which the EDSL already maps to FloatN. The
-// macro is only needed for structs with named components.
-
 void SpriteShader::define()
 {
     auto corner = vertexInput(&SpriteVertex::corner);
@@ -37,9 +33,8 @@ void Nv12Shader::define()
 
     auto uv = varying(corner);
 
-    // Undo the coding range, then apply the track's matrix. Video::toImage runs
-    // the same arithmetic from the same constants, so a frame looks identical
-    // whether it reached the screen or an Image.
+    // Undo the coding range, then apply the track's matrix - the same
+    // arithmetic Video::toImage runs, so screen and Image match.
     auto y = (sample(luma, uv).x() - yuvRange.x()) * yuvRange.y();
     auto cbcr = sample(chroma, uv);
     auto u = (cbcr.x() - yuvRange.z()) * yuvRange.w();
@@ -49,8 +44,8 @@ void Nv12Shader::define()
     auto green = y - yuvMatrix.y() * u - yuvMatrix.z() * v;
     auto blue = y + yuvMatrix.w() * u;
 
-    // Coding ranges overshoot 0-1 slightly at the extremes, and a colour
-    // outside it would blend wrong rather than simply clip.
+    // Coding ranges overshoot 0-1 at the extremes, and an out-of-range colour
+    // would blend wrong rather than simply clip.
     auto rgb = clamp(float3(red, green, blue), 0.0f, 1.0f);
 
     setFragment(float4(rgb.x(), rgb.y(), rgb.z(), 1.0f) * tint);
@@ -69,8 +64,6 @@ constexpr SpriteVertex unitQuad[] = {
 
 constexpr unsigned char whitePixel[] = {255, 255, 255, 255};
 
-// Everything the renderer draws is alpha-blended: a sprite sheet's transparent
-// margin, a translucent overlay and an antialiased line all depend on it.
 template <typename Program>
 void prepareBlended(Program& program, int sampleCount, GPU::PixelFormat colorFormat)
 {
@@ -82,10 +75,9 @@ void prepareBlended(Program& program, int sampleCount, GPU::PixelFormat colorFor
                     colorFormat);
 }
 
-// A 1x1 opaque-white texture so untextured fills reuse the textured path: the
-// fill colour is the tint, multiplied by white. Its sampling is immaterial -
-// one clamped texel reads the same through any filter - so the untextured
-// entry points draw it through whichever program is already open.
+// Lets untextured fills reuse the textured path: the fill colour is the tint,
+// multiplied by white. One clamped texel reads the same through any filter, so
+// sampling is immaterial.
 GPU::Texture makeWhiteTexture()
 {
     auto descriptor = GPU::TextureDescriptor {};
@@ -95,10 +87,8 @@ GPU::Texture makeWhiteTexture()
 
     return GPU::Device::shared().makeTexture(descriptor, whitePixel);
 }
-// The shader divides by the logical size, and a view is briefly zero-sized
-// before its first layout - so a renderer built straight from those bounds
-// would emit NaNs rather than simply drawing nothing. One logical unit is the
-// harmless stand-in.
+// The shader divides by the logical size, and a view is zero-sized before its
+// first layout, so one logical unit stands in to avoid NaNs.
 Point usableSize(Point size)
 {
     return {size.x > 0.0f ? size.x : 1.0f, size.y > 0.0f ? size.y : 1.0f};
@@ -137,18 +127,13 @@ Nv12Shader& SpriteRenderer::nv12ProgramFor(GPU::TextureSampling sampling)
 
 SpriteRenderer::~SpriteRenderer()
 {
-    // Only reachable by destroying a renderer mid-pass, which is already
-    // against the rules (its pipelines have to outlive the command list). Leave
-    // anyway, so that breaking one rule does not also leave the pass holding a
-    // pointer to freed memory.
+    // Destroying a renderer mid-pass is already against the rules, but leave
+    // anyway so the pass is not left holding a pointer to freed memory.
     detach();
 }
 
 void SpriteRenderer::begin(GPU::RenderPass& passToUse)
 {
-    // A renderer only reaches here still in a pass if it was begun twice
-    // without that pass ending. Leave the old one properly - draining it is its
-    // own business, and it is still alive to be left.
     detach();
 
     instances.clear();
@@ -156,8 +141,6 @@ void SpriteRenderer::begin(GPU::RenderPass& passToUse)
 
     pass = &passToUse;
 
-    // What makes end() optional: the pass now knows to come back here before it
-    // closes the encoder.
     passToUse.addParticipant(*this);
 }
 
@@ -171,8 +154,8 @@ void SpriteRenderer::flushInto(GPU::RenderPass&)
 {
     flush();
 
-    // Not detach(): the pass is walking its participant list right now, and it
-    // drops every one of them itself once the walk is over.
+    // Not detach(): the pass is walking its participant list and drops every
+    // one of them itself once the walk is over.
     pass = nullptr;
 }
 
@@ -193,7 +176,7 @@ void SpriteRenderer::setLogicalSize(Point size)
         return;
 
     // The queued quads were issued in the old space, so they have to be drawn
-    // in it - the mapping to clip space is what is changing.
+    // in it.
     flush();
     logicalSize = usable;
 }
@@ -248,9 +231,6 @@ void SpriteRenderer::addQuad(const GPU::Texture& texture,
                              const Color& tint,
                              GPU::TextureSampling sampling)
 {
-    // A quad joins the open run when it samples the same texture the same way;
-    // anything else has to be a draw of its own, and the run so far goes first
-    // so that the two keep the order they were issued in.
     const auto joinsRun =
         batchTexture == &texture
         && GPU::samplingIndex(batchSampling) == GPU::samplingIndex(sampling);
@@ -343,9 +323,8 @@ void SpriteRenderer::drawNv12Quad(const GPU::Texture& luma,
                                   const Color& tint,
                                   GPU::TextureSampling sampling)
 {
-    // A video quad is its own draw, so whatever was queued before it has to
-    // reach the pass first or it would end up on top of the video instead of
-    // under it.
+    // A video quad is its own draw, so anything queued before it must reach
+    // the pass first to stay underneath.
     flush();
 
     if (pass == nullptr)
@@ -388,8 +367,7 @@ void SpriteRenderer::drawRect(const Rect& rect, const Color& color, float thickn
 {
     const auto t = thickness;
 
-    // Top and bottom span the full width; the sides fit between them so corners
-    // are not drawn twice (which would double-blend a translucent outline).
+    // Sides fit between top and bottom so corners are not double-blended.
     fillRect({rect.x, rect.y, rect.w, t}, color);
     fillRect({rect.x, rect.y + rect.h - t, rect.w, t}, color);
     fillRect({rect.x, rect.y + t, t, rect.h - 2.0f * t}, color);
@@ -406,8 +384,7 @@ void SpriteRenderer::drawLine(Point a, Point b, const Color& color, float thickn
 
     const auto half = thickness * 0.5f;
 
-    // The segment normal, scaled to the half thickness: offsets each endpoint to
-    // the two long edges of the quad.
+    // Segment normal scaled to the half thickness.
     const auto nx = -delta.y / length * half;
     const auto ny = delta.x / length * half;
 

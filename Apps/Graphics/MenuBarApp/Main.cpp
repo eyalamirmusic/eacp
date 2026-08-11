@@ -5,18 +5,6 @@
 using namespace eacp;
 using namespace Graphics;
 
-// Menu items that grey themselves out from live application state.
-//
-// The point of the example is what you cannot see in a screenshot: nothing here
-// rebuilds the menu bar. It is installed once, at startup, and every item that
-// carries an `isEnabled` predicate is asked afresh each time the menu opens. So
-// open the Demo menu, close it, change the state with the window's keys, and
-// open it again — the greying follows without the app touching the bar.
-//
-// Without that, an app has two bad options: rebuild the whole bar on every
-// state change (AppKit may be tracking it at the time), or let items advertise
-// commands that quietly do nothing.
-
 struct StateContent final : UI::Component
 {
     StateContent()
@@ -27,8 +15,6 @@ struct StateContent final : UI::Component
         for (auto* line: {&documentLine, &counterLine, &hintLine})
             line->setColour({0.68f, 0.68f, 0.74f, 1.f});
 
-        // The window's keys are this component's, so it says it wants them.
-        // Nothing else in the tree does, which is why nothing else has to.
         setWantsKeyboardFocus(true);
         setInterceptsMouseClicks(true);
 
@@ -37,9 +23,6 @@ struct StateContent final : UI::Component
         refresh();
     }
 
-    // Space toggles the document open, Up/Down move the counter — the two bits
-    // of state the Demo menu reads. Anything else is returned unconsumed, so the
-    // keys this window does not use are still the window's.
     bool keyDown(const UI::KeyEvent& event) override
     {
         if (event.keyCode == UI::KeyCode::Space)
@@ -109,6 +92,8 @@ struct MenuBarApp
         installMenuBar();
     }
 
+    // Installed once: an item's isEnabled predicate is asked afresh each time
+    // the menu opens, so nothing here ever rebuilds the bar.
     void installMenuBar()
     {
         auto demo = Menu {"Demo"};
@@ -118,8 +103,6 @@ struct MenuBarApp
 
         demo.addSeparator();
 
-        // The two items worth watching. Neither is ever rebuilt; both follow
-        // the state the window prints.
         demo.add(MenuItem::withAction(
             "Close Document",
             [this] { toggleDocument(); },
@@ -134,8 +117,6 @@ struct MenuBarApp
 
         demo.addSeparator();
 
-        // Says nothing about availability, so it is always available — the case
-        // every item was in before enablement existed.
         demo.add(MenuItem::withAction(
             "Increment Counter", [this] { incrementCounter(); }, commandKey("i")));
 

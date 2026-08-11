@@ -7,11 +7,8 @@
 
 namespace eacp
 {
-// RAII handle for reading a file off disk in bounded chunks, without
-// loading the whole thing into memory.
-//
-// Non-copyable (it owns an open stream); move it or hold it behind a
-// shared_ptr when a reader closure must outlive the call that made it.
+// RAII handle for reading a file in bounded chunks. Non-copyable because it
+// owns an open stream; move it, or hold it behind a shared_ptr.
 class File
 {
 public:
@@ -22,33 +19,25 @@ public:
     bool exists() const;
     bool isRegularFile() const;
 
-    // True if this file's path resolves inside `root` (no escape via "..",
-    // symlinks, etc.). Use it to sandbox files served to untrusted callers.
+    // True if the path resolves inside `root`, with no escape via ".." or a
+    // symlink. Use it to sandbox files served to untrusted callers.
     bool isUnder(const FilePath& root) const;
 
     // Size in bytes, or 0 if the file is missing or not a regular file.
     std::uint64_t size() const;
 
-    // Last-modified time, for noticing that a file changed underneath you.
-    // Comparison is the only meaningful operation: std::filesystem's clock has
-    // an unspecified epoch, so this is not a wall-clock time and is not
-    // comparable across runs or machines. 0 when the file is missing.
-    //
-    // Pair it with size(). Filesystem timestamp granularity varies — a second
-    // on some ext4 configurations — so an edit-save-edit-save cycle can produce
-    // two writes that share a stamp, and the size usually differs when they do.
+    // Comparable only against itself: std::filesystem's clock has an
+    // unspecified epoch, so this is not a wall-clock time. 0 when missing. Pair
+    // it with size(), since two quick writes can share a timestamp.
     std::int64_t modificationTime() const;
 
-    // Opens the file for binary reading. Returns false if it can't be
-    // opened. A no-op once already open.
+    // False if it can't be opened. A no-op once already open.
     bool openForRead();
 
     bool isOpen() const;
 
-    // Reads up to `out.size()` bytes starting at byte `offset`, returning the
-    // number actually read (0 at end of file). Opens the file on first use,
-    // and only seeks when `offset` differs from the current position, so
-    // sequential reads stay cheap.
+    // Returns the number of bytes actually read, 0 at end of file. Opens on
+    // first use, and only seeks when `offset` differs from the current position.
     std::size_t read(std::uint64_t offset, std::span<std::uint8_t> out);
 
 private:

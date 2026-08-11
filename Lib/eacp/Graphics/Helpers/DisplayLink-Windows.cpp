@@ -11,9 +11,8 @@ namespace eacp::Threads
 {
 namespace
 {
-// Shared between the vblank thread, ticks already queued on the main thread
-// and the link itself, so a tick still in the event queue when the link is
-// destroyed fizzles instead of touching a dead callback.
+// Shared with the vblank thread and queued ticks, so a tick outliving the link
+// fizzles instead of touching a dead callback.
 struct TickState
 {
     explicit TickState(const Callback& cbToUse)
@@ -26,10 +25,8 @@ struct TickState
     std::atomic<bool> pending {false};
 };
 
-// DCompositionWaitForCompositorClock ships in dcomp.dll on Windows 10 1803+,
-// but dcomp.h only declares it when targeting the Windows 11 (Cobalt) SDK
-// level, so we resolve it dynamically to keep building — and running — on
-// Windows 10 without it.
+// dcomp.h only declares this at the Windows 11 SDK level, so resolve it
+// dynamically to keep building and running on Windows 10.
 using WaitForCompositorClockFn = DWORD(WINAPI*)(UINT, const HANDLE*, DWORD);
 
 WaitForCompositorClockFn loadCompositorClock(HMODULE dcomp)
@@ -42,11 +39,9 @@ WaitForCompositorClockFn loadCompositorClock(HMODULE dcomp)
 }
 } // namespace
 
-// Waits for the DWM compositor clock on a dedicated thread and posts each
-// tick to the main thread, lining callbacks up with the vsync that
-// composition swapchains present against. Ticks coalesce: while one is still
-// queued behind a busy main thread, further vblanks are skipped rather than
-// piling up.
+// Waits for the DWM compositor clock on a dedicated thread and posts ticks to
+// the main thread. Ticks coalesce rather than piling up behind a busy main
+// thread.
 struct DisplayLink::Native
 {
     explicit Native(const Callback& cb)
@@ -81,8 +76,7 @@ struct DisplayLink::Native
             postTick();
     }
 
-    // Blocks until the next vblank, returning false once the stop event is
-    // signalled so the loop ends.
+    // Blocks until the next vblank; false once the stop event is signalled.
     bool waitForNextTick() const
     {
         if (waitForClock != nullptr)
@@ -96,8 +90,7 @@ struct DisplayLink::Native
                 return true;
         }
 
-        // No compositor clock (older Windows 10, or none in this session):
-        // degrade to a fixed ~60 Hz cadence, still honouring the stop event.
+        // No compositor clock: degrade to a fixed ~60 Hz cadence.
         return WaitForSingleObject(stopEvent, 16) == WAIT_TIMEOUT;
     }
 

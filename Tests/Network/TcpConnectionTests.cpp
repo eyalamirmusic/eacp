@@ -22,8 +22,8 @@ Connection dial(const Listener& listener)
     return Connection::connect({"127.0.0.1", listener.port()}, testTimeouts());
 }
 
-// Reads everything the peer sends until it closes - the clean way to prove a
-// graceful close surfaces as an empty receive().
+// Reads everything until the peer closes, proving a graceful close surfaces as
+// an empty receive().
 std::string drain(Connection& connection)
 {
     auto all = std::string {};
@@ -156,7 +156,6 @@ auto tPeerCloseThrows = test("Tcp/receiveThrowsWhenPeerClosesBeforeDelimiter") =
 {
     auto listener = Listener::bind(0, testTimeouts());
 
-    // Server accepts and immediately drops the connection.
     auto server = std::thread([&] { auto peer = listener.accept(); });
 
     auto client = dial(listener);
@@ -448,22 +447,18 @@ auto tServerSideLargeUpload = test("Tcp/serverReassemblesALargeUpload") = []
     check(received == big);
 };
 
-// ---- hostile / adversarial cases ----------------------------------------
-
 auto tSendToHungUpPeer = test("Tcp/sendToAHungUpPeerThrowsRatherThanCrashing") = []
 {
     auto listener = Listener::bind(0, testTimeouts());
 
-    // Server accepts and drops the connection straight away.
     auto server = std::thread([&] { auto peer = listener.accept(); });
 
     auto client = dial(listener);
     server.join();
     eacp::Time::sleepMS(50); // let the reset reach us
 
-    // Writing to a peer that has gone away must surface as an Error, not a
-    // SIGPIPE that takes the whole process down. Keep pushing until the OS
-    // notices the broken pipe.
+    // A peer that has gone away must surface as an Error, not a SIGPIPE that
+    // takes the whole process down.
     auto threw = false;
     try
     {
@@ -529,7 +524,6 @@ auto tIdleReceiveTimesOut =
 {
     auto listener = Listener::bind(0, testTimeouts());
 
-    // Server holds the connection open but sends nothing.
     auto server = std::thread(
         [&]
         {

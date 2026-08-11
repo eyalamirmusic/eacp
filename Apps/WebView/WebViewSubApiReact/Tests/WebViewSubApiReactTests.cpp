@@ -4,35 +4,9 @@
 
 #include <string>
 
-// Covers the intersection WebViewSubApi and WebViewTodo each cover one half
-// of: a page that must call configureBridge({prefix}) because its api is
-// mounted as a sub-API, AND whose subscriptions come from the generated React
-// hooks module rather than from hand-written backend.on calls.
-//
-// The two store factories in EacpReact.ts.template (makeBridgeStore,
-// makeKeyedStore) run their initial fetch and their backend.on() in the
-// FACTORY BODY. The generated hooks module calls those factories at module
-// scope, and ES imports are hoisted — so App.tsx's import of that module is
-// fully evaluated before the first statement of main.tsx's body, which is
-// where configureBridge is. The prefix is read at call time, and that call
-// time is module evaluation: the store subscribes to 'counter' rather than
-// 'nested.counter' and fetches 'getCounter' rather than 'nested.getCounter'.
-//
-// Neither miss reports anything. The fetch rejects into makeBridgeStore's own
-// console.error, and the subscription simply never fires — there is no effect
-// to re-run once the prefix arrives, so the value stays at the hook's
-// generated initial.
-//
-// The third test is the control: `pulse` has no matching getter, so codegen
-// picks makeNativeEvent, which subscribes inside a useEffect and therefore
-// lands after render. Same page, same prefix, same generated client — it
-// works. That is what pins the first two failures to WHEN the subscription is
-// made rather than to prefixing being broken in general.
-//
-// A page can work around this by moving configureBridge into a module of its
-// own and importing it ahead of anything that reaches the bridge, but that
-// makes correctness depend on import order in every app that mounts a sub-API
-// — which is the thing under test here.
+// A sub-API page whose subscriptions come from the generated React hooks
+// module: the store factories in EacpReact.ts.template fetch and subscribe at
+// module scope, i.e. before main.tsx gets to call configureBridge({prefix}).
 
 using namespace eacp::WebView::Test;
 
@@ -75,17 +49,14 @@ AppDriver& driver()
 }
 } // namespace
 
-// The fetch path. makeBridgeStore fetches once at module load, and the api
-// seeds its counter away from Counter{} — so the seeded value rendering is
-// proof the fetch resolved the prefix, and the hook's generated initial (0)
-// rendering instead is proof it did not.
+// The seeded value rendering proves the module-load fetch resolved the prefix;
+// the hook's generated initial (0) would mean it did not.
 auto tStoreFetchUsesConfiguredPrefix =
     test("SubApiReact/storeInitialFetchUsesConfiguredPrefix") = []
 { check(driver().waitFor(counterShowing(Api::CounterApi::seededCounter))); };
 
-// The subscribe path, driven from C++ so it does not depend on the fetch
-// having worked: the store subscribed to 'counter', which must have
-// registered as "nested.counter" or this event never reaches the page.
+// The store subscribed to 'counter', which must have registered as
+// "nested.counter" or this event never reaches the page.
 auto tStoreSubscriptionReceivesPrefixedEvent =
     test("SubApiReact/storeSubscriptionReceivesPrefixedEvent") = []
 {
@@ -94,9 +65,8 @@ auto tStoreSubscriptionReceivesPrefixedEvent =
     check(driver().waitFor(counterShowing(7)));
 };
 
-// The control. Identical wire arrangement, identical prefix, but this hook
-// subscribes from a useEffect — so it is already correct today, and stays
-// correct after the store factories are fixed.
+// The control: same wire arrangement, but this hook subscribes from a
+// useEffect, i.e. after configureBridge has run.
 auto tEffectSubscriptionReceivesPrefixedEvent =
     test("SubApiReact/effectSubscriptionReceivesPrefixedEvent") = []
 {

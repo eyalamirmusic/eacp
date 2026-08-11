@@ -2,30 +2,14 @@
 
 using namespace eacp;
 
-// Stroking through the coverage kernel, next to the platform's own stroker.
-//
-//   left    strokeToFill + PathRasterizer - the stroke turned into a fill and
-//           rasterized single-sampled, so nothing but the arithmetic is
-//           smoothing those edges
-//   middle  Graphics::Context::strokePath - CoreGraphics here, Direct2D on
-//           Windows, the standard to beat
-//   right   the joins and caps, which the middle panel cannot draw: the
-//           platform Context takes a line width and nothing else, so there is
-//           no honest way to put them side by side
-//
-// The two compared panels stroke identical geometry with a miter join and a
-// butt cap, which is what the platform does when it is not told otherwise.
-
 namespace
 {
 constexpr auto background = Graphics::Color::gray(0.09f);
 constexpr auto ink = Graphics::Color {0.98f, 0.72f, 0.24f};
 constexpr auto headerHeight = 34.f;
 constexpr auto strokeWidth = 9.f;
+constexpr auto miterLimit = 4.f;
 
-// Sharp corners, a smooth curve, and a closed contour - between them every case
-// a join has to handle, and the curve is where a stroker that leaves gaps
-// between its segment quads gives itself away as a row of spokes.
 template <typename PathType>
 PathType comparedShapes(const Graphics::Rect& panel)
 {
@@ -73,9 +57,7 @@ Graphics::WindowOptions windowOptions()
 }
 } // namespace
 
-// Rasterizes whatever path it is given and paints the mask. Single-sampled on
-// purpose: MSAA here would be smoothing the quad's own axis-aligned edges while
-// taking credit for the mask's.
+// Single-sampled: MSAA would smooth the quad's own edges, not the mask's.
 struct StrokePanel final : GPU::GPUView
 {
     StrokePanel()
@@ -126,7 +108,6 @@ struct StrokePanel final : GPU::GPUView
         rasterizer.setPath(build(bounds));
     }
 
-    // Set by the owner: what this panel strokes.
     std::function<GPUWidgets::Path(const Graphics::Rect&)> build =
         [](const Graphics::Rect&) { return GPUWidgets::Path {}; };
 
@@ -137,8 +118,6 @@ struct StrokePanel final : GPU::GPUView
     float builtScale = 0.f;
 };
 
-// The platform's panel, stroking the same geometry through the same Context
-// every non-GPU eacp view draws with.
 struct PlatformPanel final : Graphics::View
 {
     void paint(Graphics::Context& g) override
@@ -173,9 +152,7 @@ struct PathStrokeRoot final : Graphics::View
         addChildren({coverage, platform, variants});
     }
 
-    // Every join against every cap, on a chevron of about fifty degrees - open
-    // enough that a miter is still inside the limit, so the three joins come out
-    // as three plainly different corners rather than as three bevels.
+    // Chevron angle kept inside the miter limit, so no join degrades to a bevel.
     static GPUWidgets::Path sampler(const Graphics::Rect& panel)
     {
         const GPUWidgets::LineJoin joins[] = {GPUWidgets::LineJoin::Miter,
@@ -203,7 +180,7 @@ struct PathStrokeRoot final : Graphics::View
             arrow.lineTo({left, top + rowHeight * 0.70f});
 
             auto stroked = GPUWidgets::strokeToFill(
-                arrow, {strokeWidth, caps[row], joins[row], 4.f});
+                arrow, {strokeWidth, caps[row], joins[row], miterLimit});
 
             for (const auto& sub: stroked.getSubPaths())
             {

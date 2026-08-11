@@ -5,12 +5,9 @@
 namespace eacp::simd::kernels
 {
 
-// Bilinear resize of a tightly-packed RGBA8 image, written once over a backend B
-// and run on every platform -- instantiating it with the Scalar backend makes it
-// the reference oracle. Half-pixel-center mapping with edge clamping (OpenCV
-// semantics); no heap allocation (the source mapping is computed inline). The
-// per-pixel blend is the shared blendTaps primitive, so all backends agree
-// bit-for-bit when the TU is compiled -ffp-contract=off.
+// Half-pixel-center mapping with edge clamping (OpenCV semantics), no heap
+// allocation. Instantiating with the Scalar backend gives the reference oracle;
+// all backends agree bit-for-bit via blendTaps.
 template <class B>
 void resizeBilinearImpl(const std::uint8_t* in,
                         int srcW,

@@ -11,9 +11,7 @@ namespace eacp::GPU
 {
 namespace
 {
-// The counter set holding GPUTimestamp. Looked up by name because counterSets
-// is a list in no promised order, and a device may carry sets this knows
-// nothing about.
+// By name: counterSets is in no promised order.
 id<MTLCounterSet> findTimestampSet(id<MTLDevice> device)
 {
     for (id<MTLCounterSet> set in device.counterSets)
@@ -31,15 +29,12 @@ struct GpuTimestamps::Native
     {
         ObjC::Ptr<NSObject<MTLCounterSampleBuffer>> samples;
 
-        // Retained so the slot can be asked whether the GPU has finished with
-        // it, and so GPUStartTime/GPUEndTime survive to be read: the buffer is
-        // autoreleased, and the pool it came from drains long before a frame
-        // three frames later comes looking.
+        // Retained: the buffer is autoreleased and its pool drains long before
+        // the slot is read.
         ObjC::Ptr<NSObject<MTLCommandBuffer>> commandBuffer;
     };
 
-    // Deferred rather than done in the constructor, because this is built by
-    // Device and Device::shared() has not returned yet when that runs.
+    // Deferred: Device builds this, and Device::shared() has not returned yet.
     void ensureCreated()
     {
         if (tried)
@@ -52,9 +47,8 @@ struct GpuTimestamps::Native
         if (metal == nil)
             return;
 
-        // Stage boundary is the only sampling point Apple silicon offers - not
-        // draw, blit, dispatch or tile dispatch - which is the whole reason
-        // timing here is per pass rather than a mark anywhere in the frame.
+        // Stage boundary is Apple silicon's only sampling point, which is why
+        // timing is per pass rather than at any mark in the frame.
         if (![metal supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary])
             return;
 
@@ -85,19 +79,9 @@ struct GpuTimestamps::Native
         supported = true;
     }
 
-    // GPU ticks to milliseconds.
-    //
-    // sampleTimestamps hands back a simultaneous pair of readings, and both
-    // sides of it are nanoseconds - not mach_absolute_time ticks, which on
-    // Apple silicon are 41.667ns each and would put every duration out by that
-    // factor. The pair is what says what a GPU tick is worth: one pair gives an
-    // offset, two give the rate, so this keeps the first from startup and takes
-    // another now. By the time anything reads a timing the baseline is seconds
-    // long.
-    //
-    // On Apple silicon the two are the same clock and the ratio comes out at 1.
-    // Deriving it anyway costs one call and is what makes this right on a
-    // machine where they are not.
+    // Both sides of sampleTimestamps' pair are nanoseconds, not
+    // mach_absolute_time ticks. Two pairs give the CPU/GPU rate: one kept from
+    // startup, one taken now. The ratio is 1 on Apple silicon.
     double ticksToMilliseconds() const
     {
         auto metal = (__bridge id<MTLDevice>) Device::shared().nativeDevice();
@@ -112,8 +96,7 @@ struct GpuTimestamps::Native
         const auto cpuElapsed = (double) (cpu - firstCpu);
         const auto gpuElapsed = (double) (gpu - firstGpu);
 
-        // Under a millisecond of baseline the ratio is mostly the cost of the
-        // two calls, so take the clocks as one until there is enough of it.
+        // Under a millisecond of baseline the ratio is mostly call overhead.
         const auto scale = gpuElapsed > 0.0 && cpuElapsed > 1e6
                                ? cpuElapsed / gpuElapsed
                                : 1.0;
@@ -142,19 +125,14 @@ void GpuTimestamps::beginSlot(int slot)
 {
     impl->ensureCreated();
 
-    // Unconditional, like endSlot's retain: a device with no counters still
-    // times whole frames, so its slots still hold a command buffer.
-    //
-    // The previous frame's goes now rather than at the next endSlot: it is the
-    // only thing the slot holds that is worth anything, and holding it is
-    // holding that frame's drawable pool entry too.
+    // Released here rather than at the next endSlot: holding the command buffer
+    // holds that frame's drawable pool entry too.
     impl->slots[slot].commandBuffer.release();
 }
 
 void GpuTimestamps::beginRecording(int, void*)
 {
-    // Nothing to record. A Metal command buffer times itself, and the whole
-    // frame's total comes off GPUStartTime/GPUEndTime once it has run.
+    // A Metal command buffer times itself, via GPUStartTime/GPUEndTime.
 }
 
 void* GpuTimestamps::nativeSamples(int slot) const
@@ -165,9 +143,7 @@ void* GpuTimestamps::nativeSamples(int slot) const
     return (__bridge void*) impl->slots[slot].samples.get();
 }
 
-// The command buffer is retained whether or not the counters exist, because it
-// is what carries the frame's own GPU time - and because a slot the timer is
-// waiting on cannot be answered without one.
+// Retained whether or not counters exist: it carries the frame's own GPU time.
 bool GpuTimestamps::endSlot(int slot, int, void* nativeCommandBuffer)
 {
     impl->slots[slot].commandBuffer.reset(
@@ -190,9 +166,8 @@ bool GpuTimestamps::isSlotComplete(int slot) const
 
     const auto status = buffer.status;
 
-    // Error counts as finished: the frame failed, its timestamps are whatever
-    // they are, and a slot left pending forever would stop every later frame
-    // from being timed at all.
+    // Error counts as finished, or the slot stays pending forever and stops
+    // every later frame from being timed.
     return status == MTLCommandBufferStatusCompleted
            || status == MTLCommandBufferStatusError;
 }
@@ -221,9 +196,8 @@ double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
                 const auto start = results[pass * 2].timestamp;
                 const auto end = results[pass * 2 + 1].timestamp;
 
-                // A sample the GPU never wrote comes back as the error value,
-                // and a pass whose stages were dropped can leave end before
-                // start. Both mean "no number", not a negative duration.
+                // An unwritten sample reads as the error value, and dropped
+                // stages can leave end before start. Both mean "no number".
                 const auto missing = start == MTLCounterErrorValue
                                      || end == MTLCounterErrorValue || end < start;
 
@@ -232,8 +206,7 @@ double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
         }
     }
 
-    // The frame's own total, which needs no counters at all - and so is the one
-    // number that still works on a device that cannot sample them.
+    // Needs no counters, so it still works where sampling is unsupported.
     const auto elapsed = buffer.GPUEndTime - buffer.GPUStartTime;
 
     return elapsed > 0.0 ? elapsed * 1000.0 : 0.0;

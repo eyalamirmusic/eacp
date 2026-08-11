@@ -4,11 +4,7 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
-// Texture::update re-uploads into the existing resource — the per-frame path for
-// video and camera streams. Checks the texture stays valid and sized through a
-// tightly packed update, a padded-stride update and a null no-op. Pixel content
-// is not read back (no texture readback exists), matching the validity-and-size
-// fidelity of the other texture tests. Self-skips without a GPU device.
+// No texture readback exists, so only validity and size can be checked.
 auto tTextureUpdates = test("GPU/textureUpdates") = []
 {
     auto& device = Device::shared();
@@ -31,16 +27,14 @@ auto tTextureUpdates = test("GPU/textureUpdates") = []
     check(texture.width() == 2);
     check(texture.height() == 2);
 
-    // A source whose rows are wider than width * 4: two pixels then two padding
-    // bytes per row, exercising the bytesPerRow stride path.
+    // Rows deliberately padded past width * 4 to exercise the bytesPerRow stride.
     const std::uint8_t padded[] = {
-        0,   0, 0, 255, 255, 255, 255, 255, 0xAB, 0xCD, // row 0: 2 px + 2 pad
-        255, 0, 0, 255, 0,   255, 0,   255, 0xAB, 0xCD, // row 1: 2 px + 2 pad
+        0,   0, 0, 255, 255, 255, 255, 255, 0xAB, 0xCD,
+        255, 0, 0, 255, 0,   255, 0,   255, 0xAB, 0xCD,
     };
     texture.update(padded, 10);
     check(texture.isValid());
 
-    // A null update is a safe no-op.
     texture.update(nullptr);
     check(texture.isValid());
 };

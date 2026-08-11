@@ -11,8 +11,7 @@ namespace eacp::UI
 namespace
 {
 // How far past its box a shape's quad reaches, in points, so the coverage ramp
-// has somewhere to land. One point is enough at any scale: the ramp itself is a
-// device pixel wide, and a point is never smaller than one.
+// has somewhere to land. A point is never smaller than a device pixel.
 constexpr auto antialiasMargin = 1.f;
 
 constexpr ShapeVertex shapeUnitQuad[] = {
@@ -39,15 +38,12 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
 {
     Program()
     {
-        // Nearest, because a mask is drawn at exactly the size it was
-        // rasterized: one texel lands on one device pixel, and filtering a 1:1
-        // mapping can only blur coverage that is already exact.
+        // Nearest: a mask is drawn at the size it was rasterized, one texel to
+        // one device pixel.
         maskAtlas.sampling = {GPU::TextureFilter::Nearest,
                               GPU::TextureAddressMode::Clamp};
 
-        // Linear, because a ramp is the opposite case: 256 texels stretched
-        // across whatever the shape is, so the filtering is what stops a
-        // gradient reading as the 256 bands it is stored as.
+        // Linear: a ramp is 256 texels stretched across the shape.
         gradientRamps.sampling = {GPU::TextureFilter::Linear,
                                   GPU::TextureAddressMode::Clamp};
         compile();
@@ -73,62 +69,48 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
         auto clipY = 1.f - position.y() / screenSize.y() * 2.f;
         setPosition(float4(clipX, clipY, 0.f, 1.f));
 
-        // Where this fragment sits inside the box, in points, measured from its
-        // centre. The quad spans the grown extent, so this runs past halfSize by
-        // the margin -- which is exactly the band the ramp needs.
+        // Where this fragment sits inside the box, in points from its centre.
+        // Runs past halfSize by the margin, which is the band the ramp needs.
         auto local = varying((corner - 0.5f) * (halfExtent * 2.f));
 
         auto fragHalfSize = varying(halfSize);
         auto fragColor = varying(color);
         auto fragShape = varying(shape);
 
-        // Where this fragment is in the space the gradient was placed in, which
-        // is the same space the box is expressed in.
+        // The space the gradient was placed in, which the box is also in.
         auto fragPosition = varying(position);
         auto fragGradient = varying(gradient);
         auto fragGradientRamp = varying(gradientRamp);
 
-        // Where in the atlas this fragment reads. A zero-sized rect collapses
-        // to one texel however big the quad is, which is what an unmasked shape
-        // is given.
+        // A zero-sized rect collapses to one texel, which is what an unmasked
+        // shape is given.
         auto maskUV = varying(mask.xy() + corner * mask.zw());
 
         auto radius = fragShape.x();
         auto borderWidth = fragShape.y();
 
         // The rounded-box field: distance to the box shrunk by the radius, then
-        // let back out by it. Negative inside, positive outside, and correct in
-        // both -- which is what lets the same number serve the fill and the ring.
+        // let back out by it. Negative inside, positive outside.
         auto q = abs(local) - (fragHalfSize - float2(radius, radius));
         auto outside = length(max(0.f, q));
         auto inside = min(0.f, max(q.x(), q.y()));
         auto distance = outside + inside - radius;
 
-        // The same field read as a ring, for a border: distance from the band
-        // that sits just inside the edge.
+        // The same field read as a ring, for a border.
         auto halfBorder = borderWidth * 0.5f;
         auto ring = abs(distance + halfBorder) - halfBorder;
 
-        // Selected rather than branched, because a border and a fill differ only
-        // in which distance is measured -- and carrying both is cheaper than two
-        // pipelines and the batch break between them.
+        // Selected rather than branched: two pipelines cost a batch break.
         auto shapeDistance = mix(distance, ring, fragShape.z());
 
-        // Half a device pixel each side of the edge, which is the widest ramp
-        // that still reads as a hard edge rather than a blur.
+        // Half a device pixel each side of the edge.
         auto fieldCoverage = clamp(0.5f - shapeDistance * pixelScale, 0.f, 1.f);
 
-        // Every shape pays this fetch, and that is the deliberate trade: a
-        // rectangle reads the one opaque texel -- in cache for the whole frame,
-        // and multiplying by one -- so that a path and the rectangles around it
-        // share a pipeline and go out in the same instanced draw. Branching to
-        // skip it would buy back a cached read and cost a batch break.
+        // Every shape pays this fetch, an unmasked one reading the opaque texel,
+        // so paths and rectangles share a pipeline.
         auto coverage = fieldCoverage * sample(maskAtlas, maskUV).x();
 
-        // And the clip's, out of the same texture: a clipped shape is its own
-        // coverage times the region's, which is one more fetch rather than a
-        // stencil or a pass of its own. Unclipped, it reads the opaque texel
-        // and multiplies by one -- see ClipShader.
+        // And the clip's, out of the same texture.
         coverage =
             coverage * clipCoverage(fragPosition, clipRegion, clipMask, maskAtlas);
 
@@ -169,14 +151,9 @@ ShapeBatch::ShapeBatch(const CoverageAtlas& atlasToUse,
     program.create();
     program->setVertices(shapeUnitQuad);
 
-    // Always blended: every edge this draws is a coverage ramp, and without
-    // blending the antialiasing would punch holes in whatever is behind it.
-    //
-    // The mode that accumulates the target's own alpha rather than weighting the
-    // source's by itself. Identical on the window, where the destination is
-    // already opaque, and the difference between a correct layer and one whose
-    // every antialiased edge composites too faintly -- see Layer, which renders
-    // this same batch into a transparent texture.
+    // Always blended, every edge being a coverage ramp. The mode accumulates the
+    // target's alpha, which is identical on an opaque window and is what keeps
+    // edges rendered into a Layer's transparent texture correct.
     program->prepare(sampleCount,
                      false,
                      GPU::PrimitiveTopology::Triangles,
@@ -266,8 +243,7 @@ void ShapeBatch::flush()
     if (instances.empty() || pass == nullptr)
         return;
 
-    // The rows baked while this run was being queued, uploaded before the draw
-    // that reads them. A row is written once and never rewritten, so this cannot
+    // Rows are written once and never rewritten, so uploading mid-pass cannot
     // disturb a draw already recorded.
     ramps.commit();
 
@@ -300,8 +276,7 @@ void ShapeBatch::addShape(Point origin,
     if (halfSize.x <= 0.f || halfSize.y <= 0.f || color.a <= 0.f)
         return;
 
-    // A radius past half the shorter side is not a rounder corner, it is a
-    // different shape -- and the field would fold through itself drawing it.
+    // Past half the shorter side the field would fold through itself.
     auto radius = std::clamp(cornerRadius, 0.f, std::min(halfSize.x, halfSize.y));
 
     auto instance = ShapeInstance {};
@@ -327,8 +302,7 @@ void ShapeBatch::addShape(Point origin,
     instance.shape[1] = std::max(0.f, borderWidth);
     instance.shape[2] = borderWidth > 0.f ? 1.f : 0.f;
 
-    // Nothing masks a distance-field shape, so it reads the atlas's opaque
-    // texel and its own coverage survives untouched.
+    // Nothing masks a distance-field shape, so it multiplies by one.
     setMask(instance, atlas.getOpaqueUV());
     setGradient(instance, gradient);
 
@@ -359,8 +333,7 @@ void ShapeBatch::fillMask(const Rect& rect,
 
     auto instance = ShapeInstance {};
 
-    // The quad is the mask's own footprint exactly - no margin, since the soft
-    // edge is already in the coverage rather than something the field adds.
+    // The mask's own footprint exactly: the soft edge is already in the coverage.
     instance.origin[0] = rect.x;
     instance.origin[1] = rect.y;
     instance.edgeX[0] = rect.w;
@@ -371,10 +344,8 @@ void ShapeBatch::fillMask(const Rect& rect,
     instance.halfExtent[0] = rect.w * 0.5f;
     instance.halfExtent[1] = rect.h * 0.5f;
 
-    // A field box larger than the quad by the ramp's own width, so every
-    // fragment lands well inside it and the distance term multiplies by one.
-    // The mask is then the only thing deciding coverage, which is what a path
-    // rasterized to the exact fraction of each pixel it covers needs.
+    // A field box larger than the quad, so every fragment lands well inside it
+    // and the distance term multiplies by one, leaving the mask to decide.
     instance.halfSize[0] = instance.halfExtent[0] + antialiasMargin;
     instance.halfSize[1] = instance.halfExtent[1] + antialiasMargin;
 
@@ -426,8 +397,7 @@ void ShapeBatch::drawRect(const Rect& rect,
     if (thickness <= 0.f)
         return;
 
-    // Drawn inside the edges, so the outline of a rect never grows it. The field
-    // is measured from the rect's own boundary, so the ring lands within it.
+    // Drawn inside the edges, so an outline never grows the rect.
     addAxisAlignedShape(rect, color, cornerRadius, thickness, gradient);
 }
 
@@ -455,8 +425,6 @@ void ShapeBatch::drawLine(Point a,
     auto grownLength = length + antialiasMargin * 2.f;
     auto grownThickness = thickness + antialiasMargin * 2.f;
 
-    // The grown quad's first corner: back off from the line's midpoint by half
-    // the grown span along each of its own axes.
     auto midpoint = Point {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f};
 
     auto origin = Point {midpoint.x - along.x * grownLength * 0.5f
@@ -464,8 +432,7 @@ void ShapeBatch::drawLine(Point a,
                          midpoint.y - along.y * grownLength * 0.5f
                              - across.y * grownThickness * 0.5f};
 
-    // A radius of half the thickness rounds the ends into caps, which is what a
-    // line drawn by hand has and what a square-ended one visibly lacks.
+    // A radius of half the thickness rounds the ends into caps.
     addShape(origin,
              {along.x * grownLength, along.y * grownLength},
              {across.x * grownThickness, across.y * grownThickness},

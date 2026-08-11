@@ -6,8 +6,7 @@ using namespace eacp::GPU;
 
 namespace
 {
-// The triangle shader, authored in pure C++ via the EDSL. Mirrors the
-// TriangleGen demo so the tests cover the exact path an app takes.
+// Mirrors the TriangleGen demo, so the tests cover the path an app takes.
 GeneratedShader makeTriangleShader()
 {
     auto builder = ShaderBuilder {};
@@ -22,8 +21,7 @@ GeneratedShader makeTriangleShader()
     return builder.build();
 }
 
-// Rotates the vertex position by a per-frame uniform angle, computed in-shader
-// with sin/cos. Mirrors the RotatingTriangle demo.
+// Mirrors the RotatingTriangle demo.
 GeneratedShader makeRotatingShader()
 {
     auto builder = ShaderBuilder {};
@@ -45,7 +43,7 @@ GeneratedShader makeRotatingShader()
     return builder.build();
 }
 
-// Samples a texture at the interpolated vertex UV. Mirrors the Texture demo.
+// Mirrors the Texture demo.
 GeneratedShader makeTexturedShader()
 {
     auto builder = ShaderBuilder {};
@@ -61,7 +59,6 @@ GeneratedShader makeTexturedShader()
     return builder.build();
 }
 
-// Vertex + per-instance structs for the ShaderProgram instancing test below.
 struct ProgVertex
 {
     float position[2];
@@ -79,10 +76,8 @@ struct ProgInstanceColor
     float color[3];
 };
 
-// A struct-authored shader that pulls geometry per-vertex (slot 0) and a
-// transform + colour per-instance (slots 1 and 2), mirroring what the
-// Instancing demo does. Exercises ShaderProgram::instanceInput and the
-// multi-slot vertex layout it assembles.
+// Geometry per-vertex (slot 0) and a transform + colour per-instance (slots 1
+// and 2), mirroring the Instancing demo.
 struct InstancedProgram final : ShaderProgram
 {
     Uniform<Float> time;
@@ -106,11 +101,8 @@ struct InstancedProgram final : ShaderProgram
     }
 };
 
-// A uniform block whose members stop 4 bytes short of its 8-byte alignment -
-// the shape that bound short on Metal before the upload walk padded the total.
-// (Found by the PureDOOM port: its world shader packed 36 bytes against the
-// 40-byte struct the emitter declared, and the validation layer - on by
-// default under Xcode - aborted the first draw.)
+// Members stopping 4 bytes short of the block's 8-byte alignment. Regression:
+// this bound short on Metal, and the validation layer aborted the first draw.
 struct OffBoundaryProgram final : ShaderProgram
 {
     Uniform<Float2> scale;
@@ -136,10 +128,8 @@ bool contains(const std::string& haystack, const std::string& needle)
     return haystack.find(needle) != std::string::npos;
 }
 
-// Derives the MSL uniform-block declaration string from the runtime constant
-// that the emitter uses (RenderPass::uniformBase / ComputePass::uniformBase).
-// Bumping the constant flows into both the emitter's output and the tests'
-// expectation - one source of truth, no drift.
+// Derived from the constant the emitter uses, so bumping it cannot leave this
+// expectation behind.
 std::string uniformDecl(int base)
 {
     return "constant Uniforms& uniforms [[buffer(" + std::to_string(base) + ")]]";
@@ -157,9 +147,6 @@ int countOccurrences(const std::string& haystack, const std::string& needle)
 }
 } // namespace
 
-// The generated vertex layout is derived from the same input declarations that
-// produce the shader source, so it cannot drift from the shader. Pure logic, no
-// GPU device required.
 auto tCodegenLayout = test("GPU/codegenVertexLayout") = []
 {
     auto shader = makeTriangleShader();
@@ -176,18 +163,13 @@ auto tCodegenLayout = test("GPU/codegenVertexLayout") = []
     check(shader.source.fragmentEntry == "fragmentMain");
 };
 
-// ShaderProgram::instanceInput assembles a multi-slot vertex layout from the
-// real CPU struct offsets: slot 0 per-vertex, the instanceInput slots
-// per-instance, each with the source struct's size as its stride. The layout
-// half is pure logic; the pipeline build + instance-count wiring self-skips
-// without a GPU device (matches the compile tests here).
 auto tShaderProgramInstancedLayout = test("GPU/shaderProgramInstancedLayout") = []
 {
     auto program = InstancedProgram {};
     const auto& layout = program.vertexLayout();
 
-    // Three bound slots: one per-vertex, two per-instance, strides taken from
-    // the CPU structs (not a byte-size sum), so padded structs stay correct.
+    // Strides are taken from the CPU structs, not a byte-size sum, so a padded
+    // struct stays correct.
     check(program.isInstanced());
     check(layout.buffers.size() == 3);
     check(layout.buffers[0].stride == (int) sizeof(ProgVertex));
@@ -197,7 +179,6 @@ auto tShaderProgramInstancedLayout = test("GPU/shaderProgramInstancedLayout") = 
     check(layout.buffers[2].stride == (int) sizeof(ProgInstanceColor));
     check(layout.buffers[2].stepRate == StepRate::PerInstance);
 
-    // Every attribute routes to its slot at its real member offset.
     const auto& attrs = layout.attributes;
     check(attrs.size() == 5);
     check(attrs[0].bufferIndex == 0 && attrs[0].offset == 0);
@@ -238,10 +219,8 @@ auto tShaderProgramInstancedLayout = test("GPU/shaderProgramInstancedLayout") = 
     check(program.pipeline().isValid());
 };
 
-// The packed block ends where MSL says the struct does. Two Float2s and a
-// Float stop at 20 bytes; sizeof(Uniforms) pads to the widest member's 8-byte
-// alignment, and Metal validates the bound length against that - binding the
-// unpadded 20 aborts the first draw. Pure logic, no GPU device required.
+// Two Float2s and a Float stop at 20 bytes, but MSL pads the struct to the
+// widest member's 8-byte alignment and Metal validates the bound length.
 auto tShaderProgramPadsUniformBlock = test("GPU/shaderProgramPadsUniformBlock") = []
 {
     auto program = OffBoundaryProgram {};
@@ -249,8 +228,6 @@ auto tShaderProgramPadsUniformBlock = test("GPU/shaderProgramPadsUniformBlock") 
     check(program.uniformByteSize() == 24);
 };
 
-// One IR emits both backends; assert each carries its backend-specific binding
-// syntax. Pure string generation, runs on any host.
 auto tCodegenEmitsBothBackends = test("GPU/codegenEmitsBothBackends") = []
 {
     auto builder = ShaderBuilder {};
@@ -275,9 +252,6 @@ auto tCodegenEmitsBothBackends = test("GPU/codegenEmitsBothBackends") = []
     check(contains(hlsl, "SV_Target"));
 };
 
-// Feeds the generated source through the real platform shader compiler and
-// builds a pipeline from the generated layout. Self-skips on hosts without a GPU
-// device (matches GPUSmokeTests).
 auto tCodegenCompiles = test("GPU/codegenCompiles") = []
 {
     auto& device = Device::shared();
@@ -298,9 +272,6 @@ auto tCodegenCompiles = test("GPU/codegenCompiles") = []
     check(pipeline.isValid());
 };
 
-// A uniform<>() declaration adds a uniform block bound per-frame, and sin/cos
-// are emitted as builtin calls. Built inline (like codegenEmitsBothBackends) so
-// both backends can be inspected headlessly. Pure string generation.
 auto tCodegenUniformEmits = test("GPU/codegenUniformEmits") = []
 {
     auto builder = ShaderBuilder {};
@@ -328,16 +299,12 @@ auto tCodegenUniformEmits = test("GPU/codegenUniformEmits") = []
     check(contains(hlsl, "cos(uniforms.u0)"));
     check(contains(hlsl, "sin(uniforms.u0)"));
 
-    // The plain triangle declares no uniforms, so no block is emitted.
     auto plain = makeTriangleShader();
     check(!contains(plain.source.source, "Uniforms"));
 };
 
-// HLSL cbuffer packing only forbids straddling a 16-byte register, while the
-// CPU block follows MSL struct alignment (a vec3 aligns to 16). A scalar
-// followed by a vector is where they disagree: HLSL would pack the float3 at
-// offset 4, the CPU writes it at 16, so the emitter must pad the cbuffer
-// struct up to the CPU offsets.
+// HLSL only forbids straddling a 16-byte register while the CPU block follows
+// MSL alignment, so a scalar before a vector is where the two disagree.
 auto tCodegenCbufferPadding = test("GPU/codegenHlslCbufferPadding") = []
 {
     auto builder = ShaderBuilder {};
@@ -350,22 +317,19 @@ auto tCodegenCbufferPadding = test("GPU/codegenHlslCbufferPadding") = []
     builder.fragment(float4(tint * brightness, 1.0f));
 
     // One pad moves the float3 to offset 8, where the no-straddle rule bumps it
-    // the rest of the way to 16; the emitter pads minimally and lets the rule
-    // finish the job.
+    // the rest of the way: the emitter pads minimally.
     auto hlsl = emitHlsl(builder.graph());
     check(contains(hlsl,
                    "    float u0;\n"
                    "    float pad0;\n"
                    "    float3 u1;\n"));
 
-    // MSL aligns the vec3 to 16 natively, so its struct needs no padding.
     auto metal = emitMetal(builder.graph());
     check(!contains(metal, "pad"));
 };
 
-// A float2 after a float packs at 4 in HLSL but at 8 on the CPU side, so it
-// pads by one scalar; vector-only blocks land identically under both rule sets
-// and stay pad-free.
+// A float2 after a float packs at 4 in HLSL but at 8 on the CPU side; a
+// vector-only block lands identically under both rule sets.
 auto tCodegenCbufferPaddingFloat2 = test("GPU/codegenHlslCbufferPaddingFloat2") = []
 {
     auto builder = ShaderBuilder {};
@@ -395,8 +359,6 @@ auto tCodegenCbufferPaddingFloat2 = test("GPU/codegenHlslCbufferPaddingFloat2") 
     check(!contains(emitHlsl(vectors.graph()), "pad"));
 };
 
-// Unary minus and float literal operands record IR nodes directly, with no
-// constant() wrapping at the call site. Pure string generation.
 auto tCodegenOperatorSugar = test("GPU/codegenOperatorSugar") = []
 {
     auto builder = ShaderBuilder {};
@@ -413,10 +375,8 @@ auto tCodegenOperatorSugar = test("GPU/codegenOperatorSugar") = []
     check(contains(metal, "(1.0 - (input.a0).x)"));
 };
 
-// A scalar handle broadcasts across a vector for all four operators, on either
-// side, the way MSL and HLSL broadcast a scalar themselves. Only * and / had it
-// before, so `uv + time` - one of the most ordinary lines a shader can hold -
-// did not compile while `uv * time` did.
+// Regression: only * and / broadcast a scalar handle, so `uv + time` did not
+// compile while `uv * time` did.
 auto tCodegenScalarBroadcast = test("GPU/codegenScalarHandleBroadcast") = []
 {
     auto builder = ShaderBuilder {};
@@ -446,8 +406,8 @@ auto tCodegenScalarBroadcast = test("GPU/codegenScalarHandleBroadcast") = []
     check(library.isValid());
 };
 
-// Negating a negative constant emits nested parentheses, not a pre-decrement:
-// rotateX(-72 degrees) bakes sin() as a negative literal and then negates it.
+// rotateX(-72 degrees) bakes sin() as a negative literal and then negates it,
+// which must not emit a pre-decrement.
 auto tCodegenNegatedNegative = test("GPU/codegenNegatedNegativeConstant") = []
 {
     auto builder = ShaderBuilder {};
@@ -463,10 +423,8 @@ auto tCodegenNegatedNegative = test("GPU/codegenNegatedNegativeConstant") = []
     check(!contains(metal, "--"));
 };
 
-// Vector constructors take any mix of handles and literals whose components
-// total the width - including the previously missing float4(vec3, scalar
-// handle) shape - and compile through the real shader compiler. Self-skips
-// the compile half without a GPU device.
+// Any mix of handles and literals whose components total the width, including
+// the previously missing float4(vec3, scalar handle) shape.
 auto tCodegenMixedConstructors = test("GPU/codegenMixedConstructors") = []
 {
     auto builder = ShaderBuilder {};
@@ -502,9 +460,8 @@ auto tCodegenMixedConstructors = test("GPU/codegenMixedConstructors") = []
     check(pipeline.isValid());
 };
 
-// An operation referenced more than once is hoisted into a named local and
-// computed once per stage, so generated source stays linear in the graph size
-// instead of re-inlining shared subtrees at every use. Leaf reads stay inline.
+// Hoisting keeps the generated source linear in the graph size instead of
+// re-inlining shared subtrees at every use. Leaf reads stay inline.
 auto tCodegenSharedSubexpressions = test("GPU/codegenSharedSubexpressions") = []
 {
     auto builder = ShaderBuilder {};
@@ -514,16 +471,14 @@ auto tCodegenSharedSubexpressions = test("GPU/codegenSharedSubexpressions") = []
     auto angle = builder.uniform<Float>();
     auto varyingColor = builder.varying(color);
 
-    // cos/sin each feed both rotated components: one local each in the vertex
-    // stage.
+    // cos/sin each feed both rotated components: one local each.
     auto c = cos(angle);
     auto s = sin(angle);
     auto px = position.x();
     auto py = position.y();
     builder.position(float4(float2(px * c - py * s, px * s + py * c), 0.0f, 1.0f));
 
-    // normalize() feeds both the colour and its scale: one local in the
-    // fragment stage.
+    // normalize() feeds both the colour and its scale: one local.
     auto unit = normalize(varyingColor);
     builder.fragment(float4(unit * length(unit), 1.0f));
 
@@ -544,8 +499,7 @@ auto tCodegenSharedSubexpressions = test("GPU/codegenSharedSubexpressions") = []
 };
 
 // Intrinsics carry the canonical MSL name and translate where HLSL spells
-// differently: fract -> frac, mix -> lerp; the rest are shared. Pure string
-// generation.
+// differently: fract -> frac, mix -> lerp.
 auto tCodegenIntrinsicNames = test("GPU/codegenIntrinsicNames") = []
 {
     auto builder = ShaderBuilder {};
@@ -578,17 +532,8 @@ auto tCodegenIntrinsicNames = test("GPU/codegenIntrinsicNames") = []
     check(!contains(hlsl, "mix("));
 };
 
-// A literal wherever the language takes one. Every intrinsic used to come in
-// two shapes - one where every argument is a handle, and one where the scalar
-// arguments are all literals - and a shader mixes them freely: smoothstep(0.0,
-// w, d) has one edge of each, min(0.0, g) puts the literal first, step(d, 0.0)
-// puts it second, and mix(0.5, 1.0, h) interpolates between two constants by
-// something computed. All of them are legal GLSL and all of them have a
-// spelling in both languages under this, so which positions take a literal is
-// not something the EDSL should have an opinion about.
-//
-// What this pins is the position: an anchored literal has to record where it
-// was written, since every one of these means something else if it moves.
+// A literal is legal in any argument position GLSL allows one, and what this
+// pins is the position: each of these means something else if it moves.
 auto tCodegenLiteralArguments = test("GPU/codegenLiteralArguments") = []
 {
     auto builder = ShaderBuilder {};
@@ -608,10 +553,7 @@ auto tCodegenLiteralArguments = test("GPU/codegenLiteralArguments") = []
     auto held = clamp(carried.x() + carried.y(), 0.0f, width);
     auto raised = max(-1.0f, carried.y());
 
-    // clamp was the last one still insisting on a handle in front, which no
-    // reading of the module would have turned up: it took a corpus, and one
-    // shader in it writing clamp(0.02, 2.0, t), which is an odd thing to write
-    // and is what GLSL says a shader may.
+    // clamp was the last one still insisting on a handle in front.
     auto pinned = clamp(0.02f, 2.0f, width);
     auto bounded = clamp(0.25f, carried.x(), width);
 
@@ -635,9 +577,7 @@ auto tCodegenLiteralArguments = test("GPU/codegenLiteralArguments") = []
     check(contains(hlsl, "clamp(0.02, 2.0, uniforms.u0)"));
 };
 
-// The transcendental, rounding and geometric intrinsics all spell identically
-// in both backends; only the screen-space derivatives differ, dfdx/dfdy against
-// HLSL's ddx/ddy. Pure string generation.
+// Only the screen-space derivatives differ: dfdx/dfdy against HLSL's ddx/ddy.
 auto tCodegenTranscendentalNames = test("GPU/codegenTranscendentalNames") = []
 {
     auto builder = ShaderBuilder {};
@@ -675,10 +615,8 @@ auto tCodegenTranscendentalNames = test("GPU/codegenTranscendentalNames") = []
     check(!contains(hlsl, "dfdy("));
 };
 
-// mod() is the floored modulus, recorded as x - y * floor(x / y) rather than as
-// a call: the only modulus either backend offers is fmod(), which truncates, so
-// every tile left of the origin would come out mirrored. Pure string
-// generation.
+// mod() is recorded as x - y * floor(x / y): the only modulus either backend
+// offers is fmod(), which truncates, mirroring every tile left of the origin.
 auto tCodegenFlooredModulus = test("GPU/codegenFlooredModulus") = []
 {
     auto builder = ShaderBuilder {};
@@ -695,23 +633,18 @@ auto tCodegenFlooredModulus = test("GPU/codegenFlooredModulus") = []
     check(contains(metal, "floor("));
     check(!contains(metal, "mod("));
 
-    // The divisor scales the floored quotient before it is subtracted, and the
-    // operand order is kept: neither half of this commutes.
+    // Neither half of this commutes, so the operand order is kept.
     check(contains(metal, " - (2.0 * floor("));
     check(contains(metal, " / 2.0)"));
 };
 
-// Every ordering of two and three components has an accessor, so a coordinate
-// swap is one Swizzle node rather than a constructor over rebuilt parts. Both
-// backends spell the components identically. Pure string generation.
+// A coordinate swap is one Swizzle node rather than a constructor over rebuilt
+// parts, spelled identically by both backends.
 auto tCodegenSwizzleOrderings = test("GPU/codegenSwizzleOrderings") = []
 {
-    // An accessor is constrained to the widths that can name its components:
-    // .zw belongs to a Float4 and is no part of a Float2, while .xxy widens a
-    // Float2 the way the shading languages do. The rule is asserted rather than
-    // probed with requires() - an unsatisfied constraint on a plain member
-    // function is a hard error at the call, which is the diagnostic wanted, but
-    // it leaves nothing for a requires-expression to fold to false.
+    // Asserted rather than probed with requires(): an unsatisfied constraint on
+    // a plain member function is a hard error at the call, which is the wanted
+    // diagnostic, but leaves nothing for a requires-expression to fold to false.
     static_assert(detail::spellableAt(4, "zw"));
     static_assert(detail::spellableAt(2, "yx"));
     static_assert(detail::spellableAt(2, "xxy"));
@@ -742,8 +675,8 @@ auto tCodegenSwizzleOrderings = test("GPU/codegenSwizzleOrderings") = []
     check(contains(metal, ").zw"));
     check(contains(metal, ").zyxw"));
 
-    // A four-component swizzle is one node: the source is read once, not
-    // rebuilt from four extracted components.
+    // One node per swizzle: the source is read once, not rebuilt from four
+    // extracted components.
     check(countOccurrences(metal, "input.v0") == 4);
 
     auto hlsl = emitHlsl(builder.graph());
@@ -751,10 +684,8 @@ auto tCodegenSwizzleOrderings = test("GPU/codegenSwizzleOrderings") = []
     check(contains(hlsl, ").zyxw"));
 };
 
-// The 2x2 and 3x3 matrices follow the 4x4 in every respect that matters: built
-// from columns, multiplied with the * operator on MSL and mul() on HLSL, and
-// transposed at construction on HLSL, which fills a matrix from rows. Pure
-// string generation.
+// Built from columns, multiplied with * on MSL and mul() on HLSL, and
+// transposed at construction on HLSL, which fills a matrix from rows.
 auto tCodegenSmallMatrices = test("GPU/codegenSmallMatrices") = []
 {
     auto builder = ShaderBuilder {};
@@ -786,15 +717,8 @@ auto tCodegenSmallMatrices = test("GPU/codegenSmallMatrices") = []
     check(contains(hlsl, "mul("));
 };
 
-// transpose() and determinant() are where the small matrices stop being
-// write-only. Both backends spell both the same way, and both are right on both
-// for the same reason: HLSL holds transposed what MSL holds, so transposing
-// each leaves each holding the transpose of the same logical matrix, and a
-// determinant is equal for a matrix and its transpose either way.
-//
-// The check that matters is the HLSL one, where the construction already
-// emitted a transpose of its own: the two have to nest rather than cancel.
-// Pure string generation.
+// The HLSL check is the one that matters: the construction already emitted a
+// transpose of its own, and the two have to nest rather than cancel.
 auto tCodegenMatrixTranspose = test("GPU/codegenMatrixTranspose") = []
 {
     auto builder = ShaderBuilder {};
@@ -806,8 +730,8 @@ auto tCodegenMatrixTranspose = test("GPU/codegenMatrixTranspose") = []
 
     auto carried = builder.varying(normal);
 
-    // Two matrices rather than one used twice, so neither construction is
-    // promoted to a shared local and each call still has one under it to read.
+    // Two matrices rather than one used twice, so neither is promoted to a
+    // shared local and each call still has one under it to read.
     auto basis = float3x3(carried,
                           float3(0.0f, 1.0f, builder.constant(0.0f)),
                           float3(0.0f, builder.constant(0.0f), 1.0f));
@@ -827,10 +751,6 @@ auto tCodegenMatrixTranspose = test("GPU/codegenMatrixTranspose") = []
     check(contains(hlsl, "determinant(transpose(float3x3("));
 };
 
-// Comparisons yield a Bool, the connectives combine them, and select picks
-// between two values without branching. Both backends spell all of it the same
-// way, which is why none of these needs a per-backend form. Pure string
-// generation.
 auto tCodegenComparisons = test("GPU/codegenComparisons") = []
 {
     auto builder = ShaderBuilder {};
@@ -861,9 +781,8 @@ auto tCodegenComparisons = test("GPU/codegenComparisons") = []
     check(contains(hlsl, " ? 1.0 : 0.0)"));
 };
 
-// A mutable local is a statement, not an expression: it is declared where it is
-// created and every read after an assignment sees the assigned value. Pure
-// string generation.
+// A mutable local is a statement, not an expression: declared where created,
+// and every read after an assignment sees the assigned value.
 auto tCodegenMutableLocal = test("GPU/codegenMutableLocal") = []
 {
     auto builder = ShaderBuilder {};
@@ -885,13 +804,11 @@ auto tCodegenMutableLocal = test("GPU/codegenMutableLocal") = []
     check(contains(metal, "v0 = (v0 * 2.0);"));
     check(contains(metal, "return float4(v0, v0, v0, 1.0);"));
 
-    // The declaration comes before the assignments, which come before the
-    // colour that reads them: statement order is recording order.
+    // Statement order is recording order.
     check(metal.find("float v0 = 0.0;") < metal.find("v0 = (v0 + "));
     check(metal.find("v0 = (v0 * 2.0);") < metal.find("return float4(v0"));
 };
 
-// if / else, with each body scoped to its own braces. Pure string generation.
 auto tCodegenBranches = test("GPU/codegenBranches") = []
 {
     auto builder = ShaderBuilder {};
@@ -919,16 +836,13 @@ auto tCodegenBranches = test("GPU/codegenBranches") = []
     check(contains(metal, "if (((input.v0).x < 0.0))"));
     check(contains(metal, "\n    else\n"));
 
-    // The else body declares a variable of its own, indented inside the block
-    // that owns it.
+    // The else body's own variable, indented inside the block that owns it.
     check(contains(metal, "\n        float v1 = 1.0;"));
     check(contains(emitHlsl(builder.graph()), "\n        float v1 = 1.0;"));
 };
 
-// A while loop, its two jumps, and the one rule the emitter cannot get wrong:
-// the condition is printed into the header rather than bound to a local before
-// it, or the loop would test a value that never changes. Pure string
-// generation.
+// The condition must be printed into the header rather than bound to a local
+// before it, or the loop would test a value that never changes.
 auto tCodegenLoop = test("GPU/codegenLoop") = []
 {
     auto builder = ShaderBuilder {};
@@ -963,17 +877,15 @@ auto tCodegenLoop = test("GPU/codegenLoop") = []
     check(contains(metal, "            break;"));
     check(contains(metal, "            continue;"));
 
-    // The condition reads the variable the body writes, so it must not have
-    // been hoisted: no bool local is bound ahead of the loop.
+    // No bool local is bound ahead of the loop.
     check(metal.find("while (") < metal.find("v1 = (v1 + 1.0);"));
     check(!contains(metal, "bool t"));
 
     check(contains(emitHlsl(builder.graph()), "while ((v1 < 64.0))"));
 };
 
-// A shared subtree inside a loop body is named there, not before the loop: a
-// local defined outside would hold the value the first iteration computed for
-// every one after it. Pure string generation.
+// A local defined outside the loop would hold the value the first iteration
+// computed for every one after it.
 auto tCodegenLoopLocalsStayInside = test("GPU/codegenLoopLocalsStayInside") = []
 {
     auto builder = ShaderBuilder {};
@@ -1004,9 +916,8 @@ auto tCodegenLoopLocalsStayInside = test("GPU/codegenLoopLocalsStayInside") = []
     check(countOccurrences(metal, "sin(") == 1);
 };
 
-// A value a body tests and then uses is computed once. The name spans the two
-// statements, which is the shape every raymarcher has: measure the distance,
-// stop if it is small enough, otherwise step by it. Pure string generation.
+// The name spans two statements, the shape every raymarcher has: measure the
+// distance, stop if it is small enough, otherwise step by it.
 auto tCodegenSharedAcrossStatements = test("GPU/codegenSharedAcrossStatements") = []
 {
     auto builder = ShaderBuilder {};
@@ -1037,9 +948,8 @@ auto tCodegenSharedAcrossStatements = test("GPU/codegenSharedAcrossStatements") 
     check(contains(metal, "v0 = (v0 + t0);"));
 };
 
-// ...and a name is given up the moment a statement writes a variable the value
-// behind it was computed from, which is the one thing sharing across statements
-// can get wrong. Pure string generation.
+// A name is given up the moment a statement writes a variable the value behind
+// it was computed from.
 auto tCodegenStaleLocalsAreDropped = test("GPU/codegenStaleLocalsAreDropped") = []
 {
     auto builder = ShaderBuilder {};
@@ -1062,20 +972,15 @@ auto tCodegenStaleLocalsAreDropped = test("GPU/codegenStaleLocalsAreDropped") = 
 
     auto metal = emitMetal(builder.graph());
 
-    // Two names for the one expression: what stands for sin(v0) before v0 moves
-    // cannot stand for it afterwards.
+    // What stands for sin(v0) before v0 moves cannot stand for it afterwards.
     check(countOccurrences(metal, "sin(v0)") == 2);
     check(contains(metal, "float t0 = sin(v0);"));
     check(contains(metal, "float t1 = sin(v0);"));
     check(metal.find("v0 = (v0 + 1.0);") < metal.find("float t1 = sin(v0);"));
 };
 
-// transpose() and determinant() through the real platform shader compiler,
-// which is the only thing that answers the question the string check above
-// cannot: whether the language actually has the builtin the emitter named. GLSL
-// has all three of transpose, determinant and inverse; MSL and HLSL have the
-// first two and neither has the third, which is why only two are here.
-// Self-skips without a GPU device.
+// GLSL has transpose, determinant and inverse; MSL and HLSL have the first two
+// and neither has the third, which is why only two are here.
 auto tCodegenMatrixTransposeCompiles =
     test("GPU/codegenMatrixTransposeCompiles") = []
 {
@@ -1117,13 +1022,9 @@ auto tCodegenMatrixTransposeCompiles =
     check(device.makeRenderPipeline(descriptor).isValid());
 };
 
-// A vector times a matrix, which is the same product read against the matrix's
-// rows rather than against its columns - what a shader writes to go back
-// through an orientation rather than into one. Neither backend needs a form of
-// its own for it: MSL's operator and HLSL's mul() both read whichever operand
-// is on the left as a row vector, so the order the two are written in is the
-// whole of what tells the three products apart. That order is what this pins,
-// because the other one is a different value and compiles just as happily.
+// MSL's operator and HLSL's mul() both read whichever operand is on the left as
+// a row vector, so the written order is what tells the products apart - and the
+// other order is a different value that compiles just as happily.
 auto tCodegenVectorTimesMatrix = test("GPU/codegenVectorTimesMatrix") = []
 {
     auto builder = ShaderBuilder {};
@@ -1135,8 +1036,8 @@ auto tCodegenVectorTimesMatrix = test("GPU/codegenVectorTimesMatrix") = []
 
     auto carried = builder.varying(position);
 
-    // Two matrices rather than one used twice, so neither construction is
-    // promoted to a shared local and each product still has one under it.
+    // Two matrices rather than one used twice, so neither is promoted to a
+    // shared local and each product still has one under it.
     auto into =
         float2x2(float2(cos(angle), sin(angle)), float2(-sin(angle), cos(angle)));
 
@@ -1149,16 +1050,15 @@ auto tCodegenVectorTimesMatrix = test("GPU/codegenVectorTimesMatrix") = []
     check(contains(metal, "(float2x2("));
     check(contains(metal, " * float2x2("));
 
-    // On HLSL the construction is transposed and the product is a call, so the
-    // matrix is mul()'s first argument in one and its second in the other.
+    // On HLSL the product is a call, so the matrix is mul()'s first argument in
+    // one and its second in the other.
     auto hlsl = emitHlsl(builder.graph());
     check(contains(hlsl, "mul(transpose(float2x2("));
     check(contains(hlsl, ", transpose(float2x2("));
 };
 
-// The two above through the real platform shader compiler, which is the only
-// thing that answers whether the languages take a literal where the emitter put
-// one and a vector on the left of a product. Self-skips without a GPU device.
+// Only the compiler answers whether the languages take a literal where the
+// emitter put one, and a vector on the left of a product.
 auto tCodegenLiteralArgumentsCompile =
     test("GPU/codegenLiteralArgumentsCompile") = []
 {
@@ -1199,11 +1099,8 @@ auto tCodegenLiteralArgumentsCompile =
     check(device.makeRenderPipeline(descriptor).isValid());
 };
 
-// Control flow through the real platform shader compiler, shaped like what
-// asks for it: a sphere raymarch with a mutable distance, a data-dependent
-// break and a select on the result. Emitted text says the statements are there;
-// only the compiler says the language will take them. Self-skips without a GPU
-// device.
+// Emitted text says the statements are there; only the compiler says the
+// language will take them.
 auto tCodegenControlFlowCompiles = test("GPU/codegenControlFlowCompiles") = []
 {
     auto& device = Device::shared();
@@ -1263,9 +1160,6 @@ auto tCodegenControlFlowCompiles = test("GPU/codegenControlFlowCompiles") = []
     check(pipeline.isValid());
 };
 
-// Runs the whole vocabulary through the real platform shader compiler, so
-// every intrinsic spelling and broadcast form is validated against the actual
-// language. Self-skips without a GPU device.
 auto tCodegenIntrinsicsCompile = test("GPU/codegenIntrinsicsCompile") = []
 {
     auto& device = Device::shared();
@@ -1309,10 +1203,8 @@ auto tCodegenIntrinsicsCompile = test("GPU/codegenIntrinsicsCompile") = []
     check(pipeline.isValid());
 };
 
-// The same for the transcendental, geometric, derivative and swizzle
-// vocabulary. Names alone prove nothing here: an intrinsic this backend spells
-// differently, or a swizzle it will not take, only shows up when the platform
-// compiler reads the source. Self-skips without a GPU device.
+// An intrinsic a backend spells differently, or a swizzle it will not take,
+// only shows up when the platform compiler reads the source.
 auto tCodegenTranscendentalsCompile = test("GPU/codegenTranscendentalsCompile") = []
 {
     auto& device = Device::shared();
@@ -1357,10 +1249,8 @@ auto tCodegenTranscendentalsCompile = test("GPU/codegenTranscendentalsCompile") 
     check(pipeline.isValid());
 };
 
-// A uniform read only by the fragment expression binds the block to the
-// fragment stage: the MSL fragment function gains the uniforms parameter and
-// the vertex function drops it. The HLSL cbuffer is a global both stages
-// already see. Pure string generation.
+// The HLSL cbuffer is a global both stages already see, so only the MSL
+// signatures move.
 auto tCodegenFragmentUniformEmits = test("GPU/codegenFragmentUniformEmits") = []
 {
     auto builder = ShaderBuilder {};
@@ -1384,8 +1274,7 @@ auto tCodegenFragmentUniformEmits = test("GPU/codegenFragmentUniformEmits") = []
     check(contains(hlsl, "return uniforms.u0;"));
 };
 
-// A uniform read by both stages puts the parameter on both Metal functions:
-// one block, bound twice, one slot rule.
+// One block, bound twice, one slot rule.
 auto tCodegenSharedUniformEmits = test("GPU/codegenSharedUniformEmits") = []
 {
     auto builder = ShaderBuilder {};
@@ -1406,16 +1295,12 @@ auto tCodegenSharedUniformEmits = test("GPU/codegenSharedUniformEmits") = []
                        + uniformDecl(RenderPass::uniformBase) + ")"));
 };
 
-// GeneratedShader reports which stage reads a uniform, and it is the emitter's
-// own answer rather than a second opinion: each flag is checked against whether
-// the Metal signature beside it declared the block. That is what
-// RenderPass::draw(program) binds from, so a bound stage and a declared
-// parameter cannot drift apart. Pure string generation, no GPU device required.
+// Each flag is checked against whether the Metal signature beside it declared
+// the block, so a bound stage and a declared parameter cannot drift apart.
 auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
 {
     // build() emits the host's backend, so the signature is read through
-    // emitMetal for a platform-independent comparison; the flags come off the
-    // graph and are the same either way.
+    // emitMetal for a platform-independent comparison.
     auto stagesOf = [](const ShaderGraph& graph, const GeneratedShader& generated)
     {
         auto metal = emitMetal(graph);
@@ -1426,13 +1311,11 @@ auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
         auto fragmentDeclares = contains(
             metal, "fragmentMain(VertexOut input [[stage_in]],\n    " + declaration);
 
-        // The flag and the signature are two statements of one fact; assert
-        // they agree before reading either.
+        // Two statements of one fact: assert they agree before reading either.
         check(generated.vertexReadsUniforms == vertexDeclares);
         check(generated.fragmentReadsUniforms == fragmentDeclares);
     };
 
-    // Read only by the position: the fragment stage is never bound.
     auto vertexOnly = ShaderBuilder {};
     auto vertexPosition = vertexOnly.vertexInput<Float2>();
     auto scale = vertexOnly.uniform<Float>();
@@ -1448,7 +1331,6 @@ auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
     check(vertexShader.vertexReadsUniforms);
     check(!vertexShader.fragmentReadsUniforms);
 
-    // Read only by the colour: the vertex stage is never bound.
     auto fragmentOnly = ShaderBuilder {};
     auto fragmentPosition = fragmentOnly.vertexInput<Float2>();
     auto color = fragmentOnly.uniform<Float4>();
@@ -1460,8 +1342,7 @@ auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
     check(!fragmentShader.vertexReadsUniforms);
     check(fragmentShader.fragmentReadsUniforms);
 
-    // Declared and read by neither stage: nothing is bound at all, though the
-    // program still has a block to pack.
+    // Read by neither stage, though the program still has a block to pack.
     auto unread = ShaderBuilder {};
     auto unreadPosition = unread.vertexInput<Float2>();
     auto unusedTint = unread.uniform<Float4>();
@@ -1478,11 +1359,8 @@ auto tCodegenUniformStages = test("GPU/codegenUniformStages") = []
     check(!unreadShader.fragmentReadsUniforms);
 };
 
-// A uniform read only from inside a statement still counts towards the fragment
-// stage: the flag is collected over the statement roots, not over the colour
-// expression alone. Without that a shader whose uniform is read only inside a
-// loop or a branch would go unbound and read garbage - the same trap the
-// declaration walk already guards against.
+// The flag is collected over the statement roots, not the colour expression
+// alone: otherwise a uniform read only inside a loop would go unbound.
 auto tCodegenUniformInStatementBinds =
     test("GPU/codegenUniformInStatementBinds") = []
 {
@@ -1507,9 +1385,6 @@ auto tCodegenUniformInStatementBinds =
                        + uniformDecl(RenderPass::uniformBase)));
 };
 
-// Compiles a fragment-uniform shader through the real platform shader compiler
-// and builds a pipeline, exercising the uniform-bearing fragment signature.
-// Self-skips without a GPU device.
 auto tCodegenFragmentUniformCompiles =
     test("GPU/codegenFragmentUniformCompiles") = []
 {
@@ -1539,9 +1414,8 @@ auto tCodegenFragmentUniformCompiles =
     check(pipeline.isValid());
 };
 
-// A texture() declaration reaches both backends with paired texture / sampler
-// bindings at the same index: fragment function parameters on Metal, globals
-// with t/s registers on D3D. Pure string generation.
+// Paired texture/sampler bindings at the same index: fragment parameters on
+// Metal, globals with t/s registers on D3D.
 auto tCodegenTextureEmits = test("GPU/codegenTextureEmits") = []
 {
     auto builder = ShaderBuilder {};
@@ -1564,15 +1438,11 @@ auto tCodegenTextureEmits = test("GPU/codegenTextureEmits") = []
     check(contains(hlsl, "SamplerState sampler0 : register(s0);"));
     check(contains(hlsl, "texture0.Sample(sampler0, input.v0)"));
 
-    // The vertex stage carries no texture parameters; only the fragment
-    // signature gains them on Metal.
+    // The vertex stage carries no texture parameters.
     check(
         contains(metal, "vertex VertexOut vertexMain(VertexIn input [[stage_in]])"));
 };
 
-// Compiles the sampling shader through the real platform shader compiler and
-// builds a pipeline from its layout, exercising the texture-bearing fragment
-// signature. Self-skips without a GPU device.
 auto tCodegenTextureCompiles = test("GPU/codegenTextureCompiles") = []
 {
     auto& device = Device::shared();
@@ -1593,9 +1463,8 @@ auto tCodegenTextureCompiles = test("GPU/codegenTextureCompiles") = []
     check(pipeline.isValid());
 };
 
-// Choosing the mip level is where the two backends stop agreeing on the call:
-// Metal passes it to the same sample(), HLSL has a method of its own for it.
-// One graph node, so a shader says it once. Pure string generation.
+// Metal passes the mip level to the same sample(), HLSL has a method of its
+// own. One graph node, so a shader says it once.
 auto tCodegenSampleLevelEmits = test("GPU/codegenSampleLevelEmits") = []
 {
     auto builder = ShaderBuilder {};
@@ -1617,10 +1486,8 @@ auto tCodegenSampleLevelEmits = test("GPU/codegenSampleLevelEmits") = []
     check(contains(hlsl, "texture0.SampleLevel(sampler0, input.v0, uniforms.u0)"));
 };
 
-// A level given as a plain float needs no anchoring by the caller: the texture
-// already carries the graph the constant records into. Reading the top of the
-// pyramid is what most shaders that pick a level at all are asking for, so it
-// would otherwise be the one call that needs a ShaderBuilder in scope.
+// A plain float needs no anchoring: the texture already carries the graph the
+// constant records into.
 auto tCodegenLiteralSampleLevel = test("GPU/codegenLiteralSampleLevel") = []
 {
     auto builder = ShaderBuilder {};
@@ -1640,10 +1507,9 @@ auto tCodegenLiteralSampleLevel = test("GPU/codegenLiteralSampleLevel") = []
                    "texture0.SampleLevel(sampler0, input.v0, 0.0)"));
 };
 
-// A texel read takes no sampler at all, and the coordinate goes through int2 on
-// both backends: Metal reads unsigned, so a negative coordinate has to become a
-// large one there rather than an undefined conversion, which is what makes it
-// read as zero on both. Pure string generation.
+// The coordinate goes through int2 on both backends: Metal reads unsigned, so
+// a negative coordinate must become a large one rather than an undefined
+// conversion, which is what makes it read as zero on both.
 auto tCodegenFetchEmits = test("GPU/codegenFetchEmits") = []
 {
     auto builder = ShaderBuilder {};
@@ -1665,9 +1531,8 @@ auto tCodegenFetchEmits = test("GPU/codegenFetchEmits") = []
     check(!contains(hlsl, "texture0.Sample"));
 };
 
-// Both reach the real shader compiler: an unsampled level and a texel read are
-// each one method call the backend either has or does not. Self-skips without a
-// GPU device.
+// An unsampled level and a texel read are each one method call the backend
+// either has or does not.
 auto tCodegenSampleLevelAndFetchCompile =
     test("GPU/codegenSampleLevelAndFetchCompile") = []
 {
@@ -1692,10 +1557,8 @@ auto tCodegenSampleLevelAndFetchCompile =
     check(library.isValid());
 };
 
-// A compute kernel authored via the EDSL: storage buffers, the thread id, a
-// uniform and a store. The kernel scaffolding differs per backend (function
-// parameters on Metal, globals + numthreads on D3D); the body and the implicit
-// element-count guard are shared. Pure string generation.
+// The kernel scaffolding differs per backend (function parameters on Metal,
+// globals + numthreads on D3D); the body and the count guard are shared.
 auto tCodegenComputeEmits = test("GPU/codegenComputeEmits") = []
 {
     auto builder = ShaderBuilder {};
@@ -1728,10 +1591,8 @@ auto tCodegenComputeEmits = test("GPU/codegenComputeEmits") = []
     check(contains(hlsl, "buffer1[gid] = (buffer0[gid] * uniforms.u0);"));
 };
 
-// A buffer element read more than once hoists into a named local like any
-// other shared operation, and build() marks the source as compute with the
-// kernel entry point and no vertex layout. A kernel without user uniforms
-// still gets the block: the implicit count lives there.
+// A kernel without user uniforms still gets the block: the implicit count
+// lives there.
 auto tCodegenComputeSharedRead = test("GPU/codegenComputeSharedRead") = []
 {
     auto builder = ShaderBuilder {};
@@ -1756,9 +1617,6 @@ auto tCodegenComputeSharedRead = test("GPU/codegenComputeSharedRead") = []
     check(shader.vertexLayout.attributes.size() == 0);
 };
 
-// Index arithmetic: uint operators against uint values and integer literals
-// (recorded as uint constant nodes), a uint uniform read inside an index
-// expression, and uint min/max. The spelling is shared by both backends.
 auto tCodegenComputeIndexArithmetic = test("GPU/codegenComputeIndexArithmetic") = []
 {
     auto builder = ShaderBuilder {};
@@ -1784,11 +1642,8 @@ auto tCodegenComputeIndexArithmetic = test("GPU/codegenComputeIndexArithmetic") 
     check(contains(hlsl, "buffer1[(gid * 2u)] = "));
 };
 
-// The uint comparisons, and the loop they unlock: a reduction kernel is a
-// Var<UInt> counter tested against a uint bound - until these existed the
-// counter had to be a float carried in lockstep beside the index. The literal
-// forms record uint constant nodes, so the whole header spells in uints. Pure
-// string generation.
+// The literal forms record uint constant nodes, so the whole loop header spells
+// in uints.
 auto tCodegenComputeUIntLoop = test("GPU/codegenComputeUIntLoop") = []
 {
     auto builder = ShaderBuilder {};
@@ -1819,16 +1674,14 @@ auto tCodegenComputeUIntLoop = test("GPU/codegenComputeUIntLoop") = []
         check(contains(source, "v1 = (v1 + 1u);"));
         check(contains(source, "if ((gid == 0u))"));
 
-        // The condition reads the counter the body advances, so it must be
-        // printed into the header rather than bound to a local before it.
+        // The condition reads the counter the body advances, so it must not be
+        // bound to a local before the loop.
         check(source.find("while (") < source.find("v1 = (v1 + 1u);"));
     }
 };
 
-// Crossing between the index vocabularies: into the signed one for arithmetic
-// that may go below zero, back out with toUInt once clamped, and toUInt of a
-// float scalar truncating towards zero. Constructor-style casts, spelled the
-// same by both backends. Pure string generation.
+// Into the signed vocabulary for arithmetic that may go below zero, back out
+// with toUInt once clamped. Constructor-style casts on both backends.
 auto tCodegenComputeIndexCasts = test("GPU/codegenComputeIndexCasts") = []
 {
     auto builder = ShaderBuilder {};
@@ -1850,11 +1703,8 @@ auto tCodegenComputeIndexCasts = test("GPU/codegenComputeIndexCasts") = []
     }
 };
 
-// A 2D kernel: threadPosition() gives a pair of indices, which changes the
-// entry signature, the threadgroup shape and the implicit extents the guard
-// reads. Asserting the emitted signature rather than only the runtime result is
-// the point - a rank that reached the dispatch but not the emitter would leave
-// the kernel reading a thread id of the wrong shape and say nothing about it.
+// A rank that reached the dispatch but not the emitter would leave the kernel
+// reading a thread id of the wrong shape and say nothing about it.
 auto tCodegenCompute2D = test("GPU/codegenCompute2D") = []
 {
     auto builder = ShaderBuilder {};
@@ -1885,10 +1735,9 @@ auto tCodegenCompute2D = test("GPU/codegenCompute2D") = []
     check(contains(hlsl, "buffer0[((gid.y * 16u) + gid.x)] = float(gid.x);"));
 };
 
-// A kernel that reads one texture and writes another. Read and written
-// textures take slots from one counter, because Metal binds both to one texture
-// index space; on D3D they land in the t and u spaces they share with the
-// storage buffers, above every buffer slot. Pure string generation.
+// Read and written textures take slots from one counter, because Metal binds
+// both to one texture index space; on D3D they land in the t and u spaces they
+// share with the storage buffers, above every buffer slot.
 auto tCodegenComputeTextureWrite = test("GPU/codegenComputeTextureWrite") = []
 {
     auto builder = ShaderBuilder {};
@@ -1910,17 +1759,14 @@ auto tCodegenComputeTextureWrite = test("GPU/codegenComputeTextureWrite") = []
     check(
         contains(metal, "texture2d<float, access::write> texture1 [[texture(1)]]"));
 
-    // A written texture has no sampler on either backend: there is nothing to
-    // sample it with and nothing to read out of it.
+    // A written texture has no sampler on either backend.
     check(!contains(metal, "sampler sampler1"));
     check(contains(metal,
                    "texture1.write(texture0.sample(sampler0, float2(float(gid.x), "
                    "float(gid.y))), uint2(gid.x, gid.y));"));
 
-    // Written from ComputePass::textureRegisterBase rather than from a literal,
-    // since the base is where the buffer slots end - move the one and the other
-    // moves with it, and a test naming a number would only say where it used to
-    // be.
+    // Built from ComputePass::textureRegisterBase rather than a literal: a test
+    // naming a number would only say where the base used to be.
     auto textureRegister = [](int slot)
     { return std::to_string(ComputePass::textureRegisterBase + slot); };
 
@@ -1937,9 +1783,8 @@ auto tCodegenComputeTextureWrite = test("GPU/codegenComputeTextureWrite") = []
                    "float2(float(gid.x), float(gid.y)));"));
 };
 
-// A kernel whose only output is a texture is still a kernel: recording any
-// store is what marks the graph as one, and a graph with no storage buffer at
-// all emits none.
+// Recording any store is what marks a graph as a kernel, and a graph with no
+// storage buffer emits none.
 auto tCodegenComputeTextureOnly = test("GPU/codegenComputeTextureOnly") = []
 {
     auto builder = ShaderBuilder {};
@@ -1961,8 +1806,7 @@ auto tCodegenComputeTextureOnly = test("GPU/codegenComputeTextureOnly") = []
     }
 };
 
-// The 1D kernel keeps its scalar signature and its single count: the rank is a
-// property of what the body asked for, not a new default.
+// The rank is a property of what the body asked for, not a new default.
 auto tCodegenCompute1DUnchanged = test("GPU/codegenCompute1DKeepsScalarId") = []
 {
     auto builder = ShaderBuilder {};
@@ -1981,11 +1825,9 @@ auto tCodegenCompute1DUnchanged = test("GPU/codegenCompute1DKeepsScalarId") = []
     check(contains(metal, "if (gid >= uniforms.count)"));
 };
 
-// Vector reads and writes over a buffer of records: read4(i) is elements
-// 4i..4i+3 and write(out, i, Float4) puts four back at the same place, so a
-// kernel over a struct of four floats never spells the stride. The buffer is
-// still a run of floats underneath - N scalar accesses, one index expression -
-// which is what keeps its bytes bindable as a per-instance stream.
+// read4(i) is elements 4i..4i+3, so a kernel over a struct of four floats never
+// spells the stride. The buffer is still a run of floats underneath, which is
+// what keeps its bytes bindable as a per-instance stream.
 auto tCodegenComputeVectorElements = test("GPU/codegenComputeVectorElements") = []
 {
     auto builder = ShaderBuilder {};
@@ -1997,18 +1839,15 @@ auto tCodegenComputeVectorElements = test("GPU/codegenComputeVectorElements") = 
     auto record = input.read4(i);
     builder.write(output, i, record * 2.0f);
 
-    // Identical on both backends: nothing here is spelled per-language, so the
-    // whole body is one string checked twice.
     for (const auto& text: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
     {
-        // The base index is computed once for the whole kernel. The read and
-        // the write build it through separate calls, but the product is the
-        // same pure expression, so the graph hands both the one node.
+        // The read and the write build the base index through separate calls,
+        // but it is the same pure expression, so the graph hands both one node.
         check(contains(text, "uint t0 = (gid * 4u);"));
         check(countOccurrences(text, "(gid * 4u)") == 1);
 
-        // The three offsets off that base are shared the same way - each is
-        // addressed by the read and by the write, so each is named once.
+        // Each offset off that base is addressed by the read and by the write,
+        // so each is named once.
         check(contains(text, "uint t1 = (t0 + 1u);"));
         check(contains(text, "uint t2 = (t0 + 2u);"));
         check(contains(text, "uint t3 = (t0 + 3u);"));
@@ -2017,7 +1856,6 @@ auto tCodegenComputeVectorElements = test("GPU/codegenComputeVectorElements") = 
                        "float4 t4 = (float4(buffer0[t0], buffer0[t1], "
                        "buffer0[t2], buffer0[t3]) * 2.0);"));
 
-        // One store per component, at the record's own offsets.
         check(contains(text, "buffer1[t0] = (t4).x;"));
         check(contains(text, "buffer1[t1] = (t4).y;"));
         check(contains(text, "buffer1[t2] = (t4).z;"));
@@ -2025,9 +1863,8 @@ auto tCodegenComputeVectorElements = test("GPU/codegenComputeVectorElements") = 
     }
 };
 
-// The narrower widths address their own records: read2 strides by two and
-// read3 by three, so a buffer of pairs and one of triples each index in their
-// own units.
+// read2 strides by two and read3 by three, so a buffer of pairs and one of
+// triples each index in their own units.
 auto tCodegenComputeVectorStrides = test("GPU/codegenComputeVectorStrides") = []
 {
     auto builder = ShaderBuilder {};
@@ -2057,11 +1894,9 @@ auto tCodegenComputeVectorStrides = test("GPU/codegenComputeVectorStrides") = []
     check(!contains(hlsl, "t0 + 3u"));
 };
 
-// A storage buffer read from a render stage: the same InputBuffer a kernel
-// subscripts, declared by a graph with no stores at all, so the shader is a
-// vertex/fragment pair rather than a kernel. What it buys is the indexed read a
-// vertex attribute cannot do - the shader picks the element, instead of the
-// input assembler handing it one.
+// The same InputBuffer a kernel subscripts, in a graph with no stores, so the
+// shader is a vertex/fragment pair. What it buys is the indexed read a vertex
+// attribute cannot do: the shader picks the element.
 auto tCodegenFragmentBufferRead = test("GPU/codegenFragmentBufferRead") = []
 {
     auto builder = ShaderBuilder {};
@@ -2075,30 +1910,27 @@ auto tCodegenFragmentBufferRead = test("GPU/codegenFragmentBufferRead") = []
 
     auto metal = emitMetal(builder.graph());
 
-    // Declared on the stage that reads it and nowhere else: the vertex function
-    // only builds a position, so a buffer parameter there would be dead weight
-    // the caller still has to bind.
+    // Declared on the stage that reads it and nowhere else: a buffer parameter
+    // on the vertex function would be dead weight the caller still has to bind.
     check(contains(metal,
                    "device const float* buffer0 [[buffer("
                        + std::to_string(RenderPass::bufferBase) + ")]]"));
     check(countOccurrences(metal, "device const float* buffer0") == 1);
     check(metal.find("fragmentMain") < metal.find("device const float* buffer0"));
 
-    // Read-only in a render stage, whatever a kernel would have got: there is
-    // no writable buffer on this side.
+    // Read-only in a render stage, whatever a kernel would have got.
     check(!contains(metal, "device float* buffer0"));
 
     // An HLSL global is visible to both functions, so it is declared once
-    // outside either - above every texture register, which is what the render
-    // root signature's buffer SRVs are declared at.
+    // outside either, above every texture register.
     auto hlsl = emitHlsl(builder.graph());
     check(contains(hlsl,
                    "StructuredBuffer<float> buffer0 : register(t"
                        + std::to_string(RenderPass::bufferRegisterBase) + ");"));
     check(!contains(hlsl, "RWStructuredBuffer"));
 
-    // The record index reaches the read on both backends: read3 strides by
-    // three, so an index the shader computed addresses its own record.
+    // read3 strides by three, so an index the shader computed addresses its own
+    // record.
     for (const auto& source: {metal, hlsl})
     {
         check(contains(source, "uint t0 = (uniforms.u0 * 3u);"));
@@ -2108,9 +1940,8 @@ auto tCodegenFragmentBufferRead = test("GPU/codegenFragmentBufferRead") = []
     }
 };
 
-// The vertex stage reads one too, and gets its own parameter. Nothing about the
-// binding is fragment-specific - which is what lets a vertex shader place a
-// per-instance record it looked up rather than one it was handed.
+// Nothing about the binding is fragment-specific, which is what lets a vertex
+// shader place a record it looked up rather than one it was handed.
 auto tCodegenVertexBufferRead = test("GPU/codegenVertexBufferRead") = []
 {
     auto builder = ShaderBuilder {};
@@ -2131,8 +1962,6 @@ auto tCodegenVertexBufferRead = test("GPU/codegenVertexBufferRead") = []
     check(metal.find("device const float* buffer0") < metal.find("fragmentMain"));
 };
 
-// Both stages reading one buffer declare it once each, and the fragment stage's
-// parameter list keeps textures and buffers in their own index spaces.
 auto tCodegenBothStagesReadBuffer = test("GPU/codegenBothStagesReadBuffer") = []
 {
     auto builder = ShaderBuilder {};
@@ -2151,9 +1980,8 @@ auto tCodegenBothStagesReadBuffer = test("GPU/codegenBothStagesReadBuffer") = []
     check(countOccurrences(hlsl, "StructuredBuffer<float> buffer0") == 1);
 };
 
-// Feeds a render shader that subscripts a storage buffer through the real
-// platform shader compiler, which is what says the registers and buffer indices
-// the emitter picked are ones the backend accepts. Self-skips without a GPU.
+// Only the compiler says the registers and buffer indices the emitter picked
+// are ones the backend accepts.
 auto tCodegenBufferReadCompiles = test("GPU/codegenBufferReadCompiles") = []
 {
     auto& device = Device::shared();
@@ -2176,9 +2004,6 @@ auto tCodegenBufferReadCompiles = test("GPU/codegenBufferReadCompiles") = []
     check(library.isValid());
 };
 
-// Feeds an EDSL compute kernel (including the toFloat(threadId) cast) through
-// the real platform shader compiler and builds a compute pipeline. Self-skips
-// without a GPU device.
 auto tCodegenComputeCompiles = test("GPU/codegenComputeCompiles") = []
 {
     auto& device = Device::shared();
@@ -2204,10 +2029,8 @@ auto tCodegenComputeCompiles = test("GPU/codegenComputeCompiles") = []
     check(pipeline.isValid());
 };
 
-// The integer vocabulary: the literal, the operators no float has, and the two
-// explicit crossings between int and float arithmetic. All of it spells
-// identically in MSL and HLSL, so both backends are checked against the same
-// text. Pure string generation.
+// All of this spells identically in MSL and HLSL, so both backends are checked
+// against the same text.
 auto tCodegenIntegerOperators = test("GPU/codegenIntegerOperators") = []
 {
     auto builder = ShaderBuilder {};
@@ -2225,12 +2048,11 @@ auto tCodegenIntegerOperators = test("GPU/codegenIntegerOperators") = []
 
     for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
     {
-        // An int literal carries no suffix - unlike a uint's - and the
-        // truncating cast is a constructor-style one in both languages.
+        // An int literal carries no suffix, unlike a uint's.
         check(contains(source, "int t0 = (int(((input.v0).x * 4.0)) & 3);"));
 
-        // The two shifts, which are the only operators here that do not fit in
-        // the char the graph carries an operator in.
+        // The shifts are the only operators that do not fit in the char the
+        // graph carries an operator in.
         check(contains(source, "(t0 << 2)"));
         check(contains(source, "(t0 >> 1)"));
 
@@ -2240,11 +2062,8 @@ auto tCodegenIntegerOperators = test("GPU/codegenIntegerOperators") = []
     }
 };
 
-// An Int crosses from the CPU, which is what separates it from a Bool and from
-// the small matrices: MSL and HLSL both give a signed integer four bytes and
-// pack it exactly where they pack a float, so the block needs no padding to
-// reconcile them and a shader can be handed an index rather than a float to
-// truncate. Pure string generation.
+// MSL and HLSL both give a signed integer four bytes and pack it where they
+// pack a float, so the block needs no padding to reconcile them.
 auto tCodegenIntegerUniform = test("GPU/codegenIntegerUniform") = []
 {
     auto builder = ShaderBuilder {};
@@ -2265,12 +2084,11 @@ auto tCodegenIntegerUniform = test("GPU/codegenIntegerUniform") = []
         check(contains(source, "float u1;"));
         check(contains(source, "float((uniforms.u0 + 1))"));
 
-        // Two four-byte scalars in a row: the two rule sets agree on where the
-        // second one lands, so nothing is padded between them.
+        // Two four-byte scalars in a row: the rule sets agree on where the
+        // second lands, so nothing is padded between them.
         check(!contains(source, "pad"));
     }
 
-    // And the CPU block is what the two of them add up to.
     auto types = Vector<ValueType> {};
     types.add(ValueType::Int);
     types.add(ValueType::Float);
@@ -2280,9 +2098,7 @@ auto tCodegenIntegerUniform = test("GPU/codegenIntegerUniform") = []
     check(offsets[1] == 4);
 };
 
-// A constant array is declared once at the top of the stage that subscripts it,
-// and nowhere else: not in the vertex function, which never reads it. Pure
-// string generation.
+// Declared once at the top of the stage that subscripts it, and nowhere else.
 auto tCodegenConstantArray = test("GPU/codegenConstantArray") = []
 {
     auto builder = ShaderBuilder {};
@@ -2314,26 +2130,19 @@ auto tCodegenConstantArray = test("GPU/codegenConstantArray") = []
         check(countOccurrences(source, declaration) == 1);
 
         // The subscript and the scale above it are one pure expression written
-        // twice, so they collapse to a single name: the array is indexed once
-        // and the multiply runs once, whatever the shader spelled.
+        // twice, so they collapse to a single name.
         check(countOccurrences(source, read) == 1);
         check(countOccurrences(source, "t0") == 3);
 
-        // The literal subscript, and the declaration before either read.
         check(contains(source, "a0[0]"));
         check(source.find(declaration) < source.find(read));
 
-        // The array lives in the fragment function, which is the only stage
-        // that reads it.
         check(source.find("fragmentMain") < source.find(declaration));
     }
 };
 
-// Integers and an array through the real platform shader compiler, shaped like
-// what asks for them: a palette picked by an index the shader truncates out of
-// a coordinate and masks into range. The emitted text says the vocabulary is
-// there; only the compiler says the language will take it. Self-skips without a
-// GPU device.
+// The emitted text says the vocabulary is there; only the compiler says the
+// language will take it.
 auto tCodegenIntegersCompile = test("GPU/codegenIntegersCompile") = []
 {
     auto& device = Device::shared();
@@ -2354,8 +2163,8 @@ auto tCodegenIntegersCompile = test("GPU/codegenIntegersCompile") = []
                                  float3(builder.constant(0.2f), 0.8f, 0.6f),
                                  float3(builder.constant(1.0f), 0.9f, 0.7f));
 
-    // A signed index that a negative coordinate really does make negative, held
-    // in range two different ways: the mask, and the clamp.
+    // A signed index a negative coordinate really does make negative, held in
+    // range two different ways: the mask, and the clamp.
     auto raw = toInt(carried.x() * 4.0f);
     auto masked = raw & 3;
     auto clamped = min(max(raw, 0), 3);
@@ -2385,11 +2194,8 @@ auto tCodegenIntegersCompile = test("GPU/codegenIntegersCompile") = []
     check(pipeline.isValid());
 };
 
-// The integer vectors: built out of a coordinate, taken apart by component, put
-// back together, and carrying the operators only an integer has - all of it
-// componentwise. Both languages spell the type and every operation on it the
-// same way, so both backends are checked against the same text. Pure string
-// generation.
+// Both languages spell the type and every operation on it the same way, so
+// both backends are checked against the same text.
 auto tCodegenIntegerVectors = test("GPU/codegenIntegerVectors") = []
 {
     auto builder = ShaderBuilder {};
@@ -2399,11 +2205,8 @@ auto tCodegenIntegerVectors = test("GPU/codegenIntegerVectors") = []
 
     builder.position(float4(position, 0.0f, 1.0f));
 
-    // The whole vector crosses in one cast, not a component at a time.
     auto cell = toInt(carried * 16.0f);
 
-    // Componentwise against another vector, against a broadcast literal, and
-    // the shift no float has.
     auto wrapped = (cell & 7) + int2(cell.y(), cell.x());
     auto shifted = wrapped << 1;
 
@@ -2414,28 +2217,22 @@ auto tCodegenIntegerVectors = test("GPU/codegenIntegerVectors") = []
 
     for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
     {
-        // The whole vector crosses in one cast rather than a component at a
-        // time, which is what keeps the coordinate behind it recorded once.
+        // One cast for the whole vector, which keeps the coordinate behind it
+        // recorded once.
         check(contains(source, "int2 t0 = int2((input.v0 * 16.0));"));
 
-        // The mask broadcasts the literal, the constructor takes two integer
-        // components, and the shift is the operator no float has.
         check(
             contains(source, "int2 t1 = (((t0 & 7) + int2((t0).y, (t0).x)) << 1);"));
 
         // A component of an integer vector is an integer, so the crossing back
         // into float arithmetic is still spelled out.
         check(contains(source, "float(((t1).x + (t1).y))"));
-
-        // And the whole vector crosses back in one piece too.
         check(contains(source, "float2((-(t0)))"));
     }
 };
 
-// The componentwise comparison and what collapses it. This is the pair that
-// makes the boolean vector worth having: `<` on two vectors is a mask in both
-// languages, and all()/any() is the only thing that turns one into a condition
-// a branch or a select can take. Pure string generation.
+// `<` on two vectors is a mask in both languages, and all()/any() is the only
+// thing that turns one into a condition a branch or a select can take.
 auto tCodegenVectorComparison = test("GPU/codegenVectorComparison") = []
 {
     auto builder = ShaderBuilder {};
@@ -2456,23 +2253,17 @@ auto tCodegenVectorComparison = test("GPU/codegenVectorComparison") = []
 
     for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
     {
-        // The comparison is the operator itself, and its result is a mask of
-        // the operands' width rather than a scalar.
+        // The result is a mask of the operands' width rather than a scalar.
         check(contains(source, "bool2 t0 = (input.v0 < uniforms.u0);"));
 
         // The negation is the operator too, which is what GLSL spells not().
         check(contains(source, "any((!(t0)))"));
-
-        // And the mask reaches a select only through a collapse - the whole
-        // reason for having the type at all.
         check(contains(source, "all(t0) ?"));
     }
 };
 
 // An Int2 crosses from the CPU where a Bool2 does not, and packs exactly where
-// a Float2 does - so the block needs no padding to reconcile the two backends,
-// and a shader can be handed a grid cell rather than a pair of floats to
-// truncate. Pure string generation.
+// a Float2 does, so the block needs no padding to reconcile the two backends.
 auto tCodegenIntegerVectorUniform = test("GPU/codegenIntegerVectorUniform") = []
 {
     auto builder = ShaderBuilder {};
@@ -2495,8 +2286,8 @@ auto tCodegenIntegerVectorUniform = test("GPU/codegenIntegerVectorUniform") = []
         check(contains(source, "float u1;"));
         check(contains(source, "- uniforms.u0)"));
 
-        // An eight-byte value followed by a four-byte one: the two rule sets
-        // agree on where the second lands, so nothing is padded between them.
+        // The rule sets agree on where the four-byte value after the eight-byte
+        // one lands, so nothing is padded between them.
         check(!contains(source, "pad"));
     }
 
@@ -2509,11 +2300,8 @@ auto tCodegenIntegerVectorUniform = test("GPU/codegenIntegerVectorUniform") = []
     check(offsets[1] == 8);
 };
 
-// The vector halves of both families through the real platform shader compiler,
-// shaped like what asks for them: a grid cell counted in integers and a box test
-// that compares two coordinates componentwise. The emitted text says the
-// vocabulary is there; only the compiler says the language will take it.
-// Self-skips without a GPU device.
+// The emitted text says the vocabulary is there; only the compiler says the
+// language will take it.
 auto tCodegenVectorTypesCompile = test("GPU/codegenVectorTypesCompile") = []
 {
     auto& device = Device::shared();
@@ -2557,8 +2345,6 @@ auto tCodegenVectorTypesCompile = test("GPU/codegenVectorTypesCompile") = []
     check(pipeline.isValid());
 };
 
-// Compiles the rotating shader (with its uniform block) through the real
-// platform shader compiler. Self-skips without a GPU device.
 auto tCodegenUniformCompiles = test("GPU/codegenUniformCompiles") = []
 {
     auto& device = Device::shared();
@@ -2579,12 +2365,9 @@ auto tCodegenUniformCompiles = test("GPU/codegenUniformCompiles") = []
     check(pipeline.isValid());
 };
 
-// A shared-memory reduction kernel end to end in text: the threadgroup tile,
-// the local and group ids in the entry signature, the barrier - and the guard
-// that is not there. A kernel that barriers gets no early return, because a
-// barrier below a return some threads took is undefined on both backends;
-// what bounds its loads instead is gridCount(), the same value the guard
-// would have read.
+// A kernel that barriers gets no early return, since a barrier below a return
+// some threads took is undefined on both backends; gridCount() bounds its loads
+// instead.
 auto tCodegenComputeSharedReduction = test("GPU/codegenComputeSharedReduction") = []
 {
     auto builder = ShaderBuilder {};
@@ -2630,10 +2413,8 @@ auto tCodegenComputeSharedReduction = test("GPU/codegenComputeSharedReduction") 
     check(contains(hlsl, "buffer1[tgid] = s0[0u];"));
 };
 
-// A name computed from shared memory does not survive a barrier: what the
-// tile held before other threads' stores were published is not what it holds
-// after, so the emitter re-reads rather than reusing the local - the same
-// rule an assignment imposes on the names that read its variable.
+// What the tile held before other threads' stores were published is not what it
+// holds after, so the emitter re-reads rather than reusing the local.
 auto tCodegenComputeSharedNamesRetire =
     test("GPU/codegenComputeSharedNamesRetire") = []
 {
@@ -2653,8 +2434,7 @@ auto tCodegenComputeSharedNamesRetire =
 
     builder.barrier();
 
-    // The same handle used twice again: the pre-barrier name is gone, so the
-    // element is read - and named - afresh.
+    // The pre-barrier name is gone, so the element is read - and named - afresh.
     builder.write(output, gid + 1u, sum * sum);
 
     auto metal = emitMetal(builder.graph());
@@ -2665,10 +2445,8 @@ auto tCodegenComputeSharedNamesRetire =
     check(contains(metal, "buffer0[(gid + 1u)] = (t1 * t1);"));
 };
 
-// The 2D siblings and a wide element type: localPosition()/groupPosition()
-// ride the pair scaffolding exactly as threadPosition() does, and a shared
-// array of float4 declares its element type verbatim - it never crosses the
-// CPU boundary, so there is no scalar-layout contract to decompose it into.
+// A shared array of float4 declares its element type verbatim: it never crosses
+// the CPU boundary, so there is no scalar-layout contract to decompose it into.
 auto tCodegenComputeShared2DFloat4 = test("GPU/codegenComputeShared2DFloat4") = []
 {
     auto builder = ShaderBuilder {};

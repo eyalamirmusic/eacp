@@ -16,13 +16,8 @@ struct PingResponse
 namespace Api
 {
 
-// Tiny RPC API. The static-init flow used a free `ping()` function +
-// MIRO_EXPORT_COMMAND(ping); the inversion path uses a class whose
-// reflect() body lists the same command.
-//
-// ping() is defined inline because the codegen executable instantiates
-// the makePmfHandler lambda chain — that ODR-uses the function, and
-// the codegen exe doesn't compile Schema.cpp.
+// ping() must be inline: the codegen executable ODR-uses it through the
+// makePmfHandler lambda chain but does not compile Schema.cpp.
 class PingApi
 {
 public:

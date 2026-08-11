@@ -5,16 +5,9 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 
-// Windows/D3D12 backend. Each slot owns a timestamp query heap and the readback
-// buffer the GPU resolves it into: a query heap cannot be read by the CPU, so
-// the command list itself has to copy it somewhere that can be, which is the
-// step Metal's counter sample buffer does not need.
-//
 // Query layout per slot: two per timed pass from index 0, then the frame's own
-// pair at the top. The frame pair is separate because D3D12 has no equivalent of
-// MTLCommandBuffer's GPUStartTime - the whole-frame number is two more
-// timestamps on the same list, taken before anything is recorded and after
-// everything is.
+// pair at the top, D3D12 having no equivalent of MTLCommandBuffer's
+// GPUStartTime. A query heap is not CPU-readable, hence the readback buffer.
 
 namespace eacp::GPU
 {
@@ -34,17 +27,15 @@ struct GpuTimestamps::Native
         winrt::com_ptr<ID3D12QueryHeap> heap;
         winrt::com_ptr<ID3D12Resource> readback;
 
-        // Mapped for the object's lifetime. A readback buffer is CPU-visible
-        // system memory and mapping it costs nothing to keep - the alternative
-        // is a Map/Unmap pair every frame for a 272-byte read.
+        // Mapped for the object's lifetime; a readback buffer is CPU-visible
+        // system memory and costs nothing to keep mapped.
         const UINT64* results = nullptr;
 
         std::uint64_t fenceValue = 0;
         bool submitted = false;
     };
 
-    // Deferred for the same reason as the Metal backend's: this is built by
-    // Device, and Device::shared() has not returned when that runs.
+    // Deferred: Device builds this, and Device::shared() has not returned yet.
     void ensureCreated()
     {
         if (tried)
@@ -99,8 +90,7 @@ struct GpuTimestamps::Native
             slot.results = static_cast<const UINT64*>(mapped);
         }
 
-        // Ticks per second on the queue the frames are submitted to. Constant
-        // for the queue's lifetime, so it is read once.
+        // Ticks per second, constant for the queue's lifetime.
         if (auto* queue = context.getQueue())
             if (FAILED(queue->GetTimestampFrequency(&frequency)) || frequency == 0)
                 return;
@@ -157,10 +147,8 @@ void* GpuTimestamps::nativeSamples(int slot) const
     return impl->slots[slot].heap.get();
 }
 
-// Unlike Metal, there is nothing to report without the queries: D3D12 measures
-// the frame with the same timestamps it measures a pass with, so a device that
-// cannot take them has no frame total either. Saying so is what keeps the
-// timer's slots from filling up with frames that can never be answered.
+// Nothing to report without the queries, unlike Metal: the frame total is two
+// of the same timestamps, so a device that cannot take them has no total.
 bool GpuTimestamps::endSlot(int slot, int passCount, void* nativeCommandBuffer)
 {
     if (!impl->supported)
@@ -177,9 +165,8 @@ bool GpuTimestamps::endSlot(int slot, int passCount, void* nativeCommandBuffer)
                    D3D12_QUERY_TYPE_TIMESTAMP,
                    static_cast<UINT>(frameEndQuery));
 
-    // Resolved in exactly the two ranges that were written, rather than the
-    // whole heap: a query that was never ended resolves to undefined data, and
-    // the debug layer says so.
+    // Only the ranges that were written: a query never ended resolves to
+    // undefined data, and the debug layer says so.
     if (passCount > 0)
         list->ResolveQueryData(entry.heap.get(),
                                D3D12_QUERY_TYPE_TIMESTAMP,
@@ -223,8 +210,8 @@ double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
 
     const auto toMilliseconds = [this](UINT64 start, UINT64 end)
     {
-        // A query the GPU never wrote reads as zero, and a disjoint one can
-        // read backwards. Both mean "no number" rather than a duration.
+        // An unwritten query reads as zero and a disjoint one can read
+        // backwards. Both mean "no number".
         if (end <= start)
             return 0.0;
 
@@ -238,17 +225,9 @@ double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
     const auto frameStart = entry.results[frameStartQuery];
     const auto frameEnd = entry.results[frameEndQuery];
 
-    // Where an adapter that only claimed to support timestamps is found out.
-    // These two are absolute GPU tick counts, taken on the command list outside
-    // any pass, and the slot is only read once its fence has passed - so both
-    // reading zero cannot mean a quick frame, only that the writes never landed.
-    // The Parallels virtual GPU does exactly this: it answers
-    // GetTimestampFrequency, creates the query heap and resolves nothing.
-    //
-    // Retiring support here rather than reporting zeroes is what keeps the rest
-    // honest: endSlot then stops marking slots pending, so none are left waiting
-    // on an answer that will not come, and supportsPassTimings() tells a
-    // profiler the truth before it draws an empty graph.
+    // Absolute tick counts read after the fence passed, so two zeroes mean the
+    // writes never landed - the Parallels virtual GPU answers
+    // GetTimestampFrequency, creates the heap and resolves nothing.
     if (frameStart == 0 && frameEnd == 0)
         impl->supported = false;
 

@@ -4,10 +4,9 @@
 
 #include <winhttp.h>
 
-// WinHTTP (classic Win32) rather than Windows.Web.Http (WinRT): no apartment
-// requirement, no cppwinrt include cost, and bodies travel as raw bytes both
-// ways — the WinRT backend routed them through UTF-8 *string* content, which
-// corrupted binary payloads (e.g. multipart file uploads).
+// WinHTTP rather than WinRT's Windows.Web.Http: no apartment requirement, and
+// bodies travel as raw bytes both ways rather than through UTF-8 string
+// content, which corrupted binary payloads.
 namespace eacp::HTTP
 {
 
@@ -110,9 +109,8 @@ struct Handle
 };
 
 // One process-wide session, never closed: WinHTTP session handles are
-// thread-safe and cheap to share. AUTOMATIC_PROXY honours the system proxy
-// configuration (as Windows.Web.Http did); the fallback covers systems
-// predating it (Win8.0).
+// thread-safe. AUTOMATIC_PROXY honours the system proxy configuration; the
+// fallback covers systems predating it (Win8.0).
 HINTERNET session()
 {
     static auto handle = []
@@ -206,8 +204,8 @@ OpenedRequest sendRequest(const Request& req)
     if (!opened.request)
         throwLastError("Opening the request");
 
-    // Responses arrive decompressed, matching NSURLSession and the previous
-    // backend. Best-effort: unsupported systems just skip Accept-Encoding.
+    // Responses arrive decompressed, matching NSURLSession. Best-effort:
+    // unsupported systems just skip Accept-Encoding.
     auto decompression = DWORD {WINHTTP_DECOMPRESSION_FLAG_ALL};
     WinHttpSetOption(opened.request.handle,
                      WINHTTP_OPTION_DECOMPRESSION,
@@ -263,9 +261,8 @@ int queryStatusCode(HINTERNET request)
     return static_cast<int>(status);
 }
 
-// Same line handling as the curl backend: one entry per "Key: Value" line,
-// keys kept verbatim, values trimmed. The status line has no colon and skips
-// itself.
+// One entry per "Key: Value" line, keys verbatim and values trimmed, matching
+// the curl backend. The status line has no colon and skips itself.
 void copyResponseHeaders(HINTERNET request, Response& response)
 {
     auto size = DWORD {0};

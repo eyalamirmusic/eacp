@@ -6,14 +6,8 @@
 #include "../Pipeline/ComputePipeline.h"
 #include "../Windows/D3D12Types.h"
 
-// Windows/D3D12 backend. Records onto the command buffer's recording via the
-// D3D12ComputeEncoder. Buffers bind as root descriptors by GPU address (no
-// descriptor heap involved); textures cannot - a root descriptor is a buffer
-// view and nothing else - so those bind through single-descriptor tables, out
-// of the heaps beginCompute bound. Uniforms upload into a transient buffer
-// bound as a root CBV. A UAV barrier after every dispatch orders chained
-// kernels, and covers a texture written by one and read by the next exactly as
-// it covers a buffer.
+// Buffers bind as root descriptors by GPU address; textures cannot (a root
+// descriptor is a buffer view), so they bind through single-descriptor tables.
 
 namespace eacp::GPU
 {
@@ -91,10 +85,8 @@ void ComputePass::setInputTexture(const Texture& texture, int slot, TextureSampl
 
     auto* list = impl->encoder->commands->list.get();
 
-    // A texture an earlier kernel wrote is still in UNORDERED_ACCESS, and this
-    // is where it comes back from. Only the SRV is bound: the sampler is a
-    // static sampler in the compute root signature, picked by the register the
-    // shader's sampler was emitted at. See TextureSampling.
+    // Only the SRV: samplers are static in the compute root signature, picked
+    // by the register the shader emitted them at. See TextureSampling.
     transitionTextureForUse(
         list, *data, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     list->SetComputeRootDescriptorTable(computeTextureSRVParam(slot), data->srv.gpu);
@@ -168,15 +160,8 @@ void ComputePass::dispatch(int width, int height)
     barrierAfterDispatch(list);
 }
 
-// The grid comes out of the buffer; the threadgroup size is baked into the
-// shader's [numthreads] and is not part of the arguments, which is why
-// D3D12_DISPATCH_ARGUMENTS holds only the three counts - the same three
-// DispatchArguments holds, at the same size and in the same order.
-//
-// The buffer needs a state of its own here. An earlier kernel wrote it as a
-// UAV, and a resource is only legal to read as indirect arguments from
-// INDIRECT_ARGUMENT - a transition Metal has no equivalent of and the reason
-// this is not simply the same three lines twice.
+// Indirect arguments are only legal to read from INDIRECT_ARGUMENT, so the
+// buffer a kernel wrote as a UAV needs a transition Metal has no equivalent of.
 void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
 {
     if (!impl->encoder || offsetInBytes < 0)

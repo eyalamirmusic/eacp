@@ -26,8 +26,7 @@ std::wstring toWide(const std::string& text)
     return result;
 }
 
-// Quotes a single argument following the CommandLineToArgvW rules so that
-// callers pass plain argument strings rather than a pre-escaped line.
+// Follows the CommandLineToArgvW rules, so callers pass plain argument strings.
 std::wstring quoteArgument(const std::wstring& arg)
 {
     if (!arg.empty() && arg.find_first_of(L" \t\n\v\"") == std::wstring::npos)
@@ -93,8 +92,7 @@ std::wstring upper(std::wstring text)
     return text;
 }
 
-// Windows needs the full environment block, so merge any overrides on top of
-// the current process environment. Returns empty to mean "inherit unchanged".
+// Returns empty to mean "inherit unchanged".
 std::wstring buildEnvironmentBlock(const Vector<EnvironmentVariable>& overrides)
 {
     if (overrides.empty())
@@ -239,8 +237,7 @@ struct Process::Native
 private:
     void launch(ProcessOptions options)
     {
-        // Detached children get no pipes: nobody would drain them, and a
-        // full pipe would eventually block the child.
+        // Detached children get no pipes: nobody would drain them.
         if (detached)
         {
             launchDetached(options);
@@ -332,10 +329,8 @@ private:
         errReader = std::thread([this, errRead] { drain(errRead, errBuffer); });
     }
 
-    // No pipes: the child writes straight to the launcher's stdio, so a
-    // long-running child's output streams instead of buffering unbounded.
-    // The launcher's std handles are duplicated inheritable first — the
-    // ones a harness hands us (pipes, files) often aren't.
+    // The launcher's std handles are duplicated inheritable first — the ones a
+    // harness hands us (pipes, files) often aren't.
     void launchInheritingStdio(const ProcessOptions& options)
     {
         HANDLE handles[3] = {};
@@ -406,8 +401,7 @@ private:
         auto environment = buildEnvironmentBlock(options.environment);
 
         // DETACHED_PROCESS: no inherited console, so the child survives the
-        // launcher's console/job the way a setsid'd POSIX child survives its
-        // session.
+        // launcher's console/job.
         PROCESS_INFORMATION info {};
         auto created = CreateProcessW(
             nullptr,

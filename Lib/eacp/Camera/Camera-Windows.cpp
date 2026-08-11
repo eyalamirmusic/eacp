@@ -19,17 +19,9 @@
 #include <mutex>
 #include <thread>
 
-// Windows capture backend (WinRT MediaCapture + MediaFrameReader). Frames arrive
-// as CPU BGRA SoftwareBitmaps on a worker thread; the handler copies them into
-// the latest-frame holder for the display path and hands a CameraFrame view to
-// the user callback. MediaFrameReaderAcquisitionMode::Realtime drops late frames
-// at the source (the backpressure). The session's WinRT objects live on a
-// dedicated MTA worker thread for their whole lifetime.
-//
-// NOTE: authored to the documented MediaFrameReader pattern and the repo's WinRT
-// conventions, but not yet compiled or run on Windows — expect a round of fixes
-// on the first Windows/CI build. Display goes through a CPU copy
-// (Texture::update); zero-copy via shared D3D11/D3D12 surfaces is a later phase.
+// WinRT MediaCapture + MediaFrameReader. Frames arrive as CPU BGRA
+// SoftwareBitmaps on a worker thread; the session's WinRT objects live on a
+// dedicated MTA worker thread for their whole lifetime. No zero-copy path yet.
 
 // Classic-COM byte access to a SoftwareBitmap's locked buffer.
 struct __declspec(uuid("5b0d3235-4dba-4d44-865e-8f1d0e4fd04d"))
@@ -66,10 +58,8 @@ bool isUncompressedSubtype(const winrt::hstring& subtype)
            || _stricmp(name.c_str(), "YUY2") == 0;
 }
 
-// Color sources frequently default to a compressed subtype (e.g. MJPG), which
-// the frame reader hands back as a raw buffer rather than a decoded
-// SoftwareBitmap. Selecting an uncompressed mode closest to the requested size
-// makes frames arrive as bitmaps the BGRA conversion can consume.
+// Color sources often default to a compressed subtype (e.g. MJPG), which the
+// reader hands back as a raw buffer rather than a decoded SoftwareBitmap.
 frames::MediaFrameFormat
     chooseUncompressedFormat(const frames::MediaFrameSource& source,
                              const CameraConfig& config)
@@ -98,9 +88,7 @@ frames::MediaFrameFormat
 }
 } // namespace
 
-// CPU latest-frame holder: a tightly packed BGRA copy plus a sequence so the
-// render thread only re-uploads when a new frame has arrived. The capture thread
-// sets it; the render thread copies it out.
+// Tightly packed BGRA. Set on the capture thread, copied out on the render one.
 struct LatestFrame
 {
     void set(const std::uint8_t* base, int width, int height, std::size_t stride)
@@ -165,9 +153,7 @@ struct CaptureContext
     FrameCallback callback;
     LatestFrame latest;
 
-    // Unlike `callback` this may be rewired while capture runs (CameraView
-    // attaching and detaching), so access is fenced; it is copied out before
-    // invoking so it never runs under the lock.
+    // Rewired while capture runs as CameraView attaches and detaches.
     std::mutex arrivedMutex;
     Callback frameArrived = [] {};
 };
@@ -372,23 +358,8 @@ Camera::Camera()
 
 Camera::~Camera() = default;
 
-// Enumerating means blocking on a WinRT async operation, and a blocking wait
-// is only safe in the multi-threaded apartment: an STA does not pump while
-// blocked, so the completion can never be delivered and the wait never ends.
-//
-// Unlike the capture path (runCapture, which only ever runs on the worker
-// thread above), this is public API called from wherever the caller happens to
-// be — and that is usually the main thread, which eacp deliberately puts in an
-// STA (see EventLoop-Windows: CoInitializeEx(COINIT_APARTMENTTHREADED), as
-// WebView2 and DirectComposition require). A UI building a camera menu, or an
-// IPC handler the Messenger marshalled onto the main thread, would otherwise
-// hang forever, with no error and no way back.
-//
-// So the enumeration runs on a scratch thread: it starts with no apartment, so
-// ensureApartment() lands it in the MTA, where the wait works. Enumeration is
-// quick and every caller wants the answer inline, so this joins rather than
-// going asynchronous. The hop is unconditional — cheap next to the enumeration
-// itself, and it keeps correctness from depending on the caller's apartment.
+// Blocks. Runs on a scratch thread because waiting on a WinRT async only works
+// in an MTA, and callers are usually on eacp's main thread, which is an STA.
 Vector<CameraDevice> Camera::devices()
 {
     auto result = Vector<CameraDevice> {};
@@ -413,10 +384,8 @@ Vector<CameraDevice> Camera::devices()
                     result.push_back(std::move(info));
                 }
             }
-            // Nothing may escape a thread body — an uncaught exception here
-            // would terminate the process instead of reaching the caller, and
-            // an empty list is already this function's answer for "could not
-            // enumerate".
+            // Nothing may escape a thread body, and an empty list already means
+            // "could not enumerate".
             catch (...)
             {
             }
@@ -435,8 +404,8 @@ Vector<CameraFormat> Camera::supportedFormats(const CameraDevice&)
 
 PermissionStatus Camera::permissionStatus()
 {
-    // Desktop Win32 has no pre-flight query; the global privacy setting is
-    // enforced when InitializeAsync runs, so start() fails if access is denied.
+    // Desktop Win32 has no pre-flight query; denial surfaces as a failed
+    // InitializeAsync, so start() fails instead.
     return PermissionStatus::Granted;
 }
 

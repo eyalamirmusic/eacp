@@ -6,19 +6,6 @@
 #include <optional>
 #include <vector>
 
-// Texture::update(region, ...) — filling one texture a tile at a time, which is
-// how a glyph atlas is built: glyphs are rasterized as they are first needed and
-// packed into a texture that already holds every glyph before them.
-//
-// A tile is added every tick. Only that tile's texels are sent to the GPU; the
-// rest of the atlas is left alone. The whole-texture update() overload would
-// re-send the entire atlas each time, and the running totals printed to the log
-// show the difference that makes — with a 512x512 RGBA atlas and 16x16 tiles it
-// is three orders of magnitude.
-//
-// Sampling is Nearest and the atlas is drawn magnified, so the texel grid stays
-// visible and each upload is easy to see landing.
-
 using namespace eacp;
 
 namespace
@@ -38,8 +25,6 @@ std::uint32_t packRGBA(int r, int g, int b)
            | (std::uint32_t) r;
 }
 
-// Stands in for a rasterized glyph: a bordered block whose hue depends on the
-// slot, so each upload is individually recognisable once it lands.
 std::vector<std::uint32_t> makeTile(int index)
 {
     auto pixels = std::vector<std::uint32_t>((std::size_t) (tileSize * tileSize));
@@ -90,8 +75,7 @@ struct AtlasView final : GPU::GPUView
 
         const auto bounds = getLocalBounds();
 
-        // A resize only moves the logical space; the pipelines the renderer
-        // compiled are unaffected, so it is set rather than rebuilt.
+        // A resize only moves the logical space; compiled pipelines are unaffected.
         if (bounds.w > 0 && bounds.h > 0)
         {
             if (sprites)
@@ -113,8 +97,8 @@ struct AtlasView final : GPU::GPUView
 
         const auto tile = makeTile(nextTile);
 
-        // The whole point: only this tile's texels cross to the GPU. Passing the
-        // same pixels to update(pixels) would re-send all 1 MB of the atlas.
+        // Only this tile's texels cross to the GPU; update(pixels) would re-send
+        // the whole 1 MB atlas.
         atlas.update({(float) (column * tileSize),
                       (float) (row * tileSize),
                       (float) tileSize,
@@ -129,8 +113,6 @@ struct AtlasView final : GPU::GPUView
         uploadedBytes += tileBytes;
         wholeTextureBytes += atlasBytes;
 
-        // Logged rather than drawn: this example has no text renderer, and the
-        // ratio is the thing worth taking away from it.
         if (nextTile % 32 == 0 || nextTile == tileCount)
             LOG(nextTile,
                 "/",
@@ -157,14 +139,11 @@ struct AtlasView final : GPU::GPUView
         const auto margin = 24.f;
         const auto barHeight = 10.f;
 
-        // Square, centred, as large as the window allows.
         const auto side =
             std::min(bounds.w - margin * 2.f, bounds.h - margin * 3.f - barHeight);
         const auto atlasRect =
             Graphics::Rect {(bounds.w - side) / 2.f, margin, side, side};
 
-        // The default Nearest keeps the texel grid crisp under magnification, so
-        // an upload is visible as a hard-edged block rather than a smear.
         sprites->drawTexture(atlas, atlasRect);
 
         const auto barRect = Graphics::Rect {
@@ -185,7 +164,6 @@ struct AtlasView final : GPU::GPUView
     long long uploadedBytes = 0;
     long long wholeTextureBytes = 0;
 
-    // A tile every 30ms: fast enough to watch fill, slow enough to see each one.
     Threads::Timer timer {[this] { addNextTile(); }, 33};
 };
 

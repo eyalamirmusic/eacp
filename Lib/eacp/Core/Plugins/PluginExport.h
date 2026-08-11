@@ -1,14 +1,8 @@
 #pragma once
 
-// Marks a C function as exported from an eacp plugin. The host resolves
-// them with DynamicLibrary::findFunction after enumerating via
-// getFunctionNames.
-//
-// The set of exported functions — and, when host and plugin ship
-// independently, their versioning — is the app's own contract. eacp never
-// crosses the boundary: host and plugin each statically link their own copy,
-// so nothing with C++ layout may pass through these functions; stick to C
-// primitives, C structs and function pointers.
+// Marks a C function as exported from an eacp plugin, resolved by the host with
+// DynamicLibrary::findFunction. Host and plugin each statically link their own
+// eacp, so only C primitives, C structs and function pointers may cross.
 
 #ifdef __cplusplus
 #define EACP_PLUGIN_EXTERN_C extern "C"

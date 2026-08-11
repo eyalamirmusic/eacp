@@ -52,8 +52,8 @@ void ComputePass::setInputBuffer(const Buffer& buffer, int slot)
 
 void ComputePass::setOutputBuffer(const Buffer& buffer, int slot)
 {
-    // Metal binds a device buffer the same way whether the kernel reads or
-    // writes it; the read/write distinction only matters to D3D's view types.
+    // Metal binds a device buffer the same way either direction; only D3D's
+    // view types care.
     setInputBuffer(buffer, slot);
 }
 
@@ -64,9 +64,8 @@ void ComputePass::setInputTexture(const Texture& texture,
     auto activeEncoder = impl->encoder.get();
     auto metalTexture = (__bridge id<MTLTexture>) texture.nativeTexture();
 
-    // The state for the sampling the shader declared, not one the texture
-    // carries - the same rule the render pass follows, and the one D3D12's
-    // static samplers leave no alternative to.
+    // Keyed on the sampling the shader declared, not one the texture carries,
+    // to agree with D3D12's static samplers.
     auto metalSampler =
         (__bridge id<MTLSamplerState>) Device::shared().nativeSampler(sampling);
 
@@ -85,9 +84,8 @@ void ComputePass::setOutputTexture(const Texture& texture, int slot)
     if (activeEncoder == nil || metalTexture == nil || !texture.isComputeWritable())
         return;
 
-    // Metal binds a texture the same way whether the kernel reads or writes it;
-    // what separates the two is the usage it was created with and the access
-    // qualifier the kernel declared. No sampler: a written texture has none.
+    // Direction comes from the texture's usage and the kernel's access
+    // qualifier, not the bind; a written texture has no sampler.
     [activeEncoder setTexture:metalTexture atIndex:(NSUInteger) slot];
 }
 
@@ -128,9 +126,8 @@ void ComputePass::dispatch(int width, int height)
                   threadsPerThreadgroup:MTLSizeMake(size, size, 1)];
 }
 
-// The threadgroup size still comes from here - only the *count* is in the
-// buffer. Metal reads three uint32s at the offset, which is what
-// DispatchArguments is, so no conversion happens on the way.
+// Only the group count comes from the buffer; the threadgroup size is still
+// set here. Metal reads three uint32s at the offset - DispatchArguments as is.
 void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
 {
     auto activeEncoder = impl->encoder.get();

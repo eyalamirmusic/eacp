@@ -67,17 +67,12 @@ struct Texture::Native
         if (metalDevice == nil || width <= 0 || height <= 0)
             return;
 
-        // Refused here rather than at the bind, so a format D3D12 cannot take a
-        // typed store to fails the same way on both backends instead of working
-        // on one of them. Nothing is created, so the texture is invalid rather
-        // than a kernel output that quietly does nothing. See
-        // supportsComputeWrite.
+        // Refused here so a format D3D12 cannot take a typed store to fails the
+        // same way on both backends. See supportsComputeWrite.
         if (computeWrite && !supportsComputeWrite(descriptor.format))
             return;
 
-        // A chain is only worth asking for when there are pixels to build it
-        // from: a render target or a kernel output has none at creation, so it
-        // would get levels nothing ever writes and the sampler would read them.
+        // Without pixels a chain would get levels nothing ever writes.
         if (descriptor.mipmapped && pixels != nullptr)
             levels = mipLevelCount(width, height);
 
@@ -88,23 +83,18 @@ struct Texture::Native
                                      mipmapped:levels > 1 ? YES : NO];
         textureDescriptor.usage = MTLTextureUsageShaderRead;
 
-        // Set explicitly as well as through the `mipmapped` flag, so the count
-        // the texture is created with and the count the upload loop fills cannot
-        // come from two different pieces of arithmetic.
         textureDescriptor.mipmapLevelCount = (NSUInteger) levels;
 
-        // A render target is written by the GPU and read by it, so it goes in
-        // private storage and keeps the default (managed/shared) mode otherwise
-        // - which is what makes replaceRegion valid on every Mac generation.
+        // Private storage for a GPU-only texture; the default mode elsewhere is
+        // what keeps replaceRegion valid on every Mac generation.
         if (renderTarget)
         {
             textureDescriptor.usage |= MTLTextureUsageRenderTarget;
             textureDescriptor.storageMode = MTLStorageModePrivate;
         }
 
-        // A kernel's output only needs the write usage; the storage mode is
-        // deliberately left alone, so a texture a kernel accumulates into can
-        // still be seeded from the CPU with update().
+        // Storage mode left alone, so a kernel's target can still be seeded
+        // from the CPU with update().
         if (computeWrite)
             textureDescriptor.usage |= MTLTextureUsageShaderWrite;
 
@@ -113,15 +103,12 @@ struct Texture::Native
         if (renderTarget && descriptor.depth && texture.get() != nil)
             makeDepthTexture(metalDevice);
 
-        // The default storage mode keeps replaceRegion valid on every Mac
-        // generation; it handles the CPU-to-GPU synchronisation itself.
         if (texture.get() != nil && pixels != nullptr)
             update(pixels, 0);
     }
 
-    // The depth buffer a pass into this texture attaches. Single-sampled,
-    // because a texture target never multisamples, and private - the pass
-    // clears it and stores nothing, so it is never read outside the GPU.
+    // Single-sampled, a texture target never multisampling, and private, the
+    // pass storing nothing from it.
     void makeDepthTexture(id<MTLDevice> metalDevice)
     {
         auto depthDescriptor = [MTLTextureDescriptor
@@ -136,9 +123,8 @@ struct Texture::Native
         depthTexture = [metalDevice newTextureWithDescriptor:depthDescriptor];
     }
 
-    // Zero-copy wrap of a CVPixelBuffer: the texture cache maps the buffer's
-    // IOSurface straight into an MTLTexture. cvTexture owns that mapping and
-    // keeps it alive for the texture's lifetime.
+    // The cache maps the buffer's IOSurface straight into an MTLTexture;
+    // cvTexture owns that mapping for the texture's lifetime.
     Native(Device& device, void* pixelBufferHandle)
     {
         auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
@@ -172,8 +158,8 @@ struct Texture::Native
 
         cvTexture.reset(mapped);
 
-        // The MTLTexture is owned by the CVMetalTexture mapping; retain it so
-        // the Ptr's release on destruction stays balanced.
+        // Owned by the CVMetalTexture mapping; retained to balance the Ptr's
+        // release on destruction.
         texture.reset(CVMetalTextureGetTexture(mapped));
     }
 
@@ -188,10 +174,8 @@ struct Texture::Native
         updateRegion(0, 0, width, height, pixels, bytesPerRow);
     }
 
-    // Every level, from the chain built on the CPU. Not
-    // generateMipmapsForTexture, which would work here and has no counterpart on
-    // D3D12 - see MipChain.h for why one filter shared by both backends is worth
-    // more than a free one on this side only.
+    // From the CPU chain rather than generateMipmapsForTexture, which D3D12 has
+    // no counterpart to. See MipChain.h.
     void uploadChain(const void* pixels, std::size_t bytesPerRow)
     {
         if (texture.get() == nil || pixels == nullptr)
@@ -218,8 +202,6 @@ struct Texture::Native
         }
     }
 
-    // Both update() overloads land here; the whole-texture one is just the full
-    // rect, so there is a single replaceRegion call to reason about.
     void updateRegion(int x,
                       int y,
                       int regionWidth,
@@ -233,9 +215,7 @@ struct Texture::Native
         if (regionWidth <= 0 || regionHeight <= 0)
             return;
 
-        // Metal raises on a region that leaves the texture, so an out-of-bounds
-        // request is dropped rather than clamped — see the header for why
-        // clamping would be worse than doing nothing.
+        // Metal raises on a region that leaves the texture, so drop it.
         if (x < 0 || y < 0 || x + regionWidth > width || y + regionHeight > height)
             return;
 
@@ -254,12 +234,10 @@ struct Texture::Native
     int width = 0;
     int height = 0;
 
-    // Bytes per pixel of the texture's format; the CV-wrapped path stays at 4
-    // because those buffers are always 32-bit BGRA/RGBA.
+    // The CV-wrapped path stays at 4: those buffers are always 32-bit BGRA/RGBA.
     int pixelStride = 4;
     TextureFormat format = TextureFormat::RGBA8Unorm;
 
-    // 1 unless a chain was asked for and there were pixels to build one from.
     int levels = 1;
 
     bool renderTarget = false;
@@ -290,8 +268,8 @@ void Texture::update(const Graphics::Rect& region,
                      const void* pixels,
                      std::size_t bytesPerRow)
 {
-    // Texels are whole; round rather than truncate so a rect built from
-    // accumulated float arithmetic lands on the texel it is nearest to.
+    // Rounded, not truncated, so a rect from accumulated float arithmetic lands
+    // on the nearest texel.
     impl->updateRegion((int) std::lround(region.x),
                        (int) std::lround(region.y),
                        (int) std::lround(region.w),

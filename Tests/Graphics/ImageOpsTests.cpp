@@ -107,7 +107,6 @@ auto tWarpInvalidInputsReturnInvalid =
 auto tMirroredCropFlipsHorizontally =
     test("ImageOps/mirroredCropFlipsHorizontally") = []
 {
-    // Four distinct pixels in a row; a full-width mirrored crop reverses them.
     auto src = fromBytes(
         4, 1, {10, 11, 12, 13, 20, 21, 22, 23, 30, 31, 32, 33, 40, 41, 42, 43});
     auto cropped = mirroredCrop(src, 0, 0, 4, 1);

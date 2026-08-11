@@ -19,16 +19,13 @@ std::string foldedNonEmpty(std::string_view name)
 }
 } // namespace
 
-// The endpoint lives in Impl so its destructor is the single place a stream
-// gets torn down: ~Channel, move-assignment and close() all funnel here.
 struct Channel::Impl
 {
     ~Impl() { detail::channelClose(channel); }
 
     detail::NativeChannel channel = detail::invalidChannel;
 
-    // Bytes already pulled off the stream but not yet handed back - the
-    // overshoot from a receiveUntil() read. Drained before touching the wire.
+    // Overshoot from a receiveUntil() read; drained before touching the wire.
     std::string buffered;
 };
 
@@ -151,11 +148,9 @@ std::size_t Channel::receive(char* buffer, std::size_t maxBytes)
     return detail::channelReceive(impl->channel, buffer, maxBytes);
 }
 
-// The guard is what makes "one server per name" true: it is taken before
-// binding and held until the endpoint is retired, so at any moment at most
-// one process may be sweeping and planting the endpoint. A crashed server's
-// lock died with it, which is exactly what lets a successor reclaim the
-// name without asking anyone.
+// The guard is what makes "one server per name" true: held from before the
+// bind until the endpoint is retired, and released by the kernel if the
+// process dies, so a successor can reclaim the name.
 struct ChannelServer::Impl
 {
     ~Impl() { detail::channelServerClose(listener, safeName); }

@@ -10,27 +10,22 @@
 namespace eacp::Graphics
 {
 
-// paintDirtyViewsForHost() is defined in View-Windows.cpp; the composition
-// device accessors come from DComp-Windows.h. Both are linked earlier in the
-// unity build.
+// Defined in View-Windows.cpp.
 void paintDirtyViewsForHost(HWND host);
 void redrawAllCompositionHosts();
 
-// Defined in Keyboard-Windows.cpp: Windows virtual key -> framework KeyCode
-// (KeyCode::Unknown when unmapped), so KeyEvent::keyCode means the same thing
-// on every platform.
+// Defined in Keyboard-Windows.cpp; KeyCode::Unknown when unmapped.
 uint16_t keyCodeFromVirtualKey(int vk);
 
 namespace
 {
-// Immortal because ~CompositionHostWindow unregisters here, and a Window at
-// namespace scope outlives a registry that first use constructed after it.
+// Immortal because a Window at namespace scope can outlive it and
+// ~CompositionHostWindow unregisters here.
 std::unordered_map<View*, HWND>& contentViewToHwnd()
 {
     return Singleton::getImmortal<std::unordered_map<View*, HWND>>();
 }
 
-// Virtual key codes - defined manually to reduce Windows.h dependency.
 namespace VK
 {
 constexpr uint16_t Shift = 0x10;
@@ -115,9 +110,8 @@ void repaintViewTree(View* view)
 
 namespace
 {
-// A native surface a view owns outside the composition tree (a WebView's
-// browser window) does not follow the host window on its own, so the whole
-// tree is told when it moves or its visibility changes.
+// A native surface outside the composition tree (a WebView's browser window)
+// does not follow the host window on its own.
 void notifyViewTreeOfHostMove(View* view)
 {
     if (!view)
@@ -153,8 +147,8 @@ void markViewTreeLayersDirty(const View* view)
         markViewTreeLayersDirty(subview);
 }
 
-// Every live host, so a device loss can rebuild each one's target and root.
-// Main-thread only and immortal, like the view/HWND registry above.
+// Every live host, for device-loss rebuilds. Main thread only, and immortal
+// like the registry above.
 Vector<CompositionHostWindow*>& compositionHosts()
 {
     return Singleton::getImmortal<Vector<CompositionHostWindow*>>();
@@ -173,12 +167,9 @@ bool isHostWindowTransparent(HWND hwnd)
     return false;
 }
 
-// Called by the rendering-device recovery in D2DFactory-Windows.cpp. Unlike
-// Windows.UI.Composition — which could hot-swap the rendering device and keep
-// its surfaces (they merely lost their pixels) — DirectComposition binds the
-// device at creation, so the target, the root visual and every layer/view visual
-// below them are dead objects. Rebuild the hosts' targets first, then let the
-// generation stamp on each view/layer pull the rest through on the redraw.
+// Called by the device recovery in D2DFactory-Windows.cpp. DirectComposition
+// binds its device at creation, so every visual below a lost device is dead;
+// the generation stamp on each view/layer pulls the rest through on redraw.
 void rebuildAllCompositionHosts()
 {
     for (auto* host: compositionHosts())
@@ -192,8 +183,6 @@ void rebuildAllCompositionHosts()
     redrawAllCompositionHosts();
 }
 
-// Re-renders every layer and repaints every painting view of all
-// composition-hosted windows.
 void redrawAllCompositionHosts()
 {
     for (auto& [root, hostHwnd]: contentViewToHwnd())
@@ -246,9 +235,8 @@ float CompositionHostWindow::getDpiScale() const
     return static_cast<float>(dpi) / 96.f;
 }
 
-// The root maps logical points to physical pixels for the whole tree. Content
-// visuals below it counter-scale by 1/dpiScale so their physical-pixel surfaces
-// land 1:1 — see the note in NativeLayer-Windows.h.
+// The root maps logical points to physical pixels for the whole tree; content
+// visuals below it counter-scale by 1/dpiScale to land 1:1.
 void CompositionHostWindow::rescaleRootVisualToDpi()
 {
     if (!rootVisual)
@@ -291,9 +279,7 @@ void CompositionHostWindow::ensureAllLayersRendered(const View* view) const
 {
     ensureAllLayersRendered(view, getDpiScale());
 
-    // DComp batches every visual and surface change made above; nothing reaches
-    // the screen until the device is flushed. WinRT committed implicitly, so
-    // this is the one call the old backend never needed.
+    // DComp batches changes; nothing reaches the screen until it is flushed.
     commitComposition();
 }
 
@@ -455,15 +441,9 @@ void CompositionHostWindow::teardown()
         DestroyWindow(hwnd);
 }
 
-// The DComp visual tree composites above the window's GDI redirection bitmap,
-// so wherever the app's content is transparent the bitmap shows through. Fill
-// it with the theme's window background — the counterpart of NSWindow's
-// windowBackgroundColor on macOS. Left unpainted it appears as a white
-// rectangle frozen at the window's creation size (resizes reallocate the
-// bitmap but nothing ever painted it).
-//
-// A transparent window has no redirection bitmap at all, and painting one is
-// exactly the opaque background it was created to avoid.
+// The DComp tree composites above the GDI redirection bitmap, which shows
+// through wherever the content is transparent; unpainted it is a white
+// rectangle frozen at the window's creation size.
 void CompositionHostWindow::fillWindowBackground(HDC dc) const
 {
     if (!dc || transparentBackground)
@@ -519,8 +499,8 @@ void CompositionHostWindow::ensureRawMouseRegistered()
     mouse.usUsagePage = 0x01; // generic desktop
     mouse.usUsage = 0x02; // mouse
 
-    // No RIDEV_NOLEGACY: the ordinary pointer messages must keep coming, since
-    // a MouseEvent reports the pointer's movement as well as the device's.
+    // No RIDEV_NOLEGACY: a MouseEvent reports the pointer's movement as well
+    // as the device's, so the ordinary pointer messages must keep coming.
     mouse.hwndTarget = hwnd;
 
     rawMouseRegistered = RegisterRawInputDevices(&mouse, 1, sizeof(mouse)) != FALSE;
@@ -542,8 +522,7 @@ void CompositionHostWindow::accumulateRawMouseMovement(LPARAM lParam)
     if (input.header.dwType != RIM_TYPEMOUSE)
         return;
 
-    // A tablet or a remote desktop reports where its pointer *is*, not how far
-    // the hand moved it; there is no device movement in that to report.
+    // An absolute device reports where its pointer is, not how far it moved.
     if ((input.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) != 0)
         return;
 
@@ -555,9 +534,8 @@ void CompositionHostWindow::dispatchMouseToContentView(MouseEvent event)
 {
     if (event.type == MouseEventType::Moved || event.type == MouseEventType::Dragged)
     {
-        // Whatever Raw Input has gathered since the last movement was reported.
-        // A device that cannot report its own movement (a tablet, a remote
-        // desktop) leaves this empty, and the pointer's movement stands in.
+        // Devices that cannot report their own movement leave this empty, and
+        // the pointer's movement stands in.
         auto moved = rawMouseMovement.x != 0.0f || rawMouseMovement.y != 0.0f;
 
         event.rawDelta = moved ? rawMouseMovement : event.delta;
@@ -576,15 +554,13 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
 
     switch (msg)
     {
-        // Raw Input must reach DefWindowProc to be cleaned up, so this reports
-        // the movement and then stands aside.
+        // Raw Input must still reach DefWindowProc to be cleaned up.
         case WM_INPUT:
             accumulateRawMouseMovement(lParam);
             return std::nullopt;
 
         // A minimized window reports a 0x0 client area, which would collapse
-        // the view tree — and any native surface sized from it — only to
-        // restore it a moment later. Treat it as a visibility change instead.
+        // the view tree; treat it as a visibility change instead.
         case WM_SIZE:
             if (wParam == SIZE_MINIMIZED)
             {
@@ -607,8 +583,8 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
                 clipCursorToClient();
             return 0;
 
-        // Both things that track the window in screen coordinates: a view's
-        // native surface, and the clip rectangle confining a pinned cursor.
+        // A view's native surface and the pinned cursor's clip rectangle both
+        // track the window in screen coordinates.
         case WM_MOVE:
             notifyViewTreeOfHostMove(contentView);
 
@@ -627,8 +603,8 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
 
         case WM_KILLFOCUS:
             disengageMouseLock();
-            // The matching key-ups go to whoever took focus (e.g. Alt+Tab), so
-            // tracked state would otherwise report keys stuck down forever.
+            // The matching key-ups go to whoever took focus, so tracked state
+            // would otherwise report keys stuck down forever.
             keyState.reset();
             return std::nullopt;
 
@@ -648,8 +624,7 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
         case WM_MBUTTONDOWN:
             if (contentView)
             {
-                // Capture the mouse so a drag keeps delivering moves even when
-                // the cursor leaves the client area (matching NSView tracking).
+                // So a drag keeps delivering moves outside the client area.
                 SetCapture(hwnd);
 
                 auto event = makeMouseEvent(
@@ -664,8 +639,8 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
         case WM_LBUTTONUP:
         case WM_RBUTTONUP:
         case WM_MBUTTONUP:
-            // Clear before ReleaseCapture: it sends WM_CAPTURECHANGED, which
-            // must not synthesize a second Up for this gesture.
+            // Clear before ReleaseCapture, whose WM_CAPTURECHANGED must not
+            // synthesize a second Up for this gesture.
             mouseButtonHeld = false;
 
             if (contentView)
@@ -676,15 +651,13 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
                 dispatchMouseToContentView(event);
             }
 
-            // Release the capture once no buttons remain held.
             if ((wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON)) == 0)
                 ReleaseCapture();
             return 0;
 
         case WM_CAPTURECHANGED:
-            // Capture stolen mid-drag (OS move loop, drag-drop, a popup): the
-            // matching WM_*BUTTONUP will never arrive here, so synthesize the
-            // Up to unwind the captured view's drag state.
+            // Capture stolen mid-drag means the matching WM_*BUTTONUP never
+            // arrives here.
             synthesizeMouseUpOnCaptureLoss();
             return 0;
 
@@ -696,18 +669,14 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
                 return 0;
             }
 
-            // Arm a WM_MOUSELEAVE so a cursor leaving the surface produces an
-            // Exited event, clearing any hover (e.g. a WebView's :hover state).
             ensureMouseLeaveTracking();
 
             if (contentView)
             {
                 auto buttons = wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON);
 
-                // A move with a button held is a drag. dispatchMouseEvent only
-                // forwards Dragged/Up to the captured mouseDownTarget; a plain
-                // Moved is re-hit-tested, so without this the title-bar grab is
-                // lost the instant the cursor moves and panels never drag.
+                // A move with a button held is a drag: only Dragged/Up reach
+                // the captured target, while a plain Moved is re-hit-tested.
                 auto event = makeMouseEvent(lParam,
                                             getDpiScale(),
                                             buttons != 0 ? MouseEventType::Dragged
@@ -737,9 +706,8 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
         case WM_MOUSEHWHEEL:
             if (contentView)
             {
-                // Wheel messages carry screen coordinates (unlike the button and
-                // move messages), so map them into the client area before
-                // hit-testing the view under the cursor.
+                // Wheel messages carry screen coordinates, unlike button and
+                // move messages.
                 POINT pt = {getXFromLParam(lParam), getYFromLParam(lParam)};
                 ScreenToClient(hwnd, &pt);
 
@@ -762,9 +730,8 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
             dispatchKeyEvent(msg, wParam, lParam);
             return 0;
 
-        // Alt and Alt+key arrive as sys-key messages. Track and dispatch them
-        // like plain keys, but fall through to DefWindowProc so the system
-        // chords (Alt+F4, Alt+Space, ...) keep working.
+        // Dispatched like plain keys, but falls through to DefWindowProc so
+        // the system chords (Alt+F4, Alt+Space) keep working.
         case WM_SYSKEYDOWN:
         case WM_SYSKEYUP:
             dispatchKeyEvent(msg, wParam, lParam);
@@ -804,10 +771,8 @@ void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lPa
     ensureAllLayersRendered(contentView);
 }
 
-// The pump's TranslateMessage has already posted any WM_CHAR / WM_SYSCHAR for
-// the key being dispatched; pull them off the queue so the KeyEvent carries the
-// layout-aware text — the equivalent of NSEvent.characters on macOS, and what
-// makes text entry work on non-US layouts (including dead keys).
+// TranslateMessage has already posted WM_CHAR/WM_SYSCHAR for the key being
+// dispatched; taking them here gives the KeyEvent layout-aware text.
 std::string CompositionHostWindow::takePendingCharacters() const
 {
     auto wide = std::wstring {};

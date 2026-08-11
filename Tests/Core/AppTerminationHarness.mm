@@ -1,7 +1,5 @@
-// Subprocess harness for AppTerminationTests: quits a running app via
-// terminate: or Apps::quit(returnValue) and reports whether run<T>()
-// unwound. main() returns run<T>()'s value so the parent can check the
-// process exit code.
+// Subprocess harness for AppTerminationTests: main() returns run<T>()'s value so
+// the parent can check the process exit code.
 #include <eacp/Core/Core.h>
 
 #import <Cocoa/Cocoa.h>

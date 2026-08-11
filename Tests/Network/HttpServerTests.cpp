@@ -543,9 +543,8 @@ eacp::TCP::Connection connectRaw(int port)
     return eacp::TCP::Connection::connect({"127.0.0.1", (std::uint16_t) port});
 }
 
-// Runs stop() on a helper thread and waits for it with a deadline, closing
-// the client socket afterwards so a server wedged in recv() unblocks and the
-// test fails instead of hanging.
+// Closes the client socket afterwards so a server wedged in recv() unblocks and
+// the test fails instead of hanging.
 bool stopCompletesWithin(Server& server,
                          eacp::TCP::Connection& client,
                          eacp::Time::MS timeout)

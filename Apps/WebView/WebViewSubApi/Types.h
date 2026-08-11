@@ -29,17 +29,9 @@ struct Tick
 namespace Api
 {
 
-// The api under test is NESTED, which is the whole point of this fixture.
-//
-// Miro installs a sub-API under its member identifier, so these reach the wire
-// as "nested.greet" / "nested.ticks". A generated TS client, though, is written
-// against whatever shape it was generated from — and this app's client calls a
-// plain `backend.greet()`, because from its own point of view `greet` is just a
-// command at the root.
-//
-// Closing that gap is exactly what configureBridge({prefix}) in the backend
-// template does, and what the tests here exercise end to end over a real
-// WebView.
+// Sub-APIs reach the wire under their member name ("nested.greet"), while the
+// generated client calls a root-level greet() — configureBridge({prefix}) in
+// the backend template closes that gap.
 class GreeterApi
 {
 public:
@@ -49,8 +41,7 @@ public:
         return Greeting {"hello " + req.name};
     }
 
-    // Lets a test push an event without going through a command, so the
-    // subscribe path is covered independently of the invoke path.
+    // Lets a test drive the subscribe path independently of the invoke path.
     void publishTick(int count) { ticks.publish(Tick {count}); }
 
     const std::string& greetedName() const { return lastGreeted; }

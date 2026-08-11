@@ -14,17 +14,16 @@ bool s_inRootRunLoop = false;
 int s_nestedDepth = 0;
 bool s_quitRequested = false;
 
-// terminate: (Cmd+Q, Dock quit, quit Apple Events) calls exit() without
-// unwinding run<T>(); cancel it and stop the loop so the normal teardown runs.
+// terminate: calls exit() without unwinding run<T>(), so cancel it and stop the
+// loop instead, letting the normal teardown run.
 NSApplicationTerminateReply applicationShouldTerminate(id, SEL, NSApplication*)
 {
     getEventLoop().quit();
     return NSTerminateCancel;
 }
 
-// Dock-icon click while no window is visible. The app decides what "come
-// back" means (Apps::setReopenHandler); returning NO suppresses AppKit's
-// default un-miniaturize pass.
+// Returning NO suppresses AppKit's default un-miniaturize pass, leaving the
+// decision to Apps::setReopenHandler.
 BOOL applicationShouldHandleReopen(id, SEL, NSApplication*, BOOL)
 {
     Apps::getReopenHandler()();
@@ -68,11 +67,8 @@ NSApplication* getApp()
     return [NSApplication sharedApplication];
 }
 
-// Installing the termination delegate and activation policy is what makes
-// this eacp copy "the app" — only the copy that runs the root loop may do
-// it. An eacp inside a dlopen-hosted plugin shares NSApp with the host and
-// must never overwrite the host's delegate or policy, so this lives in
-// enterRootRunLoop, not in getApp().
+// Only the copy that runs the root loop may do this: a dlopen-hosted plugin
+// shares NSApp with its host and must never overwrite its delegate or policy.
 void configureAppForLoopOwnership()
 {
     static auto once = []
@@ -88,10 +84,8 @@ void configureAppForLoopOwnership()
     (void) once;
 }
 
-// Single wrapper around [NSApp run]. Apple says NSApplication's run
-// is not safe to call recursively, so the guard here keeps the
-// invariant in one place: callers that need a bounded inner loop
-// use EventLoop::runFor (polled) instead.
+// [NSApp run] is not safe to call recursively; a bounded inner loop is
+// EventLoop::runFor.
 void enterRootRunLoop()
 {
     assert(! s_inRootRunLoop
@@ -102,9 +96,8 @@ void enterRootRunLoop()
     s_quitRequested = false;
     configureAppForLoopOwnership();
 
-    // Loop ownership is advertised through the process environment so it
-    // crosses eacp copies: a plugin-hosted app's quit reads it to know the
-    // running loop is eacp's to stop (see stopProcessRootLoop).
+    // Advertised through the process environment so it crosses eacp copies (see
+    // stopProcessRootLoop).
     setEnv("EACP_ROOT_LOOP", "1");
     [getApp() run];
     setEnv("EACP_ROOT_LOOP", "0");
@@ -164,17 +157,15 @@ bool EventLoop::runFor(Time::MS timeout)
 
 void EventLoop::quit()
 {
-    // An eacp copy that never entered a loop — eacp statically linked into
-    // a dlopen-hosted plugin — has nothing to quit, and NSApp belongs to
+    // A copy that never entered a loop has nothing to quit, and NSApp belongs to
     // the host. Quitting the application is the host's decision.
     if (!s_inRootRunLoop && s_nestedDepth == 0)
         return;
 
     s_quitRequested = true;
 
-    // [NSApp stop:] applies to the active [NSApp run]. If a nested
-    // runFor is on top, its polling loop reads s_quitRequested
-    // directly — we only need to wake it via the dummy event.
+    // A nested runFor polls s_quitRequested itself, so it only needs the wake
+    // event below.
     if (s_nestedDepth == 0 && s_inRootRunLoop)
         [getApp() stop:nil];
 
@@ -192,8 +183,7 @@ void stopProcessRootLoop()
     if (getEnvValue("EACP_ROOT_LOOP") != "1")
         return;
 
-    // NSApp is shared by every copy in the process, so stopping it from
-    // here reaches the root loop no matter which eacp copy entered it.
+    // NSApp is shared, so this reaches the root loop whichever copy entered it.
     [getApp() stop:nil];
     [getApp() postEvent:makeWakeEvent() atStart:YES];
 }

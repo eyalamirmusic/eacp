@@ -1,16 +1,6 @@
 #include "Common.h"
 
 #include <thread>
-// Exercises the bridge-side async model: C++ command handlers stay
-// completely synchronous, and the bridge turns each call into an async
-// one. runCommand runs a Miro dispatch under a chosen execution mode and
-// exposes the outcome as an eacp Async; resolveWith composes that Async
-// onto the Miro::Resolve completion the wire delivers through. Miro itself
-// is event-loop-agnostic — it only invokes the Resolve std::function.
-//
-// These drive the real event loop via Async::waitFor / runEventLoopUntil,
-// the same way Tests/Core/AsyncTests.cpp does in a bare NanoTest main.
-
 using namespace nano;
 
 using eacp::Graphics::CommandExecution;
@@ -33,8 +23,7 @@ struct EchoResponse
     MIRO_REFLECT(echoed)
 };
 
-// A perfectly ordinary synchronous API — no Promise, no threading. The
-// bridge is what makes calls to it async.
+// An ordinary synchronous API; the bridge is what makes calls to it async.
 class EchoApi
 {
 public:
@@ -43,10 +32,8 @@ public:
     EchoResponse echo(const EchoRequest& req) const { return {req.text + "!"}; }
 };
 
-// A genuinely async API: the handler returns immediately and settles the
-// Completer later, from a worker thread it owns. The bridge composes its
-// Async on top of that deferred completion without any special casing —
-// dispatchAsync simply hands the handler the Resolve.
+// The handler returns immediately and settles the Completer later, from a
+// worker thread it owns.
 class AsyncEchoApi
 {
 public:
@@ -67,8 +54,6 @@ public:
     }
 };
 
-// Invokes Miro's completion-based dispatch for `command` with the given
-// text. This is exactly what WebViewBridge::onMessage hands to runCommand.
 auto dispatchInvoke(Miro::Bridge& bridge, std::string command, std::string text)
 {
     return [&bridge, command = std::move(command), text = std::move(text)](
@@ -139,8 +124,7 @@ auto tDeferredDoesNotRunInline =
                         delivered = result["echoed"].asString();
                 });
 
-    // Deferred: nothing has run yet — onMessage's caller has returned to
-    // the event loop before the handler executes.
+    // onMessage's caller has returned to the event loop before the handler runs.
     check(!delivered.has_value());
     check(!failed.has_value());
 
@@ -159,9 +143,7 @@ auto tAsyncHandlerResolvesLater =
     auto bridge = Miro::Bridge {};
     bridge.use(api);
 
-    // MainThreadDeferred: the handler is *invoked* on the main loop, then
-    // settles later from its own worker thread — the bridge's Async still
-    // resolves on the main thread.
+    // Invoked on the main loop, settled later from its own worker thread.
     auto work = runCommand(CommandExecution::MainThreadDeferred,
                            dispatchInvoke(bridge, "echoAsync", "later"));
 

@@ -1,18 +1,10 @@
 #include "Common.h"
 
-// The shelf packer, which is pure arithmetic — no GPU, no fonts, no platform.
-// That is deliberate: packing is where an atlas goes subtly wrong (overlaps
-// that show as one glyph bleeding into another), and it is much easier to pin
-// down here than by staring at a texture.
-
 using namespace nano;
 using namespace eacp::Text;
 
 namespace
 {
-// Every placement must be inside the atlas and must not overlap any earlier
-// one. Checked exhaustively rather than by spot-check, since an overlap is
-// exactly the bug that renders as a corrupted glyph.
 struct Placements
 {
     struct Box
@@ -42,7 +34,8 @@ struct Placements
 };
 } // namespace
 
-auto tPacksFirstRectAtPadding = test("ShelfPacker/firstRectSitsInsideThePadding") = []
+auto tPacksFirstRectAtPadding =
+    test("ShelfPacker/firstRectSitsInsideThePadding") = []
 {
     auto packer = ShelfPacker {64, 64, 1};
 
@@ -53,7 +46,6 @@ auto tPacksFirstRectAtPadding = test("ShelfPacker/firstRectSitsInsideThePadding"
     check(placed->y == 1);
 };
 
-// Same-height glyphs share a row, which is the whole point of shelf packing.
 auto tSameHeightShareAShelf = test("ShelfPacker/sameHeightRectsShareAShelf") = []
 {
     auto packer = ShelfPacker {128, 128, 1};
@@ -67,8 +59,6 @@ auto tSameHeightShareAShelf = test("ShelfPacker/sameHeightRectsShareAShelf") = [
     check(second->x > first->x);
 };
 
-// Padding must actually separate them, or linear sampling pulls one glyph's
-// coverage into its neighbour's edge.
 auto tLeavesPaddingBetween = test("ShelfPacker/leavesPaddingBetweenRects") = []
 {
     auto packer = ShelfPacker {128, 128, 1};
@@ -79,14 +69,14 @@ auto tLeavesPaddingBetween = test("ShelfPacker/leavesPaddingBetweenRects") = []
     check(second->x >= first->x + 10 + 1);
 };
 
-auto tOpensNewShelfWhenRowIsFull = test("ShelfPacker/opensANewShelfWhenTheRowFills") = []
+auto tOpensNewShelfWhenRowIsFull =
+    test("ShelfPacker/opensANewShelfWhenTheRowFills") = []
 {
     auto packer = ShelfPacker {64, 128, 1};
 
     const auto first = packer.add(30, 10);
     packer.add(30, 10);
 
-    // The third no longer fits beside the first two.
     const auto third = packer.add(30, 10);
 
     check(third.has_value());
@@ -94,9 +84,8 @@ auto tOpensNewShelfWhenRowIsFull = test("ShelfPacker/opensANewShelfWhenTheRowFil
     check(third->x == 1);
 };
 
-// A short glyph must not be dropped onto a much taller shelf: the wasted height
-// applies to the whole row, so it is cheaper to open a new one.
-auto tSkipsShelvesThatWasteHeight = test("ShelfPacker/skipsShelvesThatAreTooTall") = []
+auto tSkipsShelvesThatWasteHeight =
+    test("ShelfPacker/skipsShelvesThatAreTooTall") = []
 {
     auto packer = ShelfPacker {128, 128, 1};
 
@@ -138,8 +127,6 @@ auto tReportsFullWhenExhausted = test("ShelfPacker/returnsNothingOnceFull") = []
     check(!packer.add(10, 10).has_value());
 };
 
-// The property that matters most: nothing ever overlaps, across a long run of
-// mixed sizes.
 auto tNeverOverlaps = test("ShelfPacker/placementsNeverOverlap") = []
 {
     constexpr auto atlasSize = 256;
@@ -183,8 +170,6 @@ auto tClearReleasesEverything = test("ShelfPacker/clearStartsOver") = []
     check(placed->y == 1);
 };
 
-// Growing must keep every existing placement valid — that is what lets the
-// atlas double without re-rasterizing a single glyph.
 auto tGrowKeepsPlacements = test("ShelfPacker/growKeepsExistingPlacements") = []
 {
     auto packer = ShelfPacker {64, 64, 1};
@@ -201,7 +186,6 @@ auto tGrowKeepsPlacements = test("ShelfPacker/growKeepsExistingPlacements") = []
     check(packer.width() == 128);
     check(packer.height() == 128);
 
-    // New placements must not land on top of the old ones.
     while (const auto placed = packer.add(10, 10))
     {
         if (!seen.add(*placed, 10, 10, 128))

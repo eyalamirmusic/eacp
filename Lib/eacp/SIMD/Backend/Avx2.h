@@ -7,8 +7,7 @@
 #include <immintrin.h>
 
 // AVX2 backend (256-bit). Only ever compiled inside Tu/Avx2.cpp, which carries
-// the -mavx2/-mfma (or /arch:AVX2) flag and is reached only through the runtime
-// dispatcher when the CPU supports AVX2 + FMA.
+// -mavx2/-mfma (or /arch:AVX2), and reached only when dispatch confirms AVX2+FMA.
 namespace eacp::simd::backend
 {
 

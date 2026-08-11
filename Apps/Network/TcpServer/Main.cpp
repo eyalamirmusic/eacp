@@ -1,7 +1,3 @@
-// Simplest possible TCP server: listen on a port and echo every line back.
-// The mirror image of TcpClient - together they exercise both halves of the
-// library with no external server. Ctrl-C to stop.
-
 #include <eacp/Network/Network.h>
 
 #include <iostream>
@@ -10,8 +6,7 @@ int main()
 {
     try
     {
-        // Zero timeouts == block forever: wait for a client, and wait on its
-        // input. That is what a long-lived server wants.
+        // Zero timeouts block forever: on accept, and on client input.
         auto listener = eacp::TCP::Listener::bind(5050, {{0}, {0}});
         std::cout << "listening on port " << listener.port()
                   << " (ctrl-c to stop)\n";

@@ -2,19 +2,6 @@
 
 #include <NanoTest/NanoTest.h>
 
-// Which components a change actually repaints.
-//
-// The tier's claim is that paint() runs where repaint() was called and nowhere
-// else -- so an animation costs the paint of the one component that is animating
-// however large the tree around it is. What makes that true is two bits per
-// component and one invariant: a component with either bit set has every one of
-// its ancestors marked, or the walk that skips clean subtrees would step over it.
-//
-// The interesting cases are the ones where the answer is *no* repaint: a move, a
-// reorder, a visibility change. Each of those changes the picture without
-// changing any recording in it, and paying a paint for one is the thing this
-// whole arrangement exists to stop.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
@@ -33,8 +20,6 @@ struct Counter final : Component
     int paints = 0;
 };
 
-// A host with a root and two children, painted once so that everything in it is
-// settled -- which is the state every question below is asked from.
 struct Tree
 {
     Tree()
@@ -107,8 +92,6 @@ auto tAncestorsAreMarked = test("Repaint/aRepaintDeepInATreeIsReachedByTheWalk")
     tree.first.addAndMakeVisible(deep);
     deep.setBounds({0.f, 0.f, 10.f, 10.f});
 
-    // Added to a tree that had settled: nothing above it knew there was anything
-    // left to do, and the walk only descends where there is.
     check(tree.host.paintDirtyComponents() == 1);
     check(deep.paints == 1);
 
@@ -196,8 +179,6 @@ auto tHiddenBeforeItEverPainted =
 
     late.setVisible(true);
 
-    // The walk steps over hidden subtrees, so what one of them is owed has to be
-    // carried up rather than forgotten -- otherwise nothing would ever reach it.
     check(tree.host.paintDirtyComponents() == 1);
     check(late.paints == 1);
 };
@@ -258,8 +239,6 @@ struct Shaped final : Component
     int paints = 0;
 };
 
-// A shape on a settled host, which is the state every question below is asked
-// from: whatever the call did, it did it to something that owed no paint.
 struct ShapedTree
 {
     ShapedTree()
@@ -292,16 +271,10 @@ auto tPathShapeRepaints =
 
     tree.shaped.shape.setPath(rect({0.f, 0.f, 10.f, 10.f}));
 
-    // The recorded quad carries the shape's bounds and its rect of the atlas,
-    // and both are about to be different -- so the component that drew it has to
-    // be asked again, and nothing but the shape itself knows that.
     check(tree.shaped.needsRepaint());
     check(tree.host.paintDirtyComponents() == 1);
 };
 
-// The rung-3 claim, and the reason a layout may rebuild every path it owns
-// without first working out whether it had to: a shape set to the geometry it
-// already holds is not a shape that changed.
 auto tSamePathIsNotAChange =
     test("Repaint/settingTheGeometryAShapeAlreadyHoldsDoesNothing") = []
 {
@@ -315,9 +288,8 @@ auto tSamePathIsNotAChange =
 
     check(!tree.shaped.needsRepaint(), "settled");
 
-    // Built again from scratch rather than the same object handed back, which
-    // is what a resized() does: the same arithmetic over the same inputs, so
-    // the same bits.
+    // Built again from scratch rather than handed back, which is what a
+    // resized() does: same arithmetic, same bits.
     tree.shaped.shape.setPath(rect({0.f, 0.f, 10.f, 10.f}));
 
     check(!tree.shaped.needsRepaint(), "the same shape is not a new shape");
@@ -340,8 +312,6 @@ auto tDifferentPathIsAChange = test("Repaint/aShapeThatMovedOrGrewIsAChange") = 
     check(tree.host.paintDirtyComponents() == 1);
 };
 
-// The rule is not part of the geometry, but it decides what the geometry means,
-// so it is part of the key.
 auto tFillRuleIsPartOfTheKey =
     test("Repaint/theSamePointsUnderADifferentRuleAreADifferentShape") = []
 {
@@ -362,8 +332,6 @@ auto tFillRuleIsPartOfTheKey =
     check(tree.host.paintDirtyComponents() == 1);
 };
 
-// Clearing drops the geometry rather than remembering it, so the shape that was
-// there is not mistaken for the shape that is coming back.
 auto tClearedThenSetAgainRepaints =
     test("Repaint/aClearedShapeGivenItsOldPathBackIsAChange") = []
 {

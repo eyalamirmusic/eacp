@@ -13,10 +13,8 @@ enum class OS
     Linux
 };
 
-// The operating system this binary was built for. Resolved from the single
-// compile-time platform check in Platform.cpp — the one place in the library
-// that branches on platform macros. Everything else queries it at runtime, so
-// shared code can pick behaviour without preprocessor switches.
+// The OS this binary was built for. Platform.cpp holds the library's only
+// compile-time platform check; everything else queries it at runtime.
 OS current();
 
 bool isMac(); // macOS desktop only
@@ -26,21 +24,15 @@ bool isWindows();
 bool isLinux();
 bool isPosix(); // Apple || Linux
 
-// Linkage of this eacp copy: isStandalone when it is compiled into the
-// process executable, isDLL when it lives in a dynamic library (a
-// runtime-loaded plugin). Resolved from this copy's own image
-// (Plugins::isDynamicLibrary), so every statically linked eacp copy in a
-// process answers for itself. Apps::run<T> uses it to decide loop
-// ownership: a DLL app is scheduled onto the host's loop instead of
-// running its own.
+// Linkage of this eacp copy, resolved from its own image, so every statically
+// linked copy in a process answers for itself.
 bool isStandalone();
 bool isDLL();
 
 std::string_view name();
 
-// The running app's name and version, read from the AppInfo.json that
-// eacp_set_gui_subsystem embeds via ResEmbed. Empty when this binary has no
-// embedded AppInfo (e.g. a console app that never called the CMake helper).
+// Read from the AppInfo.json eacp_set_gui_subsystem embeds. Empty when this
+// binary has none.
 std::string_view getAppName();
 std::string_view getAppVersion();
 

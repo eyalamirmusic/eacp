@@ -4,30 +4,23 @@
 #include <bit>
 #include <cmath>
 
-// Portable: the packing is bit arithmetic on the CPU, identical on both
-// backends by construction. What each format means once it reaches the GPU is
-// the two mapping tables in RenderPipeline-Apple/-Windows, and that the two
-// agree is what VertexFormatTests checks.
-
 namespace eacp::GPU
 {
 namespace
 {
-// The float bit patterns the half exponent range lands on.
 constexpr auto smallestNormalAsFloat = std::uint32_t {0x38800000}; // 2^-14
 constexpr auto tooLargeForHalfAsFloat = std::uint32_t {0x47800000}; // 65536
 constexpr auto roundsToZeroAsFloat = std::uint32_t {0x33000000}; // 2^-25
 constexpr auto infinityAsFloat = std::uint32_t {0x7F800000};
 
+// 32767 rather than 32768, so +1 and -1 are both exactly representable - the
+// convention D3D12's SNORM and Metal's Short*Normalized both read back.
+constexpr auto signedNormalizedScale = 32767.0f;
+
 std::int16_t toSignedNormalized(float value)
 {
-    // Clamped rather than wrapped: a direction that drifts a hair outside the
-    // unit range through arithmetic should saturate, not flip sign.
     const auto clamped = std::clamp(value, -1.0f, 1.0f);
-
-    // 32767 rather than 32768, so +1 and -1 are both exactly representable -
-    // the convention D3D12's SNORM and Metal's Short*Normalized both read back.
-    return (std::int16_t) std::lround(clamped * 32767.0f);
+    return (std::int16_t) std::lround(clamped * signedNormalizedScale);
 }
 
 std::uint8_t toUnsignedNormalized(float value)
@@ -42,8 +35,7 @@ std::uint16_t halfFromFloat(float value)
     const auto sign = (std::uint16_t) ((bits >> 16) & 0x8000u);
     const auto magnitude = bits & 0x7FFFFFFFu;
 
-    // A NaN has to stay a NaN: rounding one down would land it on infinity,
-    // which is a different answer rather than a less precise one.
+    // A NaN has to stay a NaN: rounding one down would land it on infinity.
     if (magnitude >= infinityAsFloat)
         return (std::uint16_t) (sign | 0x7C00u
                                 | (magnitude > infinityAsFloat ? 0x200u : 0u));
@@ -53,8 +45,7 @@ std::uint16_t halfFromFloat(float value)
 
     if (magnitude >= smallestNormalAsFloat)
     {
-        // Rebias the exponent and round the mantissa to nearest even, which the
-        // +1 on an odd surviving bit is doing.
+        // Rebias the exponent, rounding the mantissa to nearest even.
         const auto rounded = magnitude + 0x0FFFu + ((magnitude >> 13) & 1u);
         return (std::uint16_t) (sign | ((rounded - 0x38000000u) >> 13));
     }
@@ -62,10 +53,8 @@ std::uint16_t halfFromFloat(float value)
     if (magnitude <= roundsToZeroAsFloat)
         return sign;
 
-    // Subnormal: too small for any half exponent, so it is stored as a plain
-    // multiple of 2^-24 with no exponent of its own. Scaling by 2^24 and
-    // rounding lands on that multiple directly, and rolls over into the
-    // smallest normal on its own when the value is just under 2^-14.
+    // Subnormal: stored as a plain multiple of 2^-24 with no exponent of its
+    // own, so scaling by 2^24 and rounding lands on that multiple directly.
     const auto scaled = std::bit_cast<float>(magnitude) * 16777216.0f;
 
     return (std::uint16_t) (sign | (std::uint16_t) std::lround(scaled));
@@ -87,7 +76,7 @@ float halfToFloat(std::uint16_t bits)
     if (mantissa == 0)
         return std::bit_cast<float>(sign);
 
-    // Subnormal in half, ordinary in float: shift the leading one up into the
+    // Subnormal in half, ordinary in float: shift the leading one into the
     // implicit position and drop the exponent to match how far it moved.
     auto shift = 0u;
     auto significand = mantissa;

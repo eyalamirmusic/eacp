@@ -15,13 +15,8 @@ LONG WINAPI shutdownAccessViolationFilter(EXCEPTION_POINTERS* info)
 {
     auto code = info->ExceptionRecord->ExceptionCode;
 
-    // Only swallow access violations that happen after the test runner has
-    // reported its result. The known in-framework cause (winrt::uninit_apartment
-    // running in a static destructor underneath WebView2 / WinRT statics) is
-    // fixed, and the suite passes locally without this guard; it stays as a
-    // safety net against third-party teardown faults (WebView2 runtime
-    // variations on CI hosts), so CTest sees the actual test exit code instead
-    // of SEGFAULT.
+    // Safety net for third-party teardown faults only: swallowing anything
+    // before the runner reported its result would hide real failures.
     if (gShuttingDown.load() && code == EXCEPTION_ACCESS_VIOLATION)
         TerminateProcess(GetCurrentProcess(), static_cast<UINT>(gExitCode.load()));
 
@@ -31,10 +26,6 @@ LONG WINAPI shutdownAccessViolationFilter(EXCEPTION_POINTERS* info)
 
 void installShutdownCrashGuard()
 {
-    // SEM_NOGPFAULTERRORBOX is already in effect from eacp-core's static-init
-    // in ThreadUtils-Windows.cpp; the vectored handler here is what actually
-    // intercepts the WebView2 / WinRT detach access violation and reports the
-    // real test exit code.
     AddVectoredExceptionHandler(1, shutdownAccessViolationFilter);
 }
 

@@ -7,26 +7,15 @@ namespace eacp::UI
 namespace
 {
 // The opaque corner every unmasked shape samples. Four texels rather than one
-// so a filtered read - which this does not do today - could still not reach
-// past it into a neighbour's coverage.
+// so a filtered read could not reach past it into a neighbour's coverage.
 constexpr auto opaqueSize = 4;
 
-// Starts holding nothing but the opaque corner, and doubles from there, so an
-// interface with no vector shapes in it carries kilobytes rather than
-// megabytes. The ceiling is where a UI atlas stops being the right structure:
-// past it the answer is to stop rasterizing whole paths and start binning them.
 constexpr auto initialSize = 64;
 constexpr auto maximumSize = 4096;
 
-// Where a mask lands on an empty shelf: beside the opaque corner if the room
-// left in the first row is wide enough, and on the row below it otherwise. A
-// mask that fits neither does not fit an *empty* atlas of this size, which is
-// the one refusal no amount of moving things can answer.
-//
-// The second case is why a mask exactly as wide and as tall as the largest atlas
-// has to be refused rather than made room for: it needs the first row, and the
-// first row is four texels short of it for as long as the opaque corner is
-// there.
+// Whether a mask fits an atlas of `size` holding nothing but the opaque corner:
+// beside it in the first row, or on the row below. This is the one refusal that
+// no amount of moving things can answer.
 bool fitsEmptyShelf(int width, int height, int size)
 {
     if (width <= size - opaqueSize && height <= size)
@@ -74,15 +63,12 @@ void CoverageAtlas::seedOpaqueTexel()
     std::uint8_t white[opaqueSize * opaqueSize * 4];
     std::fill(std::begin(white), std::end(white), (std::uint8_t) 255);
 
-    // A kernel-written texture still takes a CPU upload, which is the only way
-    // to put a constant in one without dispatching a kernel to write it.
     texture->update({0.f, 0.f, (float) opaqueSize, (float) opaqueSize}, white);
 }
 
 void CoverageAtlas::reset()
 {
-    // The opaque corner is part of the texture rather than an allocation, so the
-    // first shelf starts beside it and no slot can ever be handed it by mistake.
+    // The first shelf starts beside the opaque corner, which is never allocated.
     cursorX = opaqueSize;
     cursorY = 0;
     rowHeight = opaqueSize;
@@ -98,8 +84,7 @@ float CoverageAtlas::getFillFraction() const
 
 Rect CoverageAtlas::getOpaqueUV() const
 {
-    // A zero-sized uv rect, so every fragment of an unmasked shape reads the
-    // same texel however large the shape is - the centre of the opaque corner,
+    // Zero-sized, so every fragment reads the same texel - the corner's centre,
     // far enough from its edge that no rounding lands outside.
     auto centre = (float) (opaqueSize / 2) + 0.5f;
     auto size = (float) texture->width();
@@ -140,11 +125,8 @@ std::optional<CoverageAtlas::Slot> CoverageAtlas::placeOnShelf(int width, int he
     auto y = cursorY;
     auto row = rowHeight;
 
-    // The current row is out of width, so the next one starts below the tallest
-    // thing on this one. Worked out before anything is committed, because a row
-    // that turns out to run off the bottom must leave the shelf as it was --
-    // the caller is about to move the whole atlas, and it will start again from
-    // an empty one anyway.
+    // Next row, below the tallest thing on this one. Worked out before anything
+    // is committed, so a row running off the bottom leaves the shelf as it was.
     if (x + width > size)
     {
         x = 0;
@@ -172,24 +154,18 @@ std::optional<CoverageAtlas::Slot> CoverageAtlas::placeOnShelf(int width, int he
 
 bool CoverageAtlas::makeRoomFor(int width, int height)
 {
-    // Every way of making room moves every slot already handed out, and on this
-    // pass the caller cannot answer that -- so there is no room to be had. The
-    // mask is refused, and the count is the only way anybody hears about it.
+    // Every way of making room moves every slot already handed out.
     if (!relocationAllowed)
         return false;
 
-    // Nothing to try: no atlas this implementation can build would hold it.
+    // No atlas this implementation can build would hold it.
     if (!fitsEmptyShelf(width, height, maximumSize))
         return false;
 
     auto size = texture->width();
 
-    // Growing is the first answer while there is anywhere to grow to, being the
-    // one that ends with more room than it started with -- an interface that
-    // keeps needing a little more settles at a size instead of compacting every
-    // frame. Straight to a size that holds this mask rather than one doubling
-    // per attempt, so the caller's next placement cannot fail for want of room
-    // that another doubling would have found.
+    // Straight to a size that holds this mask rather than one doubling per
+    // attempt, so the caller's next placement cannot fail for want of room.
     if (size < maximumSize)
     {
         auto grown = size * 2;
@@ -203,9 +179,7 @@ bool CoverageAtlas::makeRoomFor(int width, int height)
         return true;
     }
 
-    // As large as it goes, so compacting is what is left -- and only if there is
-    // something to compact. An empty shelf at the largest size has already given
-    // everything it has.
+    // At maximum size, so compacting is all that is left.
     if (isShelfEmpty())
         return false;
 
@@ -223,15 +197,8 @@ CoverageAtlas::Slot CoverageAtlas::allocate(int width, int height)
     if (width <= 0 || height <= 0)
         return empty;
 
-    // Twice at most, and that is the shape rather than an optimisation: place it
-    // on the shelf as it stands, and failing that make room once and place it on
-    // a shelf that is empty. There is no third thing to try, so a second failure
-    // is the ceiling -- which is what the count is for.
-    //
-    // Written as a recursion until it was asked for a mask as large as the atlas
-    // itself: room was made, the mask still did not fit the first row, and
-    // making room again is what the next call did. Not slow, not wrong, not
-    // silent -- it never returned.
+    // Two attempts at most, never recursive: a mask as large as the atlas can
+    // make room and still not fit, and would ask for room again forever.
     if (auto slot = placeOnShelf(width, height))
         return *slot;
 

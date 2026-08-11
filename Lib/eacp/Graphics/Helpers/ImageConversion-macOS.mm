@@ -11,8 +11,8 @@ NSImage* toNSImage(const Image& image)
     if (width <= 0 || height <= 0)
         return nil;
 
-    // The Image stores straight (non-premultiplied) 8-bit RGBA, top-left
-    // origin — exactly an NSBitmapImageRep with the non-premultiplied flag.
+    // Image is straight-alpha top-left-origin RGBA, which is exactly an
+    // NSBitmapImageRep with the non-premultiplied flag.
     auto* rep = [[NSBitmapImageRep alloc]
         initWithBitmapDataPlanes:nullptr
                       pixelsWide:width

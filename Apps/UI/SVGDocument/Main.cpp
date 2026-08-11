@@ -4,40 +4,9 @@
 #include <cmath>
 #include <string>
 
-// The same SVG document drawn twice: on the left by the native builder, on the
-// right through the component tier.
-//
-// The left half is one Graphics::ShapeLayer per shape -- a CAShapeLayer on
-// macOS, a Direct2D geometry on Windows -- which is what eacp-svg has always
-// done. The right half is one UI::PathShape per shape: every mask in the
-// document rasterized by a single compute dispatch before the frame opens, and
-// then drawn as quads out of one shared atlas, in one instanced draw, alongside
-// whatever else the interface is drawing.
-//
-// Side by side because the two questions this rung exists to answer are both
-// questions you answer by looking.
-//
-// The first is whether a document fits in the atlas at all. A mask is the size
-// of its shape on screen, and the argument that the atlas is therefore always
-// big enough assumes shapes tile: everything visible at once cannot exceed the
-// window's own area. Artwork does not tile, it stacks -- a background, then
-// shapes over it, then shapes over those, each carrying its own full
-// bounding-box mask -- and the sum of those is bounded by nothing. The Stacked
-// document below is that case on purpose, and the footer reports how full the
-// atlas is and how many masks were refused.
-//
-// The second is whether abutting shapes seam. Coverage accumulates within a path
-// and not between draws, so two shapes sharing an edge are two draws with two
-// antialiased edges and the background may show through the join. Widgets rarely
-// abut; artwork does it constantly. The Tiles document is a grid of triangles
-// sharing exact vertices, which is that case at its worst.
-//
-// Both were answered, and the two documents that answered them are still here
-// because the answers are worth being able to re-read. What the documents added
-// since show is the format rather than the tier: the features the component
-// builder has and the native one does not, and the fit it now gets right -- a
-// document is letterboxed into a component of the wrong aspect rather than
-// stretched, which is what preserveAspectRatio's own default says.
+// The same SVG document drawn twice: on the left one Graphics::ShapeLayer per
+// shape, on the right one UI::PathShape per shape, drawn as quads out of a
+// shared atlas. Click to cycle documents; the footer reports the atlas figures.
 
 using namespace eacp;
 
@@ -45,9 +14,6 @@ namespace
 {
 constexpr auto padding = 12.f;
 
-// A badge: a stroked and filled rounded rect, a circle, and text at a size the
-// host's font is not. Small enough to check that the port draws the same picture
-// before asking it anything harder.
 const auto badgeDocument = std::string {
     R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
   <rect x="10" y="10" width="180" height="180" rx="20" fill="#4A90D9" stroke="#2C5F8A" stroke-width="3"/>
@@ -55,10 +21,6 @@ const auto badgeDocument = std::string {
   <text x="100" y="160" text-anchor="middle" font-family="Helvetica" font-size="18" fill="white">eacp SVG</text>
 </svg>)SVG"};
 
-// Everything rung 1 added, in one document: a viewBox with a non-zero origin, a
-// group whose fill its children inherit, transform lists that only compose
-// correctly if they are matrices, an even-odd fill, round joins and caps, and
-// text at three sizes.
 const auto featureDocument = std::string {
     R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="360" height="260" viewBox="20 20 360 260">
   <rect x="20" y="20" width="360" height="260" fill="#FDFBF7"/>
@@ -84,17 +46,9 @@ const auto featureDocument = std::string {
   <text x="376" y="272" text-anchor="end" font-family="Helvetica" font-size="9" fill="#B0A294">viewBox origin 20,20</text>
 </svg>)SVG"};
 
-// Everything rung 2 added, and the first document where the two halves of this
-// window are supposed to disagree.
-//
-// The component tier draws all of it. The native side draws the arcs -- the path
-// parser is shared, and it emits cubics that either path type takes -- and none
-// of the rest: a <use> resolves nothing there, a style="" declaration is not
-// read, a dash pattern has no operation behind it, and preserveAspectRatio is
-// the stretch-to-fit SVGView has always done. So the left half is what the
-// module rendered before this rung and the right half is what it renders now,
-// which makes the difference the thing you are looking at rather than a bug to
-// find.
+// The two halves are supposed to disagree here: the native side draws the arcs
+// and nothing else, since it resolves no <use>, reads no style="" and has no
+// dash operation behind stroke-dasharray.
 const auto documentFeatureDocument = std::string {
     R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240">
   <defs>
@@ -137,17 +91,7 @@ const auto documentFeatureDocument = std::string {
         fill="#D0021B" style="fill:#8A7A6A">arcs · use · symbol · dashes · style</text>
 </svg>)SVG"};
 
-// Gradients, which is the whole of what rung 3 added and the first thing the
-// native half of this window cannot draw at all.
-//
-// Every case that is easy to get wrong is in here on purpose. The default units
-// are fractions of each shape's own bounding box, so the same <linearGradient>
-// paints a wide rect and a tall one differently and a diagonal axis on a shape
-// that is not square is a non-uniform scale -- which is why the bands of the top
-// bar lean and the bands of the square do not, from one definition. The three
-// spread methods are the same four stops read three ways. And the last row
-// inherits its stops through href, which is how every drawing program writes a
-// family of gradients.
+// Gradients, which the native half cannot draw at all.
 const auto gradientDocument = std::string {
     R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="360" height="300" viewBox="0 0 360 300">
   <defs>
@@ -209,22 +153,8 @@ const auto gradientDocument = std::string {
         fill="#7A6A5A">linear · radial · spread · units · href</text>
 </svg>)SVG"};
 
-// Clip paths, and every way one is placed differently from the last.
-//
-// The thing to look at is the first row, because the two halves of it cost
-// different things for the same picture. The left pane is a rectangle, which is
-// a scissor rect: exact, free of the atlas, and the only kind of clip the glyphs
-// can be cut by. The right one is two circles, which is a mask -- one mask, for
-// the three shapes under it, and one of those three is large enough to be drawn
-// as triangles rather than out of the atlas at all. A clip that only worked on
-// masked shapes would let that one through.
-//
-// The rest are the placements a document gets wrong quietly. The pair in the
-// second row name one clipPath and get different regions from it, because the
-// units are fractions of each shape's own box. The frame beside them is a single
-// child with clip-rule="evenodd", so its inner rectangle is a hole in the region
-// and not another piece of it. The third row is a clip inside a clip, where the
-// outer one is a rectangle and the two therefore intersect exactly.
+// A rectangular clip is a scissor rect and costs the atlas nothing; any other
+// shape is one mask over everything under it.
 const auto clipDocument = std::string {
     R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="360" height="300" viewBox="0 0 360 300">
   <defs>
@@ -302,22 +232,6 @@ const auto clipDocument = std::string {
         fill="#7A6A5A">rect · union · units · clip-rule · nested</text>
 </svg>)SVG"};
 
-// Group opacity, which is the last of rung 3 and the one whose difference you
-// have to construct a document to see at all.
-//
-// Every row here is the same three overlapping circles at the same 0.5. The top
-// pair is the difference: on the left the attribute is on each circle, on the
-// right it is on the group around them. Where the circles overlap, the left one
-// stacks two half-transparent discs and goes darker; the right one draws them
-// solid into a texture of its own and fades that once, so the overlap is exactly
-// the colour of the shapes and only the group is faded. The format spells both
-// `opacity` and means the second wherever it is written on a container.
-//
-// The bottom row is what that costs and what it buys. Left: a group inside a
-// group, each faded, which is two textures and the inner one rendered first --
-// the ordering rule the whole feature turns on. Right: a faded group holding
-// text and a gradient, since both go through renderers of their own and both
-// have to land in the texture rather than beside it.
 const auto opacityDocument = std::string {
     R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="360" height="300" viewBox="0 0 360 300">
   <defs>
@@ -368,9 +282,8 @@ const auto opacityDocument = std::string {
   </g>
 </svg>)SVG"};
 
-// The same markup in a component of a different aspect, which is the only way to
-// see what preserveAspectRatio does. A 320x120 document in a tall half-window
-// letterboxes under the default; the native side, which stretches, does not.
+// A 320x120 document in a tall pane: letterboxed under preserveAspectRatio's
+// default, stretched by the native side.
 const auto aspectDocument = std::string {
     R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120">
   <rect x="0" y="0" width="320" height="120" fill="#EFE7DA"/>
@@ -380,9 +293,8 @@ const auto aspectDocument = std::string {
   <text x="160" y="66" text-anchor="middle" font-family="Helvetica" font-size="20" fill="#FBF8F3">round, not oval</text>
 </svg>)SVG"};
 
-// A grid of triangles sharing exact vertices, in alternating colours: the seam
-// question at its worst, since every interior edge is drawn twice by two shapes
-// that each antialias against nothing.
+// Triangles sharing exact vertices: every interior edge is antialiased twice by
+// two shapes that know nothing of each other, which is where seams show.
 std::string makeTilesDocument(int columns, int rows)
 {
     auto cell = 40;
@@ -419,13 +331,14 @@ std::string makeTilesDocument(int columns, int rows)
     return markup + "</svg>";
 }
 
-// Large shapes stacked on one another, which is the shape of real artwork and
-// the case plan.md's atlas-ceiling argument does not cover. Each blob is about a
-// third of the document across, so its mask is about a ninth of the document's
-// area, and the sum runs past the window's own area many times over.
+// Large shapes stacked rather than tiled: each mask is about a ninth of the
+// document's area, so the sum runs past the window's own area many times over.
 std::string makeStackedDocument(int shapeCount)
 {
     auto size = 1000;
+
+    constexpr auto coprimeStepX = 137;
+    constexpr auto coprimeStepY = 211;
 
     auto markup = std::string {R"(<svg xmlns="http://www.w3.org/2000/svg" width=")"}
                   + std::to_string(size) + R"(" height=")" + std::to_string(size)
@@ -437,11 +350,8 @@ std::string makeStackedDocument(int shapeCount)
 
     for (auto index = 0; index < shapeCount; ++index)
     {
-        // Spread over the document by two coprime steps, so consecutive shapes
-        // land nowhere near each other and the packing is not doing anything
-        // clever with locality.
-        auto centreX = 120 + (index * 137) % (size - 240);
-        auto centreY = 120 + (index * 211) % (size - 240);
+        auto centreX = 120 + (index * coprimeStepX) % (size - 240);
+        auto centreY = 120 + (index * coprimeStepY) % (size - 240);
         auto radius = 120 + (index * 37) % 90;
 
         auto shade = index % 6;
@@ -462,17 +372,9 @@ struct Document
     std::string name;
     std::string markup;
 
-    // Whether the native side draws it too.
-    //
-    // It cannot always. A native shape layer is a DirectComposition surface (a
-    // CALayer on macOS) sized to the view, because the geometry is in the view's
-    // coordinates and a native path cannot be translated -- so a document of 300
-    // shapes asks the window server for 300 surfaces the size of the window, and
-    // on this window that is gigabytes. The component tier draws the same
-    // document into one shared atlas.
-    //
-    // Which is the comparison rather than a limitation of the demo, so it is
-    // said on screen rather than worked around.
+    // False where the native side cannot pay for it: a shape layer is one
+    // compositor surface the size of the view, so a 300-shape document asks the
+    // window server for gigabytes.
     bool nativeCanAfford = true;
 };
 
@@ -497,11 +399,9 @@ Vector<Document> makeDocuments()
     return documents;
 }
 
-// Reads the host's figures at paint time rather than being told them, for the
-// same reason ComponentTree's does: a repaint asked for from inside the frame
-// that produced the numbers is cleared on its way out, so a label told them
-// would sit one frame behind for ever on a tree that only redraws when something
-// moves.
+// Reads the host's figures at paint time: a repaint asked for from inside the
+// frame that produced them is cleared on the way out, so they are read during
+// the next frame instead.
 struct StatsBar final : UI::Component
 {
     void paint(UI::Graphics& g) override
@@ -509,9 +409,7 @@ struct StatsBar final : UI::Component
         if (host == nullptr || document == nullptr)
             return;
 
-        // What the document asks the atlas for, against what the atlas holds.
-        // The demand is in device pixels, so it is the mask area times the
-        // square of the backing scale; the supply is the atlas squared.
+        // Demand is in device pixels: mask area times the square of the scale.
         auto scale = host->backingScale();
         auto asked = document->getAtlasMaskArea() * scale * scale;
         auto unmeshed = document->getTotalMaskArea() * scale * scale;
@@ -534,9 +432,6 @@ struct StatsBar final : UI::Component
             + millions(asked) + "M texels of a " + millions(held) + "M atlas ("
             + millions(unmeshed) + "M unmeshed)   "
             + std::to_string((int) (host->getAtlasFillFraction() * 100.f))
-            // The host's figure rather than the document's, because a clip
-            // region is a mask like any other and one the atlas refused is as
-            // missing from the picture as a shape would be.
             + "% reserved   " + std::to_string(host->getLastDroppedPathCount())
             + " dropped   " + std::to_string(host->getLastClipChangeCount())
             + " breaks   " + std::to_string(host->getLastRendererSwitchCount())
@@ -611,10 +506,8 @@ struct ComponentHostView final : UI::ComponentHost
     ComponentSide side;
 };
 
-// The two tiers as siblings in one window: a native view holding native layers,
-// beside a GPUView holding a component tree.
-// Which document to open with, as argv[1], so a screenshot of any of them can be
-// taken without anyone having to click through the others first.
+// Which document to open with, as argv[1], so any of them can be screenshotted
+// without clicking through the others first.
 int startingDocument()
 {
     auto& args = Apps::getAppEnvironment().commandLineArgs;

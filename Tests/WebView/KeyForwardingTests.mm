@@ -1,10 +1,5 @@
 #include "Common.h"
-// Drives the unhandled-key forwarding pipeline (Options::forwardUnhandledKeys)
-// end to end on a real WKWebView: a synthesized NSEvent goes to the platform
-// view, the injected key-events.js reports whether the page consumed it, and
-// the unconsumed ones must come back out through onUnhandledKeyEvent. The
-// NSEvent synthesis is AppKit-specific, so this suite is macOS-only.
-
+// macOS-only: the NSEvent synthesis is AppKit-specific.
 #import <AppKit/AppKit.h>
 
 using namespace nano;
@@ -13,9 +8,6 @@ using namespace eacp::Graphics;
 
 namespace
 {
-// A text input to test implicit consumption, plus a page handler that
-// explicitly consumes the 'a' key (and only that key) with preventDefault.
-// `ready` gates the tests until document-start injection has run.
 const std::string pageHtml = R"HTML(
 <!doctype html>
 <html>
@@ -63,10 +55,8 @@ struct Fixture
         webView.focusContent();
     }
 
-    // WebKit only honours in-page focus() (and reports the real event target)
-    // while the hosting window is key, so the editable-target test needs the
-    // window focused for real. Not achievable in every environment (headless
-    // CI can't activate), hence a bool rather than a check.
+    // WebKit only honours in-page focus() while the hosting window is key, and
+    // headless CI cannot activate one, hence a bool rather than a check.
     bool makeWindowKey()
     {
         window.toFront();
@@ -81,8 +71,6 @@ struct Fixture
         return isKey;
     }
 
-    // Synthesizes a down+up pair straight to the window's first responder --
-    // the platform web view -- which is exactly where a real key press lands.
     void sendKey(uint16_t keyCode, NSString* characters)
     {
         auto* nsWindow = (NSWindow*) window.getHandle();
@@ -142,9 +130,8 @@ auto tKeyForwardPreventDefault = test("KeyForwarding/preventDefaultConsumes") = 
 {
     auto fix = Fixture {};
 
-    // The page preventDefaults 'a'; Space is the sentinel that flushes the
-    // pipeline -- verdicts arrive in delivery order, so once Space is out,
-    // the 'a' verdicts have already been processed.
+    // Space is the sentinel that flushes the pipeline: verdicts arrive in
+    // delivery order, so once Space is out the 'a' verdicts were processed.
     fix.sendKey(KeyCode::A, @"a");
     fix.sendKey(KeyCode::Space, @" ");
 

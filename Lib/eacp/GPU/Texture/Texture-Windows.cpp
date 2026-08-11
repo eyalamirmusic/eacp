@@ -8,12 +8,6 @@
 
 #include <cmath>
 
-// Windows/D3D12 backend. A texture is a default-heap resource plus an SRV
-// descriptor living in the context's shader-visible heap for the texture's
-// whole lifetime, so binding is a single root-table update. Pixels
-// upload through a transient row-pitch-aligned staging buffer; the resource
-// then stays in PIXEL_SHADER_RESOURCE state forever (it is only ever sampled).
-
 namespace eacp::GPU
 {
 namespace
@@ -37,15 +31,8 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
     }
 }
 
-// The filter/address translations that used to live here are gone with the
-// sampler descriptors they filled in; the equivalent mapping is now in
-// D3D12Context::createRootSignatures, which builds the static samplers.
-
-// Whether this device can take a typed UAV store to the format. The formats
-// supportsComputeWrite() allows are the ones the specification guarantees, but
-// a guarantee is not a driver, so it is asked rather than assumed - a kernel
-// whose stores are silently dropped is a great deal harder to find than a
-// texture that refused to be created.
+// Asked rather than assumed: supportsComputeWrite() is what the spec
+// guarantees, and a driver dropping stores silently is hard to find.
 bool supportsTypedUAVStore(ID3D12Device* device, DXGI_FORMAT format)
 {
     D3D12_FEATURE_DATA_FORMAT_SUPPORT support = {};
@@ -72,9 +59,7 @@ struct Texture::Native
         if (!context.isValid() || !device.isValid() || width <= 0 || height <= 0)
             return;
 
-        // Only with pixels to build one from: a render target or a kernel output
-        // has none at creation, so it would get levels nothing ever writes and
-        // the sampler would read them.
+        // Without pixels a chain would get levels nothing ever writes.
         if (descriptor.mipmapped && pixels != nullptr)
             levels = mipLevelCount(width, height);
 
@@ -93,9 +78,8 @@ struct Texture::Native
         if (descriptor.renderTarget)
             desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
 
-        // Refused before the resource exists, so a kernel output the device
-        // cannot actually store to is an invalid texture rather than a dispatch
-        // that writes nothing.
+        // Refused before the resource exists, so a target the device cannot
+        // store to is an invalid texture rather than a dispatch writing nothing.
         if (descriptor.computeWrite)
         {
             if (!supportsComputeWrite(descriptor.format)
@@ -129,10 +113,8 @@ struct Texture::Native
             createDescriptors(context, descriptor);
     }
 
-    // Zero-copy wrapping of a shared D3D11/DXGI surface into the D3D12 backend
-    // is a planned optimisation; until then the camera/video path uploads via
-    // update(). A null resource yields an invalid texture, which the higher
-    // layer detects and falls back from.
+    // No zero-copy wrap on D3D12 yet: the null resource yields an invalid
+    // texture, which the higher layer falls back from to update().
     Native(Device&, void*) {}
 
     ~Native()
@@ -146,12 +128,8 @@ struct Texture::Native
         context.deferRelease(std::move(data.resource));
     }
 
-    // Maps a staging buffer, copies each source row's pixels (advancing the
-    // source by sourcePitch to skip any padding) into the
-    // 256-byte-aligned staging rows GetCopyableFootprints reports, then records
-    // the copy and the transition back to PIXEL_SHADER_RESOURCE. The resource
-    // must already be in COPY_DEST. Returns false on a staging failure, having
-    // recorded nothing.
+    // The resource must already be in COPY_DEST. Returns false on a staging
+    // failure, having recorded nothing.
     bool copyPixels(D3D12Context& context,
                     CommandContext* commands,
                     const void* pixels,
@@ -165,16 +143,11 @@ struct Texture::Native
     {
         auto desc = data.resource->GetDesc();
 
-        // Footprints are asked for at the *region's* size, not the texture's, so
-        // the staging buffer and its row pitch describe only what is being
-        // uploaded. The copy is then placed at destX/destY in the destination.
+        // Footprints describe the *staging* side: the region's size, and always
+        // one flat level, whatever chain the destination resource has.
         auto regionDesc = desc;
         regionDesc.Width = static_cast<UINT64>(regionWidth);
         regionDesc.Height = static_cast<UINT>(regionHeight);
-
-        // One level, always: this describes the *staging* side, which is a flat
-        // rectangle of pixels. Leaving the resource's own count here would ask
-        // for the footprint of a chain a region this size cannot have.
         regionDesc.MipLevels = 1;
 
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
@@ -223,17 +196,13 @@ struct Texture::Native
                                           &source,
                                           nullptr);
 
-        // Held back while a chain is mid-upload: every level goes into the same
-        // resource, so transitioning after each one would move it out of
-        // COPY_DEST and straight back for the next - a pair of barriers per
-        // level, for nothing.
+        // Held back mid-chain: every level shares the resource, so per-level
+        // transitions would leave and re-enter COPY_DEST for nothing.
         if (transitionAfterwards)
             transitionTextureForUse(commands->list.get(),
                                     data,
                                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-        // Not parked in transients: the staging pool owns the buffer and takes
-        // it back once this recording's fence passes.
         return true;
     }
 
@@ -247,8 +216,7 @@ struct Texture::Native
             return;
         }
 
-        // The resource was created in COPY_DEST, so the copies record with no
-        // leading barrier.
+        // Created in COPY_DEST, so the copies need no leading barrier.
         if (!recordLevels(context,
                           commands,
                           pixels,
@@ -262,9 +230,8 @@ struct Texture::Native
         context.submit(commands);
     }
 
-    // The whole texture, as one level or as a chain. Every level is copied
-    // before the resource moves back to PIXEL_SHADER_RESOURCE, so the transition
-    // happens once however many levels there are.
+    // Every level is copied before the one transition back to
+    // PIXEL_SHADER_RESOURCE.
     bool recordLevels(D3D12Context& context,
                       CommandContext* commands,
                       const void* pixels,
@@ -311,9 +278,6 @@ struct Texture::Native
         updateRegion(0, 0, width, height, pixels, bytesPerRow);
     }
 
-    // The re-upload path for a mipmapped texture. Unlike updateRegion it has to
-    // move the resource back to COPY_DEST first, since by now it is being
-    // sampled.
     void updateChain(const void* pixels, std::size_t bytesPerRow)
     {
         if (data.resource == nullptr || pixels == nullptr)
@@ -341,8 +305,6 @@ struct Texture::Native
         context.submit(commands);
     }
 
-    // Both update() overloads land here; the whole-texture one is just the full
-    // rect, so there is a single upload path to reason about.
     void updateRegion(int x,
                       int y,
                       int regionWidth,
@@ -357,8 +319,7 @@ struct Texture::Native
         if (regionWidth <= 0 || regionHeight <= 0)
             return;
 
-        // Out-of-bounds is dropped rather than clamped — see the header for why
-        // clamping would silently upload skewed pixels.
+        // Dropped rather than clamped, which would upload skewed pixels.
         if (x < 0 || y < 0 || x + regionWidth > width || y + regionHeight > height)
             return;
 
@@ -376,11 +337,8 @@ struct Texture::Native
                                ? bytesPerRow
                                : static_cast<std::size_t>(regionWidth * pixelStride);
 
-        // The resource rests in PIXEL_SHADER_RESOURCE between frames - or in
-        // RENDER_TARGET, if it is one a pass last drew into - so the move to
-        // COPY_DEST goes through the tracked state rather than assuming which.
-        // Staging failing puts it back, so the next bind still sees a sampleable
-        // resource.
+        // Through the tracked state: the resource rests in either
+        // PIXEL_SHADER_RESOURCE or RENDER_TARGET between frames.
         transitionTextureForUse(
             commands->list.get(), data, D3D12_RESOURCE_STATE_COPY_DEST);
 
@@ -399,10 +357,8 @@ struct Texture::Native
         context.submit(commands);
     }
 
-    // A render target's own one-descriptor RTV heap. RTV descriptors are not
-    // shader-visible, so there is no shared heap to take one from the way the
-    // SRV does - and a heap per target is what keeps a texture's descriptor
-    // alive for exactly as long as the texture is.
+    // A heap of its own: RTV descriptors are not shader-visible, so there is no
+    // shared heap to take one from as the SRV does.
     void createRenderTargetView(D3D12Context& context,
                                 const TextureDescriptor& descriptor)
     {
@@ -425,14 +381,9 @@ struct Texture::Native
         data.rtv = handle;
     }
 
-    // The depth buffer a pass into this target attaches, and its DSV. Created
-    // in DEPTH_WRITE and left there: nothing else ever uses the resource, so it
-    // needs no barrier and no state tracking.
-    //
-    // The optimised clear value is not optional. D3D12 wants a resource that
-    // will be cleared to say so at creation, and a ClearDepthStencilView that
-    // does not match it is a validation error rather than a slow path - and it
-    // must agree with the 1.0 the pass clears to.
+    // Created in DEPTH_WRITE and left there, nothing else using the resource.
+    // The optimised clear value must match the 1.0 the pass clears to, or
+    // ClearDepthStencilView is a validation error.
     void createDepthBuffer(D3D12Context& context)
     {
         D3D12_HEAP_PROPERTIES heap = {};
@@ -484,9 +435,8 @@ struct Texture::Native
         data.dsv = handle;
     }
 
-    // The view a kernel writes through. It comes out of the same shader-visible
-    // heap as the SRV - the allocator is CBV_SRV_UAV - so a writable texture
-    // costs one more descriptor and no new heap.
+    // Out of the same CBV_SRV_UAV heap as the SRV, so this costs one more
+    // descriptor and no new heap.
     void createUnorderedAccessView(D3D12Context& context,
                                    const TextureDescriptor& descriptor)
     {
@@ -526,25 +476,18 @@ struct Texture::Native
         context.getDevice()->CreateShaderResourceView(
             data.resource.get(), nullptr, data.srv.cpu);
 
-        // No sampler descriptor is created, and TextureDescriptor::filter and
-        // ::addressMode are unused on this backend: the sampler comes from the
-        // root signature's static samplers, picked by the shader's declared
-        // TextureSampling. A sampler descriptor table cannot be relied on here -
-        // see D3D12Context::createRootSignatures. Allocating one anyway would
-        // also let the 256-entry sampler heap fail texture creation for nothing.
+        // No sampler descriptor: samplers are static in the root signature,
+        // picked by the shader's declared TextureSampling. See
+        // D3D12Context::createRootSignatures.
     }
 
     int width = 0;
     int height = 0;
 
-    // Bytes per pixel of the texture's format; the (stubbed) zero-copy wrap
-    // path stays at 4 because those buffers are always 32-bit BGRA/RGBA.
+    // The zero-copy wrap path stays at 4: those buffers are 32-bit BGRA/RGBA.
     int pixelStride = 4;
     TextureFormat format = TextureFormat::RGBA8Unorm;
 
-    // 1 unless a chain was asked for and there were pixels to build one from.
-    // The SRV is created from a null description, which covers every level the
-    // resource has, so nothing else here needs to know the count.
     int levels = 1;
 
     bool computeWrite = false;
@@ -572,8 +515,8 @@ void Texture::update(const Graphics::Rect& region,
                      const void* pixels,
                      std::size_t bytesPerRow)
 {
-    // Texels are whole; round rather than truncate so a rect built from
-    // accumulated float arithmetic lands on the texel it is nearest to.
+    // Rounded, not truncated, so a rect from accumulated float arithmetic lands
+    // on the nearest texel.
     impl->updateRegion(static_cast<int>(std::lround(region.x)),
                        static_cast<int>(std::lround(region.y)),
                        static_cast<int>(std::lround(region.w)),
@@ -627,9 +570,7 @@ void* Texture::nativeReadView() const
     return const_cast<D3D12TextureData*>(&impl->data);
 }
 
-// The depth resource and its descriptor live inside the same D3D12TextureData
-// nativeTexture hands back, which is what Frame reaches them through - so this
-// backend has no separate handle to give.
+// The depth resource lives inside the D3D12TextureData nativeTexture returns.
 void* Texture::nativeDepthTexture() const
 {
     return nullptr;

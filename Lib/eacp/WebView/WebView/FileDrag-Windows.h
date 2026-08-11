@@ -1,9 +1,7 @@
 #pragma once
 
-// Internal to the Windows WebView backend (WebView-Windows.cpp): the drop
-// source + target for a native file drag-out. A header rather than part of the
-// translation unit only so the logic is unit-testable without a live
-// SHDoDragDrop loop — see Tests/WebView/FileDragTests-Windows.cpp.
+// Drop source + target for WebView-Windows.cpp's file drag-out. A header only
+// so the logic stays testable without a live SHDoDragDrop loop.
 
 #include "WebView.h"
 
@@ -17,15 +15,10 @@
 namespace eacp::Graphics
 {
 
-// A cursor position in the host window's client space, mapped into the page's
-// own client CSS pixels (top-left origin) — the same space the page reads as
-// clientX/clientY, so a drop can be hit-tested against the DOM. GetClientRect
-// is physical pixels and the WebView lays out at CSS pixels = physical / DPI,
-// so divide back down. `inside` is whether the cursor is over the window at
-// all — false once it leaves, which is the receiving app's half of the gesture.
-inline WebView::FileDragPoint toFileDragPoint(POINT cursorInClient,
-                                              const RECT& client,
-                                              float dpiScale)
+// Maps a client-space cursor into page CSS pixels, which the WebView lays out
+// at physical / DPI while GetClientRect reports physical.
+inline WebView::FileDragPoint
+    toFileDragPoint(POINT cursorInClient, const RECT& client, float dpiScale)
 {
     WebView::FileDragPoint point;
     point.inside = PtInRect(&client, cursorInClient) != FALSE;
@@ -36,9 +29,7 @@ inline WebView::FileDragPoint toFileDragPoint(POINT cursorInClient,
     return point;
 }
 
-// The live cursor in the drag's host window, in page CSS pixels (see above).
-inline WebView::FileDragPoint fileDragPointFromCursor(HWND hostHwnd,
-                                                      float dpiScale)
+inline WebView::FileDragPoint fileDragPointFromCursor(HWND hostHwnd, float dpiScale)
 {
     POINT cursor {};
     if (!GetCursorPos(&cursor))
@@ -50,15 +41,10 @@ inline WebView::FileDragPoint fileDragPointFromCursor(HWND hostHwnd,
     return toFileDragPoint(cursor, client, dpiScale);
 }
 
-// A Windows file drag-out is a blocking modal loop (SHDoDragDrop). This drop
-// source is how the app hears about it while it runs: QueryContinueDrag fires on
-// every mouse move and button/key change inside the loop, so it streams the
-// cursor back and decides when the gesture ends. The default source SHDoDragDrop
-// uses with a null argument reports nothing — the host app could never follow
-// the drag without this. The cursor reader is injected so tests can drive the
-// verdict logic without a real cursor (the backend passes
-// fileDragPointFromCursor over its host window).
-class FileDragSource final: public IDropSource
+// SHDoDragDrop's own default source reports nothing, so this one exists to
+// stream the cursor out of the blocking modal loop via QueryContinueDrag.
+// readPoint is injected so tests can drive it without a real cursor.
+class FileDragSource final : public IDropSource
 {
 public:
     FileDragSource(std::function<WebView::FileDragPoint()> readPoint,
@@ -93,8 +79,6 @@ public:
     HRESULT STDMETHODCALLTYPE QueryContinueDrag(BOOL escapePressed,
                                                 DWORD keyState) override
     {
-        // Escape or the right button aborts; the left button coming up is the
-        // drop. Everything else is the drag in flight — report where it is.
         if (escapePressed || (keyState & MK_RBUTTON) != 0)
             return DRAGDROP_S_CANCEL;
         if ((keyState & MK_LBUTTON) == 0)
@@ -106,9 +90,7 @@ public:
 
     HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD) override
     {
-        // The drop target (see FileDragTarget) reports the effect, so the shell
-        // picks the right cursor from it. Over our own window that is a copy
-        // cursor; over Explorer / another app, whatever they return.
+        // The shell derives the cursor from the drop target's effect.
         return DRAGDROP_S_USEDEFAULTCURSORS;
     }
 
@@ -118,15 +100,10 @@ private:
     std::atomic<ULONG> refCount {1};
 };
 
-// A minimal drop target registered on our own window for the length of a
-// drag-out. Its only job is the cursor: without a target the shell paints the
-// ⊘ "no drop" badge over our window even where the page will accept the drop,
-// because the effect defaults to NONE. Reporting COPY gives the copy cursor
-// instead. The drop itself is deliberately a no-op — the app files the drop by
-// watching the cursor (onFileDragEnded, like the macOS path), not through OLE —
-// so Drop touches neither the data object nor the page; it only echoes the
-// effect to avoid a last-instant cursor flicker.
-class FileDragTarget final: public IDropTarget
+// Exists only to report COPY: with no target registered the shell paints the
+// ⊘ badge over our own window. The app files the actual drop by watching the
+// cursor (onFileDragEnded), so Drop() deliberately does nothing.
+class FileDragTarget final : public IDropTarget
 {
 public:
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) override
@@ -151,8 +128,10 @@ public:
         return remaining;
     }
 
-    HRESULT STDMETHODCALLTYPE DragEnter(
-        IDataObject*, DWORD, POINTL, DWORD* effect) override
+    HRESULT STDMETHODCALLTYPE DragEnter(IDataObject*,
+                                        DWORD,
+                                        POINTL,
+                                        DWORD* effect) override
     {
         *effect = DROPEFFECT_COPY;
         return S_OK;
@@ -166,8 +145,10 @@ public:
 
     HRESULT STDMETHODCALLTYPE DragLeave() override { return S_OK; }
 
-    HRESULT STDMETHODCALLTYPE Drop(
-        IDataObject*, DWORD, POINTL, DWORD* effect) override
+    HRESULT STDMETHODCALLTYPE Drop(IDataObject*,
+                                   DWORD,
+                                   POINTL,
+                                   DWORD* effect) override
     {
         *effect = DROPEFFECT_COPY;
         return S_OK;

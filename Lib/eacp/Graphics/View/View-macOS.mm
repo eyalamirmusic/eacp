@@ -67,10 +67,8 @@ void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
 
     e.timestamp = event.timestamp;
 
-    // Both figures, always: `delta` is the pointer's movement, shaped by the
-    // system's acceleration curve, and `rawDelta` is the device's own. A widget
-    // dragged by the pointer wants the first; a camera wants the second. See
-    // MouseEvent.
+    // `delta` is the accelerated pointer movement, `rawDelta` the device's own.
+    // See MouseEvent.
     e.delta = {(float) event.deltaX, (float) event.deltaY};
     e.rawDelta = e.delta;
 
@@ -107,8 +105,8 @@ void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
 
 ScrollPhase scrollPhaseFromEvent(NSEvent* event)
 {
-    // Momentum is reported on its own phase mask; it is checked first because an
-    // event coasting after lift-off carries momentumPhase set and phase empty.
+    // Checked first: an event coasting after lift-off carries momentumPhase set
+    // and phase empty.
     switch (event.momentumPhase)
     {
         case NSEventPhaseBegan:
@@ -155,9 +153,8 @@ void scrollWheel(id self, SEL, NSEvent* event)
     e.preciseScrolling = event.hasPreciseScrollingDeltas == YES;
     e.scrollPhase = scrollPhaseFromEvent(event);
 
-    // scrollingDelta*, not delta*: the scrolling pair carries the precise
-    // per-point figure on a trackpad, where deltaY has already been quantised
-    // back into whole lines and the smoothness is gone.
+    // scrollingDelta*, not delta*: deltaY is already quantised into whole
+    // lines on a trackpad.
     e.delta = {(float) event.scrollingDeltaX, (float) event.scrollingDeltaY};
     e.rawDelta = e.delta;
 
@@ -211,9 +208,8 @@ void viewDidChangeBackingProperties(id self, SEL)
     auto* view = (NSView*) self;
     view.layer.contentsScale = view.window.backingScaleFactor;
 
-    // The base layer follows the new scale by itself, but anything the C++ side
-    // sized in device pixels (a CAMetalLayer's drawableSize, a glyph atlas) does
-    // not, so tell the view.
+    // The base layer follows the new scale itself, but anything sized in device
+    // pixels on the C++ side does not.
     if (auto* eacpView = getView(self))
         eacpView->backingScaleChanged();
 }
@@ -298,10 +294,7 @@ NSCursor* toNSCursor(MouseCursor cursor)
 }
 
 // AppKit asks this whenever the pointer enters the tracking area, and after
-// anything else has had a go at setting the cursor. Without it, a shape set
-// from a mouseMoved handler survives only until the pointer crosses a boundary
-// and AppKit resets it — which reads as the cursor flickering back at random
-// rather than as a missing method.
+// anything else has set the cursor; without it AppKit resets our shape.
 void cursorUpdate(id self, SEL, id)
 {
     if (auto* view = getView(self))
@@ -399,10 +392,8 @@ struct View::Native
 {
     Native(View& view) { nativeView = createNativeView(&view); }
 
-    // AppKit and CoreAnimation can outlive our ObjC::Ptr reference — a pending
-    // CA transaction still draws the backing layer after the C++ View died
-    // (e.g. a window torn down right after a repaint). Break both back-links so
-    // a surviving NativeView is inert instead of dereferencing a freed View.
+    // A pending CA transaction can still draw the backing layer after the C++
+    // View died, so break both back-links and leave the NativeView inert.
     ~Native()
     {
         auto* view = nativeView.get();
@@ -428,8 +419,7 @@ struct View::Native
         auto scale = view.window != nil ? view.window.backingScaleFactor
                                         : [NSScreen mainScreen].backingScaleFactor;
 
-        // No window and no screen (headless) reports 0; fall back to 1:1 so the
-        // default-scale snapshot still produces pixels.
+        // Headless reports 0; fall back to 1:1 so snapshots still get pixels.
         return scale > 0.0 ? (float) scale : 1.0f;
     }
 
@@ -529,11 +519,8 @@ void View::setMouseCursor(MouseCursor cursor)
 
     currentCursor = cursor;
 
-    // Applied here as well as from cursorUpdate:, because the call that changes
-    // it almost always comes *from* a mouseMoved handler — the pointer is
-    // already inside, and inside is the only time the shape is visible. Waiting
-    // for the next cursorUpdate: would leave the old shape under a pointer that
-    // has already crossed onto the splitter.
+    // Applied here as well as from cursorUpdate:, since the caller is usually a
+    // mouseMoved handler and the pointer is already inside.
     auto* native = (NSView*) impl->nativeView.get();
 
     if (native != nil && native.window != nil)

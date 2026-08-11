@@ -18,17 +18,13 @@ struct ProcessOptions
     std::string workingDirectory;
     Vector<EnvironmentVariable> environment;
 
-    // When false the child inherits the launcher's stdio rather than having it
-    // captured into output()/errorOutput(). Suits long-running children whose
-    // output would otherwise buffer unbounded.
+    // When false the child inherits the launcher's stdio instead of having it
+    // captured into output()/errorOutput(), which buffers unbounded.
     bool captureOutput = true;
 
-    // When true the child is launched detached: destroying the Process never
-    // kills it, so it survives both the object and the launching process. For
-    // hand-off launches, e.g. an updater starting its replacement before
-    // exiting. Implies captureOutput = false; the launcher is expected to exit
-    // soon after (a detached child that outlives a still-running launcher is
-    // not reaped on POSIX until the launcher exits).
+    // Destroying the Process never kills a detached child, so it survives both
+    // the object and the launcher. Implies captureOutput = false, and on POSIX
+    // it is not reaped until the launcher exits.
     bool detached = false;
 };
 
@@ -41,11 +37,9 @@ struct ProcessResult
     std::string errorOutput;
 };
 
-// Launches and controls a single child process. stdout and stderr are captured
-// in the background; stdin can be fed via writeToInput. The child is owned by
-// this object: if it is still running when the Process is destroyed it is
-// killed and reaped, so callers that want it to outlive the Process must wait()
-// for it first.
+// Launches and controls a single child process, capturing stdout and stderr in
+// the background. The child is owned by this object: still running at
+// destruction, it is killed and reaped, so wait() first if it must outlive it.
 class Process
 {
 public:
@@ -79,13 +73,11 @@ private:
     Pimpl<Native> impl;
 };
 
-// Convenience: launch, block until the child exits, and return everything it
-// produced. Runs on the calling thread.
+// Blocks the calling thread until the child exits.
 ProcessResult run(ProcessOptions options);
 ProcessResult run(const std::string& executable,
                   const Vector<std::string>& arguments = {});
 
-// Same as run(), but on a background thread; the returned Async resolves on the
-// main thread once the child exits.
+// Runs on a background thread; the Async resolves on the main thread.
 Threads::Async<ProcessResult> runAsync(ProcessOptions options);
 } // namespace eacp::Processes

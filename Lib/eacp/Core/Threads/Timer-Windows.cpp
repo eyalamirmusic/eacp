@@ -10,11 +10,9 @@
 namespace eacp::Threads
 {
 
-// A plain Win32 timer replaces the WinRT DispatcherQueueTimer. SetTimer with a
-// null HWND posts WM_TIMER to the thread's queue and DispatchMessage invokes the
-// callback, so it rides the same pump the event loop already runs — including
-// inside the OS modal resize/move loop, which the dispatcher queue also managed.
-// Callers wanting frame-accurate ticks should use DisplayLink, as before.
+// SetTimer with a null HWND posts WM_TIMER to the thread queue, so the callback
+// rides the pump the event loop already runs, including inside the OS modal
+// resize/move loop. Frame-accurate ticks want DisplayLink instead.
 struct Timer::Native
 {
     Native(const Callback& cbToUse, int intervalHz)
@@ -50,14 +48,11 @@ struct Timer::Native
     Native& operator=(const Native&) = delete;
 
 private:
-    // SetTimer with a null HWND leaves WM_TIMER carrying nothing but the id, so
-    // the id is the only way back to the Native that owns the callback.
+    // WM_TIMER carries nothing but the id, so the id is the only way back.
     using Registry = std::unordered_map<UINT_PTR, Native*>;
 
-    // Immortal because a Timer owned by a singleton — the D3D12 backend's
-    // fence-completion poll is one — is destroyed during static destruction,
-    // by which point an ordinary registry constructed after that singleton is
-    // already gone and ~Native() would erase from a destroyed map.
+    // Immortal because a Timer owned by a singleton is destroyed during static
+    // destruction, when an ordinary registry would already be gone.
     static Registry& liveTimers() { return Singleton::getImmortal<Registry>(); }
 
     static void CALLBACK tick(HWND, UINT, UINT_PTR timerId, DWORD)

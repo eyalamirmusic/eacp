@@ -26,8 +26,7 @@ struct Font::Native
 
         auto wideName = toWideString(options.name);
 
-        // The shared collection carries fonts registered from memory, and the
-        // resolver accepts the PostScript/full names CoreText accepts — an
+        // The resolver accepts the PostScript/full names CoreText does; an
         // unresolvable name keeps the caller's spelling and falls back below.
         auto collection = getFontCollection();
         auto family = resolveFontFamilyName(wideName);

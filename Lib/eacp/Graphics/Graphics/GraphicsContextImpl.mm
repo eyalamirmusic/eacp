@@ -14,9 +14,8 @@
 namespace eacp::Graphics
 {
 
-// Draws a top-left-origin straight-alpha Image into the y-down context, filling
-// dest (in points). The bitmap context is flipped, so flip back locally -- as
-// drawText does -- otherwise the image lands upside down.
+// `dest` is in points. The bitmap context is flipped, so flip back locally or
+// the top-left-origin image lands upside down.
 void drawImageInContext(CGContextRef ctx, const Image& image, const Rect& dest)
 {
     if (!image.isValid())
@@ -52,17 +51,12 @@ void drawImageInContext(CGContextRef ctx, const Image& image, const Rect& dest)
     CGContextRestoreGState(ctx);
 }
 
-// Composites a view and its descendants into ctx the way the screen stacks
-// them: the view's paint() backdrop first (a view-backed layer's delegate
-// drawing is not reachable via renderInContext:, so we invoke it directly),
-// then its attached shape/text layers, then its own native content (a GPUView's
-// Metal image), then child views -- each translated and clipped to its frame.
-// Web content is drawn later, asynchronously, by the caller.
+// paint() is invoked directly because a view-backed layer's delegate drawing is
+// not reachable via renderInContext:. Web content is drawn later, by the caller.
 static void compositeView(CGContextRef ctx, View& view, float scale)
 {
-    // Group opacity flattens the whole subtree first, then fades it as one, so
-    // overlapping children don't show through each other. A transparency layer
-    // captures the current alpha and applies it on end; skip it at full opacity.
+    // A transparency layer flattens the subtree so overlapping children do not
+    // show through each other.
     auto grouped = view.getOpacity() < 1.0f;
     if (grouped)
     {
@@ -111,11 +105,9 @@ static void compositeView(CGContextRef ctx, View& view, float scale)
         CGContextEndTransparencyLayer(ctx);
 }
 
-// Builds the off-screen bitmap and composites the view's synchronous content
-// (paint, layers, GPU, child views) into it, leaving the flipped/scaled context
-// open so the caller can overlay async web content before finalizing. Returns a
-// retained context the caller owns (wrap in a CFRef or CFRelease it); CFRef is
-// copy-unsafe, so ownership is passed as a raw handle rather than by value.
+// Leaves the flipped/scaled context open so the caller can overlay async web
+// content. Returns a retained context the caller owns (CFRelease it); CFRef is
+// copy-unsafe, so ownership passes as a raw handle.
 static CGContextRef makeCompositeContext(View& view, const Rect& bounds, float scale)
 {
     auto pixelWidth = static_cast<int>(std::lround(bounds.w * scale));
@@ -138,9 +130,8 @@ static CGContextRef makeCompositeContext(View& view, const Rect& bounds, float s
     if (context == nullptr)
         return nullptr;
 
-    // paint() and the shape/text layers draw top-left origin to match the
-    // flipped on-screen view; a bitmap context is bottom-left, so flip it, then
-    // scale points to pixels for the backing scale.
+    // paint() and the layers draw top-left origin; a bitmap context is
+    // bottom-left. Then scale points to pixels.
     CGContextTranslateCTM(context, 0, pixelHeight);
     CGContextScaleCTM(context, 1.0, -1.0);
     CGContextScaleCTM(context, scale, scale);
@@ -177,11 +168,8 @@ struct AsyncTarget
     float opacity;
 };
 
-// Collects descendant views with async (web) content, tagged with their origin
-// in the root's coordinate space and the product of group opacities down to
-// them, so each snapshot lands where -- and as faded as -- it sits on screen.
-// (The synchronous composite applies group opacity via transparency layers; the
-// async web overlay is drawn afterwards, so it must carry the opacity itself.)
+// Tags each with its origin in the root's coordinate space and the product of
+// group opacities down to it, which the async overlay must apply itself.
 void collectAsyncContent(View& view,
                          Point offset,
                          float opacity,
@@ -202,10 +190,8 @@ void collectAsyncContent(View& view,
     }
 }
 
-// Shared across the pending web snapshots: owns the open composite context and
-// counts completions, resolving the promise once the last snapshot lands. The
-// context outlives this call (it is drawn into from async callbacks), so it is
-// owned here rather than in a copy-unsafe CFRef.
+// Shared across the pending web snapshots; the promise resolves once the last
+// lands. Owns the context raw because CFRef is copy-unsafe.
 struct AsyncComposite
 {
     ~AsyncComposite()

@@ -14,53 +14,15 @@
 #include "ShaderValue.h"
 #include "UniformLayout.h"
 
-// A shader authored as a struct. Uniforms are named, typed members you set by
-// name; vertex inputs are pulled straight out of the CPU vertex struct inside
-// define(), so that struct is the single source of the vertex layout. The program
-// also owns its realized GPU resources (vertex buffer, library, pipeline), so a
-// view feeds data and draws without juggling loose handles.
-//
-//   struct Vertex { float position[2]; float color[3]; };
-//
-//   struct MyShader final : ShaderProgram
-//   {
-//       Uniform<Float> angle;
-//       EACP_SHADER(angle)
-//
-//       MyShader() { compile(); }
-//
-//       void define() override
-//       {
-//           auto position = vertexInput(&Vertex::position);   // -> Float2
-//           auto color    = vertexInput(&Vertex::color);      // -> Float3
-//           setPosition(float4(position, 0.0f, 1.0f));
-//           setFragment(float4(varying(color), 1.0f));
-//       }
-//   };
-//
-//   MyShader shader;
-//   shader.setVertices(triangleVertices);   // typed; owns the buffer
-//   shader.prepare(view.sampleCount());     // builds library + pipeline
-//   ...
-//   shader.angle = 0.5f;
-//   pass.draw(shader);                       // pipeline + vertices + uniforms
-//
-// Instancing follows the same shape: pull per-instance fields with
-// instanceInput(&Instance::field, slot), feed them with setInstances(slot, ...),
-// and draw with pass.drawInstanced(shader, instanceCount [, firstInstance]). The
-// per-vertex geometry stays at slot 0; each instanceInput slot becomes a
-// PerInstance vertex-buffer binding.
-//
-//       auto pos    = vertexInput(&Vertex::position);       // slot 0, per vertex
-//       auto centre = instanceInput(&Instance::centre, 1);  // slot 1, per instance
+// A shader authored as a struct. Uniforms are named, typed members; vertex
+// inputs are pulled out of the CPU vertex struct inside define(), which is the
+// single source of the vertex layout. The program owns its GPU resources.
 
 namespace eacp::GPU
 {
-// The CPU-side storage type mirroring each shader value type. A scalar is a
-// float; a vector is a packed Array, so a uniform reads like the data it is.
-// Array wraps std::array with no added state, so the packed layout the upload
-// walk memcpys is the same either way — and a plain std::array still assigns,
-// through the sub-type overload below.
+// The CPU-side storage type mirroring each shader value type. Array wraps
+// std::array with no added state, so the packed layout the upload walk memcpys
+// is the same either way.
 template <typename T>
 struct CpuValueOf;
 
@@ -106,9 +68,8 @@ struct CpuValueOf<Int>
     using type = std::int32_t;
 };
 
-// The integer vectors cross from the CPU exactly as the float ones do, and read
-// as the packed data they are. There is deliberately no CpuValueOf for a Bool
-// or a boolean vector: ShaderBuilder refuses those as uniforms.
+// There is deliberately no CpuValueOf for a Bool or a boolean vector:
+// ShaderBuilder refuses those as uniforms.
 template <>
 struct CpuValueOf<Int2>
 {
@@ -127,14 +88,9 @@ struct CpuValueOf<Int4>
     using type = std::array<std::int32_t, 4>;
 };
 
-// The shader value a CPU type maps to. Built in for float / float[N] / array; a
-// user type opts in either intrusively (a `using ShaderValue = Float3;` member,
-// like MIRO_REFLECT) or non-intrusively via EACP_SHADER_VALUE (like
-// MIRO_REFLECT_EXTERNAL). This is what lets a `Color` struct stand in for a
-// float3 vertex field or uniform. The unmapped primary stays empty so the
-// sub-type assignment constraint below fails softly for plain types (e.g. an
-// int assigned to a Uniform<UInt> picks the CPU-value overload) instead of
-// erroring inside `typename T::ShaderValue`.
+// The shader value a CPU type maps to. A user type opts in with a
+// `using ShaderValue = ...` member or via EACP_SHADER_VALUE. The unmapped
+// primary stays empty so the sub-type assignment constraint fails softly.
 template <typename T>
 struct ShaderValueOf
 {
@@ -224,8 +180,8 @@ template <typename V, typename T>
 concept ShaderValueIs = requires { typename ShaderValueOf<V>::type; }
                         && std::same_as<typename ShaderValueOf<V>::type, T>;
 
-// Byte offset of a data member within its struct, computed from a real object so
-// it stays within defined behaviour (unlike the classic null-pointer offsetof).
+// Computed from a real object so it stays within defined behaviour, unlike the
+// classic null-pointer offsetof.
 template <typename C, typename M>
 int memberOffset(M C::* member)
 {
@@ -234,10 +190,9 @@ int memberOffset(M C::* member)
                   - reinterpret_cast<const std::byte*>(&object));
 }
 
-// A per-frame constant, declared as a member. It is both the graph value used in
-// define() and a typed CPU slot: `shader.angle = 0.5f` writes the value the upload
-// walk packs into the uniform block. It also accepts any registered sub-type of
-// the matching shape, e.g. `shader.tint = Color {1, 0, 0}` for a Uniform<Float3>.
+// Both the graph value define() uses and a typed CPU slot the upload walk packs
+// into the uniform block. Also accepts any registered sub-type of the same
+// shape, e.g. `shader.tint = Color {1, 0, 0}` for a Uniform<Float3>.
 template <typename T>
 struct Uniform : T
 {
@@ -261,11 +216,7 @@ struct Uniform : T
     Cpu value {};
 };
 
-// A texture member: the Texture2D handle used by define()'s sample() calls and
-// the slot the bound GPU::Texture is set on. Assign the texture to draw with
-// (`shader.image = checkerboard`); the program binds it (with its baked
-// sampler) when drawn. The program stores a pointer, so the texture must
-// outlive the draw.
+// The program stores a pointer, so the texture must outlive the draw.
 template <>
 struct Uniform<Texture2D> : Texture2D
 {
@@ -277,16 +228,12 @@ struct Uniform<Texture2D> : Texture2D
 
     const Texture* value = nullptr;
 
-    // How this texture is sampled. Set it before compile() runs - the build walk
-    // reads it to place the sampler - so a shader assigns it in its constructor
-    // ahead of the compile() call. See TextureSampling for why the shader owns
-    // this rather than the Texture.
+    // Must be set before compile() runs, the build walk reading it to place the
+    // sampler.
     TextureSampling sampling {};
 };
 
-// Storage-buffer members of a compute program, following the texture pattern:
-// the slot-indexed handle define() reads or writes, and the slot the assigned
-// GPU::Buffer is bound at when dispatched. The program stores a pointer, so
+// Storage-buffer members of a compute program. The program stores a pointer, so
 // the buffer must outlive the dispatch.
 template <>
 struct Uniform<InputBuffer> : InputBuffer
@@ -312,10 +259,8 @@ struct Uniform<OutputBuffer> : OutputBuffer
     const Buffer* value = nullptr;
 };
 
-// The atomic sibling, bound the same way an output is. The buffer's contents
-// are unsigned integers rather than floats, so the bytes handed to it want to
-// start as such - a buffer of zeroed uint32s, not of zeroed floats, though the
-// two happen to agree on zero.
+// The atomic sibling, bound the same way an output is. Its contents are
+// unsigned integers rather than floats, so initialise it as such.
 template <>
 struct Uniform<AtomicBuffer> : AtomicBuffer
 {
@@ -328,11 +273,8 @@ struct Uniform<AtomicBuffer> : AtomicBuffer
     const Buffer* value = nullptr;
 };
 
-// A kernel's output image, following the Uniform<Texture2D> pattern: the
-// slot-indexed handle define() writes through, and the slot the assigned
-// GPU::Texture is bound at when dispatched. It carries no sampling - nothing
-// samples a written texture - and the texture must have been created with
-// TextureDescriptor::computeWrite.
+// A kernel's output image. It carries no sampling, and the texture must have
+// been created with TextureDescriptor::computeWrite.
 template <>
 struct Uniform<WritableTexture2D> : WritableTexture2D
 {
@@ -374,13 +316,8 @@ constexpr VertexFormat toVertexFormat(ValueType type)
     return VertexFormat::Float;
 }
 
-// A CPU vertex field's wire format.
-//
-// The default is whatever its shader value implies, which is the unpacked one -
-// a Float4 attribute is four floats. A packed type overrides it by declaring a
-// vertexFormat of its own, which is the whole mechanism: the field keeps saying
-// what the shader sees through ShaderValue, and says separately what the buffer
-// holds. See PackedVertex.h.
+// A CPU vertex field's wire format: whatever its shader value implies, unless
+// the type declares a vertexFormat of its own. See PackedVertex.h.
 template <typename T>
 struct VertexFormatOf
 {
@@ -395,10 +332,8 @@ struct VertexFormatOf<T>
     static constexpr auto value = T::vertexFormat;
 };
 
-// What a field of type M is expected to occupy, for the size check every input
-// makes. A packed field is measured against the format it declares; anything
-// else against the CPU type its shader value implies - the same question asked
-// of whichever of the two is authoritative for that field.
+// What a field of type M is expected to occupy: a packed field is measured
+// against the format it declares, anything else against its CPU type.
 template <typename M, typename Handle>
 constexpr std::size_t expectedAttributeBytes()
 {
@@ -408,9 +343,8 @@ constexpr std::size_t expectedAttributeBytes()
         return sizeof(typename CpuValueOf<Handle>::type);
 }
 
-// The non-templated surface the uniform member walk bottoms out in. The templated
-// operator() adapts any Uniform<T> onto it, the same way Miro's Property adapts
-// arbitrary fields onto its Reflector - but shaped for the GPU job.
+// The non-templated surface the uniform member walk bottoms out in; the
+// templated operator() adapts any Uniform<T> onto it.
 class ShaderVisitor
 {
 public:
@@ -546,12 +480,8 @@ private:
     RenderPass& pass;
 };
 
-// Storage-buffer bind walk: hand each assigned input-buffer member to the
-// render pass at the slot its handle was declared with.
-//
-// Bound to both stages, for the reason the uniform block is: which stage reads
-// the buffer is a property of define(), not of the member, and a stage whose
-// generated function never declares it ignores the bind.
+// Bound to both stages: which stage reads the buffer is a property of define(),
+// and a stage whose generated function never declares it ignores the bind.
 class ShaderBufferBindVisitor final : public ShaderVisitor
 {
 public:
@@ -601,12 +531,9 @@ private:
     RenderPass& pass;
 };
 
-// Upload walk: copy each uniform's current value into the block at its aligned
-// offset. The caller runs finish() once the walk (and any appended tail, like
-// the compute count) is done: MSL pads sizeof(Uniforms) up to the widest
-// member's alignment, and Metal's validation layer checks the bound length
-// against that padded size - a block that stops at the last member's end binds
-// short and aborts the first draw whenever the members end off that boundary.
+// Copies each uniform into the block at its aligned offset. The caller must run
+// finish() once the walk and any appended tail are done: Metal's validation
+// layer checks the bound length against MSL's padded sizeof(Uniforms).
 class ShaderUploadVisitor final : public ShaderVisitor
 {
 public:
@@ -651,17 +578,15 @@ public:
     ShaderProgram() = default;
     virtual ~ShaderProgram() = default;
 
-    // Uniform members and pulled vertex handles point into the owned builder's
-    // graph, and the owned GPU resources are non-copyable, so a program is pinned
-    // in place.
+    // Members point into the owned builder's graph, so a program is pinned.
     ShaderProgram(const ShaderProgram&) = delete;
     ShaderProgram& operator=(const ShaderProgram&) = delete;
 
     const ShaderSource& source() const { return generated.source; }
     const VertexLayout& vertexLayout() const { return generated.vertexLayout; }
 
-    // Uploads the typed vertex data and owns the resulting buffer. The element
-    // type's size must match the layout pulled from it in define().
+    // Owns the resulting buffer. The element type's size must match the layout
+    // pulled from it in define().
     template <typename V, std::size_t N>
     void setVertices(const V (&data)[N])
     {
@@ -679,8 +604,7 @@ public:
         vertexCountValue = count;
     }
 
-    // Uploads typed index data and owns the resulting buffer; draw(program)
-    // then draws indexed. The index width is inferred from the element type.
+    // Owns the resulting buffer; draw(program) then draws indexed.
     template <std::size_t N>
     void setIndices(const std::uint32_t (&data)[N])
     {
@@ -703,18 +627,9 @@ public:
         uploadIndices(data, sizeof(std::uint16_t), count, IndexFormat::UInt16);
     }
 
-    // Uploads typed per-instance data for a buffer slot and owns the storage.
-    // bufferIndex must match the slot an instanceInput() pulled into; the
-    // element type's size must match that slot's per-instance stride. All
-    // instance slots carry the same element count - the instance count passed
-    // to RenderPass::drawInstanced(program, ...).
-    //
-    // Each call gets storage no earlier call's draw is still reading, so one
-    // program can be flushed many times in a frame - which SpriteRenderer and
-    // Text::GlyphRenderer both do, on every texture, sampling and scissor
-    // change. That used to hold by accident, because every call allocated a
-    // fresh GPU buffer; it is now a property of StreamingBuffers, which
-    // recycles and so allocates nothing once its pools are warm.
+    // bufferIndex must match the slot an instanceInput() pulled into, and the
+    // element size that slot's per-instance stride. Each call gets storage no
+    // earlier call's draw is still reading, so a program can be flushed often.
     template <typename I, std::size_t N>
     void setInstances(int bufferIndex, const I (&data)[N])
     {
@@ -747,15 +662,9 @@ public:
         setExternalInstanceBuffer(bufferIndex, nullptr);
     }
 
-    // Points an instance slot at a buffer the program does not own — the
-    // compute path's counterpart to setInstances, whose data comes from the CPU.
-    //
-    // A kernel writing per-particle state into a Storage buffer and a draw
-    // reading that same buffer as its per-instance stream is what
-    // Frame::beginCompute exists for: the data is produced and consumed on the
-    // GPU, and the CPU never sees a byte of it. The buffer must outlive the
-    // draw, and its elements must match the per-instance stride that
-    // instanceInput() declared for this slot.
+    // Points an instance slot at a buffer the program does not own, typically a
+    // kernel's output. It must outlive the draw, and its elements must match
+    // the per-instance stride instanceInput() declared for this slot.
     void setInstanceBuffer(int bufferIndex, const Buffer& buffer, int count)
     {
         assert(bufferIndex >= 0 && bufferIndex < vertexLayout().buffers.size()
@@ -765,21 +674,9 @@ public:
         instanceCountValue = count;
     }
 
-    // Builds the shader library and render pipeline. sampleCount must match the
-    // render target (GPUView::sampleCount()); set depth when the view has a depth
-    // buffer (GPUView::setDepth(true)).
-    //
-    // blendMode defaults to None, which writes fragments straight through. A
-    // program drawing anything translucent — glyph coverage, a fade, a scrim —
-    // needs AlphaBlend, or its antialiased edges punch holes in what is behind
-    // them instead of blending with it. Without this, such a program had to
-    // build its pipeline by hand and give up draw(program) entirely.
-    //
-    // colorFormat is the attachment the pipeline writes, and it has to be the
-    // format of whatever the draw ends up in: the default is a view's drawable,
-    // and a program rendering into a texture passes pixelFormatFor(its format)
-    // instead. Neither backend will take a draw whose pipeline disagrees with
-    // its attachment.
+    // sampleCount, depth and colorFormat must all match the render target -
+    // neither backend takes a draw whose pipeline disagrees with its
+    // attachment. blendMode defaults to None, writing fragments straight through.
     void prepare(int sampleCount,
                  bool depth = false,
                  PrimitiveTopology topology = PrimitiveTopology::Triangles,
@@ -796,16 +693,9 @@ public:
         prepare(descriptor);
     }
 
-    // The named form of the same thing, and what to reach for once more than
-    // one of these is not the shader's own choice: a program drawing into a
-    // texture takes its sample count, its depth and its pixel format from the
-    // target, and four positional arguments in a row say none of that at the
-    // call site. Cull mode, front face and the depth comparison are only
-    // reachable this way, having no positional slots.
-    //
-    // The program's own library and vertex layout are what they always were and
-    // are filled in here; whatever the caller left in those two fields is
-    // ignored.
+    // The named form, and the only way to reach cull mode, front face and the
+    // depth comparison. The descriptor's library and vertexLayout fields are
+    // overwritten with the program's own.
     void prepare(RenderPipelineDescriptor descriptor)
     {
         shaderLibrary.emplace(Device::shared(), generated.source);
@@ -826,7 +716,7 @@ public:
     IndexFormat indexFormat() const { return indexFormatValue; }
 
     // Re-packs the current uniform values and returns the block, ready for
-    // RenderPass::setVertexBytes. Cheap - the block is a handful of floats.
+    // RenderPass::setVertexBytes.
     const void* packedUniforms()
     {
         packUniforms();
@@ -836,49 +726,36 @@ public:
     int uniformByteSize() const { return uniformBytes.size(); }
     bool hasUniforms() const { return !uniformBytes.empty(); }
 
-    // Which stage define() actually read a uniform from, answered by the same
-    // walk that decided whether to declare the block in that stage's generated
-    // function. RenderPass::draw(program) binds to the stage that says yes and
-    // leaves the other alone; a program declaring uniforms neither stage reads
-    // binds to nobody. Ask these rather than hasUniforms() when hand-rolling a
-    // draw over app-owned geometry.
+    // Which stage define() actually read a uniform from. Ask these rather than
+    // hasUniforms() when hand-rolling a draw over app-owned geometry.
     bool vertexReadsUniforms() const { return generated.vertexReadsUniforms; }
     bool fragmentReadsUniforms() const { return generated.fragmentReadsUniforms; }
 
-    // Binds every assigned texture member to the pass; a no-op for programs
-    // without textures. RenderPass::draw(program) calls this.
+    // Called by RenderPass::draw(program).
     void bindTextures(RenderPass& pass)
     {
         auto bindVisitor = ShaderTextureBindVisitor {pass};
         reflectMembers(bindVisitor);
     }
 
-    // Its storage-buffer sibling: binds every assigned Uniform<InputBuffer> so
-    // define() can subscript it at an index the shader computed - reading a
-    // record a kernel produced, rather than receiving it as an attribute. A
-    // no-op for programs without buffers. RenderPass::draw(program) calls this.
+    // Its storage-buffer sibling, also called by RenderPass::draw(program).
     void bindBuffers(RenderPass& pass)
     {
         auto bindVisitor = ShaderBufferBindVisitor {pass};
         reflectMembers(bindVisitor);
     }
 
-    // True once any instanceInput() was pulled: the program feeds one or more
-    // per-instance buffers and is drawn with drawInstanced(program, ...).
+    // True once any instanceInput() was pulled: the program must be drawn with
+    // drawInstanced(program, ...).
     bool isInstanced() const { return usesInstancing; }
 
-    // The element count last uploaded via setInstances - the number of
-    // instances the owned per-instance buffers hold.
     int instanceCount() const { return instanceCountValue; }
 
-    // Binds every per-instance buffer at the slot it was given to, whether the
-    // program uploaded it or a kernel filled it. RenderPass::drawInstanced(
-    // program, ...) calls this after binding the per-vertex buffer at slot 0.
+    // Called by RenderPass::drawInstanced(program, ...) after binding the
+    // per-vertex buffer at slot 0.
     void bindInstances(RenderPass& pass)
     {
-        // Over both lists: a program fed only by kernels has no owned uploads
-        // at all, so bounding this by instanceBuffers alone would bind nothing
-        // and leave the draw missing its per-instance stream.
+        // Over both lists: a program fed only by kernels has no owned uploads.
         auto slots =
             std::max(instanceBuffers.size(), externalInstanceBuffers.size());
 
@@ -888,8 +765,7 @@ public:
     }
 
 protected:
-    // Runs the uniform build walk, the user's define() (which pulls vertex inputs),
-    // then emits source + layouts. Called from the most-derived constructor.
+    // Must be called from the most-derived constructor.
     void compile()
     {
         auto buildVisitor = ShaderBuildVisitor {builder};
@@ -901,10 +777,8 @@ protected:
         // offsets; use it when any input was pulled.
         if (vertexLayoutData.attributes.size() > 0)
         {
-            // instanceInput populated the per-instance slots; publish the
-            // per-vertex slot 0 too so every bound buffer carries a stride and
-            // step rate. Single-buffer programs keep the pre-instancing shape
-            // (empty buffers + stride) untouched.
+            // Publish the per-vertex slot 0 too, so every bound buffer carries
+            // a stride and step rate.
             if (usesInstancing)
                 vertexLayoutData.buffer(
                     0, vertexLayoutData.stride, StepRate::PerVertex);
@@ -915,9 +789,8 @@ protected:
         packUniforms();
     }
 
-    // Pulls a vertex attribute out of the CPU vertex struct. The field's type maps
-    // to a shader value via ShaderValueOf, the attribute takes the field's real
-    // offset, and the returned handle is what you write the shader with.
+    // Pulls a vertex attribute out of the CPU vertex struct, at the field's
+    // real offset and with the shader value ShaderValueOf maps its type to.
     template <typename C, typename M>
     typename ShaderValueOf<M>::type vertexInput(M C::* member)
     {
@@ -937,13 +810,9 @@ protected:
         return handle;
     }
 
-    // Per-instance sibling of vertexInput: pulls an attribute out of a CPU
-    // per-instance struct and routes it to a dedicated buffer slot with
-    // PerInstance step rate. bufferIndex is the slot the matching per-instance
-    // buffer binds to (setInstances(bufferIndex, ...)); the per-vertex geometry
-    // always stays at slot 0. Use 1 for a single per-instance stream, and
-    // distinct slots (1, 2, ...) when a shader needs several - e.g. a transform
-    // stream in slot 1 and a colour stream in slot 2.
+    // Per-instance sibling of vertexInput. bufferIndex is the slot the matching
+    // setInstances() buffer binds to; the per-vertex geometry stays at slot 0,
+    // so per-instance streams start at 1.
     template <typename C, typename M>
     typename ShaderValueOf<M>::type instanceInput(M C::* member, int bufferIndex)
     {
@@ -990,15 +859,6 @@ protected:
         return builder.array(first, rest...);
     }
 
-    // Control flow, forwarded from the builder: a mutable local, the two
-    // branching statements, the loop and its two jumps. See ShaderBuilder for
-    // what each records and why a loop condition is re-tested rather than
-    // hoisted.
-    // Constrained on the handle rather than on the float vocabulary, the way
-    // the builder's own is: the cell a shader walks a grid with is a variable
-    // on the same terms a colour is, and so is the orientation it builds up
-    // over several steps - which is the matrix overload beside it, outside all
-    // three families for the reason a matrix is outside them everywhere here.
     template <ShaderHandleLike T>
     Var<ShaderHandle<T>> var(const T& initialValue)
     {
@@ -1039,9 +899,8 @@ protected:
     void breakLoop() { builder.breakLoop(); }
     void continueLoop() { builder.continueLoop(); }
 
-    // In-shader transform builders, matching column-major / right-handed [0,1]
-    // depth conventions. Build the model/view/projection inside define() from
-    // scalar uniforms instead of uploading prebuilt matrices.
+    // In-shader transform builders, column-major and right-handed with a [0,1]
+    // depth range.
     Float4x4 translate(float x, float y, float z)
     {
         auto o = constant(1.0f);
@@ -1114,9 +973,7 @@ protected:
     void setFragment(const Float4& color) { builder.fragment(color); }
 
     // Kills the fragment when value falls below threshold, before any colour or
-    // depth is written — the alpha test a masked texture needs, so a sprite's
-    // transparent pixels or the holes in a grate leave what is behind them
-    // visible instead of occluding it.
+    // depth is written.
     void setDiscardBelow(const Float& value, float threshold)
     {
         builder.discardBelow(value, threshold);
@@ -1125,7 +982,6 @@ protected:
     // Generated by EACP_SHADER: visits each declared uniform member in order.
     virtual void reflectMembers(ShaderVisitor& visitor) = 0;
 
-    // Written by the user: the shader body, pulling vertex inputs as needed.
     virtual void define() = 0;
 
 private:
@@ -1159,19 +1015,9 @@ private:
         return nullptr;
     }
 
-    // A buffer per call, deliberately, and not something to "optimise" into
-    // reuse. A program is routinely drawn more than once in a frame with
-    // different data -- that is what a batching renderer is -- and both draws
-    // read their buffer when the frame executes, not when it was encoded.
-    // Refilling one buffer in place would hand the first draw the second's
-    // instances: on Metal because update() is a CPU memcpy into shared memory,
-    // and on D3D12 because the copy would land on the queue after the draw that
-    // wanted the old contents.
-    //
-    // Replacing it is what keeps both correct: the encoder retains the old
-    // resource (deferRelease on D3D12, the command encoder on Metal), so the
-    // first draw keeps reading the bytes it was given. Making that cheap is the
-    // backend's job -- see Buffer-Windows.cpp.
+    // A fresh buffer per call, deliberately: refilling one in place would hand
+    // an already-encoded draw the next call's data, since a draw reads its
+    // buffer when the frame executes rather than when it was encoded.
     void uploadIndices(const void* data,
                        std::size_t elementSize,
                        int count,
@@ -1195,21 +1041,15 @@ private:
     std::optional<ShaderLibrary> shaderLibrary;
     std::optional<RenderPipeline> pipelineState;
 
-    // Per-instance buffers indexed by their vertex-buffer slot; slot 0 stays
-    // empty (the per-vertex buffer). Populated by setInstances, bound by
-    // bindInstances. usesInstancing gates the multi-slot layout in compile().
-    //
-    // The stream owns a slot's storage across frames; the pointer beside it is
-    // the one buffer the last setInstances wrote, which is what a bind needs.
-    // Two of them rather than one because the stream hands out a different
-    // buffer each call, and the slot has to remember which.
+    // Indexed by vertex-buffer slot; slot 0 stays empty (the per-vertex
+    // buffer). The stream owns a slot's storage across frames, the pointer
+    // beside it names the one buffer the last setInstances wrote.
     bool usesInstancing = false;
     Vector<std::optional<StreamingBuffers>> instanceStreams;
     Vector<const Buffer*> instanceBuffers;
 
-    // Slots pointed at a buffer someone else owns (setInstanceBuffer), which is
-    // how a compute kernel's output is drawn. Parallel to instanceBuffers so a
-    // slot can be moved between an upload and a kernel's output.
+    // Slots pointed at a buffer someone else owns (setInstanceBuffer), parallel
+    // to instanceBuffers so a slot can be moved between the two.
     Vector<const Buffer*> externalInstanceBuffers;
     int instanceCountValue = 0;
 
@@ -1219,10 +1059,8 @@ private:
 };
 } // namespace eacp::GPU
 
-// Member-list reflection in the Miro idiom: list the declared uniform members once
-// and a reflect body is generated that hands each to the visitor by name. Mirrors
-// Miro's MIRO_FOR_EACH macro engine, kept GPU-local so the module needs no
-// serialization dependency.
+// Member-list reflection: list the declared uniform members once and a reflect
+// body is generated that hands each to the visitor by name.
 #define EACP_GPU_PARENS ()
 
 #define EACP_GPU_EXPAND(...)                                                        \
@@ -1248,8 +1086,7 @@ private:
     }
 
 // Teach the shader layer that a CPU type maps to a shader value (e.g. a 3-float
-// Color is a Float3). Non-intrusive sibling of a `using ShaderValue = ...` member;
-// place at namespace scope after the type is defined.
+// Color is a Float3). Place at namespace scope after the type is defined.
 #define EACP_SHADER_VALUE(Type, Handle)                                             \
     template <>                                                                     \
     struct eacp::GPU::ShaderValueOf<Type>                                           \

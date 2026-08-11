@@ -4,39 +4,9 @@
 
 namespace eacp::GPUWidgets
 {
-// The backdrop: what everything to the left of a tile contributes to a pixel,
-// held as a value at every tile column of every pixel row.
-//
-// It is priced by the *area*, and that was the single largest CPU cost of any
-// path covering real area - a window-sized ellipse is two hundred and eighty-one
-// segments and four hundred thousand cells, cleared, scattered into, summed and
-// shipped every frame it moves.
-//
-// None of it happens there now. Where the outline crosses into each tile column
-// falls out of the same clip that decides which tiles a segment lands in, so the
-// binning kernel adds each crossing to the rows it covers as it goes - see
-// BinKernels.h - and what is left is this: the running sum along each pixel row
-// that turns what crossed into a column into the winding entering it.
-//
-// The cells are unsigned integers, because atomicAdd is the only way threads
-// that never meet can accumulate into the same place and neither shader language
-// has one for floats. See backdropFixedScale for what that costs, which is
-// nothing that reaches a coverage step.
-
-// One pixel row's cells, summed left to right in place.
-//
-// A thread per row rather than a group per row. The rows are the parallelism -
-// a canvas is tens of thousands of them - and a thread walking its row column by
-// column reads a cell its neighbours' cells sit next to, the array being stored
-// a column at a time. A group cooperating on one row would buy a shorter
-// dependency chain and lose that.
-//
-// It does bite on a single wide path, which has few rows and many columns: an
-// automation curve is 356 rows of 151, so six threadgroups each walking 151
-// dependent loads, and cutting the walk to one column takes the stage from 0.207
-// to 0.090ms. On a canvas it does not - 128 lanes is 45,568 rows - and a
-// log-depth scan does several times the work of a serial one, so buying the solo
-// case would cost the case this exists for.
+// Sums one pixel row's cells left to right in place, turning the crossings the
+// binner scattered into the winding entering each tile column. A thread per row,
+// not a group: neighbouring threads then read neighbouring column-major cells.
 struct BackdropScanKernel final : PathIndexedKernel
 {
     BackdropScanKernel() { compile(); }
@@ -48,8 +18,7 @@ struct BackdropScanKernel final : PathIndexedKernel
 
         auto shape = recordShape(path);
 
-        // In locals, or the loop condition alone re-reads all four floats of the
-        // record on every column.
+        // In locals, or the loop condition re-reads the whole record per column.
         auto cellBase = var(toUInt(shape.x()));
         auto height = var(toUInt(shape.z()));
         auto tilesWide = var(tilesWideOf(toUInt(shape.y())));
@@ -64,9 +33,8 @@ struct BackdropScanKernel final : PathIndexedKernel
                  auto cell =
                      cellBase.get() + column.get() * height.get() + row.get();
 
-                 // Wrapping addition on the same two's-complement bits the
-                 // binner added in, so a negative winding sums as a negative
-                 // one without either stage ever spelling a sign.
+                 // Wrapping addition on the binner's two's-complement bits, so a
+                 // negative winding sums as one without either stage signing it.
                  running += cells.load(cell);
                  write(cells, cell, running.get());
 

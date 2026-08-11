@@ -6,10 +6,9 @@
 #include <cassert>
 #include <initializer_list>
 
-// The string-free EDSL surface. Float/Float2/Float3/Float4 are lightweight value
-// handles into a ShaderGraph: operators and the free float2/float3/float4()
-// constructors record IR nodes instead of touching strings. Nothing here knows
-// about a backend - the graph it builds is emitted later by ShaderEmitter.
+// The string-free EDSL surface: lightweight value handles into a ShaderGraph
+// whose operators and constructors record IR nodes. Nothing here knows about a
+// backend - the graph it builds is emitted later by ShaderEmitter.
 
 namespace eacp::GPU
 {
@@ -59,9 +58,7 @@ constexpr int componentIndex(char component)
 }
 
 // Whether a vector of the given width can name these components at all: .zw
-// belongs to a Float4 and means nothing on a Float2. Constraining each accessor
-// on this is what keeps the wrong ones off a narrow type rather than letting
-// them through to the shader compiler.
+// belongs to a Float4 and means nothing on a Float2.
 constexpr bool spellableAt(int width, const char* components)
 {
     for (const auto* at = components; *at != '\0'; ++at)
@@ -71,10 +68,8 @@ constexpr bool spellableAt(int width, const char* components)
     return true;
 }
 
-// The cross product of the component set with itself, once per swizzle width.
-// The action macro passed in is what makes one accessor out of a set of
-// components - declaring it inside Swizzles below, or defining it once the
-// vector types it returns are complete.
+// The cross product of the component set with itself, once per swizzle width;
+// the action macro passed in makes one accessor out of a set of components.
 #define EACP_SWIZZLE_PAIR_ROW(PAIR, a) PAIR(a, x) PAIR(a, y) PAIR(a, z) PAIR(a, w)
 
 #define EACP_SWIZZLE_TRIPLE_COLUMN(TRIPLE, a, b)                                    \
@@ -119,10 +114,7 @@ constexpr bool spellableAt(int width, const char* components)
 // clang-format on
 
 // One vector family: the four widths a swizzle can land in and the graph types
-// that go with them. Naming the family is what lets one set of accessors serve
-// all three - a swizzle of a Float2 is a Float, of an Int2 an Int, of a Bool4 a
-// Bool - rather than three copies of the same 340 declarations differing only
-// in what they return.
+// that go with them, so one set of accessors serves all three families.
 template <typename One,
           typename Two,
           typename Three,
@@ -188,14 +180,8 @@ using Bools = Family<Bool,
         requires(spellableAt(Width, #a #b #c #d));
 
 // Every ordering of one to four components, constrained to the widths that can
-// spell it - 340 accessors on a Float4, which is what it takes for a swizzle to
-// stay one node however it is written. Rebuilding .bgra as a constructor over
-// four extracted components would instead record the source subtree four times.
-//
-// Declared here and defined below, once the vector types are complete: a Float3
-// that returns a Float2 and a Float2 that returns a Float3 cannot both be
-// defined first, and a definition - unlike a declaration - needs its return
-// type complete the moment the class is instantiated.
+// spell it, so a swizzle stays one node however it is written. Defined below
+// rather than here, once the vector types they return are complete.
 template <typename Group, int Width>
 struct Swizzles : ValueHandle
 {
@@ -215,31 +201,21 @@ struct Float : detail::ValueHandle
 {
 };
 
-// The compute thread id and any index computed from it (+ - * / %, min/max,
-// uint uniforms and integer literals). Deliberately outside the float operator
-// vocabulary; it indexes storage buffers and crosses into float arithmetic via
-// toFloat().
+// The compute thread id and any index computed from it. Deliberately outside
+// the float operator vocabulary; cross over explicitly with toFloat().
 struct UInt : detail::ValueHandle
 {
 };
 
-// The signed integer: what subscripts an array, and what the operators no float
-// has are defined on - the remainder, the bitwise set and the two shifts. Like
-// UInt it stays outside the float operator vocabulary and crosses into it
-// explicitly, with toInt() and toFloat().
-//
-// Signed rather than unsigned because that is what an index computed from a
-// coordinate needs: int(uv.x * 4.0) is negative left of the origin, and a
-// negative index has to survive as one long enough to be masked or clamped
-// rather than wrapping to a huge number on the way in.
+// The signed integer: what subscripts an array, and what the remainder, the
+// bitwise set and the two shifts are defined on. Outside the float operator
+// vocabulary; cross over explicitly with toInt() and toFloat().
 struct Int : detail::ValueHandle
 {
 };
 
 // What a comparison yields: the condition an if, a while or a select tests.
-// Like UInt it stays outside the float operator vocabulary - it is produced by
-// the comparison operators, combined with && || !, and consumed by control
-// flow, and there is no arithmetic on it.
+// Combined with && || ! and consumed by control flow; no arithmetic on it.
 struct Bool : detail::ValueHandle
 {
 };
@@ -256,10 +232,8 @@ struct Float4 : detail::Swizzles<detail::Floats, 4>
 {
 };
 
-// The integer vectors: the cell a shader working on a grid counts, the texel
-// coordinate it addresses, the pair of counters it walks a neighbourhood with.
-// They carry the whole integer operator set componentwise, and cross into float
-// arithmetic explicitly with toInt() and toFloat(), exactly as the scalar does.
+// The integer vectors carry the whole integer operator set componentwise, and
+// cross into float arithmetic explicitly as the scalar does.
 struct Int2 : detail::Swizzles<detail::Ints, 2>
 {
 };
@@ -272,10 +246,8 @@ struct Int4 : detail::Swizzles<detail::Ints, 4>
 {
 };
 
-// The boolean vectors: what comparing two vectors yields, one component at a
-// time. There is no arithmetic on one and nothing tests one directly - a branch
-// and a select take a scalar condition - so what a shader does with one is
-// collapse it with any() or all(), which is what makes the comparison useful.
+// What comparing two vectors yields. Nothing tests one directly - a branch and
+// a select take a scalar condition - so collapse it with any() or all().
 struct Bool2 : detail::Swizzles<detail::Bools, 2>
 {
 };
@@ -340,16 +312,9 @@ EACP_SWIZZLES(EACP_DEFINE_SWIZZLE_1,
 #undef EACP_SWIZZLE_QUAD_ROW
 } // namespace detail
 
-// The square matrix values. No swizzles; their operations are matrix * vector
-// and matrix * matrix, which record a Mul node so the emitter can spell it
-// per-backend.
-//
-// Float2x2 and Float3x3 are shader-local values only - the 2D rotation a
-// procedural shader builds inline, the tangent basis a lighting term assembles
-// - and ShaderBuilder refuses them as uniforms: MSL and HLSL pack them to
-// different sizes inside the value itself, which the uniform block's padding
-// cannot bridge. See UniformLayout.h. A Float4x4, which both languages agree
-// on, is the matrix to send from the CPU.
+// The square matrix values, with no swizzles. Float2x2 and Float3x3 are
+// shader-local only - ShaderBuilder refuses them as uniforms because MSL and
+// HLSL pack them to different sizes (see UniformLayout.h).
 struct Float2x2 : detail::ValueHandle
 {
 };
@@ -362,11 +327,9 @@ struct Float4x4 : detail::ValueHandle
 {
 };
 
-// A 2D texture declared by the shader, identified by its slot rather than an
-// expression node: it is not a value, its one operation is sample(). Sampling
-// is a fragment-stage operation, so it must only feed the fragment expression,
-// never the position. Bind the matching GPU::Texture with
-// RenderPass::setFragmentTexture at the same slot.
+// Slot-identified rather than an expression node. Sampling is fragment-stage
+// only, so it must never feed the position expression. Bind the matching
+// GPU::Texture with RenderPass::setFragmentTexture at the same slot.
 struct Texture2D
 {
     ShaderGraph* graph = nullptr;
@@ -381,13 +344,8 @@ inline Float4 sample(const Texture2D& texture, const Float2& coordinates)
     return result;
 }
 
-// Sampling at a mip level the shader chooses rather than the one the hardware
-// derives from the neighbouring fragments. Two things need this: a sample taken
-// where the derivatives are meaningless - of a coordinate that jumps between
-// fragments - and a deliberate blur, which walks up the pyramid on purpose.
-//
-// A texture with one level ignores the level, since there is nothing else to
-// read; GPU::Texture has no mips yet, so that is every texture today.
+// Sampling at a mip level the shader chooses rather than the hardware-derived
+// one. A texture with a single level ignores it.
 inline Float4
     sample(const Texture2D& texture, const Float2& coordinates, const Float& level)
 {
@@ -398,10 +356,8 @@ inline Float4
     return result;
 }
 
-// The level is a literal far more often than not - a shader reaching for this
-// usually wants the top of the pyramid and nothing else - and a plain float has
-// no graph to record itself into. The texture carries one, so this spells what
-// the caller would otherwise need a ShaderBuilder in scope to anchor.
+// A literal level, anchored on the texture's own graph so the caller needs no
+// ShaderBuilder in scope.
 inline Float4
     sample(const Texture2D& texture, const Float2& coordinates, float level)
 {
@@ -412,13 +368,9 @@ inline Float4
     return result;
 }
 
-// One texel, addressed in texels rather than in the [0, 1] the sampler works
-// in, and read without it: no filtering, no wrap, no interpolation. A
-// coordinate outside the texture reads as zero on both backends.
-//
-// An Int2 is what a texel index is, and what GLSL's texelFetch takes. The
-// Float2 form stays because a shader usually has the coordinate in hand as one:
-// it truncates towards zero, exactly as GLSL's ivec2 conversion does.
+// One texel, addressed in texels rather than in the sampler's [0, 1] and read
+// without one: no filtering, no wrap, no interpolation. A coordinate outside
+// the texture reads as zero on both backends; the Float2 form truncates.
 inline Float4 fetch(const Texture2D& texture, const Int2& coordinates)
 {
     auto result = Float4 {};
@@ -435,22 +387,16 @@ inline Float4 fetch(const Texture2D& texture, const Float2& coordinates)
     return result;
 }
 
-// A 2D texture a kernel writes. Like Texture2D it is slot-identified rather
-// than an expression node, and like an OutputBuffer its one operation is the
-// store recorded via ShaderBuilder::write - there is nothing to read back from
-// one, on either backend. Bind the matching GPU::Texture, created with
-// TextureDescriptor::computeWrite, at the same slot
-// (ComputePass::setOutputTexture).
+// Write-only on both backends; its one operation is ShaderBuilder::write. Bind
+// the matching GPU::Texture, created with TextureDescriptor::computeWrite, at
+// the same slot (ComputePass::setOutputTexture).
 struct WritableTexture2D
 {
     ShaderGraph* graph = nullptr;
     int slot = -1;
 };
 
-// Where a 2D kernel's work item sits in the grid. A struct of handles rather
-// than a uint2 value type, following the idiom the GPU README states: the two
-// components are what a kernel indexes with, and neither shading language has
-// an operation on the pair that the components do not already have.
+// Where a 2D kernel's work item sits in the grid.
 struct ThreadPosition
 {
     UInt x;
@@ -460,10 +406,7 @@ struct ThreadPosition
 namespace detail
 {
 // count consecutive elements starting at index * count, assembled into a
-// vector. A buffer stays a run of floats on both backends - this is arithmetic
-// over the binding that already works, not a retyped one - so what it costs is
-// count scalar loads rather than one wide load. See ShaderBuilder::write for
-// the store that lays the same layout down.
+// vector; the buffer stays a run of floats, so this costs count scalar loads.
 template <typename T>
 T readBufferVector(
     ShaderGraph* graph, int slot, const UInt& index, ValueType type, int count)
@@ -492,10 +435,8 @@ T readBufferVector(
 }
 } // namespace detail
 
-// Storage buffers of float elements, declared by a compute kernel. Like
-// Texture2D they are slot-identified rather than expression nodes: an input's
-// one operation is the indexed read, an output's is the store recorded via
-// ShaderBuilder::write. Bind the matching GPU::Buffer at the same slot
+// Storage buffers of float elements, slot-identified rather than expression
+// nodes. Bind the matching GPU::Buffer at the same slot
 // (ComputePass::setInputBuffer / setOutputBuffer).
 struct InputBuffer
 {
@@ -507,14 +448,9 @@ struct InputBuffer
         return result;
     }
 
-    // The vector reads, for a buffer whose elements are records rather than
-    // single floats: read4(i) is elements 4i..4i+3 as a Float4, which is what a
-    // kernel walking a struct of four floats wants instead of four subscripts
-    // and the index arithmetic to go with them.
-    //
-    // The index is in records, not in floats - read4(i) and the matching
-    // write(output, i, Float4) address the same record - so a kernel never
-    // spells the stride itself.
+    // For a buffer of records rather than single floats: read4(i) is elements
+    // 4i..4i+3. The index is in records, not floats, and addresses the same
+    // record write(output, i, Float4) does.
     Float2 read2(const UInt& index) const
     {
         return detail::readBufferVector<Float2>(
@@ -544,24 +480,12 @@ struct OutputBuffer
 };
 
 // A storage buffer of unsigned integers every thread in the dispatch may
-// read-modify-write at once, which is what makes one kernel able to hand out
-// slots of a shared array to threads that know nothing about each other.
-//
-// The elements are integers and not floats, and that is not a detail: the same
-// GPU::Buffer bound to an InputBuffer in a later kernel reads those bits as
-// floats and yields nonsense. Either read it back through load(), or have the
-// kernel that finishes with it write the values out somewhere a float buffer
-// can be read from.
-//
-// The add itself is ShaderBuilder::atomicAdd rather than a method here, because
-// it is a statement: see StatementKind::AtomicAdd for why the two backends
-// leave no other option.
+// read-modify-write at once. Its elements are integers, so the same GPU::Buffer
+// bound to an InputBuffer later reads those bits as floats and yields nonsense.
 struct AtomicBuffer
 {
-    // What the element holds now. Ordered against this thread's own earlier
-    // operations and nothing else - relaxed, like the add - so it answers "how
-    // many are there" after a dispatch, not "what is the other threads' state"
-    // during one.
+    // Relaxed, like the add: ordered against this thread's own earlier
+    // operations and nothing else.
     UInt load(const UInt& index) const
     {
         auto result = UInt {};
@@ -570,10 +494,7 @@ struct AtomicBuffer
         return result;
     }
 
-    // A literal index, anchored on this buffer's own graph - the same courtesy
-    // the intrinsics extend to a float literal, and worth more here, because a
-    // single shared counter is spelled at element zero and would otherwise be
-    // the one index a kernel could not write.
+    // A literal index, anchored on this buffer's own graph.
     UInt load(unsigned index) const { return load(literal(index)); }
 
     UInt literal(unsigned value) const
@@ -689,23 +610,16 @@ struct ValueTypeOf<Bool4>
 
 namespace detail
 {
-// The plain handle type a possibly-derived handle maps back to: a
-// Uniform<Float3> member is a Float3 to every operator and intrinsic below.
-// Declared, never defined - overload resolution does the mapping.
-//
-// Float handles only, which is what makes ShaderValueLike below mean "in the
-// float vocabulary": sin() and mix() must not quietly accept an Int2. The
-// integer and boolean families answer the same question through handleOf().
+// The plain handle type a possibly-derived handle maps back to, declared but
+// never defined. Float handles only, which is what makes ShaderValueLike below
+// mean "in the float vocabulary"; other families go through handleOf().
 Float baseOf(const Float&);
 Float2 baseOf(const Float2&);
 Float3 baseOf(const Float3&);
 Float4 baseOf(const Float4&);
 
-// The same mapping over every family, for the places that genuinely take any of
-// them: a vector constructor's arguments, and the width its components add up
-// to. Split from baseOf so that widening the one does not widen the other.
-// UInt rides along as a family of one, which is what lets the counter a kernel
-// walks a buffer with be a Var<UInt> on the same terms as any other local.
+// The same mapping over every family, for the places that take any of them.
+// Split from baseOf so that widening the one does not widen the other.
 Float handleOf(const Float&);
 Float2 handleOf(const Float2&);
 Float3 handleOf(const Float3&);
@@ -751,9 +665,7 @@ template <typename T>
 concept IntScalarLike =
     IntValueLike<T> && ValueTypeOf<ShaderHandle<T>>::value == ValueType::Int;
 
-// Two handles of exactly the same type, whichever family they are in - the
-// integer and boolean counterpart of SameShaderShape, so that an Int2 and a
-// Uniform<Int2> count as the same operand shape.
+// Two handles of exactly the same type, whichever family they are in.
 template <typename T, typename Other>
 concept SameShaderHandle =
     ShaderHandleLike<Other> && std::same_as<ShaderHandle<T>, ShaderHandle<Other>>;
@@ -778,9 +690,8 @@ concept ShaderScalarLike = ShaderShape<T, Float>;
 template <typename T>
 concept ShaderVectorLike = ShaderValueLike<T> && !ShaderScalarLike<T>;
 
-// An operand of the same shape as another, written as a type constraint with
-// the reference type as its argument: template <typename L, SameShaderShape<L> R>
-// reads "R shaped like L" and accepts e.g. a Float3 next to a Uniform<Float3>.
+// An operand of the same shape as another: template <typename L,
+// SameShaderShape<L> R> reads "R shaped like L".
 template <typename T, typename Other>
 concept SameShaderShape =
     ShaderValueLike<Other> && ShaderShape<T, ShaderBase<Other>>;
@@ -923,11 +834,8 @@ ShaderBase<T> componentCall2(const T& a, float b, const char* name)
         a, constantOn(a, b), ValueTypeOf<ShaderBase<T>>::value, name);
 }
 
-// An intrinsic argument: a value handle, or the float literal GLSL writes
-// wherever a scalar is allowed. A literal has no graph of its own, so it
-// becomes a constant on the graph the handles bring with them - which is why at
-// least one argument has to be a handle, and why nothing below takes a call
-// made of literals only.
+// A literal has no graph of its own, so it becomes a constant on the graph the
+// handles bring: at least one argument must be a handle.
 template <typename T>
 concept LiteralArgument = std::same_as<T, float>;
 
@@ -954,12 +862,8 @@ int argumentNode(const ValueHandle&, const T& value)
     return value.node;
 }
 
-// One call node out of arguments that may be handles or literals in any mix.
-// This is the whole of what "a literal in any argument position" means: GLSL
-// mixes the two freely - smoothstep(0.0, w, d), min(0.0, g), step(d, 0.0),
-// mix(0.5, 1.0, h) - and every one of those has a spelling in both languages
-// this emits into, so which positions take a literal is not a question the EDSL
-// should have an opinion about.
+// One call node out of arguments that may be handles or literals in any mix,
+// the way GLSL takes them.
 template <typename Result, IntrinsicArgument... Args>
 Result intrinsic(const char* name, const Args&... arguments)
 {
@@ -978,14 +882,11 @@ Result intrinsic(const char* name, const Args&... arguments)
 } // namespace detail
 
 // An argument written beside a value of a given shape: the same shape, a scalar
-// broadcast across it, or a float literal. It is what GLSL takes wherever it
-// takes a genType, and what both languages under this take as well.
+// broadcast across it, or a float literal - GLSL's genType.
 template <typename T, typename Shape>
 concept ShapedBeside =
     detail::LiteralArgument<T> || SameShaderShape<T, Shape> || ShaderScalarLike<T>;
 
-// The thread id as a float, e.g. a value computed from the element index. The
-// constructor-style cast spells identically in MSL and HLSL.
 inline Float toFloat(const UInt& value)
 {
     return detail::call<Float>(value, ValueType::Float, "float");
@@ -1029,8 +930,7 @@ ShaderBase<T> sqrt(const T& value)
     return detail::componentCall(value, "sqrt");
 }
 
-// The reciprocal square root, spelled rsqrt in both backends (GLSL calls it
-// inversesqrt).
+// GLSL calls this inversesqrt.
 template <ShaderValueLike T>
 ShaderBase<T> rsqrt(const T& value)
 {
@@ -1061,9 +961,7 @@ ShaderBase<T> atan(const T& value)
     return detail::componentCall(value, "atan");
 }
 
-// atan2(y, x): the quadrant-aware arctangent, the form polar coordinates want.
-// Both backends spell it atan2; GLSL overloads atan for it, which is why a
-// ported shader picks this one by argument count.
+// The quadrant-aware arctangent, which GLSL spells as a two-argument atan.
 template <ShaderValueLike L, ShapedBeside<L> R>
 ShaderBase<L> atan2(const L& y, const R& x)
 {
@@ -1118,21 +1016,17 @@ ShaderBase<T> trunc(const T& value)
     return detail::componentCall(value, "trunc");
 }
 
-// Rounds to the nearest integer. The two backends disagree on exact halves -
-// Metal rounds them away from zero, HLSL to even - so a value landing on .5 is
-// the one case this is not bit-identical across them. GLSL leaves the same case
-// implementation-defined; floor(x + 0.5) is the way to pin it down.
+// The backends disagree on exact halves - Metal rounds them away from zero,
+// HLSL to even - so use floor(x + 0.5) where that matters.
 template <ShaderValueLike T>
 ShaderBase<T> round(const T& value)
 {
     return detail::componentCall(value, "round");
 }
 
-// Screen-space partial derivatives and their sum of magnitudes, the width of
-// one pixel in whatever the argument measures - the usual way to antialias a
-// procedural edge. Fragment-stage only, like sample(): the rasteriser supplies
-// them from the neighbouring pixels in the quad, so they must never feed the
-// position expression.
+// Screen-space partial derivatives and their sum of magnitudes: the width of
+// one pixel in whatever the argument measures. Fragment-stage only, like
+// sample(), so they must never feed the position expression.
 template <ShaderValueLike T>
 ShaderBase<T> dfdx(const T& value)
 {
@@ -1151,10 +1045,8 @@ ShaderBase<T> fwidth(const T& value)
     return detail::componentCall(value, "fwidth");
 }
 
-// min/max, and every intrinsic from here down, take a float literal in any
-// argument position - see ShapedBeside above. What decides the result is the
-// argument the shape is taken from, which is why each of these has a second
-// form for the case where that argument is itself the literal.
+// Every intrinsic from here down takes a float literal in any argument
+// position; the second form covers the shape-deciding argument being one.
 template <ShaderValueLike L, ShapedBeside<L> R>
 ShaderBase<L> min(const L& a, const R& b)
 {
@@ -1191,9 +1083,7 @@ ShaderBase<R> pow(float base, const R& exponent)
     return detail::intrinsic<ShaderBase<R>>("pow", base, exponent);
 }
 
-// step(edge, x): 0 where x < edge, 1 elsewhere - the branchless building block
-// until comparisons and select arrive. The shape is x's, since that is what a
-// step is taken across.
+// 0 where x < edge, 1 elsewhere. The shape is x's.
 template <typename E, ShaderValueLike T>
     requires ShapedBeside<E, T>
 ShaderBase<T> step(const E& edge, const T& value)
@@ -1237,17 +1127,15 @@ Float distance(const L& a, const R& b)
     return detail::call2<Float>(a, b, ValueType::Float, "distance");
 }
 
-// reflect(incident, normal): the incident direction mirrored in the surface,
-// with the normal taken as already unit length.
+// The normal is taken as already unit length.
 template <ShaderVectorLike I, SameShaderShape<I> N>
 ShaderBase<I> reflect(const I& incident, const N& normal)
 {
     return detail::componentCall2(incident, normal, "reflect");
 }
 
-// refract(incident, normal, eta): the incident direction bent by the ratio of
-// refractive indices, or zero under total internal reflection. Both arguments
-// are taken as unit length.
+// eta is the ratio of refractive indices; the result is zero under total
+// internal reflection. Incident and normal are taken as unit length.
 template <ShaderVectorLike I, SameShaderShape<I> N, ShaderScalarLike E>
 ShaderBase<I> refract(const I& incident, const N& normal, const E& eta)
 {
@@ -1265,8 +1153,7 @@ ShaderBase<I> refract(const I& incident, const N& normal, float eta)
                                         "refract");
 }
 
-// faceforward(normal, incident, reference): the normal flipped, if needed, to
-// face away from the incident direction.
+// The normal flipped, if needed, to face away from the incident direction.
 template <ShaderVectorLike N, SameShaderShape<N> I, SameShaderShape<N> R>
 ShaderBase<N> faceforward(const N& normal, const I& incident, const R& reference)
 {
@@ -1283,9 +1170,7 @@ ShaderBase<T> clamp(const T& value, const Low& low, const High& high)
     return detail::intrinsic<ShaderBase<T>>("clamp", value, low, high);
 }
 
-// And the same two forms the rest of them have, for the shader that clamps a
-// literal between two values it computed: what decides the result is the first
-// argument that is not itself a literal.
+// The result's shape is the first argument that is not itself a literal.
 template <ShaderValueLike Low, ShapedBeside<Low> High>
 ShaderBase<Low> clamp(float value, const Low& low, const High& high)
 {
@@ -1298,10 +1183,7 @@ ShaderBase<High> clamp(float value, float low, const High& high)
     return detail::intrinsic<ShaderBase<High>>("clamp", value, low, high);
 }
 
-// mix(from, to, amount): linear interpolation (HLSL lerp). The amount is a
-// value of the same shape, a scalar broadcast across a vector, or a literal -
-// and so are the two endpoints, which is what a shader fading between two
-// constants writes: mix(0.5, 1.0, h).
+// Linear interpolation, which HLSL spells lerp.
 template <ShaderValueLike A, ShapedBeside<A> B, ShapedBeside<A> T>
 ShaderBase<A> mix(const A& from, const B& to, const T& amount)
 {
@@ -1320,9 +1202,7 @@ ShaderBase<T> mix(float from, float to, const T& amount)
     return detail::intrinsic<ShaderBase<T>>("mix", from, to, amount);
 }
 
-// smoothstep(edge0, edge1, x): the shape is x's, and either edge is a literal
-// or a value independently of the other - smoothstep(0.0, zo * zi, -d) is what
-// an antialiased edge whose width the shader computes looks like.
+// The shape is x's; either edge may independently be a literal or a value.
 template <typename E0, typename E1, ShaderValueLike T>
     requires ShapedBeside<E0, T> && ShapedBeside<E1, T>
 ShaderBase<T> smoothstep(const E0& edge0, const E1& edge1, const T& value)
@@ -1330,7 +1210,6 @@ ShaderBase<T> smoothstep(const E0& edge0, const E1& edge1, const T& value)
     return detail::intrinsic<ShaderBase<T>>("smoothstep", edge0, edge1, value);
 }
 
-// Componentwise arithmetic between two values of the same shape.
 template <typename L, SameShaderShape<L> R>
 ShaderBase<L> operator+(const L& lhs, const R& rhs)
 {
@@ -1361,7 +1240,7 @@ ShaderBase<T> operator-(const T& value)
     return detail::unaryOp<ShaderBase<T>>('-', value);
 }
 
-// Scalar float literals on either side, broadcast across vectors.
+// Float literals on either side, broadcast across vectors.
 template <ShaderValueLike T>
 ShaderBase<T> operator+(const T& lhs, float rhs)
 {
@@ -1410,10 +1289,7 @@ ShaderBase<T> operator/(float lhs, const T& rhs)
     return detail::scalarOpLeft<ShaderBase<T>>('/', lhs, rhs);
 }
 
-// vector op scalar handle broadcasts, e.g. a colour scaled by a lighting term
-// or a coordinate offset by a time uniform. All four operators, on both sides,
-// the way the shading languages themselves broadcast: a scalar that happens to
-// live in a uniform behaves like the literal it stands in for.
+// vector op scalar handle, broadcast the way the shading languages do.
 template <ShaderVectorLike T, ShaderScalarLike S>
 ShaderBase<T> operator+(const T& vector, const S& scalar)
 {
@@ -1462,15 +1338,8 @@ ShaderBase<T> operator/(const S& scalar, const T& vector)
     return detail::binaryOp<ShaderBase<T>>('/', scalar, vector);
 }
 
-// mod(x, y): the floored modulus, x - y * floor(x / y), whose result takes the
-// sign of the divisor - so mod(-0.25, 1.0) is 0.75 and a tiling pattern is
-// continuous across the origin.
-//
-// Recorded as that expression rather than as a call, which is the whole point:
-// the only modulus either backend offers is fmod(), and fmod() truncates
-// instead, so it returns -0.25 there and every tile left of the origin comes
-// out mirrored. Building it from nodes both languages already agree on is what
-// makes the two backends bit-identical here.
+// The floored modulus, whose result takes the sign of the divisor. Spelled out
+// rather than called, because both backends only offer fmod(), which truncates.
 template <typename L, SameShaderShape<L> R>
 ShaderBase<L> mod(const L& x, const R& y)
 {
@@ -1499,8 +1368,7 @@ inline Bool compare(const char* op, const ValueHandle& lhs, const ValueHandle& r
     return result;
 }
 
-// The componentwise form: same node, same spelling, a mask of the operands'
-// width for a result.
+// The componentwise form, yielding a mask of the operands' width.
 template <typename Mask>
 Mask compareWide(const char* op, const ValueHandle& lhs, const ValueHandle& rhs)
 {
@@ -1512,9 +1380,7 @@ Mask compareWide(const char* op, const ValueHandle& lhs, const ValueHandle& rhs)
 }
 } // namespace detail
 
-// Comparisons, on scalars and against scalar literals on either side. Two
-// values of the same shape or a value and a float, the way every other binary
-// operator here takes them.
+// Comparisons, on scalars and against scalar literals on either side.
 #define EACP_COMPARISON(name, spelling)                                             \
     template <ShaderScalarLike L, ShaderScalarLike R>                               \
     Bool name(const L& lhs, const R& rhs)                                           \
@@ -1543,14 +1409,8 @@ EACP_COMPARISON(operator!=, "!=")
 
 #undef EACP_COMPARISON
 
-// The componentwise comparisons, on two vectors of the same shape. GLSL spells
-// these lessThan(), greaterThanEqual() and so on because it reserves the
-// operators for scalars; both languages this emits into give the operator
-// itself to a vector pair and yield a boolean of the same width, so that is
-// what the EDSL spells - and a ported shader's lessThan(a, b) becomes a < b.
-//
-// The result is a mask, not a condition: nothing branches on one directly, so
-// collapse it with any() or all() to get something ifThen() or select() takes.
+// The componentwise comparisons, GLSL's lessThan() and friends. The result is a
+// mask, not a condition: collapse it with any() or all() before branching.
 #define EACP_VECTOR_COMPARISON_AT(name, spelling, Vector, Mask)                     \
     template <ShaderShape<Vector> L, SameShaderShape<L> R>                          \
     Mask name(const L& lhs, const R& rhs)                                           \
@@ -1584,11 +1444,8 @@ EACP_VECTOR_COMPARISON(operator!=, "!=")
 #undef EACP_VECTOR_COMPARISON_AT
 #undef EACP_INT_VECTOR_COMPARISON_AT
 
-// The logical connectives. Overloading && and || gives up C++'s short-circuit -
-// both operands are recorded either way - but the emitted operator is the
-// language's own, so the shader itself still skips the right-hand side. That
-// only matters for what it costs, never for what it computes: a recorded node
-// has no side effects to skip.
+// Both operands are recorded whatever the condition; the emitted operator is
+// the language's own, so the shader itself still short-circuits.
 inline Bool operator&&(const Bool& lhs, const Bool& rhs)
 {
     return detail::compare("&&", lhs, rhs);
@@ -1604,9 +1461,8 @@ inline Bool operator!(const Bool& value)
     return detail::unaryOp<Bool>('!', value);
 }
 
-// Two conditions compared rather than combined, which is what a shader asking
-// whether two tests agreed writes. GLSL has it, both languages under this have
-// it, and it is not the connectives: `a == b` is true when both are false.
+// Two conditions compared rather than combined: `a == b` is true when both are
+// false.
 inline Bool operator==(const Bool& lhs, const Bool& rhs)
 {
     return detail::compare("==", lhs, rhs);
@@ -1617,13 +1473,8 @@ inline Bool operator!=(const Bool& lhs, const Bool& rhs)
     return detail::compare("!=", lhs, rhs);
 }
 
-// What collapses a mask into something a branch or a select can test: true when
-// every component is, and when any one is. Both languages spell them the same,
-// and both take the scalar Bool too, where they are the identity - so a shader
-// that widens a comparison later does not have to unpick them.
-//
-// This is the half that makes a componentwise comparison worth having. GLSL
-// needs them for exactly the same reason, under exactly these names.
+// Collapses a mask into something a branch or a select can test. Both take the
+// scalar Bool too, where they are the identity.
 template <BoolValueLike T>
 Bool all(const T& mask)
 {
@@ -1636,8 +1487,7 @@ Bool any(const T& mask)
     return detail::call<Bool>(mask, ValueType::Bool, "any");
 }
 
-// The componentwise negation, which GLSL spells not() because it cannot
-// overload the operator. Both backends take the operator itself on a mask.
+// The componentwise negation, which GLSL spells not().
 template <BoolVectorLike T>
 ShaderHandle<T> operator!(const T& mask)
 {
@@ -1659,11 +1509,8 @@ Result selectOp(const ValueHandle& condition,
 }
 } // namespace detail
 
-// select(condition, whenTrue, whenFalse): GLSL's ternary, and the branchless
-// half of control flow - both branches are values already computed, so this
-// picks between them rather than skipping one. Where the two sides are
-// expensive, or where one of them must not run at all, an if is what to reach
-// for instead.
+// GLSL's ternary. Both branches are values already computed, so this picks
+// between them rather than skipping one; use ifThen() where that matters.
 template <typename T, SameShaderShape<T> U>
 ShaderBase<T> select(const Bool& condition, const T& whenTrue, const U& whenFalse)
 {
@@ -1691,16 +1538,9 @@ inline Float select(const Bool& condition, float whenTrue, float whenFalse)
                                    detail::constantOn(condition, whenFalse));
 }
 
-// A mutable shader local: the one handle in the EDSL that names a place rather
-// than a value. Reading it records a node at the point of the read, so what it
-// evaluates to is whatever the statements before it left there - which is the
-// whole point of it, and why it is the only handle whose meaning is not fixed
-// the moment it is built.
-//
-// It is declared where it is created, so one made inside a loop body is a local
-// of that body and the C++ handle leaves scope at the same brace the emitted
-// one does. Non-copyable, so `auto b = a` cannot quietly alias a's slot: take
-// the value with a.get(), or assign it to a Var of its own.
+// A mutable shader local: the one handle naming a place rather than a value, so
+// a read evaluates to whatever the statements before it left there. It is
+// declared where it is created, and non-copyable so it cannot alias a slot.
 template <typename T>
 struct Var
 {
@@ -1713,9 +1553,7 @@ struct Var
     Var(const Var&) = delete;
     Var(Var&&) = delete;
 
-    // The value the variable holds where the read appears. get() and the
-    // implicit conversion are the same thing; the explicit one is what a
-    // generated port spells, so a read is visible in the source it produces.
+    // The value the variable holds where the read appears.
     T get() const
     {
         auto value = T {};
@@ -1770,10 +1608,7 @@ struct Var
         return *this;
     }
 
-    // The compound operators, over whatever the free operators above accept:
-    // another value of the same shape, a scalar broadcast across a vector, or a
-    // literal. A combination they reject fails here rather than silently
-    // assigning something of the wrong shape.
+    // The compound operators, over whatever the free operators above accept.
     template <typename R>
     Var& operator+=(const R& value)
     {
@@ -1802,12 +1637,9 @@ struct Var
     int slot = -1;
 };
 
-// Index arithmetic on uint values: against another uint (a Uniform<UInt>
-// binds here too) or an integer literal, which records a uint constant node.
-// Deliberately separate from the float operator vocabulary - there are no
-// implicit conversions between the two; cross over with toFloat(). Subtraction
-// wraps below zero like the languages it emits into, so guard a backwards
-// step with max(), or wrap deliberately with %.
+// Index arithmetic on uint values, against another uint or an integer literal.
+// There are no implicit conversions to the float vocabulary; cross with
+// toFloat(). Subtraction wraps below zero, so guard a backwards step with max().
 inline UInt operator+(const UInt& lhs, const UInt& rhs)
 {
     return detail::binaryOp<UInt>('+', lhs, rhs);
@@ -1884,15 +1716,8 @@ inline UInt operator%(unsigned lhs, const UInt& rhs)
 }
 
 // Signed integer arithmetic, and the operators only an integer has: the
-// remainder, the bitwise set and the two shifts. Against another Int (a
-// Uniform<Int> binds here too) or an integer literal, which records an int
-// constant node. Deliberately separate from the float operator vocabulary -
-// there are no implicit conversions between the two; cross over with toInt()
-// and toFloat().
-//
-// Division and the remainder truncate towards zero on a negative operand, as
-// they do in GLSL and in both languages this emits into. That is not what
-// floor-based tiling wants: mod() is the floored one, and is spelled for floats.
+// remainder, the bitwise set and the two shifts. Division and the remainder
+// truncate towards zero on a negative operand; mod() is the floored one.
 #define EACP_INT_OPERATOR(name, spelling)                                           \
     inline Int name(const Int& lhs, const Int& rhs)                                 \
     {                                                                               \
@@ -1935,11 +1760,9 @@ inline Int operator~(const Int& value)
     return detail::unaryOp<Int>('~', value);
 }
 
-// The same set componentwise, on the integer vectors: against another vector of
-// the same width, against a scalar Int or an integer literal broadcast across
-// it, both ways round. Every one of them is what the two shading languages
-// already do with a vector and a scalar, so none of these is spelled out as a
-// constructor.
+// The same set componentwise on the integer vectors: against another vector of
+// the same width, or a scalar Int or literal broadcast across it either way
+// round.
 #define EACP_INT_VECTOR_OPERATOR(name, spelling)                                    \
     template <IntVectorLike L, SameShaderHandle<L> R>                               \
     ShaderHandle<L> name(const L& lhs, const R& rhs)                                \
@@ -1998,8 +1821,7 @@ ShaderHandle<T> operator~(const T& value)
     return detail::unaryOp<ShaderHandle<T>>('~', value);
 }
 
-// min/max/abs componentwise, the vector half of what holds a scalar index in
-// range - here it is a cell held inside a grid.
+// min/max/abs componentwise.
 template <IntVectorLike L, SameShaderHandle<L> R>
 ShaderHandle<L> min(const L& a, const R& b)
 {
@@ -2021,8 +1843,8 @@ ShaderHandle<T> abs(const T& value)
         value, ValueTypeOf<ShaderHandle<T>>::value, "abs");
 }
 
-// Integer comparisons, which the float ones cannot cover: those are constrained
-// on the float scalar shape, and an Int is deliberately not one.
+// Integer comparisons: the float ones are constrained on the float scalar
+// shape, which an Int deliberately is not.
 #define EACP_INT_COMPARISON(name, spelling)                                         \
     inline Bool name(const Int& lhs, const Int& rhs)                                \
     {                                                                               \
@@ -2048,11 +1870,8 @@ EACP_INT_COMPARISON(operator!=, "!=")
 
 #undef EACP_INT_COMPARISON
 
-// And the uint ones, which are what a loop over a buffer tests: the counter
-// beside an index computed from threadId() is a UInt, and so is the element
-// count it runs to. The literal overloads take unsigned and record a uint
-// constant node, so a bound is spelled i < 4u exactly as the index arithmetic
-// spells i + 1u.
+// And the uint ones. The literal overloads take unsigned and record a uint
+// constant node, so a bound is spelled i < 4u.
 #define EACP_UINT_COMPARISON(name, spelling)                                        \
     inline Bool name(const UInt& lhs, const UInt& rhs)                              \
     {                                                                               \
@@ -2078,8 +1897,7 @@ EACP_UINT_COMPARISON(operator!=, "!=")
 
 #undef EACP_UINT_COMPARISON
 
-// int min/max/abs: the branchless way to hold an index inside an array, for the
-// shader that would rather clamp than mask.
+// int min/max/abs.
 inline Int min(const Int& a, const Int& b)
 {
     return detail::call2<Int>(a, b, ValueType::Int, "min");
@@ -2090,8 +1908,7 @@ inline Int min(const Int& a, int b)
     return detail::call2<Int>(a, detail::intConstantOn(a, b), ValueType::Int, "min");
 }
 
-// The literal on the left as well, for the same reason the float intrinsics
-// take one in any position: a shader writes max(0, -i) as readily as max(i, 0).
+// The literal on the left as well.
 inline Int min(int a, const Int& b)
 {
     return detail::call2<Int>(detail::intConstantOn(b, a), b, ValueType::Int, "min");
@@ -2118,12 +1935,9 @@ inline Int abs(const Int& value)
 }
 
 // Crossing between the integer and the float vocabularies, explicit in both
-// directions. The constructor-style cast spells identically in MSL and HLSL,
-// and truncates towards zero on the way to an int exactly as GLSL's int() does.
+// directions and truncating towards zero on the way to an int.
 namespace detail
 {
-// The cast is spelled with the target's own type name, so the two can never
-// drift apart: int2(v) on the way in, float2(v) on the way back.
 template <typename Result, typename T>
 Result convertTo(const T& value)
 {
@@ -2137,10 +1951,7 @@ inline Float toFloat(const Int& value)
     return detail::convertTo<Float>(value);
 }
 
-// And out of a condition, which is the other crossing GLSL spells with a
-// constructor: int(a > b) is 1 or 0, and both languages under this cast a bool
-// the same way. It is not a select - there is nothing to choose between - and
-// it is what a shader counting how many of its tests passed adds up.
+// Out of a condition: int(a > b) is 1 or 0.
 inline Int toInt(const Bool& value)
 {
     return detail::convertTo<Int>(value);
@@ -2157,10 +1968,7 @@ Int toInt(const T& value)
     return detail::convertTo<Int>(value);
 }
 
-// And between the two integer vocabularies, which a guarded index crosses
-// twice: into the signed one for arithmetic that may go below zero - the tap
-// of a padded convolution, a backwards step - and back out through toUInt for
-// the subscript once it is clamped. toUInt of a float scalar truncates
+// And between the two integer vocabularies. toUInt of a float scalar truncates
 // towards zero on the way, exactly as toInt does.
 inline Int toInt(const UInt& value)
 {
@@ -2178,9 +1986,7 @@ UInt toUInt(const T& value)
     return detail::convertTo<UInt>(value);
 }
 
-// And the same crossing a whole vector at a time, which is what a shader
-// counting a grid cell out of a coordinate writes: every component truncates
-// towards zero, exactly as the scalar does.
+// The same crossing a whole vector at a time, component by component.
 template <ShaderShape<Float2> T>
 Int2 toInt(const T& value)
 {
@@ -2217,19 +2023,9 @@ Float4 toFloat(const T& value)
     return detail::convertTo<Float4>(value);
 }
 
-// A constant array the shader subscripts: a palette, a set of offsets, any small
-// lookup table a shader would otherwise spell out as a chain of selects. Like
-// Texture2D it is slot-identified rather than an expression node - it is a
-// declaration and not a value, and its one operation is the subscript.
-//
-// Its elements are evaluated once where the array is declared, at the top of the
-// shader body, so one may read a uniform or a varying but not a mutable local:
-// no local exists yet at that point.
-//
-// The size is part of the type, so a literal index is checked here. An Int index
-// is the shader's own business, exactly as it is in GLSL - reading past the end
-// is undefined in both languages - so mask it (`i & 3`) or clamp it
-// (`min(max(i, 0), 3)`) unless it is already in range.
+// A constant array the shader subscripts, slot-identified rather than an
+// expression node. Its elements are evaluated once at the top of the body, so
+// none may be a mutable local; an Int index past the end is undefined.
 template <typename T, int Size>
 struct ConstantArray
 {
@@ -2256,15 +2052,9 @@ struct ConstantArray
     int slot = -1;
 };
 
-// A threadgroup-shared array, created inside a kernel body: the tile a
-// reduction or a blocked matmul stages in on-chip memory so a group of
-// threads reads it instead of re-reading global memory. It is never
-// CPU-visible - there is nothing to bind - so the element type is any value
-// type, a float4 record included; a subscript reads the current element, and
-// writes go through write(shared, index, value) beside the buffer writes.
-// What one thread wrote is visible to the rest of its group only after
-// barrier(), and a value read before a barrier does not stand for the same
-// element after it - the emitter gives up any name spanning one.
+// A threadgroup-shared array, created inside a kernel body. Never CPU-visible,
+// so the element type is any value type. What one thread wrote is visible to
+// the rest of its group only after barrier(); no read is reused across one.
 template <typename T>
 struct Shared
 {
@@ -2276,8 +2066,7 @@ struct Shared
         return result;
     }
 
-    // The literal subscript, for the fixed element a reduction converges on:
-    // the group leader reads tile[0u] after the last barrier.
+    // The literal subscript, e.g. tile[0u].
     T operator[](unsigned index) const
     {
         auto result = T {};
@@ -2290,7 +2079,7 @@ struct Shared
     int slot = -1;
 };
 
-// uint min/max, the branchless way to clamp an index to a valid range.
+// uint min/max.
 inline UInt min(const UInt& a, const UInt& b)
 {
     return detail::call2<UInt>(a, b, ValueType::UInt, "min");
@@ -2325,8 +2114,7 @@ Result matrixMul(const A& a, const B& b)
 }
 } // namespace detail
 
-// Matrix * vector, e.g. a 2D rotation applied to a texture coordinate or an MVP
-// transform applied to a clip-space position.
+// Matrix * vector.
 inline Float2 operator*(const Float2x2& matrix, const Float2& vector)
 {
     return detail::matrixMul<Float2>(matrix, vector);
@@ -2342,12 +2130,8 @@ inline Float4 operator*(const Float4x4& matrix, const Float4& vector)
     return detail::matrixMul<Float4>(matrix, vector);
 }
 
-// Vector * matrix, which is the same product against the matrix's rows rather
-// than its columns - what a shader writes to go back through an orientation
-// instead of into one, and how half the Shadertoys that rotate a coordinate
-// spell it. It needs no per-backend form of its own beyond the one the product
-// already has: MSL's * and HLSL's mul() both read the left operand as a row
-// vector when it is the one on the left.
+// Vector * matrix: the same product against the matrix's rows rather than its
+// columns.
 inline Float2 operator*(const Float2& vector, const Float2x2& matrix)
 {
     return detail::matrixMul<Float2>(vector, matrix);
@@ -2363,7 +2147,7 @@ inline Float4 operator*(const Float4& vector, const Float4x4& matrix)
     return detail::matrixMul<Float4>(vector, matrix);
 }
 
-// Matrix * matrix, e.g. composing two rotations, or model/view/projection.
+// Matrix * matrix.
 inline Float2x2 operator*(const Float2x2& a, const Float2x2& b)
 {
     return detail::matrixMul<Float2x2>(a, b);
@@ -2380,10 +2164,7 @@ inline Float4x4 operator*(const Float4x4& a, const Float4x4& b)
 }
 
 // A matrix scaled by a scalar, on either side and by a handle or a literal.
-// This is not one of the products above and is deliberately not a Mul node: it
-// multiplies every element, which both languages spell with the operator, and
-// which a transpose leaves alone - so HLSL needs nothing extra for it even
-// though it is holding the matrix the other way up.
+// Not a Mul node: it multiplies every element, which a transpose leaves alone.
 #define EACP_MATRIX_SCALE(Matrix)                                                   \
     template <ShaderScalarLike S>                                                   \
     Matrix operator*(const Matrix& matrix, const S& scalar)                         \
@@ -2424,9 +2205,8 @@ EACP_MATRIX_SCALE(Float4x4)
 
 #undef EACP_MATRIX_SCALE
 
-// Builds a matrix from its columns. Column-major, matching Metal's
-// float4x4(c0, c1, c2, c3); the HLSL emitter transposes this construction, since
-// HLSL fills a matrix from rows rather than columns.
+// Column-major, matching Metal's float4x4(c0, c1, c2, c3); the HLSL emitter
+// transposes this construction, HLSL filling a matrix from rows.
 inline Float2x2 float2x2(const Float2& c0, const Float2& c1)
 {
     return detail::construct<Float2x2>(
@@ -2446,15 +2226,9 @@ inline Float4x4
         *c0.graph, ValueType::Float4x4, {c0.node, c1.node, c2.node, c3.node});
 }
 
-// The transpose of a matrix, spelled the same in both backends and right in
-// both for the same reason the construction above is: HLSL holds transposed
-// what MSL holds, so transposing what each holds leaves each holding the
-// transpose of the same logical value.
-//
-// There is no inverse() beside these, and that is a property of the languages
-// rather than an omission here: neither MSL nor HLSL has one, so it would have
-// to be built out of a cofactor expansion per order - which is a function a
-// caller can write out of the nodes below, and not a node the graph is missing.
+// Correct on both backends despite HLSL holding transposed what MSL holds:
+// transposing each leaves each holding the transpose of the same logical value.
+// There is no inverse() because neither shading language offers one.
 inline Float2x2 transpose(const Float2x2& matrix)
 {
     return detail::call<Float2x2>(matrix, ValueType::Float2x2, "transpose");
@@ -2470,8 +2244,8 @@ inline Float4x4 transpose(const Float4x4& matrix)
     return detail::call<Float4x4>(matrix, ValueType::Float4x4, "transpose");
 }
 
-// The determinant, which needs no such argument at all: a matrix and its
-// transpose have the same one, so the backends agree whatever each is holding.
+// A matrix and its transpose have the same determinant, so the backends agree
+// whichever each is holding.
 inline Float determinant(const Float2x2& matrix)
 {
     return detail::call<Float>(matrix, ValueType::Float, "determinant");
@@ -2503,8 +2277,7 @@ constexpr int componentsOf()
         return componentCount(ValueTypeOf<ShaderBase<T>>::value);
 }
 
-// The graph the constructed vector records into, taken from the first handle
-// argument (the constraint guarantees one exists).
+// Taken from the first handle argument; the constraint guarantees one exists.
 inline ShaderGraph* graphOf()
 {
     return nullptr;
@@ -2519,9 +2292,8 @@ ShaderGraph* graphOf(const First& first, const Rest&... rest)
         return first.graph;
 }
 
-// The node an argument contributes. Going through the base handle rather than
-// reading .node directly is what lets a derived handle - a Uniform<Float3>, or
-// a Var<Float3> whose read is a node of its own - fill a component.
+// Going through the base handle rather than reading .node directly is what lets
+// a derived handle - a Uniform<Float3>, a Var<Float3> - fill a component.
 template <typename T>
 int nodeOf(ShaderGraph& graph, const T& value)
 {
@@ -2546,17 +2318,15 @@ Result constructFrom(ValueType type, const Args&... args)
 }
 } // namespace detail
 
-// A pack that fills a vector of the given width: handles and numeric literals
-// whose components sum to it, with at least one handle to supply the graph an
-// all-literal vector lacks (those still go through constant()).
+// A pack that fills a vector of the given width, with at least one handle to
+// supply the graph an all-literal vector lacks.
 template <int Width, typename... Args>
 concept ComponentsFor = (ShaderComponent<Args> && ...)
                         && (detail::componentsOf<Args>() + ... + 0) == Width
                         && (ShaderValueLike<Args> || ...);
 
 // Vector constructors from any mix of value handles and numeric literals whose
-// components total the vector's width: float4(position, 0.0f, 1.0f),
-// float4(color, alpha), float3(x, uv)...
+// components total the vector's width, e.g. float4(position, 0.0f, 1.0f).
 template <typename... Args>
     requires ComponentsFor<2, Args...>
 Float2 float2(const Args&... args)
@@ -2580,11 +2350,8 @@ Float4 float4(const Args&... args)
 
 namespace detail
 {
-// The same machinery for the integer and boolean families. It is separate from
-// the float one because a literal has to become a constant of the right kind -
-// int2(cell.x, 1) records an integer 1, not a float one - and because the
-// concepts are what keep the three families from mixing: an Int in a float2()
-// is a type error in GLSL, and stays one here.
+// The same machinery for the integer and boolean families, kept separate so a
+// literal becomes a constant of the right kind and the families cannot mix.
 template <typename T>
 constexpr int handleComponentsOf()
 {
@@ -2645,10 +2412,8 @@ Result buildFrom(const Args&... args)
 }
 } // namespace detail
 
-// A pack filling an integer or a boolean vector of the given width: handles of
-// that family and literals of the matching kind, with at least one handle to
-// supply the graph a wholly literal vector lacks - the same rule the float
-// constructors carry, for the same reason.
+// A pack filling an integer or a boolean vector of the given width, under the
+// same at-least-one-handle rule the float constructors carry.
 template <int Width, typename... Args>
 concept IntComponentsFor = ((IntValueLike<Args> || std::is_integral_v<Args>) && ...)
                            && (detail::handleComponentsOf<Args>() + ... + 0) == Width

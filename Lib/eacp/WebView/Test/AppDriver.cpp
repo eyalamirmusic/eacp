@@ -15,11 +15,7 @@ namespace
 
 constexpr auto defaultTimeoutMs = 5000;
 
-// Budget for the page's first navigation. The first WebView2 launch on
-// a cold CI runner regularly blows past the per-command timeout
-// (runtime spin-up, profile creation, antivirus scans), so the wait
-// for the initial load gets its own generous budget; the regular 5s
-// default only governs commands once the page is up.
+// A cold WebView2 launch on CI blows well past the per-command timeout.
 constexpr auto startupTimeoutMs = 30000;
 constexpr auto waitForPollMs = 50;
 constexpr auto defaultSnapshotSubdir = "test-results/snapshots";
@@ -75,11 +71,8 @@ std::string jsStringLiteral(std::string_view value)
     return out;
 }
 
-// Wraps an arbitrary JS expression so the callback always gets a
-// JSON-encoded {value: ...}. JSON.stringify of undefined returns
-// undefined (not a string), which evaluateJavaScript would surface
-// as an empty result — the explicit object wrapper avoids that
-// ambiguity.
+// The object wrapper keeps undefined results distinguishable, since
+// JSON.stringify(undefined) is itself undefined rather than a string.
 std::string wrapExpr(const std::string& expression)
 {
     return "JSON.stringify({value:(" + expression + ")})";
@@ -155,22 +148,11 @@ AppDriver::AppDriver(Graphics::WebView& webViewToUse,
     , snapshotDir(resolveSnapshotDir(std::move(options.snapshotDir)))
     , firstNavigation(firstNavigationPromise.get())
 {
-    // The window.__test agent is AppDriver's wire protocol — install
-    // it at document-start so it's available before page scripts run.
-    // Headless mode defers the WebView's first navigation by one
-    // runloop tick (see WebView-Shared.cpp), giving us this window to
-    // register the script before the load fires.
+    // At document-start, so window.__test exists before page scripts run.
     webView.addUserScript(loadTestAgentSource(), true);
 
-    // evaluateJavaScript before the first navigation finishes
-    // sometimes fails — the JS context isn't fully set up yet. Latch
-    // on the first didFinishNavigation callback so command methods
-    // can wait for the page to be ready (either by awaiting the
-    // promise from a coroutine, or by pumping it via waitFor in the
-    // sync path).
-    //
-    // Chain through whatever was already installed so users aren't
-    // surprised by their own handler getting clobbered.
+    // The JS context isn't reliably usable until the first navigation
+    // finishes; latch on it, chaining any handler the user installed.
     previousFinishedHandler = webView.onNavigationFinished;
     webView.onNavigationFinished =
         [this, previous = previousFinishedHandler](const std::string& url)
@@ -185,11 +167,8 @@ AppDriver::AppDriver(Graphics::WebView& webViewToUse,
         firstNavigationPromise.resolve();
     };
 
-    // Latch on failure too, so a broken scheme / 404 / etc. unblocks
-    // the wait immediately with the actual WebView error instead of
-    // hanging until the timeout. The reject() carries the error string
-    // straight through to the AsyncError that waitForFirstNavigation /
-    // any co_await on the promise will surface.
+    // Latch failures too, so a bad scheme or 404 reports the real error
+    // instead of hanging until the timeout.
     previousFailedHandler = webView.onNavigationFailed;
     webView.onNavigationFailed =
         [this, previous = previousFailedHandler](const std::string& error)
@@ -207,8 +186,7 @@ AppDriver::AppDriver(Graphics::WebView& webViewToUse,
 
 AppDriver::~AppDriver()
 {
-    // Restore the user's handlers so a longer-lived WebView doesn't
-    // keep firing into this dead driver.
+    // A longer-lived WebView must not keep firing into this dead driver.
     webView.onNavigationFinished = std::move(previousFinishedHandler);
     webView.onNavigationFailed = std::move(previousFailedHandler);
 }
@@ -236,10 +214,7 @@ void AppDriver::waitForFirstNavigation(const CallOptions& opts)
     }
     catch (const Threads::AsyncError& e)
     {
-        // If the latch has fired by the time waitFor throws, the
-        // promise was reject()'d (by onNavigationFailed) — surface the
-        // actual WebView2 error. Otherwise we hit Async::waitFor's own
-        // "timed out" path; report it as a load timeout.
+        // A fired latch means reject(), so e carries the real load error.
         if (firstNavigationFired)
             throw std::runtime_error("AppDriver: navigation failed: "
                                      + std::string {e.what()});
@@ -285,21 +260,14 @@ Miro::JSON unwrapJsResult(const std::string& raw)
     return it != obj.end() ? it->second : Miro::JSON {};
 }
 
-// Outer waitFor on a sync wrapper needs to outlive the per-call
-// timeout so the coroutine's own deadline check throws the
-// task-specific message ("waitFor timed out for selector …",
-// "JS evaluation timed out …") before the generic
-// "Async::waitFor timed out" from the wrapper.
+// Lets the coroutine's task-specific timeout message win over the generic
+// one the outer waitFor would throw.
 constexpr auto syncTimeoutBufferMs = 1000;
 
 } // namespace
 
 Time::MS AppDriver::syncOuterTimeout(int innerTimeoutMs) const
 {
-    // Until the first navigation has fired, the inner coroutine is
-    // still waiting on the page load, which gets the (much larger)
-    // startup budget — extend the outer wait to match so a slow cold
-    // start isn't cut short by the per-command timeout.
     auto startupGraceMs = firstNavigationFired ? 0 : startupTimeoutMs;
 
     return Time::MS {innerTimeoutMs + syncTimeoutBufferMs + startupGraceMs};
@@ -494,8 +462,7 @@ int AppDriver::count(const std::string& selector, CallOptions opts)
 Threads::Async<bool> AppDriver::waitForAsync(const std::string& selector,
                                              CallOptions opts)
 {
-    // Start the poll deadline only once the page is up, so it measures
-    // page responsiveness rather than (possibly slow) startup.
+    // Start the poll deadline once the page is up, not before.
     co_await waitForFirstNavigationAsync({});
 
     auto deadline = Time::Deadline {Time::MS {effectiveTimeoutMs(opts)}};

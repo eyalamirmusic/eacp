@@ -18,7 +18,6 @@ static const wchar_t* TRAY_WINDOW_CLASS_NAME =
     TRAY_WINDOW_CLASS_NAME_STORAGE.c_str();
 static bool trayWindowClassRegistered = false;
 
-// The notification-area callback message and the icon's per-window id.
 constexpr UINT WM_EACP_TRAY = WM_APP + 0x10;
 constexpr UINT TRAY_ICON_ID = 1;
 
@@ -69,9 +68,8 @@ struct TrayIcon::Native
         trayWindowClassRegistered = RegisterClassExW(&wc) != 0;
     }
 
-    // A normal (but never shown) window. Unlike a message-only window it can be
-    // made foreground, which TrackPopupMenu needs so the menu dismisses
-    // correctly.
+    // A normal but never-shown window: unlike a message-only one it can be made
+    // foreground, which TrackPopupMenu needs to dismiss correctly.
     void createMessageWindow()
     {
         messageWindow =
@@ -272,8 +270,7 @@ struct TrayIcon::Native
             return 0;
         }
 
-        // Refresh the cached menu theme so an open-after-switch picks up a
-        // live light/dark change.
+        // So a menu opened after a live light/dark switch picks it up.
         if (msg == WM_SETTINGCHANGE && isThemeChangeMessage(lParam))
             refreshMenuTheme();
 

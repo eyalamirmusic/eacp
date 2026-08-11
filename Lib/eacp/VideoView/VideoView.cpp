@@ -6,31 +6,21 @@ namespace eacp::Video
 {
 namespace
 {
-// A video frame is fitted to the view by an arbitrary factor, so it has to be
-// filtered smoothly; SpriteRenderer's default Nearest would alias it badly.
+// Frames are fitted by an arbitrary factor, so the default Nearest aliases.
 constexpr auto frameSampling = GPU::TextureSampling {GPU::TextureFilter::Linear,
                                                      GPU::TextureAddressMode::Clamp};
 } // namespace
 
 VideoView::VideoView()
 {
-    // Decoded video is already smooth, and the image is a single quad, so MSAA
-    // buys nothing; keep it at one sample.
     setSampleCount(1);
 }
 
 VideoView::~VideoView()
 {
-    // Deliberately does not touch `stream`, and this is not an oversight: a
-    // subclass that holds its FrameStream as a member has already had that
-    // member destroyed by the time this base destructor runs, so the pointer is
-    // dangling here. Reaching through it to clear the callback aborts the
-    // process on a destroyed mutex.
-    //
-    // Clearing the token instead is enough. The stored callback only touches
-    // `alive` before hopping to the main thread, and the queued hop finds the
-    // token false and backs off; a stream outliving the view keeps a callback
-    // that does nothing until the next attach replaces it.
+    // Must not touch `stream`: a subclass holding it as a member has already
+    // destroyed it by now. Clearing the token is enough, since the stored
+    // callback only reads `alive` before hopping to the main thread.
     *alive = false;
 }
 
@@ -41,8 +31,8 @@ void VideoView::attach(Player& playerToUse)
     player = &playerToUse;
     stream = &playerToUse.stream();
 
-    // The player advances every refresh anyway, so the arrival hook would only
-    // add redundant repaints.
+    // The player advances every refresh, so the arrival hook would only add
+    // redundant repaints.
     setContinuous(true);
     repaint();
 }
@@ -75,10 +65,8 @@ void VideoView::applyFrameReadyCallback()
     if (stream == nullptr)
         return;
 
-    // Caller-driven mode renders on demand, so without this a frame that lands
-    // after setTime() was already served — the common case right after a seek,
-    // where the decoder has to go and fetch it — would sit in the queue with
-    // nothing to trigger the redraw that shows it.
+    // On-demand rendering, so a frame landing after setTime() was served — the
+    // common case after a seek — needs this to trigger the redraw.
     stream->setFrameReadyCallback(
         [this, guard = alive]
         {
@@ -156,8 +144,7 @@ VideoView::Placement
 
     auto placement = Placement {};
 
-    // Where the texture's top-left corner goes, and where its +u (rightwards in
-    // the texture) and +v (downwards in the texture) axes point on screen.
+    // +u runs rightwards in the texture, +v downwards.
     switch (((rotationDegrees % 360) + 360) % 360)
     {
         case 90:
@@ -174,9 +161,7 @@ VideoView::Placement
             break;
     }
 
-    // Mirroring runs the u axis the other way, from the far corner. Applied
-    // after the rotation so it stays a horizontal flip of the *displayed*
-    // image, which is what a caller asking for a mirror means.
+    // Applied after the rotation, so it flips the *displayed* image.
     if (mirrored)
     {
         placement.origin = {placement.origin.x + placement.edgeX.x,
@@ -216,8 +201,8 @@ bool VideoView::drawZeroCopy(const VideoFrame& frame, Rect& imageArea)
     if (buffer == nullptr)
         return false;
 
-    // The frame keeps the buffer alive for as long as this call runs, so unlike
-    // the camera path there is nothing to acquire and release around the wrap.
+    // The frame keeps the buffer alive across this call, so nothing has to be
+    // acquired and released around the wrap.
     auto texture = GPU::Device::shared().wrapPixelBuffer(buffer);
 
     if (!texture.isValid())
@@ -252,8 +237,7 @@ bool VideoView::drawUpload(const VideoFrame& frame, Rect& imageArea)
 
         if (isNv12)
         {
-            // Half resolution on both axes, two bytes a texel: one Cb/Cr pair
-            // per 2x2 block of luma.
+            // One Cb/Cr pair per 2x2 block of luma.
             descriptor.width = frame.width() / 2;
             descriptor.height = frame.height() / 2;
             descriptor.format = GPU::TextureFormat::RG8Unorm;
@@ -272,8 +256,6 @@ bool VideoView::drawUpload(const VideoFrame& frame, Rect& imageArea)
         || (isNv12 && !(chromaTexture.has_value() && chromaTexture->isValid())))
         return false;
 
-    // Redrawing the same frame — a resize, an overlay change — should not pay
-    // for the upload again.
     if (uploadedPixels != pixels)
     {
         uploadTexture->update(pixels, frame.bytesPerRow());
@@ -324,13 +306,11 @@ void VideoView::render(GPU::Frame& frame)
 
     if (stream != nullptr)
     {
-        // The track's display rotation. Read per frame rather than cached at
-        // attach time, because a stream can be reopened on a different file
-        // under a view that is already attached.
+        // Read per frame, since an attached stream can be reopened on a
+        // different file.
         rotation = stream->info().rotationDegrees;
 
-        // Held for the whole pass: it owns the pixels the GPU is about to read,
-        // and the decode thread is free to keep filling the queue meanwhile.
+        // Held for the whole pass: it owns the pixels the GPU is about to read.
         auto videoFrame =
             player != nullptr ? player->currentFrame() : stream->frameAt(playhead);
 

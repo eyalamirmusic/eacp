@@ -5,7 +5,7 @@ namespace eacp::Graphics
 
 bool Keyboard::isKeyPressed(uint16_t)
 {
-    // iOS doesn't have a hardware keyboard state API in the same way as macOS
+    // iOS exposes no hardware keyboard state API.
     return false;
 }
 

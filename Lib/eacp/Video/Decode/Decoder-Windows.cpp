@@ -16,21 +16,9 @@
 #include <cstring>
 #include <memory>
 
-// Windows decode backend (Media Foundation IMFSourceReader). Frames are taken
-// in NV12 — what the H.264/HEVC decoders produce natively — so no colour
-// conversion happens on the way out; VideoView uploads the two planes and the
-// shader converts. That is 1.5 bytes per pixel through the copy and the upload
-// instead of 4.
-//
-// The reader is bound to a D3D11 device where one with a decoder exists, which
-// is what moves the decode itself onto the GPU's video engine; where none does
-// — a VM, a remote session, a frozen driver — the same code decodes in software
-// and nothing else changes.
-//
-// Frames still arrive as CPU buffers and are copied out tightly packed, the
-// same upload path Cameras::Camera takes on this platform (Texture::update).
-// Zero-copy needs those NV12 textures shared into the D3D12 device instead of
-// read back, which is the same later phase the camera backend is waiting on.
+// Media Foundation IMFSourceReader. Frames are taken in NV12, what the
+// H.264/HEVC decoders produce natively, and arrive as CPU buffers copied out
+// tightly packed; the shader does the colour conversion. No zero-copy path yet.
 
 namespace eacp::Video
 {
@@ -55,24 +43,15 @@ std::wstring widen(const char* utf8)
     return wide;
 }
 
-// COM is per-thread state: initialised on every thread that calls into Media
-// Foundation and released on that same thread. This decoder is driven from two
-// — open() by whoever opened the stream, nextFrame() and seek() by FrameStream's
-// decode thread — so a single flag on the decoder cannot describe it, and a
-// CoUninitialize() from a destructor is not necessarily even on the thread that
-// initialised. A thread_local gives the apartment the one lifetime COM accepts.
-//
-// The source reader in practice tolerates a decode thread with no apartment at
-// all, hardware decode included; this is the contract rather than a workaround.
+// COM apartments are per-thread state, and this decoder is driven from two
+// threads: open() by the caller, nextFrame()/seek() by the decode thread. The
+// thread_local gives the apartment the one lifetime COM accepts.
 void joinComApartment()
 {
     struct Apartment
     {
-        // Multithreaded is what Media Foundation wants, and the decode thread
-        // has no apartment to lose. The event loop thread is already STA (see
-        // EventLoop-Windows: WebView2, the shell dialogs and DirectComposition
-        // need it there), so this reports RPC_E_CHANGED_MODE and leaves it
-        // alone — nothing was joined, so there is nothing to leave.
+        // The event loop thread is already STA, so this reports
+        // RPC_E_CHANGED_MODE and leaves it alone; nothing was joined.
         Apartment()
             : joined {SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))}
         {
@@ -90,15 +69,9 @@ void joinComApartment()
     thread_local auto apartment = Apartment {};
 }
 
-// A D3D11 device Media Foundation can decode on, or null. Null is not an error:
-// it is the software path this backend has always taken, and it is where a VM,
-// a remote desktop session or an OEM-frozen driver lands.
-//
-// The decoder-profile count is the capability check, and it is not the same
-// question as whether the adapter does video at all. An adapter can expose a
-// video *processor* — fixed-function colour conversion, scaling, deinterlace —
-// with no decoder behind it, and binding a manager to that accelerates nothing
-// while putting a device in the pipeline.
+// Null means the software path, not an error. An adapter can expose a video
+// *processor* with no decoder behind it, so the decoder-profile count rather
+// than video support is the capability check.
 ComPtr<ID3D11Device> createVideoDevice()
 {
     ComPtr<ID3D11Device> device;
@@ -147,10 +120,9 @@ int rotationFromAttribute(UINT32 rotation)
     }
 }
 
-// Copies both planes of a locked NV12 buffer into `out`, tightly packed. The
-// planes are contiguous in the source too — `height` luma rows followed by
-// `height / 2` chroma rows, all at the same stride — so this is two runs of the
-// same row copy, and the destination keeps the layout VideoFrame documents.
+// Both planes of a locked NV12 buffer into `out`, tightly packed. They are
+// contiguous in the source too: `height` luma rows then `height / 2` chroma
+// rows, all at the same stride.
 void copyPlanes(const std::uint8_t* source,
                 LONG stride,
                 int width,
@@ -183,7 +155,7 @@ struct WindowsDecoder final : Decoder
     ~WindowsDecoder() override
     {
         // The reader holds the device manager, which holds the device; all
-        // three go before the platform they were created on is shut down.
+        // three go before MFShutdown.
         reader.Reset();
         deviceManager.Reset();
         d3dDevice.Reset();
@@ -206,10 +178,8 @@ struct WindowsDecoder final : Decoder
 
         bindVideoDevice(*attributes.Get());
 
-        // Only a safety net now that NV12 is what is asked for: the decoders
-        // produce it natively, so no processor is inserted in the common case.
-        // It stays for the odd source that decodes to something else, which
-        // would otherwise fail to open rather than cost a conversion.
+        // A safety net for the odd source that decodes to something other than
+        // NV12, which would otherwise fail to open.
         attributes->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
                               TRUE);
 
@@ -227,11 +197,8 @@ struct WindowsDecoder final : Decoder
 
         outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
 
-        // NV12 is what the H.264/HEVC decoders produce natively, so asking for
-        // it means no video processor is inserted at all — the frames come
-        // straight out of the decoder. Asking for RGB32 instead costs a
-        // full-frame colour conversion on the CPU for every frame, which at 8K
-        // is the single most expensive thing in the decode path.
+        // Asking for the decoders' native format keeps a video processor, and
+        // its per-frame CPU colour conversion, out of the pipeline.
         outputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
 
         if (FAILED(reader->SetCurrentMediaType(
@@ -250,9 +217,8 @@ struct WindowsDecoder final : Decoder
 
         joinComApartment();
 
-        // A read can legitimately return no sample (a stream tick, a format
-        // change) without being the end of the file, so keep asking until one
-        // arrives. The bound stops a malformed file spinning here forever.
+        // A read can return no sample (a stream tick, a format change) without
+        // being the end of the file; the bound stops a malformed file spinning.
         constexpr auto maxEmptyReads = 128;
 
         for (auto attempt = 0; attempt < maxEmptyReads; ++attempt)
@@ -272,8 +238,7 @@ struct WindowsDecoder final : Decoder
             if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0)
                 return false;
 
-            // The video processor can be re-negotiated mid-file; the frame size
-            // may have changed with it.
+            // Re-negotiated mid-file, so the frame size may have changed.
             if ((flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) != 0)
                 readTrackInfo();
 
@@ -291,9 +256,8 @@ struct WindowsDecoder final : Decoder
             if (duration <= 0.0 && videoInfo.frameRate > 0.0)
                 duration = 1.0 / videoInfo.frameRate;
 
-            // Media Foundation seeks to the keyframe at or before the target, so
-            // an accurate seek is finished here: drop everything that ends
-            // before the requested time.
+            // Media Foundation seeks to the keyframe at or before the target,
+            // so an accurate seek finishes here.
             if (seconds + duration <= discardBefore)
                 continue;
 
@@ -324,20 +288,13 @@ struct WindowsDecoder final : Decoder
         auto moved = SUCCEEDED(reader->SetCurrentPosition(GUID_NULL, position));
         PropVariantClear(&position);
 
-        // Keyframe mode keeps whatever the seek landed on; Accurate decodes
-        // forward from there and throws away the frames before the target.
         discardBefore = moved && mode == SeekMode::Accurate ? target : 0.0;
     }
 
 private:
-    // Points the reader at a D3D11 device so Media Foundation puts the decode
-    // on the GPU's video engine. Everything downstream is unaffected: the
-    // frames still come back through Lock2D as CPU pixels, they are just
-    // produced by fixed-function silicon instead of the CPU.
-    //
-    // Failure here is not propagated. Every step of it is a capability
-    // question, and the answer "no" means the software decoder, which is what
-    // this file did before any of this existed.
+    // Moves the decode onto the GPU's video engine; frames still come back
+    // through Lock2D as CPU pixels. Failure is not propagated — every step is a
+    // capability question whose "no" means the software decoder.
     void bindVideoDevice(IMFAttributes& attributes)
     {
         d3dDevice = createVideoDevice();
@@ -388,9 +345,7 @@ private:
         if (SUCCEEDED(currentType->GetUINT32(MF_MT_VIDEO_ROTATION, &rotation)))
             videoInfo.rotationDegrees = rotationFromAttribute(rotation);
 
-        // Tracks below high definition are usually BT.601 and above it BT.709,
-        // but only the file can say for sure, so the height rule is the
-        // fallback rather than the answer.
+        // The height rule is the fallback; only the file can say for sure.
         yuvMatrix = yuvMatrixForHeight(videoInfo.height);
 
         UINT32 signalledMatrix = 0;
@@ -405,8 +360,7 @@ private:
             fullRangeYuv = nominalRange == MFNominalRange_0_255;
 
         // Only consulted by the plain-Lock fallback; Lock2D reports the real
-        // pitch itself. One luma sample per byte, so an unpadded NV12 row is
-        // just the width.
+        // pitch itself. An unpadded NV12 row is one byte per luma sample.
         LONG defaultStride = 0;
         if (SUCCEEDED(currentType->GetUINT32(
                 MF_MT_DEFAULT_STRIDE, reinterpret_cast<UINT32*>(&defaultStride))))
@@ -430,12 +384,8 @@ private:
         return videoInfo.width > 0 && videoInfo.height > 0;
     }
 
-    // A buffer no live frame is still reading, or a new one. Recycling these
-    // rather than allocating per frame saves an allocation, a page fault per
-    // page and a full zero-fill of the buffer on every frame: resize() on a
-    // buffer that is already the right size does nothing, where a fresh Vector
-    // value-initialises all of it before the decoder overwrites every byte. At
-    // 8K that is 133 MB of pointless writes per frame.
+    // A buffer no live frame is still reading, or a new one. Recycling avoids
+    // an allocation and a full zero-fill on every frame.
     std::shared_ptr<Vector<std::uint8_t>> acquirePixelBuffer()
     {
         for (auto& candidate: pixelBuffers)
@@ -459,9 +409,8 @@ private:
         auto pixels = acquirePixelBuffer();
         auto copied = false;
 
-        // Lock2D reports the real stride. Not every buffer implements it, hence
-        // the plain Lock fallback onto the media type's default stride. Unlike
-        // RGB there is no bottom-up case to handle: NV12 is always top-down.
+        // Lock2D reports the real stride but is not always implemented, hence
+        // the plain Lock fallback. NV12 is always top-down; row 0 is the top.
         ComPtr<IMF2DBuffer> buffer2D;
 
         if (SUCCEEDED(buffer.As(&buffer2D)))
@@ -487,8 +436,6 @@ private:
             if (FAILED(buffer->Lock(&data, &maxLength, &currentLength)))
                 return false;
 
-            // Both planes have to be there: luma rows plus half as many chroma
-            // rows, all at the same stride.
             auto planeBytes = static_cast<DWORD>(stride * videoInfo.height);
             auto enough = stride > 0 && currentLength >= planeBytes + planeBytes / 2;
 
@@ -524,17 +471,14 @@ private:
     VideoInfo videoInfo;
     LONG stride = 0;
 
-    // The track's colour coding, read from the media type when it says and
-    // inferred from the frame height when it does not.
     YuvMatrix yuvMatrix = YuvMatrix::BT709;
     bool fullRangeYuv = false;
 
-    // Grows to the number of frames alive at once — the stream's queue depth
-    // plus the one on screen — and then stops.
+    // Grows to the number of frames alive at once, then stops.
     Vector<std::shared_ptr<Vector<std::uint8_t>>> pixelBuffers;
 
     // Set by an accurate seek: frames ending before this are decoded and
-    // dropped so the first frame handed out is the one covering the target.
+    // dropped.
     double discardBefore = 0.0;
 
     bool mfStarted = false;
@@ -545,9 +489,7 @@ OwningPointer<Decoder> makeDecoder()
     return makeOwned<WindowsDecoder>();
 }
 
-// Media Foundation frames always arrive as CPU pixels here, so toImage never
-// reaches this. It grows a body when the reader is bound to a D3D11 device and
-// starts handing back textures instead.
+// Frames always arrive as CPU pixels here, so toImage never reaches this.
 Graphics::Image nativeBufferToImage(void*)
 {
     return {};

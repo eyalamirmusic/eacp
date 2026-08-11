@@ -30,10 +30,8 @@ bool contains(const std::string& text, const std::string& needle)
 }
 } // namespace
 
-// With captureOutput off, the child's stdout must land in whatever the
-// parent's stdout points at — here, a file the test redirected it to. The
-// pre-fix Windows implementation piped it into capture buffers nothing read,
-// leaving the file empty.
+// Regression: the Windows implementation piped the child's stdout into capture
+// buffers nothing read, leaving the parent's redirected file empty.
 auto tChildWritesThrough = test("Process/inheritStdio/childWritesThrough") = []
 {
     const auto file = tempPath("eacp-inherit-through.txt");
@@ -68,10 +66,8 @@ auto tCaptureStaysCaptured = test("Process/inheritStdio/captureStaysCaptured") =
     std::filesystem::remove(file);
 };
 
-// Streaming, not buffering: the marker must be visible while the child is
-// still alive — it lingers after echoing, and the test kills it as soon as
-// the marker shows up. The wait is bounded well short of that linger, so a
-// slow-to-start child still gets seen alive rather than timing out.
+// The child lingers after echoing and the test kills it once the marker shows
+// up; the wait is bounded well short of that linger.
 auto tStreamsWhileRunning = test("Process/inheritStdio/streamsWhileRunning") = []
 {
     const auto file = tempPath("eacp-inherit-live.txt");

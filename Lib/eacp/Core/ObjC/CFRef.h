@@ -16,11 +16,7 @@ public:
 
     ~CFRef() { release(); }
 
-    // Move-only, and deliberately so. The implicitly generated copy duplicated
-    // the pointer without a matching CFRetain, so both copies released it — a
-    // double free surfacing as a crash inside CFRelease, a long way from the
-    // copy that caused it. Anything that wants a second owning reference has to
-    // say so with an explicit CFRetain.
+    // Move-only: a second owning reference needs an explicit CFRetain.
     CFRef(const CFRef&) = delete;
     CFRef& operator=(const CFRef&) = delete;
 
@@ -47,8 +43,7 @@ public:
         if (ref)
             CFRelease(ref);
 
-        // Clearing matters now that release() is reachable twice: once
-        // explicitly and again from the destructor.
+        // Cleared so an explicit release() followed by the destructor is safe.
         ref = nullptr;
     }
 

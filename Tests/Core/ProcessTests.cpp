@@ -107,7 +107,6 @@ auto tDetachedSurvivesDestruction = test("Process/detached/survivesDestruction")
         pid = process.id();
     }
 
-    // Destroying the Process must leave a detached child running.
     check(::kill((pid_t) pid, 0) == 0);
     ::kill((pid_t) pid, SIGKILL);
 };

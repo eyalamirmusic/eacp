@@ -12,16 +12,9 @@ using Graphics::Point;
 
 constexpr int maxDiscSegments = 256;
 
-// Every piece of a stroke is a closed contour of its own and they overlap, so
-// the one thing they must all agree on is which way round they wind: two that
-// disagree subtract under the non-zero rule, and a join wound backwards punches
-// a hole through the corner it exists to fill.
-//
-// The segment quad sets the convention, because it is the piece with no choice
-// in the matter - its normal turns with its direction, so it comes out the same
-// way round whichever way the segment points. Everything else measures itself
-// against this and is reversed if it disagrees, which makes the rule impossible
-// to get wrong rather than merely written down.
+// Sign of contourArea every emitted piece is reversed to match: two that
+// disagree would subtract under the non-zero rule. Set by the segment quad,
+// which winds the same way whichever direction its segment points.
 constexpr float houseWinding = -1.f;
 
 float contourArea(const Vector<Point>& contour)
@@ -51,8 +44,8 @@ std::optional<Point> direction(const Point& from, const Point& to)
     return Point {dx / length, dy / length};
 }
 
-// Consecutive duplicates carry no direction, so they would put a zero-length
-// segment in the middle of a run and a join with no corner in it.
+// Duplicates carry no direction, leaving zero-length segments and cornerless
+// joins.
 Vector<Point> withoutRepeats(const Vector<Point>& points, bool closed)
 {
     auto cleaned = Vector<Point> {};
@@ -63,8 +56,7 @@ Vector<Point> withoutRepeats(const Vector<Point>& points, bool closed)
             cleaned.add(point);
     }
 
-    // A closed run's last point can also repeat its first, which is the same
-    // problem at the wrap.
+    // The same problem at the wrap.
     while (cleaned.size() > 1 && closed
            && !direction(cleaned.back(), cleaned.front()).has_value())
         cleaned.erase(cleaned.end() - 1);
@@ -129,14 +121,8 @@ struct Stroker
         emit();
     }
 
-    // A round join and a round cap are the same disc: at an interior vertex it
-    // fills the wedge and the rest of it is already inside the two quads, and at
-    // an open end the half past the last point is exactly the cap.
-    //
-    // Pushed out by half its own sagitta for the reason Path::addEllipse is -
-    // vertices placed straight on the circle make a polygon wholly inside it,
-    // and a stroke reliably a little thin is worse than one whose error is
-    // signed both ways.
+    // Serves as both round join and round cap. Outset by half its sagitta so it
+    // straddles the true circle rather than sitting inside it.
     void addDisc(const Point& centre)
     {
         auto radius = half * (1.f + (1.f - std::cos(pi / (float) discSteps)) * 0.5f);
@@ -162,17 +148,9 @@ struct Stroker
         auto turn = incoming->x * outgoing->y - incoming->y * outgoing->x;
         auto straightness = incoming->x * outgoing->x + incoming->y * outgoing->y;
 
-        // How far a bevel falls short of a round join at this corner. Under the
-        // flattening tolerance the two are the same shape to within the error
-        // the curve already carries, so a smooth corner gets the three-point
-        // join whatever was asked for - and on a flattened curve that is nearly
-        // every corner, where a disc apiece would be most of the stroke.
-        //
-        // What this must never do is skip the corner. Two quads meeting at a
-        // vertex overlap on the inside of the turn and leave a wedge on the
-        // outside, and that wedge runs from the outer edge all the way down to
-        // the vertex: narrow, but as deep as the stroke is wide. Eighty-four of
-        // them around a circle read as spokes.
+        // How far a bevel falls short of a round join here. Below the flattening
+        // tolerance the two are indistinguishable, so a smooth corner is beveled
+        // whatever was asked for - but never skipped, which would leave a wedge.
         auto bevelError =
             half * (1.f - std::sqrt(std::max(0.5f + straightness * 0.5f, 0.f)));
 
@@ -205,15 +183,12 @@ struct Stroker
 
         scratch.add(toCorner);
 
-        // A corner that does not turn leaves a degenerate triangle, which emit()
-        // drops on its area.
+        // emit() drops the degenerate triangle a corner that does not turn makes.
         emit();
     }
 
-    // Where the two outer edges meet. Both offset points sit at half from the
-    // corner, so their sum bisects the angle, and similar triangles put the tip
-    // at 2*half^2 / |sum|^2 along it. Nothing is returned past the miter limit,
-    // which leaves the caller's contour a bevel.
+    // Where the two outer edges meet, or nothing past the miter limit - which
+    // leaves the caller's contour a bevel.
     std::optional<Point>
         miterTip(const Point& corner, const Point& from, const Point& to) const
     {
@@ -259,9 +234,7 @@ struct Stroker
         emit();
     }
 
-    // A sub-path that never leaves its first point: the "dot" a moveTo and a
-    // zero-length lineTo mean. It has no direction, so a square cap is taken as
-    // axis-aligned - which is what it is anywhere a direction cannot be had.
+    // A sub-path with no direction, so a square cap is taken as axis-aligned.
     void addDot(const Point& at)
     {
         if (style.cap == LineCap::Round)
@@ -307,9 +280,7 @@ struct Stroker
                 addSegment(a, b, normalAt(*unit));
         }
 
-        // A closed run turns a corner at every vertex, including the one it
-        // wraps through; an open one only between its segments, and finishes
-        // with a cap instead.
+        // A closed run also turns a corner at the vertex it wraps through.
         auto firstCorner = closed ? 0 : 1;
         auto lastCorner = closed ? count - 1 : count - 2;
 
@@ -335,8 +306,6 @@ struct Stroker
 
 namespace
 {
-// Where along the pattern the walk has got: which entry, how much of it is
-// still to come, and whether that entry draws.
 struct DashCursor
 {
     void advanceTo(int entry, const Vector<float>& pattern)
@@ -344,14 +313,12 @@ struct DashCursor
         index = entry % pattern.size();
         remaining = pattern[index];
 
-        // Read off the index rather than toggled, so skipping a zero-length
-        // entry cannot leave the two disagreeing.
+        // Derived, not toggled, so skipping an entry cannot desynchronise it.
         drawing = index % 2 == 0;
     }
 
-    // The next entry with a length to it. A zero-length one is stepped straight
-    // over: a zero-length *on* is a dot, which the format draws as a round cap
-    // and this does not, there being no segment for a cap to hang off.
+    // Steps over zero-length entries, so a zero-length on draws nothing rather
+    // than the dot the format asks for.
     void advance(const Vector<float>& pattern)
     {
         for (auto steps = 0; steps < pattern.size(); ++steps)
@@ -378,9 +345,7 @@ float totalLength(const Vector<float>& pattern)
     return total;
 }
 
-// Where every sub-path starts, which is the same place for all of them: the
-// offset is a property of the pattern, not of how far along the shape the walk
-// has come.
+// The offset belongs to the pattern, so every sub-path starts at the same place.
 DashCursor cursorAt(const Vector<float>& pattern, float offset)
 {
     auto total = totalLength(pattern);
@@ -435,10 +400,8 @@ Path dashPath(const Path& path, const DashPattern& dash)
 
     auto pattern = dash.lengths;
 
-    // An odd list is written out twice so that it comes out even, which is what
-    // makes "5 3 2" alternate rather than repeat: 5 on, 3 off, 2 on, then 5 off,
-    // 3 on, 2 off. The format says so, and it is the one thing about dashing
-    // that reliably surprises.
+    // An odd list repeats to become even, so "5 3 2" runs 5 on, 3 off, 2 on,
+    // 5 off, 3 on, 2 off.
     if (dash.lengths.size() % 2 != 0)
         for (auto length: dash.lengths)
             pattern.add(length);
@@ -493,8 +456,7 @@ Path dashPath(const Path& path, const DashPattern& dash)
         for (auto i = 1; i < sub.points.size(); ++i)
             walk(sub.points[i - 1], sub.points[i]);
 
-        // The closing edge is a segment like any other, so a closed shape dashes
-        // round the corner it started at rather than stopping short of it.
+        // The closing edge dashes like any other segment.
         if (sub.closed)
             walk(sub.points.back(), sub.points.front());
     }

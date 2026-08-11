@@ -40,11 +40,7 @@ VertexLayout buildVertexLayout(const ShaderGraph& graph)
 {
     auto layout = VertexLayout {};
 
-    // Group inputs by slot: each slot's attributes accumulate their offsets in
-    // declaration order, and the slot's stride is the sum of its byte sizes.
-    // Step rate is inherited from the first attribute assigned to a slot -
-    // callers who pass explicit bufferIndex are responsible for keeping all
-    // attributes in a given slot at the same rate.
+    // Each slot's attributes accumulate offsets in declaration order.
     auto perSlotOffsets = Vector<int> {};
     auto perSlotRates = Vector<StepRate> {};
     auto sawInstance = false;
@@ -61,12 +57,8 @@ VertexLayout buildVertexLayout(const ShaderGraph& graph)
             perSlotRates.add(StepRate::PerVertex);
         }
 
-        // First attribute in a slot establishes its step rate; every later
-        // attribute must match. Mixing PerVertex + PerInstance in a single
-        // slot would produce a subtly wrong pipeline that each backend
-        // resolves differently - a silent cross-platform footgun. Loud in
-        // Debug matches the assert-on-unhandled-mode convention added in
-        // the BlendModes PR.
+        // The first attribute in a slot establishes its step rate; mixing rates
+        // within one slot resolves differently on each backend.
         auto firstInSlot = perSlotOffsets[slot] == 0;
         if (firstInSlot)
         {
@@ -88,16 +80,13 @@ VertexLayout buildVertexLayout(const ShaderGraph& graph)
 
     if (sawInstance)
     {
-        // Multi-slot layout: publish stride + rate for every slot the graph
-        // populated. Empty leading slots (rare) get PerVertex + stride 0 by
-        // default, which is a safe no-op for backends.
+        // Empty leading slots get PerVertex and stride 0, a backend no-op.
         for (auto slot = 0; slot < perSlotOffsets.size(); ++slot)
             layout.buffer(slot, perSlotOffsets[slot], perSlotRates[slot]);
     }
     else
     {
-        // Single-buffer shortcut: keep the pre-instancing shape (buffers empty,
-        // stride populated) so existing single-buffer consumers see no change.
+        // Single-buffer shape: buffers empty, stride populated.
         layout.stride = perSlotOffsets.empty() ? 0 : perSlotOffsets[0];
     }
 

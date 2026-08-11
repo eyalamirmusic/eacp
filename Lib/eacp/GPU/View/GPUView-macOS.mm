@@ -3,9 +3,6 @@
 #include "GPUView.h"
 #include "GPUViewBacking-Apple.h"
 
-// macOS-specific GPUView piece. The CAMetalLayer setup and rendering live in the
-// shared GPUView-Apple.mm; only the backing-scale lookup differs from iOS.
-
 namespace eacp::GPU
 {
 double platformBackingScale(GPUView& view)

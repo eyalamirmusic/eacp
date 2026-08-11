@@ -2,15 +2,14 @@
 
 #include "../Common.h"
 
-// The Scalar backend is the reference implementation of the primitive set:
-// SIMD backends mirror it lane-for-lane, the swap kernel's width-remainder tail
-// runs through it, and it is the oracle SIMD kernels are validated against.
+// Reference implementation (one lane): SIMD backends mirror it lane-for-lane,
+// remainder tails run through it, and it is the oracle they are validated
+// against.
 namespace eacp::simd::backend
 {
 
 struct Scalar
 {
-    // A natural-width vector of unsigned 32-bit lanes (one lane here).
     struct U32
     {
         U32 operator&(U32 o) const { return {v & o.v}; }
@@ -46,7 +45,7 @@ struct Scalar
         static constexpr std::size_t lanes = 1;
     };
 
-    // The four channels of one RGBA pixel held as floats.
+    // The four channels of one RGBA pixel.
     struct F4
     {
         F4 operator+(F4 o) const
@@ -69,7 +68,6 @@ struct Scalar
                      static_cast<float>(p[3])}};
         }
 
-        // Round each (non-negative) lane to a byte: lround + clamp to [0, 255].
         static void storePixel(std::uint8_t* out, F4 a)
         {
             for (int c = 0; c < 4; ++c)

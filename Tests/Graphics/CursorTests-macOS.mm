@@ -3,14 +3,6 @@
 
 #include "Common.h"
 
-// The platform half of cursor shapes. CursorTests.cpp covers the state; what
-// cannot be reached from there is whether AppKit is ever told about it.
-//
-// Two things have to be true and neither is visible from portable code: the
-// backing view must implement cursorUpdate: *itself*, and its tracking area must
-// ask for cursor updates at all. Miss either and the shape is remembered
-// perfectly, every portable test passes, and the pointer stays an arrow.
-
 using namespace nano;
 using namespace eacp::Graphics;
 
@@ -21,8 +13,8 @@ NSView* nativeViewOf(View& view)
     return (__bridge NSView*) view.nativeFocusTarget();
 }
 
-// eacp's cursorUpdate: ignores its event, so there is nothing to synthesise —
-// but the selector is declared nonnull, and a literal nil is a warning.
+// cursorUpdate: ignores its event, but the selector is declared nonnull and a
+// literal nil warns.
 void sendCursorUpdate(NSView* view)
 {
     NSEvent* unusedEvent = nil;
@@ -30,13 +22,8 @@ void sendCursorUpdate(NSView* view)
 }
 } // namespace
 
-// The backing view implements cursorUpdate: rather than inheriting it.
-//
-// respondsToSelector: is worthless on its own here — NSView implements
-// cursorUpdate: itself, so it answers YES whether or not eacp registered
-// anything, and inheriting NSView's version is exactly the silent no-op that
-// leaves the arrow in place. Same trap as scrollWheel:, so the same test shape:
-// compare the resolved method against the immediate superclass's.
+// NSView implements cursorUpdate: itself, so respondsToSelector: answers YES
+// either way; the resolved method has to differ from the superclass's.
 auto tNativeViewImplementsCursorUpdate =
     test("Cursor/nativeViewImplementsCursorUpdate") = []
 {
@@ -58,9 +45,6 @@ auto tNativeViewImplementsCursorUpdate =
     check(mine != inherited);
 };
 
-// The tracking area asks for cursor updates. Without the flag AppKit never
-// sends cursorUpdate: at all, so the method above would be registered and never
-// called — and nothing else about the view would look wrong.
 auto tTrackingAreaAsksForCursorUpdates =
     test("Cursor/trackingAreaAsksForCursorUpdates") = []
 {
@@ -82,8 +66,6 @@ auto tTrackingAreaAsksForCursorUpdates =
 
     check(found);
 
-    // The wheel and move tracking this view already relied on is still there:
-    // rebuilding the options list is the easy way to drop one by accident.
     auto keptMouseMoved = false;
 
     for (NSTrackingArea* area in native.trackingAreas)
@@ -93,9 +75,6 @@ auto tTrackingAreaAsksForCursorUpdates =
     check(keptMouseMoved);
 };
 
-// cursorUpdate: sets the shape the view is carrying, which is the whole point
-// of the method — and this is the end-to-end check of the enum-to-NSCursor
-// mapping, since NSCursor.currentCursor reports what was last set.
 auto tCursorUpdateAppliesTheShape = test("Cursor/cursorUpdateAppliesTheShape") = []
 {
     auto view = View {};
@@ -113,17 +92,12 @@ auto tCursorUpdateAppliesTheShape = test("Cursor/cursorUpdateAppliesTheShape") =
 
     check([NSCursor currentCursor] == [NSCursor resizeLeftRightCursor]);
 
-    // And back to the arrow, so Default is a real shape rather than "leave
-    // whatever was there".
     view.setMouseCursor(MouseCursor::Default);
     sendCursorUpdate(native);
 
     check([NSCursor currentCursor] == [NSCursor arrowCursor]);
 };
 
-// No two shapes map onto the same NSCursor. A switch that fell through would
-// collapse two of them silently, and the only symptom is the wrong pointer over
-// one particular region.
 auto tShapesMapToDistinctCursors = test("Cursor/shapesMapToDistinctCursors") = []
 {
     auto view = View {};

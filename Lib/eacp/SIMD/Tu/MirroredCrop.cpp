@@ -1,12 +1,9 @@
 #include "../SIMD.h"
 #include "../Common.h"
 
-// Crop a width x height region at (x, y) of a tightly-packed RGBA8 image and
-// mirror it horizontally, in a single pass. This only moves bytes, so it is
-// memory-bandwidth-bound -- there is no SIMD win (cf. swapRedBlue/copy). It lives
-// in eacp-simd purely so it is always built -O3 (the gesture-camera fast path)
-// without needing a per-source compile flag in the Graphics module. The caller
-// guarantees the crop region lies within the source.
+// Byte movement only, so memory-bandwidth-bound with no SIMD win; it lives here
+// purely to be built -O3. The caller guarantees the crop region lies within the
+// source.
 namespace eacp::simd
 {
 

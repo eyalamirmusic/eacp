@@ -1,12 +1,6 @@
-// AVX2 backend entry points. This is the ONLY translation unit compiled with an
-// ISA flag (-mavx2 -mfma / /arch:AVX2, applied per-source by CMake). It is built
-// only for single-arch x86-64; the whole body is arch-guarded so a stray
-// compile on another slice degrades to an empty object.
-//
-// The dispatcher reaches these symbols only through a function pointer, and only
-// after cpu::hasAvx2Fma() returns true. The target attribute is a secondary
-// guard that keeps the compiler from inlining this AVX2 code into a baseline
-// caller under LTO (IPO is also disabled for this target in CMake).
+// The ONLY translation unit compiled with an ISA flag (-mavx2 -mfma /
+// /arch:AVX2, per-source by CMake), and reached only through a function pointer
+// once cpu::hasAvx2Fma() is true. The target attribute stops LTO inlining it.
 
 #if defined(__x86_64__) || defined(_M_X64)
 

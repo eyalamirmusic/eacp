@@ -7,7 +7,7 @@
 namespace eacp::Graphics
 {
 
-// Tightly packed 8-bit RGBA pixel storage (R,G,B,A per pixel).
+// Tightly packed 8-bit RGBA, no row padding.
 using ImageData = Vector<std::uint8_t>;
 
 enum class ImageFormat
@@ -16,80 +16,58 @@ enum class ImageFormat
     jpeg
 };
 
-// A decoded raster image held as tightly packed 8-bit RGBA: exactly
-// width * height * 4 bytes, no row padding, top-left origin, straight
-// (non-premultiplied) alpha. Decodes from / encodes to PNG or JPEG.
-//
-// Pixel access never throws. decode()/load() report failure by returning
-// an invalid image (operator bool / isValid() is false), setting *error
-// when provided. The size/dimension constructors throw std::invalid_argument
-// on a negative dimension or a pixel buffer whose length does not match
-// width * height * 4. Encoding a valid image or writing it to disk throws
-// std::runtime_error on failure.
+// width * height * 4 bytes of RGBA, top-left origin, straight (non-
+// premultiplied) alpha. Pixel access never throws; decode()/load() report
+// failure with an invalid image, the constructors and encoders throw.
 class Image
 {
 public:
     Image() = default;
 
-    // Zero-filled (fully transparent) image of the given size.
+    // Zero-filled, so fully transparent.
     Image(int widthToUse, int heightToUse);
 
-    // Adopts an existing RGBA buffer. Throws std::invalid_argument if
-    // pixels.size() != width * height * 4.
+    // Throws std::invalid_argument unless pixels.size() == width * height * 4.
     Image(int widthToUse, int heightToUse, ImageData pixelsToUse);
 
-    // Decode PNG or JPEG; the format is detected from the byte signature
-    // by the platform codec. On malformed or unsupported input returns an
-    // invalid image (see operator bool), setting *error when provided.
+    // PNG or JPEG, detected from the byte signature. Returns an invalid image
+    // on malformed input, setting *error when provided.
     static Image
         decode(const std::uint8_t* data, int size, std::string* error = nullptr);
     static Image decode(const ImageData& bytes, std::string* error = nullptr);
 
-    // Read a file and decode it. Returns an invalid image if the file
-    // cannot be read or its contents do not decode.
+    // Invalid image when the file cannot be read or does not decode.
     static Image load(const FilePath& path, std::string* error = nullptr);
 
     bool isValid() const;
     bool isEmpty() const;
 
-    // True when the image holds valid pixels; mirrors isValid().
     explicit operator bool() const;
 
     int width() const;
     int height() const;
     const ImageData& pixels() const;
 
-    // (x, y) from the top-left. Out-of-range reads return transparent
-    // black; out-of-range writes are ignored.
+    // (x, y) from the top-left. Out-of-range reads give transparent black;
+    // out-of-range writes are ignored.
     Color at(int x, int y) const;
     void set(int x, int y, const Color& color);
 
-    // Reuse this image's storage as a width*height RGBA render target for an
-    // external writer that fills every byte (an eacp::simd image kernel, a
-    // camera colour-convert, ...). Only (re)allocates when the pixel count
-    // changes; when it already matches, there is no allocation and no zero-fill
-    // -- the previous bytes are left for the writer to overwrite in full. This
-    // lets a per-frame pipeline recycle one Image instead of allocating (and
-    // zero-filling) a fresh buffer each frame. Returns the writable pixel buffer
-    // (width*height*4 bytes), or nullptr for a non-positive / oversized size
-    // (leaving the image empty). Prefer the ImageOps reuse overloads and
-    // CameraFrame::toImage(Image&) over calling this directly.
+    // Reuses this image's storage as a render target for a writer that fills
+    // every byte: no zero-fill when the pixel count already matches. Returns
+    // the buffer, or nullptr for a non-positive/oversized size.
     std::uint8_t* prepareForOverwrite(int width, int height);
 
-    // Encode into an in-memory buffer. quality (0..1) applies to JPEG
-    // only and is ignored for PNG. Throws std::runtime_error on an
-    // empty/invalid image or codec failure.
+    // quality (0..1) is JPEG-only. Throws std::runtime_error on failure.
     ImageData encode(ImageFormat format, float quality = 0.9f) const;
     ImageData toPng() const;
     ImageData toJpeg(float quality = 0.9f) const;
 
-    // Encode and write to disk. The single-argument form infers the
-    // format from the path extension (.png / .jpg / .jpeg). Creates
-    // parent directories. Throws on an unknown extension or IO failure.
+    // The single-argument form infers the format from the path extension.
+    // Creates parent directories. Throws on an unknown extension or IO failure.
     void save(const FilePath& path) const;
     void save(const FilePath& path, ImageFormat format, float quality = 0.9f) const;
 
-    // Exact comparison: identical dimensions and identical pixels.
     bool equals(const Image& other) const;
     bool operator==(const Image& other) const;
     bool operator!=(const Image& other) const;

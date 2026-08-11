@@ -2,19 +2,6 @@
 
 #include <cmath>
 
-// Compute that never reaches the CPU, and a commit that does not wait.
-//
-// Frame::beginCompute puts a kernel on the frame's own command buffer, so what
-// it writes is legal to draw in the very next pass. There is no CPU-side
-// observable for that - the buffer is written and consumed on the GPU - so the
-// only way to check it is to make the kernel's output decide a pixel and read
-// the pixel back.
-//
-// CommandBuffer::commitAsync is the other half: the submission returns before
-// the GPU has run, and the Async says when it has. What has to hold is that
-// nothing about correctness changed - the same kernel gives the same answer,
-// and a read() that does not wait for the Async still sees finished data.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
@@ -24,9 +11,8 @@ namespace
 constexpr auto viewWidth = 8;
 constexpr auto viewHeight = 4;
 
-// The colour the kernel computes, one channel per element: 0.25, 0.5, 0.75.
-// Ascending, so a pixel that came back in the wrong order says the buffer was
-// read at the wrong stride rather than that the values were wrong.
+// 0.25, 0.5, 0.75 - ascending, so a pixel in the wrong order says the buffer
+// was read at the wrong stride rather than that the values were wrong.
 constexpr auto channelBase = 0.25f;
 constexpr auto channelStep = 0.25f;
 constexpr auto channelCount = 3;
@@ -36,9 +22,7 @@ struct QuadVertex
     float position[2];
 };
 
-// One instance, whose colour is the three floats the kernel wrote. The same
-// bytes the kernel indexes as a flat float array are read here at this struct's
-// stride, which is the whole compute-feeds-graphics contract in one type.
+// The bytes the kernel indexes as a flat float array, read at this stride.
 struct InstanceColor
 {
     float color[3];
@@ -58,9 +42,8 @@ constexpr QuadVertex fullQuad[] = {
     {{-1.f, 1.f}},
 };
 
-// Writes channelBase + index * channelStep. Deliberately a function of the
-// thread id, so a kernel that never ran leaves the buffer's zeros behind and
-// the difference is visible in the pixel.
+// Deliberately a function of the thread id, so a kernel that never ran leaves
+// the buffer's zeros behind and the difference is visible in the pixel.
 struct ColorKernel final : ComputeProgram
 {
     ColorKernel() { compile(); }
@@ -78,8 +61,6 @@ struct ColorKernel final : ComputeProgram
     EACP_SHADER(output, base, stepSize)
 };
 
-// Fills the drawable with the instance colour, which came from the buffer the
-// kernel wrote.
 struct ColorFromBuffer final : ShaderProgram
 {
     ColorFromBuffer() { compile(); }
@@ -96,9 +77,8 @@ struct ColorFromBuffer final : ShaderProgram
     EACP_SHADER()
 };
 
-// One frame: a compute pass writes the colour, the render pass draws it. The
-// clear colour is deliberately nothing like the computed one, so a draw that
-// somehow did not happen cannot pass by accident.
+// The clear colour is deliberately nothing like the computed one, so a draw
+// that did not happen cannot pass by accident.
 struct ComputeThenDrawView final : GPUView
 {
     ComputeThenDrawView()
@@ -142,11 +122,9 @@ Graphics::Image readBack(View& view)
     return view.renderToImage(1.f);
 }
 
-// The image a kernel paints, one texel per work item. Red rises across the
-// width and blue falls with it, so a texel that came from the wrong column is
-// a different colour rather than a missing one; green rises down the height, so
-// the second coordinate is checked too - whichever way up the sampled image
-// ends on screen.
+// Red rises across the width and blue falls with it, so a texel from the wrong
+// column is a different colour; green rises down the height, so y is checked
+// too, whichever way up the sampled image ends on screen.
 struct ImageKernel final : ComputeProgram
 {
     ImageKernel() { compile(); }
@@ -165,8 +143,7 @@ struct ImageKernel final : ComputeProgram
     EACP_SHADER(target)
 };
 
-// Fills the drawable with that image, sampled a texel at a time so what comes
-// back is what the kernel wrote rather than a blend of it.
+// Sampled a texel at a time, so what comes back is not a blend.
 struct DrawImage final : ShaderProgram
 {
     DrawImage()
@@ -199,9 +176,8 @@ TextureDescriptor computeTarget()
     return descriptor;
 }
 
-// A kernel's image drawn by the next pass on the same frame - the whole point
-// of a texture a kernel can write. The texture is never touched by the CPU and
-// the clear is black, so every colour on screen came through the kernel.
+// The texture is never touched by the CPU and the clear is black, so every
+// colour on screen came through the kernel.
 struct ComputeImageThenDrawView final : GPUView
 {
     ComputeImageThenDrawView()
@@ -233,10 +209,8 @@ struct ComputeImageThenDrawView final : GPUView
     DrawImage draw;
 };
 
-// The record the indexed-read shader picks out of the palette the kernel wrote.
 // Deliberately not record 0: a shader that dropped the index would read the
-// first record and still produce a plausible colour, so only a later one tells
-// the two apart.
+// first record and still produce a plausible colour.
 constexpr auto paletteRecords = 2;
 constexpr auto paletteRecord = 1;
 constexpr auto paletteBase = 0.1f;
@@ -248,9 +222,8 @@ constexpr float paletteValueAt(int element)
     return paletteBase + (float) element * paletteStep;
 }
 
-// Reads its colour out of a storage buffer at an index it computes, rather than
-// receiving it as a per-instance attribute the way ColorFromBuffer does. This
-// is what a render-stage buffer read is for: the shader picks the element.
+// Picks its colour out of a storage buffer at an index it computes, rather
+// than receiving it as a per-instance attribute.
 struct ColorFromIndexedBuffer final : ShaderProgram
 {
     ColorFromIndexedBuffer() { compile(); }
@@ -269,9 +242,8 @@ struct ColorFromIndexedBuffer final : ShaderProgram
     EACP_SHADER(palette, record)
 };
 
-// The Phase 4 frame: a kernel fills a palette buffer, and the fragment stage of
-// the very next pass subscripts it. No per-instance stream carries the colour -
-// the buffer is bound whole and the shader indexes it.
+// No per-instance stream carries the colour: the buffer is bound whole and the
+// shader indexes it.
 struct ComputeThenIndexedDrawView final : GPUView
 {
     ComputeThenIndexedDrawView()
@@ -309,8 +281,6 @@ struct ComputeThenIndexedDrawView final : GPUView
     ColorFromIndexedBuffer draw;
 };
 
-// The kernel both commit paths run, kept apart from the frame test's so each
-// says one thing.
 struct ScaleKernel final : ComputeProgram
 {
     ScaleKernel() { compile(); }
@@ -332,9 +302,8 @@ constexpr float kernelInput[] = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f};
 constexpr auto kernelCount = (int) (sizeof(kernelInput) / sizeof(kernelInput[0]));
 constexpr auto kernelScale = 3.f;
 
-// A kernel over records of four floats rather than single ones. The components
-// come back rotated, so a stride the read and the write disagreed on shows up
-// as the wrong number in the wrong place instead of as the input handed back.
+// The components come back rotated, so a stride the read and the write
+// disagreed on is a wrong number in the wrong place, not the input handed back.
 struct RotateRecords final : ComputeProgram
 {
     RotateRecords() { compile(); }
@@ -353,10 +322,8 @@ struct RotateRecords final : ComputeProgram
     EACP_SHADER(input, output)
 };
 
-// A kernel over a grid rather than a flat count. Each cell writes a value that
-// says which cell it was, so a result read back at the wrong stride - or a
-// width and a height packed the wrong way round - shows up as a wrong number
-// rather than as a missing one.
+// Each cell writes a value saying which cell it was, so a wrong stride - or a
+// width and height the wrong way round - is a wrong number, not a missing one.
 struct GridKernel final : ComputeProgram
 {
     GridKernel() { compile(); }
@@ -379,9 +346,8 @@ constexpr auto gridWidth = 5;
 constexpr auto gridHeight = 3;
 } // namespace
 
-// A kernel's output drawn by the next pass on the same frame. The pixel is the
-// colour the kernel computed, which no other path could have put there: the
-// buffer starts uninitialised, the CPU never writes it, and the clear is black.
+// The buffer starts uninitialised, the CPU never writes it and the clear is
+// black, so no other path could have put the colour there.
 auto tKernelOutputFeedsDraw = test("FrameCompute/kernelOutputFeedsTheDraw") = []
 {
     if (!Device::shared().isValid())
@@ -399,16 +365,13 @@ auto tKernelOutputFeedsDraw = test("FrameCompute/kernelOutputFeedsTheDraw") = []
     check(pixel.g > pixel.r + 0.1f);
     check(pixel.b > pixel.g + 0.1f);
 
-    // And close to the values themselves, within what the read-back's transfer
-    // through the compositor leaves.
+    // The tolerance is what the read-back's transfer through the compositor
+    // leaves.
     check(std::abs(pixel.r - channelBase) < 0.1f);
     check(std::abs(pixel.b - (channelBase + 2.f * channelStep)) < 0.1f);
 };
 
-// The compute-to-fragment path: a kernel writes a texture and the next pass on
-// the same frame samples it. Nothing here could have come from anywhere else -
-// the texture is created empty, the CPU never writes it, and the clear is
-// black.
+// The texture is created empty, the CPU never writes it and the clear is black.
 auto tKernelImageFeedsTheDraw = test("FrameCompute/kernelImageFeedsTheDraw") = []
 {
     if (!Device::shared().isValid())
@@ -423,31 +386,24 @@ auto tKernelImageFeedsTheDraw = test("FrameCompute/kernelImageFeedsTheDraw") = [
     auto left = image.at(1, viewHeight / 2);
     auto right = image.at(viewWidth - 2, viewHeight / 2);
 
-    // Not the clear, and running the way the kernel painted it across the
-    // width - which is also what says the x coordinate reached the write.
+    // Running the way the kernel painted it, which says x reached the write.
     check(right.r > left.r + 0.3f);
     check(left.b > right.b + 0.3f);
 
-    // And close to the ramp itself: screen column 1 samples texel 1 and column
-    // width-2 samples texel width-2, within what the read-back's transfer
-    // through the compositor leaves.
+    // Screen column 1 samples texel 1 and column width-2 samples texel width-2.
     constexpr auto lastColumn = (float) (viewWidth - 1);
     check(std::abs(left.r - 1.f / lastColumn) < 0.15f);
     check(std::abs(right.r - (lastColumn - 1.f) / lastColumn) < 0.15f);
 
-    // And down the height. Whichever way up the sampled image lands on screen,
-    // two rows apart must differ, which they cannot if the y coordinate never
-    // reached the write.
+    // Whichever way up the sampled image lands, two rows apart must differ,
+    // which they cannot if y never reached the write.
     auto top = image.at(viewWidth / 2, 0);
     auto bottom = image.at(viewWidth / 2, viewHeight - 1);
     check(std::abs(top.g - bottom.g) > 0.3f);
 };
 
-// A shader stage reading a buffer at an index it computed, which is the one
-// thing a vertex attribute cannot do. The kernel writes a palette of two
-// records; the fragment stage is told which one to read and subscripts it.
 // Reading the wrong record, or dropping the index, gives the other record's
-// colour - which is a different pixel, not a missing one.
+// colour - a different pixel, not a missing one.
 auto tIndexedBufferReadFeedsTheDraw =
     test("FrameCompute/indexedBufferReadFeedsTheDraw") = []
 {
@@ -472,9 +428,7 @@ auto tIndexedBufferReadFeedsTheDraw =
     check(std::abs(paletteValueAt(first) - paletteValueAt(0)) > 0.2f);
 };
 
-// read4 and the Float4 write address the same record: the index is in records
-// on both sides, so the kernel never spells the stride and the bytes that come
-// back are the ones the rotation predicts.
+// The index is in records on both sides, so the kernel never spells the stride.
 auto tVectorElementsRoundTrip = test("FrameCompute/vectorElementsRoundTrip") = []
 {
     auto& device = Device::shared();
@@ -519,10 +473,8 @@ auto tVectorElementsRoundTrip = test("FrameCompute/vectorElementsRoundTrip") = [
     }
 };
 
-// A format outside the guaranteed set is refused at creation rather than
-// binding as an output that silently writes nothing. BGRA8Unorm is the one
-// worth naming: it is the drawable's own format, so it is exactly what someone
-// reaches for first.
+// BGRA8Unorm is worth naming: it is the drawable's own format, so it is what
+// someone reaches for first.
 auto tComputeWriteRefusesUnsupportedFormat =
     test("FrameCompute/computeWriteRefusesBGRA") = []
 {
@@ -534,15 +486,10 @@ auto tComputeWriteRefusesUnsupportedFormat =
 
     auto texture = Device::shared().makeTexture(descriptor);
 
-    // Nothing was created, so this is as loud as it gets short of throwing:
-    // the texture does not work at all rather than working everywhere except
-    // in the kernel that was the reason for asking.
     check(!texture.isValid());
     check(!texture.isComputeWritable());
 };
 
-// And a plain texture is not one either, so setOutputTexture has something to
-// refuse rather than binding a resource with no view to bind through.
 auto tPlainTextureIsNotComputeWritable =
     test("FrameCompute/plainTextureIsNotComputeWritable") = []
 {
@@ -557,8 +504,6 @@ auto tPlainTextureIsNotComputeWritable =
     check(!texture.isComputeWritable());
 };
 
-// commitAsync submits without waiting and resolves once the GPU is done, with
-// the same output the blocking commit produces.
 auto tCommitAsyncMatchesCommit = test("FrameCompute/commitAsyncMatchesCommit") = []
 {
     auto& device = Device::shared();
@@ -617,11 +562,8 @@ auto tCommitAsyncMatchesCommit = test("FrameCompute/commitAsyncMatchesCommit") =
     }
 };
 
-// A 2D dispatch: every cell of the grid runs exactly once, and no thread
-// outside it writes anything. The buffer starts at zero and the value each cell
-// writes is a function of both its coordinates, so an off-by-one grid, a
-// swapped pair of extents and a guard that never fired are all distinguishable
-// from the numbers that come back.
+// Each cell's value is a function of both coordinates, so an off-by-one grid,
+// swapped extents and a guard that never fired all read differently.
 auto tGridDispatchCoversTheGrid = test("FrameCompute/gridDispatchCoversTheGrid") = []
 {
     auto& device = Device::shared();
@@ -656,10 +598,8 @@ auto tGridDispatchCoversTheGrid = test("FrameCompute/gridDispatchCoversTheGrid")
             check(result[y * gridWidth + x] == (float) x + (float) y * 100.f);
 };
 
-// The read that does not wait. commitAsync returns before the GPU has run, so a
-// read() straight afterwards is only correct if the read itself orders behind
-// the submission - which is the guarantee the Metal path had to grow once the
-// commit stopped blocking, and the one D3D12 already had from its fence.
+// A read() straight after commitAsync is only correct if it orders behind the
+// submission - the guarantee the Metal path grew once commit stopped blocking.
 auto tReadAfterCommitAsyncIsOrdered =
     test("FrameCompute/readAfterCommitAsyncSeesTheResult") = []
 {
@@ -699,10 +639,8 @@ auto tReadAfterCommitAsyncIsOrdered =
 
 namespace
 {
-// Groups of 64 sum their slice of the input through a threadgroup tile: each
-// thread loads one element (zero out of range - a kernel that barriers has no
-// early return to take), a log2(64)-step tree folds the tile in half per
-// barrier, and the group leader writes the partial sum.
+// A tree fold, one halving per barrier. Out-of-range threads load zero rather
+// than returning early: a kernel that barriers has no early return to take.
 struct GroupSumKernel final : ComputeProgram
 {
     GroupSumKernel() { compile(); }
@@ -738,11 +676,9 @@ struct GroupSumKernel final : ComputeProgram
 };
 } // namespace
 
-// The whole shared-memory contract on the device: cross-thread visibility
-// through the tile, barrier ordering, and the guard-less bottom - the grid is
-// deliberately not a multiple of the group, so the excess threads run the
-// whole body and must contribute zeros rather than garbage or a hang. Small
-// integers sum exactly in float, so the checks are equalities.
+// The grid is deliberately not a multiple of the group, so the excess threads
+// run the whole body and must contribute zeros rather than garbage or a hang.
+// Small integers sum exactly in float, so the checks are equalities.
 auto tSharedMemoryGroupSums = test("FrameCompute/sharedMemoryGroupSums") = []
 {
     auto& device = Device::shared();

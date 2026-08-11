@@ -6,8 +6,6 @@
 namespace eacp::TCP
 {
 
-// The socket lives in Impl so its destructor is the single place a stream
-// gets torn down: ~Connection, move-assignment and close() all funnel here.
 struct Connection::Impl
 {
     ~Impl() { detail::socketClose(socket); }
@@ -16,8 +14,7 @@ struct Connection::Impl
     Timeouts timeouts;
     detail::NativeSocket socket = detail::invalidSocket;
 
-    // Bytes already pulled off the socket but not yet handed back - the
-    // overshoot from a receiveUntil() read. Drained before touching the wire.
+    // Overshoot from a receiveUntil() read; drained before touching the wire.
     std::string buffered;
 };
 

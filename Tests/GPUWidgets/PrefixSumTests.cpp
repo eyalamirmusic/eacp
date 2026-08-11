@@ -4,23 +4,6 @@
 
 #include <string>
 
-// The prefix sum the binner's counts go through, on its own.
-//
-// It is covered by every rasterization test in this directory already - a tile
-// whose offset is wrong reads somebody else's segments - but only at the sizes
-// those paths happen to have, and only through a picture. What is checked here
-// is the thing a picture cannot say: that the levels compose. A scan that
-// summed each group of 1024 correctly and never added what the groups before it
-// came to draws a perfectly plausible mask for every path whose tiles fit in one
-// group, which is most of them.
-//
-// So the sizes below straddle the group: one element, one short of a group, a
-// group exactly, one past it, and past the square of it - which is the first
-// size that needs three levels rather than two.
-//
-// And the counts are not all ones. A sum that dropped its input and counted
-// instead would pass on an array of ones at every size in the list.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPUWidgets;
@@ -29,8 +12,8 @@ namespace
 {
 constexpr auto perGroup = ScanBlockKernel::perGroup;
 
-// Something with a shape to it, so a scan that lost an element is a different
-// number rather than the same one.
+// Not all ones: a sum that dropped its input and counted instead would pass at
+// every size on an array of ones.
 Vector<std::uint32_t> countsOfLength(int count)
 {
     auto values = Vector<std::uint32_t> {};
@@ -111,31 +94,25 @@ void expectScans(int count)
 
     check(wrong == 0, where);
 
-    // The counting sort that follows hands its slots out through this very
-    // array, so a scan that read its input without clearing it would have every
-    // tile's cursor start at that tile's own count.
+    // The counting sort hands its slots out through this array, so a scan that
+    // left its input would start every tile's cursor at that tile's own count.
     check(leftBehind == 0, std::to_string(leftBehind) + " elements not left zeroed");
 }
 } // namespace
 
-// One group's worth and less, which is the whole of the sum for any path an
-// interface draws.
 auto tWithinOneGroup = test("PrefixSum/withinOneGroup") = []
 {
     for (auto count: {1, 2, 63, 64, 65, 255, perGroup - 1, perGroup})
         expectScans(count);
 };
 
-// Past it, which is where the level above has to carry what the groups below it
-// came to. A window-sized path is a couple of thousand tiles and lands here.
+// Where the level above has to carry what the groups below it came to.
 auto tAcrossGroups = test("PrefixSum/acrossGroups") = []
 {
     for (auto count: {perGroup + 1, perGroup * 2, perGroup * 7 + 3})
         expectScans(count);
 };
 
-// And past the square of the group, which is the first size that is three levels
-// deep rather than two - a canvas of a hundred and twenty-eight full-width lanes
-// is four hundred thousand tiles and lands here.
+// The first size that is three levels deep rather than two.
 auto tThreeLevels = test("PrefixSum/pastTheSquareOfAGroup") = []
 { expectScans(perGroup * perGroup + 17); };

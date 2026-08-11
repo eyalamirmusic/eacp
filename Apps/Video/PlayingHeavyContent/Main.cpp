@@ -15,11 +15,9 @@ namespace
 constexpr auto windowWidth = 960;
 constexpr auto windowHeight = 600;
 
-// The scrub bar's strip along the bottom of the view, in logical points.
 constexpr auto scrubHeight = 28.0f;
 constexpr auto scrubInset = 16.0f;
 
-// Ten seconds of 1080p30, which is a real decode load rather than a token one.
 Video::SyntheticClipOptions clipOptions()
 {
     auto options = Video::SyntheticClipOptions {};
@@ -30,10 +28,6 @@ Video::SyntheticClipOptions clipOptions()
     return options;
 }
 
-// A path on the command line if given — that is how to point the sample at real
-// heavy content — otherwise a generated clip, encoded once into the user's
-// cache directory and reused from then on. Nothing is read from the source
-// tree, so no media has to be committed to run this.
 FilePath resolveVideoPath()
 {
     const auto& args = Apps::getAppEnvironment().commandLineArgs;
@@ -47,10 +41,8 @@ FilePath resolveVideoPath()
     return Video::cachedSyntheticClip(clipOptions());
 }
 
-// `PlayingHeavyContent <clip> <seconds>` plays for that long, logs one summary
-// line and quits. That is how comparable decode numbers are taken across a
-// change: reading them off the HUD by eye is neither repeatable nor loggable,
-// and this is a GUI-subsystem binary with no console to print to.
+// `PlayingHeavyContent <clip> <seconds>` plays for that long, logs one
+// summary line and quits.
 double benchmarkSeconds()
 {
     const auto& args = Apps::getAppEnvironment().commandLineArgs;
@@ -83,22 +75,11 @@ Graphics::WindowOptions windowOptions()
 }
 } // namespace
 
-// A player view with a scrub bar and a stats HUD.
-//
-// The scrub bar is the point of the sample: the same stream is driven two ways.
-// Normally the attached Player runs the clock off the display link; while the
-// bar is being dragged the app takes the playhead over with setPosition,
-// exactly as an editing timeline would.
-//
-// The HUD is there because "does this keep up" is not a question you can answer
-// by looking at the picture. Skipped rising with a full queue means presentation
-// is the bottleneck; starved rising with an empty queue means decode is.
 struct PlaybackView final : Video::VideoView
 {
     PlaybackView() { setHandlesMouseEvents(true); }
 
-    // Unhooks from the stream while it is still alive. The base destructor
-    // cannot do this: by the time it runs, `stream` below has already gone.
+    // The base destructor cannot do this: by then `stream` below has gone.
     ~PlaybackView() override { detach(); }
 
     Graphics::Rect scrubArea() const
@@ -114,8 +95,6 @@ struct PlaybackView final : Video::VideoView
     {
         VideoView::update(frameTime);
 
-        // Exponentially smoothed, so the number is readable rather than
-        // flickering with every refresh.
         if (frameTime.delta > 0.0)
         {
             auto instant = 1.0 / frameTime.delta;
@@ -126,9 +105,8 @@ struct PlaybackView final : Video::VideoView
         runBenchmark(frameTime.time);
     }
 
-    // Reports only what happened inside the measurement window. The stream's
-    // counters run from open(), so the frames decoded while the window was
-    // still being created belong to no rate at all and are subtracted out.
+    // Stream counters run from open(), so frames decoded before the
+    // measurement window started are subtracted out.
     void runBenchmark(double now)
     {
         if (benchmarkLimit <= 0.0)
@@ -182,8 +160,6 @@ struct PlaybackView final : Video::VideoView
 
         renderer.drawRect(area, {1.0f, 1.0f, 1.0f, 0.35f}, 1.0f);
 
-        // A dot on the playhead, so the position is readable even when the
-        // played portion is too short to see.
         auto dot = Graphics::Rect {
             area.x + area.w * progress - 3.0f, area.y - 2.0f, 6.0f, area.h + 4.0f};
         renderer.fillRect(dot, {1.0f, 1.0f, 1.0f, 0.95f});

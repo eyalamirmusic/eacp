@@ -7,10 +7,7 @@
 
 namespace eacp::UI
 {
-// The colours the stock widgets draw with. One struct rather than a setter per
-// colour on each widget, so a theme is a value that can be shared, copied and
-// swapped rather than a hundred assignments -- the job JUCE gives LookAndFeel,
-// at the scale this prototype needs.
+// The colours the stock widgets draw with.
 struct Theme
 {
     Color background {0.11f, 0.12f, 0.15f, 1.f};
@@ -37,13 +34,10 @@ public:
     void setColour(const Color& colour);
     void setJustification(Justification newJustification);
 
-    // A face of its own, for a heading or a caption. Left unset, the label draws
-    // in whatever the host's is, which is what makes a screenful of them look
-    // like one interface.
+    // Left unset, the label draws in the host's face.
     void setFont(const Font& font);
 
-    // The host's face at another size or weight -- what a heading actually is,
-    // and what keeps a label from naming a family the host may not be using.
+    // The host's face at another size or weight.
     void setFontSize(float pointSize);
     void setFontStyle(FontStyle style);
 
@@ -54,8 +48,7 @@ private:
     Color colour = defaultTheme().text;
     Justification justification = Justification::Left;
 
-    // Empty until asked for. A label that never mentions a font has to draw in
-    // the painter's, and it cannot know what that is before it is painting.
+    // Empty until asked for: without one, the painter's face is used.
     std::optional<Font> font;
     std::optional<float> pointSize;
     std::optional<FontStyle> style;
@@ -68,8 +61,7 @@ public:
 
     void setText(std::string newText);
 
-    // Latching: the button keeps its state between clicks and draws it, the way
-    // a mute or solo does. Off by default, when it is a momentary press.
+    // Latching rather than momentary. Off by default.
     void setToggleable(bool shouldToggle);
     void setToggleState(bool shouldBeOn);
     bool getToggleState() const { return toggledOn; }
@@ -93,8 +85,7 @@ private:
     bool down = false;
 };
 
-// A box and a tick, with a caption beside it. What a list of options is made of,
-// and the one widget whose whole state is a bool.
+// A box and a tick, with a caption beside it.
 class Checkbox final : public Component
 {
 public:
@@ -116,8 +107,7 @@ public:
     void mouseExit(const MouseEvent&) override;
     void mouseUp(const MouseEvent& event) override;
 
-    // Space and Return toggle it, which is what makes a form usable without the
-    // pointer. Everything else is passed on.
+    // Space and Return toggle it; everything else is passed on.
     bool keyDown(const KeyEvent& event) override;
 
 private:
@@ -127,32 +117,17 @@ private:
 };
 
 // A single line of editable text: a caret, a selection, and the keys that move
-// them.
-//
-// Drawn by the component tier like everything else, rather than hosting a native
-// text field over the tree. The difference shows the first time an editor is put
-// inside something that scrolls -- a native view does not move with the content
-// it is over -- and in what it costs: this is a rectangle, a run of glyphs and a
-// caret in the same batch as the interface around it.
-//
-// Single line on purpose. Wrapping is a layout problem the tier has not needed
-// yet, and it is a different widget rather than a flag on this one.
-//
-// What it does not do: input methods, right-to-left text, and undo. All three
-// are real work rather than omissions to be filled in later, and a document
-// editor should not be built out of this until they are done.
+// them. No input methods, no right-to-left text, and no undo.
 class TextEditor final : public Component
 {
 public:
     explicit TextEditor(std::string textToUse = {});
 
-    // Setting the text moves the caret to the end and drops the selection, the
-    // way handing someone a field with something already in it does.
+    // Moves the caret to the end and drops the selection.
     void setText(std::string newText, bool notify = false);
     const std::string& getText() const { return text; }
 
-    // Shown in place of empty text, dimmed. Not part of the value: it is never
-    // returned by getText and typing does not have to clear it.
+    // Shown dimmed in place of empty text, and never part of the value.
     void setPlaceholder(std::string newPlaceholder);
 
     void setReadOnly(bool shouldBeReadOnly);
@@ -162,8 +137,7 @@ public:
     void setColour(const Color& colour);
     void setAccentColour(const Color& colour);
 
-    // In bytes, clamped, and never inside a UTF-8 sequence -- so a caret can be
-    // used as a substring boundary without splitting a character.
+    // In bytes, clamped, and never inside a UTF-8 sequence.
     void setCaretPosition(int position);
     int getCaretPosition() const { return caret; }
 
@@ -174,8 +148,7 @@ public:
 
     std::function<void(const std::string&)> onTextChange = [](const std::string&) {};
 
-    // Return, and the escape that means "put it back". A field that commits on
-    // Return usually wants both, and neither is the same as losing focus.
+    // Neither is the same as losing focus.
     std::function<void(const std::string&)> onReturnKey = [](const std::string&) {};
     std::function<void()> onEscapeKey = [] {};
 
@@ -204,13 +177,10 @@ private:
     void deleteBackwards();
     void deleteForwards();
 
-    // Which byte offset a click at `x` landed on, by walking characters until
-    // the measured width passes it. Linear in the string, which for one line of
-    // a field is nothing and would be the wrong shape for a document.
+    // The byte offset a click at `x` landed on. Linear in the string.
     int positionAt(float x) const;
 
-    // Where the text starts drawing, once a long string has been scrolled to
-    // keep the caret in view.
+    // Where the text starts drawing, once scrolled to keep the caret in view.
     float textOrigin() const;
     void scrollToCaret();
 
@@ -225,16 +195,14 @@ private:
 
     int caret = 0;
 
-    // The other end of the selection. Equal to the caret means none, which is
-    // why there is no separate flag to keep in step with it.
+    // The other end of the selection; equal to the caret means none.
     int selectionStart = 0;
 
     float scrollOffset = 0.f;
     bool readOnly = false;
 };
 
-// A linear fader, horizontal or vertical. Vertical runs bottom-to-top, which is
-// what a level control has to do however y is measured elsewhere.
+// A linear fader. Vertical runs bottom-to-top, unlike y elsewhere.
 class Slider final : public Component
 {
 public:
@@ -246,8 +214,7 @@ public:
 
     explicit Slider(Orientation orientationToUse = Orientation::Horizontal);
 
-    // Normalised 0-1. Clamped, so a caller doing its own arithmetic cannot push
-    // the thumb off the track.
+    // Normalised 0-1, clamped.
     void setValue(float newValue);
     float getValue() const { return value; }
 
@@ -272,19 +239,8 @@ private:
     bool dragging = false;
 };
 
-// A rotary control: a ring, an arc filled to the value, and a pointer.
-//
-// The one stock widget whose shape a rounded rectangle cannot express, and so
-// the one that shows what the path tier is for. The arc and the pointer are a
-// single PathShape -- rasterized to exact per-pixel coverage by a compute
-// kernel whenever the value changes, into the same atlas every other knob on
-// screen uses, and drawn as one quad in the same instanced batch as the
-// rectangles and glyphs around it. A hundred of them cost a hundred quads, not
-// a hundred draws.
-//
-// Dragged vertically rather than in a circle, which is what every rotary
-// control that is any good to use does: the hand does not have to trace the
-// shape it is turning.
+// A rotary control: a ring, an arc filled to the value, and a pointer. Dragged
+// vertically rather than in a circle.
 class Knob final : public Component
 {
 public:
@@ -319,18 +275,12 @@ private:
 };
 
 // A clipping viewport over a taller content component, scrolled by the wheel.
-//
-// The clipping is not this component's code: paint() gives every component a
-// Graphics already clipped to its own bounds, so content taller than the
-// viewport is cut at the edge without the viewport asking. What it adds is the
-// scroll offset, the wheel handling and the position indicator.
 class ScrollPanel final : public Component
 {
 public:
     ScrollPanel();
 
-    // The component to scroll. Not owned; its width is set to the panel's, and
-    // its height is whatever the caller made it.
+    // Not owned. Its width is set to the panel's; its height is the caller's.
     void setContent(Component& newContent);
 
     void setScrollPosition(float newOffset);

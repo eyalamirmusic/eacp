@@ -4,13 +4,6 @@
 
 #include <optional>
 
-// Two windows, two processes, one typed RPC bridge. The first instance
-// claims the name, becomes the server and launches this same executable
-// again; the second instance loses the claim, so it dials in as the
-// client. Clicks travel typed: the client invokes the server's "addDot"
-// command and hears back how many dots the server holds; the server
-// pushes its own clicks to the client as "dot" events. Both directions
-// are Miro-serialized structs - no strings are parsed anywhere.
 using namespace eacp;
 using namespace Graphics;
 
@@ -29,9 +22,8 @@ struct DotTotal
     MIRO_REFLECT(total)
 };
 
-// The server's API, mounted on the bridge: one typed command in, a typed
-// reply out. Handlers run main-thread-deferred by default, so touching
-// app state from here is safe.
+// Handlers run main-thread-deferred by default, so touching app state from
+// here is safe.
 class DotApi
 {
 public:
@@ -87,9 +79,6 @@ public:
 
     bool isServer() const { return server.has_value(); }
 
-    // The two directions showcase the two primitives: a client invokes a
-    // typed command and learns the server's new total from the reply; the
-    // server pushes an event to every connected client.
     void sendDot(Point relative)
     {
         auto dot = Dot {relative.x, relative.y};
@@ -132,13 +121,6 @@ private:
     std::optional<Processes::Process> child;
 };
 
-// Every dot the peer has sent, drawn as one component.
-//
-// One filled ellipse per dot, and no path at all: a circle this size is a
-// rounded rectangle whose corner radius is half its side, which the shape
-// renderer draws from the same distance field as every other rectangle in the
-// tree. So a hundred dots are a hundred quads in one instanced draw, and adding
-// one costs a repaint rather than a re-rasterized path.
 struct DotField final : UI::Component
 {
     explicit DotField(const UI::Color& dotColourToUse)

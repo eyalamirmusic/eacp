@@ -51,9 +51,8 @@ Bytes pngFrame(const Image& src, int size)
     return Bytes(png.data(), png.data() + png.size());
 }
 
-// A standard size belongs in the container when the source is at least that
-// big, so we never upscale — except the smallest size, always kept so even a
-// tiny source yields a usable icon.
+// Never upscales, except for the smallest size, which is always kept so a tiny
+// source still yields a usable icon.
 bool keepSize(int size, int limit, int smallest)
 {
     return size <= limit || size == smallest;

@@ -4,21 +4,12 @@
 
 #include <string>
 
-// Where a drag lands, and what happens to it on the way.
-//
-// The interesting cases are the ones a hand test never reaches: a drop that
-// destroys the thing being dragged (which is what moving a card between columns
-// *is*), a target that refuses the payload, and a source deleted mid-drag. All
-// three end in a dangling pointer if the ordering is wrong, and none of them
-// looks any different on screen when it is.
-
 using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
 namespace
 {
-// A component that can be dropped on, counting what it was told.
 struct Bin final : Component
 {
     Bin()
@@ -44,7 +35,6 @@ struct Bin final : Component
     Point lastPosition;
 };
 
-// Two bins side by side inside one container, and a source to drag from.
 struct Harness
 {
     Harness()
@@ -104,8 +94,6 @@ auto tMovingBetweenTargets = test("DragAndDrop/leavingOneTargetEntersTheOther") 
     check(harness.right.entered == 1);
 };
 
-// Enter and exit are matched even when the drag ends where it is, so a target
-// highlighting itself has one place to turn it off rather than two.
 auto tDropExitsFirst = test("DragAndDrop/aDropLeavesTheTargetBeforeDropping") = []
 {
     auto harness = Harness {};
@@ -148,8 +136,6 @@ auto tDropOutsideAnyTarget =
     check(!harness.dragging.isDragging());
 };
 
-// A target that says no is transparent: the search carries on rather than
-// stopping at the first one it meets.
 auto tRefusedDragsCarryOn = test("DragAndDrop/aTargetThatRefusesIsPassedOver") = []
 {
     auto harness = Harness {};
@@ -203,9 +189,6 @@ auto tImageIsAChildWhileDragging =
     check(!harness.dragging.isDragging());
 };
 
-// The image sits over whatever the pointer is on. If the search treated it as a
-// component like any other, a drag would find the image instead of the column
-// under it and nothing could ever be dropped.
 auto tImageIsTransparentToTheSearch =
     test("DragAndDrop/theDraggedImageIsNotItselfATarget") = []
 {
@@ -213,16 +196,14 @@ auto tImageIsTransparentToTheSearch =
 
     harness.startDrag();
 
-    // Straight onto the pointer, which is where the image is.
     harness.dragging.dragTo({50.f, 50.f});
     harness.dragging.drop({50.f, 50.f});
 
     check(harness.left.dropped == 1);
 };
 
-// What moving a card between columns actually does: the drop destroys the thing
-// the drag started from. Anything the container touches afterwards is a dangling
-// read, which is why the image and the state go before the callback runs.
+// The image and the drag state are torn down before the drop callback runs, so
+// a callback that destroys the source leaves nothing dangling.
 auto tDropMayDestroyTheSource =
     test("DragAndDrop/aDropCanDestroyWhatWasBeingDragged") = []
 {
@@ -256,8 +237,6 @@ auto tDropMayDestroyTheSource =
     check(!container.isDragging());
 };
 
-// And the other order: the source goes away *during* the drag rather than
-// because of it.
 auto tDeletingTheSourceCancels = test("DragAndDrop/losingTheSourceEndsTheDrag") = []
 {
     auto board = Component {};
@@ -287,7 +266,6 @@ auto tDeletingTheSourceCancels = test("DragAndDrop/losingTheSourceEndsTheDrag") 
     check(!container.isDragging(), "the drag went with the component it came from");
     check(bin.exited == 1, "and the target it was over was told");
 
-    // And nothing left over: a drop now is not a drop on a stale target.
     container.drop({50.f, 50.f});
 
     check(bin.dropped == 0);

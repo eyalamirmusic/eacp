@@ -1,19 +1,8 @@
 #include "Common.h"
 
-// Texture::update(region, ...) — the sub-rectangle upload path a glyph atlas
-// depends on, where each new glyph must cost a transfer its own size rather
-// than a re-upload of the whole atlas.
-//
-// There is no texture read-back API, so these tests get one the only way
-// available: draw the texture 1:1 into an off-screen GPUView with Nearest
-// sampling and read *that* back. One texel lands on one pixel, so the image is
-// the texture's contents.
-//
-// Positional assertions are made on the x axis only, where neither backend
-// mirrors. Everything the y axis would be needed for is asserted by counting
-// texels instead, which is orientation-independent.
-//
-// Runs on both backends, and self-skips without a GPU device.
+// There is no texture read-back API, so these draw the texture 1:1 and read the
+// image back. Positional assertions use the x axis only, where neither backend
+// mirrors; everything else is asserted by counting texels.
 
 using namespace nano;
 using namespace eacp;
@@ -24,7 +13,7 @@ namespace
 constexpr auto textureSize = 8;
 
 constexpr std::uint32_t black = 0xff000000;
-constexpr std::uint32_t red = 0xff0000ff;   // RGBA8, little-endian: A B G R
+constexpr std::uint32_t red = 0xff0000ff; // RGBA8, little-endian: A B G R
 constexpr std::uint32_t green = 0xff00ff00;
 
 struct QuadVertex
@@ -38,7 +27,6 @@ EACP_SHADER_VALUE(QuadVertex, Float2)
 
 namespace
 {
-// Two triangles covering clip space, with uv running 0..1 across them.
 constexpr QuadVertex fullScreenQuad[] = {
     {{-1.f, -1.f}, {0.f, 1.f}},
     {{1.f, -1.f}, {1.f, 1.f}},
@@ -66,8 +54,6 @@ struct SampleShader final : ShaderProgram
     EACP_SHADER(image)
 };
 
-// Draws the texture across the whole view, unfiltered, so the read-back is the
-// texture's own texels.
 struct TextureView final : GPUView
 {
     explicit TextureView(Texture& textureToShow)
@@ -103,8 +89,14 @@ Texture makeBlackTexture()
     return Device::shared().makeTexture(descriptor, pixels);
 }
 
-bool isRed(const Graphics::Color& c) { return c.r > 0.5f && c.g < 0.5f && c.b < 0.5f; }
-bool isGreen(const Graphics::Color& c) { return c.g > 0.5f && c.r < 0.5f; }
+bool isRed(const Graphics::Color& c)
+{
+    return c.r > 0.5f && c.g < 0.5f && c.b < 0.5f;
+}
+bool isGreen(const Graphics::Color& c)
+{
+    return c.g > 0.5f && c.r < 0.5f;
+}
 bool isBlack(const Graphics::Color& c)
 {
     return c.r < 0.5f && c.g < 0.5f && c.b < 0.5f;
@@ -132,9 +124,6 @@ Graphics::Image readBack(Texture& texture)
 }
 } // namespace
 
-// The read-back path itself, before anything is written through it: a texture
-// filled with black must come back black everywhere. Without this the other
-// cases could pass on a broken sampler.
 auto tReadBackBaseline = test("TextureRegion/readBackShowsInitialContents") = []
 {
     if (!Device::shared().isValid())
@@ -152,7 +141,6 @@ auto tReadBackBaseline = test("TextureRegion/readBackShowsInitialContents") = []
     check(count(image, isBlack) == textureSize * textureSize);
 };
 
-// A region covering the two left columns lands on exactly those columns.
 auto tRegionLandsAtOrigin = test("TextureRegion/uploadsAtTheGivenOrigin") = []
 {
     if (!Device::shared().isValid())
@@ -184,9 +172,8 @@ auto tRegionLandsAtOrigin = test("TextureRegion/uploadsAtTheGivenOrigin") = []
     check(count(image, isRed) == 2 * textureSize);
 };
 
-// The whole point of the API: a second upload elsewhere must leave the first
-// alone. A whole-texture update() would wipe the red.
-auto tRegionLeavesRestUntouched = test("TextureRegion/leavesTheRestOfTheTextureAlone") = []
+auto tRegionLeavesRestUntouched =
+    test("TextureRegion/leavesTheRestOfTheTextureAlone") = []
 {
     if (!Device::shared().isValid())
         return;
@@ -223,8 +210,7 @@ auto tRegionLeavesRestUntouched = test("TextureRegion/leavesTheRestOfTheTextureA
     }
 };
 
-// Height is honoured too. Asserted by area rather than position, so the test
-// does not depend on which way up the read-back arrives.
+// Asserted by area, so this does not depend on which way up the read-back is.
 auto tRegionHeightIsHonoured = test("TextureRegion/uploadsOnlyTheRegionHeight") = []
 {
     if (!Device::shared().isValid())
@@ -247,9 +233,7 @@ auto tRegionHeightIsHonoured = test("TextureRegion/uploadsOnlyTheRegionHeight") 
     check(count(image, isRed) == textureSize * 2);
 };
 
-// Source rows may be a slice of a wider buffer, which is exactly how a glyph
-// arrives out of a rasterization bitmap. Here a 2-wide region is read from a
-// 4-wide source, so only the first two pixels of each row are taken.
+// A 2-wide region read from a 4-wide source, the shape a glyph arrives in.
 auto tRegionRespectsSourceStride = test("TextureRegion/respectsSourceStride") = []
 {
     if (!Device::shared().isValid())
@@ -260,10 +244,15 @@ auto tRegionRespectsSourceStride = test("TextureRegion/respectsSourceStride") = 
     if (!texture.isValid())
         return;
 
-    // 4 px per row, of which the first 2 are uploaded and the last 2 skipped.
     const std::uint32_t wide[] = {
-        red, red, green, green, // row 0
-        red, red, green, green, // row 1
+        red,
+        red,
+        green,
+        green, // row 0
+        red,
+        red,
+        green,
+        green, // row 1
     };
 
     texture.update({0.f, 0.f, 2.f, 2.f}, wide, 4 * sizeof(std::uint32_t));
@@ -271,14 +260,12 @@ auto tRegionRespectsSourceStride = test("TextureRegion/respectsSourceStride") = 
     auto image = readBack(texture);
     check(image.isValid());
 
-    // The greens sat outside the region's width and must not have been taken.
     check(count(image, isRed) == 4);
     check(count(image, isGreen) == 0);
 };
 
-// Out-of-bounds regions are dropped whole rather than clamped: a clamped region
-// would keep consuming source rows at the original width and write skewed
-// pixels, which is much harder to notice than nothing happening.
+// Dropped whole rather than clamped: a clamped region would go on consuming
+// source rows at the original width and write skewed pixels.
 auto tRegionRejectsOutOfBounds = test("TextureRegion/rejectsOutOfBoundsRegions") = []
 {
     if (!Device::shared().isValid())
@@ -294,10 +281,11 @@ auto tRegionRejectsOutOfBounds = test("TextureRegion/rejectsOutOfBoundsRegions")
     for (auto& pixel: pixels)
         pixel = red;
 
-    texture.update({(float) textureSize - 1.f, 0.f, 4.f, 4.f}, pixels); // past the right edge
+    texture.update({(float) textureSize - 1.f, 0.f, 4.f, 4.f},
+                   pixels); // past the right edge
     texture.update({0.f, 0.f, (float) textureSize + 1.f, 1.f}, pixels); // too wide
-    texture.update({-2.f, 0.f, 4.f, 4.f}, pixels);                      // negative origin
-    texture.update({100.f, 100.f, 2.f, 2.f}, pixels);                   // entirely outside
+    texture.update({-2.f, 0.f, 4.f, 4.f}, pixels); // negative origin
+    texture.update({100.f, 100.f, 2.f, 2.f}, pixels); // entirely outside
 
     auto image = readBack(texture);
     check(image.isValid());
@@ -305,9 +293,8 @@ auto tRegionRejectsOutOfBounds = test("TextureRegion/rejectsOutOfBoundsRegions")
     check(count(image, isBlack) == textureSize * textureSize);
 };
 
-// Degenerate regions and a null source are safe no-ops, so a caller need not
-// special-case an empty glyph.
-auto tRegionIgnoresEmptyAndNull = test("TextureRegion/emptyRegionAndNullPixelsAreNoOps") = []
+auto tRegionIgnoresEmptyAndNull =
+    test("TextureRegion/emptyRegionAndNullPixelsAreNoOps") = []
 {
     if (!Device::shared().isValid())
         return;
@@ -333,9 +320,8 @@ auto tRegionIgnoresEmptyAndNull = test("TextureRegion/emptyRegionAndNullPixelsAr
     check(texture.isValid());
 };
 
-// A full-size region is equivalent to the whole-texture overload, which is how
-// the two share one code path underneath.
-auto tFullRegionMatchesWholeUpdate = test("TextureRegion/fullRegionMatchesWholeUpdate") = []
+auto tFullRegionMatchesWholeUpdate =
+    test("TextureRegion/fullRegionMatchesWholeUpdate") = []
 {
     if (!Device::shared().isValid())
         return;

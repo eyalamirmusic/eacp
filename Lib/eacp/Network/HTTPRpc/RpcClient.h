@@ -10,14 +10,9 @@ namespace eacp::HTTP::Rpc
 using Invoke =
     std::function<Miro::JSON(const std::string& command, const Miro::JSON& payload)>;
 
-// Typed client for the wire protocol exposed by Rpc::Server. POSTs
-// { "command", "payload" } envelopes to `baseUrl` and parses the
-// reply, throwing HTTP::Error on non-2xx with the server-returned
-// error string.
-//
-// `asInvoker()` returns an Invoke callable suitable for the Client
-// class emitted by Miro::Cpp::formatClientHeader, so a generated
-// typed C++ client can drive any RPC server through this transport.
+// POSTs { "command", "payload" } envelopes to `baseUrl` and parses the reply,
+// throwing HTTP::Error on non-2xx with the server-returned error string.
+// asInvoker() suits the Client class Miro::Cpp::formatClientHeader emits.
 class Client
 {
 public:

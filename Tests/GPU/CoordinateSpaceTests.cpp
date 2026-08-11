@@ -4,22 +4,8 @@
 
 #include <optional>
 
-// The contract between Graphics::Rect and the things that draw it: a rect taken
-// from the top of an area must appear at the top of the image.
-//
-// Nothing checked this before, and the two halves disagreed for a long time --
-// Rect's splitters were y-up (inherited from JUCE, where views are y-up) while
-// the sprite shader, the glyph shader, setScissorRect and the isFlipped backing
-// views are all y-down. So `area.removeFromTop(h)` returned the bottom slice,
-// and every app that laid out a header with it put the header along the bottom.
-//
-// Unit tests on Rect alone cannot catch that: they can only confirm the
-// arithmetic agrees with whatever convention the test author had in mind. It
-// takes rendering to say which end of the screen a rect actually lands on,
-// which is what this does -- fill the slices with telltale colours, read the
-// pixels back, assert on where they came out.
-//
-// Self-skips without a GPU device.
+// Regression: Rect's splitters were y-up while the shaders, setScissorRect and
+// the backing views are y-down, so removeFromTop() returned the bottom slice.
 
 using namespace nano;
 using namespace eacp;
@@ -34,8 +20,6 @@ constexpr auto topColor = Graphics::Color {1.f, 0.f, 0.f};
 constexpr auto bottomColor = Graphics::Color {0.f, 1.f, 0.f};
 constexpr auto leftColor = Graphics::Color {0.f, 0.f, 1.f};
 
-// Splits its bounds the way an app lays out chrome, and fills each slice with a
-// colour that says which splitter produced it.
 struct ChromeView final : GPUView
 {
     ChromeView()
@@ -63,10 +47,8 @@ struct ChromeView final : GPUView
         sprites->fillRect(left, leftColor);
     }
 
-    // Outlives render(), like every app that draws with one. A renderer built as
-    // a local here would release its vertex buffer and pipeline at the end of
-    // render(), while the command list recording those draws is still waiting to
-    // be submitted -- on D3D12 the frame then draws nothing at all.
+    // Must outlive render(): a local would release its buffers while the command
+    // list recording the draws is still unsubmitted, and D3D12 then draws nothing.
     std::optional<Sprites::SpriteRenderer> sprites;
 };
 
@@ -102,8 +84,7 @@ auto tRemoveFromTopDrawsAtTheTop =
 
     const auto middle = image.width() / 2;
 
-    // Row 0 is the top of the image, so the slice taken from the top has to be
-    // there. Before the fix this row was green.
+    // Before the fix this row was green.
     check(isRed(image.at(middle, 2)));
     check(isGreen(image.at(middle, image.height() - 3)));
 };
@@ -118,13 +99,10 @@ auto tSlicesTileTheImage = test("CoordinateSpace/slicesTileWithoutOverlap") = []
 
     const auto middle = image.width() / 2;
 
-    // Between the two bars: the left column, then the untouched middle. If the
-    // vertical splitters ran the wrong way these bands would be transposed and
-    // the black gap would sit against an edge instead of in the middle.
+    // Transposed vertical splitters would put the black gap against an edge.
     check(isBlue(image.at(4, image.height() / 2)));
     check(isBlack(image.at(middle, image.height() / 2)));
 
-    // The bars span the full width, including over the left column's x range.
     check(isRed(image.at(4, 2)));
     check(isGreen(image.at(4, image.height() - 3)));
 };
@@ -132,8 +110,7 @@ auto tSlicesTileTheImage = test("CoordinateSpace/slicesTileWithoutOverlap") = []
 auto tScissorSharesTheConvention =
     test("CoordinateSpace/scissorClipsTheSameWayUp") = []
 {
-    // setScissorRect is documented as top-left origin in pixels. If it and Rect
-    // disagreed, clipping a widget to its own bounds would clip the wrong end.
+    // setScissorRect is documented as top-left origin in pixels, like Rect.
     struct ClippedView final : GPUView
     {
         ClippedView()
@@ -153,8 +130,6 @@ auto tScissorSharesTheConvention =
             auto area = Graphics::Rect {0.f, 0.f, viewW, viewH};
             const auto top = area.removeFromTop(16.f);
 
-            // Clip to the top slice, then fill the whole view. Only the top
-            // slice should survive.
             sprites->setScissorRect({top.x, top.y, top.w, top.h});
             sprites->fillRect({0.f, 0.f, viewW, viewH}, topColor);
             sprites->clearScissorRect();

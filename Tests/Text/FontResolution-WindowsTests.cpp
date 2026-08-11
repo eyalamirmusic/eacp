@@ -8,17 +8,9 @@
 #include <cstdio>
 #include <vector>
 
-// The shared font registry (Graphics/Primitives/FontRegistry-Windows.cpp) —
-// the Windows stand-in for CoreText's process-wide font registry.
-//
-// The bug these pin down: a font registered from memory was visible only to
-// the eacp-text rasterizer (Graphics::Font resolved against the system
-// collection), and a PostScript name — the spelling CTFontCreateWithName
-// accepts, so the one cross-platform callers ship — resolved on Apple but
-// silently substituted a fallback family on Windows.
-//
-// Windows guarantees Arial, whose PostScript name (ArialMT) usefully differs
-// from its family name, so these run against it rather than shipping a font.
+// Regression: a memory-registered font was visible only to the eacp-text
+// rasterizer, and a PostScript name silently fell back to another family on
+// Windows. Arial is guaranteed and its PostScript name (ArialMT) differs.
 
 using namespace nano;
 using namespace eacp;
@@ -55,8 +47,6 @@ auto tPostScriptNameResolves =
     check(resolveFontFamilyName(L"NoSuchFace-Regular").empty());
 };
 
-// The rasterizer must land on the named face, not on a substitute — the same
-// glyphs, so the same advances as asking by family name.
 auto tRasterizerAcceptsAPostScriptName =
     test("FontResolution/rasterizerResolvesAPostScriptName") = []
 {
@@ -78,9 +68,8 @@ auto tRasterizerAcceptsAPostScriptName =
           == family.rasterize(U'W', Text::FontStyle::Regular).advance);
 };
 
-// Graphics::Font is the path the bug hid in: it used to hand DirectWrite the
-// raw name against the system collection, and an embedded or PostScript name
-// silently became the fallback family.
+// Graphics::Font used to hand DirectWrite the raw name against the system
+// collection, so an embedded or PostScript name became the fallback family.
 auto tGraphicsFontResolvesAPostScriptName =
     test("FontResolution/graphicsFontResolvesAPostScriptName") = []
 {
@@ -96,9 +85,9 @@ auto tGraphicsFontResolvesAPostScriptName =
     check(std::wstring {family} == L"Arial");
 };
 
-// DWRITE_TEXT_METRICS.width stops at the last ink, so a lone space used to
-// measure zero and letter-spaced captions fused their words. CTLine's
-// typographic width counts trailing whitespace; Windows must agree.
+// DWRITE_TEXT_METRICS.width stops at the last ink, so a lone space measured
+// zero; CTLine's typographic width counts trailing whitespace and Windows must
+// agree.
 auto tSpaceMeasuresItsAdvance = test("TextMetrics/aLoneSpaceMeasuresItsAdvance") = []
 {
     const auto font = Font {FontOptions().withName("Arial").withSize(12.f)};
@@ -111,8 +100,6 @@ auto tSpaceMeasuresItsAdvance = test("TextMetrics/aLoneSpaceMeasuresItsAdvance")
           > TextMetrics::measureWidth("ab", font));
 };
 
-// Registration rebuilds the shared collection over every registered file plus
-// the system set — a broken rebuild would drop the system fonts on the floor.
 auto tMemoryFontRegistrationKeepsTheCollectionWhole =
     test("FontResolution/memoryFontRegistrationKeepsSystemFonts") = []
 {
@@ -127,7 +114,6 @@ auto tMemoryFontRegistrationKeepsTheCollectionWhole =
 
     check(registerMemoryFontData(bytes.data(), bytes.size()));
 
-    // The rebuilt collection still resolves everything it did before.
     check(resolveFontFamilyName(L"ArialMT") == L"Arial");
     check(!resolveFontFamilyName(L"Segoe UI").empty());
     check(Text::GlyphRasterizer {Text::FontRequest {.family = "Arial"}}.isValid());

@@ -3,19 +3,6 @@
 using namespace eacp;
 using namespace Graphics;
 
-// A minimal browser demonstrating the window chrome options:
-//
-//   eacp_set_app_icon (CMakeLists.txt)  bakes Icon.icns / Icon.ico into
-//       the bundle / executable — Finder, Explorer, the Dock and the
-//       taskbar all show it, at rest and while running, with no runtime
-//       code
-//   WindowOptions::altTabIcon           the blue icon everywhere, except
-//       the Windows Alt-Tab switcher, which shows this orange override
-//   WebView::Options::statusBar         off, so hovering a link shows no
-//       URL overlay — the same behaviour as WKWebView
-//
-// Type a URL in the address bar and press return to navigate.
-
 struct BrowserView final : View
 {
     BrowserView()
@@ -42,6 +29,8 @@ struct BrowserView final : View
         return "https://" + url;
     }
 
+    // WebView2 overlays a link URL on hover; off here for parity with
+    // WKWebView, which has no status bar.
     static WebView::Options getWebViewOptions()
     {
         auto options = WebView::Options();
@@ -59,6 +48,8 @@ struct BrowserApp
 {
     BrowserApp() { window.setContentView(view); }
 
+    // The app icon itself comes from eacp_set_app_icon in CMakeLists.txt;
+    // altTabIcon overrides it only in the Windows Alt-Tab switcher.
     static WindowOptions getOptions()
     {
         auto options = WindowOptions();

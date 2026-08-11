@@ -15,9 +15,8 @@ struct KeyMapping
     int vk;
 };
 
-// The single source of truth between framework KeyCodes (macOS virtual key
-// values, see Keyboard.h) and Windows virtual keys; both lookup directions
-// derive from it.
+// Framework KeyCodes are macOS virtual key values; both lookup directions
+// derive from this table.
 constexpr KeyMapping keyMappings[] = {
     {KeyCode::A, 'A'},
     {KeyCode::S, 'S'},
@@ -81,9 +80,8 @@ constexpr KeyMapping keyMappings[] = {
     {KeyCode::F11, VK_F11},
     {KeyCode::F12, VK_F12},
 
-    // Punctuation. The OEM_* codes are positional on a US layout, which is the
-    // same convention the macOS virtual key codes follow, so a shortcut bound
-    // to a physical key means the same thing on both platforms.
+    // The OEM_* codes are positional on a US layout, the same convention the
+    // macOS virtual key codes follow.
     {KeyCode::Minus, VK_OEM_MINUS},
     {KeyCode::Equals, VK_OEM_PLUS},
     {KeyCode::LeftBracket, VK_OEM_4},
@@ -103,10 +101,8 @@ constexpr KeyMapping keyMappings[] = {
     {KeyCode::ForwardDelete, VK_DELETE},
     {KeyCode::CapsLock, VK_CAPITAL},
 
-    // Windows has no separate keypad Enter virtual key -- both Return keys
-    // report VK_RETURN and are told apart only by the extended-key flag in the
-    // message's lParam, which is not available here. Mapping it to VK_RETURN
-    // keeps isKeyPressed(KeypadEnter) meaningful rather than always false.
+    // Windows has no separate keypad Enter: both Return keys report VK_RETURN,
+    // told apart only by an lParam flag not available here.
     {KeyCode::KeypadEnter, VK_RETURN},
     {KeyCode::Keypad0, VK_NUMPAD0},
     {KeyCode::Keypad1, VK_NUMPAD1},
@@ -150,8 +146,7 @@ std::string characterForVirtualKey(int vk)
 }
 } // namespace
 
-// Used by CompositionHostWindow to dispatch KeyEvents in framework KeyCode
-// units, so cross-platform comparisons against KeyCode:: constants hold.
+// Used by CompositionHostWindow to dispatch KeyEvents in framework KeyCodes.
 uint16_t keyCodeFromVirtualKey(int vk)
 {
     for (auto& mapping: keyMappings)
@@ -192,7 +187,7 @@ bool Keyboard::isAltPressed()
 
 bool Keyboard::isCommandPressed()
 {
-    // Windows doesn't have Command key, map to Windows key
+    // Windows has no Command key, so map it to the Windows key.
     return (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0
            || (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
 }
@@ -230,8 +225,7 @@ std::string Keyboard::keyCodeToCharacter(uint16_t keyCode)
     return characterForVirtualKey(vk);
 }
 
-// Window-scoped keyboard state implementations
-// These delegate to the Window's tracked keyboard state
+// Window-scoped state, delegating to the Window's tracked keyboard state.
 
 bool Keyboard::isKeyPressed(const Window& window, uint16_t keyCode)
 {

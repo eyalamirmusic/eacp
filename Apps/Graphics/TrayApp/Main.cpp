@@ -5,9 +5,8 @@
 using namespace eacp;
 using namespace Graphics;
 
-// A smooth orange disc, generated so the example needs no asset file. On
-// macOS the menu bar renders it as a template (alpha-only, system tinted);
-// on Windows the colour shows in the notification area.
+// macOS renders the tray icon as a template (alpha-only, system tinted); on
+// Windows the colour shows in the notification area.
 static Image makeTrayIcon()
 {
     constexpr int size = 36;
@@ -35,9 +34,8 @@ static Image makeTrayIcon()
     return image;
 }
 
-// The content of the floating panel below. The window's cornerRadius clips
-// this component tree, so it just fills its bounds — the rounding comes for
-// free.
+// The window's cornerRadius shapes the frameless panel and clips this tree, so
+// it just fills its bounds.
 struct PanelContent final : UI::Component
 {
     PanelContent()
@@ -81,10 +79,8 @@ struct TrayApp
     {
         Apps::setDockIconVisible(false);
 
-        // The window shows itself on construction; hide it immediately so
-        // the app starts as a bare tray icon. setVisible keeps the window
-        // (and its content) alive across toggles, so it reappears exactly
-        // where the user left it.
+        // The window shows itself on construction, so hide it to start as a
+        // bare tray icon.
         window.setContentView(panelHost);
         window.setVisible(false);
 
@@ -93,16 +89,11 @@ struct TrayApp
 
         tray.setMenu(createTrayMenu());
 
-        // Windows: a left-click on the tray icon toggles the panel (the
-        // menu stays on right-click). On macOS the menu owns the click, so
-        // this never fires there — use the menu item instead.
+        // Windows only: on macOS the menu owns the click, so this never fires
+        // there and the menu item is the way in.
         tray.setOnClick([this] { togglePanel(); });
     }
 
-    // A small tray companion: borderless and rounded (cornerRadius defines
-    // the shape of a frameless window), floating above normal windows,
-    // following the user across Spaces, and shown without stealing focus
-    // from whatever they're working in.
     static WindowOptions getPanelOptions()
     {
         auto options = WindowOptions();

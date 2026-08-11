@@ -2,15 +2,12 @@
 
 namespace eacp
 {
-// A half-open interval [start, start + length). Stored as start + length (no
-// `end` member), so a default-constructed or zero-length Range is empty
-// regardless of start.
+// A half-open interval [start, start + length).
 template <typename T>
 struct Range
 {
     constexpr bool empty() const { return length == T {}; }
 
-    // One-past-the-last element.
     constexpr T end() const { return start + length; }
 
     constexpr bool contains(T value) const

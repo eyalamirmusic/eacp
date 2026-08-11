@@ -4,10 +4,9 @@
 #include <cstdint>
 #include <span>
 
-// Bounds-checked traversal of ISOBMFF box structures. A named namespace
-// rather than an anonymous one: this header is included from files that CI
-// compiles as a unity build, where anonymous namespaces of sibling sources
-// merge into one TU and generic names like readU32 would collide.
+// Bounds-checked traversal of ISOBMFF box structures. Named rather than
+// anonymous, because unity builds would merge sibling anonymous namespaces and
+// collide on names like readU32.
 namespace eacp::Video::Mp4
 {
 consteval std::uint32_t fourcc(const char (&tag)[5])
@@ -18,10 +17,9 @@ consteval std::uint32_t fourcc(const char (&tag)[5])
            | byte(tag[3]);
 }
 
-// Big-endian reader over a span with sticky failure: a read past the end
-// returns zero or an empty span and latches the failed state, so a parsing
-// pass can read a whole structure and check ok() once at the boundary. No
-// read ever touches memory outside the span, and nothing throws.
+// Big-endian reader with sticky failure: a read past the end returns zero or an
+// empty span and latches ok() false, so a pass can check once at the boundary.
+// Never reads outside the span, never throws.
 class BoxReader
 {
 public:
@@ -82,18 +80,15 @@ private:
     bool failed = false;
 };
 
-// One child box: its type and a span over its payload, header excluded.
+// `payload` excludes the header.
 struct Box
 {
     std::uint32_t type = 0;
     std::span<const std::uint8_t> payload;
 };
 
-// Reads the box starting at the reader's position. size == 0 extends to the
-// end of the span, size == 1 means a 64-bit largesize follows the type; a
-// size smaller than its own header or a payload running past the span is
-// malformed. False at the end of the span and on malformed input alike —
-// either way there is no box to look at.
+// size == 0 extends to the end of the span, size == 1 means a 64-bit largesize
+// follows the type. False at the end of the span and on malformed input alike.
 inline bool nextBox(BoxReader& reader, Box& out)
 {
     if (reader.remaining() == 0)
@@ -126,8 +121,7 @@ inline bool nextBox(BoxReader& reader, Box& out)
     return reader.ok();
 }
 
-// The first direct child of `parent` with the given type; false when absent
-// or when the parent's box structure is malformed before it is reached.
+// The first direct child of `parent` with the given type.
 inline bool
     findChild(std::span<const std::uint8_t> parent, std::uint32_t type, Box& out)
 {

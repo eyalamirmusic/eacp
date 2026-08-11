@@ -24,9 +24,7 @@ enum class ResourceKind
     Sampler
 };
 
-// An explicit shader resource binding. Kept as plain data (never inferred via
-// runtime reflection) so a future C++ shader EDSL can populate the exact same
-// description it generated the source for.
+// Plain data, never inferred by runtime reflection.
 struct ResourceBinding
 {
     ResourceKind kind = ResourceKind::Buffer;
@@ -35,9 +33,7 @@ struct ResourceBinding
     std::string name;
 };
 
-// Native shader source plus the metadata a pipeline needs. The whole GPU layer
-// downstream of this type consumes only this struct, so the planned shader EDSL
-// becomes "a factory that returns a ShaderSource" with no call-site changes.
+// Native shader source plus the metadata a pipeline needs.
 struct ShaderSource
 {
     static ShaderSource msl(std::string sourceToUse)
@@ -68,9 +64,8 @@ struct ShaderSource
         return *this;
     }
 
-    // Names the kernel entry point and marks this as a compute source: a library
-    // built from it compiles only the compute stage, and ComputePipeline pulls
-    // this function. Leave unset for a vertex/fragment source.
+    // Marks this a compute source, so only the compute stage is compiled. Leave
+    // unset for a vertex/fragment source.
     ShaderSource& withCompute(std::string entry)
     {
         computeEntry = std::move(entry);

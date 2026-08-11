@@ -1,14 +1,13 @@
 #pragma once
 
-// The Utah teapot, 32 bicubic Bezier patches (Newell), each 4x4 control points
-// in (x, y, z) with Z up. Source: Computer Graphics & Applications data
-// (teapotCGA.bpt). Tessellated into triangles at load time by Main.cpp.
+// The Utah teapot (Newell), 4x4 control points in (x, y, z) with Z up.
+// Source: Computer Graphics & Applications data (teapotCGA.bpt).
 
 namespace teapot
 {
 inline constexpr int patchCount = 32;
 
-// [patch][controlPoint 0..15][x,y,z]; control point (i,j) is index i*4 + j.
+// Control point (i, j) of a patch is index i * 4 + j.
 inline constexpr float patches[patchCount][16][3] = {
     {
         {1.4f, 0.0f, 2.4f},

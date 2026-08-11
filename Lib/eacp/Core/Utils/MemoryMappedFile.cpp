@@ -8,10 +8,8 @@ namespace eacp
 {
 namespace
 {
-// What the platform mapped, and the window inside it the caller asked for.
-// The two differ whenever the offset is not a multiple of the granularity:
-// the mapping has to begin at the aligned offset below it, so the requested
-// bytes start part-way into the region.
+// `region` is what the platform mapped; `start` is the window the caller asked
+// for, which begins part-way in when the offset is not granularity-aligned.
 struct Mapping
 {
     Detail::MappedRegion region;
@@ -27,8 +25,7 @@ Mapping mapOpenFile(const Detail::MappingFile& file,
     if (offset > file.size)
         return {};
 
-    // toEndOfFile is the largest std::uint64_t, so asking for everything and
-    // asking for more than there is are the same clamp.
+    // toEndOfFile is the largest uint64_t, so it clamps like any over-long ask.
     auto wanted = std::min(length, file.size - offset);
 
     auto mapping = Mapping {};
@@ -40,9 +37,8 @@ Mapping mapOpenFile(const Detail::MappingFile& file,
     auto alignedOffset = offset - (offset % Detail::mappingGranularity());
     auto delta = static_cast<std::size_t>(offset - alignedOffset);
 
-    // A window can outrun the address space on a 32-bit build, where the
-    // mapping would fail anyway. Checked before the cast rather than after,
-    // which would wrap instead of failing.
+    // Checked before the cast, which would wrap on a 32-bit build rather than
+    // fail.
     if (wanted > std::numeric_limits<std::size_t>::max() - delta)
         return {};
 
@@ -67,9 +63,7 @@ Mapping mapWindow(const FilePath& path, std::uint64_t offset, std::uint64_t leng
 
     auto mapping = mapOpenFile(file, offset, length);
 
-    // Closed as soon as the mapping exists: mmap and MapViewOfFile each keep
-    // their own reference to the file, so holding the descriptor for the life
-    // of the map would pin it for nothing.
+    // The mapping keeps its own reference, so the descriptor has done its job.
     Detail::closeMappingFile(file);
 
     return mapping;

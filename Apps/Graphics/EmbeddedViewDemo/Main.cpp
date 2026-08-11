@@ -1,15 +1,5 @@
 #include <eacp/UI/UI.h>
 
-// A component tree inside a host-provided native view.
-//
-// The point of the demo is the boundary: `EmbeddedView` attaches to an NSView or
-// HWND somebody else owns — a plugin host's editor window — and everything
-// inside it is ours. What is worth seeing after the port is that the boundary
-// did not move. A ComponentHost is a GPUView and a GPUView is an
-// eacp::Graphics::View, so the thing being embedded is the same kind of object
-// it always was, and the whole widget tree behind it is one native view rather
-// than one per element.
-
 using namespace eacp;
 
 namespace

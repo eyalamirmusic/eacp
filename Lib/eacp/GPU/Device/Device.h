@@ -18,8 +18,7 @@ class Image;
 
 namespace eacp::GPU
 {
-// The GPU device (MTLDevice + command queue on Metal). Owns the resource
-// factories. Most apps use the process-wide Device::shared().
+// The GPU device and its command queue; most apps use Device::shared().
 class Device
 {
 public:
@@ -46,24 +45,19 @@ public:
         return {*this, nullptr, bytes, usage};
     }
 
-    // A 2D texture from tightly packed 4-byte pixels (row 0 at the top), or an
-    // uninitialised texture when pixels is null.
+    // pixels is tightly packed 4-byte rows, row 0 at the top; null leaves the
+    // texture uninitialised.
     Texture makeTexture(const TextureDescriptor& descriptor,
                         const void* pixels = nullptr)
     {
         return {*this, descriptor, pixels};
     }
 
-    // A 2D texture sized from a decoded image and uploaded from its RGBA8
-    // pixels. The image is taken as tightly packed 8-bit RGBA (what
-    // Graphics::Image holds), so the format is always RGBA8Unorm. An invalid or
-    // empty image yields an invalid texture. Defined in Device.cpp.
+    // Always RGBA8Unorm, matching Graphics::Image's packed 8-bit RGBA.
     Texture makeTexture(const Graphics::Image& image);
 
-    // Wraps an existing platform pixel buffer (a CVPixelBuffer on macOS) as a
-    // sampleable texture without copying its pixels — the zero-copy path for
-    // camera and video frames. Returns an invalid texture on backends without
-    // zero-copy support (Windows for now), where Texture::update is the path.
+    // Zero-copy wrap of a platform pixel buffer (CVPixelBuffer on macOS) for
+    // camera/video frames. Invalid texture on Windows; use Texture::update.
     Texture wrapPixelBuffer(void* nativePixelBuffer)
     {
         return {*this, nativePixelBuffer};
@@ -88,85 +82,41 @@ public:
 
     bool isValid() const;
 
-    // Opaque native handles for cross-translation-unit use by other GPU types.
     void* nativeDevice() const;
     void* nativeQueue() const;
 
-    // The Metal CVMetalTextureCache backing zero-copy pixel-buffer textures.
-    // Null on backends without it (Windows), where wrapPixelBuffer is a no-op.
+    // The CVMetalTextureCache behind wrapPixelBuffer; null on Windows.
     void* nativeTextureCache() const;
 
-    // The MTLSamplerState for one sampling configuration, built once and cached
-    // for the device's lifetime — there are only samplingConfigurations of them,
-    // and a render pass looks one up per texture bind. Null on D3D12, where the
-    // sampler is static in the root signature and never bound at all.
+    // Null on D3D12, where samplers are static in the root signature.
     void* nativeSampler(TextureSampling sampling) const;
 
-    // Remembers the newest submission, and blocks until it has finished.
-    //
     // The queue is FIFO, so waiting for the newest submission waits for every
-    // earlier one too. That is what keeps Buffer::read correct now that
-    // CommandBuffer::commitAsync returns without waiting: the read blocks for
-    // exactly as long as the work it depends on still needs, and not at all
-    // once that work is done.
-    //
-    // Called by whatever commits — CommandBuffer and Frame. On D3D12 the queue's
-    // fence already records this, so tracking is a no-op there and the wait goes
-    // to the fence.
+    // earlier one. On D3D12 tracking is a no-op; the wait goes to the fence.
     void trackSubmittedWork(void* nativeCommandBuffer);
     void waitForSubmittedWork();
 
-    // How many frames have begun on this device. StreamingBuffers picks which
-    // of its pools to write into from this, so that a renderer streaming
-    // per-frame data has nothing to call at the frame boundary and therefore
-    // nothing to forget - see StreamingBuffers for why that matters.
+    // Frames begun on this device; StreamingBuffers picks its pool from this.
     std::uint64_t frameIndex() const { return frameCount; }
 
-    // Called by Frame's constructor on both backends, including the off-screen
-    // one. An off-screen frame blocks until the GPU is done, so nothing it
-    // wrote is in flight afterwards and the advance is not needed for
-    // correctness - but without it a loop of off-screen renders is one endless
-    // frame to StreamingBuffers, which then takes a fresh buffer every pass and
-    // never reclaims one.
-    //
-    // Out of line because it also starts the frame timer, which is the one
-    // thing both backends want done identically at this moment.
+    // Called by Frame's constructor on both backends, off-screen included.
     void beginFrame();
 
-    // What the GPU spent on the most recent frame it has finished: every pass
-    // that was given a label, plus the frame end to end.
-    //
-    // A pass is timed by giving it one:
-    //
-    //     auto pass = frame.beginPass({.label = "ui"});
-    //
-    // An unlabelled pass is not timed and costs nothing. The numbers are a few
-    // frames behind whatever is being drawn now, and cannot be anything else -
-    // see FrameTimings for why.
+    // The most recent finished frame: every labelled pass, plus the frame end
+    // to end. Unlabelled passes are not timed. Runs a few frames behind.
     const FrameTimings& lastFrameTimings() const { return timer.lastTimings(); }
 
-    // Whether this device can time individual passes. False says only that the
-    // per-pass breakdown will be empty: FrameTimings::milliseconds, the frame
-    // as a whole, is measured by other means and still arrives.
-    //
-    // Answerable only once a frame has begun, since that is what builds the
-    // timestamp resources - ask after rendering, not before.
+    // Only the per-pass breakdown depends on this; the whole-frame time always
+    // arrives. Answerable only once a frame has begun.
     bool supportsPassTimings() const { return timer.isSupported(); }
 
     // Internal: the timer Frame drives. Apps read lastFrameTimings().
     FrameTimer& frameTimer() { return timer; }
 
-    // How many GPU buffers have been created on this device since it came up.
-    //
-    // Per-frame data goes through StreamingBuffers, which recycles, so this
-    // settles once a renderer's pools are warm. A count that keeps climbing
-    // while the drawing repeats is allocation churn in the frame loop -
-    // newBufferWithBytes on Metal, a committed resource on D3D12 - which is
-    // what the assertions in Tests/GPU are there to catch.
+    // Settles once StreamingBuffers pools are warm; a climbing count is
+    // allocation churn in the frame loop.
     int buffersCreated() const { return bufferCount; }
 
-    // Called by Buffer's constructor on both backends, for buffers that got
-    // real storage.
     void noteBufferCreated() { ++bufferCount; }
 
 private:

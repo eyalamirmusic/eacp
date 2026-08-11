@@ -4,20 +4,13 @@
 
 namespace eacp::UI
 {
-// A mouse event as the component receiving it sees it.
-//
-// Distinct from eacp::Graphics::MouseEvent, which is in the host view's
-// coordinates, because a component is only ever told about its own space: the
-// tree walk converts on the way down, so a knob at the bottom of a nested panel
-// still compares position against its own bounds rather than against wherever
-// the panel happens to sit this frame.
+// All positions are in the receiving component's coordinates, converted by the
+// tree walk on the way down (Graphics::MouseEvent is in host view space).
 struct MouseEvent
 {
-    // Where the pointer is, in the receiving component's coordinates.
     Point position;
 
-    // Where the button went down, in the same space. Carried on every drag so a
-    // handler can work from the gesture's origin without storing it.
+    // Where the button went down; carried on every drag.
     Point downPosition;
 
     // Movement since the previous event, in points.
@@ -27,11 +20,9 @@ struct MouseEvent
     eacp::Graphics::ModifierKeys modifiers;
     int clickCount = 1;
 
-    // Wheel events only. Positive y means the content should move toward the
-    // start of the document; the platform has already applied the user's
-    // natural-scroll preference. `preciseWheel` says whether the figures are
-    // points (trackpad) or lines (a notched wheel) -- see
-    // eacp::Graphics::MouseEvent::preciseScrolling.
+    // Wheel events only, natural-scroll already applied: positive y moves the
+    // content toward the start of the document. Units are points when
+    // preciseWheel (trackpad), lines otherwise.
     Point wheelDelta;
     bool preciseWheel = false;
 };

@@ -7,8 +7,8 @@ namespace eacp::Text
 {
 namespace
 {
-// Padding between packed glyphs. One texel of transparent gutter is enough to
-// stop linear sampling pulling a neighbour's coverage into a glyph's edge.
+// A texel of transparent gutter, so linear sampling cannot pull a neighbour's
+// coverage into a glyph's edge.
 constexpr int glyphPadding = 1;
 } // namespace
 
@@ -78,8 +78,7 @@ int GlyphAtlas::findOrAddFace(const std::string& family, float pointSize)
 
     auto source = makeSource(family, pointSize);
 
-    // A factory that produced nothing leaves the caller drawing in the default
-    // face, which is a wrong family rather than an empty string.
+    // A factory that produced nothing leaves the caller in the default face.
     if (source == nullptr)
         return 0;
 
@@ -97,8 +96,7 @@ void GlyphAtlas::setScale(float newScale)
 
     deviceScale = scale;
 
-    // Rebuilt in place, so every index a caller is holding still names the same
-    // family and size.
+    // Rebuilt in place, so a caller's index still names the same face.
     for (auto& face: faces)
         face.source = makeSource(face.family, face.pointSize);
 
@@ -107,8 +105,8 @@ void GlyphAtlas::setScale(float newScale)
 
 std::uint64_t GlyphAtlas::keyFor(char32_t codepoint, FontStyle style, int face)
 {
-    // Codepoints stop at 0x10FFFF, so the top bits of the low word are free for
-    // the style and the face gets a word of its own.
+    // Codepoints stop at 0x10FFFF, leaving the low word's top bits for the
+    // style, and the high word for the face.
     return static_cast<std::uint64_t>(codepoint)
            | (static_cast<std::uint64_t>(style) << 24)
            | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(face)) << 32);
@@ -164,8 +162,8 @@ GlyphSlot GlyphAtlas::insert(char32_t codepoint, FontStyle style, int face)
     slot.advance = bitmap.advance / scale;
     slot.offset = {bitmap.bearingX / scale, -bitmap.bearingY / scale};
 
-    // A space rasterizes to nothing but still advances the pen, so it is cached
-    // as a valid slot with no source rect rather than re-rasterized every time.
+    // A space rasterizes to nothing but still advances the pen, so it caches as
+    // a valid slot with no source rect.
     if (bitmap.isEmpty())
     {
         slot.empty = true;
@@ -179,8 +177,8 @@ GlyphSlot GlyphAtlas::insert(char32_t codepoint, FontStyle style, int face)
 
     auto at = PackedRect {};
 
-    // place() grows or clears on the way through, so a second failure means the
-    // glyph is larger than a whole atlas — nothing can be done with that.
+    // place() grows or clears on the way through, so failing means the glyph is
+    // larger than a whole atlas.
     if (!place(packer, bitmap, at))
         return {};
 
@@ -224,8 +222,8 @@ void GlyphAtlas::growOrReset()
         resizePage(maskPage, newSize, 1);
         resizePage(colorPage, newSize, 4);
 
-        // Placements survive a grow — shelves only extend right and down — so
-        // no glyph is re-rasterized and no slot handed out becomes stale.
+        // Placements survive a grow, shelves only extending right and down, so
+        // no glyph is re-rasterized and no slot handed out goes stale.
         maskPacker.grow(newSize, newSize);
         colorPacker.grow(newSize, newSize);
 
@@ -233,7 +231,6 @@ void GlyphAtlas::growOrReset()
         return;
     }
 
-    // At the cap. Everything goes, and the generation tells callers so.
     dropEverything();
 }
 
@@ -260,8 +257,8 @@ void GlyphAtlas::resizePage(Page& page, int newSize, int stride)
     auto resized = std::vector<std::uint8_t>(
         static_cast<std::size_t>(newSize) * newSize * stride, std::uint8_t {0});
 
-    // Copy row by row: the old rows are shorter than the new ones, so the
-    // contents keep their coordinates and every placement stays correct.
+    // Row by row, the old rows being shorter, so the contents keep their
+    // coordinates and every placement stays correct.
     if (!page.pixels.empty() && oldSize > 0 && oldSize <= newSize)
     {
         const auto oldRow = static_cast<std::size_t>(oldSize) * stride;
@@ -275,8 +272,7 @@ void GlyphAtlas::resizePage(Page& page, int newSize, int stride)
 
     page.pixels = std::move(resized);
 
-    // The texture object is the wrong size now; drop it so the next commit
-    // makes a new one.
+    // Dropped at the wrong size, so the next commit makes a new one.
     page.texture.reset();
     page.needsFullUpload = true;
     page.clearDirty();
@@ -330,9 +326,8 @@ void GlyphAtlas::uploadPage(Page& page, GPU::TextureFormat format, int stride)
     if (!page.dirty)
         return;
 
-    // Only the changed rows, and only the changed span of each — the whole
-    // reason Texture::update takes a region. A new glyph costs its own area
-    // rather than the entire atlas.
+    // Only the changed span of the changed rows, so a new glyph costs its own
+    // area to upload rather than the entire atlas.
     const auto x = page.dirtyLeft;
     const auto y = page.dirtyTop;
     const auto width = page.dirtyRight - page.dirtyLeft;
