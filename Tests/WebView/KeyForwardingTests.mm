@@ -81,41 +81,63 @@ struct Fixture
         return isKey;
     }
 
-    // Synthesizes a down+up pair straight to the window's first responder --
-    // the platform web view -- which is exactly where a real key press lands.
-    void sendKey(uint16_t keyCode, NSString* characters)
+    // Straight to the window's first responder -- the platform web view --
+    // which is exactly where a real key press lands. The timestamp is explicit
+    // because it is the identity AppKit stamps on an event at creation, and the
+    // echo test needs to re-send one that carries an identity already seen.
+    void dispatchKey(NSEventType type,
+                     uint16_t keyCode,
+                     NSString* characters,
+                     NSTimeInterval timestamp)
     {
         auto* nsWindow = (NSWindow*) window.getHandle();
         auto* responder = nsWindow.firstResponder;
 
-        auto sendEvent = [&](NSEventType type)
-        {
-            auto* event =
-                [NSEvent keyEventWithType:type
-                                 location:NSZeroPoint
-                            modifierFlags:0
-                                timestamp:[NSProcessInfo processInfo].systemUptime
-                             windowNumber:nsWindow.windowNumber
-                                  context:nil
-                               characters:characters
-              charactersIgnoringModifiers:characters
-                                isARepeat:NO
-                                  keyCode:keyCode];
+        auto* event = [NSEvent keyEventWithType:type
+                                       location:NSZeroPoint
+                                  modifierFlags:0
+                                      timestamp:timestamp
+                                   windowNumber:nsWindow.windowNumber
+                                        context:nil
+                                     characters:characters
+                    charactersIgnoringModifiers:characters
+                                      isARepeat:NO
+                                        keyCode:keyCode];
 
-            if (type == NSEventTypeKeyDown)
-                [responder keyDown:event];
-            else
-                [responder keyUp:event];
-        };
+        if (type == NSEventTypeKeyDown)
+            [responder keyDown:event];
+        else
+            [responder keyUp:event];
+    }
 
-        sendEvent(NSEventTypeKeyDown);
-        sendEvent(NSEventTypeKeyUp);
+    void sendKey(uint16_t keyCode, NSString* characters)
+    {
+        auto now = [] { return [NSProcessInfo processInfo].systemUptime; };
+
+        dispatchKey(NSEventTypeKeyDown, keyCode, characters, now());
+        dispatchKey(NSEventTypeKeyUp, keyCode, characters, now());
     }
 
     bool waitForReceivedCount(int count)
     {
         return Threads::runEventLoopUntil(
             [this, count] { return received.size() >= count; }, webViewResultTimeout);
+    }
+
+    bool waitForKeyUp(uint16_t keyCode)
+    {
+        return Threads::runEventLoopUntil(
+            [this, keyCode]
+            {
+                for (auto& event: received)
+                {
+                    if (event.type == KeyEventType::Up && event.keyCode == keyCode)
+                        return true;
+                }
+
+                return false;
+            },
+            webViewResultTimeout);
     }
 
     void runJS(const std::string& script)
@@ -152,6 +174,39 @@ auto tKeyForwardPreventDefault = test("KeyForwarding/preventDefaultConsumes") = 
     check(fix.received.size() == 2);
     check(fix.received[0].keyCode == KeyCode::Space);
     check(fix.received[1].keyCode == KeyCode::Space);
+};
+
+// An out-of-process host (Logic runs AU editors in AUHostingServiceXPC)
+// dispatches a key we handed to its responder chain straight back into this
+// view. It arrives re-encoded across the boundary -- a different NSEvent
+// object, isARepeat NO -- so only the timestamp AppKit stamped on the original
+// identifies it as one we have already reported. Report it again and it is
+// forwarded again: one keypress becomes an unbounded round trip that freezes
+// the host. Here the test plays the host, bouncing the pair back.
+auto tKeyForwardHostEcho = test("KeyForwarding/hostEchoIsReportedOnce") = []
+{
+    auto fix = Fixture {};
+
+    fix.sendKey(KeyCode::Space, @" ");
+    check(fix.waitForReceivedCount(2));
+
+    fix.dispatchKey(NSEventTypeKeyDown,
+                    KeyCode::Space,
+                    @" ",
+                    fix.received[0].timestamp);
+    fix.dispatchKey(NSEventTypeKeyUp,
+                    KeyCode::Space,
+                    @" ",
+                    fix.received[1].timestamp);
+
+    // Sentinel: verdicts arrive in delivery order, so once 'b' is out the
+    // echoed pair has already been through the pipeline.
+    fix.sendKey(KeyCode::B, @"b");
+
+    check(fix.waitForKeyUp(KeyCode::B));
+    check(fix.received.size() == 4);
+    check(fix.received[2].keyCode == KeyCode::B);
+    check(fix.received[3].keyCode == KeyCode::B);
 };
 
 auto tKeyForwardEditable = test("KeyForwarding/typingInTextInputStaysInPage") = []
