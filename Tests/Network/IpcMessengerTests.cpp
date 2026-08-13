@@ -88,6 +88,38 @@ auto tClientLeavingNotifiesServer =
     check(runEventLoopUntil([&] { return gone; }, pumpTimeout));
 };
 
+// A busy main thread meets the newcomer's adoption before the leaver's
+// disconnect, and adoption is where spent sessions are swept - so this is the
+// ordering that can destroy a session with its disconnect still in the queue.
+auto tLeaveBehindAnArrivalStillNotifies =
+    test("Ipc/Messenger/aLeaveQueuedBehindAnArrivalStillNotifies") = []
+{
+    auto server = MessageServer {"eacp.tests.msgr.leaveBehind"};
+
+    auto sessions = 0;
+    auto gone = 0;
+    server.onClient = [&](Messenger& session)
+    {
+        ++sessions;
+        session.onDisconnected = [&] { ++gone; };
+    };
+
+    auto leaving = std::optional<Messenger> {};
+    leaving.emplace("eacp.tests.msgr.leaveBehind");
+    check(runEventLoopUntil([&] { return sessions == 1; }, pumpTimeout));
+
+    // Pumping before both are queued, in this order, tests nothing.
+    auto arriving = Messenger {"eacp.tests.msgr.leaveBehind"};
+    eacp::Time::sleep(eacp::Time::MS {50});
+
+    leaving.reset();
+    eacp::Time::sleep(eacp::Time::MS {50});
+
+    check(runEventLoopUntil([&] { return sessions == 2; }, pumpTimeout));
+    check(runEventLoopUntil([&] { return gone == 1; }, pumpTimeout));
+    check(arriving.isConnected());
+};
+
 auto tServerDyingNotifiesClient =
     test("Ipc/Messenger/serverDyingNotifiesTheClient") = []
 {
