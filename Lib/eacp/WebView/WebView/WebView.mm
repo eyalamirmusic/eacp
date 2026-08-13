@@ -294,12 +294,25 @@ struct WebView::Native
         webView.get().frame = toCGRect(bounds);
     }
 
+    // What survives an NSEvent's round trip through an out-of-process host:
+    // the timestamp AppKit stamped on it at creation. See the echo guard in
+    // installKeyEventSupport.
+    struct KeyIdentity
+    {
+        double timestamp = -1.0;
+        uint16_t keyCode = 0;
+
+        bool operator==(const KeyIdentity&) const = default;
+    };
+
     ObjC::Ptr<WKWebView> webView;
     ObjC::Ptr<NSObject> delegate;
     ObjC::Ptr<WKWebViewConfiguration> config;
     Vector<ObjC::Ptr<NSObject>> schemeHandlers;
     MessageHandlerMap messageHandlers;
     WebView& owner;
+    KeyIdentity lastUnhandledDown;
+    KeyIdentity lastUnhandledUp;
     double zoomLevel = 1.0;
     bool observingTitle = false;
 };
@@ -1141,6 +1154,22 @@ void WebView::installKeyEventSupport()
         [this](NSEvent* event, bool isDown)
         {
             auto type = isDown ? KeyEventType::Down : KeyEventType::Up;
+
+            // A host that runs the editor out of process (Logic hosts AUs in
+            // AUHostingServiceXPC) dispatches a key we handed to its responder
+            // chain straight back into this view. It returns re-encoded across
+            // the boundary — a different NSEvent, isARepeat NO — so nothing
+            // marks it as ours except the timestamp AppKit stamped on the
+            // original. Report it and it goes back out, and one keypress
+            // becomes an unbounded round trip that freezes the host.
+            auto identity = Native::KeyIdentity {event.timestamp, event.keyCode};
+            auto& lastUnhandled =
+                isDown ? impl->lastUnhandledDown : impl->lastUnhandledUp;
+
+            if (identity == lastUnhandled)
+                return;
+
+            lastUnhandled = identity;
 
             if (onUnhandledKeyEvent && onUnhandledKeyEvent(keyEventFrom(event, type)))
                 return;
