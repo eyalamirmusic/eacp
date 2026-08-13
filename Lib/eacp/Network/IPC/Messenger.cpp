@@ -291,9 +291,28 @@ struct MessageServer::Impl
 {
     std::optional<ChannelServer> server;
     Vector<OwningPointer<Messenger>> sessions;
+    Vector<OwningPointer<Messenger>> ending;
 
     std::atomic<bool> stop = false;
     std::thread acceptor;
+
+    // A session queues its onDisconnected before it reports finished, and
+    // ~Messenger drops an undelivered one - so the reap waits behind it.
+    void reapFinishedSessionsLater(const std::shared_ptr<Impl>& self)
+    {
+        sessions.eraseIf(
+            [this](OwningPointer<Messenger>& candidate)
+            {
+                if (!candidate->finished())
+                    return false;
+
+                ending.add(std::move(candidate));
+                return true;
+            });
+
+        if (!ending.empty())
+            Threads::callAsync([self] { self->ending.clear(); });
+    }
 };
 
 MessageServer::MessageServer(std::string_view name)
@@ -314,6 +333,7 @@ MessageServer::~MessageServer()
     // queued delivery lets go of impl: each Messenger destructor is what
     // guarantees its callbacks never fire again.
     impl->sessions.clear();
+    impl->ending.clear();
 }
 
 void MessageServer::acceptLoop()
@@ -350,11 +370,7 @@ void MessageServer::acceptLoop()
                 if (impl->stop)
                     return; // owned reaps the never-delivered session
 
-                // Finished sessions have already delivered their
-                // onDisconnected - a session finishes only after queueing
-                // it, and this runs later - so sweeping cannot eat news.
-                impl->sessions.eraseIf([](const OwningPointer<Messenger>& candidate)
-                                       { return candidate->finished(); });
+                impl->reapFinishedSessionsLater(impl);
 
                 auto& stored = impl->sessions.add(std::move(owned));
                 onClient(*stored);
