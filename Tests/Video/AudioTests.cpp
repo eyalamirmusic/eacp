@@ -1,6 +1,7 @@
 #include "Common.h"
 
 #include <eacp/Video/AudioRing.h>
+#include <eacp/Video/Encoder.h>
 
 #include <atomic>
 #include <cmath>
@@ -241,4 +242,45 @@ auto tAudioTimeDelaysByLatency = test("AudioTimeline/delaysByOutputLatency") = [
 
     check(std::abs(Video::audioTimeFor(0, 0.0, spec) - 0.01) < 1e-9);
     check(std::abs(Video::audioTimeFor(48'000, 0.0, spec) - 1.01) < 1e-9);
+};
+
+// The encoder OUTLIVES a recording -- a second start() reuses it -- so what
+// finish() leaves behind is what the NEXT recording's drain thread reads to
+// decide whether there is a track to write into.
+auto tEncoderStopsAcceptingAudioOnceFinished =
+    test("Encoder/stopsAcceptingAudioOnceFinished") = []
+{
+    auto spec = Video::EncoderSpec {};
+    spec.video.width = 320;
+    spec.video.height = 240;
+    spec.video.fps = 10;
+    // Non-zero: AVFoundation refuses a zero average bitrate outright, and every
+    // real caller computes one (VideoRecorder::specFor).
+    spec.video.bitrate = 320 * 240 * 8;
+    spec.audio = Video::AudioSpec {};
+
+    auto encoder = Video::makeEncoder();
+    auto image = Graphics::Image {spec.video.width, spec.video.height};
+    auto block = RampBlock {spec.audio->numChannels, 1024};
+
+    auto recordOneTake = [&](const FilePath& path)
+    {
+        check(encoder->begin(path, spec));
+        check(encoder->acceptsAudio());
+
+        encoder->waitUntilReady(Time::MS {5000});
+        encoder->appendImage(image, 0.0);
+        encoder->appendAudio(block.at(0), 0.0);
+
+        encoder->finish().waitFor(Time::MS {60'000});
+
+        // THE REGRESSION. A finished track left advertised is one the next
+        // recording's drain thread starts feeding before the screen tier's
+        // asynchronous begin() has published a track of its own -- and that
+        // begin() then releases the input out from under it.
+        check(!encoder->acceptsAudio());
+    };
+
+    recordOneTake(FilePath::tempDirectory() / "eacp-encoder-reuse-a.mp4");
+    recordOneTake(FilePath::tempDirectory() / "eacp-encoder-reuse-b.mp4");
 };

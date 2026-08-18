@@ -180,9 +180,13 @@ bool AppleEncoder::begin(const FilePath& path, const EncoderSpec& spec)
     writer = writerObject;
     input = in;
     adaptor = ad;
-    audioInput = audioIn;
-    audioFormat = std::move(format);
-    audioSpec = spec.audio.value_or(AudioSpec {});
+
+    {
+        auto lock = std::lock_guard {audioMutex};
+        audioInput = audioIn;
+        audioFormat = std::move(format);
+        audioSpec = spec.audio.value_or(AudioSpec {});
+    }
 
     // The encoder outlives one recording -- a second start() reuses it -- and
     // the new writer has a session of its own to open.
@@ -245,8 +249,16 @@ void AppleEncoder::appendImage(const Graphics::Image& image, double ptsSeconds)
     CVPixelBufferRelease(buffer);
 }
 
+bool AppleEncoder::acceptsAudio() const
+{
+    auto lock = std::lock_guard {audioMutex};
+    return audioInput && audioFormat;
+}
+
 void AppleEncoder::appendAudio(const AudioBuffer& buffer, double ptsSeconds)
 {
+    auto lock = std::lock_guard {audioMutex};
+
     if (!audioInput || !audioFormat || !buffer.isValid())
         return;
 
@@ -355,8 +367,21 @@ Threads::Async<void> AppleEncoder::finish()
 
     [input.get() markAsFinished];
 
-    if (audioInput)
-        [audioInput.get() markAsFinished];
+    {
+        auto lock = std::lock_guard {audioMutex};
+
+        if (audioInput)
+            [audioInput.get() markAsFinished];
+
+        // Dropped here, as the Windows encoder resets its writer, and for the
+        // same reason: the encoder outlives the recording, so a track left
+        // advertised is one acceptsAudio() offers the NEXT recording's drain
+        // thread -- which then messages an input that begin() is about to
+        // release. The writer holds its own reference, so the finalize below
+        // still has the input it is writing.
+        audioInput.release();
+        audioFormat.release();
+    }
 
     [writer.get() finishWritingWithCompletionHandler:^{
         Threads::callAsync([promise] { promise.resolve(); });

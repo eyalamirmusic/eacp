@@ -100,7 +100,10 @@ public:
     // Begins recording `view` into `path`, overwriting any existing file.
     // Returns false if the writer could not be set up (unwritable path,
     // non-positive view size, no available codec, an audio spec the platform
-    // encoder will not take, or the Screen tier without permission for it).
+    // encoder will not take, or the Screen tier without permission for it) --
+    // and also while the PREVIOUS recording is still being written out, since
+    // the encoder and the capture are one apiece and the Async stop() hands
+    // back is what says they are free again. Back-to-back takes wait on it.
     bool start(Graphics::View& view,
                const FilePath& path,
                const RecordingOptions& options = {});

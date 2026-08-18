@@ -26,7 +26,7 @@ struct AppleEncoder final : Encoder
     bool begin(const FilePath& path, const EncoderSpec& spec) override;
     void appendImage(const Graphics::Image& image, double ptsSeconds) override;
     void appendAudio(const AudioBuffer& buffer, double ptsSeconds) override;
-    bool acceptsAudio() const override { return audioInput && audioFormat; }
+    bool acceptsAudio() const override;
     void waitUntilReady(Time::MS timeout) override;
     bool canCaptureNativeContent(Graphics::View& view,
                                  float scale,
@@ -59,6 +59,13 @@ private:
 
     std::mutex sessionMutex;
     bool sessionStarted = false;
+
+    // The audio track's handles, which the encoder OUTLIVES: begin() publishes
+    // them from the screen tier's capture callback and finish() drops them,
+    // either of which can land while the drain thread is inside appendAudio.
+    // Held across the whole append rather than only the handoff, because the
+    // input is messaged for as long as waitForInput polls it.
+    mutable std::mutex audioMutex;
 };
 
 } // namespace eacp::Video
