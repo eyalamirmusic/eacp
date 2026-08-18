@@ -64,7 +64,8 @@ struct RecordingOptions
     CaptureMode mode = CaptureMode::Snapshot;
 
     // Pixels per point. 0 uses the view's backing scale, exactly as
-    // View::renderToImage does.
+    // View::renderToImage does. Ignored by the Screen tier on Windows: the
+    // compositor hands its frames over at the window's own pixel size.
     float scale = 0.0f;
 
     // Target frames per second. Frames arriving faster than this (a 120 Hz
