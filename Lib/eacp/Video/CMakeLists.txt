@@ -37,15 +37,19 @@ elseif (WIN32)
 
     # Media Foundation sink writer (H.264) and source reader, plus their GUIDs
     # and the PROPVARIANT helpers the reader's seek and duration queries use.
-    # d3d11 is the decoder's: the source reader is bound to a D3D11 video device
-    # so the decode runs on the GPU.
+    # d3d11/dxgi serve both the decoder (its source reader is bound to a D3D11
+    # video device, so the decode runs on the GPU) and the screen tier, which
+    # reads the compositor's capture textures back through a staging surface.
+    # windowsapp is the WinRT import library Windows.Graphics.Capture lives in.
     target_link_libraries(eacp-video PRIVATE
             d3d11
+            dxgi
             mfplat
             mfreadwrite
             mfuuid
             ole32
-            propsys)
+            propsys
+            windowsapp)
 endif ()
 
 set_default_target_setting(eacp-video)
