@@ -243,6 +243,12 @@ struct VideoRecorder::Native
     OwningPointer<Encoder> encoder = makeEncoder();
     OwningPointer<ScreenCapture> screen;
     std::atomic<bool> recording {false};
+
+    // Between stop() and the file actually being closed. The screen tier
+    // finalizes asynchronously, so `recording` going false is NOT the encoder
+    // and the capture becoming reusable -- and starting over them replaces the
+    // capture object while its own stop callback still holds it.
+    std::atomic<bool> finalizing {false};
     double startSeconds = 0.0;
 
     // Off-screen tiers (Snapshot, GpuDirect) share this DisplayLink-driven state.
@@ -286,7 +292,7 @@ bool VideoRecorder::start(Graphics::View& view,
                           const FilePath& path,
                           const RecordingOptions& options)
 {
-    if (impl->recording)
+    if (impl->recording || impl->finalizing)
         return false;
 
     impl->mode = options.mode;
@@ -330,16 +336,25 @@ Threads::Async<void> VideoRecorder::stop()
     }
 
     impl->recording = false;
+    impl->finalizing = true;
 
     // Before the encoder is finalized, and before the screen tier's own stop
     // reaches for it: the drain is the one other thread still writing samples.
     impl->stopAudio();
 
-    if (impl->mode == CaptureMode::Screen)
-        return impl->screen->stop();
+    auto finished = [this]
+    {
+        if (impl->mode == CaptureMode::Screen)
+            return impl->screen->stop();
 
-    impl->link = nullptr; // stop the off-screen display link
-    return impl->encoder->finish();
+        impl->link = nullptr; // stop the off-screen display link
+        return impl->encoder->finish();
+    }();
+
+    auto* native = impl.get();
+    finished.then([native] { native->finalizing = false; });
+
+    return finished;
 }
 
 } // namespace eacp::Video
