@@ -90,7 +90,7 @@ struct App
         {
             path = outputPath().str();
 
-            auto options = Video::VideoOptions {};
+            auto options = Video::RecordingOptions {};
             options.mode = Video::CaptureMode::GpuDirect;
 
             started = recorder.start(view, path, options);

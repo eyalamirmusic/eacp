@@ -72,7 +72,7 @@ struct App
         {
             path = outputPath().str();
 
-            auto options = Video::VideoOptions {};
+            auto options = Video::RecordingOptions {};
             auto screen = getEnvValue("EACP_CAPTURE") == "screen";
             options.mode =
                 screen ? Video::CaptureMode::Screen : Video::CaptureMode::Snapshot;

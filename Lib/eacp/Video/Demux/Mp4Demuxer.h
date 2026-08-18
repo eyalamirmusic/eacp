@@ -48,6 +48,26 @@ struct Mp4TrackInfo
     std::uint64_t duration = 0;
 };
 
+// What the audio track announces about itself, straight out of its mdhd and
+// sample entry. No sample tables: this is here so a caller can tell that a
+// file carries sound of the expected shape and length, not to decode it.
+struct Mp4AudioInfo
+{
+    bool present = false;
+
+    // mdhd units per second, and the track length in them.
+    std::uint32_t timescale = 0;
+    std::uint64_t duration = 0;
+
+    int numChannels = 0;
+    int sampleRate = 0;
+
+    double seconds() const
+    {
+        return timescale > 0 ? static_cast<double>(duration) / timescale : 0.0;
+    }
+};
+
 // Parses the sample tables of one MP4/ISOBMFF video track: per-sample byte
 // ranges, timestamps and keyframe flags, without touching the bitstream.
 // This is the container half of a decode path — what a hardware decoder
@@ -72,6 +92,8 @@ public:
 
     const Mp4TrackInfo& track() const { return trackInfo; }
 
+    const Mp4AudioInfo& audioTrack() const { return audioInfo; }
+
     // Every sample of the track, in decode order.
     const Vector<Mp4Sample>& samples() const { return sampleList; }
 
@@ -84,6 +106,7 @@ private:
     std::optional<MemoryMappedFile> file;
     std::span<const std::uint8_t> fileData;
     Mp4TrackInfo trackInfo;
+    Mp4AudioInfo audioInfo;
     Vector<Mp4Sample> sampleList;
     bool valid = false;
 };

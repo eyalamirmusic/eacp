@@ -1,7 +1,10 @@
 #pragma once
 
-#include <eacp/Core/Core.h>
+#include "Audio.h"
+
 #include <eacp/Core/Threads/Async.h>
+
+#include <optional>
 
 namespace eacp::Graphics
 {
@@ -32,7 +35,7 @@ enum class CaptureMode
     GpuDirect,
 };
 
-struct VideoOptions
+struct RecordingOptions
 {
     // How frames are captured. Snapshot is the portable, permission-free default;
     // Screen is the real-time full-composite path (see CaptureMode).
@@ -50,18 +53,21 @@ struct VideoOptions
 
     // Average H.264 bitrate in bits per second. 0 picks a size-based default.
     int bitrate = 0;
+
+    // Set to record sound as well, and push it with pushAudio(). There is no
+    // audio source of eacp's own: the app owns the audio, so the app feeds it.
+    std::optional<AudioSpec> audio;
 };
 
-// Records a View to an H.264 video (.mov / .mp4, chosen by the path extension)
-// by snapshotting it every display refresh with View::renderToImage and encoding
-// the frames with real-time presentation timestamps, so playback runs at the
-// speed it was captured. start(), the per-frame capture, and stop() all run on
-// the main thread; the file is finalized asynchronously.
+// Records a View to an H.264 video (.mov / .mp4, chosen by the path extension),
+// optionally with an AAC audio track the app pushes in.
 //
-// A first cut built on the snapshot mechanism: well-suited to 2D / layer /
-// moderate-GPU views. Each frame does a full off-screen recomposite (and, for a
-// GPUView, a GPU read-back), so it is not intended for real-time capture of
-// heavy GPU content. Apple (AVFoundation) only for now.
+// Every capture tier lays its frames on one timeline that starts when start()
+// returns, and pushAudio anchors the audio to that same timeline, so a sound
+// and the frame it belongs to stay together whichever tier is running.
+//
+// start(), the per-frame capture, and stop() all run on the main thread;
+// pushAudio() is for the audio thread and the file is finalized asynchronously.
 class VideoRecorder
 {
 public:
@@ -70,10 +76,17 @@ public:
 
     // Begins recording `view` into `path`, overwriting any existing file.
     // Returns false if the writer could not be set up (unwritable path,
-    // non-positive view size, or no available codec).
+    // non-positive view size, no available codec, or an audio spec the
+    // platform encoder will not take).
     bool start(Graphics::View& view,
                const FilePath& path,
-               const VideoOptions& options = {});
+               const RecordingOptions& options = {});
+
+    // Copies one block into the lock-free ring the recorder drains: safe to
+    // call from the audio thread, and a no-op unless recording with an audio
+    // spec. A block that arrives faster than the encoder drains is dropped
+    // whole and counted in droppedAudioFrames().
+    void pushAudio(const AudioBuffer& buffer) noexcept;
 
     // Stops capturing and finalizes the file. The returned Async resolves on the
     // main thread once the file is fully written (immediately if not recording).
@@ -81,6 +94,8 @@ public:
     Threads::Async<void> stop();
 
     bool isRecording() const;
+
+    int droppedAudioFrames() const;
 
 private:
     struct Native;

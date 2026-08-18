@@ -27,7 +27,7 @@ struct ScreenCapture
     // unsupported platform. `encoder` must outlive this ScreenCapture.
     virtual bool start(Graphics::View& view,
                        const FilePath& path,
-                       const VideoOptions& options,
+                       const RecordingOptions& options,
                        Encoder& encoder) = 0;
 
     // Stops capturing and finalizes the file. Resolves on the main thread once

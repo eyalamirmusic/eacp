@@ -1,6 +1,7 @@
 nano_add_executable(VideoTests
         NO_MAIN
         SOURCES
+            AudioTests.cpp
             FrameStreamTests.cpp
             Mp4DemuxerTests.cpp
             PlacementTests.cpp

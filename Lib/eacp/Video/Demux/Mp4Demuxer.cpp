@@ -92,30 +92,93 @@ struct Mp4TrackParser
         return false;
     }
 
+    // Walks every trak rather than stopping at the video one: the audio
+    // summary is read on the way past, and the order of the two in the file is
+    // the muxer's business, not ours.
     bool parseMoov(std::span<const std::uint8_t> payload)
     {
         auto reader = BoxReader {payload};
         auto box = Box {};
+        auto videoParsed = false;
 
         while (nextBox(reader, box))
-            if (box.type == boxTrak && trakIsVideo(box.payload))
-                return parseTrak(box.payload);
+        {
+            if (box.type != boxTrak)
+                continue;
 
-        return false;
+            auto handler = trakHandler(box.payload);
+
+            if (handler == fourcc("vide") && !videoParsed)
+                videoParsed = parseTrak(box.payload);
+            else if (handler == fourcc("soun") && !audio.present)
+                parseAudioTrak(box.payload);
+        }
+
+        return videoParsed;
     }
 
-    bool trakIsVideo(std::span<const std::uint8_t> trak) const
+    std::uint32_t trakHandler(std::span<const std::uint8_t> trak) const
     {
         auto mdia = Box {};
         auto hdlr = Box {};
 
         if (!findChild(trak, boxMdia, mdia)
             || !findChild(mdia.payload, boxHdlr, hdlr))
-            return false;
+            return 0;
 
         auto reader = BoxReader {hdlr.payload};
         reader.skip(8);
-        return reader.readU32() == fourcc("vide") && reader.ok();
+
+        auto handler = reader.readU32();
+        return reader.ok() ? handler : 0;
+    }
+
+    void parseAudioTrak(std::span<const std::uint8_t> trak)
+    {
+        auto mdia = Box {};
+        auto mdhd = Box {};
+        auto minf = Box {};
+        auto stbl = Box {};
+        auto stsd = Box {};
+
+        if (!findChild(trak, boxMdia, mdia)
+            || !findChild(mdia.payload, boxMdhd, mdhd)
+            || !parseMdhd(mdhd.payload, audio.timescale, audio.duration))
+            return;
+
+        audio.present = true;
+
+        if (findChild(mdia.payload, boxMinf, minf)
+            && findChild(minf.payload, boxStbl, stbl)
+            && findChild(stbl.payload, boxStsd, stsd))
+            parseAudioSampleEntry(stsd.payload);
+    }
+
+    // The AudioSampleEntry fields shared by every version of the box: channel
+    // count, sample size, then the 16.16 sample rate.
+    void parseAudioSampleEntry(std::span<const std::uint8_t> stsd)
+    {
+        auto reader = BoxReader {stsd};
+        reader.skip(4);
+        auto entryCount = reader.readU32();
+
+        auto entry = Box {};
+
+        if (!reader.ok() || entryCount == 0 || !nextBox(reader, entry))
+            return;
+
+        auto entryReader = BoxReader {entry.payload};
+        entryReader.skip(16);
+
+        auto channels = entryReader.readU16();
+        entryReader.skip(6);
+        auto sampleRate = entryReader.readU32() >> 16;
+
+        if (!entryReader.ok())
+            return;
+
+        audio.numChannels = static_cast<int>(channels);
+        audio.sampleRate = static_cast<int>(sampleRate);
     }
 
     bool parseTrak(std::span<const std::uint8_t> trak)
@@ -133,22 +196,29 @@ struct Mp4TrackParser
 
     bool parseMdhd(std::span<const std::uint8_t> payload)
     {
+        return parseMdhd(payload, info.timescale, info.duration);
+    }
+
+    static bool parseMdhd(std::span<const std::uint8_t> payload,
+                          std::uint32_t& timescaleOut,
+                          std::uint64_t& durationOut)
+    {
         auto reader = BoxReader {payload};
         auto is64Bit = reader.readU8() == 1;
         reader.skip(3);
         reader.skip(is64Bit ? 16 : 8);
 
-        info.timescale = reader.readU32();
+        timescaleOut = reader.readU32();
         auto duration =
             is64Bit ? reader.readU64() : std::uint64_t {reader.readU32()};
 
-        if (!reader.ok() || info.timescale == 0)
+        if (!reader.ok() || timescaleOut == 0)
             return false;
 
         // All-ones is the container's "unknown duration" sentinel.
         auto unknown =
             is64Bit ? ~std::uint64_t {0} : std::uint64_t {~std::uint32_t {0}};
-        info.duration = duration == unknown ? 0 : duration;
+        durationOut = duration == unknown ? 0 : duration;
         return true;
     }
 
@@ -367,6 +437,7 @@ struct Mp4TrackParser
     }
 
     Mp4TrackInfo info;
+    Mp4AudioInfo audio;
     Mp4TrackTables tables;
 };
 
@@ -536,6 +607,7 @@ bool Mp4Demuxer::parse(std::span<const std::uint8_t> fileBytes)
 {
     valid = false;
     trackInfo = {};
+    audioInfo = {};
     sampleList.clear();
     fileData = {};
 
@@ -552,6 +624,7 @@ bool Mp4Demuxer::parse(std::span<const std::uint8_t> fileBytes)
         return false;
 
     trackInfo = std::move(parser.info);
+    audioInfo = parser.audio;
     sampleList = std::move(samples);
     fileData = fileBytes;
     valid = true;

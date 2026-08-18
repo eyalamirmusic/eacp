@@ -5,6 +5,7 @@
 #include <eacp/Core/Utils/Strings.h>
 #include <eacp/Graphics/Graphics.h>
 
+#include <algorithm>
 #include <cstdint>
 
 namespace eacp::Video
@@ -39,14 +40,85 @@ CVPixelBufferRef makeMetalPixelBuffer(int width, int height)
                         &buffer);
     return buffer;
 }
+
+AVAssetWriterInput* makeVideoInput(const VideoSpec& spec)
+{
+    NSDictionary* compression = @{AVVideoAverageBitRateKey : @(spec.bitrate)};
+    NSDictionary* settings = @{
+        AVVideoCodecKey : AVVideoCodecTypeH264,
+        AVVideoWidthKey : @(spec.width),
+        AVVideoHeightKey : @(spec.height),
+        AVVideoCompressionPropertiesKey : compression
+    };
+
+    auto* in = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo
+                                              outputSettings:settings];
+    in.expectsMediaDataInRealTime = YES;
+    return in;
+}
+
+AVAssetWriterInput* makeAudioInput(const AudioSpec& spec)
+{
+    NSDictionary* settings = @{
+        AVFormatIDKey : @(kAudioFormatMPEG4AAC),
+        AVSampleRateKey : @(spec.sampleRate),
+        AVNumberOfChannelsKey : @(spec.numChannels),
+        AVEncoderBitRateKey : @(audioBitrateFor(spec))
+    };
+
+    auto* in = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeAudio
+                                              outputSettings:settings];
+    in.expectsMediaDataInRealTime = YES;
+    return in;
+}
+
+// What appendAudio hands the writer: interleaved 32-bit float, which the input
+// transcodes to AAC on its way into the file.
+CMFormatDescriptionRef makeAudioFormat(const AudioSpec& spec)
+{
+    auto bytesPerFrame = (UInt32) (sizeof(float) * (std::size_t) spec.numChannels);
+
+    auto description = AudioStreamBasicDescription {};
+    description.mSampleRate = spec.sampleRate;
+    description.mFormatID = kAudioFormatLinearPCM;
+    description.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+    description.mBytesPerPacket = bytesPerFrame;
+    description.mFramesPerPacket = 1;
+    description.mBytesPerFrame = bytesPerFrame;
+    description.mChannelsPerFrame = (UInt32) spec.numChannels;
+    description.mBitsPerChannel = 32;
+
+    CMFormatDescriptionRef format = nullptr;
+    if (CMAudioFormatDescriptionCreate(kCFAllocatorDefault,
+                                       &description,
+                                       0,
+                                       nullptr,
+                                       0,
+                                       nullptr,
+                                       nullptr,
+                                       &format)
+        != noErr)
+        return nullptr;
+
+    return format;
+}
+
+void waitForInput(AVAssetWriterInput* in, Time::MS timeout)
+{
+    // AVAssetWriterInput has no blocking form, so this polls. The wait is short
+    // in practice — the encoder drains in well under a millisecond — and the
+    // deadline keeps a stalled writer from hanging the caller outright.
+    auto deadline = Time::Deadline {timeout};
+
+    while (![in isReadyForMoreMediaData] && !deadline.expired())
+        Time::sleepMS(1);
+}
 } // namespace
 
-bool AppleEncoder::begin(const FilePath& path, int w, int h, int bitrate, int)
+bool AppleEncoder::begin(const FilePath& path, const EncoderSpec& spec)
 {
-    // fps is unused here: AVAssetWriter derives timing from each frame's
-    // presentation timestamp (expectsMediaDataInRealTime + PTS).
-    width = w;
-    height = h;
+    width = spec.video.width;
+    height = spec.video.height;
 
     auto* url = [NSURL fileURLWithPath:@(path.c_str())];
     [[NSFileManager defaultManager] removeItemAtURL:url error:nil];
@@ -58,17 +130,7 @@ bool AppleEncoder::begin(const FilePath& path, int w, int h, int bitrate, int)
     if (writerObject == nil)
         return false;
 
-    NSDictionary* compression = @{AVVideoAverageBitRateKey : @(bitrate)};
-    NSDictionary* settings = @{
-        AVVideoCodecKey : AVVideoCodecTypeH264,
-        AVVideoWidthKey : @(width),
-        AVVideoHeightKey : @(height),
-        AVVideoCompressionPropertiesKey : compression
-    };
-
-    auto* in = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo
-                                              outputSettings:settings];
-    in.expectsMediaDataInRealTime = YES;
+    auto* in = makeVideoInput(spec.video);
 
     // IOSurface + Metal compatibility so the GpuDirect tier can render straight
     // into pool buffers; harmless for the CPU-filled snapshot tier.
@@ -84,24 +146,43 @@ bool AppleEncoder::begin(const FilePath& path, int w, int h, int bitrate, int)
         initWithAssetWriterInput:in
         sourcePixelBufferAttributes:pixelAttributes];
 
+    auto* audioIn = spec.audio ? makeAudioInput(*spec.audio) : nil;
+    auto format = CFRef<CMFormatDescriptionRef> {
+        spec.audio ? makeAudioFormat(*spec.audio) : nullptr};
+
     auto ok = [writerObject canAddInput:in];
+
     if (ok)
-    {
         [writerObject addInput:in];
-        ok = [writerObject startWriting];
+
+    // Every track has to be declared before the writer starts: an input added
+    // afterwards is refused.
+    if (ok && audioIn != nil)
+    {
+        ok = format && [writerObject canAddInput:audioIn];
+
+        if (ok)
+            [writerObject addInput:audioIn];
     }
+
+    if (ok)
+        ok = [writerObject startWriting];
 
     if (!ok)
     {
         [writerObject release];
         [in release];
         [ad release];
+        [audioIn release];
         return false;
     }
 
     writer = writerObject;
     input = in;
     adaptor = ad;
+    audioInput = audioIn;
+    audioFormat = std::move(format);
+    audioSpec = spec.audio.value_or(AudioSpec {});
     return true;
 }
 
@@ -110,13 +191,20 @@ CVPixelBufferPoolRef AppleEncoder::pool() const
     return adaptor.get().pixelBufferPool;
 }
 
+void AppleEncoder::startSessionIfNeeded(CMTime pts)
+{
+    auto lock = std::lock_guard {sessionMutex};
+
+    if (sessionStarted)
+        return;
+
+    [writer.get() startSessionAtSourceTime:pts];
+    sessionStarted = true;
+}
+
 void AppleEncoder::append(CVPixelBufferRef buffer, CMTime pts)
 {
-    if (!sessionStarted)
-    {
-        [writer.get() startSessionAtSourceTime:pts];
-        sessionStarted = true;
-    }
+    startSessionIfNeeded(pts);
 
     if ([input.get() isReadyForMoreMediaData])
         [adaptor.get() appendPixelBuffer:buffer withPresentationTime:pts];
@@ -124,17 +212,8 @@ void AppleEncoder::append(CVPixelBufferRef buffer, CMTime pts)
 
 void AppleEncoder::waitUntilReady(Time::MS timeout)
 {
-    if (!input)
-        return;
-
-    // AVAssetWriterInput has no blocking form, so this polls. The wait is short
-    // in practice — the H.264 encoder drains a frame in well under a
-    // millisecond — and the deadline keeps a stalled writer from hanging the
-    // caller outright.
-    auto deadline = Time::Deadline {timeout};
-
-    while (![input.get() isReadyForMoreMediaData] && !deadline.expired())
-        Time::sleepMS(1);
+    if (input)
+        waitForInput(input.get(), timeout);
 }
 
 void AppleEncoder::appendImage(const Graphics::Image& image, double ptsSeconds)
@@ -158,6 +237,70 @@ void AppleEncoder::appendImage(const Graphics::Image& image, double ptsSeconds)
 
     append(buffer, CMTimeMakeWithSeconds(ptsSeconds, 600));
     CVPixelBufferRelease(buffer);
+}
+
+void AppleEncoder::appendAudio(const AudioBuffer& buffer, double ptsSeconds)
+{
+    if (!audioInput || !audioFormat || !buffer.isValid())
+        return;
+
+    auto channels = audioSpec.numChannels;
+    auto frames = buffer.numFrames;
+    interleaved.resize(frames * channels);
+
+    for (auto channel = 0; channel < channels; ++channel)
+    {
+        auto source = buffer.channel(std::min(channel, buffer.numChannels - 1));
+        auto* destination = interleaved.data() + channel;
+
+        for (auto frame = 0; frame < frames; ++frame)
+            destination[frame * channels] = source[frame];
+    }
+
+    auto byteCount = (std::size_t) interleaved.size() * sizeof(float);
+
+    CMBlockBufferRef rawBlock = nullptr;
+    if (CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault,
+                                           nullptr,
+                                           byteCount,
+                                           kCFAllocatorDefault,
+                                           nullptr,
+                                           0,
+                                           byteCount,
+                                           kCMBlockBufferAssureMemoryNowFlag,
+                                           &rawBlock)
+        != kCMBlockBufferNoErr)
+        return;
+
+    auto block = CFRef<CMBlockBufferRef> {rawBlock};
+
+    if (CMBlockBufferReplaceDataBytes(interleaved.data(), block.get(), 0, byteCount)
+        != kCMBlockBufferNoErr)
+        return;
+
+    auto pts = CMTimeMakeWithSeconds(ptsSeconds, audioSpec.sampleRate);
+
+    CMSampleBufferRef rawSample = nullptr;
+    if (CMAudioSampleBufferCreateReadyWithPacketDescriptions(kCFAllocatorDefault,
+                                                             block.get(),
+                                                             audioFormat.get(),
+                                                             frames,
+                                                             pts,
+                                                             nullptr,
+                                                             &rawSample)
+        != noErr)
+        return;
+
+    auto sample = CFRef<CMSampleBufferRef> {rawSample};
+
+    startSessionIfNeeded(pts);
+
+    // A dropped block is a hole in the sound rather than a missing frame, so
+    // this waits for the input instead of discarding it.
+    waitForInput(audioInput.get(), Time::MS {200});
+
+    if ([audioInput.get() isReadyForMoreMediaData])
+        [audioInput.get() appendSampleBuffer:sample.get()];
 }
 
 bool AppleEncoder::canCaptureNativeContent(Graphics::View& view,
@@ -205,6 +348,10 @@ Threads::Async<void> AppleEncoder::finish()
     }
 
     [input.get() markAsFinished];
+
+    if (audioInput)
+        [audioInput.get() markAsFinished];
+
     [writer.get() finishWritingWithCompletionHandler:^{
         Threads::callAsync([promise] { promise.resolve(); });
     }];

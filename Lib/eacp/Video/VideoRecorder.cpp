@@ -1,16 +1,21 @@
 #include "VideoRecorder.h"
 
+#include "AudioRing.h"
 #include "Encoder.h"
 #include "ScreenCapture.h"
 
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/Graphics/Helpers/DisplayLink.h>
 
-// The portable half of the recorder: tier dispatch and the two DisplayLink-driven
-// off-screen tiers (Snapshot and GpuDirect), which are identical on every
-// platform. Everything platform-specific sits behind the Encoder interface
-// (AVFoundation / Media Foundation) and the ScreenCapture interface
-// (ScreenCaptureKit / Windows.Graphics.Capture).
+#include <atomic>
+#include <chrono>
+#include <thread>
+
+// The portable half of the recorder: tier dispatch, the two DisplayLink-driven
+// off-screen tiers (Snapshot and GpuDirect) and the audio drain, all of which
+// are identical on every platform. Everything platform-specific sits behind the
+// Encoder interface (AVFoundation / Media Foundation) and the ScreenCapture
+// interface (ScreenCaptureKit / Windows.Graphics.Capture).
 
 namespace eacp::Video
 {
@@ -20,10 +25,34 @@ int roundDownToEven(int value)
 {
     return value & ~1;
 }
+
+double nowSeconds()
+{
+    auto since = std::chrono::steady_clock::now().time_since_epoch();
+    return std::chrono::duration<double>(since).count();
+}
+
+// A second of backlog: the drain empties the ring every few milliseconds, so
+// this only has to survive a stalled encoder, not carry the recording.
+int ringCapacityFor(const AudioSpec& spec)
+{
+    return spec.sampleRate;
+}
+
+// Long enough that the encoder is handed useful work per call, short enough
+// that the drain stays responsive to stop().
+int drainBlockFrames(const AudioSpec& spec)
+{
+    return spec.sampleRate / 50;
+}
 } // namespace
 
 struct VideoRecorder::Native
 {
+    // Every tier timestamps against the moment start() ran, so the audio the
+    // app pushes and the frames the platform hands back share one origin.
+    double elapsed() const { return nowSeconds() - startSeconds; }
+
     // Holds the target frame rate against a faster display: returns true only
     // when the next scheduled slot is due, advancing on an ideal grid so it does
     // not drift. Resyncs if a slow frame put us behind.
@@ -50,7 +79,7 @@ struct VideoRecorder::Native
         if (!recording || !paceAllows(frameTime.time))
             return;
 
-        encoder->appendNativeContent(*view, scale, frameTime.time);
+        encoder->appendNativeContent(*view, scale, elapsed());
     }
 
     void captureFrame(Threads::FrameTime frameTime)
@@ -62,54 +91,65 @@ struct VideoRecorder::Native
         if (!image.isValid() || image.width() < width || image.height() < height)
             return;
 
-        encoder->appendImage(image, frameTime.time);
+        encoder->appendImage(image, elapsed());
     }
 
-    bool startSnapshot(Graphics::View& viewToUse,
-                       const FilePath& path,
-                       const VideoOptions& options)
+    EncoderSpec specFor(const RecordingOptions& options) const
+    {
+        auto spec = EncoderSpec {};
+        spec.video.width = width;
+        spec.video.height = height;
+        spec.video.fps = options.fps > 0 ? options.fps : 60;
+        spec.video.bitrate =
+            options.bitrate > 0 ? options.bitrate : width * height * 8;
+        spec.audio = options.audio;
+        return spec;
+    }
+
+    // The size every off-screen tier records at: renderToImage resolves the
+    // backing scale itself when options.scale is 0.
+    bool probeSize(Graphics::View& viewToUse, const RecordingOptions& options)
     {
         view = &viewToUse;
         scale = options.scale;
 
-        // Probe one frame to size the video; renderToImage resolves the backing
-        // scale itself when options.scale is 0.
         auto probe = viewToUse.renderToImage(options.scale);
         width = roundDownToEven(probe.width());
         height = roundDownToEven(probe.height());
 
-        if (width <= 0 || height <= 0)
-            return false;
+        return width > 0 && height > 0;
+    }
 
-        auto fps = options.fps > 0 ? options.fps : 60;
-        auto bitrate = options.bitrate > 0 ? options.bitrate : width * height * 8;
-        if (!encoder->begin(path, width, height, bitrate, fps))
-            return false;
-
+    void startDisplayLink(const RecordingOptions& options,
+                          const Threads::DisplayLink::FrameCallback& capture)
+    {
         frameInterval = options.fps > 0 ? 1.0 / options.fps : 0.0;
         nextCapture = 0.0;
         recording = true;
+        link = makeOwned<Threads::DisplayLink>(capture);
+    }
+
+    bool startSnapshot(Graphics::View& viewToUse,
+                       const FilePath& path,
+                       const RecordingOptions& options)
+    {
+        if (!probeSize(viewToUse, options)
+            || !encoder->begin(path, specFor(options)))
+            return false;
 
         auto* native = this;
-        link = makeOwned<Threads::DisplayLink>([native](Threads::FrameTime time)
-                                               { native->captureFrame(time); });
+        startDisplayLink(options,
+                         [native](Threads::FrameTime time)
+                         { native->captureFrame(time); });
 
         return true;
     }
 
     bool startGpuDirect(Graphics::View& viewToUse,
                         const FilePath& path,
-                        const VideoOptions& options)
+                        const RecordingOptions& options)
     {
-        view = &viewToUse;
-        scale = options.scale;
-
-        // Probe for size (renderToImage resolves the backing scale when scale is
-        // 0). GPU content itself is captured zero-copy below.
-        auto probe = viewToUse.renderToImage(options.scale);
-        width = roundDownToEven(probe.width());
-        height = roundDownToEven(probe.height());
-        if (width <= 0 || height <= 0)
+        if (!probeSize(viewToUse, options))
             return false;
 
         // Confirm the view actually renders native GPU content this encoder can
@@ -118,26 +158,20 @@ struct VideoRecorder::Native
         if (!encoder->canCaptureNativeContent(viewToUse, scale, width, height))
             return false;
 
-        auto fps = options.fps > 0 ? options.fps : 60;
-        auto bitrate = options.bitrate > 0 ? options.bitrate : width * height * 8;
-        if (!encoder->begin(path, width, height, bitrate, fps))
+        if (!encoder->begin(path, specFor(options)))
             return false;
 
-        frameInterval = options.fps > 0 ? 1.0 / options.fps : 0.0;
-        nextCapture = 0.0;
-        recording = true;
-
         auto* native = this;
-        link = makeOwned<Threads::DisplayLink>(
-            [native](Threads::FrameTime time)
-            { native->captureGpuDirectFrame(time); });
+        startDisplayLink(options,
+                         [native](Threads::FrameTime time)
+                         { native->captureGpuDirectFrame(time); });
 
         return true;
     }
 
     bool startScreen(Graphics::View& viewToUse,
                      const FilePath& path,
-                     const VideoOptions& options)
+                     const RecordingOptions& options)
     {
         screen = makeScreenCapture();
         recording = true;
@@ -151,10 +185,65 @@ struct VideoRecorder::Native
         return true;
     }
 
+    void startAudio(const AudioSpec& spec)
+    {
+        audioSpec = spec;
+        audioAnchor.store(-1.0, std::memory_order_relaxed);
+        audioRing.prepare(spec.numChannels, ringCapacityFor(spec));
+
+        audioRunning = true;
+        audioThread = std::thread(
+            [this]
+            {
+                while (audioRunning.load(std::memory_order_relaxed))
+                {
+                    appendReadyAudio();
+                    Time::sleepMS(5);
+                }
+            });
+    }
+
+    void stopAudio()
+    {
+        if (!audioThread.joinable())
+            return;
+
+        audioRunning = false;
+        audioThread.join();
+
+        appendReadyAudio();
+        audioSpec.reset();
+    }
+
+    // Nothing is drained until the encoder has an audio track open: the screen
+    // tier opens the file asynchronously, and anything read out before then
+    // would go nowhere. It waits in the ring instead, keeping the position on
+    // the timeline it was pushed at.
+    void appendReadyAudio()
+    {
+        auto anchor = audioAnchor.load(std::memory_order_acquire);
+
+        if (anchor < 0.0 || !audioSpec || !encoder->acceptsAudio())
+            return;
+
+        for (;;)
+        {
+            auto frameIndex = audioRing.framesRead();
+            auto block = audioRing.read(drainBlockFrames(*audioSpec));
+
+            if (!block.isValid())
+                return;
+
+            encoder->appendAudio(block,
+                                 audioTimeFor(frameIndex, anchor, *audioSpec));
+        }
+    }
+
     CaptureMode mode = CaptureMode::Snapshot;
     OwningPointer<Encoder> encoder = makeEncoder();
     OwningPointer<ScreenCapture> screen;
-    bool recording = false;
+    std::atomic<bool> recording {false};
+    double startSeconds = 0.0;
 
     // Off-screen tiers (Snapshot, GpuDirect) share this DisplayLink-driven state.
     Graphics::View* view = nullptr;
@@ -164,32 +253,71 @@ struct VideoRecorder::Native
     double frameInterval = 0.0;
     double nextCapture = 0.0;
     OwningPointer<Threads::DisplayLink> link;
+
+    // Written by the audio thread, read by the drain. The anchor is where the
+    // app's first block landed on the recording's timeline; everything after it
+    // follows by sample count.
+    std::optional<AudioSpec> audioSpec;
+    AudioRing audioRing;
+    std::atomic<double> audioAnchor {-1.0};
+    std::atomic<bool> audioRunning {false};
+    std::thread audioThread;
 };
 
 VideoRecorder::VideoRecorder() = default;
-VideoRecorder::~VideoRecorder() = default;
+
+VideoRecorder::~VideoRecorder()
+{
+    impl->recording = false;
+    impl->stopAudio();
+}
 
 bool VideoRecorder::isRecording() const
 {
     return impl->recording;
 }
 
+int VideoRecorder::droppedAudioFrames() const
+{
+    return impl->audioRing.droppedFrames();
+}
+
 bool VideoRecorder::start(Graphics::View& view,
                           const FilePath& path,
-                          const VideoOptions& options)
+                          const RecordingOptions& options)
 {
     if (impl->recording)
         return false;
 
     impl->mode = options.mode;
+    impl->startSeconds = nowSeconds();
 
-    if (options.mode == CaptureMode::Screen)
-        return impl->startScreen(view, path, options);
+    auto started = [&]
+    {
+        if (options.mode == CaptureMode::Screen)
+            return impl->startScreen(view, path, options);
 
-    if (options.mode == CaptureMode::GpuDirect)
-        return impl->startGpuDirect(view, path, options);
+        if (options.mode == CaptureMode::GpuDirect)
+            return impl->startGpuDirect(view, path, options);
 
-    return impl->startSnapshot(view, path, options);
+        return impl->startSnapshot(view, path, options);
+    }();
+
+    if (started && options.audio)
+        impl->startAudio(*options.audio);
+
+    return started;
+}
+
+void VideoRecorder::pushAudio(const AudioBuffer& buffer) noexcept
+{
+    if (!impl->audioRunning.load(std::memory_order_relaxed))
+        return;
+
+    if (impl->audioAnchor.load(std::memory_order_relaxed) < 0.0)
+        impl->audioAnchor.store(impl->elapsed(), std::memory_order_release);
+
+    impl->audioRing.write(buffer);
 }
 
 Threads::Async<void> VideoRecorder::stop()
@@ -202,6 +330,10 @@ Threads::Async<void> VideoRecorder::stop()
     }
 
     impl->recording = false;
+
+    // Before the encoder is finalized, and before the screen tier's own stop
+    // reaches for it: the drain is the one other thread still writing samples.
+    impl->stopAudio();
 
     if (impl->mode == CaptureMode::Screen)
         return impl->screen->stop();

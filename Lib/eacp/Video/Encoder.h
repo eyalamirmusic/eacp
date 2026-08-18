@@ -1,11 +1,13 @@
 #pragma once
 
-#include "VideoRecorder.h"
+#include "Audio.h"
 
+#include <eacp/Core/Threads/Async.h>
 #include <eacp/Graphics/Image/Image.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace eacp::Graphics
 {
@@ -52,20 +54,46 @@ inline void compositeOverBlackBGRA(const Graphics::Image& image,
     }
 }
 
-// The recorder's H.264 encoder, behind one interface per platform: AVFoundation
-// on Apple, Media Foundation on Windows. begin() opens the file, appendImage()
-// feeds one straight-RGBA frame (snapshot tier) at a real-time presentation
-// timestamp, and finish() finalizes the file asynchronously.
+// The pixel side of one output file, resolved: sizes are the exact ones the
+// stream will carry, not the request the caller made.
+struct VideoSpec
+{
+    int width = 0;
+    int height = 0;
+
+    // Average H.264 bitrate in bits per second.
+    int bitrate = 0;
+
+    // The rate the encoder is told to expect; playback timing follows the
+    // per-frame presentation timestamps regardless.
+    int fps = 60;
+};
+
+// One file: a video track, and an audio track when there is sound to write.
+// Both are declared up front because AVAssetWriter takes no further inputs
+// once it has started writing.
+struct EncoderSpec
+{
+    VideoSpec video;
+    std::optional<AudioSpec> audio;
+};
+
+// The recorder's encoder, behind one interface per platform: AVFoundation on
+// Apple, Media Foundation on Windows. begin() opens the file, appendImage()
+// and appendAudio() feed it at real-time presentation timestamps, and finish()
+// finalizes the file asynchronously.
+//
+// Both append paths may be called concurrently -- video arrives on the capture
+// thread, audio on the recorder's drain -- so implementations serialise
+// whatever the writer needs them to.
 struct Encoder
 {
     virtual ~Encoder() = default;
 
-    // Opens `path` for an H.264 stream of the given pixel size, average bitrate
-    // and nominal frame rate, overwriting any existing file. Returns false on
-    // setup failure. Playback timing follows the per-frame presentation
-    // timestamps; fps is the rate the encoder is told to expect.
-    virtual bool
-        begin(const FilePath& path, int width, int height, int bitrate, int fps) = 0;
+    // Opens `path` for the given tracks, overwriting any existing file.
+    // Returns false on setup failure, including an audio spec the platform
+    // encoder cannot honour.
+    virtual bool begin(const FilePath& path, const EncoderSpec& spec) = 0;
 
     // Appends one straight-RGBA frame, composited over black, at ptsSeconds.
     // The image must be at least the size passed to begin().
@@ -76,9 +104,20 @@ struct Encoder
     // the file must call waitUntilReady() first.
     virtual void appendImage(const Graphics::Image& image, double ptsSeconds) = 0;
 
+    // Appends one block of planar audio starting at ptsSeconds. Unlike a
+    // dropped frame, a dropped block is a hole in the sound, so this waits for
+    // the encoder to catch up rather than discarding it.
+    virtual void appendAudio(const AudioBuffer& buffer, double ptsSeconds) = 0;
+
+    // Whether there is an open audio track to append to. False before begin(),
+    // which the screen tier only reaches once the system has handed it a
+    // window -- so audio pushed in the meantime waits rather than being drained
+    // into nothing.
+    virtual bool acceptsAudio() const = 0;
+
     // Blocks until the encoder can accept another frame, or the timeout
-    // expires. The recorder never calls this — dropping late frames is the
-    // behaviour it wants — but a writer producing a file offline has no frames
+    // expires. The recorder never calls this -- dropping late frames is the
+    // behaviour it wants -- but a writer producing a file offline has no frames
     // to spare and waits here instead. Defaults to returning at once, for
     // backends that queue rather than drop.
     virtual void waitUntilReady(Time::MS) {}

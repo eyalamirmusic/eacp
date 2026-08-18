@@ -1,7 +1,10 @@
 #pragma once
 
-#include <eacp/Core/Core.h>
+#include "Audio.h"
+
 #include <eacp/Graphics/Primitives/Primitives.h>
+
+#include <optional>
 
 namespace eacp::Video
 {
@@ -16,6 +19,10 @@ struct SyntheticClipOptions
 
     // Average H.264 bitrate in bits per second. 0 lets the encoder choose.
     int bitrate = 0;
+
+    // Adds an audio track carrying a steady tone, for anything that needs a
+    // file with both media in it.
+    std::optional<AudioSpec> audio;
 
     bool operator==(const SyntheticClipOptions&) const = default;
 };
@@ -33,7 +40,8 @@ int syntheticFrameCount(const SyntheticClipOptions& options);
 //
 // Each frame is a flat field of syntheticFrameColor(index) with a pale bar
 // sweeping across the middle third, so the clip has real motion to decode while
-// the corners stay a known colour a test can assert on.
+// the corners stay a known colour a test can assert on. With options.audio set
+// it also carries a tone, written frame by frame alongside the picture.
 //
 // Runs the encoder to completion, which means pumping the event loop: call it
 // on the main thread. Returns false if the encoder could not be set up or the
