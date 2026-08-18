@@ -183,6 +183,12 @@ bool AppleEncoder::begin(const FilePath& path, const EncoderSpec& spec)
     audioInput = audioIn;
     audioFormat = std::move(format);
     audioSpec = spec.audio.value_or(AudioSpec {});
+
+    // The encoder outlives one recording -- a second start() reuses it -- and
+    // the new writer has a session of its own to open.
+    auto lock = std::lock_guard {sessionMutex};
+    sessionStarted = false;
+
     return true;
 }
 

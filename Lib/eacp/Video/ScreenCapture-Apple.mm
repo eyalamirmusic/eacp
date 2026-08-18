@@ -71,6 +71,15 @@ struct AppleScreenCapture final : ScreenCapture
     {
         if (@available(macOS 12.3, *))
         {
+            // Asked before anything is set up, because everything past this
+            // point reports failure asynchronously or not at all: without the
+            // grant, SCShareableContent simply hands back nothing.
+            if (!hasScreenCapturePermission())
+            {
+                LOG("VideoRecorder: no Screen Recording permission");
+                return false;
+            }
+
             encoder = static_cast<AppleEncoder*>(&encoderToUse);
 
             auto* nsView = (NSView*) view.getHandle();
@@ -249,6 +258,28 @@ struct AppleScreenCapture final : ScreenCapture
     int height = 0;
 };
 } // namespace
+
+bool hasScreenCapturePermission()
+{
+    return CGPreflightScreenCaptureAccess();
+}
+
+void requestScreenCapturePermission(std::function<void(bool)> onResult)
+{
+    // The request goes through the TCC daemon, so it is kept off the main
+    // thread and the answer marshalled back the way the camera's is.
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
+                   ^{
+                       auto granted = CGRequestScreenCaptureAccess() == TRUE;
+
+                       Threads::callAsync(
+                           [onResult, granted]
+                           {
+                               if (onResult)
+                                   onResult(granted);
+                           });
+                   });
+}
 
 OwningPointer<ScreenCapture> makeScreenCapture()
 {

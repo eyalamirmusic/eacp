@@ -1,5 +1,6 @@
 #include "ScreenCapture.h"
 
+#include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Logging.h>
 
 // The Screen tier on Windows will tap the compositor via Windows.Graphics.Capture
@@ -31,6 +32,24 @@ struct WindowsScreenCapture final : ScreenCapture
     }
 };
 } // namespace
+
+// Windows.Graphics.Capture needs no user consent to capture the app's own
+// window -- the picker exists for capturing somebody else's -- so there is
+// nothing to ask for and nothing that can refuse.
+bool hasScreenCapturePermission()
+{
+    return true;
+}
+
+void requestScreenCapturePermission(std::function<void(bool)> onResult)
+{
+    Threads::callAsync(
+        [onResult]
+        {
+            if (onResult)
+                onResult(true);
+        });
+}
 
 OwningPointer<ScreenCapture> makeScreenCapture()
 {
