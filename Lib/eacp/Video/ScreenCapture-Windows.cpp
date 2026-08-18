@@ -15,7 +15,7 @@ struct WindowsScreenCapture final : ScreenCapture
 {
     bool start(Graphics::View&,
                const FilePath&,
-               const VideoOptions&,
+               const RecordingOptions&,
                Encoder&) override
     {
         LOG("VideoRecorder: Screen capture (Windows.Graphics.Capture) not yet "

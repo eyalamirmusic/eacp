@@ -7,6 +7,7 @@ target_link_libraries(eacp-video PUBLIC eacp-core eacp-graphics)
 # queueing, playhead-to-frame selection and the playback clock are platform
 # agnostic by design, so only Decoder-* is per-OS.
 target_sources(eacp-video PRIVATE
+        AudioRing.cpp
         VideoRecorder.cpp
         SyntheticClip.cpp
         Decode/FrameImage.cpp

@@ -3,6 +3,7 @@
 #include "Encoder.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace eacp::Video
 {
@@ -48,6 +49,51 @@ void drawSweep(Graphics::Image& image, int index, int frameCount)
         for (auto x = barX; x < barX + barWidth; ++x)
             image.set(x, y, Graphics::Color::gray(0.85f));
 }
+// A steady tone rather than anything clever: the picture already identifies
+// itself frame by frame, so all the audio has to prove is that it is there,
+// the right length, and lined up with the video it was written beside.
+constexpr auto toneFrequency = 440.0;
+constexpr auto toneAmplitude = 0.25f;
+constexpr auto twoPi = 6.283185307179586;
+
+// The tone one video frame at a time, planar, continuing from `startFrame`.
+class ToneBlock
+{
+public:
+    ToneBlock(const AudioSpec& spec, int maxFrames)
+        : channelCount(spec.numChannels)
+        , sampleRate(spec.sampleRate)
+        , capacity(maxFrames)
+    {
+        samples.resize(channelCount * capacity);
+        channels.resize(channelCount);
+
+        for (auto channel = 0; channel < channelCount; ++channel)
+            channels[channel] = samples.data() + channel * capacity;
+    }
+
+    AudioBuffer fill(std::int64_t startFrame, int frames)
+    {
+        for (auto frame = 0; frame < frames; ++frame)
+        {
+            auto seconds = (double) (startFrame + frame) / sampleRate;
+            auto value =
+                toneAmplitude * (float) std::sin(twoPi * toneFrequency * seconds);
+
+            for (auto channel = 0; channel < channelCount; ++channel)
+                samples[channel * capacity + frame] = value;
+        }
+
+        return {channels.data(), channelCount, frames};
+    }
+
+private:
+    Vector<float> samples;
+    Vector<const float*> channels;
+    int channelCount = 0;
+    int sampleRate = 0;
+    int capacity = 0;
+};
 } // namespace
 
 Graphics::Color syntheticFrameColor(int index)
@@ -72,12 +118,35 @@ bool writeSyntheticClip(const FilePath& path, const SyntheticClipOptions& option
     // and keeps the encoder from inventing its own answer.
     auto bitrate = options.bitrate > 0 ? options.bitrate : width * height * fps / 10;
 
+    auto spec = EncoderSpec {};
+    spec.video.width = width;
+    spec.video.height = height;
+    spec.video.bitrate = bitrate;
+    spec.video.fps = fps;
+    spec.audio = options.audio;
+
     auto encoder = makeEncoder();
 
-    if (!encoder->begin(path, width, height, bitrate, fps))
+    if (!encoder->begin(path, spec))
         return false;
 
     auto image = Graphics::Image {width, height};
+
+    // Frame boundaries are resolved against the whole recording rather than a
+    // fixed block size, so a rate the frame rate does not divide evenly still
+    // produces exactly as much audio as picture.
+    auto audioFrameAt = [&](int frameIndex) -> std::int64_t
+    {
+        if (!options.audio)
+            return 0;
+
+        return (std::int64_t) frameIndex * options.audio->sampleRate / fps;
+    };
+
+    auto tone = std::optional<ToneBlock> {};
+
+    if (options.audio)
+        tone.emplace(*options.audio, (int) audioFrameAt(1) + 1);
 
     for (auto index = 0; index < frameCount; ++index)
     {
@@ -93,6 +162,15 @@ bool writeSyntheticClip(const FilePath& path, const SyntheticClipOptions& option
         // the encoder drop the ones it is too busy for.
         encoder->waitUntilReady(Time::MS {5000});
         encoder->appendImage(image, (double) index / fps);
+
+        if (tone)
+        {
+            auto startFrame = audioFrameAt(index);
+            auto frames = (int) (audioFrameAt(index + 1) - startFrame);
+
+            encoder->appendAudio(tone->fill(startFrame, frames),
+                                 (double) startFrame / options.audio->sampleRate);
+        }
     }
 
     // finish() finalises the file asynchronously and resolves on the main
@@ -114,7 +192,8 @@ FilePath cachedSyntheticClip(const SyntheticClipOptions& options)
     auto name = "eacp-synthetic-" + std::to_string(toEven(options.width)) + "x"
                 + std::to_string(toEven(options.height)) + "-"
                 + std::to_string(std::max(1, options.fps)) + "fps-"
-                + std::to_string(syntheticFrameCount(options)) + ".mp4";
+                + std::to_string(syntheticFrameCount(options))
+                + (options.audio ? "-audio" : "") + ".mp4";
 
     auto path = FilePath::cacheDirectory() / name;
 

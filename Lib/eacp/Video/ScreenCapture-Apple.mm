@@ -66,7 +66,7 @@ struct AppleScreenCapture final : ScreenCapture
 {
     bool start(Graphics::View& view,
                const FilePath& path,
-               const VideoOptions& options,
+               const RecordingOptions& options,
                Encoder& encoderToUse) override
     {
         if (@available(macOS 12.3, *))
@@ -84,14 +84,21 @@ struct AppleScreenCapture final : ScreenCapture
 
             auto fps = options.fps > 0 ? options.fps : 60;
             auto explicitBitrate = options.bitrate;
+            auto audioSpec = options.audio;
             auto outputPath = path;
+
+            // The recorder's timeline starts here, so the host-clock stamps
+            // ScreenCaptureKit hands back are rebased onto it -- which is what
+            // puts them on the same zero as the audio the app pushes.
+            timelineStart = CMClockGetTime(CMClockGetHostTimeClock());
 
             auto* sinkObject = [[EacpScreenSink alloc] init];
             auto* self = this;
             sinkObject->onFrame = [self](CVPixelBufferRef buffer, CMTime pts)
             {
                 if (self->active)
-                    self->encoder->append(buffer, pts);
+                    self->encoder->append(buffer,
+                                          CMTimeSubtract(pts, self->timelineStart));
             };
             sink = sinkObject;
 
@@ -132,13 +139,17 @@ struct AppleScreenCapture final : ScreenCapture
                     self->height = roundDownToEven(
                         (int) std::lround(target.frame.size.height * backingScale));
 
-                    auto bitrate = explicitBitrate > 0
-                                       ? explicitBitrate
-                                       : self->width * self->height * 8;
+                    auto encoderSpec = EncoderSpec {};
+                    encoderSpec.video.width = self->width;
+                    encoderSpec.video.height = self->height;
+                    encoderSpec.video.fps = fps;
+                    encoderSpec.video.bitrate =
+                        explicitBitrate > 0 ? explicitBitrate
+                                            : self->width * self->height * 8;
+                    encoderSpec.audio = audioSpec;
 
                     if (self->width <= 0 || self->height <= 0
-                        || !self->encoder->begin(
-                            outputPath, self->width, self->height, bitrate, fps))
+                        || !self->encoder->begin(outputPath, encoderSpec))
                     {
                         LOG("VideoRecorder: encoder setup failed");
                         return;
@@ -231,6 +242,7 @@ struct AppleScreenCapture final : ScreenCapture
     ObjC::Ptr<NSObject> stream;
     ObjC::Ptr<NSObject> sink;
     dispatch_queue_t sampleQueue = nullptr;
+    CMTime timelineStart = kCMTimeZero;
     AppleEncoder* encoder = nullptr;
     bool active = false;
     int width = 0;

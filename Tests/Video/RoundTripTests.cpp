@@ -1,6 +1,7 @@
 #include "Common.h"
 
 #include <eacp/Video/Decode/FrameImage.h>
+#include <eacp/Video/Demux/Mp4Demuxer.h>
 #include <eacp/Video/SyntheticClip.h>
 
 using namespace nano;
@@ -142,4 +143,34 @@ auto tMissingFile = test("Decoder/missingFileFailsToOpen") = []
     auto stream = Video::FrameStream {};
     check(!stream.open(FilePath::tempDirectory() / "eacp-no-such-clip.mp4"));
     check(!stream.isOpen());
+};
+
+// What the platform encoder wrote when it was asked for sound as well: a real
+// audio track, of the shape it was given and as long as the picture beside it.
+// The container is the only witness that does not need an audio decoder.
+auto tWritesAudioTrack = test("Encoder/writesAudioTrackBesideVideo") = []
+{
+    auto options = testClipOptions();
+    options.audio = Video::AudioSpec {};
+
+    auto path = Video::cachedSyntheticClip(options);
+    check(!path.empty());
+
+    auto demuxer = Video::Mp4Demuxer {};
+    check(demuxer.open(path));
+
+    auto& audio = demuxer.audioTrack();
+    check(audio.present);
+    check(audio.numChannels == options.audio->numChannels);
+    check(audio.sampleRate == options.audio->sampleRate);
+    check(std::abs(audio.seconds() - options.duration) < 0.1);
+};
+
+// The video-only clip the other tests use must stay video-only: a track that
+// appears when nothing asked for one would put silence in every recording.
+auto tWritesNoAudioTrackByDefault = test("Encoder/writesNoAudioTrackByDefault") = []
+{
+    auto demuxer = Video::Mp4Demuxer {};
+    check(demuxer.open(testClip()));
+    check(!demuxer.audioTrack().present);
 };
