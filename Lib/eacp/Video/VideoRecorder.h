@@ -16,16 +16,24 @@ namespace eacp::Video
 
 enum class CaptureMode
 {
-    // Off-screen compositing via View::renderToImage: captures any content
-    // (paint, layers, GPU, and -- through the async path -- WebView), works
-    // headless with no permission, but re-composites every frame on the CPU so
-    // it is not meant for real-time heavy-GPU capture.
+    // Off-screen compositing via View::renderToImage: paint, attached layers
+    // and GPU content, headless and with no permission, but it re-composites
+    // every frame on the CPU so it is not meant for real-time heavy-GPU
+    // capture.
+    //
+    // An embedded WebView comes out BLANK. The page is only readable
+    // asynchronously (View::renderToImageAsync, backed by the web runtime's own
+    // snapshot call), which a per-frame capture has nowhere to wait for -- so a
+    // view with web content in it wants the Screen tier.
     Snapshot,
 
     // Taps the system compositor for this view's host window (ScreenCaptureKit on
     // macOS, Windows.Graphics.Capture on Windows): the live composited window --
     // 2D, GPU and WebView together -- delivered GPU-side, in real time. Requires
     // the window to be on-screen, plus Screen Recording permission on macOS.
+    //
+    // What lands in the file is the whole window, title bar and all, since the
+    // compositor knows nothing about which view was asked for.
     Screen,
 
     // Renders a GPUView straight into an IOSurface-backed CVPixelBuffer (shared
@@ -34,6 +42,20 @@ enum class CaptureMode
     // has no native GPU content). For a GPUView; not for 2D/paint/WebView.
     GpuDirect,
 };
+
+// Whether this app may capture the screen, which the Screen tier needs and no
+// other tier does. macOS exposes one bit here and no way to tell "never asked"
+// from "refused"; Windows asks for no consent to capture the app's own window,
+// so it is always true there.
+bool hasScreenCapturePermission();
+
+// Puts the system prompt up, which macOS does once per app and never again --
+// after that only System Settings changes the answer. onResult lands on the
+// main thread carrying the state as it stands then, which after a first-time
+// grant is still false: macOS applies a new Screen Recording grant to the next
+// launch, not to the running process. So a false here means "have the user
+// grant it and relaunch" at least as often as it means no.
+void requestScreenCapturePermission(std::function<void(bool)> onResult);
 
 struct RecordingOptions
 {
@@ -76,8 +98,8 @@ public:
 
     // Begins recording `view` into `path`, overwriting any existing file.
     // Returns false if the writer could not be set up (unwritable path,
-    // non-positive view size, no available codec, or an audio spec the
-    // platform encoder will not take).
+    // non-positive view size, no available codec, an audio spec the platform
+    // encoder will not take, or the Screen tier without permission for it).
     bool start(Graphics::View& view,
                const FilePath& path,
                const RecordingOptions& options = {});

@@ -67,6 +67,11 @@ float blipSample(double seconds)
     return (float) (0.3 * envelope * std::sin(twoPi * 880.0 * sinceBlip));
 }
 
+bool wantsScreenTier()
+{
+    return getEnvValue("EACP_CAPTURE") == "screen";
+}
+
 FilePath outputPath()
 {
     auto dir = FilePath::downloadsDirectory();
@@ -195,6 +200,18 @@ struct App
         // and the file reads as if the sound were early.
         link.setMaxFps(60);
 
+        // Asked for up front, because the answer only reaches the next launch:
+        // the grant a first-time user gives here applies to the run after this
+        // one, so the recording below still fails and says why.
+        if (wantsScreenTier() && !Video::hasScreenCapturePermission())
+            Video::requestScreenCapturePermission(
+                [](bool granted)
+                {
+                    LOG(granted ? "screen recording permitted"
+                                : "screen recording not permitted -- grant it in "
+                                  "System Settings and relaunch");
+                });
+
         device.start();
     }
 
@@ -217,7 +234,7 @@ struct App
         path = outputPath().str();
 
         auto options = Video::RecordingOptions {};
-        auto screen = getEnvValue("EACP_CAPTURE") == "screen";
+        auto screen = wantsScreenTier();
         options.mode =
             screen ? Video::CaptureMode::Screen : Video::CaptureMode::Snapshot;
         options.audio = audio;
@@ -225,11 +242,15 @@ struct App
         started = recorder.start(host, path, options);
         startTime = now;
 
+        if (!started)
+        {
+            LOG("recording start FAILED -- see the reason above");
+            Apps::quit();
+            return;
+        }
+
         LOG(std::string(screen ? "screen" : "snapshot") + " capture + audio -> "
             + path);
-
-        if (!started)
-            LOG("recording start FAILED");
     }
 
     void stopRecording()
