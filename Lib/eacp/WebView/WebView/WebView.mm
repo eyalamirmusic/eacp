@@ -390,6 +390,25 @@ void webViewDelegateDidFailNavigation(
         });
 }
 
+// Without this selector WebKit tells nobody, and a WKWebView whose content
+// process was jetsammed (memory pressure, sleep/wake) stays an opaque dead
+// view until the app relaunches. Reload right here, inside the delegate
+// callback (WebKit calls it on the main thread): a reload issued from here
+// survives WebKit's post-crash reset, where a deferred one gets clobbered by
+// it. Then let the owner know. An HTML-string load leaves no back-forward
+// item to reload — there the owner callback is the recovery path.
+void webViewDelegateWebContentProcessDidTerminate(id self, SEL, WKWebView* webView)
+{
+    [webView reload];
+
+    eacp::Threads::callAsync(
+        [weak = getWebViewDelegateState(self)->nativeWeak]()
+        {
+            if (auto native = weak.lock())
+                native->owner.onContentProcessTerminated();
+        });
+}
+
 void webViewDelegateObserveValue(id self,
                                  SEL,
                                  NSString* keyPath,
@@ -576,6 +595,8 @@ Class getWebViewDelegateClass()
             webViewDelegateDidFailProvisionalNavigation);
         builder->addMethod(@selector(webView:didFailNavigation:withError:),
                            webViewDelegateDidFailNavigation);
+        builder->addMethod(@selector(webViewWebContentProcessDidTerminate:),
+                           webViewDelegateWebContentProcessDidTerminate);
         builder->addMethod(
             @selector(observeValueForKeyPath:ofObject:change:context:),
             webViewDelegateObserveValue);
