@@ -7,6 +7,7 @@
 
 namespace eacp::IPC
 {
+using AsyncValue = Threads::Async<Miro::Json::Value>;
 
 // The dialing side of RpcServer. Calls are safe to issue immediately after
 // construction: anything sent before the dial lands waits in an outbox
@@ -15,6 +16,8 @@ namespace eacp::IPC
 class RpcClient
 {
 public:
+
+
     explicit RpcClient(std::string_view name, Time::MS timeout = Time::MS {5000});
 
     RpcClient(const RpcClient&) = delete;
@@ -22,19 +25,15 @@ public:
     RpcClient(RpcClient&&) = delete;
     RpcClient& operator=(RpcClient&&) = delete;
 
-    [[nodiscard]] bool isConnected() const { return messenger.isConnected(); }
+    bool isConnected() const { return messenger.isConnected(); }
 
     // Invokes a command on the server, resolving with its JSON result on
     // the main thread. The typed overloads serialize the request and
     // deserialize the response through Miro, so a call site is just:
     //     rpc.call<DotTotal>("addDot", dot).then([](DotTotal t) { ... });
-    Threads::Async<Miro::Json::Value> call(const std::string& command,
-                                           const Miro::Json::Value& payload);
+    AsyncValue call(const std::string& command, const Miro::Json::Value& payload);
 
-    Threads::Async<Miro::Json::Value> call(const std::string& command)
-    {
-        return call(command, Miro::Json::Value {});
-    }
+    AsyncValue call(const std::string& command);
 
     template <typename Res, typename Req>
     Threads::Async<Res> call(const std::string& command, const Req& request)

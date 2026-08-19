@@ -123,4 +123,19 @@ void RpcServer::broadcast()
         client->send(text);
 }
 
+OwningPointer<RpcServer> createRPCServer(std::string_view name,
+                                      Miro::Bridge& bridgeToUse)
+{
+    try
+    {
+        return new RpcServer(name, bridgeToUse);
+    }
+    catch (std::exception& e)
+    {
+        LOG ("Can't create server ", e.what());
+    }
+
+    return nullptr;
+}
+
 } // namespace eacp::IPC
