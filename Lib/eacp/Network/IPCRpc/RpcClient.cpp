@@ -26,8 +26,8 @@ RpcClient::RpcClient(std::string_view name, Time::MS timeout)
     messenger.onMessage = [this](const std::string& body) { handle(body); };
 }
 
-Threads::Async<Miro::Json::Value> RpcClient::call(const std::string& command,
-                                                  const Miro::Json::Value& payload)
+AsyncValue RpcClient::call(const std::string& command,
+                           const Miro::Json::Value& payload)
 {
     auto id = ++callCounter;
     auto promise = Threads::AsyncPromise<Miro::Json::Value> {};
@@ -46,6 +46,11 @@ Threads::Async<Miro::Json::Value> RpcClient::call(const std::string& command,
         outbox.add(std::move(text));
 
     return promise.get();
+}
+
+AsyncValue RpcClient::call(const std::string& command)
+{
+    return call(command, Miro::Json::Value {});
 }
 
 void RpcClient::handle(const std::string& body)
@@ -115,8 +120,7 @@ void RpcClient::rejectPending(const std::string& reason)
     auto failed = std::move(pendingCalls);
     pendingCalls.clear();
 
-    for (auto& [id, promise]: failed)
-        promise.reject(reason);
+    for (auto& fail: failed)
+        fail.second.reject(reason);
 }
-
 } // namespace eacp::IPC

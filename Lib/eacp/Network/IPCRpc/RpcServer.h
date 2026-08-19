@@ -45,11 +45,14 @@ private:
     Rpc::CommandExecution commandExecution =
         Rpc::CommandExecution::MainThreadDeferred;
     Vector<Messenger*> clients;
-    EA::Listener emitListener;
+    Listener emitListener;
 
     // Last member on purpose: destroying the MessageServer first is what
     // retires the sessions - and with them every handler capturing this.
     MessageServer server;
 };
+
+OwningPointer<RpcServer> createRPCServer(std::string_view name,
+                                      Miro::Bridge& bridgeToUse);
 
 } // namespace eacp::IPC
