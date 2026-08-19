@@ -8,6 +8,7 @@ target_sources(eacp-svg PRIVATE
         SVGComponent.cpp
         SVGGeometry.cpp
         SVGGradient.cpp
+        SVGImage.cpp
         SVGParser.cpp
         SVGPathParser.cpp
         XMLParser.cpp)
