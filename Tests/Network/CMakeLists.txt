@@ -1,10 +1,12 @@
 set(network_test_sources
+        HttpAsyncTests.cpp
         HttpDownloadProgressTests.cpp
         HttpJsonTests.cpp
         HttpParallelDownloadTests.cpp
         HttpRequestTests.cpp
         HttpRpcTests.cpp
         HttpServerTests.cpp
+        HttpTimeoutTests.cpp
         TcpConnectionTests.cpp)
 
 # The lock and channel cross-process cases drive a real second process, which

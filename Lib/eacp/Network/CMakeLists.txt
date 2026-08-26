@@ -2,6 +2,7 @@ add_library(eacp-network STATIC)
 
 target_sources(eacp-network PRIVATE
         HTTP/Http.cpp
+        HTTP/HttpAsync.cpp
         HTTP/HttpProtocol.cpp
         HTTPServer/HttpServer.cpp
         HTTPServer/HttpServerDispatcher.cpp

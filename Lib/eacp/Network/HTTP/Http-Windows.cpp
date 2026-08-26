@@ -6,6 +6,8 @@
 
 #include <winhttp.h>
 
+#include <limits>
+
 // WinHTTP (classic Win32) rather than Windows.Web.Http (WinRT): no apartment
 // requirement, no cppwinrt include cost, and bodies travel as raw bytes both
 // ways — the WinRT backend routed them through UTF-8 *string* content, which
@@ -98,6 +100,44 @@ HINTERNET session()
     return handle;
 }
 
+// WinHTTP bounds each phase of a request separately - resolving,
+// connecting, sending, receiving - so four full-length phases, or a slow
+// drip of small reads, can outlive all of them. The read loops check this
+// too, which makes the limit cover the whole request the way the curl and
+// NSURLSession backends do.
+class RequestTimeout
+{
+public:
+    explicit RequestTimeout(const Request& req)
+        : limited(req.timeout.count > 0)
+        , deadline(req.timeout)
+    {
+    }
+
+    void throwIfExpired() const
+    {
+        if (limited && deadline.expired())
+            throw std::runtime_error("The request timed out");
+    }
+
+private:
+    bool limited = false;
+    Time::Deadline deadline;
+};
+
+void applyTimeouts(HINTERNET request, const Request& req)
+{
+    if (req.timeout.count <= 0)
+        return;
+
+    auto maxMilliseconds = std::numeric_limits<int>::max();
+    auto limit = req.timeout.count > maxMilliseconds
+                     ? maxMilliseconds
+                     : static_cast<int>(req.timeout.count);
+
+    WinHttpSetTimeouts(request, limit, limit, limit, limit);
+}
+
 struct CrackedUrl
 {
     std::wstring host;
@@ -169,6 +209,8 @@ OpenedRequest sendRequest(const Request& req)
 
     if (!opened.request)
         throwLastError("Opening the request");
+
+    applyTimeouts(opened.request.handle, req);
 
     // Responses arrive decompressed, matching NSURLSession and the previous
     // backend. Best-effort: unsupported systems just skip Accept-Encoding.
@@ -291,12 +333,14 @@ std::int64_t queryContentLength(HINTERNET request)
     }
 }
 
-std::string readBodyToString(HINTERNET request)
+std::string readBodyToString(HINTERNET request, const RequestTimeout& timeout)
 {
     auto body = std::string();
 
     while (true)
     {
+        timeout.throwIfExpired();
+
         auto available = DWORD {0};
         if (!WinHttpQueryDataAvailable(request, &available))
             throwLastError("Reading the response");
@@ -337,13 +381,16 @@ HANDLE openDestinationFileForWrite(const std::string& filePath)
 void streamBodyToFile(HINTERNET request,
                       HANDLE file,
                       const Request& req,
-                      const std::string& filePath)
+                      const std::string& filePath,
+                      const RequestTimeout& timeout)
 {
     auto buffer = std::string(64 * 1024, '\0');
     auto received = std::int64_t {0};
 
     while (true)
     {
+        timeout.throwIfExpired();
+
         if (req.progress && req.progress->cancel.load())
             throw std::runtime_error("Download cancelled");
 
@@ -374,17 +421,19 @@ void streamBodyToFile(HINTERNET request,
 
 Response httpRequestInternal(const Request& req)
 {
+    auto timeout = RequestTimeout(req);
     auto opened = sendRequest(req);
 
     auto response = Response();
     response.statusCode = queryStatusCode(opened.request.handle);
     copyResponseHeaders(opened.request.handle, response);
-    response.content = readBodyToString(opened.request.handle);
+    response.content = readBodyToString(opened.request.handle, timeout);
     return response;
 }
 
 Response downloadFileInternal(const Request& req, const std::string& filePath)
 {
+    auto timeout = RequestTimeout(req);
     auto opened = sendRequest(req);
 
     auto response = Response();
@@ -398,7 +447,7 @@ Response downloadFileInternal(const Request& req, const std::string& filePath)
 
     try
     {
-        streamBodyToFile(opened.request.handle, file, req, filePath);
+        streamBodyToFile(opened.request.handle, file, req, filePath, timeout);
     }
     catch (...)
     {
