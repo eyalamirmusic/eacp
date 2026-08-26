@@ -7,6 +7,9 @@ using namespace Graphics;
 // taskbar button (Windows). Add messages by hand, or let the timer bring them
 // in the way the app it is meant for would, and watch the badge follow.
 //
+// Threads::Timer takes a rate in Hz, not a period, so 1 is one message a
+// second.
+//
 // The badge is text, not a number, so what an app puts there is its own
 // decision: this one caps at 99+ the way a mail client does, and clears with
 // an empty string.
@@ -134,14 +137,14 @@ private:
         if (incoming)
             incoming.reset();
         else
-            incoming.emplace([this] { setUnread(unread + 1); }, 2);
+            incoming.emplace([this] { setUnread(unread + 1); }, 1);
 
         updateIncomingText();
     }
 
     void updateIncomingText()
     {
-        autoIncoming.setText(incoming ? "Stop the messages" : "One every 2 seconds");
+        autoIncoming.setText(incoming ? "Stop the messages" : "One a second");
     }
 
     Button addOne;
