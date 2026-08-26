@@ -41,6 +41,20 @@ struct WindowEvents
     // work that only a visible window needs. Never fires for a window that
     // closes normally; that one gets onQuit and is destroyed.
     std::function<void()> onHidden = [] {};
+
+    // Fires after the window has moved, with its new top-left in screen
+    // points — the same space WindowOptions::initialPosition and
+    // Window::getPosition are in. The pair of them is what lets an app put a
+    // window back where the user left it on the next launch.
+    //
+    // Every move, not only the user's: setPosition reports itself too. The
+    // one placement it does not fire for is the window's first, from
+    // initialPosition, which happens before there is a window to observe.
+    //
+    // Here rather than beside WindowOptions::onResize because, unlike a first
+    // size, nothing needs a position before the window exists: a handler set
+    // after construction has still missed nothing.
+    std::function<void(Point position)> onMoved = [](auto&&) {};
 };
 
 struct WindowOptions
@@ -259,6 +273,29 @@ public:
     // setVisible, so toggles need no shadow bool in app code. False while
     // hidden, minimized to nothing, or under headless; always true on iOS.
     bool isVisible();
+
+    // The window's top-left in screen points, measured from the primary
+    // display's top-left and growing right and down — the same space
+    // WindowOptions::initialPosition and Display report, so a position read
+    // here can be stored and handed straight back to a later launch.
+    //
+    // The frame's top-left, title bar included, which is what
+    // initialPosition places.
+    //
+    // A window has a frame whether or not it is on screen, so this answers
+    // under headless too — where the window is made and simply never ordered
+    // front. {0, 0} on iOS, which has no window to place.
+    Point getPosition() const;
+
+    // Moves the window's top-left to `position`, in the same space. Unlike
+    // initialPosition this does not contain the window within the display: an
+    // app moving a window on purpose is told where to put it, and a value
+    // restored from disk should go through initialPosition, which does clamp.
+    //
+    // Fires WindowEvents::onMoved, like a move by the user does — the window
+    // moved, and an app saving its position wants to hear about it however it
+    // happened. No-op on iOS.
+    void setPosition(Point position);
 
     // Minimizes to the Dock / taskbar (macOS miniaturize, Windows
     // SW_MINIMIZE). Lets borderless windows with web-rendered window

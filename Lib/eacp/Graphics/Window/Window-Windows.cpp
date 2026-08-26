@@ -669,6 +669,38 @@ struct Window::Native
     HICON applicationIcon = nullptr;
     HICON altTabIcon = nullptr;
     Callback quitCallback = [] {};
+    // Pixels off the HWND, points out: the whole public surface is in points
+    // (see Display), and initialPosition is multiplied by the same scale on
+    // the way in.
+    Point getPosition() const
+    {
+        if (host.hwnd == nullptr)
+            return {};
+
+        auto frame = RECT {};
+        GetWindowRect(host.hwnd, &frame);
+
+        auto scale = host.getDpiScale();
+        return {static_cast<float>(frame.left / scale),
+                static_cast<float>(frame.top / scale)};
+    }
+
+    void setPosition(Point position)
+    {
+        if (host.hwnd == nullptr)
+            return;
+
+        auto scale = host.getDpiScale();
+
+        SetWindowPos(host.hwnd,
+                     nullptr,
+                     static_cast<int>(position.x * scale),
+                     static_cast<int>(position.y * scale),
+                     0,
+                     0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
     ResizeCallback onResize;
     WillResizeCallback onWillResize;
     WindowEvents* events = nullptr;
@@ -734,6 +766,15 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
         case WM_ACTIVATE:
             if (self->events && self->events->onActivationChanged)
                 self->events->onActivationChanged(LOWORD(wParam) != WA_INACTIVE);
+            break;
+
+        case WM_MOVE:
+            // Not lParam, which carries the client area's origin: the frame's
+            // is what WindowOptions::initialPosition places and what
+            // getPosition answers, and on a titled window the two differ by
+            // the whole title bar.
+            if (self->events != nullptr)
+                self->events->onMoved(self->getPosition());
             break;
 
         case WM_CLOSE:
@@ -908,6 +949,16 @@ void Window::toggleMaximize()
 void Window::setMouseLocked(bool locked)
 {
     impl->host.setMouseLocked(locked);
+}
+
+Point Window::getPosition() const
+{
+    return impl->getPosition();
+}
+
+void Window::setPosition(Point position)
+{
+    impl->setPosition(position);
 }
 
 bool Window::isMouseLocked() const
