@@ -160,3 +160,98 @@ auto tGlobalHotKeyConstructsUnderHeadless =
     check(calls == 0);
     environment.headless = previousHeadless;
 };
+
+// Window position, in the screen points WindowOptions::initialPosition and
+// Display are already in: top-left origin, y growing down. The window is made
+// under headless too — it is only never ordered front — so its frame is real
+// and these read it rather than a stub.
+
+auto tMovedCallbackIsUserOwned = test("WindowEvents/movedCallbackIsUserOwned") = []
+{
+    auto events = WindowEvents {};
+    auto lastPosition = Point {};
+    auto calls = 0;
+
+    events.onMoved = [&](Point position)
+    {
+        lastPosition = position;
+        ++calls;
+    };
+
+    events.onMoved({40.f, 90.f});
+
+    check(calls == 1);
+    check(lastPosition.x == 40.f);
+    check(lastPosition.y == 90.f);
+};
+
+// Non-null by default, so a backend reporting a move never has to check.
+auto tMovedDefaultsToNoOp = test("WindowEvents/movedDefaultsToNoOp") = []
+{
+    auto events = WindowEvents {};
+
+    check(static_cast<bool>(events.onMoved));
+    events.onMoved({0.f, 0.f});
+};
+
+auto tInitialPositionIsReadBack = test("Window/initialPositionIsReadBack") = []
+{
+    auto options = WindowOptions {};
+    options.initialPosition = Point {120.f, 90.f};
+
+    auto window = Window {options};
+    auto position = window.getPosition();
+
+    check(position.x == 120.f);
+    check(position.y == 90.f);
+};
+
+auto tSetPositionMovesTheWindow = test("Window/setPositionMovesTheWindow") = []
+{
+    auto window = Window {};
+
+    window.setPosition({210.f, 160.f});
+
+    auto position = window.getPosition();
+
+    check(position.x == 210.f);
+    check(position.y == 160.f);
+};
+
+// The round trip is the whole point: what getPosition reports has to be a
+// value setPosition and initialPosition accept, or a window cannot be put
+// back where the user left it.
+auto tPositionRoundTrips = test("Window/positionRoundTrips") = []
+{
+    auto first = Window {};
+    first.setPosition({260.f, 200.f});
+
+    auto options = WindowOptions {};
+    options.initialPosition = first.getPosition();
+
+    auto second = Window {options};
+
+    check(second.getPosition().x == first.getPosition().x);
+    check(second.getPosition().y == first.getPosition().y);
+};
+
+// A programmatic move is still a move: an app that saves its window position
+// from onMoved would otherwise miss every placement it made itself.
+auto tSetPositionFiresOnMoved = test("Window/setPositionFiresOnMoved") = []
+{
+    auto window = Window {};
+    auto calls = 0;
+    auto reported = Point {};
+
+    window.events.onMoved = [&](Point position)
+    {
+        ++calls;
+        reported = position;
+    };
+
+    window.setPosition({300.f, 220.f});
+
+    check(calls == 1);
+    check(reported.x == 300.f);
+    check(reported.y == 220.f);
+};

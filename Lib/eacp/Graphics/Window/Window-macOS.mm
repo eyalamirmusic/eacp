@@ -145,6 +145,21 @@ Class getKeyableBorderlessWindowClass()
     return instance->get();
 }
 
+// AppKit measures screen points from the bottom-left of the primary screen
+// with y growing up; eacp measures them from its top-left with y growing down
+// (see Display, and WindowOptions::initialPosition). Both directions of the
+// conversion are the same flip about the primary screen's top edge.
+double primaryScreenTop()
+{
+    NSScreen* primary = NSScreen.screens.firstObject;
+    return primary != nil ? NSMaxY(primary.frame) : 0.0;
+}
+
+Point toScreenPoint(NSRect frame)
+{
+    return {(float) frame.origin.x, (float) (primaryScreenTop() - NSMaxY(frame))};
+}
+
 // Runtime classes get no automatic C++ ivar construction, so the delegate's
 // C++ state lives behind one raw pointer, created with the delegate and
 // deleted in its dealloc.
@@ -222,6 +237,16 @@ void windowDidResize(id self, SEL, NSNotification* notification)
     state->onResize((int) content.size.width, (int) content.size.height);
 }
 
+void windowDidMove(id self, SEL, NSNotification* notification)
+{
+    auto* state = getDelegateState(self);
+
+    if (state->events == nullptr)
+        return;
+
+    state->events->onMoved(toScreenPoint([(NSWindow*) notification.object frame]));
+}
+
 void notifyKeyState(id self, bool isKey)
 {
     auto* state = getDelegateState(self);
@@ -264,6 +289,7 @@ Class getWindowDelegateClass()
         builder->addMethod(@selector(windowWillResize:toSize:),
                            windowWillResize);
         builder->addMethod(@selector(windowDidResize:), windowDidResize);
+        builder->addMethod(@selector(windowDidMove:), windowDidMove);
         builder->addMethod(@selector(windowDidBecomeKey:), windowDidBecomeKey);
         builder->addMethod(@selector(windowDidResignKey:), windowDidResignKey);
         builder->addMethod(@selector(dealloc), deallocDelegate);
@@ -432,14 +458,11 @@ struct Window::Native
 
         if (options.initialPosition)
         {
-            // initialPosition is top-left from the primary display's top-left
-            // (Electron convention); AppKit's origin is the bottom-left of
-            // the primary screen, so flip y against its height.
-            NSScreen* primary = NSScreen.screens.firstObject;
-            auto screenTop = primary != nil ? NSMaxY(primary.frame) : 0.0;
+            // initialPosition is top-left from the primary display's
+            // top-left; see primaryScreenTop for the flip.
             [getWindow()
                 setFrameTopLeftPoint:NSMakePoint(options.initialPosition->x,
-                                                 screenTop
+                                                 primaryScreenTop()
                                                      - options.initialPosition
                                                            ->y)];
         }
@@ -684,6 +707,11 @@ struct Window::Native
 
     NSWindow* getWindow() { return handle.get(); }
 
+    // Objective-C has no const-qualified message send, so a const method
+    // reading geometry off the window has to drop the qualifier the C++ side
+    // put on the pointer. -frame mutates nothing.
+    NSWindow* getWindow() const { return const_cast<NSWindow*>(handle.get()); }
+
     void setMouseLocked(bool locked)
     {
         if (mouseLockIntent == locked)
@@ -844,6 +872,18 @@ Window::~Window() = default;
 void Window::setMouseLocked(bool locked)
 {
     impl->setMouseLocked(locked);
+}
+
+Point Window::getPosition() const
+{
+    return toScreenPoint([impl->getWindow() frame]);
+}
+
+void Window::setPosition(Point position)
+{
+    [impl->getWindow()
+        setFrameTopLeftPoint:NSMakePoint(position.x,
+                                         primaryScreenTop() - position.y)];
 }
 
 bool Window::isMouseLocked() const

@@ -13,6 +13,10 @@ if (NOT IOS)
     # and has neither on iOS.
     add_subdirectory(AppBadge)
 
+    # Window::getPosition / setPosition / WindowEvents::onMoved. iOS has one
+    # window and it fills the screen, so there is nothing to place.
+    add_subdirectory(WindowPosition)
+
     # Menu items greying themselves out from live state, with the bar installed
     # once. iOS has no menu bar, so this is desktop-only.
     add_subdirectory(MenuBarApp)

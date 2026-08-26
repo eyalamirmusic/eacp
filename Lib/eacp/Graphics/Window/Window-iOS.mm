@@ -109,6 +109,18 @@ bool Window::isVisible()
     return true;
 }
 
+Point Window::getPosition() const
+{
+    // iOS apps are single-window and fill the screen; there is no position to
+    // report.
+    return {};
+}
+
+void Window::setPosition(Point)
+{
+    // iOS apps are single-window; there's nowhere to move to.
+}
+
 void Window::minimize()
 {
     // iOS apps are single-window; there's nothing to minimize.
