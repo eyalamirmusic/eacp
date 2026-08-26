@@ -23,8 +23,6 @@
 #include <WebView2.h>
 #include <WebView2EnvironmentOptions.h>
 
-
-
 namespace eacp::Graphics
 {
 
@@ -287,8 +285,8 @@ struct WebView::Native
         // Remove the render visual from the View's composition tree.
         if (webViewVisual)
         {
-            if (auto* container = static_cast<IDCompositionVisual2*>(
-                    owner.getNativeLayer()))
+            if (auto* container =
+                    static_cast<IDCompositionVisual2*>(owner.getNativeLayer()))
                 container->RemoveVisual(webViewVisual.Get());
 
             webViewVisual.Reset();
@@ -478,8 +476,7 @@ struct WebView::Native
                     applyBackground();
 
                     // Render into our composition visual.
-                    compositionController->put_RootVisualTarget(
-                        webViewVisual.Get());
+                    compositionController->put_RootVisualTarget(webViewVisual.Get());
 
                     applySettings();
                     setupEventHandlers();
@@ -868,7 +865,21 @@ struct WebView::Native
             settings->put_AreDefaultContextMenusEnabled(
                 options.defaultContextMenu ? TRUE : FALSE);
             settings->put_IsStatusBarEnabled(options.statusBar ? TRUE : FALSE);
+            applyUserAgent(settings);
         }
+    }
+
+    // ICoreWebView2Settings2 is where the UA lives; an older runtime simply
+    // does not have it, and the view keeps the platform's own string.
+    void applyUserAgent(const ComPtr<ICoreWebView2Settings>& settings)
+    {
+        if (options.userAgent.empty())
+            return;
+
+        ComPtr<ICoreWebView2Settings2> settings2;
+
+        if (SUCCEEDED(settings.As(&settings2)) && settings2)
+            settings2->put_UserAgent(Strings::widen(options.userAgent).c_str());
     }
 
     void applyBackground()
@@ -1146,9 +1157,13 @@ struct WebView::Native
 
         if (!owner.onNewWindowRequested(std::move(popup), url))
         {
-            // Embedder declined and let the popup be destroyed, so onReady will
-            // never fire. Hand the request back to WebView2's default handling.
-            args->put_Handled(FALSE);
+            // Embedder declined and let the popup be destroyed, so onReady
+            // will never fire. Hand the request back to WebView2's default
+            // handling — which opens its own popup window — unless the view
+            // asked for declined requests to be dropped instead
+            // (Options::loadDeclinedPopupsInline). Marking it handled with no
+            // new window set is what drops it.
+            args->put_Handled(options.loadDeclinedPopupsInline ? FALSE : TRUE);
             deferral->Complete();
         }
 
@@ -1424,8 +1439,8 @@ struct WebView::Native
                         // something else already owns the window's drop slot.
                         ComPtr<IDropTarget> dropTarget;
                         dropTarget.Attach(new FileDragTarget());
-                        auto registered =
-                            SUCCEEDED(RegisterDragDrop(ownerWindow, dropTarget.Get()));
+                        auto registered = SUCCEEDED(
+                            RegisterDragDrop(ownerWindow, dropTarget.Get()));
 
                         DWORD effect = DROPEFFECT_NONE;
                         SHDoDragDrop(ownerWindow,

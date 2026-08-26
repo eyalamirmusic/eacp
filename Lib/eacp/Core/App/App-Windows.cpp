@@ -16,6 +16,190 @@ namespace eacp::Apps
 // button, so there is nothing to toggle.
 void setDockIconVisible(bool) {}
 
+namespace
+{
+// The overlay belongs to a window rather than to the process, so the badge
+// needs one: the first visible, unowned top-level window this process has.
+HWND findMainWindow()
+{
+    struct Search
+    {
+        DWORD processId = GetCurrentProcessId();
+        HWND found = nullptr;
+    };
+
+    auto search = Search {};
+
+    EnumWindows(
+        [](HWND window, LPARAM param) -> BOOL
+        {
+            auto& state = *reinterpret_cast<Search*>(param);
+
+            auto owner = DWORD {};
+            GetWindowThreadProcessId(window, &owner);
+
+            if (owner != state.processId || !IsWindowVisible(window)
+                || GetWindow(window, GW_OWNER) != nullptr)
+                return TRUE;
+
+            state.found = window;
+            return FALSE;
+        },
+        reinterpret_cast<LPARAM>(&search));
+
+    return search.found;
+}
+
+// The taskbar takes an icon, not a string, so the text is drawn into one at
+// the system's small-icon size. GDI's text output leaves the alpha channel
+// alone, which on a 32-bit DIB means "transparent" — so the disc is filled
+// into the pixels directly and every pixel inside it is forced opaque again
+// once DrawText has run, rather than trusting the alpha GDI left behind.
+HICON createBadgeIcon(const std::string& text)
+{
+    const auto size = GetSystemMetrics(SM_CXSMICON);
+    const auto radius = (float) size * 0.5f;
+
+    auto isInsideDisc = [radius](int x, int y)
+    {
+        const auto dx = (float) x + 0.5f - radius;
+        const auto dy = (float) y + 0.5f - radius;
+        return dx * dx + dy * dy <= radius * radius;
+    };
+
+    auto info = BITMAPINFO {};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = size;
+    info.bmiHeader.biHeight = -size;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+
+    void* bits = nullptr;
+    auto color = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+
+    if (color == nullptr)
+        return nullptr;
+
+    auto* pixels = static_cast<std::uint32_t*>(bits);
+
+    for (auto y = 0; y < size; ++y)
+        for (auto x = 0; x < size; ++x)
+            pixels[y * size + x] = isInsideDisc(x, y) ? 0xffed3b3bu : 0u;
+
+    auto screen = GetDC(nullptr);
+    auto dc = CreateCompatibleDC(screen);
+    ReleaseDC(nullptr, screen);
+
+    auto previousBitmap = SelectObject(dc, color);
+
+    auto font = CreateFontW(-(size * 3) / 5,
+                            0,
+                            0,
+                            0,
+                            FW_BOLD,
+                            FALSE,
+                            FALSE,
+                            FALSE,
+                            DEFAULT_CHARSET,
+                            OUT_DEFAULT_PRECIS,
+                            CLIP_DEFAULT_PRECIS,
+                            ANTIALIASED_QUALITY,
+                            DEFAULT_PITCH | FF_DONTCARE,
+                            L"Segoe UI");
+
+    auto previousFont = SelectObject(dc, font);
+
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, RGB(255, 255, 255));
+
+    auto wide = Strings::widen(text);
+    auto textBounds = RECT {0, 0, size, size};
+
+    DrawTextW(dc,
+              wide.c_str(),
+              (int) wide.size(),
+              &textBounds,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
+
+    GdiFlush();
+
+    for (auto y = 0; y < size; ++y)
+        for (auto x = 0; x < size; ++x)
+        {
+            auto& pixel = pixels[y * size + x];
+            pixel = isInsideDisc(x, y) ? pixel | 0xff000000u : 0u;
+        }
+
+    SelectObject(dc, previousFont);
+    DeleteObject(font);
+    SelectObject(dc, previousBitmap);
+    DeleteDC(dc);
+
+    // 1-bit scanlines are WORD aligned. The mask goes unused for a 32-bit
+    // icon whose alpha carries the shape, but CreateIconIndirect still wants
+    // one, and one full of whatever CreateBitmap left behind is not it.
+    auto maskBits = Vector<std::uint8_t>(((size + 15) / 16) * 2 * size);
+    auto mask = CreateBitmap(size, size, 1, 1, maskBits.data());
+
+    auto iconInfo = ICONINFO {};
+    iconInfo.fIcon = TRUE;
+    iconInfo.hbmColor = color;
+    iconInfo.hbmMask = mask;
+
+    auto icon = CreateIconIndirect(&iconInfo);
+
+    DeleteObject(mask);
+    DeleteObject(color);
+
+    return icon;
+}
+} // namespace
+
+void setAppBadge(const std::string& text)
+{
+    auto window = findMainWindow();
+
+    if (window == nullptr)
+        return;
+
+    const auto coInit =
+        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const bool shouldUninitialize = SUCCEEDED(coInit);
+
+    // COM objects must release before CoUninitialize, so the taskbar list
+    // lives in this scope — the same shape the file pickers above use.
+    {
+        auto taskbar = winrt::com_ptr<ITaskbarList3> {};
+
+        if (SUCCEEDED(CoCreateInstance(CLSID_TaskbarList,
+                                       nullptr,
+                                       CLSCTX_INPROC_SERVER,
+                                       IID_PPV_ARGS(taskbar.put())))
+            && SUCCEEDED(taskbar->HrInit()))
+        {
+            if (text.empty())
+            {
+                taskbar->SetOverlayIcon(window, nullptr, nullptr);
+            }
+            else
+            {
+                auto icon = createBadgeIcon(text);
+                auto description = Strings::widen(text);
+
+                taskbar->SetOverlayIcon(window, icon, description.c_str());
+
+                // The shell keeps its own copy, so this one goes straight back.
+                if (icon != nullptr)
+                    DestroyIcon(icon);
+            }
+        }
+    }
+
+    if (shouldUninitialize)
+        CoUninitialize();
+}
+
 // No OS-level power-off announcement to watch for, so a quit request is
 // never the system's (see App.h).
 bool isSystemPoweringOff()

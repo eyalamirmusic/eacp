@@ -12,3 +12,6 @@ add_subdirectory(WebViewCamera)
 add_subdirectory(EmbeddedPopups)
 add_subdirectory(WebViewDragOut)
 add_subdirectory(WebViewToggle)
+
+# Options::userAgent and Options::loadDeclinedPopupsInline, tested by one page.
+add_subdirectory(UserAgent)
