@@ -37,7 +37,7 @@ const std::string pageHtml = R"HTML(<!doctype html><html><head><style>
   requestAnimationFrame(frame);
   setTimeout(function () {
     window.webkit.messageHandlers.ready.postMessage('ready');
-  }, 150);
+  }, 50);
 </script></body></html>)HTML";
 
 struct Fixture
@@ -57,7 +57,7 @@ struct Fixture
         check(Threads::runEventLoopUntil([this] { return ready; },
                                          firstNavigationTimeout));
         // Give the rAF loop a few ticks to paint (when it is running at all).
-        Threads::runEventLoopFor(eacp::Time::MS {200});
+        Threads::runEventLoopFor(eacp::Time::MS {100});
     }
 
     static WebView::Options makeOptions(bool driveOffscreen)

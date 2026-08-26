@@ -622,7 +622,10 @@ auto tSlowClientNotDroppedByRecvTimeout =
                     {
                         auto client = connectRaw(port);
                         client.send("GET /slow HTTP/1.1\r\nHost: 127.0.0.1\r\n");
-                        eacp::Time::sleepMS(600);
+                        // Comfortably past the 250ms SO_RCVTIMEO the server
+                        // arms on an idle connection, which is what must not
+                        // drop the client.
+                        eacp::Time::sleepMS(400);
                         client.send("Connection: close\r\n\r\n");
 
                         while (true)

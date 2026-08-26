@@ -67,13 +67,18 @@ struct Fixture
     // while the hosting window is key, so the editable-target test needs the
     // window focused for real. Not achievable in every environment (headless
     // CI can't activate), hence a bool rather than a check.
+    //
+    // The wait is short because activation is effectively binary: an active
+    // app gets a key window within a turn or two of the loop, and an app that
+    // cannot activate at all never will, however long it is given. Where it
+    // cannot, this wait is the whole cost of the test.
     bool makeWindowKey()
     {
         window.toFront();
 
         auto* nsWindow = (NSWindow*) window.getHandle();
         auto isKey = Threads::runEventLoopUntil(
-            [nsWindow] { return nsWindow.keyWindow; }, eacp::Time::MS {2000});
+            [nsWindow] { return nsWindow.keyWindow; }, eacp::Time::MS {150});
 
         if (isKey)
             webView.focusContent();

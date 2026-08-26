@@ -39,14 +39,24 @@ ServerOptions threadPoolOptions()
     return options;
 }
 
-Response sleepThenRespond(MS duration)
+Response okResponse()
 {
-    eacp::Time::sleep(duration);
-
     auto res = Response();
     res.statusCode = 200;
     res.content = "ok";
     return res;
+}
+
+Response sleepThenRespond(MS duration)
+{
+    eacp::Time::sleep(duration);
+    return okResponse();
+}
+
+Response stallThenRespond(StallGate& gate)
+{
+    gate.wait();
+    return okResponse();
 }
 
 Response runOnWorkerThread(Server& server, const std::function<Response()>& perform)
@@ -86,8 +96,9 @@ auto tDefaultIsNoLimit = test("HttpTimeout/defaultsToNoLimit") = []
 auto tSlowResponseTimesOut = test("HttpTimeout/slowResponseFailsBeforeTheReply") = []
 {
     auto server = Server(threadPoolOptions());
+    auto stalled = StallGate();
 
-    auto handler = [](const Request&) { return sleepThenRespond(MS {1500}); };
+    auto handler = [&](const Request&) { return stallThenRespond(stalled); };
     check(server.listen(0, handler));
 
     auto req = Request(baseUrl(server.boundPort()) + "/slow");
@@ -100,6 +111,7 @@ auto tSlowResponseTimesOut = test("HttpTimeout/slowResponseFailsBeforeTheReply")
         auto beforeTheServerReplies = eacp::Time::Deadline {MS {1000}};
         auto res = eacp::HTTP::httpRequest(req);
         gaveUpEarly = !beforeTheServerReplies.expired();
+        stalled.release();
         return res;
     };
 
@@ -133,8 +145,9 @@ auto tGenerousTimeoutCompletes =
 auto tDownloadTimesOut = test("HttpTimeout/downloadFailsWhenTheServerStalls") = []
 {
     auto server = Server(threadPoolOptions());
+    auto stalled = StallGate();
 
-    auto handler = [](const Request&) { return sleepThenRespond(MS {1500}); };
+    auto handler = [&](const Request&) { return stallThenRespond(stalled); };
     check(server.listen(0, handler));
 
     auto progress = DownloadProgress();
@@ -151,6 +164,7 @@ auto tDownloadTimesOut = test("HttpTimeout/downloadFailsWhenTheServerStalls") = 
         auto beforeTheServerReplies = eacp::Time::Deadline {MS {1000}};
         auto res = req.downloadTo(destination);
         gaveUpEarly = !beforeTheServerReplies.expired();
+        stalled.release();
         return res;
     };
 
