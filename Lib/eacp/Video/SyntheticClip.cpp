@@ -2,8 +2,12 @@
 
 #include "Encoder.h"
 
+#include <eacp/Core/Utils/StdPath.h>
+
 #include <algorithm>
 #include <cmath>
+#include <random>
+#include <system_error>
 
 namespace eacp::Video
 {
@@ -94,6 +98,14 @@ private:
     int sampleRate = 0;
     int capacity = 0;
 };
+
+// A suffix no concurrent writer will pick, so two processes building the same
+// cached clip never share a temporary.
+std::string uniqueSuffix()
+{
+    auto device = std::random_device {};
+    return std::to_string(device()) + "-" + std::to_string(device());
+}
 } // namespace
 
 Graphics::Color syntheticFrameColor(int index)
@@ -189,17 +201,47 @@ bool writeSyntheticClip(const FilePath& path, const SyntheticClipOptions& option
 
 FilePath cachedSyntheticClip(const SyntheticClipOptions& options)
 {
-    auto name = "eacp-synthetic-" + std::to_string(toEven(options.width)) + "x"
+    auto stem = "eacp-synthetic-" + std::to_string(toEven(options.width)) + "x"
                 + std::to_string(toEven(options.height)) + "-"
                 + std::to_string(std::max(1, options.fps)) + "fps-"
                 + std::to_string(syntheticFrameCount(options))
-                + (options.audio ? "-audio" : "") + ".mp4";
+                + (options.audio ? "-audio" : "");
 
-    auto path = FilePath::cacheDirectory() / name;
+    auto path = FilePath::cacheDirectory() / (stem + ".mp4");
 
     if (File {path}.exists())
         return path;
 
-    return writeSyntheticClip(path, options) ? path : FilePath {};
+    // Encode to a private sibling and publish it with a rename, which the
+    // filesystem does atomically. The cache directory is shared and every test
+    // case runs in its own process, so encoding straight to `path` would let a
+    // concurrent reader open a half-written file: exists() goes true the moment
+    // the encoder creates it, long before finish() finalises the sample tables.
+    // Same reasoning as Files::writeFileAtomically, which cannot be reused here
+    // because the encoder writes the file itself rather than handing over bytes.
+    //
+    // The temporary keeps the .mp4 extension: the sink writer picks its
+    // container from it, and refuses to open a path ending in anything else.
+    auto temp = FilePath::cacheDirectory()
+                / (stem + "." + uniqueSuffix() + ".partial.mp4");
+    auto ec = std::error_code {};
+
+    if (!writeSyntheticClip(temp, options))
+    {
+        std::filesystem::remove(toStdPath(temp), ec);
+        return {};
+    }
+
+    std::filesystem::rename(toStdPath(temp), toStdPath(path), ec);
+
+    if (ec)
+    {
+        // Another process published first — its file is complete, so keep that
+        // one and drop ours. On Windows the rename also fails while a reader
+        // holds the destination open, which means the same thing.
+        std::filesystem::remove(toStdPath(temp), ec);
+    }
+
+    return File {path}.exists() ? path : FilePath {};
 }
 } // namespace eacp::Video
