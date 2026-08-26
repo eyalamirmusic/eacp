@@ -6,6 +6,7 @@
 #include "App.h"
 #include "../ObjC/CFRef.h"
 #include "../ObjC/ObjC.h"
+#include "../ObjC/Strings.h"
 
 #include <cstring>
 #include <mach-o/dyld.h>
@@ -78,6 +79,11 @@ void setDockIconVisible(bool visible)
 {
     [NSApp setActivationPolicy:visible ? NSApplicationActivationPolicyRegular
                                        : NSApplicationActivationPolicyAccessory];
+}
+
+void setAppBadge(const std::string& text)
+{
+    NSApp.dockTile.badgeLabel = text.empty() ? nil : Strings::toNSString(text);
 }
 
 namespace
