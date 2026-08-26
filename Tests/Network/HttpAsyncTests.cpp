@@ -48,7 +48,13 @@ Response respondWith(const std::string& content)
     return res;
 }
 
-// A handler that sleeps has to run off the event loop, which is the same
+Response stallThenRespond(StallGate& gate, const std::string& content)
+{
+    gate.wait();
+    return respondWith(content);
+}
+
+// A handler that blocks has to run off the event loop, which is the same
 // loop the reply has to travel back through.
 ServerOptions threadPoolOptions()
 {
@@ -119,12 +125,9 @@ auto tDelivers = test("HttpAsync/deliversOnTheMessageThreadExactlyOnce") = []
 auto tReturnsBeforeTheReply = test("HttpAsync/returnsBeforeTheServerReplies") = []
 {
     auto server = Server(threadPoolOptions());
+    auto stalled = StallGate();
 
-    auto handler = [](const Request&)
-    {
-        eacp::Time::sleep(MS {400});
-        return respondWith("slow");
-    };
+    auto handler = [&](const Request&) { return stallThenRespond(stalled, "slow"); };
     check(server.listen(0, handler));
 
     auto calls = 0;
@@ -135,6 +138,8 @@ auto tReturnsBeforeTheReply = test("HttpAsync/returnsBeforeTheServerReplies") = 
 
     check(!beforeTheReply.expired());
     check(calls == 0);
+
+    stalled.release();
 
     auto arrived = [&] { return calls > 0; };
     check(pumpUntil(arrived));
@@ -166,12 +171,9 @@ auto tFailureArrives = test("HttpAsync/failureArrivesInTheResponse") = []
 auto tHonoursTimeout = test("HttpAsync/honoursTheRequestTimeout") = []
 {
     auto server = Server(threadPoolOptions());
+    auto stalled = StallGate();
 
-    auto handler = [](const Request&)
-    {
-        eacp::Time::sleep(MS {1500});
-        return respondWith("late");
-    };
+    auto handler = [&](const Request&) { return stallThenRespond(stalled, "late"); };
     check(server.listen(0, handler));
 
     auto req = Request(baseUrl(server.boundPort()) + "/slow");
@@ -195,18 +197,16 @@ auto tHonoursTimeout = test("HttpAsync/honoursTheRequestTimeout") = []
     check(!beforeTheServerReplies.expired());
     check(!received.error.empty());
 
+    stalled.release();
     server.stop();
 };
 
 auto tCancelAllStops = test("HttpAsync/cancelAllStopsTheCallback") = []
 {
     auto server = Server(threadPoolOptions());
+    auto stalled = StallGate();
 
-    auto handler = [](const Request&)
-    {
-        eacp::Time::sleep(MS {400});
-        return respondWith("late");
-    };
+    auto handler = [&](const Request&) { return stallThenRespond(stalled, "late"); };
     check(server.listen(0, handler));
 
     auto calls = 0;
@@ -215,7 +215,10 @@ auto tCancelAllStops = test("HttpAsync/cancelAllStopsTheCallback") = []
     asyncRequest(Request(baseUrl(server.boundPort()) + "/slow"), onResponse);
     cancelAllAsyncRequests();
 
-    pumpFor(MS {1200});
+    // Let the reply the cancel raced actually land: the callback still must
+    // not fire.
+    stalled.release();
+    pumpFor(MS {250});
 
     check(calls == 0);
 

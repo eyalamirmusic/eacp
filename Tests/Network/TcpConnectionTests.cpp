@@ -528,13 +528,15 @@ auto tIdleReceiveTimesOut =
     test("Tcp/receiveTimesOutWithTimeoutErrorWhenPeerIsIdle") = []
 {
     auto listener = Listener::bind(0, testTimeouts());
+    auto stalled = StallGate();
 
-    // Server holds the connection open but sends nothing.
+    // Server holds the connection open but sends nothing, until the client has
+    // had its timeout.
     auto server = std::thread(
         [&]
         {
             auto peer = listener.accept();
-            eacp::Time::sleepMS(500);
+            stalled.wait();
         });
 
     // Short io timeout so the idle read trips quickly.
@@ -551,6 +553,7 @@ auto tIdleReceiveTimesOut =
         timedOut = true;
     }
 
+    stalled.release();
     server.join();
     check(timedOut);
 };
@@ -623,12 +626,14 @@ auto tDoubleClose = test("Tcp/doubleCloseIsHarmless") = []
 auto tUnreachableHost = test("Tcp/connectToAnUnreachableHostFails") = []
 {
     // 192.0.2.0/24 is reserved (RFC 5737) and routes nowhere, so this either
-    // times out or is rejected - both surface as Error within the budget.
+    // times out or is rejected - both surface as Error within the budget. The
+    // budget is what the test costs when the address blackholes rather than
+    // rejects, so it is only as long as it takes to prove the connect gave up.
     auto threw = false;
     try
     {
         auto client = Connection::connect(
-            {"192.0.2.1", 80}, {eacp::Time::MS {800}, eacp::Time::MS {800}});
+            {"192.0.2.1", 80}, {eacp::Time::MS {200}, eacp::Time::MS {200}});
     }
     catch (const Error&)
     {

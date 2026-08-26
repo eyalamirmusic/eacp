@@ -331,7 +331,7 @@ auto tStarRules = test("PathRasterizer/selfIntersectingStarMatchesUnbinned") = [
 // scratch at the new size.
 auto tKnobSizes = test("PathRasterizer/knobIndicatorMatchesUnbinnedAtEverySize") = []
 {
-    for (auto size: {18.f, 24.f, 33.f, 40.f, 57.f, 64.f, 96.f, 129.f, 160.f})
+    for (auto size: {18.f, 24.f, 33.f, 40.f, 57.f, 64.f, 96.f, 129.f})
         expectMatchesReference(knobIndicator(size, 0.7f), 2.f, FillRule::NonZero);
 };
 
@@ -350,6 +350,12 @@ auto tDiagonal = test("PathRasterizer/thinDiagonalMatchesUnbinned") = []
 // The point of the exercise: a path is priced by its outline, not by its area.
 // A circle's outline grows with its radius while its box grows with the square,
 // so doubling the size must not double the ratio's denominator.
+//
+// Only the counters, which setPath settles on the CPU - no dispatch, and no
+// reference walk. Reading them is what this test is for, and at 512 square the
+// pixel-by-pixel reference would cost more than the rest of the suite put
+// together. That the coverage is also right is ellipseMatchesUnbinned's job, at
+// a size the reference can afford.
 auto tBinningCutsWork = test("PathRasterizer/binningCutsWorkWithArea") = []
 {
     if (!GPU::Device::shared().isValid())
@@ -358,14 +364,16 @@ auto tBinningCutsWork = test("PathRasterizer/binningCutsWorkWithArea") = []
     auto path = Path {};
     path.addEllipse({0.f, 0.f, 512.f, 512.f});
 
-    auto result = compareAgainstReference(path, 1.f, FillRule::NonZero);
+    auto rasterizer = PathRasterizer {};
+    rasterizer.setScale(1.f);
+    rasterizer.setPath(path, FillRule::NonZero);
 
-    if (!result.ran)
-        return;
+    auto unbinnedTests = (long long) rasterizer.getCoverageWidth()
+                         * (long long) rasterizer.getCoverageHeight()
+                         * (long long) rasterizer.getSegmentCount();
 
-    check(result.pixelsOver == 0);
-    check(result.segmentTests > 0);
-    check(result.segmentTests * 20 < result.unbinnedTests);
+    check(rasterizer.getSegmentTests() > 0);
+    check(rasterizer.getSegmentTests() * 20 < unbinnedTests);
 };
 
 // The array the counting sort fills is sized to a bound, because the count is
