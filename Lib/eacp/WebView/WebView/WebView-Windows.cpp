@@ -1157,14 +1157,11 @@ struct WebView::Native
 
         if (!owner.onNewWindowRequested(std::move(popup), url))
         {
-            // Embedder declined and let the popup be destroyed, so onReady
-            // will never fire. Hand the request back to WebView2's default
-            // handling — which opens its own popup window — unless the view
-            // asked for declined requests to be dropped instead
-            // (Options::loadDeclinedPopupsInline). Marking it handled with no
-            // new window set is what drops it.
-            args->put_Handled(options.loadDeclinedPopupsInline ? FALSE : TRUE);
+            args->put_Handled(TRUE);
             deferral->Complete();
+
+            if (options.loadDeclinedPopupsInline)
+                owner.loadURL(url);
         }
 
         return S_OK;

@@ -153,12 +153,12 @@ public:
         // target="_blank" / window.open request.
         //
         // True, the default, keeps the behaviour an app with nowhere else to
-        // put the navigation wants: macOS loads the URL here, and Windows lets
-        // WebView2 open its own popup window, so the click reaches the user
-        // either way. False drops the request entirely and leaves this page
-        // where it is — for an embedder that has already dealt with the URL
-        // itself (handed it to the system browser, opened its own tab), and
-        // for which replacing the page under the user is the one wrong answer.
+        // put the navigation wants: the URL loads here, replacing this
+        // document, so the click still reaches the user. False drops the
+        // request entirely and leaves this page where it is — for an embedder
+        // that has already dealt with the URL itself (handed it to the system
+        // browser, opened its own tab), and for which replacing the page under
+        // the user is the one wrong answer.
         bool loadDeclinedPopupsInline = true;
 
         // macOS/iOS: back this WebView with a non-persistent (in-memory)
