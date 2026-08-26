@@ -5,6 +5,11 @@ namespace eacp::Apps
 // No Dock/activation-policy concept here.
 void setDockIconVisible(bool) {}
 
+// Badges are the desktop environment's business here (Unity launcher entries,
+// per-DE D-Bus protocols) rather than the window system's, and eacp has no
+// backend for any of them.
+void setAppBadge(const std::string&) {}
+
 // No OS-level power-off announcement to watch for, so a quit request is
 // never the system's (see App.h).
 bool isSystemPoweringOff()

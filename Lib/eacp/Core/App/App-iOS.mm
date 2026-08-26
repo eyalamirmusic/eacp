@@ -8,6 +8,11 @@ namespace eacp::Apps
 // iOS has no Dock / activation policy.
 void setDockIconVisible(bool) {}
 
+// The iOS analogue is the home-screen icon badge, which is part of the
+// notification system and needs the user's permission before it will show
+// anything. Nothing to do here until eacp has notifications.
+void setAppBadge(const std::string&) {}
+
 // No OS-level power-off announcement to watch for, so a quit request is
 // never the system's (see App.h).
 bool isSystemPoweringOff()

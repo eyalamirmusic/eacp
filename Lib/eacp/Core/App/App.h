@@ -59,6 +59,22 @@ void openExternalURL(const std::string& url);
 // runtime. No-op on Windows, Linux and iOS.
 void setDockIconVisible(bool visible);
 
+// The badge drawn on the app's Dock tile (macOS) or over its taskbar button
+// (Windows) — an unread count, a short status. An empty string clears it.
+//
+// macOS draws the text itself, in the system's badge shape. Windows has no
+// text badge at all: the taskbar takes a small overlay *icon*, so the string
+// is rendered into one at the system's small-icon size, which realistically
+// fits two or three characters ("9", "12", "99+"). Keep it short either way —
+// a badge that has to be read is not a badge.
+//
+// Safe to call before any window exists on macOS. On Windows the overlay
+// belongs to a window, so it is applied to the process's first top-level
+// window and is a no-op until one is up; call it again once it is.
+//
+// No-op on Linux and iOS.
+void setAppBadge(const std::string& text);
+
 // macOS: called when the user reactivates the app (Dock icon click) while
 // it has no visible windows — applicationShouldHandleReopen:. A window
 // hidden via WindowOptions::hidesOnClose uses this to come back:

@@ -9,6 +9,10 @@ if (NOT IOS)
     add_subdirectory(IpcDemo)
     add_subdirectory(TrayApp)
 
+    # Apps::setAppBadge, which needs a Dock tile or a taskbar button to draw on
+    # and has neither on iOS.
+    add_subdirectory(AppBadge)
+
     # Menu items greying themselves out from live state, with the bar installed
     # once. iOS has no menu bar, so this is desktop-only.
     add_subdirectory(MenuBarApp)
