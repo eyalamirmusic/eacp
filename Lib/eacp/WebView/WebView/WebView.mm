@@ -216,6 +216,12 @@ struct WebView::Native
             setWebViewUnderPageBackground(webView.get(), NSColor.clearColor);
 #endif
         }
+
+        if (! options.userAgent.empty())
+            webView.get().customUserAgent = Strings::toNSString(options.userAgent);
+
+        loadDeclinedPopupsInline = options.loadDeclinedPopupsInline;
+
         detail::setFileDragStartedCallback(
             webView.get(),
             [this] { owner.onFileDragStarted(); });
@@ -315,6 +321,7 @@ struct WebView::Native
     KeyIdentity lastUnhandledUp;
     double zoomLevel = 1.0;
     bool observingTitle = false;
+    bool loadDeclinedPopupsInline = true;
 };
 
 struct WebViewNativeAccess
@@ -433,8 +440,11 @@ WKWebView* webViewDelegateCreateWebView(id self,
         return popupWKWebView;
 
     // Embedder declined. Load the URL inline so target="_blank"-style
-    // navigations still reach the user.
-    if (navigationAction.targetFrame == nil)
+    // navigations still reach the user — unless the view asked for the
+    // request to be dropped instead (Options::loadDeclinedPopupsInline),
+    // because the embedder routed the URL somewhere else and this page must
+    // stay where it is.
+    if (native->loadDeclinedPopupsInline && navigationAction.targetFrame == nil)
         [webView loadRequest:navigationAction.request];
 
     return nil;

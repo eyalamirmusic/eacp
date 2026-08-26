@@ -35,12 +35,16 @@ endif ()
 #                           into the composited image, awaited with waitFor
 #   OffscreenAnimationTests Options::driveOffscreenAnimation keeping an rAF loop
 #                           advancing off-screen, compared as captured pixels
+#   UserAgentTests          Options::userAgent read back from the page, and
+#                           Options::loadDeclinedPopupsInline deciding whether a
+#                           declined window.open replaces the host document
 if (TARGET eacp-webview-test-main)
     list(APPEND webview_test_sources
             CommandDispatchTests.cpp
             OffscreenAnimationTests.cpp
             RenderToImageAsyncTests.cpp
             StreamingPumpTests.cpp
+            UserAgentTests.cpp
             WebViewAffordanceTests.cpp
             WebViewCallTests.cpp
             WindowControlTests.cpp
