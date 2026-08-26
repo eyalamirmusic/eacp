@@ -81,6 +81,13 @@ void applyCommonOptions(CURL* curl, const Request& req, CurlSlist& headers)
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
 
+    if (req.timeout.count > 0)
+    {
+        auto limit = (long) req.timeout.count;
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, limit);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, limit);
+    }
+
     if (req.type == "HEAD")
         curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
 

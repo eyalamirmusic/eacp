@@ -101,6 +101,21 @@ Class getDownloadDelegateClass()
 
     return instance->get();
 }
+
+double toSeconds(Time::MS timeout)
+{
+    return (double) timeout.count / 1000.0;
+}
+
+void applyTimeout(NSURLSessionConfiguration* config, const Request& req)
+{
+    if (req.timeout.count <= 0)
+        return;
+
+    auto seconds = toSeconds(req.timeout);
+    config.timeoutIntervalForRequest = seconds;
+    config.timeoutIntervalForResource = seconds;
+}
 } // namespace
 
 NSMutableURLRequest* getRequest(const Request& req)
@@ -133,6 +148,9 @@ NSMutableURLRequest* getRequest(const Request& req)
     if (!req.body.empty())
         request.HTTPBody = Strings::toNSData(req.body);
 
+    if (req.timeout.count > 0)
+        request.timeoutInterval = toSeconds(req.timeout);
+
     return request;
 }
 
@@ -147,6 +165,44 @@ NSURLSession* getSharedSession()
 {
     return [NSURLSession sharedSession];
 }
+
+// A timed request needs its own session: timeoutIntervalForResource - the
+// only setting that bounds the whole transfer rather than the gaps between
+// packets - lives on the configuration, and the shared session's is
+// process-wide. Invalidated once the task has finished, so it is not leaked.
+class SessionForRequest
+{
+public:
+    explicit SessionForRequest(const Request& req)
+    {
+        if (req.timeout.count <= 0)
+        {
+            session = getSharedSession();
+            return;
+        }
+
+        auto config = [NSURLSessionConfiguration defaultSessionConfiguration];
+        applyTimeout(config, req);
+
+        session = [NSURLSession sessionWithConfiguration:config];
+        owned = true;
+    }
+
+    ~SessionForRequest()
+    {
+        if (owned)
+            [session finishTasksAndInvalidate];
+    }
+
+    SessionForRequest(const SessionForRequest&) = delete;
+    SessionForRequest& operator=(const SessionForRequest&) = delete;
+
+    NSURLSession* get() const { return session; }
+
+private:
+    NSURLSession* session = nil;
+    bool owned = false;
+};
 
 void copyResponseHeaders(NSHTTPURLResponse* httpResponse, Response& response)
 {
@@ -163,7 +219,7 @@ void copyResponseHeaders(NSHTTPURLResponse* httpResponse, Response& response)
     }
 }
 
-SafeResult performSyncRequest(NSURLRequest* request)
+SafeResult performSyncRequest(NSURLRequest* request, NSURLSession* session)
 {
     auto result = SafeResult();
 
@@ -179,7 +235,7 @@ SafeResult performSyncRequest(NSURLRequest* request)
         semaphore.signal();
     };
 
-    [[getSharedSession()
+    [[session
         dataTaskWithRequest:request
           completionHandler:^(NSData* data, NSURLResponse* res, NSError* error) {
             cppHandler(data, res, error);
@@ -193,7 +249,8 @@ SafeResult performSyncRequest(NSURLRequest* request)
 Response httpRequestInternal(const Request& req)
 {
     auto request = getRequest(req);
-    auto raw = performSyncRequest(request);
+    auto session = SessionForRequest(req);
+    auto raw = performSyncRequest(request, session.get());
 
     if (raw.error)
         throw std::runtime_error(Strings::toStdString(raw.error.get()));
@@ -247,6 +304,8 @@ Response downloadFileInternal(const Request& req,
     ObjC::getIvar<void*>(delegate.get(), "ctx") = &ctx;
 
     auto config = [NSURLSessionConfiguration defaultSessionConfiguration];
+    applyTimeout(config, req);
+
     auto session = ObjC::attachPtr([NSURLSession
         sessionWithConfiguration:config
                         delegate:(id<NSURLSessionDelegate>) delegate.get()

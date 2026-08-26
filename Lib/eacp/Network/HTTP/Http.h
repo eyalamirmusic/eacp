@@ -70,6 +70,12 @@ struct Request
     std::string type = "GET";
     std::string body;
     std::map<std::string, std::string> headers;
+
+    // Wall-clock limit for the whole request. Zero, the default, leaves each
+    // backend's own behaviour in place. A parallel download applies it to
+    // every chunk separately.
+    Time::MS timeout {0};
+
     Vector<FormField> formFields;
     Vector<FileField> fileFields;
 
