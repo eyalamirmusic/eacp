@@ -6,7 +6,12 @@
 
 #include <winhttp.h>
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <limits>
+#include <mutex>
+#include <thread>
 
 // WinHTTP (classic Win32) rather than Windows.Web.Http (WinRT): no apartment
 // requirement, no cppwinrt include cost, and bodies travel as raw bytes both
@@ -138,6 +143,87 @@ void applyTimeouts(HINTERNET request, const Request& req)
     WinHttpSetTimeouts(request, limit, limit, limit, limit);
 }
 
+// Those timeouts are recorded but never interrupt a call already in flight:
+// against a server that accepts the connection and then goes quiet,
+// WinHttpSendRequest stays blocked until the reply finally arrives, and the
+// limit is only reported afterwards - far too late to be the wall-clock bound
+// the curl and NSURLSession backends give. Closing the request handle is the
+// one thing that does cut a blocked call short, so the handle lives here with
+// a thread that closes it at the deadline; the call then fails with
+// ERROR_WINHTTP_OPERATION_CANCELLED and unwinds as a timeout.
+class TimedRequestHandle
+{
+public:
+    ~TimedRequestHandle()
+    {
+        stopWatchdog();
+        closeOnce();
+    }
+
+    // Takes ownership of the handle and starts the clock. Called before the
+    // first blocking call, so the whole exchange sits inside the window.
+    void adopt(HINTERNET requestToOwn, Time::MS timeout)
+    {
+        handle = requestToOwn;
+
+        if (timeout.count > 0)
+            watchdog = std::thread([this, timeout] { watch(timeout); });
+    }
+
+    HINTERNET get() const { return handle; }
+
+    void throwIfTimedOut() const
+    {
+        if (expired.load())
+            throw std::runtime_error("The request timed out");
+    }
+
+private:
+    void watch(Time::MS timeout)
+    {
+        auto lock = std::unique_lock(mutex);
+        auto due = std::chrono::steady_clock::now()
+                   + std::chrono::milliseconds(timeout.count);
+
+        if (settled.wait_until(lock, due, [this] { return finished; }))
+            return;
+
+        lock.unlock();
+
+        expired.store(true);
+        closeOnce();
+    }
+
+    void stopWatchdog()
+    {
+        {
+            auto lock = std::scoped_lock(mutex);
+            finished = true;
+        }
+
+        settled.notify_all();
+
+        if (watchdog.joinable())
+            watchdog.join();
+    }
+
+    // Whichever of the watchdog and the destructor gets here first does the
+    // close, so a cancelled handle is never closed twice.
+    void closeOnce()
+    {
+        if (handle && !closed.exchange(true))
+            WinHttpCloseHandle(handle);
+    }
+
+    HINTERNET handle = nullptr;
+    std::thread watchdog;
+    std::mutex mutex;
+    std::condition_variable settled;
+    std::atomic<bool> expired {false};
+    std::atomic<bool> closed {false};
+    bool finished = false;
+};
+
 struct CrackedUrl
 {
     std::wstring host;
@@ -175,13 +261,15 @@ CrackedUrl crackUrl(const std::string& url)
     return cracked;
 }
 
+// The request is declared last so it is destroyed first: the watchdog gets
+// joined and the request closed before the connection it hangs off.
 struct OpenedRequest
 {
     Handle connection;
-    Handle request;
+    TimedRequestHandle request;
 };
 
-OpenedRequest sendRequest(const Request& req)
+void sendRequest(const Request& req, OpenedRequest& opened)
 {
     if (req.url.empty())
         throw std::invalid_argument("URL cannot be empty");
@@ -191,31 +279,30 @@ OpenedRequest sendRequest(const Request& req)
 
     auto cracked = crackUrl(req.url);
 
-    auto opened = OpenedRequest {};
     opened.connection =
         Handle(WinHttpConnect(session(), cracked.host.c_str(), cracked.port, 0));
 
     if (!opened.connection)
         throwLastError("Connecting");
 
-    opened.request =
-        Handle(WinHttpOpenRequest(opened.connection.handle,
-                                  Strings::widen(req.type).c_str(),
-                                  cracked.pathWithQuery.c_str(),
-                                  nullptr,
-                                  WINHTTP_NO_REFERER,
-                                  WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                  cracked.secure ? WINHTTP_FLAG_SECURE : 0));
+    auto* request = WinHttpOpenRequest(opened.connection.handle,
+                                       Strings::widen(req.type).c_str(),
+                                       cracked.pathWithQuery.c_str(),
+                                       nullptr,
+                                       WINHTTP_NO_REFERER,
+                                       WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                       cracked.secure ? WINHTTP_FLAG_SECURE : 0);
 
-    if (!opened.request)
+    if (!request)
         throwLastError("Opening the request");
 
-    applyTimeouts(opened.request.handle, req);
+    applyTimeouts(request, req);
+    opened.request.adopt(request, req.timeout);
 
     // Responses arrive decompressed, matching NSURLSession and the previous
     // backend. Best-effort: unsupported systems just skip Accept-Encoding.
     auto decompression = DWORD {WINHTTP_DECOMPRESSION_FLAG_ALL};
-    WinHttpSetOption(opened.request.handle,
+    WinHttpSetOption(opened.request.get(),
                      WINHTTP_OPTION_DECOMPRESSION,
                      &decompression,
                      sizeof(decompression));
@@ -232,7 +319,7 @@ OpenedRequest sendRequest(const Request& req)
     auto headerBlock = Strings::widen(headerLines);
 
     if (!headerBlock.empty())
-        WinHttpAddRequestHeaders(opened.request.handle,
+        WinHttpAddRequestHeaders(opened.request.get(),
                                  headerBlock.c_str(),
                                  static_cast<DWORD>(headerBlock.size()),
                                  WINHTTP_ADDREQ_FLAG_ADD);
@@ -241,19 +328,23 @@ OpenedRequest sendRequest(const Request& req)
     auto* bodyData = req.body.empty() ? WINHTTP_NO_REQUEST_DATA
                                       : const_cast<char*>(req.body.data());
 
-    if (!WinHttpSendRequest(opened.request.handle,
+    if (!WinHttpSendRequest(opened.request.get(),
                             WINHTTP_NO_ADDITIONAL_HEADERS,
                             0,
                             bodyData,
                             bodySize,
                             bodySize,
                             0))
+    {
+        opened.request.throwIfTimedOut();
         throwLastError("Sending the request");
+    }
 
-    if (!WinHttpReceiveResponse(opened.request.handle, nullptr))
+    if (!WinHttpReceiveResponse(opened.request.get(), nullptr))
+    {
+        opened.request.throwIfTimedOut();
         throwLastError("Receiving the response");
-
-    return opened;
+    }
 }
 
 int queryStatusCode(HINTERNET request)
@@ -333,7 +424,8 @@ std::int64_t queryContentLength(HINTERNET request)
     }
 }
 
-std::string readBodyToString(HINTERNET request, const RequestTimeout& timeout)
+std::string readBodyToString(const TimedRequestHandle& request,
+                             const RequestTimeout& timeout)
 {
     auto body = std::string();
 
@@ -342,8 +434,11 @@ std::string readBodyToString(HINTERNET request, const RequestTimeout& timeout)
         timeout.throwIfExpired();
 
         auto available = DWORD {0};
-        if (!WinHttpQueryDataAvailable(request, &available))
+        if (!WinHttpQueryDataAvailable(request.get(), &available))
+        {
+            request.throwIfTimedOut();
             throwLastError("Reading the response");
+        }
 
         if (available == 0)
             return body;
@@ -352,8 +447,11 @@ std::string readBodyToString(HINTERNET request, const RequestTimeout& timeout)
         body.resize(offset + available);
 
         auto read = DWORD {0};
-        if (!WinHttpReadData(request, body.data() + offset, available, &read))
+        if (!WinHttpReadData(request.get(), body.data() + offset, available, &read))
+        {
+            request.throwIfTimedOut();
             throwLastError("Reading the response");
+        }
 
         body.resize(offset + read);
 
@@ -378,7 +476,7 @@ HANDLE openDestinationFileForWrite(const std::string& filePath)
     return handle;
 }
 
-void streamBodyToFile(HINTERNET request,
+void streamBodyToFile(const TimedRequestHandle& request,
                       HANDLE file,
                       const Request& req,
                       const std::string& filePath,
@@ -395,16 +493,22 @@ void streamBodyToFile(HINTERNET request,
             throw std::runtime_error("Download cancelled");
 
         auto available = DWORD {0};
-        if (!WinHttpQueryDataAvailable(request, &available))
+        if (!WinHttpQueryDataAvailable(request.get(), &available))
+        {
+            request.throwIfTimedOut();
             throwLastError("Reading the response");
+        }
 
         if (available == 0)
             return;
 
         auto toRead = std::min(available, static_cast<DWORD>(buffer.size()));
         auto read = DWORD {0};
-        if (!WinHttpReadData(request, buffer.data(), toRead, &read))
+        if (!WinHttpReadData(request.get(), buffer.data(), toRead, &read))
+        {
+            request.throwIfTimedOut();
             throwLastError("Reading the response");
+        }
 
         if (read == 0)
             return;
@@ -422,32 +526,36 @@ void streamBodyToFile(HINTERNET request,
 Response httpRequestInternal(const Request& req)
 {
     auto timeout = RequestTimeout(req);
-    auto opened = sendRequest(req);
+
+    auto opened = OpenedRequest {};
+    sendRequest(req, opened);
 
     auto response = Response();
-    response.statusCode = queryStatusCode(opened.request.handle);
-    copyResponseHeaders(opened.request.handle, response);
-    response.content = readBodyToString(opened.request.handle, timeout);
+    response.statusCode = queryStatusCode(opened.request.get());
+    copyResponseHeaders(opened.request.get(), response);
+    response.content = readBodyToString(opened.request, timeout);
     return response;
 }
 
 Response downloadFileInternal(const Request& req, const std::string& filePath)
 {
     auto timeout = RequestTimeout(req);
-    auto opened = sendRequest(req);
+
+    auto opened = OpenedRequest {};
+    sendRequest(req, opened);
 
     auto response = Response();
-    response.statusCode = queryStatusCode(opened.request.handle);
-    copyResponseHeaders(opened.request.handle, response);
+    response.statusCode = queryStatusCode(opened.request.get());
+    copyResponseHeaders(opened.request.get(), response);
 
     if (req.progress)
-        req.progress->totalBytes.store(queryContentLength(opened.request.handle));
+        req.progress->totalBytes.store(queryContentLength(opened.request.get()));
 
     auto file = openDestinationFileForWrite(filePath);
 
     try
     {
-        streamBodyToFile(opened.request.handle, file, req, filePath, timeout);
+        streamBodyToFile(opened.request, file, req, filePath, timeout);
     }
     catch (...)
     {
