@@ -37,8 +37,8 @@ WaitForCompositorClockFn loadCompositorClock(HMODULE dcomp)
     if (dcomp == nullptr)
         return nullptr;
 
-    return reinterpret_cast<WaitForCompositorClockFn>(
-        GetProcAddress(dcomp, "DCompositionWaitForCompositorClock"));
+    return procAddress<WaitForCompositorClockFn>(
+        dcomp, "DCompositionWaitForCompositorClock");
 }
 } // namespace
 

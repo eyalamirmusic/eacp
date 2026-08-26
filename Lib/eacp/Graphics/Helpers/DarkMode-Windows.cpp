@@ -36,10 +36,10 @@ struct UxThemeDarkMode
         if (!module)
             return;
 
-        setPreferredAppMode = reinterpret_cast<SetPreferredAppModeFn>(
-            GetProcAddress(module, MAKEINTRESOURCEA(135)));
-        flushMenuThemes = reinterpret_cast<FlushMenuThemesFn>(
-            GetProcAddress(module, MAKEINTRESOURCEA(136)));
+        setPreferredAppMode =
+            procAddress<SetPreferredAppModeFn>(module, MAKEINTRESOURCEA(135));
+        flushMenuThemes =
+            procAddress<FlushMenuThemesFn>(module, MAKEINTRESOURCEA(136));
     }
 
     HMODULE module = nullptr;

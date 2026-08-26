@@ -4,8 +4,8 @@
 #include <eacp/Graphics/Primitives/Font.h>
 #include <eacp/Graphics/Primitives/TextMetrics.h>
 
-#include <algorithm>
-#include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <vector>
 
 // The shared font registry (Graphics/Primitives/FontRegistry-Windows.cpp) —
@@ -28,22 +28,10 @@ namespace
 {
 std::vector<unsigned char> readFile(const wchar_t* path)
 {
-    auto* file = _wfopen(path, L"rb");
+    auto stream = std::ifstream(path, std::ios::binary);
 
-    if (file == nullptr)
-        return {};
-
-    std::fseek(file, 0, SEEK_END);
-    const auto size = std::ftell(file);
-    std::fseek(file, 0, SEEK_SET);
-
-    auto bytes = std::vector<unsigned char>((std::size_t) std::max(0L, size));
-    const auto read = std::fread(bytes.data(), 1, bytes.size(), file);
-    std::fclose(file);
-
-    bytes.resize(read);
-
-    return bytes;
+    return {std::istreambuf_iterator<char> {stream},
+            std::istreambuf_iterator<char> {}};
 }
 } // namespace
 
