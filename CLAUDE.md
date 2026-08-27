@@ -9,7 +9,18 @@ the current conversation.
 
 ## Project Overview
 
-eacp is a macOS + Windows-focused GUI/graphics framework written in modern C++20 with Objective-C++ interop. It provides abstractions for application lifecycle, graphics rendering (Core Graphics), threading (CFRunLoop), and networking. The framework is self-contained with no third-party dependencies beyond macOS system frameworks.
+eacp is a cross-platform GUI/graphics framework written in modern C++20 with Objective-C++ interop. It provides abstractions for application lifecycle, graphics rendering, threading, GPU, and networking.
+
+Platform coverage splits on whether a module draws. `Core`, `Network` and `SIMD`
+build everywhere, Linux included; the graphics stack (`Graphics`, `GPU`, `Text`,
+`Sprites`, `UI`, `SVG`, `WebView`, `Camera`, `Video`) is gated behind
+`(APPLE OR WIN32) AND EACP_BUILD_GRAPHICS` in `Lib/eacp/CMakeLists.txt`, with
+`Video`/`VideoView` additionally off on iOS. See the table in `README.md`. CI
+builds and tests macOS, Windows (x64 and ARM64, MSVC and clang-cl) and Linux
+(GCC and Clang), and builds iOS for the simulator.
+
+Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`
+and `ResEmbed` — plus libcurl on Linux, which backs the HTTP client there.
 
 ## Build Commands
 
@@ -31,10 +42,12 @@ Output executables:
 
 ### Build Options
 
-- `EACP_UNITY_BUILD` (default `ON`): compiles eacp libraries as CMake unity
-  builds for faster full-project compilation. Claude must always configure with
-  `-DEACP_UNITY_BUILD=OFF` so per-file compile commands land in
-  `compile_commands.json` and LSP tooling returns accurate results.
+- `EACP_UNITY_BUILD` (default `OFF`): compiles eacp libraries as CMake unity
+  builds for faster full-project compilation. It is off by default precisely
+  because a unity build collapses the per-file entries in
+  `compile_commands.json` that LSP tooling reads; Claude must keep it off, and
+  pass `-DEACP_UNITY_BUILD=OFF` explicitly so a cached `ON` in an existing build
+  directory does not survive a reconfigure.
 
 ```bash
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
@@ -147,7 +160,9 @@ matching `APPLE`/`IOS`/`WIN32` branch.
 
 ### Framework Dependencies
 
-Foundation, Cocoa, CoreVideo, CoreGraphics, CoreText (all macOS system frameworks)
+macOS: Foundation, Cocoa, CoreVideo, CoreGraphics, CoreText, Metal.
+Windows: Direct2D, DirectWrite, D3D11/D3D12, DXGI, DirectComposition, WinHTTP.
+Linux: pthreads and libcurl.
 
 ## Code Style
 
