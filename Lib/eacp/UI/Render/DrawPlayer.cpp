@@ -54,17 +54,22 @@ GradientFill DrawPlayer::offsetBy(const GradientFill& gradient, Point origin)
     return result;
 }
 
+void DrawPlayer::drainInOrder()
+{
+    meshes.flush();
+    shapes.flush();
+    images.flush();
+    text.flush(pass);
+    text.begin();
+}
+
 void DrawPlayer::applyClip(bool changeScissor, bool changeMask)
 {
     // Every queue has to be drawn under the clip it was issued in, so the meshes
     // and the glyphs go out alongside the quads. setScissorRect flushes the
     // shape queue itself; the text renderer has to be told, and then restarted
     // for the glyphs that follow.
-    meshes.flush();
-    shapes.flush();
-    images.flush();
-    text.flush(pass);
-    text.begin();
+    drainInOrder();
 
     if (changeScissor)
     {
@@ -325,6 +330,11 @@ void DrawPlayer::play(const DrawList& list, Point origin, const Rect& clipToUse)
                                            recorded.mask.uv};
                 break;
             }
+
+            case DrawCommand::Kind::Fence:
+                drainInOrder();
+                ++clipChanges;
+                break;
         }
     }
 }

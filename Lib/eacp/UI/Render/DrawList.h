@@ -153,7 +153,11 @@ struct DrawCommand
         Mesh,
         Layer,
         Images,
-        Clip
+        Clip,
+
+        // Everything after it draws over everything before it, text included.
+        // See Graphics::paintOver.
+        Fence
     };
 
     Kind kind = Kind::Shapes;
@@ -195,6 +199,7 @@ public:
     void addImage(const ImageDraw& image);
 
     void addClip(const ClipDraw& clip);
+    void addFence();
 
     const Vector<DrawCommand>& getCommands() const { return commands; }
     const Vector<ShapeDraw>& getShapes() const { return shapes; }

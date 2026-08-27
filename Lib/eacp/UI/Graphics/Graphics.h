@@ -190,6 +190,17 @@ public:
     // it: a component cannot escape its parent's clip by asking.
     void reduceClipRegion(const Rect& rect);
 
+    // Everything drawn after this lands over everything drawn before it, text
+    // included. Within one clip region text composites above the fills
+    // whatever order it was issued in -- which is what a component drawing
+    // its own background and then its own caption wants, and the wrong thing
+    // for a component that is an opaque object placed over other content: a
+    // sticky header over a page scrolled under it, a menu dropped over a form.
+    // Such a component says so here, before it draws, and pays a batch break
+    // for it. What came before is drawn as it stands; what follows composites
+    // among itself as usual.
+    void paintOver();
+
     // Narrows the clip to a vector shape: everything drawn after this is
     // multiplied by the shape's own coverage as well as its own, until a
     // restoreState puts back what was in force before.

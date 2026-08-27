@@ -162,6 +162,19 @@ public:
     void setColour(const Color& colour);
     void setAccentColour(const Color& colour);
 
+    // Whether the editor draws the panel and outline behind its text. On by
+    // default; off for a field whose surroundings draw its frame -- a form
+    // control on a styled page has its border and background from the page,
+    // and the editor is then the text, the selection and the caret alone.
+    void setDrawsFrame(bool shouldDrawFrame);
+    bool getDrawsFrame() const { return drawsFrame; }
+
+    // Drawn in place of every character, for a password field. The text is
+    // kept and returned as typed; only the drawing, and the hit testing that
+    // goes with it, use the mask. Empty -- the default -- draws the text.
+    void setPasswordCharacter(std::string mask);
+    const std::string& getPasswordCharacter() const { return passwordCharacter; }
+
     // In bytes, clamped, and never inside a UTF-8 sequence -- so a caret can be
     // used as a substring boundary without splitting a character.
     void setCaretPosition(int position);
@@ -173,6 +186,10 @@ public:
     std::string getSelectedText() const;
 
     std::function<void(const std::string&)> onTextChange = [](const std::string&) {};
+
+    // When the editor takes the keyboard and when it gives it up, for whoever
+    // shows a field's focus somewhere other than in the editor's own frame.
+    std::function<void(bool focused)> onFocusChange = [](bool) {};
 
     // Return, and the escape that means "put it back". A field that commits on
     // Return usually wants both, and neither is the same as losing focus.
@@ -216,8 +233,16 @@ private:
 
     bool handleClipboardKey(const KeyEvent& event);
 
+    // What is drawn for the first `bytes` of the text: the text itself, or
+    // one mask per character of it in a password field. Everything that
+    // measures goes through here, so the caret and a click agree with what
+    // is on screen whichever it is.
+    std::string displayedPrefix(int bytes) const;
+    std::string displayed() const { return displayedPrefix((int) text.size()); }
+
     std::string text;
     std::string placeholder;
+    std::string passwordCharacter;
 
     Color colour = defaultTheme().text;
     Color accent = defaultTheme().accent;
@@ -231,6 +256,7 @@ private:
 
     float scrollOffset = 0.f;
     bool readOnly = false;
+    bool drawsFrame = true;
 };
 
 // A linear fader, horizontal or vertical. Vertical runs bottom-to-top, which is
