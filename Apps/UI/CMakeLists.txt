@@ -8,6 +8,11 @@ add_subdirectory(ComponentTree)
 # hold, which is the one limit in it that a real interface can reach.
 add_subdirectory(AtlasCeiling)
 
+# Pictures in the tier: one image drawn at every size down from its own, a row
+# of icons out of one texture, a photo under a rounded clip, and the draw count
+# each of them cost.
+add_subdirectory(Images)
+
 # An SVG document drawn twice in one window: native shape layers on the left,
 # the component tier's coverage masks on the right, for comparing the two on
 # screen and for reading what a real document costs the atlas.

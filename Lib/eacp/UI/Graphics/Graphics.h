@@ -124,6 +124,28 @@ public:
     // animated opacity re-renders nothing.
     void drawLayer(const Layer& layer);
 
+    // Draws an image the host has uploaded -- see ImageCache, which is where
+    // one comes from -- stretched to `dest` and faded by `opacity`. In its own
+    // colours whatever the current colour is: a picture is not a shape read in
+    // a colour.
+    //
+    // A run of these out of one image is one instanced draw, and a change of
+    // image costs what a change of clip costs. The image is drawn through the
+    // clip in force, shape and all, so a photo under a rounded clip is cut by
+    // the corners.
+    //
+    // Text composites above the images of its clip region whatever order the
+    // two were issued in, exactly as it does above the shapes: a caption over
+    // a picture costs nothing, and a picture over a caption is a layer's job.
+    void drawImage(const ImageRef& image, const Rect& dest, float opacity = 1.f);
+
+    // The `source` part of the image, in its own pixels, stretched to `dest`: a
+    // crop, or one cell of a sheet.
+    void drawImage(const ImageRef& image,
+                   const Rect& source,
+                   const Rect& dest,
+                   float opacity = 1.f);
+
     // Draws with the pen on the baseline at the string's left edge, and returns
     // the advance so differently coloured runs can be chained along a line.
     float drawText(std::string_view text, Point baselineLeft);

@@ -48,6 +48,7 @@ void ComponentHost::componentDeleted(Component& component)
         lastDroppedPaths = 0;
         lastMeshedPaths = 0;
         lastSharedMasks = 0;
+        lastImageDraws = 0;
     }
 }
 
@@ -168,6 +169,7 @@ void ComponentHost::resized()
         shapes->setLogicalSize({bounds.w, bounds.h});
         shapes->setPixelScale(backingScale());
         meshes->setLogicalSize({bounds.w, bounds.h});
+        images->setLogicalSize({bounds.w, bounds.h});
         layers->setLogicalSize({bounds.w, bounds.h});
     }
     else
@@ -180,6 +182,7 @@ void ComponentHost::resized()
                        sampleCount());
         meshes.emplace(
             *paths, gradientRamps(), Point {bounds.w, bounds.h}, sampleCount());
+        images.emplace(*paths, Point {bounds.w, bounds.h}, sampleCount());
         layers.emplace(Point {bounds.w, bounds.h}, sampleCount());
     }
 
@@ -272,9 +275,18 @@ void ComponentHost::recordTree()
         ComponentHost& host;
     } publish {*this};
 
-    if (!root->needsRecording())
-        return;
+    if (root->needsRecording())
+        recordDirtyTree();
 
+    // A texture the walk stopped drawing -- a recording cleared and painted
+    // without it, a component that has gone -- is held by nothing now, and
+    // goes with the walk that stopped drawing it. Here rather than in the
+    // frame, so a tree painted without one being drawn lets go all the same.
+    imageCache.releaseUnused();
+}
+
+void ComponentHost::recordDirtyTree()
+{
     auto before = renderer().generation();
 
     recordComponent(*root);
@@ -418,10 +430,12 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
 
     shapes->setLogicalSize({bounds.w, bounds.h});
     meshes->setLogicalSize({bounds.w, bounds.h});
+    images->setLogicalSize({bounds.w, bounds.h});
     layers->setLogicalSize({bounds.w, bounds.h});
 
     shapes->begin(pass);
     meshes->begin(pass);
+    images->begin(pass);
 
     text->setViewport({bounds.w, bounds.h}, backingScale());
     text->begin();
@@ -446,6 +460,7 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
 
         auto player = DrawPlayer {*shapes,
                                   *meshes,
+                                  *images,
                                   *layers,
                                   *text,
                                   pass,
@@ -458,11 +473,13 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
 
     shapes->end();
     meshes->end();
+    images->end();
 
     auto surface = getLocalBounds();
 
     shapes->setLogicalSize({surface.w, surface.h});
     meshes->setLogicalSize({surface.w, surface.h});
+    images->setLogicalSize({surface.w, surface.h});
     layers->setLogicalSize({surface.w, surface.h});
 
     layer.markRendered();
@@ -624,20 +641,22 @@ void ComponentHost::render(GPU::Frame& frame)
     auto pass = frame.beginPass({background});
     shapes->begin(pass);
     meshes->begin(pass);
+    images->begin(pass);
 
-    auto player =
-        DrawPlayer {*shapes, *meshes, *layers, *text, pass, bounds, backingScale()};
+    auto player = DrawPlayer {
+        *shapes, *meshes, *images, *layers, *text, pass, bounds, backingScale()};
 
     playComponent(*root, player, {}, bounds);
 
-    // Drains both queues while the pass is still open. The shape batch would
-    // drain itself when the pass ends, but that is after this point, so the last
+    // Drains every queue while the pass is still open. The batches would drain
+    // themselves when the pass ends, but that is after this point, so the last
     // run of quads would land on top of the last run of glyphs rather than
     // under it.
     player.flush();
 
     lastClipChanges = player.getClipChangeCount();
     lastRendererSwitches = player.getRendererSwitchCount();
+    lastImageDraws = images->getDrawCount();
 }
 
 MouseEvent ComponentHost::makeEvent(const Component& target,

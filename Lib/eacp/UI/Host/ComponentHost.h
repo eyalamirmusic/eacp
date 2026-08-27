@@ -2,6 +2,7 @@
 
 #include "../Component/Component.h"
 #include "../Render/DrawPlayer.h"
+#include "../Render/ImageCache.h"
 
 #include <optional>
 
@@ -53,6 +54,21 @@ public:
     float measureText(std::string_view text, const Font& font) const;
     float getLineHeight(const Font& font) const;
     float getAscent(const Font& font) const;
+
+    // Where an image a component draws comes from: the host turns a decoded
+    // image into a texture once, and the reference it hands back is what
+    // Graphics::drawImage takes. See ImageCache for who keeps it alive.
+    ImageCache& getImageCache() { return imageCache; }
+
+    // How many image textures the host is holding: everything some recording
+    // in the tree, or some caller, still draws. What a screen of pictures
+    // costs in memory, one entry per distinct image.
+    int getCachedImageCount() const { return imageCache.size(); }
+
+    // Image draws in the last frame's own pass: one per run of quads out of
+    // one texture, so a row of icons out of one image is one and a page of
+    // photographs is one apiece. See ImageBatch.
+    int getLastImageDrawCount() const { return lastImageDraws; }
 
     // What the last frame cost. `clipChanges` is the number of batch breaks:
     // between two of them every quad goes out as one instanced draw, so this is
@@ -166,6 +182,7 @@ private:
     bool recordComponent(Component& component);
 
     void recordTree();
+    void recordDirtyTree();
     void record(Component& component);
 
     // Draws the recorded lists, in tree order, offsetting each by where its
@@ -261,9 +278,18 @@ private:
     // tree painted them.
     std::optional<MeshBatch> meshes;
 
+    // Where the pictures go, batched by texture. Built with the two shape
+    // batches and drawn into the same pass, in the order the tree painted.
+    std::optional<ImageBatch> images;
+
     // What composites a layer's texture back into the picture. One draw apiece
     // and nothing queued, so it holds no state between frames.
     std::optional<LayerRenderer> layers;
+
+    // The textures behind every image the tree draws, shared by content. Needs
+    // no size to exist, so unlike the batches it is a plain member: a component
+    // can ask for a texture before the host has ever been shown.
+    ImageCache imageCache;
 
     // Mutable because measuring is a const question with a lazily built answer:
     // a component asking for a width before the first frame has to be able to
@@ -310,5 +336,6 @@ private:
     // Shapes that drew through a mask somebody else had already rasterized.
     int lastSharedMasks = 0;
     int lastRenderedLayers = 0;
+    int lastImageDraws = 0;
 };
 } // namespace eacp::UI
