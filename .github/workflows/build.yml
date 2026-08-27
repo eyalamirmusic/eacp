@@ -55,14 +55,16 @@ jobs:
         with:
           arch: ${{ matrix.msvc-arch }}
 
+      # No target uses C++20 modules; the scan pass is dead weight. Remove
+      # this flag if modules are ever adopted.
       - name: Configure
-        run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON ${{ matrix.cmake-flags }}
+        run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF ${{ matrix.cmake-flags }}
 
       - name: Build
         run: cmake --build build
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure -j 4
 
   build-ios:
     name: iOS Simulator
