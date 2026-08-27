@@ -218,3 +218,23 @@ auto tClearKeepsStorage = test("DrawList/rerecordingAllocatesNothing") = []
     check(list.getShapes().empty());
     check(list.getCommands().empty());
 };
+
+auto tFence = test("DrawList/paintOverIsRecordedAsAFence") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto recorder = Recorder {};
+
+    recorder.g.setColour(red);
+    recorder.g.fillRect({0.f, 0.f, 10.f, 10.f});
+    recorder.g.paintOver();
+    recorder.g.setColour(blue);
+    recorder.g.fillRect({0.f, 0.f, 10.f, 10.f});
+
+    const auto& commands = recorder.list.getCommands();
+
+    check(commands.size() == 3, "shapes, the fence, shapes again");
+    check(commands.size() == 3 && commands[1].kind == DrawCommand::Kind::Fence);
+    check(recorder.list.getShapes().size() == 2);
+};

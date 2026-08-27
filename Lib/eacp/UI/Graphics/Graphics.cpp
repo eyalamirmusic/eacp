@@ -339,6 +339,11 @@ void Graphics::reduceClipRegion(const Rect& rect)
     state.clip = state.clip.intersection(toLocal(rect));
 }
 
+void Graphics::paintOver()
+{
+    list.addFence();
+}
+
 void Graphics::reduceClipToShape(const PathShape& shape)
 {
     auto bounds = shape.getBounds();
