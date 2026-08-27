@@ -2,6 +2,7 @@
 
 #include "../Render/Layer.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace eacp::UI
@@ -219,6 +220,37 @@ void Graphics::drawLayer(const Layer& layer)
     recordClip();
 
     list.addLayer(layer, toLocal(layer.getBounds()));
+}
+
+void Graphics::drawImage(const ImageRef& image, const Rect& dest, float opacity)
+{
+    if (image == nullptr)
+        return;
+
+    drawImage(image,
+              {0.f, 0.f, (float) image->width, (float) image->height},
+              dest,
+              opacity);
+}
+
+void Graphics::drawImage(const ImageRef& image,
+                         const Rect& source,
+                         const Rect& dest,
+                         float opacity)
+{
+    if (image == nullptr || image->width <= 0 || image->height <= 0 || dest.w <= 0.f
+        || dest.h <= 0.f || opacity <= 0.f)
+        return;
+
+    recordClip();
+
+    auto width = (float) image->width;
+    auto height = (float) image->height;
+
+    auto uv = Rect {
+        source.x / width, source.y / height, source.w / width, source.h / height};
+
+    list.addImage({image, toLocal(dest), uv, std::clamp(opacity, 0.f, 1.f)});
 }
 
 float Graphics::drawText(std::string_view textToDraw, Point baselineLeft)

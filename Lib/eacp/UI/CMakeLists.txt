@@ -15,6 +15,8 @@ target_sources(eacp-ui PRIVATE
         Render/DrawList.cpp
         Render/DrawPlayer.cpp
         Render/GradientRamps.cpp
+        Render/ImageBatch.cpp
+        Render/ImageCache.cpp
         Render/Layer.cpp
         Render/LayerRenderer.cpp
         Render/MaskCache.cpp

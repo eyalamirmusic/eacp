@@ -9,6 +9,7 @@ namespace eacp::UI
 {
 DrawPlayer::DrawPlayer(ShapeBatch& shapesToUse,
                        MeshBatch& meshesToUse,
+                       ImageBatch& imagesToUse,
                        LayerRenderer& layersToUse,
                        Text::TextRenderer& textToUse,
                        GPU::RenderPass& passToUse,
@@ -16,6 +17,7 @@ DrawPlayer::DrawPlayer(ShapeBatch& shapesToUse,
                        float backingScaleToUse)
     : shapes(shapesToUse)
     , meshes(meshesToUse)
+    , images(imagesToUse)
     , layers(layersToUse)
     , text(textToUse)
     , pass(passToUse)
@@ -30,6 +32,7 @@ DrawPlayer::DrawPlayer(ShapeBatch& shapesToUse,
     // was none, which is every frame of an interface that never clips.
     shapes.setClipMask({});
     meshes.setClipMask({});
+    images.setClipMask({});
 }
 
 Rect DrawPlayer::offsetBy(const Rect& rect, Point origin)
@@ -59,6 +62,7 @@ void DrawPlayer::applyClip(bool changeScissor, bool changeMask)
     // for the glyphs that follow.
     meshes.flush();
     shapes.flush();
+    images.flush();
     text.flush(pass);
     text.begin();
 
@@ -77,11 +81,13 @@ void DrawPlayer::applyClip(bool changeScissor, bool changeMask)
 
     if (changeMask)
     {
-        // Both renderers, and not only the one about to draw: a document's
-        // clipped run may hold shapes of either kind, and whichever is told
-        // second would otherwise draw the run before it under this clip.
+        // Every renderer, and not only the one about to draw: a document's
+        // clipped run may hold shapes of either kind and pictures beside them,
+        // and whichever is told last would otherwise draw the run before it
+        // under this clip.
         shapes.setClipMask(clipMask);
         meshes.setClipMask(clipMask);
+        images.setClipMask(clipMask);
 
         appliedClipMask = clipMask;
     }
@@ -101,7 +107,8 @@ void DrawPlayer::prepareToDraw(const Rect& surfaceBounds, Renderer renderer)
     // being one quad of its own texture -- so it never appears here as something
     // to drain, only as the thing the other two are drained for.
     auto holding = (renderer != Renderer::Quads && !shapes.isEmpty())
-                   || (renderer != Renderer::Meshes && !meshes.isEmpty());
+                   || (renderer != Renderer::Meshes && !meshes.isEmpty())
+                   || (renderer != Renderer::Images && !images.isEmpty());
 
     if (holding)
     {
@@ -110,6 +117,9 @@ void DrawPlayer::prepareToDraw(const Rect& surfaceBounds, Renderer renderer)
 
         if (renderer != Renderer::Quads)
             shapes.flush();
+
+        if (renderer != Renderer::Images)
+            images.flush();
 
         ++rendererSwitches;
     }
@@ -230,6 +240,24 @@ void DrawPlayer::playMesh(const DrawList& list,
         mesh.vertices, offset, mesh.colour, offsetBy(mesh.gradient, origin));
 }
 
+void DrawPlayer::playImages(const DrawList& list,
+                            const DrawCommand& command,
+                            Point origin)
+{
+    const auto& recorded = list.getImages();
+
+    for (auto i = command.first; i < command.first + command.count; ++i)
+    {
+        const auto& image = recorded[i];
+        auto target = offsetBy(image.bounds, origin);
+
+        prepareToDraw(target, Renderer::Images);
+
+        images.draw(
+            image.image->texture, target, image.uv, Color::white(image.opacity));
+    }
+}
+
 void DrawPlayer::playLayer(const DrawList& list,
                            const DrawCommand& command,
                            Point origin)
@@ -281,6 +309,10 @@ void DrawPlayer::play(const DrawList& list, Point origin, const Rect& clipToUse)
                 playLayer(list, command, origin);
                 break;
 
+            case DrawCommand::Kind::Images:
+                playImages(list, command, origin);
+                break;
+
             case DrawCommand::Kind::Clip:
             {
                 const auto& recorded = list.getClips()[command.first];
@@ -303,11 +335,12 @@ void DrawPlayer::flush()
     // the fills, which is what a component drawing its own background and then
     // its own caption wants.
     //
-    // Only one of the two shape queues can hold anything by now -- drawing into
-    // either empties the other -- so the order between those two is whatever
+    // Only one of the three queues can hold anything by now -- drawing into
+    // any of them empties the others -- so the order among them is whatever
     // order they were issued in, which is the one that matters.
     meshes.flush();
     shapes.flush();
+    images.flush();
     text.flush(pass);
     text.begin();
 }
