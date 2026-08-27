@@ -65,6 +65,25 @@ struct GlyphRasterizer::Native
             fonts[index].reset(makeVariant(base, (FontStyle) index));
 
         valid = fonts[0].get() != nullptr;
+        resolved = familyNameOf(base);
+    }
+
+    static std::string familyNameOf(CTFontRef font)
+    {
+        CFRef<CFStringRef> name(CTFontCopyFamilyName(font));
+
+        if (!name)
+            return {};
+
+        auto capacity = CFStringGetMaximumSizeForEncoding(CFStringGetLength(name),
+                                                          kCFStringEncodingUTF8)
+                        + 1;
+        auto buffer = std::string(static_cast<std::size_t>(capacity), '\0');
+
+        if (!CFStringGetCString(name, buffer.data(), capacity, kCFStringEncodingUTF8))
+            return {};
+
+        return buffer.c_str();
     }
 
     CTFontRef fontFor(FontStyle style) const
@@ -225,6 +244,7 @@ struct GlyphRasterizer::Native
     FontRequest request;
     CFRef<CTFontRef> fonts[4];
     bool valid = false;
+    std::string resolved;
 };
 
 GlyphRasterizer::GlyphRasterizer(const FontRequest& request)
@@ -237,6 +257,11 @@ GlyphRasterizer::~GlyphRasterizer() = default;
 bool GlyphRasterizer::isValid() const
 {
     return impl->valid;
+}
+
+std::string GlyphRasterizer::resolvedFamily() const
+{
+    return impl->resolved;
 }
 
 FontMetrics GlyphRasterizer::metrics(FontStyle style) const

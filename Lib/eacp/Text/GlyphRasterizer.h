@@ -47,6 +47,12 @@ public:
     // False when the family could not be resolved and no substitute was found.
     bool isValid() const;
 
+    // The family the platform actually resolved the request to: the one asked
+    // for when it has it, and the substitute it chose when it does not - which
+    // is how a caller holding a list of families finds the first one the
+    // platform has, since both platforms draw *something* for any name.
+    std::string resolvedFamily() const;
+
     // In device pixels, for the requested style. Faces in a family can differ:
     // a bold face is often slightly wider than its regular sibling.
     FontMetrics metrics(FontStyle style) const override;
