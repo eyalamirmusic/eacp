@@ -73,17 +73,56 @@ function(eacp_target_is_w4 target out)
     endforeach ()
 endfunction()
 
-function(eacp_pch_image_for target out)
-    set(${out} eacp-pch PARENT_SCOPE)
+# Clang stamps the PIE level into an image and rejects any translation unit
+# whose level differs ("is pie differs in PCH file vs. current file"). eacp
+# compiles position-independent throughout, and CMake spells that -fPIC for a
+# library and -fPIE for an executable, so the two groups cannot share an image.
+# MSVC draws no such distinction, and Apple builds green on a single image, so
+# the split is confined to the drivers that act on the flag.
+function(eacp_needs_pie_image out)
+    set(${out} FALSE PARENT_SCOPE)
 
-    if (NOT MSVC)
+    if (MSVC OR APPLE OR NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         return ()
     endif ()
 
-    eacp_target_is_w4(${target} is_w4)
+    if (CMAKE_CXX_COMPILE_OPTIONS_PIE AND NOT
+            CMAKE_CXX_COMPILE_OPTIONS_PIE STREQUAL CMAKE_CXX_COMPILE_OPTIONS_PIC)
+        set(${out} TRUE PARENT_SCOPE)
+    endif ()
+endfunction()
 
-    if (is_w4)
-        set(${out} eacp-pch-w4 PARENT_SCOPE)
+# Nothing links the image -- REUSE_FROM shares the precompiled header alone --
+# so the flag is here to match what the consumers compile under rather than to
+# change the code generated for it. The property goes off first so CMake does
+# not emit its own -fPIC and leave which of the two wins up to flag order.
+function(eacp_make_image_pie name)
+    set_target_properties(${name} PROPERTIES POSITION_INDEPENDENT_CODE OFF)
+    target_compile_options(${name} PRIVATE ${CMAKE_CXX_COMPILE_OPTIONS_PIE})
+endfunction()
+
+function(eacp_pch_image_for target out)
+    set(${out} eacp-pch PARENT_SCOPE)
+
+    if (MSVC)
+        eacp_target_is_w4(${target} is_w4)
+
+        if (is_w4)
+            set(${out} eacp-pch-w4 PARENT_SCOPE)
+        endif ()
+
+        return ()
+    endif ()
+
+    # The image exists only where the PIE level was worth splitting on, so its
+    # presence is the condition -- no second reading of what eacp_apply_pch
+    # already decided.
+    if (TARGET eacp-pch-pie)
+        get_target_property(type ${target} TYPE)
+
+        if (type STREQUAL "EXECUTABLE")
+            set(${out} eacp-pch-pie PARENT_SCOPE)
+        endif ()
     endif ()
 endfunction()
 
@@ -149,6 +188,13 @@ function(eacp_apply_pch)
     if (MSVC)
         eacp_create_pch_image(eacp-pch-w4)
         set_default_warnings_level(eacp-pch-w4)
+    endif ()
+
+    eacp_needs_pie_image(needs_pie)
+
+    if (needs_pie)
+        eacp_create_pch_image(eacp-pch-pie)
+        eacp_make_image_pie(eacp-pch-pie)
     endif ()
 
     eacp_apply_pch_in_directory("${eacp_SOURCE_DIR}")
