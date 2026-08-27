@@ -98,3 +98,45 @@ auto tRejectsBadInput = test("SVGImage/rejectsUnparseableMarkupAndEmptySizes") =
     check(!SVG::renderToImage(redSquare, 0, 16).isValid());
     check(!SVG::renderToImage(redSquare, 16, -1).isValid());
 };
+
+namespace
+{
+// A clip-path in a document that has a viewBox: the clip is authored in the
+// document's units, the same as the shape it cuts.
+constexpr auto clippedUnderViewBox = std::string_view {
+    R"svg(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 22">)svg"
+    R"svg(<rect clip-path="url(#a)" width="140" height="22" fill="#0000ff"/>)svg"
+    R"svg(<defs><clipPath id="a"><path d="M0 0h140v21.42H0z"/></clipPath></defs></svg>)svg"};
+} // namespace
+
+auto tClipUnderViewBox = test("SVGImage/aClipPathIsInTheViewBoxsUnits") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto image = SVG::renderToImage(clippedUnderViewBox, 140, 22);
+    check(image.isValid());
+
+    auto centre = image.at(70, 11);
+
+    check(isOpaque(centre), "the clip covers the shape, so the shape draws");
+    check(centre.b > 0.9f);
+
+    auto scaled = SVG::renderToImage(clippedUnderViewBox, 280, 44);
+    check(isOpaque(scaled.at(140, 22)), "and at twice the size");
+
+    // Letterboxed: the viewBox is centred in a taller picture, so the whole
+    // document - clip included - moves down.
+    auto again = SVG::renderToImage(clippedUnderViewBox, 280, 44);
+    check(isOpaque(again.at(140, 22)), "and a second time, in a host of its own");
+
+    auto wide = SVG::renderToImage(clippedUnderViewBox, 300, 47);
+    check(isOpaque(wide.at(150, 23)), "at a fractional scale with no letterbox");
+
+    auto tall = SVG::renderToImage(clippedUnderViewBox, 140, 44);
+    check(isOpaque(tall.at(70, 22)), "letterboxed at scale one");
+
+    auto boxed = SVG::renderToImage(clippedUnderViewBox, 300, 150);
+    check(isOpaque(boxed.at(150, 75)), "and moved by the letterbox");
+    check(isClear(boxed.at(150, 5)));
+};

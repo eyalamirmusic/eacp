@@ -270,6 +270,9 @@ void GPUView::backingScaleChanged()
 
 float GPUView::backingScale() const
 {
+    if (renderScale > 0.f)
+        return renderScale;
+
     // updateSize() has not run before the view is first laid out, so fall back to
     // asking the platform rather than reporting a nonsense zero.
     if (impl->backingScale > 0.f)
@@ -357,7 +360,14 @@ Graphics::Image GPUView::renderNativeContent(float scale)
                                            (__bridge void*) msaaTexture,
                                            (__bridge void*) depthTexture};
             auto frame = Frame(Device::shared(), target);
+
+            // Rendered as a view of this scale: a snapshot at 1x on a 2x
+            // display would otherwise rasterize its masks and glyphs, and
+            // place its scissor rects, for pixels twice the size of the ones
+            // it is drawn into.
+            renderScale = scale;
             render(frame);
+            renderScale = 0.f;
         }
 
         // Copy the private colour texture into a shared buffer so the CPU can
