@@ -640,6 +640,9 @@ void GPUView::backingScaleChanged()
 
 float GPUView::backingScale() const
 {
+    if (renderScale > 0.f)
+        return renderScale;
+
     return Native::dpiScale();
 }
 
@@ -836,7 +839,11 @@ Graphics::Image GPUView::renderNativeContent(float scale)
         target.depthTexture = depthTexture ? &depthTarget : nullptr;
 
         auto frame = Frame(Device::shared(), target);
+
+        // Rendered as a view of this scale: see the Apple side.
+        renderScale = scale;
         render(frame);
+        renderScale = 0.f;
     }
     // The Frame destructor left the colour texture in COPY_SOURCE and ran the
     // GPU to completion.
