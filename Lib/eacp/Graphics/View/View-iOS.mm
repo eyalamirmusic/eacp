@@ -165,6 +165,10 @@ struct View::Native
 
     void setOpacity(float opacity) { nativeView.get().alpha = opacity; }
 
+    // UIKit propagates this to the subtree, nested WKWebView included, the same
+    // way AppKit does on macOS.
+    void setVisible(bool visible) { nativeView.get().hidden = !visible; }
+
     Rect getBounds() const { return toRect([nativeView.get() frame]); }
     void setBounds(const Rect& bounds)
     {
@@ -232,6 +236,16 @@ void View::setOpacity(float opacityToUse)
 {
     opacity = opacityToUse;
     impl->setOpacity(opacityToUse);
+}
+
+void View::setVisible(bool shouldBeVisible)
+{
+    if (visible == shouldBeVisible)
+        return;
+
+    visible = shouldBeVisible;
+    impl->setVisible(shouldBeVisible);
+    notifyVisibilityChanged(shouldBeVisible);
 }
 
 Rect View::getBounds() const

@@ -441,6 +441,11 @@ struct View::Native
 
     void setOpacity(float opacity) { nativeView.get().alphaValue = opacity; }
 
+    // AppKit propagates this to the whole subtree on its own, and that includes
+    // any nested platform surface: a WKWebView under a hidden ancestor is sent
+    // viewDidHide, which is what drops its page out of the visible state.
+    void setVisible(bool visible) { nativeView.get().hidden = !visible; }
+
     Rect getBounds() const { return toRect([nativeView.get() frame]); }
     void setBounds(const Rect& bounds)
     {
@@ -524,6 +529,16 @@ void View::setOpacity(float opacityToUse)
 {
     opacity = opacityToUse;
     impl->setOpacity(opacityToUse);
+}
+
+void View::setVisible(bool shouldBeVisible)
+{
+    if (visible == shouldBeVisible)
+        return;
+
+    visible = shouldBeVisible;
+    impl->setVisible(shouldBeVisible);
+    notifyVisibilityChanged(shouldBeVisible);
 }
 
 Rect View::getBounds() const

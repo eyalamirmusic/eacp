@@ -1244,4 +1244,10 @@ void WebView::mouseWheel(const MouseEvent&) {}
 // and visibility on its own.
 void WebView::hostWindowMoved() {}
 void WebView::hostWindowVisibilityChanged(bool) {}
+
+// Nothing to forward: the WKWebView is a subview of the view being hidden, so
+// AppKit/UIKit has already sent it viewDidHide and WebKit has already taken the
+// page out of the visible state. The Windows backend, whose WebView2 is
+// composition-hosted rather than a child view, has to say so explicitly.
+void WebView::visibilityChanged(bool) {}
 } // namespace eacp::Graphics

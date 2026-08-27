@@ -169,6 +169,24 @@ public:
     void setOpacity(float opacity);
     float getOpacity() const { return opacity; }
 
+    // Whether this view and its subtree are shown at all.
+    //
+    // Not the same as opacity 0, or bounds parked where nobody can see them:
+    // those still leave a live view the platform keeps composited and up to
+    // date. This tells the OS the subtree is gone, and for a view backed by a
+    // real platform surface that is the difference that matters — a hidden
+    // WebView's page drops to visibilityState "hidden", so the web engine
+    // throttles its timers and reclaims what it was holding to draw a page
+    // nobody is looking at. A container parking inactive services offscreen
+    // instead pays full freight for every one of them.
+    //
+    // The flag is this view's own. Effective visibility is the whole ancestor
+    // chain, so showing a view inside a hidden parent shows nothing until the
+    // parent comes back — which is what the platforms already do, and what
+    // visibilityChanged reports.
+    void setVisible(bool visible);
+    bool isVisible() const { return visible; }
+
     void* getHandle();
 
     virtual void paint(Context&) {};
@@ -223,6 +241,14 @@ public:
     // visibility it was given until it is told otherwise.
     virtual void hostWindowMoved() {}
     virtual void hostWindowVisibilityChanged(bool) {}
+
+    // This view's effective visibility changed — setVisible was called on it or
+    // on an ancestor. Sibling of hostWindowVisibilityChanged, for the same
+    // reason and with the same audience: a view that is only a node in the
+    // composition tree needs nothing, because hiding the native view hides it
+    // for free, while a view hosting a separate platform surface has to pass
+    // the news along to whatever owns that surface.
+    virtual void visibilityChanged(bool) {}
 
     Rect getBounds() const;
     Rect getLocalBounds() const;
@@ -323,9 +349,16 @@ private:
     void viewAdded(View& view);
     void viewRemoved(View& view);
 
+    // Walks the subtree announcing an effective-visibility change, skipping any
+    // branch whose own flag already hides it: a view hidden in its own right
+    // stays hidden whatever its parent does, and telling it otherwise would have
+    // it un-throttle a page that is still not on screen.
+    void notifyVisibilityChanged(bool effectivelyVisible);
+
     Vector<View*> subviews;
     Vector<Layer*> layers;
     float opacity = 1.0f;
+    bool visible = true;
     View* parent = nullptr;
     View* hoveredView = nullptr;
     View* mouseDownTarget = nullptr;
