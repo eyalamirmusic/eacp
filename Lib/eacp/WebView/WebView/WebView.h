@@ -344,6 +344,7 @@ protected:
     // where the native web view is an ordinary subview of the window.
     void hostWindowMoved() override;
     void hostWindowVisibilityChanged(bool visible) override;
+    void visibilityChanged(bool visible) override;
 
     // Windows hosts the WebView as a composition visual (no input HWND), so the
     // framework's routed mouse events are forwarded to the browser here. On
