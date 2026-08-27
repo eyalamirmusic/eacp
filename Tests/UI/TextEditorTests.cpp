@@ -3,6 +3,7 @@
 #include <NanoTest/NanoTest.h>
 
 #include <string>
+#include <vector>
 
 // What an editor does to its own string, which is the half that has nothing to
 // do with drawing.
@@ -348,4 +349,87 @@ auto tLosingFocusDropsTheSelection =
 
     check(!harness.editor.hasSelection());
     check(harness.editor.getText() == "abc");
+};
+
+auto tPasswordMask = test("TextEditor/aPasswordFieldKeepsTheTextAndDrawsTheMask") = []
+{
+    auto harness = Harness {};
+
+    harness.editor.setPasswordCharacter("\xE2\x80\xA2");
+    harness.press(typed("a"));
+    harness.press(typed(accented));
+
+    check(harness.editor.getText() == "a" + accented, "the value is what was typed");
+    check(harness.editor.getCaretPosition() == 1 + (int) accented.size());
+
+    harness.press(keyOf(KeyCode::LeftArrow));
+    check(harness.editor.getCaretPosition() == 1 + (int) accented.size() - 2,
+          "and the caret still moves by the text's own characters");
+
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto list = DrawList {};
+    auto ramps = GradientRamps {};
+    auto text = Text::TextRenderer {};
+    auto g = UI::Graphics {list, ramps, text, harness.editor.getLocalBounds()};
+
+    harness.editor.paint(g);
+
+    const auto& glyphs = list.getGlyphs();
+    auto characters = 0;
+
+    for (auto c: harness.editor.getText())
+        if ((static_cast<unsigned char>(c) & 0xC0) != 0x80)
+            ++characters;
+
+    check(glyphs.size() == characters, "one glyph per character");
+
+    auto allTheSame = true;
+
+    for (const auto& glyph: glyphs)
+        allTheSame = allTheSame && glyph.source.x == glyphs[0].source.x
+                     && glyph.source.y == glyphs[0].source.y;
+
+    check(allTheSame, "and every one is the mask, not the letters typed");
+};
+
+auto tFrameless = test("TextEditor/anEditorWithoutAFrameDrawsOnlyItsText") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto harness = Harness {};
+    harness.editor.setText("abc");
+    harness.editor.giveAwayKeyboardFocus();
+
+    auto record = [&]
+    {
+        auto list = DrawList {};
+        auto ramps = GradientRamps {};
+        auto text = Text::TextRenderer {};
+        auto g = UI::Graphics {list, ramps, text, harness.editor.getLocalBounds()};
+
+        harness.editor.paint(g);
+
+        return list.getShapes().size();
+    };
+
+    check(record() == 2, "the panel and its outline");
+
+    harness.editor.setDrawsFrame(false);
+    check(record() == 0, "and neither without the frame");
+};
+
+auto tFocusIsReported = test("TextEditor/takingAndLosingTheKeyboardIsReported") = []
+{
+    auto harness = Harness {};
+    auto reported = std::vector<bool> {};
+
+    harness.editor.onFocusChange = [&](bool focused) { reported.push_back(focused); };
+
+    harness.editor.giveAwayKeyboardFocus();
+    harness.editor.grabKeyboardFocus();
+
+    check(reported.size() == 2 && !reported[0] && reported[1]);
 };
