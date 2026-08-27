@@ -90,6 +90,11 @@ private:
     // costs is draining the queues and that happens once.
     void applyClip(bool changeScissor, bool changeMask);
 
+    // Drains every queue in the order they compose - fills, then the glyphs
+    // over them - so what follows is drawn over the lot. A fence, and what a
+    // clip change does on its way to the new clip.
+    void drainInOrder();
+
     static Rect offsetBy(const Rect& rect, Point origin);
 
     // The map into the gradient's own space, composed with where the list sits.
