@@ -2,6 +2,7 @@
 
 #include "ClipMask.h"
 #include "Gradient.h"
+#include "ImageTexture.h"
 
 #include <eacp/GPUWidgets/GPUWidgets.h>
 #include <eacp/Text/Text.h>
@@ -114,6 +115,21 @@ struct LayerDraw
     Rect bounds;
 };
 
+// An image drawn as one quad of its texture: which part of it, where, and how
+// faded. The texture is shared with the recording rather than pointed at, which
+// is what lets a list outlive the component that painted it -- see
+// ImageTexture. A run of them sharing a texture is one instanced draw.
+struct ImageDraw
+{
+    ImageRef image;
+    Rect bounds;
+
+    // The part of the image drawn, in normalised coordinates.
+    Rect uv;
+
+    float opacity = 1.f;
+};
+
 // The clip in force for everything issued after it, as an absolute state rather
 // than a change: what a paint() narrowed the region to, and the mask it narrowed
 // it with. Recorded whenever it differs from the last one recorded, which is the
@@ -136,13 +152,14 @@ struct DrawCommand
         Glyphs,
         Mesh,
         Layer,
+        Images,
         Clip
     };
 
     Kind kind = Kind::Shapes;
 
-    // A range into the matching vector for Shapes; an index into it for the
-    // rest, whose entries carry their own ranges.
+    // A range into the matching vector for Shapes and Images; an index into it
+    // for the rest, whose entries carry their own ranges.
     int first = 0;
     int count = 0;
 };
@@ -175,6 +192,8 @@ public:
 
     void addLayer(const Layer& layer, const Rect& bounds);
 
+    void addImage(const ImageDraw& image);
+
     void addClip(const ClipDraw& clip);
 
     const Vector<DrawCommand>& getCommands() const { return commands; }
@@ -183,6 +202,7 @@ public:
     const Vector<GlyphRun>& getGlyphRuns() const { return glyphRuns; }
     const Vector<MeshDraw>& getMeshes() const { return meshes; }
     const Vector<LayerDraw>& getLayers() const { return layers; }
+    const Vector<ImageDraw>& getImages() const { return images; }
     const Vector<ClipDraw>& getClips() const { return clips; }
 
 private:
@@ -199,6 +219,7 @@ private:
     Vector<GlyphRun> glyphRuns;
     Vector<MeshDraw> meshes;
     Vector<LayerDraw> layers;
+    Vector<ImageDraw> images;
     Vector<ClipDraw> clips;
 };
 } // namespace eacp::UI

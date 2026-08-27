@@ -31,6 +31,7 @@ set(graphics_test_sources
         RoundedRectTests.cpp
         ScrollWheelTests.cpp
         TestMain.cpp
+        ViewVisibilityTests.cpp
         ViewWindowTests.cpp
         WindowTests.cpp)
 
@@ -47,6 +48,7 @@ if (APPLE AND NOT IOS)
             CursorTests-macOS.mm
             MenuTests-macOS.mm
             ScrollWheelTests-macOS.mm
+            ViewVisibilityTests-macOS.mm
             WindowTests-macOS.mm)
 endif ()
 
