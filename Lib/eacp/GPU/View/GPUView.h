@@ -137,6 +137,12 @@ private:
     // target's GPU surface (a CVPixelBuffer's IOSurface on Metal), no read-back.
     bool renderNativeContentToTarget(void* nativeTarget, float scale) final;
 
+    // The scale an off-screen render was asked for, while it runs: what
+    // backingScale() reports then, so the masks, glyphs and scissor rects of
+    // that frame are built for the pixels it is rendered into rather than for
+    // the display the view happens to be on. Zero between renders.
+    float renderScale = 0.f;
+
     struct Native;
     Pimpl<Native> impl;
 };
