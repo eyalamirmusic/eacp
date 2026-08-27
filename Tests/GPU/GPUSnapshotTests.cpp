@@ -17,7 +17,7 @@ using namespace eacp::GPU;
 
 namespace
 {
-bool near(const Graphics::Color& c, int r, int g, int b, int tolerance = 2)
+bool isNear(const Graphics::Color& c, int r, int g, int b, int tolerance = 2)
 {
     auto within = [&](float channel, int target)
     { return std::abs((int) std::lround(channel * 255.f) - target) <= tolerance; };
@@ -175,8 +175,8 @@ auto tCapturesClearColor = test("GPUSnapshot/capturesClearColor") = []
     check(image.isValid());
     check(image.width() == 64);
     check(image.height() == 48);
-    check(near(image.at(32, 24), 0, 0, 255)); // blue, everywhere
-    check(near(image.at(1, 1), 0, 0, 255));
+    check(isNear(image.at(32, 24), 0, 0, 255)); // blue, everywhere
+    check(isNear(image.at(1, 1), 0, 0, 255));
 };
 
 // An actual pipeline draw runs through the off-screen frame: a full-viewport
@@ -194,8 +194,8 @@ auto tCapturesDrawnGeometry = test("GPUSnapshot/capturesDrawnGeometry") = []
     auto image = view.renderToImage(1.f);
 
     check(image.isValid());
-    check(near(image.at(20, 20), 0, 255, 0)); // green fill, not the red clear
-    check(near(image.at(3, 3), 0, 255, 0));
+    check(isNear(image.at(20, 20), 0, 255, 0)); // green fill, not the red clear
+    check(isNear(image.at(3, 3), 0, 255, 0));
 };
 
 // Translucent GPU content is composited premultiplied; the read-back
@@ -217,7 +217,7 @@ auto tUnpremultipliesTranslucent =
     check(image.isValid());
 
     auto c = image.at(20, 20);
-    check(near(c, 128, 0, 0, 6));
+    check(isNear(c, 128, 0, 0, 6));
     check(std::abs((int) std::lround(c.a * 255.f) - 128) <= 6);
 };
 

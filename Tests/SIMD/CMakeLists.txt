@@ -12,3 +12,8 @@ target_link_libraries(SimdBench PRIVATE eacp-simd ea_data_structures)
 if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     eacp_force_optimization(SimdBench)
 endif ()
+
+# Neither of these links Miro, so neither inherits the /Zc:preprocessor it
+# exports, and the shared PCH image is created under that flag.
+eacp_skip_pch(SimdTests)
+eacp_skip_pch(SimdBench)

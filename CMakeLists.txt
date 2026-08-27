@@ -41,6 +41,11 @@ if (EACP_CI_BUILD)
             "Compile eacp libraries as CMake unity builds" FORCE)
     set(MIRO_UNITY_BUILD ON CACHE BOOL
             "Enable CMake unity build for the Miro library" FORCE)
+    # Worth roughly half the compile time of a cold Windows build. Off by
+    # default because it is a whole-project rebuild whenever Pch.h changes,
+    # which is the wrong trade for an edit-compile loop.
+    set(EACP_PCH ON CACHE BOOL
+            "Precompile the system headers every eacp target parses" FORCE)
 endif ()
 
 if (NOT EACP_BUILD_GRAPHICS)
@@ -51,6 +56,7 @@ endif ()
 include(TargetSetup)
 include(EacpSchema)
 include(EacpPlugin)
+include(EacpPch)
 
 option(EACP_HIDDEN_VISIBILITY "Compile eacp with hidden symbol visibility" ON)
 
@@ -83,6 +89,7 @@ endif ()
 #eacp_check_deployment_target()
 
 set(CMAKE_CXX_STANDARD 20)
+
 add_subdirectory(Lib)
 
 option(EACP_ENABLE_EXAMPLES "Enable Examples for EACP" ${PROJECT_IS_TOP_LEVEL})
@@ -95,3 +102,7 @@ if (EACP_ENABLE_TESTS)
     enable_testing()
     add_subdirectory(Tests)
 endif ()
+
+# Builds the shared precompiled header and points every target above at it.
+# Has to run after the last add_subdirectory: it walks the targets they created.
+eacp_apply_pch()

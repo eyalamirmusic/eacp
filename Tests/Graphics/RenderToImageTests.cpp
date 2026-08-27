@@ -7,7 +7,7 @@ using namespace eacp::Graphics;
 
 namespace
 {
-bool near(const Color& c, int r, int g, int b, int tolerance = 6)
+bool isNear(const Color& c, int r, int g, int b, int tolerance = 6)
 {
     auto within = [&](float channel, int target)
     { return std::abs((int) std::lround(channel * 255.f) - target) <= tolerance; };
@@ -66,9 +66,9 @@ auto tCompositesPaintAndChildren =
     check(image.width() == 100);
     check(image.height() == 100);
 
-    check(near(image.at(20, 20), 255, 0, 0)); // red child, top-left
-    check(near(image.at(80, 80), 0, 255, 0)); // green child, bottom-right
-    check(near(image.at(50, 50), 0, 0, 0)); // backdrop between them
+    check(isNear(image.at(20, 20), 255, 0, 0)); // red child, top-left
+    check(isNear(image.at(80, 80), 0, 255, 0)); // green child, bottom-right
+    check(isNear(image.at(50, 50), 0, 0, 0)); // backdrop between them
 };
 
 // scale super-samples: the same 100pt view rendered at 2x is 200x200 device
@@ -92,7 +92,7 @@ auto tScaleSuperSamples = test("RenderToImage/scaleSuperSamples") = []
 
     check(image.width() == 200);
     check(image.height() == 200);
-    check(near(image.at(40, 40), 255, 0, 0)); // 20pt * 2 lands inside the child
+    check(isNear(image.at(40, 40), 255, 0, 0)); // 20pt * 2 lands inside the child
 };
 
 // A real framework widget (ShapeLayerView renders through a CAShapeLayer, not
@@ -111,7 +111,7 @@ auto tCapturesShapeLayerWidget = test("RenderToImage/capturesShapeLayerWidget") 
     auto image = shape.renderToImage(1.f);
 
     check(image.isValid());
-    check(near(image.at(20, 20), 0, 0, 255)); // blue fill
+    check(isNear(image.at(20, 20), 0, 0, 255)); // blue fill
 };
 
 // Group opacity flattens the subtree and fades it as one: a fully black child
@@ -140,7 +140,7 @@ auto tGroupOpacityFadesSubtree = test("RenderToImage/groupOpacityFadesSubtree") 
     auto root = Root {};
     auto image = root.renderToImage(1.f);
 
-    check(near(image.at(20, 20), 128, 128, 128, 8));
+    check(isNear(image.at(20, 20), 128, 128, 128, 8));
 };
 
 // A zero-sized view has nothing to render into and yields an invalid Image
@@ -177,6 +177,6 @@ auto tLayerPathSpaceIsYDown = test("RenderToImage/layerPathSpaceIsYDown") = []
         return;
 
     // A band at y = 0..10 belongs against the top edge.
-    check(near(image.at(20, 5), 0, 0, 255));
-    check(!near(image.at(20, 35), 0, 0, 255));
+    check(isNear(image.at(20, 5), 0, 0, 255));
+    check(!isNear(image.at(20, 35), 0, 0, 255));
 };

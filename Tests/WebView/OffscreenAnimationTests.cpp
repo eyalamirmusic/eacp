@@ -13,7 +13,7 @@ using namespace eacp::Graphics;
 
 namespace
 {
-bool near(const Color& c, int r, int g, int b, int tolerance = 16)
+bool isNear(const Color& c, int r, int g, int b, int tolerance = 16)
 {
     auto within = [&](float channel, int target)
     { return std::abs((int) std::lround(channel * 255.f) - target) <= tolerance; };
@@ -80,7 +80,7 @@ struct Fixture
 auto tDrivesAnimationOffscreen = test("OffscreenAnimation/paintsWhenEnabled") = []
 {
     auto fix = Fixture {/*driveOffscreen*/ true};
-    check(near(fix.centre(), 16, 192, 32)); // #10c020, the painted green
+    check(isNear(fix.centre(), 16, 192, 32)); // #10c020, the painted green
 };
 
 // Without the flag, whether an off-screen rAF loop keeps running is left to the
@@ -99,7 +99,7 @@ auto tAnimationDefaultMatchesPlatform =
     auto fix = Fixture {/*driveOffscreen*/ false};
 
     if (Platform::isWindows())
-        check(near(fix.centre(), 16, 192, 32)); // #10c020, native rAF paints it
+        check(isNear(fix.centre(), 16, 192, 32)); // #10c020, native rAF paints it
     else
-        check(near(fix.centre(), 224, 16, 16)); // #e01010, rAF frozen off-screen
+        check(isNear(fix.centre(), 224, 16, 16)); // #e01010, rAF frozen off-screen
 };

@@ -74,7 +74,7 @@ struct BlendView final : GPUView
     TranslucentShader shader;
 };
 
-bool near(float value, float target, float tolerance = 0.06f)
+bool isNear(float value, float target, float tolerance = 0.06f)
 {
     return std::abs(value - target) <= tolerance;
 }
@@ -99,8 +99,8 @@ auto tNoBlendOverwrites = test("ShaderBlend/defaultModeOverwritesTheBackground")
 
     const auto pixel = image.at(8, 8);
 
-    check(near(pixel.r, 1.f));
-    check(near(pixel.g, 0.f));
+    check(isNear(pixel.r, 1.f));
+    check(isNear(pixel.g, 0.f));
 };
 
 // With AlphaBlend the same fragment mixes: half red over green lands halfway
@@ -168,5 +168,5 @@ auto tDefaultsToNoBlend = test("ShaderBlend/prepareDefaultsToNoBlending") = []
 
     auto image = view.renderToImage(1.f);
     check(image.isValid());
-    check(near(image.at(8, 8).r, 1.f));
+    check(isNear(image.at(8, 8).r, 1.f));
 };
