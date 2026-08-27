@@ -59,7 +59,7 @@ static MTLPixelFormat toMetalPixelFormat(PixelFormat format)
     return MTLPixelFormatBGRA8Unorm;
 }
 
-static MTLCompareFunction toMetalCompareFunction(DepthCompare compare)
+static MTLCompareFunction toMetalCompareFunction(CompareFunction compare)
 {
     switch (compare)
     {
@@ -82,6 +82,49 @@ static MTLCompareFunction toMetalCompareFunction(DepthCompare compare)
     }
 
     return MTLCompareFunctionLessEqual;
+}
+
+static MTLStencilOperation toMetalStencilOperation(StencilOp op)
+{
+    switch (op)
+    {
+        case StencilOp::Keep:
+            return MTLStencilOperationKeep;
+        case StencilOp::Zero:
+            return MTLStencilOperationZero;
+        case StencilOp::Replace:
+            return MTLStencilOperationReplace;
+        case StencilOp::IncrementClamp:
+            return MTLStencilOperationIncrementClamp;
+        case StencilOp::DecrementClamp:
+            return MTLStencilOperationDecrementClamp;
+        case StencilOp::Invert:
+            return MTLStencilOperationInvert;
+        case StencilOp::IncrementWrap:
+            return MTLStencilOperationIncrementWrap;
+        case StencilOp::DecrementWrap:
+            return MTLStencilOperationDecrementWrap;
+    }
+
+    return MTLStencilOperationKeep;
+}
+
+// The masks come from the descriptor rather than the face, which is where
+// D3D12 keeps them - see RenderPipelineDescriptor::stencilReadMask for why the
+// narrower API is the one both backends are held to.
+static MTLStencilDescriptor* makeStencilDescriptor(
+    const StencilFace& face, unsigned char readMask, unsigned char writeMask)
+{
+    auto descriptor = [[MTLStencilDescriptor alloc] init];
+
+    descriptor.stencilCompareFunction = toMetalCompareFunction(face.compare);
+    descriptor.stencilFailureOperation = toMetalStencilOperation(face.stencilFail);
+    descriptor.depthFailureOperation = toMetalStencilOperation(face.depthFail);
+    descriptor.depthStencilPassOperation = toMetalStencilOperation(face.pass);
+    descriptor.readMask = readMask;
+    descriptor.writeMask = writeMask;
+
+    return descriptor;
 }
 
 static MTLVertexStepFunction toMetalStepFunction(StepRate rate)
@@ -164,15 +207,48 @@ struct RenderPipeline::Native
 
         pipelineDescriptor.rasterSampleCount = (NSUInteger) descriptor.sampleCount;
 
-        if (descriptor.depth)
+        // One attachment carries both planes, so its format is decided by
+        // whether either test is on and the stencilled one is a superset. The
+        // stencil attachment names the same texture again, which is how Metal
+        // spells a combined format.
+        if (descriptor.depth || descriptor.stencil)
         {
-            pipelineDescriptor.depthAttachmentPixelFormat =
-                MTLPixelFormatDepth32Float;
+            const auto attachmentFormat = descriptor.stencil
+                                            ? MTLPixelFormatDepth32Float_Stencil8
+                                            : MTLPixelFormatDepth32Float;
+
+            pipelineDescriptor.depthAttachmentPixelFormat = attachmentFormat;
+
+            if (descriptor.stencil)
+                pipelineDescriptor.stencilAttachmentPixelFormat = attachmentFormat;
 
             auto depthDescriptor = [[MTLDepthStencilDescriptor alloc] init];
+
+            // A pipeline that only masks the stencil still has the depth plane
+            // under it, and must not disturb it: Always with no write is the
+            // depth test not happening, which is what `depth` off means.
             depthDescriptor.depthCompareFunction =
-                toMetalCompareFunction(descriptor.depthCompare);
-            depthDescriptor.depthWriteEnabled = descriptor.depthWrite ? YES : NO;
+                descriptor.depth ? toMetalCompareFunction(descriptor.depthCompare)
+                                 : MTLCompareFunctionAlways;
+            depthDescriptor.depthWriteEnabled =
+                descriptor.depth && descriptor.depthWrite ? YES : NO;
+
+            if (descriptor.stencil)
+            {
+                auto front = makeStencilDescriptor(descriptor.stencilFront,
+                                                   descriptor.stencilReadMask,
+                                                   descriptor.stencilWriteMask);
+                auto back = makeStencilDescriptor(descriptor.stencilBack,
+                                                  descriptor.stencilReadMask,
+                                                  descriptor.stencilWriteMask);
+
+                depthDescriptor.frontFaceStencil = front;
+                depthDescriptor.backFaceStencil = back;
+
+                [front release];
+                [back release];
+            }
+
             depthState =
                 [metalDevice newDepthStencilStateWithDescriptor:depthDescriptor];
             [depthDescriptor release];

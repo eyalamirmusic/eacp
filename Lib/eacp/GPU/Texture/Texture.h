@@ -194,6 +194,17 @@ struct TextureDescriptor
     // never stored, like the drawable's. Ignored without renderTarget, which is
     // what renders.
     bool depth = false;
+
+    // Whether that buffer also carries a stencil plane, for a pass whose
+    // pipelines set RenderPipelineDescriptor::stencil.
+    //
+    // Implies depth rather than standing beside it: both APIs put the two
+    // planes in one attachment of one combined format, so a stencil-only target
+    // would allocate the depth plane anyway and then have to explain why it is
+    // there. Asking for stencil therefore gets a depth buffer as well, which a
+    // pipeline is free to leave untested. Ignored without renderTarget, as
+    // depth is.
+    bool stencil = false;
 };
 
 // A 2D texture sampled by the fragment stage (MTLTexture on Metal, a D3D12
@@ -236,6 +247,11 @@ public:
     // depth-tested pipeline needs and false on a target that did not ask for
     // one. A pass runs either way; without this it runs without the test.
     bool hasDepth() const;
+
+    // Whether that buffer carries a stencil plane too - what a pipeline setting
+    // RenderPipelineDescriptor::stencil needs to match. True implies hasDepth,
+    // the two planes being one attachment.
+    bool hasStencil() const;
 
     // Re-uploads pixels into a texture created by Device::makeTexture, reusing
     // the GPU resource instead of allocating a new one — the per-frame path for

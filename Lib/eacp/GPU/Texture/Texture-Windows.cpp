@@ -431,8 +431,10 @@ struct Texture::Native
     // will be cleared to say so at creation, and a ClearDepthStencilView that
     // does not match it is a validation error rather than a slow path - and it
     // must agree with the 1.0 the pass clears to.
-    void createDepthBuffer(D3D12Context& context)
+    void createDepthBuffer(D3D12Context& context, bool withStencil)
     {
+        const auto format = depthAttachmentFormat(withStencil);
+
         D3D12_HEAP_PROPERTIES heap = {};
         heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 
@@ -442,12 +444,12 @@ struct Texture::Native
         desc.Height = static_cast<UINT>(height);
         desc.DepthOrArraySize = 1;
         desc.MipLevels = 1;
-        desc.Format = DXGI_FORMAT_D32_FLOAT;
+        desc.Format = format;
         desc.SampleDesc.Count = 1;
         desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
         D3D12_CLEAR_VALUE clearValue = {};
-        clearValue.Format = DXGI_FORMAT_D32_FLOAT;
+        clearValue.Format = format;
         clearValue.DepthStencil.Depth = 1.f;
 
         if (FAILED(context.getDevice()->CreateCommittedResource(
@@ -472,7 +474,7 @@ struct Texture::Native
         }
 
         D3D12_DEPTH_STENCIL_VIEW_DESC viewDesc = {};
-        viewDesc.Format = DXGI_FORMAT_D32_FLOAT;
+        viewDesc.Format = format;
         viewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
 
         auto handle = data.dsvHeap->GetCPUDescriptorHandleForHeapStart();
@@ -480,6 +482,7 @@ struct Texture::Native
             data.depthResource.get(), &viewDesc, handle);
 
         data.dsv = handle;
+        data.depthHasStencil = withStencil;
     }
 
     // The view a kernel writes through. It comes out of the same shader-visible
@@ -510,8 +513,9 @@ struct Texture::Native
         if (descriptor.renderTarget)
             createRenderTargetView(context, descriptor);
 
-        if (descriptor.renderTarget && descriptor.depth && data.rtv.ptr != 0)
-            createDepthBuffer(context);
+        if (descriptor.renderTarget && (descriptor.depth || descriptor.stencil)
+            && data.rtv.ptr != 0)
+            createDepthBuffer(context, descriptor.stencil);
 
         if (computeWrite)
             createUnorderedAccessView(context, descriptor);
@@ -618,6 +622,11 @@ bool Texture::isComputeWritable() const
 bool Texture::hasDepth() const
 {
     return isValid() && impl->data.hasDepth();
+}
+
+bool Texture::hasStencil() const
+{
+    return isValid() && impl->data.hasStencil();
 }
 
 void* Texture::nativeTexture() const

@@ -820,6 +820,12 @@ public:
     const Buffer& vertices() const { return *vertexBufferData; }
     int vertexCount() const { return vertexCountValue; }
 
+    // Whether setVertices ever gave this program geometry of its own. A program
+    // only ever drawn through RenderPass::bind(program, vertices) has none, and
+    // asking it for vertices() would dereference an empty optional - which is
+    // why that overload does not.
+    bool hasVertices() const { return vertexBufferData.has_value(); }
+
     bool hasIndices() const { return indexBufferData.has_value(); }
     const Buffer& indices() const { return *indexBufferData; }
     int indexCount() const { return indexCountValue; }
@@ -846,7 +852,11 @@ public:
     bool fragmentReadsUniforms() const { return generated.fragmentReadsUniforms; }
 
     // Binds every assigned texture member to the pass; a no-op for programs
-    // without textures. RenderPass::draw(program) calls this.
+    // without textures. RenderPass::bind and RenderPass::draw(program) call it
+    // once - and so does a caller drawing sub-ranges of one buffer that differ
+    // by their texture, which is what this is public for: after bind(), the
+    // per-draw state is the caller's to restate, and a texture is the commonest
+    // thing it is.
     void bindTextures(RenderPass& pass)
     {
         auto bindVisitor = ShaderTextureBindVisitor {pass};

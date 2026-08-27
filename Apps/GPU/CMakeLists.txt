@@ -43,6 +43,10 @@ add_subdirectory(Instancing)
 # Scissor-clipped scrolling panes: setScissorRect + wheel events + backingScale.
 add_subdirectory(Clipping)
 
+# Stencil shadow volumes: per-face stencil ops counting depth failures, and the
+# lighting pass masked on the count. The algorithm the stencil buffer is for.
+add_subdirectory(StencilShadows)
+
 # Incremental sub-region texture uploads, the glyph-atlas pattern.
 add_subdirectory(TextureAtlas)
 

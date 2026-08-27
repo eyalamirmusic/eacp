@@ -396,3 +396,47 @@ auto tDepthRangeRemapsWhatIsWritten = test("Viewport/depthRangeRemapsWrites") = 
     check(isRed(defaultRange.at(20, middleRow)));
     check(isGreen(pushedBack.at(20, middleRow)));
 };
+
+// The target's own size, which the pass has always known and never said. A
+// caller dividing the target between viewports has to divide something, and the
+// obvious substitute - the view's bounds times its backing scale - is the
+// drawable's size rather than this pass's, so it is wrong for exactly the
+// off-screen renders every case in this file is made of.
+//
+// Checked against a snapshot at two scales, because one scale cannot tell the
+// pass's size apart from the bounds it was given.
+auto tPassReportsItsTargetSize = test("Viewport/thePassReportsItsTargetSize") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    struct SizeProbeView final : GPUView
+    {
+        SizeProbeView() { setSampleCount(1); }
+
+        void render(Frame& frame) override
+        {
+            auto pass = frame.beginPass({{0.f, 0.f, 0.f, 1.f}});
+
+            width = pass.targetWidth();
+            height = pass.targetHeight();
+        }
+
+        int width = -1;
+        int height = -1;
+    };
+
+    auto view = SizeProbeView {};
+    view.setBounds({0.f, 0.f, targetSize, targetSize});
+
+    check(view.renderToImage(1.f).isValid());
+    check(view.width == (int) targetSize);
+    check(view.height == (int) targetSize);
+
+    // The half that makes it a measurement rather than a restatement of the
+    // bounds: at twice the scale the pass is twice the size, and a caller
+    // reading the bounds would still see the same forty points.
+    check(view.renderToImage(2.f).isValid());
+    check(view.width == (int) targetSize * 2);
+    check(view.height == (int) targetSize * 2);
+};

@@ -43,6 +43,17 @@ public:
     void setDepth(bool enabled);
     bool hasDepth() const;
 
+    // Adds a stencil plane to that buffer, for pipelines setting
+    // RenderPipelineDescriptor::stencil. Off by default.
+    //
+    // Turns depth on with it rather than beside it: both APIs carry the two
+    // planes in one attachment of one combined format, so a view asking for
+    // stencil allocates the depth plane whether or not anything tests it.
+    // Turning depth back off afterwards drops the stencil plane too, there
+    // being no attachment left to hold it.
+    void setStencil(bool enabled);
+    bool hasStencil() const;
+
     void setContinuous(bool continuous);
     bool isContinuous() const;
 

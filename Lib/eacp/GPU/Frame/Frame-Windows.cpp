@@ -295,6 +295,13 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
                           static_cast<LONG>(impl->drawable->height)};
     list->RSSetScissorRects(1, &scissor);
 
+    // The stencil reference is command-list state here and encoder state on
+    // Metal, so it survives a pass on this backend and does not on that one.
+    // Reset to Metal's own default at every pass, or a pass that sets a
+    // reference silently lends it to the next pass on the same frame and the
+    // two backends draw differently. Tests/GPU/StencilTests.cpp pins it.
+    list->OMSetStencilRef(0);
+
     if (descriptor.clear)
     {
         const auto& color = descriptor.clearColor;
@@ -303,10 +310,16 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     }
 
     // Depth is cleared to the far plane (1.0) whenever a depth buffer is
-    // bound, matching the Metal pass's unconditional depth clear.
+    // bound, matching the Metal pass's unconditional depth clear - and the
+    // stencil plane with it, to the value the descriptor names, whenever the
+    // buffer has one.
     if (hasDepth)
-        list->ClearDepthStencilView(
-            impl->depth->view, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        list->ClearDepthStencilView(impl->depth->view,
+                                    depthClearFlags(impl->depth->stencil),
+                                    1.0f,
+                                    descriptor.clearStencil,
+                                    0,
+                                    nullptr);
 
     auto* encoder = new D3D12Encoder {impl->commands, {}};
     impl->timePass(*encoder, descriptor.label);
@@ -359,6 +372,13 @@ RenderPass Frame::beginPass(const Texture& target,
     D3D12_RECT scissor = {0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
     list->RSSetScissorRects(1, &scissor);
 
+    // The stencil reference is command-list state here and encoder state on
+    // Metal, so it survives a pass on this backend and does not on that one.
+    // Reset to Metal's own default at every pass, or a pass that sets a
+    // reference silently lends it to the next pass on the same frame and the
+    // two backends draw differently. Tests/GPU/StencilTests.cpp pins it.
+    list->OMSetStencilRef(0);
+
     if (descriptor.clear)
     {
         const auto& color = descriptor.clearColor;
@@ -369,8 +389,12 @@ RenderPass Frame::beginPass(const Texture& target,
     // Cleared to the far plane whenever there is one, matching both the
     // drawable pass here and the Metal pass's unconditional depth clear.
     if (hasDepth)
-        list->ClearDepthStencilView(
-            data->dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        list->ClearDepthStencilView(data->dsv,
+                                    depthClearFlags(data->hasStencil()),
+                                    1.0f,
+                                    descriptor.clearStencil,
+                                    0,
+                                    nullptr);
 
     auto* encoder = new D3D12Encoder {impl->commands, {}};
     impl->timePass(*encoder, descriptor.label);

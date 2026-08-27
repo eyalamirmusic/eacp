@@ -177,7 +177,7 @@ D3D12_CULL_MODE toD3DCullMode(CullMode mode)
     return D3D12_CULL_MODE_NONE;
 }
 
-D3D12_COMPARISON_FUNC toD3DComparison(DepthCompare compare)
+D3D12_COMPARISON_FUNC toD3DComparison(CompareFunction compare)
 {
     switch (compare)
     {
@@ -277,19 +277,73 @@ D3D12_BLEND_DESC makeBlendDesc(BlendMode mode)
     }
 }
 
+D3D12_STENCIL_OP toD3DStencilOp(StencilOp op)
+{
+    switch (op)
+    {
+        case StencilOp::Keep:
+            return D3D12_STENCIL_OP_KEEP;
+        case StencilOp::Zero:
+            return D3D12_STENCIL_OP_ZERO;
+        case StencilOp::Replace:
+            return D3D12_STENCIL_OP_REPLACE;
+        case StencilOp::IncrementClamp:
+            return D3D12_STENCIL_OP_INCR_SAT;
+        case StencilOp::DecrementClamp:
+            return D3D12_STENCIL_OP_DECR_SAT;
+        case StencilOp::Invert:
+            return D3D12_STENCIL_OP_INVERT;
+        case StencilOp::IncrementWrap:
+            return D3D12_STENCIL_OP_INCR;
+        case StencilOp::DecrementWrap:
+            return D3D12_STENCIL_OP_DECR;
+    }
+
+    return D3D12_STENCIL_OP_KEEP;
+}
+
+// D3D12's INCR/DECR are the wrapping pair and INCR_SAT/DECR_SAT the clamping
+// one, which is the opposite way round from how the names read - GL and Metal
+// both spell the wrapping pair with the longer name. Worth stating because
+// getting it backwards produces a shadow that is right until a pixel is inside
+// 255 volumes, which no test would ever reach.
+D3D12_DEPTH_STENCILOP_DESC toD3DStencilFace(const StencilFace& face)
+{
+    D3D12_DEPTH_STENCILOP_DESC desc = {};
+
+    desc.StencilFailOp = toD3DStencilOp(face.stencilFail);
+    desc.StencilDepthFailOp = toD3DStencilOp(face.depthFail);
+    desc.StencilPassOp = toD3DStencilOp(face.pass);
+    desc.StencilFunc = toD3DComparison(face.compare);
+
+    return desc;
+}
+
 // The [0,1] depth range is shared by both APIs, so no convention flip is needed
-// and the comparison means the same thing on each.
+// and the comparison means the same thing on each. The same holds for the
+// stencil: an 8-bit unsigned plane, one reference value, one read mask and one
+// write mask on both.
 D3D12_DEPTH_STENCIL_DESC makeDepthStencilDesc(const RenderPipelineDescriptor& from)
 {
     D3D12_DEPTH_STENCIL_DESC desc = {};
 
-    if (!from.depth)
-        return desc;
+    if (from.depth)
+    {
+        desc.DepthEnable = TRUE;
+        desc.DepthWriteMask = from.depthWrite ? D3D12_DEPTH_WRITE_MASK_ALL
+                                              : D3D12_DEPTH_WRITE_MASK_ZERO;
+        desc.DepthFunc = toD3DComparison(from.depthCompare);
+    }
 
-    desc.DepthEnable = TRUE;
-    desc.DepthWriteMask =
-        from.depthWrite ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
-    desc.DepthFunc = toD3DComparison(from.depthCompare);
+    if (from.stencil)
+    {
+        desc.StencilEnable = TRUE;
+        desc.StencilReadMask = from.stencilReadMask;
+        desc.StencilWriteMask = from.stencilWriteMask;
+        desc.FrontFace = toD3DStencilFace(from.stencilFront);
+        desc.BackFace = toD3DStencilFace(from.stencilBack);
+    }
+
     return desc;
 }
 } // namespace
@@ -305,6 +359,7 @@ struct RenderPipeline::Native
         pipeline.topology = toD3DTopology(descriptor.topology);
         pipeline.strides = makeStrideTable(descriptor.vertexLayout);
         pipeline.depth = descriptor.depth;
+        pipeline.stencil = descriptor.stencil;
 
         if (!context.isValid() || context.getRenderRootSignature() == nullptr
             || descriptor.library == nullptr)
@@ -334,8 +389,9 @@ struct RenderPipeline::Native
         desc.PrimitiveTopologyType = toTopologyType(descriptor.topology);
         desc.NumRenderTargets = 1;
         desc.RTVFormats[0] = toDXGIFormat(descriptor.colorFormat);
-        desc.DSVFormat =
-            descriptor.depth ? DXGI_FORMAT_D32_FLOAT : DXGI_FORMAT_UNKNOWN;
+        desc.DSVFormat = descriptor.depth || descriptor.stencil
+                             ? depthAttachmentFormat(descriptor.stencil)
+                             : DXGI_FORMAT_UNKNOWN;
         desc.SampleDesc.Count = static_cast<UINT>(
             descriptor.sampleCount > 1 ? descriptor.sampleCount : 1);
 
