@@ -134,6 +134,7 @@ struct D3D12Pipeline
     // Legacy single-buffer pipelines carry one entry at index 0.
     Vector<UINT> strides;
     bool depth = false;
+    bool stencil = false;
 };
 
 // The single "stride for a bound slot" rule shared by RenderPipeline (which
@@ -168,6 +169,31 @@ struct D3D12BufferData
 // in the context's shader-visible heap for the texture's whole lifetime;
 // binding is just a root-table pointer update. There is no sampler slot: every
 // sampler is static in the root signature. See TextureSampling.
+// The one format a depth attachment is created, cleared, viewed and compiled
+// against. Kept in one place because those four have to name the same value:
+// a resource, its optimised clear value, its DSV and the pipeline's DSVFormat
+// disagreeing is a validation error at the draw rather than at creation, which
+// is the slowest possible place to find it.
+//
+// D32_FLOAT_S8X24_UINT rather than D24_UNORM_S8_UINT so the depth plane keeps
+// the same 32-bit float precision, and the same near/far behaviour, whether or
+// not the stencil plane is there - and so it matches Metal, whose Apple-silicon
+// devices do not have the 24-bit combined format at all.
+inline DXGI_FORMAT depthAttachmentFormat(bool withStencil)
+{
+    return withStencil ? DXGI_FORMAT_D32_FLOAT_S8X24_UINT : DXGI_FORMAT_D32_FLOAT;
+}
+
+// Which planes a pass clears. Both when the buffer has both, which is what
+// keeps a stencilled pass starting from a value it named rather than from
+// whatever the last frame left in the plane.
+inline D3D12_CLEAR_FLAGS depthClearFlags(bool withStencil)
+{
+    return withStencil ? static_cast<D3D12_CLEAR_FLAGS>(D3D12_CLEAR_FLAG_DEPTH
+                                                        | D3D12_CLEAR_FLAG_STENCIL)
+                       : D3D12_CLEAR_FLAG_DEPTH;
+}
+
 struct D3D12TextureData
 {
     winrt::com_ptr<ID3D12Resource> resource;
@@ -195,6 +221,11 @@ struct D3D12TextureData
     winrt::com_ptr<ID3D12DescriptorHeap> dsvHeap;
     D3D12_CPU_DESCRIPTOR_HANDLE dsv = {};
 
+    // Whether that buffer was created in the combined format, which is what
+    // decides both the clear flags the pass uses and whether a pipeline drawing
+    // here must set RenderPipelineDescriptor::stencil.
+    bool depthHasStencil = false;
+
     // A plain texture rests in PIXEL_SHADER_RESOURCE forever - it is only ever
     // sampled - and a render target moves between that and RENDER_TARGET as the
     // passes go by. Unlike a buffer this does not decay to COMMON at
@@ -206,6 +237,7 @@ struct D3D12TextureData
     bool isRenderTarget() const { return rtv.ptr != 0; }
     bool isComputeWritable() const { return uav.cpu.ptr != 0; }
     bool hasDepth() const { return dsv.ptr != 0; }
+    bool hasStencil() const { return hasDepth() && depthHasStencil; }
 };
 
 // The frame's color target. All members are owned by GPUView and stay valid
@@ -236,6 +268,10 @@ struct D3D12MsaaTarget
 struct D3D12DepthTarget
 {
     D3D12_CPU_DESCRIPTOR_HANDLE view = {};
+
+    // Whether the buffer behind that view carries a stencil plane, so the pass
+    // knows whether to clear one. A DSV says nothing about its own format.
+    bool stencil = false;
 };
 
 // Carries the frame's recording (and the active pipeline's per-slot strides)

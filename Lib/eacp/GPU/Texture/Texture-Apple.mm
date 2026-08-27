@@ -110,8 +110,9 @@ struct Texture::Native
 
         texture = [metalDevice newTextureWithDescriptor:textureDescriptor];
 
-        if (renderTarget && descriptor.depth && texture.get() != nil)
-            makeDepthTexture(metalDevice);
+        if (renderTarget && (descriptor.depth || descriptor.stencil)
+            && texture.get() != nil)
+            makeDepthTexture(metalDevice, descriptor.stencil);
 
         // The default storage mode keeps replaceRegion valid on every Mac
         // generation; it handles the CPU-to-GPU synchronisation itself.
@@ -122,10 +123,13 @@ struct Texture::Native
     // The depth buffer a pass into this texture attaches. Single-sampled,
     // because a texture target never multisamples, and private - the pass
     // clears it and stores nothing, so it is never read outside the GPU.
-    void makeDepthTexture(id<MTLDevice> metalDevice)
+    void makeDepthTexture(id<MTLDevice> metalDevice, bool withStencil)
     {
+        const auto format = withStencil ? MTLPixelFormatDepth32Float_Stencil8
+                                        : MTLPixelFormatDepth32Float;
+
         auto depthDescriptor = [MTLTextureDescriptor
-            texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+            texture2DDescriptorWithPixelFormat:format
                                          width:(NSUInteger) width
                                         height:(NSUInteger) height
                                      mipmapped:NO];
@@ -333,6 +337,14 @@ bool Texture::isComputeWritable() const
 bool Texture::hasDepth() const
 {
     return impl->depthTexture.get() != nil;
+}
+
+bool Texture::hasStencil() const
+{
+    auto depth = (id<MTLTexture>) impl->depthTexture.get();
+
+    return depth != nil
+           && depth.pixelFormat == MTLPixelFormatDepth32Float_Stencil8;
 }
 
 void* Texture::nativeTexture() const

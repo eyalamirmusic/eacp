@@ -31,13 +31,20 @@ auto tTextureUpdates = test("GPU/textureUpdates") = []
     check(texture.width() == 2);
     check(texture.height() == 2);
 
-    // A source whose rows are wider than width * 4: two pixels then two padding
-    // bytes per row, exercising the bytesPerRow stride path.
+    // A source whose rows are wider than width * 4: two pixels then a pixel's
+    // worth of padding per row, exercising the bytesPerRow stride path.
+    //
+    // The padding is four bytes rather than two because a stride has to be a
+    // whole number of pixels: Metal's validation layer asserts outright on a
+    // bytesPerRow that is not a multiple of the format's pixel size, so a
+    // 10-byte stride took the whole suite down under MTL_DEBUG_LAYER=1 while
+    // passing without it. Nothing pads to a fraction of a pixel in practice
+    // either - capture buffers align rows to 4, 16 or 64 bytes.
     const std::uint8_t padded[] = {
-        0,   0, 0, 255, 255, 255, 255, 255, 0xAB, 0xCD, // row 0: 2 px + 2 pad
-        255, 0, 0, 255, 0,   255, 0,   255, 0xAB, 0xCD, // row 1: 2 px + 2 pad
+        0,   0, 0, 255, 255, 255, 255, 255, 0xAB, 0xCD, 0xAB, 0xCD, // 2 px + pad
+        255, 0, 0, 255, 0,   255, 0,   255, 0xAB, 0xCD, 0xAB, 0xCD, // 2 px + pad
     };
-    texture.update(padded, 10);
+    texture.update(padded, 12);
     check(texture.isValid());
 
     // A null update is a safe no-op.

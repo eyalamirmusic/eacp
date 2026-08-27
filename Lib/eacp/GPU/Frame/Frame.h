@@ -27,6 +27,16 @@ struct RenderPassDescriptor
     // existing `beginPass({colour})` in the tree warns under
     // -Wmissing-field-initializers for the field it does not know about.
     std::string_view label = {};
+
+    // The value the stencil plane is cleared to, where the pass has one. Zero
+    // is what a mask wants to start from and what a shadow volume counts up
+    // from; a half-way value is what an algorithm that decrements below its
+    // start needs, since the plane is unsigned.
+    //
+    // Unconditional, like the depth clear beside it: a pass with no stencil
+    // plane ignores this, and one that has a plane always starts from a value it
+    // named rather than from whatever the last frame left.
+    unsigned char clearStencil = 0;
 };
 
 // Off-screen render target for snapshots: a colour texture the app owns instead
@@ -37,6 +47,10 @@ struct OffscreenTarget
 {
     void* colorTexture = nullptr;
     void* msaaTexture = nullptr;
+
+    // The combined depth-stencil buffer, when the view asked for either. What
+    // the pass does with the stencil plane follows from the buffer's format, so
+    // there is nothing further to pass here.
     void* depthTexture = nullptr;
 };
 

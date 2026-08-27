@@ -9,6 +9,45 @@
 
 namespace eacp::GPU
 {
+namespace
+{
+// Whether a depth attachment also carries a stencil plane. Only the one
+// combined format is ever created here (GPUView::setStencil, and
+// TextureDescriptor::stencil), so this asks about that one rather than
+// enumerating formats Metal has and eacp does not use.
+bool hasStencilPlane(MTLPixelFormat format)
+{
+    return format == MTLPixelFormatDepth32Float_Stencil8;
+}
+
+// Attaches the frame's depth buffer, and its stencil plane when the format has
+// one - the same texture named twice, which is how Metal spells a combined
+// attachment. Both planes are cleared at the start of every pass and stored by
+// neither, which is what a per-frame buffer is for.
+//
+// Shared by the drawable pass and the texture-target pass so the two cannot
+// drift on which planes a pass gets or what they start from.
+void attachDepthStencil(MTLRenderPassDescriptor* passDescriptor,
+                        id<MTLTexture> depth,
+                        unsigned char clearStencil)
+{
+    auto depthAttachment = passDescriptor.depthAttachment;
+    depthAttachment.texture = depth;
+    depthAttachment.loadAction = MTLLoadActionClear;
+    depthAttachment.storeAction = MTLStoreActionDontCare;
+    depthAttachment.clearDepth = 1.0;
+
+    if (! hasStencilPlane(depth.pixelFormat))
+        return;
+
+    auto stencilAttachment = passDescriptor.stencilAttachment;
+    stencilAttachment.texture = depth;
+    stencilAttachment.loadAction = MTLLoadActionClear;
+    stencilAttachment.storeAction = MTLStoreActionDontCare;
+    stencilAttachment.clearStencil = (uint32_t) clearStencil;
+}
+} // namespace
+
 struct Frame::Native
 {
     Native(Device& deviceToUse,
@@ -175,13 +214,8 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
         MTLClearColorMake(color.r, color.g, color.b, color.a);
 
     if (auto depth = impl->depthTexture.get())
-    {
-        auto depthAttachment = passDescriptor.depthAttachment;
-        depthAttachment.texture = (id<MTLTexture>) depth;
-        depthAttachment.loadAction = MTLLoadActionClear;
-        depthAttachment.storeAction = MTLStoreActionDontCare;
-        depthAttachment.clearDepth = 1.0;
-    }
+        attachDepthStencil(
+            passDescriptor, (id<MTLTexture>) depth, descriptor.clearStencil);
 
     impl->timeRenderPass(passDescriptor, descriptor.label);
 
@@ -221,13 +255,7 @@ RenderPass Frame::beginPass(const Texture& target,
         MTLClearColorMake(color.r, color.g, color.b, color.a);
 
     if (auto depth = (__bridge id<MTLTexture>) target.nativeDepthTexture())
-    {
-        auto depthAttachment = passDescriptor.depthAttachment;
-        depthAttachment.texture = depth;
-        depthAttachment.loadAction = MTLLoadActionClear;
-        depthAttachment.storeAction = MTLStoreActionDontCare;
-        depthAttachment.clearDepth = 1.0;
-    }
+        attachDepthStencil(passDescriptor, depth, descriptor.clearStencil);
 
     impl->timeRenderPass(passDescriptor, descriptor.label);
 

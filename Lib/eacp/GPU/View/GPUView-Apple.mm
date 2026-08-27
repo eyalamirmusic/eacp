@@ -112,6 +112,15 @@ struct GPUView::Native
         msaaTexture = [metalDevice newTextureWithDescriptor:textureDescriptor];
     }
 
+    // One texture for both planes, in the combined format when the stencil one
+    // is wanted - which is how both APIs spell a depth-stencil attachment, and
+    // why setStencil implies depth.
+    MTLPixelFormat depthAttachmentFormat() const
+    {
+        return stencilEnabled ? MTLPixelFormatDepth32Float_Stencil8
+                              : MTLPixelFormatDepth32Float;
+    }
+
     void updateDepthTexture(NSUInteger width, NSUInteger height)
     {
         if (! depthEnabled || width == 0 || height == 0)
@@ -123,7 +132,7 @@ struct GPUView::Native
         auto metalDevice = (__bridge id<MTLDevice>) Device::shared().nativeDevice();
 
         auto textureDescriptor = [MTLTextureDescriptor
-            texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+            texture2DDescriptorWithPixelFormat:depthAttachmentFormat()
                                          width:width
                                         height:height
                                      mipmapped:NO];
@@ -167,6 +176,7 @@ struct GPUView::Native
     int framesInFlight = 3;
     bool continuous = false;
     bool depthEnabled = false;
+    bool stencilEnabled = false;
 
     // Device pixels per logical point, refreshed by updateSize(). Zero until the
     // first update, which is how the initial scale is told apart from a change.
@@ -198,12 +208,34 @@ void GPUView::setSampleCount(int count)
 void GPUView::setDepth(bool enabled)
 {
     impl->depthEnabled = enabled;
+
+    // The stencil plane lives in the depth attachment, so turning the
+    // attachment off takes the plane with it rather than leaving hasStencil()
+    // claiming a buffer that is gone.
+    if (! enabled)
+        impl->stencilEnabled = false;
+
     impl->updateSize();
 }
 
 bool GPUView::hasDepth() const
 {
     return impl->depthEnabled;
+}
+
+void GPUView::setStencil(bool enabled)
+{
+    impl->stencilEnabled = enabled;
+
+    if (enabled)
+        impl->depthEnabled = true;
+
+    impl->updateSize();
+}
+
+bool GPUView::hasStencil() const
+{
+    return impl->stencilEnabled;
 }
 
 void GPUView::setContinuous(bool continuous)
@@ -348,9 +380,10 @@ Graphics::Image GPUView::renderNativeContent(float scale)
         auto colorTexture = makeTarget(MTLPixelFormatBGRA8Unorm, false);
         auto msaaTexture =
             samples > 1 ? makeTarget(MTLPixelFormatBGRA8Unorm, true) : nil;
-        auto depthTexture =
-            impl->depthEnabled ? makeTarget(MTLPixelFormatDepth32Float, samples > 1)
-                               : nil;
+        auto depthTexture = impl->depthEnabled
+                              ? makeTarget(impl->depthAttachmentFormat(),
+                                           samples > 1)
+                              : nil;
 
         {
             auto target = OffscreenTarget {(__bridge void*) colorTexture,
@@ -474,9 +507,10 @@ bool GPUView::renderNativeContentToTarget(void* nativeTarget, float)
 
         auto msaaTexture =
             samples > 1 ? makeTarget(MTLPixelFormatBGRA8Unorm, true) : nil;
-        auto depthTexture =
-            impl->depthEnabled ? makeTarget(MTLPixelFormatDepth32Float, samples > 1)
-                               : nil;
+        auto depthTexture = impl->depthEnabled
+                              ? makeTarget(impl->depthAttachmentFormat(),
+                                           samples > 1)
+                              : nil;
 
         auto target = OffscreenTarget {(__bridge void*) colorTexture,
                                        (__bridge void*) msaaTexture,

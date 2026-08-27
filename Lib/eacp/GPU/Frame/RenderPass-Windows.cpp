@@ -123,6 +123,16 @@ void RenderPass::clearViewport()
     impl->encoder->commands->list->RSSetViewports(1, &viewport);
 }
 
+int RenderPass::targetWidth() const
+{
+    return impl->targetWidth;
+}
+
+int RenderPass::targetHeight() const
+{
+    return impl->targetHeight;
+}
+
 void RenderPass::setPipeline(const RenderPipeline& pipeline)
 {
     if (!impl->encoder)
@@ -140,6 +150,14 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
     list->IASetPrimitiveTopology(state->topology);
 
     impl->encoder->strides = state->strides;
+}
+
+void RenderPass::setStencilReference(unsigned int value)
+{
+    if (!impl->encoder)
+        return;
+
+    impl->encoder->commands->list->OMSetStencilRef(static_cast<UINT>(value));
 }
 
 void RenderPass::setVertexBuffer(const Buffer& buffer, int index)

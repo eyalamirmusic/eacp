@@ -172,6 +172,16 @@ void RenderPass::clearViewport()
     [activeEncoder setViewport:viewport];
 }
 
+int RenderPass::targetWidth() const
+{
+    return impl->targetWidth;
+}
+
+int RenderPass::targetHeight() const
+{
+    return impl->targetHeight;
+}
+
 void RenderPass::setPipeline(const RenderPipeline& pipeline)
 {
     auto activeEncoder = impl->encoder.get();
@@ -206,6 +216,12 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
     }
 
     impl->primitiveType = toMetalPrimitiveType(pipeline.topology());
+}
+
+void RenderPass::setStencilReference(unsigned int value)
+{
+    if (auto activeEncoder = impl->encoder.get())
+        [activeEncoder setStencilReferenceValue:(uint32_t) value];
 }
 
 void RenderPass::setVertexBuffer(const Buffer& buffer, int index)

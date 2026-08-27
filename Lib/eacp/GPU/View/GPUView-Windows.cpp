@@ -394,12 +394,12 @@ struct GPUView::Native : DeviceResourceHolder
         descriptor.Height = height;
         descriptor.DepthOrArraySize = 1;
         descriptor.MipLevels = 1;
-        descriptor.Format = DXGI_FORMAT_D32_FLOAT;
+        descriptor.Format = depthAttachmentFormat(stencilEnabled);
         descriptor.SampleDesc.Count = useMsaa ? static_cast<UINT>(sampleCount) : 1;
         descriptor.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
         D3D12_CLEAR_VALUE clearValue = {};
-        clearValue.Format = DXGI_FORMAT_D32_FLOAT;
+        clearValue.Format = depthAttachmentFormat(stencilEnabled);
         clearValue.DepthStencil.Depth = 1.0f;
 
         if (FAILED(device->CreateCommittedResource(&heap,
@@ -466,7 +466,10 @@ struct GPUView::Native : DeviceResourceHolder
 
         D3D12DepthTarget depth = {};
         if (useDepth)
+        {
             depth.view = depthViewHandle;
+            depth.stencil = stencilEnabled;
+        }
 
         {
             auto frame = Frame(Device::shared(),
@@ -527,6 +530,7 @@ struct GPUView::Native : DeviceResourceHolder
 
     bool continuous = false;
     bool depthEnabled = false;
+    bool stencilEnabled = false;
     UINT width = 0;
     UINT height = 0;
 
@@ -572,12 +576,34 @@ void GPUView::setSampleCount(int count)
 void GPUView::setDepth(bool enabled)
 {
     impl->depthEnabled = enabled;
+
+    // The stencil plane lives in the depth attachment, so turning the
+    // attachment off takes the plane with it rather than leaving hasStencil()
+    // claiming a buffer that is gone.
+    if (!enabled)
+        impl->stencilEnabled = false;
+
     impl->updateDepthTexture();
 }
 
 bool GPUView::hasDepth() const
 {
     return impl->depthEnabled;
+}
+
+void GPUView::setStencil(bool enabled)
+{
+    impl->stencilEnabled = enabled;
+
+    if (enabled)
+        impl->depthEnabled = true;
+
+    impl->updateDepthTexture();
+}
+
+bool GPUView::hasStencil() const
+{
+    return impl->stencilEnabled;
 }
 
 void GPUView::setContinuous(bool continuous)
@@ -789,14 +815,14 @@ Graphics::Image GPUView::renderNativeContent(float scale)
                 &dsvHeapDesc, __uuidof(ID3D12DescriptorHeap), dsvHeap.put_void())))
         {
             D3D12_CLEAR_VALUE clearValue = {};
-            clearValue.Format = DXGI_FORMAT_D32_FLOAT;
+            clearValue.Format = depthAttachmentFormat(impl->stencilEnabled);
             clearValue.DepthStencil.Depth = 1.0f;
 
             depthTexture =
                 makeSnapshotTexture(device,
                                     pixelWidth,
                                     pixelHeight,
-                                    DXGI_FORMAT_D32_FLOAT,
+                                    depthAttachmentFormat(impl->stencilEnabled),
                                     useMsaa ? samples : 1,
                                     D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,
                                     D3D12_RESOURCE_STATE_DEPTH_WRITE,
@@ -827,7 +853,10 @@ Graphics::Image GPUView::renderNativeContent(float scale)
 
     D3D12DepthTarget depthTarget = {};
     if (depthTexture)
+    {
         depthTarget.view = depthDsv;
+        depthTarget.stencil = impl->stencilEnabled;
+    }
 
     {
         OffscreenTarget target = {};

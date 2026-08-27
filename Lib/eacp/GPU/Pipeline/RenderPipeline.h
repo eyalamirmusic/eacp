@@ -118,16 +118,21 @@ enum class Winding
     Clockwise
 };
 
-// The test a fragment's depth has to pass against what is already in the depth
-// buffer to be kept. Less-equal is the conventional choice for a near-to-far
-// depth buffer cleared to 1, and is what this had baked in before it was a
-// choice.
+// The test a fragment has to pass to be kept, against what is already in the
+// depth buffer or - for a stencil face - against the pass's reference value.
+// Less-equal is the conventional depth choice for a near-to-far buffer cleared
+// to 1, and is what this had baked in before it was a choice.
 //
 // The two that look redundant are not. Always with depthWrite off is how a
 // pass draws while ignoring depth entirely without needing a second pipeline
 // shape, and Greater is what a reverse-Z projection - the standard fix for
 // depth precision at distance - tests with.
-enum class DepthCompare
+//
+// One enum for both tests because both APIs have one: MTLCompareFunction and
+// D3D12_COMPARISON_FUNC are each used for depth and stencil alike, so a second
+// enum would be the same eight values under another name and one more place for
+// the two backends to disagree.
+enum class CompareFunction
 {
     Never,
     Less,
@@ -137,6 +142,59 @@ enum class DepthCompare
     GreaterEqual,
     Greater,
     Always
+};
+
+// The name this was born under, kept because `depthCompare` reads better with
+// it and nothing is served by rewriting every call site.
+using DepthCompare = CompareFunction;
+
+// What happens to the stencil value in the buffer when a fragment reaches one
+// of the three outcomes a StencilFace names.
+//
+// IncrementWrap and DecrementWrap are the pair that matter for shadow volumes:
+// the count of front faces entered minus back faces left is what a stencil
+// shadow accumulates, and the clamping forms lose it the moment a pixel is
+// inside more shadow volumes than the buffer's 255. Wrapping is what keeps the
+// arithmetic modular, so an over- and an under-count still cancel.
+enum class StencilOp
+{
+    Keep,
+    Zero,
+    Replace,
+    IncrementClamp,
+    DecrementClamp,
+    Invert,
+    IncrementWrap,
+    DecrementWrap
+};
+
+// What one facing does with the stencil buffer: the test it runs against the
+// pass's reference value, and what it writes on each of the three outcomes.
+//
+// Front and back are separate because the one algorithm that most needs stencil
+// needs them to differ: a two-sided depth-fail shadow volume increments on the
+// back faces and decrements on the front ones in a single pass over the
+// geometry, which is what glStencilOpSeparate exists for and what a
+// one-face-at-a-time API costs two passes.
+//
+// The defaults are the pass-through: always test, never write. A pipeline that
+// sets `stencil` and leaves a face alone therefore reads the buffer without
+// disturbing it, which is what the shading pass of a shadowed scene wants for
+// both faces once the volume pass has filled it in.
+struct StencilFace
+{
+    CompareFunction compare = CompareFunction::Always;
+
+    // Applied when the stencil test fails, so the fragment is discarded.
+    StencilOp stencilFail = StencilOp::Keep;
+
+    // Applied when the stencil test passes and the depth test then fails. This
+    // is the outcome the depth-fail (Carmack's reverse) shadow algorithm counts,
+    // and it is the reason a stencil pipeline usually wants a depth buffer too.
+    StencilOp depthFail = StencilOp::Keep;
+
+    // Applied when both tests pass and the fragment is kept.
+    StencilOp pass = StencilOp::Keep;
 };
 
 struct RenderPipelineDescriptor
@@ -175,6 +233,45 @@ struct RenderPipelineDescriptor
     // convention CullMode's note states.
     CullMode cullMode = CullMode::None;
     Winding frontFace = Winding::CounterClockwise;
+
+    // Whether this pipeline's attachment carries a stencil plane, and so
+    // whether the two faces below are read at all.
+    //
+    // It is the same question `depth` asks and has the same answer: the
+    // attachment's format is part of what a pipeline is compiled against, so
+    // this must agree with the pass it draws into or the draw is rejected.
+    // Requires GPUView::setStencil(true), or TextureDescriptor::stencil on a
+    // texture target - each of which also gives the pass a depth buffer, the
+    // two planes being one attachment on both APIs.
+    //
+    // Setting this does not enable the depth test: `depth` still does that, and
+    // a pipeline may reasonably set stencil with depth off (a mask being
+    // painted) or both together (a shadow volume, which counts depth failures).
+    //
+    // It does, though, have to be set by *every* pipeline drawing into a pass
+    // whose attachment carries a stencil plane, including one that only wants
+    // the depth test - the format of the attachment is what a pipeline is
+    // compiled against, and a stencilled buffer is a different format from a
+    // plain depth one. A view left on setStencil(false) is the cheaper
+    // attachment and the one to keep where nothing needs the plane.
+    bool stencil = false;
+
+    StencilFace stencilFront;
+    StencilFace stencilBack;
+
+    // Which bits a stencil comparison reads, and which bits a stencil write may
+    // touch. Both default to every bit.
+    //
+    // One pair for both faces rather than a pair on each, which is the narrower
+    // of the two APIs: D3D12 carries a single StencilReadMask and
+    // StencilWriteMask on the whole depth-stencil state, while Metal has them
+    // per face. Offering per-face masks would mean offering something one
+    // backend cannot honour, so the shared pair is what both can mean exactly.
+    // No algorithm this exists for wants them to differ: a write mask splits the
+    // buffer into bitfields, and the split is a property of the buffer rather
+    // than of a facing.
+    unsigned char stencilReadMask = 0xff;
+    unsigned char stencilWriteMask = 0xff;
 };
 
 // A compiled render pipeline state (MTLRenderPipelineState on Metal). Create via
@@ -196,7 +293,8 @@ public:
     Winding frontFace() const;
 
     // Opaque native handles for cross-translation-unit use by the render pass.
-    // nativeDepthState() is null when the pipeline has no depth testing.
+    // nativeDepthState() is the combined depth-stencil state on both backends,
+    // and null when the pipeline tests neither.
     void* nativeState() const;
     void* nativeDepthState() const;
 
