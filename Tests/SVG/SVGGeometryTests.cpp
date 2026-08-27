@@ -667,6 +667,25 @@ auto tSymbolIsFittedToTheUse =
           "the symbol's viewBox was mapped onto the use's size");
 };
 
+// A sprite sheet is one document of nested <svg> icons, each with a viewBox
+// of its own and an x, y, width and height placing it in the sheet. Met in
+// the tree rather than through a <use>, one was drawn as a plain group: its
+// viewBox ignored, its content at whatever scale it was authored in.
+auto tNestedSvgIsAViewport =
+    test("SVGComponent/aNestedSvgIsFittedToItsOwnWidthAndHeight") = []
+{
+    auto component = componentFor(
+        R"(<svg width="100" height="100"><svg x="0" y="50" width="50" height="50" viewBox="0 0 1000 1000">)"
+        R"(<rect x="0" y="0" width="1000" height="1000" fill="red"/></svg></svg>)");
+
+    check(component->getShapeCount() == 1);
+
+    // The icon's 1000x1000 box, drawn at the 50x50 it was given.
+    check(component->getTotalMaskArea() > 2000.f
+              && component->getTotalMaskArea() < 3000.f,
+          "the nested svg's viewBox was mapped onto its width and height");
+};
+
 // ----------------------------------------------------------------- dashing
 
 // The observable here is thin on purpose: a dashed stroke is still one region
