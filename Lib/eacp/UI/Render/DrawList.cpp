@@ -10,6 +10,7 @@ void DrawList::clear()
     glyphRuns.clear();
     meshes.clear();
     layers.clear();
+    images.clear();
     clips.clear();
 }
 
@@ -18,7 +19,8 @@ void DrawList::append(DrawCommand::Kind kind, int first)
     // Only a run of primitives merges. An entry that carries its own range --
     // a mesh, a layer, a clip -- is one command apiece, since a command holding
     // two of them would have to say which, and the range is already in the entry.
-    auto mergeable = kind == DrawCommand::Kind::Shapes;
+    auto mergeable =
+        kind == DrawCommand::Kind::Shapes || kind == DrawCommand::Kind::Images;
 
     if (mergeable && !commands.empty())
     {
@@ -70,6 +72,15 @@ void DrawList::addLayer(const Layer& layer, const Rect& bounds)
 {
     layers.add({&layer, bounds});
     append(DrawCommand::Kind::Layer, layers.size() - 1);
+}
+
+void DrawList::addImage(const ImageDraw& image)
+{
+    if (image.image == nullptr)
+        return;
+
+    images.add(image);
+    append(DrawCommand::Kind::Images, images.size() - 1);
 }
 
 void DrawList::addClip(const ClipDraw& clip)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DrawList.h"
+#include "ImageBatch.h"
 #include "LayerRenderer.h"
 #include "MeshBatch.h"
 #include "ShapeBatch.h"
@@ -19,14 +20,15 @@ namespace eacp::UI
 //
 // Which is also why the batching lives here and not in the painter. A run of
 // quads goes out as one instanced draw, and what breaks the run is a clip change
-// or a switch between the two shape renderers; both are decided by comparing one
-// component's primitives against what the last one left on the pass, and only
-// something walking the whole tree can do that.
+// or a switch between the queueing renderers -- shapes, meshes, images; both
+// are decided by comparing one component's primitives against what the last
+// one left on the pass, and only something walking the whole tree can do that.
 class DrawPlayer
 {
 public:
     DrawPlayer(ShapeBatch& shapesToUse,
                MeshBatch& meshesToUse,
+               ImageBatch& imagesToUse,
                LayerRenderer& layersToUse,
                Text::TextRenderer& textToUse,
                GPU::RenderPass& passToUse,
@@ -46,22 +48,24 @@ public:
     void flush();
 
     // How many times the clip actually had to change, and how many times drawing
-    // alternated between the two shape renderers. Each is a batch break, so
+    // alternated between the queueing renderers. Each is a batch break, so
     // between them they are what a frame costs beyond its primitives. See
     // ComponentHost, which reports both.
     int getClipChangeCount() const { return clipChanges; }
     int getRendererSwitchCount() const { return rendererSwitches; }
 
 private:
-    // Which of the two shape renderers is about to be drawn into. They share one
+    // Which of the queueing renderers is about to be drawn into. They share one
     // pass, and a pass draws in flush order rather than in call order, so
-    // whatever is queued in the other one has to go out first -- otherwise a
+    // whatever is queued in the others has to go out first -- otherwise a
     // document stacking a meshed shape over a masked one would come out with the
-    // masked one on top, wherever in the document it was.
+    // masked one on top, wherever in the document it was, and a picture drawn
+    // over a background would come out under it.
     enum class Renderer
     {
         Quads,
         Meshes,
+        Images,
         Layers
     };
 
@@ -69,6 +73,7 @@ private:
     void playGlyphs(const DrawList& list, const DrawCommand& command, Point origin);
     void playMesh(const DrawList& list, const DrawCommand& command, Point origin);
     void playLayer(const DrawList& list, const DrawCommand& command, Point origin);
+    void playImages(const DrawList& list, const DrawCommand& command, Point origin);
 
     // Puts the right scissor on the pass for a primitive covering
     // `surfaceBounds` -- which usually means leaving it alone. A component
@@ -96,6 +101,7 @@ private:
 
     ShapeBatch& shapes;
     MeshBatch& meshes;
+    ImageBatch& images;
     LayerRenderer& layers;
     Text::TextRenderer& text;
 

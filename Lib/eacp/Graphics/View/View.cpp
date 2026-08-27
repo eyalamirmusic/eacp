@@ -60,6 +60,15 @@ Window* View::getWindow() const
 
 void View::resized() {}
 
+void View::notifyVisibilityChanged(bool effectivelyVisible)
+{
+    visibilityChanged(effectivelyVisible);
+
+    for (auto* child: subviews)
+        if (child->visible)
+            child->notifyVisibilityChanged(effectivelyVisible);
+}
+
 Rect View::getLocalBounds() const
 {
     auto b = getBounds();

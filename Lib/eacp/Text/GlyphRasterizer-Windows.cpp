@@ -733,6 +733,11 @@ bool GlyphRasterizer::isValid() const
     return impl->valid;
 }
 
+std::string GlyphRasterizer::resolvedFamily() const
+{
+    return Strings::narrow(impl->family);
+}
+
 FontMetrics GlyphRasterizer::metrics(FontStyle style) const
 {
     return impl->metrics(style);

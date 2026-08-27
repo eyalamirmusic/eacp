@@ -487,7 +487,7 @@ struct WebView::Native
                     // initializing (a tray app's panel, hidden right after it
                     // is constructed) must not have the browser's window come
                     // up on screen now.
-                    setControllerVisible(hostVisible);
+                    applyControllerVisibility();
 
                     initialized = true;
                     initInProgress = false;
@@ -1245,9 +1245,23 @@ struct WebView::Native
     void setControllerVisible(bool visible)
     {
         hostVisible = visible;
+        applyControllerVisibility();
+    }
 
+    // The other half of the same question: View::setVisible on this view or an
+    // ancestor. Tracked apart from the host window's state because either one
+    // alone is enough to hide the page, and neither may undo the other — a
+    // parked service view must stay hidden when its window is shown again.
+    void setViewVisible(bool visible)
+    {
+        viewVisible = visible;
+        applyControllerVisibility();
+    }
+
+    void applyControllerVisibility()
+    {
         if (controller)
-            controller->put_IsVisible(visible ? TRUE : FALSE);
+            controller->put_IsVisible(hostVisible && viewVisible ? TRUE : FALSE);
     }
 
     // --- Input forwarding ---------------------------------------------------
@@ -1580,6 +1594,9 @@ struct WebView::Native
 
     // Whether the host window is showing. See setControllerVisible.
     bool hostVisible = true;
+
+    // Whether this view is shown in its own right. See setViewVisible.
+    bool viewVisible = true;
 
     static constexpr int maxWebView2CreateRetries = 3;
     int webView2CreateRetries = 0;
@@ -1940,6 +1957,11 @@ void WebView::hostWindowMoved()
 void WebView::hostWindowVisibilityChanged(bool visible)
 {
     impl->setControllerVisible(visible);
+}
+
+void WebView::visibilityChanged(bool visible)
+{
+    impl->setViewVisible(visible);
 }
 
 // Visual hosting gives the WebView no input HWND of its own, and the key-focus

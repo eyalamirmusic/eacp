@@ -1,6 +1,7 @@
 #include "Common.h"
 
 #include <algorithm>
+#include <cctype>
 
 // The real platform rasterizer, against a font the OS is guaranteed to have.
 //
@@ -400,7 +401,8 @@ auto tRealAtlasTakesASecondFamily =
 // The renderer's own font-per-call path, which is what UI::Graphics::setFont
 // drives: measurement has to follow the face, or a centred caption centres
 // against glyphs other than the ones drawn.
-auto tRendererMeasuresPerFont = test("GlyphRasterizer/rendererMeasuresTheFaceItIsGiven") = []
+auto tRendererMeasuresPerFont =
+    test("GlyphRasterizer/rendererMeasuresTheFaceItIsGiven") = []
 {
     if (!GlyphRasterizer {monospaceRequest()}.isValid())
         return;
@@ -420,11 +422,48 @@ auto tRendererMeasuresPerFont = test("GlyphRasterizer/rendererMeasuresTheFaceItI
     renderer.setFont({defaultMonospaceFamily(), 24.f});
 
     check(renderer.measure(text) == large);
-    check(renderer.ascent() == renderer.ascent(Font {defaultMonospaceFamily(), 24.f}));
+    check(renderer.ascent()
+          == renderer.ascent(Font {defaultMonospaceFamily(), 24.f}));
 
     // And a bold run is measured as bold, not as the regular face beside it.
-    const auto bold =
-        renderer.measure(text, Font {defaultMonospaceFamily(), 24.f, FontStyle::Bold});
+    const auto bold = renderer.measure(
+        text, Font {defaultMonospaceFamily(), 24.f, FontStyle::Bold});
 
     check(bold > 0.f);
+};
+
+// A name the platform has resolves to itself; a name it does not have still
+// draws - CoreText and the Windows resolver both substitute - and says which
+// family it substituted, which is how a family list is walked to the first
+// one that exists.
+auto tResolvedFamily =
+    test("GlyphRasterizer/resolvedFamilyNamesTheFaceThePlatformChose") = []
+{
+    auto exact = GlyphRasterizer {monospaceRequest()};
+
+    if (!exact.isValid())
+        return;
+
+    auto sameIgnoringCase = [](std::string a, std::string b)
+    {
+        for (auto& c: a)
+            c = (char) std::tolower((unsigned char) c);
+
+        for (auto& c: b)
+            c = (char) std::tolower((unsigned char) c);
+
+        return a == b;
+    };
+
+    check(sameIgnoringCase(exact.resolvedFamily(), defaultMonospaceFamily()));
+
+    auto request = monospaceRequest();
+    request.family = "No Such Family EACP";
+
+    auto substituted = GlyphRasterizer {request};
+
+    check(substituted.isValid(), "a substitute is still a face to draw with");
+    check(!substituted.resolvedFamily().empty());
+    check(!sameIgnoringCase(substituted.resolvedFamily(), request.family),
+          "and it says so");
 };

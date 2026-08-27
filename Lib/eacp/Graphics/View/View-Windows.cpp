@@ -423,6 +423,32 @@ struct View::Native
         }
     }
 
+    // DirectComposition has no per-visual hidden flag, so hiding takes the
+    // visual out of the tree. An opacity-0 visual would still be composited
+    // every frame, which is the cost this exists to avoid.
+    //
+    // Re-showing re-inserts at the top, so z-order among siblings is not
+    // preserved — the same gap addSubview/removeSubview already have, and the
+    // reason the parent is remembered here rather than read back from the
+    // detached visual.
+    void setVisible(bool shouldBeVisible)
+    {
+        if (shouldBeVisible)
+        {
+            if (parentWhileHidden)
+            {
+                auto restored = parentWhileHidden;
+                parentWhileHidden.Reset();
+                attachToParent(restored.Get());
+            }
+        }
+        else if (parent)
+        {
+            parentWhileHidden = parent;
+            detachFromParent();
+        }
+    }
+
     void attachToParent(IDCompositionVisual2* parentVisual)
     {
         if (parentVisual && visual)
@@ -632,6 +658,10 @@ struct View::Native
     ComPtr<IDCompositionVisual3> visual3;
     ComPtr<IDCompositionVisual2> parent;
 
+    // Where the visual goes back when setVisible(true) undoes a hide. Null
+    // whenever this view is not hidden by its own flag.
+    ComPtr<IDCompositionVisual2> parentWhileHidden;
+
     ComPtr<IDCompositionVisual2> paintVisual;
     ComPtr<IDCompositionSurface> paintSurface;
     ComPtr<ID2D1DeviceContext> paintDc;
@@ -668,6 +698,16 @@ void View::setOpacity(float opacityToUse)
 {
     opacity = opacityToUse;
     impl->setOpacity(opacityToUse);
+}
+
+void View::setVisible(bool shouldBeVisible)
+{
+    if (visible == shouldBeVisible)
+        return;
+
+    visible = shouldBeVisible;
+    impl->setVisible(shouldBeVisible);
+    notifyVisibilityChanged(shouldBeVisible);
 }
 
 Rect View::getBounds() const
@@ -887,6 +927,9 @@ void compositeView(ID2D1DeviceContext* dc,
 
     for (auto* child: view.getSubviews())
     {
+        if (!child->isVisible())
+            continue;
+
         auto bounds = child->getBounds();
         auto childTransform =
             D2D1::Matrix3x2F::Translation(bounds.x, bounds.y) * transform;
