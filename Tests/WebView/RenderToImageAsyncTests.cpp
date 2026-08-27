@@ -13,7 +13,7 @@ using namespace eacp::Graphics;
 
 namespace
 {
-bool near(const Color& c, int r, int g, int b, int tolerance = 12)
+bool isNear(const Color& c, int r, int g, int b, int tolerance = 12)
 {
     auto within = [&](float channel, int target)
     { return std::abs((int) std::lround(channel * 255.f) - target) <= tolerance; };
@@ -63,7 +63,7 @@ auto tAsyncSnapshotCapturesWebContent =
     check(image.isValid());
     check(image.width() == 120);
     check(image.height() == 80);
-    check(near(image.at(60, 40), 224, 16, 16)); // page red at the centre
+    check(isNear(image.at(60, 40), 224, 16, 16)); // page red at the centre
 };
 
 // A subtree with no web content still resolves (immediately) through the async

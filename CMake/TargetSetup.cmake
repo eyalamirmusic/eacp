@@ -34,6 +34,10 @@ endfunction()
 # (hence PARENT_SCOPE), so keep each force-optimized target in its own
 # subdirectory -- the usual case. The rest of the project keeps the defaults.
 function(eacp_force_optimization target)
+    # The flags below are not the ones the shared PCH image was created under,
+    # and MSVC rejects a mismatch outright.
+    eacp_skip_pch(${target})
+
     if (MSVC)
         # The cl/clang-cl Debug defaults fight optimization: /RTC1 is a hard
         # error under any /O level (D8016) and /Od warns when overridden by /O2

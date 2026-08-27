@@ -11,6 +11,11 @@ function(eacp_add_plugin target)
 
     set_target_properties(${target} PROPERTIES
             PREFIX ""
+            # CMake defines <target>_EXPORTS for a MODULE by default. eacp marks
+            # its plugin entry points with EACP_PLUGIN_EXPORT and nothing reads
+            # the generated macro, so drop it rather than leave every plugin
+            # carrying a define the shared PCH image cannot match.
+            DEFINE_SYMBOL ""
             POSITION_INDEPENDENT_CODE ON)
 
     # Keep the plugin's own sources free of STB_GNU_UNIQUE symbols so glibc can
