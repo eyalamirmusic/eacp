@@ -356,6 +356,35 @@ void TextEditor::setAccentColour(const Color& colourToUse)
     repaint();
 }
 
+void TextEditor::setDrawsFrame(bool shouldDrawFrame)
+{
+    drawsFrame = shouldDrawFrame;
+    repaint();
+}
+
+void TextEditor::setPasswordCharacter(std::string mask)
+{
+    passwordCharacter = std::move(mask);
+    scrollToCaret();
+    repaint();
+}
+
+std::string TextEditor::displayedPrefix(int bytes) const
+{
+    auto prefix = std::string_view {text}.substr(0, (std::size_t) bytes);
+
+    if (passwordCharacter.empty())
+        return std::string {prefix};
+
+    auto masked = std::string {};
+
+    for (auto c: prefix)
+        if ((static_cast<unsigned char>(c) & 0xC0) != 0x80)
+            masked += passwordCharacter;
+
+    return masked;
+}
+
 int TextEditor::nextCharacter(int from) const
 {
     auto position = std::clamp(from, 0, (int) text.size());
@@ -495,15 +524,14 @@ void TextEditor::scrollToCaret()
     if (visible <= 0.f)
         return;
 
-    auto caretX = measureText(std::string_view {text}.substr(0, (std::size_t) caret),
-                              fontToDrawIn());
+    auto caretX = measureText(displayedPrefix(caret), fontToDrawIn());
 
     // Only ever as far as it has to be: the caret is pulled back into view from
     // whichever edge it left, and a string that fits is never scrolled at all.
     scrollOffset = std::clamp(scrollOffset, caretX - visible, caretX);
     scrollOffset = std::max(0.f, scrollOffset);
 
-    auto full = measureText(text, fontToDrawIn());
+    auto full = measureText(displayed(), fontToDrawIn());
 
     if (full - scrollOffset < visible)
         scrollOffset = std::max(0.f, full - visible);
@@ -523,10 +551,8 @@ int TextEditor::positionAt(float x) const
     {
         auto next = nextCharacter(position);
 
-        auto before = measureText(
-            std::string_view {text}.substr(0, (std::size_t) position), face);
-        auto after =
-            measureText(std::string_view {text}.substr(0, (std::size_t) next), face);
+        auto before = measureText(displayedPrefix(position), face);
+        auto after = measureText(displayedPrefix(next), face);
 
         // Past the middle of a character means the one after it, which is what
         // makes clicking the right-hand half of a letter put the caret behind
@@ -559,12 +585,14 @@ void TextEditor::mouseDrag(const MouseEvent& event)
 void TextEditor::focusGained()
 {
     repaint();
+    onFocusChange(true);
 }
 
 void TextEditor::focusLost()
 {
     deselect();
     repaint();
+    onFocusChange(false);
 }
 
 bool TextEditor::handleClipboardKey(const KeyEvent& event)
@@ -678,11 +706,14 @@ void TextEditor::paint(Graphics& g)
     auto bounds = getLocalBounds();
     auto focused = hasKeyboardFocus();
 
-    g.setColour(theme.panel);
-    g.fillRoundedRect(bounds, 4.f);
+    if (drawsFrame)
+    {
+        g.setColour(theme.panel);
+        g.fillRoundedRect(bounds, 4.f);
 
-    g.setColour(focused ? accent : theme.outline);
-    g.drawRoundedRect(bounds, 4.f, focused ? 2.f : 1.f);
+        g.setColour(focused ? accent : theme.outline);
+        g.drawRoundedRect(bounds, 4.f, focused ? 2.f : 1.f);
+    }
 
     auto face = fontToDrawIn();
     g.setFont(face);
@@ -705,17 +736,15 @@ void TextEditor::paint(Graphics& g)
 
     if (hasSelection() && focused)
     {
-        auto left = g.measureText(
-            std::string_view {text}.substr(0, (std::size_t) selectionLeft()));
-        auto right = g.measureText(
-            std::string_view {text}.substr(0, (std::size_t) selectionRight()));
+        auto left = g.measureText(displayedPrefix(selectionLeft()));
+        auto right = g.measureText(displayedPrefix(selectionRight()));
 
         g.setColour(accent.withAlpha(0.35f));
         g.fillRect({origin + left, 2.f, right - left, bounds.h - 4.f});
     }
 
     g.setColour(colour);
-    g.drawText(text, {origin, baseline});
+    g.drawText(displayed(), {origin, baseline});
 
     if (!focused || readOnly)
         return;
@@ -724,9 +753,7 @@ void TextEditor::paint(Graphics& g)
     // repaint of the tree twice a second for as long as a field has focus,
     // which is a real cost in a tier whose whole claim is that it draws nothing
     // while nothing changes.
-    auto caretX =
-        origin
-        + g.measureText(std::string_view {text}.substr(0, (std::size_t) caret));
+    auto caretX = origin + g.measureText(displayedPrefix(caret));
 
     g.setColour(accent);
     g.fillRect({caretX, 3.f, 1.5f, bounds.h - 6.f});

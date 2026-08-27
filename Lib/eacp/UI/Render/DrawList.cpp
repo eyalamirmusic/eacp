@@ -88,4 +88,9 @@ void DrawList::addClip(const ClipDraw& clip)
     clips.add(clip);
     append(DrawCommand::Kind::Clip, clips.size() - 1);
 }
+
+void DrawList::addFence()
+{
+    append(DrawCommand::Kind::Fence, 0);
+}
 } // namespace eacp::UI
