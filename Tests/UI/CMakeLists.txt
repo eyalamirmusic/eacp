@@ -1,6 +1,7 @@
 nano_add_executable(UITests
         SOURCES
             ClipMaskTests.cpp
+            ClippedFillTests.cpp
             CoverageAtlasTests.cpp
             DrawListTests.cpp
             DragAndDropTests.cpp
