@@ -33,6 +33,37 @@ constexpr bool isItalic(FontStyle style)
     return (static_cast<std::uint8_t>(style) & 2) != 0;
 }
 
+// What a family varies its faces by, on the axes CSS names: the weight on
+// its 100 (thin) to 900 (black) scale, 400 regular and 700 bold, and the
+// slant. The axis FontStyle folds to two bits, kept beside it rather than
+// in it so a caller that has only ever wanted bold-or-not keeps its enum.
+struct FontVariant
+{
+    int weight = 400;
+    bool italic = false;
+
+    bool operator==(const FontVariant&) const = default;
+};
+
+constexpr FontVariant variantOf(FontStyle style)
+{
+    return {isBold(style) ? 700 : 400, isItalic(style)};
+}
+
+constexpr FontStyle styleOf(const FontVariant& variant)
+{
+    return toFontStyle(variant.weight >= 600, variant.italic);
+}
+
+// The nearest of the nine CSS weights, so a face's own value keys the same
+// way whichever of them it was asked for as.
+constexpr int weightClass(int weight)
+{
+    const auto clamped = weight < 100 ? 100 : weight > 900 ? 900 : weight;
+
+    return (clamped + 50) / 100 * 100;
+}
+
 // The platform's stock fixed-pitch face. No family name ships on both systems,
 // so asking for a literal one gets you a substitute on the other platform —
 // a proportional substitute, which quietly loses the property most callers of a
@@ -73,6 +104,16 @@ struct Font
     std::string family = defaultMonospaceFamily();
     float pointSize = 13.f;
     FontStyle style = FontStyle::Regular;
+
+    // A weight on CSS's scale, 100 to 900, for a caller that has one. Zero
+    // takes it from the style: 400, or 700 when the style is bold.
+    int weight = 0;
+
+    FontVariant variant() const
+    {
+        return {weight > 0 ? weightClass(weight) : (isBold(style) ? 700 : 400),
+                isItalic(style)};
+    }
 };
 
 // How close two sizes have to be to share a face. Matched with a tolerance

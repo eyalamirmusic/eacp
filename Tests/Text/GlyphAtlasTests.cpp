@@ -18,7 +18,7 @@ namespace
 // asked — the cache is only believable if we can see the misses.
 struct StubSource final : GlyphSource
 {
-    FontMetrics metrics(FontStyle style) const override
+    FontMetrics metrics(const FontVariant& variant) const override
     {
         ++metricCalls;
 
@@ -26,7 +26,7 @@ struct StubSource final : GlyphSource
         result.ascent = 20.f;
         result.descent = 6.f;
         result.leading = 2.f;
-        result.advance = isBold(style) ? 12.f : 10.f;
+        result.advance = variant.weight >= 600 ? 12.f : 10.f;
 
         // The size the face was built at, so a test can tell two faces apart by
         // what they measure rather than by identity alone.
@@ -37,12 +37,37 @@ struct StubSource final : GlyphSource
 
     float scale() const override { return scaleValue; }
 
-    GlyphBitmap rasterize(char32_t codepoint, FontStyle style) const override
+    // One glyph per codepoint, its id the codepoint itself and every advance
+    // ten pixels; a CJK codepoint comes from font 1, the way a fallback face
+    // would, so a test can see the font in the key.
+    ShapedRun shape(std::string_view text, const FontVariant&) const override
+    {
+        ++shapeCalls;
+
+        auto run = ShapedRun {};
+        auto index = std::size_t {0};
+
+        while (index < text.size())
+        {
+            const auto start = index;
+            const auto codepoint = decodeUtf8(text, index);
+            const auto font = codepoint >= 0x4E00 && codepoint < 0xA000 ? 1 : 0;
+
+            run.glyphs.add({{codepoint, font}, run.advance, 0.f, (int) start});
+            run.advance += 10.f;
+        }
+
+        return run;
+    }
+
+    GlyphBitmap rasterize(GlyphKey key, const FontVariant& variant) const override
     {
         ++rasterCalls;
-        lastCodepoint = codepoint;
-        lastStyle = style;
+        lastCodepoint = key.glyph;
+        lastStyle = styleOf(variant);
+        lastFont = key.font;
 
+        const auto codepoint = (char32_t) key.glyph;
         auto bitmap = GlyphBitmap {};
 
         if (codepoint == U'\0')
@@ -74,9 +99,11 @@ struct StubSource final : GlyphSource
     float pointSize = 13.f;
 
     mutable int rasterCalls = 0;
+    mutable int shapeCalls = 0;
     mutable int metricCalls = 0;
     mutable char32_t lastCodepoint = 0;
     mutable FontStyle lastStyle = FontStyle::Regular;
+    mutable int lastFont = 0;
 };
 
 // The atlas owns its faces, so the harness records every stub it hands over and
@@ -458,4 +485,87 @@ auto tRejectsUnknownFaces = test("GlyphAtlas/anUnknownFaceDrawsNothing") = []
     check(!harness.atlas->glyph(U'A', FontStyle::Regular, 7).valid);
     check(!harness.atlas->glyph(U'A', FontStyle::Regular, -1).valid);
     check(harness.atlas->metrics(FontStyle::Regular, 7).lineHeight() == 0.f);
+};
+
+// A shaped string comes back as one slot per glyph the source placed, each
+// with its pen and the byte it came from, and rasterizes each glyph once.
+auto tShapeReturnsASlotPerGlyph = test("GlyphAtlas/shapeReturnsASlotPerGlyph") = []
+{
+    auto harness = Harness {};
+
+    const auto shaped = harness.atlas->shape("ab", {});
+
+    check(shaped.glyphs.size() == 2);
+    check(shaped.advance == 20.f);
+    check(shaped.glyphs[0].pen.x == 0.f);
+    check(shaped.glyphs[1].pen.x == 10.f);
+    check(shaped.glyphs[0].cluster == 0);
+    check(shaped.glyphs[1].cluster == 1);
+    check(shaped.glyphs[0].slot.valid && shaped.glyphs[1].slot.valid);
+    check(harness.source()->rasterCalls == 2);
+};
+
+// A string is shaped once however often it is measured or drawn - a document
+// asks for the same words over and over - and the cache goes with the slots.
+auto tShapedStringsAreCached = test("GlyphAtlas/shapedStringsAreCached") = []
+{
+    auto harness = Harness {};
+
+    harness.atlas->shape("hello", {});
+    harness.atlas->shape("hello", {});
+    harness.atlas->shape("hello", {});
+
+    check(harness.source()->shapeCalls == 1);
+    check(harness.source()->rasterCalls == 4); // h, e, l, o
+
+    // Another variant is another string.
+    harness.atlas->shape("hello", {700, false});
+    check(harness.source()->shapeCalls == 2);
+
+    // A scale change rebuilds the face and drops every slot, and the shaped
+    // strings holding them go too: the string is shaped again, by the new
+    // source.
+    harness.atlas->setScale(2.f);
+    harness.atlas->shape("hello", {});
+    check(harness.sourceCount() == 2);
+    check(harness.source(1)->shapeCalls == 1);
+    check(harness.source(1)->rasterCalls == 4);
+};
+
+// A glyph id names a glyph in one font. The same id in a fallback font is
+// another glyph, and the key knows it.
+auto tFontIsPartOfTheKey = test("GlyphAtlas/fontIsPartOfTheKey") = []
+{
+    auto harness = Harness {};
+
+    const auto own = harness.atlas->glyph(GlyphKey {0x41, 0}, {});
+    const auto fallback = harness.atlas->glyph(GlyphKey {0x41, 1}, {});
+
+    check(harness.source()->rasterCalls == 2);
+    check(harness.source()->lastFont == 1);
+    check(own.src.x != fallback.src.x || own.src.y != fallback.src.y);
+
+    // And a shaped string that reaches into the fallback font keys it there.
+    const auto shaped = harness.atlas->shape("a\xe6\xbc\xa2", {});
+    check(shaped.glyphs.size() == 2);
+    check(harness.source()->lastFont == 1);
+};
+
+// The nine weights are nine faces of the key; a face asked for as bold and
+// as 700 is one.
+auto tWeightIsPartOfTheKey = test("GlyphAtlas/weightsAreCachedSeparately") = []
+{
+    auto harness = Harness {};
+
+    harness.atlas->glyph(GlyphKey {0x41, 0}, {300, false});
+    harness.atlas->glyph(GlyphKey {0x41, 0}, {400, false});
+    harness.atlas->glyph(GlyphKey {0x41, 0}, {700, false});
+
+    check(harness.source()->rasterCalls == 3);
+
+    harness.atlas->glyph(U'A', FontStyle::Bold);
+    check(harness.source()->rasterCalls == 3, "bold is the 700 face");
+
+    harness.atlas->glyph(GlyphKey {0x41, 0}, {650, false});
+    check(harness.source()->rasterCalls == 3, "650 rounds to the 700 face");
 };
