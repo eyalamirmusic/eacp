@@ -5,8 +5,47 @@
 
 #include <eacp/Core/Utils/Pimpl.h>
 
+#include <string_view>
+
 namespace eacp::Text
 {
+// A glyph as a shaper names it: its index in a font's own table, and which
+// font that is. Font 0 is the face itself; a run the platform had to reach
+// into another face for — CJK in a Latin family, an emoji — names that face
+// by the number the source gave it when it first met it, so the same id in
+// two fonts is two glyphs.
+struct GlyphKey
+{
+    std::uint32_t glyph = 0;
+    int font = 0;
+
+    bool operator==(const GlyphKey&) const = default;
+};
+
+// One glyph a shaper placed. Positions are in device pixels from the run's
+// pen and baseline, x along the line and y upwards, the way GlyphBitmap
+// reports its bearings; `cluster` is the byte offset in the shaped text of
+// the first character the glyph came from, which is how a caller maps a
+// glyph back to the text — a ligature carries the offset of its first
+// letter, and a mark that of its base.
+struct ShapedGlyph
+{
+    GlyphKey key;
+    float x = 0.f;
+    float y = 0.f;
+    int cluster = 0;
+};
+
+// A string shaped in a face: the glyphs, and how far the pen moved. Kerning,
+// ligatures, mark placement and fallback are all inside, which is the whole
+// difference from walking codepoints — "AV" is two glyphs closer together
+// than their advances, "fi" is one glyph in a face that has it.
+struct ShapedRun
+{
+    Vector<ShapedGlyph> glyphs;
+    float advance = 0.f;
+};
+
 // Where GlyphAtlas gets its pixels. GlyphRasterizer is the real implementation;
 // the indirection exists so the atlas — packing, growth, upload, eviction, all
 // of which is portable logic worth testing hard — can be driven by a stub
@@ -16,16 +55,24 @@ class GlyphSource
 public:
     virtual ~GlyphSource() = default;
 
-    virtual FontMetrics metrics(FontStyle style) const = 0;
-    virtual GlyphBitmap rasterize(char32_t codepoint, FontStyle style) const = 0;
+    virtual FontMetrics metrics(const FontVariant& variant) const = 0;
+
+    // Turns a string into placed glyphs. The platform's shaper, so the glyph
+    // ids it returns are the ones rasterize() understands.
+    virtual ShapedRun shape(std::string_view text,
+                            const FontVariant& variant) const = 0;
+
+    // Rasterizes one glyph shape() named.
+    virtual GlyphBitmap rasterize(GlyphKey glyph,
+                                  const FontVariant& variant) const = 0;
 
     // Device pixels per point, so the atlas can convert pixel-space bitmap
     // metrics into the logical points its callers lay out in.
     virtual float scale() const = 0;
 };
 
-// The whole platform surface of this module: turn a codepoint into pixels and
-// metrics. CoreText on Apple, DirectWrite on Windows.
+// The whole platform surface of this module: turn a string into glyphs, and
+// a glyph into pixels and metrics. CoreText on Apple, DirectWrite on Windows.
 //
 // Everything else — packing, caching, growth, GPU upload — is portable and sits
 // on top of this interface, which is what lets the atlas be tested against a
@@ -53,18 +100,27 @@ public:
     // platform has, since both platforms draw *something* for any name.
     std::string resolvedFamily() const;
 
-    // In device pixels, for the requested style. Faces in a family can differ:
-    // a bold face is often slightly wider than its regular sibling.
-    FontMetrics metrics(FontStyle style) const override;
+    // In device pixels, for the requested variant. Faces in a family can
+    // differ: a bold face is often slightly wider than its regular sibling.
+    FontMetrics metrics(const FontVariant& variant) const override;
+    FontMetrics metrics(FontStyle style) const { return metrics(variantOf(style)); }
 
     float scale() const override;
 
-    // Rasterizes one codepoint. Falls back to another face when the requested
-    // one has no glyph, so CJK and emoji still render from a Latin family; the
-    // returned bitmap reports Color format when the fallback was a colour font.
-    //
-    // Returns an invalid bitmap when nothing can draw the codepoint.
-    GlyphBitmap rasterize(char32_t codepoint, FontStyle style) const override;
+    // Shapes through the platform — CTLine on Apple, IDWriteTextLayout on
+    // Windows — in the face nearest the variant the family has, falling
+    // back to other faces for what it lacks so CJK and emoji still shape
+    // from a Latin family; each fallback face is numbered as it is met.
+    ShapedRun shape(std::string_view text,
+                    const FontVariant& variant) const override;
+
+    // Rasterizes one glyph a shape() named; the bitmap reports Color format
+    // when the glyph's font is a colour font. Invalid when no font has it.
+    GlyphBitmap rasterize(GlyphKey glyph, const FontVariant& variant) const override;
+
+    // One codepoint, shaped on its own and rasterized: what a caller walking
+    // a string by codepoint asks for, and what a test of a single glyph wants.
+    GlyphBitmap rasterize(char32_t codepoint, FontStyle style) const;
 
     const FontRequest& request() const;
 

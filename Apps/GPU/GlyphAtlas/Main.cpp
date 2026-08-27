@@ -9,10 +9,11 @@
 // Text drawn from a glyph atlas: rasterize on demand, cache, upload only what
 // changed, then draw each glyph as a textured quad.
 //
-// The layout here is a real one, not a grid — each glyph is placed by its own
-// bearings and steps the pen by its own advance, which is what the atlas gained
-// over the fixed-cell version it grew out of. Proportional text, a monospace
-// block, and mixed styles all come out of the same path.
+// The layout here is the platform's: each line is shaped through the atlas,
+// so "AV" is kerned, "fi" is one glyph and a weight the family has is that
+// face, and every glyph is placed by its own bearings — which is what the
+// atlas gained over the fixed-cell version it grew out of. Proportional text,
+// a monospace block, and mixed styles all come out of the same path.
 //
 // Press a key to append it; the atlas rasterizes anything new on the spot.
 
@@ -28,41 +29,28 @@ struct Line
     std::string text;
     Text::FontStyle style = Text::FontStyle::Regular;
     Graphics::Color color = Graphics::Color::gray(0.86f);
+
+    // Drawn in the proportional face rather than the monospace one, at a
+    // CSS weight of its own when one is given.
+    bool proportional = false;
+    int weight = 0;
+
+    Text::FontVariant variant() const
+    {
+        return {weight > 0 ? weight : (Text::isBold(style) ? 700 : 400),
+                Text::isItalic(style)};
+    }
 };
 
-// Minimal UTF-8 decode, enough to walk the sample text and typed input.
-char32_t nextCodepoint(const std::string& text, std::size_t& index)
+// A proportional family with kerning pairs, ligatures and more than two
+// weights, so the shaping shows.
+constexpr const char* proportionalFamily()
 {
-    const auto lead = (unsigned char) text[index];
-
-    if (lead < 0x80)
-        return (char32_t) text[index++];
-
-    auto extra = 0;
-    auto value = char32_t {0};
-
-    if ((lead & 0xe0) == 0xc0)
-    {
-        extra = 1;
-        value = lead & 0x1fu;
-    }
-    else if ((lead & 0xf0) == 0xe0)
-    {
-        extra = 2;
-        value = lead & 0x0fu;
-    }
-    else
-    {
-        extra = 3;
-        value = lead & 0x07u;
-    }
-
-    ++index;
-
-    for (auto i = 0; i < extra && index < text.size(); ++i, ++index)
-        value = (value << 6) | ((unsigned char) text[index] & 0x3fu);
-
-    return value;
+#if defined(_WIN32)
+    return "Segoe UI";
+#else
+    return "Helvetica Neue";
+#endif
 }
 
 struct AtlasTextView final : GPU::GPUView
@@ -77,6 +65,20 @@ struct AtlasTextView final : GPU::GPUView
              Text::FontStyle::Regular},
             {"Bold text puts down more ink", Text::FontStyle::Bold},
             {"Italic leans, and shares the same atlas", Text::FontStyle::Italic},
+            {"AVAST To fi fl - kerned and ligated, proportional",
+             Text::FontStyle::Regular,
+             Graphics::Color {0.95f, 0.85f, 0.55f},
+             true},
+            {"Light 300",
+             Text::FontStyle::Regular,
+             Graphics::Color::gray(0.86f),
+             true,
+             300},
+            {"Regular 400  Bold 700  Black 900",
+             Text::FontStyle::Regular,
+             Graphics::Color::gray(0.86f),
+             true,
+             900},
             {"if (glyph.valid) { draw(glyph); }",
              Text::FontStyle::Regular,
              Graphics::Color {0.55f, 0.80f, 0.60f}},
@@ -119,6 +121,7 @@ struct AtlasTextView final : GPU::GPUView
 
         atlas = makeOwned<Text::GlyphAtlas>(
             Text::rasterizerFaceFactory(), request, 256, 2048);
+        proportionalFace = atlas->findOrAddFace(proportionalFamily(), 22.f);
 
         builtAtScale = scale;
     }
@@ -183,43 +186,43 @@ struct AtlasTextView final : GPU::GPUView
         repaint();
     }
 
-    // Walks one line, asking the atlas for each glyph and placing it by its own
+    // Shapes one line through the atlas and places each glyph by its own
     // bearings. Returns the pen position it ended at.
     float layOutLine(const Line& line, float x, float baseline, bool collectOnly)
     {
-        auto pen = x;
+        const auto face = line.proportional ? proportionalFace : 0;
+        const auto shaped = atlas->shape(line.text, line.variant(), face);
 
-        for (std::size_t index = 0; index < line.text.size();)
+        if (collectOnly)
+            return x + shaped.advance;
+
+        for (const auto& placed: shaped.glyphs)
         {
-            const auto codepoint = nextCodepoint(line.text, index);
-            const auto glyph = atlas->glyph(codepoint, line.style);
+            const auto& glyph = placed.slot;
 
-            if (!glyph.valid)
+            if (!glyph.valid || glyph.empty)
                 continue;
 
-            if (!glyph.empty && !collectOnly)
-            {
-                // offset is measured from the pen and the baseline, so this is
-                // the destination rect's top-left directly.
-                const auto destination = Graphics::Rect {pen + glyph.offset.x,
-                                                         baseline + glyph.offset.y,
-                                                         glyph.src.w / builtAtScale,
-                                                         glyph.src.h / builtAtScale};
+            // The glyph's pen and the slot's offset are measured from the
+            // line's pen and the baseline, so this is the destination rect's
+            // top-left directly.
+            const auto destination =
+                Graphics::Rect {x + placed.pen.x + glyph.offset.x,
+                                baseline + placed.pen.y + glyph.offset.y,
+                                glyph.src.w / builtAtScale,
+                                glyph.src.h / builtAtScale};
 
-                // Masks carry coverage only and take the line's colour; colour
-                // glyphs carry their own and are drawn untinted. GlyphRenderer
-                // keeps the two in separate queues and shades each correctly —
-                // a general sprite shader would multiply the mask's coverage
-                // into RGB and draw opaque red boxes instead of text.
-                const auto colored = glyph.format == Text::GlyphFormat::Color;
+            // Masks carry coverage only and take the line's colour; colour
+            // glyphs carry their own and are drawn untinted. GlyphRenderer
+            // keeps the two in separate queues and shades each correctly — a
+            // general sprite shader would multiply the mask's coverage into
+            // RGB and draw opaque red boxes instead of text.
+            const auto colored = glyph.format == Text::GlyphFormat::Color;
 
-                glyphs->add(destination, glyph.src, line.color, colored);
-            }
-
-            pen += glyph.advance;
+            glyphs->add(destination, glyph.src, line.color, colored);
         }
 
-        return pen;
+        return x + shaped.advance;
     }
 
     void render(GPU::Frame& frame) override
@@ -271,6 +274,7 @@ struct AtlasTextView final : GPU::GPUView
     std::optional<Sprites::SpriteRenderer> sprites;
     std::optional<Text::GlyphRenderer> glyphs;
     OwningPointer<Text::GlyphAtlas> atlas;
+    int proportionalFace = 0;
     float builtAtScale = 0.f;
 
     std::vector<Line> lines;

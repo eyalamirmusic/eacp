@@ -4,49 +4,6 @@
 
 namespace eacp::Text
 {
-namespace
-{
-// Decodes one UTF-8 sequence starting at `index`, advancing it past what was
-// consumed. Malformed bytes yield U+FFFD and advance by one, so a bad byte
-// costs one replacement glyph rather than desynchronising the rest of the line.
-char32_t nextCodepoint(std::string_view text, std::size_t& index)
-{
-    auto lead = (unsigned char) text[index];
-
-    auto continuationBytes = lead < 0x80   ? 0
-                             : lead < 0xC0 ? -1
-                             : lead < 0xE0 ? 1
-                             : lead < 0xF0 ? 2
-                             : lead < 0xF8 ? 3
-                                           : -1;
-
-    if (continuationBytes < 0 || index + continuationBytes >= text.size())
-    {
-        ++index;
-        return 0xFFFD;
-    }
-
-    constexpr char32_t leadMask[] = {0x7F, 0x1F, 0x0F, 0x07};
-    auto codepoint = (char32_t) (lead & leadMask[continuationBytes]);
-
-    for (auto i = 1; i <= continuationBytes; ++i)
-    {
-        auto byte = (unsigned char) text[index + i];
-
-        if ((byte & 0xC0) != 0x80)
-        {
-            ++index;
-            return 0xFFFD;
-        }
-
-        codepoint = (codepoint << 6) | (byte & 0x3F);
-    }
-
-    index += continuationBytes + 1;
-    return codepoint;
-}
-} // namespace
-
 TextRenderer::TextRenderer(float pointSizeToUse, std::string familyToUse)
     : defaultFont {std::move(familyToUse), pointSizeToUse}
 {
@@ -145,39 +102,33 @@ float TextRenderer::layout(std::string_view text,
                            Vector<PlacedGlyph>* into)
 {
     const auto face = faceFor(font);
+    const auto shaped = atlas->shape(text, font.variant(), face);
 
-    auto advance = 0.0f;
-    auto index = std::size_t {0};
+    if (!emit)
+        return shaped.advance;
 
-    while (index < text.size())
+    for (const auto& placed: shaped.glyphs)
     {
-        auto glyph = atlas->glyph(nextCodepoint(text, index), font.style, face);
+        const auto& glyph = placed.slot;
 
-        if (!glyph.valid)
+        if (!glyph.valid || glyph.empty)
             continue;
 
-        if (emit && !glyph.empty)
-        {
-            // The slot's src is in atlas texels but its offset and advance are
-            // already in points, so only the size needs dividing by the scale.
-            auto placed = PlacedGlyph {{pen.x + advance + glyph.offset.x,
-                                        pen.y + glyph.offset.y,
-                                        glyph.src.w / builtAtScale,
-                                        glyph.src.h / builtAtScale},
-                                       glyph.src,
-                                       glyph.format == GlyphFormat::Color};
+        // The slot's src is in atlas texels but its offset and the glyph's pen
+        // are already in points, so only the size needs dividing by the scale.
+        auto destination = Graphics::Rect {pen.x + placed.pen.x + glyph.offset.x,
+                                           pen.y + placed.pen.y + glyph.offset.y,
+                                           glyph.src.w / builtAtScale,
+                                           glyph.src.h / builtAtScale};
 
-            if (into != nullptr)
-                into->add(placed);
-            else
-                glyphs->add(
-                    placed.destination, placed.source, color, placed.colored);
-        }
-
-        advance += glyph.advance;
+        if (into != nullptr)
+            into->add({destination, glyph.src, glyph.format == GlyphFormat::Color});
+        else
+            glyphs->add(
+                destination, glyph.src, color, glyph.format == GlyphFormat::Color);
     }
 
-    return advance;
+    return shaped.advance;
 }
 
 float TextRenderer::draw(std::string_view text,

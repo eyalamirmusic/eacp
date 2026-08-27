@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace eacp::Text
@@ -39,6 +41,24 @@ struct GlyphSlot
     bool empty = false;
 };
 
+// One glyph of a shaped string with its slot: where the glyph's own pen sits
+// relative to the string's, in points — x along the line, y downwards — so
+// the destination's top-left is the string's pen plus this plus the slot's
+// offset. `cluster` is the byte offset of the character it came from.
+struct ShapedSlot
+{
+    GlyphSlot slot;
+    Graphics::Point pen;
+    int cluster = 0;
+};
+
+// A string shaped and cached: every glyph's slot, and the advance in points.
+struct ShapedText
+{
+    Vector<ShapedSlot> glyphs;
+    float advance = 0.f;
+};
+
 // Caches rasterized glyphs in a GPU texture, packed on demand.
 //
 // Two textures, not one: masks go into an R8Unorm atlas (a quarter the memory
@@ -52,8 +72,8 @@ struct GlyphSlot
 // clear, and generation() ticks so callers can notice.
 //
 // **One atlas holds many faces.** A face is a (family, pointSize) pair, and the
-// key is (face, codepoint, style) — so a heading, a caption and a monospace log
-// share one texture and are drawn in one batch. The alternative, an atlas per
+// key is (face, variant, font, glyph id) — so a heading, a caption and a
+// monospace log share one texture and are drawn in one batch. The alternative, an atlas per
 // size, is what this class used to be: it costs a texture and a batch break per
 // size, which is bearable for an interface that looks like one thing and wrong
 // for a document, which mixes sizes by definition.
@@ -98,13 +118,29 @@ public:
 
     int faceCount() const { return faces.size(); }
 
+    // Shapes the string through the face's source and returns each glyph with
+    // its slot, rasterizing what the atlas has not seen. Shaped strings are
+    // cached too — a document measures the same words over and over — and the
+    // cache goes with the slots whenever the atlas is cleared.
+    ShapedText
+        shape(std::string_view text, const FontVariant& variant, int face = 0);
+
     // Rasterizes on first request, then returns the cached slot. An out-of-range
     // face draws nothing rather than reading past the table.
+    GlyphSlot glyph(GlyphKey key, const FontVariant& variant, int face = 0);
+
+    // The one glyph a codepoint shapes to on its own: the way to walk a string
+    // by codepoint when nothing between the codepoints matters, and what a
+    // shaped run is made of when the face has no kerning or ligatures.
     GlyphSlot glyph(char32_t codepoint, FontStyle style, int face = 0);
 
     // Face metrics in **points**, unlike the pixel-space FontMetrics the
     // rasterizer reports.
-    FontMetrics metrics(FontStyle style = FontStyle::Regular, int face = 0) const;
+    FontMetrics metrics(const FontVariant& variant, int face = 0) const;
+    FontMetrics metrics(FontStyle style = FontStyle::Regular, int face = 0) const
+    {
+        return metrics(variantOf(style), face);
+    }
 
     float scale() const { return deviceScale; }
 
@@ -135,7 +171,7 @@ public:
 private:
     struct Page;
 
-    GlyphSlot insert(char32_t codepoint, FontStyle style, int face);
+    GlyphSlot insert(GlyphKey key, const FontVariant& variant, int face);
     bool place(ShelfPacker& packer, const GlyphBitmap& bitmap, PackedRect& out);
     void growOrReset();
 
@@ -146,7 +182,9 @@ private:
     OwningPointer<GlyphSource> makeSource(const std::string& family,
                                           float pointSize) const;
 
-    static std::uint64_t keyFor(char32_t codepoint, FontStyle style, int face);
+    static std::uint64_t keyFor(GlyphKey key, const FontVariant& variant, int face);
+    static std::string
+        shapeKeyFor(std::string_view text, const FontVariant& variant, int face);
 
     // One family and size, and the rasterizer that draws it at this atlas's
     // scale.
@@ -170,6 +208,7 @@ private:
     ShelfPacker colorPacker;
 
     std::unordered_map<std::uint64_t, GlyphSlot> slots;
+    std::unordered_map<std::string, ShapedText> shaped;
 
     struct Page
     {
