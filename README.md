@@ -2,14 +2,9 @@
 
 A cross-platform C++20 framework that abstracts native OS primitives behind a
 single, modern API. eacp lets you write desktop and mobile applications once
-and have them target the platform's first-class primitives directly — no
-heavyweight runtime, no third-party dependencies beyond the host OS frameworks.
-
-> **⚠️ Alpha software.** eacp is in active early development. APIs are unstable
-> and **will** change without notice between commits. Platform coverage is
-> incomplete, edge cases are unhandled, and parts of the surface area are
-> stubs. Do not use this in production. It is published in the open so that
-> early adopters and contributors can experiment with it — expect breakage.
+and have them target the platform's first-class primitives directly. The heavy
+lifting stays with the OS: there is no bundled renderer, no bundled widget
+toolkit and no VM.
 
 ## What it abstracts
 
@@ -34,22 +29,61 @@ them, so apps inherit the look, feel, and performance of the host OS:
 - **Widgets & menus** — native text inputs, menus, and embedded views.
 - **WebView** — embed a system web view (WKWebView on Apple, WebView2 on
   Windows) with support for popups and new-window requests.
-- **Networking** — an `HTTP::Request` / `HTTP::Response` API plus a small
-  `HTTPServer`, backed by NSURLSession on Apple platforms.
+- **Networking** — an `HTTP::Request` / `HTTP::Response` API plus an
+  `HTTPServer`, TCP sockets, IPC channels and an RPC layer over both. Backed by
+  NSURLSession on Apple platforms, WinHTTP on Windows and libcurl on Linux.
 - **SVG** — parsing and rendering of SVG documents into the graphics layer.
+- **Processes & plugins** — launch a child process with args, env and working
+  directory, feed its stdin and capture its output (`eacp::Processes`), and load
+  and unload shared libraries at runtime (`DynamicLibrary`).
+- **Text & sprites** — font metrics, glyph rasterization and a GPU glyph atlas,
+  alongside a batched textured-quad renderer for everything that draws in bulk.
+- **UI** — a lightweight component tier: a whole widget tree in one `GPUView`,
+  drawn through the sprite and glyph batchers.
+- **SIMD** — portable kernels with runtime backend dispatch, so one source picks
+  the widest instruction set the machine actually has.
+- **Camera & video** — capture devices and frames with a `CameraView` to show
+  them, screen capture, video encoding, and decoded playback through the GPU
+  display stack.
 - **Interop helpers** — RAII wrappers (`Ptr<T>`, `CFRef<T>`,
   `AutoReleasePool`) for safe Objective-C / Core Foundation interop, plus
   generic utilities (`Pimpl`, `Singleton`, vector helpers).
 
 ## Supported platforms
 
-| Platform | Status |
-| --- | --- |
-| macOS   | Primary target |
-| Windows | Supported, less mature than macOS |
-| iOS     | Partial — core, graphics, and views |
+The dividing line is drawing. Everything that never touches a screen — the app
+and threading core, processes, plugins, files, the HTTP client and server, IPC
+and RPC, the SIMD kernels — builds on Linux too, which is what makes eacp usable
+for a headless service as well as for a GUI. The graphics stack is macOS,
+Windows and iOS, because it wraps each platform's own compositor instead of
+shipping one.
 
-Linux/Android are not currently supported.
+| Module | macOS | Windows | iOS | Linux |
+| --- | :---: | :---: | :---: | :---: |
+| `Core` — lifecycle, event loops, timers, processes, plugins, files | ✅ | ✅ | ✅ | ✅ |
+| `Network` — HTTP client and server, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ |
+| `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ |
+| `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | — |
+| `GPU` / `GPUWidgets` — Metal, D3D12 and the shader EDSL | ✅ | ✅ | ✅ | — |
+| `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | — |
+| `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | — |
+| `WebView` — WKWebView and WebView2 | ✅ | ✅ | ✅ | — |
+| `Camera` / `CameraView` — capture devices and frames | ✅ | ✅ | ✅ | — |
+| `Video` / `VideoView` — screen capture, encode, playback | ✅ | ✅ | — | — |
+
+`Lib/eacp/CMakeLists.txt` is where this is enforced: `Core`, `SIMD` and
+`Network` are unconditional, and the rest sit behind `(APPLE OR WIN32) AND
+EACP_BUILD_GRAPHICS`. Pass `-DEACP_BUILD_GRAPHICS=OFF` to build the portable
+half on any platform.
+
+CI builds every configuration in that matrix and runs the test suite on macOS
+(universal), Windows x64 and ARM64 (MSVC and clang-cl) and Linux (GCC and
+Clang); iOS is built for the simulator. macOS is the most exercised of them,
+and Android is not supported.
+
+The HTTP client is one API over three backends — NSURLSession on Apple
+platforms, WinHTTP on Windows, libcurl on Linux — so a Linux build needs
+libcurl's development headers (`libcurl4-openssl-dev` on Debian/Ubuntu).
 
 ## A taste of the API
 
@@ -115,8 +149,9 @@ req.headers["Content-Type"] = "application/json";
 auto res = req.perform();
 ```
 
-More examples live under [`Apps/`](Apps), including `SimpleView`, `HTTP`,
-`HttpServer`, `WebViewEmbed`, `Todo`, and `SVG`.
+More examples live under [`Apps/`](Apps), grouped by the module they exercise:
+`Console`, `Network`, `Graphics`, `GPU`, `UI`, `SVG`, `WebView`, `Camera`,
+`Video`, `Plugins` and `Mixed`.
 
 ## Building
 
@@ -137,46 +172,89 @@ cmake --build build --target Console   # build/Apps/Console/Console
 
 ### Build options
 
-- `EACP_UNITY_BUILD` (default `ON`) — compiles eacp libraries as unity builds
-  for faster full-project compilation. Turn it `OFF` when working with
-  language servers or tooling that consumes `compile_commands.json`:
+- `EACP_UNITY_BUILD` (default `OFF`) — compiles eacp libraries as CMake unity
+  builds, which is markedly faster for a cold full-project build. It is off by
+  default because a unity build collapses per-file entries in
+  `compile_commands.json`, which is what language servers read:
 
   ```bash
-  cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
+  cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=ON
+  ```
+
+- `EACP_BUILD_GRAPHICS` (default `ON`) — builds the whole drawing half. Turn it
+  off to build only the portable modules, on any platform.
+
+- `EACP_CI_BUILD` (default `OFF`) — the single switch that reproduces CI's exact
+  configuration locally. It forces `EACP_UNITY_BUILD` and `MIRO_UNITY_BUILD` on,
+  and turns on `EACP_PCH`, a precompiled header shared across every target that
+  is worth roughly half the compile time of a cold Windows build.
+
+  ```bash
+  cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON
   ```
 
 ## Repository layout
 
+Each subdirectory of `Lib/eacp` is a self-contained area you can include on its
+own — take `Network` without pulling in `GPU`.
+
 ```
 Lib/eacp/
-  Core/       App lifecycle, threading, ObjC/CF interop, utils
+  Core/       App lifecycle, threading, processes, plugins, files, ObjC/CF interop
+  Network/    HTTP client and server, TCP, IPC, RPC
+  SIMD/       Portable SIMD kernels with runtime backend dispatch
   Graphics/   Windows, views, widgets, menus, drawing primitives
   GPU/        Metal / D3D12: device, buffers, textures, pipelines, passes, and
               the shader EDSL — see GPU/README.md
   GPUWidgets/ Views drawn on the GPU (gradients, paths)
-  Sprites/    Batched textured-quad renderer
   Text/       Font metrics, glyph rasterization and a GPU glyph atlas
-  SIMD/       Portable SIMD kernels with runtime backend dispatch
-  Camera/     Capture devices and frames, plus CameraView/ to show them
-  Video/      Screen capture and video encoding
-  Network/    HTTP client and minimal HTTP server
-  WebView/    System web view embedding
+  Sprites/    Batched textured-quad renderer
+  UI/         A whole widget tree in one GPUView
   SVG/        SVG parsing and rendering
+  WebView/    System web view embedding
+  Camera/     Capture devices and frames, plus CameraView/ to show them
+  Video/      Screen capture and encoding, plus VideoView/ for playback
 Apps/         Example applications
 Tests/        Unit tests
 CMake/        Build helpers (TargetSetup, CPM)
 ```
 
-## Project status & contributing
+## Built with eacp
 
-eacp is alpha. Expect:
+Four projects lean on different parts of the framework, and between them are
+what keeps it honest — each one is a demand the API has to meet, and the gaps
+they surface are what gets fixed next.
 
-- Breaking API changes between commits.
-- Missing features and platform gaps (notably on Windows and iOS).
-- Rough edges in error handling, threading, and lifecycle management.
+- **[PureDOOM](https://github.com/eyalamirmusic/PureDOOM)** — DOOM on eacp's
+  application, GPU and input stack. The level is drawn as real hardware 3D at
+  the window's resolution rather than at 320×200, but the shading is DOOM's own:
+  the texture yields a palette index, the `COLORMAP` row picked by sector light
+  and distance remaps it, and the palette resolves the colour. Three attract-mode
+  demos, 11,410 tics, replay as a test that hashes the world after every tic.
 
-Issues, patches, and experiments are welcome, but please treat anything you
-build on top of eacp today as throwaway code.
+- **[ShaderToyEACP](https://github.com/eyalamirmusic/ShaderToyEACP)** —
+  Shadertoy's GLSL turned into eacp GPU programs, shaders authored as C++ structs
+  and compiled to Metal and HLSL from one source. A corpus of two hundred real
+  fragment shaders turns "what is the shader EDSL missing?" into a measurement:
+  every shader that fails to convert names a gap, and the number blocked on each
+  gap decides which one to close next.
+
+- **[imgui-eacp](https://github.com/eyalamirmusic/imgui-eacp)** — Dear ImGui as
+  an ordinary eacp `View`, drawn by the GPU module, with ImGui's shader written
+  once in the EDSL and emitted as both MSL and HLSL. Because it is a real view it
+  composes: `Apps/MixedViews` puts it beside a `WebView` in one window, wired in
+  both directions.
+
+- **[CowTerm](https://github.com/jamierpond/CowTerm)** — a GPU-accelerated
+  terminal emulator and session manager by Jamie Pond. Every visible pixel is
+  composited on the GPU from a CoreText glyph atlas; sessions, a fuzzy palette
+  and persistent pane layouts replace the tmux-sessionizer workflow.
+
+## Contributing
+
+eacp is developed in the open and moves quickly — the API is still settling, and
+breaking changes land between releases. Issues, patches and experiments are all
+welcome; the examples under `Apps/` are the fastest way in.
 
 ## License
 
