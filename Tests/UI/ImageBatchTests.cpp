@@ -55,7 +55,7 @@ struct Recorder
     UI::Graphics g;
 };
 
-bool near(float a, float b, float tolerance = 1e-4f)
+bool isNear(float a, float b, float tolerance = 1e-4f)
 {
     return std::abs(a - b) <= tolerance;
 }
@@ -82,8 +82,8 @@ struct Rendered
 // Within what eight bits and a linear filter allow.
 bool isColour(const Color& actual, const Color& expected)
 {
-    return near(actual.r, expected.r, 0.02f) && near(actual.g, expected.g, 0.02f)
-           && near(actual.b, expected.b, 0.02f);
+    return isNear(actual.r, expected.r, 0.02f) && isNear(actual.g, expected.g, 0.02f)
+           && isNear(actual.b, expected.b, 0.02f);
 }
 
 // The left half red, the right half blue at half strength, out of two images
@@ -214,10 +214,10 @@ auto tSourceRectIsUV =
 
     const auto& uv = recorder.list.getImages()[0].uv;
 
-    check(near(uv.x, 0.25f));
-    check(near(uv.y, 0.5f));
-    check(near(uv.w, 0.5f));
-    check(near(uv.h, 0.25f));
+    check(isNear(uv.x, 0.25f));
+    check(isNear(uv.y, 0.5f));
+    check(isNear(uv.w, 0.5f));
+    check(isNear(uv.h, 0.25f));
 };
 
 auto tNothingIsRecordedForNothing =
