@@ -11,6 +11,25 @@ namespace eacp::UI
 {
 class Layer;
 
+// The shadow a rounded box casts, in the terms it is authored in: the box
+// that casts it, how far it falls, how far past that box it spreads, how wide
+// its blur is, and whether it falls inside the box rather than behind it.
+//
+// Never drawn over the box itself: CSS casts a shadow as though the box were
+// opaque, so what shows through a translucent card is the page behind it and
+// not its own shadow. Which is why the box is what is named here rather than
+// the rectangle the shadow lands in -- the renderer needs both, and one of
+// them is arithmetic on the other.
+struct ShadowShape
+{
+    Rect box;
+    float cornerRadius = 0.f;
+    Point offset;
+    float blurRadius = 0.f;
+    float spread = 0.f;
+    bool inset = false;
+};
+
 // What one paint() produced: the primitives it issued, in the order it issued
 // them, in the painting component's own points.
 //
@@ -53,7 +72,12 @@ struct ShapeDraw
 
         // A box painted through a rect of the coverage atlas: what a vector path
         // draws as.
-        Mask
+        Mask,
+
+        // The shadow `rect` casts: a rounded box whose edge fades over
+        // `blurRadius` each side of it, drawn everywhere but over the box
+        // itself. See ShadowShape.
+        Shadow
     };
 
     Kind kind = Kind::Fill;
@@ -68,6 +92,15 @@ struct ShapeDraw
 
     float cornerRadius = 0.f;
     float thickness = 0.f;
+
+    // Where a shadow falls from the box that casts it, how far past that box
+    // it spreads, how wide its blur is, and whether it falls inside the box
+    // rather than behind it. For Kind::Shadow, whose `rect` is the box that
+    // casts it -- see ShadowShape, which these are.
+    Point shadowOffset;
+    float spread = 0.f;
+    float blurRadius = 0.f;
+    bool inset = false;
 
     // Where in the coverage atlas this shape's own mask is, for Kind::Mask.
     Rect maskUV;

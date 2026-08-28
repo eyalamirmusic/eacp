@@ -3,6 +3,7 @@
 #include "../Common.h"
 #include "ClipMask.h"
 #include "CoverageAtlas.h"
+#include "DrawList.h"
 #include "GradientRamps.h"
 
 namespace eacp::UI
@@ -60,6 +61,19 @@ struct ShapeInstance
     // texel and is multiplied by one. See CoverageAtlas for why one pipeline
     // does both.
     float mask[4];
+
+    // How wide this shape's edge ramp is -- one over twice the blur radius --
+    // and whether it has one at all. A shadow is this same distance field read
+    // through a ramp as wide as its blur instead of one as wide as a pixel, so
+    // it is two numbers on the instance rather than a pipeline of its own.
+    float blur[2];
+
+    // Where the box that cast this shadow sits inside it -- its centre against
+    // this one's, and how much larger it is on every side -- and whether the
+    // shadow falls inside that box rather than outside it. The shadow is not
+    // drawn where the box is, which is what CSS means by casting a shadow as
+    // though the box were opaque.
+    float caster[4];
 };
 
 // Draws rounded rectangles, borders and lines, batched and instanced.
@@ -152,6 +166,18 @@ public:
                   const Color& color,
                   float thickness = 1.f,
                   const GradientFill& gradient = {});
+
+    // The shadow a box casts: the same rounded-box field, read through a ramp
+    // as wide as the blur rather than as wide as a pixel, and cut back out of
+    // the box itself -- outside it for an outer shadow, inside it for an inset
+    // one.
+    //
+    // The ramp is a smoothstep across twice the blur, which is the cheapest
+    // curve that reads as a Gaussian of half the radius -- the blur CSS asks
+    // for -- and costs the field it already computes plus a few instructions.
+    void fillShadow(const ShadowShape& shadow,
+                    const Color& color,
+                    const GradientFill& gradient = {});
 
     // A rect painted through a coverage mask: the atlas rect `maskUV` decides
     // how much of `color` each pixel gets. This is how a vector path draws, and
