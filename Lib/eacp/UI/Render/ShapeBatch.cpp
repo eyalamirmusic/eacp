@@ -67,6 +67,8 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
         auto mask = instanceInput(&ShapeInstance::mask, 1);
         auto gradient = instanceInput(&ShapeInstance::gradient, 1);
         auto gradientRamp = instanceInput(&ShapeInstance::gradientRamp, 1);
+        auto blur = instanceInput(&ShapeInstance::blur, 1);
+        auto caster = instanceInput(&ShapeInstance::caster, 1);
 
         auto position = origin + corner.x() * edgeX + corner.y() * edgeY;
         auto clipX = position.x() / screenSize.x() * 2.f - 1.f;
@@ -87,6 +89,8 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
         auto fragPosition = varying(position);
         auto fragGradient = varying(gradient);
         auto fragGradientRamp = varying(gradientRamp);
+        auto fragBlur = varying(blur);
+        auto fragCaster = varying(caster);
 
         // Where in the atlas this fragment reads. A zero-sized rect collapses
         // to one texel however big the quad is, which is what an unmasked shape
@@ -99,10 +103,16 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
         // The rounded-box field: distance to the box shrunk by the radius, then
         // let back out by it. Negative inside, positive outside, and correct in
         // both -- which is what lets the same number serve the fill and the ring.
-        auto q = abs(local) - (fragHalfSize - float2(radius, radius));
-        auto outside = length(max(0.f, q));
-        auto inside = min(0.f, max(q.x(), q.y()));
-        auto distance = outside + inside - radius;
+        auto roundedBox = [](auto point, auto halfSize, auto cornerRadius)
+        {
+            auto q = abs(point) - (halfSize - float2(cornerRadius, cornerRadius));
+            auto outside = length(max(0.f, q));
+            auto inside = min(0.f, max(q.x(), q.y()));
+
+            return outside + inside - cornerRadius;
+        };
+
+        auto distance = roundedBox(local, fragHalfSize, radius);
 
         // The same field read as a ring, for a border: distance from the band
         // that sits just inside the edge.
@@ -116,7 +126,59 @@ struct ShapeBatch::Program final : GPU::ShaderProgram
 
         // Half a device pixel each side of the edge, which is the widest ramp
         // that still reads as a hard edge rather than a blur.
-        auto fieldCoverage = clamp(0.5f - shapeDistance * pixelScale, 0.f, 1.f);
+        auto hardEdge = clamp(0.5f - shapeDistance * pixelScale, 0.f, 1.f);
+
+        // A shadow's edge, over a ramp as wide as twice its blur: the same
+        // distance read through a curve instead of a line, which is what makes
+        // it a blur rather than a fade. Smoothstep across twice the blur is
+        // within a percent of a Gaussian of half of it, which is the blur CSS
+        // and every design tool mean by the word.
+        auto ramp = [&](auto edgeDistance)
+        {
+            return smoothstep(
+                0.f, 1.f, clamp(0.5f - edgeDistance * fragBlur.x(), 0.f, 1.f));
+        };
+
+        // Along the box's own axes, and multiplied: a blurred rectangle is
+        // exactly what it blurs to in x times what it blurs to in y, the
+        // Gaussian being separable. Read off the field alone the corners come
+        // out too bright, every direction out of one looking like an edge.
+        auto axes = ramp(abs(local.x()) - fragHalfSize.x())
+                    * ramp(abs(local.y()) - fragHalfSize.y());
+
+        // The smaller of the two, which is the one that is right: the axes are
+        // exact for a square box at any blur, the field for a rounded one at
+        // none, and a rounded box is never more than the square box round it.
+        //
+        // And with no blur at all, the hard edge itself: a shadow thrown by an
+        // offset or spread alone is the box's own shape, drawn where the box
+        // is not, and the ramp would have nothing to run across.
+        auto blurred = mix(
+            hardEdge, min(ramp(shapeDistance), axes), step(0.0001f, fragBlur.x()));
+
+        // The box that cast this shadow, in the shadow's own space: where the
+        // shadow is *not*. CSS casts a shadow as though the box were opaque, so
+        // an outer one is cut out of it -- otherwise a translucent card shows
+        // its own shadow through itself -- and an inset one is the same field
+        // the other way up, kept inside the box and nowhere else.
+        auto casterGrow = fragCaster.z();
+        auto casterHalf = fragHalfSize + float2(casterGrow, casterGrow);
+
+        // Square when the shadow's corners are square, which they are exactly
+        // when the box's own are: a spread rounds nothing that was not round.
+        auto casterRadius = max(0.f, radius + casterGrow) * step(0.001f, radius);
+        auto casterDistance =
+            roundedBox(local - fragCaster.xy(), casterHalf, casterRadius);
+        auto inCaster = clamp(0.5f - casterDistance * pixelScale, 0.f, 1.f);
+
+        auto outerShadow = blurred * (1.f - inCaster);
+        auto insetShadow = (1.f - blurred) * inCaster;
+
+        // Mixed rather than branched, for the reason the border is: a shadow
+        // and a fill are one pipeline, so a card and the shadow under it go out
+        // in one instanced draw.
+        auto shadow = mix(outerShadow, insetShadow, fragCaster.w());
+        auto fieldCoverage = mix(hardEdge, shadow, fragBlur.y());
 
         // Every shape pays this fetch, and that is the deliberate trade: a
         // rectangle reads the one opaque texel -- in cache for the whole frame,
@@ -415,6 +477,85 @@ void ShapeBatch::fillRect(const Rect& rect,
                           const GradientFill& gradient)
 {
     addAxisAlignedShape(rect, color, cornerRadius, 0.f, gradient);
+}
+
+void ShapeBatch::fillShadow(const ShadowShape& shadow,
+                            const Color& color,
+                            const GradientFill& gradient)
+{
+    const auto& box = shadow.box;
+
+    if (box.w <= 0.f || box.h <= 0.f || color.a <= 0.f)
+        return;
+
+    // Where the shadow itself falls: the box moved by the offset, and let out
+    // past it by the spread -- or, inset, held in from it by the spread. A
+    // spread that swallows the box leaves a sliver rather than nothing, which
+    // is what an inset shadow deep enough to fill its box asks for.
+    auto grow = shadow.inset ? -shadow.spread : shadow.spread;
+    auto blur = std::max(0.f, shadow.blurRadius);
+
+    auto half = Point {std::max(0.01f, box.w * 0.5f + grow),
+                       std::max(0.01f, box.h * 0.5f + grow)};
+
+    if (!shadow.inset && (box.w * 0.5f + grow <= 0.f || box.h * 0.5f + grow <= 0.f))
+        return;
+
+    // Let out with the box, so a spread rounds nothing that was square and a
+    // rounded box keeps the shape of its corners however far its shadow
+    // reaches. The shader reads the caster's radius back out of this one.
+    auto radius =
+        shadow.cornerRadius > 0.f ? std::max(0.f, shadow.cornerRadius + grow) : 0.f;
+
+    radius = std::clamp(radius, 0.f, std::min(half.x, half.y));
+
+    auto centre = Point {box.x + box.w * 0.5f + shadow.offset.x,
+                         box.y + box.h * 0.5f + shadow.offset.y};
+
+    // The quad, centred on the shadow as every shape's quad is centred on its
+    // own field: as far as the blur reaches past an outer shadow, and as far
+    // as the box it is held inside for an inset one.
+    auto reach = shadow.inset ? Point {box.w * 0.5f + std::abs(shadow.offset.x),
+                                       box.h * 0.5f + std::abs(shadow.offset.y)}
+                              : Point {half.x + blur, half.y + blur};
+
+    auto instance = ShapeInstance {};
+
+    instance.origin[0] = centre.x - reach.x - antialiasMargin;
+    instance.origin[1] = centre.y - reach.y - antialiasMargin;
+    instance.edgeX[0] = (reach.x + antialiasMargin) * 2.f;
+    instance.edgeY[1] = (reach.y + antialiasMargin) * 2.f;
+
+    instance.halfSize[0] = half.x;
+    instance.halfSize[1] = half.y;
+    instance.halfExtent[0] = reach.x + antialiasMargin;
+    instance.halfExtent[1] = reach.y + antialiasMargin;
+
+    instance.color[0] = color.r;
+    instance.color[1] = color.g;
+    instance.color[2] = color.b;
+    instance.color[3] = color.a;
+
+    instance.shape[0] = radius;
+
+    // One over twice the blur, so the ramp runs from opaque a blur inside the
+    // shadow's edge to nothing a blur outside it; and the flag that chooses
+    // it, which the CPU knows and the fragment stage would otherwise compare
+    // for.
+    instance.blur[0] = blur > 0.f ? 0.5f / blur : 0.f;
+    instance.blur[1] = 1.f;
+
+    // The box that cast it, against the shadow's own centre: where the shadow
+    // is not drawn.
+    instance.caster[0] = -shadow.offset.x;
+    instance.caster[1] = -shadow.offset.y;
+    instance.caster[2] = -grow;
+    instance.caster[3] = shadow.inset ? 1.f : 0.f;
+
+    setMask(instance, atlas.getOpaqueUV());
+    setGradient(instance, gradient);
+
+    instances.add(instance);
 }
 
 void ShapeBatch::drawRect(const Rect& rect,
