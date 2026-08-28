@@ -13,6 +13,11 @@ add_subdirectory(AtlasCeiling)
 # each of them cost.
 add_subdirectory(Images)
 
+# The blurred rounded box every card, dialog and dropdown sits on, at rising
+# blurs, spreads and radii -- and the batch break it does not cost, a shadow
+# being the same distance field a fill is read through a wider ramp.
+add_subdirectory(Shadows)
+
 # An SVG document drawn twice in one window: native shape layers on the left,
 # the component tier's coverage masks on the right, for comparing the two on
 # screen and for reading what a real document costs the atlas.

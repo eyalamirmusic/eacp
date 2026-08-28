@@ -183,6 +183,31 @@ void DrawPlayer::playShapes(const DrawList& list,
         }
 
         auto target = offsetBy(shape.rect, origin);
+
+        if (shape.kind == ShapeDraw::Kind::Shadow)
+        {
+            auto shadow = ShadowShape {target,
+                                       shape.cornerRadius,
+                                       shape.shadowOffset,
+                                       shape.blurRadius,
+                                       shape.spread,
+                                       shape.inset};
+
+            // What the shadow actually covers, for the clip to be elided
+            // against: the box it falls from for an inset one, and that box
+            // moved, spread and blurred for an outer one.
+            auto reach = shadow.inset ? 0.f : shadow.blurRadius + shadow.spread;
+            auto offset = shadow.inset ? Point {} : shadow.offset;
+
+            prepareToDraw({target.x + offset.x - reach,
+                           target.y + offset.y - reach,
+                           target.w + reach * 2.f,
+                           target.h + reach * 2.f});
+
+            shapes.fillShadow(shadow, shape.colour, gradient);
+            continue;
+        }
+
         prepareToDraw(target);
 
         if (shape.kind == ShapeDraw::Kind::Fill)
