@@ -5,6 +5,8 @@
 #include "../Texture/Texture.h"
 #include "VertexLayout.h"
 
+#include <optional>
+
 namespace eacp::GPU
 {
 class Device;
@@ -77,6 +79,158 @@ enum class BlendMode
     AlphaBlendOntoTransparent,
 
     Additive
+};
+
+// One operand's weight in the blend equation:
+//
+//     result = source * sourceFactor  <op>  destination * destinationFactor
+//
+// The same eleven values on both backends, because MTLBlendFactor and
+// D3D12_BLEND took them from the same place. `Source` is the fragment the
+// shader just produced; `Destination` is what is already in the attachment.
+//
+// This is the escape hatch, not the front door. BlendMode's four presets are
+// what a UI, a sprite or a glyph wants, and they are named because those are
+// the four that come up. What needs the factors themselves is content whose
+// *author* chose the equation - a material system, where "modulate by what is
+// behind me" and "weight by the destination's alpha" are things written in a
+// file that the renderer has to honour rather than approximate.
+enum class BlendFactor
+{
+    Zero,
+    One,
+    SourceColor,
+    OneMinusSourceColor,
+    SourceAlpha,
+    OneMinusSourceAlpha,
+    DestinationColor,
+    OneMinusDestinationColor,
+    DestinationAlpha,
+    OneMinusDestinationAlpha,
+
+    // min(sourceAlpha, 1 - destinationAlpha) in all four channels. The one
+    // factor that is not a plain operand.
+    SourceAlphaSaturated
+};
+
+// How the two weighted operands are combined. Add is the equation above; the
+// other four are what both APIs offer beside it, spelled the same way.
+//
+// Subtract and ReverseSubtract differ only in which side is taken from which,
+// and the names follow the convention OpenGL and D3D share: Subtract is source
+// minus destination.
+//
+// Min and Max ignore the factors entirely on both backends - they compare the
+// unweighted operands - which is worth knowing before setting factors that
+// then do nothing.
+enum class BlendOperation
+{
+    Add,
+    Subtract,
+    ReverseSubtract,
+    Min,
+    Max
+};
+
+// The whole blend equation, colour and alpha separately, for a caller that
+// needs a combination BlendMode does not name.
+//
+// The two halves are separate because both APIs separate them, and because the
+// difference is decisive on a texture that will be composited later - which is
+// the entire argument for BlendMode::AlphaBlendOntoTransparent, expressible
+// here as the pair of equations it actually is.
+//
+// The defaults are BlendMode::None: the source replaces the destination. The
+// factors are written as (One, Zero) rather than left arbitrary so that turning
+// `enabled` on by itself means exactly the same thing.
+//
+// **One asymmetry between the backends is closed here rather than passed on.**
+// D3D12 rejects the four `*Color` factors in the alpha slots outright - a
+// pipeline naming SourceColor for `sourceAlpha` fails to create - while Metal
+// accepts them. It is not a capability difference: in the alpha channel, the
+// alpha component of SourceColor *is* SourceAlpha, so the two express the same
+// arithmetic and D3D12 simply refuses the redundant spelling. The Windows
+// backend therefore substitutes the alpha equivalent in those two fields, and
+// both backends compute the same number for the same BlendState. Stated because
+// a reader comparing the two files will otherwise see a translation that looks
+// wrong.
+struct BlendState
+{
+    bool enabled = false;
+
+    BlendFactor sourceColor = BlendFactor::One;
+    BlendFactor destinationColor = BlendFactor::Zero;
+    BlendOperation colorOperation = BlendOperation::Add;
+
+    BlendFactor sourceAlpha = BlendFactor::One;
+    BlendFactor destinationAlpha = BlendFactor::Zero;
+    BlendOperation alphaOperation = BlendOperation::Add;
+};
+
+// What each named mode is, written out once. Both backends build their state
+// through this rather than each switching on BlendMode themselves, so a
+// preset's equation is stated in one place and the two cannot drift on what a
+// preset means.
+constexpr BlendState blendStateFor(BlendMode mode)
+{
+    auto state = BlendState {};
+
+    switch (mode)
+    {
+        case BlendMode::None:
+            return state;
+
+        case BlendMode::AlphaBlend:
+            state.enabled = true;
+            state.sourceColor = BlendFactor::SourceAlpha;
+            state.destinationColor = BlendFactor::OneMinusSourceAlpha;
+            state.sourceAlpha = BlendFactor::SourceAlpha;
+            state.destinationAlpha = BlendFactor::OneMinusSourceAlpha;
+            return state;
+
+        case BlendMode::AlphaBlendOntoTransparent:
+            state.enabled = true;
+            state.sourceColor = BlendFactor::SourceAlpha;
+            state.destinationColor = BlendFactor::OneMinusSourceAlpha;
+            state.sourceAlpha = BlendFactor::One;
+            state.destinationAlpha = BlendFactor::OneMinusSourceAlpha;
+            return state;
+
+        case BlendMode::Additive:
+            state.enabled = true;
+            state.sourceColor = BlendFactor::SourceAlpha;
+            state.destinationColor = BlendFactor::One;
+            state.sourceAlpha = BlendFactor::One;
+            state.destinationAlpha = BlendFactor::One;
+            return state;
+    }
+
+    return state;
+}
+
+// Which channels a fragment is allowed to write. Every channel by default,
+// which is where both backends start.
+//
+// What this is for is a pass that has to update the depth or the stencil plane
+// while leaving the picture alone - a shadow volume being counted, a depth
+// prepass - and the reason it is a field rather than a workaround is that the
+// workaround only covers one case of it. Drawing additively at zero alpha
+// leaves the destination untouched, which is "writes nothing"; there is no
+// trick at all for "writes green but not red", which a material system's
+// maskRed / maskColor / maskAlpha keywords ask for directly.
+//
+// Independent of the blend equation: a masked channel is not written whatever
+// the blend computed for it.
+struct ColorWriteMask
+{
+    bool red = true;
+    bool green = true;
+    bool blue = true;
+    bool alpha = true;
+
+    // Nothing at all - the case the additive-at-zero-alpha workaround was
+    // standing in for.
+    static constexpr ColorWriteMask none() { return {false, false, false, false}; }
 };
 
 // Which faces the rasterizer keeps. None draws both and is the default: it is
@@ -207,6 +361,18 @@ struct RenderPipelineDescriptor
     // count (GPUView::sampleCount()). 1 = no MSAA.
     int sampleCount = 1;
     BlendMode blendMode = BlendMode::None;
+
+    // The blend equation in full, when one of the four named modes is not it.
+    //
+    // Unset - which it is by default - and blendMode decides, so nothing that
+    // has ever been written against this struct changes. Set, and it wins:
+    // there is no merging of the two, because a caller who has written out an
+    // equation has said what they mean and reading blendMode as well would only
+    // create a way to disagree with it.
+    std::optional<BlendState> blend;
+
+    // Which channels reach the attachment, after the blend.
+    ColorWriteMask colorWriteMask;
 
     // Whether this pipeline has a depth attachment at all. Requires the view to
     // provide a depth buffer (GPUView::setDepth(true)), and both backends reject

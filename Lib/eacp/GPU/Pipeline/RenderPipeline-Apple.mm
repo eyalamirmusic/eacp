@@ -59,6 +59,75 @@ static MTLPixelFormat toMetalPixelFormat(PixelFormat format)
     return MTLPixelFormatBGRA8Unorm;
 }
 
+static MTLBlendFactor toMetalBlendFactor(BlendFactor factor)
+{
+    switch (factor)
+    {
+        case BlendFactor::Zero:
+            return MTLBlendFactorZero;
+        case BlendFactor::One:
+            return MTLBlendFactorOne;
+        case BlendFactor::SourceColor:
+            return MTLBlendFactorSourceColor;
+        case BlendFactor::OneMinusSourceColor:
+            return MTLBlendFactorOneMinusSourceColor;
+        case BlendFactor::SourceAlpha:
+            return MTLBlendFactorSourceAlpha;
+        case BlendFactor::OneMinusSourceAlpha:
+            return MTLBlendFactorOneMinusSourceAlpha;
+        case BlendFactor::DestinationColor:
+            return MTLBlendFactorDestinationColor;
+        case BlendFactor::OneMinusDestinationColor:
+            return MTLBlendFactorOneMinusDestinationColor;
+        case BlendFactor::DestinationAlpha:
+            return MTLBlendFactorDestinationAlpha;
+        case BlendFactor::OneMinusDestinationAlpha:
+            return MTLBlendFactorOneMinusDestinationAlpha;
+        case BlendFactor::SourceAlphaSaturated:
+            return MTLBlendFactorSourceAlphaSaturated;
+    }
+
+    return MTLBlendFactorOne;
+}
+
+static MTLBlendOperation toMetalBlendOperation(BlendOperation operation)
+{
+    switch (operation)
+    {
+        case BlendOperation::Add:
+            return MTLBlendOperationAdd;
+        case BlendOperation::Subtract:
+            return MTLBlendOperationSubtract;
+        case BlendOperation::ReverseSubtract:
+            return MTLBlendOperationReverseSubtract;
+        case BlendOperation::Min:
+            return MTLBlendOperationMin;
+        case BlendOperation::Max:
+            return MTLBlendOperationMax;
+    }
+
+    return MTLBlendOperationAdd;
+}
+
+static MTLColorWriteMask toMetalWriteMask(const ColorWriteMask& mask)
+{
+    // Accumulated as the underlying integer rather than as the enum, which
+    // MTLColorWriteMask is a typedef *of* rather than a bitmask type: |= on the
+    // enum itself does not compile.
+    NSUInteger value = MTLColorWriteMaskNone;
+
+    if (mask.red)
+        value |= MTLColorWriteMaskRed;
+    if (mask.green)
+        value |= MTLColorWriteMaskGreen;
+    if (mask.blue)
+        value |= MTLColorWriteMaskBlue;
+    if (mask.alpha)
+        value |= MTLColorWriteMaskAlpha;
+
+    return (MTLColorWriteMask) value;
+}
+
 static MTLCompareFunction toMetalCompareFunction(CompareFunction compare)
 {
     switch (compare)
@@ -257,43 +326,31 @@ struct RenderPipeline::Native
         auto colorAttachment = pipelineDescriptor.colorAttachments[0];
         colorAttachment.pixelFormat = toMetalPixelFormat(descriptor.colorFormat);
 
-        switch (descriptor.blendMode)
+        // One path for the named modes and for a written-out equation, because
+        // blendStateFor turns the first into the second. A preset's meaning is
+        // therefore stated once, in the header, rather than once per backend.
+        const auto blend = descriptor.blend
+                               ? *descriptor.blend
+                               : blendStateFor(descriptor.blendMode);
+
+        if (blend.enabled)
         {
-            case BlendMode::None:
-                break;
-            case BlendMode::AlphaBlend:
-                colorAttachment.blendingEnabled = YES;
-                colorAttachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-                colorAttachment.destinationRGBBlendFactor =
-                    MTLBlendFactorOneMinusSourceAlpha;
-                colorAttachment.sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
-                colorAttachment.destinationAlphaBlendFactor =
-                    MTLBlendFactorOneMinusSourceAlpha;
-                break;
-            case BlendMode::AlphaBlendOntoTransparent:
-                colorAttachment.blendingEnabled = YES;
-                colorAttachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-                colorAttachment.destinationRGBBlendFactor =
-                    MTLBlendFactorOneMinusSourceAlpha;
-                colorAttachment.sourceAlphaBlendFactor = MTLBlendFactorOne;
-                colorAttachment.destinationAlphaBlendFactor =
-                    MTLBlendFactorOneMinusSourceAlpha;
-                break;
-            case BlendMode::Additive:
-                colorAttachment.blendingEnabled = YES;
-                colorAttachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-                colorAttachment.destinationRGBBlendFactor = MTLBlendFactorOne;
-                colorAttachment.sourceAlphaBlendFactor = MTLBlendFactorOne;
-                colorAttachment.destinationAlphaBlendFactor = MTLBlendFactorOne;
-                break;
-            default:
-                // Guards against a future BlendMode value that this backend
-                // was never taught to handle - would otherwise silently
-                // produce a no-blend pipeline. Loud in Debug, degrades to
-                // None in Release (both backends match this behaviour).
-                assert(false && "eacp: unhandled BlendMode in Metal backend");
-                break;
+            colorAttachment.blendingEnabled = YES;
+            colorAttachment.sourceRGBBlendFactor =
+                toMetalBlendFactor(blend.sourceColor);
+            colorAttachment.destinationRGBBlendFactor =
+                toMetalBlendFactor(blend.destinationColor);
+            colorAttachment.rgbBlendOperation =
+                toMetalBlendOperation(blend.colorOperation);
+            colorAttachment.sourceAlphaBlendFactor =
+                toMetalBlendFactor(blend.sourceAlpha);
+            colorAttachment.destinationAlphaBlendFactor =
+                toMetalBlendFactor(blend.destinationAlpha);
+            colorAttachment.alphaBlendOperation =
+                toMetalBlendOperation(blend.alphaOperation);
         }
+
+        colorAttachment.writeMask = toMetalWriteMask(descriptor.colorWriteMask);
 
         NSError* error = nil;
         state = [metalDevice newRenderPipelineStateWithDescriptor:pipelineDescriptor

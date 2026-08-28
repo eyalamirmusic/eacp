@@ -229,52 +229,127 @@ D3D12_RASTERIZER_DESC makeRasterizerDesc(const RenderPipelineDescriptor& from)
     return desc;
 }
 
-D3D12_BLEND_DESC makeBlendDesc(BlendMode mode)
+D3D12_BLEND toD3DBlendFactor(BlendFactor factor)
+{
+    switch (factor)
+    {
+        case BlendFactor::Zero:
+            return D3D12_BLEND_ZERO;
+        case BlendFactor::One:
+            return D3D12_BLEND_ONE;
+        case BlendFactor::SourceColor:
+            return D3D12_BLEND_SRC_COLOR;
+        case BlendFactor::OneMinusSourceColor:
+            return D3D12_BLEND_INV_SRC_COLOR;
+        case BlendFactor::SourceAlpha:
+            return D3D12_BLEND_SRC_ALPHA;
+        case BlendFactor::OneMinusSourceAlpha:
+            return D3D12_BLEND_INV_SRC_ALPHA;
+        case BlendFactor::DestinationColor:
+            return D3D12_BLEND_DEST_COLOR;
+        case BlendFactor::OneMinusDestinationColor:
+            return D3D12_BLEND_INV_DEST_COLOR;
+        case BlendFactor::DestinationAlpha:
+            return D3D12_BLEND_DEST_ALPHA;
+        case BlendFactor::OneMinusDestinationAlpha:
+            return D3D12_BLEND_INV_DEST_ALPHA;
+        case BlendFactor::SourceAlphaSaturated:
+            return D3D12_BLEND_SRC_ALPHA_SAT;
+    }
+
+    return D3D12_BLEND_ONE;
+}
+
+// The alpha slots, where D3D12 is narrower than Metal and the difference is a
+// spelling rather than a capability.
+//
+// SrcBlendAlpha and DestBlendAlpha reject the four *_COLOR factors outright:
+// a pipeline naming D3D12_BLEND_SRC_COLOR there fails to create, with the
+// debug layer saying so. Metal accepts the same request and computes what the
+// name means - and in the alpha channel, the alpha component of SourceColor
+// *is* SourceAlpha, so what it computes is the alpha-named factor's value.
+//
+// Substituting is therefore exact rather than approximate, and it is what
+// makes one BlendState mean one thing on both backends. Doom-3-era material
+// systems are the reason it comes up at all: OpenGL's glBlendFunc sets one
+// factor pair for colour and alpha together, so a material asking for
+// (DST_COLOR, ZERO) is asking for that pair in the alpha channel too.
+D3D12_BLEND toD3DAlphaBlendFactor(BlendFactor factor)
+{
+    switch (factor)
+    {
+        case BlendFactor::SourceColor:
+            return D3D12_BLEND_SRC_ALPHA;
+        case BlendFactor::OneMinusSourceColor:
+            return D3D12_BLEND_INV_SRC_ALPHA;
+        case BlendFactor::DestinationColor:
+            return D3D12_BLEND_DEST_ALPHA;
+        case BlendFactor::OneMinusDestinationColor:
+            return D3D12_BLEND_INV_DEST_ALPHA;
+        default:
+            return toD3DBlendFactor(factor);
+    }
+}
+
+D3D12_BLEND_OP toD3DBlendOperation(BlendOperation operation)
+{
+    switch (operation)
+    {
+        case BlendOperation::Add:
+            return D3D12_BLEND_OP_ADD;
+        case BlendOperation::Subtract:
+            return D3D12_BLEND_OP_SUBTRACT;
+        case BlendOperation::ReverseSubtract:
+            return D3D12_BLEND_OP_REV_SUBTRACT;
+        case BlendOperation::Min:
+            return D3D12_BLEND_OP_MIN;
+        case BlendOperation::Max:
+            return D3D12_BLEND_OP_MAX;
+    }
+
+    return D3D12_BLEND_OP_ADD;
+}
+
+UINT8 toD3DWriteMask(const ColorWriteMask& mask)
+{
+    UINT8 value = 0;
+
+    if (mask.red)
+        value |= D3D12_COLOR_WRITE_ENABLE_RED;
+    if (mask.green)
+        value |= D3D12_COLOR_WRITE_ENABLE_GREEN;
+    if (mask.blue)
+        value |= D3D12_COLOR_WRITE_ENABLE_BLUE;
+    if (mask.alpha)
+        value |= D3D12_COLOR_WRITE_ENABLE_ALPHA;
+
+    return value;
+}
+
+// One path for the named modes and for a written-out equation, because
+// blendStateFor turns the first into the second. A preset's meaning is stated
+// once, in the header, rather than once per backend.
+D3D12_BLEND_DESC makeBlendDesc(const RenderPipelineDescriptor& from)
 {
     D3D12_BLEND_DESC desc = {};
     auto& target = desc.RenderTarget[0];
-    target.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 
-    switch (mode)
-    {
-        case BlendMode::None:
-            return desc;
-        case BlendMode::AlphaBlend:
-            target.BlendEnable = TRUE;
-            target.SrcBlend = D3D12_BLEND_SRC_ALPHA;
-            target.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-            target.BlendOp = D3D12_BLEND_OP_ADD;
-            target.SrcBlendAlpha = D3D12_BLEND_SRC_ALPHA;
-            target.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
-            target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-            return desc;
-        case BlendMode::AlphaBlendOntoTransparent:
-            target.BlendEnable = TRUE;
-            target.SrcBlend = D3D12_BLEND_SRC_ALPHA;
-            target.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-            target.BlendOp = D3D12_BLEND_OP_ADD;
-            target.SrcBlendAlpha = D3D12_BLEND_ONE;
-            target.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
-            target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-            return desc;
-        case BlendMode::Additive:
-            target.BlendEnable = TRUE;
-            target.SrcBlend = D3D12_BLEND_SRC_ALPHA;
-            target.DestBlend = D3D12_BLEND_ONE;
-            target.BlendOp = D3D12_BLEND_OP_ADD;
-            target.SrcBlendAlpha = D3D12_BLEND_ONE;
-            target.DestBlendAlpha = D3D12_BLEND_ONE;
-            target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-            return desc;
-        default:
-            // Guards against a future BlendMode value that this backend was
-            // never taught to handle - would otherwise silently produce a
-            // no-blend pipeline (that's what the zero-initialised desc is).
-            // Loud in Debug, degrades to None in Release (both backends
-            // match this behaviour).
-            assert(false && "eacp: unhandled BlendMode in D3D12 backend");
-            return desc;
-    }
+    target.RenderTargetWriteMask = toD3DWriteMask(from.colorWriteMask);
+
+    const auto blend = from.blend ? *from.blend : blendStateFor(from.blendMode);
+
+    if (!blend.enabled)
+        return desc;
+
+    target.BlendEnable = TRUE;
+    target.SrcBlend = toD3DBlendFactor(blend.sourceColor);
+    target.DestBlend = toD3DBlendFactor(blend.destinationColor);
+    target.BlendOp = toD3DBlendOperation(blend.colorOperation);
+    target.SrcBlendAlpha = toD3DAlphaBlendFactor(blend.sourceAlpha);
+    target.DestBlendAlpha = toD3DAlphaBlendFactor(blend.destinationAlpha);
+    target.BlendOpAlpha = toD3DBlendOperation(blend.alphaOperation);
+
+    return desc;
 }
 
 D3D12_STENCIL_OP toD3DStencilOp(StencilOp op)
@@ -380,7 +455,7 @@ struct RenderPipeline::Native
         desc.VS.BytecodeLength = program->vertexBytecode->GetBufferSize();
         desc.PS.pShaderBytecode = program->pixelBytecode->GetBufferPointer();
         desc.PS.BytecodeLength = program->pixelBytecode->GetBufferSize();
-        desc.BlendState = makeBlendDesc(descriptor.blendMode);
+        desc.BlendState = makeBlendDesc(descriptor);
         desc.SampleMask = UINT_MAX;
         desc.RasterizerState = makeRasterizerDesc(descriptor);
         desc.DepthStencilState = makeDepthStencilDesc(descriptor);
