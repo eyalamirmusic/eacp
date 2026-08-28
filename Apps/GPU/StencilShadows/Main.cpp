@@ -438,15 +438,20 @@ struct StencilShadowsView final : GPUView
     {
         visibleVolume.prepare(volumeDescriptor(BlendMode::AlphaBlend));
 
-        // The invisible one. eacp has no colour write mask, so the volume is
-        // made to write nothing by drawing it additively at zero alpha:
-        // Additive is (SRC_ALPHA, ONE), so a fragment with no alpha contributes
-        // nothing and the destination survives untouched. The stencil ops still
-        // fire, which is all this pass is for.
+        // The invisible one: the volume is rasterized so the stencil ops fire,
+        // and writes no colour at all while doing it. That is what the pass is
+        // for and it is now what the pipeline says.
         //
-        // A real renderer wants the mask - Doom 3 sets glColorMask here - and
-        // this is the workaround until eacp grows one.
-        hiddenVolume.prepare(volumeDescriptor(BlendMode::Additive));
+        // It used to be faked, and the fake is worth remembering because it is
+        // what this example was built to expose: with no write mask, the only
+        // way to draw without drawing was Additive at zero alpha - (SRC_ALPHA,
+        // ONE) with no alpha contributes nothing - which covers "write nothing"
+        // and no other masking at all. Doom 3 sets glColorMask here, per
+        // channel, and asking for that is what turned the hole into a field.
+        auto descriptor = volumeDescriptor(BlendMode::None);
+        descriptor.colorWriteMask = ColorWriteMask::none();
+
+        hiddenVolume.prepare(descriptor);
     }
 
     void update(Threads::FrameTime time) override
@@ -676,9 +681,10 @@ struct StencilShadowsView final : GPUView
 
         visibleVolume.color = Array {0.30f, 0.85f, 0.95f, 0.13f};
 
-        // Nothing at all: the volume that must not be seen writes no colour, so
-        // its alpha is what makes it invisible rather than a mask on the
-        // pipeline. See prepareVolumePipelines.
+        // Never read: this program's pipeline writes no channel at all
+        // (prepareVolumePipelines), so whatever the fragment computes is
+        // discarded. Set anyway, because a uniform the shader declares and the
+        // app leaves alone is a thing to wonder about later.
         hiddenVolume.color = Array {0.f, 0.f, 0.f, 0.f};
 
         auto descriptor = RenderPassDescriptor {};

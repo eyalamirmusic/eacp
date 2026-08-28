@@ -93,6 +93,34 @@ still exists and means exactly the same thing; it just says less at the call
 site, and the fields past `depth` are usually the *target's* answers rather than
 the shader's.
 
+### Blending past the four named modes
+
+`BlendMode`'s presets are what a UI, a sprite or a glyph wants. What they do not
+cover is content whose *author* chose the equation — a material system, where
+"modulate by what is behind me" is something written in a file that the renderer
+has to honour rather than approximate. `blend` takes the equation itself and
+wins over `blendMode` when set:
+
+```cpp
+auto blend = BlendState {};
+blend.enabled = true;
+blend.sourceColor = BlendFactor::DestinationColor;   // `blend filter`
+blend.destinationColor = BlendFactor::Zero;
+blend.sourceAlpha = BlendFactor::DestinationAlpha;
+blend.destinationAlpha = BlendFactor::Zero;
+
+descriptor.blend = blend;
+```
+
+`blendStateFor(mode)` writes a preset out in the same terms, and is what both
+backends build from — so a preset means one thing, stated once.
+
+`colorWriteMask` is beside it and independent of it: which channels reach the
+attachment after the blend. `ColorWriteMask::none()` is a pass that updates the
+depth or stencil plane and leaves the picture alone, which is what a shadow
+volume being counted needs; per-channel masking has no workaround at all and is
+why the field exists rather than the trick that used to stand in for it.
+
 ### Face culling, and which way round front is
 
 `CullMode::None` is the default: both faces rasterise, which is what a mesh whose
