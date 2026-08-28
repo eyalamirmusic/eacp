@@ -11,5 +11,6 @@ nano_add_executable(UITests
             MaskCacheTests.cpp
             LayerTests.cpp
             RepaintTests.cpp
+            ShadowTests.cpp
             TextEditorTests.cpp
         TARGETS eacp-ui)

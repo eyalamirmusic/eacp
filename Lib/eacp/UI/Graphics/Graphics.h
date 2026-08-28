@@ -96,6 +96,22 @@ public:
 
     void drawLine(Point a, Point b, float thickness = 1.f);
 
+    // The shadow a rounded box casts, in the current colour: how far it falls,
+    // how far past the box it spreads, how wide its blur is, and whether it
+    // falls inside the box rather than behind it.
+    //
+    // Never over the box itself, which is what CSS means by casting a shadow
+    // as though the box were opaque: what shows through a translucent card is
+    // the page behind it and not its own shadow.
+    //
+    // The same distance field as a fill, read through a wider ramp -- so a
+    // shadow joins the batch the shape casting it is in, and a page of cards
+    // costs one draw for the cards and their shadows together. Which is why
+    // there is no blur kernel behind this and no layer to render into: the
+    // only shape that can be blurred this way is a rounded box, and a shadow
+    // is always a rounded box.
+    void drawShadow(const ShadowShape& shadow);
+
     // Fills a vector shape the component built earlier, in the current colour.
     //
     // A path is not drawn from its geometry here: the coverage was computed by
