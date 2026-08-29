@@ -113,7 +113,14 @@ auto tMemoryFontRegistrationKeepsTheCollectionWhole =
     if (bytes.empty())
         return;
 
-    check(registerMemoryFontData(bytes.data(), bytes.size()));
+    const auto registered = registerMemoryFontData(bytes.data(), bytes.size());
+    check(registered.has_value());
+
+    if (registered)
+    {
+        check(registered->family == L"Arial");
+        check(registered->postScriptName == L"ArialMT");
+    }
 
     // The rebuilt collection still resolves everything it did before.
     check(resolveFontFamilyName(L"ArialMT") == L"Arial");

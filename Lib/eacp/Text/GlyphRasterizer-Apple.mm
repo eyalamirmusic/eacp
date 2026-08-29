@@ -595,22 +595,55 @@ const FontRequest& GlyphRasterizer::request() const
     return impl->request;
 }
 
-bool registerMemoryFont(const void* data, std::size_t size)
+namespace
 {
-    if (data == nullptr || size == 0)
-        return false;
-
-    CFRef<CFDataRef> wrapped(CFDataCreateWithBytesNoCopy(
-        nullptr, (const UInt8*) data, (CFIndex) size, kCFAllocatorNull));
-
-    if (!wrapped)
-        return false;
-
-    CFRef<CGDataProviderRef> provider(CGDataProviderCreateWithCFData(wrapped));
-    CFRef<CGFontRef> font(CGFontCreateWithDataProvider(provider));
+// Whether a face by that PostScript name resolves to itself. CoreText draws
+// something for any name, so the name of what came back is the answer.
+bool faceResolves(const std::string& postScriptName)
+{
+    CFRef<CFStringRef> name(CFStringCreateWithCString(
+        nullptr, postScriptName.c_str(), kCFStringEncodingUTF8));
+    CFRef<CTFontRef> font(CTFontCreateWithName(name, 12.f, nullptr));
 
     if (!font)
         return false;
+
+    CFRef<CFStringRef> resolved(CTFontCopyPostScriptName(font));
+
+    return toString(resolved.get()) == postScriptName;
+}
+} // namespace
+
+std::optional<RegisteredFont> registerMemoryFont(const void* data, std::size_t size)
+{
+    if (data == nullptr || size == 0)
+        return std::nullopt;
+
+    CFRef<CFDataRef> copied(CFDataCreate(nullptr, (const UInt8*) data, (CFIndex) size));
+
+    if (!copied)
+        return std::nullopt;
+
+    CFRef<CGDataProviderRef> provider(CGDataProviderCreateWithCFData(copied));
+    CFRef<CGFontRef> font(CGFontCreateWithDataProvider(provider));
+
+    if (!font)
+        return std::nullopt;
+
+    auto names = RegisteredFont {};
+    CFRef<CFStringRef> postScriptName(CGFontCopyPostScriptName(font));
+    names.postScriptName = toString(postScriptName.get());
+
+    CFRef<CTFontRef> face(CTFontCreateWithGraphicsFont(font, 12.f, nullptr, nullptr));
+
+    if (face)
+    {
+        CFRef<CFStringRef> family(CTFontCopyFamilyName(face));
+        names.family = toString(family.get());
+    }
+
+    if (names.family.empty() || names.postScriptName.empty())
+        return std::nullopt;
 
     // Deprecated, but the only API that registers an in-memory font for
     // process-wide name lookup — the replacements want file URLs, and spilling
@@ -620,6 +653,11 @@ bool registerMemoryFont(const void* data, std::size_t size)
     const auto registered = CTFontManagerRegisterGraphicsFont(font, nullptr);
 #pragma clang diagnostic pop
 
-    return registered == true;
+    // A registration refused is usually this face registered earlier - a
+    // page reloaded - and the face is there whichever call put it there.
+    if (!registered && !faceResolves(names.postScriptName))
+        return std::nullopt;
+
+    return names;
 }
 } // namespace eacp::Text

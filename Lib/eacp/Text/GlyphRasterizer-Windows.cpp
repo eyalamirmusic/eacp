@@ -968,11 +968,17 @@ const FontRequest& GlyphRasterizer::request() const
     return impl->request;
 }
 
-bool registerMemoryFont(const void* data, std::size_t size)
+std::optional<RegisteredFont> registerMemoryFont(const void* data, std::size_t size)
 {
     // Registration lives in eacp-graphics so its text sites (Font,
     // TextMetrics) see the face too — the same process-wide visibility
     // CTFontManagerRegisterGraphicsFont gives the Apple side.
-    return Graphics::registerMemoryFontData(data, size);
+    const auto names = Graphics::registerMemoryFontData(data, size);
+
+    if (!names)
+        return std::nullopt;
+
+    return RegisteredFont {Strings::narrow(names->family),
+                           Strings::narrow(names->postScriptName)};
 }
 } // namespace eacp::Text
