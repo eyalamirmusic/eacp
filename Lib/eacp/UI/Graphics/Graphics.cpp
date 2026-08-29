@@ -151,6 +151,24 @@ void Graphics::fillRoundedRect(const Rect& rect, float cornerRadius)
     list.addShape(shape);
 }
 
+void Graphics::drawShadow(const ShadowShape& shadow)
+{
+    recordClip();
+
+    auto shape = ShapeDraw {};
+    shape.kind = ShapeDraw::Kind::Shadow;
+    shape.rect = toLocal(shadow.box);
+    shape.colour = state.colour;
+    shape.cornerRadius = shadow.cornerRadius;
+    shape.shadowOffset = shadow.offset;
+    shape.spread = shadow.spread;
+    shape.blurRadius = shadow.blurRadius;
+    shape.inset = shadow.inset;
+    shape.gradient = state.gradient;
+
+    list.addShape(shape);
+}
+
 void Graphics::drawRect(const Rect& rect, float thickness)
 {
     drawRoundedRect(rect, 0.f, thickness);

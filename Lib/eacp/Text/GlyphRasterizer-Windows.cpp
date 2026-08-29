@@ -1,4 +1,5 @@
 #include "GlyphRasterizer.h"
+#include "Utf8.h"
 
 #include <eacp/Core/Utils/WinInclude.h>
 #include <eacp/Graphics/D2D-Windows.h>
@@ -11,10 +12,18 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
-// DirectWrite rasterizer, the Windows counterpart to GlyphRasterizer-Apple.mm.
+// DirectWrite rasterizer and shaper, the Windows counterpart to
+// GlyphRasterizer-Apple.mm.
+//
+// Shaping goes through IDWriteTextLayout with a renderer that collects the
+// glyph runs instead of drawing them: the layout kerns, ligates, places marks
+// and falls back to other faces for what the family lacks, and DrawGlyphRun
+// hands back each run's face, glyph ids, advances, offsets and cluster map.
 //
 // Rasterizing goes through IDWriteGlyphRunAnalysis rather than through Direct2D:
 // the analysis hands back a coverage texture straight out of DirectWrite, which
@@ -61,46 +70,134 @@ IDWriteFactory2* dwriteFactory()
     return instance.Get();
 }
 
-int encodeUtf16(char32_t codepoint, wchar_t* units)
+// DirectWrite's weights are CSS's numbers, so the class is the enum.
+DWRITE_FONT_WEIGHT weightFor(const FontVariant& variant)
 {
-    if (codepoint <= 0xffff)
+    return static_cast<DWRITE_FONT_WEIGHT>(weightClass(variant.weight));
+}
+
+DWRITE_FONT_STYLE slantFor(const FontVariant& variant)
+{
+    return variant.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL;
+}
+
+// UTF-8 to UTF-16, remembering which byte each code unit came from, so a
+// glyph's cluster maps back to an offset in the text the caller gave.
+struct Utf16Text
+{
+    std::wstring units;
+    std::vector<int> byteOf;
+};
+
+Utf16Text toUtf16(std::string_view text)
+{
+    auto result = Utf16Text {};
+    result.units.reserve(text.size());
+    result.byteOf.reserve(text.size() + 1);
+
+    auto index = std::size_t {0};
+
+    while (index < text.size())
     {
-        units[0] = static_cast<wchar_t>(codepoint);
-        return 1;
+        const auto start = index;
+        const auto codepoint = decodeUtf8(text, index);
+
+        if (codepoint <= 0xFFFF)
+        {
+            result.units.push_back(static_cast<wchar_t>(codepoint));
+            result.byteOf.push_back(static_cast<int>(start));
+        }
+        else
+        {
+            const auto value = codepoint - 0x10000;
+            result.units.push_back(static_cast<wchar_t>(0xD800 + (value >> 10)));
+            result.units.push_back(static_cast<wchar_t>(0xDC00 + (value & 0x3FF)));
+            result.byteOf.push_back(static_cast<int>(start));
+            result.byteOf.push_back(static_cast<int>(start));
+        }
     }
 
-    const auto value = codepoint - 0x10000;
-    units[0] = static_cast<wchar_t>(0xd800 + (value >> 10));
-    units[1] = static_cast<wchar_t>(0xdc00 + (value & 0x3ff));
+    result.byteOf.push_back(static_cast<int>(text.size()));
 
-    return 2;
+    return result;
 }
 
-DWRITE_FONT_WEIGHT weightFor(FontStyle style)
+// One glyph run the layout would have drawn, kept instead: the face and
+// size it shaped in, and the glyphs with where they went.
+struct CollectedRun
 {
-    return isBold(style) ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL;
-}
+    ComPtr<IDWriteFontFace> face;
+    float emSize = 0.f;
+    float baselineX = 0.f;
+    std::vector<UINT16> glyphs;
+    std::vector<float> advances;
+    std::vector<DWRITE_GLYPH_OFFSET> offsets;
 
-DWRITE_FONT_STYLE slantFor(FontStyle style)
+    // The first text position (in UTF-16 units of the whole string) each
+    // glyph came from, inverted from the run's cluster map.
+    std::vector<UINT32> firstPosition;
+};
+
+// Whether two faces are the same font: the same files at the same index with
+// the same simulations. The layout hands out face objects of its own, so a
+// pointer comparison would number the requested face as a fallback.
+bool sameFontFace(IDWriteFontFace* a, IDWriteFontFace* b)
 {
-    return isItalic(style) ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL;
+    if (a == b)
+        return true;
+
+    if (a == nullptr || b == nullptr)
+        return false;
+
+    if (a->GetIndex() != b->GetIndex() || a->GetSimulations() != b->GetSimulations())
+        return false;
+
+    const auto filesOf = [](IDWriteFontFace* face)
+    {
+        auto keys = std::vector<std::string> {};
+        auto count = UINT32 {};
+
+        if (FAILED(face->GetFiles(&count, nullptr)) || count == 0)
+            return keys;
+
+        auto raw = std::vector<IDWriteFontFile*>(count);
+
+        if (FAILED(face->GetFiles(&count, raw.data())))
+            return keys;
+
+        for (auto index = UINT32 {}; index < count; ++index)
+        {
+            auto file = ComPtr<IDWriteFontFile> {};
+            file.Attach(raw[index]);
+
+            const void* key = nullptr;
+            auto size = UINT32 {};
+
+            if (SUCCEEDED(file->GetReferenceKey(&key, &size)) && key != nullptr)
+                keys.emplace_back(static_cast<const char*>(key), size);
+            else
+                keys.emplace_back();
+        }
+
+        return keys;
+    };
+
+    return filesOf(a) == filesOf(b);
 }
 
-// The text MapCharacters analyses. It is a single codepoint on the stack that
-// never outlives the call, so the reference counting is deliberately inert.
-class SingleGlyphSource final : public IDWriteTextAnalysisSource
+// The renderer IDWriteTextLayout::Draw calls back into. It lives on the
+// stack for one Draw and never outlives it, so the reference counting is
+// deliberately inert.
+class RunCollector final : public IDWriteTextRenderer
 {
 public:
-    SingleGlyphSource(const wchar_t* textToUse, UINT32 lengthToUse)
-        : text(textToUse)
-        , length(lengthToUse)
-    {
-    }
+    std::vector<CollectedRun> runs;
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,
                                              void** object) noexcept override
     {
-        if (id == __uuidof(IUnknown) || id == __uuidof(IDWriteTextAnalysisSource))
+        if (id == __uuidof(IUnknown) || id == __uuidof(IDWritePixelSnapping)
+            || id == __uuidof(IDWriteTextRenderer))
         {
             *object = this;
             return S_OK;
@@ -113,59 +210,112 @@ public:
     ULONG STDMETHODCALLTYPE AddRef() noexcept override { return 1; }
     ULONG STDMETHODCALLTYPE Release() noexcept override { return 1; }
 
-    HRESULT STDMETHODCALLTYPE GetTextAtPosition(UINT32 position,
-                                                const WCHAR** textOut,
-                                                UINT32* lengthOut) noexcept override
+    // Positions are wanted as the shaper placed them, unsnapped: the atlas lays
+    // text out in a continuous space, as CoreText does.
+    HRESULT STDMETHODCALLTYPE
+        IsPixelSnappingDisabled(void*, BOOL* isDisabled) noexcept override
     {
-        const auto inside = position < length;
+        *isDisabled = TRUE;
+        return S_OK;
+    }
 
-        *textOut = inside ? text + position : nullptr;
-        *lengthOut = inside ? length - position : 0;
+    HRESULT STDMETHODCALLTYPE
+        GetCurrentTransform(void*, DWRITE_MATRIX* transform) noexcept override
+    {
+        *transform = DWRITE_MATRIX {1.f, 0.f, 0.f, 1.f, 0.f, 0.f};
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetPixelsPerDip(void*,
+                                              FLOAT* pixelsPerDip) noexcept override
+    {
+        *pixelsPerDip = 1.f;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE
+        DrawGlyphRun(void*,
+                     FLOAT baselineOriginX,
+                     FLOAT,
+                     DWRITE_MEASURING_MODE,
+                     const DWRITE_GLYPH_RUN* glyphRun,
+                     const DWRITE_GLYPH_RUN_DESCRIPTION* description,
+                     IUnknown*) noexcept override
+    {
+        if (glyphRun == nullptr || glyphRun->glyphCount == 0)
+            return S_OK;
+
+        auto run = CollectedRun {};
+        run.face = glyphRun->fontFace;
+        run.emSize = glyphRun->fontEmSize;
+        run.baselineX = baselineOriginX;
+        run.glyphs.assign(glyphRun->glyphIndices,
+                          glyphRun->glyphIndices + glyphRun->glyphCount);
+        run.advances.assign(glyphRun->glyphAdvances,
+                            glyphRun->glyphAdvances + glyphRun->glyphCount);
+
+        if (glyphRun->glyphOffsets != nullptr)
+            run.offsets.assign(glyphRun->glyphOffsets,
+                               glyphRun->glyphOffsets + glyphRun->glyphCount);
+        else
+            run.offsets.assign(glyphRun->glyphCount, DWRITE_GLYPH_OFFSET {});
+
+        run.firstPosition.assign(glyphRun->glyphCount, UINT32_MAX);
+
+        if (description != nullptr && description->clusterMap != nullptr)
+            for (auto position = UINT32 {}; position < description->stringLength;
+                 ++position)
+            {
+                const auto glyph = description->clusterMap[position];
+
+                if (glyph < glyphRun->glyphCount)
+                    run.firstPosition[glyph] =
+                        std::min(run.firstPosition[glyph],
+                                 description->textPosition + position);
+            }
+
+        // A glyph the cluster map never names - a mark folded into its base's
+        // cluster - takes the position of the glyph before it.
+        auto last = description != nullptr ? description->textPosition : UINT32 {};
+
+        for (auto& position: run.firstPosition)
+        {
+            if (position == UINT32_MAX)
+                position = last;
+
+            last = position;
+        }
+
+        runs.push_back(std::move(run));
 
         return S_OK;
     }
 
-    HRESULT STDMETHODCALLTYPE GetTextBeforePosition(
-        UINT32 position, const WCHAR** textOut, UINT32* lengthOut) noexcept override
+    HRESULT STDMETHODCALLTYPE DrawUnderline(
+        void*, FLOAT, FLOAT, const DWRITE_UNDERLINE*, IUnknown*) noexcept override
     {
-        const auto inside = position > 0 && position <= length;
-
-        *textOut = inside ? text : nullptr;
-        *lengthOut = inside ? position : 0;
-
         return S_OK;
     }
 
-    DWRITE_READING_DIRECTION STDMETHODCALLTYPE
-        GetParagraphReadingDirection() noexcept override
+    HRESULT STDMETHODCALLTYPE DrawStrikethrough(void*,
+                                                FLOAT,
+                                                FLOAT,
+                                                const DWRITE_STRIKETHROUGH*,
+                                                IUnknown*) noexcept override
     {
-        return DWRITE_READING_DIRECTION_LEFT_TO_RIGHT;
-    }
-
-    HRESULT STDMETHODCALLTYPE GetLocaleName(UINT32 position,
-                                            UINT32* lengthOut,
-                                            const WCHAR** nameOut) noexcept override
-    {
-        *lengthOut = length - std::min(position, length);
-        *nameOut = nullptr;
-
         return S_OK;
     }
 
-    HRESULT STDMETHODCALLTYPE GetNumberSubstitution(
-        UINT32 position,
-        UINT32* lengthOut,
-        IDWriteNumberSubstitution** substitution) noexcept override
+    HRESULT STDMETHODCALLTYPE DrawInlineObject(void*,
+                                               FLOAT,
+                                               FLOAT,
+                                               IDWriteInlineObject*,
+                                               BOOL,
+                                               BOOL,
+                                               IUnknown*) noexcept override
     {
-        *lengthOut = length - std::min(position, length);
-        *substitution = nullptr;
-
         return S_OK;
     }
-
-private:
-    const wchar_t* text;
-    UINT32 length;
 };
 
 // One layer of a colour glyph, already measured. COLR fonts describe an emoji
@@ -201,17 +351,12 @@ struct GlyphRasterizer::Native
         if (!collection)
             return;
 
-        factory->GetSystemFontFallback(fallback.GetAddressOf());
-
         family = resolveFamily();
 
         if (family.empty())
             return;
 
-        for (auto index = 0; index < 4; ++index)
-            faces[index] = createFace(static_cast<FontStyle>(index));
-
-        valid = faces[0] != nullptr;
+        valid = faceFor({}) != nullptr;
     }
 
     // Nothing on Windows is called Menlo or SF Mono. Rather than refuse to draw,
@@ -244,7 +389,7 @@ struct GlyphRasterizer::Native
                && exists;
     }
 
-    ComPtr<IDWriteFontFace> createFace(FontStyle style) const
+    ComPtr<IDWriteFontFace> createFace(const FontVariant& variant) const
     {
         auto index = UINT32 {};
         auto exists = BOOL {};
@@ -260,9 +405,9 @@ struct GlyphRasterizer::Native
 
         auto font = ComPtr<IDWriteFont>();
 
-        if (FAILED(fontFamily->GetFirstMatchingFont(weightFor(style),
+        if (FAILED(fontFamily->GetFirstMatchingFont(weightFor(variant),
                                                     DWRITE_FONT_STRETCH_NORMAL,
-                                                    slantFor(style),
+                                                    slantFor(variant),
                                                     font.GetAddressOf())))
             return {};
 
@@ -271,21 +416,23 @@ struct GlyphRasterizer::Native
         if (FAILED(font->CreateFontFace(face.GetAddressOf())))
             return {};
 
-        return withSimulations(face.Get(), missingTraits(font.Get(), style));
+        return withSimulations(face.Get(), missingTraits(font.Get(), variant));
     }
 
     // GetFirstMatchingFont returns the nearest face rather than failing, so a
     // family shipping only Regular answers a bold request with Regular. Ask
     // DirectWrite to synthesize whatever the family does not have, which is what
     // CTFontCreateCopyWithSymbolicTraits does on the Apple side.
-    static DWRITE_FONT_SIMULATIONS missingTraits(IDWriteFont* font, FontStyle style)
+    static DWRITE_FONT_SIMULATIONS missingTraits(IDWriteFont* font,
+                                                 const FontVariant& variant)
     {
         auto simulations = int {DWRITE_FONT_SIMULATIONS_NONE};
 
-        if (isBold(style) && font->GetWeight() < DWRITE_FONT_WEIGHT_SEMI_BOLD)
+        if (variant.weight >= 600
+            && font->GetWeight() < DWRITE_FONT_WEIGHT_SEMI_BOLD)
             simulations |= DWRITE_FONT_SIMULATIONS_BOLD;
 
-        if (isItalic(style) && font->GetStyle() == DWRITE_FONT_STYLE_NORMAL)
+        if (variant.italic && font->GetStyle() == DWRITE_FONT_STYLE_NORMAL)
             simulations |= DWRITE_FONT_SIMULATIONS_OBLIQUE;
 
         return static_cast<DWRITE_FONT_SIMULATIONS>(simulations);
@@ -326,17 +473,27 @@ struct GlyphRasterizer::Native
         return derived ? derived : ComPtr<IDWriteFontFace>(face);
     }
 
-    IDWriteFontFace* faceFor(FontStyle style) const
+    // The face for a variant, built on first ask: the family's nearest by
+    // DirectWrite's matching, with what it lacks simulated.
+    IDWriteFontFace* faceFor(const FontVariant& variant) const
     {
-        const auto index = static_cast<int>(style);
+        const auto key = weightClass(variant.weight) * 2 + (variant.italic ? 1 : 0);
+        auto found = variants.find(key);
 
-        return faces[index] ? faces[index].Get() : faces[0].Get();
+        if (found != variants.end())
+            return found->second.Get();
+
+        auto face = createFace(variant);
+        auto* result = face.Get();
+        variants.emplace(key, std::move(face));
+
+        return result;
     }
 
-    FontMetrics metrics(FontStyle style) const
+    FontMetrics metrics(const FontVariant& variant) const
     {
         auto result = FontMetrics {};
-        auto* face = faceFor(style);
+        auto* face = faceFor(variant);
 
         if (face == nullptr)
             return result;
@@ -383,110 +540,143 @@ struct GlyphRasterizer::Native
                / static_cast<float>(fontMetrics.designUnitsPerEm);
     }
 
-    // A codepoint resolved to the face that can actually draw it.
-    struct Resolved
+    // A face the layout reached for that is not the one asked for, at the
+    // size the layout drew it: the fallback's em can differ from the base's.
+    struct FallbackFace
     {
         ComPtr<IDWriteFontFace> face;
-        UINT16 glyph = 0;
         float emSize = 0.f;
     };
 
-    Resolved resolve(char32_t codepoint, FontStyle style) const
+    // The number a run's face shapes under: 0 for the face asked for, else
+    // the fallback's place in the table, added the first time it is met.
+    int fontIndexOf(IDWriteFontFace* face,
+                    float emSize,
+                    IDWriteFontFace* requested) const
     {
-        auto result = Resolved {};
-        auto* base = faceFor(style);
+        if (face == nullptr || sameFontFace(face, requested))
+            return 0;
 
-        if (base == nullptr)
-            return result;
+        for (auto index = std::size_t {0}; index < fallbacks.size(); ++index)
+            if (sameFontFace(fallbacks[index].face.Get(), face))
+                return static_cast<int>(index) + 1;
 
-        const auto point = static_cast<UINT32>(codepoint);
-        auto glyph = UINT16 {};
+        if (fallbacks.size() >= 255)
+            return 0;
 
-        if (SUCCEEDED(base->GetGlyphIndices(&point, 1, &glyph)) && glyph != 0)
-        {
-            result.face = base;
-            result.glyph = glyph;
-            result.emSize = request.pixelSize();
+        fallbacks.push_back({face, emSize});
 
-            return result;
-        }
-
-        return mapThroughFallback(codepoint, style);
+        return static_cast<int>(fallbacks.size());
     }
 
-    // How a Latin family still renders CJK and emoji: hand the codepoint to the
-    // system fallback and use whichever face it names.
-    Resolved mapThroughFallback(char32_t codepoint, FontStyle style) const
+    struct FaceAt
     {
-        auto result = Resolved {};
+        IDWriteFontFace* face = nullptr;
+        float emSize = 0.f;
+    };
 
-        if (!fallback)
+    FaceAt faceOf(GlyphKey key, const FontVariant& variant) const
+    {
+        if (key.font == 0)
+            return {faceFor(variant), request.pixelSize()};
+
+        const auto index = static_cast<std::size_t>(key.font) - 1;
+
+        if (index >= fallbacks.size())
+            return {};
+
+        return {fallbacks[index].face.Get(), fallbacks[index].emSize};
+    }
+
+    ShapedRun shape(std::string_view text, const FontVariant& variant) const
+    {
+        auto result = ShapedRun {};
+        auto* factory = dwriteFactory();
+        auto* requested = faceFor(variant);
+
+        if (factory == nullptr || requested == nullptr || text.empty())
             return result;
 
-        wchar_t units[2] = {};
-        const auto unitCount = static_cast<UINT32>(encodeUtf16(codepoint, units));
+        auto format = ComPtr<IDWriteTextFormat>();
 
-        auto source = SingleGlyphSource {units, unitCount};
-        auto mappedLength = UINT32 {};
-        auto mapped = ComPtr<IDWriteFont>();
-        auto scale = FLOAT {1.f};
-
-        fallback->MapCharacters(&source,
-                                0,
-                                unitCount,
-                                collection.Get(),
-                                family.c_str(),
-                                weightFor(style),
-                                slantFor(style),
-                                DWRITE_FONT_STRETCH_NORMAL,
-                                &mappedLength,
-                                mapped.GetAddressOf(),
-                                &scale);
-
-        if (!mapped)
+        if (FAILED(factory->CreateTextFormat(family.c_str(),
+                                             collection.Get(),
+                                             weightFor(variant),
+                                             slantFor(variant),
+                                             DWRITE_FONT_STRETCH_NORMAL,
+                                             request.pixelSize(),
+                                             L"en-us",
+                                             format.GetAddressOf())))
             return result;
 
-        auto face = ComPtr<IDWriteFontFace>();
+        format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
 
-        if (FAILED(mapped->CreateFontFace(face.GetAddressOf())))
+        const auto utf16 = toUtf16(text);
+        auto layout = ComPtr<IDWriteTextLayout>();
+
+        if (FAILED(factory->CreateTextLayout(utf16.units.c_str(),
+                                             static_cast<UINT32>(utf16.units.size()),
+                                             format.Get(),
+                                             1.0e6f,
+                                             1.0e6f,
+                                             layout.GetAddressOf())))
             return result;
 
-        const auto point = static_cast<UINT32>(codepoint);
-        auto glyph = UINT16 {};
+        auto collector = RunCollector {};
 
-        if (FAILED(face->GetGlyphIndices(&point, 1, &glyph)) || glyph == 0)
+        if (FAILED(layout->Draw(nullptr, &collector, 0.f, 0.f)))
             return result;
 
-        result.face = face;
-        result.glyph = glyph;
+        for (const auto& run: collector.runs)
+        {
+            const auto fontIndex =
+                fontIndexOf(run.face.Get(), run.emSize, requested);
+            auto pen = run.baselineX;
 
-        // The fallback face can be drawn at a different em to stay visually
-        // matched to the base font; MapCharacters reports the factor.
-        result.emSize = request.pixelSize() * scale;
+            for (auto index = std::size_t {0}; index < run.glyphs.size(); ++index)
+            {
+                const auto unit =
+                    std::min(static_cast<std::size_t>(run.firstPosition[index]),
+                             utf16.byteOf.size() - 1);
+
+                result.glyphs.add({{run.glyphs[index], fontIndex},
+                                   pen + run.offsets[index].advanceOffset,
+                                   run.offsets[index].ascenderOffset,
+                                   utf16.byteOf[unit]});
+
+                pen += run.advances[index];
+            }
+        }
+
+        auto metrics = DWRITE_TEXT_METRICS {};
+
+        if (SUCCEEDED(layout->GetMetrics(&metrics)))
+            result.advance = metrics.widthIncludingTrailingWhitespace;
 
         return result;
     }
 
-    GlyphBitmap rasterize(char32_t codepoint, FontStyle style) const
+    GlyphBitmap rasterize(GlyphKey key, const FontVariant& variant) const
     {
         auto result = GlyphBitmap {};
-        const auto resolved = resolve(codepoint, style);
+        const auto at = faceOf(key, variant);
 
-        if (!resolved.face)
+        if (at.face == nullptr)
             return result;
 
+        auto glyph = static_cast<UINT16>(key.glyph);
+
         result.valid = true;
-        result.advance =
-            advanceOf(resolved.face.Get(), resolved.glyph, resolved.emSize);
+        result.advance = advanceOf(at.face, glyph, at.emSize);
 
         auto advance = FLOAT {0.f};
         auto offset = DWRITE_GLYPH_OFFSET {};
         auto run = DWRITE_GLYPH_RUN {};
 
-        run.fontFace = resolved.face.Get();
-        run.fontEmSize = resolved.emSize;
+        run.fontFace = at.face;
+        run.fontEmSize = at.emSize;
         run.glyphCount = 1;
-        run.glyphIndices = &resolved.glyph;
+        run.glyphIndices = &glyph;
         run.glyphAdvances = &advance;
         run.glyphOffsets = &offset;
 
@@ -715,9 +905,9 @@ struct GlyphRasterizer::Native
 
     FontRequest request;
     ComPtr<IDWriteFontCollection> collection;
-    ComPtr<IDWriteFontFallback> fallback;
-    ComPtr<IDWriteFontFace> faces[4];
     std::wstring family;
+    mutable std::map<int, ComPtr<IDWriteFontFace>> variants;
+    mutable std::vector<FallbackFace> fallbacks;
     bool valid = false;
 };
 
@@ -738,9 +928,9 @@ std::string GlyphRasterizer::resolvedFamily() const
     return Strings::narrow(impl->family);
 }
 
-FontMetrics GlyphRasterizer::metrics(FontStyle style) const
+FontMetrics GlyphRasterizer::metrics(const FontVariant& variant) const
 {
-    return impl->metrics(style);
+    return impl->metrics(variant);
 }
 
 float GlyphRasterizer::scale() const
@@ -748,9 +938,29 @@ float GlyphRasterizer::scale() const
     return impl->request.scale;
 }
 
+ShapedRun GlyphRasterizer::shape(std::string_view text,
+                                 const FontVariant& variant) const
+{
+    return impl->shape(text, variant);
+}
+
+GlyphBitmap GlyphRasterizer::rasterize(GlyphKey glyph,
+                                       const FontVariant& variant) const
+{
+    return impl->rasterize(glyph, variant);
+}
+
 GlyphBitmap GlyphRasterizer::rasterize(char32_t codepoint, FontStyle style) const
 {
-    return impl->rasterize(codepoint, style);
+    char encoded[4] = {};
+    const auto length = encodeUtf8(codepoint, encoded);
+    const auto variant = variantOf(style);
+    const auto run = impl->shape({encoded, length}, variant);
+
+    if (run.glyphs.empty())
+        return {};
+
+    return impl->rasterize(run.glyphs[0].key, variant);
 }
 
 const FontRequest& GlyphRasterizer::request() const

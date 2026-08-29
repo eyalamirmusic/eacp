@@ -7,3 +7,4 @@
 #include "GlyphRasterizer.h"
 #include "ShelfPacker.h"
 #include "TextRenderer.h"
+#include "Utf8.h"

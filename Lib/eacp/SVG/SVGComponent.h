@@ -334,6 +334,7 @@ private:
     // and y ask for. Not a shared mask -- each use site has its own transform
     // and therefore its own coverage, so there is nothing to share.
     void buildUse(const SVGElement& element, const Style& style, int depth);
+    void buildNestedSvg(const SVGElement& element, const Style& inherited, int depth);
 
     // A <symbol> (or a nested <svg>) instantiated by a use: a container that
     // brings its own viewBox, mapped onto the size the use site asked for.

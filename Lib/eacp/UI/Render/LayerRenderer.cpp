@@ -48,8 +48,20 @@ struct LayerRenderer::Program final : GPU::ShaderProgram
     {
         auto corner = vertexInput(&LayerVertex::corner);
 
-        auto position = float2(destination.x() + corner.x() * destination.z(),
-                               destination.y() + corner.y() * destination.w());
+        // The corner in the layer's own space, then through the matrix, then
+        // where the layer sits: which is what makes the transform local, so a
+        // layer turned about its middle stays turned about its middle wherever
+        // it is composited -- including into another layer's texture.
+        auto local =
+            float2(corner.x() * destination.z(), corner.y() * destination.w());
+
+        auto placed = float2(matrix.x() * local.x() + matrix.z() * local.y()
+                                 + offset.x(),
+                             matrix.y() * local.x() + matrix.w() * local.y()
+                                 + offset.y());
+
+        auto position =
+            float2(destination.x() + placed.x(), destination.y() + placed.y());
 
         auto clipX = position.x() / screenSize.x() * 2.f - 1.f;
         auto clipY = 1.f - position.y() / screenSize.y() * 2.f;
@@ -78,6 +90,11 @@ struct LayerRenderer::Program final : GPU::ShaderProgram
     GPU::Uniform<GPU::Float4> destination;
     GPU::Uniform<GPU::Float4> contentUV;
     GPU::Uniform<GPU::Float> opacity;
+
+    // The layer's transform, as SVG writes it: (a, b, c, d) and (tx, ty).
+    GPU::Uniform<GPU::Float4> matrix;
+    GPU::Uniform<GPU::Float2> offset;
+
     GPU::Uniform<GPU::Float4> clipRegion;
     GPU::Uniform<GPU::Float4> clipMask;
     GPU::Uniform<GPU::Texture2D> content;
@@ -87,6 +104,8 @@ struct LayerRenderer::Program final : GPU::ShaderProgram
                 destination,
                 contentUV,
                 opacity,
+                matrix,
+                offset,
                 clipRegion,
                 clipMask,
                 content,
@@ -137,6 +156,12 @@ void LayerRenderer::draw(GPU::RenderPass& pass,
         Array<float, 4> {destination.x, destination.y, destination.w, destination.h};
     program->contentUV = Array<float, 4> {uv.x, uv.y, uv.w, uv.h};
     program->opacity = layer.getOpacity();
+
+    const auto& placement = layer.getTransform();
+
+    program->matrix =
+        Array<float, 4> {placement.a, placement.b, placement.c, placement.d};
+    program->offset = Array {placement.tx, placement.ty};
 
     packClipMask(clip,
                  atlas.getOpaqueUV(),

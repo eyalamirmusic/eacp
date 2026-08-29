@@ -2,17 +2,23 @@
 #import <CoreText/CoreText.h>
 
 #include "GlyphRasterizer.h"
+#include "Utf8.h"
 
 #include <eacp/Core/ObjC/CFRef.h>
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <vector>
 
-// CoreText rasterizer, shared by macOS and iOS — CoreText and CoreGraphics are
-// present on both, so nothing here is macOS-specific. Draws each glyph into a bitmap sized to its own bounding
-// box and reports where that box sits relative to the pen and baseline, rather
-// than centring it in a fixed cell — that is what lets the atlas serve
-// proportional text and ligatures, not just a monospace grid.
+// CoreText rasterizer and shaper, shared by macOS and iOS — CoreText and
+// CoreGraphics are present on both, so nothing here is macOS-specific.
+//
+// Shaping goes through CTLine, which kerns, ligates, places marks and falls
+// back to other faces for what the family lacks, and hands back runs of glyph
+// ids with positions. Each glyph is then drawn into a bitmap sized to its own
+// bounding box, with where that box sits relative to the pen and baseline,
+// rather than centred in a fixed cell.
 
 namespace eacp::Text
 {
@@ -32,18 +38,113 @@ CTFontRef makeVariant(CTFontRef base, FontStyle style)
     return (CTFontRef) CFRetain(base);
 }
 
-int encodeUtf16(char32_t codepoint, UniChar* units)
+// CoreText's weight trait is a number from -1 to 1 on a scale of its own;
+// these are the values its named weights sit at, in CSS's order.
+struct WeightAnchor
 {
-    if (codepoint <= 0xffff)
-    {
-        units[0] = (UniChar) codepoint;
+    float trait;
+    int css;
+};
+
+constexpr WeightAnchor weightAnchors[] = {{-0.8f, 100},
+                                          {-0.6f, 200},
+                                          {-0.4f, 300},
+                                          {0.0f, 400},
+                                          {0.23f, 500},
+                                          {0.3f, 600},
+                                          {0.4f, 700},
+                                          {0.56f, 800},
+                                          {0.62f, 900}};
+
+int cssWeightOf(float trait)
+{
+    auto best = weightAnchors[0];
+
+    for (const auto& anchor: weightAnchors)
+        if (std::abs(anchor.trait - trait) < std::abs(best.trait - trait))
+            best = anchor;
+
+    return best.css;
+}
+
+// How far a face's weight is from the one wanted, by CSS Fonts' matching:
+// from 400 the search goes to 500 first, then downwards, then up; from 500
+// to 400 first, then down, then up; below 400 downwards then up; above 500
+// upwards then down. Smaller is nearer.
+int weightDistance(int wanted, int have)
+{
+    if (have == wanted)
+        return 0;
+
+    const auto above = have > wanted;
+
+    if (wanted == 400 && have == 500)
         return 1;
+
+    if (wanted == 500 && have == 400)
+        return 1;
+
+    if (wanted <= 500)
+        return above ? 1000 + (have - wanted) : 2 + (wanted - have);
+
+    return above ? 2 + (have - wanted) : 1000 + (wanted - have);
+}
+
+// UTF-8 to UTF-16, remembering which byte each code unit came from, so a
+// glyph's string index maps back to an offset in the text the caller gave.
+struct Utf16Text
+{
+    std::vector<UniChar> units;
+    std::vector<int> byteOf;
+};
+
+Utf16Text toUtf16(std::string_view text)
+{
+    auto result = Utf16Text {};
+    result.units.reserve(text.size());
+    result.byteOf.reserve(text.size() + 1);
+
+    auto index = std::size_t {0};
+
+    while (index < text.size())
+    {
+        const auto start = index;
+        const auto codepoint = decodeUtf8(text, index);
+
+        if (codepoint <= 0xFFFF)
+        {
+            result.units.push_back((UniChar) codepoint);
+            result.byteOf.push_back((int) start);
+        }
+        else
+        {
+            const auto value = codepoint - 0x10000;
+            result.units.push_back((UniChar) (0xD800 + (value >> 10)));
+            result.units.push_back((UniChar) (0xDC00 + (value & 0x3FF)));
+            result.byteOf.push_back((int) start);
+            result.byteOf.push_back((int) start);
+        }
     }
 
-    const auto value = codepoint - 0x10000;
-    units[0] = (UniChar) (0xd800 + (value >> 10));
-    units[1] = (UniChar) (0xdc00 + (value & 0x3ff));
-    return 2;
+    result.byteOf.push_back((int) text.size());
+
+    return result;
+}
+
+std::string toString(CFStringRef string)
+{
+    if (string == nullptr)
+        return {};
+
+    auto capacity = CFStringGetMaximumSizeForEncoding(CFStringGetLength(string),
+                                                      kCFStringEncodingUTF8)
+                    + 1;
+    auto buffer = std::string(static_cast<std::size_t>(capacity), '\0');
+
+    if (!CFStringGetCString(string, buffer.data(), capacity, kCFStringEncodingUTF8))
+        return {};
+
+    return buffer.c_str();
 }
 } // namespace
 
@@ -55,46 +156,172 @@ struct GlyphRasterizer::Native
         CFRef<CFStringRef> name(CFStringCreateWithCString(
             nullptr, request.family.c_str(), kCFStringEncodingUTF8));
 
-        CFRef<CTFontRef> base(
-            CTFontCreateWithName(name, request.pixelSize(), nullptr));
+        base.reset(CTFontCreateWithName(name, request.pixelSize(), nullptr));
 
         if (!base)
             return;
 
-        for (auto index = 0; index < 4; ++index)
-            fonts[index].reset(makeVariant(base, (FontStyle) index));
-
-        valid = fonts[0].get() != nullptr;
-        resolved = familyNameOf(base);
+        valid = true;
+        resolved = familyNameOf(base.get());
+        collectFamilyFaces();
     }
 
     static std::string familyNameOf(CTFontRef font)
     {
         CFRef<CFStringRef> name(CTFontCopyFamilyName(font));
 
-        if (!name)
-            return {};
-
-        auto capacity = CFStringGetMaximumSizeForEncoding(CFStringGetLength(name),
-                                                          kCFStringEncodingUTF8)
-                        + 1;
-        auto buffer = std::string(static_cast<std::size_t>(capacity), '\0');
-
-        if (!CFStringGetCString(name, buffer.data(), capacity, kCFStringEncodingUTF8))
-            return {};
-
-        return buffer.c_str();
+        return toString(name.get());
     }
 
-    CTFontRef fontFor(FontStyle style) const
+    // One face of the family: its descriptor and where it sits on the axes.
+    // The width is kept because a family's heaviest faces are often its
+    // condensed ones, and CSS matches by stretch before weight.
+    struct FamilyFace
     {
-        return fonts[(int) style].get() != nullptr ? fonts[(int) style].get()
-                                                   : fonts[0].get();
+        CFRef<CTFontDescriptorRef> descriptor;
+        int weight = 400;
+        float width = 0.f;
+        bool italic = false;
+    };
+
+    // Every face the family has, read once, so a variant is matched to a real
+    // face by CSS's rules rather than to whatever CoreText's trait matching
+    // considers close enough.
+    void collectFamilyFaces()
+    {
+        CFRef<CFStringRef> family(CFStringCreateWithCString(
+            nullptr, resolved.c_str(), kCFStringEncodingUTF8));
+
+        const void* keys[] = {kCTFontFamilyNameAttribute};
+        const void* values[] = {family.get()};
+
+        CFRef<CFDictionaryRef> attributes(
+            CFDictionaryCreate(nullptr,
+                               keys,
+                               values,
+                               1,
+                               &kCFTypeDictionaryKeyCallBacks,
+                               &kCFTypeDictionaryValueCallBacks));
+
+        CFRef<CTFontDescriptorRef> wanted(
+            CTFontDescriptorCreateWithAttributes(attributes));
+        CFRef<CFArrayRef> matches(
+            CTFontDescriptorCreateMatchingFontDescriptors(wanted, nullptr));
+
+        if (!matches)
+            return;
+
+        for (auto index = CFIndex {0}; index < CFArrayGetCount(matches); ++index)
+        {
+            auto descriptor = (CTFontDescriptorRef) CFArrayGetValueAtIndex(matches, index);
+            CFRef<CFDictionaryRef> traits(
+                (CFDictionaryRef) CTFontDescriptorCopyAttribute(descriptor,
+                                                                kCTFontTraitsAttribute));
+
+            auto face = FamilyFace {};
+            face.descriptor.reset((CTFontDescriptorRef) CFRetain(descriptor));
+
+            if (traits)
+            {
+                if (auto weight = (CFNumberRef) CFDictionaryGetValue(traits,
+                                                                     kCTFontWeightTrait))
+                {
+                    auto value = 0.f;
+                    CFNumberGetValue(weight, kCFNumberFloatType, &value);
+                    face.weight = cssWeightOf(value);
+                }
+
+                if (auto width = (CFNumberRef) CFDictionaryGetValue(traits,
+                                                                    kCTFontWidthTrait))
+                    CFNumberGetValue(width, kCFNumberFloatType, &face.width);
+
+                if (auto symbolic = (CFNumberRef) CFDictionaryGetValue(
+                        traits, kCTFontSymbolicTrait))
+                {
+                    auto value = std::uint32_t {0};
+                    CFNumberGetValue(symbolic, kCFNumberSInt32Type, &value);
+                    face.italic = (value & kCTFontTraitItalic) != 0;
+                }
+            }
+
+            familyFaces.push_back(std::move(face));
+        }
     }
 
-    FontMetrics metrics(FontStyle style) const
+    // The family's face nearest the variant, by CSS's matching: the normal
+    // width first, then the slant, then the weight. Null when the family
+    // reported no faces.
+    const FamilyFace* nearestFace(const FontVariant& variant) const
     {
-        auto font = fontFor(style);
+        const FamilyFace* best = nullptr;
+        auto bestDistance = 0.f;
+
+        for (const auto& face: familyFaces)
+        {
+            const auto distance = std::abs(face.width) * 1000000.f
+                                  + (face.italic != variant.italic ? 10000.f : 0.f)
+                                  + (float) weightDistance(variant.weight, face.weight);
+
+            if (best == nullptr || distance < bestDistance)
+            {
+                best = &face;
+                bestDistance = distance;
+            }
+        }
+
+        return best;
+    }
+
+    CTFontRef fontFor(const FontVariant& variant) const
+    {
+        if (!base)
+            return nullptr;
+
+        const auto key = weightClass(variant.weight) * 2 + (variant.italic ? 1 : 0);
+        auto found = variants.find(key);
+
+        if (found != variants.end())
+            return found->second.get();
+
+        auto font = CFRef<CTFontRef> {makeFont(variant)};
+        auto* result = font.get();
+        variants.emplace(key, std::move(font));
+
+        return result;
+    }
+
+    // Returns a +1 retained font: the family's nearest face, given the traits
+    // it lacks synthetically where CoreText can, and the base face when the
+    // family could not be enumerated at all.
+    CTFontRef makeFont(const FontVariant& variant) const
+    {
+        const auto* face = nearestFace(variant);
+
+        if (face == nullptr)
+            return makeVariant(base.get(), styleOf(variant));
+
+        auto font = CFRef<CTFontRef> {CTFontCreateWithFontDescriptor(
+            face->descriptor.get(), request.pixelSize(), nullptr)};
+
+        if (!font)
+            return makeVariant(base.get(), styleOf(variant));
+
+        const auto missingBold = variant.weight >= 600 && face->weight < 600;
+        const auto missingItalic = variant.italic && !face->italic;
+        const auto wanted = (CTFontSymbolicTraits) ((missingBold ? kCTFontTraitBold : 0)
+                                                    | (missingItalic ? kCTFontTraitItalic : 0));
+
+        if (wanted != 0)
+            if (auto* derived = CTFontCreateCopyWithSymbolicTraits(
+                    font.get(), 0, nullptr, wanted, wanted))
+                return derived;
+
+        return (CTFontRef) CFRetain(font.get());
+    }
+
+    FontMetrics metrics(const FontVariant& variant) const
+    {
+        auto font = fontFor(variant);
         auto result = FontMetrics {};
 
         if (font == nullptr)
@@ -116,52 +343,114 @@ struct GlyphRasterizer::Native
         return result;
     }
 
-    // Resolves the codepoint to a glyph, falling back to another face when the
-    // requested one cannot draw it — how a Latin family still renders CJK and
-    // emoji. Returns the font that owns the glyph.
-    CFRef<CTFontRef> resolve(char32_t codepoint, FontStyle style, CGGlyph& glyph) const
+    // The number a run's font shapes under: 0 for the face asked for, else
+    // the fallback's place in the table, added the first time it is met.
+    int fontIndexOf(CTFontRef runFont, CTFontRef requested) const
     {
-        UniChar units[2] = {};
-        const auto unitCount = encodeUtf16(codepoint, units);
+        if (runFont == nullptr || CFEqual(runFont, requested))
+            return 0;
 
-        auto base = fontFor(style);
+        for (auto index = std::size_t {0}; index < fallbacks.size(); ++index)
+            if (CFEqual(fallbacks[index].get(), runFont))
+                return (int) index + 1;
 
-        if (base == nullptr)
-            return {};
+        if (fallbacks.size() >= 255)
+            return 0;
 
-        CGGlyph glyphs[2] = {};
-        const auto direct =
-            CTFontGetGlyphsForCharacters(base, units, glyphs, unitCount);
+        fallbacks.emplace_back((CTFontRef) CFRetain(runFont));
 
-        auto font = CFRef<CTFontRef> {(CTFontRef) CFRetain(base)};
-
-        if (!direct || glyphs[0] == 0)
-        {
-            CFRef<CFStringRef> text(
-                CFStringCreateWithCharacters(nullptr, units, unitCount));
-
-            if (auto* fallback =
-                    CTFontCreateForString(base, text, CFRangeMake(0, unitCount)))
-                font.reset(fallback);
-
-            if (!CTFontGetGlyphsForCharacters(font, units, glyphs, unitCount)
-                || glyphs[0] == 0)
-                return {};
-        }
-
-        glyph = glyphs[0];
-        return font;
+        return (int) fallbacks.size();
     }
 
-    GlyphBitmap rasterize(char32_t codepoint, FontStyle style) const
+    CTFontRef fontOf(GlyphKey key, const FontVariant& variant) const
+    {
+        if (key.font == 0)
+            return fontFor(variant);
+
+        const auto index = (std::size_t) key.font - 1;
+
+        return index < fallbacks.size() ? fallbacks[index].get() : nullptr;
+    }
+
+    ShapedRun shape(std::string_view text, const FontVariant& variant) const
+    {
+        auto result = ShapedRun {};
+        auto font = fontFor(variant);
+
+        if (font == nullptr || text.empty())
+            return result;
+
+        const auto utf16 = toUtf16(text);
+
+        CFRef<CFStringRef> string(CFStringCreateWithCharacters(
+            nullptr, utf16.units.data(), (CFIndex) utf16.units.size()));
+
+        const void* keys[] = {kCTFontAttributeName};
+        const void* values[] = {font};
+
+        CFRef<CFDictionaryRef> attributes(
+            CFDictionaryCreate(nullptr,
+                               keys,
+                               values,
+                               1,
+                               &kCFTypeDictionaryKeyCallBacks,
+                               &kCFTypeDictionaryValueCallBacks));
+
+        CFRef<CFAttributedStringRef> attributed(
+            CFAttributedStringCreate(nullptr, string, attributes));
+        CFRef<CTLineRef> line(CTLineCreateWithAttributedString(attributed));
+
+        if (!line)
+            return result;
+
+        auto runs = CTLineGetGlyphRuns(line);
+
+        for (auto runIndex = CFIndex {0}; runIndex < CFArrayGetCount(runs); ++runIndex)
+        {
+            auto run = (CTRunRef) CFArrayGetValueAtIndex(runs, runIndex);
+            const auto count = CTRunGetGlyphCount(run);
+
+            if (count <= 0)
+                continue;
+
+            auto glyphs = std::vector<CGGlyph>((std::size_t) count);
+            auto positions = std::vector<CGPoint>((std::size_t) count);
+            auto indices = std::vector<CFIndex>((std::size_t) count);
+
+            CTRunGetGlyphs(run, CFRangeMake(0, 0), glyphs.data());
+            CTRunGetPositions(run, CFRangeMake(0, 0), positions.data());
+            CTRunGetStringIndices(run, CFRangeMake(0, 0), indices.data());
+
+            auto runFont = (CTFontRef) CFDictionaryGetValue(CTRunGetAttributes(run),
+                                                            kCTFontAttributeName);
+            const auto fontIndex = fontIndexOf(runFont, font);
+
+            for (auto i = std::size_t {0}; i < glyphs.size(); ++i)
+            {
+                const auto unit = std::clamp(
+                    (std::size_t) indices[i], std::size_t {0}, utf16.byteOf.size() - 1);
+
+                result.glyphs.add({{glyphs[i], fontIndex},
+                                   (float) positions[i].x,
+                                   (float) positions[i].y,
+                                   utf16.byteOf[unit]});
+            }
+        }
+
+        result.advance = (float) CTLineGetTypographicBounds(line, nullptr, nullptr, nullptr);
+
+        return result;
+    }
+
+    GlyphBitmap rasterize(GlyphKey key, const FontVariant& variant) const
     {
         auto result = GlyphBitmap {};
+        auto font = fontOf(key, variant);
 
-        auto glyph = CGGlyph {};
-        auto font = resolve(codepoint, style, glyph);
-
-        if (!font)
+        if (font == nullptr)
             return result;
+
+        auto glyph = (CGGlyph) key.glyph;
 
         result.valid = true;
         result.advance = (float) CTFontGetAdvancesForGlyphs(
@@ -242,7 +531,10 @@ struct GlyphRasterizer::Native
     }
 
     FontRequest request;
-    CFRef<CTFontRef> fonts[4];
+    CFRef<CTFontRef> base;
+    std::vector<FamilyFace> familyFaces;
+    mutable std::map<int, CFRef<CTFontRef>> variants;
+    mutable std::vector<CFRef<CTFontRef>> fallbacks;
     bool valid = false;
     std::string resolved;
 };
@@ -264,9 +556,9 @@ std::string GlyphRasterizer::resolvedFamily() const
     return impl->resolved;
 }
 
-FontMetrics GlyphRasterizer::metrics(FontStyle style) const
+FontMetrics GlyphRasterizer::metrics(const FontVariant& variant) const
 {
-    return impl->metrics(style);
+    return impl->metrics(variant);
 }
 
 float GlyphRasterizer::scale() const
@@ -274,9 +566,28 @@ float GlyphRasterizer::scale() const
     return impl->request.scale;
 }
 
+ShapedRun GlyphRasterizer::shape(std::string_view text, const FontVariant& variant) const
+{
+    return impl->shape(text, variant);
+}
+
+GlyphBitmap GlyphRasterizer::rasterize(GlyphKey glyph, const FontVariant& variant) const
+{
+    return impl->rasterize(glyph, variant);
+}
+
 GlyphBitmap GlyphRasterizer::rasterize(char32_t codepoint, FontStyle style) const
 {
-    return impl->rasterize(codepoint, style);
+    char encoded[4] = {};
+    const auto length = encodeUtf8(codepoint, encoded);
+
+    const auto variant = variantOf(style);
+    const auto run = impl->shape({encoded, length}, variant);
+
+    if (run.glyphs.empty())
+        return {};
+
+    return impl->rasterize(run.glyphs[0].key, variant);
 }
 
 const FontRequest& GlyphRasterizer::request() const
