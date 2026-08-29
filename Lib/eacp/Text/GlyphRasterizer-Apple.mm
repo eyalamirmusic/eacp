@@ -442,7 +442,9 @@ struct GlyphRasterizer::Native
         return result;
     }
 
-    GlyphBitmap rasterize(GlyphKey key, const FontVariant& variant) const
+    GlyphBitmap rasterize(GlyphKey key,
+                          const FontVariant& variant,
+                          const RasterRequest& request) const
     {
         auto result = GlyphBitmap {};
         auto font = fontOf(key, variant);
@@ -468,10 +470,17 @@ struct GlyphRasterizer::Native
             return result; // valid but nothing to draw — a space
 
         // Snap the box outwards to whole pixels so antialiased edges are not
-        // clipped, then rasterize at exactly that size.
-        const auto left = (int) std::floor(bounds.origin.x);
+        // clipped, then rasterize at exactly that size — the box of the glyph
+        // as it is drawn, shifted right by the subpixel offset, so a stem that
+        // crosses a pixel edge at this phase has its extra column. One more
+        // column each side for the font smoothing, which thickens a stem by
+        // about a third of a pixel beyond the outline's own bounds and
+        // nothing above or below it.
+        const auto shift = (CGFloat) std::clamp(request.subpixelX, 0.f, 1.f);
+        const auto left = (int) std::floor(bounds.origin.x + shift) - 1;
         const auto bottom = (int) std::floor(bounds.origin.y);
-        const auto right = (int) std::ceil(bounds.origin.x + bounds.size.width);
+        const auto right =
+            (int) std::ceil(bounds.origin.x + shift + bounds.size.width) + 1;
         const auto top = (int) std::ceil(bounds.origin.y + bounds.size.height);
 
         result.width = std::max(right - left, 1);
@@ -500,14 +509,32 @@ struct GlyphRasterizer::Native
 
         CGContextSetShouldAntialias(context, true);
 
-        // Grayscale, never LCD: the atlas is tinted at draw time, and subpixel
-        // antialiasing would bake one text colour into the cached coverage.
-        CGContextSetShouldSmoothFonts(context, false);
-        CGContextSetRGBFillColor(context, 1, 1, 1, 1);
+        // Grayscale, with the platform's font smoothing on. Since Mojave there
+        // is no LCD antialiasing left for smoothing to mean, so nothing is
+        // baked into the coverage that a tint at draw time could disagree
+        // with; what it means now is the slight thickening of every stem the
+        // system's own text is drawn with, and an alpha-only context applies
+        // it as an RGB one would.
+        CGContextSetAllowsFontSmoothing(context, true);
+        CGContextSetShouldSmoothFonts(context, true);
 
-        // Shift the glyph so its bounding box lands at the bitmap's origin.
-        // CoreGraphics is y-up, so this is measured from the bottom.
-        auto position = CGPointMake((CGFloat) -left, (CGFloat) -bottom);
+        // The subpixel offset is meant exactly; left to itself CoreGraphics
+        // quantizes a fractional position to steps of its own choosing.
+        CGContextSetAllowsFontSubpixelPositioning(context, true);
+        CGContextSetShouldSubpixelPositionFonts(context, true);
+        CGContextSetAllowsFontSubpixelQuantization(context, false);
+        CGContextSetShouldSubpixelQuantizeFonts(context, false);
+
+        // The fill's lightness is what the smoothing reads to decide how much
+        // to thicken the stems, light text getting more; an alpha-only context
+        // keeps no colour, but the decision is made before that.
+        const auto ink = (CGFloat) (request.lightText ? 1 : 0);
+        CGContextSetRGBFillColor(context, ink, ink, ink, 1);
+
+        // Shift the glyph so its bounding box lands at the bitmap's origin,
+        // then right by the subpixel offset. CoreGraphics is y-up, so the
+        // vertical shift is measured from the bottom.
+        auto position = CGPointMake((CGFloat) -left + shift, (CGFloat) -bottom);
         CTFontDrawGlyphs(font, &glyph, &position, 1, context);
 
         if (colored)
@@ -571,9 +598,11 @@ ShapedRun GlyphRasterizer::shape(std::string_view text, const FontVariant& varia
     return impl->shape(text, variant);
 }
 
-GlyphBitmap GlyphRasterizer::rasterize(GlyphKey glyph, const FontVariant& variant) const
+GlyphBitmap GlyphRasterizer::rasterize(GlyphKey glyph,
+                                       const FontVariant& variant,
+                                       const RasterRequest& request) const
 {
-    return impl->rasterize(glyph, variant);
+    return impl->rasterize(glyph, variant, request);
 }
 
 GlyphBitmap GlyphRasterizer::rasterize(char32_t codepoint, FontStyle style) const
@@ -587,7 +616,7 @@ GlyphBitmap GlyphRasterizer::rasterize(char32_t codepoint, FontStyle style) cons
     if (run.glyphs.empty())
         return {};
 
-    return impl->rasterize(run.glyphs[0].key, variant);
+    return impl->rasterize(run.glyphs[0].key, variant, {});
 }
 
 const FontRequest& GlyphRasterizer::request() const

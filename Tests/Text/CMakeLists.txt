@@ -10,6 +10,7 @@ nano_add_executable(TextTests
             GlyphRasterizerTests.cpp
             ShapingTests.cpp
             TextRenderingTests.cpp
+            TextRendererTests.cpp
             GlyphRendererTests.cpp
             MemoryFontTests.cpp
             TestMain.cpp

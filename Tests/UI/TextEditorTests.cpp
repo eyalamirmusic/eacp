@@ -388,8 +388,8 @@ auto tPasswordMask = test("TextEditor/aPasswordFieldKeepsTheTextAndDrawsTheMask"
     auto allTheSame = true;
 
     for (const auto& glyph: glyphs)
-        allTheSame = allTheSame && glyph.source.x == glyphs[0].source.x
-                     && glyph.source.y == glyphs[0].source.y;
+        allTheSame = allTheSame && glyph.key == glyphs[0].key
+                     && glyph.face == glyphs[0].face;
 
     check(allTheSame, "and every one is the mask, not the letters typed");
 };

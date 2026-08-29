@@ -656,7 +656,9 @@ struct GlyphRasterizer::Native
         return result;
     }
 
-    GlyphBitmap rasterize(GlyphKey key, const FontVariant& variant) const
+    GlyphBitmap rasterize(GlyphKey key,
+                          const FontVariant& variant,
+                          const RasterRequest& request) const
     {
         auto result = GlyphBitmap {};
         const auto at = faceOf(key, variant);
@@ -680,8 +682,11 @@ struct GlyphRasterizer::Native
         run.glyphAdvances = &advance;
         run.glyphOffsets = &offset;
 
+        // DirectWrite's coverage does not follow the text's lightness the way
+        // CoreGraphics's does, so the request's lightText has nothing to say
+        // here.
         if (!drawColorGlyph(run, result))
-            drawMask(run, result);
+            drawMask(run, result, request.subpixelX);
 
         return result;
     }
@@ -716,9 +721,14 @@ struct GlyphRasterizer::Native
         return bounds.right > bounds.left && bounds.bottom > bounds.top;
     }
 
-    void drawMask(const DWRITE_GLYPH_RUN& run, GlyphBitmap& bitmap) const
+    void drawMask(const DWRITE_GLYPH_RUN& run,
+                  GlyphBitmap& bitmap,
+                  float subpixelX) const
     {
-        auto analysis = analyse(run, 0.f, 0.f);
+        // The baseline origin carries the subpixel offset: the texture bounds
+        // come back relative to the whole pixel, which is the bearing the atlas
+        // wants, and DirectWrite draws the outline the fraction to the right.
+        auto analysis = analyse(run, std::clamp(subpixelX, 0.f, 1.f), 0.f);
         auto bounds = RECT {};
 
         // An empty box is a space: valid, advances the pen, draws nothing.
@@ -945,9 +955,10 @@ ShapedRun GlyphRasterizer::shape(std::string_view text,
 }
 
 GlyphBitmap GlyphRasterizer::rasterize(GlyphKey glyph,
-                                       const FontVariant& variant) const
+                                       const FontVariant& variant,
+                                       const RasterRequest& request) const
 {
-    return impl->rasterize(glyph, variant);
+    return impl->rasterize(glyph, variant, request);
 }
 
 GlyphBitmap GlyphRasterizer::rasterize(char32_t codepoint, FontStyle style) const
@@ -960,7 +971,7 @@ GlyphBitmap GlyphRasterizer::rasterize(char32_t codepoint, FontStyle style) cons
     if (run.glyphs.empty())
         return {};
 
-    return impl->rasterize(run.glyphs[0].key, variant);
+    return impl->rasterize(run.glyphs[0].key, variant, {});
 }
 
 const FontRequest& GlyphRasterizer::request() const

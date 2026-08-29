@@ -44,10 +44,12 @@ struct GlyphSlot
 // One glyph of a shaped string with its slot: where the glyph's own pen sits
 // relative to the string's, in points — x along the line, y downwards — so
 // the destination's top-left is the string's pen plus this plus the slot's
-// offset. `cluster` is the byte offset of the character it came from.
+// offset. `cluster` is the byte offset of the character it came from. The
+// slot is the glyph at phase 0; `key` is what to ask for another phase by.
 struct ShapedSlot
 {
     GlyphSlot slot;
+    GlyphKey key;
     Graphics::Point pen;
     int cluster = 0;
 };
@@ -72,7 +74,7 @@ struct ShapedText
 // clear, and generation() ticks so callers can notice.
 //
 // **One atlas holds many faces.** A face is a (family, pointSize) pair, and the
-// key is (face, variant, font, glyph id) — so a heading, a caption and a
+// key is (face, variant, font, glyph id, phase, lightness) — so a heading, a caption and a
 // monospace log share one texture and are drawn in one batch. The alternative, an atlas per
 // size, is what this class used to be: it costs a texture and a batch break per
 // size, which is bearable for an interface that looks like one thing and wrong
@@ -127,7 +129,18 @@ public:
 
     // Rasterizes on first request, then returns the cached slot. An out-of-range
     // face draws nothing rather than reading past the table.
-    GlyphSlot glyph(GlyphKey key, const FontVariant& variant, int face = 0);
+    //
+    // `phase` is which of the subpixelPhases positions within a pixel the
+    // glyph is drawn at, 0 being the pixel's own left edge, and `lightText`
+    // whether it is drawn in light text, which the platform thickens more
+    // (RasterRequest); each combination is a slot of its own, rasterized on
+    // first ask. A colour glyph has one — emoji sit on whole pixels and carry
+    // their own colours — so its other phases hand back the same slot.
+    GlyphSlot glyph(GlyphKey key,
+                    const FontVariant& variant,
+                    int face = 0,
+                    int phase = 0,
+                    bool lightText = false);
 
     // The one glyph a codepoint shapes to on its own: the way to walk a string
     // by codepoint when nothing between the codepoints matters, and what a
@@ -171,7 +184,11 @@ public:
 private:
     struct Page;
 
-    GlyphSlot insert(GlyphKey key, const FontVariant& variant, int face);
+    GlyphSlot insert(GlyphKey key,
+                     const FontVariant& variant,
+                     int face,
+                     int phase,
+                     bool lightText);
     bool place(ShelfPacker& packer, const GlyphBitmap& bitmap, PackedRect& out);
     void growOrReset();
 
@@ -182,7 +199,11 @@ private:
     OwningPointer<GlyphSource> makeSource(const std::string& family,
                                           float pointSize) const;
 
-    static std::uint64_t keyFor(GlyphKey key, const FontVariant& variant, int face);
+    static std::uint64_t keyFor(GlyphKey key,
+                                const FontVariant& variant,
+                                int face,
+                                int phase,
+                                bool lightText);
     static std::string
         shapeKeyFor(std::string_view text, const FontVariant& variant, int face);
 
