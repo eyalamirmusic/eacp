@@ -299,7 +299,15 @@ void DrawPlayer::playLayer(const DrawList& list,
 
     auto target = offsetBy(recorded.bounds, origin);
 
-    prepareToDraw(target, Renderer::Layers);
+    // What the scissor has to be judged against is where the quad actually
+    // lands, which a transform may have moved anywhere -- so the bounds of the
+    // four corners it was turned into, and not the untransformed rect the
+    // renderer is handed to place the content in. The matrix is local to the
+    // layer, so it is applied to a rect at the origin and put back afterwards.
+    auto turned = recorded.layer->getTransform().apply(
+        Rect {0.f, 0.f, target.w, target.h});
+
+    prepareToDraw(offsetBy(turned, {target.x, target.y}), Renderer::Layers);
 
     // Straight to the pass rather than into a queue, and the clip goes with it
     // rather than being state the renderer holds: one layer is one draw, so
