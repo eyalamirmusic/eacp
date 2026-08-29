@@ -48,6 +48,35 @@ struct ShapedRun
     float advance = 0.f;
 };
 
+// How many positions within a device pixel a glyph is rasterized at along the
+// line. A pen at x = 10.6 asks for the glyph drawn 0.5 of a pixel right of
+// x = 10 and lands on pixel 10, rather than for the glyph drawn at 10 placed
+// at 10.6, which a linear sampler smears across both pixels — half a pixel of
+// blur on every edge, and on a fractional baseline a whole line of it. Four
+// steps is what the platforms' own text is placed in, and the most of one
+// glyph an atlas should hold.
+constexpr int subpixelPhases = 4;
+
+// How one glyph is to be rasterized, beyond which glyph of which face.
+//
+// `subpixelX` is how far right of the pen's pixel it is drawn, in device
+// pixels, 0 ≤ subpixelX < 1, the bitmap's bearings measured from that pixel:
+// the glyph is placed on a whole pixel and the fraction rasterized into it,
+// rather than the pixel-aligned glyph drawn at the fraction and resampled —
+// see subpixelPhases.
+//
+// `lightText` says the text is light on a dark ground. CoreGraphics reads the
+// fill colour's lightness when it smooths a glyph and thickens light text
+// more — a sixth more ink than dark text at 13px, nothing by 40px — even into
+// an alpha-only mask, so a mask drawn in white is the right weight for light
+// text and too heavy for dark, and the atlas keeps one of each for a glyph
+// that is drawn both ways.
+struct RasterRequest
+{
+    float subpixelX = 0.f;
+    bool lightText = false;
+};
+
 // Where GlyphAtlas gets its pixels. GlyphRasterizer is the real implementation;
 // the indirection exists so the atlas — packing, growth, upload, eviction, all
 // of which is portable logic worth testing hard — can be driven by a stub
@@ -64,9 +93,10 @@ public:
     virtual ShapedRun shape(std::string_view text,
                             const FontVariant& variant) const = 0;
 
-    // Rasterizes one glyph shape() named.
+    // Rasterizes one glyph shape() named, as the request says.
     virtual GlyphBitmap rasterize(GlyphKey glyph,
-                                  const FontVariant& variant) const = 0;
+                                  const FontVariant& variant,
+                                  const RasterRequest& request) const = 0;
 
     // Device pixels per point, so the atlas can convert pixel-space bitmap
     // metrics into the logical points its callers lay out in.
@@ -83,7 +113,13 @@ public:
 // Rasterization is grayscale on both platforms, never subpixel/LCD: the atlas
 // stores coverage and the colour arrives at draw time, so subpixel antialiasing
 // would bake one particular text colour into the cache. It also cannot coexist
-// with a transparent window background, and macOS dropped it in Mojave.
+// with a transparent window background, and macOS dropped it in Mojave. What
+// Apple still calls font smoothing is on: since Mojave that is no LCD fringe
+// but the slight thickening of every stem the rest of the system's text is
+// drawn with — a sixth more ink for dark text at 16px, a third for light,
+// the fill's lightness deciding which — and without it text reads thin
+// beside a native view. Which is why a mask is drawn in the lightness of the
+// text it is for: see RasterRequest::lightText.
 class GlyphRasterizer final : public GlyphSource
 {
 public:
@@ -118,7 +154,9 @@ public:
 
     // Rasterizes one glyph a shape() named; the bitmap reports Color format
     // when the glyph's font is a colour font. Invalid when no font has it.
-    GlyphBitmap rasterize(GlyphKey glyph, const FontVariant& variant) const override;
+    GlyphBitmap rasterize(GlyphKey glyph,
+                          const FontVariant& variant,
+                          const RasterRequest& request) const override;
 
     // One codepoint, shaped on its own and rasterized: what a caller walking
     // a string by codepoint asks for, and what a test of a single glyph wants.

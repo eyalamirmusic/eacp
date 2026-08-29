@@ -109,17 +109,20 @@ void GlyphAtlas::setScale(float newScale)
     dropEverything();
 }
 
-std::uint64_t GlyphAtlas::keyFor(GlyphKey key, const FontVariant& variant, int face)
+std::uint64_t GlyphAtlas::keyFor(
+    GlyphKey key, const FontVariant& variant, int face, int phase, bool lightText)
 {
     // A glyph id is sixteen bits in every font format, which leaves the low
-    // word room for the font it is in, the weight class and the slant; the
-    // face gets a word of its own.
+    // word room for the font it is in, the weight class, the slant, the phase
+    // and the lightness; the face gets a word of its own.
     const auto weight =
         static_cast<std::uint64_t>(weightClass(variant.weight) / 100);
     const auto font = static_cast<std::uint64_t>(std::clamp(key.font, 0, 255));
 
     return static_cast<std::uint64_t>(key.glyph & 0xFFFF) | (font << 16)
            | (weight << 24) | (static_cast<std::uint64_t>(variant.italic) << 28)
+           | (static_cast<std::uint64_t>(phase & 3) << 29)
+           | (static_cast<std::uint64_t>(lightText) << 31)
            | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(face)) << 32);
 }
 
@@ -155,18 +158,23 @@ FontMetrics GlyphAtlas::metrics(const FontVariant& variant, int face) const
             pixels.advance / scale};
 }
 
-GlyphSlot GlyphAtlas::glyph(GlyphKey glyphKey, const FontVariant& variant, int face)
+GlyphSlot GlyphAtlas::glyph(GlyphKey glyphKey,
+                            const FontVariant& variant,
+                            int face,
+                            int phase,
+                            bool lightText)
 {
     if (face < 0 || face >= faces.size())
         return {};
 
-    const auto key = keyFor(glyphKey, variant, face);
+    const auto clampedPhase = std::clamp(phase, 0, subpixelPhases - 1);
+    const auto key = keyFor(glyphKey, variant, face, clampedPhase, lightText);
     const auto found = slots.find(key);
 
     if (found != slots.end())
         return found->second;
 
-    const auto slot = insert(glyphKey, variant, face);
+    const auto slot = insert(glyphKey, variant, face, clampedPhase, lightText);
     slots.emplace(key, slot);
 
     return slot;
@@ -205,6 +213,7 @@ ShapedText
 
     for (const auto& placed: run.glyphs)
         result.glyphs.add({glyph(placed.key, variant, face),
+                           placed.key,
                            {placed.x / scale, -placed.y / scale},
                            placed.cluster});
 
@@ -218,13 +227,22 @@ ShapedText
     return result;
 }
 
-GlyphSlot GlyphAtlas::insert(GlyphKey key, const FontVariant& variant, int face)
+GlyphSlot GlyphAtlas::insert(
+    GlyphKey key, const FontVariant& variant, int face, int phase, bool lightText)
 {
     const auto& source = faces[face].source;
-    const auto bitmap = source->rasterize(key, variant);
+    const auto request = RasterRequest {
+        static_cast<float>(phase) / static_cast<float>(subpixelPhases), lightText};
+    const auto bitmap = source->rasterize(key, variant, request);
 
     if (!bitmap.valid)
         return {};
+
+    // A colour glyph is placed on whole pixels and carries its own colours, so
+    // its phases and lightnesses share the one bitmap rather than costing the
+    // atlas eight copies of every emoji.
+    if (bitmap.format == GlyphFormat::Color && (phase != 0 || lightText))
+        return glyph(key, variant, face, 0, false);
 
     const auto scale = source->scale() > 0.f ? source->scale() : 1.f;
 

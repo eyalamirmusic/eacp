@@ -60,12 +60,16 @@ struct StubSource final : GlyphSource
         return run;
     }
 
-    GlyphBitmap rasterize(GlyphKey key, const FontVariant& variant) const override
+    GlyphBitmap rasterize(GlyphKey key,
+                          const FontVariant& variant,
+                          const RasterRequest& request) const override
     {
         ++rasterCalls;
         lastCodepoint = key.glyph;
         lastStyle = styleOf(variant);
         lastFont = key.font;
+        lastSubpixel = request.subpixelX;
+        lastLight = request.lightText;
 
         const auto codepoint = (char32_t) key.glyph;
         auto bitmap = GlyphBitmap {};
@@ -104,6 +108,8 @@ struct StubSource final : GlyphSource
     mutable char32_t lastCodepoint = 0;
     mutable FontStyle lastStyle = FontStyle::Regular;
     mutable int lastFont = 0;
+    mutable float lastSubpixel = 0.f;
+    mutable bool lastLight = false;
 };
 
 // The atlas owns its faces, so the harness records every stub it hands over and
@@ -568,4 +574,69 @@ auto tWeightIsPartOfTheKey = test("GlyphAtlas/weightsAreCachedSeparately") = []
 
     harness.atlas->glyph(GlyphKey {0x41, 0}, {650, false});
     check(harness.source()->rasterCalls == 3, "650 rounds to the 700 face");
+};
+
+// A phase is a slot of its own: the glyph rasterized that fraction of a pixel
+// to the right, asked of the source once and cached like any other.
+auto tPhasesAreSlotsOfTheirOwn =
+    test("GlyphAtlas/subpixelPhasesAreCachedSeparately") = []
+{
+    auto harness = Harness {};
+
+    const auto whole = harness.atlas->glyph(GlyphKey {0x41, 0}, {}, 0, 0);
+    check(harness.source()->rasterCalls == 1);
+    check(harness.source()->lastSubpixel == 0.f);
+
+    const auto half = harness.atlas->glyph(GlyphKey {0x41, 0}, {}, 0, 2);
+    check(harness.source()->rasterCalls == 2);
+    check(harness.source()->lastSubpixel == 0.5f);
+    check(whole.src.x != half.src.x || whole.src.y != half.src.y);
+
+    harness.atlas->glyph(GlyphKey {0x41, 0}, {}, 0, 2);
+    harness.atlas->glyph(GlyphKey {0x41, 0}, {}, 0, 0);
+    check(harness.source()->rasterCalls == 2);
+
+    // A phase past the last is the last, never a fifth slot.
+    harness.atlas->glyph(GlyphKey {0x41, 0}, {}, 0, subpixelPhases);
+    check(harness.source()->lastSubpixel == 0.75f);
+    check(harness.source()->rasterCalls == 3);
+};
+
+// An emoji sits on whole pixels, so every phase of it is the one bitmap.
+auto tColourGlyphsHaveOnePhase =
+    test("GlyphAtlas/colourGlyphsShareOneBitmapAcrossPhases") = []
+{
+    auto harness = Harness {};
+
+    const auto whole = harness.atlas->glyph(GlyphKey {0x1F600, 0}, {}, 0, 0);
+    const auto half = harness.atlas->glyph(GlyphKey {0x1F600, 0}, {}, 0, 2);
+
+    check(whole.format == GlyphFormat::Color);
+    check(half.valid && !half.empty);
+    check(half.src.x == whole.src.x && half.src.y == whole.src.y);
+
+    harness.atlas->glyph(GlyphKey {0x1F600, 0}, {}, 0, 2);
+    check(harness.source()->rasterCalls == 2, "asked once per phase, kept once");
+
+    const auto light = harness.atlas->glyph(GlyphKey {0x1F600, 0}, {}, 0, 0, true);
+    check(light.src.x == whole.src.x && light.src.y == whole.src.y);
+};
+
+// Light text is thickened more than dark by the platform, so a glyph drawn
+// both ways is two slots, the source told which each is for.
+auto tLightTextIsASlotOfItsOwn = test("GlyphAtlas/lightTextIsCachedSeparately") = []
+{
+    auto harness = Harness {};
+
+    const auto dark = harness.atlas->glyph(GlyphKey {0x41, 0}, {}, 0, 0, false);
+    check(!harness.source()->lastLight);
+
+    const auto light = harness.atlas->glyph(GlyphKey {0x41, 0}, {}, 0, 0, true);
+    check(harness.source()->lastLight);
+    check(harness.source()->rasterCalls == 2);
+    check(dark.src.x != light.src.x || dark.src.y != light.src.y);
+
+    harness.atlas->glyph(GlyphKey {0x41, 0}, {}, 0, 0, true);
+    harness.atlas->glyph(GlyphKey {0x41, 0}, {}, 0, 0, false);
+    check(harness.source()->rasterCalls == 2);
 };

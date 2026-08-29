@@ -118,7 +118,7 @@ auto tLigatureIsOneGlyph = test("Shaping/ligatureIsOneGlyph") = []
     check(fi.glyphs[0].cluster == 0);
     check(fi.advance > 0.f);
 
-    const auto bitmap = rasterizer.rasterize(fi.glyphs[0].key, {});
+    const auto bitmap = rasterizer.rasterize(fi.glyphs[0].key, {}, {});
     check(bitmap.valid && !bitmap.isEmpty());
 };
 
@@ -161,7 +161,7 @@ auto tFallbackRunsAreNumbered = test("Shaping/fallbackFacesAreNumbered") = []
     check(run.glyphs[1].cluster == 1);
     check(run.glyphs[2].cluster == 4);
 
-    const auto han = rasterizer.rasterize(run.glyphs[1].key, {});
+    const auto han = rasterizer.rasterize(run.glyphs[1].key, {}, {});
     check(han.valid);
     check(!han.isEmpty());
     check(han.advance > 0.f);
@@ -186,7 +186,7 @@ auto tWeightsDrawDifferently =
 
         return run.glyphs.empty()
                    ? GlyphBitmap {}
-                   : rasterizer.rasterize(run.glyphs[0].key, {weight, false});
+                   : rasterizer.rasterize(run.glyphs[0].key, {weight, false}, {});
     };
 
     const auto light = at(300);

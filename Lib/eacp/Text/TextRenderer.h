@@ -8,27 +8,50 @@
 
 namespace eacp::Text
 {
-// One glyph a layout placed: where it goes in the caller's own points, where it
-// is in the atlas, and which of the two atlases that is.
+// One glyph a layout placed: its pen in the caller's own points, and which
+// glyph of which face to draw there.
 //
 // What a caller keeps when it wants the layout done once rather than once per
 // frame. Laying a string out is a walk over its bytes with an atlas lookup per
 // glyph, and a string that has not changed produces the same glyphs every time
 // -- so a caller drawing an unchanged interface should be able to hold these and
-// hand them straight back. See layoutInto and drawGlyph, and note generation():
-// a slot kept across frames is only valid while the atlas has not been cleared
-// underneath it.
+// hand them straight back. See layoutInto and drawGlyph.
+//
+// It names the glyph rather than its texels because which bitmap it needs --
+// the glyph rasterized at which of the positions within a pixel -- is only
+// known once whatever the caller adds to the pen at draw time has been added
+// and the pen is snapped; the atlas is asked then. Which also means a recorded
+// layout survives the atlas being cleared underneath it.
 struct PlacedGlyph
 {
+    // x at the glyph's left edge, y on the baseline.
+    Graphics::Point pen;
+
+    // Where the bitmap lands, give or take the pixel it is snapped to on the
+    // way to the screen: what a clip is judged against.
     Graphics::Rect destination;
 
-    // In atlas texels, which survive the atlas growing -- placements only ever
-    // extend right and down, and the size the shader divides by is read at the
-    // draw. Only a clear invalidates these, and generation() is what says so.
-    Graphics::Rect source;
-
+    GlyphKey key;
+    FontVariant variant;
+    int face = 0;
     bool colored = false;
 };
+
+// Where a pen lands on the device: the pixel its x falls in and which of the
+// subpixelPhases positions within that pixel is nearest, and its baseline
+// rounded to a whole pixel. The glyph rasterized at that phase and drawn on
+// that pixel puts every texel on a device pixel of its own, which is what
+// keeps text sharp -- a pixel-aligned bitmap drawn at a fractional position
+// through a linear sampler is blurred by up to half a pixel each way, and a
+// fractional baseline blurs a whole line at once.
+struct SnappedPen
+{
+    int x = 0;
+    int y = 0;
+    int phase = 0;
+};
+
+SnappedPen snapPen(Graphics::Point pen, float scale);
 
 // Draws strings. An atlas, a glyph renderer and the layout loop that walks a
 // string placing each glyph by its own bearings — the three things every
@@ -111,10 +134,9 @@ public:
     // whatever colour the caller is drawing in now.
     void drawGlyph(const PlacedGlyph& glyph, const Graphics::Color& color);
 
-    // Ticks when the atlas is cleared, which is what makes every PlacedGlyph
-    // handed out before it point at texels belonging to somebody else. A caller
-    // holding placements across frames compares this and lays out again; one
-    // that lays out every frame can ignore it.
+    // Ticks when the atlas is cleared. A PlacedGlyph names its glyph rather
+    // than its texels and is unaffected; what a clear invalidates is a
+    // GlyphSlot a caller took from the atlas itself and kept.
     std::uint32_t generation() const;
 
     // The advance `text` would take, without drawing it.
@@ -145,6 +167,14 @@ private:
                  const Font& font,
                  bool emit,
                  Vector<PlacedGlyph>* into = nullptr);
+
+    // Snaps the pen, takes the glyph at that phase from the atlas and queues
+    // it on the pixel: the one place a glyph's final position is decided.
+    void queueGlyph(Graphics::Point pen,
+                    GlyphKey key,
+                    const FontVariant& variant,
+                    int face,
+                    const Graphics::Color& color);
 
     Font defaultFont;
     float builtAtScale = 0.0f;

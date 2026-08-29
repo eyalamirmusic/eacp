@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 // The real platform rasterizer, against a font the OS is guaranteed to have.
 //
@@ -466,4 +467,98 @@ auto tResolvedFamily =
     check(!substituted.resolvedFamily().empty());
     check(!sameIgnoringCase(substituted.resolvedFamily(), request.family),
           "and it says so");
+};
+
+// The subpixel offset moves the ink and nothing else: drawn half a pixel to
+// the right, the glyph's centre of mass - the bearing and the bitmap between
+// them - is half a pixel further from the pen, with the same ink in it.
+auto tSubpixelOffsetMovesTheInk =
+    test("GlyphRasterizer/subpixelOffsetMovesTheInkAndKeepsTheMass") = []
+{
+    const auto rasterizer = GlyphRasterizer {monospaceRequest(24.f)};
+
+    if (!rasterizer.isValid())
+        return;
+
+    const auto run = rasterizer.shape("H", {});
+
+    if (run.glyphs.empty())
+        return;
+
+    struct Ink
+    {
+        double mass = 0.0;
+        double centre = 0.0;
+    };
+
+    auto inkOf = [](const GlyphBitmap& bitmap)
+    {
+        auto moment = 0.0;
+        auto ink = Ink {};
+
+        for (auto y = 0; y < bitmap.height; ++y)
+            for (auto x = 0; x < bitmap.width; ++x)
+            {
+                const auto coverage =
+                    (double) bitmap.pixels[(std::size_t) y * bitmap.width + x];
+
+                ink.mass += coverage;
+                moment += coverage * ((double) x + 0.5);
+            }
+
+        ink.centre = bitmap.bearingX + moment / ink.mass;
+
+        return ink;
+    };
+
+    const auto whole = rasterizer.rasterize(run.glyphs[0].key, {}, {});
+    const auto half = rasterizer.rasterize(run.glyphs[0].key, {}, {0.5f, false});
+
+    check(whole.valid && !whole.isEmpty());
+    check(half.valid && !half.isEmpty());
+
+    const auto before = inkOf(whole);
+    const auto after = inkOf(half);
+
+    check(std::abs(after.centre - before.centre - 0.5) < 0.15);
+    check(std::abs(after.mass - before.mass) < before.mass * 0.05);
+};
+
+// The platform thickens light text more than dark - CoreGraphics by a sixth
+// at this size, DirectWrite not at all - so a mask for light text has at
+// least the ink of one for dark, and on Apple visibly more.
+auto tLightTextIsThickened =
+    test("GlyphRasterizer/lightTextHasAtLeastTheInkOfDark") = []
+{
+    const auto rasterizer = GlyphRasterizer {monospaceRequest(13.f, 2.f)};
+
+    if (!rasterizer.isValid())
+        return;
+
+    const auto run = rasterizer.shape("n", {});
+
+    if (run.glyphs.empty())
+        return;
+
+    const auto inkOf = [](const GlyphBitmap& bitmap)
+    {
+        long long total = 0;
+
+        for (const auto value: bitmap.pixels)
+            total += value;
+
+        return total;
+    };
+
+    const auto dark =
+        inkOf(rasterizer.rasterize(run.glyphs[0].key, {}, {0.f, false}));
+    const auto light =
+        inkOf(rasterizer.rasterize(run.glyphs[0].key, {}, {0.f, true}));
+
+    check(dark > 0);
+    check(light >= dark);
+
+#if defined(__APPLE__)
+    check(light > dark + dark / 20);
+#endif
 };

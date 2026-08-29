@@ -1,5 +1,6 @@
 #include "TextRenderer.h"
 
+#include <cmath>
 #include <utility>
 
 namespace eacp::Text
@@ -114,21 +115,87 @@ float TextRenderer::layout(std::string_view text,
         if (!glyph.valid || glyph.empty)
             continue;
 
-        // The slot's src is in atlas texels but its offset and the glyph's pen
-        // are already in points, so only the size needs dividing by the scale.
-        auto destination = Graphics::Rect {pen.x + placed.pen.x + glyph.offset.x,
-                                           pen.y + placed.pen.y + glyph.offset.y,
+        const auto glyphPen =
+            Graphics::Point {pen.x + placed.pen.x, pen.y + placed.pen.y};
+
+        if (into == nullptr)
+        {
+            queueGlyph(glyphPen, placed.key, font.variant(), face, color);
+            continue;
+        }
+
+        // Where the glyph lands give or take the snap, which is decided when
+        // it is drawn and the pen is final. The slot's src is in atlas texels
+        // but its offset and the pen are already in points, so only the size
+        // needs dividing by the scale.
+        auto destination = Graphics::Rect {glyphPen.x + glyph.offset.x,
+                                           glyphPen.y + glyph.offset.y,
                                            glyph.src.w / builtAtScale,
                                            glyph.src.h / builtAtScale};
 
-        if (into != nullptr)
-            into->add({destination, glyph.src, glyph.format == GlyphFormat::Color});
-        else
-            glyphs->add(
-                destination, glyph.src, color, glyph.format == GlyphFormat::Color);
+        into->add({glyphPen,
+                   destination,
+                   placed.key,
+                   font.variant(),
+                   face,
+                   glyph.format == GlyphFormat::Color});
     }
 
     return shaped.advance;
+}
+
+namespace
+{
+// Whether text in this colour is light on a dark ground, for the rasterizer
+// to thicken it the way the platform does. CoreGraphics steps up the
+// thickening from mid grey and again from three quarters; one threshold
+// between those two steps leaves either side within a few percent of it.
+bool isLightText(const Graphics::Color& colour)
+{
+    const auto luma = 0.2126f * colour.r + 0.7152f * colour.g + 0.0722f * colour.b;
+
+    return luma >= 0.7f;
+}
+} // namespace
+
+SnappedPen snapPen(Graphics::Point pen, float scale)
+{
+    const auto x = pen.x * scale;
+    auto pixel = std::floor(x);
+    auto phase = (int) std::lround((x - pixel) * (float) subpixelPhases);
+
+    if (phase == subpixelPhases)
+    {
+        pixel += 1.f;
+        phase = 0;
+    }
+
+    return {(int) pixel, (int) std::lround(pen.y * scale), phase};
+}
+
+void TextRenderer::queueGlyph(Graphics::Point pen,
+                              GlyphKey key,
+                              const FontVariant& variant,
+                              int face,
+                              const Graphics::Color& color)
+{
+    const auto snapped = snapPen(pen, builtAtScale);
+    const auto slot =
+        atlas->glyph(key, variant, face, snapped.phase, isLightText(color));
+
+    if (!slot.valid || slot.empty)
+        return;
+
+    // The pixel the pen snapped to, back in points, plus the slot's offset,
+    // which is whole pixels over the same scale: every texel lands on a pixel
+    // of its own, and the linear sampler has nothing to blend.
+    const auto destination =
+        Graphics::Rect {(float) snapped.x / builtAtScale + slot.offset.x,
+                        (float) snapped.y / builtAtScale + slot.offset.y,
+                        slot.src.w / builtAtScale,
+                        slot.src.h / builtAtScale};
+
+    glyphs->add(destination, slot.src, color, slot.format == GlyphFormat::Color);
 }
 
 float TextRenderer::draw(std::string_view text,
@@ -169,7 +236,7 @@ void TextRenderer::drawGlyph(const PlacedGlyph& glyph, const Graphics::Color& co
     if (!glyphs.has_value())
         begin();
 
-    glyphs->add(glyph.destination, glyph.source, color, glyph.colored);
+    queueGlyph(glyph.pen, glyph.key, glyph.variant, glyph.face, color);
 }
 
 std::uint32_t TextRenderer::generation() const

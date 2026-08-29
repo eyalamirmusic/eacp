@@ -230,7 +230,8 @@ void DrawPlayer::playGlyphs(const DrawList& list,
     // The run's own reach, for the clip to be elided against. Taken from the
     // glyphs rather than re-measured: they are the thing being drawn, and
     // measuring the string again is the walk this whole arrangement exists to
-    // avoid.
+    // avoid. A glyph is snapped to a whole pixel on its way to the screen, so
+    // the reach is allowed a point either way.
     auto bounds = offsetBy(glyphs[run.first].destination, origin);
 
     for (auto i = run.first + 1; i < run.first + run.count; ++i)
@@ -245,11 +246,12 @@ void DrawPlayer::playGlyphs(const DrawList& list,
         bounds = {left, top, right - left, bottom - top};
     }
 
-    prepareToDraw(bounds);
+    prepareToDraw({bounds.x - 1.f, bounds.y - 1.f, bounds.w + 2.f, bounds.h + 2.f});
 
     for (auto i = run.first; i < run.first + run.count; ++i)
     {
         auto placed = glyphs[i];
+        placed.pen = {placed.pen.x + origin.x, placed.pen.y + origin.y};
         placed.destination = offsetBy(placed.destination, origin);
 
         text.drawGlyph(placed, run.colour);
