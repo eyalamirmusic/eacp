@@ -5,18 +5,19 @@
 #include <iterator>
 #include <string>
 
-// The same lines of text twice: on the left the system web view -- WebKit
-// drawing through CoreText, which is the text the rest of the platform is
-// judged against -- and on the right the component tier's TextRenderer, at the
-// same families, sizes, weights and positions. The right half is there to be
-// read against the left, and the difference should be none the eye can find:
-// each glyph is rasterized with the platform's font smoothing and at the
-// quarter of a pixel its pen fell in, then placed on a whole device pixel,
-// which is what WebKit's own painter does.
+// The same lines of text twice: on the left the system web view -- the
+// browser engine drawing through the platform's own text stack, which is the
+// text the rest of the system is judged against -- and on the right the
+// component tier's TextRenderer, at the same families, sizes, weights and
+// positions. The right half is there to be read against the left, and the
+// difference should be none the eye can find: each glyph is rasterized with
+// the platform's font smoothing and at the quarter of a pixel its pen fell in,
+// then placed on a whole device pixel, which is what the engine's own painter
+// does.
 //
 // The rows are one table and the page on the left is generated from it, so
 // the halves cannot drift apart. Each row is positioned absolutely with
-// `line-height: normal`, which puts WebKit's baseline at the row's top plus
+// `line-height: normal`, which puts the engine's baseline at the row's top plus
 // the face's ascent, rounded, plus half its line gap; the right half puts its
 // baseline at the top plus the ascent, rounded. For a face with a line gap the
 // two differ by a pixel, which the comparison tolerates: it is about the
@@ -38,7 +39,16 @@ constexpr auto leftInset = 24.f;
 constexpr auto captionTop = 14.f;
 constexpr auto firstRowTop = 48.f;
 
-constexpr auto helvetica = "Helvetica Neue";
+// The platform's own UI and monospace faces, never a literal family name: a
+// name only one system ships resolves to a substitute on the other, and the two
+// halves pick different substitutes -- the web engine's default standard face
+// against the rasterizer's -- so the comparison would be between two faces
+// rather than between two renderings of one. On Windows that reads as a size
+// difference, since the engine's fallback is a serif with a much smaller
+// x-height than Segoe UI. Asking for the family the platform actually has puts
+// both halves in it.
+constexpr auto ui = UI::defaultUIFontFamily();
+constexpr auto mono = Text::defaultMonospaceFamily();
 constexpr auto fox = "The quick brown fox jumps over the lazy dog 0123456789";
 constexpr auto sphinx = "Sphinx of black quartz, judge my vow.";
 constexpr auto kerned = "AVAWATo Ty fi fl: kerned pairs and ligatures";
@@ -58,17 +68,17 @@ struct Row
 };
 
 constexpr Row rows[] = {
-    {helvetica, 11.f, 400, false, false, fox},
-    {helvetica, 13.f, 400, false, false, fox},
-    {helvetica, 16.f, 400, false, false, kerned},
-    {helvetica, 16.f, 700, false, false, sphinx},
-    {helvetica, 16.f, 400, true, false, sphinx},
-    {helvetica, 16.f, 300, false, false, sphinx},
+    {ui, 11.f, 400, false, false, fox},
+    {ui, 13.f, 400, false, false, fox},
+    {ui, 16.f, 400, false, false, kerned},
+    {ui, 16.f, 700, false, false, sphinx},
+    {ui, 16.f, 400, true, false, sphinx},
+    {ui, 16.f, 300, false, false, sphinx},
     {"Georgia", 16.f, 400, false, false, jugs},
-    {"Menlo", 13.f, 400, false, false, code},
-    {helvetica, 24.f, 400, false, false, waltz},
-    {helvetica, 40.f, 700, false, false, "Hamburgefonstiv"},
-    {helvetica, 16.f, 400, false, true, thinNote},
+    {mono, 13.f, 400, false, false, code},
+    {ui, 24.f, 400, false, false, waltz},
+    {ui, 40.f, 700, false, false, "Hamburgefonstiv"},
+    {ui, 16.f, 400, false, true, thinNote},
 };
 
 constexpr auto captionSize = 13.f;
@@ -101,10 +111,10 @@ std::string pixels(float value)
     return text + "px";
 }
 
-// What the row says it is, ahead of its text: "16px bold", "Menlo 13px".
+// What the row says it is, ahead of its text: "16px bold", "Georgia 16px".
 std::string labelled(const Row& row)
 {
-    auto label = std::string {row.family == helvetica ? "" : row.family};
+    auto label = std::string {row.family == ui ? "" : row.family};
 
     if (!label.empty())
         label += ' ';
@@ -171,7 +181,7 @@ std::string specimenHtml(const std::string& caption)
 
     html += placed("caption",
                    captionTop,
-                   cssFont(helvetica, captionSize, captionWeight, false),
+                   cssFont(ui, captionSize, captionWeight, false),
                    caption);
 
     for (auto i = 0; i < (int) std::size(rows); ++i)
@@ -198,14 +208,14 @@ UI::Font fontFor(const char* family, float size, int weight, bool italic)
     return font;
 }
 
-// The right half: every row drawn with its pen where WebKit puts its
-// baseline, the ascent rounded as WebKit rounds it.
+// The right half: every row drawn with its pen where the engine puts its
+// baseline, the ascent rounded as the engine rounds it.
 struct Specimen final : UI::Component
 {
     void paint(UI::Graphics& g) override
     {
         drawRow(g,
-                fontFor(helvetica, captionSize, captionWeight, false),
+                fontFor(ui, captionSize, captionWeight, false),
                 captionTop,
                 "eacp TextRenderer",
                 UI::Color {0.42f, 0.42f, 0.42f, 1.f});
