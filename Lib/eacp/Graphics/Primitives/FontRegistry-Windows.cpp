@@ -40,98 +40,29 @@ IDWriteFactory5* memoryFontFactory()
     return instance.Get();
 }
 
-// The system collection until a font is registered from memory, and a rebuilt
-// system-plus-embedded one afterwards.
-class FontRegistry
+// The English string of a localised set when it has one, else its first.
+std::wstring firstString(const ComPtr<IDWriteLocalizedStrings>& strings)
 {
-public:
-    ComPtr<IDWriteFontCollection> collection()
-    {
-        const auto lock = std::lock_guard {mutex};
+    if (!strings || strings->GetCount() == 0)
+        return {};
 
-        if (!current)
-            if (auto* factory = getDWriteFactory())
-                factory->GetSystemFontCollection(current.GetAddressOf(), FALSE);
+    auto index = UINT32 {0};
+    auto exists = BOOL {};
 
-        return current;
-    }
+    if (FAILED(strings->FindLocaleName(L"en-us", &index, &exists)) || !exists)
+        index = 0;
 
-    bool add(const void* data, std::size_t size)
-    {
-        auto* factory = memoryFontFactory();
+    auto length = UINT32 {};
 
-        if (factory == nullptr || data == nullptr || size == 0)
-            return false;
+    if (FAILED(strings->GetStringLength(index, &length)) || length == 0)
+        return {};
 
-        const auto lock = std::lock_guard {mutex};
+    auto text = std::wstring(length, L'\0');
 
-        if (!loader)
-        {
-            if (FAILED(factory->CreateInMemoryFontFileLoader(loader.GetAddressOf()))
-                || FAILED(factory->RegisterFontFileLoader(loader.Get())))
-                return false;
-        }
+    if (FAILED(strings->GetString(index, text.data(), length + 1)))
+        return {};
 
-        auto file = ComPtr<IDWriteFontFile>();
-
-        // A null owner tells DirectWrite to copy the data, so the caller's
-        // buffer does not have to outlive the registration.
-        if (FAILED(loader->CreateInMemoryFontFileReference(factory,
-                                                           data,
-                                                           static_cast<UINT32>(size),
-                                                           nullptr,
-                                                           file.GetAddressOf())))
-            return false;
-
-        files.push_back(file);
-
-        return rebuild(factory);
-    }
-
-private:
-    // Called with the lock held. A font set is immutable once built, so adding a
-    // face means building a fresh one over every file plus the system set.
-    bool rebuild(IDWriteFactory5* factory)
-    {
-        auto builder = ComPtr<IDWriteFontSetBuilder1>();
-
-        if (FAILED(factory->CreateFontSetBuilder(builder.GetAddressOf())))
-            return false;
-
-        for (const auto& file: files)
-            builder->AddFontFile(file.Get());
-
-        auto systemSet = ComPtr<IDWriteFontSet>();
-
-        if (SUCCEEDED(factory->GetSystemFontSet(systemSet.GetAddressOf())))
-            builder->AddFontSet(systemSet.Get());
-
-        auto set = ComPtr<IDWriteFontSet>();
-
-        if (FAILED(builder->CreateFontSet(set.GetAddressOf())))
-            return false;
-
-        auto built = ComPtr<IDWriteFontCollection1>();
-
-        if (FAILED(factory->CreateFontCollectionFromFontSet(set.Get(),
-                                                            built.GetAddressOf())))
-            return false;
-
-        current = built;
-
-        return true;
-    }
-
-    std::mutex mutex;
-    ComPtr<IDWriteInMemoryFontFileLoader> loader;
-    std::vector<ComPtr<IDWriteFontFile>> files;
-    ComPtr<IDWriteFontCollection> current;
-};
-
-FontRegistry& fontRegistry()
-{
-    static auto registry = FontRegistry {};
-    return registry;
+    return text;
 }
 
 bool hasFamily(const ComPtr<IDWriteFontCollection>& collection,
@@ -181,18 +112,173 @@ std::wstring familyOfNamedFace(const ComPtr<IDWriteFontCollection>& collection,
             || !exists || !values)
             continue;
 
-        auto length = UINT32 {};
-
-        if (FAILED(values->GetStringLength(0, &length)) || length == 0)
-            continue;
-
-        auto family = std::wstring(length, L'\0');
-
-        if (SUCCEEDED(values->GetString(0, family.data(), length + 1)))
+        if (auto family = firstString(values); !family.empty())
             return family;
     }
 
     return {};
+}
+
+// The face in a font file, for its names.
+ComPtr<IDWriteFontFace3> faceOf(IDWriteFactory5* factory,
+                                const ComPtr<IDWriteFontFile>& file)
+{
+    auto reference = ComPtr<IDWriteFontFaceReference>();
+
+    if (FAILED(factory->CreateFontFaceReference(file.Get(),
+                                                0,
+                                                DWRITE_FONT_SIMULATIONS_NONE,
+                                                reference.GetAddressOf()))
+        || !reference)
+        return {};
+
+    auto face = ComPtr<IDWriteFontFace3>();
+
+    if (FAILED(reference->CreateFontFace(face.GetAddressOf())))
+        return {};
+
+    return face;
+}
+
+std::wstring postScriptNameOf(const ComPtr<IDWriteFontFace3>& face)
+{
+    auto exists = BOOL {};
+    auto strings = ComPtr<IDWriteLocalizedStrings>();
+
+    if (!face
+        || FAILED(face->GetInformationalStrings(
+            DWRITE_INFORMATIONAL_STRING_POSTSCRIPT_NAME,
+            strings.GetAddressOf(),
+            &exists))
+        || !exists)
+        return {};
+
+    return firstString(strings);
+}
+
+std::wstring familyNameOf(const ComPtr<IDWriteFontFace3>& face)
+{
+    auto strings = ComPtr<IDWriteLocalizedStrings>();
+
+    if (!face || FAILED(face->GetFamilyNames(strings.GetAddressOf())))
+        return {};
+
+    return firstString(strings);
+}
+
+// The system collection until a font is registered from memory, and a rebuilt
+// system-plus-embedded one afterwards.
+class FontRegistry
+{
+public:
+    ComPtr<IDWriteFontCollection> collection()
+    {
+        const auto lock = std::lock_guard {mutex};
+
+        if (!current)
+            if (auto* factory = getDWriteFactory())
+                factory->GetSystemFontCollection(current.GetAddressOf(), FALSE);
+
+        return current;
+    }
+
+    std::optional<RegisteredFontNames> add(const void* data, std::size_t size)
+    {
+        auto* factory = memoryFontFactory();
+
+        if (factory == nullptr || data == nullptr || size == 0)
+            return std::nullopt;
+
+        const auto lock = std::lock_guard {mutex};
+
+        if (!loader)
+        {
+            if (FAILED(factory->CreateInMemoryFontFileLoader(loader.GetAddressOf()))
+                || FAILED(factory->RegisterFontFileLoader(loader.Get())))
+                return std::nullopt;
+        }
+
+        auto file = ComPtr<IDWriteFontFile>();
+
+        // A null owner tells DirectWrite to copy the data, so the caller's
+        // buffer does not have to outlive the registration.
+        if (FAILED(loader->CreateInMemoryFontFileReference(factory,
+                                                           data,
+                                                           static_cast<UINT32>(size),
+                                                           nullptr,
+                                                           file.GetAddressOf())))
+            return std::nullopt;
+
+        const auto face = faceOf(factory, file);
+        auto names = RegisteredFontNames {};
+        names.postScriptName = postScriptNameOf(face);
+
+        if (names.postScriptName.empty())
+            return std::nullopt;
+
+        files.push_back(file);
+
+        if (!rebuild(factory))
+            return std::nullopt;
+
+        // The family as the rebuilt collection files it, which is the name
+        // resolveFontFamilyName answers to; the face's own when the set does
+        // not find it by name.
+        names.family = familyOfNamedFace(current, names.postScriptName);
+
+        if (names.family.empty())
+            names.family = familyNameOf(face);
+
+        if (names.family.empty())
+            return std::nullopt;
+
+        return names;
+    }
+
+private:
+    // Called with the lock held. A font set is immutable once built, so adding a
+    // face means building a fresh one over every file plus the system set.
+    bool rebuild(IDWriteFactory5* factory)
+    {
+        auto builder = ComPtr<IDWriteFontSetBuilder1>();
+
+        if (FAILED(factory->CreateFontSetBuilder(builder.GetAddressOf())))
+            return false;
+
+        for (const auto& file: files)
+            builder->AddFontFile(file.Get());
+
+        auto systemSet = ComPtr<IDWriteFontSet>();
+
+        if (SUCCEEDED(factory->GetSystemFontSet(systemSet.GetAddressOf())))
+            builder->AddFontSet(systemSet.Get());
+
+        auto set = ComPtr<IDWriteFontSet>();
+
+        if (FAILED(builder->CreateFontSet(set.GetAddressOf())))
+            return false;
+
+        auto built = ComPtr<IDWriteFontCollection1>();
+
+        if (FAILED(factory->CreateFontCollectionFromFontSet(set.Get(),
+                                                            built.GetAddressOf())))
+            return false;
+
+        current = built;
+
+        return true;
+    }
+
+    std::mutex mutex;
+    ComPtr<IDWriteInMemoryFontFileLoader> loader;
+    std::vector<ComPtr<IDWriteFontFile>> files;
+    ComPtr<IDWriteFontCollection> current;
+};
+
+FontRegistry& fontRegistry()
+{
+    static auto registry = FontRegistry {};
+    return registry;
 }
 } // namespace
 
@@ -201,7 +287,8 @@ ComPtr<IDWriteFontCollection> getFontCollection()
     return fontRegistry().collection();
 }
 
-bool registerMemoryFontData(const void* data, std::size_t size)
+std::optional<RegisteredFontNames> registerMemoryFontData(const void* data,
+                                                          std::size_t size)
 {
     return fontRegistry().add(data, size);
 }

@@ -5,6 +5,8 @@
 
 #include <eacp/Core/Utils/Pimpl.h>
 
+#include <optional>
+#include <string>
 #include <string_view>
 
 namespace eacp::Text
@@ -129,9 +131,22 @@ private:
     Pimpl<Native> impl;
 };
 
-// Registers a font held in memory (an embedded .ttf) with the platform's font
-// system, so a FontRequest naming it resolves without the file ever being
-// installed or written to disk. Returns false when the data is not a usable
-// font. Registering the same face twice is harmless.
-bool registerMemoryFont(const void* data, std::size_t size);
+// What registering a font made visible: the family the platform filed the
+// face under, which is the name a FontRequest resolves - and not necessarily
+// the one the caller knew it by, since a page's @font-face names a family of
+// its own choosing - and the face's PostScript name, which names that face
+// alone and which both platforms resolve too.
+struct RegisteredFont
+{
+    std::string family;
+    std::string postScriptName;
+};
+
+// Registers a font held in memory (an embedded .ttf, a page's web font) with
+// the platform's font system, so a FontRequest naming it resolves without the
+// file ever being installed or written to disk; the bytes are copied, so the
+// caller's buffer need not outlive the call. Nothing when the data is not a
+// usable font. Registering the same face twice reports it as it was, since a
+// page reloaded registers its fonts again.
+std::optional<RegisteredFont> registerMemoryFont(const void* data, std::size_t size);
 } // namespace eacp::Text
