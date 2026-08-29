@@ -1,6 +1,7 @@
 nano_add_executable(UITests
         SOURCES
             ClipMaskTests.cpp
+            ClippedFillTests.cpp
             CoverageAtlasTests.cpp
             DrawListTests.cpp
             DragAndDropTests.cpp
@@ -10,5 +11,6 @@ nano_add_executable(UITests
             MaskCacheTests.cpp
             LayerTests.cpp
             RepaintTests.cpp
+            ShadowTests.cpp
             TextEditorTests.cpp
         TARGETS eacp-ui)

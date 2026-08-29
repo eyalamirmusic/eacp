@@ -1,4 +1,5 @@
 #include "GlyphAtlas.h"
+#include "Utf8.h"
 
 #include <algorithm>
 #include <cstring>
@@ -10,6 +11,9 @@ namespace
 // Padding between packed glyphs. One texel of transparent gutter is enough to
 // stop linear sampling pulling a neighbour's coverage into a glyph's edge.
 constexpr int glyphPadding = 1;
+
+// Shaped strings kept before the cache starts over.
+constexpr std::size_t maxShapedStrings = 16384;
 } // namespace
 
 void GlyphAtlas::Page::markDirty(int x, int y, int width, int height)
@@ -105,23 +109,43 @@ void GlyphAtlas::setScale(float newScale)
     dropEverything();
 }
 
-std::uint64_t GlyphAtlas::keyFor(char32_t codepoint, FontStyle style, int face)
+std::uint64_t GlyphAtlas::keyFor(GlyphKey key, const FontVariant& variant, int face)
 {
-    // Codepoints stop at 0x10FFFF, so the top bits of the low word are free for
-    // the style and the face gets a word of its own.
-    return static_cast<std::uint64_t>(codepoint)
-           | (static_cast<std::uint64_t>(style) << 24)
+    // A glyph id is sixteen bits in every font format, which leaves the low
+    // word room for the font it is in, the weight class and the slant; the
+    // face gets a word of its own.
+    const auto weight =
+        static_cast<std::uint64_t>(weightClass(variant.weight) / 100);
+    const auto font = static_cast<std::uint64_t>(std::clamp(key.font, 0, 255));
+
+    return static_cast<std::uint64_t>(key.glyph & 0xFFFF) | (font << 16)
+           | (weight << 24) | (static_cast<std::uint64_t>(variant.italic) << 28)
            | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(face)) << 32);
 }
 
-FontMetrics GlyphAtlas::metrics(FontStyle style, int face) const
+std::string GlyphAtlas::shapeKeyFor(std::string_view text,
+                                    const FontVariant& variant,
+                                    int face)
+{
+    auto key = std::string {};
+    key.reserve(text.size() + 4);
+    key += static_cast<char>(face);
+    key += static_cast<char>(face >> 8);
+    key += static_cast<char>(weightClass(variant.weight) / 100
+                             + (variant.italic ? 16 : 0));
+    key += text;
+
+    return key;
+}
+
+FontMetrics GlyphAtlas::metrics(const FontVariant& variant, int face) const
 {
     if (face < 0 || face >= faces.size())
         return {};
 
     const auto& source = faces[face].source;
 
-    auto pixels = source->metrics(style);
+    auto pixels = source->metrics(variant);
     const auto scale = source->scale() > 0.f ? source->scale() : 1.f;
 
     // The rasterizer works in device pixels; callers lay out in points.
@@ -131,27 +155,73 @@ FontMetrics GlyphAtlas::metrics(FontStyle style, int face) const
             pixels.advance / scale};
 }
 
-GlyphSlot GlyphAtlas::glyph(char32_t codepoint, FontStyle style, int face)
+GlyphSlot GlyphAtlas::glyph(GlyphKey glyphKey, const FontVariant& variant, int face)
 {
     if (face < 0 || face >= faces.size())
         return {};
 
-    const auto key = keyFor(codepoint, style, face);
+    const auto key = keyFor(glyphKey, variant, face);
     const auto found = slots.find(key);
 
     if (found != slots.end())
         return found->second;
 
-    const auto slot = insert(codepoint, style, face);
+    const auto slot = insert(glyphKey, variant, face);
     slots.emplace(key, slot);
 
     return slot;
 }
 
-GlyphSlot GlyphAtlas::insert(char32_t codepoint, FontStyle style, int face)
+GlyphSlot GlyphAtlas::glyph(char32_t codepoint, FontStyle style, int face)
+{
+    char encoded[4] = {};
+    const auto length = encodeUtf8(codepoint, encoded);
+    const auto run = shape({encoded, length}, variantOf(style), face);
+
+    if (run.glyphs.empty())
+        return {};
+
+    return run.glyphs[0].slot;
+}
+
+ShapedText
+    GlyphAtlas::shape(std::string_view text, const FontVariant& variant, int face)
+{
+    if (face < 0 || face >= faces.size() || text.empty())
+        return {};
+
+    const auto key = shapeKeyFor(text, variant, face);
+    const auto found = shaped.find(key);
+
+    if (found != shaped.end())
+        return found->second;
+
+    const auto& source = faces[face].source;
+    const auto scale = source->scale() > 0.f ? source->scale() : 1.f;
+    const auto run = source->shape(text, variant);
+
+    auto result = ShapedText {};
+    result.advance = run.advance / scale;
+
+    for (const auto& placed: run.glyphs)
+        result.glyphs.add({glyph(placed.key, variant, face),
+                           {placed.x / scale, -placed.y / scale},
+                           placed.cluster});
+
+    // A document's vocabulary is bounded; a cache that is not would hold every
+    // string ever measured, so it starts over rather than grow without end.
+    if (shaped.size() >= maxShapedStrings)
+        shaped.clear();
+
+    shaped.emplace(std::move(key), result);
+
+    return result;
+}
+
+GlyphSlot GlyphAtlas::insert(GlyphKey key, const FontVariant& variant, int face)
 {
     const auto& source = faces[face].source;
-    const auto bitmap = source->rasterize(codepoint, style);
+    const auto bitmap = source->rasterize(key, variant);
 
     if (!bitmap.valid)
         return {};
@@ -242,6 +312,7 @@ void GlyphAtlas::dropEverything()
     maskPacker.clear();
     colorPacker.clear();
     slots.clear();
+    shaped.clear();
 
     std::fill(maskPage.pixels.begin(), maskPage.pixels.end(), std::uint8_t {0});
     std::fill(colorPage.pixels.begin(), colorPage.pixels.end(), std::uint8_t {0});

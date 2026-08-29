@@ -3,6 +3,7 @@
 #include "../Common.h"
 
 #include <eacp/GPU/GPU.h>
+#include <eacp/GPUWidgets/Path/AffineTransform.h>
 
 #include <functional>
 #include <optional>
@@ -71,6 +72,24 @@ public:
     void setOpacity(float newOpacity);
     float getOpacity() const { return opacity; }
 
+    // Applied to the quad as it is composited, so a layer can be rotated,
+    // scaled or skewed where nothing else in the tier can: the clip is a
+    // scissor rect and a rotated one cannot be expressed, but a layer is a
+    // picture placed with four corners and they may go anywhere.
+    //
+    // In the layer's *own* space, with (0, 0) at its top-left rather than the
+    // component's -- so a caller turning a box about its middle names half its
+    // size and not where it happens to sit, and a layer that holds another
+    // composites the same wherever the outer one put it. Move it by setting
+    // the bounds; the matrix says what happens inside them.
+    //
+    // Not a re-render, exactly as the opacity is not: what the texture holds is
+    // the content as it was drawn, and this is read where it is composited. So
+    // an animated transform costs a frame and no pass of its own, which is what
+    // makes it worth doing here rather than in the drawing.
+    void setTransform(const GPUWidgets::AffineTransform& newTransform);
+    const GPUWidgets::AffineTransform& getTransform() const { return transform; }
+
     // What goes in it, drawn with the origin at the layer's own top-left -- so a
     // caller draws in the same coordinates it would have drawn in without a
     // layer, and moving the layer moves the content with it.
@@ -114,6 +133,7 @@ private:
 
     Rect bounds;
     float opacity = 1.f;
+    GPUWidgets::AffineTransform transform;
 
     std::optional<GPU::Texture> texture;
 

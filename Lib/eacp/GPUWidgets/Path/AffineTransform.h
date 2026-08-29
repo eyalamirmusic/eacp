@@ -2,6 +2,7 @@
 
 #include "../Common.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace eacp::GPUWidgets
@@ -65,6 +66,29 @@ struct AffineTransform
     Graphics::Point apply(const Graphics::Point& point) const
     {
         return {a * point.x + c * point.y + tx, b * point.x + d * point.y + ty};
+    }
+
+    // The upright rectangle round the four corners of `rect` once they have
+    // been through this. Not the transform of a rectangle -- a turned one is
+    // not a rectangle -- but what a caller placing a scissor, sizing a texture
+    // or asking what was touched actually needs.
+    Graphics::Rect apply(const Graphics::Rect& rect) const
+    {
+        auto topLeft = apply({rect.x, rect.y});
+        auto topRight = apply({rect.right(), rect.y});
+        auto bottomLeft = apply({rect.x, rect.bottom()});
+        auto bottomRight = apply({rect.right(), rect.bottom()});
+
+        auto left = std::min(std::min(topLeft.x, topRight.x),
+                             std::min(bottomLeft.x, bottomRight.x));
+        auto right = std::max(std::max(topLeft.x, topRight.x),
+                              std::max(bottomLeft.x, bottomRight.x));
+        auto top = std::min(std::min(topLeft.y, topRight.y),
+                            std::min(bottomLeft.y, bottomRight.y));
+        auto bottom = std::max(std::max(topLeft.y, topRight.y),
+                               std::max(bottomLeft.y, bottomRight.y));
+
+        return {left, top, right - left, bottom - top};
     }
 
     // How much this magnifies a length, as one number: the square root of the

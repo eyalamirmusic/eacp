@@ -475,6 +475,18 @@ void SVGComponent::buildElementContent(const SVGElement& element,
         return;
     }
 
+    // A nested <svg> met where it stands is a viewport of its own: placed by
+    // its x and y, its viewBox mapped onto its width and height - the box's
+    // own size when it gives none - the way a <use> of it maps the box onto
+    // the use site. A sprite sheet is a document of these, one icon each, and
+    // was drawn as a plain group: every icon at the scale it was authored in,
+    // over every other.
+    if (element.tag == "svg" && &element != &documentRoot)
+    {
+        buildNestedSvg(element, style, depth);
+        return;
+    }
+
     // Which is also what makes <defs> and <symbol> draw nothing where they
     // stand: neither is a container here, so neither is descended into except
     // through the <use> that names it.
@@ -610,6 +622,34 @@ void SVGComponent::buildSymbol(const SVGElement& symbol,
     }
 
     for (auto& child: symbol.children)
+        buildElement(child, style, depth);
+}
+
+void SVGComponent::buildNestedSvg(const SVGElement& element,
+                                  const Style& inherited,
+                                  int depth)
+{
+    auto style = inherited;
+
+    style.transform = GPUWidgets::AffineTransform::translation(element.numAttr("x"),
+                                                               element.numAttr("y"))
+                          .then(style.transform);
+
+    auto numbers = parseNumberList(element.attr("viewBox"));
+
+    if (numbers.size() >= 4)
+    {
+        auto box = Graphics::Rect {numbers[0], numbers[1], numbers[2], numbers[3]};
+        auto viewport = Graphics::Rect {0.f,
+                                        0.f,
+                                        element.numAttr("width", box.w),
+                                        element.numAttr("height", box.h)};
+        auto fit = parsePreserveAspectRatio(element.attr("preserveAspectRatio"));
+
+        style.transform = viewBoxTransform(box, viewport, fit).then(style.transform);
+    }
+
+    for (auto& child: element.children)
         buildElement(child, style, depth);
 }
 
