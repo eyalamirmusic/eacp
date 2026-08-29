@@ -10,6 +10,7 @@
 #include <dwrite.h>
 #include <wrl/client.h>
 
+#include <optional>
 #include <string>
 
 namespace eacp::Graphics
@@ -21,9 +22,19 @@ namespace eacp::Graphics
 // everywhere at once.
 Microsoft::WRL::ComPtr<IDWriteFontCollection> getFontCollection();
 
+// What registering a font made visible: the family the collection files the
+// face under, and the face's PostScript name.
+struct RegisteredFontNames
+{
+    std::wstring family;
+    std::wstring postScriptName;
+};
+
 // Registers in-memory OTF/TTF bytes with the shared collection (the bytes are
-// copied). The Windows half of eacp::Text::registerMemoryFont.
-bool registerMemoryFontData(const void* data, std::size_t size);
+// copied). The Windows half of eacp::Text::registerMemoryFont. Nothing when
+// the bytes are not a usable font.
+std::optional<RegisteredFontNames> registerMemoryFontData(const void* data,
+                                                          std::size_t size);
 
 // Resolves `name` the way CTFontCreateWithName does — as a family name, then a
 // PostScript or full face name — so the one name a caller ships works on both
