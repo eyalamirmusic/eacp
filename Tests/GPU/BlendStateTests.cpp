@@ -208,12 +208,13 @@ auto tUnweightedAdd = test("BlendState/oneOneSumsWithoutWeightingByAlpha") = []
     if (!out.ran)
         return;
 
-    check(isNear(out.r, 1.f));   // 0.5 + 0.5, at the clamp
-    check(isNear(out.g, 1.f));   // 0.25 + 1, clamped
-    check(isNear(out.b, 0.f));   // nothing in either
+    check(isNear(out.r, 1.f)); // 0.5 + 0.5, at the clamp
+    check(isNear(out.g, 1.f)); // 0.25 + 1, clamped
+    check(isNear(out.b, 0.f)); // nothing in either
 };
 
-auto tAdditivePresetWeights = test("BlendState/additivePresetWeightsBySourceAlpha") = []
+auto tAdditivePresetWeights =
+    test("BlendState/additivePresetWeightsBySourceAlpha") = []
 {
     auto descriptor = RenderPipelineDescriptor {};
     descriptor.blendMode = BlendMode::Additive;
@@ -256,7 +257,7 @@ auto tSourceColorSquares = test("BlendState/sourceColorIsNotDestinationColor") =
         return;
 
     check(isNear(out.r, 0.25f)); // 0.5 * 0.5, which happens to agree
-    check(isNear(out.g, 1.f));   // 1 * 1, where the two part company
+    check(isNear(out.g, 1.f)); // 1 * 1, where the two part company
     check(isNear(out.b, 0.f));
 };
 
@@ -298,7 +299,8 @@ auto tOneMinusDestinationAlpha =
 // The operation, not the factors. Reverse subtract takes the source away from
 // the destination, which is the direction the name promises and the one that is
 // easy to get backwards.
-auto tReverseSubtract = test("BlendState/reverseSubtractTakesSourceFromDestination") = []
+auto tReverseSubtract =
+    test("BlendState/reverseSubtractTakesSourceFromDestination") = []
 {
     auto out = render(withBlend(colorEquation(
         BlendFactor::One, BlendFactor::One, BlendOperation::ReverseSubtract)));
@@ -306,8 +308,8 @@ auto tReverseSubtract = test("BlendState/reverseSubtractTakesSourceFromDestinati
     if (!out.ran)
         return;
 
-    check(isNear(out.r, 0.f));   // 0.5 - 0.5
-    check(isNear(out.g, 0.f));   // 0.25 - 1, clamped at zero
+    check(isNear(out.r, 0.f)); // 0.5 - 0.5
+    check(isNear(out.g, 0.f)); // 0.25 - 1, clamped at zero
     check(isNear(out.b, 0.f));
 };
 
@@ -321,8 +323,8 @@ auto tSubtract = test("BlendState/subtractTakesDestinationFromSource") = []
     if (!out.ran)
         return;
 
-    check(isNear(out.r, 0.f));    // 0.5 - 0.5
-    check(isNear(out.g, 0.75f));  // 1 - 0.25, where the two directions differ
+    check(isNear(out.r, 0.f)); // 0.5 - 0.5
+    check(isNear(out.g, 0.75f)); // 1 - 0.25, where the two directions differ
     check(isNear(out.b, 0.f));
 };
 
@@ -362,7 +364,8 @@ auto tPresetsRoundTrip = test("BlendState/writingOutAPresetMatchesTheMode") = []
 };
 
 // `blend` wins over `blendMode` outright rather than being merged with it.
-auto tBlendOverridesTheMode = test("BlendState/theEquationOverridesTheNamedMode") = []
+auto tBlendOverridesTheMode =
+    test("BlendState/theEquationOverridesTheNamedMode") = []
 {
     auto descriptor = withBlend(unweightedAdd());
     descriptor.blendMode = BlendMode::None;
@@ -396,9 +399,9 @@ auto tWriteMaskKeepsChannels = test("BlendState/colorWriteMaskSpares_a_channel")
     if (!out.ran)
         return;
 
-    check(isNear(out.r, sourceR));                // written
-    check(isNear(out.g, destinationColor.g));     // spared
-    check(isNear(out.b, sourceB));                // written
+    check(isNear(out.r, sourceR)); // written
+    check(isNear(out.g, destinationColor.g)); // spared
+    check(isNear(out.b, sourceB)); // written
 };
 
 // The whole mask off: the draw runs, and the attachment is exactly what the
@@ -433,5 +436,5 @@ auto tMaskAndBlendTogether = test("BlendState/theMaskSurvivesA_blend") = []
         return;
 
     check(isNear(out.r, destinationColor.r)); // masked, so the sum never lands
-    check(isNear(out.g, 1.f));                // blended, 0.25 + 1 clamped
+    check(isNear(out.g, 1.f)); // blended, 0.25 + 1 clamped
 };
