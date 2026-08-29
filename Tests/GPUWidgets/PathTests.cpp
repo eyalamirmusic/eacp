@@ -313,3 +313,24 @@ auto tFillCompiles = test("GPUWidgets/fillShaderCompiles") = []
     auto pipeline = device.makeRenderPipeline(descriptor);
     check(pipeline.isValid());
 };
+
+// The rect a turned rect is inside, which is what a scissor, a texture size or
+// a damaged area is asked for -- a rotated rectangle not being one.
+auto tTransformedBounds = test("GPUWidgets/aTurnedRectIsBoundedByItsCorners") = []
+{
+    auto square = Graphics::Rect {10.f, 10.f, 20.f, 20.f};
+
+    auto moved = AffineTransform::translation(5.f, -5.f).apply(square);
+
+    check(moved.x == 15.f && moved.y == 5.f);
+    check(moved.w == 20.f && moved.h == 20.f, "a translation moves the bounds");
+
+    auto turned = AffineTransform::rotationAbout(3.14159265f / 4.f, {20.f, 20.f})
+                      .apply(square);
+
+    auto halfDiagonal = std::sqrt(200.f);
+
+    check(std::abs(turned.w - halfDiagonal * 2.f) < 0.01f);
+    check(std::abs(turned.x - (20.f - halfDiagonal)) < 0.01f,
+          "and a quarter of a turn grows them to the diagonal");
+};
