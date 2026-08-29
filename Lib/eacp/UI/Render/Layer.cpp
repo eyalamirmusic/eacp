@@ -60,6 +60,15 @@ void Layer::setOpacity(float newOpacity)
     owner.invalidateHost();
 }
 
+void Layer::setTransform(const GPUWidgets::AffineTransform& newTransform)
+{
+    // As with the opacity, and for the same reason: the content is drawn once
+    // and placed by four corners at composite time, so turning it is a frame
+    // and not a pass.
+    transform = newTransform;
+    owner.invalidateHost();
+}
+
 void Layer::setDirty()
 {
     dirty = true;

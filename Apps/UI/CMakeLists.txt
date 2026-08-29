@@ -18,6 +18,12 @@ add_subdirectory(Images)
 # being the same distance field a fill is read through a wider ramp.
 add_subdirectory(Shadows)
 
+# The one thing in the tier that is not upright: a layer composited through a
+# matrix -- turned, scaled, skewed, and one inside another -- with a card
+# spinning on a count of no layers rendered, a transform being read where the
+# quad is drawn rather than where the content was.
+add_subdirectory(Transforms)
+
 # An SVG document drawn twice in one window: native shape layers on the left,
 # the component tier's coverage masks on the right, for comparing the two on
 # screen and for reading what a real document costs the atlas.

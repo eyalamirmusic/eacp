@@ -36,6 +36,12 @@ public:
     // `destination` is where the layer's own bounds land in the space this
     // draws in. A clip mask multiplies the whole layer, so a clipped group is
     // cut once rather than shape by shape.
+    //
+    // `destination` is where the bounds land *before* the layer's transform:
+    // the matrix is read off the layer and applied inside them, so what is
+    // passed here is where the content would be if it were not turned. The
+    // clip is still a rect in this space, which is why a rotated layer is cut
+    // by an upright scissor rather than by a turned one.
     void draw(GPU::RenderPass& pass,
               const Layer& layer,
               const Rect& destination,

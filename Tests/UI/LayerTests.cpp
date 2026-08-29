@@ -77,3 +77,130 @@ auto tSameBoundsAreNotAChange = test("Layer/settingTheSameBoundsAsksForNothing")
 
     check(sameRect(layer.getBounds(), {0.f, 0.f, 50.f, 50.f}));
 };
+
+// And the transform is the other one that is not: what the texture holds is the
+// content as it was drawn, and the matrix places the quad it is composited as.
+auto tTransformStartsAsIdentity = test("Layer/aLayerStartsUnturned") = []
+{
+    auto component = Component {};
+    auto layer = Layer {component};
+
+    check(layer.getTransform().isIdentity());
+
+    layer.setTransform(GPUWidgets::AffineTransform::scaling(2.f, 2.f));
+
+    check(layer.getTransform().a == 2.f);
+    check(layer.getBounds().isEmpty(), "which the bounds know nothing about");
+};
+
+namespace
+{
+// A layer of one flat colour, so where it lands is the only thing a readback is
+// reporting.
+struct Square final : Component
+{
+    Square()
+        : layer(*this)
+    {
+        layer.onPaint = [this](UI::Graphics& g)
+        {
+            g.setColour(Color {1.f, 0.f, 0.f, 1.f});
+            g.fillRect(layer.getBounds());
+        };
+    }
+
+    void paint(UI::Graphics& g) override { g.drawLayer(layer); }
+
+    Layer layer;
+};
+
+eacp::Graphics::Image renderSquare(const Rect& bounds,
+                                   const GPUWidgets::AffineTransform& transform)
+{
+    auto content = Square {};
+    content.layer.setBounds(bounds);
+    content.layer.setTransform(transform);
+
+    auto host = ComponentHost {};
+
+    host.setBackgroundColour({0.f, 0.f, 0.f, 0.f});
+    host.setBounds({0.f, 0.f, 200.f, 200.f});
+    host.resized();
+    host.setRootComponent(content);
+
+    return host.renderToImage(1.f);
+}
+
+bool isRed(const eacp::Graphics::Image& image, int x, int y)
+{
+    auto pixel = image.at(x, y);
+    return pixel.a > 0.9f && pixel.r > 0.9f;
+}
+
+bool isEmpty(const eacp::Graphics::Image& image, int x, int y)
+{
+    return image.at(x, y).a < 0.1f;
+}
+} // namespace
+
+auto tUnturnedLayerLandsInItsBounds =
+    test("Layer/anUnturnedLayerFillsTheBoundsItWasGiven") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto image = renderSquare({50.f, 50.f, 50.f, 50.f}, {});
+
+    check(isRed(image, 75, 75), "inside");
+    check(isEmpty(image, 120, 75), "and nothing past its right edge");
+};
+
+// The matrix is in the layer's own space, so this moves the content 60 to the
+// right of wherever the bounds put it -- and a caller that wanted it moved
+// would have set the bounds.
+auto tTranslatedLayerMoves = test("Layer/aTranslatedLayerDrawsWhereItWasSent") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto image = renderSquare({50.f, 50.f, 50.f, 50.f},
+                              GPUWidgets::AffineTransform::translation(60.f, 0.f));
+
+    check(isRed(image, 135, 75), "60 to the right");
+    check(isEmpty(image, 75, 75), "and gone from where it was");
+};
+
+// About the layer's own top-left rather than the component's, which is the
+// difference that lets a layer inside another one composite the same wherever
+// the outer one put it.
+auto tScaledLayerGrowsFromItsOwnOrigin =
+    test("Layer/aScaledLayerGrowsFromItsOwnCorner") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto image = renderSquare({50.f, 50.f, 50.f, 50.f},
+                              GPUWidgets::AffineTransform::scaling(2.f, 2.f));
+
+    check(isRed(image, 55, 55), "still anchored where the bounds are");
+    check(isRed(image, 140, 140), "and twice as far across");
+    check(isEmpty(image, 160, 160), "and no further");
+};
+
+auto tRotatedLayerTurns = test("Layer/aRotatedLayerIsCutByAnUprightScissor") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    // A quarter turn about the middle of a 60-point square at (70, 70) leaves
+    // it where it was, being square -- so what this reports is that a rotation
+    // composites at all, and where a corner of it went.
+    auto centred = GPUWidgets::AffineTransform::rotationAbout(
+        3.14159265f / 4.f, {30.f, 30.f});
+
+    auto image = renderSquare({70.f, 70.f, 60.f, 60.f}, centred);
+
+    check(isRed(image, 100, 100), "the middle stays put");
+    check(isRed(image, 100, 65), "and a corner comes round to the top");
+    check(isEmpty(image, 75, 75), "leaving the old corner behind");
+};
