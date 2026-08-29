@@ -82,7 +82,7 @@ constexpr unsigned char testFont[] = {
 constexpr auto testFamily = "EacpTestSans";
 constexpr auto testPostScriptName = "EacpTestSans-Regular";
 
-bool near(float a, float b, float tolerance = 1.f)
+bool approx(float a, float b, float tolerance = 1.f)
 {
     return a > b - tolerance && a < b + tolerance;
 }
@@ -142,12 +142,12 @@ auto tTheFaceShapes = test("MemoryFont/aRegisteredFaceShapesWithItsOwnAdvances")
     // 'A' advances 600 of 1000 units, so 60 pixels at a 100-pixel em; the
     // space 300.
     check(run.glyphs.size() == 1);
-    check(near(run.advance, 60.f));
-    check(near(rasterizer.shape(" ", {}).advance, 30.f));
+    check(approx(run.advance, 60.f));
+    check(approx(rasterizer.shape(" ", {}).advance, 30.f));
 
     const auto metrics = rasterizer.metrics(FontVariant {});
-    check(near(metrics.ascent, 80.f));
-    check(near(metrics.descent, 20.f));
+    check(approx(metrics.ascent, 80.f));
+    check(approx(metrics.descent, 20.f));
 };
 
 auto tRegisteringAgainIsNotAnError =
