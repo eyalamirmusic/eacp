@@ -155,6 +155,45 @@ auto tUnturnedLayerLandsInItsBounds =
     check(isEmpty(image, 120, 75), "and nothing past its right edge");
 };
 
+// A tree recorded by hand before its first frame - paintDirtyComponents,
+// which is what a headless snapshot and a test do - names a layer that has
+// no texture yet. The recording has to name it all the same: the frame
+// renders the layer and then plays the recording, and nothing would record
+// the component again for the layer's sake.
+auto tLayerRecordedBeforeItIsRendered =
+    test("Layer/aLayerRecordedBeforeItsFirstFrameIsStillDrawn") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto content = Square {};
+    content.layer.setBounds({50.f, 50.f, 50.f, 50.f});
+
+    auto host = ComponentHost {};
+
+    host.setBackgroundColour({0.f, 0.f, 0.f, 0.f});
+    host.setBounds({0.f, 0.f, 200.f, 200.f});
+    host.resized();
+    host.setRootComponent(content);
+
+    // A first frame at the scale the rest is judged at, so a later one has
+    // no reason of its own to record the tree again.
+    check(isRed(host.renderToImage(1.f), 75, 75));
+
+    // The layer moved, which empties it, and the tree recorded by hand
+    // before the frame that fills it.
+    content.layer.setBounds({100.f, 50.f, 50.f, 50.f});
+
+    check(host.paintDirtyComponents() > 0, "recorded before the frame");
+    check(content.layer.isEmpty(), "with the layer not yet rendered");
+    check(!content.needsRepaint(), "and nothing left to record");
+
+    auto image = host.renderToImage(1.f);
+
+    check(isRed(image, 125, 75), "the layer is drawn all the same");
+    check(isEmpty(image, 75, 75), "where it now is");
+};
+
 // The matrix is in the layer's own space, so this moves the content 60 to the
 // right of wherever the bounds put it -- and a caller that wanted it moved
 // would have set the bounds.
