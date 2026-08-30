@@ -230,11 +230,13 @@ void Graphics::fillPath(const PathShape& shape)
     list.addShape(masked);
 }
 
+// Recorded whether or not the layer has been rendered yet: a recording names
+// the layer, and the player asks it for a texture when the frame is drawn.
+// Skipping an unrendered one here would leave it out of a recording made
+// before its first frame - a tree recorded by hand through
+// paintDirtyComponents, say - with nothing to say it had arrived since.
 void Graphics::drawLayer(const Layer& layer)
 {
-    if (layer.isEmpty())
-        return;
-
     recordClip();
 
     list.addLayer(layer, toLocal(layer.getBounds()));
