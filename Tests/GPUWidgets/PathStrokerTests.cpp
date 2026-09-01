@@ -30,8 +30,6 @@ namespace
 {
 using Graphics::Point;
 
-constexpr auto pi = 3.14159265358979323846f;
-
 // How far from the ideal edge a pixel has to be before its coverage is called.
 // One pixel each way covers the antialiased band; the checks are about which
 // region got filled, not about how its edge is shaded.
@@ -359,12 +357,12 @@ auto tMiterLimit = test("PathStroker/theMiterLimitCapsTheCorner") = []
 
     // The hairpin turns at x = 140; a generous limit lets the corner run well
     // past it and a strict one bevels it back to the offset points.
-    check(generous.x + generous.w > 175.f);
-    check(strict.x + strict.w < 150.f);
+    check(generous.right() > 175.f);
+    check(strict.right() < 150.f);
 
     // And the default has to be one of the safe ones.
     auto byDefault = strokeToFill(hairpin(), StrokeStyle {width}).getBounds();
-    check(byDefault.x + byDefault.w < 160.f);
+    check(byDefault.right() < 160.f);
 };
 
 // Flattening a curve makes hundreds of corners that turn by almost nothing.
@@ -459,8 +457,7 @@ float lengthOf(const Path& path)
 
     for (const auto& sub: path.getSubPaths())
         for (auto i = 1; i < sub.points.size(); ++i)
-            total += std::hypot(sub.points[i].x - sub.points[i - 1].x,
-                                sub.points[i].y - sub.points[i - 1].y);
+            total += sub.points[i].distanceTo(sub.points[i - 1]);
 
     return total;
 }

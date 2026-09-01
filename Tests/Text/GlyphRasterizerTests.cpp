@@ -1,7 +1,8 @@
 #include "Common.h"
 
+#include <eacp/Core/Utils/Strings.h>
+
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 
 // The real platform rasterizer, against a font the OS is guaranteed to have.
@@ -445,18 +446,8 @@ auto tResolvedFamily =
     if (!exact.isValid())
         return;
 
-    auto sameIgnoringCase = [](std::string a, std::string b)
-    {
-        for (auto& c: a)
-            c = (char) std::tolower((unsigned char) c);
-
-        for (auto& c: b)
-            c = (char) std::tolower((unsigned char) c);
-
-        return a == b;
-    };
-
-    check(sameIgnoringCase(exact.resolvedFamily(), defaultMonospaceFamily()));
+    check(Strings::equalsCaseInsensitive(exact.resolvedFamily(),
+                                         defaultMonospaceFamily()));
 
     auto request = monospaceRequest();
     request.family = "No Such Family EACP";
@@ -465,7 +456,8 @@ auto tResolvedFamily =
 
     check(substituted.isValid(), "a substitute is still a face to draw with");
     check(!substituted.resolvedFamily().empty());
-    check(!sameIgnoringCase(substituted.resolvedFamily(), request.family),
+    check(!Strings::equalsCaseInsensitive(substituted.resolvedFamily(),
+                                          request.family),
           "and it says so");
 };
 

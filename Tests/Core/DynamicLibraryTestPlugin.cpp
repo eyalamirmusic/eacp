@@ -4,6 +4,7 @@
 // image reopened does not re-initialize.
 #include <eacp/Core/Plugins/PluginExport.h>
 #include <eacp/Core/Utils/Environment.h>
+#include <eacp/Core/Utils/Strings.h>
 
 #include <string>
 
@@ -11,8 +12,7 @@ namespace
 {
 int currentLoadCount()
 {
-    auto value = eacp::getEnvValue("EACP_TEST_PLUGIN_LOADS");
-    return value.empty() ? 0 : std::stoi(value);
+    return eacp::Strings::parseIntOr(eacp::getEnvValue("EACP_TEST_PLUGIN_LOADS"));
 }
 
 int bumpLoadCount()

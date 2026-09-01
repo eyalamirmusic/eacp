@@ -223,20 +223,6 @@ void applyDashPattern(const std::string& value, GPUWidgets::DashPattern& dash)
     dash.lengths = Strings::toLower(value) == "none" ? Vector<float> {}
                                                      : parseNumberList(value);
 }
-
-void collectIds(const SVGElement& element,
-                std::unordered_map<std::string, const SVGElement*>& byId)
-{
-    auto id = element.attr("id");
-
-    // First wins where a document repeats an id, which is what a browser does
-    // with the same mistake.
-    if (!id.empty())
-        byId.emplace(id, &element);
-
-    for (auto& child: element.children)
-        collectIds(child, byId);
-}
 } // namespace
 
 void SVGComponent::applyPresentationAttributes(Style& style,

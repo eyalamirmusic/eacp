@@ -1,7 +1,6 @@
 #include "Common.h"
 
-#include <algorithm>
-#include <cctype>
+#include <eacp/Core/Utils/Strings.h>
 
 // Shaping through the real platform: CTLine on Apple, IDWriteTextLayout on
 // Windows. Like the rasterizer tests these cannot assert exact numbers - that
@@ -54,22 +53,11 @@ FontRequest requestFor(const char* family, float pointSize = 32.f)
     return request;
 }
 
-bool sameIgnoringCase(std::string a, std::string b)
-{
-    for (auto& c: a)
-        c = (char) std::tolower((unsigned char) c);
-
-    for (auto& c: b)
-        c = (char) std::tolower((unsigned char) c);
-
-    return a == b;
-}
-
 // The platform has the family itself, not a substitute for it.
 bool has(const GlyphRasterizer& rasterizer, const char* family)
 {
     return rasterizer.isValid()
-           && sameIgnoringCase(rasterizer.resolvedFamily(), family);
+           && Strings::equalsCaseInsensitive(rasterizer.resolvedFamily(), family);
 }
 
 long long ink(const GlyphBitmap& bitmap)

@@ -30,8 +30,6 @@ namespace
 using Graphics::Point;
 using Graphics::Rect;
 
-constexpr auto pi = 3.14159265358979323846f;
-
 // The mask is an 8-bit texture and the two sides sum a pixel's segments in a
 // different order, so exact equality is not on offer. A step and a half of an
 // 8-bit channel is: anything structurally wrong with the binning is a whole edge
@@ -180,7 +178,7 @@ Path knobIndicator(float size, float value)
 // saturation here, which is what makes this the shape worth checking the rule on.
 Path selfIntersectingStar(const Rect& bounds)
 {
-    auto centre = Point {bounds.x + bounds.w * 0.5f, bounds.y + bounds.h * 0.5f};
+    auto centre = bounds.center();
     auto radius = std::min(bounds.w, bounds.h) * 0.5f - 1.f;
 
     auto path = Path {};

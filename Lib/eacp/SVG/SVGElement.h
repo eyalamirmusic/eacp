@@ -33,4 +33,17 @@ struct SVGElement
 // to be looked up in: a <use>, a gradient's href chain, a clip-path.
 using ElementsById = std::unordered_map<std::string, const SVGElement*>;
 
+// First wins where a document repeats an id, which is what a browser does with
+// the same mistake.
+inline void collectIds(const SVGElement& element, ElementsById& byId)
+{
+    auto id = element.attr("id");
+
+    if (!id.empty())
+        byId.emplace(id, &element);
+
+    for (const auto& child: element.children)
+        collectIds(child, byId);
+}
+
 } // namespace eacp::SVG

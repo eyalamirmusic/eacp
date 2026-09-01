@@ -39,8 +39,6 @@ namespace
 using Graphics::Point;
 using Graphics::Rect;
 
-constexpr auto pi = 3.14159265358979323846f;
-
 // The two sides sum a pixel's segments in the same order here - it is the same
 // kernel - so this is looser than it needs to be for anything but the 8-bit
 // texture the mask lives in.
@@ -50,7 +48,7 @@ constexpr auto tolerance = 1.5f / 255.f;
 
 Path star(Rect bounds, int points)
 {
-    auto centre = Point {bounds.x + bounds.w * 0.5f, bounds.y + bounds.h * 0.5f};
+    auto centre = bounds.center();
     auto radius = std::min(bounds.w, bounds.h) * 0.5f;
 
     auto path = Path {};

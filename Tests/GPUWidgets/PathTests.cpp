@@ -50,7 +50,6 @@ float polygonArea(const Vector<Point>& polygon)
 // Paths demo draws.
 Vector<Point> starPoints(float centerX, float centerY, float outer, float inner)
 {
-    constexpr auto pi = 3.14159265358979323846f;
     auto points = Vector<Point> {};
 
     for (auto i = 0; i < 10; ++i)
@@ -325,8 +324,8 @@ auto tTransformedBounds = test("GPUWidgets/aTurnedRectIsBoundedByItsCorners") = 
     check(moved.x == 15.f && moved.y == 5.f);
     check(moved.w == 20.f && moved.h == 20.f, "a translation moves the bounds");
 
-    auto turned = AffineTransform::rotationAbout(3.14159265f / 4.f, {20.f, 20.f})
-                      .apply(square);
+    auto turned =
+        AffineTransform::rotationAbout(pi / 4.f, {20.f, 20.f}).apply(square);
 
     auto halfDiagonal = std::sqrt(200.f);
 
