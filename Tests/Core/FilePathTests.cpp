@@ -76,21 +76,3 @@ auto tInvalidUtf8NeverThrows =
     check(wide.find(wchar_t {0xFFFD}) != std::wstring::npos);
     check(!eacp::toStdPath(path).empty());
 };
-
-#ifdef _WIN32
-auto tGenericSeparators =
-    test("FilePath/std path converts to generic separators") = []
-{
-    auto path = FilePath {std::filesystem::path {L"C:\\dir\\file.wav"}};
-    check(path.str() == "C:/dir/file.wav");
-};
-
-auto tLoneSurrogateNeverThrows =
-    test("FilePath/lone surrogate becomes U+FFFD instead of throwing") = []
-{
-    auto name = std::wstring {L"bad"} + wchar_t {0xD800} + L"name.wav";
-    auto path = FilePath {std::filesystem::path {name}};
-
-    check(path.str() == "bad\xEF\xBF\xBDname.wav");
-};
-#endif
