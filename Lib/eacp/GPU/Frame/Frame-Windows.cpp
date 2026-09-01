@@ -254,6 +254,30 @@ Frame::~Frame()
         impl->drawable->swapChain->Present(1, 0);
 }
 
+// The submit half of the destructor, without the present and without the
+// resolve: the recording goes, the frame stays and takes a fresh one. Resource
+// states live on the resources rather than on the list, so nothing the passes
+// so far established is lost, and the next beginPass binds the root state onto
+// the new list the way it binds it onto every list.
+void Frame::flush()
+{
+    if (impl->commands == nullptr)
+        return;
+
+    auto& context = impl->context();
+
+    // Withdrawn before the submit, exactly as ~Frame withdraws it: an upload
+    // must never be handed a list that is about to be closed.
+    context.setOpenRecording(nullptr);
+    context.submit(impl->commands);
+
+    // The timer is not told, and needs no telling: its opening timestamp is
+    // already on the queue and its closing one goes onto whichever list is open
+    // when the frame ends. Both are queries on one heap, executed in order, so
+    // unlike Metal's the total still means the whole frame.
+    impl->open(context.acquire());
+}
+
 RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
 {
     if (impl->commands == nullptr || impl->drawable == nullptr

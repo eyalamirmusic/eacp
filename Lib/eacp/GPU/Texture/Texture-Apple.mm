@@ -10,6 +10,7 @@
 #include <eacp/Core/ObjC/ObjC.h>
 
 #include <cmath>
+#include <cstring>
 
 namespace eacp::GPU
 {
@@ -54,15 +55,18 @@ bool toMetalFormat(CVPixelBufferRef pixelBuffer, MTLPixelFormat& out)
 
 struct Texture::Native
 {
-    Native(Device& device, const TextureDescriptor& descriptor, const void* pixels)
-        : width(descriptor.width)
+    Native(Device& deviceToUse,
+           const TextureDescriptor& descriptor,
+           const void* pixels)
+        : device(&deviceToUse)
+        , width(descriptor.width)
         , height(descriptor.height)
         , pixelStride(bytesPerPixel(descriptor.format))
         , format(descriptor.format)
         , renderTarget(descriptor.renderTarget)
         , computeWrite(descriptor.computeWrite)
     {
-        auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
+        auto metalDevice = (__bridge id<MTLDevice>) deviceToUse.nativeDevice();
 
         if (metalDevice == nil || width <= 0 || height <= 0)
             return;
@@ -143,10 +147,11 @@ struct Texture::Native
     // Zero-copy wrap of a CVPixelBuffer: the texture cache maps the buffer's
     // IOSurface straight into an MTLTexture. cvTexture owns that mapping and
     // keeps it alive for the texture's lifetime.
-    Native(Device& device, void* pixelBufferHandle)
+    Native(Device& deviceToUse, void* pixelBufferHandle)
+        : device(&deviceToUse)
     {
-        auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
-        auto cache = (CVMetalTextureCacheRef) device.nativeTextureCache();
+        auto metalDevice = (__bridge id<MTLDevice>) deviceToUse.nativeDevice();
+        auto cache = (CVMetalTextureCacheRef) deviceToUse.nativeTextureCache();
         auto pixelBuffer = (CVPixelBufferRef) pixelBufferHandle;
 
         if (metalDevice == nil || cache == nullptr || pixelBuffer == nullptr)
@@ -255,6 +260,92 @@ struct Texture::Native
                          bytesPerRow:(NSUInteger) stride];
     }
 
+    // Both read() overloads land here, as the update() pair land in
+    // updateRegion.
+    //
+    // Through a shared buffer rather than getBytes, because a render target is
+    // in private storage and getBytes on one raises: the blit is the only way
+    // off the device that works for every texture this class creates, and it is
+    // what GPUView's own snapshot has always done.
+    void readRegion(int x,
+                    int y,
+                    int regionWidth,
+                    int regionHeight,
+                    void* dst,
+                    std::size_t bytesPerRow) const
+    {
+        auto source = (id<MTLTexture>) texture.get();
+
+        if (source == nil || dst == nullptr || device == nullptr)
+            return;
+
+        if (regionWidth <= 0 || regionHeight <= 0)
+            return;
+
+        // Dropped rather than clamped, exactly as the upload side drops it.
+        if (x < 0 || y < 0 || x + regionWidth > width || y + regionHeight > height)
+            return;
+
+        auto metalDevice = (__bridge id<MTLDevice>) device->nativeDevice();
+        auto queue = (__bridge id<MTLCommandQueue>) device->nativeQueue();
+
+        if (metalDevice == nil || queue == nil)
+            return;
+
+        @autoreleasepool
+        {
+            const auto rowBytes = (NSUInteger) (regionWidth * pixelStride);
+            const auto imageBytes = rowBytes * (NSUInteger) regionHeight;
+
+            auto staging =
+                [metalDevice newBufferWithLength:imageBytes
+                                         options:MTLResourceStorageModeShared];
+
+            if (staging == nil)
+                return;
+
+            auto commandBuffer = [queue commandBuffer];
+            auto blit = [commandBuffer blitCommandEncoder];
+
+            [blit copyFromTexture:source
+                             sourceSlice:0
+                             sourceLevel:0
+                            sourceOrigin:MTLOriginMake((NSUInteger) x,
+                                                       (NSUInteger) y,
+                                                       0)
+                              sourceSize:MTLSizeMake((NSUInteger) regionWidth,
+                                                     (NSUInteger) regionHeight,
+                                                     1)
+                                toBuffer:staging
+                       destinationOffset:0
+                  destinationBytesPerRow:rowBytes
+                destinationBytesPerImage:imageBytes];
+            [blit endEncoding];
+
+            // The queue is FIFO, so waiting for this copy waits for everything
+            // committed before it - which is what makes the rule in the header
+            // "committed" rather than "finished".
+            [commandBuffer commit];
+            [commandBuffer waitUntilCompleted];
+
+            const auto stride =
+                bytesPerRow != 0 ? bytesPerRow : (std::size_t) rowBytes;
+
+            auto* out = (unsigned char*) dst;
+            auto* in = (const unsigned char*) [staging contents];
+
+            for (auto row = 0; row < regionHeight; ++row)
+                std::memcpy(out + (std::size_t) row * stride,
+                            in + (std::size_t) row * rowBytes,
+                            (std::size_t) rowBytes);
+        }
+    }
+
+    // The Device these belong to, for the queue a read-back's blit is committed
+    // on. Held rather than passed in because a Texture is read through its own
+    // handle, with no Device in sight.
+    Device* device = nullptr;
+
     int width = 0;
     int height = 0;
 
@@ -302,6 +393,25 @@ void Texture::update(const Graphics::Rect& region,
                        (int) std::lround(region.h),
                        pixels,
                        bytesPerRow);
+}
+
+void Texture::read(void* dst, std::size_t bytesPerRow) const
+{
+    impl->readRegion(0, 0, impl->width, impl->height, dst, bytesPerRow);
+}
+
+void Texture::read(const Graphics::Rect& region,
+                   void* dst,
+                   std::size_t bytesPerRow) const
+{
+    // Rounded rather than truncated, as update()'s region is: a rect built from
+    // accumulated float arithmetic lands on the texel it is nearest to.
+    impl->readRegion((int) std::lround(region.x),
+                     (int) std::lround(region.y),
+                     (int) std::lround(region.w),
+                     (int) std::lround(region.h),
+                     dst,
+                     bytesPerRow);
 }
 
 int Texture::width() const

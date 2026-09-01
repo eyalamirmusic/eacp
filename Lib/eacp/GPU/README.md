@@ -710,6 +710,36 @@ fragment left at alpha 0.25 comes back with its colour divided by four, and two
 values that differed before that division can arrive equal after it. Write an
 opaque alpha, or compare two renders rather than either against a number.
 
+`Texture::read` is the other half, and the one an app that composes its frame
+into a render target wants: the texture's own pixels, in its own format, with no
+compositor in between and no second render. It is `update()` backwards — rows
+tightly packed at the format's `bytesPerPixel` unless a stride says otherwise,
+row 0 at the top, a region overload beside the whole-texture one.
+
+**It reads what has been committed, not what has been recorded**, which is the
+rule `Buffer::read` already carries and the one that catches people. A frame's
+passes reach the GPU when the frame ends, so this:
+
+```cpp
+void render(Frame& frame) override
+{
+    { auto pass = frame.beginPass(target); pass.draw(scene); }
+
+    frame.flush();           // <- without this, the read is a frame behind
+    target.read(pixels.data());
+}
+```
+
+`Frame::flush()` sends everything recorded so far and carries on recording, so
+the read that follows it sees the passes above it. No pass may be open when it
+is called — a command buffer takes one encoder at a time — and it costs Metal's
+*frame* timing, which is read off a command buffer and after a flush there are
+two of those. Nothing else needs it: two passes on one frame already see each
+other's results without it.
+
+Both calls block until the GPU has finished. That is what a read-back is; it is
+not something to put in a frame loop.
+
 ## Windows
 
 The D3D12 backend is less exercised than the Metal one. Notes worth having:
