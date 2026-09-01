@@ -397,6 +397,112 @@ struct Texture::Native
         context.submit(commands);
     }
 
+    // Both read() overloads land here, as the update() pair land in
+    // updateRegion. The download side of copyPixels, and the same three pieces:
+    // the footprint of the *region*, a pooled staging resource in the read-back
+    // heap, and the row pitch it reports, which is 256-byte aligned and almost
+    // never the row the caller wants.
+    //
+    // The submission is waited on rather than left running - the pixels are
+    // wanted now, which is what a read-back is - and the resource is put back
+    // where the rest of this file expects to find it.
+    void readRegion(int x,
+                    int y,
+                    int regionWidth,
+                    int regionHeight,
+                    void* dst,
+                    std::size_t bytesPerRow) const
+    {
+        if (data.resource == nullptr || dst == nullptr || !context.isValid())
+            return;
+
+        if (regionWidth <= 0 || regionHeight <= 0)
+            return;
+
+        // Dropped rather than clamped, exactly as the upload side drops it.
+        if (x < 0 || y < 0 || x + regionWidth > width || y + regionHeight > height)
+            return;
+
+        auto regionDesc = data.resource->GetDesc();
+        regionDesc.Width = static_cast<UINT64>(regionWidth);
+        regionDesc.Height = static_cast<UINT>(regionHeight);
+        regionDesc.MipLevels = 1;
+
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+        UINT rows = 0;
+        UINT64 rowBytes = 0;
+        UINT64 totalBytes = 0;
+        context.getDevice()->GetCopyableFootprints(
+            &regionDesc, 0, 1, 0, &footprint, &rows, &rowBytes, &totalBytes);
+
+        auto* commands = context.acquire();
+
+        if (commands == nullptr)
+            return;
+
+        auto* staging = context.acquireReadbackBuffer(*commands, totalBytes);
+
+        if (staging == nullptr)
+        {
+            context.discard(commands);
+            return;
+        }
+
+        transitionTextureForUse(
+            commands->list.get(), data, D3D12_RESOURCE_STATE_COPY_SOURCE);
+
+        D3D12_TEXTURE_COPY_LOCATION destination = {};
+        destination.pResource = staging;
+        destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        destination.PlacedFootprint = footprint;
+
+        D3D12_TEXTURE_COPY_LOCATION source = {};
+        source.pResource = data.resource.get();
+        source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        source.SubresourceIndex = 0;
+
+        D3D12_BOX box = {};
+        box.left = static_cast<UINT>(x);
+        box.top = static_cast<UINT>(y);
+        box.front = 0;
+        box.right = static_cast<UINT>(x + regionWidth);
+        box.bottom = static_cast<UINT>(y + regionHeight);
+        box.back = 1;
+
+        commands->list->CopyTextureRegion(&destination, 0, 0, 0, &source, &box);
+
+        // Back to where a texture rests between frames, so the next bind finds
+        // a sampleable resource whatever this one was doing before the read.
+        transitionTextureForUse(
+            commands->list.get(), data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+        // The copy went onto the same queue as the writes, so waiting for this
+        // submission's fence also waits for them - which is the rule the header
+        // states, and the same one Buffer::read leans on.
+        context.waitFor(context.submit(commands));
+
+        void* mapped = nullptr;
+        const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(totalBytes)};
+
+        if (FAILED(staging->Map(0, &readRange, &mapped)) || mapped == nullptr)
+            return;
+
+        const auto stride =
+            bytesPerRow != 0 ? bytesPerRow : static_cast<std::size_t>(rowBytes);
+
+        auto* out = static_cast<unsigned char*>(dst);
+        const auto* in = static_cast<const unsigned char*>(mapped);
+
+        for (auto row = UINT {0}; row < rows; ++row)
+            std::memcpy(
+                out + static_cast<std::size_t>(row) * stride,
+                in + static_cast<std::size_t>(row) * footprint.Footprint.RowPitch,
+                static_cast<std::size_t>(rowBytes));
+
+        const D3D12_RANGE noWrite = {0, 0};
+        staging->Unmap(0, &noWrite);
+    }
+
     // A render target's own one-descriptor RTV heap. RTV descriptors are not
     // shader-visible, so there is no shared heap to take one from the way the
     // SRV does - and a heap per target is what keeps a texture's descriptor
@@ -555,7 +661,11 @@ struct Texture::Native
     int levels = 1;
 
     bool computeWrite = false;
-    D3D12TextureData data;
+
+    // Mutable because the state tracking advances inside the const read(): the
+    // copy to the read-back buffer is a use like any other, and Buffer's
+    // Native carries the same note for the same reason.
+    mutable D3D12TextureData data;
 };
 
 Texture::Texture(Device& device,
@@ -587,6 +697,24 @@ void Texture::update(const Graphics::Rect& region,
                        static_cast<int>(std::lround(region.h)),
                        pixels,
                        bytesPerRow);
+}
+
+void Texture::read(void* dst, std::size_t bytesPerRow) const
+{
+    impl->readRegion(0, 0, impl->width, impl->height, dst, bytesPerRow);
+}
+
+void Texture::read(const Graphics::Rect& region,
+                   void* dst,
+                   std::size_t bytesPerRow) const
+{
+    // Rounded rather than truncated, as update()'s region is.
+    impl->readRegion(static_cast<int>(std::lround(region.x)),
+                     static_cast<int>(std::lround(region.y)),
+                     static_cast<int>(std::lround(region.w)),
+                     static_cast<int>(std::lround(region.h)),
+                     dst,
+                     bytesPerRow);
 }
 
 int Texture::width() const

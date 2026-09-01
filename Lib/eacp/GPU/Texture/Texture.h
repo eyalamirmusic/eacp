@@ -282,6 +282,34 @@ public:
                 const void* pixels,
                 std::size_t bytesPerRow = 0);
 
+    // Copies the texture's pixels back to the CPU — update()'s mirror, and the
+    // only way what the GPU produced becomes bytes a program can look at: a
+    // screenshot, a kernel's output image, a test asserting on what a pass
+    // actually drew.
+    //
+    // dst receives rows tightly packed at the format's bytesPerPixel with row 0
+    // at the top, unless bytesPerRow gives a larger stride — the same layout
+    // update() reads, so a texture read out and uploaded back is the texture it
+    // was. It must have room for the texture's (or the region's) height of them.
+    //
+    // **Valid once the work that drew the texture has been committed**, which is
+    // the rule Buffer::read carries and the same trap. A pass recorded on a
+    // Frame has not been: the frame's commands reach the GPU when the frame
+    // ends, so a read inside the frame that drew it reads what was there
+    // before. Frame::flush() is what makes it true, and is there for this.
+    //
+    // The copy goes through a staging buffer and blocks until the GPU has
+    // finished it, so this is a stall by construction — a round trip to the
+    // device per call. That is what a screenshot costs; it is not something to
+    // put in a frame loop.
+    //
+    // A no-op on an invalid texture, a null dst, or a region that is not wholly
+    // inside the texture — not clamped, for the reason update() gives.
+    void read(void* dst, std::size_t bytesPerRow = 0) const;
+    void read(const Graphics::Rect& region,
+              void* dst,
+              std::size_t bytesPerRow = 0) const;
+
     // Opaque native handles for cross-translation-unit use by the render pass.
     // There is no sampler handle: the render pass gets that from the sampling
     // the shader declared, not from the texture.

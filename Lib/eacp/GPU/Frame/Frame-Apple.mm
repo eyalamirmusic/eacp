@@ -59,7 +59,7 @@ struct Frame::Native
         if (drawableHandle != nullptr)
             drawable.reset((__bridge NSObject<CAMetalDrawable>*) drawableHandle);
 
-        init(deviceToUse, msaaTextureHandle, depthTextureHandle);
+        init(msaaTextureHandle, depthTextureHandle);
     }
 
     Native(Device& deviceToUse, const OffscreenTarget& target)
@@ -68,10 +68,10 @@ struct Frame::Native
         if (target.colorTexture != nullptr)
             colorTexture.reset((__bridge NSObject<MTLTexture>*) target.colorTexture);
 
-        init(deviceToUse, target.msaaTexture, target.depthTexture);
+        init(target.msaaTexture, target.depthTexture);
     }
 
-    void init(Device& device, void* msaaTextureHandle, void* depthTextureHandle)
+    void init(void* msaaTextureHandle, void* depthTextureHandle)
     {
         if (msaaTextureHandle != nullptr)
             msaaTexture.reset((__bridge NSObject<MTLTexture>*) msaaTextureHandle);
@@ -79,7 +79,17 @@ struct Frame::Native
         if (depthTextureHandle != nullptr)
             depthTexture.reset((__bridge NSObject<MTLTexture>*) depthTextureHandle);
 
-        if (auto queue = (__bridge id<MTLCommandQueue>) device.nativeQueue())
+        openCommandBuffer();
+    }
+
+    // The buffer everything is recorded onto, taken again by flush() so that
+    // recording continues after a submission rather than ending with it.
+    void openCommandBuffer()
+    {
+        if (device == nullptr)
+            return;
+
+        if (auto queue = (__bridge id<MTLCommandQueue>) device->nativeQueue())
             commandBuffer.reset((NSObject<MTLCommandBuffer>*) [queue commandBuffer]);
     }
 
@@ -181,6 +191,31 @@ Frame::~Frame()
         [buffer commit];
         [buffer waitUntilCompleted];
     }
+}
+
+// The commit half of the destructor without the present: the work goes, the
+// frame stays. A fresh command buffer takes over, and since the queue is FIFO
+// it lands behind what was just sent - so a read-back committed in between sees
+// everything recorded up to here and none of what follows.
+void Frame::flush()
+{
+    auto buffer = impl->commandBuffer.get();
+
+    if (buffer == nil)
+        return;
+
+    // Tracked for the same reason the destructor tracks it: a Buffer::read
+    // after this waits for the work rather than for nothing.
+    if (impl->device != nullptr)
+        impl->device->trackSubmittedWork((__bridge void*) buffer);
+
+    [buffer commit];
+
+    // Not told to the timer, which takes one buffer per frame and reads the
+    // total off it. The passes already recorded keep their samples - those live
+    // in the device's sample buffer, not in the command buffer - and the total
+    // becomes the part of the frame after this call. Frame.h says so.
+    impl->openCommandBuffer();
 }
 
 RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)

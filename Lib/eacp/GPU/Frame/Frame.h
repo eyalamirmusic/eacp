@@ -124,6 +124,29 @@ public:
     // RenderPassDescriptor::label.
     ComputePass beginCompute(std::string_view label = {});
 
+    // Sends everything recorded so far to the GPU and carries on recording, so
+    // that the rest of the frame is encoded onto a second submission rather
+    // than the same one.
+    //
+    // There is one reason to want that, and it is the reason this exists:
+    // **reading back, inside the frame, something the frame itself drew.**
+    // Texture::read and Buffer::read are only valid once the work that wrote
+    // them has been committed, and a frame commits when it ends — so without
+    // this a screenshot taken mid-frame reads the frame before it. Nothing else
+    // needs it: two passes on one frame already see each other's results, which
+    // is what beginPass above is at pains to say.
+    //
+    // **No pass may be open.** A command buffer takes one encoder at a time and
+    // cannot be committed while one is live, so end the pass first — the same
+    // rule beginCompute states for the pass that follows it.
+    //
+    // What it costs, beyond the submission: the frame's own GPU time on Metal
+    // stops meaning the frame. That number is read off the command buffer, and
+    // after a flush there are two, so it measures the part after the last one.
+    // The per-pass timings are unaffected on both backends, and so is D3D12's
+    // total, which is a pair of queries rather than a property of a list.
+    void flush();
+
     bool isValid() const;
 
 private:
