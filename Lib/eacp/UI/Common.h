@@ -28,11 +28,10 @@ using FontStyle = eacp::Text::FontStyle;
 // systems, and asking for a literal one gets a substitute on the other.
 constexpr const char* defaultUIFontFamily()
 {
-#if defined(_WIN32)
-    return "Segoe UI";
-#else
+    if constexpr (Platform::isWindows())
+        return "Segoe UI";
+
     return "Helvetica Neue";
-#endif
 }
 
 // True when `outer` covers every point of `inner`. The clip logic asks this of

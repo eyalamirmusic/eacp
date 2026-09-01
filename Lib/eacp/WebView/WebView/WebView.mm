@@ -857,7 +857,7 @@ void WebView::initNative(Options options)
     impl->attachToParentView();
     detail::registerWebView(this);
 
-    if (Platform::isMac()) // desktop-only; iOS windows have no chrome to drive
+    if constexpr (Platform::isMac()) // desktop-only; iOS windows have no chrome to drive
     {
         installWindowDragSupport();
         installWindowControlSupport();
