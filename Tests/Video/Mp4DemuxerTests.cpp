@@ -71,24 +71,19 @@ void appendRun(Bytes& out, int count, std::uint8_t value)
         out.push_back(value);
 }
 
-void append(Bytes& out, const Bytes& data)
-{
-    out.addFrom(data);
-}
-
 Bytes mp4Box(const char* type, const Bytes& payload)
 {
     auto out = Bytes {};
     appendBE32(out, static_cast<std::uint32_t>(payload.size() + 8));
     appendTag(out, type);
-    append(out, payload);
+    out.addFrom(payload);
     return out;
 }
 
 Bytes mp4FullBox(const char* type, std::uint8_t version, const Bytes& payload)
 {
     auto body = Bytes {version, 0, 0, 0};
-    append(body, payload);
+    body.addFrom(payload);
     return mp4Box(type, body);
 }
 
@@ -176,7 +171,7 @@ struct TestMp4Builder
             appendBE32(out, 1);
             appendTag(out, "mdat");
             appendBE64(out, static_cast<std::uint64_t>(payload.size()) + 16);
-            append(out, payload);
+            out.addFrom(payload);
             return out;
         }
 
@@ -185,7 +180,7 @@ struct TestMp4Builder
             auto out = Bytes {};
             appendBE32(out, 0);
             appendTag(out, "mdat");
-            append(out, payload);
+            out.addFrom(payload);
             return out;
         }
 
@@ -209,7 +204,7 @@ struct TestMp4Builder
         appendBE16(body, 0xFFFF);
 
         if (!omitConfigBox)
-            append(body, mp4Box(hevc ? "hvcC" : "avcC", codecConfig));
+            body.addFrom(mp4Box(hevc ? "hvcC" : "avcC", codecConfig));
 
         return mp4Box(hevc ? "hvc1" : "avc1", body);
     }
@@ -218,7 +213,7 @@ struct TestMp4Builder
     {
         auto payload = Bytes {};
         appendBE32(payload, 1);
-        append(payload, sampleEntry());
+        payload.addFrom(sampleEntry());
         return mp4FullBox("stsd", 0, payload);
     }
 
@@ -385,38 +380,38 @@ struct TestMp4Builder
         auto stbl = Bytes {};
 
         if (!omits("stsd"))
-            append(stbl, buildStsd());
+            stbl.addFrom(buildStsd());
         if (!omits("stts"))
-            append(stbl, buildStts());
+            stbl.addFrom(buildStts());
         if (cttsVersion >= 0)
-            append(stbl, buildCtts());
+            stbl.addFrom(buildCtts());
         if (!omits("stsc"))
-            append(stbl, buildStsc());
+            stbl.addFrom(buildStsc());
         if (!omits("stco"))
-            append(stbl, buildChunkOffsetBox(mdatPayloadStart));
+            stbl.addFrom(buildChunkOffsetBox(mdatPayloadStart));
         if (!omits("stsz"))
-            append(stbl, buildStsz());
+            stbl.addFrom(buildStsz());
         if (includeStss)
-            append(stbl, buildStss());
+            stbl.addFrom(buildStss());
 
         auto mdia = Bytes {};
-        append(mdia, buildMdhd());
-        append(mdia, buildHdlr());
-        append(mdia, mp4Box("minf", mp4Box("stbl", stbl)));
+        mdia.addFrom(buildMdhd());
+        mdia.addFrom(buildHdlr());
+        mdia.addFrom(mp4Box("minf", mp4Box("stbl", stbl)));
 
         auto trak = Bytes {};
 
         if (includeUnknownBoxes)
-            append(trak, buildElst());
+            trak.addFrom(buildElst());
 
-        append(trak, mp4Box("mdia", mdia));
+        trak.addFrom(mp4Box("mdia", mdia));
 
         auto moovPayload = Bytes {};
 
         if (includeUnknownBoxes)
-            append(moovPayload, mp4Box("udta", Bytes {1, 2, 3}));
+            moovPayload.addFrom(mp4Box("udta", Bytes {1, 2, 3}));
 
-        append(moovPayload, mp4Box("trak", trak));
+        moovPayload.addFrom(mp4Box("trak", trak));
         return mp4Box("moov", moovPayload);
     }
 
@@ -427,10 +422,10 @@ struct TestMp4Builder
         appendTag(ftypPayload, "isom");
         appendBE32(ftypPayload, 512);
         appendTag(ftypPayload, "isom");
-        append(out, mp4Box("ftyp", ftypPayload));
+        out.addFrom(mp4Box("ftyp", ftypPayload));
 
         if (includeUnknownBoxes)
-            append(out, mp4Box("free", Bytes {0xAA, 0xBB}));
+            out.addFrom(mp4Box("free", Bytes {0xAA, 0xBB}));
 
         auto mdatHeader = std::uint64_t {largesizeMdat ? 16u : 8u};
         auto moovSize = static_cast<std::uint64_t>(buildMoov(0).size());
@@ -442,17 +437,17 @@ struct TestMp4Builder
 
         if (mdatFirst)
         {
-            append(out, mdat);
+            out.addFrom(mdat);
 
             if (includeUnknownBoxes)
-                append(out, mp4Box("moof", Bytes {0x00}));
+                out.addFrom(mp4Box("moof", Bytes {0x00}));
 
-            append(out, moov);
+            out.addFrom(moov);
         }
         else
         {
-            append(out, moov);
-            append(out, mdat);
+            out.addFrom(moov);
+            out.addFrom(mdat);
         }
 
         return out;
@@ -847,7 +842,7 @@ auto tRejectsOversizedBoxes = test("Mp4Demuxer/rejectsOversizedChildBox") = []
     appendBE32(moovPayload, 1000);
     appendTag(moovPayload, "trak");
     moovPayload.push_back(0);
-    append(oversizedChild, mp4Box("moov", moovPayload));
+    oversizedChild.addFrom(mp4Box("moov", moovPayload));
     check(!parseBytes(demuxer, oversizedChild));
 
     auto overflowing32 = ftyp;

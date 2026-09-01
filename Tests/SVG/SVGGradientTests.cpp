@@ -45,17 +45,6 @@ SVG::SVGElement documentFrom(const std::string& markup)
     return root.has_value() ? *root : SVG::SVGElement {};
 }
 
-void collectIds(const SVG::SVGElement& element, SVG::ElementsById& byId)
-{
-    auto id = element.attr("id");
-
-    if (!id.empty())
-        byId.emplace(id, &element);
-
-    for (const auto& child: element.children)
-        collectIds(child, byId);
-}
-
 // Where the gradient's own two ends land once everything has been composed,
 // which is the whole of what the placement has to get right.
 Graphics::Point endOf(const UI::Gradient& gradient, bool second)
@@ -111,7 +100,7 @@ auto tBoundingBoxUnits =
         R"(<stop offset="1" stop-color="blue"/></linearGradient></svg>)");
 
     auto byId = SVG::ElementsById {};
-    collectIds(document, byId);
+    SVG::collectIds(document, byId);
 
     auto wide =
         SVG::resolveGradient("g", byId, {10.f, 20.f, 100.f, 40.f}, anyViewport, {});
@@ -134,7 +123,7 @@ auto tUserSpaceUnits = test("SVGGradient/userSpaceUnitsIgnoreTheShape") = []
         R"(<stop offset="0" stop-color="red"/></linearGradient></svg>)");
 
     auto byId = SVG::ElementsById {};
-    collectIds(document, byId);
+    SVG::collectIds(document, byId);
 
     auto gradient =
         SVG::resolveGradient("g", byId, {1000.f, 1000.f, 1.f, 1.f}, anyViewport, {});
@@ -151,7 +140,7 @@ auto tGradientTransformIsInsideTheBox =
         R"(<stop offset="0" stop-color="red"/></linearGradient></svg>)");
 
     auto byId = SVG::ElementsById {};
-    collectIds(document, byId);
+    SVG::collectIds(document, byId);
 
     auto gradient =
         SVG::resolveGradient("g", byId, {0.f, 0.f, 200.f, 100.f}, anyViewport, {});
@@ -170,7 +159,7 @@ auto tElementTransformApplies =
         R"(<stop offset="0" stop-color="red"/></linearGradient></svg>)");
 
     auto byId = SVG::ElementsById {};
-    collectIds(document, byId);
+    SVG::collectIds(document, byId);
 
     auto scaled = GPUWidgets::AffineTransform::scaling(3.f, 3.f);
 
@@ -195,7 +184,7 @@ auto tHrefInheritance = test("SVGGradient/hrefCarriesStopsAndAttributes") = []
                      R"(</svg>)");
 
     auto byId = SVG::ElementsById {};
-    collectIds(document, byId);
+    SVG::collectIds(document, byId);
 
     auto child = SVG::resolveGradient("child", byId, anyBox, anyViewport, {});
 
@@ -218,7 +207,7 @@ auto tHrefCycle = test("SVGGradient/anHrefCycleTerminates") = []
                                  R"(</svg>)");
 
     auto byId = SVG::ElementsById {};
-    collectIds(document, byId);
+    SVG::collectIds(document, byId);
 
     check(SVG::resolveGradient("a", byId, anyBox, anyViewport, {}).isEmpty());
 };
@@ -230,7 +219,7 @@ auto tRadialDefaults = test("SVGGradient/aRadialCentresItselfOnTheBox") = []
         R"(<stop offset="0" stop-color="red"/></radialGradient></svg>)");
 
     auto byId = SVG::ElementsById {};
-    collectIds(document, byId);
+    SVG::collectIds(document, byId);
 
     auto gradient =
         SVG::resolveGradient("g", byId, {0.f, 0.f, 80.f, 40.f}, anyViewport, {});
@@ -254,7 +243,7 @@ auto tUserSpacePercentages =
         R"(<stop offset="0" stop-color="red"/></linearGradient></svg>)");
 
     auto byId = SVG::ElementsById {};
-    collectIds(document, byId);
+    SVG::collectIds(document, byId);
 
     auto gradient =
         SVG::resolveGradient("g", byId, anyBox, {0.f, 0.f, 400.f, 100.f}, {});
@@ -270,7 +259,7 @@ auto tGradientRefusals = test("SVGGradient/aReferenceThatResolvesToNothing") = [
         R"(<svg><linearGradient id="empty"/><rect id="notAGradient"/></svg>)");
 
     auto byId = SVG::ElementsById {};
-    collectIds(document, byId);
+    SVG::collectIds(document, byId);
 
     check(SVG::resolveGradient("missing", byId, anyBox, anyViewport, {}).isEmpty());
     check(SVG::resolveGradient("empty", byId, anyBox, anyViewport, {}).isEmpty(),

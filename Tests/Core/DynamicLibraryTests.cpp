@@ -2,6 +2,7 @@
 #include <eacp/Core/Plugins/DynamicLibrary.h>
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Environment.h>
+#include <eacp/Core/Utils/Strings.h>
 
 using namespace nano;
 using namespace eacp;
@@ -12,8 +13,7 @@ namespace
 // (see DynamicLibraryTestPlugin.cpp), so it counts real map/unmap cycles.
 int pluginLoadCount()
 {
-    auto value = getEnvValue("EACP_TEST_PLUGIN_LOADS");
-    return value.empty() ? 0 : std::stoi(value);
+    return Strings::parseIntOr(getEnvValue("EACP_TEST_PLUGIN_LOADS"));
 }
 } // namespace
 

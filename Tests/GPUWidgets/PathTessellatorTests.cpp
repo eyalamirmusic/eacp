@@ -203,12 +203,6 @@ float polygonArea(const Path& path)
 
     return total;
 }
-
-Graphics::Rect grownBounds(const Path& path, float by)
-{
-    auto bounds = path.getBounds();
-    return {bounds.x - by, bounds.y - by, bounds.w + by * 2.f, bounds.h + by * 2.f};
-}
 } // namespace
 
 // The mesh evaluated as the coverage function it is, against the polygon it came
@@ -222,7 +216,7 @@ auto tCoversTheShape = test("PathTessellator/meshCoversExactlyTheShape") = []
         auto mesh = tessellateAntialiasedFill(shape, feather);
         check(!mesh.empty());
 
-        auto area = grownBounds(shape, feather * 4.f);
+        auto area = shape.getBounds().inset(-feather * 4.f);
         auto missing = 0;
         auto extra = 0;
 
@@ -285,7 +279,7 @@ auto tDoesNotOverlapItself = test("PathTessellator/trianglesDoNotOverlap") = []
     for (const auto& shape: everyShape())
     {
         auto mesh = tessellateAntialiasedFill(shape, feather);
-        auto area = grownBounds(shape, feather * 4.f);
+        auto area = shape.getBounds().inset(-feather * 4.f);
         auto overlapping = 0;
 
         for (auto y = 0; y < 90; ++y)
@@ -355,7 +349,7 @@ auto tRefusesSelfCrossing = test("PathTessellator/refusesACrossingContour") = []
     {
         // Every second point of a pentagon, which is the star polygon: five
         // vertices, five edges, and five crossings.
-        auto angle = (float) (i * 2) / 5.f * 2.f * 3.14159265358979323846f;
+        auto angle = (float) (i * 2) / 5.f * 2.f * pi;
         auto at =
             Point {120.f + std::cos(angle) * 100.f, 120.f + std::sin(angle) * 100.f};
 
@@ -416,7 +410,7 @@ auto tRefusesTooManyPoints =
 
     for (auto i = 1; i < 1200; ++i)
     {
-        auto angle = (float) i / 1200.f * 2.f * 3.14159265358979323846f;
+        auto angle = (float) i / 1200.f * 2.f * pi;
         many.lineTo(
             {120.f + std::sin(angle) * 100.f, 120.f - std::cos(angle) * 100.f});
     }

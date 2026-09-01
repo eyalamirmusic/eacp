@@ -46,17 +46,6 @@ SVG::SVGElement clipDocumentFrom(const std::string& markup)
     return root.has_value() ? *root : SVG::SVGElement {};
 }
 
-void collectClipIds(const SVG::SVGElement& element, SVG::ElementsById& byId)
-{
-    auto id = element.attr("id");
-
-    if (!id.empty())
-        byId.emplace(id, &element);
-
-    for (const auto& child: element.children)
-        collectClipIds(child, byId);
-}
-
 // The flatness a document's own units are built at here. Nothing in these tests
 // depends on the segment count, only on where the points are.
 constexpr auto clipFlatness = 0.05f;
@@ -82,7 +71,7 @@ auto tClipReference = test("SVGClip/aClipPathNamesARegionOrIsNotThere") = []
         R"SVG(<svg><defs><clipPath id="c"><rect x="10" y="20" width="30" height="40"/></clipPath></defs></svg>)SVG");
 
     auto byId = SVG::ElementsById {};
-    collectClipIds(document, byId);
+    SVG::collectIds(document, byId);
 
     auto region = SVG::resolveClipPath("c", byId, anyBox, clipFlatness);
 
@@ -108,7 +97,7 @@ auto tEmptyClipPath = test("SVGClip/aClipPathHoldingNothingIsStillAClipPath") = 
         R"SVG(<svg><defs><clipPath id="c"></clipPath></defs></svg>)SVG");
 
     auto byId = SVG::ElementsById {};
-    collectClipIds(document, byId);
+    SVG::collectIds(document, byId);
 
     auto region = SVG::resolveClipPath("c", byId, anyBox, clipFlatness);
 
@@ -127,7 +116,7 @@ auto tClipUnion = test("SVGClip/severalShapesInAClipPathAreTheirUnion") = []
            </clipPath></defs></svg>)SVG");
 
     auto byId = SVG::ElementsById {};
-    collectClipIds(document, byId);
+    SVG::collectIds(document, byId);
 
     auto region = SVG::resolveClipPath("c", byId, anyBox, clipFlatness);
 
@@ -152,7 +141,7 @@ auto tClipChildTransform =
            </clipPath></defs></svg>)SVG");
 
     auto byId = SVG::ElementsById {};
-    collectClipIds(document, byId);
+    SVG::collectIds(document, byId);
 
     auto region = SVG::resolveClipPath("c", byId, anyBox, clipFlatness);
 
@@ -168,7 +157,7 @@ auto tClipUse = test("SVGClip/aUseInsideAClipPathIsTheShapeItNames") = []
            </defs></svg>)SVG");
 
     auto byId = SVG::ElementsById {};
-    collectClipIds(document, byId);
+    SVG::collectIds(document, byId);
 
     auto region = SVG::resolveClipPath("c", byId, anyBox, clipFlatness);
 
@@ -191,7 +180,7 @@ auto tClipUnits = test("SVGClip/objectBoundingBoxIsFractionsOfTheClippedShape") 
            </defs></svg>)SVG");
 
     auto byId = SVG::ElementsById {};
-    collectClipIds(document, byId);
+    SVG::collectIds(document, byId);
 
     check(SVG::clipUsesBoundingBox("half", byId));
     check(!SVG::clipUsesBoundingBox("user", byId));
@@ -227,7 +216,7 @@ auto tClipRule = test("SVGClip/clipRuleIsTheRegionsFillRule") = []
            </defs></svg>)SVG");
 
     auto byId = SVG::ElementsById {};
-    collectClipIds(document, byId);
+    SVG::collectIds(document, byId);
 
     check(SVG::resolveClipPath("frame", byId, anyBox, clipFlatness).rule
           == GPUWidgets::FillRule::EvenOdd);
