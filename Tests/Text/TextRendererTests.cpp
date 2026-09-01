@@ -260,7 +260,6 @@ auto tDarkTextIsNoHeavier =
     check(darkInk > 1.f);
     check(lightInk >= darkInk * 0.98f);
 
-#if defined(__APPLE__)
-    check(lightInk > darkInk * 1.03f);
-#endif
+    if constexpr (Platform::isApple())
+        check(lightInk > darkInk * 1.03f);
 };

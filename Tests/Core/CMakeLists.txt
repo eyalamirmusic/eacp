@@ -32,9 +32,20 @@ if (NOT WIN32)
     list(APPEND core_test_sources ProcessTests.cpp)
 endif ()
 
-# The file/folder picker seam is Windows-only (App-Windows-FilePicker.h).
+# The file/folder picker seam is Windows-only (App-Windows-FilePicker.h), and
+# so are the wide-path conversions FilePathTests-Windows.cpp covers.
 if (WIN32)
-    list(APPEND core_test_sources FilePickerWindowsTests.cpp)
+    list(APPEND core_test_sources
+            FilePathTests-Windows.cpp
+            FilePickerWindowsTests.cpp)
+endif ()
+
+# Permission bits, symlinks and FIFOs — the file behaviour Windows has no form
+# of. Each portable half covers the rest.
+if (NOT WIN32)
+    list(APPEND core_test_sources
+            FilesTests-Posix.cpp
+            MemoryMappedFileTests-Posix.cpp)
 endif ()
 
 if (APPLE AND NOT IOS)

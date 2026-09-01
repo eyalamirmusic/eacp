@@ -2,14 +2,9 @@
 #include "Common.h"
 #include <atomic>
 #include <cstdlib>
-#include <new>
-
-#if !defined(_WIN32)
-#include <sys/stat.h>
-#endif
-
 #include <filesystem>
 #include <fstream>
+#include <new>
 #include <numeric>
 
 using namespace nano;
@@ -291,26 +286,6 @@ auto tOutlivesTheOpenFile = test("MemoryMappedFile/outlivesTheOpenFile") = []
 
     std::filesystem::remove_all(dir);
 };
-
-#if !defined(_WIN32)
-// A FIFO has no size and no pages to map. It is here for the open rather than
-// the rejection: opening one for reading waits for a writer, so a plain
-// O_RDONLY would not fail this test, it would hang it forever.
-auto tFifoIsInvalid = test("MemoryMappedFile/fifoIsInvalid") = []
-{
-    const auto dir = scratchDirectory("fifo");
-    const auto path = dir / "pipe";
-
-    if (::mkfifo(path.c_str(), 0600) != 0)
-        return;
-
-    const auto file = MemoryMappedFile {FilePath {path}};
-
-    check(!file.isValid());
-
-    std::filesystem::remove_all(dir);
-};
-#endif
 
 // --- cost --------------------------------------------------------------------
 

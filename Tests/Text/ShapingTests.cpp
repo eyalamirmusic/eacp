@@ -20,31 +20,28 @@ namespace
 // A proportional face both platforms ship, with kerning pairs.
 constexpr const char* proportionalFamily()
 {
-#if defined(_WIN32)
-    return "Arial";
-#else
-    return "Helvetica";
-#endif
+    if constexpr (Platform::isWindows())
+        return "Arial";
+    else
+        return "Helvetica";
 }
 
 // A face that ligates "fi".
 constexpr const char* ligatingFamily()
 {
-#if defined(_WIN32)
-    return "Calibri";
-#else
-    return "Helvetica";
-#endif
+    if constexpr (Platform::isWindows())
+        return "Calibri";
+    else
+        return "Helvetica";
 }
 
 // A family with a light face as well as a bold one.
 constexpr const char* weightedFamily()
 {
-#if defined(_WIN32)
-    return "Segoe UI";
-#else
-    return "Helvetica Neue";
-#endif
+    if constexpr (Platform::isWindows())
+        return "Segoe UI";
+    else
+        return "Helvetica Neue";
 }
 
 FontRequest requestFor(const char* family, float pointSize = 32.f)

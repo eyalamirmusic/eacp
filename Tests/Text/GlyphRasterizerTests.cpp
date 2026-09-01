@@ -558,7 +558,6 @@ auto tLightTextIsThickened =
     check(dark > 0);
     check(light >= dark);
 
-#if defined(__APPLE__)
-    check(light > dark + dark / 20);
-#endif
+    if constexpr (Platform::isApple())
+        check(light > dark + dark / 20);
 };
