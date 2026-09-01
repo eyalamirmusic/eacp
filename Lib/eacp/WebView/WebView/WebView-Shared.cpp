@@ -544,7 +544,7 @@ Threads::Async<std::string> WebView::callJS(const std::string& script)
 {
     auto promise = Threads::AsyncPromise<std::string>();
 
-    if (Platform::isWindows())
+    if constexpr (Platform::isWindows())
     {
         // WebView2's ExecuteScript reports JS exceptions as a "null" result
         // with HRESULT S_OK — there's no native error path, unlike WKWebView's

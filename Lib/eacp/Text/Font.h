@@ -70,11 +70,10 @@ constexpr int weightClass(int weight)
 // monospace family wanted in the first place.
 constexpr const char* defaultMonospaceFamily()
 {
-#if defined(_WIN32)
-    return "Consolas";
-#else
+    if constexpr (Platform::isWindows())
+        return "Consolas";
+
     return "Menlo";
-#endif
 }
 
 // What to rasterize with.
