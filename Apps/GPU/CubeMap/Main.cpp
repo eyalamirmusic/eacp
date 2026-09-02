@@ -50,16 +50,10 @@
 
 using namespace eacp;
 using namespace GPU;
+using namespace Maths;
 
 namespace
 {
-constexpr auto pi = 3.14159265358979f;
-
-constexpr float radians(float degrees)
-{
-    return degrees * (pi / 180.f);
-}
-
 // How far the camera orbits at, how big the ball is, how wide the lens is, and
 // how far away the sky's walls are - which matters not at all to what is
 // sampled (a direction has no length) and only has to clear the far plane.
@@ -68,108 +62,11 @@ constexpr auto sphereRadius = 1.f;
 constexpr auto fieldOfView = 50.f;
 constexpr auto skyRadius = 40.f;
 
-struct Vec3
-{
-    float x = 0.f;
-    float y = 0.f;
-    float z = 0.f;
-
-    using ShaderValue = Float3;
-};
-
-constexpr Vec3 operator-(Vec3 a, Vec3 b)
-{
-    return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-constexpr Vec3 operator*(Vec3 a, float s)
-{
-    return {a.x * s, a.y * s, a.z * s};
-}
-
-constexpr float dot(Vec3 a, Vec3 b)
-{
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-constexpr Vec3 cross(Vec3 a, Vec3 b)
-{
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
-
-Vec3 normalize(Vec3 v)
-{
-    auto length = std::sqrt(dot(v, v));
-    return length > 1.0e-6f ? v * (1.f / length) : Vec3 {0.f, 0.f, 1.f};
-}
-
-// Column-major, the layout Float4x4 has on both sides of the language boundary.
 // The camera here is a position and a target rather than a pair of angles, so
-// the matrices are built on the CPU and uploaded, where the Teapot builds its
-// own from scalars inside define().
-using Mat4 = Array<float, 16>;
-
-Mat4 multiply(const Mat4& a, const Mat4& b)
-{
-    auto out = Mat4 {};
-
-    for (auto column = 0; column < 4; ++column)
-        for (auto row = 0; row < 4; ++row)
-        {
-            auto sum = 0.f;
-
-            for (auto k = 0; k < 4; ++k)
-                sum += a[k * 4 + row] * b[column * 4 + k];
-
-            out[column * 4 + row] = sum;
-        }
-
-    return out;
-}
-
-// Right-handed with [0, 1] depth, matching ShaderProgram::perspective.
-Mat4 perspective(float aspect, float fovY, float nearZ, float farZ)
-{
-    auto f = 1.f / std::tan(fovY * 0.5f);
-    auto out = Mat4 {};
-    out.fill(0.f);
-
-    out[0] = f / aspect;
-    out[5] = f;
-    out[10] = farZ / (nearZ - farZ);
-    out[11] = -1.f;
-    out[14] = (farZ * nearZ) / (nearZ - farZ);
-
-    return out;
-}
-
-Mat4 lookAt(Vec3 eye, Vec3 target, Vec3 up)
-{
-    auto back = normalize(eye - target);
-    auto right = normalize(cross(up, back));
-    auto trueUp = cross(back, right);
-
-    auto out = Mat4 {};
-
-    out[0] = right.x;
-    out[1] = trueUp.x;
-    out[2] = back.x;
-    out[3] = 0.f;
-    out[4] = right.y;
-    out[5] = trueUp.y;
-    out[6] = back.y;
-    out[7] = 0.f;
-    out[8] = right.z;
-    out[9] = trueUp.z;
-    out[10] = back.z;
-    out[11] = 0.f;
-    out[12] = -dot(right, eye);
-    out[13] = -dot(trueUp, eye);
-    out[14] = -dot(back, eye);
-    out[15] = 1.f;
-
-    return out;
-}
+// the matrices are built on the CPU with Maths::Mat4 and uploaded, where the
+// Teapot builds its own from scalars inside define(). Both agree on what they
+// mean: Mat4 is column-major, right-handed and [0, 1] in depth, the same as
+// ShaderProgram's own perspective().
 
 // The six faces, in the order TextureDescriptor::cube takes them, each with the
 // letter --check prints it as and the hue that says which one it is. Six
@@ -178,8 +75,8 @@ Mat4 lookAt(Vec3 eye, Vec3 target, Vec3 up)
 // are close.
 struct SkyFace
 {
-    const char* name;
-    char letter;
+    const char* name = "";
+    char letter = ' ';
     Vec3 color;
 };
 
@@ -550,18 +447,17 @@ struct CubeMapView final : GPUView
         if (width <= 0.f || height <= 0.f)
             return;
 
-        auto view = lookAt(eyePosition, {0.f, 0.f, 0.f}, upDirection);
+        auto view = Mat4::lookAt(eyePosition, {0.f, 0.f, 0.f}, upDirection);
         auto projection =
-            perspective(width / height, radians(fieldOfView), 0.1f, 200.f);
+            Mat4::perspective(width / height, radians(fieldOfView), 0.1f, 200.f);
 
-        auto viewProjection = multiply(projection, view);
-        auto eye = Array {eyePosition.x, eyePosition.y, eyePosition.z};
+        auto viewProjection = projection * view;
 
         skyShader.viewProjection = viewProjection;
-        skyShader.eyePosition = eye;
+        skyShader.eyePosition = eyePosition;
 
         mirrorShader.viewProjection = viewProjection;
-        mirrorShader.eyePosition = eye;
+        mirrorShader.eyePosition = eyePosition;
 
         // The sky covers every pixel of the frame, so the clear colour is never
         // seen; the ball goes on top of it.
@@ -733,7 +629,7 @@ void printFaceMap(CubeMapView& view)
     //
     // Closer in than the orbit runs, because the ball is what is worth looking
     // at here and 76 columns is not many to give it.
-    auto eye = normalize({0.62f, 0.45f, 0.65f}) * (orbitRadius * 0.7f);
+    auto eye = normalize(Vec3 {0.62f, 0.45f, 0.65f}) * (orbitRadius * 0.7f);
 
     view.lookFrom(eye, {0.f, 1.f, 0.f});
     view.setBounds({0.f, 0.f, (float) width, (float) height});

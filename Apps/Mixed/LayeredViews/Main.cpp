@@ -8,23 +8,19 @@ using namespace eacp::Graphics;
 // 1. A GPU surface: a Metal/D3D triangle that spins, built with the shader EDSL.
 // ---------------------------------------------------------------------------
 
-struct GpuVec2
-{
-    float x, y;
-};
-
 struct GpuRGB
 {
-    float r, g, b;
+    float r = 0.f;
+    float g = 0.f;
+    float b = 0.f;
 };
 
 struct GpuVertex
 {
-    GpuVec2 position;
+    Maths::Vec2 position;
     GpuRGB color;
 };
 
-EACP_SHADER_VALUE(GpuVec2, Float2)
 EACP_SHADER_VALUE(GpuRGB, Float3)
 
 namespace

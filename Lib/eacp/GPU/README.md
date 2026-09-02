@@ -72,6 +72,41 @@ an unused binding. App code that takes `draw(program)` apart to draw its own
 geometry should call `pass.setUniforms(program)` rather than the two per-stage
 setters, for the same reason.
 
+### The CPU types a shader value is fed from
+
+A vertex field or a uniform can be any CPU type whose shape the shader layer
+knows. `float`, `float[N]` and `std::array<float, N>` are built in; a type of
+your own says so with `EACP_SHADER_VALUE` (or a `using ShaderValue = Float3;`
+member), and `Core/Maths` arrives already registered — `Maths::Vec2`, `Vec3`,
+`Vec4` and a column-major `Maths::Mat4`, all packed exactly as the float2 /
+float3 / float4 / float4x4 they stand for.
+
+That is the whole point of them: the same value does the CPU-side geometry and
+crosses to the GPU with nothing to repack or transpose.
+
+```cpp
+using namespace eacp::Maths;
+
+struct Vertex
+{
+    Vec3 position;
+    Vec3 normal;
+};
+
+// ... in the view:
+auto view = Mat4::lookAt(eye, {0.f, 0.f, 0.f}, {0.f, 1.f, 0.f});
+auto projection = Mat4::perspective(aspect, radians(50.f), 0.1f, 200.f);
+
+shader.viewProjection = projection * view;   // Uniform<Float4x4>
+shader.lightDirection = normalize(eye);      // Uniform<Float3>
+```
+
+`Mat4` is right-handed with a `[0, 1]` depth range — what both backends clip
+against, and what `ShaderProgram::perspective` builds — so a matrix assembled on
+the CPU and one assembled inside `define()` mean the same thing. Apps/GPU has
+both: `Teapot` and `Maze` send scalars and let the shader build the matrices,
+`CubeMap` and `StencilShadows` build them here and send the result.
+
 ### Naming the pipeline's state
 
 `prepare` also takes a `RenderPipelineDescriptor`, which is the form to reach for

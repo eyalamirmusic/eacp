@@ -42,6 +42,10 @@ them, so apps inherit the look, feel, and performance of the host OS:
   drawn through the sprite and glyph batchers.
 - **SIMD** — portable kernels with runtime backend dispatch, so one source picks
   the widest instruction set the machine actually has.
+- **Maths** — `Vec2` / `Vec3` / `Vec4` and a column-major `Mat4` with the
+  transform and projection builders, packed exactly as the shader types they
+  register as, so the same value does the CPU-side geometry and crosses to the
+  GPU as a vertex field or uniform without repacking.
 - **Camera & video** — capture devices and frames with a `CameraView` to show
   them, screen capture, video encoding, and decoded playback through the GPU
   display stack.
@@ -200,7 +204,8 @@ own — take `Network` without pulling in `GPU`.
 
 ```
 Lib/eacp/
-  Core/       App lifecycle, threading, processes, plugins, files, ObjC/CF interop
+  Core/       App lifecycle, threading, processes, plugins, files, vector maths,
+              ObjC/CF interop
   Network/    HTTP client and server, TCP, IPC, RPC
   SIMD/       Portable SIMD kernels with runtime backend dispatch
   Graphics/   Windows, views, widgets, menus, drawing primitives
