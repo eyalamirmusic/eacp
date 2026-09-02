@@ -54,6 +54,8 @@ static MTLPixelFormat toMetalPixelFormat(PixelFormat format)
             return MTLPixelFormatRGBA16Float;
         case PixelFormat::RGBA32Float:
             return MTLPixelFormatRGBA32Float;
+        case PixelFormat::R32Float:
+            return MTLPixelFormatR32Float;
     }
 
     return MTLPixelFormatBGRA8Unorm;

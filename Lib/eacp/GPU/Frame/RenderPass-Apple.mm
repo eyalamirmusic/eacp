@@ -255,6 +255,30 @@ void RenderPass::setFragmentTexture(const Texture& texture,
     [activeEncoder setFragmentSamplerState:metalSampler atIndex:(NSUInteger) slot];
 }
 
+void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
+                                         int slot,
+                                         TextureSampling sampling)
+{
+    if (!renderTarget.hasSampleableDepth())
+        return;
+
+    auto activeEncoder = impl->encoder.get();
+    auto metalTexture = (__bridge id<MTLTexture>) renderTarget.nativeDepthTexture();
+
+    auto metalSampler =
+        (__bridge id<MTLSamplerState>) Device::shared().nativeSampler(sampling);
+
+    if (activeEncoder == nil || metalTexture == nil || metalSampler == nil)
+        return;
+
+    // The same two calls the colour bind makes, which is the whole of the
+    // difference on this backend: a depth texture goes on a texture index like
+    // any other, and what makes it a depth2d rather than a texture2d is the
+    // declaration the shader was compiled with.
+    [activeEncoder setFragmentTexture:metalTexture atIndex:(NSUInteger) slot];
+    [activeEncoder setFragmentSamplerState:metalSampler atIndex:(NSUInteger) slot];
+}
+
 void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)
 {
     auto activeEncoder = impl->encoder.get();

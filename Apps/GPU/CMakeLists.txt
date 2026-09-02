@@ -51,6 +51,10 @@ add_subdirectory(StencilShadows)
 # Where the six faces go, and what a direction lookup is.
 add_subdirectory(CubeMap)
 
+# One pass reading the depth another wrote: sampleableDepth + DepthAction::Keep
+# + depthTexture(), and the soft particles that is all for. R32Float beside it.
+add_subdirectory(DepthSampling)
+
 # Incremental sub-region texture uploads, the glyph-atlas pattern.
 add_subdirectory(TextureAtlas)
 

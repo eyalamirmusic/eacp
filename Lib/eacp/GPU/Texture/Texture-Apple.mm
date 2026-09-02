@@ -30,6 +30,8 @@ MTLPixelFormat toMetalFormat(TextureFormat format)
             return MTLPixelFormatRGBA16Float;
         case TextureFormat::RGBA32Float:
             return MTLPixelFormatRGBA32Float;
+        case TextureFormat::R32Float:
+            return MTLPixelFormatR32Float;
         default:
             return MTLPixelFormatRGBA8Unorm;
     }
@@ -133,9 +135,13 @@ struct Texture::Native
 
         texture = [metalDevice newTextureWithDescriptor:textureDescriptor];
 
-        if (renderTarget && (descriptor.depth || descriptor.stencil)
+        if (renderTarget
+            && (descriptor.depth || descriptor.stencil
+                || descriptor.sampleableDepth)
             && texture.get() != nil)
-            makeDepthTexture(metalDevice, descriptor.stencil);
+            makeDepthTexture(metalDevice,
+                             descriptor.stencil,
+                             descriptor.sampleableDepth);
 
         // The default storage mode keeps replaceRegion valid on every Mac
         // generation; it handles the CPU-to-GPU synchronisation itself.
@@ -146,7 +152,16 @@ struct Texture::Native
     // The depth buffer a pass into this texture attaches. Single-sampled,
     // because a texture target never multisamples, and private - the pass
     // clears it and stores nothing, so it is never read outside the GPU.
-    void makeDepthTexture(id<MTLDevice> metalDevice, bool withStencil)
+    //
+    // Unless it is asked to be. MTLTextureUsageShaderRead is the whole of what
+    // sampleableDepth costs here - the storage mode is already Private and has
+    // to stay so, a depth format having no CPU layout to share - and without it
+    // Metal refuses the sample whatever texture the encoder is handed. It is
+    // still a flag rather than the default because the same request costs D3D12
+    // a typeless resource, a descriptor and a barrier per pass.
+    void makeDepthTexture(id<MTLDevice> metalDevice,
+                          bool withStencil,
+                          bool sampleable)
     {
         const auto format = withStencil ? MTLPixelFormatDepth32Float_Stencil8
                                         : MTLPixelFormatDepth32Float;
@@ -158,9 +173,15 @@ struct Texture::Native
                                      mipmapped:NO];
 
         depthDescriptor.usage = MTLTextureUsageRenderTarget;
+
+        if (sampleable)
+            depthDescriptor.usage |= MTLTextureUsageShaderRead;
+
         depthDescriptor.storageMode = MTLStorageModePrivate;
 
         depthTexture = [metalDevice newTextureWithDescriptor:depthDescriptor];
+
+        sampleableDepth = sampleable && depthTexture.get() != nil;
     }
 
     // Zero-copy wrap of a CVPixelBuffer: the texture cache maps the buffer's
@@ -451,6 +472,10 @@ struct Texture::Native
     // entry points do - and nothing else.
     bool cube = false;
 
+    // Whether that depth buffer was created able to be sampled as well as
+    // attached, which is the one thing a bind through it can check.
+    bool sampleableDepth = false;
+
     ObjC::Ptr<NSObject<MTLTexture>> texture;
     ObjC::Ptr<NSObject<MTLTexture>> depthTexture;
     CFRef<CVMetalTextureRef> cvTexture;
@@ -552,6 +577,11 @@ bool Texture::hasStencil() const
 
     return depth != nil
            && depth.pixelFormat == MTLPixelFormatDepth32Float_Stencil8;
+}
+
+bool Texture::hasSampleableDepth() const
+{
+    return impl->sampleableDepth && impl->depthTexture.get() != nil;
 }
 
 void* Texture::nativeTexture() const

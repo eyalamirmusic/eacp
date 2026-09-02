@@ -307,6 +307,30 @@ struct Uniform<TextureCube> : TextureCube
     TextureSampling sampling {};
 };
 
+// The depth form, and the one place the pattern bends: what is assigned here is
+// the *render target whose depth buffer this samples*, not a texture of its own.
+// A depth attachment is created with its colour texture and lives exactly as
+// long, so there is nothing else to name it by - and the bind is
+// RenderPass::setFragmentDepthTexture, which takes the target for the same
+// reason.
+//
+// It has to have been created with TextureDescriptor::sampleableDepth;
+// Texture::hasSampleableDepth is what says whether it was, and a bind through
+// one that was not draws nothing rather than reading something undefined.
+template <>
+struct Uniform<TextureDepth2D> : TextureDepth2D
+{
+    Uniform& operator=(const Texture& newRenderTarget)
+    {
+        value = &newRenderTarget;
+        return *this;
+    }
+
+    const Texture* value = nullptr;
+
+    TextureSampling sampling {};
+};
+
 // Storage-buffer members of a compute program, following the texture pattern:
 // the slot-indexed handle define() reads or writes, and the slot the assigned
 // GPU::Buffer is bound at when dispatched. The program stores a pointer, so
@@ -455,6 +479,11 @@ public:
         onCubeTexture(name, member, member.value, member.sampling);
     }
 
+    void operator()(const char* name, Uniform<TextureDepth2D>& member)
+    {
+        onDepthTexture(name, member, member.value, member.sampling);
+    }
+
     void operator()(const char* name, Uniform<InputBuffer>& member)
     {
         onInputBuffer(name, member, member.value);
@@ -488,6 +517,10 @@ protected:
     }
     virtual void
         onCubeTexture(const char*, TextureCube&, const Texture*, TextureSampling)
+    {
+    }
+    virtual void
+        onDepthTexture(const char*, TextureDepth2D&, const Texture*, TextureSampling)
     {
     }
     virtual void onInputBuffer(const char*, InputBuffer&, const Buffer*) {}
@@ -530,6 +563,14 @@ public:
                        TextureSampling sampling) override
     {
         handle = builder.cubeTexture(sampling);
+    }
+
+    void onDepthTexture(const char*,
+                        TextureDepth2D& handle,
+                        const Texture*,
+                        TextureSampling sampling) override
+    {
+        handle = builder.depthTexture(sampling);
     }
 
     void onInputBuffer(const char*, InputBuffer& handle, const Buffer*) override
@@ -593,6 +634,17 @@ public:
     {
         if (texture != nullptr)
             pass.setFragmentTexture(*texture, handle.slot, sampling);
+    }
+
+    // The one member whose bind is a different call, because what was assigned
+    // is a render target and what is wanted is the depth buffer inside it.
+    void onDepthTexture(const char*,
+                        TextureDepth2D& handle,
+                        const Texture* renderTarget,
+                        TextureSampling sampling) override
+    {
+        if (renderTarget != nullptr)
+            pass.setFragmentDepthTexture(*renderTarget, handle.slot, sampling);
     }
 
 private:

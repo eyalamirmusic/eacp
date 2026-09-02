@@ -32,6 +32,8 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
             return DXGI_FORMAT_R16G16B16A16_FLOAT;
         case TextureFormat::RGBA32Float:
             return DXGI_FORMAT_R32G32B32A32_FLOAT;
+        case TextureFormat::R32Float:
+            return DXGI_FORMAT_R32_FLOAT;
         default:
             return DXGI_FORMAT_R8G8B8A8_UNORM;
     }
@@ -613,13 +615,17 @@ struct Texture::Native
 
     // The depth buffer a pass into this target attaches, and its DSV. Created
     // in DEPTH_WRITE and left there: nothing else ever uses the resource, so it
-    // needs no barrier and no state tracking.
+    // needs no barrier and no state tracking - unless `sampleable` says a shader
+    // is going to read it too, which is what createDepthShaderResourceView adds
+    // and the one case where the state moves.
     //
     // The optimised clear value is not optional. D3D12 wants a resource that
     // will be cleared to say so at creation, and a ClearDepthStencilView that
     // does not match it is a validation error rather than a slow path - and it
-    // must agree with the 1.0 the pass clears to.
-    void createDepthBuffer(D3D12Context& context, bool withStencil)
+    // must agree with the 1.0 the pass clears to. It names the *attachment*
+    // format even where the resource is typeless, which is the format the clear
+    // is actually performed in.
+    void createDepthBuffer(D3D12Context& context, bool withStencil, bool sampleable)
     {
         const auto format = depthAttachmentFormat(withStencil);
 
@@ -632,10 +638,13 @@ struct Texture::Native
         desc.Height = static_cast<UINT>(height);
         desc.DepthOrArraySize = 1;
         desc.MipLevels = 1;
-        desc.Format = format;
+        desc.Format = depthResourceFormat(withStencil, sampleable);
         desc.SampleDesc.Count = 1;
         desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
+        // DENY_SHADER_RESOURCE is not set either way, so this flag says nothing
+        // by its absence; what makes the buffer readable is the typeless format
+        // above and the SRV below.
         D3D12_CLEAR_VALUE clearValue = {};
         clearValue.Format = format;
         clearValue.DepthStencil.Depth = 1.f;
@@ -671,6 +680,31 @@ struct Texture::Native
 
         data.dsv = handle;
         data.depthHasStencil = withStencil;
+        data.depthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+
+        if (sampleable)
+            createDepthShaderResourceView(context, withStencil);
+    }
+
+    // The other view of the same resource: one float channel, out of the same
+    // shader-visible heap the colour SRV comes from. A failure here leaves the
+    // target with a depth buffer it can still attach and not sample, which is
+    // what hasSampleableDepth answers and what a bind through it checks.
+    void createDepthShaderResourceView(D3D12Context& context, bool withStencil)
+    {
+        data.depthSrv = context.allocateTextureDescriptor();
+
+        if (data.depthSrv.cpu.ptr == 0)
+            return;
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc = {};
+        viewDesc.Format = depthShaderResourceFormat(withStencil);
+        viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        viewDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        viewDesc.Texture2D.MipLevels = 1;
+
+        context.getDevice()->CreateShaderResourceView(
+            data.depthResource.get(), &viewDesc, data.depthSrv.cpu);
     }
 
     // The view a kernel writes through. It comes out of the same shader-visible
@@ -701,9 +735,11 @@ struct Texture::Native
         if (descriptor.renderTarget)
             createRenderTargetView(context, descriptor);
 
-        if (descriptor.renderTarget && (descriptor.depth || descriptor.stencil)
+        if (descriptor.renderTarget
+            && (descriptor.depth || descriptor.stencil || descriptor.sampleableDepth)
             && data.rtv.ptr != 0)
-            createDepthBuffer(context, descriptor.stencil);
+            createDepthBuffer(
+                context, descriptor.stencil, descriptor.sampleableDepth);
 
         if (computeWrite)
             createUnorderedAccessView(context, descriptor);
@@ -875,6 +911,11 @@ bool Texture::hasDepth() const
 bool Texture::hasStencil() const
 {
     return isValid() && impl->data.hasStencil();
+}
+
+bool Texture::hasSampleableDepth() const
+{
+    return isValid() && impl->data.hasSampleableDepth();
 }
 
 void* Texture::nativeTexture() const

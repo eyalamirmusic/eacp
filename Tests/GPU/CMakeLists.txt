@@ -39,6 +39,7 @@ if (APPLE OR WIN32)
             RenderTargetTests.cpp
             RenderTargetDepthTests.cpp
             DepthActionTests.cpp
+            DepthTextureTests.cpp
             FrameComputeTests.cpp
             FrameTimingTests.cpp
             PipelineStateTests.cpp

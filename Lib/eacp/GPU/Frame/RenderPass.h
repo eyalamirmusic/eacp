@@ -150,6 +150,28 @@ public:
                             int slot = 0,
                             TextureSampling sampling = {});
 
+    // Binds the *depth buffer* of a render target to the fragment stage, on the
+    // same slot space and with the same sampling rule as the call above. The
+    // shader's matching declaration is ShaderBuilder::depthTexture, whose
+    // sample() gives back one float rather than four - which is what a depth
+    // format is on both backends.
+    //
+    // `renderTarget` is the colour texture the buffer belongs to, not a texture
+    // of its own: a depth attachment is created with its target, lives exactly
+    // as long, and has no independent existence to hand out. It must have been
+    // created with TextureDescriptor::sampleableDepth; one that was not is a
+    // no-op here rather than a read of something undefined, and
+    // Texture::hasSampleableDepth is what says which.
+    //
+    // **The pass rendering into that target cannot be this one.** A texture is
+    // not sampleable by the pass that is writing it, and a depth attachment is
+    // a texture; so the pass that drew the depth has to have ended, with
+    // DepthAction::Keep so that what it wrote is still there. That is the same
+    // shape a colour copy out of a render target already has, one plane along.
+    void setFragmentDepthTexture(const Texture& renderTarget,
+                                 int slot = 0,
+                                 TextureSampling sampling = {});
+
     // Binds a Storage buffer for indexed reads in a shader stage - the thing a
     // vertex attribute stream is not. setVertexBuffer feeds the input assembler,
     // one element per vertex or per instance; this binds the whole buffer so the
