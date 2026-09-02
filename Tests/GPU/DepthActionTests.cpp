@@ -126,15 +126,15 @@ struct DepthView final : GPUView
         descriptor.depthCompare = CompareFunction::Less;
         descriptor.depthWrite = true;
 
-        near.depth = nearDepth;
-        near.color = Array {0.f, 0.f, 1.f, 1.f};
-        near.setVertices(fullQuad);
-        near.prepare(descriptor);
+        nearQuad.depth = nearDepth;
+        nearQuad.color = Array {0.f, 0.f, 1.f, 1.f};
+        nearQuad.setVertices(fullQuad);
+        nearQuad.prepare(descriptor);
 
-        far.depth = farDepth;
-        far.color = Array {0.f, 1.f, 0.f, 1.f};
-        far.setVertices(fullQuad);
-        far.prepare(descriptor);
+        farQuad.depth = farDepth;
+        farQuad.color = Array {0.f, 1.f, 0.f, 1.f};
+        farQuad.setVertices(fullQuad);
+        farQuad.prepare(descriptor);
     }
 
     void render(Frame& frame) override
@@ -145,7 +145,7 @@ struct DepthView final : GPUView
             descriptor.depthAction = suspension.first;
 
             auto pass = frame.beginPass(descriptor);
-            pass.draw(near);
+            pass.draw(nearQuad);
         }
 
         auto descriptor = RenderPassDescriptor {};
@@ -153,12 +153,12 @@ struct DepthView final : GPUView
         descriptor.depthAction = suspension.second;
 
         auto pass = frame.beginPass(descriptor);
-        pass.draw(far);
+        pass.draw(farQuad);
     }
 
     Suspension suspension;
-    FlatShader near;
-    FlatShader far;
+    FlatShader nearQuad;
+    FlatShader farQuad;
 };
 
 // The same shape one plane over: the left half stamped with a stencil value in
