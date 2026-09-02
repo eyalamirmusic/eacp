@@ -48,7 +48,8 @@ if (APPLE OR WIN32)
             MipmapTests.cpp
             TextureReadTests.cpp
             CubeTextureTests.cpp
-            ExternalGeometryTests.cpp)
+            ExternalGeometryTests.cpp
+            StreamedRangeDrawTests.cpp)
 endif ()
 
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through
