@@ -43,9 +43,14 @@ set(graphics_test_sources
 # else. APPLE covers iOS, which has no AppKit, no menu bar and no pointing
 # device, so the native halves are macOS-only; the portable halves still build
 # everywhere.
+#
+# EmbeddedViewTests-macOS has no portable half: where a surface lands inside a
+# host's view is the AppKit frame, and the y-axis conversion it turns on is
+# decided by a host view that only exists here.
 if (APPLE AND NOT IOS)
     list(APPEND graphics_test_sources
             CursorTests-macOS.mm
+            EmbeddedViewTests-macOS.mm
             MenuTests-macOS.mm
             ScrollWheelTests-macOS.mm
             ViewVisibilityTests-macOS.mm

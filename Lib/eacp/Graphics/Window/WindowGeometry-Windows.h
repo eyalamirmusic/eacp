@@ -2,14 +2,38 @@
 
 #include <eacp/Core/Utils/WinInclude.h>
 
-#include <algorithm>
+#include "../Primitives/Primitives.h"
 
-// The geometry behind the two placement rules a frameless Win32 window has to
-// enforce for itself, kept apart from the HWND that feeds them so both can be
-// checked without a display: where a point lands on a window's own resize
-// band, and how a window too big for its display is brought back within reach.
+#include <algorithm>
+#include <cmath>
+
+// The geometry behind the placement rules a Win32 surface has to enforce for
+// itself, kept apart from the HWND that feeds them so all of it can be checked
+// without a display: where a point lands on a window's own resize band, how a
+// window too big for its display is brought back within reach, and which
+// pixels a rect measured in points covers.
 namespace eacp::Graphics::detail
 {
+// The pixels a rect of ours covers, for placing and sizing a window in the
+// physical units Win32 measures one in. `scale` is pixels per point.
+//
+// Grown to the smallest pixel rect containing the points, rather than rounded
+// to the nearest. A surface rounded down leaves a seam of whatever is behind
+// it showing along its right and bottom edges, and against a host's own window
+// that seam is visible in a way half a pixel of overlap is not.
+inline RECT toPhysicalPixels(const Rect& bounds, float scale)
+{
+    auto left = std::floor(bounds.x * scale);
+    auto top = std::floor(bounds.y * scale);
+    auto right = std::ceil((bounds.x + bounds.w) * scale);
+    auto bottom = std::ceil((bounds.y + bounds.h) * scale);
+
+    return {static_cast<LONG>(left),
+            static_cast<LONG>(top),
+            static_cast<LONG>(right),
+            static_cast<LONG>(bottom)};
+}
+
 // Shrinks and slides a window rect until the whole of it lies inside `work`
 // (the display's work area — the monitor minus the taskbar and any appbars).
 //
