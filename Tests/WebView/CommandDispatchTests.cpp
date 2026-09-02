@@ -1,6 +1,7 @@
 #include "Common.h"
 
 #include <thread>
+#include <type_traits>
 // Drives the page -> C++ command path on a real WebView (window.eacp.invoke
 // -> WebViewBridge::onMessage -> Miro dispatch). Covers the two features
 // layered on top of the basic sync dispatch:
@@ -16,6 +17,11 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
+
+// The platform web view is one ScriptHost among others, and the bridge still
+// takes it by reference with nothing spelled out at the call site.
+static_assert(std::is_base_of_v<ScriptHost, WebView>);
+static_assert(std::is_constructible_v<WebViewBridge, WebView&>);
 
 namespace
 {

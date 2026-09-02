@@ -2,6 +2,8 @@
 
 #include "../Common.h"
 
+#include "ScriptHost.h"
+
 namespace eacp::Graphics
 {
 // Owning byte buffer and non-owning views used across the resource API.
@@ -71,28 +73,16 @@ StreamingProvider fileStreamProvider(
 
 struct WebViewNativeAccess;
 
-class WebView : public View
+class WebView
+    : public View
+    , public ScriptHost
 {
 public:
-    // A single file the page can hand to the native drag-out. `path` is the
-    // absolute on-disk path the OS copies on drop; `name` is the display label.
-    struct DraggableFile
-    {
-        std::string path;
-        std::string name;
-
-        MIRO_REFLECT(path, name)
-    };
-
-    // Payload of the built-in `armFileDrag` bridge command. The page sends
-    // `{ files: [{ path, name }, ...] }` and Miro deserializes it into this
-    // type. Multiple files start a single multi-file drag session.
-    struct DraggableFileList
-    {
-        Vector<DraggableFile> files;
-
-        MIRO_REFLECT(files)
-    };
+    // The drag-out payload types live at namespace scope beside ScriptHost
+    // now, so the built-in `armFileDrag` command deserializes into the same
+    // struct whichever host serves it. Still spelled WebView::DraggableFile.
+    using DraggableFile = ::eacp::Graphics::DraggableFile;
+    using DraggableFileList = ::eacp::Graphics::DraggableFileList;
 
     struct Options
     {
@@ -239,8 +229,16 @@ public:
     using JSCallback =
         std::function<void(const std::string& result, const std::string& error)>;
 
-    void evaluateJavaScript(const std::string& script,
-                            const JSCallback& callback = nullptr);
+    void evaluateJavaScript(const std::string& script, const JSCallback& callback);
+
+    // The fire-and-forget form, which is also ScriptHost's. Separate rather
+    // than a defaulted callback argument: the one-argument call has to be
+    // the virtual the bridge reaches through a ScriptHost&, and a default
+    // argument on the two-argument overload would make that call ambiguous.
+    void evaluateJavaScript(const std::string& script) override
+    {
+        evaluateJavaScript(script, nullptr);
+    }
 
     // Awaitable wrapper around evaluateJavaScript. The returned Async
     // resolves with the script result string, or rejects with the
@@ -289,16 +287,17 @@ public:
 
     void addScriptMessageHandler(
         const std::string& name,
-        std::function<void(const std::string& message)> handler);
-    void removeScriptMessageHandler(const std::string& name);
+        const MessageFunc& handler) override;
+    void removeScriptMessageHandler(const std::string& name) override;
 
-    void addUserScript(const std::string& source, bool atDocumentStart = true);
+    void addUserScript(const std::string& source,
+                       bool atDocumentStart = true) override;
 
     // Arms a native file drag-out of the given on-disk files for the next mouse
     // gesture, so the drag can escape the app into Finder / Explorer / a DAW.
     // Prefer the built-in `armFileDrag` bridge command, which routes a
     // DraggableFileList here. Desktop only (macOS + Windows); asserts on iOS.
-    void armFileDrag(const Vector<std::string>& paths);
+    void armFileDrag(const Vector<std::string>& paths) override;
 
     // Arms a native window drag for the next mouse gesture. Desktop only
     // (macOS + Windows); asserts on iOS.

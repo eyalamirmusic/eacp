@@ -39,9 +39,11 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND EACP_BUILD_WEBVIEW)
     add_subdirectory(Codegen)
 endif ()
 
-# Pure-logic WebView tests (Range header resolution). Same platform gate as
-# Codegen -- they link eacp-webview but never construct a WebView.
-if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND EACP_BUILD_WEBVIEW)
+# Pure-logic WebView tests (Range header resolution), plus the bridge over a
+# ScriptHost that is no WebView -- which is why the gate stops at the graphics
+# one: eacp-webview-bridge builds without EACP_BUILD_WEBVIEW, and the module
+# skips the suites that need a real WebView when it is off.
+if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(WebView)
 endif ()
 
