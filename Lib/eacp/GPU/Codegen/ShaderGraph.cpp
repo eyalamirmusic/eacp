@@ -323,17 +323,28 @@ int ShaderGraph::addTexture(TextureSampling sampling)
 {
     textureSamplings.add(sampling);
     textureAccesses.add(TextureAccess::Sample);
+    textureKinds.add(TextureKind::Texture2D);
+    return textureSamplings.size() - 1;
+}
+
+int ShaderGraph::addCubeTexture(TextureSampling sampling)
+{
+    textureSamplings.add(sampling);
+    textureAccesses.add(TextureAccess::Sample);
+    textureKinds.add(TextureKind::Cube);
     return textureSamplings.size() - 1;
 }
 
 int ShaderGraph::addWritableTexture()
 {
-    // The sampling is recorded to keep the two lists parallel and is never
-    // read: a written texture has no sampler on either backend. Spelled out
-    // rather than braced - `add({})` is Vector's initializer-list overload with
-    // an empty list, which adds nothing at all.
+    // The sampling is recorded to keep the lists parallel and is never read: a
+    // written texture has no sampler on either backend. Spelled out rather than
+    // braced - `add({})` is Vector's initializer-list overload with an empty
+    // list, which adds nothing at all. The kind is 2D for the same reason: a
+    // kernel writes an image, and there is no cube form of that to record.
     textureSamplings.add(TextureSampling {});
     textureAccesses.add(TextureAccess::Write);
+    textureKinds.add(TextureKind::Texture2D);
     return textureSamplings.size() - 1;
 }
 

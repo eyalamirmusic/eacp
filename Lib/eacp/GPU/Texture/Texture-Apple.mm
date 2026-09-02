@@ -65,6 +65,7 @@ struct Texture::Native
         , format(descriptor.format)
         , renderTarget(descriptor.renderTarget)
         , computeWrite(descriptor.computeWrite)
+        , cube(descriptor.cube)
     {
         auto metalDevice = (__bridge id<MTLDevice>) deviceToUse.nativeDevice();
 
@@ -79,17 +80,35 @@ struct Texture::Native
         if (computeWrite && !supportsComputeWrite(descriptor.format))
             return;
 
+        // A cube's faces are square and there are six of them, so a rectangle or
+        // a GPU-written cube has nothing this could create. Refused here rather
+        // than clamped or half-built, and on both backends identically - see
+        // TextureDescriptor::cube.
+        if (cube && (width != height || renderTarget || computeWrite))
+            return;
+
         // A chain is only worth asking for when there are pixels to build it
         // from: a render target or a kernel output has none at creation, so it
         // would get levels nothing ever writes and the sampler would read them.
         if (descriptor.mipmapped && pixels != nullptr)
             levels = mipLevelCount(width, height);
 
-        auto textureDescriptor = [MTLTextureDescriptor
-            texture2DDescriptorWithPixelFormat:toMetalFormat(descriptor.format)
-                                         width:(NSUInteger) width
-                                        height:(NSUInteger) height
-                                     mipmapped:levels > 1 ? YES : NO];
+        // Two descriptors for one texture, and the only difference is the shape:
+        // a cube is six square slices Metal indexes with a direction, and the
+        // rest of this constructor - the usage, the level count, the upload -
+        // does not care which of the two it got.
+        auto textureDescriptor =
+            cube ? [MTLTextureDescriptor
+                       textureCubeDescriptorWithPixelFormat:toMetalFormat(
+                                                                descriptor.format)
+                                                       size:(NSUInteger) width
+                                                  mipmapped:levels > 1 ? YES : NO]
+                 : [MTLTextureDescriptor
+                       texture2DDescriptorWithPixelFormat:toMetalFormat(
+                                                              descriptor.format)
+                                                    width:(NSUInteger) width
+                                                   height:(NSUInteger) height
+                                                mipmapped:levels > 1 ? YES : NO];
         textureDescriptor.usage = MTLTextureUsageShaderRead;
 
         // Set explicitly as well as through the `mipmapped` flag, so the count
@@ -188,20 +207,57 @@ struct Texture::Native
 
     void update(const void* pixels, std::size_t bytesPerRow)
     {
+        if (cube)
+        {
+            uploadCube(pixels, bytesPerRow);
+            return;
+        }
+
         if (levels > 1)
         {
-            uploadChain(pixels, bytesPerRow);
+            uploadChain(0, pixels, bytesPerRow);
             return;
         }
 
         updateRegion(0, 0, width, height, pixels, bytesPerRow);
     }
 
-    // Every level, from the chain built on the CPU. Not
+    // The six faces, one after another in the block the caller handed over.
+    // bytesPerRow is the stride *within* a face, so the next face begins one
+    // face's worth of rows further on - which is what makes a cube assembled out
+    // of six separately loaded images uploadable without repacking, as long as
+    // they were loaded at one size.
+    //
+    // A face is an ordinary texture as far as everything below here is
+    // concerned: its own slice, and its own mip chain built from its own pixels
+    // rather than from its neighbours'. See TextureDescriptor::cube for the
+    // order the six are in and why it is the same order on both backends.
+    void uploadCube(const void* pixels, std::size_t bytesPerRow)
+    {
+        if (texture.get() == nil || pixels == nullptr)
+            return;
+
+        const auto stride =
+            bytesPerRow != 0 ? bytesPerRow : (std::size_t) (width * pixelStride);
+        const auto faceBytes = stride * (std::size_t) height;
+
+        for (auto face = 0; face < 6; ++face)
+        {
+            const auto* facePixels =
+                (const unsigned char*) pixels + (std::size_t) face * faceBytes;
+
+            if (levels > 1)
+                uploadChain(face, facePixels, stride);
+            else
+                replaceSlice(face, 0, width, height, facePixels, stride);
+        }
+    }
+
+    // Every level of one slice, from the chain built on the CPU. Not
     // generateMipmapsForTexture, which would work here and has no counterpart on
     // D3D12 - see MipChain.h for why one filter shared by both backends is worth
     // more than a free one on this side only.
-    void uploadChain(const void* pixels, std::size_t bytesPerRow)
+    void uploadChain(int slice, const void* pixels, std::size_t bytesPerRow)
     {
         if (texture.get() == nil || pixels == nullptr)
             return;
@@ -216,15 +272,35 @@ struct Texture::Native
             const auto levelWidth = mipExtent(width, level);
             const auto levelHeight = mipExtent(height, level);
 
-            [texture.get()
-                 replaceRegion:MTLRegionMake2D(0,
-                                               0,
-                                               (NSUInteger) levelWidth,
-                                               (NSUInteger) levelHeight)
-                   mipmapLevel:(NSUInteger) level
-                     withBytes:chain.level(level)
-                   bytesPerRow:(NSUInteger) (levelWidth * pixelStride)];
+            replaceSlice(slice,
+                         level,
+                         levelWidth,
+                         levelHeight,
+                         chain.level(level),
+                         (std::size_t) (levelWidth * pixelStride));
         }
+    }
+
+    // One rectangle of one slice of one level. bytesPerImage is 0 because this
+    // is a 2D region: Metal reads that argument only where a single
+    // replaceRegion covers more than one image, which is a 3D texture or a whole
+    // array, and never for a cube face uploaded a slice at a time.
+    void replaceSlice(int slice,
+                      int level,
+                      int regionWidth,
+                      int regionHeight,
+                      const void* pixels,
+                      std::size_t bytesPerRow)
+    {
+        [texture.get() replaceRegion:MTLRegionMake2D(0,
+                                                    0,
+                                                    (NSUInteger) regionWidth,
+                                                    (NSUInteger) regionHeight)
+                         mipmapLevel:(NSUInteger) level
+                               slice:(NSUInteger) slice
+                           withBytes:pixels
+                         bytesPerRow:(NSUInteger) bytesPerRow
+                       bytesPerImage:0];
     }
 
     // Both update() overloads land here; the whole-texture one is just the full
@@ -240,6 +316,11 @@ struct Texture::Native
             return;
 
         if (regionWidth <= 0 || regionHeight <= 0)
+            return;
+
+        // A cube has six rectangles this could mean, and nothing here says
+        // which - see the header. Dropped rather than sent to +X.
+        if (cube)
             return;
 
         // Metal raises on a region that leaves the texture, so an out-of-bounds
@@ -280,6 +361,11 @@ struct Texture::Native
             return;
 
         if (regionWidth <= 0 || regionHeight <= 0)
+            return;
+
+        // Six faces and no argument to name one, exactly as the region upload
+        // has none - see the header.
+        if (cube)
             return;
 
         // Dropped rather than clamped, exactly as the upload side drops it.
@@ -359,6 +445,12 @@ struct Texture::Native
 
     bool renderTarget = false;
     bool computeWrite = false;
+
+    // Six square slices rather than one rectangle, which changes the descriptor
+    // it was created from, the upload loop, and what the two region-shaped
+    // entry points do - and nothing else.
+    bool cube = false;
+
     ObjC::Ptr<NSObject<MTLTexture>> texture;
     ObjC::Ptr<NSObject<MTLTexture>> depthTexture;
     CFRef<CVMetalTextureRef> cvTexture;
@@ -432,6 +524,11 @@ bool Texture::isValid() const
 bool Texture::isRenderTarget() const
 {
     return impl->renderTarget && impl->texture.get() != nil;
+}
+
+bool Texture::isCube() const
+{
+    return impl->cube && impl->texture.get() != nil;
 }
 
 int Texture::mipLevels() const

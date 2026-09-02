@@ -93,6 +93,19 @@ public:
             pass.setInputTexture(*texture, handle.slot, sampling);
     }
 
+    // The same call the 2D one takes, for the reason the render bind visitor
+    // gives: a cube is one texture on one slot of one index space on both
+    // backends, and its dimensionality was settled when it was created and when
+    // the kernel was compiled.
+    void onCubeTexture(const char*,
+                       TextureCube& handle,
+                       const Texture* texture,
+                       TextureSampling sampling) override
+    {
+        if (texture != nullptr)
+            pass.setInputTexture(*texture, handle.slot, sampling);
+    }
+
     void onWritableTexture(const char*,
                            WritableTexture2D& handle,
                            const Texture* texture) override

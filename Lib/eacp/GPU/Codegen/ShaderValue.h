@@ -381,6 +381,32 @@ inline Float4 sample(const Texture2D& texture, const Float2& coordinates)
     return result;
 }
 
+// A cube texture declared by the shader: six square faces, sampled with a
+// direction out of the cube's centre rather than with a coordinate on an image.
+// Like Texture2D it is slot-identified rather than an expression node, it takes
+// its slot from the same counter, and it is bound the same way - with
+// RenderPass::setFragmentTexture, handed a GPU::Texture created from a
+// TextureDescriptor whose `cube` is set. That last pairing is the one thing
+// neither type can check: Texture::isCube is what says whether the texture
+// bound is the shape the shader declared.
+struct TextureCube
+{
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
+// The direction need not be normalized. Which face is read is decided by the
+// largest component's axis and sign, and where in it by the other two divided by
+// that component - so a reflection vector goes in exactly as the arithmetic
+// produced it, and a normalize() before this would change nothing but the cost.
+inline Float4 sample(const TextureCube& texture, const Float3& direction)
+{
+    auto result = Float4 {};
+    result.graph = texture.graph;
+    result.node = texture.graph->addSample(texture.slot, direction.node);
+    return result;
+}
+
 // Sampling at a mip level the shader chooses rather than the one the hardware
 // derives from the neighbouring fragments. Two things need this: a sample taken
 // where the derivatives are meaningless - of a coordinate that jumps between

@@ -1260,6 +1260,25 @@ const char* hlslBufferType(BufferAccess access)
     return "StructuredBuffer<float>";
 }
 
+// What a sampled texture slot is declared as, which is the whole of what a cube
+// changes in the generated source. All four places a sampled texture is
+// declared - a Metal fragment parameter, a Metal kernel parameter, an HLSL
+// render global, an HLSL kernel global - go through these, so no two of them can
+// end up disagreeing about which slots are cubes.
+//
+// The sample expression is deliberately not one of them. `.sample(s, uv)` on
+// Metal and `.Sample(s, uv)` on HLSL read both kinds, the coordinate's own width
+// choosing which, so ExprKind::Sample never asks what shape the texture is.
+const char* metalTextureType(TextureKind kind)
+{
+    return kind == TextureKind::Cube ? "texturecube<float>" : "texture2d<float>";
+}
+
+const char* hlslTextureType(TextureKind kind)
+{
+    return kind == TextureKind::Cube ? "TextureCube" : "Texture2D";
+}
+
 // Compute kernel emission. The expression printer is the render one; only the
 // scaffolding differs: storage buffers and the uniform block are MSL kernel
 // parameters but HLSL globals, and the work-item id arrives as a builtin
@@ -1331,7 +1350,8 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                 continue;
             }
 
-            source += "texture2d<float> texture" + slot + " [[texture(" + slot
+            source += std::string(metalTextureType(graph.textureKind(i)))
+                      + " texture" + slot + " [[texture(" + slot
                       + ")]],\n    sampler sampler" + slot + " [[sampler(" + slot
                       + ")]],\n    ";
         }
@@ -1402,9 +1422,10 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
             auto samplerRegister =
                 i * samplingConfigurations + samplingIndex(graph.textureSampling(i));
 
-            source += "Texture2D texture" + slot + " : register(t" + reg
-                      + ");\nSamplerState sampler" + slot + " : register(s"
-                      + std::to_string(samplerRegister) + ");\n";
+            source += std::string(hlslTextureType(graph.textureKind(i))) + " texture"
+                      + slot + " : register(t" + reg + ");\nSamplerState sampler"
+                      + slot + " : register(s" + std::to_string(samplerRegister)
+                      + ");\n";
         }
 
         if (graph.textureCount() > 0)
@@ -1532,10 +1553,10 @@ std::string emit(const ShaderGraph& graph, Backend backend)
             auto samplerRegister =
                 i * samplingConfigurations + samplingIndex(graph.textureSampling(i));
 
-            source += "Texture2D texture" + std::to_string(i) + " : register(t"
-                      + std::to_string(i) + ");\nSamplerState sampler"
-                      + std::to_string(i) + " : register(s"
-                      + std::to_string(samplerRegister) + ");\n";
+            source += std::string(hlslTextureType(graph.textureKind(i))) + " texture"
+                      + std::to_string(i) + " : register(t" + std::to_string(i)
+                      + ");\nSamplerState sampler" + std::to_string(i)
+                      + " : register(s" + std::to_string(samplerRegister) + ");\n";
         }
 
         if (graph.textureCount() > 0)
@@ -1618,10 +1639,11 @@ std::string emit(const ShaderGraph& graph, Backend backend)
                       + std::to_string(RenderPass::uniformBase) + ")]]";
 
         for (auto i = 0; i < graph.textureCount(); ++i)
-            source += ",\n    texture2d<float> texture" + std::to_string(i)
-                      + " [[texture(" + std::to_string(i)
-                      + ")]],\n    sampler sampler" + std::to_string(i)
-                      + " [[sampler(" + std::to_string(i) + ")]]";
+            source += ",\n    " + std::string(metalTextureType(graph.textureKind(i)))
+                      + " texture" + std::to_string(i) + " [[texture("
+                      + std::to_string(i) + ")]],\n    sampler sampler"
+                      + std::to_string(i) + " [[sampler(" + std::to_string(i)
+                      + ")]]";
 
         source += bufferParameters(graph, stageRoots);
         source += ")\n{\n";

@@ -205,13 +205,48 @@ struct TextureDescriptor
     // pipeline is free to leave untested. Ignored without renderTarget, as
     // depth is.
     bool stencil = false;
+
+    // Whether this is a cube texture: six square faces sampled with a direction
+    // rather than with a coordinate, which is what a reflection or a sky needs.
+    // Declare it in the shader with ShaderBuilder::cubeTexture (or a
+    // Uniform<TextureCube> member) and sample it with a Float3.
+    //
+    // **The six faces arrive as one block of pixels, in +X, -X, +Y, -Y, +Z, -Z
+    // order, each face width * height of the format's bytesPerPixel with row 0
+    // at the top.** That is one convention rather than three: Metal's cube slice
+    // order, D3D12's array order under a TEXTURECUBE view and OpenGL's
+    // GL_TEXTURE_CUBE_MAP_POSITIVE_X + i are the same six faces in the same
+    // sequence, and all three orient a face the same way - which is what lets a
+    // cube assembled for any one of them be uploaded here untouched.
+    //
+    // It is worth pinning rather than assuming, because there is nothing to warn
+    // you when it is wrong: a face in the wrong slot, or flipped within its own
+    // slot, still samples and still looks like a picture.
+    // Tests/GPU/CubeTextureTests.cpp holds both halves - which face each axis
+    // reads, and which way u and v run inside one.
+    //
+    // width and height must be equal; six faces of a rectangle is a shape
+    // neither API has. A cube asking for renderTarget or computeWrite is refused
+    // rather than half-supported, there being no way here to say which face a
+    // pass or a kernel would write.
+    //
+    // mipmapped builds a chain per face out of that face's own pixels, which is
+    // what both APIs' own generators do: no level is ever averaged across a
+    // seam.
+    bool cube = false;
 };
 
-// A 2D texture sampled by the fragment stage (MTLTexture on Metal, a D3D12
+// A texture sampled by the fragment stage (MTLTexture on Metal, a D3D12
 // resource with its SRV descriptor on Windows). Create via
 // Device::makeTexture with tightly packed pixels (the format's
 // bytesPerPixel each), row 0 at the top, or null pixels for an
 // uninitialised texture. Bind with RenderPass::setFragmentTexture.
+//
+// Two dimensionalities, decided by TextureDescriptor::cube: a 2D image sampled
+// with a Float2, or six square faces sampled with a Float3 direction. They are
+// one class because everything below the sample is the same - one resource, one
+// descriptor, one upload path, one bind - and the difference lives where it is
+// actually visible, which is the shader's declaration.
 class Texture
 {
 public:
@@ -227,6 +262,14 @@ public:
     int width() const;
     int height() const;
     bool isValid() const;
+
+    // Whether this texture is the six-faced kind, which is what a shader
+    // declaring a TextureCube has to be handed. Binding a 2D texture where the
+    // shader declared a cube is a mismatch neither backend reports: Metal draws
+    // nothing through the sampler and D3D12 reads an SRV of the wrong
+    // dimension, so this is the only thing that can tell the two apart at the
+    // bind.
+    bool isCube() const;
 
     // Whether this texture was created able to be rendered into, which is what
     // Frame::beginPass(texture) needs and what makes an ordinary one a no-op
@@ -259,6 +302,11 @@ public:
     // bytesPerRow gives a larger stride (0 means width * the format's
     // bytesPerPixel), matching the padded rows capture buffers often carry. A
     // no-op on a wrapped or invalid texture, or when pixels is null.
+    //
+    // On a cube this takes all six faces, in the order and layout the
+    // descriptor's `cube` describes - the same block of pixels the texture was
+    // created from. There is no way to replace one face, for the reason there
+    // is no region form below.
     void update(const void* pixels, std::size_t bytesPerRow = 0);
 
     // Re-uploads one sub-rectangle, leaving the rest of the texture untouched.
@@ -278,6 +326,10 @@ public:
     // no-op. Deliberately not clamped: a clamped region would keep consuming
     // source rows at the original width and silently upload skewed pixels,
     // which is far harder to spot than nothing appearing.
+    //
+    // A no-op on a cube, which has six rectangles this could mean and no
+    // argument to say which. Quietly writing +X would be exactly the kind of
+    // silent wrong answer the out-of-bounds rule above exists to avoid.
     void update(const Graphics::Rect& region,
                 const void* pixels,
                 std::size_t bytesPerRow = 0);
@@ -304,7 +356,9 @@ public:
     // put in a frame loop.
     //
     // A no-op on an invalid texture, a null dst, or a region that is not wholly
-    // inside the texture — not clamped, for the reason update() gives.
+    // inside the texture — not clamped, for the reason update() gives. Also on a
+    // cube, which has six faces and no way here to name one, exactly as the
+    // region update has not.
     void read(void* dst, std::size_t bytesPerRow = 0) const;
     void read(const Graphics::Rect& region,
               void* dst,
