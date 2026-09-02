@@ -22,19 +22,33 @@ bool hasStencilPlane(MTLPixelFormat format)
 
 // Attaches the frame's depth buffer, and its stencil plane when the format has
 // one - the same texture named twice, which is how Metal spells a combined
-// attachment. Both planes are cleared at the start of every pass and stored by
-// neither, which is what a per-frame buffer is for.
+// attachment.
+//
+// Both planes take the same load and the same store, from DepthAction: they are
+// one attachment of one format, so a pass resuming one and clearing the other
+// would be describing a buffer the hardware does not have. Deciding it here
+// rather than at the two call sites is what keeps them in step.
 //
 // Shared by the drawable pass and the texture-target pass so the two cannot
 // drift on which planes a pass gets or what they start from.
 void attachDepthStencil(MTLRenderPassDescriptor* passDescriptor,
                         id<MTLTexture> depth,
-                        unsigned char clearStencil)
+                        unsigned char clearStencil,
+                        DepthAction action)
 {
+    const auto load =
+        action == DepthAction::Resume ? MTLLoadActionLoad : MTLLoadActionClear;
+
+    // Discarded unless a later pass is going to load it. A tile-based GPU keeps
+    // the buffer in tile memory, so storing one that nothing reads back writes
+    // the target's size again to memory at the end of every pass.
+    const auto store = action == DepthAction::Clear ? MTLStoreActionDontCare
+                                                    : MTLStoreActionStore;
+
     auto depthAttachment = passDescriptor.depthAttachment;
     depthAttachment.texture = depth;
-    depthAttachment.loadAction = MTLLoadActionClear;
-    depthAttachment.storeAction = MTLStoreActionDontCare;
+    depthAttachment.loadAction = load;
+    depthAttachment.storeAction = store;
     depthAttachment.clearDepth = 1.0;
 
     if (! hasStencilPlane(depth.pixelFormat))
@@ -42,8 +56,8 @@ void attachDepthStencil(MTLRenderPassDescriptor* passDescriptor,
 
     auto stencilAttachment = passDescriptor.stencilAttachment;
     stencilAttachment.texture = depth;
-    stencilAttachment.loadAction = MTLLoadActionClear;
-    stencilAttachment.storeAction = MTLStoreActionDontCare;
+    stencilAttachment.loadAction = load;
+    stencilAttachment.storeAction = store;
     stencilAttachment.clearStencil = (uint32_t) clearStencil;
 }
 } // namespace
@@ -249,8 +263,10 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
         MTLClearColorMake(color.r, color.g, color.b, color.a);
 
     if (auto depth = impl->depthTexture.get())
-        attachDepthStencil(
-            passDescriptor, (id<MTLTexture>) depth, descriptor.clearStencil);
+        attachDepthStencil(passDescriptor,
+                           (id<MTLTexture>) depth,
+                           descriptor.clearStencil,
+                           descriptor.depthAction);
 
     impl->timeRenderPass(passDescriptor, descriptor.label);
 
@@ -264,8 +280,8 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
 }
 
 // Rendering into an app-owned texture: one attachment, stored, and no resolve.
-// Depth comes from the target when it was created with one, cleared and
-// discarded exactly as the drawable pass does it. Passes on one command buffer
+// Depth comes from the target when it was created with one, loaded and stored
+// exactly as the drawable pass does it. Passes on one command buffer
 // are ordered by the queue, so nothing here has to say that a later pass may
 // sample what this one wrote.
 RenderPass Frame::beginPass(const Texture& target,
@@ -290,7 +306,8 @@ RenderPass Frame::beginPass(const Texture& target,
         MTLClearColorMake(color.r, color.g, color.b, color.a);
 
     if (auto depth = (__bridge id<MTLTexture>) target.nativeDepthTexture())
-        attachDepthStencil(passDescriptor, depth, descriptor.clearStencil);
+        attachDepthStencil(
+            passDescriptor, depth, descriptor.clearStencil, descriptor.depthAction);
 
     impl->timeRenderPass(passDescriptor, descriptor.label);
 

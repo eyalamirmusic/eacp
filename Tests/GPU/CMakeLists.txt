@@ -38,6 +38,7 @@ if (APPLE OR WIN32)
             SpriteBatchTests.cpp
             RenderTargetTests.cpp
             RenderTargetDepthTests.cpp
+            DepthActionTests.cpp
             FrameComputeTests.cpp
             FrameTimingTests.cpp
             PipelineStateTests.cpp

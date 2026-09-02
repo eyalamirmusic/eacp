@@ -9,6 +9,44 @@ namespace eacp::GPU
 {
 class Device;
 
+// What a pass does with the depth and stencil planes it is handed - the load at
+// its start and the store at its end, which are one decision because the second
+// is only worth paying for when a later pass makes the first one Load.
+//
+// The two planes move together throughout, both APIs putting them in one
+// attachment of one combined format, so this says nothing about depth that it
+// does not also say about stencil.
+enum class DepthAction
+{
+    // Clear on entry, discard on exit. What a pass drawing a scene wants: the
+    // buffer is scratch space for the pass and nothing after it looks.
+    //
+    // The discard is not a detail. A tile-based GPU keeps the buffer in tile
+    // memory and would otherwise write the whole thing out to memory at the end
+    // of every pass, which is the target's size again in bandwidth for pixels
+    // nothing reads.
+    Clear,
+
+    // Clear on entry, keep on exit, for a pass a later Resume will pick up
+    // from.
+    Keep,
+
+    // Load what a Keep or Resume pass left, and keep it again.
+    //
+    // This is what a *suspended* pass needs. A texture cannot be sampled by the
+    // pass rendering into it, so an app that wants to copy the frame it has
+    // drawn so far - a refraction sampling what is behind it, Doom 3's
+    // _currentRender - has to end its pass, copy, and open another. Without
+    // this the second one comes back with an empty depth buffer and everything
+    // drawn after the copy has nothing to be occluded by.
+    //
+    // `clear` is the colour's half of the same question and is separate,
+    // because the two are not always asked together: the copy above wants the
+    // colour kept and so does the depth, while a second *view* on one frame
+    // wants the colour kept and the depth cleared.
+    Resume
+};
+
 struct RenderPassDescriptor
 {
     Graphics::Color clearColor = Graphics::Color::black();
@@ -33,10 +71,15 @@ struct RenderPassDescriptor
     // from; a half-way value is what an algorithm that decrements below its
     // start needs, since the plane is unsigned.
     //
-    // Unconditional, like the depth clear beside it: a pass with no stencil
-    // plane ignores this, and one that has a plane always starts from a value it
-    // named rather than from whatever the last frame left.
+    // Read on a pass that clears - DepthAction::Clear or Keep - and ignored by
+    // one that resumes, which by definition wants the count the pass before it
+    // left. A pass with no stencil plane ignores it either way.
     unsigned char clearStencil = 0;
+
+    // The depth and stencil planes' load and store. Clear by default, which is
+    // what every pass did before this existed and what a pass drawing a scene
+    // wants.
+    DepthAction depthAction = DepthAction::Clear;
 };
 
 // Off-screen render target for snapshots: a colour texture the app owns instead

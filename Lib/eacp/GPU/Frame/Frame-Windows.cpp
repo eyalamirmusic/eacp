@@ -333,11 +333,15 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
         list->ClearRenderTargetView(target, clearColor, 0, nullptr);
     }
 
-    // Depth is cleared to the far plane (1.0) whenever a depth buffer is
-    // bound, matching the Metal pass's unconditional depth clear - and the
-    // stencil plane with it, to the value the descriptor names, whenever the
-    // buffer has one.
-    if (hasDepth)
+    // Depth is cleared to the far plane (1.0) whenever a depth buffer is bound
+    // and the pass did not ask to resume one - and the stencil plane with it, to
+    // the value the descriptor names, whenever the buffer has one.
+    //
+    // Only the load half of DepthAction exists here. There is no store to
+    // choose: a D3D12 depth buffer is a committed resource that rests in
+    // DEPTH_WRITE, so what a pass wrote is simply still there for the next one,
+    // and Keep differs from Clear on Metal alone.
+    if (hasDepth && descriptor.depthAction != DepthAction::Resume)
         list->ClearDepthStencilView(impl->depth->view,
                                     depthClearFlags(impl->depth->stencil),
                                     1.0f,
@@ -410,9 +414,10 @@ RenderPass Frame::beginPass(const Texture& target,
         list->ClearRenderTargetView(data->rtv, clearColor, 0, nullptr);
     }
 
-    // Cleared to the far plane whenever there is one, matching both the
-    // drawable pass here and the Metal pass's unconditional depth clear.
-    if (hasDepth)
+    // Cleared to the far plane whenever there is one and the pass is not
+    // resuming, matching the drawable pass above - and, as there, with no store
+    // to decide, the resource keeping what was written to it either way.
+    if (hasDepth && descriptor.depthAction != DepthAction::Resume)
         list->ClearDepthStencilView(data->dsv,
                                     depthClearFlags(data->hasStencil()),
                                     1.0f,
