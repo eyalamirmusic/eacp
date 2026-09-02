@@ -284,6 +284,29 @@ struct Uniform<Texture2D> : Texture2D
     TextureSampling sampling {};
 };
 
+// The cube form of the same member, and deliberately the same shape: the handle
+// define()'s sample() calls read, the GPU::Texture bound on its slot, and the
+// sampling baked into the shader. What differs is one line of the build walk -
+// the handle comes from cubeTexture() rather than texture() - and what sample()
+// will take, which is a Float3 direction.
+//
+// The GPU::Texture assigned here has to have been created with
+// TextureDescriptor::cube. Nothing in the type system says so, and neither
+// backend reports the mismatch: Texture::isCube is what a caller checks with.
+template <>
+struct Uniform<TextureCube> : TextureCube
+{
+    Uniform& operator=(const Texture& newTexture)
+    {
+        value = &newTexture;
+        return *this;
+    }
+
+    const Texture* value = nullptr;
+
+    TextureSampling sampling {};
+};
+
 // Storage-buffer members of a compute program, following the texture pattern:
 // the slot-indexed handle define() reads or writes, and the slot the assigned
 // GPU::Buffer is bound at when dispatched. The program stores a pointer, so
@@ -427,6 +450,11 @@ public:
         onTexture(name, member, member.value, member.sampling);
     }
 
+    void operator()(const char* name, Uniform<TextureCube>& member)
+    {
+        onCubeTexture(name, member, member.value, member.sampling);
+    }
+
     void operator()(const char* name, Uniform<InputBuffer>& member)
     {
         onInputBuffer(name, member, member.value);
@@ -456,6 +484,10 @@ protected:
     // Texture and storage-buffer members are not packed into the uniform block,
     // so only the walks that care (build, resource bind) override these.
     virtual void onTexture(const char*, Texture2D&, const Texture*, TextureSampling)
+    {
+    }
+    virtual void
+        onCubeTexture(const char*, TextureCube&, const Texture*, TextureSampling)
     {
     }
     virtual void onInputBuffer(const char*, InputBuffer&, const Buffer*) {}
@@ -490,6 +522,14 @@ public:
                    TextureSampling sampling) override
     {
         handle = builder.texture(sampling);
+    }
+
+    void onCubeTexture(const char*,
+                       TextureCube& handle,
+                       const Texture*,
+                       TextureSampling sampling) override
+    {
+        handle = builder.cubeTexture(sampling);
     }
 
     void onInputBuffer(const char*, InputBuffer& handle, const Buffer*) override
@@ -537,6 +577,19 @@ public:
                    Texture2D& handle,
                    const Texture* texture,
                    TextureSampling sampling) override
+    {
+        if (texture != nullptr)
+            pass.setFragmentTexture(*texture, handle.slot, sampling);
+    }
+
+    // The same call, and that is the point rather than an economy: a cube is one
+    // texture on one slot of one index space on both backends, so nothing about
+    // binding it differs from binding a 2D image. The dimensionality was settled
+    // when the texture was created and when the shader was compiled.
+    void onCubeTexture(const char*,
+                       TextureCube& handle,
+                       const Texture* texture,
+                       TextureSampling sampling) override
     {
         if (texture != nullptr)
             pass.setFragmentTexture(*texture, handle.slot, sampling);
