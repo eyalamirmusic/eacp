@@ -242,8 +242,28 @@ void CompositionHostWindow::initializeComposition(bool topMost)
 
 float CompositionHostWindow::getDpiScale() const
 {
+    if (dpiScaleOverride > 0.f)
+        return dpiScaleOverride;
+
     auto dpi = hwnd ? GetDpiForWindow(hwnd) : GetDpiForSystem();
     return static_cast<float>(dpi) / 96.f;
+}
+
+void CompositionHostWindow::setDpiScaleOverride(float scale)
+{
+    if (dpiScaleOverride == scale)
+        return;
+
+    dpiScaleOverride = scale;
+
+    if (!hwnd)
+        return;
+
+    // Everything already laid out was measured against the old answer: the root
+    // transform maps points to pixels with it, and the content view's size in
+    // points came from dividing the client area by it.
+    rescaleRootVisualToDpi();
+    resizeContentViewToClient();
 }
 
 // The root maps logical points to physical pixels for the whole tree. Content

@@ -40,6 +40,15 @@ struct CompositionHostWindow
     void initializeComposition(bool topMost);
 
     float getDpiScale() const;
+
+    // Overrides what getDpiScale reports, for a surface whose host does its own
+    // scaling and so works in a figure the window's DPI does not agree with; 0
+    // goes back to that DPI. Everything measured through getDpiScale follows —
+    // the root visual's transform, the size in points the content view is
+    // given, where a mouse event lands — so the surface stays consistent with
+    // itself whichever answer is in force.
+    void setDpiScaleOverride(float scale);
+
     void rescaleRootVisualToDpi();
 
     // Binds the content view: sizes it to the client area, inserts its visual,
@@ -89,6 +98,9 @@ struct CompositionHostWindow
     // redirection surface, so there is no bitmap behind the visual tree to
     // fill — and filling it is what would make the window opaque again.
     bool transparentBackground = false;
+
+    // See setDpiScaleOverride. 0 means the window's own DPI answers.
+    float dpiScaleOverride = 0.f;
 
     std::bitset<256> keyState;
     bool trackingMouseLeave = false;
