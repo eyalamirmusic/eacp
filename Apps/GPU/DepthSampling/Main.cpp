@@ -794,7 +794,7 @@ struct DepthSamplingView final : GPUView
     void drawPuffs(RenderPass& pass, Shader& shader, const Camera& camera)
     {
         shader.viewProjection = camera.viewProjection;
-        shader.tint = Array {0.88f, 0.86f, 0.82f};
+        shader.tint = {0.88f, 0.86f, 0.82f};
         shader.opacity = 0.72f;
 
         pass.bind(shader, puffBuffer);
