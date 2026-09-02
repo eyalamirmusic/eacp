@@ -25,6 +25,14 @@ bool isNear(const Color& c, int r, int g, int b, int tolerance = 16)
 // fires, the canvas is transparent and the red body shows through. A timer (which
 // fires off-screen even when rAF does not) signals ready, so the test can snapshot
 // regardless of whether the animation ran.
+//
+// The loop chains a fixed number of frames and then stops, signalling painted:
+// chaining is what proves rAF keeps firing off-screen, and stopping is what lets
+// the snapshot run against a page that has gone quiet. Snapshotting an off-screen
+// WKWebView that is still repainting stalls -- takeSnapshotWithConfiguration's
+// completion handler never arrives -- which is what made this test flaky on macOS
+// CI. The canvas keeps whatever the loop painted, so the colour still reports
+// whether rAF ran at all.
 const std::string pageHtml = R"HTML(<!doctype html><html><head><style>
   html,body{margin:0;height:100%;background:#e01010}
   canvas{display:block;width:100%;height:100%}
@@ -32,12 +40,13 @@ const std::string pageHtml = R"HTML(<!doctype html><html><head><style>
   var c = document.getElementById('c');
   c.width = 60; c.height = 40;
   var ctx = c.getContext('2d');
+  var frames = 0;
+  function post(name){ window.webkit.messageHandlers[name].postMessage(name); }
   function frame(){ ctx.fillStyle = '#10c020'; ctx.fillRect(0,0,60,40);
-                    requestAnimationFrame(frame); }
+                    if (++frames < 3) requestAnimationFrame(frame);
+                    else post('painted'); }
   requestAnimationFrame(frame);
-  setTimeout(function () {
-    window.webkit.messageHandlers.ready.postMessage('ready');
-  }, 50);
+  setTimeout(function () { post('ready'); }, 50);
 </script></body></html>)HTML";
 
 struct Fixture
@@ -45,6 +54,7 @@ struct Fixture
     WebView webView;
     Window window {};
     bool ready = false;
+    bool painted = false;
 
     explicit Fixture(bool driveOffscreen)
         : webView(makeOptions(driveOffscreen))
@@ -53,11 +63,20 @@ struct Fixture
         webView.setBounds({0.f, 0.f, 60.f, 40.f});
         webView.addScriptMessageHandler(
             "ready", [this](const std::string&) { ready = true; });
+        webView.addScriptMessageHandler(
+            "painted", [this](const std::string&) { painted = true; });
         webView.loadHTML(pageHtml);
         check(Threads::runEventLoopUntil([this] { return ready; },
                                          firstNavigationTimeout));
-        // Give the rAF loop a few ticks to paint (when it is running at all).
-        Threads::runEventLoopFor(eacp::Time::MS {100});
+    }
+
+    // Waits for the rAF loop to paint its frames and stop, so centre() snapshots
+    // a page that has gone quiet. Only for the cases that expect rAF to run at
+    // all: where it stays frozen off-screen, painted never arrives.
+    void waitForPaint()
+    {
+        check(Threads::runEventLoopUntil([this] { return painted; },
+                                         webViewResultTimeout));
     }
 
     static WebView::Options makeOptions(bool driveOffscreen)
@@ -80,6 +99,7 @@ struct Fixture
 auto tDrivesAnimationOffscreen = test("OffscreenAnimation/paintsWhenEnabled") = []
 {
     auto fix = Fixture {/*driveOffscreen*/ true};
+    fix.waitForPaint();
     check(isNear(fix.centre(), 16, 192, 32)); // #10c020, the painted green
 };
 
@@ -99,7 +119,10 @@ auto tAnimationDefaultMatchesPlatform =
     auto fix = Fixture {/*driveOffscreen*/ false};
 
     if (Platform::isWindows())
+    {
+        fix.waitForPaint();
         check(isNear(fix.centre(), 16, 192, 32)); // #10c020, native rAF paints it
+    }
     else
         check(isNear(fix.centre(), 224, 16, 16)); // #e01010, rAF frozen off-screen
 };
