@@ -67,8 +67,18 @@ struct Texture::Native
         , height(descriptor.height)
         , pixelStride(bytesPerPixel(descriptor.format))
         , format(descriptor.format)
+        , cube(descriptor.cube)
     {
         if (!context.isValid() || width <= 0 || height <= 0)
+            return;
+
+        // A cube's faces are square and there are six of them, so a rectangle -
+        // or a cube something on the GPU would write - has nothing this could
+        // create. Refused in the same words the Metal backend uses, so the two
+        // agree on what is not a texture. See TextureDescriptor::cube.
+        if (cube
+            && (width != height || descriptor.renderTarget
+                || descriptor.computeWrite))
             return;
 
         // Only with pixels to build one from: a render target or a kernel output
@@ -84,7 +94,13 @@ struct Texture::Native
         desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
         desc.Width = static_cast<UINT64>(width);
         desc.Height = static_cast<UINT>(height);
-        desc.DepthOrArraySize = 1;
+
+        // A cube is a six-element 2D array here, and it is the *view* that makes
+        // it a cube - D3D12 has no cube resource dimension, only
+        // D3D12_SRV_DIMENSION_TEXTURECUBE over six array slices, which
+        // createDescriptors builds below. The slice order is the array order,
+        // which is the same +X, -X, +Y, -Y, +Z, -Z the Metal backend uploads in.
+        desc.DepthOrArraySize = static_cast<UINT16>(cube ? 6 : 1);
         desc.MipLevels = static_cast<UINT16>(levels);
         desc.Format = toDXGIFormat(descriptor.format);
         desc.SampleDesc.Count = 1;
@@ -162,7 +178,8 @@ struct Texture::Native
                     int regionWidth,
                     int regionHeight,
                     int mipLevel = 0,
-                    bool transitionAfterwards = true)
+                    bool transitionAfterwards = true,
+                    int face = 0)
     {
         auto desc = data.resource->GetDesc();
 
@@ -173,10 +190,12 @@ struct Texture::Native
         regionDesc.Width = static_cast<UINT64>(regionWidth);
         regionDesc.Height = static_cast<UINT>(regionHeight);
 
-        // One level, always: this describes the *staging* side, which is a flat
-        // rectangle of pixels. Leaving the resource's own count here would ask
-        // for the footprint of a chain a region this size cannot have.
+        // One level and one slice, always: this describes the *staging* side,
+        // which is a flat rectangle of pixels. Leaving the resource's own counts
+        // here would ask for the footprint of a chain a region this size cannot
+        // have, and - on a cube - of six faces where one is being uploaded.
         regionDesc.MipLevels = 1;
+        regionDesc.DepthOrArraySize = 1;
 
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
         UINT rows = 0;
@@ -210,7 +229,12 @@ struct Texture::Native
         D3D12_TEXTURE_COPY_LOCATION destination = {};
         destination.pResource = data.resource.get();
         destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        destination.SubresourceIndex = static_cast<UINT>(mipLevel);
+
+        // D3D12CalcSubresource, spelled out: the mip levels of one array slice
+        // are consecutive, and the slices follow one another. On a 2D texture
+        // the face is 0 and this is the level, which is what it was before cube
+        // textures existed.
+        destination.SubresourceIndex = static_cast<UINT>(mipLevel + face * levels);
 
         D3D12_TEXTURE_COPY_LOCATION source = {};
         source.pResource = staging;
@@ -263,17 +287,61 @@ struct Texture::Native
         context.submit(commands);
     }
 
-    // The whole texture, as one level or as a chain. Every level is copied
-    // before the resource moves back to PIXEL_SHADER_RESOURCE, so the transition
-    // happens once however many levels there are.
+    // The whole texture: one face or six, as one level or as a chain. Every
+    // subresource is copied before the resource moves back to
+    // PIXEL_SHADER_RESOURCE, so the transition happens once however many there
+    // are.
+    //
+    // A cube's faces follow one another in the source block, each of them
+    // sourcePitch * height bytes on from the last - the layout
+    // TextureDescriptor::cube describes, and the same one the Metal backend
+    // walks.
     bool recordLevels(D3D12Context& context,
                       CommandContext* commands,
                       const void* pixels,
                       std::size_t sourcePitch)
     {
+        const auto faces = cube ? 6 : 1;
+        const auto faceBytes = sourcePitch * static_cast<std::size_t>(height);
+
+        for (auto face = 0; face < faces; ++face)
+        {
+            const auto* facePixels = static_cast<const unsigned char*>(pixels)
+                                     + static_cast<std::size_t>(face) * faceBytes;
+
+            // The very last subresource of the very last face is what puts the
+            // resource back where a bind expects it, and nothing before it does.
+            const auto isLast = face == faces - 1;
+
+            if (!recordFace(
+                    context, commands, facePixels, sourcePitch, face, isLast))
+                return false;
+        }
+
+        return true;
+    }
+
+    // One face - which on a 2D texture is the whole texture - as one level or as
+    // a chain built from that face's own pixels.
+    bool recordFace(D3D12Context& context,
+                    CommandContext* commands,
+                    const void* pixels,
+                    std::size_t sourcePitch,
+                    int face,
+                    bool transitionAfterwards)
+    {
         if (levels <= 1)
-            return copyPixels(
-                context, commands, pixels, sourcePitch, 0, 0, width, height);
+            return copyPixels(context,
+                              commands,
+                              pixels,
+                              sourcePitch,
+                              0,
+                              0,
+                              width,
+                              height,
+                              0,
+                              transitionAfterwards,
+                              face);
 
         const auto chain = buildMipChain(pixels, width, height, format, sourcePitch);
 
@@ -294,7 +362,8 @@ struct Texture::Native
                             levelWidth,
                             levelHeight,
                             level,
-                            level == levels - 1))
+                            transitionAfterwards && level == levels - 1,
+                            face))
                 return false;
         }
 
@@ -303,7 +372,10 @@ struct Texture::Native
 
     void update(const void* pixels, std::size_t bytesPerRow)
     {
-        if (levels > 1)
+        // A cube goes the same way a mipmapped texture does, and for the same
+        // reason: more than one subresource to fill, so the resource has to be
+        // moved back to COPY_DEST once and every face written before it returns.
+        if (levels > 1 || cube)
         {
             updateChain(pixels, bytesPerRow);
             return;
@@ -312,9 +384,9 @@ struct Texture::Native
         updateRegion(0, 0, width, height, pixels, bytesPerRow);
     }
 
-    // The re-upload path for a mipmapped texture. Unlike updateRegion it has to
-    // move the resource back to COPY_DEST first, since by now it is being
-    // sampled.
+    // The re-upload path for a texture with more than one subresource - a mip
+    // chain, six cube faces, or both. Unlike updateRegion it has to move the
+    // resource back to COPY_DEST first, since by now it is being sampled.
     void updateChain(const void* pixels, std::size_t bytesPerRow)
     {
         if (data.resource == nullptr || pixels == nullptr)
@@ -355,6 +427,11 @@ struct Texture::Native
             return;
 
         if (regionWidth <= 0 || regionHeight <= 0)
+            return;
+
+        // A cube has six rectangles this could mean, and nothing here says
+        // which - see the header. Dropped rather than sent to +X.
+        if (cube)
             return;
 
         // Out-of-bounds is dropped rather than clamped — see the header for why
@@ -417,6 +494,11 @@ struct Texture::Native
             return;
 
         if (regionWidth <= 0 || regionHeight <= 0)
+            return;
+
+        // Six faces and no argument to name one, exactly as the region upload
+        // has none - see the header.
+        if (cube)
             return;
 
         // Dropped rather than clamped, exactly as the upload side drops it.
@@ -631,8 +713,36 @@ struct Texture::Native
         if (data.srv.cpu.ptr == 0)
             return;
 
-        context.getDevice()->CreateShaderResourceView(
-            data.resource.get(), nullptr, data.srv.cpu);
+        // **The view is what makes a cube a cube on this backend.** The resource
+        // underneath is a six-slice 2D array and nothing about it says
+        // otherwise, so a null description - which is what every 2D texture here
+        // takes, and what covers every level a resource has - would hand the
+        // shader a Texture2DArray. A TextureCube declaration reading one is a
+        // dimension mismatch: the debug layer says so, and a release runtime
+        // samples nothing at all.
+        //
+        // MipLevels is spelled out because the description is no longer the
+        // null one: -1 is D3D12's "all of them from MostDetailedMip down", and
+        // is what the null description was giving before.
+        if (cube)
+        {
+            D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc = {};
+            viewDesc.Format = toDXGIFormat(descriptor.format);
+            viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+            viewDesc.Shader4ComponentMapping =
+                D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            viewDesc.TextureCube.MostDetailedMip = 0;
+            viewDesc.TextureCube.MipLevels = static_cast<UINT>(-1);
+            viewDesc.TextureCube.ResourceMinLODClamp = 0.f;
+
+            context.getDevice()->CreateShaderResourceView(
+                data.resource.get(), &viewDesc, data.srv.cpu);
+        }
+        else
+        {
+            context.getDevice()->CreateShaderResourceView(
+                data.resource.get(), nullptr, data.srv.cpu);
+        }
 
         // No sampler descriptor is created, and TextureDescriptor::filter and
         // ::addressMode are unused on this backend: the sampler comes from the
@@ -661,6 +771,11 @@ struct Texture::Native
     int levels = 1;
 
     bool computeWrite = false;
+
+    // Six array slices under a cube view rather than one 2D image, which changes
+    // the resource's array size, the subresource each upload lands on, the SRV,
+    // and what the two region-shaped entry points do - and nothing else.
+    bool cube = false;
 
     // Mutable because the state tracking advances inside the const read(): the
     // copy to the read-back buffer is a use like any other, and Buffer's
@@ -740,6 +855,11 @@ int Texture::mipLevels() const
 bool Texture::isRenderTarget() const
 {
     return isValid() && impl->data.isRenderTarget();
+}
+
+bool Texture::isCube() const
+{
+    return isValid() && impl->cube;
 }
 
 bool Texture::isComputeWritable() const

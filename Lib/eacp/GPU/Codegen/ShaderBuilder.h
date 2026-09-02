@@ -105,6 +105,18 @@ public:
         return {&graphData, graphData.addTexture(sampling)};
     }
 
+    // A cube texture, sampled with a Float3 direction rather than a Float2
+    // coordinate - a sky, a reflection, anything looked up by where it points
+    // rather than by where it is. Slots come from the same counter texture()
+    // uses and the bind is the same call, so the only difference a caller sees
+    // is the type of the handle and the width of what sample() takes. The
+    // GPU::Texture bound at the slot has to have been created with
+    // TextureDescriptor::cube.
+    TextureCube cubeTexture(TextureSampling sampling = {})
+    {
+        return {&graphData, graphData.addCubeTexture(sampling)};
+    }
+
     // Compute kernel authoring. Declaring buffers assigns slots in call order
     // (inputs and outputs share one slot space, matching Metal's flat buffer
     // indices); threadId() is the 1D work-item index; write() records a kernel

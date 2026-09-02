@@ -1570,6 +1570,52 @@ auto tCodegenTextureEmits = test("GPU/codegenTextureEmits") = []
         contains(metal, "vertex VertexOut vertexMain(VertexIn input [[stage_in]])"));
 };
 
+// A cubeTexture() declaration changes the declared type and nothing else. The
+// sampler sits at the same register, the slot comes from the same counter - a
+// cube declared beside a 2D image lands on slot 1 - and the sample is spelled
+// exactly as the 2D one is, because both shading languages read both kinds
+// through the same call and let the coordinate's width choose.
+//
+// That last part is the reason this is a test rather than a comment: it means
+// ExprKind::Sample never asks what shape the texture is, so the only thing
+// standing between a cube and a Texture2D in the generated source is these four
+// declaration sites. Pure string generation.
+auto tCodegenCubeTextureEmits = test("GPU/codegenCubeTextureEmits") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto uv = builder.vertexInput<Float2>();
+    auto normal = builder.vertexInput<Float3>();
+    auto flat = builder.texture();
+    auto cube = builder.cubeTexture();
+    auto varyingUv = builder.varying(uv);
+    auto varyingNormal = builder.varying(normal);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(sample(flat, varyingUv) * sample(cube, varyingNormal));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "texture2d<float> texture0 [[texture(0)]]"));
+    check(contains(metal, "texturecube<float> texture1 [[texture(1)]]"));
+    check(contains(metal, "sampler sampler1 [[sampler(1)]]"));
+    check(contains(metal, "texture1.sample(sampler1, input.v1)"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "Texture2D texture0 : register(t0);"));
+    check(contains(hlsl, "TextureCube texture1 : register(t1);"));
+    check(contains(hlsl,
+                   "SamplerState sampler1 : register(s"
+                       + std::to_string(samplingConfigurations) + ");"));
+    check(contains(hlsl, "texture1.Sample(sampler1, input.v1)"));
+
+    // Not a Texture2DArray and not a texture2d_array: the cube's own type is the
+    // one thing that has to be right, and both backends have a near neighbour
+    // that would compile and sample nothing.
+    check(!contains(hlsl, "Texture2DArray"));
+    check(!contains(metal, "texture2d_array"));
+};
+
 // Compiles the sampling shader through the real platform shader compiler and
 // builds a pipeline from its layout, exercising the texture-bearing fragment
 // signature. Self-skips without a GPU device.

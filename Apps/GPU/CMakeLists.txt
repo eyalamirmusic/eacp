@@ -47,6 +47,10 @@ add_subdirectory(Clipping)
 # lighting pass masked on the count. The algorithm the stencil buffer is for.
 add_subdirectory(StencilShadows)
 
+# Cube textures: a sky sampled by view direction and a sphere reflecting it.
+# Where the six faces go, and what a direction lookup is.
+add_subdirectory(CubeMap)
+
 # Incremental sub-region texture uploads, the glyph-atlas pattern.
 add_subdirectory(TextureAtlas)
 

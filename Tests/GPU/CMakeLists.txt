@@ -46,6 +46,7 @@ if (APPLE OR WIN32)
             ViewportTests.cpp
             MipmapTests.cpp
             TextureReadTests.cpp
+            CubeTextureTests.cpp
             ExternalGeometryTests.cpp)
 endif ()
 
