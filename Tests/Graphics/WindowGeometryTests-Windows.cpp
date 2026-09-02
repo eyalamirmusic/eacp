@@ -1,7 +1,8 @@
-// The two placement rules a frameless Win32 window enforces for itself, tested
-// as the pure geometry they are — no HWND, no display, no message loop. The
-// window proc that uses them does nothing but read the frame, the work area and
-// the DPI off the system and hand them over (Window-Windows.cpp).
+// The placement rules a Win32 surface enforces for itself, tested as the pure
+// geometry they are — no HWND, no display, no message loop. The window proc
+// that uses them does nothing but read the frame, the work area and the DPI off
+// the system and hand them over (Window-Windows.cpp), and the same is true of
+// the child window an EmbeddedView places inside a host's window.
 
 #include <eacp/Graphics/Window/WindowGeometry-Windows.h>
 #include <NanoTest/NanoTest.h>
@@ -176,4 +177,51 @@ auto tHitTestBandScalesWithDpi = test("WindowGeometry/hitTestBandScalesWithDpi")
 
     check(resizeBandHitTest(frame, POINT {15, 600}, 16) == HTLEFT);
     check(resizeBandHitTest(frame, POINT {16, 600}, 16) == HTCLIENT);
+};
+
+// Points to the pixels a child window is placed in. At 100% the numbers go
+// through unchanged, which is the case that hides every scaling bug.
+auto tPhysicalPixelsAtUnitScale =
+    test("WindowGeometry/physicalPixelsAtUnitScale") = []
+{
+    auto pixels =
+        toPhysicalPixels(eacp::Graphics::Rect {20.f, 40.f, 100.f, 60.f}, 1.f);
+
+    check(pixels.left == 20);
+    check(pixels.top == 40);
+    check(widthOf(pixels) == 100);
+    check(heightOf(pixels) == 60);
+};
+
+auto tPhysicalPixelsScalePosition =
+    test("WindowGeometry/physicalPixelsScalePosition") = []
+{
+    auto pixels =
+        toPhysicalPixels(eacp::Graphics::Rect {20.f, 40.f, 100.f, 60.f}, 1.5f);
+
+    // The origin scales as well as the size: a surface placed 20 points into a
+    // 150% host is 30 pixels in, and one that scaled only its size would drift
+    // further from where the host put it the further across the window it sat.
+    check(pixels.left == 30);
+    check(pixels.top == 60);
+    check(widthOf(pixels) == 150);
+    check(heightOf(pixels) == 90);
+};
+
+// The rounding rule: outwards to whole pixels, never to the nearest. A surface
+// that lands half a pixel short leaves a line of the host's own window showing
+// down its right edge, and that seam is visible in a way half a pixel of
+// overlap is not.
+auto tPhysicalPixelsGrowToContainThePoints =
+    test("WindowGeometry/physicalPixelsGrowToContainThePoints") = []
+{
+    auto pixels =
+        toPhysicalPixels(eacp::Graphics::Rect {10.f, 10.f, 101.f, 101.f}, 1.5f);
+
+    check(pixels.left == 15);
+    check(pixels.top == 15);
+
+    // 10 + 101 points at 150% is 166.5 pixels, and the surface has to cover it.
+    check(pixels.right == 167);
+    check(pixels.bottom == 167);
 };

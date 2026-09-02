@@ -2,6 +2,7 @@
 
 #include "EmbeddedView.h"
 #include "CompositionHostWindow-Windows.h"
+#include "WindowGeometry-Windows.h"
 
 namespace eacp::Graphics
 {
@@ -13,11 +14,11 @@ static bool embeddedClassRegistered = false;
 
 struct EmbeddedView::Native
 {
-    Native(void* hostParentHandle, const EmbeddedViewOptions& options)
+    Native(void* hostParentHandle, const Rect& initialBounds)
     {
         Threads::attachCurrentThreadAsMain();
         registerWindowClass();
-        createChildWindow((HWND) hostParentHandle, options);
+        createChildWindow((HWND) hostParentHandle, initialBounds);
         host.initializeComposition(false);
     }
 
@@ -40,12 +41,12 @@ struct EmbeddedView::Native
         embeddedClassRegistered = RegisterClassExW(&wc) != 0;
     }
 
-    void createChildWindow(HWND parent, const EmbeddedViewOptions& options)
+    void createChildWindow(HWND parent, const Rect& initialBounds)
     {
+        // The parent's DPI, not our own: there is no window of ours to ask yet.
         auto dpi = parent ? GetDpiForWindow(parent) : GetDpiForSystem();
-        auto dpiScale = static_cast<float>(dpi) / 96.f;
-        auto physicalWidth = static_cast<int>(options.width * dpiScale);
-        auto physicalHeight = static_cast<int>(options.height * dpiScale);
+        auto pixels =
+            detail::toPhysicalPixels(initialBounds, static_cast<float>(dpi) / 96.f);
 
         DWORD style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
 
@@ -54,32 +55,47 @@ struct EmbeddedView::Native
                             EMBEDDED_CLASS_NAME,
                             L"",
                             style,
-                            0,
-                            0,
-                            physicalWidth,
-                            physicalHeight,
+                            pixels.left,
+                            pixels.top,
+                            pixels.right - pixels.left,
+                            pixels.bottom - pixels.top,
                             parent,
                             nullptr,
                             (HINSTANCE) eacp::Plugins::getCurrentModuleHandle(),
                             this);
     }
 
-    void setSize(int width, int height)
+    void setBounds(const Rect& bounds)
     {
         if (!host.hwnd)
             return;
 
-        auto dpiScale = host.getDpiScale();
-        auto physicalWidth = static_cast<int>(width * dpiScale);
-        auto physicalHeight = static_cast<int>(height * dpiScale);
+        auto pixels = detail::toPhysicalPixels(bounds, host.getDpiScale());
 
         SetWindowPos(host.hwnd,
                      nullptr,
-                     0,
-                     0,
-                     physicalWidth,
-                     physicalHeight,
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                     pixels.left,
+                     pixels.top,
+                     pixels.right - pixels.left,
+                     pixels.bottom - pixels.top,
+                     SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+    }
+
+    void stopFollowingHost()
+    {
+        // Nothing to undo. A child window is moved and sized by whoever calls
+        // SetWindowPos on it and by nobody else, so unlike AppKit's
+        // autoresizing there is no second party here to switch off.
+    }
+
+    void setVisible(bool shouldBeVisible)
+    {
+        if (!host.hwnd)
+            return;
+
+        // SW_SHOWNA, not SW_SHOW: bringing the surface back must not take the
+        // focus off whatever in the host's window had it.
+        ShowWindow(host.hwnd, shouldBeVisible ? SW_SHOWNA : SW_HIDE);
     }
 
     static LRESULT CALLBACK windowProc(HWND hwnd,
@@ -120,8 +136,8 @@ LRESULT CALLBACK EmbeddedView::Native::windowProc(HWND hwnd,
 
 EmbeddedView::EmbeddedView(void* hostParentHandle,
                            const EmbeddedViewOptions& optionsToUse)
-    : options(optionsToUse)
-    , impl(hostParentHandle, options)
+    : bounds(0.f, 0.f, (float) optionsToUse.width, (float) optionsToUse.height)
+    , impl(hostParentHandle, bounds)
 {
 }
 
@@ -132,9 +148,32 @@ void EmbeddedView::setContentView(View& view)
     impl->host.attachContentView(&view);
 }
 
+void EmbeddedView::setBounds(const Rect& newBounds)
+{
+    bounds = newBounds;
+
+    impl->stopFollowingHost();
+    impl->setBounds(bounds);
+}
+
 void EmbeddedView::setSize(int width, int height)
 {
-    impl->setSize(width, height);
+    bounds = bounds.withSize((float) width, (float) height);
+    impl->setBounds(bounds);
+}
+
+void EmbeddedView::setVisible(bool shouldBeVisible)
+{
+    visible = shouldBeVisible;
+    impl->setVisible(shouldBeVisible);
+}
+
+void EmbeddedView::setPixelsPerPoint(float pixelsPerPoint)
+{
+    impl->host.setDpiScaleOverride(pixelsPerPoint);
+
+    // The frame was measured against the answer that has just changed.
+    impl->setBounds(bounds);
 }
 
 void* EmbeddedView::getHandle()
