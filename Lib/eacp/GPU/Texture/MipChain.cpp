@@ -83,10 +83,9 @@ void halveFloats(const std::uint8_t* source,
                  int sourceHeight,
                  std::uint8_t* destination,
                  int destinationWidth,
-                 int destinationHeight)
+                 int destinationHeight,
+                 int channels)
 {
-    constexpr auto channels = 4;
-
     for (auto y = 0; y < destinationHeight; ++y)
         for (auto x = 0; x < destinationWidth; ++x)
         {
@@ -254,13 +253,15 @@ MipChain buildMipChain(const void* pixels,
                 break;
 
             case TextureFormat::RGBA32Float:
+            case TextureFormat::R32Float:
                 halveFloats(source,
                             pitch,
                             sourceWidth,
                             sourceHeight,
                             destination.data(),
                             destinationWidth,
-                            destinationHeight);
+                            destinationHeight,
+                            texelBytes / (int) sizeof(float));
                 break;
         }
     }
