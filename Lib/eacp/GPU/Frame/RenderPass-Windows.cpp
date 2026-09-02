@@ -162,21 +162,29 @@ void RenderPass::setStencilReference(unsigned int value)
 
 void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
 {
-    if (!impl->encoder)
+    setVertexBuffer(BufferRange::of(buffer), index);
+}
+
+void RenderPass::setVertexBuffer(const BufferRange& range, int index)
+{
+    if (!impl->encoder || range.buffer == nullptr)
         return;
 
-    auto* data = static_cast<D3D12BufferData*>(buffer.nativeBuffer());
+    auto* data = static_cast<D3D12BufferData*>(range.buffer->nativeBuffer());
 
-    if (data == nullptr || data->resource == nullptr)
+    if (data == nullptr || data->resource == nullptr || range.offset >= data->size)
         return;
 
     auto& commands = *impl->encoder->commands;
     transitionForUse(
         commands, *data, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
 
+    // A view starting part-way into the resource: the address moves up by the
+    // offset and the size comes down by it, so the view still ends where the
+    // buffer does and vertex zero is the byte at the offset.
     D3D12_VERTEX_BUFFER_VIEW view = {};
-    view.BufferLocation = data->resource->GetGPUVirtualAddress();
-    view.SizeInBytes = static_cast<UINT>(data->size);
+    view.BufferLocation = data->resource->GetGPUVirtualAddress() + range.offset;
+    view.SizeInBytes = static_cast<UINT>(data->size - range.offset);
     view.StrideInBytes = strideForSlot(impl->encoder->strides, index);
 
     commands.list->IASetVertexBuffers(static_cast<UINT>(index), 1, &view);
@@ -330,7 +338,50 @@ void RenderPass::drawInstanced(int vertexCount,
                                                  static_cast<UINT>(firstInstance));
 }
 
+namespace
+{
+// The index buffer view for a slice, bound, with the resource moved into the
+// state an index read needs. False when there is nothing to bind - no buffer,
+// no resource, or an offset past the end of it - so the draw that follows can
+// be skipped rather than issued over nothing. The view starts at the slice
+// and runs to the buffer's end, the same shape the vertex bind takes, so
+// firstIndex counts on from the slice's own index zero.
+bool bindIndexRange(CommandContext& commands,
+                    const BufferRange& indices,
+                    IndexFormat format)
+{
+    if (indices.buffer == nullptr)
+        return false;
+
+    auto* data = static_cast<D3D12BufferData*>(indices.buffer->nativeBuffer());
+
+    if (data == nullptr || data->resource == nullptr || indices.offset >= data->size)
+        return false;
+
+    transitionForUse(commands, *data, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+
+    D3D12_INDEX_BUFFER_VIEW view = {};
+    view.BufferLocation = data->resource->GetGPUVirtualAddress() + indices.offset;
+    view.SizeInBytes = static_cast<UINT>(data->size - indices.offset);
+    view.Format =
+        format == IndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
+
+    commands.list->IASetIndexBuffer(&view);
+
+    return true;
+}
+} // namespace
+
 void RenderPass::drawIndexed(const Buffer& indices,
+                             int indexCount,
+                             IndexFormat format,
+                             int firstIndex,
+                             int baseVertex)
+{
+    drawIndexed(BufferRange::of(indices), indexCount, format, firstIndex, baseVertex);
+}
+
+void RenderPass::drawIndexed(const BufferRange& indices,
                              int indexCount,
                              IndexFormat format,
                              int firstIndex,
@@ -339,21 +390,11 @@ void RenderPass::drawIndexed(const Buffer& indices,
     if (!impl->encoder || !impl->pipelineBound)
         return;
 
-    auto* data = static_cast<D3D12BufferData*>(indices.nativeBuffer());
+    auto& commands = *impl->encoder->commands;
 
-    if (data == nullptr || data->resource == nullptr)
+    if (!bindIndexRange(commands, indices, format))
         return;
 
-    auto& commands = *impl->encoder->commands;
-    transitionForUse(commands, *data, D3D12_RESOURCE_STATE_INDEX_BUFFER);
-
-    D3D12_INDEX_BUFFER_VIEW view = {};
-    view.BufferLocation = data->resource->GetGPUVirtualAddress();
-    view.SizeInBytes = static_cast<UINT>(data->size);
-    view.Format =
-        format == IndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
-
-    commands.list->IASetIndexBuffer(&view);
     commands.list->DrawIndexedInstanced(static_cast<UINT>(indexCount),
                                         1,
                                         static_cast<UINT>(firstIndex),
@@ -369,24 +410,31 @@ void RenderPass::drawIndexedInstanced(const Buffer& indices,
                                       int firstInstance,
                                       int baseVertex)
 {
+    drawIndexedInstanced(BufferRange::of(indices),
+                         indexCount,
+                         instanceCount,
+                         format,
+                         firstIndex,
+                         firstInstance,
+                         baseVertex);
+}
+
+void RenderPass::drawIndexedInstanced(const BufferRange& indices,
+                                      int indexCount,
+                                      int instanceCount,
+                                      IndexFormat format,
+                                      int firstIndex,
+                                      int firstInstance,
+                                      int baseVertex)
+{
     if (!impl->encoder || !impl->pipelineBound)
         return;
 
-    auto* data = static_cast<D3D12BufferData*>(indices.nativeBuffer());
+    auto& commands = *impl->encoder->commands;
 
-    if (data == nullptr || data->resource == nullptr)
+    if (!bindIndexRange(commands, indices, format))
         return;
 
-    auto& commands = *impl->encoder->commands;
-    transitionForUse(commands, *data, D3D12_RESOURCE_STATE_INDEX_BUFFER);
-
-    D3D12_INDEX_BUFFER_VIEW view = {};
-    view.BufferLocation = data->resource->GetGPUVirtualAddress();
-    view.SizeInBytes = static_cast<UINT>(data->size);
-    view.Format =
-        format == IndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
-
-    commands.list->IASetIndexBuffer(&view);
     commands.list->DrawIndexedInstanced(static_cast<UINT>(indexCount),
                                         static_cast<UINT>(instanceCount),
                                         static_cast<UINT>(firstIndex),

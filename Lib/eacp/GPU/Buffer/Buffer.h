@@ -73,4 +73,36 @@ private:
     struct Native;
     Pimpl<Native> impl;
 };
+
+// A contiguous slice of one Buffer: where it starts and how long it is, in
+// bytes from the buffer's beginning.
+//
+// This is what a sub-allocator hands out and what a bind can take. A
+// StreamingBuffers write comes back as one of these rather than as a whole
+// buffer, and RenderPass::setVertexBuffer and drawIndexed accept one directly,
+// which is what lets a frame's worth of geometry share a single GPU resource
+// instead of being one resource per draw. Nothing about the buffer changes:
+// the range only says which part of it a draw should read from.
+//
+// Holds a pointer, not ownership. Whoever handed the range out owns the buffer
+// and says how long the range stays valid - a streamed one until its pool
+// comes round again, a range over an app's own buffer as long as the app
+// keeps the buffer.
+struct BufferRange
+{
+    const Buffer* buffer = nullptr;
+    std::size_t offset = 0;
+    std::size_t bytes = 0;
+
+    // The whole of a buffer, for the calls that take a range when what a
+    // caller has is a buffer it means to bind from the start.
+    static BufferRange of(const Buffer& whole)
+    {
+        return {&whole, 0, whole.size()};
+    }
+
+    // False for a default-constructed range and for one over a buffer that
+    // never got storage, which is the same test a bind makes before encoding.
+    bool isValid() const { return buffer != nullptr && buffer->isValid(); }
+};
 } // namespace eacp::GPU
