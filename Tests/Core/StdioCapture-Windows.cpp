@@ -5,8 +5,7 @@
 #include <io.h>
 #include <sys/stat.h>
 
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include <eacp/Core/Utils/WinInclude.h>
 
 namespace StdioCapture
 {

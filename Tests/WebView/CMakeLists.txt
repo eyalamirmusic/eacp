@@ -34,7 +34,11 @@ endif ()
 #   RenderToImageAsyncTests View::renderToImageAsync folding the page's pixels
 #                           into the composited image, awaited with waitFor
 #   OffscreenAnimationTests Options::driveOffscreenAnimation keeping an rAF loop
-#                           advancing off-screen, compared as captured pixels
+#                           advancing off-screen, read back out of the page
+#   SnapshotDeadlineTests   detail::withSnapshotDeadline, which is what makes
+#                           takeSnapshot's callback unconditional. Builds no
+#                           WebView, but it does need the runloop the bootstrap
+#                           brings up, so it lives here rather than above
 #   UserAgentTests          Options::userAgent read back from the page, and
 #                           Options::loadDeclinedPopupsInline deciding whether a
 #                           declined window.open replaces the host document
@@ -43,6 +47,7 @@ if (TARGET eacp-webview-test-main)
             CommandDispatchTests.cpp
             OffscreenAnimationTests.cpp
             RenderToImageAsyncTests.cpp
+            SnapshotDeadlineTests.cpp
             StreamingPumpTests.cpp
             UserAgentTests.cpp
             WebViewAffordanceTests.cpp

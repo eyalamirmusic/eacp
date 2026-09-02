@@ -3,6 +3,7 @@
 
 using namespace eacp;
 using namespace GPU;
+using namespace Maths;
 
 // A Wolfenstein3D-style first-person walk through a grid maze. The map below
 // extrudes into textured wall quads once at startup; the camera is two scalar
@@ -33,13 +34,6 @@ constexpr std::string_view worldMap[] = {
 };
 
 constexpr auto mapRows = (int) std::size(worldMap);
-
-constexpr float pi = 3.14159265358979f;
-
-float radians(float degrees)
-{
-    return degrees * (pi / 180.0f);
-}
 
 bool isSolid(int x, int z)
 {

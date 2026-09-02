@@ -11,6 +11,7 @@ set(core_test_sources
         FilePathTests.cpp
         FileTests.cpp
         FilesTests.cpp
+        MathsTests.cpp
         MemoryMappedFileTests.cpp
         PluginObjectTests.cpp
         ProcessInheritStdioTests.cpp

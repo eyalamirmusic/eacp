@@ -1,8 +1,23 @@
 #pragma once
 
-// The header set every eacp translation unit parses anyway. Precompiling it
-// once is worth a large fraction of a cold Windows build, where <windows.h>
-// alone is bigger than the rest of a typical TU put together.
+// The header set every eacp translation unit parses anyway: the STL, and
+// nothing else. Precompiling it is worth about a third of a typical
+// translation unit -- 692ms down to 475ms, measured on a Windows build.
+//
+// <windows.h> is deliberately absent, and adding it back would be a mistake
+// worth naming. CMake builds a precompiled header with /FI, so whatever is
+// listed here is force-included into every file in the project, and windows.h
+// carries a couple of dozen macros with it. `near` and `far` are the dangerous
+// ones, being lowercase and so sharing a namespace with every member and
+// variable this codebase declares; they cost the Windows lanes a build once, on
+// a test whose `near`/`far` members preprocessed down to `.depth = nearDepth;`.
+// Undefining them is not a way out -- FAR and NEAR expand to them, and the SDK
+// still writes `LPMALLOC FAR *`. Measured, it bought the ~87% of files that
+// never include it exactly nothing (475ms with an STL-only image against 478ms
+// with windows.h added), while the *-Windows.cpp TUs that do want it pay a flat
+// ~68ms each to parse it through WinInclude.h instead. The two defines that
+// configure it live in CMake/TargetSetup.cmake, where they apply with EACP_PCH
+// off as well.
 //
 // Only headers from outside this repository belong here. eacp's own headers
 // would precompile faster still, but any edit to one would invalidate the image
@@ -12,48 +27,6 @@
 // every consuming target, and the C consumers here are ResEmbed's generated
 // byte-array blobs, which include nothing and would only pay to load it.
 #ifdef __cplusplus
-
-#ifdef _WIN32
-// The configuration eacp/Core/Utils/WinInclude.h applies, spelled out
-// rather than included so the image depends on nothing in the repo.
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-
-#include <windows.h>
-
-// No <unknwn.h> here, deliberately. WinInclude.h pairs it with windows.h
-// for the WinRT interop TUs, but it drags in rpcndr.h, whose `small`
-// macro would then be forced on every file in the project.
-
-// windows.h takes `near` and `far` as macro names, and a force-included image
-// hands them to every file in the project -- including the portable ones that
-// never asked for windows.h and compile clean on every other platform. That
-// broke the Windows lanes once already, on a test whose `near`/`far` members
-// preprocessed down to `.depth = nearDepth;`.
-//
-// They cannot simply be undefined. FAR and NEAR expand to them, and the SDK
-// still writes `LPMALLOC FAR *` in a hundred-odd of its own headers, which are
-// parsed after this one -- undefining the pair alone fails combaseapi.h with
-// `expected ')'`. So the two are taken back and FAR/NEAR are restored as the
-// empty macros they have meant since 16-bit addressing died.
-//
-// The A/W macros -- DrawText, LoadImage, CreateFont -- are deliberately left:
-// the *-Windows.cpp TUs call the Win32 functions through them, and being
-// PascalCase they can only collide with a type of that exact name, which eacp
-// has none of. What made `near` different is that it is lowercase, and so in
-// the same namespace as every member and variable this codebase declares.
-#undef near
-#undef far
-#undef NEAR
-#undef FAR
-#define NEAR
-#define FAR
-#endif
 
 #include <algorithm>
 #include <array>
