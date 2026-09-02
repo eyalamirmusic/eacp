@@ -736,3 +736,229 @@ auto tFontsSurviveARebuild =
     component->setBounds({0.f, 0.f, 400.f, 200.f});
     check(component->getFontCount() == 2, "two sizes, not four");
 };
+
+// ------------------------------------------------------- percentage lengths
+
+// SVG 1.1 §7.10: a length written as a percentage is a fraction of the nearest
+// viewport -- the x-axis ones of its width, the y-axis ones of its height, and
+// the ones belonging to neither of the diagonal over root two.
+//
+// Every one of them used to be read as a bare number, so `<rect width="100%">`
+// was a rect a hundred user units wide: a tile written to cover its own 160x160
+// viewport drew a hundred of it and left the rest of every tile blank, which is
+// what a page-wide background texture came out as.
+
+namespace
+{
+bool isNearRect(const Graphics::Rect& rect, float x, float y, float w, float h)
+{
+    return isNear(rect.x, x) && isNear(rect.y, y) && isNear(rect.w, w)
+           && isNear(rect.h, h);
+}
+
+// Which is how a curve is compared, rather than against numbers: an ellipse is
+// flattened to a polygon pushed half a sagitta outside the real curve, so its
+// bounds are the radius and a little, and the little cancels only between two
+// shapes built the same way.
+bool isNearRect(const Graphics::Rect& rect, const Graphics::Rect& other)
+{
+    return isNearRect(rect, other.x, other.y, other.w, other.h);
+}
+
+// One shape's own geometry, against whatever viewport the test names rather than
+// against one an enclosing <svg> would have established.
+GPUWidgets::Path geometryOf(const std::string& markup, const SVG::Viewport& viewport)
+{
+    return SVG::buildGeometry(documentFrom(markup), viewport, 0.05f);
+}
+} // namespace
+
+auto tPercentageTakesItsOwnAxis =
+    test("SVGGeometry/aPercentageIsAFractionOfTheViewportsOwnAxis") = []
+{
+    auto rect = geometryOf(R"(<rect x="25%" y="10%" width="50%" height="80%"/>)",
+                           {160.f, 100.f});
+
+    check(isNearRect(rect.getBounds(), 40.f, 10.f, 80.f, 80.f),
+          "each length against the extent the axis it belongs to has");
+};
+
+auto tFullSizeRect = test("SVGGeometry/aHundredPercentRectIsTheWholeViewport") = []
+{
+    auto rect = geometryOf(R"(<rect width="100%" height="100%"/>)", {160.f, 160.f});
+
+    check(isNearRect(rect.getBounds(), 0.f, 0.f, 160.f, 160.f),
+          "160 of it, and not the hundred the number read as");
+};
+
+auto tRadiusTakesTheDiagonal =
+    test("SVGGeometry/aRadiusIsAFractionOfTheNormalisedDiagonal") = []
+{
+    auto viewport = SVG::Viewport {160.f, 120.f};
+
+    // sqrt(160^2 + 120^2) / sqrt(2) is 200 / sqrt(2), so half of it is 70.71 --
+    // neither the 80 the width would give nor the 60 the height would.
+    auto radius = 0.5f * std::sqrt((160.f * 160.f + 120.f * 120.f) * 0.5f);
+
+    auto asPercentage =
+        geometryOf(R"(<circle cx="50%" cy="50%" r="50%"/>)", viewport);
+
+    auto asNumber = geometryOf(R"(<circle cx="80" cy="60" r=")"
+                                   + std::to_string(radius) + R"("/>)",
+                               viewport);
+
+    check(isNearRect(asPercentage.getBounds(), asNumber.getBounds()),
+          "a radius belongs to neither axis, so it takes the diagonal");
+
+    auto acrossOnly = geometryOf(R"(<circle cx="80" cy="60" r="80"/>)", viewport);
+
+    check(!isNearRect(asPercentage.getBounds(), acrossOnly.getBounds()),
+          "and not the width's half");
+};
+
+// rx and ry do have an axis each, so one fraction written twice is two lengths
+// wherever the viewport is not square.
+auto tEllipseRadiiTakeTheirAxes =
+    test("SVGGeometry/anEllipsesRadiiTakeAnAxisEach") = []
+{
+    auto viewport = SVG::Viewport {200.f, 100.f};
+
+    auto asPercentages =
+        geometryOf(R"(<ellipse cx="50%" cy="50%" rx="25%" ry="25%"/>)", viewport);
+
+    auto asNumbers =
+        geometryOf(R"(<ellipse cx="100" cy="50" rx="50" ry="25"/>)", viewport);
+
+    check(isNearRect(asPercentages.getBounds(), asNumbers.getBounds()),
+          "one fraction written twice is two lengths");
+};
+
+auto tLinePercentages = test("SVGGeometry/aLinesEndsAreLengthsToo") = []
+{
+    auto line =
+        geometryOf(R"(<line x1="10%" y1="10%" x2="90%" y2="50%"/>)", {200.f, 100.f});
+
+    check(isNearRect(line.getBounds(), 20.f, 10.f, 160.f, 40.f));
+};
+
+auto tPlainNumbersAreUntouched =
+    test("SVGGeometry/aPlainNumberIsTheNumberWhateverTheViewport") = []
+{
+    auto markup = std::string {R"(<rect x="10" y="20" width="30" height="40"/>)"};
+
+    check(isNearRect(
+        geometryOf(markup, {160.f, 160.f}).getBounds(), 10.f, 20.f, 30.f, 40.f));
+
+    check(isNearRect(
+        geometryOf(markup, {1.f, 1.f}).getBounds(), 10.f, 20.f, 30.f, 40.f));
+
+    // And a unit is still passed over rather than refused, which is what reading
+    // these as bare numbers has always done with one.
+    check(isNearRect(
+        geometryOf(R"(<rect width="30px" height="40px"/>)", {160.f, 160.f})
+            .getBounds(),
+        0.f,
+        0.f,
+        30.f,
+        40.f));
+};
+
+// ------------------------------------------ the viewport down the tree
+
+auto tDocumentIsTheViewport =
+    test("SVGComponent/aFullSizeRectIsTheSameShapeWrittenEitherWay") = []
+{
+    auto asPercentages = componentFor(
+        R"(<svg width="160" height="160"><rect width="100%" height="100%" fill="red"/></svg>)",
+        160.f,
+        160.f);
+
+    auto asNumbers = componentFor(
+        R"(<svg width="160" height="160"><rect width="160" height="160" fill="red"/></svg>)",
+        160.f,
+        160.f);
+
+    check(asPercentages->getShapeCount() == 1);
+    check(isNear(asPercentages->getTotalMaskArea(), asNumbers->getTotalMaskArea()),
+          "the tile covers its own viewport");
+};
+
+// The viewBox and not the width attribute, because the viewBox is the viewport
+// expressed in the units the children are actually written in.
+auto tViewBoxIsTheViewport =
+    test("SVGComponent/aPercentageIsOfTheViewBoxRatherThanTheWidth") = []
+{
+    // 80x40 of user space fitted uniformly into a 160x160 component is a scale
+    // of two, so a rect filling the viewBox covers 160x80 points of it.
+    auto component = componentFor(
+        R"(<svg width="160" height="160" viewBox="0 0 80 40"><rect width="100%" height="100%" fill="red"/></svg>)",
+        160.f,
+        160.f);
+
+    check(component->getShapeCount() == 1);
+    check(isNear(component->getTotalMaskArea(), 160.f * 80.f));
+};
+
+auto tNestedSvgReplacesTheViewport =
+    test("SVGComponent/aNestedSvgIsWhatItsChildrensPercentagesAreOf") = []
+{
+    auto component = componentFor(
+        R"(<svg width="100" height="100"><svg x="0" y="50" width="50" height="50" viewBox="0 0 1000 1000">)"
+        R"(<rect width="100%" height="100%" fill="red"/></svg></svg>)");
+
+    check(component->getShapeCount() == 1);
+    check(isNear(component->getTotalMaskArea(), 50.f * 50.f),
+          "the icon's own box, drawn at the 50x50 the sheet gave it");
+};
+
+auto tSymbolReplacesTheViewport =
+    test("SVGComponent/aSymbolsViewBoxIsWhatItsPercentagesAreOf") = []
+{
+    auto component = componentFor(
+        R"(<svg width="100" height="100"><defs><symbol id="s" viewBox="0 0 10 10">)"
+        R"(<rect width="100%" height="100%" fill="red"/></symbol></defs>)"
+        R"(<use href="#s" width="50" height="50"/></svg>)");
+
+    check(component->getShapeCount() == 1);
+    check(isNear(component->getTotalMaskArea(), 50.f * 50.f));
+};
+
+// The one place a percentage has no viewport to be a fraction of: the root's own
+// width says how big whatever is showing the document is, which the document
+// knows nothing about. So it is as intrinsic a size as no width at all, and a
+// caller sizing an <img> by it has to be given the same fallback.
+auto tPercentageRootSizeIsNotIntrinsic =
+    test("SVGComponent/aPercentageRootSizeIsTheMissingSizeItBehavesAs") = []
+{
+    auto ratio =
+        componentFor(R"(<svg width="100%" height="100%" viewBox="0 0 4 3"></svg>)");
+
+    auto missing = componentFor(R"(<svg viewBox="0 0 4 3"></svg>)");
+
+    check(isNear(ratio->getDocumentWidth(), 4.f));
+    check(isNear(ratio->getDocumentHeight(), 3.f));
+    check(isNear(ratio->getDocumentWidth(), missing->getDocumentWidth()));
+    check(isNear(ratio->getDocumentHeight(), missing->getDocumentHeight()));
+
+    // And with no viewBox to take a ratio from either, the 300x150 the format
+    // falls back to.
+    auto neither = componentFor(R"(<svg width="100%" height="100%"></svg>)");
+
+    check(isNear(neither->getDocumentWidth(), 300.f));
+    check(isNear(neither->getDocumentHeight(), 150.f));
+};
+
+auto tStrokeWidthIsALength =
+    test("SVGComponent/aStrokeWidthPercentageIsOfTheDiagonalToo") = []
+{
+    // Which for a square viewport is its side, so the two documents are the same
+    // pen written two ways.
+    auto asPercentage = componentFor(
+        R"(<svg width="100" height="100"><line x1="10" y1="50" x2="90" y2="50" fill="none" stroke="red" stroke-width="10%"/></svg>)");
+
+    auto asNumber = componentFor(
+        R"(<svg width="100" height="100"><line x1="10" y1="50" x2="90" y2="50" fill="none" stroke="red" stroke-width="10"/></svg>)");
+
+    check(asPercentage->getShapeCount() == 1);
+    check(isNear(asPercentage->getTotalMaskArea(), asNumber->getTotalMaskArea()));
+};

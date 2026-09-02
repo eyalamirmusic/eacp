@@ -52,10 +52,14 @@ struct ClipRegion
 //    is their union; a single child's own rule is honoured.
 //
 // `flatness` is the tolerance the curves are flattened to, in the same units the
-// region comes out in.
+// region comes out in, and `viewport` is what the percentages inside it are
+// fractions of -- the one in force where the clip-path was written, the region
+// belonging to the referencing element's space rather than to wherever in the
+// tree the <clipPath> happens to sit.
 ClipRegion resolveClipPath(const std::string& reference,
                            const ElementsById& byId,
                            const Graphics::Rect& objectBounds,
+                           const Viewport& viewport,
                            float flatness);
 
 // The rectangle a path is, when it is exactly one -- four corners, axis-aligned

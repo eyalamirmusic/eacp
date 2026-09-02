@@ -239,6 +239,11 @@ private:
         GPUWidgets::AffineTransform transform;
         Graphics::Rect objectBounds;
 
+        // Part of what two askers have to agree on before they share a region,
+        // since a clipPath written in percentages resolves to different geometry
+        // under two viewports however alike everything else about them is.
+        Viewport viewport;
+
         // Unused for a clip that came out a rectangle, which needs no mask: the
         // bounds below are the whole of it, and a scissor rect draws them for
         // nothing.
@@ -334,7 +339,8 @@ private:
     // and y ask for. Not a shared mask -- each use site has its own transform
     // and therefore its own coverage, so there is nothing to share.
     void buildUse(const SVGElement& element, const Style& style, int depth);
-    void buildNestedSvg(const SVGElement& element, const Style& inherited, int depth);
+    void
+        buildNestedSvg(const SVGElement& element, const Style& inherited, int depth);
 
     // A <symbol> (or a nested <svg>) instantiated by a use: a container that
     // brings its own viewBox, mapped onto the size the use site asked for.
@@ -362,6 +368,7 @@ private:
     // format says draws the element unclipped.
     int findOrAddClip(const std::string& reference,
                       const GPUWidgets::AffineTransform& transform,
+                      const Viewport& viewport,
                       const Graphics::Rect& objectBounds);
 
     // What a paint reference resolves to, against this document's ids and its

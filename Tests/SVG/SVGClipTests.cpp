@@ -52,6 +52,11 @@ constexpr auto clipFlatness = 0.05f;
 
 const auto anyBox = Graphics::Rect {0.f, 0.f, 10.f, 10.f};
 
+// What a percentage inside one of these clipPaths would be a fraction of. None
+// of them writes one, so it makes no difference what it is; the documents are
+// this size.
+const auto anyViewport = SVG::Viewport {100.f, 100.f};
+
 OwningPointer<SVG::SVGComponent> clippedComponent(const std::string& markup,
                                                   float width = 100.f,
                                                   float height = 100.f)
@@ -73,7 +78,7 @@ auto tClipReference = test("SVGClip/aClipPathNamesARegionOrIsNotThere") = []
     auto byId = SVG::ElementsById {};
     SVG::collectIds(document, byId);
 
-    auto region = SVG::resolveClipPath("c", byId, anyBox, clipFlatness);
+    auto region = SVG::resolveClipPath("c", byId, anyBox, anyViewport, clipFlatness);
 
     check(region.resolved);
     check(!region.isEmpty());
@@ -82,7 +87,8 @@ auto tClipReference = test("SVGClip/aClipPathNamesARegionOrIsNotThere") = []
     // An id that names nothing is ignored and the element draws unclipped, which
     // is not the same answer as a region of nothing -- so the two have to be
     // distinguishable and this is what distinguishes them.
-    auto missing = SVG::resolveClipPath("nothing", byId, anyBox, clipFlatness);
+    auto missing =
+        SVG::resolveClipPath("nothing", byId, anyBox, anyViewport, clipFlatness);
 
     check(!missing.resolved);
     check(missing.isEmpty());
@@ -99,7 +105,7 @@ auto tEmptyClipPath = test("SVGClip/aClipPathHoldingNothingIsStillAClipPath") = 
     auto byId = SVG::ElementsById {};
     SVG::collectIds(document, byId);
 
-    auto region = SVG::resolveClipPath("c", byId, anyBox, clipFlatness);
+    auto region = SVG::resolveClipPath("c", byId, anyBox, anyViewport, clipFlatness);
 
     check(region.resolved, "the reference found a clipPath");
     check(region.isEmpty(), "which holds no region at all");
@@ -118,7 +124,7 @@ auto tClipUnion = test("SVGClip/severalShapesInAClipPathAreTheirUnion") = []
     auto byId = SVG::ElementsById {};
     SVG::collectIds(document, byId);
 
-    auto region = SVG::resolveClipPath("c", byId, anyBox, clipFlatness);
+    auto region = SVG::resolveClipPath("c", byId, anyBox, anyViewport, clipFlatness);
 
     check(region.path.getSubPaths().size() == 2, "both shapes are in the region");
     check(isNearRect(region.path.getBounds(), 0.f, 0.f, 60.f, 50.f),
@@ -143,7 +149,7 @@ auto tClipChildTransform =
     auto byId = SVG::ElementsById {};
     SVG::collectIds(document, byId);
 
-    auto region = SVG::resolveClipPath("c", byId, anyBox, clipFlatness);
+    auto region = SVG::resolveClipPath("c", byId, anyBox, anyViewport, clipFlatness);
 
     check(isNearRect(region.path.getBounds(), 30.f, 40.f, 10.f, 10.f));
 };
@@ -159,7 +165,7 @@ auto tClipUse = test("SVGClip/aUseInsideAClipPathIsTheShapeItNames") = []
     auto byId = SVG::ElementsById {};
     SVG::collectIds(document, byId);
 
-    auto region = SVG::resolveClipPath("c", byId, anyBox, clipFlatness);
+    auto region = SVG::resolveClipPath("c", byId, anyBox, anyViewport, clipFlatness);
 
     check(!region.isEmpty());
     check(isNearRect(region.path.getBounds(), 5.f, 7.f, 10.f, 10.f),
@@ -186,14 +192,14 @@ auto tClipUnits = test("SVGClip/objectBoundingBoxIsFractionsOfTheClippedShape") 
     check(!SVG::clipUsesBoundingBox("user", byId));
 
     auto box = Graphics::Rect {100.f, 200.f, 40.f, 60.f};
-    auto region = SVG::resolveClipPath("half", byId, box, clipFlatness);
+    auto region = SVG::resolveClipPath("half", byId, box, anyViewport, clipFlatness);
 
     check(isNearRect(region.path.getBounds(), 100.f, 200.f, 20.f, 60.f),
           "half the box, placed on the box");
 
     // The same numbers in user space are the numbers themselves, and the box is
     // not read at all.
-    auto plain = SVG::resolveClipPath("user", byId, box, clipFlatness);
+    auto plain = SVG::resolveClipPath("user", byId, box, anyViewport, clipFlatness);
 
     check(isNearRect(plain.path.getBounds(), 0.f, 0.f, 0.5f, 1.f));
 };
@@ -218,16 +224,19 @@ auto tClipRule = test("SVGClip/clipRuleIsTheRegionsFillRule") = []
     auto byId = SVG::ElementsById {};
     SVG::collectIds(document, byId);
 
-    check(SVG::resolveClipPath("frame", byId, anyBox, clipFlatness).rule
+    check(SVG::resolveClipPath("frame", byId, anyBox, anyViewport, clipFlatness).rule
           == GPUWidgets::FillRule::EvenOdd);
 
     // A clipPath's own clip-rule is inherited by its children in the CSS sense,
     // which is how most documents write it.
-    check(SVG::resolveClipPath("onTheContainer", byId, anyBox, clipFlatness).rule
+    check(SVG::resolveClipPath(
+              "onTheContainer", byId, anyBox, anyViewport, clipFlatness)
+              .rule
           == GPUWidgets::FillRule::EvenOdd);
 
-    check(SVG::resolveClipPath("unsaid", byId, anyBox, clipFlatness).rule
-          == GPUWidgets::FillRule::NonZero);
+    check(
+        SVG::resolveClipPath("unsaid", byId, anyBox, anyViewport, clipFlatness).rule
+        == GPUWidgets::FillRule::NonZero);
 };
 
 // The one shape worth telling apart from every other, because it is the clip

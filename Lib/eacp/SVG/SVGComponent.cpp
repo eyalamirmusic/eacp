@@ -23,6 +23,10 @@ struct SVGComponent::Style
     {
         std::string reference;
         GPUWidgets::AffineTransform transform;
+
+        // Which includes the viewport, a clipPath's own geometry being as free
+        // to write itself in percentages as anything else is.
+        Viewport viewport;
     };
 
     Graphics::Color fill = Graphics::Color::black();
@@ -62,6 +66,11 @@ struct SVGComponent::Style
     // tree. Baked into the geometry rather than applied to anything at draw
     // time, which is what lets the whole document be one component.
     GPUWidgets::AffineTransform transform;
+
+    // The nearest viewport, in the units the element is written in: the root's
+    // viewBox, and whatever a nested <svg> or a <symbol> replaced it with on the
+    // way down. What every percentage below here is a percentage of.
+    Viewport viewport;
 
     // The clip-paths in force, outermost first, each with the transform that was
     // in force where it was written -- a clip belongs to the space of the
@@ -182,6 +191,15 @@ void applyNumber(const std::string& value, float& target)
         target = Strings::parseFloatOr(value, target);
 }
 
+void applyLength(const std::string& value,
+                 const Viewport& viewport,
+                 LengthAxis axis,
+                 float& target)
+{
+    if (!value.empty())
+        target = parseLength(value, viewport, axis, target);
+}
+
 bool isContainerTag(const std::string& tag)
 {
     return tag == "g" || tag == "svg";
@@ -233,7 +251,13 @@ void SVGComponent::applyPresentationAttributes(Style& style,
     applyPaint(read("fill"), style.fill, style.fillReference, style.hasFill);
     applyPaint(read("stroke"), style.stroke, style.strokeReference, style.hasStroke);
 
-    applyNumber(read("stroke-width"), style.strokeStyle.width);
+    // A stroke width belongs to neither axis, so a percentage of it is one of
+    // the viewport's diagonal over root two.
+    applyLength(read("stroke-width"),
+                style.viewport,
+                LengthAxis::Diagonal,
+                style.strokeStyle.width);
+
     applyNumber(read("stroke-miterlimit"), style.strokeStyle.miterLimit);
     applyNumber(read("stroke-dashoffset"), style.dash.offset);
     applyNumber(read("fill-opacity"), style.fillOpacity);
@@ -290,7 +314,7 @@ void SVGComponent::applyPresentationAttributes(Style& style,
     auto clip = parsePaintReference(read("clip-path"));
 
     if (!clip.empty())
-        style.clips.add({clip, style.transform});
+        style.clips.add({clip, style.transform, style.viewport});
 }
 
 SVGComponent::SVGComponent() = default;
@@ -305,8 +329,15 @@ void SVGComponent::setDocument(const SVGElement& root)
     elementsById.clear();
     collectIds(documentRoot, elementsById);
 
-    documentWidth = root.numAttr("width", 300.f);
-    documentHeight = root.numAttr("height", 150.f);
+    // A root width of "100%" is a fraction of a viewport the document is not
+    // being handed one of yet, so it says nothing about how big the drawing is
+    // and is passed over exactly as a missing width would be -- which leaves the
+    // viewBox's own extent, or the 300x150 the format falls back to.
+    auto declaresWidth = namesAnIntrinsicLength(root.attr("width"));
+    auto declaresHeight = namesAnIntrinsicLength(root.attr("height"));
+
+    documentWidth = declaresWidth ? root.numAttr("width", 300.f) : 300.f;
+    documentHeight = declaresHeight ? root.numAttr("height", 150.f) : 150.f;
 
     aspectRatio = parsePreserveAspectRatio(root.attr("preserveAspectRatio"));
 
@@ -319,10 +350,10 @@ void SVGComponent::setDocument(const SVGElement& root)
         // The origin is subtracted, not ignored. SVGBuilder reads only the
         // third and fourth numbers, so viewBox="10 20 100 100" renders shifted
         // by (10, 20) and nothing says so.
-        if (root.attr("width").empty())
+        if (!declaresWidth)
             documentWidth = viewBox.w;
 
-        if (root.attr("height").empty())
+        if (!declaresHeight)
             documentHeight = viewBox.h;
     }
     else
@@ -366,6 +397,12 @@ void SVGComponent::rebuild()
     {
         auto style = Style {};
         style.transform = documentToComponent();
+
+        // The viewBox is the viewport in the units the document is written in,
+        // and it is the document's own size where there is no viewBox -- so a
+        // percentage at the top level is a fraction of whatever this component
+        // is showing, however the two are fitted together.
+        style.viewport = {viewBox.w, viewBox.h};
 
         buildElement(documentRoot, style, 0);
     }
@@ -563,9 +600,11 @@ void SVGComponent::buildUse(const SVGElement& element, const Style& style, int d
     // attributes, with x and y translating *within* that group -- so the
     // translation is the first thing the referenced geometry meets and the use's
     // transform, already folded into style, is applied to the result.
-    useStyle.transform = GPUWidgets::AffineTransform::translation(
-                             element.numAttr("x"), element.numAttr("y"))
-                             .then(useStyle.transform);
+    useStyle.transform =
+        GPUWidgets::AffineTransform::translation(
+            lengthAttr(element, "x", style.viewport, LengthAxis::Horizontal),
+            lengthAttr(element, "y", style.viewport, LengthAxis::Vertical))
+            .then(useStyle.transform);
 
     if (isViewportTag(target->tag))
     {
@@ -589,6 +628,13 @@ void SVGComponent::buildSymbol(const SVGElement& symbol,
     auto style = inherited;
     applyPresentationAttributes(style, symbol);
 
+    // The use site's own width and height are lengths in the space the use was
+    // written in, which is the viewport outside the one the symbol establishes.
+    auto outer = inherited.viewport;
+
+    auto sizeFrom = [&](const std::string& name, LengthAxis axis, float fallback)
+    { return lengthAttr(useSite, name, outer, axis, fallback); };
+
     auto numbers = parseNumberList(symbol.attr("viewBox"));
 
     if (numbers.size() >= 4)
@@ -597,14 +643,24 @@ void SVGComponent::buildSymbol(const SVGElement& symbol,
 
         // The use site says how big the symbol is drawn. Said nothing, it is
         // drawn at the size it was authored, which is the box itself.
-        auto viewport = Graphics::Rect {0.f,
-                                        0.f,
-                                        useSite.numAttr("width", box.w),
-                                        useSite.numAttr("height", box.h)};
+        auto viewport =
+            Graphics::Rect {0.f,
+                            0.f,
+                            sizeFrom("width", LengthAxis::Horizontal, box.w),
+                            sizeFrom("height", LengthAxis::Vertical, box.h)};
 
         auto fit = parsePreserveAspectRatio(symbol.attr("preserveAspectRatio"));
 
         style.transform = viewBoxTransform(box, viewport, fit).then(style.transform);
+
+        // The children are written in the box's own units, so it is the box and
+        // not the size it was fitted into that their percentages are of.
+        style.viewport = {box.w, box.h};
+    }
+    else
+    {
+        style.viewport = {sizeFrom("width", LengthAxis::Horizontal, outer.width),
+                          sizeFrom("height", LengthAxis::Vertical, outer.height)};
     }
 
     for (auto& child: symbol.children)
@@ -617,8 +673,16 @@ void SVGComponent::buildNestedSvg(const SVGElement& element,
 {
     auto style = inherited;
 
-    style.transform = GPUWidgets::AffineTransform::translation(element.numAttr("x"),
-                                                               element.numAttr("y"))
+    // Its own x, y, width and height are lengths in the viewport it sits in, and
+    // are read before the one it establishes replaces that.
+    auto outer = inherited.viewport;
+
+    auto lengthOf = [&](const std::string& name, LengthAxis axis, float fallback)
+    { return lengthAttr(element, name, outer, axis, fallback); };
+
+    style.transform = GPUWidgets::AffineTransform::translation(
+                          lengthOf("x", LengthAxis::Horizontal, 0.f),
+                          lengthOf("y", LengthAxis::Vertical, 0.f))
                           .then(style.transform);
 
     auto numbers = parseNumberList(element.attr("viewBox"));
@@ -626,13 +690,21 @@ void SVGComponent::buildNestedSvg(const SVGElement& element,
     if (numbers.size() >= 4)
     {
         auto box = Graphics::Rect {numbers[0], numbers[1], numbers[2], numbers[3]};
-        auto viewport = Graphics::Rect {0.f,
-                                        0.f,
-                                        element.numAttr("width", box.w),
-                                        element.numAttr("height", box.h)};
+        auto viewport =
+            Graphics::Rect {0.f,
+                            0.f,
+                            lengthOf("width", LengthAxis::Horizontal, box.w),
+                            lengthOf("height", LengthAxis::Vertical, box.h)};
         auto fit = parsePreserveAspectRatio(element.attr("preserveAspectRatio"));
 
         style.transform = viewBoxTransform(box, viewport, fit).then(style.transform);
+
+        style.viewport = {box.w, box.h};
+    }
+    else
+    {
+        style.viewport = {lengthOf("width", LengthAxis::Horizontal, outer.width),
+                          lengthOf("height", LengthAxis::Vertical, outer.height)};
     }
 
     for (auto& child: element.children)
@@ -648,16 +720,19 @@ void SVGComponent::buildShapes(const SVGElement& element, const Style& style)
     if (scale <= 0.f)
         return;
 
-    auto fillPath = style.hasFill ? buildGeometry(element, fillFlatness() / scale)
-                                  : GPUWidgets::Path {};
+    auto fillPath =
+        style.hasFill
+            ? buildGeometry(element, style.viewport, fillFlatness() / scale)
+            : GPUWidgets::Path {};
 
     // Built a second time rather than shared with the fill, at a tolerance ten
     // times tighter. The two masks are different regions anyway, so there is
     // nothing to share but the polyline, and the polyline a fill can afford is
     // not one a stroke can.
-    auto strokePath = style.hasStroke && style.strokeStyle.width > 0.f
-                          ? buildGeometry(element, strokeFlatness() / scale)
-                          : GPUWidgets::Path {};
+    auto strokePath =
+        style.hasStroke && style.strokeStyle.width > 0.f
+            ? buildGeometry(element, style.viewport, strokeFlatness() / scale)
+            : GPUWidgets::Path {};
 
     // The element's own bounding box, which a clip in bounding-box units is
     // placed against -- the geometry's and not the stroked region's, the format
@@ -733,8 +808,9 @@ void SVGComponent::buildTextRun(const SVGElement& element, const Style& style)
     // Only the origin is transformed. A rotated transform rotates where the text
     // sits and not the text, because a glyph is an axis-aligned quad out of an
     // atlas; text on a path is the same missing feature seen from the other end.
-    run.baseline =
-        style.transform.apply({element.numAttr("x"), element.numAttr("y")});
+    run.baseline = style.transform.apply(
+        {lengthAttr(element, "x", style.viewport, LengthAxis::Horizontal),
+         lengthAttr(element, "y", style.viewport, LengthAxis::Vertical)});
 
     run.colour =
         style.hasFill
@@ -788,6 +864,7 @@ void SVGComponent::addShape(const GPUWidgets::Path& path,
 
 int SVGComponent::findOrAddClip(const std::string& reference,
                                 const GPUWidgets::AffineTransform& transform,
+                                const Viewport& viewport,
                                 const Graphics::Rect& objectBounds)
 {
     // Only where the region is actually placed against it. In user space the
@@ -807,6 +884,7 @@ int SVGComponent::findOrAddClip(const std::string& reference,
     auto matches = [&](const Clip& clip)
     {
         return clip.reference == reference && clip.transform == transform
+               && clip.viewport == viewport
                && UI::sameRect(clip.objectBounds, bounds);
     };
 
@@ -819,8 +897,8 @@ int SVGComponent::findOrAddClip(const std::string& reference,
     if (scale <= 0.f)
         return -1;
 
-    auto region =
-        resolveClipPath(reference, elementsById, bounds, fillFlatness() / scale);
+    auto region = resolveClipPath(
+        reference, elementsById, bounds, viewport, fillFlatness() / scale);
 
     // Not a clipPath, or a reference to nothing at all: ignored, and the element
     // draws unclipped. A clipPath that *is* one and holds no geometry is the
@@ -836,6 +914,7 @@ int SVGComponent::findOrAddClip(const std::string& reference,
     clip.reference = reference;
     clip.transform = transform;
     clip.objectBounds = bounds;
+    clip.viewport = viewport;
 
     // A rectangle is a scissor rect: exact, free of the atlas, and the only kind
     // of clip that reaches the glyphs. Worth testing for rather than assuming
@@ -868,8 +947,10 @@ SVGComponent::ClipState
 
     for (const auto& reference: style.clips)
     {
-        auto index =
-            findOrAddClip(reference.reference, reference.transform, objectBounds);
+        auto index = findOrAddClip(reference.reference,
+                                   reference.transform,
+                                   reference.viewport,
+                                   objectBounds);
 
         if (index < 0)
             continue;

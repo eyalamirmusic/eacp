@@ -9,18 +9,24 @@ namespace eacp::SVG
 {
 namespace
 {
-void addRectGeometry(GPUWidgets::Path& path, const SVGElement& element)
+void addRectGeometry(GPUWidgets::Path& path,
+                     const SVGElement& element,
+                     const Viewport& viewport)
 {
-    auto rect = Graphics::Rect {element.numAttr("x"),
-                                element.numAttr("y"),
-                                element.numAttr("width"),
-                                element.numAttr("height")};
+    auto across = [&](const std::string& name)
+    { return lengthAttr(element, name, viewport, LengthAxis::Horizontal); };
+
+    auto down = [&](const std::string& name)
+    { return lengthAttr(element, name, viewport, LengthAxis::Vertical); };
+
+    auto rect =
+        Graphics::Rect {across("x"), down("y"), across("width"), down("height")};
 
     if (rect.w <= 0.f || rect.h <= 0.f)
         return;
 
-    auto rx = element.numAttr("rx");
-    auto ry = element.numAttr("ry");
+    auto rx = across("rx");
+    auto ry = down("ry");
 
     // Either radius alone stands for both, which is what the format says.
     if (rx <= 0.f)
@@ -70,31 +76,37 @@ bool isShapeTag(const std::string& tag)
            || tag == "polyline" || tag == "polygon" || tag == "path";
 }
 
-GPUWidgets::Path buildGeometry(const SVGElement& element, float flatness)
+GPUWidgets::Path buildGeometry(const SVGElement& element,
+                               const Viewport& viewport,
+                               float flatness)
 {
     auto path = GPUWidgets::Path {};
     path.setFlatness(flatness);
 
+    auto across = [&](const std::string& name)
+    { return lengthAttr(element, name, viewport, LengthAxis::Horizontal); };
+
+    auto down = [&](const std::string& name)
+    { return lengthAttr(element, name, viewport, LengthAxis::Vertical); };
+
     auto& tag = element.tag;
 
     if (tag == "rect")
-        addRectGeometry(path, element);
+        addRectGeometry(path, element, viewport);
     else if (tag == "circle")
-        addEllipseGeometry(path,
-                           element.numAttr("cx"),
-                           element.numAttr("cy"),
-                           element.numAttr("r"),
-                           element.numAttr("r"));
+    {
+        // A circle's one radius belongs to neither axis, so it is the diagonal
+        // over root two that a percentage of it is a percentage of.
+        auto r = lengthAttr(element, "r", viewport, LengthAxis::Diagonal);
+
+        addEllipseGeometry(path, across("cx"), down("cy"), r, r);
+    }
     else if (tag == "ellipse")
-        addEllipseGeometry(path,
-                           element.numAttr("cx"),
-                           element.numAttr("cy"),
-                           element.numAttr("rx"),
-                           element.numAttr("ry"));
+        addEllipseGeometry(path, across("cx"), down("cy"), across("rx"), down("ry"));
     else if (tag == "line")
     {
-        path.moveTo({element.numAttr("x1"), element.numAttr("y1")});
-        path.lineTo({element.numAttr("x2"), element.numAttr("y2")});
+        path.moveTo({across("x1"), down("y1")});
+        path.lineTo({across("x2"), down("y2")});
     }
     else if (tag == "polyline")
         addPolylineGeometry(path, element, false);

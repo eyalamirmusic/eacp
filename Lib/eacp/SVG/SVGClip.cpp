@@ -37,9 +37,19 @@ GPUWidgets::AffineTransform contentTransform(const SVGElement& clipPath,
         objectBounds.w, 0.f, 0.f, objectBounds.h, objectBounds.x, objectBounds.y};
 }
 
+// What a percentage inside the clipPath is a fraction of. In bounding-box units
+// the coordinates are already fractions of the box, so a hundred percent is one
+// of them; in user space it is the viewport the reference was written in, the
+// same rule a gradient's own units follow.
+Viewport contentViewport(const SVGElement& clipPath, const Viewport& viewport)
+{
+    return usesBoundingBox(clipPath) ? Viewport {1.f, 1.f} : viewport;
+}
+
 void addClipChild(const SVGElement& element,
                   const ElementsById& byId,
                   const GPUWidgets::AffineTransform& inherited,
+                  const Viewport& viewport,
                   float flatness,
                   GPUWidgets::Path& region,
                   int depth)
@@ -64,11 +74,13 @@ void addClipChild(const SVGElement& element,
         if (found == byId.end())
             return;
 
-        auto placed = GPUWidgets::AffineTransform::translation(element.numAttr("x"),
-                                                               element.numAttr("y"))
+        auto placed = GPUWidgets::AffineTransform::translation(
+                          lengthAttr(element, "x", viewport, LengthAxis::Horizontal),
+                          lengthAttr(element, "y", viewport, LengthAxis::Vertical))
                           .then(transform);
 
-        addClipChild(*found->second, byId, placed, flatness, region, depth + 1);
+        addClipChild(
+            *found->second, byId, placed, viewport, flatness, region, depth + 1);
         return;
     }
 
@@ -82,7 +94,7 @@ void addClipChild(const SVGElement& element,
     if (scale <= 0.f)
         return;
 
-    auto path = buildGeometry(element, flatness / scale);
+    auto path = buildGeometry(element, viewport, flatness / scale);
 
     if (path.isEmpty())
         return;
@@ -94,6 +106,7 @@ void addClipChild(const SVGElement& element,
 ClipRegion resolveClipPath(const std::string& reference,
                            const ElementsById& byId,
                            const Graphics::Rect& objectBounds,
+                           const Viewport& viewport,
                            float flatness)
 {
     auto result = ClipRegion {};
@@ -111,6 +124,7 @@ ClipRegion resolveClipPath(const std::string& reference,
     result.resolved = true;
 
     auto base = contentTransform(clipPath, objectBounds);
+    auto content = contentViewport(clipPath, viewport);
 
     // The clipPath's own clip-rule, which its children inherit in the CSS sense
     // -- a document setting it once on the container is the usual spelling.
@@ -123,7 +137,7 @@ ClipRegion resolveClipPath(const std::string& reference,
     {
         auto before = result.path.getSubPaths().size();
 
-        addClipChild(child, byId, base, flatness, result.path, 0);
+        addClipChild(child, byId, base, content, flatness, result.path, 0);
 
         if (result.path.getSubPaths().size() == before)
             continue;
