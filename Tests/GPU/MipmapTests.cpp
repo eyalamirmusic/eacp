@@ -197,6 +197,25 @@ auto tLevelsAverageTheOneAbove = test("Mipmap/levelsAverageTheOneAbove") = []
     check(level1[3] == 255); // alpha was 255 everywhere and stays there
 };
 
+// The same filter over one float channel rather than four. Worth its own case:
+// R32Float reached the averaging switch with no branch to land on, so its lower
+// levels were sized and then never written. The float filter now takes its
+// channel count as an argument, and the count is the thing to hold still - at
+// four it would stride past the end of every row and average texels that are
+// not neighbours.
+auto tSingleChannelFloatLevels = test("Mipmap/singleChannelFloatLevels") = []
+{
+    const float pixels[] = {1.0f, 2.0f, 3.0f, 4.0f};
+
+    const auto chain = buildMipChain(pixels, 2, 2, TextureFormat::R32Float);
+
+    check(chain.isValid());
+    check(chain.levelCount() == 2);
+    check(chain.levels[1].size() == (int) sizeof(float));
+
+    check(*static_cast<const float*>(chain.level(1)) == 2.5f);
+};
+
 // A texture with no pixels has nothing to build a chain from, so it does not get
 // one. Worth stating because the alternative is worse than no mips: levels the
 // sampler will happily read and nothing ever wrote.
