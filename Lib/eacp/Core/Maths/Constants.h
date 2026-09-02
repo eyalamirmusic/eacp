@@ -38,12 +38,20 @@ constexpr T degrees(T radianValue)
     return radianValue * (T) (180.L / detail::exactPi);
 }
 
+// std::abs is not constexpr until C++26, and the things built on this one — the
+// comparison below, the matrix inverse — are worth having at compile time.
+template <std::floating_point T>
+constexpr T magnitude(T value)
+{
+    return value < T {} ? -value : value;
+}
+
 // Float equality with slack, which is the only kind worth asking for once a
 // value has been through any arithmetic at all. A NaN on either side is never
 // nearly equal to anything, itself included.
 template <std::floating_point T>
 constexpr bool nearlyEqual(T a, T b, T allowed = (T) tolerance)
 {
-    return (a > b ? a - b : b - a) <= allowed;
+    return magnitude(a - b) <= allowed;
 }
 } // namespace eacp::Maths
