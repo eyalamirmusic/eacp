@@ -1902,10 +1902,10 @@ void WebView::takeSnapshot(SnapshotCallback callback)
         });
 }
 
-void WebView::addScriptMessageHandler(
-    const std::string& name, std::function<void(const std::string& message)> handler)
+void WebView::addScriptMessageHandler(const std::string& name,
+                                      const MessageFunc& handler)
 {
-    impl->messageHandlers[name] = std::move(handler);
+    impl->messageHandlers[name] = handler;
 
     // Expose the handler under both the plain `window.<name>` form and the
     // WebKit `window.webkit.messageHandlers.<name>` form. macOS only offers the

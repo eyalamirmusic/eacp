@@ -4,9 +4,11 @@ add_subdirectory(Network)
 
 if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     add_subdirectory(Graphics)
-    if (EACP_BUILD_WEBVIEW)
-        add_subdirectory(WebView)
-    endif ()
+
+    # Always added: the directory builds the page bridge (eacp-webview-bridge),
+    # which speaks to a ScriptHost and needs no native web runtime.
+    # EACP_BUILD_WEBVIEW gates only the WKWebView / WebView2 half inside it.
+    add_subdirectory(WebView)
     # The whole GPU stack (Metal) now builds on macOS, iOS and Windows. Sprites,
     # GPUWidgets and CameraView are portable C++ on top of it.
     add_subdirectory(Camera)

@@ -1058,7 +1058,7 @@ void WebView::takeSnapshot(SnapshotCallback callback)
 }
 
 void WebView::addScriptMessageHandler(
-    const std::string& name, std::function<void(const std::string& message)> handler)
+    const std::string& name, const MessageFunc& handler)
 {
     // -[WKUserContentController addScriptMessageHandler:name:] RAISES on a name
     // it already holds, and the controller outlives every page this WebView
@@ -1068,7 +1068,7 @@ void WebView::addScriptMessageHandler(
     // already know is already routed: only the handler needs replacing.
     const auto alreadyRouted = impl->messageHandlers.contains(name);
 
-    impl->messageHandlers[name] = std::move(handler);
+    impl->messageHandlers[name] = handler;
 
     if (alreadyRouted)
         return;

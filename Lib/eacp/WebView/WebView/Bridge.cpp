@@ -23,8 +23,8 @@ std::string loadBridgeShim()
 }
 } // namespace
 
-WebViewBridge::WebViewBridge(WebView& webViewToUse)
-    : webView(webViewToUse)
+WebViewBridge::WebViewBridge(ScriptHost& scriptHostToUse)
+    : scriptHost(scriptHostToUse)
     , emitListener(
           bridge.onEmit,
           [this] { broadcast(); },
@@ -32,8 +32,8 @@ WebViewBridge::WebViewBridge(WebView& webViewToUse)
 {
     stateListeners = attachStaticStateBinders(bridge);
     registerBuiltins();
-    webView.addUserScript(loadBridgeShim(), true);
-    webView.addScriptMessageHandler(
+    scriptHost.addUserScript(loadBridgeShim(), true);
+    scriptHost.addScriptMessageHandler(
         bridgeChannel, [this](const std::string& body) { onMessage(body); });
 }
 
@@ -42,9 +42,9 @@ void WebViewBridge::registerBuiltins()
     // Native file drag-out as a first-class bridge command. The page invokes
     // `armFileDrag` with a DraggableFileList from a mousedown handler; Miro
     // deserializes the payload into the typed struct (no hand-rolled JSON),
-    // and we arm the WebView so the next mouseDragged: starts the OS drag.
-    using DraggableFileList = WebView::DraggableFileList;
-
+    // and we arm the host so the next mouseDragged: starts the OS drag. A
+    // host with no native drag takes ScriptHost's no-op, so the command
+    // still resolves rather than failing.
     auto arm = std::function<void(const DraggableFileList&)> {
         [this](const DraggableFileList& list)
         {
@@ -54,7 +54,7 @@ void WebViewBridge::registerBuiltins()
             for (const auto& file: list.files)
                 paths.add(file.path);
 
-            webView.armFileDrag(paths);
+            scriptHost.armFileDrag(paths);
         }};
 
     bridge.on<DraggableFileList>("armFileDrag", arm);
@@ -65,7 +65,7 @@ WebViewBridge::~WebViewBridge()
     // Before anything else: the command hops already sitting on the loop read
     // this and stand down rather than dispatch into the wreckage. See `alive`.
     alive->store(false);
-    webView.removeScriptMessageHandler(bridgeChannel);
+    scriptHost.removeScriptMessageHandler(bridgeChannel);
 }
 
 namespace
@@ -180,7 +180,7 @@ Threads::Async<Miro::Json::Value>
                   + std::to_string(static_cast<long long>(id)) + ","
                   + jsStringLiteral(functionName) + "," + payloadJson + ");";
 
-    webView.evaluateJavaScript(script);
+    scriptHost.evaluateJavaScript(script);
 
     return promise.get();
 }
@@ -232,7 +232,7 @@ void WebViewBridge::deliver(double id,
                   + std::to_string(static_cast<long long>(id)) + "," + resultJson
                   + "," + errorJson + ");";
 
-    webView.evaluateJavaScript(script);
+    scriptHost.evaluateJavaScript(script);
 }
 
 void WebViewBridge::broadcast()
@@ -246,7 +246,7 @@ void WebViewBridge::broadcast()
                   + jsStringLiteral(bridge.currentEvent()) + "," + payloadJson
                   + ");";
 
-    webView.evaluateJavaScript(script);
+    scriptHost.evaluateJavaScript(script);
 }
 
 } // namespace eacp::Graphics
