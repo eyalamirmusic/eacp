@@ -1832,6 +1832,10 @@ void WebView::takeSnapshot(SnapshotCallback callback)
     if (!callback)
         return;
 
+    // Before ensureInitialized, so the deadline also covers an initialization
+    // that never finishes and leaves the queued operation unrun.
+    callback = detail::withSnapshotDeadline(std::move(callback));
+
     impl->ensureInitialized();
     impl->queueOperation(
         [this, callback]() mutable
