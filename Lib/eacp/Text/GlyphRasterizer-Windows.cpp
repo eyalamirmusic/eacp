@@ -81,6 +81,108 @@ DWRITE_FONT_STYLE slantFor(const FontVariant& variant)
     return variant.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL;
 }
 
+// What CSS's oblique is on the slnt axis, which counts degrees anticlockwise
+// from upright and so runs negative for the way a Latin italic leans.
+constexpr float obliqueSlant = -14.f;
+
+// The axis values a variant asks of a face, and the simulations they make
+// unnecessary. Only ever what matching a face could not supply: the weight
+// when the family had no face at it, and the slant when it had no italic one,
+// so a family cut into faces and a face matched exactly ask nothing.
+//
+// A variable face is the one case matching cannot answer. The collection files
+// one file under one family, so GetFirstMatchingFont has no bolder sibling to
+// return and answers every weight with the same face; the weight has to be
+// asked of the axis instead. The CoreText side does the same — see
+// GlyphRasterizer-Apple.mm's axisSettingsFor.
+struct AxisRequest
+{
+    std::vector<DWRITE_FONT_AXIS_VALUE> values;
+    int supplied = DWRITE_FONT_SIMULATIONS_NONE;
+};
+
+AxisRequest axisRequestFor(IDWriteFontResource* resource,
+                           IDWriteFont* matched,
+                           const FontVariant& variant)
+{
+    auto request = AxisRequest {};
+
+    if (resource == nullptr || matched == nullptr)
+        return request;
+
+    const auto count = resource->GetFontAxisCount();
+
+    if (count == 0)
+        return request;
+
+    auto defaults = std::vector<DWRITE_FONT_AXIS_VALUE>(count);
+    auto ranges = std::vector<DWRITE_FONT_AXIS_RANGE>(count);
+
+    if (FAILED(resource->GetDefaultFontAxisValues(defaults.data(), count))
+        || FAILED(resource->GetFontAxisRanges(ranges.data(), count)))
+        return request;
+
+    const auto wanted = weightClass(variant.weight);
+    const auto wantsWeight =
+        wanted != weightClass(static_cast<int>(matched->GetWeight()));
+    const auto wantsSlant =
+        variant.italic && matched->GetStyle() == DWRITE_FONT_STYLE_NORMAL;
+
+    auto hasItalicAxis = false;
+
+    for (auto index = UINT32 {}; index < count; ++index)
+        if (defaults[index].axisTag == DWRITE_FONT_AXIS_TAG_ITALIC)
+            hasItalicAxis = true;
+
+    for (auto index = UINT32 {}; index < count; ++index)
+    {
+        const auto tag = defaults[index].axisTag;
+        const auto& range = ranges[index];
+        const auto clamped = [&range](float value)
+        { return std::clamp(value, range.minValue, range.maxValue); };
+
+        if (tag == DWRITE_FONT_AXIS_TAG_WEIGHT && wantsWeight)
+        {
+            request.values.push_back({tag, clamped(static_cast<float>(wanted))});
+            request.supplied |= DWRITE_FONT_SIMULATIONS_BOLD;
+        }
+        else if (tag == DWRITE_FONT_AXIS_TAG_ITALIC && wantsSlant)
+        {
+            request.values.push_back({tag, clamped(1.f)});
+            request.supplied |= DWRITE_FONT_SIMULATIONS_OBLIQUE;
+        }
+        else if (tag == DWRITE_FONT_AXIS_TAG_SLANT && wantsSlant && !hasItalicAxis)
+        {
+            request.values.push_back({tag, clamped(obliqueSlant)});
+            request.supplied |= DWRITE_FONT_SIMULATIONS_OBLIQUE;
+        }
+    }
+
+    return request;
+}
+
+// The axis values a face was built at. A layout names a family and a weight,
+// which finds a face and not a point on an axis, so a variable face has to be
+// shaped at the same values the glyphs are rasterized from.
+std::vector<DWRITE_FONT_AXIS_VALUE> axisValuesOf(IDWriteFontFace* face)
+{
+    auto values = std::vector<DWRITE_FONT_AXIS_VALUE> {};
+    auto varying = ComPtr<IDWriteFontFace5>();
+
+    if (face == nullptr
+        || FAILED(face->QueryInterface(IID_PPV_ARGS(varying.GetAddressOf())))
+        || !varying->HasVariations())
+        return values;
+
+    values.resize(varying->GetFontAxisValueCount());
+
+    if (FAILED(varying->GetFontAxisValues(values.data(),
+                                          static_cast<UINT32>(values.size()))))
+        values.clear();
+
+    return values;
+}
+
 // UTF-8 to UTF-16, remembering which byte each code unit came from, so a
 // glyph's cluster maps back to an offset in the text the caller gave.
 struct Utf16Text
@@ -416,7 +518,50 @@ struct GlyphRasterizer::Native
         if (FAILED(font->CreateFontFace(face.GetAddressOf())))
             return {};
 
-        return withSimulations(face.Get(), missingTraits(font.Get(), variant));
+        const auto simulations = missingTraits(font.Get(), variant);
+
+        if (auto varied = alongItsOwnAxes(face, font.Get(), variant, simulations))
+            return varied;
+
+        return withSimulations(face.Get(), simulations);
+    }
+
+    // The face moved along its own variation axes to the weight and slant the
+    // family had no face for, with only the simulations the axes did not
+    // supply. Nothing when the face does not vary, when nothing has to be
+    // asked of it, or when the interfaces are not there — the caller then
+    // falls back on the simulations alone, which is what it did before.
+    static ComPtr<IDWriteFontFace>
+        alongItsOwnAxes(const ComPtr<IDWriteFontFace>& face,
+                        IDWriteFont* matched,
+                        const FontVariant& variant,
+                        DWRITE_FONT_SIMULATIONS simulations)
+    {
+        auto varying = ComPtr<IDWriteFontFace5>();
+
+        if (FAILED(face.As(&varying)) || !varying->HasVariations())
+            return {};
+
+        auto resource = ComPtr<IDWriteFontResource>();
+
+        if (FAILED(varying->GetFontResource(resource.GetAddressOf())))
+            return {};
+
+        const auto request = axisRequestFor(resource.Get(), matched, variant);
+
+        if (request.values.empty())
+            return {};
+
+        const auto rest =
+            static_cast<DWRITE_FONT_SIMULATIONS>(simulations & ~request.supplied);
+        const auto count = static_cast<UINT32>(request.values.size());
+        auto varied = ComPtr<IDWriteFontFace5>();
+
+        if (FAILED(resource->CreateFontFace(
+                rest, request.values.data(), count, varied.GetAddressOf())))
+            return {};
+
+        return varied;
     }
 
     // GetFirstMatchingFont returns the nearest face rather than failing, so a
@@ -621,6 +766,14 @@ struct GlyphRasterizer::Native
                                              1.0e6f,
                                              layout.GetAddressOf())))
             return result;
+
+        if (const auto axes = axisValuesOf(requested); !axes.empty())
+            if (auto varying = ComPtr<IDWriteTextLayout4>();
+                SUCCEEDED(layout.As(&varying)))
+                varying->SetFontAxisValues(
+                    axes.data(),
+                    static_cast<UINT32>(axes.size()),
+                    {0, static_cast<UINT32>(utf16.units.size())});
 
         auto collector = RunCollector {};
 

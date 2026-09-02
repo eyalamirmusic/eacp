@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <vector>
 
 // CoreText rasterizer and shaper, shared by macOS and iOS — CoreText and
@@ -24,33 +25,188 @@ namespace eacp::Text
 {
 namespace
 {
-// The same font with its optical-size axis pinned to the size the caller
-// asked for. Returns a +1 retained font; callers adopt it into a CFRef.
+// A four-character variation axis tag, the number CoreText identifies an
+// axis by.
+constexpr long variationAxisTag(char a, char b, char c, char d)
+{
+    return ((long) a << 24) | ((long) b << 16) | ((long) c << 8) | (long) d;
+}
+
+constexpr auto weightAxis = variationAxisTag('w', 'g', 'h', 't');
+constexpr auto italicAxis = variationAxisTag('i', 't', 'a', 'l');
+constexpr auto slantAxis = variationAxisTag('s', 'l', 'n', 't');
+
+// What CSS's oblique is on the slnt axis, which counts degrees anticlockwise
+// from upright and so runs negative for the way a Latin italic leans.
+constexpr float obliqueSlant = -14.f;
+
+// One axis of a variable face: the range a value asked for is clamped into,
+// since a face declaring `font-weight: 100 900` may cover less than a page
+// asks of it and CoreText's own clamping is not to be relied on.
+struct AxisRange
+{
+    float minimum = 0.f;
+    float maximum = 0.f;
+
+    float clamped(float value) const
+    {
+        return std::clamp(value, minimum, maximum);
+    }
+};
+
+// The axes a face varies its weight and its slant on. A face cut at one
+// weight has none of them and is matched by choosing a sibling face; a
+// variable face is every weight in its range in one file, which is what a
+// page's `@font-face { font-weight: 100 900 }` brings and what a family the
+// platform files under one name therefore has no sibling for.
+struct VariationAxes
+{
+    std::optional<AxisRange> weight;
+    std::optional<AxisRange> italic;
+    std::optional<AxisRange> slant;
+};
+
+std::optional<float> axisNumber(CFDictionaryRef axis, CFStringRef key)
+{
+    auto number = (CFNumberRef) CFDictionaryGetValue(axis, key);
+
+    if (number == nullptr)
+        return std::nullopt;
+
+    auto value = 0.f;
+    CFNumberGetValue(number, kCFNumberFloatType, &value);
+
+    return value;
+}
+
+VariationAxes variationAxesOf(CTFontRef font)
+{
+    auto result = VariationAxes {};
+    CFRef<CFArrayRef> axes(CTFontCopyVariationAxes(font));
+
+    if (!axes)
+        return result;
+
+    for (auto index = CFIndex {0}; index < CFArrayGetCount(axes.get()); ++index)
+    {
+        auto axis = (CFDictionaryRef) CFArrayGetValueAtIndex(axes.get(), index);
+        auto identifier = (CFNumberRef) CFDictionaryGetValue(
+            axis, kCTFontVariationAxisIdentifierKey);
+        const auto minimum = axisNumber(axis, kCTFontVariationAxisMinimumValueKey);
+        const auto maximum = axisNumber(axis, kCTFontVariationAxisMaximumValueKey);
+
+        if (identifier == nullptr || !minimum || !maximum)
+            continue;
+
+        auto tag = 0L;
+        CFNumberGetValue(identifier, kCFNumberLongType, &tag);
+
+        const auto range = AxisRange {*minimum, *maximum};
+
+        if (tag == weightAxis)
+            result.weight = range;
+        else if (tag == italicAxis)
+            result.italic = range;
+        else if (tag == slantAxis)
+            result.slant = range;
+    }
+
+    return result;
+}
+
+// What a variant has to ask of a face's own axes, which is only ever what
+// matching a face could not supply: the weight when the family had no face at
+// it, and the slant when it had no italic one. A family cut into faces carries
+// no axes and a face matched exactly asks nothing of them, so a face that was
+// already the right one is left exactly as it was.
+struct AxisSettings
+{
+    std::optional<float> weight;
+    std::optional<float> italic;
+    std::optional<float> slant;
+
+    bool any() const { return weight || italic || slant; }
+};
+
+AxisSettings axisSettingsFor(const VariationAxes& axes,
+                             const FontVariant& wanted,
+                             const FontVariant& face)
+{
+    auto settings = AxisSettings {};
+    const auto weight = weightClass(wanted.weight);
+
+    if (axes.weight && weight != weightClass(face.weight))
+        settings.weight = axes.weight->clamped((float) weight);
+
+    if (wanted.italic && !face.italic)
+    {
+        if (axes.italic)
+            settings.italic = axes.italic->clamped(1.f);
+        else if (axes.slant)
+            settings.slant = axes.slant->clamped(obliqueSlant);
+    }
+
+    return settings;
+}
+
+void setAxis(CFMutableDictionaryRef variation, long tag, std::optional<float> value)
+{
+    if (!value)
+        return;
+
+    const auto amount = *value;
+
+    CFRef<CFNumberRef> key(CFNumberCreate(nullptr, kCFNumberLongType, &tag));
+    CFRef<CFNumberRef> number(CFNumberCreate(nullptr, kCFNumberFloatType, &amount));
+
+    CFDictionarySetValue(variation, key.get(), number.get());
+}
+
+// The same font with its optical-size axis pinned to the size the caller asked
+// for and the axes a variant wanted set on it. Returns a +1 retained font;
+// callers adopt it into a CFRef.
 //
-// CoreText reads that axis off the font's own size, which here is the size
-// times the device scale -- so a face that varies by optical size (a variable
-// font's opsz axis; Inter's runs 14 to 32, and so does the system UI face)
-// would be shaped in its display design on a Retina panel and in its text
+// CoreText reads the optical-size axis off the font's own size, which here is
+// the size times the device scale -- so a face that varies by optical size (a
+// variable font's opsz axis; Inter's runs 14 to 32, and so does the system UI
+// face) would be shaped in its display design on a Retina panel and in its text
 // design off one, and the same string would measure two widths. The scale is
 // how finely a glyph is rasterized and nothing else: a caller asks for 16
 // points and gets the design a browser would set 16px in, on any display.
-CTFontRef withOpticalSize(CTFontRef font, float pointSize)
+//
+// The weight goes in the same descriptor rather than in a copy of its own,
+// since a copy made from a variation dictionary of one axis leaves the others
+// at their defaults and would undo the pin.
+CTFontRef withPinnedAxes(CTFontRef font, float pointSize, const AxisSettings& settings)
 {
     if (font == nullptr)
         return nullptr;
 
     CFRef<CFNumberRef> size(
         CFNumberCreate(nullptr, kCFNumberFloatType, &pointSize));
+    CFRef<CFMutableDictionaryRef> attributes(
+        CFDictionaryCreateMutable(nullptr,
+                                  2,
+                                  &kCFTypeDictionaryKeyCallBacks,
+                                  &kCFTypeDictionaryValueCallBacks));
 
-    const void* keys[] = {(const void*) kCTFontOpticalSizeAttribute};
-    const void* values[] = {size.get()};
+    CFDictionarySetValue(attributes.get(), kCTFontOpticalSizeAttribute, size.get());
 
-    CFRef<CFDictionaryRef> attributes(CFDictionaryCreate(nullptr,
-                                                         keys,
-                                                         values,
-                                                         1,
-                                                         &kCFTypeDictionaryKeyCallBacks,
-                                                         &kCFTypeDictionaryValueCallBacks));
+    if (settings.any())
+    {
+        CFRef<CFMutableDictionaryRef> variation(
+            CFDictionaryCreateMutable(nullptr,
+                                      3,
+                                      &kCFTypeDictionaryKeyCallBacks,
+                                      &kCFTypeDictionaryValueCallBacks));
+
+        setAxis(variation.get(), weightAxis, settings.weight);
+        setAxis(variation.get(), italicAxis, settings.italic);
+        setAxis(variation.get(), slantAxis, settings.slant);
+
+        CFDictionarySetValue(attributes.get(), kCTFontVariationAttribute, variation.get());
+    }
+
     CFRef<CTFontDescriptorRef> descriptor(
         CTFontDescriptorCreateWithAttributes(attributes.get()));
 
@@ -198,7 +354,7 @@ struct GlyphRasterizer::Native
         CFRef<CTFontRef> named(
             CTFontCreateWithName(name, request.pixelSize(), nullptr));
 
-        base.reset(withOpticalSize(named.get(), request.pointSize));
+        base.reset(withPinnedAxes(named.get(), request.pointSize, {}));
 
         if (!base)
             return;
@@ -332,8 +488,9 @@ struct GlyphRasterizer::Native
         return result;
     }
 
-    // Returns a +1 retained font: the family's nearest face, given the traits
-    // it lacks synthetically where CoreText can, and the base face when the
+    // Returns a +1 retained font: the family's nearest face, moved along its
+    // own axes to what the face itself was not, given the traits it still
+    // lacks synthetically where CoreText can, and the base face when the
     // family could not be enumerated at all.
     CTFontRef makeFont(const FontVariant& variant) const
     {
@@ -344,14 +501,19 @@ struct GlyphRasterizer::Native
 
         auto matched = CFRef<CTFontRef> {CTFontCreateWithFontDescriptor(
             face->descriptor.get(), request.pixelSize(), nullptr)};
-        auto font =
-            CFRef<CTFontRef> {withOpticalSize(matched.get(), request.pointSize)};
+        const auto settings = axisSettingsFor(variationAxesOf(matched.get()),
+                                              variant,
+                                              FontVariant {face->weight, face->italic});
+        auto font = CFRef<CTFontRef> {
+            withPinnedAxes(matched.get(), request.pointSize, settings)};
 
         if (!font)
             return makeVariant(base.get(), styleOf(variant));
 
-        const auto missingBold = variant.weight >= 600 && face->weight < 600;
-        const auto missingItalic = variant.italic && !face->italic;
+        const auto missingBold =
+            variant.weight >= 600 && face->weight < 600 && !settings.weight;
+        const auto missingItalic = variant.italic && !face->italic
+                                   && !settings.italic && !settings.slant;
         const auto wanted = (CTFontSymbolicTraits) ((missingBold ? kCTFontTraitBold : 0)
                                                     | (missingItalic ? kCTFontTraitItalic : 0));
 
