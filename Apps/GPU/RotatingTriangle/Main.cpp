@@ -3,18 +3,17 @@
 
 using namespace eacp;
 using namespace GPU;
+using namespace Maths;
 
-// Reusable value sub-types instead of raw float arrays. EACP_SHADER_VALUE teaches
-// the shader layer their shape once, so they stand in for float2 / float3 wherever
-// a vertex field or uniform is expected.
-struct Vec2
-{
-    float x, y;
-};
-
+// Value sub-types instead of raw float arrays. Maths::Vec2 arrives already known
+// to the shader layer as a Float2; a type of your own says its shape with
+// EACP_SHADER_VALUE, which is the same registration the library does for Vec2 -
+// either way the field stands in wherever a float2 / float3 is expected.
 struct Color
 {
-    float r, g, b;
+    float r = 0.f;
+    float g = 0.f;
+    float b = 0.f;
 };
 
 struct Vertex
@@ -23,7 +22,6 @@ struct Vertex
     Color color;
 };
 
-EACP_SHADER_VALUE(Vec2, Float2)
 EACP_SHADER_VALUE(Color, Float3)
 
 namespace
