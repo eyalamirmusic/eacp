@@ -78,6 +78,60 @@ GPUWidgets::AffineTransform viewBoxTransform(const Graphics::Rect& viewBox,
                                              const Graphics::Rect& viewport,
                                              const PreserveAspectRatio& fit);
 
+// Which of the viewport's extents a percentage is a fraction of. SVG 1.1 §7.10
+// gives an x-axis length the width, a y-axis one the height, and a length with
+// no axis of its own -- a radius, a stroke width -- the diagonal over root two,
+// which is the same length a gradient's `r` is resolved against.
+enum class LengthAxis
+{
+    Horizontal,
+    Vertical,
+    Diagonal
+};
+
+// What a percentage is a percentage *of*: the nearest viewport, which is the
+// viewBox of the closest enclosing <svg> where it brought one and that <svg>'s
+// own width and height where it did not.
+//
+// Carried down the tree by whoever is walking it rather than looked up, because
+// an element cannot see the ancestor that established it -- and the walk has to
+// resolve the establishing element's own width and height against the viewport
+// outside it before the new one exists.
+struct Viewport
+{
+    float width = 0.f;
+    float height = 0.f;
+
+    float across(LengthAxis axis) const;
+
+    bool operator==(const Viewport& other) const = default;
+};
+
+// A geometry attribute's value as a length: a plain number, or a percentage of
+// the viewport along the axis it belongs to.
+//
+// A suffix that is not '%' is passed over, which is what reading one of these
+// as a bare number has always done with it -- right for the px an SVG user unit
+// already is, and a shrug at the absolute units almost nothing writes.
+float parseLength(const std::string& value,
+                  const Viewport& viewport,
+                  LengthAxis axis,
+                  float fallback = 0.f);
+
+float lengthAttr(const SVGElement& element,
+                 const std::string& name,
+                 const Viewport& viewport,
+                 LengthAxis axis,
+                 float fallback = 0.f);
+
+// Whether a root <svg>'s width or height says how big the *document* is.
+//
+// A percentage says how big whatever is showing it is, which is not something
+// the document knows anything about, so it is exactly as intrinsic a size as no
+// width at all -- and a caller asking for one has to fall back the same way,
+// onto the viewBox's ratio or onto 300x150.
+bool namesAnIntrinsicLength(const std::string& value);
+
 // A style="..." attribute's declarations, by property name.
 //
 // The same properties a presentation attribute spells, in CSS's punctuation -

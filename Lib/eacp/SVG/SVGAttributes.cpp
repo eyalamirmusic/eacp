@@ -4,6 +4,7 @@
 #include <eacp/Core/Utils/Strings.h>
 
 #include <algorithm>
+#include <cmath>
 #include <sstream>
 
 namespace eacp::SVG
@@ -395,6 +396,68 @@ GPUWidgets::AffineTransform viewBoxTransform(const Graphics::Rect& viewBox,
     return Affine::translation(-viewBox.x, -viewBox.y)
         .then(Affine::scaling(scaleX, scaleY))
         .then(Affine::translation(x, y));
+}
+
+namespace
+{
+// The value with whatever the document left after it taken off, so a length
+// written `"100% "` is still the percentage it says it is.
+std::string_view withoutTrailingSpace(const std::string& value)
+{
+    auto trimmed = std::string_view {value};
+
+    while (!trimmed.empty()
+           && std::isspace(static_cast<unsigned char>(trimmed.back())) != 0)
+        trimmed.remove_suffix(1);
+
+    return trimmed;
+}
+
+bool isPercentage(const std::string& value)
+{
+    auto trimmed = withoutTrailingSpace(value);
+
+    return !trimmed.empty() && trimmed.back() == '%';
+}
+} // namespace
+
+float Viewport::across(LengthAxis axis) const
+{
+    if (axis == LengthAxis::Horizontal)
+        return width;
+
+    if (axis == LengthAxis::Vertical)
+        return height;
+
+    return std::sqrt((width * width + height * height) * 0.5f);
+}
+
+float parseLength(const std::string& value,
+                  const Viewport& viewport,
+                  LengthAxis axis,
+                  float fallback)
+{
+    if (value.empty())
+        return fallback;
+
+    if (!isPercentage(value))
+        return Strings::parseFloatOr(value, fallback);
+
+    return Strings::parseFloatOr(value, 0.f) * 0.01f * viewport.across(axis);
+}
+
+float lengthAttr(const SVGElement& element,
+                 const std::string& name,
+                 const Viewport& viewport,
+                 LengthAxis axis,
+                 float fallback)
+{
+    return parseLength(element.attr(name), viewport, axis, fallback);
+}
+
+bool namesAnIntrinsicLength(const std::string& value)
+{
+    return !value.empty() && !isPercentage(value);
 }
 
 std::unordered_map<std::string, std::string>

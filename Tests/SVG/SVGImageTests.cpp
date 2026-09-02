@@ -140,3 +140,49 @@ auto tClipUnderViewBox = test("SVGImage/aClipPathIsInTheViewBoxsUnits") = []
     check(isOpaque(boxed.at(150, 75)), "and moved by the letterbox");
     check(isClear(boxed.at(150, 5)));
 };
+
+// A tile written to fill its own viewport, which is what a page-wide background
+// texture is. Read as a bare number the percentage was a hundred user units of a
+// hundred and sixty, so every tile drew its colour over five eighths of itself
+// and left the rest bare -- a checkerboard where the page asked for a wash.
+auto tFullSizeRectCoversTheDocument =
+    test("SVGImage/aHundredPercentRectCoversTheWholeDocument") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto document = std::string_view {
+        R"(<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160">)"
+        R"(<rect width="100%" height="100%" fill="#ff0000"/></svg>)"};
+
+    auto image = SVG::renderToImage(document, 160, 160);
+    check(image.isValid());
+
+    check(isOpaque(image.at(2, 2)));
+    check(isOpaque(image.at(80, 80)));
+
+    auto corner = image.at(157, 157);
+
+    check(isOpaque(corner), "the far corner, which is the part that was bare");
+    check(corner.r > 0.9f && corner.g < 0.1f);
+};
+
+auto tPercentageOffsetPlacesTheRect =
+    test("SVGImage/aPercentageOffsetPutsTheRectWhereItSays") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    // A quarter in and half across a 160-wide document, which is 40 to 120.
+    auto document = std::string_view {
+        R"(<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160">)"
+        R"(<rect x="25%" y="0" width="50%" height="100%" fill="#0000ff"/></svg>)"};
+
+    auto image = SVG::renderToImage(document, 160, 160);
+    check(image.isValid());
+
+    check(isClear(image.at(20, 80)), "left of where the offset starts it");
+    check(isOpaque(image.at(45, 80)));
+    check(isOpaque(image.at(115, 80)));
+    check(isClear(image.at(140, 80)), "past the width it was given");
+};
