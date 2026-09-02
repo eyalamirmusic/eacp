@@ -184,6 +184,30 @@ inline DXGI_FORMAT depthAttachmentFormat(bool withStencil)
     return withStencil ? DXGI_FORMAT_D32_FLOAT_S8X24_UINT : DXGI_FORMAT_D32_FLOAT;
 }
 
+// What the depth *resource* is created as, which is the same thing as the
+// attachment format unless a shader is also going to read it. D3D12 will not
+// give one resource two views of two different fully-typed formats, so a
+// sampleable depth buffer is created typeless and the DSV and the SRV each name
+// the type they want out of it. Metal needs none of this: a depth texture there
+// keeps its format and gains a usage bit.
+inline DXGI_FORMAT depthResourceFormat(bool withStencil, bool sampleable)
+{
+    if (!sampleable)
+        return depthAttachmentFormat(withStencil);
+
+    return withStencil ? DXGI_FORMAT_R32G8X24_TYPELESS : DXGI_FORMAT_R32_TYPELESS;
+}
+
+// The read half of that pair: one float channel, which is what
+// ShaderBuilder::depthTexture declares and what Metal's depth2d<float> hands
+// back from the same sample. With a stencil plane the depth still reads as the
+// first 32 bits and the other 32 are named as the padding they are.
+inline DXGI_FORMAT depthShaderResourceFormat(bool withStencil)
+{
+    return withStencil ? DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS
+                       : DXGI_FORMAT_R32_FLOAT;
+}
+
 // Which planes a pass clears. Both when the buffer has both, which is what
 // keeps a stencilled pass starting from a value it named rather than from
 // whatever the last frame left in the plane.
@@ -226,6 +250,17 @@ struct D3D12TextureData
     // here must set RenderPipelineDescriptor::stencil.
     bool depthHasStencil = false;
 
+    // The read view of that same depth resource, and the state it is currently
+    // in - both of which a target created without
+    // TextureDescriptor::sampleableDepth simply does not have. The paragraph
+    // above says the depth resource rests in DEPTH_WRITE and needs no tracking,
+    // and that stays true of every target but this one: a sampled depth buffer
+    // moves to PIXEL_SHADER_RESOURCE for the pass that reads it and back to
+    // DEPTH_WRITE for the pass that attaches it, which is the pair of barriers
+    // sampleableDepth's documentation charges it for.
+    DescriptorSlot depthSrv;
+    D3D12_RESOURCE_STATES depthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+
     // A plain texture rests in PIXEL_SHADER_RESOURCE forever - it is only ever
     // sampled - and a render target moves between that and RENDER_TARGET as the
     // passes go by. Unlike a buffer this does not decay to COMMON at
@@ -238,7 +273,32 @@ struct D3D12TextureData
     bool isComputeWritable() const { return uav.cpu.ptr != 0; }
     bool hasDepth() const { return dsv.ptr != 0; }
     bool hasStencil() const { return hasDepth() && depthHasStencil; }
+
+    bool hasSampleableDepth() const { return hasDepth() && depthSrv.cpu.ptr != 0; }
 };
+
+// The depth resource moved between the two states it can be in. The colour
+// resource's helper is transitionTextureForUse below; this is its depth twin,
+// separate because the two planes are two resources with two states and one
+// D3D12TextureData.
+inline void transitionDepthForUse(ID3D12GraphicsCommandList* list,
+                                  D3D12TextureData& texture,
+                                  D3D12_RESOURCE_STATES target)
+{
+    if (texture.depthResource == nullptr || !texture.hasSampleableDepth()
+        || texture.depthState == target)
+        return;
+
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = texture.depthResource.get();
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barrier.Transition.StateBefore = texture.depthState;
+    barrier.Transition.StateAfter = target;
+    list->ResourceBarrier(1, &barrier);
+
+    texture.depthState = target;
+}
 
 // The frame's color target. All members are owned by GPUView and stay valid
 // for the lifetime of the Frame. Pointed to by the drawable handle passed to

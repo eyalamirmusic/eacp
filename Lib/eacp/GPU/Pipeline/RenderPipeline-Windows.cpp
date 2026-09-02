@@ -99,6 +99,8 @@ DXGI_FORMAT toDXGIFormat(PixelFormat format)
             return DXGI_FORMAT_R16G16B16A16_FLOAT;
         case PixelFormat::RGBA32Float:
             return DXGI_FORMAT_R32G32B32A32_FLOAT;
+        case PixelFormat::R32Float:
+            return DXGI_FORMAT_R32_FLOAT;
         case PixelFormat::BGRA8Unorm:
             break;
     }

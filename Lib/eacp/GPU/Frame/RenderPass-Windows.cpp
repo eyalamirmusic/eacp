@@ -206,6 +206,32 @@ void RenderPass::setFragmentTexture(const Texture& texture,
     list->SetGraphicsRootDescriptorTable(renderTextureParam(slot), data->srv.gpu);
 }
 
+void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
+                                         int slot,
+                                         TextureSampling)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    auto* data = static_cast<D3D12TextureData*>(renderTarget.nativeTexture());
+
+    if (data == nullptr || !data->hasSampleableDepth()
+        || data->depthSrv.gpu.ptr == 0)
+        return;
+
+    auto* list = impl->encoder->commands->list.get();
+
+    // The depth resource rests in DEPTH_WRITE, which is where the pass that drew
+    // it left it and where the next pass to attach it expects to find it - so
+    // this is the outward half of the pair, and Frame::beginPass records the
+    // return. The two states are two views of one resource, which is why they
+    // are one tracked value rather than a flag per view.
+    transitionDepthForUse(list, *data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+    list->SetGraphicsRootDescriptorTable(renderTextureParam(slot),
+                                         data->depthSrv.gpu);
+}
+
 namespace
 {
 // The address a stage's root SRV binds to, with the buffer moved into the state

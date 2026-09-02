@@ -407,6 +407,39 @@ inline Float4 sample(const TextureCube& texture, const Float3& direction)
     return result;
 }
 
+// The depth buffer of a render target, declared as a slot like the two above and
+// taking its slot from the same counter - but bound with
+// RenderPass::setFragmentDepthTexture, which takes the *target* rather than a
+// texture, a depth attachment having no existence apart from the colour texture
+// it was created with.
+//
+// The pass that wrote the depth must have ended before the pass that samples it
+// begins, and must have been told to keep it (DepthAction::Keep): a texture is
+// not sampleable by the pass rendering into it, and the depth plane is no
+// different.
+//
+// Render stage only. ComputePass::setInputTexture takes a Texture, and a depth
+// attachment is not one; a kernel that wants scene depth reads a copy of it in
+// a colour format, which is what the render pass this exists for produces.
+struct TextureDepth2D
+{
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
+// One float, not four, and that is the shape of a depth format on both backends
+// rather than a convenience: Metal's depth2d and an R32_FLOAT SRV each give a
+// single channel, and a Float4 here would be three components the hardware never
+// produced. What comes back is the window-space depth the pass wrote - 0 at the
+// near plane, 1 at the far one, after whatever depth range the viewport set.
+inline Float sample(const TextureDepth2D& texture, const Float2& coordinates)
+{
+    auto result = Float {};
+    result.graph = texture.graph;
+    result.node = texture.graph->addDepthSample(texture.slot, coordinates.node);
+    return result;
+}
+
 // Sampling at a mip level the shader chooses rather than the one the hardware
 // derives from the neighbouring fragments. Two things need this: a sample taken
 // where the derivatives are meaningless - of a coordinate that jumps between

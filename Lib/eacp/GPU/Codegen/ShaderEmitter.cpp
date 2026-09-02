@@ -1267,16 +1267,39 @@ const char* hlslBufferType(BufferAccess access)
 // end up disagreeing about which slots are cubes.
 //
 // The sample expression is deliberately not one of them. `.sample(s, uv)` on
-// Metal and `.Sample(s, uv)` on HLSL read both kinds, the coordinate's own width
-// choosing which, so ExprKind::Sample never asks what shape the texture is.
+// Metal and `.Sample(s, uv)` on HLSL read all three kinds, the coordinate's own
+// width choosing between the first two, so ExprKind::Sample never asks what
+// shape the texture is. What a depth slot changes is not the call but the type
+// of what it returns - one float rather than four - and that is carried on the
+// node ShaderGraph::addDepthSample built, not here.
 const char* metalTextureType(TextureKind kind)
 {
-    return kind == TextureKind::Cube ? "texturecube<float>" : "texture2d<float>";
+    switch (kind)
+    {
+        case TextureKind::Cube:
+            return "texturecube<float>";
+        case TextureKind::Depth2D:
+            return "depth2d<float>";
+        default:
+            return "texture2d<float>";
+    }
 }
 
+// `Texture2D<float>` rather than the bare `Texture2D` a colour slot gets: the
+// SRV over the depth resource is a single-channel R32_FLOAT view (see
+// depthShaderResourceFormat), and the typed declaration is what makes Sample
+// return the one float MSL's depth2d does.
 const char* hlslTextureType(TextureKind kind)
 {
-    return kind == TextureKind::Cube ? "TextureCube" : "Texture2D";
+    switch (kind)
+    {
+        case TextureKind::Cube:
+            return "TextureCube";
+        case TextureKind::Depth2D:
+            return "Texture2D<float>";
+        default:
+            return "Texture2D";
+    }
 }
 
 // Compute kernel emission. The expression printer is the render one; only the

@@ -117,6 +117,19 @@ public:
         return {&graphData, graphData.addCubeTexture(sampling)};
     }
 
+    // The depth buffer of a render target, sampled at a Float2 coordinate for
+    // the one float it holds. Slots come from the same counter as the two above;
+    // what differs is the bind - RenderPass::setFragmentDepthTexture, given the
+    // target rather than a texture - and that sample() gives back a Float.
+    //
+    // The target has to have been created with
+    // TextureDescriptor::sampleableDepth, and the pass that wrote the depth has
+    // to have ended and kept it. See TextureDepth2D.
+    TextureDepth2D depthTexture(TextureSampling sampling = {})
+    {
+        return {&graphData, graphData.addDepthTexture(sampling)};
+    }
+
     // Compute kernel authoring. Declaring buffers assigns slots in call order
     // (inputs and outputs share one slot space, matching Metal's flat buffer
     // indices); threadId() is the 1D work-item index; write() records a kernel

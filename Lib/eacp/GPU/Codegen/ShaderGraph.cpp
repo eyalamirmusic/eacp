@@ -335,6 +335,27 @@ int ShaderGraph::addCubeTexture(TextureSampling sampling)
     return textureSamplings.size() - 1;
 }
 
+int ShaderGraph::addDepthTexture(TextureSampling sampling)
+{
+    textureSamplings.add(sampling);
+    textureAccesses.add(TextureAccess::Sample);
+    textureKinds.add(TextureKind::Depth2D);
+    return textureSamplings.size() - 1;
+}
+
+// Everything addSample records, with the type it gives the node changed - which
+// is what makes the emitter print `float d = ...` where a colour sample prints
+// `float4 c = ...`, and is the only place the two differ.
+int ShaderGraph::addDepthSample(int textureSlot, int uv)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Sample;
+    node.type = ValueType::Float;
+    node.index = textureSlot;
+    node.args.add(uv);
+    return add(std::move(node));
+}
+
 int ShaderGraph::addWritableTexture()
 {
     // The sampling is recorded to keep the lists parallel and is never read: a

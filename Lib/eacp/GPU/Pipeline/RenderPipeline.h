@@ -21,7 +21,8 @@ enum class PixelFormat
     BGRA8Unorm,
     RGBA8Unorm,
     RGBA16Float,
-    RGBA32Float
+    RGBA32Float,
+    R32Float
 };
 
 constexpr PixelFormat pixelFormatFor(TextureFormat format)
@@ -34,6 +35,8 @@ constexpr PixelFormat pixelFormatFor(TextureFormat format)
             return PixelFormat::RGBA16Float;
         case TextureFormat::RGBA32Float:
             return PixelFormat::RGBA32Float;
+        case TextureFormat::R32Float:
+            return PixelFormat::R32Float;
         default:
             return PixelFormat::RGBA8Unorm;
     }

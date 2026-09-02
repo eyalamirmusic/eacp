@@ -385,6 +385,14 @@ RenderPass Frame::beginPass(const Texture& target,
     transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
     auto hasDepth = data->hasDepth();
+
+    // The return half of the pair RenderPass::setFragmentDepthTexture opens: a
+    // depth buffer an earlier pass on this frame *read* is in
+    // PIXEL_SHADER_RESOURCE, and attaching it needs it back in DEPTH_WRITE. A
+    // target whose depth was never made sampleable has never left that state and
+    // the helper records nothing.
+    transitionDepthForUse(list, *data, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+
     list->OMSetRenderTargets(1, &data->rtv, FALSE, hasDepth ? &data->dsv : nullptr);
 
     auto width = target.width();

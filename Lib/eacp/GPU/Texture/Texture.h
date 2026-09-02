@@ -32,7 +32,19 @@ enum class TextureFormat
     // simulation that really needs the mantissa; filtering one is *not*
     // guaranteed, so sample it Nearest unless the device is known to allow more.
     RGBA16Float,
-    RGBA32Float
+    RGBA32Float,
+
+    // One full-precision channel, sampled as (r, 0, 0, 1). What a texture
+    // holding a *measurement* rather than a colour wants: a depth buffer copied
+    // out for a later pass to read, a distance field, a height map, a single
+    // accumulated scalar. Eight and sixteen bits are both too coarse for the
+    // first of those - a window-space depth spends almost its whole range in
+    // the last thousandth, where a half float has about one value to offer.
+    //
+    // Renderable on both backends and readable back through read(); filtering
+    // it is *not* guaranteed, so sample it Nearest for the same reason
+    // RGBA32Float says so.
+    R32Float
 };
 
 constexpr int bytesPerPixel(TextureFormat format)
@@ -55,7 +67,8 @@ constexpr int bytesPerPixel(TextureFormat format)
 constexpr bool isFloatFormat(TextureFormat format)
 {
     return format == TextureFormat::RGBA16Float
-           || format == TextureFormat::RGBA32Float;
+           || format == TextureFormat::RGBA32Float
+           || format == TextureFormat::R32Float;
 }
 
 // Whether a kernel may write this format. The restriction is D3D12's: a typed
@@ -195,6 +208,26 @@ struct TextureDescriptor
     // what renders.
     bool depth = false;
 
+    // Whether that depth buffer may also be *sampled*, by a pass that is not
+    // the one rendering into it - RenderPass::setFragmentDepthTexture, and a
+    // shader slot declared with ShaderBuilder::depthTexture.
+    //
+    // Implies depth, and is separate from it because it is not free: on D3D12
+    // the resource has to be created typeless so that one view can read it as a
+    // depth buffer and another as a single float channel, and it costs a
+    // shader-visible descriptor and a pair of barriers around every pass that
+    // attaches it. A target nothing samples the depth of should not pay for
+    // either.
+    //
+    // **What it is for is a pass reading the depth an earlier pass wrote**, and
+    // the earlier pass has to have ended: a texture cannot be sampled by the
+    // pass rendering into it, and a depth attachment is no different. So this
+    // pairs with DepthAction::Keep, which is what makes the values survive the
+    // end of that pass - a soft particle fading where it meets the wall behind
+    // it, a fog whose thickness is how far away the geometry is, a decal
+    // projected onto whatever the depth buffer says is there.
+    bool sampleableDepth = false;
+
     // Whether that buffer also carries a stencil plane, for a pass whose
     // pipelines set RenderPipelineDescriptor::stencil.
     //
@@ -295,6 +328,13 @@ public:
     // RenderPipelineDescriptor::stencil needs to match. True implies hasDepth,
     // the two planes being one attachment.
     bool hasStencil() const;
+
+    // Whether that buffer can be sampled as well as attached, which is what
+    // RenderPass::setFragmentDepthTexture needs and false on a target created
+    // without TextureDescriptor::sampleableDepth. True implies hasDepth. A bind
+    // through a target that answers false is a no-op rather than a read of
+    // something undefined.
+    bool hasSampleableDepth() const;
 
     // Re-uploads pixels into a texture created by Device::makeTexture, reusing
     // the GPU resource instead of allocating a new one — the per-frame path for

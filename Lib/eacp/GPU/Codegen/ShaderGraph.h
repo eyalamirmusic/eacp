@@ -99,10 +99,21 @@ enum class TextureAccess
 // on HLSL are how both kinds are read, with the coordinate's own width deciding
 // which; so the emitter's Sample case is untouched by cube textures, and the
 // only place a kind is read is where the parameter or the global is declared.
+// A depth slot is the one kind where the sample expression's *type* differs
+// rather than only its declaration: `depth2d<float>` on Metal and
+// `Texture2D<float>` on HLSL both hand back one float where the other two hand
+// back four. So this is read in two places rather than one - the declaration,
+// and the node addDepthSample gives the sample.
 enum class TextureKind
 {
     Texture2D,
-    Cube
+    Cube,
+
+    // The depth buffer of a render target, bound with
+    // RenderPass::setFragmentDepthTexture. Not a texture the app created: a
+    // depth attachment belongs to the target it was made with, which is why the
+    // bind takes the target rather than a texture of its own.
+    Depth2D
 };
 
 // The shape of the grid a kernel is dispatched over, decided by which thread
@@ -326,6 +337,14 @@ public:
     // the declaration the emitter prints and the width of the coordinate
     // addSample is handed; nothing else here knows the difference.
     int addCubeTexture(TextureSampling sampling = {});
+
+    // A depth slot, again from the same counter and the same sampler space, and
+    // the sample of one - which is a Float rather than a Float4, both backends'
+    // depth textures having exactly one channel to give. That is the whole
+    // reason this is its own pair of entry points rather than a flag on the two
+    // above: the node's type is what every expression built on it reads.
+    int addDepthTexture(TextureSampling sampling = {});
+    int addDepthSample(int textureSlot, int uv);
 
     // A texture slot a kernel writes rather than reads, and one such write. It
     // takes a slot from the same counter addTexture does, so a kernel that
