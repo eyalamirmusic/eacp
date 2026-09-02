@@ -89,6 +89,22 @@ enum class TextureAccess
     Write
 };
 
+// What shape a texture slot is: a 2D image sampled with a float2, or six square
+// faces sampled with a float3 direction. It rides beside TextureAccess rather
+// than inside it because the two answer different questions - one is how the
+// shader reaches the texture, the other is what the texture is - and only the
+// declaration the emitter prints depends on this one.
+//
+// The sample itself does not. `t.sample(s, uv)` on Metal and `t.Sample(s, uv)`
+// on HLSL are how both kinds are read, with the coordinate's own width deciding
+// which; so the emitter's Sample case is untouched by cube textures, and the
+// only place a kind is read is where the parameter or the global is declared.
+enum class TextureKind
+{
+    Texture2D,
+    Cube
+};
+
 // The shape of the grid a kernel is dispatched over, decided by which thread
 // index its body asked for: threadId() gives one index over a flat count,
 // threadPosition() gives a pair over a width and a height. The emitter takes
@@ -304,6 +320,13 @@ public:
     int addSample(int textureSlot, int uv);
     int addSample(int textureSlot, int uv, int level);
 
+    // A cube slot, from the same counter and the same sampler space as the 2D
+    // one - a shader that declares both binds them at distinct indices, and
+    // RenderPass::setFragmentTexture takes either at either. What it changes is
+    // the declaration the emitter prints and the width of the coordinate
+    // addSample is handed; nothing else here knows the difference.
+    int addCubeTexture(TextureSampling sampling = {});
+
     // A texture slot a kernel writes rather than reads, and one such write. It
     // takes a slot from the same counter addTexture does, so a kernel that
     // reads one texture and writes another binds them at distinct indices -
@@ -391,6 +414,14 @@ public:
                                                           : TextureAccess::Sample;
     }
 
+    // Whether texture `slot` is a 2D image or a cube - the other half of that
+    // declaration, and the only other thing the emitter needs to print it.
+    TextureKind textureKind(int slot) const
+    {
+        return slot >= 0 && slot < textureKinds.size() ? textureKinds[slot]
+                                                       : TextureKind::Texture2D;
+    }
+
     int position() const { return positionNode; }
     int fragment() const { return fragmentNode; }
     int discard() const { return discardNode; }
@@ -470,6 +501,7 @@ private:
     Vector<TextureStore> textureStoreList;
     Vector<TextureSampling> textureSamplings;
     Vector<TextureAccess> textureAccesses; // parallel to textureSamplings
+    Vector<TextureKind> textureKinds; // parallel to textureSamplings
     Vector<ArrayConstant> arrayConstants;
     Vector<SharedArray> sharedArrayList;
     bool localIdUsed = false;
