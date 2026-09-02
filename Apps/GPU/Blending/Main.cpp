@@ -4,12 +4,12 @@
 
 using namespace eacp;
 using namespace GPU;
+using namespace Maths;
 
 namespace
 {
 constexpr int viewWidth = 900;
 constexpr int viewHeight = 360;
-constexpr float pi = 3.14159265358979323846f;
 
 // A Venn-triangle of three overlapping RGB circles, drawn as real triangle-list
 // geometry (no shader masking) so the None mode has no outside-the-circle
@@ -62,8 +62,8 @@ void appendCircle(std::vector<Vertex>& out, const CircleSpec& c)
 {
     for (auto i = 0; i < circleSegments; ++i)
     {
-        const auto a0 = (float) i / (float) circleSegments * 2.f * pi;
-        const auto a1 = (float) (i + 1) / (float) circleSegments * 2.f * pi;
+        const auto a0 = (float) i / (float) circleSegments * twoPi;
+        const auto a1 = (float) (i + 1) / (float) circleSegments * twoPi;
 
         const Vertex centre {{c.centerX, c.centerY}, {c.r, c.g, c.b, circleAlpha}};
         const Vertex rim0 {{c.centerX + circleRadius * std::cos(a0),

@@ -1,17 +1,77 @@
 #include "WebView.h"
 #include <algorithm>
+#include <utility>
 
 #include "DevServerProbe.h"
 #include "JsStringLiteral.h"
 #include "StreamingRange.h"
 #include "WebViewDetail.h"
 
+#include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/Singleton.h>
 #include <eacp/Core/Utils/Strings.h>
 #include <eacp/Graphics/Image/Image.h>
 
 namespace eacp::Graphics
 {
+namespace
+{
+// The deadline rides the run loop rather than a thread. Threads::delay would be
+// the shorter spelling, but it answers from a detached thread that can outlive
+// the loop it posts into — fine for the test driver that uses it, not for a
+// library call an app makes. Threads::Timer is repeating and integer-Hz, so it
+// only has to tick finer than the deadline; Time::Deadline keeps the real one.
+constexpr auto deadlineTickHz = 10;
+
+struct PendingSnapshot
+{
+    explicit PendingSnapshot(Time::MS deadline)
+        : expiry(deadline)
+    {
+    }
+
+    bool answered = false;
+    Time::Deadline expiry;
+    std::unique_ptr<Threads::Timer> timer;
+};
+
+// The answer can come from inside the timer's own callback, where releasing the
+// timer would destroy the std::function that is mid-call — so the release waits
+// a turn of the loop. It is also what breaks the reference cycle between the
+// timer and the state holding it.
+void releaseTimer(const std::shared_ptr<PendingSnapshot>& pending)
+{
+    Threads::callAsync([pending] { pending->timer.reset(); });
+}
+} // namespace
+
+WebView::SnapshotCallback
+    detail::withSnapshotDeadline(WebView::SnapshotCallback callback,
+                                 Time::MS deadline)
+{
+    auto pending = std::make_shared<PendingSnapshot>(deadline);
+
+    auto once = [pending, callback = std::move(callback)](Bytes pngBytes,
+                                                          const std::string& error)
+    {
+        if (std::exchange(pending->answered, true))
+            return;
+
+        releaseTimer(pending);
+        callback(std::move(pngBytes), error);
+    };
+
+    pending->timer = std::make_unique<Threads::Timer>(
+        [pending, once]
+        {
+            if (!pending->answered && pending->expiry.expired())
+                once({}, "snapshot timed out");
+        },
+        deadlineTickHz);
+
+    return once;
+}
+
 void WebView::captureAsyncContent(float, std::function<void(Image)> done)
 {
     takeSnapshot(

@@ -46,129 +46,21 @@
 
 using namespace eacp;
 using namespace GPU;
+using namespace Maths;
 
 namespace
 {
 constexpr auto panelCount = 3;
-constexpr auto pi = 3.14159265358979f;
 
 // Far enough that the extruded cap clears any surface the shadow could land on,
 // and well inside the far plane - depth-fail needs the cap rasterized, so a
 // volume running past the far plane would have its count cut off.
 constexpr auto extrusionLength = 25.f;
 
-float radians(float degrees)
-{
-    return degrees * (pi / 180.f);
-}
-
-struct Vec3
-{
-    float x = 0.f;
-    float y = 0.f;
-    float z = 0.f;
-
-    using ShaderValue = Float3;
-};
-
-Vec3 operator+(Vec3 a, Vec3 b)
-{
-    return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-Vec3 operator-(Vec3 a, Vec3 b)
-{
-    return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-Vec3 operator*(Vec3 a, float s)
-{
-    return {a.x * s, a.y * s, a.z * s};
-}
-
-float dot(Vec3 a, Vec3 b)
-{
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-Vec3 cross(Vec3 a, Vec3 b)
-{
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
-
-Vec3 normalize(Vec3 v)
-{
-    auto length = std::sqrt(dot(v, v));
-    return length > 1.0e-6f ? v * (1.f / length) : Vec3 {0.f, 0.f, 1.f};
-}
-
-// Column-major, matching the shader EDSL's own transform builders and the
-// Float4x4 both languages agree on the layout of.
-using Mat4 = Array<float, 16>;
-
-Mat4 multiply(const Mat4& a, const Mat4& b)
-{
-    auto out = Mat4 {};
-
-    for (auto column = 0; column < 4; ++column)
-        for (auto row = 0; row < 4; ++row)
-        {
-            auto sum = 0.f;
-
-            for (auto k = 0; k < 4; ++k)
-                sum += a[k * 4 + row] * b[column * 4 + k];
-
-            out[column * 4 + row] = sum;
-        }
-
-    return out;
-}
-
-// The same right-handed [0, 1]-depth projection ShaderProgram::perspective
-// builds in the shader, written out here because this scene sends one finished
-// matrix rather than the scalars that shader takes.
-Mat4 perspective(float aspect, float fovY, float nearZ, float farZ)
-{
-    auto f = 1.f / std::tan(fovY * 0.5f);
-    auto out = Mat4 {};
-    out.fill(0.f);
-
-    out[0] = f / aspect;
-    out[5] = f;
-    out[10] = farZ / (nearZ - farZ);
-    out[11] = -1.f;
-    out[14] = (farZ * nearZ) / (nearZ - farZ);
-
-    return out;
-}
-
-Mat4 lookAt(Vec3 eye, Vec3 target, Vec3 up)
-{
-    auto forward = normalize(eye - target);
-    auto right = normalize(cross(up, forward));
-    auto trueUp = cross(forward, right);
-
-    auto out = Mat4 {};
-
-    out[0] = right.x;
-    out[1] = trueUp.x;
-    out[2] = forward.x;
-    out[3] = 0.f;
-    out[4] = right.y;
-    out[5] = trueUp.y;
-    out[6] = forward.y;
-    out[7] = 0.f;
-    out[8] = right.z;
-    out[9] = trueUp.z;
-    out[10] = forward.z;
-    out[11] = 0.f;
-    out[12] = -dot(right, eye);
-    out[13] = -dot(trueUp, eye);
-    out[14] = -dot(forward, eye);
-    out[15] = 1.f;
-
-    return out;
-}
+// The camera is one finished Mat4 sent up as a uniform, rather than the scalars
+// the Teapot's shader assembles a matrix from inside define(). The two land in
+// the same place: Mat4 is column-major, right-handed and [0, 1] in depth, the
+// convention the shader EDSL's own transform builders use.
 
 struct SceneVertex
 {
@@ -615,10 +507,11 @@ struct StencilShadowsView final : GPUView
 
     Camera cameraFor(float aspect) const
     {
-        auto view = lookAt({0.f, 2.1f, 5.2f}, {0.f, -0.35f, 0.f}, {0.f, 1.f, 0.f});
-        auto projection = perspective(aspect, radians(42.f), 0.1f, 100.f);
+        auto view =
+            Mat4::lookAt({0.f, 2.1f, 5.2f}, {0.f, -0.35f, 0.f}, {0.f, 1.f, 0.f});
+        auto projection = Mat4::perspective(aspect, radians(42.f), 0.1f, 100.f);
 
-        return {multiply(projection, view)};
+        return {projection * view};
     }
 
     // The scene twice over: ground, then cube, differing only in their colour,
@@ -627,14 +520,13 @@ struct StencilShadowsView final : GPUView
     void drawScene(RenderPass& pass, SceneShader& shader, const Camera& camera) const
     {
         shader.viewProjection = camera.viewProjection;
-        shader.lightPoint =
-            Array {lightPosition.x, lightPosition.y, lightPosition.z};
-        shader.baseColor = Array {0.34f, 0.36f, 0.42f};
+        shader.lightPoint = lightPosition;
+        shader.baseColor = Vec3 {0.34f, 0.36f, 0.42f};
 
         pass.bind(shader, sceneBuffer);
         pass.draw(groundVertexCount, 0);
 
-        shader.baseColor = Array {0.86f, 0.52f, 0.30f};
+        shader.baseColor = Vec3 {0.86f, 0.52f, 0.30f};
         pass.setUniforms(shader);
         pass.draw(cubeVertexCount, groundVertexCount);
     }
@@ -679,13 +571,13 @@ struct StencilShadowsView final : GPUView
         updateSceneBuffer();
         updateVolumeBuffer();
 
-        visibleVolume.color = Array {0.30f, 0.85f, 0.95f, 0.13f};
+        visibleVolume.color = Vec4 {0.30f, 0.85f, 0.95f, 0.13f};
 
         // Never read: this program's pipeline writes no channel at all
         // (prepareVolumePipelines), so whatever the fragment computes is
         // discarded. Set anyway, because a uniform the shader declares and the
         // app leaves alone is a thing to wonder about later.
-        hiddenVolume.color = Array {0.f, 0.f, 0.f, 0.f};
+        hiddenVolume.color = Vec4 {};
 
         auto descriptor = RenderPassDescriptor {};
         descriptor.clearColor = Graphics::Color {0.06f, 0.07f, 0.09f};

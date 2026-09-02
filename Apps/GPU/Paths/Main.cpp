@@ -5,8 +5,6 @@ using namespace eacp::GPUWidgets;
 
 namespace
 {
-constexpr float pi = 3.14159265358979323846f;
-
 // The paths below are authored in a fixed 800 x 520 design space (see
 // setCoordinateSpace), so they keep filling the window whatever its size.
 constexpr float designWidth = 800.0f;

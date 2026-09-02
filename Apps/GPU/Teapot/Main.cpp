@@ -7,14 +7,10 @@
 
 using namespace eacp;
 using namespace GPU;
+using namespace Maths;
 
-// A 3-float value used for both CPU mesh math and as a Float3 vertex attribute.
-struct Vec3
-{
-    float x, y, z;
-    using ShaderValue = Float3;
-};
-
+// Maths::Vec3 is both the CPU value the mesh math is done in and the Float3
+// vertex attribute the shader reads - one packed type, no repacking on upload.
 struct Vertex
 {
     Vec3 position;
@@ -23,39 +19,6 @@ struct Vertex
 
 namespace
 {
-constexpr float pi = 3.14159265358979f;
-
-float radians(float degrees)
-{
-    return degrees * (pi / 180.0f);
-}
-
-Vec3 operator-(Vec3 a, Vec3 b)
-{
-    return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-Vec3 operator+(Vec3 a, Vec3 b)
-{
-    return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-Vec3 operator*(Vec3 a, float s)
-{
-    return {a.x * s, a.y * s, a.z * s};
-}
-
-Vec3 cross(Vec3 a, Vec3 b)
-{
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
-
-Vec3 normalize(Vec3 v)
-{
-    auto length = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-    return length > 1.0e-6f ? v * (1.0f / length) : Vec3 {0.0f, 0.0f, 1.0f};
-}
-
 // Cubic Bernstein basis and its derivative, for evaluating a bicubic patch.
 void bernstein(float t, float* basis, float* derivative)
 {
@@ -96,11 +59,8 @@ TeapotMesh buildTeapot()
         for (auto k = 0; k < 16; ++k)
         {
             auto cp = controlPoint(p, k / 4, k % 4);
-            low = {
-                std::min(low.x, cp.x), std::min(low.y, cp.y), std::min(low.z, cp.z)};
-            high = {std::max(high.x, cp.x),
-                    std::max(high.y, cp.y),
-                    std::max(high.z, cp.z)};
+            low = min(low, cp);
+            high = max(high, cp);
         }
 
     auto center = (low + high) * 0.5f;
@@ -125,17 +85,17 @@ TeapotMesh buildTeapot()
                 float bv[4], dbv[4];
                 bernstein((float) iv / steps, bv, dbv);
 
-                auto position = Vec3 {0.0f, 0.0f, 0.0f};
-                auto tangentU = Vec3 {0.0f, 0.0f, 0.0f};
-                auto tangentV = Vec3 {0.0f, 0.0f, 0.0f};
+                auto position = Vec3 {};
+                auto tangentU = Vec3 {};
+                auto tangentV = Vec3 {};
 
                 for (auto i = 0; i < 4; ++i)
                     for (auto j = 0; j < 4; ++j)
                     {
                         auto cp = controlPoint(p, i, j);
-                        position = position + cp * (bu[i] * bv[j]);
-                        tangentU = tangentU + cp * (dbu[i] * bv[j]);
-                        tangentV = tangentV + cp * (bu[i] * dbv[j]);
+                        position += cp * (bu[i] * bv[j]);
+                        tangentU += cp * (dbu[i] * bv[j]);
+                        tangentV += cp * (bu[i] * dbv[j]);
                     }
 
                 auto normal = normalize(cross(tangentU, tangentV));
@@ -240,8 +200,8 @@ struct TeapotView final : GPUView
         // The CPU uploads only scalars now; the shader builds every matrix.
         shader.angle = spin;
         shader.aspect = bounds.h > 0.0f ? bounds.w / bounds.h : 1.0f;
-        shader.lightDir = Array {0.4f, 0.5f, 0.8f};
-        shader.baseColor = Array {0.85f, 0.5f, 0.32f};
+        shader.lightDir = Vec3 {0.4f, 0.5f, 0.8f};
+        shader.baseColor = Vec3 {0.85f, 0.5f, 0.32f};
 
         auto pass = frame.beginPass({Graphics::Color {0.09f, 0.10f, 0.13f}});
         pass.draw(shader);
