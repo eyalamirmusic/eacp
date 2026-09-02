@@ -1,7 +1,7 @@
 #pragma once
 
 #include "AsyncBridge.h"
-#include "WebView.h"
+#include "ScriptHost.h"
 
 #include <ea_data_structures/Pointers/Broadcaster.h>
 
@@ -13,9 +13,14 @@ namespace eacp::Graphics
 
 using EmptyMessage = Miro::EmptyValue;
 
-// Transport adapter that routes WebView <-> C++ messages through a
+// Transport adapter that routes page <-> C++ messages through a
 // Miro::Bridge, which owns the command table and event registry; this class
-// handles only the WebView wire format.
+// handles only the wire format.
+//
+// The page is reached through a ScriptHost, so the same bridge serves a
+// Graphics::WebView and anything else that runs scripts against a document —
+// the typed commands, the C++ -> page calls and the EACP_STATE broadcasts
+// are the host's five members and nothing more.
 //
 // On construction it picks up every state declared via EACP_STATE in the
 // linked TUs (see StateBridge.h) and broadcasts their changes on the wire
@@ -27,11 +32,11 @@ using EmptyMessage = Miro::EmptyValue;
 class WebViewBridge
 {
 public:
-    WebViewBridge(WebView& webViewToUse);
+    WebViewBridge(ScriptHost& scriptHostToUse);
 
     template <typename T>
-    WebViewBridge(WebView& webViewToUse, T& api)
-        : WebViewBridge(webViewToUse)
+    WebViewBridge(ScriptHost& scriptHostToUse, T& api)
+        : WebViewBridge(scriptHostToUse)
     {
         getBridge().use(api);
     }
@@ -107,7 +112,7 @@ private:
     // touching the bridge, because a command outlives the object it was
     // addressed to more easily than it looks: onMessage does not run the
     // handler, it QUEUES it (Rpc::runCommand, MainThreadDeferred) and queues
-    // the reply behind that. A WebView destroyed in between — an app that
+    // the reply behind that. A host destroyed in between — an app that
     // makes and unmakes windows on demand, rather than hiding them — leaves
     // those blocks pointing at a freed Bridge, and the page goes on posting
     // commands right up to the moment it is freed, so no amount of deferring
@@ -119,7 +124,7 @@ private:
     std::shared_ptr<std::atomic<bool>> alive =
         std::make_shared<std::atomic<bool>>(true);
 
-    WebView& webView;
+    ScriptHost& scriptHost;
     Miro::Bridge bridge;
     EA::Listener emitListener;
     Vector<OwningPointer<EA::Listener>> stateListeners;

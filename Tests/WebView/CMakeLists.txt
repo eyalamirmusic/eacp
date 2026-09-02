@@ -1,3 +1,16 @@
+# The bridge over a ScriptHost that is not a WebView. Its own executable,
+# linking eacp-webview-bridge and nothing else, because that is the claim
+# being tested: the bridge, the shim and the state binders stand up with no
+# native web runtime under them. Built whether or not EACP_BUILD_WEBVIEW is
+# on, which is the configuration a consumer that only wants the bridge uses.
+nano_add_executable(ScriptHostTests
+        SOURCES ScriptHostTests.cpp
+        TARGETS eacp-webview-bridge)
+
+if (NOT EACP_BUILD_WEBVIEW)
+    return ()
+endif ()
+
 # Pure-logic suites: Range header resolution, the file provider and the async
 # bridge. They link eacp-webview but never construct a WebView, so they build
 # wherever the library does.
