@@ -55,6 +55,12 @@ add_subdirectory(CubeMap)
 # + depthTexture(), and the soft particles that is all for. R32Float beside it.
 add_subdirectory(DepthSampling)
 
+# Two thousand meshes a frame, each written as its own slice: StreamingBuffers
+# under a game renderer's load - the draw order shuffled every frame and the
+# byte total doubled every three seconds, with the allocation count that says
+# the arenas are recycling rather than churning.
+add_subdirectory(StreamingStress)
+
 # Incremental sub-region texture uploads, the glyph-atlas pattern.
 add_subdirectory(TextureAtlas)
 
