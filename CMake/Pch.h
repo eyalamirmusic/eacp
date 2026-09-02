@@ -29,6 +29,30 @@
 // No <unknwn.h> here, deliberately. WinInclude.h pairs it with windows.h
 // for the WinRT interop TUs, but it drags in rpcndr.h, whose `small`
 // macro would then be forced on every file in the project.
+
+// windows.h takes `near` and `far` as macro names, and a force-included image
+// hands them to every file in the project -- including the portable ones that
+// never asked for windows.h and compile clean on every other platform. That
+// broke the Windows lanes once already, on a test whose `near`/`far` members
+// preprocessed down to `.depth = nearDepth;`.
+//
+// They cannot simply be undefined. FAR and NEAR expand to them, and the SDK
+// still writes `LPMALLOC FAR *` in a hundred-odd of its own headers, which are
+// parsed after this one -- undefining the pair alone fails combaseapi.h with
+// `expected ')'`. So the two are taken back and FAR/NEAR are restored as the
+// empty macros they have meant since 16-bit addressing died.
+//
+// The A/W macros -- DrawText, LoadImage, CreateFont -- are deliberately left:
+// the *-Windows.cpp TUs call the Win32 functions through them, and being
+// PascalCase they can only collide with a type of that exact name, which eacp
+// has none of. What made `near` different is that it is lowercase, and so in
+// the same namespace as every member and variable this codebase declares.
+#undef near
+#undef far
+#undef NEAR
+#undef FAR
+#define NEAR
+#define FAR
 #endif
 
 #include <algorithm>
