@@ -65,10 +65,18 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON
 ```
 
 - `EACP_PCH` (default `OFF`, on under `EACP_CI_BUILD`): shares one precompiled
-  header — `<windows.h>` plus the STL — across every eacp target, which is worth
-  roughly half the compile time of a cold Windows build. It holds no eacp header
-  on purpose, but editing `CMake/Pch.h` still rebuilds the project, so it is off
+  header — the STL — across every eacp target, which is worth roughly a third of
+  the compile time of a typical translation unit. It holds no eacp header on
+  purpose, but editing `CMake/Pch.h` still rebuilds the project, so it is off
   for normal work and on in CI, where every build is cold anyway.
+
+  `<windows.h>` is deliberately **not** in it. CMake builds a PCH with `/FI`, so
+  the payload is force-included into every translation unit, and windows.h
+  brings two dozen macros with it — `near` and `far` among them, which are
+  lowercase and so collide with ordinary member names. Measured: it saves a
+  portable TU nothing (475ms against an STL-only image, 478ms with windows.h
+  added, 692ms with no image), and costs the `*-Windows.cpp` TUs that do want it
+  a flat ~68ms each to parse it through `WinInclude.h` instead.
 
 ```bash
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
