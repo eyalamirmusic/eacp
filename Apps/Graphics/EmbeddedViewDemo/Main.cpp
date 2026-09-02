@@ -9,6 +9,18 @@
 // eacp::Graphics::View, so the thing being embedded is the same kind of object
 // it always was, and the whole widget tree behind it is one native view rather
 // than one per element.
+//
+// The host here has a layout of its own: it keeps a strip along the top of its
+// window and gives the surface what is left, laying it out again on every
+// resize. That is the arrangement any host bigger than a bare window ends up
+// with, and the reason setBounds exists — a surface left to itself fills the
+// window it was handed and would cover the strip.
+//
+// It is also where the two coordinate systems part company. The window's
+// content view is a plain platform view, which on macOS measures its subviews
+// up from its bottom edge, while the rect below is eacp's: points, y-down. The
+// strip is at the top of the window on both platforms, and if the conversion
+// were missing it would be at the bottom on one of them.
 
 using namespace eacp;
 
@@ -50,16 +62,48 @@ struct Host final : UI::ComponentHost
 
 struct FakeHostApp
 {
+    static constexpr auto initialWidth = 640;
+    static constexpr auto initialHeight = 400;
+
+    // The host's own chrome — where its toolbar would go. Nothing draws it
+    // here; it is the band of window the surface has to keep off.
+    static constexpr auto stripHeight = 44.f;
+    static constexpr auto margin = 12.f;
+
     FakeHostApp()
     {
-        window.setTitle("Fake Plugin Host");
         embedded.setContentView(host);
+        placeSurface(initialWidth, initialHeight);
+    }
+
+    void placeSurface(int width, int height)
+    {
+        embedded.setBounds({margin,
+                            stripHeight,
+                            static_cast<float>(width) - margin * 2.f,
+                            static_cast<float>(height) - stripHeight - margin});
+    }
+
+    Graphics::WindowOptions makeOptions()
+    {
+        auto options = Graphics::WindowOptions {};
+
+        options.title = "Fake Plugin Host";
+        options.width = initialWidth;
+        options.height = initialHeight;
+
+        // The host lays the surface out again itself, because placing it once
+        // took it off the automatic sizing that would have done so.
+        options.onResize = [this](int width, int height)
+        { placeSurface(width, height); };
+
+        return options;
     }
 
     Host host;
-    eacp::Graphics::Window window;
-    eacp::Graphics::EmbeddedView embedded {window.getContentViewHandle(),
-                                           {640, 400}};
+    Graphics::Window window {makeOptions()};
+    Graphics::EmbeddedView embedded {window.getContentViewHandle(),
+                                     {initialWidth, initialHeight}};
 };
 } // namespace
 
