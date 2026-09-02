@@ -250,6 +250,14 @@ public:
 
     using SnapshotCallback =
         std::function<void(Bytes pngBytes, const std::string& error)>;
+
+    // Captures the page as PNG bytes. The callback runs exactly once, on the
+    // main thread, and is guaranteed to run: a snapshot the platform never
+    // answers — WKWebView can drop the completion handler for a hidden,
+    // throttled page — arrives after a few seconds with empty bytes and an
+    // error instead of never arriving at all. So it may fire after the page it
+    // was asked about has moved on, and a callback that captures state of its
+    // own has to stay valid for that long.
     void takeSnapshot(SnapshotCallback callback);
 
     // View snapshot hooks: the page is async-only, so renderToImageAsync folds it

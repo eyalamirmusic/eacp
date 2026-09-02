@@ -1053,7 +1053,8 @@ void WebView::takeSnapshot(SnapshotCallback callback)
     if (callback == nullptr)
         return;
 
-    detail::takeAppleSnapshot(impl->webView.get(), std::move(callback));
+    detail::takeAppleSnapshot(impl->webView.get(),
+                              detail::withSnapshotDeadline(std::move(callback)));
 }
 
 void WebView::addScriptMessageHandler(
