@@ -20,9 +20,9 @@ namespace eacp::Maths
 // neutral value, and the one a transform left unset should behave as.
 struct Mat4
 {
-    static Mat4 translation(const Vec3& offset);
-    static Mat4 scale(const Vec3& factors);
-    static Mat4 scale(float factor);
+    static constexpr Mat4 translation(const Vec3& offset);
+    static constexpr Mat4 scale(const Vec3& factors);
+    static constexpr Mat4 scale(float factor);
 
     static Mat4 rotationX(float radians);
     static Mat4 rotationY(float radians);
@@ -30,35 +30,38 @@ struct Mat4
 
     static Mat4 perspective(float aspect, float fovY, float nearZ, float farZ);
 
-    static Mat4 orthographic(
+    static constexpr Mat4 orthographic(
         float left, float right, float bottom, float top, float nearZ, float farZ);
 
     // The view matrix for a camera at eye looking at target. `up` only has to
     // point roughly upward; the part of it along the view direction is removed.
     static Mat4 lookAt(const Vec3& eye, const Vec3& target, const Vec3& up);
 
-    float& at(int column, int row) { return values[column * 4 + row]; }
+    constexpr float& at(int column, int row) { return values[column * 4 + row]; }
 
-    const float& at(int column, int row) const { return values[column * 4 + row]; }
+    constexpr const float& at(int column, int row) const
+    {
+        return values[column * 4 + row];
+    }
 
-    Vec4 column(int index) const
+    constexpr Vec4 column(int index) const
     {
         return {at(index, 0), at(index, 1), at(index, 2), at(index, 3)};
     }
 
-    void setColumn(int index, const Vec4& value)
+    constexpr void setColumn(int index, const Vec4& value)
     {
         for (auto row = 0; row < 4; ++row)
             at(index, row) = value[row];
     }
 
-    Mat4 transposed() const;
+    constexpr Mat4 transposed() const;
 
     // A singular matrix has no inverse, and the identity comes back for one, so
     // the result stays usable rather than turning into a block of NaNs.
-    Mat4 inverted() const;
+    constexpr Mat4 inverted() const;
 
-    const float* data() const { return values.data(); }
+    constexpr const float* data() const { return values.data(); }
 
     bool operator==(const Mat4&) const = default;
 
@@ -70,7 +73,7 @@ struct Mat4
     // clang-format on
 };
 
-inline Mat4 Mat4::translation(const Vec3& offset)
+constexpr Mat4 Mat4::translation(const Vec3& offset)
 {
     auto result = Mat4 {};
     result.setColumn(3, {offset.x, offset.y, offset.z, 1.f});
@@ -78,7 +81,7 @@ inline Mat4 Mat4::translation(const Vec3& offset)
     return result;
 }
 
-inline Mat4 Mat4::scale(const Vec3& factors)
+constexpr Mat4 Mat4::scale(const Vec3& factors)
 {
     auto result = Mat4 {};
 
@@ -88,7 +91,7 @@ inline Mat4 Mat4::scale(const Vec3& factors)
     return result;
 }
 
-inline Mat4 Mat4::scale(float factor)
+constexpr Mat4 Mat4::scale(float factor)
 {
     return scale(Vec3 {factor, factor, factor});
 }
@@ -142,7 +145,7 @@ inline Mat4 Mat4::perspective(float aspect, float fovY, float nearZ, float farZ)
     return result;
 }
 
-inline Mat4 Mat4::orthographic(
+constexpr Mat4 Mat4::orthographic(
     float left, float right, float bottom, float top, float nearZ, float farZ)
 {
     auto width = right - left;
@@ -176,7 +179,7 @@ inline Mat4 Mat4::lookAt(const Vec3& eye, const Vec3& target, const Vec3& up)
     return result;
 }
 
-inline Mat4 Mat4::transposed() const
+constexpr Mat4 Mat4::transposed() const
 {
     auto result = Mat4 {};
 
@@ -189,7 +192,7 @@ inline Mat4 Mat4::transposed() const
 
 namespace detail
 {
-inline void swapRows(Mat4& matrix, int a, int b)
+constexpr void swapRows(Mat4& matrix, int a, int b)
 {
     for (auto column = 0; column < 4; ++column)
         std::swap(matrix.at(column, a), matrix.at(column, b));
@@ -199,7 +202,7 @@ inline void swapRows(Mat4& matrix, int a, int b)
 // Gauss-Jordan with partial pivoting: `working` is driven to the identity and
 // the same operations, applied to a matrix that starts as the identity, leave
 // the inverse behind.
-inline Mat4 Mat4::inverted() const
+constexpr Mat4 Mat4::inverted() const
 {
     auto working = *this;
     auto result = Mat4 {};
@@ -209,10 +212,11 @@ inline Mat4 Mat4::inverted() const
         auto best = pivot;
 
         for (auto row = pivot + 1; row < 4; ++row)
-            if (std::abs(working.at(pivot, row)) > std::abs(working.at(pivot, best)))
+            if (magnitude(working.at(pivot, row))
+                > magnitude(working.at(pivot, best)))
                 best = row;
 
-        if (std::abs(working.at(pivot, best)) < epsilon)
+        if (magnitude(working.at(pivot, best)) < epsilon)
             return {};
 
         detail::swapRows(working, pivot, best);
@@ -244,7 +248,7 @@ inline Mat4 Mat4::inverted() const
     return result;
 }
 
-inline Mat4 operator*(const Mat4& a, const Mat4& b)
+constexpr Mat4 operator*(const Mat4& a, const Mat4& b)
 {
     auto result = Mat4 {};
 
@@ -262,12 +266,12 @@ inline Mat4 operator*(const Mat4& a, const Mat4& b)
     return result;
 }
 
-inline Mat4& operator*=(Mat4& a, const Mat4& b)
+constexpr Mat4& operator*=(Mat4& a, const Mat4& b)
 {
     return a = a * b;
 }
 
-inline Vec4 operator*(const Mat4& matrix, const Vec4& vector)
+constexpr Vec4 operator*(const Mat4& matrix, const Vec4& vector)
 {
     auto result = Vec4 {};
 
@@ -286,7 +290,7 @@ inline Vec4 operator*(const Mat4& matrix, const Vec4& vector)
 
 // A position: translated, and divided through by w so a projection matrix gives
 // back the point it lands on rather than a homogeneous one.
-inline Vec3 transformPoint(const Mat4& matrix, const Vec3& point)
+constexpr Vec3 transformPoint(const Mat4& matrix, const Vec3& point)
 {
     auto transformed = matrix * Vec4 {point.x, point.y, point.z, 1.f};
 
@@ -298,7 +302,7 @@ inline Vec3 transformPoint(const Mat4& matrix, const Vec3& point)
 
 // A direction: rotated and scaled, never translated. A normal wants the inverse
 // transpose instead whenever the transform scales non-uniformly.
-inline Vec3 transformDirection(const Mat4& matrix, const Vec3& direction)
+constexpr Vec3 transformDirection(const Mat4& matrix, const Vec3& direction)
 {
     auto transformed = matrix * Vec4 {direction.x, direction.y, direction.z, 0.f};
     return transformed.xyz();
@@ -307,7 +311,7 @@ inline Vec3 transformDirection(const Mat4& matrix, const Vec3& direction)
 // What to compare two matrices with: exact equality holds for one that was
 // assembled rather than computed, and stops holding the moment a product or an
 // inverse has rounded anything.
-inline bool nearlyEqual(const Mat4& a, const Mat4& b, float allowed = tolerance)
+constexpr bool nearlyEqual(const Mat4& a, const Mat4& b, float allowed = tolerance)
 {
     for (auto column = 0; column < 4; ++column)
         for (auto row = 0; row < 4; ++row)

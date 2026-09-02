@@ -125,6 +125,28 @@ auto tVectorArithmeticIsConstexpr = test("Maths/vectorArithmeticIsConstexpr") = 
     check(true);
 };
 
+// Everything but the trig-based builders is usable at compile time — the
+// storage is an EA::Array, which is constexpr throughout, so a transform folded
+// from translations, scales and products costs nothing at runtime.
+auto tMatrixIsConstexpr = test("Maths/matrixIsConstexpr") = []
+{
+    constexpr auto identity = Mat4 {};
+    static_assert(identity.at(0, 0) == 1.f && identity.at(1, 0) == 0.f);
+
+    constexpr auto transform = Mat4::translation({1.f, 2.f, 3.f}) * Mat4::scale(2.f);
+
+    static_assert(transformPoint(transform, {1.f, 1.f, 1.f})
+                  == Vec3 {3.f, 4.f, 5.f});
+    static_assert(transform.column(3) == Vec4 {1.f, 2.f, 3.f, 1.f});
+    static_assert(transform.transposed().at(0, 3) == 1.f);
+    static_assert(nearlyEqual(transform * transform.inverted(), identity));
+
+    constexpr auto projection = Mat4::orthographic(-1.f, 1.f, -1.f, 1.f, 1.f, 5.f);
+    static_assert(nearlyEqual(transformPoint(projection, {0.f, 0.f, -5.f}).z, 1.f));
+
+    check(true);
+};
+
 auto tMatrixDefaultsToIdentity = test("Maths/matrixDefaultsToIdentity") = []
 {
     auto identity = Mat4 {};
