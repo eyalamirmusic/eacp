@@ -818,8 +818,9 @@ public:
     // program can be flushed many times in a frame - which SpriteRenderer and
     // Text::GlyphRenderer both do, on every texture, sampling and scissor
     // change. That used to hold by accident, because every call allocated a
-    // fresh GPU buffer; it is now a property of StreamingBuffers, which
-    // recycles and so allocates nothing once its pools are warm.
+    // fresh GPU buffer; it is now a property of StreamingBuffers, which hands
+    // each call its own slice of one arena per frame in flight, and so
+    // allocates nothing once its pools are warm.
     template <typename I, std::size_t N>
     void setInstances(int bufferIndex, const I (&data)[N])
     {
@@ -847,7 +848,7 @@ public:
             stream.emplace(BufferUsage::Vertex);
 
         instanceBuffers[bufferIndex] =
-            &stream->write(data, sizeof(I) * (std::size_t) count);
+            stream->write(data, sizeof(I) * (std::size_t) count);
         instanceCountValue = count;
         setExternalInstanceBuffer(bufferIndex, nullptr);
     }
@@ -998,8 +999,8 @@ public:
             std::max(instanceBuffers.size(), externalInstanceBuffers.size());
 
         for (auto slot = 0; slot < slots; ++slot)
-            if (const auto* buffer = instanceBufferAt(slot))
-                pass.setVertexBuffer(*buffer, slot);
+            if (auto range = instanceBufferAt(slot); range.buffer != nullptr)
+                pass.setVertexBuffer(range, slot);
     }
 
 protected:
@@ -1261,17 +1262,20 @@ private:
     }
 
     // A slot carries either an owned upload or a borrowed buffer; the last call
-    // for that slot wins, so a program can be re-pointed between the two.
-    const Buffer* instanceBufferAt(int slot) const
+    // for that slot wins, so a program can be re-pointed between the two. A
+    // borrowed buffer is bound whole, from its start; an owned upload is the
+    // slice of the stream's arena that setInstances was given. A slot holding
+    // neither comes back with a null buffer.
+    BufferRange instanceBufferAt(int slot) const
     {
         if (slot < externalInstanceBuffers.size()
             && externalInstanceBuffers[slot] != nullptr)
-            return externalInstanceBuffers[slot];
+            return BufferRange::of(*externalInstanceBuffers[slot]);
 
-        if (slot < instanceBuffers.size() && instanceBuffers[slot] != nullptr)
+        if (slot < instanceBuffers.size())
             return instanceBuffers[slot];
 
-        return nullptr;
+        return {};
     }
 
     // A buffer per call, deliberately, and not something to "optimise" into
@@ -1314,13 +1318,13 @@ private:
     // empty (the per-vertex buffer). Populated by setInstances, bound by
     // bindInstances. usesInstancing gates the multi-slot layout in compile().
     //
-    // The stream owns a slot's storage across frames; the pointer beside it is
-    // the one buffer the last setInstances wrote, which is what a bind needs.
-    // Two of them rather than one because the stream hands out a different
-    // buffer each call, and the slot has to remember which.
+    // The stream owns a slot's storage across frames; the range beside it is
+    // the slice the last setInstances wrote, which is what a bind needs. Two
+    // of them rather than one because the stream hands out a different slice
+    // each call, and the slot has to remember which.
     bool usesInstancing = false;
     Vector<std::optional<StreamingBuffers>> instanceStreams;
-    Vector<const Buffer*> instanceBuffers;
+    Vector<BufferRange> instanceBuffers;
 
     // Slots pointed at a buffer someone else owns (setInstanceBuffer), which is
     // how a compute kernel's output is drawn. Parallel to instanceBuffers so a

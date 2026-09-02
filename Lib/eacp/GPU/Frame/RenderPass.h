@@ -137,6 +137,13 @@ public:
 
     void setVertexBuffer(const Buffer& buffer, int index = 0);
 
+    // The same, reading from range.offset bytes into its buffer rather than
+    // from the start: what a StreamingBuffers write hands back, and what lets
+    // every draw of a frame bind the one arena they were all streamed into.
+    // Vertex zero of the draw is the byte at the offset. An invalid range
+    // binds nothing.
+    void setVertexBuffer(const BufferRange& range, int index = 0);
+
     // Binds a texture to the fragment stage, sampled the way `sampling` says.
     // slot maps to Metal texture(slot) and to D3D t<slot>.
     //
@@ -252,9 +259,27 @@ public:
                      int firstIndex = 0,
                      int baseVertex = 0);
 
+    // The same over a slice of an index buffer: index zero is the one at
+    // range.offset, and firstIndex counts on from there. The indexed sibling
+    // of the setVertexBuffer overload, for indices streamed into an arena
+    // beside the vertices.
+    void drawIndexed(const BufferRange& indices,
+                     int indexCount,
+                     IndexFormat format = IndexFormat::UInt32,
+                     int firstIndex = 0,
+                     int baseVertex = 0);
+
     // Instanced sibling of drawIndexed: reuses the index buffer per instance.
     // Same step-rate semantics as drawInstanced, and the same baseVertex.
     void drawIndexedInstanced(const Buffer& indices,
+                              int indexCount,
+                              int instanceCount,
+                              IndexFormat format = IndexFormat::UInt32,
+                              int firstIndex = 0,
+                              int firstInstance = 0,
+                              int baseVertex = 0);
+
+    void drawIndexedInstanced(const BufferRange& indices,
                               int indexCount,
                               int instanceCount,
                               IndexFormat format = IndexFormat::UInt32,
@@ -302,6 +327,19 @@ public:
     // used. Nothing here asks it for one.
     template <typename Program>
     void bind(Program& program, const Buffer& vertices)
+    {
+        setPipeline(program.pipeline());
+        setVertexBuffer(vertices);
+        setUniforms(program);
+
+        program.bindTextures(*this);
+        program.bindBuffers(*this);
+    }
+
+    // The same over a slice of a buffer - geometry the app streamed rather than
+    // geometry it keeps.
+    template <typename Program>
+    void bind(Program& program, const BufferRange& vertices)
     {
         setPipeline(program.pipeline());
         setVertexBuffer(vertices);

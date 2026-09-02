@@ -226,12 +226,21 @@ void RenderPass::setStencilReference(unsigned int value)
 
 void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
 {
-    auto activeEncoder = impl->encoder.get();
-    auto metalBuffer = (__bridge id<MTLBuffer>) buffer.nativeBuffer();
+    setVertexBuffer(BufferRange::of(buffer), index);
+}
 
+void RenderPass::setVertexBuffer(const BufferRange& range, int index)
+{
+    auto activeEncoder = impl->encoder.get();
+    auto metalBuffer = range.buffer != nullptr
+                           ? (__bridge id<MTLBuffer>) range.buffer->nativeBuffer()
+                           : nil;
+
+    // The offset is the range's whole contribution: Metal reads vertex zero
+    // at buffer + offset, which is exactly what a slice of an arena is.
     if (activeEncoder != nil && metalBuffer != nil)
         [activeEncoder setVertexBuffer:metalBuffer
-                                offset:0
+                                offset:(NSUInteger) range.offset
                                atIndex:(NSUInteger) index];
 }
 
@@ -356,8 +365,19 @@ void RenderPass::drawIndexed(const Buffer& indices,
                              int firstIndex,
                              int baseVertex)
 {
+    drawIndexed(BufferRange::of(indices), indexCount, format, firstIndex, baseVertex);
+}
+
+void RenderPass::drawIndexed(const BufferRange& indices,
+                             int indexCount,
+                             IndexFormat format,
+                             int firstIndex,
+                             int baseVertex)
+{
     auto activeEncoder = impl->encoder.get();
-    auto metalBuffer = (__bridge id<MTLBuffer>) indices.nativeBuffer();
+    auto metalBuffer = indices.buffer != nullptr
+                           ? (__bridge id<MTLBuffer>) indices.buffer->nativeBuffer()
+                           : nil;
 
     if (! impl->pipelineBound || activeEncoder == nil || metalBuffer == nil)
         return;
@@ -369,12 +389,15 @@ void RenderPass::drawIndexed(const Buffer& indices,
 
     // The eight-argument selector rather than the five-argument one because
     // only this form carries a base vertex; instanceCount:1 makes it the same
-    // draw the short form issues.
+    // draw the short form issues. The range's offset and firstIndex are the
+    // same thing to Metal - a byte offset into the buffer - so they add.
     [activeEncoder drawIndexedPrimitives:impl->primitiveType
                               indexCount:(NSUInteger) indexCount
                                indexType:indexType
                              indexBuffer:metalBuffer
-                       indexBufferOffset:(NSUInteger) firstIndex * indexSize
+                       indexBufferOffset:(NSUInteger) (indices.offset
+                                                       + (std::size_t) firstIndex
+                                                             * indexSize)
                            instanceCount:1
                               baseVertex:(NSInteger) baseVertex
                             baseInstance:0];
@@ -388,8 +411,27 @@ void RenderPass::drawIndexedInstanced(const Buffer& indices,
                                       int firstInstance,
                                       int baseVertex)
 {
+    drawIndexedInstanced(BufferRange::of(indices),
+                         indexCount,
+                         instanceCount,
+                         format,
+                         firstIndex,
+                         firstInstance,
+                         baseVertex);
+}
+
+void RenderPass::drawIndexedInstanced(const BufferRange& indices,
+                                      int indexCount,
+                                      int instanceCount,
+                                      IndexFormat format,
+                                      int firstIndex,
+                                      int firstInstance,
+                                      int baseVertex)
+{
     auto activeEncoder = impl->encoder.get();
-    auto metalBuffer = (__bridge id<MTLBuffer>) indices.nativeBuffer();
+    auto metalBuffer = indices.buffer != nullptr
+                           ? (__bridge id<MTLBuffer>) indices.buffer->nativeBuffer()
+                           : nil;
 
     if (! impl->pipelineBound || activeEncoder == nil || metalBuffer == nil)
         return;
@@ -403,7 +445,9 @@ void RenderPass::drawIndexedInstanced(const Buffer& indices,
                               indexCount:(NSUInteger) indexCount
                                indexType:indexType
                              indexBuffer:metalBuffer
-                       indexBufferOffset:(NSUInteger) firstIndex * indexSize
+                       indexBufferOffset:(NSUInteger) (indices.offset
+                                                       + (std::size_t) firstIndex
+                                                             * indexSize)
                            instanceCount:(NSUInteger) instanceCount
                               baseVertex:(NSInteger) baseVertex
                             baseInstance:(NSUInteger) firstInstance];
