@@ -34,6 +34,17 @@ constexpr const char* ligatingFamily()
         return "Helvetica";
 }
 
+// A family whose design changes with the size it is set at: a variable face
+// with an optical-size axis, which the platform reads off the font's own
+// size. Apple's system UI face has one; so does Segoe UI Variable.
+constexpr const char* opticallySizedFamily()
+{
+    if constexpr (Platform::isWindows())
+        return "Segoe UI Variable";
+    else
+        return ".AppleSystemUIFont";
+}
+
 // A family with a light face as well as a bold one.
 constexpr const char* weightedFamily()
 {
@@ -245,4 +256,36 @@ auto tWidthBeforeWeight =
 
     check(bold.glyphs.size() == 1 && black.glyphs.size() == 1);
     check(black.advance >= bold.advance - 0.01f);
+};
+
+// The scale is how finely a glyph is rasterized and nothing else: the same
+// string at the same point size measures the same on a Retina panel and off
+// one. An optically sized face is where that used to go wrong -- the platform
+// picks the axis off the font's own size, which is the point size times the
+// scale, so the face was shaped in its display design at 2x and its text
+// design at 1x, and a document measured at one scale and drawn at the other
+// was a tenth too wide.
+auto tOpticalSizeFollowsThePointSize =
+    test("Shaping/anOpticallySizedFaceMeasuresTheSameAtEveryScale") = []
+{
+    const auto* family = opticallySizedFamily();
+
+    if (!has(GlyphRasterizer {requestFor(family, 16.f)}, family))
+        return;
+
+    const auto measured = [family](float scale)
+    {
+        auto request = requestFor(family, 16.f);
+        request.scale = scale;
+
+        const auto rasterizer = GlyphRasterizer {request};
+
+        return rasterizer.shape("block or inline", {}).advance / scale;
+    };
+
+    const auto atOne = measured(1.f);
+    const auto atTwo = measured(2.f);
+
+    check(atOne > 0.f);
+    check(atTwo > atOne - 0.01f && atTwo < atOne + 0.01f);
 };

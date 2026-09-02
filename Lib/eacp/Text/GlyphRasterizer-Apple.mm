@@ -24,6 +24,45 @@ namespace eacp::Text
 {
 namespace
 {
+// The same font with its optical-size axis pinned to the size the caller
+// asked for. Returns a +1 retained font; callers adopt it into a CFRef.
+//
+// CoreText reads that axis off the font's own size, which here is the size
+// times the device scale -- so a face that varies by optical size (a variable
+// font's opsz axis; Inter's runs 14 to 32, and so does the system UI face)
+// would be shaped in its display design on a Retina panel and in its text
+// design off one, and the same string would measure two widths. The scale is
+// how finely a glyph is rasterized and nothing else: a caller asks for 16
+// points and gets the design a browser would set 16px in, on any display.
+CTFontRef withOpticalSize(CTFontRef font, float pointSize)
+{
+    if (font == nullptr)
+        return nullptr;
+
+    CFRef<CFNumberRef> size(
+        CFNumberCreate(nullptr, kCFNumberFloatType, &pointSize));
+
+    const void* keys[] = {(const void*) kCTFontOpticalSizeAttribute};
+    const void* values[] = {size.get()};
+
+    CFRef<CFDictionaryRef> attributes(CFDictionaryCreate(nullptr,
+                                                         keys,
+                                                         values,
+                                                         1,
+                                                         &kCFTypeDictionaryKeyCallBacks,
+                                                         &kCFTypeDictionaryValueCallBacks));
+    CFRef<CTFontDescriptorRef> descriptor(
+        CTFontDescriptorCreateWithAttributes(attributes.get()));
+
+    if (auto* pinned = CTFontCreateCopyWithAttributes(font,
+                                                      CTFontGetSize(font),
+                                                      nullptr,
+                                                      descriptor.get()))
+        return pinned;
+
+    return (CTFontRef) CFRetain(font);
+}
+
 // Returns a +1 retained font; callers adopt it into a CFRef.
 CTFontRef makeVariant(CTFontRef base, FontStyle style)
 {
@@ -156,7 +195,10 @@ struct GlyphRasterizer::Native
         CFRef<CFStringRef> name(CFStringCreateWithCString(
             nullptr, request.family.c_str(), kCFStringEncodingUTF8));
 
-        base.reset(CTFontCreateWithName(name, request.pixelSize(), nullptr));
+        CFRef<CTFontRef> named(
+            CTFontCreateWithName(name, request.pixelSize(), nullptr));
+
+        base.reset(withOpticalSize(named.get(), request.pointSize));
 
         if (!base)
             return;
@@ -300,8 +342,10 @@ struct GlyphRasterizer::Native
         if (face == nullptr)
             return makeVariant(base.get(), styleOf(variant));
 
-        auto font = CFRef<CTFontRef> {CTFontCreateWithFontDescriptor(
+        auto matched = CFRef<CTFontRef> {CTFontCreateWithFontDescriptor(
             face->descriptor.get(), request.pixelSize(), nullptr)};
+        auto font =
+            CFRef<CTFontRef> {withOpticalSize(matched.get(), request.pointSize)};
 
         if (!font)
             return makeVariant(base.get(), styleOf(variant));
