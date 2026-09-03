@@ -134,6 +134,26 @@ bool Device::supportsSampleCount(int count) const
     return [impl->device.get() supportsTextureSampleCount:(NSUInteger) count] == YES;
 }
 
+// One property, and the guard around it is the whole of the platform story: the
+// query is macOS 11 and iOS 16.4, and eacp's deployment targets are 11.0 and
+// 14.0 - so the guard is inert on macOS as configured and real on iOS.
+//
+// The false below is not a claim about the hardware. On iOS it is very nearly
+// one, BC having reached the platform in the same release the query did; on a
+// macOS older than 11 the formats are there (Metal has had them since 10.11)
+// and there is simply no way to ask, so eacp declines rather than guesses. See
+// Device::supportsBlockCompression.
+bool Device::supportsBlockCompression() const
+{
+    if (!isValid())
+        return false;
+
+    if (@available(macOS 11.0, iOS 16.4, *))
+        return [impl->device.get() supportsBCTextureCompression] == YES;
+
+    return false;
+}
+
 void* Device::nativeContext() const
 {
     // Nothing to hand out: the queue, the texture cache and the samplers are

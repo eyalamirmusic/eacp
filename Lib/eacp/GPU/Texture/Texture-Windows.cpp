@@ -18,10 +18,16 @@ namespace eacp::GPU
 {
 namespace
 {
+// Exhaustive, in the same words the Metal backend uses: a format added without
+// a DXGI counterpart is a -Wswitch warning rather than a resource quietly
+// created as RGBA8, which is what the default this replaced would have made of
+// every one of the block formats.
 DXGI_FORMAT toDXGIFormat(TextureFormat format)
 {
     switch (format)
     {
+        case TextureFormat::RGBA8Unorm:
+            return DXGI_FORMAT_R8G8B8A8_UNORM;
         case TextureFormat::BGRA8Unorm:
             return DXGI_FORMAT_B8G8R8A8_UNORM;
         case TextureFormat::R8Unorm:
@@ -34,9 +40,21 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
             return DXGI_FORMAT_R32G32B32A32_FLOAT;
         case TextureFormat::R32Float:
             return DXGI_FORMAT_R32_FLOAT;
-        default:
-            return DXGI_FORMAT_R8G8B8A8_UNORM;
+
+        // No sRGB variants here for the reason Texture.h gives: eacp has no
+        // sRGB formats at all, so DXT1 with or without punch-through alpha is
+        // this one BC1_UNORM either way.
+        case TextureFormat::BC1RGBA:
+            return DXGI_FORMAT_BC1_UNORM;
+        case TextureFormat::BC2RGBA:
+            return DXGI_FORMAT_BC2_UNORM;
+        case TextureFormat::BC3RGBA:
+            return DXGI_FORMAT_BC3_UNORM;
+        case TextureFormat::BC7RGBA:
+            return DXGI_FORMAT_BC7_UNORM;
     }
+
+    return DXGI_FORMAT_UNKNOWN;
 }
 
 // The filter/address translations that used to live here are gone with the
@@ -67,7 +85,6 @@ struct Texture::Native
         : context(getD3D12Context(device))
         , width(descriptor.width)
         , height(descriptor.height)
-        , pixelStride(bytesPerPixel(descriptor.format))
         , format(descriptor.format)
         , cube(descriptor.cube)
     {
@@ -95,11 +112,56 @@ struct Texture::Native
             data.sampleCount = descriptor.sampleCount;
         }
 
-        // Only with pixels to build one from: a render target or a kernel output
-        // has none at creation, so it would get levels nothing ever writes and
-        // the sampler would read them.
-        if (descriptor.mipmapped && pixels != nullptr)
+        // A compressed texture is a block of bytes the sampler decodes and
+        // nothing else, so there is no per-texel address for a pass or a kernel
+        // to write to. Refused in the same words the Metal backend uses, and the
+        // device is asked for the format because a caller has a choice to make
+        // when the answer is no - Device::supportsBlockCompression says yes on
+        // every Direct3D device, and that is a fact about D3D rather than about
+        // this call. See the block formats in Texture.h.
+        if (isCompressedFormat(format))
+        {
+            if (descriptor.renderTarget || descriptor.computeWrite)
+                return;
+
+            if (!device.supportsBlockCompression())
+                return;
+        }
+
+        if (descriptor.mipLevels < 0)
+            return;
+
+        // A caller-supplied chain is taken as it is, and everything that would
+        // make it a chain nobody could have supplied is refused rather than
+        // reconciled - see TextureDescriptor::mipLevels, and the Metal backend,
+        // which refuses the same six things.
+        if (descriptor.mipLevels > 0)
+        {
+            if (descriptor.mipmapped || descriptor.renderTarget
+                || descriptor.computeWrite || cube)
+                return;
+
+            // Nothing was handed over, so there is no chain to take - refused
+            // rather than created empty, in the same words the Metal backend
+            // uses.
+            if (pixels == nullptr)
+                return;
+
+            if (descriptor.mipLevels > mipLevelCount(width, height))
+                return;
+
+            levels = descriptor.mipLevels;
+            suppliedChain = true;
+        }
+        // A chain eacp builds needs pixels to build it from and a format it can
+        // average: a render target or a kernel output has none at creation, and
+        // a compressed one has no average, so either would get levels nothing
+        // ever writes and the sampler would read them.
+        else if (descriptor.mipmapped && pixels != nullptr
+                 && canBuildMipChain(format))
+        {
             levels = mipLevelCount(width, height);
+        }
 
         D3D12_HEAP_PROPERTIES heap = {};
         heap.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -186,6 +248,15 @@ struct Texture::Native
     // the copy and the transition back to PIXEL_SHADER_RESOURCE. The resource
     // must already be in COPY_DEST. Returns false on a staging failure, having
     // recorded nothing.
+    //
+    // **Rows here are whatever GetCopyableFootprints says a row is**, which for
+    // a block-compressed format is a row of 4x4 blocks: NumRows comes back as
+    // the level's height in blocks and RowSizeInBytes as its width in blocks
+    // times the block's size. So this loop needs no block arithmetic of its own -
+    // only a sourcePitch measured the same way, which is what levelBytesPerRow
+    // gives its callers. Every compressed copy covers a whole subresource at
+    // (0, 0), which is what keeps it inside D3D12's rule that a BC copy be
+    // block-aligned or cover the level.
     bool copyPixels(D3D12Context& context,
                     CommandContext* commands,
                     const void* pixels,
@@ -291,10 +362,8 @@ struct Texture::Native
 
         // The resource was created in COPY_DEST, so the copies record with no
         // leading barrier.
-        if (!recordLevels(context,
-                          commands,
-                          pixels,
-                          static_cast<std::size_t>(width * pixelStride)))
+        if (!recordLevels(
+                context, commands, pixels, levelBytesPerRow(format, width)))
         {
             context.discard(commands);
             data.resource = nullptr;
@@ -319,7 +388,8 @@ struct Texture::Native
                       std::size_t sourcePitch)
     {
         const auto faces = cube ? 6 : 1;
-        const auto faceBytes = sourcePitch * static_cast<std::size_t>(height);
+        const auto faceBytes =
+            sourcePitch * static_cast<std::size_t>(levelRows(format, height));
 
         for (auto face = 0; face < faces; ++face)
         {
@@ -338,8 +408,9 @@ struct Texture::Native
         return true;
     }
 
-    // One face - which on a 2D texture is the whole texture - as one level or as
-    // a chain built from that face's own pixels.
+    // One face - which on a 2D texture is the whole texture - as one level, as a
+    // chain built from that face's own pixels, or as the chain the caller
+    // supplied. The three differ only in where each level's bytes come from.
     bool recordFace(D3D12Context& context,
                     CommandContext* commands,
                     const void* pixels,
@@ -360,6 +431,10 @@ struct Texture::Native
                               transitionAfterwards,
                               face);
 
+        if (suppliedChain)
+            return recordSuppliedChain(
+                context, commands, pixels, face, transitionAfterwards);
+
         const auto chain = buildMipChain(pixels, width, height, format, sourcePitch);
 
         if (!chain.isValid())
@@ -373,7 +448,7 @@ struct Texture::Native
             if (!copyPixels(context,
                             commands,
                             chain.level(level),
-                            static_cast<std::size_t>(levelWidth * pixelStride),
+                            levelBytesPerRow(format, levelWidth),
                             0,
                             0,
                             levelWidth,
@@ -387,24 +462,80 @@ struct Texture::Native
         return true;
     }
 
+    // The same loop with the source walked rather than produced: the levels are
+    // already in the block MipChain packs, so each one starts levelBytes past
+    // the last. No filter runs anywhere here, which is the whole of what
+    // TextureDescriptor::mipLevels is for.
+    bool recordSuppliedChain(D3D12Context& context,
+                             CommandContext* commands,
+                             const void* pixels,
+                             int face,
+                             bool transitionAfterwards)
+    {
+        const auto* bytes = static_cast<const unsigned char*>(pixels);
+
+        for (auto level = 0; level < levels; ++level)
+        {
+            const auto levelWidth = mipExtent(width, level);
+            const auto levelHeight = mipExtent(height, level);
+
+            if (!copyPixels(context,
+                            commands,
+                            bytes,
+                            levelBytesPerRow(format, levelWidth),
+                            0,
+                            0,
+                            levelWidth,
+                            levelHeight,
+                            level,
+                            transitionAfterwards && level == levels - 1,
+                            face))
+                return false;
+
+            bytes += levelBytes(format, levelWidth, levelHeight);
+        }
+
+        return true;
+    }
+
     void update(const void* pixels, std::size_t bytesPerRow)
     {
+        // Tightly packed by definition, so a stride is a number that can only be
+        // wrong - dropped rather than used as a pitch it cannot be, in the same
+        // words the Metal backend uses. See Texture::update.
+        if (bytesPerRow != 0 && (suppliedChain || isCompressedFormat(format)))
+            return;
+
         // A cube goes the same way a mipmapped texture does, and for the same
         // reason: more than one subresource to fill, so the resource has to be
         // moved back to COPY_DEST once and every face written before it returns.
-        if (levels > 1 || cube)
+        // A compressed texture joins them whatever its level count, because the
+        // other path is the region one and a region of blocks is refused there.
+        if (levels > 1 || cube || isCompressedFormat(format))
         {
-            updateChain(pixels, bytesPerRow);
+            updateWholeTexture(pixels, bytesPerRow);
             return;
         }
 
         updateRegion(0, 0, width, height, pixels, bytesPerRow);
     }
 
-    // The re-upload path for a texture with more than one subresource - a mip
-    // chain, six cube faces, or both. Unlike updateRegion it has to move the
-    // resource back to COPY_DEST first, since by now it is being sampled.
-    void updateChain(const void* pixels, std::size_t bytesPerRow)
+    // The re-upload path for everything the region one cannot take - a mip
+    // chain, six cube faces, blocks, or any combination. Unlike updateRegion it
+    // has to move the resource back to COPY_DEST first, since by now it is being
+    // sampled.
+    //
+    // **The tracked state goes back where it was if nothing is submitted.**
+    // transitionTextureForUse records a barrier *and* advances data.state, but a
+    // discarded list is closed without ever executing - so the resource is still
+    // resting where it was while the tracking says COPY_DEST, and the next
+    // transition would name a StateBefore the resource is not in: a debug-layer
+    // error, and undefined behaviour without one. The shape predates this change
+    // - updateRegion below avoids it by submitting either way - but every
+    // compressed and every supplied-chain update now comes through here, so it
+    // is worth closing rather than leaving on a path only staging failure
+    // reaches.
+    void updateWholeTexture(const void* pixels, std::size_t bytesPerRow)
     {
         if (data.resource == nullptr || pixels == nullptr)
             return;
@@ -414,15 +545,17 @@ struct Texture::Native
         if (commands == nullptr)
             return;
 
+        const auto stateBefore = data.state;
+
         transitionTextureForUse(
             commands->list.get(), data, D3D12_RESOURCE_STATE_COPY_DEST);
 
-        const auto pitch = bytesPerRow > 0
-                               ? bytesPerRow
-                               : static_cast<std::size_t>(width * pixelStride);
+        const auto pitch =
+            bytesPerRow > 0 ? bytesPerRow : levelBytesPerRow(format, width);
 
         if (!recordLevels(context, commands, pixels, pitch))
         {
+            data.state = stateBefore;
             context.discard(commands);
             return;
         }
@@ -451,6 +584,13 @@ struct Texture::Native
         if (cube)
             return;
 
+        // A compressed rectangle would have to land on the 4x4 block grid, so
+        // the rect asked for and the rect written would differ by up to three
+        // texels a side. Dropped rather than rounded, in the same words the
+        // Metal backend uses.
+        if (isCompressedFormat(format))
+            return;
+
         // Out-of-bounds is dropped rather than clamped — see the header for why
         // clamping would silently upload skewed pixels.
         if (x < 0 || y < 0 || x + regionWidth > width || y + regionHeight > height)
@@ -464,9 +604,8 @@ struct Texture::Native
         if (commands == nullptr)
             return;
 
-        auto sourcePitch = bytesPerRow != 0
-                               ? bytesPerRow
-                               : static_cast<std::size_t>(regionWidth * pixelStride);
+        auto sourcePitch =
+            bytesPerRow != 0 ? bytesPerRow : levelBytesPerRow(format, regionWidth);
 
         // The resource rests in PIXEL_SHADER_RESOURCE between frames - or in
         // RENDER_TARGET, if it is one a pass last drew into - so the move to
@@ -516,6 +655,11 @@ struct Texture::Native
         // Six faces and no argument to name one, exactly as the region upload
         // has none - see the header.
         if (cube)
+            return;
+
+        // Blocks rather than pixels, and no decoder at either end - see the
+        // header for why a compressed read-back has nothing to hand back.
+        if (isCompressedFormat(format))
             return;
 
         // Dropped rather than clamped, exactly as the upload side drops it.
@@ -953,15 +1097,25 @@ struct Texture::Native
     int width = 0;
     int height = 0;
 
-    // Bytes per pixel of the texture's format; the (stubbed) zero-copy wrap
-    // path stays at 4 because those buffers are always 32-bit BGRA/RGBA.
-    int pixelStride = 4;
+    // Every size in this file comes out of the format through levelBytesPerRow
+    // and levelBytes rather than out of a stored stride, because a compressed
+    // format has no per-texel size to store. The (stubbed) zero-copy wrap path
+    // leaves this at RGBA8Unorm, which is the four bytes those buffers always
+    // carry.
     TextureFormat format = TextureFormat::RGBA8Unorm;
 
-    // 1 unless a chain was asked for and there were pixels to build one from.
-    // The SRV is created from a null description, which covers every level the
-    // resource has, so nothing else here needs to know the count.
+    // 1 unless a chain was asked for and there were pixels to build one from, or
+    // the caller supplied one of its own. It is the resource's MipLevels, the
+    // stride between one face's subresources and the next in copyPixels, and the
+    // bound of every upload loop; the SRV alone does not need it, being built
+    // from a null description that covers whatever levels the resource has -
+    // except on a cube, where createDescriptors spells the TEXTURECUBE view out.
     int levels = 1;
+
+    // Whether those levels arrived with the pixels rather than being built from
+    // level 0, which changes where each level's bytes come from and nothing
+    // else. See TextureDescriptor::mipLevels.
+    bool suppliedChain = false;
 
     bool computeWrite = false;
 

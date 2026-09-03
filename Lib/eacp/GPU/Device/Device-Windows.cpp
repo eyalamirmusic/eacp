@@ -99,6 +99,17 @@ bool Device::supportsSampleCount(int count) const
     return true;
 }
 
+// Nothing to ask the device. BC1 through BC5 have been required of every
+// feature-level-11 device and BC6H/BC7 of every feature-level-11_0 one, and
+// D3D12 has no feature level below 11 at all - so the four formats eacp names
+// are there on anything that produced a device in the first place. Metal is
+// where this question has an answer that varies, which is why it is a Device
+// call rather than a constant.
+bool Device::supportsBlockCompression() const
+{
+    return isValid();
+}
+
 void* Device::nativeContext() const
 {
     return &impl->context;
