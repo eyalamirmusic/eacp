@@ -272,7 +272,18 @@ void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
         return;
 
     auto activeEncoder = impl->encoder.get();
-    auto metalTexture = (__bridge id<MTLTexture>) renderTarget.nativeDepthTexture();
+
+    // The resolve on a multisampled target and the attachment itself on a
+    // single-sampled one. A depth2d_ms is not what the shader declared and Metal
+    // will not bind one to a depth2d, which is why a multisampled target carries
+    // a single-sampled twin at all - see TextureDescriptor::sampleCount.
+    auto resolved =
+        (__bridge id<MTLTexture>) renderTarget.nativeResolvedDepthTexture();
+
+    auto metalTexture =
+        resolved != nil
+            ? resolved
+            : (__bridge id<MTLTexture>) renderTarget.nativeDepthTexture();
 
     auto metalSampler =
         (__bridge id<MTLSamplerState>) Device::shared().nativeSampler(sampling);

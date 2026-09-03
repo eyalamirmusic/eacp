@@ -31,8 +31,16 @@ bool hasStencilPlane(MTLPixelFormat format)
 //
 // Shared by the drawable pass and the texture-target pass so the two cannot
 // drift on which planes a pass gets or what they start from.
+//
+// `resolved` is the single-sampled buffer a multisampled target's sampleable
+// depth lives in, and is null everywhere else. Where there is one, the depth
+// plane resolves into it at the end of every pass as well as being kept, for
+// exactly the reason the colour does: a pass cannot know whether what follows it
+// is another pass or a read of what it drew. The stencil plane is not resolved -
+// nothing samples it, and no filter over a count would mean anything.
 void attachDepthStencil(MTLRenderPassDescriptor* passDescriptor,
                         id<MTLTexture> depth,
+                        id<MTLTexture> resolved,
                         unsigned char clearStencil,
                         DepthAction action)
 {
@@ -50,6 +58,22 @@ void attachDepthStencil(MTLRenderPassDescriptor* passDescriptor,
     depthAttachment.loadAction = load;
     depthAttachment.storeAction = store;
     depthAttachment.clearDepth = 1.0;
+
+    if (resolved != nil)
+    {
+        depthAttachment.resolveTexture = resolved;
+
+        // Sample 0 rather than Min or Max. What reads this wants the depth of
+        // the surface at the pixel, which is what a single-sampled render would
+        // have put there; the nearest or the furthest of the samples at a
+        // silhouette is neither of the two surfaces meeting in it.
+        depthAttachment.depthResolveFilter =
+            MTLMultisampleDepthResolveFilterSample0;
+
+        depthAttachment.storeAction =
+            store == MTLStoreActionStore ? MTLStoreActionStoreAndMultisampleResolve
+                                         : MTLStoreActionMultisampleResolve;
+    }
 
     if (! hasStencilPlane(depth.pixelFormat))
         return;
@@ -265,6 +289,7 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     if (auto depth = impl->depthTexture.get())
         attachDepthStencil(passDescriptor,
                            (id<MTLTexture>) depth,
+                           nil,
                            descriptor.clearStencil,
                            descriptor.depthAction);
 
@@ -279,11 +304,20 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
                       (int) target.height);
 }
 
-// Rendering into an app-owned texture: one attachment, stored, and no resolve.
-// Depth comes from the target when it was created with one, loaded and stored
-// exactly as the drawable pass does it. Passes on one command buffer
-// are ordered by the queue, so nothing here has to say that a later pass may
-// sample what this one wrote.
+// Rendering into an app-owned texture. Depth comes from the target when it was
+// created with one, loaded and stored exactly as the drawable pass does it.
+// Passes on one command buffer are ordered by the queue, so nothing here has to
+// say that a later pass may sample what this one wrote.
+//
+// **A multisampled target renders into its multisample texture and resolves into
+// itself**, which is the drawable path's shape with the resolve landing in an
+// app-owned texture rather than in a drawable. Two things differ from the
+// drawable's, and both follow from the target being readable between passes:
+// the store is StoreAndMultisampleResolve rather than MultisampleResolve, so the
+// samples survive for the next pass to load; and a pass that does not clear
+// loads the *multisample* texture, which is the attachment, rather than the
+// flattened picture it has been resolving into. See
+// TextureDescriptor::sampleCount.
 RenderPass Frame::beginPass(const Texture& target,
                             const RenderPassDescriptor& descriptor)
 {
@@ -296,8 +330,19 @@ RenderPass Frame::beginPass(const Texture& target,
     auto passDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
     auto colorAttachment = passDescriptor.colorAttachments[0];
 
-    colorAttachment.texture = texture;
-    colorAttachment.storeAction = MTLStoreActionStore;
+    if (auto multisample =
+            (__bridge id<MTLTexture>) target.nativeMultisampleTexture())
+    {
+        colorAttachment.texture = multisample;
+        colorAttachment.resolveTexture = texture;
+        colorAttachment.storeAction = MTLStoreActionStoreAndMultisampleResolve;
+    }
+    else
+    {
+        colorAttachment.texture = texture;
+        colorAttachment.storeAction = MTLStoreActionStore;
+    }
+
     colorAttachment.loadAction =
         descriptor.clear ? MTLLoadActionClear : MTLLoadActionLoad;
 
@@ -307,7 +352,11 @@ RenderPass Frame::beginPass(const Texture& target,
 
     if (auto depth = (__bridge id<MTLTexture>) target.nativeDepthTexture())
         attachDepthStencil(
-            passDescriptor, depth, descriptor.clearStencil, descriptor.depthAction);
+            passDescriptor,
+            depth,
+            (__bridge id<MTLTexture>) target.nativeResolvedDepthTexture(),
+            descriptor.clearStencil,
+            descriptor.depthAction);
 
     impl->timeRenderPass(passDescriptor, descriptor.label);
 

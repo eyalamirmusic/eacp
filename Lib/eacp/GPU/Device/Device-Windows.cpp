@@ -60,6 +60,45 @@ std::string Device::name() const
     return getD3D12Shared().getAdapterName();
 }
 
+// D3D12 answers per format rather than per device, so this asks about the two
+// formats a multisampled attachment is ever created in here: the colour targets
+// eacp makes (BGRA8, the drawable's own) and the combined depth-stencil the
+// depth buffer takes. A count both take is a count a pass can be built at.
+//
+// NumQualityLevels of 0 is the "no" - the call itself succeeds for a count the
+// adapter does not offer and reports nothing behind it.
+bool Device::supportsSampleCount(int count) const
+{
+    if (count <= 1)
+        return true;
+
+    if (!isValid())
+        return false;
+
+    auto* device = getD3D12Shared().getDevice();
+
+    if (device == nullptr)
+        return false;
+
+    const DXGI_FORMAT formats[] = {DXGI_FORMAT_B8G8R8A8_UNORM,
+                                   DXGI_FORMAT_R8G8B8A8_UNORM,
+                                   DXGI_FORMAT_D32_FLOAT_S8X24_UINT};
+
+    for (auto format: formats)
+    {
+        D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS levels = {};
+        levels.Format = format;
+        levels.SampleCount = static_cast<UINT>(count);
+
+        if (FAILED(device->CheckFeatureSupport(
+                D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &levels, sizeof(levels)))
+            || levels.NumQualityLevels == 0)
+            return false;
+    }
+
+    return true;
+}
+
 void* Device::nativeContext() const
 {
     return &impl->context;

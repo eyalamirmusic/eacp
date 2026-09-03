@@ -120,6 +120,20 @@ std::string Device::name() const
     return [[impl->device.get() name] UTF8String];
 }
 
+// Metal answers this directly, and answers it for the *texture*: a count it
+// takes here is one a render attachment can be created at, which is the whole of
+// what a caller wants to know.
+bool Device::supportsSampleCount(int count) const
+{
+    if (count <= 1)
+        return true;
+
+    if (!isValid())
+        return false;
+
+    return [impl->device.get() supportsTextureSampleCount:(NSUInteger) count] == YES;
+}
+
 void* Device::nativeContext() const
 {
     // Nothing to hand out: the queue, the texture cache and the samplers are

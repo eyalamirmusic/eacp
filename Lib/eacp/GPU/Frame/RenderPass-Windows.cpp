@@ -378,7 +378,8 @@ void RenderPass::drawIndexed(const Buffer& indices,
                              int firstIndex,
                              int baseVertex)
 {
-    drawIndexed(BufferRange::of(indices), indexCount, format, firstIndex, baseVertex);
+    drawIndexed(
+        BufferRange::of(indices), indexCount, format, firstIndex, baseVertex);
 }
 
 void RenderPass::drawIndexed(const BufferRange& indices,
@@ -452,6 +453,15 @@ void RenderPass::end()
     // rather than after it.
     if (impl->encoder)
         endTimedPass(*impl->encoder);
+
+    // And after the timestamp, so the resolve is not counted as the pass's own
+    // work: it belongs to the target rather than to what was drawn. Metal spells
+    // this as a store action on the attachment and records nothing at all here -
+    // see resolveMultisampledTarget for why it happens per pass on both.
+    if (impl->encoder && impl->encoder->resolveTarget != nullptr
+        && impl->encoder->commands != nullptr)
+        resolveMultisampledTarget(impl->encoder->commands->list.get(),
+                                  *impl->encoder->resolveTarget);
 
     // Commands are recorded onto the frame's list, which submits when the
     // frame is destroyed; releasing the encoder marks the pass finished.

@@ -83,6 +83,18 @@ struct Texture::Native
                 || descriptor.computeWrite))
             return;
 
+        // Refused before anything is created, in the same words the Metal
+        // backend uses: a target the device cannot multisample is an invalid
+        // texture rather than one drawing at a count the pipelines compiled for
+        // it do not carry. See TextureDescriptor::sampleCount.
+        if (descriptor.renderTarget && descriptor.sampleCount > 1)
+        {
+            if (cube || !device.supportsSampleCount(descriptor.sampleCount))
+                return;
+
+            data.sampleCount = descriptor.sampleCount;
+        }
+
         // Only with pixels to build one from: a render target or a kernel output
         // has none at creation, so it would get levels nothing ever writes and
         // the sampler would read them.
@@ -160,8 +172,11 @@ struct Texture::Native
         context.freeTextureDescriptor(data.srv);
         context.freeTextureDescriptor(data.uav);
         context.deferRelease(std::move(data.rtvHeap));
+        context.deferRelease(std::move(data.msaaRtvHeap));
         context.deferRelease(std::move(data.dsvHeap));
         context.deferRelease(std::move(data.depthResource));
+        context.deferRelease(std::move(data.resolvedDepthResource));
+        context.deferRelease(std::move(data.msaaResource));
         context.deferRelease(std::move(data.resource));
     }
 
@@ -611,6 +626,71 @@ struct Texture::Native
             data.resource.get(), &viewDesc, handle);
 
         data.rtv = handle;
+        data.colorFormat = viewDesc.Format;
+    }
+
+    // The multisample resource a pass into this target actually renders into,
+    // and its own one-descriptor RTV heap - the same shape the single-sampled
+    // RTV above has, and for the same reason.
+    //
+    // It rests in RENDER_TARGET, as the drawable's MSAA target does, and the
+    // resolve at the end of each pass steps it out to RESOLVE_SOURCE and back.
+    // The optimised clear value has to be there and has to agree with what
+    // beginPass clears to, which is nothing in particular - the pass names its
+    // own colour - so this takes black and accepts the mismatch warning a clear
+    // to another colour costs, exactly as the drawable's target does.
+    void createMultisampleTarget(D3D12Context& context,
+                                 const TextureDescriptor& descriptor)
+    {
+        D3D12_HEAP_PROPERTIES heap = {};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+        D3D12_RESOURCE_DESC desc = {};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        desc.Width = static_cast<UINT64>(width);
+        desc.Height = static_cast<UINT>(height);
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = 1;
+        desc.Format = toDXGIFormat(descriptor.format);
+        desc.SampleDesc.Count = static_cast<UINT>(data.sampleCount);
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+        D3D12_CLEAR_VALUE clearValue = {};
+        clearValue.Format = desc.Format;
+
+        if (FAILED(context.getDevice()->CreateCommittedResource(
+                &heap,
+                D3D12_HEAP_FLAG_NONE,
+                &desc,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,
+                &clearValue,
+                __uuidof(ID3D12Resource),
+                data.msaaResource.put_void())))
+            return;
+
+        D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+        heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        heapDesc.NumDescriptors = 1;
+
+        if (FAILED(context.getDevice()->CreateDescriptorHeap(
+                &heapDesc,
+                __uuidof(ID3D12DescriptorHeap),
+                data.msaaRtvHeap.put_void())))
+        {
+            data.msaaResource = nullptr;
+            return;
+        }
+
+        D3D12_RENDER_TARGET_VIEW_DESC viewDesc = {};
+        viewDesc.Format = desc.Format;
+        viewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DMS;
+
+        auto handle = data.msaaRtvHeap->GetCPUDescriptorHandleForHeapStart();
+        context.getDevice()->CreateRenderTargetView(
+            data.msaaResource.get(), &viewDesc, handle);
+
+        data.msaaRtv = handle;
+        data.msaaState = D3D12_RESOURCE_STATE_RENDER_TARGET;
     }
 
     // The depth buffer a pass into this target attaches, and its DSV. Created
@@ -638,8 +718,18 @@ struct Texture::Native
         desc.Height = static_cast<UINT>(height);
         desc.DepthOrArraySize = 1;
         desc.MipLevels = 1;
-        desc.Format = depthResourceFormat(withStencil, sampleable);
-        desc.SampleDesc.Count = 1;
+        // At the colour attachment's count, because both APIs require every
+        // attachment of one pass to agree - a multisampled target with a
+        // single-sampled depth buffer is not a pass either of them will run.
+        //
+        // The *resource* is only created typeless where the buffer itself is
+        // going to be read; on a multisampled target the thing a shader reads is
+        // the resolve below, and this one keeps the fully typed attachment
+        // format it would have had without sampleableDepth at all.
+        const auto multisampled = data.sampleCount > 1;
+
+        desc.Format = depthResourceFormat(withStencil, sampleable && !multisampled);
+        desc.SampleDesc.Count = static_cast<UINT>(data.sampleCount);
         desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
         // DENY_SHADER_RESOURCE is not set either way, so this flag says nothing
@@ -672,7 +762,8 @@ struct Texture::Native
 
         D3D12_DEPTH_STENCIL_VIEW_DESC viewDesc = {};
         viewDesc.Format = format;
-        viewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+        viewDesc.ViewDimension = multisampled ? D3D12_DSV_DIMENSION_TEXTURE2DMS
+                                              : D3D12_DSV_DIMENSION_TEXTURE2D;
 
         auto handle = data.dsvHeap->GetCPUDescriptorHandleForHeapStart();
         context.getDevice()->CreateDepthStencilView(
@@ -681,15 +772,67 @@ struct Texture::Native
         data.dsv = handle;
         data.depthHasStencil = withStencil;
         data.depthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+        data.msaaDepthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 
-        if (sampleable)
-            createDepthShaderResourceView(context, withStencil);
+        if (!sampleable)
+            return;
+
+        // On a multisampled target the buffer a shader reads is not the
+        // attachment: a Texture2DMS is not what ShaderBuilder::depthTexture
+        // declares. So the plane is resolved into a single-sampled twin at the
+        // end of every pass and the SRV views that instead. See
+        // TextureDescriptor::sampleCount.
+        if (multisampled && !createResolvedDepthBuffer(context, withStencil))
+            return;
+
+        createDepthShaderResourceView(context, withStencil);
     }
 
-    // The other view of the same resource: one float channel, out of the same
-    // shader-visible heap the colour SRV comes from. A failure here leaves the
-    // target with a depth buffer it can still attach and not sample, which is
-    // what hasSampleableDepth answers and what a bind through it checks.
+    // The single-sampled destination of that resolve, created typeless so the
+    // SRV can name one float channel out of it, and resting in DEPTH_WRITE for
+    // the same reason the attachment does - it is what transitionDepthForUse
+    // moves, and starting both in one state keeps the tracking honest.
+    //
+    // ALLOW_DEPTH_STENCIL rather than nothing: a resolve destination for a
+    // depth format has to be a depth resource, ResolveSubresourceRegion refusing
+    // one that is not.
+    bool createResolvedDepthBuffer(D3D12Context& context, bool withStencil)
+    {
+        D3D12_HEAP_PROPERTIES heap = {};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+        D3D12_RESOURCE_DESC desc = {};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        desc.Width = static_cast<UINT64>(width);
+        desc.Height = static_cast<UINT>(height);
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = 1;
+        desc.Format = depthResourceFormat(withStencil, true);
+        desc.SampleDesc.Count = 1;
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+        D3D12_CLEAR_VALUE clearValue = {};
+        clearValue.Format = depthAttachmentFormat(withStencil);
+        clearValue.DepthStencil.Depth = 1.f;
+
+        return SUCCEEDED(context.getDevice()->CreateCommittedResource(
+            &heap,
+            D3D12_HEAP_FLAG_NONE,
+            &desc,
+            D3D12_RESOURCE_STATE_DEPTH_WRITE,
+            &clearValue,
+            __uuidof(ID3D12Resource),
+            data.resolvedDepthResource.put_void()));
+    }
+
+    // The read view: one float channel, out of the same shader-visible heap the
+    // colour SRV comes from. A failure here leaves the target with a depth
+    // buffer it can still attach and not sample, which is what
+    // hasSampleableDepth answers and what a bind through it checks.
+    //
+    // The resource it views is the attachment on a single-sampled target and the
+    // resolve on a multisampled one, which is the whole of what sampledDepth-
+    // Resource is for.
     void createDepthShaderResourceView(D3D12Context& context, bool withStencil)
     {
         data.depthSrv = context.allocateTextureDescriptor();
@@ -704,7 +847,7 @@ struct Texture::Native
         viewDesc.Texture2D.MipLevels = 1;
 
         context.getDevice()->CreateShaderResourceView(
-            data.depthResource.get(), &viewDesc, data.depthSrv.cpu);
+            data.sampledDepthResource(), &viewDesc, data.depthSrv.cpu);
     }
 
     // The view a kernel writes through. It comes out of the same shader-visible
@@ -734,6 +877,20 @@ struct Texture::Native
     {
         if (descriptor.renderTarget)
             createRenderTargetView(context, descriptor);
+
+        // Created after the RTV and refused with it: a multisampled target is
+        // either both resources or nothing, since a pass rendering into the
+        // single-sampled one would silently be a different pass.
+        if (data.sampleCount > 1 && data.rtv.ptr != 0)
+        {
+            createMultisampleTarget(context, descriptor);
+
+            if (!data.isMultisampled())
+            {
+                data.resource = nullptr;
+                return;
+            }
+        }
 
         if (descriptor.renderTarget
             && (descriptor.depth || descriptor.stencil || descriptor.sampleableDepth)
@@ -918,6 +1075,11 @@ bool Texture::hasSampleableDepth() const
     return isValid() && impl->data.hasSampleableDepth();
 }
 
+int Texture::sampleCount() const
+{
+    return isValid() ? impl->data.sampleCount : 1;
+}
+
 void* Texture::nativeTexture() const
 {
     return const_cast<D3D12TextureData*>(&impl->data);
@@ -932,6 +1094,20 @@ void* Texture::nativeReadView() const
 // nativeTexture hands back, which is what Frame reaches them through - so this
 // backend has no separate handle to give.
 void* Texture::nativeDepthTexture() const
+{
+    return nullptr;
+}
+
+// Both of these are Metal's, for the same reason the depth handle above is
+// null here: the multisample colour resource and the resolved depth buffer live
+// inside the D3D12TextureData nativeTexture hands back, and every Windows
+// translation unit that wants one reaches it through that.
+void* Texture::nativeMultisampleTexture() const
+{
+    return nullptr;
+}
+
+void* Texture::nativeResolvedDepthTexture() const
 {
     return nullptr;
 }

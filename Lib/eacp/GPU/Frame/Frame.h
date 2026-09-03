@@ -134,10 +134,13 @@ public:
     // for it whenever the pass draws a 3D scene rather than a full-screen quad,
     // and match it with RenderPipelineDescriptor::depth on the pipeline.
     //
-    // Multisampling is still deliberately absent. A texture target has nothing
-    // to resolve into - the texture *is* what a resolve would produce - and the
-    // pass is single-sampled, so a pipeline used here needs sampleCount 1 even
-    // when the same shader draws multisampled into the drawable.
+    // Multisampling is the target's, from TextureDescriptor::sampleCount. Above
+    // 1 the pass renders into the multisampled texture beside the target and
+    // resolves into the target at its end, which is what the drawable path does
+    // with a drawable at the far end of the resolve - so the texture handed in
+    // here always holds the resolved picture, whoever samples or reads it, and
+    // only the pipeline has to know: match RenderPipelineDescriptor::sampleCount
+    // to Texture::sampleCount or the draw is rejected.
     //
     // A texture cannot be sampled by the same pass that renders into it. That
     // is what two of them and a swap is for - see the ping-pong a feedback
