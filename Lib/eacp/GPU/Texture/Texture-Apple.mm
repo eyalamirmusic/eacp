@@ -74,6 +74,21 @@ struct Texture::Native
         if (metalDevice == nil || width <= 0 || height <= 0)
             return;
 
+        // Refused rather than clamped, and refused before anything is created,
+        // so a target the device cannot multisample is an invalid texture rather
+        // than one that silently draws at a different count than the pipelines
+        // compiled for it. See TextureDescriptor::sampleCount; ask
+        // Device::supportsSampleCount to choose a number instead of finding out
+        // here. A count on a texture nothing renders into is ignored, as depth
+        // is, and a multisampled cube is refused with the other two below.
+        if (renderTarget && descriptor.sampleCount > 1)
+        {
+            if (!deviceToUse.supportsSampleCount(descriptor.sampleCount))
+                return;
+
+            samples = descriptor.sampleCount;
+        }
+
         // Refused here rather than at the bind, so a format D3D12 cannot take a
         // typed store to fails the same way on both backends instead of working
         // on one of them. Nothing is created, so the texture is invalid rather
@@ -87,6 +102,12 @@ struct Texture::Native
         // than clamped or half-built, and on both backends identically - see
         // TextureDescriptor::cube.
         if (cube && (width != height || renderTarget || computeWrite))
+            return;
+
+        // A cube cannot be a render target at all, so it cannot be a
+        // multisampled one either; refused here rather than left to look like it
+        // worked.
+        if (cube && descriptor.sampleCount > 1)
             return;
 
         // A chain is only worth asking for when there are pixels to build it
@@ -135,6 +156,20 @@ struct Texture::Native
 
         texture = [metalDevice newTextureWithDescriptor:textureDescriptor];
 
+        // The texture the pass renders into when this target multisamples; this
+        // one becomes what it resolves into. Created after it and refused with
+        // it, so a target is either both textures or invalid.
+        if (samples > 1 && texture.get() != nil)
+        {
+            makeMultisampleTexture(metalDevice, toMetalFormat(descriptor.format));
+
+            if (multisampleTexture.get() == nil)
+            {
+                texture.release();
+                return;
+            }
+        }
+
         if (renderTarget
             && (descriptor.depth || descriptor.stencil
                 || descriptor.sampleableDepth)
@@ -149,16 +184,44 @@ struct Texture::Native
             update(pixels, 0);
     }
 
-    // The depth buffer a pass into this texture attaches. Single-sampled,
-    // because a texture target never multisamples, and private - the pass
-    // clears it and stores nothing, so it is never read outside the GPU.
+    // The multisampled colour attachment that stands in front of the target when
+    // it multisamples. Render-target usage only and private storage: nothing
+    // samples it, reads it back or uploads to it - the resolve into the target
+    // is the only way anything sees what it holds.
+    void makeMultisampleTexture(id<MTLDevice> metalDevice, MTLPixelFormat format)
+    {
+        auto descriptor =
+            [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format
+                                                               width:(NSUInteger) width
+                                                              height:(NSUInteger) height
+                                                           mipmapped:NO];
+
+        descriptor.textureType = MTLTextureType2DMultisample;
+        descriptor.sampleCount = (NSUInteger) samples;
+        descriptor.usage = MTLTextureUsageRenderTarget;
+        descriptor.storageMode = MTLStorageModePrivate;
+
+        multisampleTexture = [metalDevice newTextureWithDescriptor:descriptor];
+    }
+
+    // The depth buffer a pass into this texture attaches, at the target's own
+    // sample count - both APIs require every attachment of a pass to agree on
+    // one - and private, the pass clearing it and storing nothing, so it is
+    // never read outside the GPU.
     //
     // Unless it is asked to be. MTLTextureUsageShaderRead is the whole of what
-    // sampleableDepth costs here - the storage mode is already Private and has
-    // to stay so, a depth format having no CPU layout to share - and without it
-    // Metal refuses the sample whatever texture the encoder is handed. It is
-    // still a flag rather than the default because the same request costs D3D12
-    // a typeless resource, a descriptor and a barrier per pass.
+    // sampleableDepth costs on a single-sampled target - the storage mode is
+    // already Private and has to stay so, a depth format having no CPU layout to
+    // share - and without it Metal refuses the sample whatever texture the
+    // encoder is handed. It is still a flag rather than the default because the
+    // same request costs D3D12 a typeless resource, a descriptor and a barrier
+    // per pass.
+    //
+    // A *multisampled* target pays one texture more for it, because the read
+    // usage is not the problem there: a shader eacp generated declares a depth2d
+    // and Metal will not bind a depth2d_ms to one. So the buffer is resolved into
+    // a single-sampled twin at the end of every pass and that is what the bind
+    // hands over. See TextureDescriptor::sampleCount.
     void makeDepthTexture(id<MTLDevice> metalDevice,
                           bool withStencil,
                           bool sampleable)
@@ -174,14 +237,37 @@ struct Texture::Native
 
         depthDescriptor.usage = MTLTextureUsageRenderTarget;
 
-        if (sampleable)
+        if (sampleable && samples == 1)
             depthDescriptor.usage |= MTLTextureUsageShaderRead;
+
+        if (samples > 1)
+        {
+            depthDescriptor.textureType = MTLTextureType2DMultisample;
+            depthDescriptor.sampleCount = (NSUInteger) samples;
+        }
 
         depthDescriptor.storageMode = MTLStorageModePrivate;
 
         depthTexture = [metalDevice newTextureWithDescriptor:depthDescriptor];
 
-        sampleableDepth = sampleable && depthTexture.get() != nil;
+        if (depthTexture.get() == nil)
+            return;
+
+        if (sampleable && samples > 1)
+        {
+            depthDescriptor.textureType = MTLTextureType2D;
+            depthDescriptor.sampleCount = 1;
+            depthDescriptor.usage =
+                MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+
+            resolvedDepthTexture =
+                [metalDevice newTextureWithDescriptor:depthDescriptor];
+
+            sampleableDepth = resolvedDepthTexture.get() != nil;
+            return;
+        }
+
+        sampleableDepth = sampleable;
     }
 
     // Zero-copy wrap of a CVPixelBuffer: the texture cache maps the buffer's
@@ -467,6 +553,11 @@ struct Texture::Native
     bool renderTarget = false;
     bool computeWrite = false;
 
+    // How many samples a pass into this target takes. 1 on everything that is
+    // not a multisampled render target, and the count the multisample colour
+    // texture and the depth buffer were both created at otherwise.
+    int samples = 1;
+
     // Six square slices rather than one rectangle, which changes the descriptor
     // it was created from, the upload loop, and what the two region-shaped
     // entry points do - and nothing else.
@@ -477,7 +568,9 @@ struct Texture::Native
     bool sampleableDepth = false;
 
     ObjC::Ptr<NSObject<MTLTexture>> texture;
+    ObjC::Ptr<NSObject<MTLTexture>> multisampleTexture;
     ObjC::Ptr<NSObject<MTLTexture>> depthTexture;
+    ObjC::Ptr<NSObject<MTLTexture>> resolvedDepthTexture;
     CFRef<CVMetalTextureRef> cvTexture;
 };
 
@@ -584,6 +677,11 @@ bool Texture::hasSampleableDepth() const
     return impl->sampleableDepth && impl->depthTexture.get() != nil;
 }
 
+int Texture::sampleCount() const
+{
+    return impl->samples;
+}
+
 void* Texture::nativeTexture() const
 {
     return (__bridge void*) impl->texture.get();
@@ -592,6 +690,16 @@ void* Texture::nativeTexture() const
 void* Texture::nativeDepthTexture() const
 {
     return (__bridge void*) impl->depthTexture.get();
+}
+
+void* Texture::nativeMultisampleTexture() const
+{
+    return (__bridge void*) impl->multisampleTexture.get();
+}
+
+void* Texture::nativeResolvedDepthTexture() const
+{
+    return (__bridge void*) impl->resolvedDepthTexture.get();
 }
 
 void* Texture::nativeReadView() const

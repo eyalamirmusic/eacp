@@ -108,6 +108,12 @@ public:
     // nothing, so a caller can print it either way.
     std::string name() const;
 
+    // Whether a render target of this many samples can be created on this
+    // device - TextureDescriptor::sampleCount, and the drawable's
+    // GPUView::setSampleCount.
+    //
+    bool supportsSampleCount(int count) const;
+
     // Opaque native handles for cross-translation-unit use by other GPU types.
     void* nativeDevice() const;
     void* nativeQueue() const;

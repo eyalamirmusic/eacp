@@ -208,6 +208,17 @@ inline DXGI_FORMAT depthShaderResourceFormat(bool withStencil)
                        : DXGI_FORMAT_R32_FLOAT;
 }
 
+// The format a depth resolve names, which is neither of the two above: a
+// resolve is a copy, so it wants the plane as data rather than as a depth
+// attachment, and the resolve modes MIN and MAX are only defined over a
+// single-component typed format. The stencil half of a combined buffer is not
+// resolved and is named as the padding it is here.
+inline DXGI_FORMAT depthResolveFormat(bool withStencil)
+{
+    return withStencil ? DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS
+                       : DXGI_FORMAT_R32_FLOAT;
+}
+
 // Which planes a pass clears. Both when the buffer has both, which is what
 // keeps a stencilled pass starting from a value it named rather than from
 // whatever the last frame left in the plane.
@@ -235,6 +246,26 @@ struct D3D12TextureData
     winrt::com_ptr<ID3D12DescriptorHeap> rtvHeap;
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = {};
 
+    // A multisampled target owns a second colour resource and a second RTV: the
+    // one a pass actually renders into, resolved into `resource` at the end of
+    // every pass. `resource` is never a render target on that path - it is the
+    // resolve destination - which is why the two carry their own states.
+    //
+    // The multisample resource rests in RENDER_TARGET, as the drawable's own
+    // MSAA target does, and steps out to RESOLVE_SOURCE for the resolve and back.
+    winrt::com_ptr<ID3D12Resource> msaaResource;
+    winrt::com_ptr<ID3D12DescriptorHeap> msaaRtvHeap;
+    D3D12_CPU_DESCRIPTOR_HANDLE msaaRtv = {};
+    D3D12_RESOURCE_STATES msaaState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+
+    // The colour format both resources were created in. ResolveSubresource has
+    // to be told it and a resource will not hand it back without a GetDesc.
+    DXGI_FORMAT colorFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+    // How many samples a pass into this target takes: 1 unless msaaResource is
+    // there, and then the count both it and the depth buffer were created at.
+    int sampleCount = 1;
+
     // A target created with TextureDescriptor::depth owns its depth buffer and
     // that buffer's DSV, on the same terms as the RTV above and for the same
     // reason: DSV descriptors are not shader-visible either. The resource rests
@@ -261,6 +292,29 @@ struct D3D12TextureData
     DescriptorSlot depthSrv;
     D3D12_RESOURCE_STATES depthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 
+    // The single-sampled buffer a multisampled target's depth plane resolves
+    // into, and the resource depthSrv actually views on that path. Null
+    // everywhere else, where the attachment is what a shader reads.
+    //
+    // It exists because a shader eacp generated declares a Texture2D, not a
+    // Texture2DMS with a sample index to choose between - see
+    // TextureDescriptor::sampleCount. The resolve is a ResolveSubresourceRegion
+    // in RESOLVE_MODE_MAX, D3D12 having no equivalent of Metal's sample-0 depth
+    // filter, so the value that comes out is the furthest of the samples rather
+    // than the first; on a silhouette pixel those differ, and everywhere else
+    // they do not.
+    //
+    // depthState tracks whichever of the two depthSrv views, since that is the
+    // one a bind moves.
+    winrt::com_ptr<ID3D12Resource> resolvedDepthResource;
+    D3D12_RESOURCE_STATES msaaDepthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+
+    ID3D12Resource* sampledDepthResource() const
+    {
+        return resolvedDepthResource != nullptr ? resolvedDepthResource.get()
+                                                : depthResource.get();
+    }
+
     // A plain texture rests in PIXEL_SHADER_RESOURCE forever - it is only ever
     // sampled - and a render target moves between that and RENDER_TARGET as the
     // passes go by. Unlike a buffer this does not decay to COMMON at
@@ -275,23 +329,41 @@ struct D3D12TextureData
     bool hasStencil() const { return hasDepth() && depthHasStencil; }
 
     bool hasSampleableDepth() const { return hasDepth() && depthSrv.cpu.ptr != 0; }
+
+    bool isMultisampled() const
+    {
+        return msaaResource != nullptr && msaaRtv.ptr != 0;
+    }
+
+    // Where a pass into this target draws, and where it clears: the multisample
+    // resource when there is one, and the texture itself otherwise.
+    D3D12_CPU_DESCRIPTOR_HANDLE attachmentView() const
+    {
+        return isMultisampled() ? msaaRtv : rtv;
+    }
 };
 
 // The depth resource moved between the two states it can be in. The colour
 // resource's helper is transitionTextureForUse below; this is its depth twin,
 // separate because the two planes are two resources with two states and one
 // D3D12TextureData.
+// On a multisampled target the resource this moves is the *resolved* buffer -
+// the one depthSrv views and the one a shader reads - and the attachment stays
+// in DEPTH_WRITE throughout, which is what lets the pass go on writing depth
+// while an earlier pass's resolve of it is being sampled.
 inline void transitionDepthForUse(ID3D12GraphicsCommandList* list,
                                   D3D12TextureData& texture,
                                   D3D12_RESOURCE_STATES target)
 {
-    if (texture.depthResource == nullptr || !texture.hasSampleableDepth()
+    auto* resource = texture.sampledDepthResource();
+
+    if (resource == nullptr || !texture.hasSampleableDepth()
         || texture.depthState == target)
         return;
 
     D3D12_RESOURCE_BARRIER barrier = {};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource = texture.depthResource.get();
+    barrier.Transition.pResource = resource;
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     barrier.Transition.StateBefore = texture.depthState;
     barrier.Transition.StateAfter = target;
@@ -350,6 +422,13 @@ struct D3D12Encoder
     // carries no label and is therefore not timed.
     ID3D12QueryHeap* queryHeap = nullptr;
     int endQuery = -1;
+
+    // The multisampled target this pass is drawing into, or null. Held so the
+    // resolve happens when the pass *ends* rather than when the frame does: what
+    // the target holds has to be right for whatever reads it next, and a read
+    // between two passes is the case the whole thing exists for. See
+    // TextureDescriptor::sampleCount, and resolveMultisampledTarget below.
+    D3D12TextureData* resolveTarget = nullptr;
 };
 
 // The compute sibling of D3D12Encoder. The CommandContext stays owned by the
@@ -485,5 +564,87 @@ inline void transition(ID3D12GraphicsCommandList* list,
     barrier.Transition.StateBefore = before;
     barrier.Transition.StateAfter = after;
     list->ResourceBarrier(1, &barrier);
+}
+
+// What a pass into a multisampled target does on its way out: flatten the
+// samples into the target's own resource, and into the resolved depth buffer
+// where the target has one, leaving both attachments untouched so the next pass
+// can load them.
+//
+// **Recorded at the end of every pass, not at the end of the frame**, which is
+// where the drawable's resolve lives and is the one thing that could not be
+// copied from it. A texture target is readable between passes - sampled by the
+// next pass, blitted out, read back to the CPU - and none of those know which
+// pass was the last, so the resolved picture has to be current whenever a pass
+// has just ended. See TextureDescriptor::sampleCount.
+//
+// The colour resolve leaves the target in RESOLVE_DEST rather than putting it
+// back: `state` tracks it, so whatever comes next - a sample, a read, another
+// pass - emits the barrier it needs from there and this pays for none it does
+// not.
+//
+// Depth is a ResolveSubresourceRegion in RESOLVE_MODE_MAX, ResolveSubresource
+// having no depth form: MIN and MAX are the only modes D3D12 offers a
+// depth-stencil format, so the resolved value is the furthest sample rather than
+// Metal's first one. It runs on plane 0, the depth plane, the stencil plane
+// having no resolve and nothing that reads it.
+inline void resolveMultisampledTarget(ID3D12GraphicsCommandList* list,
+                                      D3D12TextureData& texture)
+{
+    if (!texture.isMultisampled() || texture.resource == nullptr)
+        return;
+
+    transition(list,
+               texture.msaaResource.get(),
+               texture.msaaState,
+               D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
+    texture.msaaState = D3D12_RESOURCE_STATE_RESOLVE_SOURCE;
+
+    transitionTextureForUse(list, texture, D3D12_RESOURCE_STATE_RESOLVE_DEST);
+
+    list->ResolveSubresource(texture.resource.get(),
+                             0,
+                             texture.msaaResource.get(),
+                             0,
+                             texture.colorFormat);
+
+    transition(list,
+               texture.msaaResource.get(),
+               D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
+               D3D12_RESOURCE_STATE_RENDER_TARGET);
+    texture.msaaState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+
+    if (texture.resolvedDepthResource == nullptr)
+        return;
+
+    winrt::com_ptr<ID3D12GraphicsCommandList1> list1;
+
+    if (FAILED(list->QueryInterface(__uuidof(ID3D12GraphicsCommandList1),
+                                    list1.put_void())))
+        return;
+
+    transition(list,
+               texture.depthResource.get(),
+               texture.msaaDepthState,
+               D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
+    texture.msaaDepthState = D3D12_RESOURCE_STATE_RESOLVE_SOURCE;
+
+    transitionDepthForUse(list, texture, D3D12_RESOURCE_STATE_RESOLVE_DEST);
+
+    list1->ResolveSubresourceRegion(texture.resolvedDepthResource.get(),
+                                    0,
+                                    0,
+                                    0,
+                                    texture.depthResource.get(),
+                                    0,
+                                    nullptr,
+                                    depthResolveFormat(texture.depthHasStencil),
+                                    D3D12_RESOLVE_MODE_MAX);
+
+    transition(list,
+               texture.depthResource.get(),
+               D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
+               D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    texture.msaaDepthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 }
 } // namespace eacp::GPU

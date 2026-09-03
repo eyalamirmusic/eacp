@@ -352,7 +352,7 @@ texture.renderTarget = true;
 texture.depth = true;                                 // the pass gets one
 
 auto pipeline = RenderPipelineDescriptor {};
-pipeline.sampleCount = 1;                             // a texture pass never MSAAs
+pipeline.sampleCount = texture.sampleCount;           // 1 unless it multisamples
 pipeline.depth = true;                                // the pipeline tests it
 pipeline.colorFormat = pixelFormatFor(texture.format);
 
@@ -369,10 +369,40 @@ D3D12 — and on Apple silicon it *appears* to work, because the tile memory is
 there whether or not anything attached it. Do not read that as permission;
 `Texture::hasDepth()` is what a pipeline should be built from.
 
-Render targets are still single-sampled. A texture target has nothing to resolve
-into — the texture is what a resolve would produce — so a pipeline drawing into
-one passes `sampleCount` 1 even when the same shader draws multisampled into the
-drawable.
+### Multisampling a target
+
+`TextureDescriptor::sampleCount` above 1 grows a multisampled colour texture
+beside the target: the pass renders into that one and resolves into the target
+at the end of *every* pass, so what a shader samples, what `read()` reads and
+what a blit copies is always the resolved picture.
+
+```cpp
+auto texture = TextureDescriptor {};
+texture.renderTarget = true;
+texture.stencil = true;                  // the depth buffer comes at the same count
+texture.sampleCount = 4;
+
+auto target = Device::shared().makeTexture(texture);   // invalid if 4 is refused
+```
+
+Three things follow from it and are worth knowing before reaching for it.
+
+The count has to reach every pipeline that draws there —
+`RenderPipelineDescriptor::sampleCount = target.sampleCount()` — and both
+backends reject a draw where the two disagree.
+
+A count the device cannot render at makes the texture **invalid** rather than
+quietly dropping to 1, since a silent drop would leave every pipeline compiled
+against a number the pass does not have. `Device::supportsSampleCount()` is how
+to pick one before building anything.
+
+The samples are *kept* as well as resolved, so a pass that does not clear loads
+the multisampled attachment back rather than the flattened picture — which is
+what makes a suspended pass (`DepthAction::Resume`) and a mid-frame copy of the
+target work at 4 samples the same way they do at 1. `sampleableDepth` costs a
+second depth buffer here: the shaders eacp generates declare a `depth2d`, so the
+depth plane is resolved into a single-sampled twin and that is what
+`setFragmentDepthTexture` binds.
 
 ## Compute
 

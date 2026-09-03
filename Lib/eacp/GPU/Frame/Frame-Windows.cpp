@@ -358,18 +358,25 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
                       static_cast<int>(impl->drawable->height));
 }
 
-// Rendering into an app-owned texture: one attachment and no resolve. Depth is
-// the target's own, from TextureDescriptor::depth, and rests in DEPTH_WRITE for
-// its lifetime, so it costs a clear here and no barrier.
+// Rendering into an app-owned texture. Depth is the target's own, from
+// TextureDescriptor::depth, and rests in DEPTH_WRITE for its lifetime, so it
+// costs a clear here and no barrier.
 //
 // Deliberately does not touch passBegun, which records whether the *back
 // buffer* was moved out of PRESENT - a frame whose only passes were into
 // textures must not have one transitioned back on the way out.
 //
-// The texture is moved into RENDER_TARGET here and moved back the moment
-// something samples it, in RenderPass::setFragmentTexture, rather than at the
-// end of the pass: a target written by one pass and read by the next then costs
-// exactly the two barriers it needs, and one written and never read costs one.
+// A single-sampled texture is moved into RENDER_TARGET here and moved back the
+// moment something samples it, in RenderPass::setFragmentTexture, rather than at
+// the end of the pass: a target written by one pass and read by the next then
+// costs exactly the two barriers it needs, and one written and never read costs
+// one.
+//
+// A multisampled one draws into the multisample resource beside it instead, and
+// the texture itself is the *destination* of a resolve the pass records on its
+// way out - resolveMultisampledTarget, which the encoder's resolveTarget carries
+// it to. So the texture is never in RENDER_TARGET on that path, and this leaves
+// its state alone for the resolve to move.
 RenderPass Frame::beginPass(const Texture& target,
                             const RenderPassDescriptor& descriptor)
 {
@@ -382,8 +389,28 @@ RenderPass Frame::beginPass(const Texture& target,
     auto* list = impl->commands->list.get();
 
     impl->bindRootState(context, list);
-    transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
+    if (data->isMultisampled())
+    {
+        // Back from the RESOLVE_SOURCE the last pass's resolve left it in. It
+        // rests in RENDER_TARGET otherwise, exactly as the drawable's MSAA
+        // target does.
+        if (data->msaaState != D3D12_RESOURCE_STATE_RENDER_TARGET)
+        {
+            transition(list,
+                       data->msaaResource.get(),
+                       data->msaaState,
+                       D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+            data->msaaState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        }
+    }
+    else
+    {
+        transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    }
+
+    const auto attachment = data->attachmentView();
     auto hasDepth = data->hasDepth();
 
     // The return half of the pair RenderPass::setFragmentDepthTexture opens: a
@@ -393,7 +420,7 @@ RenderPass Frame::beginPass(const Texture& target,
     // the helper records nothing.
     transitionDepthForUse(list, *data, D3D12_RESOURCE_STATE_DEPTH_WRITE);
 
-    list->OMSetRenderTargets(1, &data->rtv, FALSE, hasDepth ? &data->dsv : nullptr);
+    list->OMSetRenderTargets(1, &attachment, FALSE, hasDepth ? &data->dsv : nullptr);
 
     auto width = target.width();
     auto height = target.height();
@@ -419,7 +446,7 @@ RenderPass Frame::beginPass(const Texture& target,
     {
         const auto& color = descriptor.clearColor;
         const float clearColor[4] = {color.r, color.g, color.b, color.a};
-        list->ClearRenderTargetView(data->rtv, clearColor, 0, nullptr);
+        list->ClearRenderTargetView(attachment, clearColor, 0, nullptr);
     }
 
     // Cleared to the far plane whenever there is one and the pass is not
@@ -434,6 +461,12 @@ RenderPass Frame::beginPass(const Texture& target,
                                     nullptr);
 
     auto* encoder = new D3D12Encoder {impl->commands, {}};
+
+    // Recorded when the pass ends rather than when the frame does, because what
+    // reads a texture target may be the very next thing on the list.
+    if (data->isMultisampled())
+        encoder->resolveTarget = data;
+
     impl->timePass(*encoder, descriptor.label);
 
     return RenderPass(encoder, width, height);

@@ -239,6 +239,20 @@ struct TextureDescriptor
     // depth is.
     bool stencil = false;
 
+    // How many samples a pass rendering into this target takes per pixel. 1 -
+    // the default - is no multisampling, and is what every texture target was
+    // before this existed.
+    //
+    // Above 1 the target grows a second colour texture beside itself: a
+    // multisampled one that the pass actually renders into, resolved into this
+    // texture at the end of every pass. So the texture a shader samples, and the
+    // one read() reads, is always the resolved single-sampled picture, and
+    // nothing binding a render target has to know whether it is multisampled.
+    // **A pipeline drawing into it must carry the same
+    // RenderPipelineDescriptor::sampleCount**, which both backends enforce.
+    //
+    int sampleCount = 1;
+
     // Whether this is a cube texture: six square faces sampled with a direction
     // rather than with a coordinate, which is what a reflection or a sky needs.
     // Declare it in the shader with ShaderBuilder::cubeTexture (or a
@@ -329,6 +343,13 @@ public:
     // the two planes being one attachment.
     bool hasStencil() const;
 
+    // How many samples a pass into this target takes, which is what a pipeline
+    // drawing here has to set RenderPipelineDescriptor::sampleCount to. 1 on
+    // everything that is not a multisampled render target, including a target
+    // whose requested count the device refused - such a texture is invalid, so
+    // there is no case where this quietly disagrees with what was asked for.
+    int sampleCount() const;
+
     // Whether that buffer can be sampled as well as attached, which is what
     // RenderPass::setFragmentDepthTexture needs and false on a target created
     // without TextureDescriptor::sampleableDepth. True implies hasDepth. A bind
@@ -414,10 +435,24 @@ public:
     void* nativeReadView() const;
 
     // The depth buffer a pass into this texture attaches, or null on a target
-    // that asked for none. An MTLTexture on Metal; on D3D12 the depth resource
-    // and its descriptor live inside the same texture data nativeTexture hands
-    // back, so this is null there and Frame reaches them through that.
+    // that asked for none. Multisampled when the target is. An MTLTexture on
+    // Metal; on D3D12 the depth resource and its descriptor live inside the same
+    // texture data nativeTexture hands back, so this is null there and Frame
+    // reaches them through that.
     void* nativeDepthTexture() const;
+
+    // The multisampled colour texture a pass into this target actually renders
+    // into, resolved into nativeTexture at the end of every pass. Null on a
+    // single-sampled target, which renders into its own texture directly, and
+    // null on D3D12, where it lives in the texture data with everything else.
+    void* nativeMultisampleTexture() const;
+
+    // The single-sampled depth buffer the multisampled one resolves into, which
+    // is what setFragmentDepthTexture binds. Null unless the target is both
+    // multisampled and sampleableDepth - on a single-sampled target the
+    // attachment is already sampleable and nativeDepthTexture is the answer -
+    // and null on D3D12 for the reason above.
+    void* nativeResolvedDepthTexture() const;
 
 private:
     struct Native;
