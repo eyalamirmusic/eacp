@@ -233,9 +233,12 @@ struct Texture::Native
     {
         context.freeTextureDescriptor(data.srv);
         context.freeTextureDescriptor(data.uav);
+        context.freeTextureDescriptor(data.depthSrv);
+        context.freeTextureDescriptor(data.msaaDepthSrv);
         context.deferRelease(std::move(data.rtvHeap));
         context.deferRelease(std::move(data.msaaRtvHeap));
         context.deferRelease(std::move(data.dsvHeap));
+        context.deferRelease(std::move(data.resolvedDsvHeap));
         context.deferRelease(std::move(data.depthResource));
         context.deferRelease(std::move(data.resolvedDepthResource));
         context.deferRelease(std::move(data.msaaResource));
@@ -666,17 +669,25 @@ struct Texture::Native
         if (x < 0 || y < 0 || x + regionWidth > width || y + regionHeight > height)
             return;
 
-        auto regionDesc = data.resource->GetDesc();
-        regionDesc.Width = static_cast<UINT64>(regionWidth);
-        regionDesc.Height = static_cast<UINT>(regionHeight);
-        regionDesc.MipLevels = 1;
+        // A driver that will not copy a box out of a texture
+        // (DriverQuirks::noBoxedTextureCopy) is asked for the whole subresource
+        // and the region is cut out of it below - the same bytes, one texture's
+        // worth of read-back later.
+        const auto wholeCopy = getD3D12Shared().getDriverQuirks().noBoxedTextureCopy;
+        const auto copyWidth = wholeCopy ? width : regionWidth;
+        const auto copyHeight = wholeCopy ? height : regionHeight;
+
+        auto copyDesc = data.resource->GetDesc();
+        copyDesc.Width = static_cast<UINT64>(copyWidth);
+        copyDesc.Height = static_cast<UINT>(copyHeight);
+        copyDesc.MipLevels = 1;
 
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
         UINT rows = 0;
         UINT64 rowBytes = 0;
         UINT64 totalBytes = 0;
         context.getDevice()->GetCopyableFootprints(
-            &regionDesc, 0, 1, 0, &footprint, &rows, &rowBytes, &totalBytes);
+            &copyDesc, 0, 1, 0, &footprint, &rows, &rowBytes, &totalBytes);
 
         auto* commands = context.acquire();
 
@@ -712,7 +723,8 @@ struct Texture::Native
         box.bottom = static_cast<UINT>(y + regionHeight);
         box.back = 1;
 
-        commands->list->CopyTextureRegion(&destination, 0, 0, 0, &source, &box);
+        commands->list->CopyTextureRegion(
+            &destination, 0, 0, 0, &source, wholeCopy ? nullptr : &box);
 
         // Back to where a texture rests between frames, so the next bind finds
         // a sampleable resource whatever this one was doing before the read.
@@ -730,17 +742,30 @@ struct Texture::Native
         if (FAILED(staging->Map(0, &readRange, &mapped)) || mapped == nullptr)
             return;
 
-        const auto stride =
-            bytesPerRow != 0 ? bytesPerRow : static_cast<std::size_t>(rowBytes);
+        // Exact for every format that reaches here, the compressed ones having
+        // been turned away above: rowBytes is the copied width's texels and
+        // nothing else.
+        const auto texelBytes =
+            static_cast<std::size_t>(rowBytes) / static_cast<std::size_t>(copyWidth);
+        const auto regionRowBytes =
+            texelBytes * static_cast<std::size_t>(regionWidth);
+        const auto stride = bytesPerRow != 0 ? bytesPerRow : regionRowBytes;
+
+        // Where the region starts inside what was copied: the origin unless the
+        // whole subresource came back.
+        const auto skipRows = wholeCopy ? static_cast<std::size_t>(y) : 0;
+        const auto skipBytes =
+            wholeCopy ? texelBytes * static_cast<std::size_t>(x) : 0;
 
         auto* out = static_cast<unsigned char*>(dst);
-        const auto* in = static_cast<const unsigned char*>(mapped);
+        const auto* in = static_cast<const unsigned char*>(mapped) + skipBytes;
 
-        for (auto row = UINT {0}; row < rows; ++row)
-            std::memcpy(
-                out + static_cast<std::size_t>(row) * stride,
-                in + static_cast<std::size_t>(row) * footprint.Footprint.RowPitch,
-                static_cast<std::size_t>(rowBytes));
+        for (auto row = std::size_t {0};
+             row < static_cast<std::size_t>(regionHeight);
+             ++row)
+            std::memcpy(out + row * stride,
+                        in + (row + skipRows) * footprint.Footprint.RowPitch,
+                        regionRowBytes);
 
         const D3D12_RANGE noWrite = {0, 0};
         staging->Unmap(0, &noWrite);
@@ -869,10 +894,14 @@ struct Texture::Native
         // The *resource* is only created typeless where the buffer itself is
         // going to be read; on a multisampled target the thing a shader reads is
         // the resolve below, and this one keeps the fully typed attachment
-        // format it would have had without sampleableDepth at all.
+        // format it would have had without sampleableDepth at all - unless the
+        // resolve is going to be drawn, in which case the shader drawing it
+        // reads this one too. See resolveDepthWithShader.
         const auto multisampled = data.sampleCount > 1;
+        const auto readByShader =
+            !multisampled || getD3D12Shared().getDriverQuirks().noDepthResolve;
 
-        desc.Format = depthResourceFormat(withStencil, sampleable && !multisampled);
+        desc.Format = depthResourceFormat(withStencil, sampleable && readByShader);
         desc.SampleDesc.Count = static_cast<UINT>(data.sampleCount);
         desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
@@ -929,7 +958,52 @@ struct Texture::Native
         if (multisampled && !createResolvedDepthBuffer(context, withStencil))
             return;
 
+        if (multisampled && getD3D12Shared().getDriverQuirks().noDepthResolve
+            && !createShaderResolveViews(context, withStencil))
+            return;
+
         createDepthShaderResourceView(context, withStencil);
+    }
+
+    // What resolveDepthWithShader draws with, where the driver leaves it to:
+    // the multisampled attachment as a Texture2DMS for the pixel shader to
+    // load, and the resolved buffer as the depth attachment it writes. A
+    // failure leaves the target without a sampleable depth, exactly as a
+    // failed resolve buffer does.
+    bool createShaderResolveViews(D3D12Context& context, bool withStencil)
+    {
+        D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+        heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        heapDesc.NumDescriptors = 1;
+
+        if (FAILED(context.getDevice()->CreateDescriptorHeap(
+                &heapDesc,
+                __uuidof(ID3D12DescriptorHeap),
+                data.resolvedDsvHeap.put_void())))
+            return false;
+
+        D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+        dsvDesc.Format = depthAttachmentFormat(withStencil);
+        dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+
+        data.resolvedDsv =
+            data.resolvedDsvHeap->GetCPUDescriptorHandleForHeapStart();
+        context.getDevice()->CreateDepthStencilView(
+            data.resolvedDepthResource.get(), &dsvDesc, data.resolvedDsv);
+
+        data.msaaDepthSrv = context.allocateTextureDescriptor();
+
+        if (data.msaaDepthSrv.cpu.ptr == 0)
+            return false;
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Format = depthShaderResourceFormat(withStencil);
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMS;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+
+        context.getDevice()->CreateShaderResourceView(
+            data.depthResource.get(), &srvDesc, data.msaaDepthSrv.cpu);
+        return true;
     }
 
     // The single-sampled destination of that resolve, created typeless so the

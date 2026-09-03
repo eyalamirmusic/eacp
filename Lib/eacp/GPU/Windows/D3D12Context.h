@@ -134,6 +134,25 @@ struct DescriptorSlot
     D3D12_GPU_DESCRIPTOR_HANDLE gpu = {};
 };
 
+// What the driver cannot be asked to do, found out by asking it. Each flag
+// names a spec-legal D3D12 operation that a real driver has been seen to
+// refuse - not with an error the call site could act on, but by killing the
+// command list or the device - and that the backend therefore takes another
+// route around when the flag is set. See D3D12Shared::probeDriverQuirks for
+// how they are found, and why by trial rather than by adapter name.
+struct DriverQuirks
+{
+    // ResolveSubresourceRegion on a multisampled depth plane fails the command
+    // list at Close(). The resolve is drawn through a shader instead; see
+    // resolveDepthWithShader.
+    bool noDepthResolve = false;
+
+    // CopyTextureRegion from a texture into a buffer with a source box removes
+    // the device. A region read copies the whole subresource and crops on the
+    // CPU instead; see Texture::read.
+    bool noBoxedTextureCopy = false;
+};
+
 // The process-wide half. Created on first use by getD3D12Shared().
 class D3D12Shared
 {
@@ -148,6 +167,27 @@ public:
     // rather than per-context because every Device on this machine runs on the
     // same adapter.
     const std::string& getAdapterName() const { return adapterName; }
+
+    // What this adapter's driver was found unable to do, probed once before
+    // the device was created. Shared for the same reason the name is.
+    const DriverQuirks& getDriverQuirks() const { return quirks; }
+
+    // The pipeline that stands in for a depth resolve where the driver has
+    // none (DriverQuirks::noDepthResolve): a full-screen triangle whose pixel
+    // shader reads the multisampled plane and writes the furthest sample to
+    // SV_Depth, so the value that comes out matches what
+    // ResolveSubresourceRegion in RESOLVE_MODE_MAX would have produced. One per
+    // depth format, since the DSV format is baked into the state; built on
+    // first use like the dispatch signature, and for the same reason.
+    struct DepthResolveShader
+    {
+        winrt::com_ptr<ID3D12RootSignature> rootSignature;
+        winrt::com_ptr<ID3D12PipelineState> state;
+
+        bool isValid() const { return state != nullptr; }
+    };
+
+    const DepthResolveShader& getDepthResolveShader(bool withStencil);
 
     ID3D12RootSignature* getRenderRootSignature() const
     {
@@ -186,9 +226,11 @@ private:
 
     winrt::com_ptr<ID3D12Device> device;
     std::string adapterName;
+    DriverQuirks quirks;
     winrt::com_ptr<ID3D12RootSignature> renderRootSignature;
     winrt::com_ptr<ID3D12RootSignature> computeRootSignature;
     winrt::com_ptr<ID3D12CommandSignature> dispatchSignature;
+    DepthResolveShader depthResolveShaders[2];
 
     std::uint64_t generation = 1;
 };
@@ -478,6 +520,7 @@ private:
     void releaseRecycledBuffers();
     void pollCompletions();
     void deferReleaseUnknown(winrt::com_ptr<IUnknown> object);
+    void reportFailedClose() const;
 
     // Renews everything if the shared device was rebuilt since this context
     // was. Cheap enough to sit at the top of acquire(): one integer compare.

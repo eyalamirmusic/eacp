@@ -9,10 +9,13 @@
 #include <eacp/Core/Threads/ThreadUtils.h>
 #include <eacp/Core/Utils/Strings.h>
 
+#include <d3dcompiler.h>
+
 #include <algorithm>
 #include <cassert>
-
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace eacp::GPU
 {
@@ -45,6 +48,277 @@ constexpr std::size_t constantPageBytes = 64 * 1024;
 // handful more and then stops.
 constexpr std::size_t uploadChunkBytes = 1024 * 1024;
 
+// Whether an EACP_D3D12_* environment switch is set to anything but "0".
+bool environmentFlag(const char* name)
+{
+    std::size_t length = 0;
+    char value[8] = {};
+
+    return getenv_s(&length, value, sizeof(value), name) == 0 && length > 1
+           && value[0] != '0';
+}
+
+// EACP_D3D12_WARP=1 skips the hardware adapter and takes the software one. It
+// is a debugging affordance and worth the four lines: WARP is the reference
+// implementation, so an app that misbehaves on a GPU and behaves on WARP has
+// found a driver bug rather than its own, and that is otherwise an expensive
+// thing to establish. Slow enough that it is only ever a question being
+// answered, never a way to run.
+bool forcesWarp()
+{
+    return environmentFlag("EACP_D3D12_WARP");
+}
+
+winrt::com_ptr<ID3D12Resource> makeProbeResource(ID3D12Device* device,
+                                                 const D3D12_RESOURCE_DESC& desc,
+                                                 D3D12_RESOURCE_STATES state,
+                                                 const D3D12_CLEAR_VALUE* clear)
+{
+    D3D12_HEAP_PROPERTIES heap = {};
+    heap.Type = desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+                    ? D3D12_HEAP_TYPE_READBACK
+                    : D3D12_HEAP_TYPE_DEFAULT;
+
+    auto resource = winrt::com_ptr<ID3D12Resource>();
+    device->CreateCommittedResource(&heap,
+                                    D3D12_HEAP_FLAG_NONE,
+                                    &desc,
+                                    state,
+                                    clear,
+                                    __uuidof(ID3D12Resource),
+                                    resource.put_void());
+    return resource;
+}
+
+D3D12_RESOURCE_DESC probeTexture(UINT size,
+                                 DXGI_FORMAT format,
+                                 UINT samples,
+                                 D3D12_RESOURCE_FLAGS flags)
+{
+    D3D12_RESOURCE_DESC desc = {};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = size;
+    desc.Height = size;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = format;
+    desc.SampleDesc.Count = samples;
+    desc.Flags = flags;
+    return desc;
+}
+
+// The resources a probe records against, held until the list has been closed:
+// what it records is never executed, but the driver validates against them at
+// Close(), which is the answer being asked for.
+struct ProbeResources
+{
+    Vector<winrt::com_ptr<ID3D12Resource>> resources;
+};
+
+// The depth resolve exactly as resolveMultisampledTarget records it: a
+// four-sample D32 plane into a single-sampled typeless twin, in RESOLVE_MODE_MAX.
+bool recordDepthResolve(ID3D12Device* device,
+                        ID3D12GraphicsCommandList* list,
+                        ProbeResources& probe)
+{
+    constexpr auto size = UINT {8};
+    constexpr auto samples = UINT {4};
+
+    D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS levels = {};
+    levels.Format = DXGI_FORMAT_D32_FLOAT;
+    levels.SampleCount = samples;
+
+    // A device without four-sample depth will never be asked to resolve one,
+    // so there is nothing to find out.
+    if (FAILED(device->CheckFeatureSupport(
+            D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &levels, sizeof(levels)))
+        || levels.NumQualityLevels == 0)
+        return false;
+
+    D3D12_CLEAR_VALUE clear = {};
+    clear.Format = DXGI_FORMAT_D32_FLOAT;
+    clear.DepthStencil.Depth = 1.f;
+
+    auto multisampled =
+        makeProbeResource(device,
+                          probeTexture(size,
+                                       DXGI_FORMAT_D32_FLOAT,
+                                       samples,
+                                       D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL),
+                          D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
+                          &clear);
+
+    auto resolved =
+        makeProbeResource(device,
+                          probeTexture(size,
+                                       DXGI_FORMAT_R32_TYPELESS,
+                                       1,
+                                       D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL),
+                          D3D12_RESOURCE_STATE_RESOLVE_DEST,
+                          &clear);
+
+    if (multisampled == nullptr || resolved == nullptr)
+        return false;
+
+    auto list1 = winrt::com_ptr<ID3D12GraphicsCommandList1>();
+
+    if (FAILED(list->QueryInterface(__uuidof(ID3D12GraphicsCommandList1),
+                                    list1.put_void())))
+        return false;
+
+    list1->ResolveSubresourceRegion(resolved.get(),
+                                    0,
+                                    0,
+                                    0,
+                                    multisampled.get(),
+                                    0,
+                                    nullptr,
+                                    DXGI_FORMAT_R32_FLOAT,
+                                    D3D12_RESOLVE_MODE_MAX);
+
+    probe.resources.add(std::move(multisampled));
+    probe.resources.add(std::move(resolved));
+    return true;
+}
+
+// The region read-back exactly as Texture::read records it: a texture-to-buffer
+// copy whose source box is a part of the texture rather than all of it.
+bool recordBoxedTextureCopy(ID3D12Device* device,
+                            ID3D12GraphicsCommandList* list,
+                            ProbeResources& probe)
+{
+    constexpr auto size = UINT {4};
+    constexpr auto regionSize = UINT {2};
+
+    auto texture = makeProbeResource(
+        device,
+        probeTexture(size, DXGI_FORMAT_R8G8B8A8_UNORM, 1, D3D12_RESOURCE_FLAG_NONE),
+        D3D12_RESOURCE_STATE_COPY_SOURCE,
+        nullptr);
+
+    auto regionDesc = probeTexture(
+        regionSize, DXGI_FORMAT_R8G8B8A8_UNORM, 1, D3D12_RESOURCE_FLAG_NONE);
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT64 totalBytes = 0;
+    device->GetCopyableFootprints(
+        &regionDesc, 0, 1, 0, &footprint, nullptr, nullptr, &totalBytes);
+
+    D3D12_RESOURCE_DESC bufferDesc = {};
+    bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bufferDesc.Width = totalBytes;
+    bufferDesc.Height = 1;
+    bufferDesc.DepthOrArraySize = 1;
+    bufferDesc.MipLevels = 1;
+    bufferDesc.SampleDesc.Count = 1;
+    bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    auto buffer = makeProbeResource(
+        device, bufferDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr);
+
+    if (texture == nullptr || buffer == nullptr)
+        return false;
+
+    D3D12_TEXTURE_COPY_LOCATION destination = {};
+    destination.pResource = buffer.get();
+    destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    destination.PlacedFootprint = footprint;
+
+    D3D12_TEXTURE_COPY_LOCATION source = {};
+    source.pResource = texture.get();
+    source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+
+    const D3D12_BOX box = {1, 1, 0, 1 + regionSize, 1 + regionSize, 1};
+    list->CopyTextureRegion(&destination, 0, 0, 0, &source, &box);
+
+    probe.resources.add(std::move(texture));
+    probe.resources.add(std::move(buffer));
+    return true;
+}
+
+// Whether the driver accepts a recording of `record`. Nothing is executed:
+// both operations probed are refused at Close(), which is what makes this
+// cheap enough to run at every device creation. A recording that could not be
+// made - a resource the device would not create - is taken as accepted, there
+// being nothing to refuse.
+template <typename Record>
+bool acceptsRecording(ID3D12Device* device, Record&& record)
+{
+    auto allocator = winrt::com_ptr<ID3D12CommandAllocator>();
+    auto list = winrt::com_ptr<ID3D12GraphicsCommandList>();
+
+    if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                              __uuidof(ID3D12CommandAllocator),
+                                              allocator.put_void()))
+        || FAILED(device->CreateCommandList(0,
+                                            D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                            allocator.get(),
+                                            nullptr,
+                                            __uuidof(ID3D12GraphicsCommandList),
+                                            list.put_void())))
+        return true;
+
+    auto probe = ProbeResources {};
+
+    if (!record(device, list.get(), probe))
+        return true;
+
+    return SUCCEEDED(list->Close());
+}
+
+// Asks the hardware driver, on a device made for the purpose, whether it will
+// take the two recordings the flags in DriverQuirks describe.
+//
+// By trial rather than by adapter name because a name is a guess about a
+// driver and this is the driver's own answer: a fixed driver passes and loses
+// the workaround by itself, and a different driver with the same gap is caught
+// without anyone having heard of it. On a device made for the purpose because
+// the trial is not survivable - the boxed copy removes the device it is
+// recorded on, and the resolve leaves its command list unusable - so nothing
+// the app will use may exist yet. Every object here is released before
+// createHardwareOrWarpDevice runs, which is what lets a fresh device come up
+// on the same adapter afterwards.
+//
+// EACP_D3D12_QUIRKS=1 sets every flag without asking, so the routes around
+// them can be exercised on a driver that does not need them - WARP in CI,
+// for one.
+DriverQuirks probeDriverQuirks()
+{
+    auto quirks = DriverQuirks {};
+
+    if (environmentFlag("EACP_D3D12_QUIRKS"))
+    {
+        quirks.noDepthResolve = true;
+        quirks.noBoxedTextureCopy = true;
+        return quirks;
+    }
+
+    if (forcesWarp())
+        return quirks;
+
+    auto device = winrt::com_ptr<ID3D12Device>();
+
+    if (FAILED(D3D12CreateDevice(nullptr,
+                                 D3D_FEATURE_LEVEL_11_0,
+                                 __uuidof(ID3D12Device),
+                                 device.put_void())))
+        return quirks;
+
+    quirks.noDepthResolve = !acceptsRecording(device.get(), recordDepthResolve);
+    quirks.noBoxedTextureCopy =
+        !acceptsRecording(device.get(), recordBoxedTextureCopy);
+
+    if (quirks.noDepthResolve)
+        LOG("D3D12: this driver refuses a multisampled depth resolve; "
+            "resolving through a shader instead");
+
+    if (quirks.noBoxedTextureCopy)
+        LOG("D3D12: this driver refuses a boxed texture read-back; "
+            "reading whole textures and cropping instead");
+
+    return quirks;
+}
+
 winrt::com_ptr<ID3D12Device> createHardwareOrWarpDevice()
 {
     auto device = winrt::com_ptr<ID3D12Device>();
@@ -57,19 +331,7 @@ winrt::com_ptr<ID3D12Device> createHardwareOrWarpDevice()
         debug->EnableDebugLayer();
 #endif
 
-    // EACP_D3D12_WARP=1 skips the hardware adapter and takes the software one
-    // below. It is a debugging affordance and worth the four lines: WARP is the
-    // reference implementation, so an app that misbehaves on a GPU and behaves
-    // on WARP has found a driver bug rather than its own, and that is otherwise
-    // an expensive thing to establish. Slow enough that it is only ever a
-    // question being answered, never a way to run.
-    std::size_t warpEnvLength = 0;
-    char warpEnv[8] = {};
-    const auto forceWarp =
-        getenv_s(&warpEnvLength, warpEnv, sizeof(warpEnv), "EACP_D3D12_WARP") == 0
-        && warpEnvLength > 1 && warpEnv[0] != '0';
-
-    if (!forceWarp
+    if (!forcesWarp()
         && SUCCEEDED(D3D12CreateDevice(nullptr,
                                        D3D_FEATURE_LEVEL_11_0,
                                        __uuidof(ID3D12Device),
@@ -239,6 +501,9 @@ void D3D12Shared::createAll()
 
 void D3D12Shared::createDevice()
 {
+    // Before the device, and not merely first: the probe's own device has to
+    // be gone before this one is made. See probeDriverQuirks.
+    quirks = probeDriverQuirks();
     device = createHardwareOrWarpDevice();
     adapterName = describeAdapter(device.get());
 }
@@ -417,11 +682,123 @@ ID3D12CommandSignature* D3D12Shared::getDispatchSignature()
     return dispatchSignature.get();
 }
 
+namespace
+{
+// The stand-in for a depth resolve, in HLSL: a triangle that covers the target
+// from three vertex ids and no vertex buffer, and a pixel shader that reads
+// every sample at its pixel and writes the furthest one to SV_Depth - the value
+// RESOLVE_MODE_MAX defines, so a target reads the same on both routes.
+constexpr auto depthResolveSource = R"(
+Texture2DMS<float> source : register(t0);
+
+float4 vertexMain(uint id : SV_VertexID) : SV_Position
+{
+    float2 corner = float2((id << 1) & 2, id & 2);
+    return float4(corner * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+}
+
+float pixelMain(float4 position : SV_Position) : SV_Depth
+{
+    uint width, height, samples;
+    source.GetDimensions(width, height, samples);
+
+    float depth = 0.0;
+
+    for (uint sample = 0; sample < samples; ++sample)
+        depth = max(depth, source.Load(int2(position.xy), sample));
+
+    return depth;
+}
+)";
+
+winrt::com_ptr<ID3DBlob> compileDepthResolveStage(const char* entry,
+                                                  const char* target)
+{
+    auto code = winrt::com_ptr<ID3DBlob>();
+    auto errors = winrt::com_ptr<ID3DBlob>();
+
+    if (FAILED(D3DCompile(depthResolveSource,
+                          std::strlen(depthResolveSource),
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          entry,
+                          target,
+                          D3DCOMPILE_ENABLE_STRICTNESS,
+                          0,
+                          code.put(),
+                          errors.put())))
+    {
+        if (errors != nullptr)
+            LOG(static_cast<const char*>(errors->GetBufferPointer()));
+
+        return nullptr;
+    }
+
+    return code;
+}
+} // namespace
+
+const D3D12Shared::DepthResolveShader&
+    D3D12Shared::getDepthResolveShader(bool withStencil)
+{
+    auto& shader = depthResolveShaders[withStencil ? 1 : 0];
+
+    if (shader.isValid() || device == nullptr)
+        return shader;
+
+    // One table of one SRV at t0, pixel-visible, and nothing else: the pass
+    // binds the multisampled plane and draws.
+    D3D12_DESCRIPTOR_RANGE range = {};
+    range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    range.NumDescriptors = 1;
+
+    const auto parameter = rootTable(&range);
+
+    D3D12_ROOT_SIGNATURE_DESC signatureDesc = {};
+    signatureDesc.NumParameters = 1;
+    signatureDesc.pParameters = &parameter;
+
+    shader.rootSignature = makeRootSignature(device.get(), signatureDesc);
+
+    const auto vertex = compileDepthResolveStage("vertexMain", "vs_5_0");
+    const auto pixel = compileDepthResolveStage("pixelMain", "ps_5_0");
+
+    if (shader.rootSignature == nullptr || vertex == nullptr || pixel == nullptr)
+        return shader;
+
+    // Depth only: no colour target, the test always passing and the write
+    // always on, so every pixel of the triangle lands its sample.
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC desc = {};
+    desc.pRootSignature = shader.rootSignature.get();
+    desc.VS = {vertex->GetBufferPointer(), vertex->GetBufferSize()};
+    desc.PS = {pixel->GetBufferPointer(), pixel->GetBufferSize()};
+    desc.SampleMask = UINT_MAX;
+    desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    desc.RasterizerState.DepthClipEnable = TRUE;
+    desc.DepthStencilState.DepthEnable = TRUE;
+    desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    desc.DSVFormat = depthAttachmentFormat(withStencil);
+    desc.SampleDesc.Count = 1;
+
+    device->CreateGraphicsPipelineState(
+        &desc, __uuidof(ID3D12PipelineState), shader.state.put_void());
+
+    return shader;
+}
+
 void D3D12Shared::recreateAfterDeviceLoss()
 {
     renderRootSignature = nullptr;
     computeRootSignature = nullptr;
     dispatchSignature = nullptr;
+
+    for (auto& shader: depthResolveShaders)
+        shader = {};
+
     device = nullptr;
 
     ++generation;
@@ -893,13 +1270,18 @@ std::uint64_t D3D12Context::submit(CommandContext* commands)
 
     if (FAILED(commands->list->Close()))
     {
-        // An invalid recording (or removed device) must not execute; recycle
-        // the context with its transients released. Nothing reached the GPU, so
-        // its staging slots are free at once rather than behind a fence.
-        commands->transients.clear();
+        // An invalid recording (or removed device) must not execute. Nothing
+        // reached the GPU, so its staging slots are free at once rather than
+        // behind a fence.
+        //
+        // The context is dropped rather than recycled: a list whose Close()
+        // failed cannot be Reset() again on every driver, and one that cannot
+        // be is a pooled context every later recording on it silently loses.
+        // The next acquire() makes a fresh one.
+        reportFailedClose();
         returnStaging(*commands, 0);
         returnConstantPages(*commands, 0);
-        available.push_back(commands);
+        pool.removeItem(*commands);
         return 0;
     }
 
@@ -912,6 +1294,28 @@ std::uint64_t D3D12Context::submit(CommandContext* commands)
     returnConstantPages(*commands, commands->fenceValue);
     available.push_back(commands);
     return commands->fenceValue;
+}
+
+// Once per process, so a recording the driver refuses is a line in the log
+// rather than a frame that quietly went missing. The removal reason is the
+// part worth having: a refused recording and a removed device look the same
+// from Close(), and only the device says which it was.
+void D3D12Context::reportFailedClose() const
+{
+    static auto reported = false;
+
+    if (reported)
+        return;
+
+    reported = true;
+
+    auto* device = getDevice();
+    const auto reason = device != nullptr ? device->GetDeviceRemovedReason() : S_OK;
+
+    char code[16] = {};
+    std::snprintf(code, sizeof(code), "0x%08lX", static_cast<unsigned long>(reason));
+
+    LOG("D3D12Context: a recording failed to close; device removed reason ", code);
 }
 
 void D3D12Context::discard(CommandContext* commands)
