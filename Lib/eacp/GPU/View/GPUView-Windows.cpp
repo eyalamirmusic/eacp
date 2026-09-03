@@ -10,6 +10,7 @@
 #include <eacp/Graphics/Image/Image.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cmath>
 #include <unordered_set>
 
@@ -485,8 +486,33 @@ struct GPUView::Native : DeviceResourceHolder
 
     void checkDeviceRemoved()
     {
-        if (device == nullptr || SUCCEEDED(device->GetDeviceRemovedReason()))
+        if (device == nullptr)
             return;
+
+        const auto reason = device->GetDeviceRemovedReason();
+
+        if (SUCCEEDED(reason))
+            return;
+
+        // Say which of them it was, once. The recovery below is silent by
+        // design - a device replaced under a running app is not an error - but
+        // a device the app *lost* and a device the system replaced take the
+        // same path, and only the reason tells them apart. DEVICE_HUNG
+        // (0x887A0006) and DRIVER_INTERNAL_ERROR (0x887A0020) mean the app
+        // gave the GPU work it could not finish; DEVICE_REMOVED (0x887A0005)
+        // and DEVICE_RESET (0x887A0007) usually mean it did not.
+        static auto reported = false;
+
+        if (!reported)
+        {
+            reported = true;
+
+            char code[16] = {};
+            std::snprintf(code, sizeof(code), "0x%08lX",
+                          static_cast<unsigned long>(reason));
+
+            LOG("GPUView: the D3D12 device was removed, reason ", code);
+        }
 
         // Recovery rebuilds this view's swapchain, so run it from a fresh
         // stack frame instead of re-entering while render() is live. The 2D

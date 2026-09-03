@@ -18,11 +18,21 @@ namespace eacp::GPU
 
 // The binding model both root signatures implement. Slots map straight onto
 // shader registers: uniform slot n = b<n>, input buffer slot n = t<n>, output
-// buffer slot n = u<n>, texture slot n = t<n>/s<n> — the same registers the
-// shader emitter and the hand-written HLSL in tests and examples declare.
+// buffer slot n = u<n>, texture slot n = t<n> — the same registers the shader
+// emitter and the hand-written HLSL in tests and examples declare. A texture's
+// *sampler* is the one binding that does not follow its slot: there are
+// samplingConfigurations static samplers at s0.. and every texture shares the
+// one its declared sampling picks, so a slot count costs no sampler registers.
+// See TextureSampling.
 constexpr int maxUniformSlots = 2;
 constexpr int maxBufferSlots = ComputePass::maxBufferSlots;
-constexpr int maxTextureSlots = 4;
+
+// Eight, and the number is a shader model limit rather than a hardware one: the
+// slots are single-descriptor tables, which cost one root DWORD each, so this
+// is nearly free. It was four until a port needed five in one program - Doom 3
+// lights a surface from a bump map, a falloff, a light projection, a diffuse
+// map and a specular map, none of which fold into another.
+constexpr int maxTextureSlots = 8;
 
 // Render root signature parameter layout: root CBVs per stage, then one
 // single-descriptor table per texture slot (SRV, then sampler — tables cannot

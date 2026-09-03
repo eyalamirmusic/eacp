@@ -241,9 +241,14 @@ enum class TextureAddressMode
 // any effect. Static samplers are unaffected, being nowhere near a heap.
 //
 // Since the configuration space is tiny, the root signature simply declares one
-// static sampler for every (texture slot, configuration) pair and the emitter
-// points each texture's sampler at the matching register. Metal has no such
-// bug, but reads the same declaration so the two backends cannot drift apart.
+// static sampler per configuration - s0..s(samplingConfigurations - 1) - and
+// the emitter points every texture at the one its declared sampling picks. Two
+// textures sampled the same way share a sampler, which is exactly what a
+// sampler is; the alternative, one per (slot, configuration) pair, was what
+// this used to be and it made the sampler registers the thing that capped how
+// many textures a shader could bind. Metal has no such bug, but declares a
+// sampler per texture because MSL passes them as function arguments rather
+// than binding them to registers.
 //
 // The cost is that the sampling is fixed when the shader is compiled rather
 // than when a texture is bound: one shader samples one slot exactly one way.
@@ -256,10 +261,10 @@ struct TextureSampling
     TextureAddressMode addressMode = TextureAddressMode::Clamp;
 };
 
-// The number of distinct sampling configurations, and the index of one. The
-// D3D12 root signature reserves this many static samplers per texture slot, and
-// the register a texture's sampler lands on is slot * this + index; the Metal
-// backend caches this many MTLSamplerStates on the Device.
+// The number of distinct sampling configurations, and the index of one. On
+// D3D12 this is the entire static sampler count - a texture's sampler lands on
+// register s<index>, whatever slot the texture is in - and the Metal backend
+// caches this many MTLSamplerStates on the Device.
 constexpr int samplingConfigurations = 4;
 
 constexpr int samplingIndex(const TextureSampling& sampling)

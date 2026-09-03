@@ -431,8 +431,9 @@ public:
     // render signature, so buffers start above every texture slot - the mirror
     // of ComputePass::textureRegisterBase, where a kernel's buffers hold the low
     // registers and its textures start above them. D3D12Types.h holds the
-    // emitter and the root signature to this number.
-    static constexpr int bufferRegisterBase = 4;
+    // emitter and the root signature to this number, and static_asserts that it
+    // is not below maxTextureSlots.
+    static constexpr int bufferRegisterBase = 8;
 
 private:
     // Flushes every participant, once. Called by end() on both backends before

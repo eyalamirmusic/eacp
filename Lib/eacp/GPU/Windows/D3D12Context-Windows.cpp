@@ -1,4 +1,4 @@
-#include <eacp/Core/Utils/WinInclude.h>
+﻿#include <eacp/Core/Utils/WinInclude.h>
 #include "../Common.h"
 
 #include "D3D12Context.h"
@@ -12,11 +12,23 @@
 #include <algorithm>
 #include <cassert>
 
+#include <cstdlib>
+
 namespace eacp::GPU
 {
 namespace
 {
-constexpr UINT textureHeapCapacity = 1024;
+// How many textures can exist at once. It is a descriptor each, held for the
+// texture's lifetime, and the heap is shader-visible so it cannot be grown
+// without invalidating every GPU handle already handed out - which is why the
+// number is generous rather than tuned. 64K descriptors is 2 MB of heap on
+// every device eacp runs on, and the count it replaces was 1024: a game level
+// is a couple of thousand textures (Doom 3's first map is about 2,100), so the
+// old ceiling was one an app could reach by loading its content.
+//
+// Reaching it is not graceful even now - allocateFrom below returns an invalid
+// slot, which it logs - so the number matters.
+constexpr UINT textureHeapCapacity = 65536;
 constexpr UINT samplerHeapCapacity = 256;
 
 // Root CBVs read in 256-byte units, so transient constant uploads round up.
@@ -45,10 +57,23 @@ winrt::com_ptr<ID3D12Device> createHardwareOrWarpDevice()
         debug->EnableDebugLayer();
 #endif
 
-    if (SUCCEEDED(D3D12CreateDevice(nullptr,
-                                    D3D_FEATURE_LEVEL_11_0,
-                                    __uuidof(ID3D12Device),
-                                    device.put_void())))
+    // EACP_D3D12_WARP=1 skips the hardware adapter and takes the software one
+    // below. It is a debugging affordance and worth the four lines: WARP is the
+    // reference implementation, so an app that misbehaves on a GPU and behaves
+    // on WARP has found a driver bug rather than its own, and that is otherwise
+    // an expensive thing to establish. Slow enough that it is only ever a
+    // question being answered, never a way to run.
+    std::size_t warpEnvLength = 0;
+    char warpEnv[8] = {};
+    const auto forceWarp =
+        getenv_s(&warpEnvLength, warpEnv, sizeof(warpEnv), "EACP_D3D12_WARP") == 0
+        && warpEnvLength > 1 && warpEnv[0] != '0';
+
+    if (!forceWarp
+        && SUCCEEDED(D3D12CreateDevice(nullptr,
+                                       D3D_FEATURE_LEVEL_11_0,
+                                       __uuidof(ID3D12Device),
+                                       device.put_void())))
         return device;
 
     // Fallback to WARP software renderer (also the headless CI path).
@@ -181,7 +206,7 @@ D3D12Shared::D3D12Shared()
     // device voluntarily, so a healthy D3D12 device is left alone.
     //
     // Registered here rather than by Device, because there is one of these and
-    // there may be any number of Devices — a listener each would rebuild the
+    // there may be any number of Devices â€” a listener each would rebuild the
     // swapchains once per Device.
     Graphics::addRenderingDeviceReplacedListener(
         []
@@ -257,9 +282,9 @@ void D3D12Shared::createRootSignatures()
                            D3D12_SHADER_VISIBILITY_PIXEL);
     }
 
-    // A static sampler for every (texture slot, sampling configuration) pair, at
-    // register s(slot * samplingConfigurations + configuration) - the register
-    // ShaderEmitter points each texture's sampler at.
+    // One static sampler per sampling configuration, at register
+    // s<configuration> - the register ShaderEmitter points every texture with
+    // that sampling at, whatever slot it is in.
     //
     // Samplers are declared here rather than bound per draw from a descriptor
     // heap because a sampler descriptor table cannot be relied on: a
@@ -267,38 +292,32 @@ void D3D12Shared::createRootSignatures()
     // to descriptor 0 of the bound heap, so all textures in the process sample
     // through whichever sampler happens to be first. Static samplers never reach
     // a heap and are unaffected. See TextureSampling.
-    D3D12_STATIC_SAMPLER_DESC
-    staticSamplers[maxTextureSlots * samplingConfigurations] = {};
+    D3D12_STATIC_SAMPLER_DESC staticSamplers[samplingConfigurations] = {};
 
-    for (auto slot = 0; slot < maxTextureSlots; ++slot)
+    for (auto configuration = 0; configuration < samplingConfigurations;
+         ++configuration)
     {
-        for (auto configuration = 0; configuration < samplingConfigurations;
-             ++configuration)
-        {
-            const auto linear = (configuration & 2) != 0;
-            const auto repeat = (configuration & 1) != 0;
-            const auto address = repeat ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
-                                        : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        const auto linear = (configuration & 2) != 0;
+        const auto repeat = (configuration & 1) != 0;
+        const auto address = repeat ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
+                                    : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
 
-            auto& sampler =
-                staticSamplers[slot * samplingConfigurations + configuration];
+        auto& sampler = staticSamplers[configuration];
 
-            sampler.Filter = linear ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
-                                    : D3D12_FILTER_MIN_MAG_MIP_POINT;
-            sampler.AddressU = address;
-            sampler.AddressV = address;
-            sampler.AddressW = address;
-            sampler.MaxLOD = D3D12_FLOAT32_MAX;
+        sampler.Filter = linear ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
+                                : D3D12_FILTER_MIN_MAG_MIP_POINT;
+        sampler.AddressU = address;
+        sampler.AddressV = address;
+        sampler.AddressW = address;
+        sampler.MaxLOD = D3D12_FLOAT32_MAX;
 
-            // Not left at 0: zero is not a legal D3D12_COMPARISON_FUNC (they run
-            // 1..8), and a static sampler is validated when the root signature is
-            // serialised rather than quietly ignored.
-            sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
-            sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
-            sampler.ShaderRegister =
-                static_cast<UINT>(slot * samplingConfigurations + configuration);
-            sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-        }
+        // Not left at 0: zero is not a legal D3D12_COMPARISON_FUNC (they run
+        // 1..8), and a static sampler is validated when the root signature is
+        // serialised rather than quietly ignored.
+        sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+        sampler.ShaderRegister = static_cast<UINT>(configuration);
+        sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     }
 
     D3D12_ROOT_SIGNATURE_DESC renderDesc = {};
@@ -329,7 +348,7 @@ void D3D12Shared::createRootSignatures()
 
     // A texture is not a root descriptor on either side of the read/write
     // split: root descriptors are buffer views, so both go through
-    // single-descriptor tables. Their registers start above the buffers' — the
+    // single-descriptor tables. Their registers start above the buffers' â€” the
     // two slot spaces share t and u. See computeTextureRegister.
     for (auto slot = 0; slot < maxTextureSlots; ++slot)
     {
@@ -352,10 +371,9 @@ void D3D12Shared::createRootSignatures()
     // one read the identical emitted source. Only the visibility differs, for
     // the reason rootTable takes one: a compute root signature accepts nothing
     // but ALL.
-    constexpr auto samplerCount = maxTextureSlots * samplingConfigurations;
-    D3D12_STATIC_SAMPLER_DESC computeSamplers[samplerCount] = {};
+    D3D12_STATIC_SAMPLER_DESC computeSamplers[samplingConfigurations] = {};
 
-    for (auto i = 0; i < samplerCount; ++i)
+    for (auto i = 0; i < samplingConfigurations; ++i)
     {
         computeSamplers[i] = staticSamplers[i];
         computeSamplers[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -469,8 +487,8 @@ void D3D12Context::createAll()
 
 // Tier 1 hardware requires every descriptor table the root signature declares
 // to be populated, so the slots a shader does not use still need something
-// bound. It has to be something permanently valid: the obvious candidate — the
-// heap's first descriptor — belongs to whichever texture allocated it, and
+// bound. It has to be something permanently valid: the obvious candidate â€” the
+// heap's first descriptor â€” belongs to whichever texture allocated it, and
 // descriptor slots are recycled through a free list, so that descriptor can
 // come to describe a destroyed resource. Binding it then points the GPU at
 // freed memory, which hangs the device rather than failing cleanly.
@@ -619,6 +637,22 @@ DescriptorSlot D3D12Context::allocateFrom(DescriptorAllocator& allocator)
     }
     else
     {
+        // The heap is shader-visible and cannot be grown in place, so there is
+        // nothing to do but say so. Silence here is expensive: the caller gets
+        // a slot whose handles are null, writes a view to a null CPU handle and
+        // binds a null GPU handle, and what comes back is the device removed
+        // with DXGI_ERROR_DRIVER_INTERNAL_ERROR several frames later.
+        static auto reported = false;
+
+        if (!reported)
+        {
+            reported = true;
+            LOG("D3D12Context: out of descriptors - the heap holds ",
+                allocator.capacity,
+                " and every live texture needs one. Textures created from here "
+                "on will not be sampleable.");
+        }
+
         return {};
     }
 
@@ -671,7 +705,7 @@ void D3D12Context::deferReleaseUnknown(winrt::com_ptr<IUnknown> object)
     // that can reference the object from here on is one that already exists: no
     // new command can name it, its owner is gone. But one of those lists may
     // still be open, and an open list's fence value is not assigned until it
-    // submits — so there is nothing sound to stamp it with until nothing is
+    // submits â€” so there is nothing sound to stamp it with until nothing is
     // recording. purgeRetired does that.
     //
     // Stamping it here with the value the *next* signal will carry is what this
@@ -1081,7 +1115,7 @@ D3D12Context::ConstantPage* D3D12Context::pageFor(CommandContext& commands,
     }
 
     // A block larger than the page size gets a page of its own rather than
-    // failing — uniform blocks are capped well below it, but nothing here
+    // failing â€” uniform blocks are capped well below it, but nothing here
     // depends on that being true.
     auto pageBytes = std::max(constantPageBytes, bytes);
     auto resource = makeUploadBuffer(nullptr, pageBytes);

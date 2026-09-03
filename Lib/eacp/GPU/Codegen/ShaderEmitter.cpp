@@ -135,6 +135,15 @@ std::string helperDefinitions(const ShaderGraph& graph, Backend backend)
     return definitions;
 }
 
+// The HLSL sampler a texture with this sampling reads through. Named for the
+// configuration rather than for the texture, because that is what it is: the
+// root signature declares samplingConfigurations static samplers and every
+// texture sampled that way shares one. See TextureSampling.
+std::string hlslSamplerName(const TextureSampling& sampling)
+{
+    return "samplerConfig" + std::to_string(samplingIndex(sampling));
+}
+
 // Prints one stage's expressions. Nodes the stage plan named as locals print
 // as tN references; everything else prints inline. print() spells out a node's
 // own expression (used for both inline nodes and local definitions), ref() is
@@ -270,13 +279,23 @@ struct ExprPrinter
 
             case ExprKind::Sample:
             {
-                // Texture sample at a float2 coordinate, through the sampler
-                // declared at the same index as the texture. A second argument
-                // is the mip level the shader picked, which each backend spells
+                // Texture sample at a float2 coordinate. A second argument is
+                // the mip level the shader picked, which each backend spells
                 // its own way: Metal as an extra argument to the same call,
                 // HLSL as a different method.
+                //
+                // The two backends also name the sampler differently, and that
+                // is the one place their declarations genuinely differ. MSL
+                // passes a sampler as a function argument, so there is one per
+                // texture and it carries the texture's index; HLSL binds one to
+                // a register, and there is one per sampling configuration that
+                // every texture declaring that sampling shares. See
+                // TextureSampling.
                 auto name = "texture" + std::to_string(expr.index);
-                auto sampler = "sampler" + std::to_string(expr.index);
+                auto sampler =
+                    backend == Backend::Metal
+                        ? "sampler" + std::to_string(expr.index)
+                        : hlslSamplerName(graph.textureSampling(expr.index));
                 auto uv = ref(expr.args[0]);
 
                 if (expr.args.size() < 2)
@@ -1302,6 +1321,39 @@ const char* hlslTextureType(TextureKind kind)
     }
 }
 
+// The SamplerState globals an HLSL stage needs: one per sampling configuration
+// any of its readable textures asked for, at the register the root signature
+// put that configuration's static sampler on.
+//
+// Declaring them per configuration rather than per texture is what stops the
+// sampler registers from capping maxTextureSlots. HLSL has 16 of them
+// (s0..s15), so one sampler per (slot, configuration) pair - which is what this
+// emitted until a shader needed a fifth texture - ran out at four slots. Metal
+// never had the question, because MSL passes a sampler as a function argument
+// rather than binding it to a register, so the Metal path below still declares
+// one per texture.
+//
+// A write-access texture is skipped for the same reason it is declared as an
+// RWTexture2D: there is nothing to sample it with.
+std::string hlslSamplerDeclarations(const ShaderGraph& graph)
+{
+    bool used[samplingConfigurations] = {};
+
+    for (auto i = 0; i < graph.textureCount(); ++i)
+        if (graph.textureAccess(i) != TextureAccess::Write)
+            used[samplingIndex(graph.textureSampling(i))] = true;
+
+    auto source = std::string {};
+
+    for (auto configuration = 0; configuration < samplingConfigurations;
+         ++configuration)
+        if (used[configuration])
+            source += "SamplerState samplerConfig" + std::to_string(configuration)
+                      + " : register(s" + std::to_string(configuration) + ");\n";
+
+    return source;
+}
+
 // Compute kernel emission. The expression printer is the render one; only the
 // scaffolding differs: storage buffers and the uniform block are MSL kernel
 // parameters but HLSL globals, and the work-item id arrives as a builtin
@@ -1442,14 +1494,11 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                 continue;
             }
 
-            auto samplerRegister =
-                i * samplingConfigurations + samplingIndex(graph.textureSampling(i));
-
             source += std::string(hlslTextureType(graph.textureKind(i))) + " texture"
-                      + slot + " : register(t" + reg + ");\nSamplerState sampler"
-                      + slot + " : register(s" + std::to_string(samplerRegister)
-                      + ");\n";
+                      + slot + " : register(t" + reg + ");\n";
         }
+
+        source += hlslSamplerDeclarations(graph);
 
         if (graph.textureCount() > 0)
             source += "\n";
@@ -1566,21 +1615,17 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     // share an index, matching RenderPass::setFragmentTexture.
     if (backend == Backend::DirectX)
     {
-        // The texture lands on t<slot>, but its sampler lands on a register
-        // chosen by how the shader declared the texture should be sampled: the
-        // root signature declares a static sampler for every (slot,
-        // configuration) pair, so picking the register picks the sampler. See
-        // TextureSampling for why samplers cannot come from a descriptor table.
+        // The texture lands on t<slot>. Its sampler does not land beside it:
+        // the root signature declares one static sampler per sampling
+        // configuration and every texture that declared that sampling reads the
+        // same one, which is what keeps a slot count from costing sampler
+        // registers. See TextureSampling, and hlslSamplerDeclarations.
         for (auto i = 0; i < graph.textureCount(); ++i)
-        {
-            auto samplerRegister =
-                i * samplingConfigurations + samplingIndex(graph.textureSampling(i));
-
             source += std::string(hlslTextureType(graph.textureKind(i))) + " texture"
                       + std::to_string(i) + " : register(t" + std::to_string(i)
-                      + ");\nSamplerState sampler" + std::to_string(i)
-                      + " : register(s" + std::to_string(samplerRegister) + ");\n";
-        }
+                      + ");\n";
+
+        source += hlslSamplerDeclarations(graph);
 
         if (graph.textureCount() > 0)
             source += "\n";
