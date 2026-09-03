@@ -2,6 +2,8 @@
 
 #include "../Common.h"
 
+#include <cstddef>
+
 namespace eacp::GPU
 {
 class Device;
@@ -44,24 +46,153 @@ enum class TextureFormat
     // Renderable on both backends and readable back through read(); filtering
     // it is *not* guaranteed, so sample it Nearest for the same reason
     // RGBA32Float says so.
-    R32Float
+    R32Float,
+
+    // Block-compressed: a 4x4 block of texels stored as one 8- or 16-byte
+    // record that the sampler decodes on its way out. The picture costs a
+    // quarter or an eighth of what it does uncompressed - in memory, over the
+    // bus and in every cache in between - and it stays compressed on the
+    // device, which is the whole difference between this and decompressing at
+    // load.
+    //
+    // **eacp neither compresses nor decompresses.** These are for content that
+    // arrived compressed - a .dds file, an atlas some tool produced - and the
+    // blocks reach the device exactly as they came off disk. Compressing here
+    // would mean choosing an encoder, and every encoder makes a different
+    // picture out of the same pixels.
+    //
+    // BC1 is 8 bytes a block: three colour channels and, in the half of the
+    // encoding where the two endpoints are ordered the other way round, a
+    // one-bit alpha - DXT1 with or without punch-through is this one format on
+    // both APIs. BC2 (DXT3) and BC3 (DXT5) are 16 bytes and differ only in how
+    // they spend the extra eight: four explicit bits of alpha per texel, or two
+    // alpha endpoints and a three-bit index. BC7 is 16 and is the modern one -
+    // eight modes, and near-lossless where the older three band visibly.
+    //
+    // No sRGB variants, because eacp has no sRGB formats at all.
+    //
+    // **What a compressed texture cannot be**, refused rather than
+    // half-supported and in the same words on both backends: a renderTarget or
+    // a computeWrite target, there being no per-texel address for a pass or a
+    // kernel to write to. read() and update(region, ...) are no-ops on one - a
+    // read-back would have to hand back blocks in a layout nothing here
+    // consumes, and a region would have to be block-aligned, which nothing here
+    // needs. And `mipmapped` gets it exactly one level: the CPU filter averages
+    // texels, and a block is not four numbers to take a mean of.
+    // TextureDescriptor::mipLevels is how a compressed texture gets a chain,
+    // and is the only way it can.
+    //
+    // Not every device has them. Every Mac does, and every feature-level-11
+    // Direct3D device is required to; an Apple-family iOS GPU mostly does not.
+    // Ask Device::supportsBlockCompression - a texture asking for a format the
+    // device refuses is invalid, exactly as a refused sampleCount is.
+    BC1RGBA,
+    BC2RGBA,
+    BC3RGBA,
+    BC7RGBA
 };
 
+// Whether one record of this format covers a 4x4 block of texels rather than a
+// single one. The formats that do are sized differently from the rest all the
+// way down, which is what levelBytesPerRow and levelBytes below exist to hide
+// from everything that only wants the size of a level.
+constexpr bool isCompressedFormat(TextureFormat format)
+{
+    return format == TextureFormat::BC1RGBA || format == TextureFormat::BC2RGBA
+           || format == TextureFormat::BC3RGBA || format == TextureFormat::BC7RGBA;
+}
+
+// Bytes one 4x4 block occupies, and 0 for a format that has no blocks. Both
+// APIs round a level up to whole blocks, so a 2x2 level of a compressed texture
+// is still one block of this size and a 1x1 level is too.
+constexpr int bytesPerBlock(TextureFormat format)
+{
+    switch (format)
+    {
+        case TextureFormat::BC1RGBA:
+            return 8;
+
+        case TextureFormat::BC2RGBA:
+        case TextureFormat::BC3RGBA:
+        case TextureFormat::BC7RGBA:
+            return 16;
+
+        case TextureFormat::RGBA8Unorm:
+        case TextureFormat::BGRA8Unorm:
+        case TextureFormat::R8Unorm:
+        case TextureFormat::RG8Unorm:
+        case TextureFormat::RGBA16Float:
+        case TextureFormat::RGBA32Float:
+        case TextureFormat::R32Float:
+            break;
+    }
+
+    return 0;
+}
+
+// Bytes one texel occupies, and 0 for a block-compressed format, which has no
+// per-texel size at all - levelBytesPerRow is the number a compressed upload
+// wants.
+//
+// Exhaustive on purpose. This answered 4 for anything it did not recognise
+// until the block formats arrived, which is a wrong number rather than a
+// missing case: a format added without a size here is now a -Wswitch warning
+// instead of a texture uploaded at someone else's stride.
 constexpr int bytesPerPixel(TextureFormat format)
 {
     switch (format)
     {
         case TextureFormat::R8Unorm:
             return 1;
+
         case TextureFormat::RG8Unorm:
             return 2;
+
+        case TextureFormat::RGBA8Unorm:
+        case TextureFormat::BGRA8Unorm:
+        case TextureFormat::R32Float:
+            return 4;
+
         case TextureFormat::RGBA16Float:
             return 8;
+
         case TextureFormat::RGBA32Float:
             return 16;
-        default:
-            return 4;
+
+        case TextureFormat::BC1RGBA:
+        case TextureFormat::BC2RGBA:
+        case TextureFormat::BC3RGBA:
+        case TextureFormat::BC7RGBA:
+            break;
     }
+
+    return 0;
+}
+
+// A level's row pitch when it is tightly packed: bytes per row of texels, or
+// bytes per row of *blocks* for a compressed format, where one row covers four
+// rows of texels.
+constexpr std::size_t levelBytesPerRow(TextureFormat format, int width)
+{
+    if (isCompressedFormat(format))
+        return (std::size_t) ((width + 3) / 4) * (std::size_t) bytesPerBlock(format);
+
+    return (std::size_t) width * (std::size_t) bytesPerPixel(format);
+}
+
+// How many rows of that pitch a level holds: its height in texels, or in blocks
+// of four.
+constexpr int levelRows(TextureFormat format, int height)
+{
+    return isCompressedFormat(format) ? (height + 3) / 4 : height;
+}
+
+// One level of a texture this size, tightly packed - and the unit every layout
+// in this header is written in: a whole 2D texture, one face of a cube, one
+// level of a chain the caller supplied.
+constexpr std::size_t levelBytes(TextureFormat format, int width, int height)
+{
+    return levelBytesPerRow(format, width) * (std::size_t) levelRows(format, height);
 }
 
 constexpr bool isFloatFormat(TextureFormat format)
@@ -188,7 +319,48 @@ struct TextureDescriptor
     // chain. update() rebuilds it; update(region, ...) does not - a partial
     // upload has no way to know what the rest of the texture holds, so it
     // refreshes level 0 and leaves the levels below it as they were.
+    //
+    // A block-compressed format gets exactly one level whatever this says. The
+    // filter averages texels and a 4x4 block is not four numbers to take a mean
+    // of, so building a chain would mean decoding, filtering and re-encoding
+    // with an encoder eacp does not have. mipLevels below is how such a texture
+    // gets a chain - the one its compressor already built.
     bool mipmapped = false;
+
+    // How many levels the pixels passed in already hold, for a caller that
+    // built its own chain. 0 - the default - is exactly what it was before this
+    // existed: one level, or the whole chain eacp builds when `mipmapped` says
+    // so.
+    //
+    // Above 0, `pixels` is N levels tightly packed with level 0 first, level i
+    // being levelBytes(format, mipExtent(width, i), mipExtent(height, i)) - the
+    // layout MipChain already produces, so a chain eacp built and a chain a
+    // .dds file carries are the same block of bytes. They are uploaded as they
+    // arrive, with no filter of eacp's own anywhere near them.
+    //
+    // **Two callers want this, for different reasons.** A compressed texture
+    // has no other way to have a chain at all, blocks being unaverageable, and
+    // every .dds file carries the one its compressor produced. And an
+    // uncompressed one may want a filter eacp does not have: Doom 3's own mip
+    // builder can preserve a zero border, so a projected light's low levels stay
+    // dark at the edge where an unweighted average spills light past it.
+    //
+    // **A descriptor field rather than an update() overload**, because both
+    // APIs fix a texture's level count when the resource is created - a chain
+    // handed over afterwards would have nowhere to go. eacp's own builder stays
+    // the default and becomes one way of getting a chain rather than the only
+    // one.
+    //
+    // Refused rather than reconciled, each yielding an invalid texture: with
+    // `mipmapped`, which says the opposite thing about who builds the chain;
+    // above mipLevelCount(width, height), which is more levels than the size
+    // has; with null pixels, there being no chain to take and nothing to fill
+    // the levels with; on a renderTarget or a computeWrite texture, whose pixels
+    // come from the GPU so there was never a chain to hand over; and on a cube,
+    // whose faces would each carry one and where nothing here can pin which
+    // level a direction sampled. And bytesPerRow must be 0 on such a texture's
+    // update(), the levels being tightly packed by definition.
+    int mipLevels = 0;
 
     // Whether a pass rendering into this texture gets a depth buffer, which is
     // what a pipeline built with RenderPipelineDescriptor::depth tests against
@@ -275,7 +447,9 @@ struct TextureDescriptor
     // width and height must be equal; six faces of a rectangle is a shape
     // neither API has. A cube asking for renderTarget or computeWrite is refused
     // rather than half-supported, there being no way here to say which face a
-    // pass or a kernel would write.
+    // pass or a kernel would write. A cube may be compressed - the six faces are
+    // each levelBytes of blocks, in the same order - but not with a supplied
+    // mipLevels, for the reason that field gives.
     //
     // mipmapped builds a chain per face out of that face's own pixels, which is
     // what both APIs' own generators do: no level is ever averaged across a
@@ -284,10 +458,15 @@ struct TextureDescriptor
 };
 
 // A texture sampled by the fragment stage (MTLTexture on Metal, a D3D12
-// resource with its SRV descriptor on Windows). Create via
-// Device::makeTexture with tightly packed pixels (the format's
-// bytesPerPixel each), row 0 at the top, or null pixels for an
+// resource with its SRV descriptor on Windows). Create via Device::makeTexture
+// with tightly packed pixels, row 0 at the top, or null pixels for an
 // uninitialised texture. Bind with RenderPass::setFragmentTexture.
+//
+// **What "tightly packed" means is levelBytes of the format**, which is the
+// format's bytesPerPixel per texel for the ordinary formats and one 8- or
+// 16-byte record per 4x4 block for the compressed ones. The block is one level
+// of one face unless the descriptor asked for more: six faces in a row for a
+// cube, mipLevels levels in a row for a chain the caller built.
 //
 // Two dimensionalities, decided by TextureDescriptor::cube: a 2D image sampled
 // with a Float2, or six square faces sampled with a Float3 direction. They are
@@ -329,8 +508,10 @@ public:
     bool isComputeWritable() const;
 
     // How many mip levels this texture actually has: 1 unless it asked for a
-    // chain and got one. A format the chain builder does not know how to average
-    // yields 1 rather than a texture whose lower levels are uninitialised.
+    // chain and got one, and TextureDescriptor::mipLevels where the caller
+    // supplied the chain itself. A format the chain builder does not know how to
+    // average - every compressed one - yields 1 rather than a texture whose
+    // lower levels are uninitialised.
     int mipLevels() const;
 
     // Whether a pass into this texture carries a depth buffer, which is what a
@@ -368,6 +549,13 @@ public:
     // descriptor's `cube` describes - the same block of pixels the texture was
     // created from. There is no way to replace one face, for the reason there
     // is no region form below.
+    //
+    // On a compressed texture, or one created with TextureDescriptor::mipLevels,
+    // it takes the same block the constructor took - the blocks of every level,
+    // tightly packed - and **bytesPerRow must be 0**. Both layouts are tightly
+    // packed by definition, so a stride there is a number that can only be
+    // wrong; a nonzero one is a no-op rather than an upload at a pitch nothing
+    // means.
     void update(const void* pixels, std::size_t bytesPerRow = 0);
 
     // Re-uploads one sub-rectangle, leaving the rest of the texture untouched.
@@ -391,6 +579,12 @@ public:
     // A no-op on a cube, which has six rectangles this could mean and no
     // argument to say which. Quietly writing +X would be exactly the kind of
     // silent wrong answer the out-of-bounds rule above exists to avoid.
+    //
+    // A no-op on a compressed texture too. A region there would have to start
+    // and end on a 4x4 block boundary, so the rect a caller wrote and the rect
+    // the GPU updated would differ by up to three texels a side - and nothing
+    // that wants this wants it for compressed content, a glyph atlas being
+    // uploaded a glyph at a time as it is rasterized.
     void update(const Graphics::Rect& region,
                 const void* pixels,
                 std::size_t bytesPerRow = 0);
@@ -420,6 +614,12 @@ public:
     // inside the texture — not clamped, for the reason update() gives. Also on a
     // cube, which has six faces and no way here to name one, exactly as the
     // region update has not.
+    //
+    // And a no-op on a compressed texture. Handing back the blocks would need a
+    // layout of its own and a decoder at the other end, and handing back texels
+    // would need a decoder here - while the things this exists for, a screenshot
+    // and a test's assertion, read a render target, which a compressed texture
+    // cannot be.
     void read(void* dst, std::size_t bytesPerRow = 0) const;
     void read(const Graphics::Rect& region,
               void* dst,

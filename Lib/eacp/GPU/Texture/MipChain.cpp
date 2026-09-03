@@ -157,28 +157,9 @@ void halveHalves(const std::uint8_t* source,
 }
 } // namespace
 
-int mipExtent(int extent, int level)
-{
-    const auto shifted = extent >> level;
-    return shifted > 1 ? shifted : 1;
-}
-
-int mipLevelCount(int width, int height)
-{
-    if (width <= 0 || height <= 0)
-        return 0;
-
-    auto levels = 1;
-    auto largest = width > height ? width : height;
-
-    while (largest > 1)
-    {
-        largest /= 2;
-        ++levels;
-    }
-
-    return levels;
-}
+// mipExtent, mipLevelCount and mipChainBytes are constexpr in the header: they
+// are arithmetic over a size, and a caller whose size is known at compile time
+// should be able to size a buffer with them.
 
 MipChain buildMipChain(const void* pixels,
                        int width,
@@ -189,6 +170,12 @@ MipChain buildMipChain(const void* pixels,
     auto chain = MipChain {};
 
     if (pixels == nullptr || width <= 0 || height <= 0)
+        return chain;
+
+    // Nothing below here can average a 4x4 block, so a compressed format leaves
+    // with an empty chain rather than with levels sized and never written. See
+    // canBuildMipChain.
+    if (!canBuildMipChain(format))
         return chain;
 
     const auto texelBytes = bytesPerPixel(format);
@@ -262,6 +249,16 @@ MipChain buildMipChain(const void* pixels,
                             destinationWidth,
                             destinationHeight,
                             texelBytes / (int) sizeof(float));
+                break;
+
+            // Turned away above, before a single level was sized. Named here
+            // rather than left to a default so that a format added without a
+            // filter is a -Wswitch warning, which is what caught R32Float
+            // reaching this switch with no branch to land on.
+            case TextureFormat::BC1RGBA:
+            case TextureFormat::BC2RGBA:
+            case TextureFormat::BC3RGBA:
+            case TextureFormat::BC7RGBA:
                 break;
         }
     }

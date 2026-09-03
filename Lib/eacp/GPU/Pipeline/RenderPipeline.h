@@ -25,10 +25,18 @@ enum class PixelFormat
     R32Float
 };
 
+// Exhaustive rather than defaulted, so that a texture format added without an
+// attachment format is a -Wswitch warning here rather than a pipeline silently
+// built against RGBA8. The formats that fall through are the ones no pass can
+// render into anyway: the one- and two-channel byte formats, which PixelFormat
+// has no member for, and every block-compressed one, which cannot be a render
+// target at all.
 constexpr PixelFormat pixelFormatFor(TextureFormat format)
 {
     switch (format)
     {
+        case TextureFormat::RGBA8Unorm:
+            return PixelFormat::RGBA8Unorm;
         case TextureFormat::BGRA8Unorm:
             return PixelFormat::BGRA8Unorm;
         case TextureFormat::RGBA16Float:
@@ -37,9 +45,17 @@ constexpr PixelFormat pixelFormatFor(TextureFormat format)
             return PixelFormat::RGBA32Float;
         case TextureFormat::R32Float:
             return PixelFormat::R32Float;
-        default:
-            return PixelFormat::RGBA8Unorm;
+
+        case TextureFormat::R8Unorm:
+        case TextureFormat::RG8Unorm:
+        case TextureFormat::BC1RGBA:
+        case TextureFormat::BC2RGBA:
+        case TextureFormat::BC3RGBA:
+        case TextureFormat::BC7RGBA:
+            break;
     }
+
+    return PixelFormat::RGBA8Unorm;
 }
 
 // How the vertex stream assembles into primitives. Fixed on the pipeline

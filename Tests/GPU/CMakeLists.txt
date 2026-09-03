@@ -47,6 +47,8 @@ if (APPLE OR WIN32)
             StencilTests.cpp
             ViewportTests.cpp
             MipmapTests.cpp
+            SuppliedMipChainTests.cpp
+            CompressedTextureTests.cpp
             TextureReadTests.cpp
             CubeTextureTests.cpp
             ExternalGeometryTests.cpp

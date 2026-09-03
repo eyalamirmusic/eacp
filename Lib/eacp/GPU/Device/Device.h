@@ -114,6 +114,23 @@ public:
     //
     bool supportsSampleCount(int count) const;
 
+    // Whether the block-compressed formats - BC1, BC2, BC3 and BC7 - can be
+    // created on this device. Every Mac answers yes, and every Direct3D device
+    // eacp runs on is required to; an Apple-family iOS GPU mostly answers no.
+    //
+    // Below macOS 11 or iOS 16.4 this answers no because the *query* does not
+    // exist there, not because the hardware lacks the formats - Metal has had
+    // them on macOS since 10.11. Answering no is eacp declining to guess: a
+    // caller that gets a yes knows the texture will be created, and a caller
+    // that gets a no on such a system keeps whatever it would have kept anyway.
+    //
+    // Here for the reason supportsSampleCount is: a texture in a format the
+    // device refuses is **invalid** rather than quietly something else, so a
+    // caller with a choice to make - keep the uncompressed original, or decline
+    // the file - has to make it before it asks for the texture rather than by
+    // finding out afterwards.
+    bool supportsBlockCompression() const;
+
     // Opaque native handles for cross-translation-unit use by other GPU types.
     void* nativeDevice() const;
     void* nativeQueue() const;

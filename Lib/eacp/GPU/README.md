@@ -731,12 +731,40 @@ chain, since there is nothing to build one from. `update()` rebuilds it;
 `update(region, ...)` does not, because a partial upload cannot know what the
 rest of the texture holds. Ask a texture what it got with `mipLevels()`.
 
+**Or hand over a chain of your own**, which is `TextureDescriptor::mipLevels`:
+
+```cpp
+descriptor.mipLevels = mipLevelCount(1024, 1024);   // 11 levels in `pixels`
+
+auto albedo = Device::shared().makeTexture(descriptor, pixels);
+```
+
+`pixels` is then those levels tightly packed, level 0 first, each one
+`levelBytes(format, mipExtent(width, i), mipExtent(height, i))` — the layout
+`buildMipChain` already produces, and `mipChainBytes` sizes the block. eacp
+uploads them as they arrive and runs no filter of its own.
+
+Two callers want this, and for different reasons. A block-compressed texture has
+no other way to have a chain at all — 4x4 blocks cannot be averaged — and every
+`.dds` file carries the one its compressor built. And a caller whose own filter
+differs on purpose: Doom 3's mip builder preserves a zero border, so a projected
+light's low levels stay dark at the edge where an unweighted average spills light
+past it.
+
+It is a descriptor field rather than an `update()` overload because both APIs fix
+a texture's level count when the resource is created. `mipmapped` beside it is
+refused rather than resolved — the two say opposite things about who builds the
+chain — as are a count above `mipLevelCount`, null pixels, a render target, a
+kernel output and a cube.
+
 No new `TextureSampling` configuration is involved: mip filtering on a
 single-level texture is what both APIs do anyway, so the four configurations
 still cover everything. That is also where a long-standing divergence was found —
 D3D12's static samplers had always declared `MIN_MAG_MIP_LINEAR`, while Metal
 left `mipFilter` at its default of `NotMipmapped`. Nothing could see it while no
-texture had a second level.
+texture had a second level — and neither could `sample(t, uv, level)`, which
+names a level instead of letting the hardware pick one from the derivatives, and
+read level 0 whatever it asked for because level 0 was all there was.
 
 ## Texture formats
 
@@ -744,8 +772,11 @@ texture had a second level.
 | --- | --- |
 | `RGBA8Unorm`, `BGRA8Unorm` | The ordinary ones |
 | `R8Unorm` | One byte per pixel, sampled as `(r, 0, 0, 1)` — masks, palette indices |
+| `RG8Unorm` | Two, sampled as `(r, g, 0, 1)` — an NV12 frame's chroma plane |
 | `RGBA16Float` | The float format to reach for |
 | `RGBA32Float` | When the mantissa really is the point |
+| `R32Float` | One full-precision channel — a depth copy, a distance field |
+| `BC1RGBA`, `BC2RGBA`, `BC3RGBA`, `BC7RGBA` | Block-compressed — DXT1/3/5 and BC7 |
 
 The float formats are not an optimisation. Eight bits per channel cannot hold a
 value above 1 and quantise everything below it, so a pass that feeds back into
@@ -757,8 +788,34 @@ float texture, so a shader sampling one anywhere but at a texel centre would
 come back nearest-neighbour on some machines and bilinear on others; half
 filters everywhere eacp runs and holds far more range than a colour needs.
 
-There are no mips: a texture has one level, so `sample(t, uv, level)` reads it
-whatever level it asks for.
+The block-compressed formats are for content that **arrived** compressed — a
+`.dds` file, an atlas some tool produced. eacp neither compresses nor
+decompresses: the blocks go to the device as they came off disk, which is what
+saves the decode at load and the four- or eightfold texture memory afterwards. A
+4x4 block is one 8-byte record (BC1, so an eighth of RGBA8) or one 16-byte record
+(BC2, BC3, BC7, so a quarter), and every size is therefore counted in whole
+blocks — `levelBytesPerRow`, `levelRows` and `levelBytes` are what to measure an
+upload with, and `bytesPerPixel` answers 0 for them because there is no such
+number.
+
+```cpp
+descriptor.format = TextureFormat::BC1RGBA;   // 8 bytes per 4x4 block
+descriptor.mipLevels = levelsInTheFile;       // the compressor's chain
+
+if (Device::shared().supportsBlockCompression())
+    texture = Device::shared().makeTexture(descriptor, fileBytes);
+```
+
+Ask the device first: a texture in a format it refuses is invalid rather than
+quietly something else, exactly as a refused `sampleCount` is. Every Mac and
+every Direct3D device answers yes; an Apple-family iOS GPU mostly does not.
+
+A compressed texture cannot be a render target or a kernel output, `read()` and
+`update(region, ...)` are no-ops on one, `update(pixels)` takes the same packed
+block the constructor took with `bytesPerRow` at 0, and `mipmapped` gives it
+exactly one level — the CPU filter averages texels and a block is not four
+numbers to average. `mipLevels` is how it gets a chain. There are no sRGB
+variants, eacp having no sRGB formats at all.
 
 ## Sampling
 
