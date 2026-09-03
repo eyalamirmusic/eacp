@@ -443,6 +443,68 @@ void RenderPass::drawIndexedInstanced(const BufferRange& indices,
                                         static_cast<UINT>(firstInstance));
 }
 
+// The depth resolve drawn rather than asked for: the multisampled plane goes
+// to PIXEL_SHADER_RESOURCE to be loaded from, the resolved buffer to
+// DEPTH_WRITE to be written through its own DSV, and one triangle carries every
+// pixel's furthest sample across. The pass that just ended has already bound
+// its own root state, targets and viewport, and the next one binds its own
+// again, so nothing set here has to be put back.
+//
+// The attachment returns to DEPTH_WRITE on the way out, as the API resolve
+// leaves it; the resolved buffer stays in DEPTH_WRITE with depthState saying
+// so, and whatever samples it next moves it from there.
+void resolveDepthWithShader(CommandContext& commands, D3D12TextureData& texture)
+{
+    auto* list = commands.list.get();
+    auto* context = commands.context;
+
+    if (list == nullptr || context == nullptr || texture.msaaDepthSrv.gpu.ptr == 0
+        || texture.resolvedDsv.ptr == 0)
+        return;
+
+    const auto& shader =
+        getD3D12Shared().getDepthResolveShader(texture.depthHasStencil);
+
+    if (!shader.isValid())
+        return;
+
+    transition(list,
+               texture.depthResource.get(),
+               texture.msaaDepthState,
+               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    texture.msaaDepthState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+    transitionDepthForUse(list, texture, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+
+    const auto desc = texture.resolvedDepthResource->GetDesc();
+
+    D3D12_VIEWPORT viewport = {};
+    viewport.Width = static_cast<float>(desc.Width);
+    viewport.Height = static_cast<float>(desc.Height);
+    viewport.MaxDepth = 1.f;
+
+    const D3D12_RECT scissor = {
+        0, 0, static_cast<LONG>(desc.Width), static_cast<LONG>(desc.Height)};
+
+    ID3D12DescriptorHeap* heaps[] = {context->getTextureHeap(),
+                                     context->getSamplerHeap()};
+    list->SetDescriptorHeaps(2, heaps);
+    list->SetGraphicsRootSignature(shader.rootSignature.get());
+    list->SetGraphicsRootDescriptorTable(0, texture.msaaDepthSrv.gpu);
+    list->SetPipelineState(shader.state.get());
+    list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    list->OMSetRenderTargets(0, nullptr, FALSE, &texture.resolvedDsv);
+    list->RSSetViewports(1, &viewport);
+    list->RSSetScissorRects(1, &scissor);
+    list->DrawInstanced(3, 1, 0, 0);
+
+    transition(list,
+               texture.depthResource.get(),
+               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+               D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    texture.msaaDepthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+}
+
 void RenderPass::end()
 {
     // Before the encoder goes, so a batching renderer's queued draws still get
@@ -460,7 +522,7 @@ void RenderPass::end()
     // see resolveMultisampledTarget for why it happens per pass on both.
     if (impl->encoder && impl->encoder->resolveTarget != nullptr
         && impl->encoder->commands != nullptr)
-        resolveMultisampledTarget(impl->encoder->commands->list.get(),
+        resolveMultisampledTarget(*impl->encoder->commands,
                                   *impl->encoder->resolveTarget);
 
     // Commands are recorded onto the frame's list, which submits when the

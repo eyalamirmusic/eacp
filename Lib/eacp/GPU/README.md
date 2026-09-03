@@ -823,6 +823,19 @@ How a texture is sampled belongs to the *shader*, not to the `Texture`, which is
 a deliberate break from the obvious design and has a Windows driver bug behind
 it. See [`SAMPLERS.md`](SAMPLERS.md).
 
+## Driver quirks
+
+Two more D3D12 operations are known to be refused by a shipping driver — the
+Parallels virtual GPU fails a command list that resolves a multisampled depth
+plane, and removes the device outright on a region read-back — and the backend
+routes around both when it finds it is on such a driver. It finds out by
+trying: before the real device is created, a throwaway device records each
+operation and is asked to close the list, and a refusal sets the matching flag
+in `DriverQuirks`. Nothing is identified by name, so a fixed driver drops the
+workaround by itself and an unknown driver with the same gap picks it up.
+`EACP_D3D12_QUIRKS=1` sets every flag without asking, which is how the
+fallback paths are run against WARP.
+
 ## Reading pixels back
 
 `View::renderToImage` renders off-screen and hands back a `Graphics::Image`. It

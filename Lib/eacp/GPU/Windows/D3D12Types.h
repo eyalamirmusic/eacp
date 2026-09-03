@@ -319,6 +319,15 @@ struct D3D12TextureData
     winrt::com_ptr<ID3D12Resource> resolvedDepthResource;
     D3D12_RESOURCE_STATES msaaDepthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 
+    // What the shader route to that resolve draws with, where the driver has
+    // no resolve of its own (DriverQuirks::noDepthResolve): a read view of the
+    // multisampled attachment for the pixel shader to load samples from, and a
+    // DSV on the resolved buffer for it to write SV_Depth through. Empty
+    // everywhere else. See resolveDepthWithShader.
+    DescriptorSlot msaaDepthSrv;
+    winrt::com_ptr<ID3D12DescriptorHeap> resolvedDsvHeap;
+    D3D12_CPU_DESCRIPTOR_HANDLE resolvedDsv = {};
+
     ID3D12Resource* sampledDepthResource() const
     {
         return resolvedDepthResource != nullptr ? resolvedDepthResource.get()
@@ -597,10 +606,16 @@ inline void transition(ID3D12GraphicsCommandList* list,
 // having no depth form: MIN and MAX are the only modes D3D12 offers a
 // depth-stencil format, so the resolved value is the furthest sample rather than
 // Metal's first one. It runs on plane 0, the depth plane, the stencil plane
-// having no resolve and nothing that reads it.
-inline void resolveMultisampledTarget(ID3D12GraphicsCommandList* list,
+// having no resolve and nothing that reads it. On a driver that refuses the
+// call - DriverQuirks::noDepthResolve - the same value is drawn instead; see
+// resolveDepthWithShader.
+void resolveDepthWithShader(CommandContext& commands, D3D12TextureData& texture);
+
+inline void resolveMultisampledTarget(CommandContext& commands,
                                       D3D12TextureData& texture)
 {
+    auto* list = commands.list.get();
+
     if (!texture.isMultisampled() || texture.resource == nullptr)
         return;
 
@@ -626,6 +641,12 @@ inline void resolveMultisampledTarget(ID3D12GraphicsCommandList* list,
 
     if (texture.resolvedDepthResource == nullptr)
         return;
+
+    if (getD3D12Shared().getDriverQuirks().noDepthResolve)
+    {
+        resolveDepthWithShader(commands, texture);
+        return;
+    }
 
     winrt::com_ptr<ID3D12GraphicsCommandList1> list1;
 
