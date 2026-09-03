@@ -1559,10 +1559,15 @@ auto tCodegenTextureEmits = test("GPU/codegenTextureEmits") = []
     check(contains(metal, "sampler sampler0 [[sampler(0)]]"));
     check(contains(metal, "texture0.sample(sampler0, input.v0)"));
 
+    // The sampler is named for the sampling configuration, not for the
+    // texture, and that is the whole of the difference between the two
+    // backends' declarations: MSL passes a sampler per texture as a function
+    // argument, HLSL binds one per configuration to a register. Default
+    // sampling is Nearest/Clamp, which is configuration 0.
     auto hlsl = emitHlsl(builder.graph());
     check(contains(hlsl, "Texture2D texture0 : register(t0);"));
-    check(contains(hlsl, "SamplerState sampler0 : register(s0);"));
-    check(contains(hlsl, "texture0.Sample(sampler0, input.v0)"));
+    check(contains(hlsl, "SamplerState samplerConfig0 : register(s0);"));
+    check(contains(hlsl, "texture0.Sample(samplerConfig0, input.v0)"));
 
     // The vertex stage carries no texture parameters; only the fragment
     // signature gains them on Metal.
@@ -1601,13 +1606,16 @@ auto tCodegenCubeTextureEmits = test("GPU/codegenCubeTextureEmits") = []
     check(contains(metal, "sampler sampler1 [[sampler(1)]]"));
     check(contains(metal, "texture1.sample(sampler1, input.v1)"));
 
+    // Both textures were declared with the same (default) sampling, so on
+    // HLSL there is exactly one SamplerState between them and both samples go
+    // through it. This is what keeps a texture slot from costing a sampler
+    // register - there are 16 of those and rather more slots than that.
     auto hlsl = emitHlsl(builder.graph());
     check(contains(hlsl, "Texture2D texture0 : register(t0);"));
     check(contains(hlsl, "TextureCube texture1 : register(t1);"));
-    check(contains(hlsl,
-                   "SamplerState sampler1 : register(s"
-                       + std::to_string(samplingConfigurations) + ");"));
-    check(contains(hlsl, "texture1.Sample(sampler1, input.v1)"));
+    check(contains(hlsl, "SamplerState samplerConfig0 : register(s0);"));
+    check(!contains(hlsl, "samplerConfig1"));
+    check(contains(hlsl, "texture1.Sample(samplerConfig0, input.v1)"));
 
     // Not a Texture2DArray and not a texture2d_array: the cube's own type is the
     // one thing that has to be right, and both backends have a near neighbour
@@ -1660,7 +1668,8 @@ auto tCodegenSampleLevelEmits = test("GPU/codegenSampleLevelEmits") = []
         contains(metal, "texture0.sample(sampler0, input.v0, level(uniforms.u0))"));
 
     auto hlsl = emitHlsl(builder.graph());
-    check(contains(hlsl, "texture0.SampleLevel(sampler0, input.v0, uniforms.u0)"));
+    check(contains(hlsl,
+                   "texture0.SampleLevel(samplerConfig0, input.v0, uniforms.u0)"));
 };
 
 // A level given as a plain float needs no anchoring by the caller: the texture
@@ -1683,7 +1692,7 @@ auto tCodegenLiteralSampleLevel = test("GPU/codegenLiteralSampleLevel") = []
                    "texture0.sample(sampler0, input.v0, level(0.0))"));
 
     check(contains(emitHlsl(builder.graph()),
-                   "texture0.SampleLevel(sampler0, input.v0, 0.0)"));
+                   "texture0.SampleLevel(samplerConfig0, input.v0, 0.0)"));
 };
 
 // A texel read takes no sampler at all, and the coordinate goes through int2 on
@@ -1973,14 +1982,66 @@ auto tCodegenComputeTextureWrite = test("GPU/codegenComputeTextureWrite") = []
     auto hlsl = emitHlsl(builder.graph());
     check(contains(hlsl,
                    "Texture2D texture0 : register(t" + textureRegister(0) + ");"));
-    check(contains(hlsl, "SamplerState sampler0 : register(s0);"));
+    check(contains(hlsl, "SamplerState samplerConfig0 : register(s0);"));
     check(contains(hlsl,
                    "RWTexture2D<float4> texture1 : register(u" + textureRegister(1)
                        + ");"));
-    check(!contains(hlsl, "SamplerState sampler1"));
     check(contains(hlsl,
-                   "texture1[uint2(gid.x, gid.y)] = texture0.Sample(sampler0, "
+                   "texture1[uint2(gid.x, gid.y)] = texture0.Sample(samplerConfig0, "
                    "float2(float(gid.x), float(gid.y)));"));
+};
+
+// Two textures sampled two different ways get two SamplerStates, at the
+// registers their configurations name - and a third texture sampled like the
+// first gets no sampler of its own.
+//
+// This is the other half of codegenCubeTextureEmits, which checks that sharing
+// happens; this checks that it is sharing rather than collapsing. Between them
+// they pin the rule: one sampler per *configuration used*, never per texture
+// and never one for the whole shader.
+auto tCodegenSamplerPerConfiguration = test("GPU/codegenSamplerPerConfiguration") = []
+{
+    auto builder = ShaderBuilder {};
+
+    const auto nearestClamp = TextureSampling {};
+    const auto linearRepeat =
+        TextureSampling {TextureFilter::Linear, TextureAddressMode::Repeat};
+
+    auto position = builder.vertexInput<Float2>();
+    auto uv = builder.vertexInput<Float2>();
+    auto crisp = builder.texture(nearestClamp);
+    auto smooth = builder.texture(linearRepeat);
+    auto alsoCrisp = builder.texture(nearestClamp);
+    auto varyingUv = builder.varying(uv);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(sample(crisp, varyingUv) * sample(smooth, varyingUv)
+                     * sample(alsoCrisp, varyingUv));
+
+    auto hlsl = emitHlsl(builder.graph());
+
+    const auto crispIndex = std::to_string(samplingIndex(nearestClamp));
+    const auto smoothIndex = std::to_string(samplingIndex(linearRepeat));
+
+    check(crispIndex != smoothIndex);
+
+    check(contains(hlsl,
+                   "SamplerState samplerConfig" + crispIndex + " : register(s"
+                       + crispIndex + ");"));
+    check(contains(hlsl,
+                   "SamplerState samplerConfig" + smoothIndex + " : register(s"
+                       + smoothIndex + ");"));
+
+    check(contains(hlsl, "texture0.Sample(samplerConfig" + crispIndex + ","));
+    check(contains(hlsl, "texture1.Sample(samplerConfig" + smoothIndex + ","));
+    check(contains(hlsl, "texture2.Sample(samplerConfig" + crispIndex + ","));
+
+    // Metal is unchanged by any of this: a sampler per texture, in the
+    // signature, because MSL has no registers to share.
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "sampler sampler0 [[sampler(0)]]"));
+    check(contains(metal, "sampler sampler1 [[sampler(1)]]"));
+    check(contains(metal, "sampler sampler2 [[sampler(2)]]"));
 };
 
 // A kernel whose only output is a texture is still a kernel: recording any
