@@ -36,6 +36,17 @@ namespace eacp::GPU
 // nothing allocated once the arena is as big as the frame. What a slice costs
 // is what it is: its bytes, rounded up to an alignment.
 //
+// The arenas are BufferStorage::Streaming, so a write is a memcpy into memory
+// the GPU reads in place - on Metal because a shared MTLBuffer always was one,
+// on D3D12 because the arena is an UPLOAD-heap resource kept mapped and bound
+// as vertex, index or constant data where it lies. Nothing about a write
+// reaches a command list, which is the difference between a frame of hundreds
+// of streamed ranges costing hundreds of copies and barriers and costing none -
+// and which means the rotation below is the only thing keeping a write off
+// bytes a frame still in flight is reading. That is the trade this type is: the
+// storage is cheap to write precisely because something else guarantees when it
+// may be written, and this is that something.
+//
 // Arenas grow on demand and never shrink, so steady state allocates nothing;
 // Device::buffersCreated() is the number that says so, and bufferCount() is
 // framesInFlight once every pool is warm.

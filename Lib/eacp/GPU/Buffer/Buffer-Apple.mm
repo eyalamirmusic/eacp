@@ -10,7 +10,11 @@ namespace eacp::GPU
 {
 struct Buffer::Native
 {
-    Native(Device& deviceToUse, const void* data, std::size_t bytes, BufferUsage)
+    Native(Device& deviceToUse,
+           const void* data,
+           std::size_t bytes,
+           BufferUsage,
+           BufferStorage)
         : device(&deviceToUse)
         , length(bytes)
     {
@@ -22,6 +26,11 @@ struct Buffer::Native
         // Shared storage keeps the buffer CPU-visible, so read() is a memcpy and
         // a compute output needs no staging copy. The usage flag is a Metal no-op:
         // a plain MTLBuffer already serves as a vertex or a device storage buffer.
+        //
+        // So is BufferStorage: what it asks for on D3D12 - memory the CPU writes
+        // in place and the GPU reads with no copy in between - is what every
+        // buffer here already is, and update() below is already the memcpy it
+        // buys. Metal has nothing to opt into and no second path to keep right.
         if (data != nullptr)
             buffer = [metalDevice newBufferWithBytes:data
                                               length:bytes
@@ -36,8 +45,12 @@ struct Buffer::Native
     std::size_t length = 0;
 };
 
-Buffer::Buffer(Device& device, const void* data, std::size_t bytes, BufferUsage usage)
-    : impl(device, data, bytes, usage)
+Buffer::Buffer(Device& device,
+               const void* data,
+               std::size_t bytes,
+               BufferUsage usage,
+               BufferStorage storage)
+    : impl(device, data, bytes, usage, storage)
 {
     // Only the ones that got storage, so the count means GPU allocations rather
     // than calls - a zero-byte or device-less Buffer allocated nothing.

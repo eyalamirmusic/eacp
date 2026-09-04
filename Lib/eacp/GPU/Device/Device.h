@@ -41,9 +41,10 @@ public:
 
     Buffer makeBuffer(const void* data,
                       std::size_t bytes,
-                      BufferUsage usage = BufferUsage::Vertex)
+                      BufferUsage usage = BufferUsage::Vertex,
+                      BufferStorage storage = BufferStorage::Device)
     {
-        return {*this, data, bytes, usage};
+        return {*this, data, bytes, usage, storage};
     }
 
     template <typename T, std::size_t N>

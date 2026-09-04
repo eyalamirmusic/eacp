@@ -18,6 +18,39 @@ enum class BufferUsage
     Storage
 };
 
+// Where a buffer's storage lives, which is a statement about who writes it
+// rather than about what it is bound as.
+//
+// Device is the default and what an app's own geometry wants: memory the GPU
+// reads out of its own heap, filled through a staged copy. Streaming says the
+// CPU rewrites these bytes every frame and the GPU only ever reads them, which
+// buys a very different deal on D3D12 - the resource lives on the UPLOAD heap,
+// stays mapped for its whole life, and is bound as vertex, index or constant
+// data straight out of that mapping. A write is then one memcpy and records
+// nothing: no staging chunk, no CopyBufferRegion, and no pair of barriers
+// around it, since an upload-heap resource is permanently in GENERIC_READ. A
+// renderer streaming hundreds of ranges a frame pays hundreds of barriers and
+// copy commands for the Device answer and none at all for this one.
+//
+// What it costs is that the memory is CPU-visible and write-combined, so the
+// GPU reads it across the bus rather than out of its own heap, and that
+// nothing may rewrite a byte the GPU has not finished reading - there is no
+// copy in the command stream for the write to be ordered behind. That second
+// one is StreamingBuffers' whole contract, which is why this is the storage
+// its arenas ask for and not something a long-lived buffer should reach for.
+//
+// On Metal it says nothing new: every eacp buffer is already a shared-storage
+// MTLBuffer, and update() there already is the memcpy this asks for.
+//
+// A Storage buffer keeps device storage whatever is asked here. A kernel
+// writing through a UAV is precisely what an upload heap cannot do, and a
+// creation that quietly failed would be far worse than paying for the copy.
+enum class BufferStorage
+{
+    Device,
+    Streaming
+};
+
 // The width of the indices in an Index buffer, told to drawIndexed.
 enum class IndexFormat
 {
@@ -34,7 +67,8 @@ public:
     Buffer(Device& device,
            const void* data,
            std::size_t bytes,
-           BufferUsage usage = BufferUsage::Vertex);
+           BufferUsage usage = BufferUsage::Vertex,
+           BufferStorage storage = BufferStorage::Device);
 
     std::size_t size() const;
     bool isValid() const;
@@ -48,6 +82,13 @@ public:
     // update that happened while a Frame was recording put its copy on that
     // frame's list, so it has not reached the buffer until the frame ends.
     // Reading inside the frame that filled it reads what was there before.
+    //
+    // A BufferStorage::Streaming buffer is the exception both backends share:
+    // its bytes live in memory the CPU wrote directly and no GPU work ever
+    // writes, so a read is a memcpy back out of them and sees the newest
+    // update rather than the last committed one. It is a debugging and test
+    // affordance rather than a frame-loop one - the memory is write-combined
+    // on D3D12, and reading it is far slower than writing it.
     void read(void* dst, std::size_t bytes, std::size_t offset = 0) const;
 
     // Overwrites part of the buffer's contents from the CPU, starting at
@@ -58,6 +99,12 @@ public:
     // commands encoded after the call; update at most once per displayed
     // frame, as pacing against frames still in flight is not synchronised
     // here.
+    //
+    // That last sentence is the whole contract for a BufferStorage::Streaming
+    // buffer rather than advice: there, the write lands in memory the GPU may
+    // be reading this instant, with no copy in the command stream to order it
+    // behind. StreamingBuffers is what makes that safe, by never handing out
+    // bytes from an arena a frame still in flight was drawn from.
     void update(const void* data, std::size_t bytes, std::size_t offset = 0);
 
     // Opaque native handle for cross-translation-unit use by other GPU types.
