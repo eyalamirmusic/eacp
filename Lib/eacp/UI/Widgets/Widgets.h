@@ -274,12 +274,30 @@ public:
 
     // Normalised 0-1. Clamped, so a caller doing its own arithmetic cannot push
     // the thumb off the track.
-    void setValue(float newValue);
+    //
+    // Silent unless asked, the way Checkbox::setChecked and TextEditor::setText
+    // are, and for the reason a control attached to something else needs: a
+    // value arriving from that something -- a parameter moved by automation, a
+    // preset loaded -- must not come back out as a change and be written to it
+    // again. The mouse paths ask.
+    void setValue(float newValue, bool notify = false);
     float getValue() const { return value; }
+
+    // Where a double-click puts the value. Unset by default, and then a second
+    // click is an ordinary press: a control with no default has nowhere to go.
+    void setDefaultValue(std::optional<float> newDefault);
+    const std::optional<float>& getDefaultValue() const { return defaultValue; }
 
     void setAccentColour(const Color& colour);
 
     std::function<void(float)> onValueChange = [](float) {};
+
+    // The two ends of a gesture, which is what a host recording automation
+    // needs around the values it is given: exactly one onDragEnd for every
+    // onDragStart, the double-click reset included -- it is a whole gesture of
+    // its own rather than the start of a drag.
+    std::function<void()> onDragStart = [] {};
+    std::function<void()> onDragEnd = [] {};
 
     void paint(Graphics& g) override;
 
@@ -294,6 +312,7 @@ private:
 
     Orientation orientation;
     float value = 0.5f;
+    std::optional<float> defaultValue;
     Color accent = defaultTheme().accent;
     bool dragging = false;
 };
@@ -316,13 +335,20 @@ class Knob final : public Component
 public:
     Knob();
 
-    // Normalised 0-1, clamped.
-    void setValue(float newValue);
+    // Normalised 0-1, clamped, and silent unless asked -- see Slider::setValue,
+    // which this matches in every respect.
+    void setValue(float newValue, bool notify = false);
     float getValue() const { return value; }
+
+    void setDefaultValue(std::optional<float> newDefault);
+    const std::optional<float>& getDefaultValue() const { return defaultValue; }
 
     void setAccentColour(const Color& colour);
 
     std::function<void(float)> onValueChange = [](float) {};
+
+    std::function<void()> onDragStart = [] {};
+    std::function<void()> onDragEnd = [] {};
 
     void paint(Graphics& g) override;
     void resized() override;
@@ -338,6 +364,7 @@ private:
 
     float value = 0.5f;
     float valueAtDragStart = 0.5f;
+    std::optional<float> defaultValue;
     Color accent = defaultTheme().accent;
     bool dragging = false;
 
