@@ -257,9 +257,8 @@ they surface are what gets fixed next.
 
 ## Contributing
 
-eacp is developed in the open and moves quickly — the API is still settling, and
-breaking changes land between releases. Issues, patches and experiments are all
-welcome; the examples under `Apps/` are the fastest way in.
+eacp is developed in the open. Issues, patches and experiments are all welcome;
+the examples under `Apps/` are the fastest way in.
 
 ## License
 
