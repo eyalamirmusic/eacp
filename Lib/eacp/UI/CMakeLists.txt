@@ -23,6 +23,9 @@ target_sources(eacp-ui PRIVATE
         Render/MeshBatch.cpp
         Render/PathShape.cpp
         Render/ShapeBatch.cpp
+        Widgets/ComboBox.cpp
+        Widgets/ListBox.cpp
+        Widgets/Tabs.cpp
         Widgets/Widgets.cpp)
 
 set_default_target_setting(eacp-ui)

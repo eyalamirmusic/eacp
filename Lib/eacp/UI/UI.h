@@ -22,4 +22,7 @@
 #include "Render/MeshBatch.h"
 #include "Render/PathShape.h"
 #include "Render/ShapeBatch.h"
+#include "Widgets/ComboBox.h"
+#include "Widgets/ListBox.h"
+#include "Widgets/Tabs.h"
 #include "Widgets/Widgets.h"

@@ -768,7 +768,7 @@ Slider::Slider(Orientation orientationToUse)
                        : eacp::Graphics::MouseCursor::ResizeUpDown);
 }
 
-void Slider::setValue(float newValue)
+void Slider::setValue(float newValue, bool notify)
 {
     auto clamped = std::clamp(newValue, 0.f, 1.f);
 
@@ -776,8 +776,15 @@ void Slider::setValue(float newValue)
         return;
 
     value = clamped;
-    onValueChange(value);
     repaint();
+
+    if (notify)
+        onValueChange(value);
+}
+
+void Slider::setDefaultValue(std::optional<float> newDefault)
+{
+    defaultValue = newDefault;
 }
 
 void Slider::setAccentColour(const Color& colour)
@@ -831,10 +838,33 @@ void Slider::setValueFromPosition(Point position)
     auto bounds = getLocalBounds();
 
     if (orientation == Orientation::Horizontal)
-        setValue(bounds.w > 0.f ? position.x / bounds.w : 0.f);
+        setValue(bounds.w > 0.f ? position.x / bounds.w : 0.f, true);
     else
-        setValue(bounds.h > 0.f ? 1.f - position.y / bounds.h : 0.f);
+        setValue(bounds.h > 0.f ? 1.f - position.y / bounds.h : 0.f, true);
 }
+
+namespace
+{
+// A double-click on a control that has a default is a whole gesture on its own:
+// bracketed like a drag, so a host recording automation writes one value and
+// closes the recording, and followed by no drag at all -- which is why the
+// caller stops here rather than carrying on into its press.
+//
+// Written once against both controls rather than twice: they differ in how a
+// drag reaches a value and in nothing about how a gesture is shaped.
+template <typename Control>
+bool resetToDefault(Control& control, const MouseEvent& event)
+{
+    if (event.clickCount < 2 || !control.getDefaultValue().has_value())
+        return false;
+
+    control.onDragStart();
+    control.setValue(*control.getDefaultValue(), true);
+    control.onDragEnd();
+
+    return true;
+}
+} // namespace
 
 void Slider::mouseEnter(const MouseEvent&)
 {
@@ -848,19 +878,31 @@ void Slider::mouseExit(const MouseEvent&)
 
 void Slider::mouseDown(const MouseEvent& event)
 {
+    if (resetToDefault(*this, event))
+        return;
+
     dragging = true;
+    onDragStart();
     setValueFromPosition(event.position);
     repaint();
 }
 
 void Slider::mouseDrag(const MouseEvent& event)
 {
-    setValueFromPosition(event.position);
+    if (dragging)
+        setValueFromPosition(event.position);
 }
 
+// The release that ends the press this widget started, and only that one: the
+// host captures a press, so the mouseUp after a double-click reset arrives here
+// too and would otherwise close a gesture that was already closed.
 void Slider::mouseUp(const MouseEvent&)
 {
+    if (!dragging)
+        return;
+
     dragging = false;
+    onDragEnd();
     repaint();
 }
 
@@ -922,7 +964,7 @@ Knob::Knob()
     setMouseCursor(eacp::Graphics::MouseCursor::ResizeUpDown);
 }
 
-void Knob::setValue(float newValue)
+void Knob::setValue(float newValue, bool notify)
 {
     auto clamped = std::clamp(newValue, 0.f, 1.f);
 
@@ -931,8 +973,15 @@ void Knob::setValue(float newValue)
 
     value = clamped;
     rebuildIndicator();
-    onValueChange(value);
     repaint();
+
+    if (notify)
+        onValueChange(value);
+}
+
+void Knob::setDefaultValue(std::optional<float> newDefault)
+{
+    defaultValue = newDefault;
 }
 
 void Knob::setAccentColour(const Color& colour)
@@ -1030,10 +1079,14 @@ void Knob::mouseExit(const MouseEvent&)
     repaint();
 }
 
-void Knob::mouseDown(const MouseEvent&)
+void Knob::mouseDown(const MouseEvent& event)
 {
+    if (resetToDefault(*this, event))
+        return;
+
     dragging = true;
     valueAtDragStart = value;
+    onDragStart();
     repaint();
 }
 
@@ -1041,13 +1094,20 @@ void Knob::mouseDown(const MouseEvent&)
 // value cannot drift from accumulated rounding over a long drag.
 void Knob::mouseDrag(const MouseEvent& event)
 {
+    if (!dragging)
+        return;
+
     auto travel = event.downPosition.y - event.position.y;
-    setValue(valueAtDragStart + travel / knobDragRange);
+    setValue(valueAtDragStart + travel / knobDragRange, true);
 }
 
 void Knob::mouseUp(const MouseEvent&)
 {
+    if (!dragging)
+        return;
+
     dragging = false;
+    onDragEnd();
     repaint();
 }
 
