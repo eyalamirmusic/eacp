@@ -5,12 +5,22 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 
-// Windows/D3D12 backend. Every buffer is a default-heap resource (a Storage
-// buffer additionally allows unordered access); initial data goes through a
-// transient upload buffer submitted at construction, and read() copies into a
-// readback buffer and blocks on the fence, preserving the contract that a read
-// after commit() sees the kernel's output. State is tracked per recording in
-// D3D12BufferData; cross-submit ordering comes from the single direct queue.
+// Windows/D3D12 backend. A BufferStorage::Device buffer is a default-heap
+// resource (a Storage buffer additionally allows unordered access); initial
+// data goes through a transient upload buffer submitted at construction, and
+// read() copies into a readback buffer and blocks on the fence, preserving the
+// contract that a read after commit() sees the kernel's output. State is
+// tracked per recording in D3D12BufferData; cross-submit ordering comes from
+// the single direct queue.
+//
+// A BufferStorage::Streaming buffer is the other shape entirely: one
+// UPLOAD-heap resource, mapped once and kept mapped, whose GPU address is bound
+// as vertex, index or constant data in place. Every write is a memcpy through
+// that mapping and puts nothing on a command list - no staging chunk, no
+// CopyBufferRegion, no barrier either side of it - which is what a renderer
+// streaming hundreds of ranges a frame is here for. Correctness comes from the
+// caller instead: see BufferStorage in Buffer.h, and StreamingBuffers, which is
+// the caller that has it.
 
 namespace eacp::GPU
 {
@@ -55,7 +65,11 @@ winrt::com_ptr<ID3D12Resource> makeDefaultBuffer(ID3D12Device* device,
 
 struct Buffer::Native
 {
-    Native(Device& device, const void* data, std::size_t bytes, BufferUsage usage)
+    Native(Device& device,
+           const void* data,
+           std::size_t bytes,
+           BufferUsage usage,
+           BufferStorage storage)
         : context(getD3D12Context(device))
     {
         bufferData.size = bytes;
@@ -65,6 +79,15 @@ struct Buffer::Native
 
         flags = toResourceFlags(usage);
         capacity = bytes;
+
+        // A Storage buffer is refused host storage rather than given it and
+        // left broken: an upload heap takes no ALLOW_UNORDERED_ACCESS, so a
+        // kernel could not write it and CreateCommittedResource would refuse
+        // the pair outright. Falling through to the device heap costs the copy
+        // a stream was trying to avoid and keeps the buffer a buffer.
+        if (storage == BufferStorage::Streaming && usage != BufferUsage::Storage)
+            if (mapStreamingStorage(data, bytes))
+                return;
 
         // A spare of the right shape only when this buffer arrives with the data
         // to fill it. Created empty, it has to be the zero-filled resource the
@@ -100,10 +123,53 @@ struct Buffer::Native
     //
     // Offered up for reuse rather than dropped, on the same terms: it is exactly
     // the buffer the replacement is about to ask for.
+    //
+    // The streaming half goes to deferRelease rather than to the default-buffer
+    // free list, which is a pool of one heap type - and it is deferred for the
+    // reason everything here is: draws recorded out of this arena may still be
+    // on the queue. The mapping needs no Unmap; releasing the resource takes it
+    // with it, the way the context's own upload chunks live and die mapped.
     ~Native()
     {
+        if (bufferData.uploadHeap)
+        {
+            context.deferRelease(std::move(bufferData.resource));
+            return;
+        }
+
         context.recycleDefaultBuffer(
             std::move(bufferData.resource), capacity, flags);
+    }
+
+    // One upload-heap resource, mapped for good. False when either step fails,
+    // which leaves the caller to fall through to the default-heap path rather
+    // than hand back a buffer that never got storage.
+    bool mapStreamingStorage(const void* data, std::size_t bytes)
+    {
+        auto resource = context.makeUploadBuffer(nullptr, bytes);
+
+        if (resource == nullptr)
+            return false;
+
+        // Mapped with an empty read range, which is both true and the cheap
+        // answer: the CPU writes this memory and only the GPU reads it, so the
+        // runtime is told there is nothing to make readable on the way in.
+        void* address = nullptr;
+        const D3D12_RANGE noRead = {0, 0};
+
+        if (FAILED(resource->Map(0, &noRead, &address)) || address == nullptr)
+            return false;
+
+        bufferData.resource = std::move(resource);
+        bufferData.state = D3D12_RESOURCE_STATE_GENERIC_READ;
+        bufferData.uploadHeap = true;
+        mapped = static_cast<std::uint8_t*>(address);
+        capacity = bytes;
+
+        if (data != nullptr)
+            std::memcpy(mapped, data, bytes);
+
+        return true;
     }
 
     // The copy that fills the buffer from CPU bytes, and the whole of what makes
@@ -188,13 +254,19 @@ struct Buffer::Native
     // the real size that decides who it can be handed to next.
     std::size_t capacity = 0;
     D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE;
+
+    // The persistent mapping of an upload-heap buffer, and the one test that
+    // tells the two shapes of this class apart: non-null means a write is a
+    // memcpy here and a read comes back out of the same bytes.
+    std::uint8_t* mapped = nullptr;
 };
 
 Buffer::Buffer(Device& device,
                const void* data,
                std::size_t bytes,
-               BufferUsage usage)
-    : impl(device, data, bytes, usage)
+               BufferUsage usage,
+               BufferStorage storage)
+    : impl(device, data, bytes, usage, storage)
 {
     // Only the ones that got storage, so the count means GPU allocations rather
     // than calls - a zero-byte or device-less Buffer allocated nothing.
@@ -221,6 +293,17 @@ void Buffer::read(void* dst, std::size_t bytes, std::size_t offset) const
 
     auto available = impl->bufferData.size - offset;
     auto count = bytes < available ? bytes : available;
+
+    // Host storage reads straight back out of the mapping, as Metal's shared
+    // buffers always have. Nothing on the GPU writes those bytes, so there is
+    // no work to wait for and no readback copy to make - only the reminder
+    // that upload-heap memory is write-combined, which makes this a test and
+    // debugging path rather than one for a frame loop.
+    if (impl->mapped != nullptr)
+    {
+        std::memcpy(dst, impl->mapped + offset, count);
+        return;
+    }
 
     auto& context = impl->context;
     auto* commands = context.acquire();
@@ -272,6 +355,17 @@ void Buffer::update(const void* data, std::size_t bytes, std::size_t offset)
 
     auto available = impl->bufferData.size - offset;
     auto count = bytes < available ? bytes : available;
+
+    // The whole of a streamed write. No recording is touched, so nothing
+    // orders it against the draws already on the list and nothing needs to:
+    // what makes it safe is that the caller does not write bytes an in-flight
+    // frame is still reading, which is the contract BufferStorage::Streaming
+    // states and StreamingBuffers keeps.
+    if (impl->mapped != nullptr)
+    {
+        std::memcpy(impl->mapped + offset, data, count);
+        return;
+    }
 
     // The same path the initial data takes, rather than a pooled staging
     // resource of its own: an update that lands while a frame is recording goes

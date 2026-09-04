@@ -173,6 +173,15 @@ struct D3D12BufferData
     UINT64 size = 0;
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
     std::uint64_t recordingId = 0;
+
+    // Set for a BufferStorage::Streaming buffer, whose resource is on the
+    // UPLOAD heap. There is no state tracking to do for one: an upload-heap
+    // resource is created in GENERIC_READ and D3D12 forbids transitioning it
+    // out, which is the whole reason a streamed write records nothing. The
+    // flag is what stops transitionForUse from trying - a barrier off
+    // GENERIC_READ is a debug-layer error, and on a real driver it is a
+    // command list that will not close.
+    bool uploadHeap = false;
 };
 
 // What Texture::nativeTexture()/nativeReadView() point to. The SRV slot lives
@@ -483,6 +492,12 @@ inline void transitionForUse(CommandContext& commands,
                              D3D12BufferData& buffer,
                              D3D12_RESOURCE_STATES target)
 {
+    // An upload-heap buffer is already in the one state it may ever be in, and
+    // GENERIC_READ covers every way a draw reads one - vertices, indices,
+    // constants, a shader resource. Nothing to record, which is the point.
+    if (buffer.uploadHeap)
+        return;
+
     if (buffer.recordingId != commands.recordingId)
     {
         buffer.recordingId = commands.recordingId;

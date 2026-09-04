@@ -7,6 +7,15 @@
 // Entirely portable: N GPU::Buffers, a cursor, a growth rule and a fold. Both
 // backends get the same recycling out of one implementation, which is what
 // makes this a safe thing to add to a two-backend module.
+//
+// The arenas are BufferStorage::Streaming, which is the one thing here that
+// reaches into a backend, and this type is the reason that storage can exist at
+// all. A streamed write goes straight into memory the GPU may read without a
+// copy to order it behind, so what makes it safe is that no arena is ever
+// written while a frame that drew from it can still be in flight - the pool
+// rotation below, and nothing else. On D3D12 that turns a write from a memcpy
+// plus a barrier, a CopyBufferRegion and a barrier back into a memcpy; on Metal
+// it is what a write already was.
 
 namespace eacp::GPU
 {
@@ -82,8 +91,11 @@ void StreamingBuffers::beginFrame(Pool& pool, std::uint64_t frame)
     }
 
     pool.arenas.clear();
-    pool.arenas.createNew(
-        Device::shared(), nullptr, grownCapacity(pool.highWater, 0), usage);
+    pool.arenas.createNew(Device::shared(),
+                          nullptr,
+                          grownCapacity(pool.highWater, 0),
+                          usage,
+                          BufferStorage::Streaming);
 }
 
 // The arena the next `bytes` go into: the current one when they fit after the
@@ -113,7 +125,8 @@ Buffer& StreamingBuffers::arenaFor(Pool& pool, std::size_t bytes)
     return pool.arenas.createNew(Device::shared(),
                                  nullptr,
                                  grownCapacity(pool.streamed + bytes, current * 2),
-                                 usage);
+                                 usage,
+                                 BufferStorage::Streaming);
 }
 
 BufferRange StreamingBuffers::write(const void* data, std::size_t bytes)

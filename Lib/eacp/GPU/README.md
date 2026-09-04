@@ -887,3 +887,16 @@ The D3D12 backend is less exercised than the Metal one. Notes worth having:
 - Buffers decay to `COMMON` after every `ExecuteCommandLists` and are implicitly
   promoted on first use; textures do not, so a texture's state is tracked for
   its whole lifetime rather than per recording
+- A buffer's storage says which of two very different writes it gets.
+  `BufferStorage::Device` — the default, and every buffer an app makes — is a
+  default-heap resource filled by a staged copy: a memcpy into the recording's
+  upload arena, a barrier to `COPY_DEST`, a `CopyBufferRegion` and a barrier
+  back before the draw. `BufferStorage::Streaming`, which is what
+  `StreamingBuffers` asks for its arenas, is an `UPLOAD`-heap resource mapped
+  once and kept mapped, bound as vertex, index or constant data straight out of
+  that mapping: the write is the memcpy and nothing is recorded at all. Upload
+  heaps are permanently in `GENERIC_READ`, so none of those barriers exists to
+  be recorded either — which is why a renderer streaming hundreds of ranges a
+  frame pays for hundreds of copy commands on one and none on the other. What
+  buys it is the rule `StreamingBuffers` already keeps: no arena is written
+  while a frame that drew from it can still be on the GPU
