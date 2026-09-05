@@ -146,9 +146,13 @@ matching `APPLE`/`IOS`/`WIN32` branch.
   Ubuntu 24.04's 8.5.0). `WebSocket.cpp` is the one state machine, marshalling
   every `Sink` report to the message thread through `Threads::callAsync`; each
   `WebSocket-<Platform>` file implements `Backend.h`'s `makeBackend` and
-  nothing else. `Protocol.h` is RFC 6455 framing, spoken by the tests' server.
-  The library is one translation unit under a unity build, so every file-scope
-  name in `WebSocket/` is prefixed `webSocket`/`WebSocket`.
+  nothing else. `Protocol.h` is RFC 6455 framing, spoken by
+  `WebSocket::Server` (`Server.h`: over `TCP::Listener`, an accept thread and
+  one per client, clients addressed by `ClientId`, callbacks on the message
+  thread like the client's) and by the tests' misbehaving server.
+  `Apps/Network/WebSocketDemo` runs both ends in one process. The library is
+  one translation unit under a unity build, so every file-scope name in
+  `WebSocket/` is prefixed `webSocket`/`WebSocket`.
 
 **Process/** - Child process launch and control (`eacp::Processes`)
 - `Process`: launch an executable with args/env/working dir; captures stdout and

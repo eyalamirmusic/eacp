@@ -13,6 +13,7 @@ target_sources(eacp-network PRIVATE
         TCP/Connection.cpp
         TCP/Listener.cpp
         WebSocket/Protocol.cpp
+        WebSocket/Server.cpp
         WebSocket/WebSocket.cpp)
 
 target_link_libraries(eacp-network PUBLIC eacp-core)

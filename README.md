@@ -30,9 +30,10 @@ them, so apps inherit the look, feel, and performance of the host OS:
 - **WebView** — embed a system web view (WKWebView on Apple, WebView2 on
   Windows) with support for popups and new-window requests.
 - **Networking** — an `HTTP::Request` / `HTTP::Response` API plus an
-  `HTTPServer`, a `WebSocket::Connection` client, TCP sockets, IPC channels and
-  an RPC layer over both. Backed by NSURLSession on Apple platforms, WinHTTP on
-  Windows and libcurl on Linux.
+  `HTTPServer`, a `WebSocket::Connection` client and `WebSocket::Server`, TCP
+  sockets, IPC channels and an RPC layer over both — `Apps/Network/WebSocketDemo`
+  runs both WebSocket ends in one process. Backed by NSURLSession on Apple
+  platforms, WinHTTP on Windows and libcurl on Linux.
 - **SVG** — parsing and rendering of SVG documents into the graphics layer.
 - **Processes & plugins** — launch a child process with args, env and working
   directory, feed its stdin and capture its output (`eacp::Processes`), and load
