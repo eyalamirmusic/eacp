@@ -308,6 +308,13 @@ public:
     std::function<void(const std::string& error)> onNavigationFailed = [](auto&&) {};
     std::function<void(const std::string& title)> onTitleChanged = [](auto&&) {};
 
+    // The engine's content process died out from under the view (jetsam,
+    // sleep/wake, a renderer crash). URL loads are reloaded automatically —
+    // the alternative is a permanently dead view. An HTML-string load leaves
+    // nothing to reload, so a loadHTML embedder that wants to survive this
+    // re-issues its load from here.
+    std::function<void()> onContentProcessTerminated = [] {};
+
     std::function<bool(OwningPointer<WebView> popup, const std::string& url)>
         onNewWindowRequested = [](auto&&, auto&&) { return false; };
 
