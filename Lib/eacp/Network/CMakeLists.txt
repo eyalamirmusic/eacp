@@ -29,7 +29,8 @@ if (APPLE)
             WebSocket/WebSocket.mm)
     target_link_libraries(eacp-network PRIVATE
             "-framework Foundation"
-            "-framework CoreFoundation")
+            "-framework CoreFoundation"
+            "-framework Network")
 elseif (WIN32)
     target_sources(eacp-network PRIVATE
             HTTP/Http-Windows.cpp
