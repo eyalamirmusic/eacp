@@ -138,8 +138,17 @@ matching `APPLE`/`IOS`/`WIN32` branch.
 - `Timer`: NSTimer-backed periodic callbacks
 - `DisplayLink`: CADisplayLink-backed V-sync synchronized callbacks
 
-**Network/** - HTTP abstraction
+**Network/** - HTTP and WebSocket abstraction
 - `Request`/`Response` structs with `httpRequest()` function (NSURLSession backed)
+- `WebSocket::Connection` (`Network/WebSocket/`): a client over the same three
+  platform stacks - `NSURLSessionWebSocketTask`, WinHTTP's WebSocket API,
+  libcurl's `curl_ws_*` (`isSupported()` is false where libcurl lacks it, as on
+  Ubuntu 24.04's 8.5.0). `WebSocket.cpp` is the one state machine, marshalling
+  every `Sink` report to the message thread through `Threads::callAsync`; each
+  `WebSocket-<Platform>` file implements `Backend.h`'s `makeBackend` and
+  nothing else. `Protocol.h` is RFC 6455 framing, spoken by the tests' server.
+  The library is one translation unit under a unity build, so every file-scope
+  name in `WebSocket/` is prefixed `webSocket`/`WebSocket`.
 
 **Process/** - Child process launch and control (`eacp::Processes`)
 - `Process`: launch an executable with args/env/working dir; captures stdout and
