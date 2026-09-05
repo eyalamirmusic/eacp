@@ -12,12 +12,12 @@
 // hundreds, because a component is not a native view and drawing one is queueing
 // a quad.
 //
-// The knobs are the interesting ones. A knob's arc and pointer are a vector
-// path, rasterized to exact per-pixel coverage by a compute kernel into a shared
-// atlas -- so drawing one is also just a quad, and adding forty-eight of them to
-// this tree does not add a single batch break. That is what the shared atlas
-// buys: a coverage texture per path would have made each knob its own texture
-// bind and its own draw.
+// The knobs are the interesting ones. A knob's track and value arcs are vector
+// paths, rasterized to exact per-pixel coverage by a compute kernel into a
+// shared atlas -- so drawing one is also just quads, and adding forty-eight of
+// them to this tree does not add a single batch break. That is what the shared
+// atlas buys: a coverage texture per path would have made each knob its own
+// texture bind and its own draw.
 //
 // Scroll the list to see clipping: rows are cut at the panel's edge without the
 // panel doing anything about it, since paint() is handed a Graphics already
