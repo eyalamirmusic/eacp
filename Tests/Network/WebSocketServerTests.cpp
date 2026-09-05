@@ -114,17 +114,6 @@ struct WebSocketServerRecord
         return result;
     }
 
-    std::size_t messagesFor(ClientId id) const
-    {
-        auto count = std::size_t {0};
-
-        for (const auto& [from, message]: messages)
-            if (from == id)
-                ++count;
-
-        return count;
-    }
-
     CloseStatus closeOf(ClientId id) const
     {
         for (const auto& [from, status]: closes)
@@ -196,9 +185,10 @@ bool webSocketServerClientSkipped()
     return !Connection::isSupported();
 }
 
-std::unique_ptr<Connection> webSocketServerConnect(const std::string& url,
-                                                   WebSocketServerClientRecord& record,
-                                                   const Options& options = {})
+std::unique_ptr<Connection>
+    webSocketServerConnect(const std::string& url,
+                           WebSocketServerClientRecord& record,
+                           const Options& options = {})
 {
     return std::make_unique<Connection>(url, record.callbacks(), options);
 }
@@ -352,8 +342,8 @@ std::unique_ptr<Server> webSocketServerListening(WebSocketServerRecord& record,
 }
 } // namespace
 
-auto tServerBinds = test("WebSocketServer/bindsAnEphemeralPortAndRefusesABusyOne") =
-    []
+auto tServerBinds =
+    test("WebSocketServer/bindsAnEphemeralPortAndRefusesABusyOne") = []
 {
     auto record = WebSocketServerRecord();
     auto server = Server(record.callbacks());
@@ -901,9 +891,8 @@ auto tServerMeetsTheClient =
     auto options = Options();
     options.headers["Origin"] = "https://eacp.test";
 
-    auto connection =
-        webSocketServerConnect(webSocketServerUrl(*server, "/chat?x=1"), client,
-                               options);
+    auto connection = webSocketServerConnect(
+        webSocketServerUrl(*server, "/chat?x=1"), client, options);
 
     check(webSocketServerClientOpened(client));
     check(webSocketServerPumpUntil([&] { return record.connects == 1; }));
@@ -918,8 +907,7 @@ auto tServerMeetsTheClient =
     check(!record.reentered);
 
     auto secondClient = WebSocketServerClientRecord();
-    auto second =
-        webSocketServerConnect(webSocketServerUrl(*server), secondClient);
+    auto second = webSocketServerConnect(webSocketServerUrl(*server), secondClient);
 
     check(webSocketServerClientOpened(secondClient));
     check(webSocketServerPumpUntil([&] { return record.connects == 2; }));
@@ -1012,9 +1000,9 @@ auto tServerEchoesForTheClient =
     auto inOrder = true;
 
     for (auto i = 0; i < burst; ++i)
-        inOrder = inOrder
-                  && client.messages[(std::size_t) i + 2].data
-                         == "m" + std::to_string(i);
+        inOrder =
+            inOrder
+            && client.messages[(std::size_t) i + 2].data == "m" + std::to_string(i);
 
     check(inOrder);
     check(client.errors == 0);
