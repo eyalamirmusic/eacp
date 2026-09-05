@@ -302,8 +302,11 @@ public:
                         ? WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE
                         : WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE;
 
-        auto* payload = const_cast<char*>(message.data.data());
+        // WinHTTP answers ERROR_INVALID_PARAMETER to a zero-length send
+        // through a non-null pointer; an empty frame must pass null.
         auto length = static_cast<DWORD>(message.data.size());
+        auto* payload =
+            length > 0 ? const_cast<char*>(message.data.data()) : nullptr;
 
         auto result = DWORD {ERROR_SUCCESS};
 
