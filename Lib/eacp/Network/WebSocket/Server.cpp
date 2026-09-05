@@ -282,7 +282,10 @@ public:
     WebSocketServerClient(const WebSocketServerClient&) = delete;
     WebSocketServerClient& operator=(const WebSocketServerClient&) = delete;
 
-    void start() { worker = std::thread([this] { run(); }); }
+    void start()
+    {
+        worker = std::thread([this] { run(); });
+    }
 
     void join()
     {
