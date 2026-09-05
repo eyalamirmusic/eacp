@@ -141,7 +141,9 @@ matching `APPLE`/`IOS`/`WIN32` branch.
 **Network/** - HTTP and WebSocket abstraction
 - `Request`/`Response` structs with `httpRequest()` function (NSURLSession backed)
 - `WebSocket::Connection` (`Network/WebSocket/`): a client over the same three
-  platform stacks - `NSURLSessionWebSocketTask`, WinHTTP's WebSocket API,
+  platform stacks - Network.framework's `nw_ws` (`WebSocket.mm`;
+  NSURLSessionWebSocketTask's cancelWithCloseCode: drops its close frame on
+  GitHub's macOS runners), WinHTTP's WebSocket API,
   libcurl's `curl_ws_*` (`isSupported()` is false where libcurl lacks it, as on
   Ubuntu 24.04's 8.5.0). `WebSocket.cpp` is the one state machine, marshalling
   every `Sink` report to the message thread through `Threads::callAsync`; each

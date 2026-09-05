@@ -242,13 +242,35 @@ auto tBinaryEcho = test("WebSocket/echoesEveryByteValueAsBinary") = []
     check(record.messages[0].data == payload);
 };
 
+auto tEmptyMessage = test("WebSocket/carriesAnEmptyMessageOfEitherKind") = []
+{
+    if (webSocketSkipped())
+        return;
+
+    auto server = WebSocketTestServer();
+    auto record = WebSocketRecord();
+
+    auto connection = webSocketConnect(server.url(), record);
+    check(webSocketOpened(record));
+
+    connection->send("");
+    connection->sendBinary("");
+
+    check(webSocketPumpUntil([&] { return record.messages.size() == 2; }));
+    check(record.messages[0].type == MessageType::text);
+    check(record.messages[0].data.empty());
+    check(record.messages[1].type == MessageType::binary);
+    check(record.messages[1].data.empty());
+    check(record.errors == 0);
+};
+
 auto tLargeMessage = test("WebSocket/carriesAMessageBiggerThanTheDefaultLimit") = []
 {
     if (webSocketSkipped())
         return;
 
-    // Three megabytes is past NSURLSession's own one-megabyte default, so
-    // this only passes where Options::maxMessageSize reached the task.
+    // Three megabytes is past the one-megabyte default a platform stack may
+    // impose, so this only passes where Options::maxMessageSize reached it.
     auto payload = std::string(3 * 1024 * 1024, 'z');
 
     auto server = WebSocketTestServer();
@@ -403,14 +425,8 @@ auto tCloseIsIdempotent = test("WebSocket/closingTwiceReportsOneClose") = []
 
 // A peer that takes the close frame and then answers nothing at all. What
 // every backend owes is that the connection ends anyway, once, quietly, and
-// promptly: closeTimeout bounds the wait where a backend waits for the
-// answer, and NSURLSession waits for none.
-//
-// The code is where they part. A backend that reads the peer's close frame
-// knows one never came and reports §7.1.5's 1006; NSURLSession's
-// didCloseWithCode: fires for our own cancelWithCloseCode: as well, carrying
-// back the code we passed, so macOS cannot tell an answered close from an
-// abandoned one and reports what was asked for.
+// promptly: closeTimeout bounds the wait for the answer, and a close frame
+// that never came is §7.1.5's 1006.
 auto tCloseTimesOut = test("WebSocket/aCloseNobodyAnswersStillEnds") = []
 {
     if (webSocketSkipped())
@@ -436,7 +452,7 @@ auto tCloseTimesOut = test("WebSocket/aCloseNobodyAnswersStillEnds") = []
 
     check(record.closes == 1);
     check(record.errors == 0);
-    check(record.close.code == 1006 || record.close.code == 1000);
+    check(record.close.code == 1006);
     check(connection->state() == State::closed);
     check(server.sawClose());
     check(server.closeStatus().code == 1000);

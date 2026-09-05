@@ -1,436 +1,647 @@
 #import <Foundation/Foundation.h>
+#import <Network/Network.h>
+
 #include "Backend.h"
-#include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/ObjC/AutoReleasePool.h>
-#include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/ObjC/Strings.h>
+#include <eacp/Core/Utils/Strings.h>
 
+#include <memory>
 #include <mutex>
+#include <stdexcept>
+#include <string_view>
 
+// Network.framework's WebSocket, which frames, masks and answers pings
+// itself, rather than NSURLSessionWebSocketTask: that one's
+// cancelWithCloseCode: tears the transport down before its close frame is on
+// the wire - a few percent of the time on a desktop, every time on GitHub's
+// macOS runners. Here the close frame is a send like any other, and the
+// connection is not cancelled until the peer has answered it or the stream
+// has ended. Every file-scope name is prefixed, the library being one
+// translation unit under a unity build.
 namespace eacp::WebSocket
 {
-// What the delegate, the completion blocks and the backend share. The blocks
-// and the delegate both outlive the backend - a cancelled task reports on the
-// session's queue long after the Connection has gone - so everything they
-// touch lives here behind a lock, held by shared_ptr rather than by the
-// backend that made it.
-//
-// It is also the gate that keeps the Sink's contract: one terminal report and
-// nothing after it, however many ways the task has of ending.
-struct WebSocketContext
+namespace
 {
-    explicit WebSocketContext(std::shared_ptr<Sink> sinkToUse)
+
+constexpr auto webSocketMaxCloseReasonLength = std::size_t {123};
+constexpr auto webSocketNormalClose = 1000;
+constexpr auto webSocketEmptyClose = 1005;
+constexpr auto webSocketAbnormalClose = 1006;
+
+// RFC 6455's close codes 1005 and 1006 are the two a peer may never put on
+// the wire, so an echo of either goes out as a plain 1000.
+int webSocketEchoableCode(int code)
+{
+    if (code == webSocketEmptyClose || code == webSocketAbnormalClose)
+        return webSocketNormalClose;
+
+    return code;
+}
+
+// §5.5: a close reason is what is left of a control frame's 125 bytes once
+// the code has taken two.
+std::string webSocketTrimReason(const std::string& reason)
+{
+    if (reason.size() <= webSocketMaxCloseReasonLength)
+        return reason;
+
+    return reason.substr(0, webSocketMaxCloseReasonLength);
+}
+
+bool webSocketIsSecureUrl(const std::string& url)
+{
+    constexpr auto scheme = std::string_view {"wss://"};
+
+    if (url.size() < scheme.size())
+        return false;
+
+    return Strings::equalsCaseInsensitive(
+        std::string_view {url}.substr(0, scheme.size()), scheme);
+}
+
+// §5.6 has no frame for a text payload that is not UTF-8.
+bool webSocketIsUtf8(const std::string& text)
+{
+    auto* string = [[NSString alloc] initWithBytes:text.data()
+                                            length:text.size()
+                                          encoding:NSUTF8StringEncoding];
+    auto valid = string != nil;
+    [string release];
+    return valid;
+}
+
+std::string webSocketErrorText(nw_error_t error)
+{
+    if (error == nullptr)
+        return {};
+
+    auto cfError = nw_error_copy_cf_error(error);
+    auto text = Strings::toStdString((__bridge NSError*) cfError);
+    CFRelease(cfError);
+    return text;
+}
+
+std::string webSocketBytesOf(dispatch_data_t content)
+{
+    __block auto bytes = std::string();
+
+    if (content == nullptr)
+        return bytes;
+
+    dispatch_data_apply(content,
+                        ^(dispatch_data_t, size_t, const void* buffer, size_t size) {
+                          bytes.append((const char*) buffer, size);
+                          return true;
+                        });
+
+    return bytes;
+}
+
+// Retained, or null for nothing at all. dispatch_data_create copies the
+// bytes, so the string need not outlive the send.
+dispatch_data_t webSocketDataOf(const std::string& bytes)
+{
+    if (bytes.empty())
+        return nullptr;
+
+    return dispatch_data_create(
+        bytes.data(), bytes.size(), nullptr, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+}
+
+nw_endpoint_t webSocketEndpointFor(const std::string& url)
+{
+    if (url.empty())
+        throw std::invalid_argument("URL cannot be empty");
+
+    auto endpoint = nw_endpoint_create_url(url.c_str());
+
+    if (endpoint == nullptr)
+        throw std::runtime_error("Malformed URL format");
+
+    return endpoint;
+}
+
+uint32_t webSocketWholeSeconds(Time::MS timeout)
+{
+    return (uint32_t) ((timeout.count + 999) / 1000);
+}
+
+// TLS for wss and none for ws. The connect timeout bounds the TCP handshake
+// here; the WebSocket one it bounds from a timer, Network.framework having
+// no bound of its own on the upgrade.
+nw_parameters_t webSocketParametersFor(const std::string& url,
+                                       const Options& options)
+{
+    auto seconds = webSocketWholeSeconds(options.connectTimeout);
+
+    auto configureTcp = ^(nw_protocol_options_t tcp) {
+      if (seconds > 0)
+          nw_tcp_options_set_connection_timeout(tcp, seconds);
+    };
+
+    auto configureTls = webSocketIsSecureUrl(url) ? NW_PARAMETERS_DEFAULT_CONFIGURATION
+                                                  : NW_PARAMETERS_DISABLE_PROTOCOL;
+
+    auto parameters = nw_parameters_create_secure_tcp(configureTls, configureTcp);
+    auto stack = nw_parameters_copy_default_protocol_stack(parameters);
+    auto webSocket = nw_ws_create_options(nw_ws_version_13);
+
+    nw_ws_options_set_auto_reply_ping(webSocket, true);
+    nw_ws_options_set_maximum_message_size(webSocket, options.maxMessageSize);
+
+    for (const auto& [name, value]: options.headers)
+        nw_ws_options_add_additional_header(webSocket, name.c_str(), value.c_str());
+
+    for (const auto& protocol: options.protocols)
+        nw_ws_options_add_subprotocol(webSocket, protocol.c_str());
+
+    nw_protocol_stack_prepend_application_protocol(stack, webSocket);
+
+    nw_release(webSocket);
+    nw_release(stack);
+    return parameters;
+}
+
+// What the connection's handlers and the backend share. The handlers outlive
+// the backend - a cancelled connection reports on its queue after the
+// Connection has gone - so everything they touch lives here behind a lock,
+// held by shared_ptr from every block. It is also the gate that keeps the
+// Sink's contract: one terminal report and nothing after it, however many
+// ways the connection has of ending.
+//
+// Every Network.framework call made under the lock is asynchronous, its
+// handlers always dispatched to the queue rather than run inline, which is
+// what makes holding the lock across them safe.
+class WebSocketContext : public std::enable_shared_from_this<WebSocketContext>
+{
+public:
+    WebSocketContext(std::shared_ptr<Sink> sinkToUse, Time::MS connectTimeoutToUse)
         : sink(std::move(sinkToUse))
+        , connectTimeout(connectTimeoutToUse)
+        , queue(dispatch_queue_create("eacp.websocket", DISPATCH_QUEUE_SERIAL))
+        , webSocketDefinition(nw_protocol_copy_ws_definition())
     {
     }
 
-    void opened(const std::string& protocol)
+    ~WebSocketContext()
+    {
+        nw_release(webSocketDefinition);
+        dispatch_release(queue);
+    }
+
+    // Takes the connection, retained, and starts it.
+    void start(nw_connection_t connectionToUse)
+    {
+        auto lock = std::scoped_lock(mutex);
+        auto self = shared_from_this();
+
+        connection = connectionToUse;
+
+        nw_connection_set_queue(connection, queue);
+        nw_connection_set_state_changed_handler(
+            connection, ^(nw_connection_state_t state, nw_error_t error) {
+              self->stateChanged(state, error);
+            });
+        nw_connection_start(connection);
+
+        scheduleConnectTimeout();
+    }
+
+    void send(const Message& message)
     {
         auto lock = std::scoped_lock(mutex);
 
-        if (!finished)
-            sink->opened(protocol);
+        if (finished || !opened || closeSent)
+            return;
+
+        if (message.type == MessageType::text && !webSocketIsUtf8(message.data))
+        {
+            streamEnded("Text message is not valid UTF-8");
+            return;
+        }
+
+        auto opcode = message.type == MessageType::text ? nw_ws_opcode_text
+                                                        : nw_ws_opcode_binary;
+
+        auto metadata = nw_ws_create_metadata(opcode);
+        sendFrame(metadata, message.data);
+        nw_release(metadata);
     }
 
-    void received(Message message)
+    void close(int code, const std::string& reason)
     {
         auto lock = std::scoped_lock(mutex);
 
-        if (!finished)
-            sink->received(std::move(message));
+        if (finished || closeSent)
+            return;
+
+        // Before open there is no handshake to close: the attempt is
+        // abandoned, and reads as the abnormal closure it is.
+        if (!opened)
+        {
+            reportClosed(webSocketAbnormalClose, {});
+            cancel();
+            return;
+        }
+
+        sendClose(code, webSocketTrimReason(reason));
     }
 
-    void notePeerClose(int code, std::string reason)
+    // The backend is going away: nothing the connection says from here on is
+    // the Sink's business, and the transport goes without waiting on the
+    // network.
+    void detach()
     {
         auto lock = std::scoped_lock(mutex);
 
-        sawPeerClose = true;
-        peerCode = code;
-        peerReason = std::move(reason);
+        finished = true;
+        cancel();
+
+        if (connection != nullptr)
+        {
+            nw_release(connection);
+            connection = nullptr;
+        }
     }
 
-    // Why the transport stopped, kept rather than reported: a send or a
-    // receive that fails is the task ending, and the task says how.
-    void noteTransportError(std::string error)
+private:
+    void stateChanged(nw_connection_state_t state, nw_error_t error)
+    {
+        auto pool = ObjC::AutoReleasePool();
+        auto lock = std::scoped_lock(mutex);
+
+        if (finished)
+            return;
+
+        switch (state)
+        {
+            case nw_connection_state_ready:
+                becomeReady();
+                return;
+
+            // A refusal arrives as waiting, the connection meaning to try
+            // again once a path appears; nobody here is owed that wait.
+            case nw_connection_state_waiting:
+                if (error != nullptr)
+                    streamEnded(webSocketErrorText(error));
+                return;
+
+            case nw_connection_state_failed:
+            case nw_connection_state_cancelled:
+                streamEnded(webSocketErrorText(error));
+                return;
+
+            default:
+                return;
+        }
+    }
+
+    void received(dispatch_data_t content,
+                  nw_content_context_t context,
+                  bool isComplete,
+                  nw_error_t error)
+    {
+        auto pool = ObjC::AutoReleasePool();
+        auto lock = std::scoped_lock(mutex);
+
+        if (finished)
+            return;
+
+        if (error != nullptr)
+        {
+            streamEnded(webSocketErrorText(error));
+            return;
+        }
+
+        auto metadata = context != nullptr
+                            ? nw_content_context_copy_protocol_metadata(
+                                context, webSocketDefinition)
+                            : nullptr;
+
+        // No frame in it: the stream has ended.
+        if (metadata == nullptr)
+        {
+            streamEnded({});
+            return;
+        }
+
+        auto opcode = nw_ws_metadata_get_opcode(metadata);
+        auto closeCode = (int) nw_ws_metadata_get_close_code(metadata);
+        nw_release(metadata);
+
+        switch (opcode)
+        {
+            case nw_ws_opcode_close:
+                peerClosed(closeCode, webSocketBytesOf(content));
+                return;
+
+            case nw_ws_opcode_text:
+            case nw_ws_opcode_binary:
+            case nw_ws_opcode_cont:
+                collect(opcode, webSocketBytesOf(content), isComplete);
+                break;
+
+            // Pings are answered by the framework, pongs are nobody's business
+            case nw_ws_opcode_ping:
+            case nw_ws_opcode_pong:
+                break;
+
+            default:
+                streamEnded({});
+                return;
+        }
+
+        armReceive();
+    }
+
+    void connectTimedOut()
     {
         auto lock = std::scoped_lock(mutex);
 
-        if (transportError.empty())
-            transportError = std::move(error);
+        if (finished || opened)
+            return;
+
+        streamEnded("Connecting timed out");
     }
 
-    // The one place a task's ending is turned into a report: a close code
-    // beats the error that stopped us, which beats a stream that simply
-    // ended. The order is not a preference - a perfectly clean close leaves
-    // "Socket is not connected" behind on the pending receive, so an error
-    // read first would turn every closing handshake into a failure.
-    //
-    // The limit of the platform is that didCloseWithCode: also fires for our
-    // own cancelWithCloseCode:, carrying back the code we passed, so after a
-    // close of ours the code is what we asked for whether the peer answered
-    // it or not. A closing handshake the peer abandons therefore reads here
-    // as the close that was asked for, not as §7.1.5's 1006.
-    void finish(int taskCloseCode,
-                const std::string& taskCloseReason,
-                const std::string& error)
+    void sendFailed(const std::string& error)
     {
         auto lock = std::scoped_lock(mutex);
 
         if (finished)
             return;
 
-        finished = true;
-
-        if (sawPeerClose)
-        {
-            sink->closed(peerCode, peerReason);
-            return;
-        }
-
-        if (taskCloseCode != 0)
-        {
-            sink->closed(taskCloseCode, taskCloseReason);
-            return;
-        }
-
-        auto failure = error.empty() ? transportError : error;
-
-        if (!failure.empty())
-        {
-            sink->failed(failure);
-            return;
-        }
-
-        sink->closed(1005, {});
+        streamEnded(error);
     }
 
-    // The backend is going away: whatever the cancelled task reports next is
-    // our own teardown answering itself, and no business of the Sink's.
-    void detach()
+    void closeAnswered()
     {
         auto lock = std::scoped_lock(mutex);
+        cancel();
+    }
+
+    void becomeReady()
+    {
+        if (opened)
+            return;
+
+        auto response = serverResponse();
+
+        if (response != nullptr
+            && nw_ws_response_get_status(response) == nw_ws_response_status_reject)
+        {
+            nw_release(response);
+            streamEnded("The server rejected the WebSocket handshake");
+            return;
+        }
+
+        auto* chosen = response != nullptr
+                           ? nw_ws_response_get_selected_subprotocol(response)
+                           : nullptr;
+
+        auto protocol = chosen != nullptr ? std::string(chosen) : std::string();
+
+        if (response != nullptr)
+            nw_release(response);
+
+        opened = true;
+        sink->opened(protocol);
+        armReceive();
+    }
+
+    nw_ws_response_t serverResponse()
+    {
+        auto metadata =
+            nw_connection_copy_protocol_metadata(connection, webSocketDefinition);
+
+        if (metadata == nullptr)
+            return nullptr;
+
+        auto response = nw_ws_metadata_copy_server_response(metadata);
+        nw_release(metadata);
+        return response;
+    }
+
+    // Armed once the socket opens and again after every frame, so a delivery
+    // is always waiting. An error ends the loop and the connection with it.
+    void armReceive()
+    {
+        auto self = shared_from_this();
+
+        nw_connection_receive_message(
+            connection,
+            ^(dispatch_data_t content,
+              nw_content_context_t context,
+              bool isComplete,
+              nw_error_t error) {
+              self->received(content, context, isComplete, error);
+            });
+    }
+
+    // Whole messages as a rule, but a framework that hands a message over in
+    // pieces is joined back together here rather than trusted not to.
+    void collect(nw_ws_opcode_t opcode, std::string bytes, bool isComplete)
+    {
+        if (!assembling)
+        {
+            assembling = true;
+            assembly.clear();
+            assemblyType = opcode == nw_ws_opcode_binary ? MessageType::binary
+                                                         : MessageType::text;
+        }
+
+        assembly += bytes;
+
+        if (!isComplete)
+            return;
+
+        assembling = false;
+        sink->received({std::move(assembly), assemblyType});
+        assembly.clear();
+    }
+
+    // §5.5.1: a close we did not ask for is answered with its own code, and
+    // the connection let go once the answer is out; one we did ask for is the
+    // peer's reply to a frame already sent.
+    void peerClosed(int code, const std::string& reason)
+    {
+        auto status = code > 0 ? code : webSocketEmptyClose;
+
+        if (closeSent)
+        {
+            reportClosed(status, reason);
+            cancel();
+            return;
+        }
+
+        auto self = shared_from_this();
+
+        sendClose(webSocketEchoableCode(status), reason, ^(nw_error_t) {
+          self->closeAnswered();
+        });
+
+        reportClosed(status, reason);
+    }
+
+    // The transport is over, with or without a word from the peer: after a
+    // close of ours that is the abnormal closure §7.1.5 describes, before
+    // one it is a failure.
+    void streamEnded(const std::string& error)
+    {
+        if (closeSent)
+            reportClosed(webSocketAbnormalClose, {});
+        else if (!error.empty())
+            reportFailed(error);
+        else
+            reportFailed("The connection ended without a close frame");
+
+        cancel();
+    }
+
+    void sendClose(int code,
+                   const std::string& reason,
+                   nw_connection_send_completion_t completion = nullptr)
+    {
+        closeSent = true;
+
+        auto metadata = nw_ws_create_metadata(nw_ws_opcode_close);
+        nw_ws_metadata_set_close_code(metadata, (nw_ws_close_code_t) code);
+        sendFrame(metadata, reason, completion);
+        nw_release(metadata);
+    }
+
+    void sendFrame(nw_protocol_metadata_t metadata,
+                   const std::string& bytes,
+                   nw_connection_send_completion_t completion = nullptr)
+    {
+        auto self = shared_from_this();
+
+        auto context = nw_content_context_create("eacp.websocket.frame");
+        nw_content_context_set_metadata_for_protocol(context, metadata);
+
+        auto data = webSocketDataOf(bytes);
+
+        nw_connection_send(connection, data, context, true, ^(nw_error_t error) {
+          if (error != nullptr)
+              self->sendFailed(webSocketErrorText(error));
+
+          if (completion != nullptr)
+              completion(error);
+        });
+
+        if (data != nullptr)
+            dispatch_release(data);
+
+        nw_release(context);
+    }
+
+    void scheduleConnectTimeout()
+    {
+        if (connectTimeout.count <= 0)
+            return;
+
+        auto weak = std::weak_ptr<WebSocketContext>(shared_from_this());
+        auto delay = dispatch_time(DISPATCH_TIME_NOW,
+                                   (int64_t) connectTimeout.count * NSEC_PER_MSEC);
+
+        dispatch_after(delay, queue, ^{
+          if (auto self = weak.lock())
+              self->connectTimedOut();
+        });
+    }
+
+    void cancel()
+    {
+        if (connection == nullptr || cancelled)
+            return;
+
+        cancelled = true;
+        nw_connection_cancel(connection);
+    }
+
+    void reportClosed(int code, const std::string& reason)
+    {
         finished = true;
+        sink->closed(code, reason);
+    }
+
+    void reportFailed(const std::string& error)
+    {
+        finished = true;
+        sink->failed(error);
     }
 
     std::mutex mutex;
     std::shared_ptr<Sink> sink;
+    Time::MS connectTimeout;
+    dispatch_queue_t queue;
+    nw_protocol_definition_t webSocketDefinition;
+    nw_connection_t connection = nullptr;
+
+    bool opened = false;
     bool finished = false;
-    bool sawPeerClose = false;
-    int peerCode = 1005;
-    std::string peerReason;
-    std::string transportError;
+    bool closeSent = false;
+    bool cancelled = false;
+
+    bool assembling = false;
+    std::string assembly;
+    MessageType assemblyType = MessageType::text;
 };
 
-namespace
-{
-using WebSocketContextBox = std::shared_ptr<WebSocketContext>;
-
-WebSocketContextBox* webSocketBoxOf(id self)
-{
-    return (WebSocketContextBox*) ObjC::getIvar<void*>(self, "ctx");
-}
-
-WebSocketContext* webSocketContextOf(id self)
-{
-    auto* box = webSocketBoxOf(self);
-    return box != nullptr ? box->get() : nullptr;
-}
-
-std::string webSocketStringOf(NSURLSessionWebSocketMessage* message)
-{
-    if (message.type == NSURLSessionWebSocketMessageTypeString)
-        return Strings::toStdString(message.string);
-
-    return Strings::toStdString(message.data);
-}
-
-Message webSocketMessageFrom(NSURLSessionWebSocketMessage* message)
-{
-    auto isText = message.type == NSURLSessionWebSocketMessageTypeString;
-    return {webSocketStringOf(message),
-            isText ? MessageType::text : MessageType::binary};
-}
-
-// Armed once the task is resumed - it queues until the socket opens - and
-// again after every message, so a delivery is always waiting. An error ends
-// the loop: the task's own completion is what reports it.
-void webSocketArmReceive(NSURLSessionWebSocketTask* task,
-                         WebSocketContextBox context)
-{
-    [task receiveMessageWithCompletionHandler:
-              ^(NSURLSessionWebSocketMessage* message, NSError* error) {
-                if (error != nil)
-                {
-                    context->noteTransportError(Strings::toStdString(error));
-                    return;
-                }
-
-                if (message == nil)
-                    return;
-
-                context->received(webSocketMessageFrom(message));
-                webSocketArmReceive(task, context);
-              }];
-}
-
-void webSocketDelegateDidOpen(id self,
-                              SEL,
-                              NSURLSession*,
-                              NSURLSessionWebSocketTask*,
-                              NSString* protocol)
-{
-    if (auto* context = webSocketContextOf(self))
-        context->opened(Strings::toStdString(protocol));
-}
-
-void webSocketDelegateDidClose(id self,
-                               SEL,
-                               NSURLSession*,
-                               NSURLSessionWebSocketTask*,
-                               NSURLSessionWebSocketCloseCode code,
-                               NSData* reason)
-{
-    if (auto* context = webSocketContextOf(self))
-        context->notePeerClose((int) code, Strings::toStdString(reason));
-}
-
-void webSocketDelegateDidComplete(
-    id self, SEL, NSURLSession*, NSURLSessionTask* task, NSError* error)
-{
-    auto* context = webSocketContextOf(self);
-
-    if (context == nullptr)
-        return;
-
-    auto code = 0;
-    auto reason = std::string();
-
-    if ([task isKindOfClass:[NSURLSessionWebSocketTask class]])
-    {
-        auto* socketTask = (NSURLSessionWebSocketTask*) task;
-        code = (int) socketTask.closeCode;
-        reason = Strings::toStdString(socketTask.closeReason);
-    }
-
-    context->finish(code, reason, Strings::toStdString(error));
-}
-
-// The last message a session sends its delegate, and so where the delegate's
-// half of the shared context is let go: the session holds the delegate until
-// this returns, and nothing arrives after it.
-void webSocketDelegateDidInvalidate(id self, SEL, NSURLSession*, NSError*)
-{
-    auto*& slot = ObjC::getIvar<void*>(self, "ctx");
-    delete (WebSocketContextBox*) slot;
-    slot = nullptr;
-}
-
-Class webSocketDelegateClass()
-{
-    static auto* instance = []
-    {
-        auto* builder = new ObjC::RuntimeClass<NSObject>("EacpWebSocketDelegate");
-
-        builder->addIvar<void*>("ctx");
-        builder->addProtocol(@protocol(NSURLSessionWebSocketDelegate));
-
-        builder->addMethod(@selector(URLSession:webSocketTask:didOpenWithProtocol:),
-                           webSocketDelegateDidOpen);
-        builder->addMethod(@selector(URLSession:
-                                     webSocketTask:didCloseWithCode:reason:),
-                           webSocketDelegateDidClose);
-        builder->addMethod(@selector(URLSession:task:didCompleteWithError:),
-                           webSocketDelegateDidComplete);
-        builder->addMethod(@selector(URLSession:didBecomeInvalidWithError:),
-                           webSocketDelegateDidInvalidate);
-
-        builder->registerClass();
-        return builder;
-    }();
-
-    return instance->get();
-}
-
-double webSocketSeconds(Time::MS timeout)
-{
-    return (double) timeout.count / 1000.0;
-}
-
-std::string webSocketJoinProtocols(const Vector<std::string>& protocols)
-{
-    auto joined = std::string();
-
-    for (const auto& protocol: protocols)
-    {
-        if (!joined.empty())
-            joined += ", ";
-
-        joined += protocol;
-    }
-
-    return joined;
-}
-
-NSMutableURLRequest* webSocketRequestFor(const std::string& url,
-                                         const Options& options)
-{
-    if (url.empty())
-        throw std::invalid_argument("URL cannot be empty");
-
-    auto* urlString = Strings::toNSString(url);
-
-    if (urlString == nil)
-        throw std::runtime_error("URL contains invalid UTF-8 characters");
-
-    auto* parsed = [NSURL URLWithString:urlString];
-
-    if (parsed == nil)
-        throw std::runtime_error("Malformed URL format");
-
-    auto* request = [NSMutableURLRequest requestWithURL:parsed];
-
-    for (const auto& header: options.headers)
-    {
-        auto* name = Strings::toNSString(header.first);
-        auto* value = Strings::toNSString(header.second);
-
-        if (name != nil && value != nil)
-            [request setValue:value forHTTPHeaderField:name];
-    }
-
-    auto offered = webSocketJoinProtocols(options.protocols);
-
-    if (!offered.empty())
-        [request setValue:Strings::toNSString(offered)
-            forHTTPHeaderField:@"Sec-WebSocket-Protocol"];
-
-    if (options.connectTimeout.count > 0)
-        request.timeoutInterval = webSocketSeconds(options.connectTimeout);
-
-    return request;
-}
-
-// Nil for a text payload that is not UTF-8, which RFC 6455 §5.6 has no frame
-// for: initWithBytes: answers nil there and NSURLSessionWebSocketMessage
-// raises on a nil string. Built from the bytes rather than from a C string so
-// a legitimate U+0000 survives.
-NSURLSessionWebSocketMessage* webSocketMessageFor(const Message& message)
-{
-    if (message.type == MessageType::binary)
-        return [[[NSURLSessionWebSocketMessage alloc]
-            initWithData:Strings::toNSData(message.data)] autorelease];
-
-    auto* text = [[[NSString alloc] initWithBytes:message.data.data()
-                                           length:message.data.size()
-                                         encoding:NSUTF8StringEncoding]
-        autorelease];
-
-    if (text == nil)
-        return nil;
-
-    return [[[NSURLSessionWebSocketMessage alloc] initWithString:text]
-        autorelease];
-}
-
-// RFC 6455 §5.5: a close reason is what is left of a control frame's 125
-// bytes once the code has taken two, and Foundation raises rather than
-// truncating.
-std::string webSocketTrimReason(const std::string& reason)
-{
-    constexpr auto maxReasonBytes = std::size_t {123};
-    return reason.size() <= maxReasonBytes ? reason
-                                           : reason.substr(0, maxReasonBytes);
-}
-
-class WebSocketAppleBackend final : public Backend
+class WebSocketNetworkBackend final : public Backend
 {
 public:
-    WebSocketAppleBackend(const std::string& url,
-                          const Options& options,
-                          std::shared_ptr<Sink> sink)
-        : context(std::make_shared<WebSocketContext>(std::move(sink)))
+    WebSocketNetworkBackend(const std::string& url,
+                            const Options& options,
+                            std::shared_ptr<Sink> sink)
+        : context(std::make_shared<WebSocketContext>(std::move(sink),
+                                                     options.connectTimeout))
     {
         auto pool = ObjC::AutoReleasePool();
 
-        auto* request = webSocketRequestFor(url, options);
+        auto endpoint = webSocketEndpointFor(url);
+        auto parameters = webSocketParametersFor(url, options);
+        auto connection = nw_connection_create(endpoint, parameters);
 
-        delegate.set([[webSocketDelegateClass() alloc] init]);
-        ObjC::getIvar<void*>(delegate.get(), "ctx") =
-            new WebSocketContextBox(context);
+        nw_release(parameters);
+        nw_release(endpoint);
 
-        auto* configuration =
-            [NSURLSessionConfiguration defaultSessionConfiguration];
+        if (connection == nullptr)
+            throw std::runtime_error("Could not create the WebSocket connection");
 
-        if (options.connectTimeout.count > 0)
-            configuration.timeoutIntervalForRequest =
-                webSocketSeconds(options.connectTimeout);
-
-        session = ObjC::attachPtr([NSURLSession
-            sessionWithConfiguration:configuration
-                            delegate:(id<NSURLSessionDelegate>) delegate.get()
-                       delegateQueue:nil]);
-
-        task = ObjC::attachPtr([session.get() webSocketTaskWithRequest:request]);
-        task.get().maximumMessageSize = (NSInteger) options.maxMessageSize;
-
-        [task.get() resume];
-        webSocketArmReceive(task.get(), context);
+        context->start(connection);
     }
 
-    ~WebSocketAppleBackend() override
+    ~WebSocketNetworkBackend() override
     {
         auto pool = ObjC::AutoReleasePool();
-
         context->detach();
-        [session.get() invalidateAndCancel];
     }
 
     void send(const Message& message) override
     {
         auto pool = ObjC::AutoReleasePool();
-        auto* payload = webSocketMessageFor(message);
-
-        if (payload == nil)
-        {
-            context->noteTransportError("Text message is not valid UTF-8");
-            return;
-        }
-
-        auto forReporting = context;
-
-        [task.get() sendMessage:payload
-              completionHandler:^(NSError* error) {
-                if (error != nil)
-                    forReporting->noteTransportError(Strings::toStdString(error));
-              }];
+        context->send(message);
     }
 
     void close(int code, const std::string& reason) override
     {
         auto pool = ObjC::AutoReleasePool();
-        auto trimmed = webSocketTrimReason(reason);
-        NSData* payload = nil;
-
-        if (!trimmed.empty())
-            payload = Strings::toNSData(trimmed);
-
-        [task.get() cancelWithCloseCode:(NSURLSessionWebSocketCloseCode) code
-                                 reason:payload];
+        context->close(code, reason);
     }
 
 private:
     std::shared_ptr<WebSocketContext> context;
-    ObjC::Ptr<NSObject> delegate;
-    ObjC::Ptr<NSURLSession> session;
-    ObjC::Ptr<NSURLSessionWebSocketTask> task;
 };
+
 } // namespace
 
 std::unique_ptr<Backend> makeBackend(const std::string& url,
                                      const Options& options,
                                      std::shared_ptr<Sink> sink)
 {
-    return std::make_unique<WebSocketAppleBackend>(url, options, std::move(sink));
+    return std::make_unique<WebSocketNetworkBackend>(url, options, std::move(sink));
 }
 
 bool backendIsSupported()
