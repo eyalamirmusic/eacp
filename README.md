@@ -30,8 +30,10 @@ them, so apps inherit the look, feel, and performance of the host OS:
 - **WebView** — embed a system web view (WKWebView on Apple, WebView2 on
   Windows) with support for popups and new-window requests.
 - **Networking** — an `HTTP::Request` / `HTTP::Response` API plus an
-  `HTTPServer`, TCP sockets, IPC channels and an RPC layer over both. Backed by
-  NSURLSession on Apple platforms, WinHTTP on Windows and libcurl on Linux.
+  `HTTPServer`, a `WebSocket::Connection` client and `WebSocket::Server`, TCP
+  sockets, IPC channels and an RPC layer over both — `Apps/Network/WebSocketDemo`
+  runs both WebSocket ends in one process. Backed by NSURLSession on Apple
+  platforms, WinHTTP on Windows and libcurl on Linux.
 - **SVG** — parsing and rendering of SVG documents into the graphics layer.
 - **Processes & plugins** — launch a child process with args, env and working
   directory, feed its stdin and capture its output (`eacp::Processes`), and load
@@ -65,7 +67,7 @@ shipping one.
 | Module | macOS | Windows | iOS | Linux |
 | --- | :---: | :---: | :---: | :---: |
 | `Core` — lifecycle, event loops, timers, processes, plugins, files | ✅ | ✅ | ✅ | ✅ |
-| `Network` — HTTP client and server, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ |
+| `Network` — HTTP client and server, WebSocket client, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ |
 | `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ |
 | `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | — |
 | `GPU` / `GPUWidgets` — Metal, D3D12 and the shader EDSL | ✅ | ✅ | ✅ | — |
@@ -206,7 +208,7 @@ own — take `Network` without pulling in `GPU`.
 Lib/eacp/
   Core/       App lifecycle, threading, processes, plugins, files, vector maths,
               ObjC/CF interop
-  Network/    HTTP client and server, TCP, IPC, RPC
+  Network/    HTTP client and server, WebSocket client, TCP, IPC, RPC
   SIMD/       Portable SIMD kernels with runtime backend dispatch
   Graphics/   Windows, views, widgets, menus, drawing primitives
   GPU/        Metal / D3D12: device, buffers, textures, pipelines, passes, and
