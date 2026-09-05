@@ -7,7 +7,10 @@ set(network_test_sources
         HttpRpcTests.cpp
         HttpServerTests.cpp
         HttpTimeoutTests.cpp
-        TcpConnectionTests.cpp)
+        TcpConnectionTests.cpp
+        WebSocketProtocolTests.cpp
+        WebSocketServerTests.cpp
+        WebSocketTests.cpp)
 
 # The lock and channel cross-process cases drive a real second process, which
 # iOS cannot spawn (Process-iOS.cpp is a stub).
