@@ -49,8 +49,9 @@ Point onCircle(Point centre, float radius, float angle)
             centre.y - std::cos(angle) * radius};
 }
 
-// UI::Knob's indicator, geometry for geometry: a ring segment as a closed
-// contour, and the pointer as a second one wound the same way.
+// A rotary indicator of the ring-and-pointer kind: a ring segment as a closed
+// contour, and the pointer as a second one wound the same way. Two contours
+// that overlap, which is what makes it worth timing.
 GPUWidgets::Path knobIndicator(float size, float value)
 {
     constexpr auto startAngle = -2.356194f;

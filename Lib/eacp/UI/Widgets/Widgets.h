@@ -317,15 +317,25 @@ private:
     bool dragging = false;
 };
 
-// A rotary control: a ring, an arc filled to the value, and a pointer.
+// A rotary control, built the way JUCE's stock look builds one: a track arc,
+// a value arc over it, and a round thumb where the value arc ends.
+//
+// Both arcs are strokes with round caps, so every end is a semicircle, and the
+// thumb is a disc twice the stroke's width centred on the ring -- concentric
+// with the cap it sits on, which is what makes the two read as one shape
+// rather than as an arc with something stuck to it. Same angles, inset and
+// line width as JUCE, so a knob laid out at the sizes its demos use comes out
+// the same shape.
 //
 // The one stock widget whose shape a rounded rectangle cannot express, and so
-// the one that shows what the path tier is for. The arc and the pointer are a
-// single PathShape -- rasterized to exact per-pixel coverage by a compute
-// kernel whenever the value changes, into the same atlas every other knob on
-// screen uses, and drawn as one quad in the same instanced batch as the
-// rectangles and glyphs around it. A hundred of them cost a hundred quads, not
-// a hundred draws.
+// the one that shows what the path tier is for. Each arc is a PathShape --
+// rasterized to exact per-pixel coverage by a compute kernel when its geometry
+// changes, into the same atlas every other knob on screen uses, and drawn as
+// one quad in the same instanced batch as the rectangles and glyphs around it.
+// The track changes only with the size, and every knob of one size shares one
+// mask of it; the thumb is a rounded rectangle from the distance field and
+// costs no path at all. A hundred of them cost a few hundred quads, not a
+// hundred draws.
 //
 // Dragged vertically rather than in a circle, which is what every rotary
 // control that is any good to use does: the hand does not have to trace the
@@ -360,7 +370,8 @@ public:
     void mouseUp(const MouseEvent&) override;
 
 private:
-    void rebuildIndicator();
+    void rebuildTrack();
+    void rebuildArc();
 
     float value = 0.5f;
     float valueAtDragStart = 0.5f;
@@ -368,7 +379,8 @@ private:
     Color accent = defaultTheme().accent;
     bool dragging = false;
 
-    PathShape indicator {*this};
+    PathShape track {*this};
+    PathShape arc {*this};
 };
 
 // A clipping viewport over a taller content component, scrolled by the wheel.
