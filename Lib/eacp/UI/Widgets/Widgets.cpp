@@ -6,6 +6,8 @@
 
 namespace eacp::UI
 {
+namespace
+{
 // Corner radii, in points. Kept together because what makes a set of controls
 // look like a set is that they agree about this, and a literal at each call
 // site is how they stop agreeing.
@@ -15,7 +17,8 @@ constexpr auto trackCorner = 4.f;
 // The gap between an editor's border and the first glyph. Also what the caret
 // has to stay clear of, which is why it is a constant rather than a literal in
 // the scrolling arithmetic.
-constexpr auto textInset = 6.f;
+constexpr auto editorTextInset = 6.f;
+} // namespace
 
 const Theme& defaultTheme()
 {
@@ -514,12 +517,12 @@ void TextEditor::deleteForwards()
 
 float TextEditor::textOrigin() const
 {
-    return textInset - scrollOffset;
+    return editorTextInset - scrollOffset;
 }
 
 void TextEditor::scrollToCaret()
 {
-    auto visible = getWidth() - textInset * 2.f;
+    auto visible = getWidth() - editorTextInset * 2.f;
 
     if (visible <= 0.f)
         return;
@@ -722,7 +725,7 @@ void TextEditor::paint(Graphics& g)
     // string has scrolled. Clipped to the inside of the border so a scrolled
     // string is cut at the edge rather than running over it.
     auto scope = Graphics::ScopedState {g};
-    g.reduceClipRegion(bounds.inset(textInset * 0.5f, 1.f));
+    g.reduceClipRegion(bounds.inset(editorTextInset * 0.5f, 1.f));
 
     auto baseline = (bounds.h - g.lineHeight()) * 0.5f + g.ascent();
     auto origin = textOrigin();
