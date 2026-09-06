@@ -3,6 +3,7 @@
 #include <eacp/Core/Utils/Containers.h>
 
 #include <algorithm>
+#include <array>
 
 #include "../Buffer/StreamingBuffers.h"
 #include "../Device/Device.h"
@@ -168,6 +169,33 @@ template <>
 struct ShaderValueOf<float[4]>
 {
     using type = Float4;
+};
+
+// The shader EDSL reads a caller's own vertex-struct members and uniform
+// assignments, so it keeps recognising std::array alongside EA::Array -- the
+// container migration moved eacp's interfaces, not what a consumer may hand in.
+template <>
+struct ShaderValueOf<std::array<float, 2>>
+{
+    using type = Float2;
+};
+
+template <>
+struct ShaderValueOf<std::array<float, 3>>
+{
+    using type = Float3;
+};
+
+template <>
+struct ShaderValueOf<std::array<float, 4>>
+{
+    using type = Float4;
+};
+
+template <>
+struct ShaderValueOf<std::array<float, 16>>
+{
+    using type = Float4x4;
 };
 
 template <>
