@@ -5,6 +5,7 @@ add_subdirectory(BasicHTTP)
 add_subdirectory(HttpServer)
 add_subdirectory(TcpClient)
 add_subdirectory(TcpServer)
+add_subdirectory(WebSocketDemo)
 
 if (NOT IOS)
     add_subdirectory(HttpRpcDemo)

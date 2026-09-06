@@ -135,11 +135,32 @@ matching `APPLE`/`IOS`/`WIN32` branch.
 **Threads/** - Event loop and timing
 - `EventLoop`: CFRunLoop wrapper with `run()`, `quit()`, `call(Callback)`
 - `callAsync(Callback)`: Schedule function on main thread
-- `Timer`: NSTimer-backed periodic callbacks
+- `callAfter(Time::MS, Callback)`: the same, delayed. One shared scheduler
+  thread serves every pending callback, so N deadlines cost one thread, not N;
+  `Threads::delay` is built on it (`Threads/CallAfter.cpp`)
+- `Timer`: periodic callbacks, taking either `Time::MS` or an integer Hz
 - `DisplayLink`: CADisplayLink-backed V-sync synchronized callbacks
 
-**Network/** - HTTP abstraction
+**Network/** - HTTP and WebSocket abstraction
 - `Request`/`Response` structs with `httpRequest()` function (NSURLSession backed)
+- Multipart parts come from a path (`addFileField`) or from bytes already in
+  memory (`addFileBytes`/`FileField::fromBytes`, no temporary file needed)
+- `urlEncode`/`urlDecode` and `parseQueryString` (`HTTP/Http.h`)
+- `WebSocket::Connection` (`Network/WebSocket/`): a client over the same three
+  platform stacks - Network.framework's `nw_ws` (`WebSocket.mm`;
+  NSURLSessionWebSocketTask's cancelWithCloseCode: drops its close frame on
+  GitHub's macOS runners), WinHTTP's WebSocket API,
+  libcurl's `curl_ws_*` (`isSupported()` is false where libcurl lacks it, as on
+  Ubuntu 24.04's 8.5.0). `WebSocket.cpp` is the one state machine, marshalling
+  every `Sink` report to the message thread through `Threads::callAsync`; each
+  `WebSocket-<Platform>` file implements `Backend.h`'s `makeBackend` and
+  nothing else. `Protocol.h` is RFC 6455 framing, spoken by
+  `WebSocket::Server` (`Server.h`: over `TCP::Listener`, an accept thread and
+  one per client, clients addressed by `ClientId`, callbacks on the message
+  thread like the client's) and by the tests' misbehaving server.
+  `Apps/Network/WebSocketDemo` runs both ends in one process. The library is
+  one translation unit under a unity build, so every file-scope name in
+  `WebSocket/` is prefixed `webSocket`/`WebSocket`.
 
 **Process/** - Child process launch and control (`eacp::Processes`)
 - `Process`: launch an executable with args/env/working dir; captures stdout and
@@ -158,6 +179,8 @@ matching `APPLE`/`IOS`/`WIN32` branch.
 - `Pimpl<T>`: Pointer-to-implementation pattern
 - `Singleton<T>::get()`: Thread-safe singleton
 - `Vectors`: Container algorithms (`contains`, `eraseMatch`, `find`)
+- `Base64::encode`/`decode`: RFC 4648, the framework's only implementation -
+  the WebSocket handshake's accept key goes through it too
 
 ### Key Design Patterns
 

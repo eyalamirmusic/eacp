@@ -274,12 +274,30 @@ public:
 
     // Normalised 0-1. Clamped, so a caller doing its own arithmetic cannot push
     // the thumb off the track.
-    void setValue(float newValue);
+    //
+    // Silent unless asked, the way Checkbox::setChecked and TextEditor::setText
+    // are, and for the reason a control attached to something else needs: a
+    // value arriving from that something -- a parameter moved by automation, a
+    // preset loaded -- must not come back out as a change and be written to it
+    // again. The mouse paths ask.
+    void setValue(float newValue, bool notify = false);
     float getValue() const { return value; }
+
+    // Where a double-click puts the value. Unset by default, and then a second
+    // click is an ordinary press: a control with no default has nowhere to go.
+    void setDefaultValue(std::optional<float> newDefault);
+    const std::optional<float>& getDefaultValue() const { return defaultValue; }
 
     void setAccentColour(const Color& colour);
 
     std::function<void(float)> onValueChange = [](float) {};
+
+    // The two ends of a gesture, which is what a host recording automation
+    // needs around the values it is given: exactly one onDragEnd for every
+    // onDragStart, the double-click reset included -- it is a whole gesture of
+    // its own rather than the start of a drag.
+    std::function<void()> onDragStart = [] {};
+    std::function<void()> onDragEnd = [] {};
 
     void paint(Graphics& g) override;
 
@@ -294,19 +312,30 @@ private:
 
     Orientation orientation;
     float value = 0.5f;
+    std::optional<float> defaultValue;
     Color accent = defaultTheme().accent;
     bool dragging = false;
 };
 
-// A rotary control: a ring, an arc filled to the value, and a pointer.
+// A rotary control, built the way JUCE's stock look builds one: a track arc,
+// a value arc over it, and a round thumb where the value arc ends.
+//
+// Both arcs are strokes with round caps, so every end is a semicircle, and the
+// thumb is a disc twice the stroke's width centred on the ring -- concentric
+// with the cap it sits on, which is what makes the two read as one shape
+// rather than as an arc with something stuck to it. Same angles, inset and
+// line width as JUCE, so a knob laid out at the sizes its demos use comes out
+// the same shape.
 //
 // The one stock widget whose shape a rounded rectangle cannot express, and so
-// the one that shows what the path tier is for. The arc and the pointer are a
-// single PathShape -- rasterized to exact per-pixel coverage by a compute
-// kernel whenever the value changes, into the same atlas every other knob on
-// screen uses, and drawn as one quad in the same instanced batch as the
-// rectangles and glyphs around it. A hundred of them cost a hundred quads, not
-// a hundred draws.
+// the one that shows what the path tier is for. Each arc is a PathShape --
+// rasterized to exact per-pixel coverage by a compute kernel when its geometry
+// changes, into the same atlas every other knob on screen uses, and drawn as
+// one quad in the same instanced batch as the rectangles and glyphs around it.
+// The track changes only with the size, and every knob of one size shares one
+// mask of it; the thumb is a rounded rectangle from the distance field and
+// costs no path at all. A hundred of them cost a few hundred quads, not a
+// hundred draws.
 //
 // Dragged vertically rather than in a circle, which is what every rotary
 // control that is any good to use does: the hand does not have to trace the
@@ -316,13 +345,20 @@ class Knob final : public Component
 public:
     Knob();
 
-    // Normalised 0-1, clamped.
-    void setValue(float newValue);
+    // Normalised 0-1, clamped, and silent unless asked -- see Slider::setValue,
+    // which this matches in every respect.
+    void setValue(float newValue, bool notify = false);
     float getValue() const { return value; }
+
+    void setDefaultValue(std::optional<float> newDefault);
+    const std::optional<float>& getDefaultValue() const { return defaultValue; }
 
     void setAccentColour(const Color& colour);
 
     std::function<void(float)> onValueChange = [](float) {};
+
+    std::function<void()> onDragStart = [] {};
+    std::function<void()> onDragEnd = [] {};
 
     void paint(Graphics& g) override;
     void resized() override;
@@ -334,14 +370,17 @@ public:
     void mouseUp(const MouseEvent&) override;
 
 private:
-    void rebuildIndicator();
+    void rebuildTrack();
+    void rebuildArc();
 
     float value = 0.5f;
     float valueAtDragStart = 0.5f;
+    std::optional<float> defaultValue;
     Color accent = defaultTheme().accent;
     bool dragging = false;
 
-    PathShape indicator {*this};
+    PathShape track {*this};
+    PathShape arc {*this};
 };
 
 // A clipping viewport over a taller content component, scrolled by the wheel.
