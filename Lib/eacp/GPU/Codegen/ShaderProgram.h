@@ -269,6 +269,13 @@ struct Uniform : T
 // (`shader.image = checkerboard`); the program binds it (with its baked
 // sampler) when drawn. The program stores a pointer, so the texture must
 // outlive the draw.
+//
+// Which is why a temporary is refused outright, here and on every resource
+// member below. `shader.image = device.makeTexture(...)` would store a pointer
+// into a texture destroyed at the semicolon, and there is nothing later that
+// could report it: the draw reads freed memory or a live resource that happens
+// to have taken the same address. Deleting the rvalue overload moves that from
+// a wrong picture to a compile error, and the fix is to name the resource.
 template <>
 struct Uniform<Texture2D> : Texture2D
 {
@@ -277,6 +284,8 @@ struct Uniform<Texture2D> : Texture2D
         value = &newTexture;
         return *this;
     }
+
+    Uniform& operator=(Texture&&) = delete;
 
     const Texture* value = nullptr;
 
@@ -305,6 +314,8 @@ struct Uniform<TextureCube> : TextureCube
         return *this;
     }
 
+    Uniform& operator=(Texture&&) = delete;
+
     const Texture* value = nullptr;
 
     TextureSampling sampling {};
@@ -329,6 +340,8 @@ struct Uniform<TextureDepth2D> : TextureDepth2D
         return *this;
     }
 
+    Uniform& operator=(Texture&&) = delete;
+
     const Texture* value = nullptr;
 
     TextureSampling sampling {};
@@ -347,6 +360,8 @@ struct Uniform<InputBuffer> : InputBuffer
         return *this;
     }
 
+    Uniform& operator=(Buffer&&) = delete;
+
     const Buffer* value = nullptr;
 };
 
@@ -358,6 +373,8 @@ struct Uniform<OutputBuffer> : OutputBuffer
         value = &newBuffer;
         return *this;
     }
+
+    Uniform& operator=(Buffer&&) = delete;
 
     const Buffer* value = nullptr;
 };
@@ -375,6 +392,8 @@ struct Uniform<AtomicBuffer> : AtomicBuffer
         return *this;
     }
 
+    Uniform& operator=(Buffer&&) = delete;
+
     const Buffer* value = nullptr;
 };
 
@@ -391,6 +410,8 @@ struct Uniform<WritableTexture2D> : WritableTexture2D
         value = &newTexture;
         return *this;
     }
+
+    Uniform& operator=(Texture&&) = delete;
 
     const Texture* value = nullptr;
 };

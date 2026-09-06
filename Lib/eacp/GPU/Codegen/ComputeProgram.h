@@ -315,6 +315,15 @@ protected:
         builder.write(buffer, index, value);
     }
 
+    // Two values narrowed to fp16 and packed into the one float slot that
+    // holds them, which InputBuffer::readHalf2 reads back at the same index.
+    void writeHalf2(const OutputBuffer& buffer,
+                    const UInt& index,
+                    const Float2& value)
+    {
+        builder.writeHalf2(buffer, index, value);
+    }
+
     // One element of a threadgroup-shared array, published to the rest of the
     // group by the next barrier().
     template <typename T>
