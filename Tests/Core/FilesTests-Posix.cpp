@@ -9,7 +9,6 @@
 
 #include <filesystem>
 #include <fstream>
-#include <span>
 #include <string>
 #include <thread>
 
@@ -43,8 +42,8 @@ void writeAtomically(const std::filesystem::path& path, std::string_view content
 {
     eacp::Files::writeFileAtomically(
         FilePath {path},
-        std::span {reinterpret_cast<const std::uint8_t*>(contents.data()),
-                   contents.size()});
+        eacp::Span {reinterpret_cast<const std::uint8_t*>(contents.data()),
+                    (int) contents.size()});
 }
 } // namespace
 

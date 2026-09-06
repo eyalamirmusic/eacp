@@ -263,7 +263,7 @@ struct Texture::Native
     bool copyPixels(D3D12Context& context,
                     CommandContext* commands,
                     const void* pixels,
-                    std::size_t sourcePitch,
+                    int sourcePitch,
                     int destX,
                     int destY,
                     int regionWidth,
@@ -312,7 +312,8 @@ struct Texture::Native
             std::memcpy(static_cast<unsigned char*>(mapped)
                             + row * footprint.Footprint.RowPitch,
                         static_cast<const unsigned char*>(pixels)
-                            + row * sourcePitch,
+                            + static_cast<std::size_t>(row)
+                                  * static_cast<std::size_t>(sourcePitch),
                         copyBytes);
 
         staging->Unmap(0, nullptr);
@@ -388,11 +389,11 @@ struct Texture::Native
     bool recordLevels(D3D12Context& context,
                       CommandContext* commands,
                       const void* pixels,
-                      std::size_t sourcePitch)
+                      int sourcePitch)
     {
         const auto faces = cube ? 6 : 1;
-        const auto faceBytes =
-            sourcePitch * static_cast<std::size_t>(levelRows(format, height));
+        const auto faceBytes = static_cast<std::size_t>(sourcePitch)
+                               * static_cast<std::size_t>(levelRows(format, height));
 
         for (auto face = 0; face < faces; ++face)
         {
@@ -417,7 +418,7 @@ struct Texture::Native
     bool recordFace(D3D12Context& context,
                     CommandContext* commands,
                     const void* pixels,
-                    std::size_t sourcePitch,
+                    int sourcePitch,
                     int face,
                     bool transitionAfterwards)
     {
@@ -501,7 +502,7 @@ struct Texture::Native
         return true;
     }
 
-    void update(const void* pixels, std::size_t bytesPerRow)
+    void update(const void* pixels, int bytesPerRow)
     {
         // Tightly packed by definition, so a stride is a number that can only be
         // wrong - dropped rather than used as a pitch it cannot be, in the same
@@ -538,7 +539,7 @@ struct Texture::Native
     // compressed and every supplied-chain update now comes through here, so it
     // is worth closing rather than leaving on a path only staging failure
     // reaches.
-    void updateWholeTexture(const void* pixels, std::size_t bytesPerRow)
+    void updateWholeTexture(const void* pixels, int bytesPerRow)
     {
         if (data.resource == nullptr || pixels == nullptr)
             return;
@@ -573,7 +574,7 @@ struct Texture::Native
                       int regionWidth,
                       int regionHeight,
                       const void* pixels,
-                      std::size_t bytesPerRow)
+                      int bytesPerRow)
     {
         if (data.resource == nullptr || pixels == nullptr || width <= 0
             || height <= 0)
@@ -647,7 +648,7 @@ struct Texture::Native
                     int regionWidth,
                     int regionHeight,
                     void* dst,
-                    std::size_t bytesPerRow) const
+                    int bytesPerRow) const
     {
         if (data.resource == nullptr || dst == nullptr || !context.isValid())
             return;
@@ -749,7 +750,8 @@ struct Texture::Native
             static_cast<std::size_t>(rowBytes) / static_cast<std::size_t>(copyWidth);
         const auto regionRowBytes =
             texelBytes * static_cast<std::size_t>(regionWidth);
-        const auto stride = bytesPerRow != 0 ? bytesPerRow : regionRowBytes;
+        const auto stride = bytesPerRow != 0 ? static_cast<std::size_t>(bytesPerRow)
+                                             : regionRowBytes;
 
         // Where the region starts inside what was copied: the origin unless the
         // whole subresource came back.
@@ -1216,14 +1218,14 @@ Texture::Texture(Device& device, void* nativePixelBuffer)
 {
 }
 
-void Texture::update(const void* pixels, std::size_t bytesPerRow)
+void Texture::update(const void* pixels, int bytesPerRow)
 {
     impl->update(pixels, bytesPerRow);
 }
 
 void Texture::update(const Graphics::Rect& region,
                      const void* pixels,
-                     std::size_t bytesPerRow)
+                     int bytesPerRow)
 {
     // Texels are whole; round rather than truncate so a rect built from
     // accumulated float arithmetic lands on the texel it is nearest to.
@@ -1235,14 +1237,12 @@ void Texture::update(const Graphics::Rect& region,
                        bytesPerRow);
 }
 
-void Texture::read(void* dst, std::size_t bytesPerRow) const
+void Texture::read(void* dst, int bytesPerRow) const
 {
     impl->readRegion(0, 0, impl->width, impl->height, dst, bytesPerRow);
 }
 
-void Texture::read(const Graphics::Rect& region,
-                   void* dst,
-                   std::size_t bytesPerRow) const
+void Texture::read(const Graphics::Rect& region, void* dst, int bytesPerRow) const
 {
     // Rounded rather than truncated, as update()'s region is.
     impl->readRegion(static_cast<int>(std::lround(region.x)),

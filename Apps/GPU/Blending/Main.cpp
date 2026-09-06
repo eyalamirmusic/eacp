@@ -1,7 +1,5 @@
 #include <eacp/GPU/GPU.h>
 
-#include <vector>
-
 using namespace eacp;
 using namespace GPU;
 using namespace Maths;
@@ -58,7 +56,7 @@ constexpr CircleSpec circles[] = {
 
 // Real triangle-list mesh per circle: segments triangles of shape
 // (centre, rim[i], rim[i+1]). No fragment discard, no shader masking.
-void appendCircle(std::vector<Vertex>& out, const CircleSpec& c)
+void appendCircle(Vector<Vertex>& out, const CircleSpec& c)
 {
     for (auto i = 0; i < circleSegments; ++i)
     {
@@ -73,16 +71,16 @@ void appendCircle(std::vector<Vertex>& out, const CircleSpec& c)
                             c.centerY + circleRadius * std::sin(a1)},
                            {c.r, c.g, c.b, circleAlpha}};
 
-        out.push_back(centre);
-        out.push_back(rim0);
-        out.push_back(rim1);
+        out.add(centre);
+        out.add(rim0);
+        out.add(rim1);
     }
 }
 
-std::vector<Vertex> buildCircleMesh()
+Vector<Vertex> buildCircleMesh()
 {
-    auto out = std::vector<Vertex> {};
-    out.reserve(sizeof(circles) / sizeof(circles[0]) * circleSegments * 3);
+    auto out = Vector<Vertex> {};
+    out.reserve((int) (sizeof(circles) / sizeof(circles[0])) * circleSegments * 3);
     for (const auto& c: circles)
         appendCircle(out, c);
     return out;
@@ -123,7 +121,7 @@ struct BlendingView final : GPUView
         : shader(makeBlendingShader())
         , vertexData(buildCircleMesh())
         , vertexBuffer(Device::shared().makeBuffer(
-              vertexData.data(), vertexData.size() * sizeof(Vertex)))
+              vertexData.data(), vertexData.size() * (int) sizeof(Vertex)))
         , library(Device::shared().makeShaderLibrary(shader.source))
         , none(makePipeline(BlendMode::None))
         , alphaBlend(makePipeline(BlendMode::AlphaBlend))
@@ -149,7 +147,7 @@ struct BlendingView final : GPUView
         pass.setPipeline(pipeline);
         pass.setVertexBuffer(vertexBuffer);
         pass.setVertexBytes(&uniforms, sizeof(uniforms), 0);
-        pass.draw((int) vertexData.size());
+        pass.draw(vertexData.size());
     }
 
     void render(Frame& frame) override
@@ -164,7 +162,7 @@ struct BlendingView final : GPUView
     }
 
     GeneratedShader shader;
-    std::vector<Vertex> vertexData;
+    Vector<Vertex> vertexData;
     Buffer vertexBuffer;
     ShaderLibrary library;
     RenderPipeline none;

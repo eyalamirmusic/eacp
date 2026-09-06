@@ -43,19 +43,19 @@ float TextMetrics::measureWidth(const std::string& text, const Font& font)
 }
 
 float TextMetrics::getOffsetForIndex(const std::string& text,
-                                     size_t index,
+                                     int index,
                                      const Font& font)
 {
-    if (index == 0)
+    if (index <= 0)
         return 0.0f;
 
-    auto substring = text.substr(0, index);
+    auto substring = text.substr(0, (size_t) index);
     return measureWidth(substring, font);
 }
 
-size_t TextMetrics::getIndexForOffset(const std::string& text,
-                                      float xOffset,
-                                      const Font& font)
+int TextMetrics::getIndexForOffset(const std::string& text,
+                                   float xOffset,
+                                   const Font& font)
 {
     auto* textFormat = static_cast<IDWriteTextFormat*>(font.getHandle());
     auto* factory = getDWriteFactory();
@@ -80,7 +80,7 @@ size_t TextMetrics::getIndexForOffset(const std::string& text,
     auto hitMetrics = DWRITE_HIT_TEST_METRICS();
     textLayout->HitTestPoint(xOffset, 0.0f, &isTrailingHit, &isInside, &hitMetrics);
 
-    return hitMetrics.textPosition + (isTrailingHit ? 1 : 0);
+    return (int) hitMetrics.textPosition + (isTrailingHit ? 1 : 0);
 }
 
 float TextMetrics::getLineHeight(const Font& font)

@@ -71,10 +71,11 @@ void Connection::send(std::string_view bytes)
     if (!isOpen())
         throw Error("send() on a closed TCP connection");
 
-    auto sent = std::size_t {0};
-    while (sent < bytes.size())
-        sent += detail::socketSend(
-            impl->socket, bytes.data() + sent, bytes.size() - sent);
+    auto total = (int) bytes.size();
+    auto sent = 0;
+
+    while (sent < total)
+        sent += detail::socketSend(impl->socket, bytes.data() + sent, total - sent);
 }
 
 std::string Connection::receiveUntil(char delimiter)
@@ -92,11 +93,12 @@ std::string Connection::receiveUntil(char delimiter)
         }
 
         char chunk[4096];
-        auto received = detail::socketReceive(impl->socket, chunk, sizeof(chunk));
+        auto received =
+            detail::socketReceive(impl->socket, chunk, (int) sizeof(chunk));
         if (received == 0)
             throw Error("peer closed the connection before the delimiter arrived");
 
-        impl->buffered.append(chunk, received);
+        impl->buffered.append(chunk, (std::size_t) received);
     }
 }
 
@@ -108,22 +110,23 @@ std::string Connection::receiveLine()
     return line;
 }
 
-std::string Connection::receive(std::size_t maxBytes)
+std::string Connection::receive(int maxBytes)
 {
     if (!isOpen())
         throw Error("receive() on a closed TCP connection");
 
     if (!impl->buffered.empty())
     {
-        auto take = std::min(maxBytes, impl->buffered.size());
-        auto out = impl->buffered.substr(0, take);
-        impl->buffered.erase(0, take);
+        auto take = std::min(maxBytes, (int) impl->buffered.size());
+        auto out = impl->buffered.substr(0, (std::size_t) take);
+        impl->buffered.erase(0, (std::size_t) take);
         return out;
     }
 
-    auto chunk = std::string(maxBytes, '\0');
-    auto received = detail::socketReceive(impl->socket, chunk.data(), chunk.size());
-    chunk.resize(received);
+    auto chunk = std::string((std::size_t) maxBytes, '\0');
+    auto received =
+        detail::socketReceive(impl->socket, chunk.data(), (int) chunk.size());
+    chunk.resize((std::size_t) received);
     return chunk;
 }
 

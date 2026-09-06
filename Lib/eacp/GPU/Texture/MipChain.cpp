@@ -40,7 +40,7 @@ TexelBlock texelBlockFor(int x, int y, int sourceWidth, int sourceHeight)
 // averaging four texels channel by channel gives the same answer whichever
 // order those channels are stored in.
 void halveBytes(const std::uint8_t* source,
-                std::size_t sourcePitch,
+                int sourcePitch,
                 int sourceWidth,
                 int sourceHeight,
                 std::uint8_t* destination,
@@ -57,10 +57,7 @@ void halveBytes(const std::uint8_t* source,
             for (auto channel = 0; channel < channels; ++channel)
             {
                 const auto at = [&](int sx, int sy)
-                {
-                    return (int) source[(std::size_t) sy * sourcePitch
-                                        + (std::size_t) (sx * channels + channel)];
-                };
+                { return (int) source[sy * sourcePitch + sx * channels + channel]; };
 
                 const auto sum = at(block.x0, block.y0) + at(block.x1, block.y0)
                                  + at(block.x0, block.y1) + at(block.x1, block.y1);
@@ -68,17 +65,15 @@ void halveBytes(const std::uint8_t* source,
                 // +2 before the shift rounds to nearest rather than always
                 // down, which over a ten-level chain is the difference between
                 // a mip that holds its brightness and one that drifts dark.
-                destination[(std::size_t) y
-                                * (std::size_t) (destinationWidth * channels)
-                            + (std::size_t) (x * channels + channel)] =
-                    (std::uint8_t) ((sum + 2) / 4);
+                destination[y * destinationWidth * channels + x * channels
+                            + channel] = (std::uint8_t) ((sum + 2) / 4);
             }
         }
     }
 }
 
 void halveFloats(const std::uint8_t* source,
-                 std::size_t sourcePitch,
+                 int sourcePitch,
                  int sourceWidth,
                  int sourceHeight,
                  std::uint8_t* destination,
@@ -95,15 +90,13 @@ void halveFloats(const std::uint8_t* source,
             {
                 const auto at = [&](int sx, int sy)
                 {
-                    const auto* row = source + (std::size_t) sy * sourcePitch;
+                    const auto* row = source + sy * sourcePitch;
                     const auto* texel = reinterpret_cast<const float*>(row);
                     return texel[sx * channels + channel];
                 };
 
                 auto* row = destination
-                            + (std::size_t) y
-                                  * (std::size_t) (destinationWidth * channels)
-                                  * sizeof(float);
+                            + y * destinationWidth * channels * (int) sizeof(float);
 
                 reinterpret_cast<float*>(row)[x * channels + channel] =
                     (at(block.x0, block.y0) + at(block.x1, block.y0)
@@ -117,7 +110,7 @@ void halveFloats(const std::uint8_t* source,
 // patterns would be meaningless - they are a sign, an exponent and a mantissa,
 // not a number - which is the trap this exists to avoid.
 void halveHalves(const std::uint8_t* source,
-                 std::size_t sourcePitch,
+                 int sourcePitch,
                  int sourceWidth,
                  int sourceHeight,
                  std::uint8_t* destination,
@@ -135,7 +128,7 @@ void halveHalves(const std::uint8_t* source,
             {
                 const auto at = [&](int sx, int sy)
                 {
-                    const auto* row = source + (std::size_t) sy * sourcePitch;
+                    const auto* row = source + sy * sourcePitch;
                     const auto* texel = reinterpret_cast<const std::uint16_t*>(row);
                     return halfToFloat(texel[sx * channels + channel]);
                 };
@@ -145,10 +138,9 @@ void halveHalves(const std::uint8_t* source,
                      + at(block.x0, block.y1) + at(block.x1, block.y1))
                     * 0.25f;
 
-                auto* row = destination
-                            + (std::size_t) y
-                                  * (std::size_t) (destinationWidth * channels)
-                                  * sizeof(std::uint16_t);
+                auto* row =
+                    destination
+                    + y * destinationWidth * channels * (int) sizeof(std::uint16_t);
 
                 reinterpret_cast<std::uint16_t*>(row)[x * channels + channel] =
                     halfFromFloat(average);
@@ -161,11 +153,8 @@ void halveHalves(const std::uint8_t* source,
 // are arithmetic over a size, and a caller whose size is known at compile time
 // should be able to size a buffer with them.
 
-MipChain buildMipChain(const void* pixels,
-                       int width,
-                       int height,
-                       TextureFormat format,
-                       std::size_t bytesPerRow)
+MipChain buildMipChain(
+    const void* pixels, int width, int height, TextureFormat format, int bytesPerRow)
 {
     auto chain = MipChain {};
 
@@ -179,8 +168,7 @@ MipChain buildMipChain(const void* pixels,
         return chain;
 
     const auto texelBytes = bytesPerPixel(format);
-    const auto sourcePitch =
-        bytesPerRow > 0 ? bytesPerRow : (std::size_t) (width * texelBytes);
+    const auto sourcePitch = bytesPerRow > 0 ? bytesPerRow : width * texelBytes;
 
     const auto levels = mipLevelCount(width, height);
     chain.levels.resize(levels);
@@ -188,14 +176,11 @@ MipChain buildMipChain(const void* pixels,
     // Level 0, repacked to a tight stride so every level below it reads the
     // same way and the backends upload them all through one loop.
     auto& base = chain.levels[0];
-    base.resize((int) ((std::size_t) width * (std::size_t) height
-                       * (std::size_t) texelBytes));
+    base.resize(width * height * texelBytes);
 
     for (auto row = 0; row < height; ++row)
-        std::memcpy(base.data()
-                        + (std::size_t) row * (std::size_t) (width * texelBytes),
-                    static_cast<const std::uint8_t*>(pixels)
-                        + (std::size_t) row * sourcePitch,
+        std::memcpy(base.data() + row * width * texelBytes,
+                    static_cast<const std::uint8_t*>(pixels) + row * sourcePitch,
                     (std::size_t) (width * texelBytes));
 
     for (auto level = 1; level < levels; ++level)
@@ -206,12 +191,10 @@ MipChain buildMipChain(const void* pixels,
         const auto destinationHeight = mipExtent(height, level);
 
         auto& destination = chain.levels[level];
-        destination.resize(
-            (int) ((std::size_t) destinationWidth * (std::size_t) destinationHeight
-                   * (std::size_t) texelBytes));
+        destination.resize(destinationWidth * destinationHeight * texelBytes);
 
         const auto* source = chain.levels[level - 1].data();
-        const auto pitch = (std::size_t) (sourceWidth * texelBytes);
+        const auto pitch = sourceWidth * texelBytes;
 
         switch (format)
         {

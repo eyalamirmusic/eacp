@@ -5,8 +5,6 @@
 #include <Miro/CommandExport/CommandEntry.h>
 #include <Miro/TypeTree/TypeTree.h>
 
-#include <span>
-
 namespace eacp::Graphics::Codegen
 {
 
@@ -25,10 +23,9 @@ namespace eacp::Graphics::Codegen
 // commands is consulted only to detect the existence of a get<Name>
 // twin; nothing about the command beyond the name is read. typeRoots
 // must include every event payload's reflected TypeNode.
-std::string
-    formatHooksModule(std::span<Miro::TypeTree::TypeNode> typeRoots,
-                      std::span<const Miro::CommandExport::CommandEntry> commands,
-                      std::span<const EventEntry> events,
-                      std::string_view baseName);
+std::string formatHooksModule(Span<Miro::TypeTree::TypeNode> typeRoots,
+                              Span<const Miro::CommandExport::CommandEntry> commands,
+                              Span<const EventEntry> events,
+                              std::string_view baseName);
 
 } // namespace eacp::Graphics::Codegen

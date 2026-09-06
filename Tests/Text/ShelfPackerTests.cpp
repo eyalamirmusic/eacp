@@ -20,7 +20,7 @@ struct Placements
         int x, y, w, h;
     };
 
-    std::vector<Box> boxes;
+    EA::Vector<Box> boxes;
 
     bool add(const PackedRect& at, int w, int h, int atlasSize)
     {
@@ -36,13 +36,14 @@ struct Placements
                 return false;
         }
 
-        boxes.push_back({at.x, at.y, w, h});
+        boxes.add({at.x, at.y, w, h});
         return true;
     }
 };
 } // namespace
 
-auto tPacksFirstRectAtPadding = test("ShelfPacker/firstRectSitsInsideThePadding") = []
+auto tPacksFirstRectAtPadding =
+    test("ShelfPacker/firstRectSitsInsideThePadding") = []
 {
     auto packer = ShelfPacker {64, 64, 1};
 
@@ -79,7 +80,8 @@ auto tLeavesPaddingBetween = test("ShelfPacker/leavesPaddingBetweenRects") = []
     check(second->x >= first->x + 10 + 1);
 };
 
-auto tOpensNewShelfWhenRowIsFull = test("ShelfPacker/opensANewShelfWhenTheRowFills") = []
+auto tOpensNewShelfWhenRowIsFull =
+    test("ShelfPacker/opensANewShelfWhenTheRowFills") = []
 {
     auto packer = ShelfPacker {64, 128, 1};
 
@@ -96,7 +98,8 @@ auto tOpensNewShelfWhenRowIsFull = test("ShelfPacker/opensANewShelfWhenTheRowFil
 
 // A short glyph must not be dropped onto a much taller shelf: the wasted height
 // applies to the whole row, so it is cheaper to open a new one.
-auto tSkipsShelvesThatWasteHeight = test("ShelfPacker/skipsShelvesThatAreTooTall") = []
+auto tSkipsShelvesThatWasteHeight =
+    test("ShelfPacker/skipsShelvesThatAreTooTall") = []
 {
     auto packer = ShelfPacker {128, 128, 1};
 

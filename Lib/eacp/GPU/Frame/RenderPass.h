@@ -197,22 +197,22 @@ public:
     // is the
     // uniform-block slot the generated shader declares (slot 0 = the first
     // uniform block). Ideal for values that change every frame, e.g. a transform.
-    void setVertexBytes(const void* data, std::size_t bytes, int slot = 0);
+    void setVertexBytes(const void* data, int bytes, int slot = 0);
 
     // The fragment-stage sibling of setVertexBytes, with the same slot mapping,
     // so one uniform block can be bound to both stages.
-    void setFragmentBytes(const void* data, std::size_t bytes, int slot = 0);
+    void setFragmentBytes(const void* data, int bytes, int slot = 0);
 
     template <typename T>
     void setVertexUniform(const T& value, int slot = 0)
     {
-        setVertexBytes(&value, sizeof(T), slot);
+        setVertexBytes(&value, (int) sizeof(T), slot);
     }
 
     template <typename T>
     void setFragmentUniform(const T& value, int slot = 0)
     {
-        setFragmentBytes(&value, sizeof(T), slot);
+        setFragmentBytes(&value, (int) sizeof(T), slot);
     }
 
     // Uploads a ShaderProgram's uniform block in one call: packs the program's

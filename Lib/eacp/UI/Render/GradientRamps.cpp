@@ -145,7 +145,7 @@ float GradientRamps::rowFor(const Gradient& gradient)
 
 void GradientRamps::bake(const Row& source, int row)
 {
-    auto* out = pixels.data() + (std::size_t) row * rampWidth * 4;
+    auto* out = pixels.data() + row * rampWidth * 4;
 
     for (auto x = 0; x < rampWidth; ++x)
     {
@@ -175,7 +175,7 @@ void GradientRamps::commit()
     auto count = rows.size() - first;
 
     texture->update({0.f, (float) first, (float) rampWidth, (float) count},
-                    pixels.data() + (std::size_t) first * rampWidth * 4);
+                    pixels.data() + first * rampWidth * 4);
 
     uploadedRows = rows.size();
 }

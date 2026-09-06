@@ -19,7 +19,7 @@ void uploadTo(std::optional<GPU::Buffer>& buffer,
               const Vector<float>& values,
               int& updates)
 {
-    auto bytes = sizeof(float) * (std::size_t) values.size();
+    auto bytes = (int) sizeof(float) * values.size();
 
     if (!buffer.has_value() || buffer->size() < bytes)
         buffer.emplace(
@@ -42,12 +42,12 @@ void padEmpty(Vector<float>& values)
 // The arrays the binning and backdrop stages work in. Never uploaded and never
 // read back - a kernel is what puts a value in one - so these are allocations
 // and nothing else, grown when a batch needs more than the last one did.
-void ensureRoom(std::optional<GPU::Buffer>& buffer, std::size_t bytes)
+void ensureRoom(std::optional<GPU::Buffer>& buffer, int bytes)
 {
     if (!buffer.has_value() || buffer->size() < bytes)
         buffer.emplace(GPU::Device::shared(),
                        nullptr,
-                       std::max<std::size_t>(4, bytes),
+                       std::max(4, bytes),
                        GPU::BufferUsage::Storage);
 }
 
@@ -164,14 +164,14 @@ void CoverageBatch::upload()
     uploadTo(recordBuffer, records, bufferUpdates);
     uploadTo(blockBuffer, blockOffsets, bufferUpdates);
 
-    ensureRoom(cellBuffer, sizeof(std::uint32_t) * (std::size_t) cells);
+    ensureRoom(cellBuffer, (int) sizeof(std::uint32_t) * cells);
 
     // One past the last tile, holding the total: it is what makes the last
     // tile's run end a read of the same array rather than a special case, and
     // what the prefix sum leaves the entry count in.
-    ensureRoom(tileCountBuffer, sizeof(std::uint32_t) * (std::size_t) (tiles + 1));
-    ensureRoom(tileOffsetBuffer, sizeof(std::uint32_t) * (std::size_t) (tiles + 1));
-    ensureRoom(entryBuffer, sizeof(float) * 4 * (std::size_t) entries);
+    ensureRoom(tileCountBuffer, (int) sizeof(std::uint32_t) * (tiles + 1));
+    ensureRoom(tileOffsetBuffer, (int) sizeof(std::uint32_t) * (tiles + 1));
+    ensureRoom(entryBuffer, (int) sizeof(float) * 4 * entries);
 }
 
 // Zero, count, sum, sort - the tiles, for every path in the batch, and the

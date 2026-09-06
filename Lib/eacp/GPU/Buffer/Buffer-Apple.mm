@@ -12,7 +12,7 @@ struct Buffer::Native
 {
     Native(Device& deviceToUse,
            const void* data,
-           std::size_t bytes,
+           int bytes,
            BufferUsage,
            BufferStorage)
         : device(&deviceToUse)
@@ -20,7 +20,7 @@ struct Buffer::Native
     {
         auto metalDevice = (__bridge id<MTLDevice>) device->nativeDevice();
 
-        if (metalDevice == nil || bytes == 0)
+        if (metalDevice == nil || bytes <= 0)
             return;
 
         // Shared storage keeps the buffer CPU-visible, so read() is a memcpy and
@@ -33,21 +33,21 @@ struct Buffer::Native
         // buys. Metal has nothing to opt into and no second path to keep right.
         if (data != nullptr)
             buffer = [metalDevice newBufferWithBytes:data
-                                              length:bytes
+                                              length:(NSUInteger) bytes
                                              options:MTLResourceStorageModeShared];
         else
-            buffer = [metalDevice newBufferWithLength:bytes
+            buffer = [metalDevice newBufferWithLength:(NSUInteger) bytes
                                               options:MTLResourceStorageModeShared];
     }
 
     ObjC::Ptr<NSObject<MTLBuffer>> buffer;
     Device* device = nullptr;
-    std::size_t length = 0;
+    int length = 0;
 };
 
 Buffer::Buffer(Device& device,
                const void* data,
-               std::size_t bytes,
+               int bytes,
                BufferUsage usage,
                BufferStorage storage)
     : impl(device, data, bytes, usage, storage)
@@ -58,7 +58,7 @@ Buffer::Buffer(Device& device,
         device.noteBufferCreated();
 }
 
-std::size_t Buffer::size() const
+int Buffer::size() const
 {
     return impl->length;
 }
@@ -68,9 +68,9 @@ bool Buffer::isValid() const
     return impl->buffer.get() != nil;
 }
 
-void Buffer::read(void* dst, std::size_t bytes, std::size_t offset) const
+void Buffer::read(void* dst, int bytes, int offset) const
 {
-    if (offset >= impl->length)
+    if (bytes <= 0 || offset < 0 || offset >= impl->length)
         return;
 
     // Shared storage makes the copy itself a memcpy, but the kernel that filled
@@ -85,20 +85,22 @@ void Buffer::read(void* dst, std::size_t bytes, std::size_t offset) const
     auto count = bytes < available ? bytes : available;
 
     if (auto metalBuffer = impl->buffer.get())
-        std::memcpy(dst, (const char*) [metalBuffer contents] + offset, count);
+        std::memcpy(
+            dst, (const char*) [metalBuffer contents] + offset, (std::size_t) count);
 }
 
-void Buffer::update(const void* data, std::size_t bytes, std::size_t offset)
+void Buffer::update(const void* data, int bytes, int offset)
 {
     auto metalBuffer = impl->buffer.get();
 
-    if (metalBuffer == nil || data == nullptr || bytes == 0
+    if (metalBuffer == nil || data == nullptr || bytes <= 0 || offset < 0
         || offset >= impl->length)
         return;
 
     auto available = impl->length - offset;
     auto count = bytes < available ? bytes : available;
-    std::memcpy((char*) [metalBuffer contents] + offset, data, count);
+    std::memcpy(
+        (char*) [metalBuffer contents] + offset, data, (std::size_t) count);
 }
 
 void* Buffer::nativeBuffer() const

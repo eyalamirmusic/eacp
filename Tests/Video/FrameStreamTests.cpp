@@ -108,7 +108,7 @@ auto tDepthBudget = test("FrameStream/queueDepthFitsMemoryBudget") = []
 {
     auto options = Video::StreamOptions {};
     options.queueDepth = 4;
-    options.maxQueueBytes = 192u * 1024u * 1024u;
+    options.maxQueueBytes = 192 * 1024 * 1024;
 
     auto sized = [](int width, int height)
     {
@@ -132,7 +132,7 @@ auto tDepthBudget = test("FrameStream/queueDepthFitsMemoryBudget") = []
     check(Video::FrameStream::depthWithinBudget(sized(7680, 4320), options) == 1);
 
     // A stream whose size is unknown keeps what was asked for.
-    options.maxQueueBytes = 192u * 1024u * 1024u;
+    options.maxQueueBytes = 192 * 1024 * 1024;
     check(Video::FrameStream::depthWithinBudget(sized(0, 0), options) == 4);
 };
 

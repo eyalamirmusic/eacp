@@ -417,7 +417,7 @@ struct Texture::Native
     // definition - a compressed texture, or a chain the caller supplied - and a
     // nonzero one there is dropped rather than used as a pitch it cannot be.
     // See Texture::update.
-    void update(const void* pixels, std::size_t bytesPerRow)
+    void update(const void* pixels, int bytesPerRow)
     {
         if (texture.get() == nil || pixels == nullptr || width <= 0 || height <= 0)
             return;
@@ -432,13 +432,13 @@ struct Texture::Native
         // concerned: its own slice, and its own chain built from its own pixels
         // rather than from its neighbours'. See TextureDescriptor::cube for the
         // order the six are in and why it is the same order on both backends.
-        const auto faceBytes = stride * (std::size_t) levelRows(format, height);
+        const auto faceBytes = stride * levelRows(format, height);
         const auto faces = cube ? 6 : 1;
 
         for (auto face = 0; face < faces; ++face)
         {
             const auto* facePixels =
-                (const unsigned char*) pixels + (std::size_t) face * faceBytes;
+                (const unsigned char*) pixels + face * faceBytes;
 
             if (suppliedChain)
                 uploadSuppliedChain(face, facePixels);
@@ -453,7 +453,7 @@ struct Texture::Native
     // generateMipmapsForTexture, which would work here and has no counterpart on
     // D3D12 - see MipChain.h for why one filter shared by both backends is worth
     // more than a free one on this side only.
-    void uploadChain(int slice, const void* pixels, std::size_t bytesPerRow)
+    void uploadChain(int slice, const void* pixels, int bytesPerRow)
     {
         const auto chain = buildMipChain(pixels, width, height, format, bytesPerRow);
 
@@ -513,7 +513,7 @@ struct Texture::Native
                       int regionWidth,
                       int regionHeight,
                       const void* pixels,
-                      std::size_t bytesPerRow)
+                      int bytesPerRow)
     {
         [texture.get() replaceRegion:MTLRegionMake2D(0,
                                                     0,
@@ -533,7 +533,7 @@ struct Texture::Native
                       int regionWidth,
                       int regionHeight,
                       const void* pixels,
-                      std::size_t bytesPerRow)
+                      int bytesPerRow)
     {
         if (texture.get() == nil || pixels == nullptr || width <= 0 || height <= 0)
             return;
@@ -583,7 +583,7 @@ struct Texture::Native
                     int regionWidth,
                     int regionHeight,
                     void* dst,
-                    std::size_t bytesPerRow) const
+                    int bytesPerRow) const
     {
         auto source = (id<MTLTexture>) texture.get();
 
@@ -649,15 +649,15 @@ struct Texture::Native
             [commandBuffer commit];
             [commandBuffer waitUntilCompleted];
 
-            const auto stride =
-                bytesPerRow != 0 ? bytesPerRow : (std::size_t) rowBytes;
+            const auto stride = bytesPerRow != 0 ? (NSUInteger) bytesPerRow
+                                                 : rowBytes;
 
             auto* out = (unsigned char*) dst;
             auto* in = (const unsigned char*) [staging contents];
 
             for (auto row = 0; row < regionHeight; ++row)
-                std::memcpy(out + (std::size_t) row * stride,
-                            in + (std::size_t) row * rowBytes,
+                std::memcpy(out + (NSUInteger) row * stride,
+                            in + (NSUInteger) row * rowBytes,
                             (std::size_t) rowBytes);
         }
     }
@@ -721,14 +721,14 @@ Texture::Texture(Device& device, void* nativePixelBuffer)
 {
 }
 
-void Texture::update(const void* pixels, std::size_t bytesPerRow)
+void Texture::update(const void* pixels, int bytesPerRow)
 {
     impl->update(pixels, bytesPerRow);
 }
 
 void Texture::update(const Graphics::Rect& region,
                      const void* pixels,
-                     std::size_t bytesPerRow)
+                     int bytesPerRow)
 {
     // Texels are whole; round rather than truncate so a rect built from
     // accumulated float arithmetic lands on the texel it is nearest to.
@@ -740,14 +740,12 @@ void Texture::update(const Graphics::Rect& region,
                        bytesPerRow);
 }
 
-void Texture::read(void* dst, std::size_t bytesPerRow) const
+void Texture::read(void* dst, int bytesPerRow) const
 {
     impl->readRegion(0, 0, impl->width, impl->height, dst, bytesPerRow);
 }
 
-void Texture::read(const Graphics::Rect& region,
-                   void* dst,
-                   std::size_t bytesPerRow) const
+void Texture::read(const Graphics::Rect& region, void* dst, int bytesPerRow) const
 {
     // Rounded rather than truncated, as update()'s region is: a rect built from
     // accumulated float arithmetic lands on the texel it is nearest to.

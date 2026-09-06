@@ -82,7 +82,7 @@ bool File::isOpen() const
     return impl->stream.is_open();
 }
 
-std::size_t File::read(std::uint64_t offset, std::span<std::uint8_t> out)
+int File::read(std::uint64_t offset, Span<std::uint8_t> out)
 {
     if (!openForRead() || out.empty())
         return 0;
@@ -100,8 +100,8 @@ std::size_t File::read(std::uint64_t offset, std::span<std::uint8_t> out)
     stream.read(reinterpret_cast<char*>(out.data()),
                 static_cast<std::streamsize>(out.size()));
 
-    auto got = static_cast<std::size_t>(stream.gcount());
-    impl->position += got;
+    auto got = static_cast<int>(stream.gcount());
+    impl->position += static_cast<std::uint64_t>(got);
     return got;
 }
 } // namespace eacp

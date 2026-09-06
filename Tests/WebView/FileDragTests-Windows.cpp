@@ -7,8 +7,6 @@
 #include <eacp/WebView/WebView/FileDrag-Windows.h>
 #include <NanoTest/NanoTest.h>
 
-#include <vector>
-
 using namespace nano;
 using namespace eacp::Graphics;
 
@@ -48,7 +46,8 @@ auto tPointOutsideClientRect = test("FileDrag/pointOutsideClientRectIsOutside") 
     check(toFileDragPoint({.x = 0, .y = 0}, rect, 1.f).inside);
 };
 
-auto tZeroDpiFallsBackUnscaled = test("FileDrag/zeroDpiScaleFallsBackToUnscaled") = []
+auto tZeroDpiFallsBackUnscaled =
+    test("FileDrag/zeroDpiScaleFallsBackToUnscaled") = []
 {
     auto mapped = toFileDragPoint({.x = 40, .y = 30}, clientRect(200, 100), 0.f);
 
@@ -59,10 +58,9 @@ auto tZeroDpiFallsBackUnscaled = test("FileDrag/zeroDpiScaleFallsBackToUnscaled"
 auto tHeldButtonStreamsCursor =
     test("FileDrag/heldLeftButtonContinuesAndStreamsCursor") = []
 {
-    auto moves = std::vector<WebView::FileDragPoint> {};
+    auto moves = EA::Vector<WebView::FileDragPoint> {};
     auto source = FileDragSource {[] { return point(12, 34, true); },
-                                  [&](WebView::FileDragPoint p)
-                                  { moves.push_back(p); }};
+                                  [&](WebView::FileDragPoint p) { moves.add(p); }};
 
     check(source.QueryContinueDrag(FALSE, MK_LBUTTON) == S_OK);
     check(source.QueryContinueDrag(FALSE, MK_LBUTTON) == S_OK);
@@ -142,8 +140,7 @@ auto tComContract = test("FileDrag/comIdentityAndRefCount") = []
     check(asDropSource == static_cast<IDropSource*>(source));
 
     void* asDropTarget = nullptr;
-    check(source->QueryInterface(IID_IDropTarget, &asDropTarget)
-          == E_NOINTERFACE);
+    check(source->QueryInterface(IID_IDropTarget, &asDropTarget) == E_NOINTERFACE);
     check(asDropTarget == nullptr);
 
     // QueryInterface took a ref: 2 total. Releases count down to deletion.

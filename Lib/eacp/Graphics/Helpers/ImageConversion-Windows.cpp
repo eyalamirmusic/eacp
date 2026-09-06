@@ -45,7 +45,7 @@ HICON toHIcon(const Image& image)
     // RGBA (source) -> BGRA (DIB byte order).
     auto* dst = static_cast<std::uint8_t*>(bits);
     const auto* src = image.pixels().data();
-    eacp::simd::swapRedBlue(src, dst, (std::size_t) width * height);
+    eacp::simd::swapRedBlue(src, dst, width * height);
 
     auto maskBitmap = CreateBitmap(width, height, 1, 1, nullptr);
 

@@ -124,10 +124,9 @@ public:
         auto got = ULONG {0};
 
         if (want > 0 && resource.read)
-            got = static_cast<ULONG>(
-                resource.read(base + position,
-                              ByteSpan {static_cast<std::uint8_t*>(out),
-                                        static_cast<std::size_t>(want)}));
+            got = static_cast<ULONG>(resource.read(
+                base + position,
+                ByteSpan {static_cast<std::uint8_t*>(out), (int) want}));
 
         position += got;
 

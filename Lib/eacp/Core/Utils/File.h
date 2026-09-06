@@ -3,8 +3,6 @@
 #include "Common.h"
 #include "FilePath.h"
 
-#include <span>
-
 namespace eacp
 {
 // RAII handle for reading a file off disk in bounded chunks, without
@@ -49,7 +47,7 @@ public:
     // number actually read (0 at end of file). Opens the file on first use,
     // and only seeks when `offset` differs from the current position, so
     // sequential reads stay cheap.
-    std::size_t read(std::uint64_t offset, std::span<std::uint8_t> out);
+    int read(std::uint64_t offset, Span<std::uint8_t> out);
 
 private:
     struct Impl;

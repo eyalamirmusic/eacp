@@ -1,8 +1,6 @@
 #include "IconContainers.h"
 
 #include "../Image/ImageOps.h"
-#include <array>
-#include <vector>
 
 namespace eacp::Graphics::Icons
 {
@@ -10,7 +8,7 @@ namespace eacp::Graphics::Icons
 namespace
 {
 
-using Bytes = std::vector<std::uint8_t>;
+using Bytes = Vector<std::uint8_t>;
 
 void appendBE32(Bytes& out, std::uint32_t value)
 {
@@ -36,7 +34,8 @@ void appendLE32(Bytes& out, std::uint32_t value)
 
 void appendTag(Bytes& out, const char* tag)
 {
-    out.insert(out.end(), tag, tag + 4);
+    for (auto i = 0; i < 4; ++i)
+        out.add(static_cast<std::uint8_t>(tag[i]));
 }
 
 int maxDimension(const Image& src)
@@ -46,9 +45,7 @@ int maxDimension(const Image& src)
 
 Bytes pngFrame(const Image& src, int size)
 {
-    const auto frame = downscaleTo(src, size);
-    const auto png = frame.toPng();
-    return Bytes(png.data(), png.data() + png.size());
+    return downscaleTo(src, size).toPng();
 }
 
 // A standard size belongs in the container when the source is at least that
@@ -78,7 +75,7 @@ void writeIcns(const Image& src, const FilePath& out)
         const char* type;
     };
 
-    static constexpr std::array chunks = {
+    static constexpr Array chunks = {
         Chunk {1024, "ic10"},
         Chunk {512, "ic09"},
         Chunk {256, "ic08"},
@@ -99,32 +96,32 @@ void writeIcns(const Image& src, const FilePath& out)
         const auto png = pngFrame(src, chunk.size);
         appendTag(body, chunk.type);
         appendBE32(body, static_cast<std::uint32_t>(8 + png.size()));
-        body.insert(body.end(), png.begin(), png.end());
+        body.addFrom(png);
     }
 
     Bytes file;
     appendTag(file, "icns");
     appendBE32(file, static_cast<std::uint32_t>(8 + body.size()));
-    file.insert(file.end(), body.begin(), body.end());
+    file.addFrom(body);
 
     Files::writeFile(out, file);
 }
 
 void writeIco(const Image& src, const FilePath& out)
 {
-    static constexpr std::array sizes = {16, 24, 32, 48, 64, 128, 256};
+    static constexpr Array sizes = {16, 24, 32, 48, 64, 128, 256};
 
     const auto limit = maxDimension(src);
 
-    std::vector<Bytes> frames;
-    std::vector<int> frameSizes;
+    Vector<Bytes> frames;
+    Vector<int> frameSizes;
     for (const auto size: sizes)
     {
         if (!keepSize(size, limit, 16))
             continue;
 
-        frames.push_back(pngFrame(src, size));
-        frameSizes.push_back(size);
+        frames.add(pngFrame(src, size));
+        frameSizes.add(size);
     }
 
     const auto count = static_cast<std::uint16_t>(frames.size());
@@ -135,7 +132,7 @@ void writeIco(const Image& src, const FilePath& out)
     appendLE16(dir, count);
 
     auto offset = static_cast<std::uint32_t>(6 + 16 * frames.size());
-    for (auto i = 0u; i < frames.size(); ++i)
+    for (auto i = 0; i < frames.size(); ++i)
     {
         const auto size = frameSizes[i];
         const auto bytesInRes = static_cast<std::uint32_t>(frames[i].size());
@@ -154,14 +151,15 @@ void writeIco(const Image& src, const FilePath& out)
 
     Bytes file = dir;
     for (const auto& frame: frames)
-        file.insert(file.end(), frame.begin(), frame.end());
+        file.addFrom(frame);
 
     Files::writeFile(out, file);
 }
 
 void writeIconset(const Image& src, const FilePath& outDir)
 {
-    Files::writeFile(outDir / "icon_1024.png", pngFrame(src, 1024));
+    const auto png = pngFrame(src, 1024);
+    Files::writeFile(outDir / "icon_1024.png", png);
 
     static constexpr auto contents = "{\n"
                                      "  \"images\" : [\n"
@@ -179,7 +177,10 @@ void writeIconset(const Image& src, const FilePath& outDir)
                                      "}\n";
 
     const std::string json = contents;
-    Files::writeFile(outDir / "Contents.json", Bytes(json.begin(), json.end()));
+
+    Bytes jsonBytes;
+    jsonBytes.assign(json.begin(), json.end());
+    Files::writeFile(outDir / "Contents.json", jsonBytes);
 }
 
 } // namespace eacp::Graphics::Icons

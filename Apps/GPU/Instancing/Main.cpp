@@ -1,8 +1,6 @@
 #include <eacp/GPU/GPU.h>
 #include <algorithm>
 
-#include <vector>
-
 using namespace eacp;
 using namespace GPU;
 
@@ -169,37 +167,37 @@ Graphics::Color colorFor(int index, int cols, int rows)
     return hueColor((float) row / (float) rows);
 }
 
-std::vector<PerInstanceTransform> buildInstancedTransforms()
+Vector<PerInstanceTransform> buildInstancedTransforms()
 {
-    auto out = std::vector<PerInstanceTransform> {};
+    auto out = Vector<PerInstanceTransform> {};
     out.reserve(instanceCount);
     for (auto i = 0; i < instanceCount; ++i)
     {
         float x, y;
         cellCentre(
             i, gridCols, gridRows, gridLeftX, gridRightX, gpuBotY, gpuTopY, x, y);
-        out.push_back({{x, y}, rotationSpeedFor(i, instanceCount)});
+        out.add(PerInstanceTransform {{x, y}, rotationSpeedFor(i, instanceCount)});
     }
     return out;
 }
 
-std::vector<PerInstanceColor> buildInstancedColors()
+Vector<PerInstanceColor> buildInstancedColors()
 {
-    auto out = std::vector<PerInstanceColor> {};
+    auto out = Vector<PerInstanceColor> {};
     out.reserve(instanceCount);
     for (auto i = 0; i < instanceCount; ++i)
     {
         auto c = colorFor(i, gridCols, gridRows);
-        out.push_back({{c.r, c.g, c.b}});
+        out.add(PerInstanceColor {{c.r, c.g, c.b}});
     }
     return out;
 }
 
 // Non-instanced expansion: 3 fat verts per triangle, each carrying the
 // triangle's centre / speed / colour on top of its own corner + uv.
-std::vector<FatVertex> buildNonInstancedVerts()
+Vector<FatVertex> buildNonInstancedVerts()
 {
-    auto out = std::vector<FatVertex> {};
+    auto out = Vector<FatVertex> {};
     out.reserve(nonInstCount * 3);
 
     for (auto tri = 0; tri < nonInstCount; ++tri)
@@ -212,7 +210,7 @@ std::vector<FatVertex> buildNonInstancedVerts()
 
         for (const auto& v: unitTriangleVerts)
         {
-            out.push_back({
+            out.add(FatVertex {
                 {v.position[0], v.position[1]},
                 {v.uv[0], v.uv[1]},
                 {cx, cy},
@@ -325,7 +323,7 @@ struct NonInstancedView final : GPUView
     NonInstancedView()
         : fatVertsData(buildNonInstancedVerts())
     {
-        shader.setVertices(fatVertsData.data(), (int) fatVertsData.size());
+        shader.setVertices(fatVertsData.data(), fatVertsData.size());
         shader.prepare(sampleCount());
         setContinuous(true);
     }
@@ -341,7 +339,7 @@ struct NonInstancedView final : GPUView
         pass.draw(shader);
     }
 
-    std::vector<FatVertex> fatVertsData;
+    Vector<FatVertex> fatVertsData;
     NonInstancedProgram shader;
     float elapsed = 0.f;
 };
@@ -353,8 +351,8 @@ struct InstancedView final : GPUView
         , colorsData(buildInstancedColors())
     {
         shader.setVertices(unitTriangleVerts);
-        shader.setInstances(1, transformsData.data(), (int) transformsData.size());
-        shader.setInstances(2, colorsData.data(), (int) colorsData.size());
+        shader.setInstances(1, transformsData.data(), transformsData.size());
+        shader.setInstances(2, colorsData.data(), colorsData.size());
         shader.prepare(sampleCount());
         setContinuous(true);
     }
@@ -370,8 +368,8 @@ struct InstancedView final : GPUView
         pass.drawInstanced(shader, instanceCount);
     }
 
-    std::vector<PerInstanceTransform> transformsData;
-    std::vector<PerInstanceColor> colorsData;
+    Vector<PerInstanceTransform> transformsData;
+    Vector<PerInstanceColor> colorsData;
     InstancedProgram shader;
     float elapsed = 0.f;
 };
@@ -389,8 +387,8 @@ struct RowScanView final : GPUView
         , colorsData(buildInstancedColors())
     {
         shader.setVertices(unitTriangleVerts);
-        shader.setInstances(1, transformsData.data(), (int) transformsData.size());
-        shader.setInstances(2, colorsData.data(), (int) colorsData.size());
+        shader.setInstances(1, transformsData.data(), transformsData.size());
+        shader.setInstances(2, colorsData.data(), colorsData.size());
         shader.setIndices(indices);
         shader.prepare(sampleCount());
         setContinuous(true);
@@ -413,8 +411,8 @@ struct RowScanView final : GPUView
         pass.drawInstanced(shader, gridCols, firstInstance);
     }
 
-    std::vector<PerInstanceTransform> transformsData;
-    std::vector<PerInstanceColor> colorsData;
+    Vector<PerInstanceTransform> transformsData;
+    Vector<PerInstanceColor> colorsData;
     InstancedProgram shader;
     float elapsed = 0.f;
 };

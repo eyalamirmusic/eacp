@@ -104,17 +104,17 @@ frames::MediaFrameFormat
 // sets it; the render thread copies it out.
 struct LatestFrame
 {
-    void set(const std::uint8_t* base, int width, int height, std::size_t stride)
+    void set(const std::uint8_t* base, int width, int height, int stride)
     {
         std::lock_guard<std::mutex> lock(mutex);
 
         data.resize(width * height * 4);
-        auto rowBytes = (std::size_t) width * 4;
+        auto rowBytes = width * 4;
 
         for (auto y = 0; y < height; ++y)
-            std::memcpy(data.data() + (std::size_t) y * rowBytes,
-                        base + (std::size_t) y * stride,
-                        rowBytes);
+            std::memcpy(data.data() + y * rowBytes,
+                        base + y * stride,
+                        (std::size_t) rowBytes);
 
         frameWidth = width;
         frameHeight = height;
@@ -313,7 +313,7 @@ struct Camera::Native
             return;
 
         const auto* base = bytes + plane.StartIndex;
-        auto stride = (std::size_t) plane.Stride;
+        auto stride = (int) plane.Stride;
 
         auto timestampSeconds = 0.0;
         auto relative = frame.SystemRelativeTime();

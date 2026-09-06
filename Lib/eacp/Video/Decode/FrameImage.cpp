@@ -41,14 +41,14 @@ Graphics::Image nv12ToImage(const VideoFrame& frame)
 
     for (auto y = 0; y < frame.height(); ++y)
     {
-        const auto* lumaRow = luma + (std::size_t) y * stride;
+        const auto* lumaRow = luma + y * stride;
 
         // One chroma row and one chroma pair per two pixels each way.
-        const auto* chromaRow = chroma + (std::size_t) (y / 2) * stride;
+        const auto* chromaRow = chroma + (y / 2) * stride;
 
         for (auto x = 0; x < frame.width(); ++x)
         {
-            const auto* pair = chromaRow + (std::size_t) (x / 2) * 2;
+            const auto* pair = chromaRow + (x / 2) * 2;
             image.set(x, y, yuvToColor(transform, lumaRow[x], pair[0], pair[1]));
         }
     }
@@ -60,12 +60,11 @@ Graphics::Image bgraToImage(const VideoFrame& frame)
 {
     const auto* pixels = frame.pixels();
     auto image = Graphics::Image {frame.width(), frame.height()};
-    auto stride = frame.bytesPerRow() != 0 ? frame.bytesPerRow()
-                                           : (std::size_t) frame.width() * 4;
+    auto stride = frame.bytesPerRow() != 0 ? frame.bytesPerRow() : frame.width() * 4;
 
     for (auto y = 0; y < frame.height(); ++y)
     {
-        const auto* row = pixels + (std::size_t) y * stride;
+        const auto* row = pixels + y * stride;
 
         for (auto x = 0; x < frame.width(); ++x)
             image.set(x,

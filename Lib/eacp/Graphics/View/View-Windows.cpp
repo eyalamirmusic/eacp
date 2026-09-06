@@ -10,7 +10,6 @@
 #include <cmath>
 #include <memory>
 #include <unordered_set>
-#include <vector>
 
 namespace eacp::Graphics
 {
@@ -275,7 +274,7 @@ private:
     Color currentColor {1.0f, 1.0f, 1.0f, 1.0f};
     float lineWidth = 1.0f;
 
-    std::vector<SavedState> savedStates;
+    Vector<SavedState> savedStates;
     bool drawing = false;
     bool failed = false;
     bool adopted = false;
@@ -835,10 +834,9 @@ void drawImageIntoContext(ID2D1DeviceContext* dc,
 
     // Straight RGBA -> premultiplied BGRA, the byte order a B8G8R8A8 D2D bitmap
     // composites with.
-    auto bgra = std::vector<std::uint32_t>(static_cast<std::size_t>(width)
-                                           * static_cast<std::size_t>(height));
+    auto bgra = Vector<std::uint32_t>(width * height);
 
-    for (std::size_t i = 0; i < bgra.size(); ++i)
+    for (auto i = 0; i < bgra.size(); ++i)
     {
         auto r = pixels[i * 4 + 0];
         auto g = pixels[i * 4 + 1];

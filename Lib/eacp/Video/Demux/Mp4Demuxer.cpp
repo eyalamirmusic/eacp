@@ -27,7 +27,7 @@ constexpr auto boxStss = fourcc("stss");
 
 // A SampleEntry header plus the fixed VisualSampleEntry fields; the codec
 // configuration boxes start here.
-constexpr auto visualSampleEntrySize = std::size_t {78};
+constexpr auto visualSampleEntrySize = 78;
 
 // Far beyond any real file, and keeps a hostile count from asking a table
 // for gigabytes before its bytes are ever read.
@@ -77,7 +77,7 @@ bool tableFits(const BoxReader& reader,
 
 struct Mp4TrackParser
 {
-    bool parseFile(std::span<const std::uint8_t> fileBytes)
+    bool parseFile(Span<const std::uint8_t> fileBytes)
     {
         auto reader = BoxReader {fileBytes};
         auto box = Box {};
@@ -95,7 +95,7 @@ struct Mp4TrackParser
     // Walks every trak rather than stopping at the video one: the audio
     // summary is read on the way past, and the order of the two in the file is
     // the muxer's business, not ours.
-    bool parseMoov(std::span<const std::uint8_t> payload)
+    bool parseMoov(Span<const std::uint8_t> payload)
     {
         auto reader = BoxReader {payload};
         auto box = Box {};
@@ -117,7 +117,7 @@ struct Mp4TrackParser
         return videoParsed;
     }
 
-    std::uint32_t trakHandler(std::span<const std::uint8_t> trak) const
+    std::uint32_t trakHandler(Span<const std::uint8_t> trak) const
     {
         auto mdia = Box {};
         auto hdlr = Box {};
@@ -133,7 +133,7 @@ struct Mp4TrackParser
         return reader.ok() ? handler : 0;
     }
 
-    void parseAudioTrak(std::span<const std::uint8_t> trak)
+    void parseAudioTrak(Span<const std::uint8_t> trak)
     {
         auto mdia = Box {};
         auto mdhd = Box {};
@@ -156,7 +156,7 @@ struct Mp4TrackParser
 
     // The AudioSampleEntry fields shared by every version of the box: channel
     // count, sample size, then the 16.16 sample rate.
-    void parseAudioSampleEntry(std::span<const std::uint8_t> stsd)
+    void parseAudioSampleEntry(Span<const std::uint8_t> stsd)
     {
         auto reader = BoxReader {stsd};
         reader.skip(4);
@@ -181,7 +181,7 @@ struct Mp4TrackParser
         audio.sampleRate = static_cast<int>(sampleRate);
     }
 
-    bool parseTrak(std::span<const std::uint8_t> trak)
+    bool parseTrak(Span<const std::uint8_t> trak)
     {
         auto mdia = Box {};
         auto mdhd = Box {};
@@ -194,12 +194,12 @@ struct Mp4TrackParser
                && findChild(minf.payload, boxStbl, stbl) && parseStbl(stbl.payload);
     }
 
-    bool parseMdhd(std::span<const std::uint8_t> payload)
+    bool parseMdhd(Span<const std::uint8_t> payload)
     {
         return parseMdhd(payload, info.timescale, info.duration);
     }
 
-    static bool parseMdhd(std::span<const std::uint8_t> payload,
+    static bool parseMdhd(Span<const std::uint8_t> payload,
                           std::uint32_t& timescaleOut,
                           std::uint64_t& durationOut)
     {
@@ -222,7 +222,7 @@ struct Mp4TrackParser
         return true;
     }
 
-    bool parseStbl(std::span<const std::uint8_t> stbl)
+    bool parseStbl(Span<const std::uint8_t> stbl)
     {
         auto reader = BoxReader {stbl};
         auto box = Box {};
@@ -270,7 +270,7 @@ struct Mp4TrackParser
                && tables.sampleCount > 0;
     }
 
-    bool parseStsd(std::span<const std::uint8_t> payload)
+    bool parseStsd(Span<const std::uint8_t> payload)
     {
         auto reader = BoxReader {payload};
         reader.skip(4);
@@ -308,7 +308,7 @@ struct Mp4TrackParser
         return true;
     }
 
-    bool parseStts(std::span<const std::uint8_t> payload)
+    bool parseStts(Span<const std::uint8_t> payload)
     {
         auto reader = BoxReader {payload};
         reader.skip(4);
@@ -329,7 +329,7 @@ struct Mp4TrackParser
         return reader.ok();
     }
 
-    bool parseCtts(std::span<const std::uint8_t> payload)
+    bool parseCtts(Span<const std::uint8_t> payload)
     {
         auto reader = BoxReader {payload};
         auto isSigned = reader.readU8() == 1;
@@ -353,7 +353,7 @@ struct Mp4TrackParser
         return reader.ok();
     }
 
-    bool parseStsc(std::span<const std::uint8_t> payload)
+    bool parseStsc(Span<const std::uint8_t> payload)
     {
         auto reader = BoxReader {payload};
         reader.skip(4);
@@ -375,7 +375,7 @@ struct Mp4TrackParser
         return reader.ok();
     }
 
-    bool parseChunkOffsets(std::span<const std::uint8_t> payload, bool is64Bit)
+    bool parseChunkOffsets(Span<const std::uint8_t> payload, bool is64Bit)
     {
         auto reader = BoxReader {payload};
         reader.skip(4);
@@ -394,7 +394,7 @@ struct Mp4TrackParser
         return reader.ok();
     }
 
-    bool parseStsz(std::span<const std::uint8_t> payload)
+    bool parseStsz(Span<const std::uint8_t> payload)
     {
         auto reader = BoxReader {payload};
         reader.skip(4);
@@ -418,7 +418,7 @@ struct Mp4TrackParser
         return reader.ok();
     }
 
-    bool parseStss(std::span<const std::uint8_t> payload)
+    bool parseStss(Span<const std::uint8_t> payload)
     {
         auto reader = BoxReader {payload};
         reader.skip(4);
@@ -603,7 +603,7 @@ bool Mp4Demuxer::open(const FilePath& path)
     return true;
 }
 
-bool Mp4Demuxer::parse(std::span<const std::uint8_t> fileBytes)
+bool Mp4Demuxer::parse(Span<const std::uint8_t> fileBytes)
 {
     valid = false;
     trackInfo = {};
@@ -618,7 +618,7 @@ bool Mp4Demuxer::parse(std::span<const std::uint8_t> fileBytes)
 
     auto samples = Vector<Mp4Sample> {};
 
-    if (!resolveSampleRanges(parser.tables, fileBytes.size(), samples)
+    if (!resolveSampleRanges(parser.tables, fileBytes.getSize(), samples)
         || !applyTimestamps(parser.tables, samples)
         || !markKeyframes(parser.tables, samples))
         return false;
@@ -631,18 +631,17 @@ bool Mp4Demuxer::parse(std::span<const std::uint8_t> fileBytes)
     return true;
 }
 
-std::span<const std::uint8_t> Mp4Demuxer::sampleBytes(int index) const
+Span<const std::uint8_t> Mp4Demuxer::sampleBytes(int index) const
 {
     if (index < 0 || index >= sampleList.size())
         return {};
 
     auto& range = sampleList[index].byteRange;
 
-    if (range.end() > fileData.size())
+    if (range.end() > fileData.getSize())
         return {};
 
-    return fileData.subspan(static_cast<std::size_t>(range.start),
-                            static_cast<std::size_t>(range.length));
+    return fileData.subspan(range.start, range.length);
 }
 
 double Mp4Demuxer::toSeconds(std::int64_t timeUnits) const

@@ -7,7 +7,6 @@
 #include <cwctype>
 #include <mutex>
 #include <thread>
-#include <vector>
 
 namespace eacp::Processes
 {
@@ -24,7 +23,7 @@ std::wstring quoteArgument(const std::wstring& arg)
 
     for (auto it = arg.begin();; ++it)
     {
-        auto backslashes = std::size_t {0};
+        auto backslashes = 0;
 
         while (it != arg.end() && *it == L'\\')
         {
@@ -184,19 +183,19 @@ struct Process::Native
         if (inputWrite == nullptr)
             return false;
 
-        auto total = std::size_t {0};
+        auto total = 0;
+        const auto size = (int) data.size();
 
-        while (total < data.size())
+        while (total < size)
         {
-            auto chunk =
-                (DWORD) std::min<std::size_t>(data.size() - total, 1u << 20);
+            auto chunk = (DWORD) std::min(size - total, 1 << 20);
             DWORD written = 0;
 
             if (!WriteFile(
                     inputWrite, data.data() + total, chunk, &written, nullptr))
                 return false;
 
-            total += written;
+            total += (int) written;
         }
 
         return true;

@@ -134,11 +134,11 @@ void GlyphRenderer::add(const Graphics::Rect& destination,
     instance.color[2] = color.b;
     instance.color[3] = color.a;
 
-    (colored ? colors : masks).push_back(instance);
+    (colored ? colors : masks).add(instance);
 }
 
 void GlyphRenderer::drawQueue(RenderPass& pass,
-                              std::vector<GlyphInstance>& queue,
+                              Vector<GlyphInstance>& queue,
                               Texture& texture,
                               bool colored)
 {
@@ -152,9 +152,9 @@ void GlyphRenderer::drawQueue(RenderPass& pass,
                                static_cast<float>(texture.height())};
     program.atlas = texture;
 
-    program.setInstances(1, queue.data(), static_cast<int>(queue.size()));
+    program.setInstances(1, queue.data(), queue.size());
 
-    pass.drawInstanced(program, static_cast<int>(queue.size()));
+    pass.drawInstanced(program, queue.size());
 }
 
 void GlyphRenderer::flush(RenderPass& pass, GlyphAtlas& atlas)

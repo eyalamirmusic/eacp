@@ -27,7 +27,7 @@ using namespace Graphics;
 namespace
 {
 constexpr auto channelName = "com.eacp.ipccamdemo";
-constexpr auto frameHeaderBytes = std::size_t {8};
+constexpr auto frameHeaderBytes = 8;
 
 void appendU32(std::string& out, std::uint32_t value)
 {
@@ -39,7 +39,7 @@ std::uint32_t readU32(const char* bytes)
 {
     auto value = std::uint32_t {0};
 
-    for (auto index = std::size_t {0}; index < 4; ++index)
+    for (auto index = 0; index < 4; ++index)
         value |= (std::uint32_t) (unsigned char) bytes[index] << (index * 8);
 
     return value;
@@ -47,23 +47,24 @@ std::uint32_t readU32(const char* bytes)
 
 std::string encodeFrame(const Cameras::CameraFrame& frame)
 {
-    auto width = (std::size_t) frame.width();
-    auto height = (std::size_t) frame.height();
+    auto width = frame.width();
+    auto height = frame.height();
     auto rowBytes = width * 4;
 
     auto message = std::string {};
-    message.reserve(frameHeaderBytes + rowBytes * height);
+    message.reserve((std::size_t) (frameHeaderBytes + rowBytes * height));
 
-    appendU32(message, (std::uint32_t) frame.width());
-    appendU32(message, (std::uint32_t) frame.height());
+    appendU32(message, (std::uint32_t) width);
+    appendU32(message, (std::uint32_t) height);
 
     const auto* pixels = (const char*) frame.data();
 
     if (frame.bytesPerRow() == rowBytes)
-        message.append(pixels, rowBytes * height);
+        message.append(pixels, (std::size_t) (rowBytes * height));
     else
-        for (auto row = std::size_t {0}; row < height; ++row)
-            message.append(pixels + row * frame.bytesPerRow(), rowBytes);
+        for (auto row = 0; row < height; ++row)
+            message.append(pixels + row * frame.bytesPerRow(),
+                           (std::size_t) rowBytes);
 
     return message;
 }
@@ -330,15 +331,16 @@ struct IpcCameraApp
 
     void showFrame(std::string message)
     {
-        if (message.size() < frameHeaderBytes)
+        auto messageBytes = (std::int64_t) message.size();
+
+        if (messageBytes < frameHeaderBytes)
             return;
 
         auto width = (int) readU32(message.data());
         auto height = (int) readU32(message.data() + 4);
-        auto expected = (std::size_t) width * (std::size_t) height * 4;
+        auto expected = (std::int64_t) width * height * 4;
 
-        if (width <= 0 || height <= 0
-            || message.size() - frameHeaderBytes != expected)
+        if (width <= 0 || height <= 0 || messageBytes - frameHeaderBytes != expected)
             return;
 
         remoteView->showFrame(width, height, std::move(message));

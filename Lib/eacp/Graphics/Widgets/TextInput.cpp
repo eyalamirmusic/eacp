@@ -14,7 +14,7 @@ TextInput::TextInput(const FontOptions& options)
 
 TextInput::TextInput(const std::string& initialText)
     : text(initialText)
-    , cursorIndex(initialText.length())
+    , cursorIndex((int) initialText.length())
 {
     initialize();
 }
@@ -46,8 +46,8 @@ void TextInput::initialize()
 void TextInput::setText(const std::string& newText)
 {
     text = newText;
-    if (cursorIndex > text.length())
-        cursorIndex = text.length();
+    if (cursorIndex > (int) text.length())
+        cursorIndex = (int) text.length();
 
     updateTextDisplay();
     updateCursorPosition();
@@ -58,13 +58,13 @@ std::string TextInput::getText() const
     return text;
 }
 
-void TextInput::setCursorPosition(size_t position)
+void TextInput::setCursorPosition(int position)
 {
-    cursorIndex = std::min(position, text.length());
+    cursorIndex = std::clamp(position, 0, (int) text.length());
     updateCursorPosition();
 }
 
-size_t TextInput::getCursorPosition() const
+int TextInput::getCursorPosition() const
 {
     return cursorIndex;
 }
@@ -146,7 +146,7 @@ void TextInput::keyDown(const KeyEvent& event)
     {
         if (event.keyCode == KeyCode::A)
         {
-            cursorIndex = text.length();
+            cursorIndex = (int) text.length();
             updateCursorPosition();
         }
         return;
@@ -166,7 +166,7 @@ void TextInput::keyDown(const KeyEvent& event)
     }
     else if (event.keyCode == KeyCode::RightArrow)
     {
-        if (cursorIndex < text.length())
+        if (cursorIndex < (int) text.length())
         {
             cursorIndex++;
             updateCursorPosition();
@@ -182,8 +182,8 @@ void TextInput::keyDown(const KeyEvent& event)
         char c = event.characters[0];
         if (c >= 32 && c < 127)
         {
-            text.insert(cursorIndex, event.characters);
-            cursorIndex += event.characters.length();
+            text.insert((size_t) cursorIndex, event.characters);
+            cursorIndex += (int) event.characters.length();
             updateTextDisplay();
             updateCursorPosition();
 
@@ -241,7 +241,7 @@ void TextInput::handleBackspace()
 {
     if (cursorIndex > 0 && !text.empty())
     {
-        text.erase(cursorIndex - 1, 1);
+        text.erase((size_t) (cursorIndex - 1), 1);
         cursorIndex--;
         updateTextDisplay();
         updateCursorPosition();
@@ -253,9 +253,9 @@ void TextInput::handleBackspace()
 
 void TextInput::handleDelete()
 {
-    if (cursorIndex < text.length())
+    if (cursorIndex < (int) text.length())
     {
-        text.erase(cursorIndex, 1);
+        text.erase((size_t) cursorIndex, 1);
         updateTextDisplay();
         updateCursorPosition();
 

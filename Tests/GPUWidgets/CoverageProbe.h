@@ -69,7 +69,7 @@ inline Vector<float>
         || height <= 0)
         return values;
 
-    auto bytes = sizeof(float) * (std::size_t) (width * height);
+    auto bytes = (int) sizeof(float) * width * height;
     auto readback = GPU::Buffer {
         GPU::Device::shared(), nullptr, bytes, GPU::BufferUsage::Storage};
 
@@ -115,7 +115,7 @@ inline Vector<float> rasterize(PathRasterizer& rasterizer,
 
     auto width = rasterizer.getCoverageWidth();
     auto height = rasterizer.getCoverageHeight();
-    auto bytes = sizeof(float) * (std::size_t) (width * height);
+    auto bytes = (int) sizeof(float) * width * height;
 
     auto readback = GPU::Buffer {
         GPU::Device::shared(), nullptr, bytes, GPU::BufferUsage::Storage};

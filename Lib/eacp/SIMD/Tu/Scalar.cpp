@@ -9,9 +9,7 @@
 namespace eacp::simd::backends
 {
 
-void swapRedBlue_scalar(const std::uint8_t* in,
-                        std::uint8_t* out,
-                        std::size_t pixelCount)
+void swapRedBlue_scalar(const std::uint8_t* in, std::uint8_t* out, int pixelCount)
 {
     kernels::swapRedBlueImpl<backend::Scalar>(in, out, pixelCount);
 }

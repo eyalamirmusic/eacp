@@ -28,7 +28,7 @@ struct Frame
 struct Decoded
 {
     Frame frame;
-    std::size_t consumed = 0;
+    int consumed = 0;
 };
 
 struct Error : std::runtime_error

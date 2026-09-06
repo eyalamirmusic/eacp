@@ -6,7 +6,6 @@
 #include <cstring>
 #include <optional>
 #include <string>
-#include <vector>
 
 // A pass reading the depth an earlier pass wrote, and the effect that is the
 // whole reason to want it: soft particles.
@@ -505,7 +504,7 @@ constexpr Puff puffs[] = {
 constexpr auto puffCount = (int) (sizeof(puffs) / sizeof(puffs[0]));
 constexpr auto puffVertexCount = puffCount * 6;
 
-void appendQuad(std::vector<SceneVertex>& out,
+void appendQuad(Vector<SceneVertex>& out,
                 Vec3 a,
                 Vec3 b,
                 Vec3 c,
@@ -513,15 +512,15 @@ void appendQuad(std::vector<SceneVertex>& out,
                 Vec3 normal,
                 Vec3 color)
 {
-    out.push_back({a, normal, color});
-    out.push_back({b, normal, color});
-    out.push_back({c, normal, color});
-    out.push_back({a, normal, color});
-    out.push_back({c, normal, color});
-    out.push_back({d, normal, color});
+    out.add(SceneVertex {a, normal, color});
+    out.add(SceneVertex {b, normal, color});
+    out.add(SceneVertex {c, normal, color});
+    out.add(SceneVertex {a, normal, color});
+    out.add(SceneVertex {c, normal, color});
+    out.add(SceneVertex {d, normal, color});
 }
 
-void appendBox(std::vector<SceneVertex>& out, const Box& box)
+void appendBox(Vector<SceneVertex>& out, const Box& box)
 {
     auto c = box.centre;
     auto h = box.halfSize;
@@ -569,9 +568,9 @@ void appendBox(std::vector<SceneVertex>& out, const Box& box)
                box.color);
 }
 
-std::vector<SceneVertex> buildScene()
+Vector<SceneVertex> buildScene()
 {
-    auto vertices = std::vector<SceneVertex> {};
+    auto vertices = Vector<SceneVertex> {};
     vertices.reserve(sceneVertexCount);
 
     appendQuad(vertices,
@@ -632,8 +631,9 @@ struct DepthSamplingView final : GPUView
 {
     DepthSamplingView()
         : sceneVertices(buildScene())
-        , sceneBuffer(Device::shared().makeBuffer(
-              sceneVertices.data(), sceneVertices.size() * sizeof(SceneVertex)))
+        , sceneBuffer(Device::shared().makeBuffer(sceneVertices.data(),
+                                                  sceneVertices.size()
+                                                      * (int) sizeof(SceneVertex)))
         , puffBuffer(Device::shared().makeBuffer(
               nullptr, puffVertexCount * sizeof(PuffVertex)))
     {
@@ -723,7 +723,7 @@ struct DepthSamplingView final : GPUView
         depthCopy.sceneDepth = *sceneTarget;
         softPuffs.sceneDepth = *sceneTarget;
 
-        depthValues.assign((std::size_t) (width * height), 0.f);
+        depthValues.assign(width * height, 0.f);
     }
 
     void update(Threads::FrameTime time) override
@@ -755,7 +755,7 @@ struct DepthSamplingView final : GPUView
     // screen, and the fade would then be measuring the wrong distance.
     void updatePuffBuffer(const Camera& camera)
     {
-        auto vertices = std::vector<PuffVertex> {};
+        auto vertices = Vector<PuffVertex> {};
         vertices.reserve(puffVertexCount);
 
         constexpr Vec2 corners[6] = {{-1.f, -1.f},
@@ -771,10 +771,11 @@ struct DepthSamplingView final : GPUView
                 auto offset = camera.right * (corner.x * puff.radius)
                               + camera.up * (corner.y * puff.radius);
 
-                vertices.push_back({puff.centre + offset, corner});
+                vertices.add(PuffVertex {puff.centre + offset, corner});
             }
 
-        puffBuffer.update(vertices.data(), vertices.size() * sizeof(PuffVertex));
+        puffBuffer.update(vertices.data(),
+                          vertices.size() * (int) sizeof(PuffVertex));
     }
 
     void drawScene(RenderPass& pass, SceneShader& shader, const Camera& camera)
@@ -787,7 +788,7 @@ struct DepthSamplingView final : GPUView
         // From the vector rather than from the constant beside it: the buffer
         // holds what buildScene made, and a draw past the end of it is a read
         // of whatever follows.
-        pass.draw((int) sceneVertices.size());
+        pass.draw(sceneVertices.size());
     }
 
     template <typename Shader>
@@ -924,12 +925,12 @@ struct DepthSamplingView final : GPUView
     // What --check reads back, and the reason the copy pass is not conditional:
     // the frame it measures has to be the frame the window would have drawn.
     bool readBackDepth = false;
-    std::vector<float> depthValues;
+    Vector<float> depthValues;
 
     int targetWidth = 0;
     int targetHeight = 0;
 
-    std::vector<SceneVertex> sceneVertices;
+    Vector<SceneVertex> sceneVertices;
     Buffer sceneBuffer;
     Buffer puffBuffer;
 
@@ -1191,8 +1192,7 @@ int runCheck()
         maxDepth = std::max(maxDepth, value);
     }
 
-    auto probe =
-        view.depthValues[(std::size_t) (worstY * view.targetWidth + worstX)];
+    auto probe = view.depthValues[worstY * view.targetWidth + worstX];
 
     auto asByte = quantiseToByte(probe);
     auto asHalf = quantiseToHalf(probe);

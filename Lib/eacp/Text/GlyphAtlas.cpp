@@ -13,7 +13,7 @@ namespace
 constexpr int glyphPadding = 1;
 
 // Shaped strings kept before the cache starts over.
-constexpr std::size_t maxShapedStrings = 16384;
+constexpr int maxShapedStrings = 16384;
 } // namespace
 
 void GlyphAtlas::Page::markDirty(int x, int y, int width, int height)
@@ -184,7 +184,7 @@ GlyphSlot GlyphAtlas::glyph(char32_t codepoint, FontStyle style, int face)
 {
     char encoded[4] = {};
     const auto length = encodeUtf8(codepoint, encoded);
-    const auto run = shape({encoded, length}, variantOf(style), face);
+    const auto run = shape({encoded, (std::size_t) length}, variantOf(style), face);
 
     if (run.glyphs.empty())
         return {};
@@ -219,7 +219,7 @@ ShapedText
 
     // A document's vocabulary is bounded; a cache that is not would hold every
     // string ever measured, so it starts over rather than grow without end.
-    if (shaped.size() >= maxShapedStrings)
+    if ((int) shaped.size() >= maxShapedStrings)
         shaped.clear();
 
     shaped.emplace(std::move(key), result);
@@ -332,8 +332,8 @@ void GlyphAtlas::dropEverything()
     slots.clear();
     shaped.clear();
 
-    std::fill(maskPage.pixels.begin(), maskPage.pixels.end(), std::uint8_t {0});
-    std::fill(colorPage.pixels.begin(), colorPage.pixels.end(), std::uint8_t {0});
+    maskPage.pixels.fill(std::uint8_t {0});
+    colorPage.pixels.fill(std::uint8_t {0});
 
     maskPage.needsFullUpload = true;
     colorPage.needsFullUpload = true;
@@ -346,20 +346,19 @@ void GlyphAtlas::dropEverything()
 void GlyphAtlas::resizePage(Page& page, int newSize, int stride)
 {
     const auto oldSize = atlasSize;
-    auto resized = std::vector<std::uint8_t>(
-        static_cast<std::size_t>(newSize) * newSize * stride, std::uint8_t {0});
+    auto resized = Vector<std::uint8_t>(newSize * newSize * stride);
 
     // Copy row by row: the old rows are shorter than the new ones, so the
     // contents keep their coordinates and every placement stays correct.
     if (!page.pixels.empty() && oldSize > 0 && oldSize <= newSize)
     {
-        const auto oldRow = static_cast<std::size_t>(oldSize) * stride;
-        const auto newRow = static_cast<std::size_t>(newSize) * stride;
+        const auto oldRow = oldSize * stride;
+        const auto newRow = newSize * stride;
 
         for (auto y = 0; y < oldSize; ++y)
-            std::memcpy(&resized[static_cast<std::size_t>(y) * newRow],
-                        &page.pixels[static_cast<std::size_t>(y) * oldRow],
-                        oldRow);
+            std::memcpy(&resized[y * newRow],
+                        &page.pixels[y * oldRow],
+                        (std::size_t) oldRow);
     }
 
     page.pixels = std::move(resized);
@@ -380,12 +379,11 @@ void GlyphAtlas::blit(Page& page,
 
     for (auto y = 0; y < bitmap.height; ++y)
     {
-        const auto destOffset =
-            (static_cast<std::size_t>(at.y + y) * atlasSize + at.x) * stride;
+        const auto destOffset = ((at.y + y) * atlasSize + at.x) * stride;
 
         std::memcpy(&page.pixels[destOffset],
-                    &bitmap.pixels[static_cast<std::size_t>(y) * sourceRow],
-                    sourceRow);
+                    &bitmap.pixels[y * sourceRow],
+                    (std::size_t) sourceRow);
     }
 
     page.markDirty(at.x, at.y, bitmap.width, bitmap.height);
@@ -427,9 +425,8 @@ void GlyphAtlas::uploadPage(Page& page, GPU::TextureFormat format, int stride)
     const auto width = page.dirtyRight - page.dirtyLeft;
     const auto height = page.dirtyBottom - page.dirtyTop;
 
-    const auto rowBytes = static_cast<std::size_t>(atlasSize) * stride;
-    const auto* start = &page.pixels[static_cast<std::size_t>(y) * rowBytes
-                                     + static_cast<std::size_t>(x) * stride];
+    const auto rowBytes = atlasSize * stride;
+    const auto* start = &page.pixels[y * rowBytes + x * stride];
 
     page.texture->update({static_cast<float>(x),
                           static_cast<float>(y),

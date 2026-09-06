@@ -185,7 +185,7 @@ struct DepthCopyView final : GPUView
         setSampleCount(1);
 
         quad.setVertices(leftHalf, 6);
-        quad.color = std::array {1.f, 0.f, 0.f};
+        quad.color = Array {1.f, 0.f, 0.f};
         quad.prepare(1,
                      true,
                      PrimitiveTopology::Triangles,
@@ -286,7 +286,7 @@ void renderOnce(View& view)
 
 float valueAt(const Array<float, pixelCount>& values, int x, int y)
 {
-    return values[(std::size_t) (y * targetSize + x)];
+    return values[y * targetSize + x];
 }
 
 bool near(float value, float expected)
@@ -396,7 +396,7 @@ auto tFloatTargetKeepsItsPrecision =
 
     for (auto i = 0; i < pixelCount; ++i)
     {
-        check(view.values[(std::size_t) i] == nearlyFar);
-        check(view.values[(std::size_t) i] != 1.f);
+        check(view.values[i] == nearlyFar);
+        check(view.values[i] != 1.f);
     }
 };

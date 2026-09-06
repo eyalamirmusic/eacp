@@ -43,9 +43,9 @@ std::string_view tsPrimitiveLocal(PrimitiveKind kind)
 Vector<std::string_view> splitOnDot(std::string_view name)
 {
     auto out = Vector<std::string_view> {};
-    auto start = std::size_t {0};
+    auto start = 0;
 
-    for (auto i = std::size_t {0}; i < name.size(); ++i)
+    for (auto i = 0; i < (int) name.size(); ++i)
     {
         if (name[i] == '.')
         {
@@ -113,7 +113,7 @@ std::string stripTrailing(std::string s, std::string_view suffix)
     return s;
 }
 
-const TypeNode* findRootByQualified(std::span<const TypeNode> roots,
+const TypeNode* findRootByQualified(Span<const TypeNode> roots,
                                     std::string_view qualified)
 {
     for (auto& r: roots)
@@ -167,7 +167,7 @@ std::optional<KeyedInfo> resolveKeyedInfo(const TypeNode& payload,
     return KeyedInfo {&itemNode, tsPrimitiveLocal(keyNode.primitive)};
 }
 
-bool commandExists(std::span<const CommandEntry> commands, std::string_view name)
+bool commandExists(Span<const CommandEntry> commands, std::string_view name)
 {
     for (auto& c: commands)
         if (c.name == name)
@@ -186,9 +186,9 @@ std::string initialJsonFor(const EventEntry& event)
 
 } // namespace
 
-std::string formatHooksModule(std::span<TypeNode> typeRoots,
-                              std::span<const CommandEntry> commands,
-                              std::span<const EventEntry> events,
+std::string formatHooksModule(Span<TypeNode> typeRoots,
+                              Span<const CommandEntry> commands,
+                              Span<const EventEntry> events,
                               std::string_view /*baseName*/)
 {
     auto resolved = resolveTypes(typeRoots);

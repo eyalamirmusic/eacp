@@ -3,6 +3,7 @@
 #include <eacp/Core/Utils/Containers.h>
 
 #include <algorithm>
+#include <array>
 
 #include "../Buffer/StreamingBuffers.h"
 #include "../Device/Device.h"
@@ -59,8 +60,7 @@ namespace eacp::GPU
 // The CPU-side storage type mirroring each shader value type. A scalar is a
 // float; a vector is a packed Array, so a uniform reads like the data it is.
 // Array wraps std::array with no added state, so the packed layout the upload
-// walk memcpys is the same either way — and a plain std::array still assigns,
-// through the sub-type overload below.
+// walk memcpys is the same either way.
 template <typename T>
 struct CpuValueOf;
 
@@ -112,19 +112,19 @@ struct CpuValueOf<Int>
 template <>
 struct CpuValueOf<Int2>
 {
-    using type = std::array<std::int32_t, 2>;
+    using type = Array<std::int32_t, 2>;
 };
 
 template <>
 struct CpuValueOf<Int3>
 {
-    using type = std::array<std::int32_t, 3>;
+    using type = Array<std::int32_t, 3>;
 };
 
 template <>
 struct CpuValueOf<Int4>
 {
-    using type = std::array<std::int32_t, 4>;
+    using type = Array<std::int32_t, 4>;
 };
 
 // The shader value a CPU type maps to. Built in for float / float[N] / array; a
@@ -171,6 +171,9 @@ struct ShaderValueOf<float[4]>
     using type = Float4;
 };
 
+// The shader EDSL reads a caller's own vertex-struct members and uniform
+// assignments, so it keeps recognising std::array alongside EA::Array -- the
+// container migration moved eacp's interfaces, not what a consumer may hand in.
 template <>
 struct ShaderValueOf<std::array<float, 2>>
 {
@@ -447,12 +450,12 @@ struct VertexFormatOf<T>
 // else against the CPU type its shader value implies - the same question asked
 // of whichever of the two is authoritative for that field.
 template <typename M, typename Handle>
-constexpr std::size_t expectedAttributeBytes()
+constexpr int expectedAttributeBytes()
 {
     if constexpr (requires { M::vertexFormat; })
-        return (std::size_t) bytesPerAttribute(M::vertexFormat);
+        return bytesPerAttribute(M::vertexFormat);
     else
-        return sizeof(typename CpuValueOf<Handle>::type);
+        return (int) sizeof(typename CpuValueOf<Handle>::type);
 }
 
 // The non-templated surface the uniform member walk bottoms out in. The templated
@@ -776,11 +779,10 @@ public:
     template <typename V>
     void setVertices(const V* data, int count)
     {
-        assert(sizeof(V) == (std::size_t) vertexLayout().stride
+        assert((int) sizeof(V) == vertexLayout().stride
                && "vertex element size does not match the shader's vertex layout");
 
-        vertexBufferData.emplace(
-            Device::shared(), data, sizeof(V) * (std::size_t) count);
+        vertexBufferData.emplace(Device::shared(), data, (int) sizeof(V) * count);
         vertexCountValue = count;
     }
 
@@ -800,12 +802,12 @@ public:
 
     void setIndices(const std::uint32_t* data, int count)
     {
-        uploadIndices(data, sizeof(std::uint32_t), count, IndexFormat::UInt32);
+        uploadIndices(data, (int) sizeof(std::uint32_t), count, IndexFormat::UInt32);
     }
 
     void setIndices(const std::uint16_t* data, int count)
     {
-        uploadIndices(data, sizeof(std::uint16_t), count, IndexFormat::UInt16);
+        uploadIndices(data, (int) sizeof(std::uint16_t), count, IndexFormat::UInt16);
     }
 
     // Uploads typed per-instance data for a buffer slot and owns the storage.
@@ -832,7 +834,7 @@ public:
     {
         assert(bufferIndex >= 0 && bufferIndex < vertexLayout().buffers.size()
                && "instance buffer slot was not declared via instanceInput");
-        assert(sizeof(I) == (std::size_t) vertexLayout().buffers[bufferIndex].stride
+        assert((int) sizeof(I) == vertexLayout().buffers[bufferIndex].stride
                && "instance element size does not match the shader's "
                   "per-instance layout");
 
@@ -847,8 +849,7 @@ public:
         if (!stream.has_value())
             stream.emplace(BufferUsage::Vertex);
 
-        instanceBuffers[bufferIndex] =
-            stream->write(data, sizeof(I) * (std::size_t) count);
+        instanceBuffers[bufferIndex] = stream->write(data, (int) sizeof(I) * count);
         instanceCountValue = count;
         setExternalInstanceBuffer(bufferIndex, nullptr);
     }
@@ -1038,7 +1039,7 @@ protected:
     typename ShaderValueOf<M>::type vertexInput(M C::* member)
     {
         using Handle = typename ShaderValueOf<M>::type;
-        static_assert(sizeof(M) == expectedAttributeBytes<M, Handle>(),
+        static_assert((int) sizeof(M) == expectedAttributeBytes<M, Handle>(),
                       "vertex field size does not match the format it declares");
 
         constexpr auto type = ValueTypeOf<Handle>::value;
@@ -1064,7 +1065,7 @@ protected:
     typename ShaderValueOf<M>::type instanceInput(M C::* member, int bufferIndex)
     {
         using Handle = typename ShaderValueOf<M>::type;
-        static_assert(sizeof(M) == expectedAttributeBytes<M, Handle>(),
+        static_assert((int) sizeof(M) == expectedAttributeBytes<M, Handle>(),
                       "instance field size does not match the format it declares");
 
         constexpr auto type = ValueTypeOf<Handle>::value;
@@ -1292,14 +1293,12 @@ private:
     // first draw keeps reading the bytes it was given. Making that cheap is the
     // backend's job -- see Buffer-Windows.cpp.
     void uploadIndices(const void* data,
-                       std::size_t elementSize,
+                       int elementSize,
                        int count,
                        IndexFormat format)
     {
-        indexBufferData.emplace(Device::shared(),
-                                data,
-                                elementSize * (std::size_t) count,
-                                BufferUsage::Index);
+        indexBufferData.emplace(
+            Device::shared(), data, elementSize * count, BufferUsage::Index);
         indexCountValue = count;
         indexFormatValue = format;
     }

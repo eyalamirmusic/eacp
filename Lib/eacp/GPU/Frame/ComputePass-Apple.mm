@@ -91,11 +91,11 @@ void ComputePass::setOutputTexture(const Texture& texture, int slot)
     [activeEncoder setTexture:metalTexture atIndex:(NSUInteger) slot];
 }
 
-void ComputePass::setBytes(const void* data, std::size_t bytes, int slot)
+void ComputePass::setBytes(const void* data, int bytes, int slot)
 {
     if (auto activeEncoder = impl->encoder.get())
         [activeEncoder setBytes:data
-                         length:bytes
+                         length:(NSUInteger) bytes
                         atIndex:(NSUInteger) (uniformBase + slot)];
 }
 

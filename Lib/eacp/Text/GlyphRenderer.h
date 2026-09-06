@@ -2,8 +2,6 @@
 
 #include "GlyphAtlas.h"
 
-#include <vector>
-
 namespace eacp::Text
 {
 // A unit-quad corner, each component 0 or 1, mapped onto each glyph's rect.
@@ -72,21 +70,21 @@ public:
     // Submits the queued glyphs: at most two draw calls, one per atlas.
     void flush(GPU::RenderPass& pass, GlyphAtlas& atlas);
 
-    std::size_t queuedGlyphs() const { return masks.size() + colors.size(); }
+    int queuedGlyphs() const { return masks.size() + colors.size(); }
 
 private:
     struct Program;
 
     void drawQueue(GPU::RenderPass& pass,
-                   std::vector<GlyphInstance>& queue,
+                   Vector<GlyphInstance>& queue,
                    GPU::Texture& texture,
                    bool colored);
 
     OwningPointer<Program> maskProgram;
     OwningPointer<Program> colorProgram;
 
-    std::vector<GlyphInstance> masks;
-    std::vector<GlyphInstance> colors;
+    Vector<GlyphInstance> masks;
+    Vector<GlyphInstance> colors;
 
     Graphics::Point viewport {1.f, 1.f};
     bool prepared = false;

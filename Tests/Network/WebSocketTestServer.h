@@ -10,7 +10,6 @@
 #include <optional>
 #include <string>
 #include <thread>
-#include <vector>
 
 // What the server does once a client is on the far end. Everything here is a
 // scenario some test needs and no live server would ever do on purpose.
@@ -80,13 +79,13 @@ public:
         return found != requestHeaders.end() ? found->second : std::string();
     }
 
-    std::vector<std::string> messages() const
+    eacp::Vector<std::string> messages() const
     {
         auto lock = std::scoped_lock(mutex);
         return received;
     }
 
-    std::size_t messageCount() const
+    int messageCount() const
     {
         auto lock = std::scoped_lock(mutex);
         return received.size();
@@ -358,7 +357,7 @@ private:
             if (!decoded.has_value())
                 return true;
 
-            buffer.erase(0, decoded->consumed);
+            buffer.erase(0, (std::size_t) decoded->consumed);
 
             if (!handleFrame(peer, decoded->frame))
                 return false;
@@ -493,7 +492,7 @@ private:
 
     mutable std::mutex mutex;
     std::map<std::string, std::string> requestHeaders;
-    std::vector<std::string> received;
+    eacp::Vector<std::string> received;
     eacp::WebSocket::CloseStatus closeFromClient;
 
     std::atomic<bool> stopping {false};

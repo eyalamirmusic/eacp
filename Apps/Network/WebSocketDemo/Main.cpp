@@ -23,7 +23,6 @@
 #include <iostream>
 #include <set>
 #include <string>
-#include <vector>
 
 using namespace eacp;
 
@@ -341,7 +340,8 @@ std::uint16_t portFrom(const std::string& text)
 
 int main(int argc, char** argv)
 {
-    auto arguments = std::vector<std::string>(argv + 1, argv + argc);
+    auto arguments = Vector<std::string>();
+    arguments.assign(argv + 1, argv + argc);
 
     if (arguments.empty())
         return runBothEnds();

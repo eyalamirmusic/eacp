@@ -41,7 +41,7 @@ int maxCoverage(const GlyphBitmap& bitmap)
 
     auto highest = 0;
 
-    for (std::size_t i = 3; i < bitmap.pixels.size(); i += 4)
+    for (auto i = 3; i < bitmap.pixels.size(); i += 4)
         highest = std::max(highest, (int) bitmap.pixels[i]);
 
     return highest;
@@ -100,7 +100,7 @@ auto tRasterizesALetter = test("GlyphRasterizer/rasterizesALetterAsAMask") = []
     check(bitmap.format == GlyphFormat::Mask);
     check(bitmap.advance > 0.f);
 
-    check(bitmap.pixels.size() == (std::size_t) bitmap.width * bitmap.height);
+    check(bitmap.pixels.size() == bitmap.width * bitmap.height);
 
     check(maxCoverage(bitmap) > 0); // it drew something
     check(bitmap.width < 200);
@@ -221,8 +221,7 @@ auto tUnassignedCodepointIsSelfConsistent =
             continue;
 
         check(bitmap.pixels.size()
-              == (std::size_t) bitmap.width * bitmap.height
-                     * bytesPerPixel(bitmap.format));
+              == bitmap.width * bitmap.height * bytesPerPixel(bitmap.format));
     }
 };
 
@@ -247,8 +246,7 @@ auto tFallsBackForMissingGlyphs =
         check(!bitmap.isEmpty());
         check(bitmap.advance > 0.f);
         check(bitmap.pixels.size()
-              == (std::size_t) bitmap.width * bitmap.height
-                     * bytesPerPixel(bitmap.format));
+              == bitmap.width * bitmap.height * bytesPerPixel(bitmap.format));
     }
 };
 
@@ -270,8 +268,7 @@ auto tColorGlyphsReportFourBytesPerPixel =
         return;
 
     check(bitmap.pixels.size()
-          == (std::size_t) bitmap.width * bitmap.height
-                 * bytesPerPixel(bitmap.format));
+          == bitmap.width * bitmap.height * bytesPerPixel(bitmap.format));
 
     if (bitmap.format != GlyphFormat::Color)
         return;
@@ -280,7 +277,7 @@ auto tColorGlyphsReportFourBytesPerPixel =
     // is the failure a premultiply/compositing mistake produces.
     auto opaque = 0;
 
-    for (std::size_t i = 3; i < bitmap.pixels.size(); i += 4)
+    for (auto i = 3; i < bitmap.pixels.size(); i += 4)
         if (bitmap.pixels[i] > 128)
             ++opaque;
 
@@ -491,8 +488,7 @@ auto tSubpixelOffsetMovesTheInk =
         for (auto y = 0; y < bitmap.height; ++y)
             for (auto x = 0; x < bitmap.width; ++x)
             {
-                const auto coverage =
-                    (double) bitmap.pixels[(std::size_t) y * bitmap.width + x];
+                const auto coverage = (double) bitmap.pixels[y * bitmap.width + x];
 
                 ink.mass += coverage;
                 moment += coverage * ((double) x + 0.5);

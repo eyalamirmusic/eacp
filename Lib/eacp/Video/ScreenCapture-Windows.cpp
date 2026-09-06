@@ -388,7 +388,7 @@ struct WindowsScreenCapture final : ScreenCapture
                                      static_cast<std::int32_t>(description.Width)),
                             std::min(contentSize.Height,
                                      static_cast<std::int32_t>(description.Height)),
-                            mapped.RowPitch,
+                            (int) mapped.RowPitch,
                             pts);
 
         context->Unmap(staging.Get(), 0);

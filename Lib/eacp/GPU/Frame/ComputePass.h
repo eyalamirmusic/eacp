@@ -65,12 +65,12 @@ public:
 
     // Uploads a small uniform block without a buffer object, like the render
     // pass's setVertexBytes. slot is the uniform-block slot (0 = first block).
-    void setBytes(const void* data, std::size_t bytes, int slot = 0);
+    void setBytes(const void* data, int bytes, int slot = 0);
 
     template <typename T>
     void setUniform(const T& value, int slot = 0)
     {
-        setBytes(&value, sizeof(T), slot);
+        setBytes(&value, (int) sizeof(T), slot);
     }
 
     // Runs the kernel over count work items, in groups of threadGroupWidth.
@@ -102,7 +102,7 @@ public:
         // Sequenced separately: packing must happen before the size is read,
         // and argument evaluation order would not guarantee that.
         const auto* uniforms = program.packedUniforms(count);
-        setBytes(uniforms, (std::size_t) program.uniformByteSize());
+        setBytes(uniforms, program.uniformByteSize());
         dispatch(count);
     }
 
@@ -115,7 +115,7 @@ public:
         program.bindResources(*this);
 
         const auto* uniforms = program.packedUniforms(width, height);
-        setBytes(uniforms, (std::size_t) program.uniformByteSize());
+        setBytes(uniforms, program.uniformByteSize());
         dispatch(width, height);
     }
 
@@ -144,7 +144,7 @@ public:
         program.bindResources(*this);
 
         const auto* uniforms = program.packedUniforms(guardCount);
-        setBytes(uniforms, (std::size_t) program.uniformByteSize());
+        setBytes(uniforms, program.uniformByteSize());
         dispatchIndirect(arguments, offsetInBytes);
     }
 

@@ -514,12 +514,10 @@ Response Request::downloadTo(const std::string& filePath) const
 
 namespace
 {
-void appendDecodedPercentEscape(std::string& out,
-                                const std::string& src,
-                                std::size_t& i)
+void appendDecodedPercentEscape(std::string& out, const std::string& src, int& i)
 {
-    auto hi = Strings::hexCharToInt(src[i + 1]);
-    auto lo = Strings::hexCharToInt(src[i + 2]);
+    auto hi = Strings::hexCharToInt(src[(std::size_t) i + 1]);
+    auto lo = Strings::hexCharToInt(src[(std::size_t) i + 2]);
 
     if (hi < 0 || lo < 0)
     {
@@ -570,13 +568,13 @@ std::string urlDecode(const std::string& encoded)
     auto result = std::string();
     result.reserve(encoded.size());
 
-    for (auto i = std::size_t {0}; i < encoded.size(); ++i)
+    for (auto i = 0; i < (int) encoded.size(); ++i)
     {
-        auto c = encoded[i];
+        auto c = encoded[(std::size_t) i];
 
         if (c == '+')
             result.push_back(' ');
-        else if (c == '%' && i + 2 < encoded.size())
+        else if (c == '%' && i + 2 < (int) encoded.size())
             appendDecodedPercentEscape(result, encoded, i);
         else
             result.push_back(c);

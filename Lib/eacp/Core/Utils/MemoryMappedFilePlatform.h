@@ -33,7 +33,7 @@ void closeMappingFile(MappingFile& file);
 // What a mapping offset has to be a multiple of: the page size on POSIX,
 // dwAllocationGranularity on Windows — 64KB, and deliberately not the page
 // size there.
-std::size_t mappingGranularity();
+int mappingGranularity();
 
 struct MappedRegion
 {

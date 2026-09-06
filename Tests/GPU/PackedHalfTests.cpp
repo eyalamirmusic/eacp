@@ -171,11 +171,10 @@ auto tUnpackHalf2 = test("PackedHalf/unpacksEveryFloat16Class") = []
 
     auto count = words.size();
 
-    auto input = device.makeBuffer(words.data(),
-                                   (std::size_t) count * sizeof(std::uint32_t),
-                                   BufferUsage::Storage);
+    auto input = device.makeBuffer(
+        words.data(), count * (int) sizeof(std::uint32_t), BufferUsage::Storage);
 
-    auto output = device.makeBuffer((std::size_t) count * 2 * sizeof(float));
+    auto output = device.makeBuffer(count * 2 * (int) sizeof(float));
 
     auto kernel = UnpackKernel {};
     kernel.words = input;
@@ -192,7 +191,7 @@ auto tUnpackHalf2 = test("PackedHalf/unpacksEveryFloat16Class") = []
     commands.commit();
 
     auto result = Vector<float>(count * 2);
-    output.read(result.data(), (std::size_t) result.size() * sizeof(float));
+    output.read(result.data(), result.size() * (int) sizeof(float));
 
     for (auto i = 0; i < count; ++i)
     {

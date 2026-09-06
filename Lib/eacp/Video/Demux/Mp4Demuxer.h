@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <span>
 
 namespace eacp::Video
 {
@@ -86,7 +85,7 @@ public:
 
     // Parses caller-owned bytes, which must outlive every later call to
     // sampleBytes(). For tests and in-memory sources.
-    bool parse(std::span<const std::uint8_t> fileBytes);
+    bool parse(Span<const std::uint8_t> fileBytes);
 
     bool isValid() const { return valid; }
 
@@ -98,13 +97,13 @@ public:
     const Vector<Mp4Sample>& samples() const { return sampleList; }
 
     // The mapped bytes of one sample; empty for an out-of-range index.
-    std::span<const std::uint8_t> sampleBytes(int index) const;
+    Span<const std::uint8_t> sampleBytes(int index) const;
 
     double toSeconds(std::int64_t timeUnits) const;
 
 private:
     std::optional<MemoryMappedFile> file;
-    std::span<const std::uint8_t> fileData;
+    Span<const std::uint8_t> fileData;
     Mp4TrackInfo trackInfo;
     Mp4AudioInfo audioInfo;
     Vector<Mp4Sample> sampleList;
