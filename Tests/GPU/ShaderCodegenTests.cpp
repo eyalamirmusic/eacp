@@ -3165,3 +3165,79 @@ auto tCodegenGlslAvoidsReservedWords =
     expectGlslCompiles(builder.graph());
     expectGlslCompiles(kernel.graph());
 };
+
+// A scalar written beside a vector, in every argument position the EDSL allows
+// one. MSL converts it and HLSL promotes it, so both take the call as written;
+// GLSL overloads each genType builtin per width and accepts a scalar only in a
+// few trailing positions, so every scalar argument of a mixed call is broadcast
+// there through the call's own vector constructor.
+//
+// The case that found this is the UI shape shader's length(max(0.f, q)): a
+// scalar first, which no GLSL overload of max has, and which the emitter had
+// been printing verbatim.
+auto tCodegenGlslScalarBesideVector = test("GPU/codegenGlslScalarBesideVector") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto width = builder.uniform<Float>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto q = builder.varying(position);
+    auto scalar = q.x() + q.y();
+
+    // The literal first, the literal second, a computed scalar in either of
+    // clamp's bounds, mix's amount, step's edge, both of smoothstep's, and pow's
+    // exponent - the whole of what ShapedBeside admits.
+    auto outside = length(max(0.0f, q));
+    auto floored = min(q, 0.0f);
+    auto held = clamp(q, 0.0f, width);
+    auto blended = mix(q, floored, scalar);
+    auto gated = step(0.0f, q);
+    auto ramp = smoothstep(0.0f, width, q);
+    auto curved = pow(q, 2.0f);
+    auto angle = atan2(q, 1.0f);
+
+    builder.fragment(
+        float4(held + blended + gated, ramp.x() + curved.y() + angle.x(), outside));
+
+    // Unchanged in the two dialects that need no broadcast: the scalar prints
+    // exactly where it was written.
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "max(0.0, "));
+    check(contains(metal, ", 0.0)"));
+    check(contains(metal, "clamp("));
+    check(!contains(metal, "float2(0.0)"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "max(0.0, "));
+    check(contains(hlsl, ", 0.0)"));
+    check(!contains(hlsl, "float2(0.0)"));
+
+    // And broadcast in the one that does, in every position.
+    auto glsl = emitGlsl(builder.graph());
+    check(contains(glsl, "max(vec2(0.0), "));
+    check(contains(glsl, "min(vary0, vec2(0.0))"));
+    check(contains(glsl, "vec2(0.0), vec2(uniforms.u0))"));
+    check(contains(glsl, "step(vec2(0.0), vary0)"));
+    check(contains(glsl, "pow(vary0, vec2(2.0))"));
+    check(contains(glsl, "atan(vary0, vec2(1.0))"));
+    check(!contains(glsl, "max(0.0, "));
+    check(!contains(glsl, ", 0.0)"));
+
+    // A call whose arguments already agree keeps the scalar form: nothing is
+    // broadcast to a width of one.
+    auto scalarOnly = ShaderBuilder {};
+    auto scalarPosition = scalarOnly.vertexInput<Float2>();
+    auto carried = scalarOnly.varying(scalarPosition);
+
+    scalarOnly.position(float4(scalarPosition, 0.0f, 1.0f));
+    scalarOnly.fragment(
+        float4(smoothstep(0.0f, 1.0f, carried.x()), 0.0f, 0.0f, 1.0f));
+
+    check(contains(emitGlsl(scalarOnly.graph()), "smoothstep(0.0, 1.0, "));
+
+    expectGlslCompiles(builder.graph());
+    expectGlslCompiles(scalarOnly.graph());
+};

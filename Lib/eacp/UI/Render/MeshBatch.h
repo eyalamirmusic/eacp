@@ -114,6 +114,9 @@ public:
 
     bool isEmpty() const { return triangles.empty(); }
 
+    // The shader this batch builds -- see ShapeBatch::forEachShaderGraph.
+    static void forEachShaderGraph(const GPU::ShaderGraphVisitor& visit);
+
 private:
     struct Program;
 

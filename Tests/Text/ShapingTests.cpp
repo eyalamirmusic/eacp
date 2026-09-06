@@ -16,11 +16,14 @@ using namespace eacp::Text;
 
 namespace
 {
-// A proportional face both platforms ship, with kerning pairs.
+// A proportional face all three platforms ship, with kerning pairs. DejaVu
+// Sans is the Linux one: "AV" kerns from 1401 units to 1270.
 constexpr const char* proportionalFamily()
 {
     if constexpr (Platform::isWindows())
         return "Arial";
+    else if constexpr (Platform::isLinux())
+        return "DejaVu Sans";
     else
         return "Helvetica";
 }
@@ -30,26 +33,37 @@ constexpr const char* ligatingFamily()
 {
     if constexpr (Platform::isWindows())
         return "Calibri";
+    else if constexpr (Platform::isLinux())
+        return "DejaVu Sans";
     else
         return "Helvetica";
 }
 
 // A family whose design changes with the size it is set at: a variable face
 // with an optical-size axis, which the platform reads off the font's own
-// size. Apple's system UI face has one; so does Segoe UI Variable.
+// size. Apple's system UI face has one; so does Segoe UI Variable. No family a
+// Linux distribution ships as standard does, so the Linux name is one a
+// machine may well not have and the test below skips itself when it does not -
+// the rasterizer pins opsz either way.
 constexpr const char* opticallySizedFamily()
 {
     if constexpr (Platform::isWindows())
         return "Segoe UI Variable";
+    else if constexpr (Platform::isLinux())
+        return "Inter";
     else
         return ".AppleSystemUIFont";
 }
 
-// A family with a light face as well as a bold one.
+// A family with a light face as well as a bold one. DejaVu Sans has ExtraLight
+// (fontconfig weight 40, CSS 200), Book, Bold, and Condensed cuts of each -
+// which is what makes the width-before-weight rule visible there too.
 constexpr const char* weightedFamily()
 {
     if constexpr (Platform::isWindows())
         return "Segoe UI";
+    else if constexpr (Platform::isLinux())
+        return "DejaVu Sans";
     else
         return "Helvetica Neue";
 }

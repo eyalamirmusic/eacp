@@ -237,4 +237,9 @@ void ImageBatch::draw(const GPU::Texture& texture,
     instance.tint[2] = tint.b;
     instance.tint[3] = tint.a;
 }
+
+void ImageBatch::forEachShaderGraph(const GPU::ShaderGraphVisitor& visit)
+{
+    visit(Program {}.graph());
+}
 } // namespace eacp::UI

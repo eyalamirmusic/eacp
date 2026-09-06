@@ -14,6 +14,7 @@ nano_add_executable(TextTests
             GlyphRendererTests.cpp
             MemoryFontTests.cpp
             VariableFontTests.cpp
+            FontPresenceTests.cpp
             TestMain.cpp
         TARGETS eacp-text)
 

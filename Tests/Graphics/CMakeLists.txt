@@ -37,17 +37,17 @@ set(graphics_test_sources
         ViewWindowTests.cpp
         WindowTests.cpp)
 
-# The two that need something the Linux build deliberately does not have.
-# ImageTests round-trips PNG and JPEG through the platform codec, which is
-# ImageIO or WIC and has no Linux counterpart; RenderToImageTests reads back
-# pixels a 2D Context painted. Listed rather than left to self-skip: a suite
-# that skips every case reports as a pass, which is exactly the silent green
-# the plan warns about.
+# The two that need something the Linux build deliberately does not have, which
+# is exactly what EACP_HAS_CONTEXT names. ImageTests round-trips PNG and JPEG
+# through the platform codec, which is ImageIO or WIC and has no Linux
+# counterpart; RenderToImageTests reads back pixels a 2D Context painted.
+# Listed rather than left to self-skip: a suite that skips every case reports as
+# a pass, which is exactly the silent green the plan warns about.
 #
 # RoundedRectTests used to be here too. It only needs clampedCornerRadius and a
 # Path to build the shape into, and Path-Linux.cpp gives it both, so it runs
 # everywhere now.
-if (APPLE OR WIN32)
+if (EACP_HAS_CONTEXT)
     list(APPEND graphics_test_sources
             ImageTests.cpp
             RenderToImageTests.cpp)

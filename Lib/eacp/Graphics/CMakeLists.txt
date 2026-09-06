@@ -12,11 +12,10 @@ target_sources(eacp-graphics PRIVATE
 
 # Portable C++ that nonetheless stands on the 2D drawing stack: the retained
 # shape/text layers, the views that wrap one, and the text field drawn out of
-# them. Linux has no Context and no Font yet - it has a Path, but only as
-# geometry (plan stage 6 decides whether it ever gets a 2D backend or draws
-# this tier through the GPU coverage rasterizer instead), so these are left out
-# there rather than stubbed.
-if (APPLE OR WIN32)
+# them. This is the tier EACP_HAS_CONTEXT names. Linux has no Context and no
+# Font - it has a Path, but only as geometry, and it draws its text through the
+# GPU tier instead - so these are left out there rather than stubbed.
+if (EACP_HAS_CONTEXT)
     target_sources(eacp-graphics PRIVATE
             Layers/LayerViews.cpp
             Layers/ShapeLayer.cpp
@@ -159,9 +158,10 @@ add_ide_sources(eacp-graphics)
 
 # Build-time host tool, and the one thing in this directory that is not
 # portable-by-construction: it decodes a PNG/JPEG through Image, which is
-# implemented per platform. Kept out of the Linux branch until there is a codec
-# behind it - eacp_set_app_icon(... IMAGE ...) is the only caller, and it is
-# only reachable from an app that draws.
-if (APPLE OR WIN32)
+# implemented per platform - hence EACP_HAS_CONTEXT, which is the variable the
+# codecs live under. Kept out of the Linux branch until there is a codec behind
+# it - eacp_set_app_icon(... IMAGE ...) is the only caller, and it is only
+# reachable from an app that draws.
+if (EACP_HAS_CONTEXT)
     add_subdirectory(IconTool)
 endif ()

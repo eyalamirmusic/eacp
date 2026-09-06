@@ -173,4 +173,9 @@ void LayerRenderer::draw(GPU::RenderPass& pass,
 
     pass.draw(*program);
 }
+
+void LayerRenderer::forEachShaderGraph(const GPU::ShaderGraphVisitor& visit)
+{
+    visit(Program {}.graph());
+}
 } // namespace eacp::UI

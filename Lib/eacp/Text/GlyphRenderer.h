@@ -72,6 +72,15 @@ public:
 
     int queuedGlyphs() const { return masks.size() + colors.size(); }
 
+    // The two shaders this renderer builds -- one body with the coverage
+    // handling switched at build time, so both arms are visited. Handed over as
+    // graphs so a test can emit them in a dialect this platform does not itself
+    // compile, which is what makes a GLSL regression in either fail on the macOS
+    // and Windows lanes rather than wait for the one with a Vulkan device.
+    // Static and device-free: a program's constructor records its graph and
+    // touches no Device.
+    static void forEachShaderGraph(const GPU::ShaderGraphVisitor& visit);
+
 private:
     struct Program;
 
