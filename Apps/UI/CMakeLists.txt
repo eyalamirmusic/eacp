@@ -32,5 +32,9 @@ add_subdirectory(WidgetGallery)
 
 # An SVG document drawn twice in one window: native shape layers on the left,
 # the component tier's coverage masks on the right, for comparing the two on
-# screen and for reading what a real document costs the atlas.
-add_subdirectory(SVGDocument)
+# screen and for reading what a real document costs the atlas. The comparison
+# is the point of it and the left half is SVG::parse, so this is the one
+# example here that needs the platform's own 2D tier as well as the GPU one.
+if (EACP_HAS_CONTEXT)
+    add_subdirectory(SVGDocument)
+endif ()

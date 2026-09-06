@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 
 #include "../Buffer/StreamingBuffers.h"
 #include "../Device/Device.h"
@@ -771,6 +772,11 @@ private:
     int blockAlignment = 1;
 };
 
+// How a module hands over shaders it builds behind a .cpp: the program itself
+// is a nested type nothing outside can name, so what crosses the header is the
+// graph. See ShaderProgram::graph() for what a caller wants one for.
+using ShaderGraphVisitor = std::function<void(const ShaderGraph&)>;
+
 // Base for struct-authored shaders. Derive, declare uniform members, list them
 // with EACP_SHADER, write define() (pulling vertex inputs from the CPU vertex
 // struct), and call compile() from the constructor.
@@ -788,6 +794,12 @@ public:
 
     const ShaderSource& source() const { return generated.source; }
     const VertexLayout& vertexLayout() const { return generated.vertexLayout; }
+
+    // The shader as the EDSL recorded it, which source() is only this
+    // platform's spelling of. It is what lets a test emit a module's shader in
+    // GLSL on a host that compiles MSL or HLSL, so a dialect regression fails
+    // there rather than waiting for the one lane with a Vulkan device.
+    const ShaderGraph& graph() const { return builder.graph(); }
 
     // Uploads the typed vertex data and owns the resulting buffer. The element
     // type's size must match the layout pulled from it in define().

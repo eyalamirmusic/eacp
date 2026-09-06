@@ -42,13 +42,12 @@ add_subdirectory(StreamingStress)
 # Incremental sub-region texture uploads, the glyph-atlas pattern.
 add_subdirectory(TextureAtlas)
 
-# Everything from here to the end paints an overlay with the 2D
-# Graphics::Context - a caption, a legend, a Path drawn by the platform's own
-# rasterizer beside the GPU's - so each needs the whole 2D and glyph stack
-# rather than only a window, which is why none of them is in the Linux build
-# while EACP_HAS_TEXT is off there. The GPU half of each would build; the
-# labels are what would not.
-if (EACP_HAS_TEXT)
+# The next seven paint an overlay with the 2D Graphics::Context - a caption, a
+# legend, a Path drawn by the platform's own rasterizer beside the GPU's - so
+# each needs the native 2D tier rather than only a window and a glyph
+# rasterizer, which is why none of them is in the Linux build. The GPU half of
+# each would build; the labels are what would not.
+if (EACP_HAS_CONTEXT)
     # Blend modes side by side, and instanced quads beside them - each panel
     # captioned with what it should look like.
     add_subdirectory(Blending)
@@ -75,11 +74,15 @@ if (EACP_HAS_TEXT)
     # the half that needs the 2D stack.
     add_subdirectory(PathQuality)
     add_subdirectory(PathStroke)
+endif ()
 
-    # The two that link eacp-text rather than only the GPU module: text drawn
-    # from the glyph atlas with per-glyph bearings, and one embedded variable
-    # face at nine weights beside a family cut into faces - registerMemoryFont,
-    # and a weight asked of an axis rather than matched.
+# The two that link eacp-text rather than only the GPU module, and draw every
+# pixel they draw through it: text out of the glyph atlas with per-glyph
+# bearings, and one embedded variable face at nine weights beside a family cut
+# into faces - registerMemoryFont, and a weight asked of an axis rather than
+# matched. No Graphics::Context anywhere in either, so a glyph rasterizer is
+# the whole of what they add over a window.
+if (EACP_HAS_TEXT)
     add_subdirectory(GlyphAtlas)
     add_subdirectory(VariableFont)
 endif ()

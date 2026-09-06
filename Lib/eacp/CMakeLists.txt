@@ -33,7 +33,9 @@ if (EACP_HAS_TEXT)
     add_subdirectory(UI)
 
     # After UI, because a document now builds into either tier: native shape
-    # layers, or a component tree drawn through the coverage rasterizer.
+    # layers, or a component tree drawn through the coverage rasterizer. Only
+    # the first of those needs EACP_HAS_CONTEXT, so the module is here with the
+    # rest of the text tier and its native builder alone is gated inside.
     add_subdirectory(SVG)
 endif ()
 

@@ -32,7 +32,11 @@ if (EACP_HAS_TEXT AND NOT IOS)
     add_subdirectory(UI)
 
     # The parse layer and the geometry it builds. Above UI in the list because
-    # SVGComponent is a UI::Component, and none of these needs a window.
+    # SVGComponent is a UI::Component, and none of these needs a window. Every
+    # case is on the portable half - parseXML, the geometry, the component tier
+    # - and none of them calls SVG::parse, so the suite needs no more than
+    # EACP_HAS_TEXT even though the module's native builder needs
+    # EACP_HAS_CONTEXT.
     add_subdirectory(SVG)
 endif ()
 

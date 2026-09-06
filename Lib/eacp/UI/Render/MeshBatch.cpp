@@ -248,4 +248,9 @@ void MeshBatch::addMesh(const Vector<GPUWidgets::MeshVertex>& mesh,
         triangles.add(triangle);
     }
 }
+
+void MeshBatch::forEachShaderGraph(const GPU::ShaderGraphVisitor& visit)
+{
+    visit(Program {}.graph());
+}
 } // namespace eacp::UI

@@ -30,20 +30,34 @@ ARG CMAKE_VERSION=3.31.6
 # The Wayland half of the graphics backend needs libwayland-client, the
 # protocol XML and wayland-scanner, xkbcommon and libdecor to build, and
 # Weston's headless backend gives the tests a compositor to open windows on
-# (see with-weston below). CMake itself comes from Kitware to match the
-# version GH Actions ships.
+# (see with-weston below). The text half needs FreeType, HarfBuzz and
+# fontconfig to build, and font files to mean anything once built: every font
+# test asks fontconfig for a family by name and self-skips when nothing
+# resolves, so an image with no fonts runs the whole Text suite as a silent
+# green. DejaVu is the stock family the defaults name (the -extra package
+# carries the ExtraLight and Condensed faces that weight and width matching
+# needs), Droid Sans Fallback is the CJK fallback a missing glyph lands on, and
+# Noto Color Emoji is the one colour font in the set. CMake itself comes from
+# Kitware to match the version GH Actions ships.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         clang \
         curl \
+        fonts-dejavu-core \
+        fonts-dejavu-extra \
+        fonts-droid-fallback \
+        fonts-noto-color-emoji \
         g++ \
         gcc \
         gdb \
         git \
         libcurl4-openssl-dev \
         libdecor-0-dev \
+        libfontconfig-dev \
+        libfreetype-dev \
+        libharfbuzz-dev \
         libvulkan1 \
         libwayland-bin \
         libwayland-dev \
@@ -90,6 +104,7 @@ RUN printf '%s\n' \
 # EACP_HEADLESS is deliberately not set by the script: a test binary that
 # wants to open windows runs with it unset (or 0), and EACP_REQUIRE_DISPLAY=1
 # makes such a test fail rather than self-skip when no compositor is found.
+# EACP_REQUIRE_FONTS=1 does the same for the font packages installed above.
 COPY Scripts/with-weston /usr/local/bin/with-weston
 
 WORKDIR /workspace

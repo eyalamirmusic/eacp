@@ -196,4 +196,10 @@ void GlyphRenderer::flush(RenderPass& pass, GlyphAtlas& atlas)
     masks.clear();
     colors.clear();
 }
+
+void GlyphRenderer::forEachShaderGraph(const ShaderGraphVisitor& visit)
+{
+    visit(Program {false}.graph());
+    visit(Program {true}.graph());
+}
 } // namespace eacp::Text

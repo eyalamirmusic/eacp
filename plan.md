@@ -279,6 +279,126 @@ Follow-ups found on the way, not yet done:
   libdecor's built-in fallback plugin only.
 - Stages 5 and 6 still stand as written below; D6 remains the user's.
 
+**Stage 5 — landed 2026-09-06** (verified: Linux with `EACP_LINUX_GRAPHICS=ON`
+1419 tests headless under GCC with zero validation messages under
+`EACP_VK_VALIDATION=1`, and the same 1419 inside a headless Weston session with
+`EACP_REQUIRE_DISPLAY=1` and `EACP_REQUIRE_FONTS=1`; `EACP_CI_BUILD` unity+PCH
+under Clang 1419; option off 570; macOS 1538 with WebView off, which is the
+1531 the develop merge left plus the seven cases below.)
+
+- Written as two parallel slices plus one fix found by running the union. The
+  first is `Text/GlyphRasterizer-Linux.cpp`, FreeType + HarfBuzz + fontconfig
+  in one file: a `FontRequest::family` resolves through the process-wide
+  memory-font registry first (family or PostScript name, case-insensitive),
+  then `FcFontMatch`, with a `FC_POSTSCRIPT_NAME` retry before a substitute is
+  accepted; `resolvedFamily()` is the matched family, so a name the machine
+  lacks is valid and says what it became. The family's faces come from
+  `FcFontList` (`FcWeightToOpenType` for the weight, `FC_WIDTH`, `FC_SLANT`, a
+  variable master's weight range read as "any weight", named instances
+  skipped) and are matched by the Apple file's rule — width before slant
+  before weight, `weightDistance` copied verbatim. One sized `FT_Face` and one
+  hb font per (weight class, slant), cached; `FT_Set_Var_Design_Coordinates`
+  supplies `wght` (clamped to the axis), `ital` or else `slnt` for a missing
+  italic, and pins `opsz` to the point size rather than the pixel size;
+  synthetic bold and oblique (`hb_font_set_synthetic_bold`/`slant` beside
+  `FT_Outline_EmboldenXY` and a shear) only when neither a sibling face nor
+  an axis supplies them. Shaping itemizes first — by script through
+  `hb_unicode_script` with Common/Inherited/Unknown joining the neighbouring
+  script, then by font: the base cmap, else the first `FcFontSort` entry
+  whose charset has the codepoint, a colour font preferred for emoji
+  presentation, each fallback numbered per rasterizer from 1 in order of first
+  use — then hands HarfBuzz one run per change of either, the whole string in
+  the buffer with the item as its range so clusters are byte offsets, the
+  direction from the script. Advances are HarfBuzz's unhinted ones
+  everywhere; outlines are light-hinted, shifted by the subpixel phase before
+  `FT_Render_Glyph`, and `lightText` gets the same mask. A CBDT colour strike
+  (Noto Color Emoji is one 109-px strike) is selected with `FT_Select_Size`,
+  shaped through HarfBuzz's own OpenType metrics rather than hb-ft, box
+  filtered to the requested size and un-premultiplied to straight RGBA.
+  `registerMemoryFont` copies the bytes into a registry that lives for the
+  process, reads family, PostScript name, OS/2 weight, style and axes through
+  FreeType, and reports a face registered twice as it was. One `FT_Library`,
+  one `FcInit`, one mutex around every call into the three libraries.
+  `CMake/FindLinuxText.cmake`: pkg-config `freetype2`, `harfbuzz`,
+  `fontconfig` into one `eacp-linux-text` target that `eacp-text` links
+  PRIVATE. Tests: `Tests/Text/FontPresenceTests.cpp` fails under
+  `EACP_REQUIRE_FONTS=1` unless the stock families resolve to themselves, Han
+  falls back to another face and U+1F600 comes back as a colour glyph;
+  `ShapingTests.cpp` names "DejaVu Sans" for kerning, ligatures, weights and
+  widths on Linux (it kerns "AV", ligates "fi", and `fonts-dejavu-extra` adds
+  ExtraLight and the Condensed cuts) and "Inter" for the optical-size case,
+  which self-skips there. `TextTests` is 100 on Linux, none of them skipping
+  except that one.
+- The second slice is the gate. `EACP_HAS_TEXT` is on for `LINUX AND
+  EACP_LINUX_GRAPHICS`, and a sixth capability variable, `EACP_HAS_CONTEXT`
+  (`EACP_HAS_DRAW AND (APPLE OR WIN32)`), names the platform's own 2D tier —
+  `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, `EmbeddedView`, the
+  retained `ShapeLayer`/`TextLayer` and their views, the image codecs — and
+  gates what stands on it: the layer sources and `IconTool` in Graphics (the
+  old `APPLE OR WIN32` tests, now named), `ImageTests` and
+  `RenderToImageTests`, `SVGBuilder.cpp` with `SVGParser.cpp` (`SVG::parse`
+  calls the builder and its `ParseResult` destroys native layers, so on Linux
+  it is a declaration with no definition and the documented path is
+  `parseXML` + `SVGComponent::setDocument`), `Apps/Graphics`, `Apps/Plugins`,
+  `Apps/SVG`, `Apps/UI/SVGDocument` and the seven `Apps/GPU` overlay
+  examples. Newly built on Linux: `eacp-text`, `eacp-ui`, the component half
+  of `eacp-svg`, `TextTests`, `UITests`, `SVGTests`, `SVGImageTests`,
+  `Apps/GPU/GlyphAtlas` and `VariableFont`, and six `Apps/UI` examples; the
+  macOS and Windows target sets are unchanged. CI's graphics lane installs
+  `libfreetype-dev libharfbuzz-dev libfontconfig-dev fonts-dejavu-core
+  fonts-dejavu-extra fonts-noto-color-emoji fonts-droid-fallback`, shows what
+  fontconfig resolves before the build, and sets `EACP_REQUIRE_FONTS=1` on
+  the Weston test step; the `Dockerfile`, `README.md` and `CLAUDE.md` say the
+  same.
+- Running `UITests` on lavapipe for the first time found the GLSL dialect
+  printing a scalar beside a vector verbatim — `length(max(0.f, q))` in
+  `UI/Render/ShapeBatch.cpp`, which MSL converts and HLSL promotes but GLSL
+  has no overload for — so sixteen UI and SVG pixel tests drew nothing.
+  `ShaderEmitter.cpp` now broadcasts every scalar argument of a mixed call to
+  one of the eight genType builtins (`min`, `max`, `clamp`, `mix`, `step`,
+  `smoothstep`, `pow`, `atan2` — exactly the set `ShapedBeside` admits a
+  mixed shape for) through the call's vector constructor, in the Vulkan
+  dialect only; integer/float mixes are already a C++ compile error in the
+  EDSL. Pinned by `GPU/codegenGlslScalarBesideVector`, and the gap that let
+  it through is closed by `Tests/UI/ModuleShaderTests.cpp`: `ShaderProgram`
+  and `ComputeProgram` expose `graph()`, each renderer whose program is a
+  type nested in a `.cpp` has a static `forEachShaderGraph`, and the suite
+  emits the GLSL of all 19 shaders the UI, Text, Sprites and GPUWidgets
+  modules build and compiles it with glslang on every platform, so a dialect
+  regression in a module shader fails on macOS and Windows CI rather than
+  waiting for a Vulkan device.
+- One Clang-only unity-build fix on the way: `GlyphRenderer.cpp` says `using
+  namespace eacp::GPU` at file scope, a unity TU carries that into the
+  rasterizer, and a FreeType `pixel_mode` byte compared to an enumerator made
+  Clang instantiate the EDSL's constrained `operator==` with a builtin type
+  and reject it before the constraint was checked (GCC defers the check).
+  Compared as `FT_Pixel_Mode` now, which finds the builtin comparison and
+  never looks.
+
+Follow-ups found on the way, not yet done:
+
+- No bidi: a mixed-direction line is shaped run by run in logical order, each
+  run in its script's own direction, with no reordering between them. The fix
+  is a paragraph-level pass above the rasterizer, not inside it.
+- Emoji presentation is a range test (U+1F000–U+1FAFF, or a following
+  U+FE0F), not the Unicode property; `hb_buffer_set_language` is "en" for
+  every run, as the Windows backend's `en-us` is.
+- No stock Linux family has an `opsz` axis, so the optical-size pin is
+  unexercised there; COLRv1 fonts went through `FT_LOAD_COLOR` untested (CBDT
+  and COLRv0 were). `lightText` has no FreeType counterpart.
+- The `Apps/GPU` example shaders are built on Linux but their GLSL is compiled
+  by no test; `ModuleShaderTests` covers the library modules only.
+- `Timer/destructionStopsTicking` (`Tests/Core/TimerTests.cpp`) is flaky on
+  Linux: it failed once in the final headless run and again on the third of
+  ten repeats in an otherwise idle container. A 10 ms timer is destroyed after
+  its first tick and 100 ms of silence asserted, so a tick already queued on
+  the loop when the timer dies trips it. Pre-existing (ac3c818), not touched
+  here.
+- The `Graphics.h` umbrella still includes the `EACP_HAS_CONTEXT` headers on
+  Linux; they compile, and a caller reaching a definition gets a link error
+  rather than a configure-time one.
+- Stage 6 still stands as written below; D6 remains the user's.
+
 ## 1. Headline findings
 
 1. **"Linux GPU" is two projects, and Graphics is the critical path.** `eacp-gpu`

@@ -616,4 +616,9 @@ void ShapeBatch::drawLine(Point a,
              0.f,
              gradient);
 }
+
+void ShapeBatch::forEachShaderGraph(const GPU::ShaderGraphVisitor& visit)
+{
+    visit(Program {}.graph());
+}
 } // namespace eacp::UI

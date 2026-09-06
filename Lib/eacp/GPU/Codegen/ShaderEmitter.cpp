@@ -199,6 +199,29 @@ std::string callName(Backend backend, const std::string& name)
     return name;
 }
 
+// The genType builtins: the ones GLSL declares over float/vec2/vec3/vec4 and
+// overloads per width. A scalar written beside a vector is accepted there only
+// in a few trailing positions - min(vec2, float) compiles, min(float, vec2) does
+// not, and pow takes no mixed form at all - while MSL converts the scalar and
+// HLSL promotes it wherever it stands. The EDSL sides with those two:
+// ShapedBeside takes a Float or a literal in every argument position of exactly
+// these eight. So this arm broadcasts rather than refuses, writing every scalar
+// argument of a mixed call through the call's own vector constructor, which is
+// one rule for every position instead of a table of the positions GLSL allows.
+//
+// Only float shapes ever reach a mixed call: ShaderScalarLike is Float alone,
+// and the integer min/max overloads take two operands of one type. So
+// max(int, vec2) - which GLSL rejects for the other reason, genIType and genType
+// being separate families with no promotion between them - is already a C++
+// compile error in the EDSL, and there is nothing here to convert between
+// families.
+bool isGenTypeCall(const std::string& name)
+{
+    return name == "min" || name == "max" || name == "clamp" || name == "mix"
+           || name == "step" || name == "smoothstep" || name == "pow"
+           || name == "atan2";
+}
+
 // GLSL reserves the relational and equality operators for scalars: `a < b` on
 // two vectors is a compile error there, not the componentwise mask MSL and HLSL
 // give back. The mask is a function instead, and this is its name - asked only
@@ -530,6 +553,40 @@ struct ExprPrinter
         return print(node);
     }
 
+    // The type a mixed genType call broadcasts its scalar arguments through -
+    // see isGenTypeCall. Float, whose width is one, whenever nothing is to be
+    // broadcast: another dialect, another builtin, or arguments that already
+    // agree.
+    ValueType broadcastType(const Expr& call) const
+    {
+        if (backend != Backend::Vulkan || !isGenTypeCall(call.text))
+            return ValueType::Float;
+
+        auto widest = ValueType::Float;
+
+        for (auto argument: call.args)
+        {
+            auto type = graph.expr(argument).type;
+
+            if (componentCount(type) > componentCount(widest))
+                widest = type;
+        }
+
+        return widest;
+    }
+
+    // One argument of such a call, written through that constructor when it is
+    // the scalar of the pair.
+    std::string widened(int node, ValueType wide) const
+    {
+        auto argument = ref(node);
+
+        if (componentCount(wide) == 1 || componentCount(graph.expr(node).type) > 1)
+            return argument;
+
+        return std::string(typeName(backend, wide)) + "(" + argument + ")";
+    }
+
     std::string print(int node) const
     {
         const auto& expr = graph.expr(node);
@@ -603,13 +660,14 @@ struct ExprPrinter
             case ExprKind::Call:
             {
                 auto text = callName(backend, expr.text) + "(";
+                auto wide = broadcastType(expr);
 
                 for (auto i = 0; i < expr.args.size(); ++i)
                 {
                     if (i > 0)
                         text += ", ";
 
-                    text += ref(expr.args[i]);
+                    text += widened(expr.args[i], wide);
                 }
 
                 return text + ")";

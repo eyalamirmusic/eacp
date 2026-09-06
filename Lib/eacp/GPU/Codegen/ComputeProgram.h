@@ -134,6 +134,9 @@ public:
 
     const ShaderSource& source() const { return generated.source; }
 
+    // The kernel as the EDSL recorded it - see ShaderProgram::graph().
+    const ShaderGraph& graph() const { return builder.graph(); }
+
     // Builds the shader library and compute pipeline from the generated kernel,
     // on the Device whose passes will dispatch it. A pipeline belongs to the
     // device that compiled it, so a kernel a worker Device dispatches is

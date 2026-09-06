@@ -74,13 +74,13 @@ shipping one.
 | `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ |
 | `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | 🚧 |
 | `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan and the shader EDSL | ✅ | ✅ | ✅ | 🚧 |
-| `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | — |
-| `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | — |
+| `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | 🚧 |
+| `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | 🚧 |
 | `WebView` — WKWebView and WebView2 | ✅ | ✅ | ✅ | — |
 | `Camera` / `CameraView` — capture devices and frames | ✅ | ✅ | ✅ | — |
 | `Video` / `VideoView` — screen capture, encode, playback | ✅ | ✅ | — | — |
 
-🚧 on Linux is `-DEACP_LINUX_GRAPHICS=ON`, which builds two things. A Wayland
+🚧 on Linux is `-DEACP_LINUX_GRAPHICS=ON`, which builds three things. A Wayland
 `eacp-graphics`: a `Window` is a `wl_surface` with an xdg-shell toplevel
 decorated by libdecor, the view tree, hit-testing and input routing are the
 portable ones with the seat's pointer and keyboard translated into them through
@@ -89,34 +89,45 @@ scaled by the compositor's fractional scale, `Display` reports the first output,
 mouse lock goes through pointer-constraints, and the display's connection is
 pumped by eacp's own event loop. What a window cannot do there is what the
 protocol has no words for — a position, a raise, an icon — and the file says so
-where it matters. There is still no 2D drawing context and no `Font` — `Path`
-exists, but only as recorded geometry — so `Context`, `TextInput`, menus, the
-tray, image codecs and the retained layer classes are absent or honest stubs.
-And a Vulkan backend under it: everything from `Device` to `RenderPass` is real,
-the drawable `Frame` renders into a swapchain image and presents it, and
-`GPUView` owns that swapchain — mailbox or FIFO, frames in flight, rebuilt on
-resize and `OUT_OF_DATE`, with continuous rendering paced by the compositor's
-frame callbacks rather than a clock — beside the off-screen render-and-read-back
-path every pixel test rides. Under `EACP_HEADLESS=1`, or with no compositor to
-reach, every window is built and never shown and every GPU test still runs on
-Mesa's lavapipe with no display server at all; the window and present tests run
-for real under a headless Weston. It is off by default while the FreeType half
-is still to come.
+where it matters. A Vulkan backend under it: everything from `Device` to
+`RenderPass` is real, the drawable `Frame` renders into a swapchain image and
+presents it, and `GPUView` owns that swapchain — mailbox or FIFO, frames in
+flight, rebuilt on resize and `OUT_OF_DATE`, with continuous rendering paced by
+the compositor's frame callbacks rather than a clock — beside the off-screen
+render-and-read-back path every pixel test rides. And a text stack beside them:
+`eacp-text`'s glyph rasterizer on FreeType, HarfBuzz and fontconfig, so
+`Sprites`, `UI` and the portable half of `SVG` build and run too — a whole
+widget tree, its text, its images and its SVG documents drawn inside one
+`GPUView` through the coverage rasterizer and the glyph atlas.
 
-The top-level `CMakeLists.txt` decides this once, in five capability variables
+What Linux still does not have is the platform's own 2D tier. There is no
+`Graphics::Context` and no `Graphics::Font` — `Path` exists, but only as
+recorded geometry — so the retained `ShapeLayer`/`TextLayer` and the views over
+them, `TextInput`, `EmbeddedView`, the image codecs (an `Image` is a pixel
+container there, and loading a file yields an invalid one), menus and the tray
+are absent or honest stubs. `SVG`'s native-layer builder and the `SVG::parse`
+in front of it go with them; the same document parses and draws through
+`SVGComponent`. Under `EACP_HEADLESS=1`, or with no compositor to reach, every
+window is built and never shown and every GPU test still runs on Mesa's
+lavapipe with no display server at all; the window and present tests run for
+real under a headless Weston.
+
+The top-level `CMakeLists.txt` decides this once, in six capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
 The three drawing ones are nested rather than a single predicate because Linux
-arrives at them one stage at a time; Apple and Windows have all three:
+arrives at them one stage at a time, and it is now at the third; the other three
+hang off `EACP_HAS_DRAW` and are Apple/Windows-only:
 
 | Variable | On when | Gates |
 | --- | --- | --- |
 | `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows or Linux with `EACP_LINUX_GRAPHICS` | `Graphics`, and `Tests/Graphics` |
 | `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows or Linux with `EACP_LINUX_GRAPHICS` | `GPU`, `GPUWidgets`, `Sprites`, their tests and `Apps/GPU` |
-| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple or Windows | `Text`, `UI`, `SVG`, their tests, and the examples that draw text |
+| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows or Linux with `EACP_LINUX_GRAPHICS` | `Text`, `UI`, `SVG`, their tests, `Apps/UI` and the GPU examples that draw glyphs |
+| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, `EmbeddedView`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/Plugins`, `Apps/SVG` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 
-Two pieces of the gated modules are portable and so sit outside all five: they
+Two pieces of the gated modules are portable and so sit outside all six: they
 are built and tested on every platform, Linux included, because neither touches
 a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
 emitters — string generation with no GPU under it, checked by
@@ -129,8 +140,8 @@ the test. `-DEACP_BUILD_SPIRV=OFF` skips it and the checks with it. And
 web view, checked by `ScriptHostTests`.
 
 `-DEACP_LINUX_GRAPHICS=ON` is the switch the Linux graphics backend is being
-built behind, stage by stage; the FreeType half is not there yet, so
-`EACP_HAS_TEXT` stays off on Linux whatever it says. Pass
+built behind, stage by stage; it is off by default while the 2D tier of
+`EACP_HAS_CONTEXT` is still an open question rather than a written backend. Pass
 `-DEACP_BUILD_GRAPHICS=OFF` to build the portable half on any platform. CI
 builds headless and then runs the suite inside a headless Weston session, and
 the `Dockerfile` reproduces both:
@@ -141,7 +152,7 @@ docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
     ci-build -DEACP_LINUX_GRAPHICS=ON -DEACP_UNITY_BUILD=OFF
 
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
-    -v "$PWD":/workspace eacp-ci-linux \
+    -e EACP_REQUIRE_FONTS=1 -v "$PWD":/workspace eacp-ci-linux \
     with-weston ctest --test-dir build-ci-linux --output-on-failure
 ```
 
@@ -150,13 +161,17 @@ allocator are fetched by CPM, and the loader is opened by name at runtime, so
 all a machine needs to run it is a driver — `mesa-vulkan-drivers` is enough, and
 its software rasterizer is what CI uses. `EACP_VK_SOFTWARE=1` asks for that
 device by preference; `EACP_REQUIRE_GPU=1` turns "no device" from a suite that
-silently skips into a suite that fails. The Wayland half is found the way
-libcurl is, by pkg-config against the machine's own libraries: `libwayland-dev
-wayland-protocols libwayland-bin libxkbcommon-dev libdecor-0-dev pkg-config` on
-Debian/Ubuntu, and `weston` to run the window tests without a desktop
-(`Scripts/with-weston`, which is also `with-weston` in the image).
-`EACP_REQUIRE_DISPLAY=1` does for the compositor what `EACP_REQUIRE_GPU=1` does
-for the device.
+silently skips into a suite that fails. The Wayland and text halves are found
+the way libcurl is, by pkg-config against the machine's own libraries:
+`libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev
+libdecor-0-dev libfreetype-dev libharfbuzz-dev libfontconfig-dev pkg-config` on
+Debian/Ubuntu, `weston` to run the window tests without a desktop
+(`Scripts/with-weston`, which is also `with-weston` in the image), and fonts for
+the text tests to resolve — `fonts-dejavu-core fonts-dejavu-extra
+fonts-droid-fallback fonts-noto-color-emoji`. `EACP_REQUIRE_DISPLAY=1` does for
+the compositor what `EACP_REQUIRE_GPU=1` does for the device, and
+`EACP_REQUIRE_FONTS=1` does it for the fonts, which is the third way a suite can
+report green by skipping everything.
 
 CI builds every configuration in that matrix and runs the test suite on macOS
 (universal), Windows x64 and ARM64 (MSVC and clang-cl) and Linux (GCC, Clang,

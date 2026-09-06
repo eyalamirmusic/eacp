@@ -1,7 +1,8 @@
 # Glyph rasterization and atlas caching. The atlas, packer and upload path are
 # portable C++ over eacp-gpu; only the rasterizer is per-platform (CoreText on
-# Apple, DirectWrite on Windows), which is what lets the rest be tested against
-# a stub glyph source instead of against installed fonts.
+# Apple, DirectWrite on Windows, FreeType + HarfBuzz + fontconfig on Linux),
+# which is what lets the rest be tested against a stub glyph source instead of
+# against installed fonts.
 add_library(eacp-text STATIC
         GlyphAtlas.cpp
         GlyphRenderer.cpp
@@ -14,6 +15,14 @@ if (APPLE)
 elseif (WIN32)
     target_sources(eacp-text PRIVATE GlyphRasterizer-Windows.cpp)
     target_link_libraries(eacp-text PRIVATE dwrite)
+elseif (UNIX)
+    include(FindLinuxText)
+
+    target_sources(eacp-text PRIVATE GlyphRasterizer-Linux.cpp)
+
+    # PRIVATE, so no FreeType, HarfBuzz or fontconfig header reaches a
+    # consumer of eacp-text: the whole platform surface is this one file.
+    target_link_libraries(eacp-text PRIVATE eacp-linux-text)
 endif ()
 
 target_link_libraries(eacp-text PUBLIC eacp-gpu)

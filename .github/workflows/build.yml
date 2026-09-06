@@ -75,12 +75,24 @@ jobs:
       # The Wayland half is different: libwayland-client, xkbcommon and libdecor
       # are linked, wayland-scanner generates the protocol bindings at build
       # time, and Weston is the compositor the tests open their windows on.
+      # FreeType, HarfBuzz and fontconfig are linked the same way, by the glyph
+      # rasterizer - and the font packages beside them are not optional: every
+      # font test asks fontconfig for a family by name and self-skips when it
+      # cannot resolve one, so a runner with no fonts installed runs the whole
+      # Text suite as a silent green. DejaVu is the stock family the defaults
+      # name (fonts-dejavu-extra carries the ExtraLight and Condensed faces the
+      # weight and width matching needs), Droid Sans Fallback is the CJK
+      # fallback a missing glyph lands on, and Noto Color Emoji is the one
+      # colour font in the set.
       - name: Install the Linux graphics dependencies
         if: matrix.vulkan
         run: >
           sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
           libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev
           libdecor-0-dev pkg-config weston
+          libfreetype-dev libharfbuzz-dev libfontconfig-dev
+          fonts-dejavu-core fonts-dejavu-extra fonts-noto-color-emoji
+          fonts-droid-fallback
 
       # Before the build, not before the test. NanoTest discovers cases by
       # running every test binary with --list-tests at build time, so a lane
@@ -92,6 +104,18 @@ jobs:
       - name: Show the Vulkan device
         if: matrix.vulkan
         run: vulkaninfo --summary
+
+      # The same reasoning one step up, for the other half that fails by
+      # skipping. What fontconfig resolves the two default families to, and
+      # what families it has at all: a substitution here is what a font test
+      # asserting on a face name will report as a mismatch, and an empty list
+      # is what it will report as a skip.
+      - name: Show the fonts
+        if: matrix.vulkan
+        run: |
+          fc-match monospace
+          fc-match sans-serif
+          fc-list : family | sort -u
 
       - name: Set up MSVC environment
         if: runner.os == 'Windows'
@@ -116,12 +140,17 @@ jobs:
       # run for real, and EACP_REQUIRE_DISPLAY turns their self-skip into a
       # failure so a lane whose compositor never came up cannot report green.
       # The build above still ran headless, which is what NanoTest's build-time
-      # test discovery wants.
+      # test discovery wants. EACP_REQUIRE_FONTS is the same trade over the
+      # text stack: FontPresenceTests fails rather than skips unless the stock
+      # families resolve to themselves, a CJK glyph finds a fallback face and
+      # an emoji comes back as a colour glyph - which is the whole of what the
+      # font packages above are installed for.
       - name: Test under Weston
         if: matrix.vulkan
         env:
           EACP_HEADLESS: '0'
           EACP_REQUIRE_DISPLAY: '1'
+          EACP_REQUIRE_FONTS: '1'
         run: Scripts/with-weston ctest --test-dir build --output-on-failure -j 4
 
   build-ios:

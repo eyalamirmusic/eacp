@@ -12,16 +12,21 @@ the current conversation.
 eacp is a cross-platform GUI/graphics framework written in modern C++20 with Objective-C++ interop. It provides abstractions for application lifecycle, graphics rendering, threading, GPU, and networking.
 
 Platform coverage splits on whether a module draws, decided once in the
-top-level `CMakeLists.txt` by five capability variables that `Lib`, `Apps` and
+top-level `CMakeLists.txt` by six capability variables that `Lib`, `Apps` and
 `Tests` read instead of restating the platform test: `EACP_HAS_DRAW`
 (`Graphics` and `Tests/Graphics`), `EACP_HAS_GPU` (`GPU`, `GPUWidgets`,
-`Sprites`, `Apps/GPU`), `EACP_HAS_TEXT` (`Text`, `UI`, `SVG` and the examples
-that draw text), `EACP_HAS_CAPTURE` (`Camera`, `CameraView`, `Video`,
-`VideoView`, the last two additionally off on iOS) and `EACP_HAS_WEBVIEW` (the
-native `WebView`). The first three are nested — `TEXT` implies `GPU` implies
-`DRAW` — because Linux reaches them one plan stage at a time; Apple and Windows
-have all three, so their target sets are what `EACP_HAS_DRAW` alone used to
-decide. `Core`,
+`Sprites`, `Apps/GPU`), `EACP_HAS_TEXT` (`Text`, `UI`, `SVG`, `Apps/UI` and the
+GPU examples that draw glyphs), `EACP_HAS_CONTEXT` (the platform's own 2D tier —
+`Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, `EmbeddedView`, the
+retained `ShapeLayer`/`TextLayer` and their views, the image codecs — and so
+`SVGBuilder`, `Apps/Graphics`, `Apps/Plugins`, `Apps/SVG`, `Apps/UI/SVGDocument`
+and the GPU examples that paint a 2D overlay), `EACP_HAS_CAPTURE` (`Camera`,
+`CameraView`, `Video`, `VideoView`, the last two additionally off on iOS) and
+`EACP_HAS_WEBVIEW` (the native `WebView`). The first three are nested — `TEXT`
+implies `GPU` implies `DRAW` — because Linux reaches them one plan stage at a
+time, and it is now at the third. The other three hang off `EACP_HAS_DRAW` and
+are Apple/Windows-only, so on those two platforms all six are simply what
+`EACP_HAS_DRAW` alone used to decide. `Core`,
 `Network` and `SIMD` build everywhere, Linux included, and so do two device-free
 pieces of the gated modules: `eacp-gpu-codegen`, the shader EDSL and the
 MSL/HLSL/GLSL emitters (`GPUCodegenTests`), and `eacp-webview-bridge`, the page
@@ -35,16 +40,19 @@ and Windows CI rather than waiting for a Vulkan device. See the table in `README
 builds and tests macOS, Windows (x64 and ARM64, MSVC and clang-cl) and Linux
 (GCC, Clang, and a Clang lane with `EACP_LINUX_GRAPHICS=ON` running the Vulkan
 backend on Mesa's lavapipe, with the tests inside a headless Weston session so
-windows and swapchains are real), and builds iOS for the simulator.
+windows and swapchains are real and with the stock font packages installed so
+the text suites resolve rather than skip), and builds iOS for the simulator.
 
 Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
 `ResEmbed` and, behind `EACP_BUILD_SPIRV`, `glslang`; a Linux graphics build adds
 `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator` (`CMake/FindVulkanBackend.cmake`,
 one `eacp-vulkan` target, fetched on no other platform). Plus libcurl on Linux,
-which backs the HTTP client there, and — for a Linux graphics build — the
-Wayland client library, `wayland-protocols` with `wayland-scanner`, xkbcommon
-and libdecor, found by pkg-config (`CMake/FindWayland.cmake`, one
-`eacp-wayland` target holding the generated protocol code). Nothing links `libvulkan`: `volkInitialize()`
+which backs the HTTP client there, and — for a Linux graphics build — two
+pkg-config groups: the Wayland client library, `wayland-protocols` with
+`wayland-scanner`, xkbcommon and libdecor (`CMake/FindWayland.cmake`, one
+`eacp-wayland` target holding the generated protocol code), and FreeType,
+HarfBuzz and fontconfig for the glyph rasterizer (`CMake/FindLinuxText.cmake`,
+one `eacp-linux-text` target). Nothing links `libvulkan`: `volkInitialize()`
 opens it by name at runtime, so a machine with no driver builds the same binary
 and reports `Device::isValid()` false.
 
@@ -114,9 +122,9 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
   a 4-core CI runner). Off skips the fetch and the target; consumers test
   `if (TARGET eacp-spirv)`.
 
-- `EACP_LINUX_GRAPHICS` (default `OFF`): turns `EACP_HAS_DRAW` and
-  `EACP_HAS_GPU` on for Linux; `EACP_HAS_TEXT` stays off there until the
-  FreeType backend lands. What it builds is a Wayland `eacp-graphics` — one
+- `EACP_LINUX_GRAPHICS` (default `OFF`): turns `EACP_HAS_DRAW`, `EACP_HAS_GPU`
+  and `EACP_HAS_TEXT` on for Linux; `EACP_HAS_CONTEXT` stays off there, there
+  being no 2D backend. What it builds is a Wayland `eacp-graphics` — one
   process-wide connection (`Window/WaylandDisplay-Linux.cpp`: registry,
   outputs, libdecor context, the surface-to-window map, and the loop source
   that pumps it through `Threads::addLoopSource` with a pre-poll flush), a
@@ -139,10 +147,28 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
   knows Wayland as two opaque pointers and neither links nor includes it.
   Under `EACP_HEADLESS=1` or with no `WAYLAND_DISPLAY` to reach, a window is
   built with no surface, exactly the headless backend this grew out of. Device
-  loss is terminal (no `VkDevice` rebuild; `onDeviceRestored` never fires). No
-  2D `Context`, so `Font`, `TextMetrics`, `TextInput`, `EmbeddedView` and the
-  retained layer classes are left out of the Linux source list rather than
-  stubbed; `Path` is there as recorded geometry only
+  loss is terminal (no `VkDevice` rebuild; `onDeviceRestored` never fires).
+
+  On top of that, the text half: `Text/GlyphRasterizer-Linux.cpp` on FreeType,
+  HarfBuzz and fontconfig, found by pkg-config through
+  `CMake/FindLinuxText.cmake` into one `eacp-linux-text` target that `eacp-text`
+  links PRIVATE, so nothing above the module sees a FreeType header. That makes
+  `eacp-text` real on Linux and with it `eacp-ui`, the portable half of
+  `eacp-svg`, `Apps/UI` (minus `SVGDocument`) and `Apps/GPU`'s `GlyphAtlas` and
+  `VariableFont`. It needs font files as well as libraries — a font test asks
+  fontconfig for a family and self-skips when nothing resolves, so an
+  installation with no fonts runs the Text suite as a silent green;
+  `EACP_REQUIRE_FONTS=1` turns that skip into a failure, and the packages CI and
+  the `Dockerfile` install for it are `libfreetype-dev libharfbuzz-dev
+  libfontconfig-dev fonts-dejavu-core fonts-dejavu-extra fonts-droid-fallback
+  fonts-noto-color-emoji`.
+
+  What stays absent is `EACP_HAS_CONTEXT`: no 2D `Context`, so `Font`,
+  `TextMetrics`, `TextInput`, `EmbeddedView`, the retained layer classes and the
+  image codecs are left out of the Linux source list rather than stubbed, and
+  with them `SVGBuilder`/`SVG::parse`, `Apps/Graphics`, `Apps/Plugins`,
+  `Apps/SVG`, `Apps/UI/SVGDocument` and the `Apps/GPU` examples that paint a 2D
+  overlay. `Path` is there as recorded geometry only
   (`Primitives/Path-Linux.h`). Every GPU test but the Metal-only
   `TextureInteropTests.mm` runs there on lavapipe.
 
@@ -152,7 +178,7 @@ docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
       ci-build -DEACP_LINUX_GRAPHICS=ON -DEACP_UNITY_BUILD=OFF
 
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
-      -v "$PWD":/workspace eacp-ci-linux \
+      -e EACP_REQUIRE_FONTS=1 -v "$PWD":/workspace eacp-ci-linux \
       with-weston ctest --test-dir build-ci-linux --output-on-failure
 ```
 
@@ -164,8 +190,9 @@ docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISP
   `GPUTests`' `Present` cases) run for real: `Scripts/with-weston` (also
   `with-weston` in the image) wraps a command in a headless Weston session,
   and `EACP_REQUIRE_DISPLAY=1` makes those tests fail rather than self-skip
-  without a compositor. Weston's headless backend has no seat, so input is
-  never exercised there. See `Lib/eacp/GPU/README.md`.
+  without a compositor, as `EACP_REQUIRE_FONTS=1` does for the font tests.
+  Weston's headless backend has no seat, so input is never exercised there.
+  See `Lib/eacp/GPU/README.md`.
 
 - `EACP_WEBVIEW_DEV` (default `OFF`): skips the Vite production build and
   resource embedding for webview apps. The UI is served from the Vite dev
@@ -285,8 +312,8 @@ matching `APPLE`/`IOS`/`WIN32` branch.
 macOS: Foundation, Cocoa, CoreVideo, CoreGraphics, CoreText, Metal.
 Windows: Direct2D, DirectWrite, D3D11/D3D12, DXGI, DirectComposition, WinHTTP.
 Linux: pthreads, libcurl, and — behind `EACP_LINUX_GRAPHICS` — wayland-client,
-wayland-cursor, xkbcommon and libdecor, plus the Vulkan loader, opened with
-`dlopen` rather than linked.
+wayland-cursor, xkbcommon, libdecor, FreeType, HarfBuzz and fontconfig, plus the
+Vulkan loader, opened with `dlopen` rather than linked.
 
 ## Code Style
 
