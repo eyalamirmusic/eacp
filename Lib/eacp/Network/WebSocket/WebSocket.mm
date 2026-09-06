@@ -25,6 +25,13 @@ namespace
 {
 
 constexpr auto webSocketMaxCloseReasonLength = std::size_t {123};
+
+// A close frame Network.framework has no receive pending for is not held
+// back: it ends the connection as ENOTCONN instead, and its code and reason
+// are gone. So one receive covers the frame being delivered and the other
+// whatever the peer put behind it in the same read - a last message and a
+// goodbye being the pair that arrives that way.
+constexpr auto webSocketReceivesInFlight = 2;
 constexpr auto webSocketNormalClose = 1000;
 constexpr auto webSocketEmptyClose = 1005;
 constexpr auto webSocketAbnormalClose = 1006;
@@ -205,6 +212,9 @@ public:
             });
         nw_connection_start(connection);
 
+        for (auto pending = 0; pending < webSocketReceivesInFlight; ++pending)
+            armReceive();
+
         scheduleConnectTimeout();
     }
 
@@ -330,6 +340,9 @@ private:
         auto closeCode = (int) nw_ws_metadata_get_close_code(metadata);
         nw_release(metadata);
 
+        // Every path that is not the end of the connection arms the next
+        // receive before it hands this frame on, so the framework never holds
+        // one with nobody to give it to.
         switch (opcode)
         {
             case nw_ws_opcode_close:
@@ -339,20 +352,20 @@ private:
             case nw_ws_opcode_text:
             case nw_ws_opcode_binary:
             case nw_ws_opcode_cont:
+                armReceive();
                 collect(opcode, webSocketBytesOf(content), isComplete);
-                break;
+                return;
 
             // Pings are answered by the framework, pongs are nobody's business
             case nw_ws_opcode_ping:
             case nw_ws_opcode_pong:
-                break;
+                armReceive();
+                return;
 
             default:
                 streamEnded({});
                 return;
         }
-
-        armReceive();
     }
 
     void connectTimedOut()
@@ -407,7 +420,6 @@ private:
 
         opened = true;
         sink->opened(protocol);
-        armReceive();
     }
 
     nw_ws_response_t serverResponse()
@@ -423,8 +435,10 @@ private:
         return response;
     }
 
-    // Armed once the socket opens and again after every frame, so a delivery
-    // is always waiting. An error ends the loop and the connection with it.
+    // Armed from the start rather than from the handshake, and replaced the
+    // moment one is spent, so a delivery is always waiting: a peer that
+    // closes as soon as it has answered the upgrade used to find nothing
+    // there. An error ends the loop and the connection with it.
     void armReceive()
     {
         auto self = shared_from_this();
