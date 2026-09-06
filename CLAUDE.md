@@ -31,12 +31,13 @@ are Apple/Windows-only, so on those two platforms all six are simply what
 pieces of the gated modules: `eacp-gpu-codegen`, the shader EDSL and the
 MSL/HLSL/GLSL emitters (`GPUCodegenTests`), and `eacp-webview-bridge`, the page
 bridge over a `ScriptHost` (`ScriptHostTests`). `eacp-spirv` (`GPU/Spirv/`)
-wraps glslang as a portable GLSL-to-SPIR-V compiler so the GLSL dialect can be
-compiled on every platform (`SpirvTests`); only the Vulkan backend and the tests
-link it, never a shipping macOS/Windows binary. Where it is built, every GLSL
+wraps glslang as a GLSL-to-SPIR-V compiler (`SpirvTests`); it is built on
+Linux only by default (`EACP_BUILD_SPIRV`), because only the Vulkan backend
+ships it, and macOS and Windows can opt in. Where it is built, every GLSL
 source the codegen tests emit — and every hand-written GLSL twin in `GPUTests` —
-is compiled by glslang inside the suite, so an emitter regression fails on macOS
-and Windows CI rather than waiting for a Vulkan device. See the table in `README.md`. CI
+is compiled by glslang inside the suite, so an emitter regression fails on every
+Linux CI lane, the two with no Vulkan device included, rather than only as a
+wrong pixel on the graphics lane. See the table in `README.md`. CI
 builds and tests macOS, Windows (x64 and ARM64, MSVC and clang-cl) and Linux
 (GCC, Clang, and a Clang lane with `EACP_LINUX_GRAPHICS=ON` running the Vulkan
 backend on Mesa's lavapipe, with the tests inside a headless Weston session so
@@ -44,7 +45,8 @@ windows and swapchains are real and with the stock font packages installed so
 the text suites resolve rather than skip), and builds iOS for the simulator.
 
 Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
-`ResEmbed` and, behind `EACP_BUILD_SPIRV`, `glslang`; a Linux graphics build adds
+`ResEmbed` and, behind `EACP_BUILD_SPIRV` and so on Linux only by default,
+`glslang`; a Linux graphics build adds
 `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator` (`CMake/FindVulkanBackend.cmake`,
 one `eacp-vulkan` target, fetched on no other platform). Plus libcurl on Linux,
 which backs the HTTP client there, and — for a Linux graphics build — two
@@ -117,9 +119,14 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
       -DEACP_PCH=ON
 ```
 
-- `EACP_BUILD_SPIRV` (default `ON`): builds `eacp-spirv`, fetching glslang via
-  CPM (a shallow ~75 MB checkout, about 5 s of build on a laptop, a minute on
-  a 4-core CI runner). Off skips the fetch and the target; consumers test
+- `EACP_BUILD_SPIRV` (default `ON` on Linux, `OFF` elsewhere): builds
+  `eacp-spirv`, fetching glslang via CPM (a shallow ~75 MB checkout, about 5 s
+  of build on a laptop, a minute on a 4-core CI runner). It is on where
+  something ships it — the Vulkan backend has no shader compiler in the OS —
+  and off on macOS and Windows, whose backends compile their own dialects, so
+  those builds skip the fetch. Passing `ON` there builds the compiler and turns
+  the GLSL compile checks in `GPUCodegenTests`, `GPUTests` and `UITests` back
+  on, which is how to check the emitter locally on a Mac. Consumers test
   `if (TARGET eacp-spirv)`.
 
 - `EACP_LINUX_GRAPHICS` (default `OFF`): turns `EACP_HAS_DRAW`, `EACP_HAS_GPU`
