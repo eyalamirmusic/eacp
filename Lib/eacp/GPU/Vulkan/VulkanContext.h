@@ -212,6 +212,30 @@ struct DriverQuirks
 {
 };
 
+// The binary semaphores one submission of a swapchain frame carries, beside the
+// timeline every submission signals.
+//
+// Two rather than one because the two halves of a present are different
+// dependencies. `wait` is the acquire: the presentation engine signals it when
+// the image the frame renders into is actually free, and the submission must
+// not write the image before then - so it is waited on at
+// COLOR_ATTACHMENT_OUTPUT, the stage that first touches an attachment, which
+// also leaves the vertex work free to start early. `signal` is the frame's
+// "the picture is finished", which vkQueuePresentKHR waits on.
+//
+// A frame that calls flush() is several submissions, and only the first of them
+// waits and only the last of them signals - see Frame::flush.
+struct SubmitSync
+{
+    bool isEmpty() const
+    {
+        return wait == VK_NULL_HANDLE && signal == VK_NULL_HANDLE;
+    }
+
+    VkSemaphore wait = VK_NULL_HANDLE;
+    VkSemaphore signal = VK_NULL_HANDLE;
+};
+
 // A descriptor-set layout and the pipeline layout over it, which are made
 // together and always used together.
 struct PipelineLayouts
@@ -256,6 +280,18 @@ public:
     // Whether the device writes timestamps at all, and on this queue. Both have
     // to be true before GpuTimestamps builds anything.
     bool supportsTimestamps() const { return timestampsSupported; }
+
+    // Whether this process can put pixels on a Wayland compositor: the instance
+    // carries VK_KHR_surface and VK_KHR_wayland_surface and the device carries
+    // VK_KHR_swapchain. False on a headless ICD, on a machine whose loader
+    // offers no window-system integration, and on anything else that leaves one
+    // of the three missing - and GPUView then renders off-screen exactly as it
+    // did before there was a swapchain, rather than failing at the first frame.
+    //
+    // It says nothing about a *particular* surface: whether the queue can
+    // present to one is asked per surface with
+    // vkGetPhysicalDeviceSurfaceSupportKHR, at the point the surface exists.
+    bool supportsPresentation() const { return presentationSupported; }
 
     // Nanoseconds per timestamp tick, straight off the device limits.
     float getTimestampPeriod() const { return properties.limits.timestampPeriod; }
@@ -315,6 +351,11 @@ private:
     std::string adapterName = "no Vulkan device";
     DriverQuirks quirks;
     bool timestampsSupported = false;
+
+    // Both halves of supportsPresentation(): the instance extensions were
+    // enabled, and then the device's swapchain extension was.
+    bool surfaceExtensionsEnabled = false;
+    bool presentationSupported = false;
 
     PipelineLayouts computeLayouts;
     PipelineLayouts renderLayouts;
@@ -393,8 +434,14 @@ public:
 
     // Ends and submits the command buffer, signalling the next value on this
     // context's timeline, and recycles the recording. Returns the value that
-    // completes when the GPU has finished. Same thread rule as acquire().
-    std::uint64_t submit(CommandContext* commands);
+    // completes when the GPU has finished, and zero if nothing was submitted.
+    // Same thread rule as acquire().
+    //
+    // `sync` adds the two binary semaphores a swapchain frame needs on top of
+    // the timeline - see SubmitSync. Every caller but the drawable Frame leaves
+    // it empty, which is the submission this backend made before there was a
+    // swapchain, unchanged.
+    std::uint64_t submit(CommandContext* commands, const SubmitSync& sync = {});
 
     // Recycles a recording that should never reach the GPU.
     void discard(CommandContext* commands);

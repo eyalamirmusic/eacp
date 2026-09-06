@@ -16,18 +16,21 @@
 // and every buffer the pass may read has to have been made visible in advance
 // by the one global barrier barrierBeforeRendering records.
 //
-// The off-screen constructor is the whole of the frame today. Its colour target
-// is a real GPU::Texture that GPUView created with renderTarget, which carries
-// its own multisample companion and its own depth buffer - so OffscreenTarget's
-// msaaTexture and depthTexture stay null here where the D3D12 backend fills all
-// three, and beginPass(descriptor) is beginPass(thatTexture, descriptor).
+// **Both constructors take the same shape of target**, which is the one thing
+// this backend does differently from the D3D12 one. Off-screen, the colour
+// target is a real GPU::Texture that GPUView created with renderTarget; on the
+// drawable path it is a swapchain image GPUView described the same way. Either
+// way the multisample companion and the depth buffer hang off that one
+// VulkanTextureData, so OffscreenTarget's msaaTexture and depthTexture and the
+// drawable constructor's msaa and depth arguments all stay null here where
+// D3D12 fills all three, and beginPass(descriptor) is one body.
 //
-// The drawable constructor is stage 4's and is still an honest placeholder: it
-// acquires nothing, records nothing and reports the frame invalid, because
-// there is no surface, no swapchain and nothing to present to. Device::beginFrame
-// is deliberately not called on that path - counting a frame that will not be
-// recorded would make a loop of failed frames look like a renderer that is
-// drawing.
+// What the two do differently is how they end. An off-screen frame is rendered
+// to be read, so its destructor submits and waits. A drawable frame submits
+// with the acquire semaphore waited on and the render-finished semaphore
+// signalled, then presents - and waits for nothing at all, the whole point of
+// the semaphores being that the CPU never blocks on the GPU per frame. The
+// throttle that keeps the CPU from running away is GPUView's, on the timeline.
 
 namespace eacp::GPU
 {
@@ -97,12 +100,26 @@ VkAttachmentStoreOp vulkanDepthStoreOp(DepthAction action)
 
 struct Frame::Native
 {
-    // Stage 4's constructor. Nothing is acquired and nothing is opened, so
-    // every entry point below finds a null recording and drops what it was
-    // asked to record.
-    Native(Device& deviceToUse, void*, void*, void*)
+    // The swapchain image GPUView has just acquired. The msaa and depth
+    // arguments are unread on this backend: both companions belong to the
+    // drawable's own VulkanTextureData, exactly as they belong to the texture
+    // on the off-screen path.
+    Native(Device& deviceToUse, void* drawablePointer, void*, void*)
         : device(&deviceToUse)
+        , drawable(static_cast<VulkanDrawable*>(drawablePointer))
     {
+        if (drawable == nullptr || drawable->target == nullptr)
+            return;
+
+        target = drawable->target;
+
+        // The acquire is the first submission's to wait on, wherever the first
+        // submission turns out to be - this frame's last one if nothing
+        // flushes, and flush()'s if something does.
+        pendingWait = drawable->acquired;
+
+        if (deviceToUse.isValid() && target->isValid() && target->isRenderTarget())
+            open(context().acquire());
     }
 
     // The off-screen target: a texture the caller owns, rendered into and then
@@ -334,21 +351,59 @@ struct Frame::Native
         return RenderPass(encoder, data.width, data.height);
     }
 
+    // Hands the finished picture to the compositor. The queue mutex is the same
+    // one every submit takes: presenting is a queue operation, and a VkQueue is
+    // externally synchronized whichever call is using it.
+    //
+    // The wait is the render-finished semaphore the last submission signalled,
+    // so this never blocks - vkQueuePresentKHR queues the wait rather than
+    // performing it, and the presentation engine picks the image up when the
+    // GPU is done with it.
+    void present(std::uint64_t submittedValue)
+    {
+        // A submission the driver refused signals nothing, and a present
+        // waiting on a semaphore that will never be signalled hangs the
+        // compositor's view of this surface rather than dropping one frame.
+        if (submittedValue == 0)
+            return;
+
+        VkPresentInfoKHR info = {};
+        info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        info.waitSemaphoreCount = 1;
+        info.pWaitSemaphores = &drawable->renderFinished;
+        info.swapchainCount = 1;
+        info.pSwapchains = &drawable->swapchain;
+        info.pImageIndices = &drawable->imageIndex;
+
+        auto lock = std::lock_guard<std::mutex> {getVulkanShared().getQueueMutex()};
+
+        drawable->presentResult = vkQueuePresentKHR(context().getQueue(), &info);
+    }
+
     Device* device = nullptr;
     CommandContext* commands = nullptr;
 
-    // The off-screen colour target, and null on the drawable path until stage 4
-    // has a swapchain image to put here.
+    // The colour target: a texture the caller owns on the off-screen path, and
+    // the acquired swapchain image on the drawable one.
     VulkanTextureData* target = nullptr;
+
+    // Null on every frame but a drawable one, which is the test the destructor
+    // and flush() branch on.
+    VulkanDrawable* drawable = nullptr;
+
+    // The acquire semaphore until some submission has taken it, and null after
+    // - so a frame that flushes waits on the acquire once, in its first
+    // submission, rather than in every one of them.
+    VkSemaphore pendingWait = VK_NULL_HANDLE;
+
     bool offscreen = false;
 };
 
 Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture)
     : impl(device, drawable, msaaTexture, depthTexture)
 {
-    // No Device::beginFrame() and no timing: nothing was acquired, so there is
-    // no frame to count and no command buffer to write the opening timestamp
-    // onto. Stage 4's drawable frame calls both, as the other two backends do.
+    device.beginFrame();
+    impl->beginTiming();
 }
 
 Frame::Frame(Device& device, const OffscreenTarget& target)
@@ -369,16 +424,44 @@ Frame::~Frame()
 
     auto& context = impl->context();
 
+    // A frame that opened no pass never moved the image anywhere, and
+    // vkQueuePresentKHR requires PRESENT_SRC_KHR. That is not a corner case: a
+    // GPUView whose render() draws nothing is what the base class does, and its
+    // first frame would otherwise be presented straight out of UNDEFINED.
+    //
+    // A frame that did open one is already resting there - RenderPass::end put
+    // it there through restingUse() - so this records nothing, the barrier
+    // helper skipping a transition to where the image already is.
+    if (impl->drawable != nullptr && impl->target != nullptr)
+        transitionTextureForUse(impl->commands->buffer, *impl->target, imagePresent);
+
     // The closing timestamp goes on while the buffer is still open; the
     // timeline value it will be read against only exists once it is submitted.
     impl->device->frameTimer().endFrame(impl->commands->buffer);
-    impl->device->frameTimer().noteSubmitted(context.submit(impl->commands));
 
-    // An off-screen frame is rendered to be read, and Texture::read is only
-    // valid once what drew the texture has finished - so the wait is the
-    // present's counterpart rather than an extra cost. The drawable frame will
-    // not wait here; it will present.
-    if (impl->offscreen)
+    // The acquire, if no earlier flush already took it, and the frame's
+    // "picture finished" - so exactly one submission of the frame waits and
+    // exactly one signals, whichever number of them there turned out to be.
+    auto sync = SubmitSync {};
+
+    if (impl->drawable != nullptr)
+    {
+        sync.wait = impl->pendingWait;
+        sync.signal = impl->drawable->renderFinished;
+        impl->pendingWait = VK_NULL_HANDLE;
+    }
+
+    const auto submitted = context.submit(impl->commands, sync);
+    impl->device->frameTimer().noteSubmitted(submitted);
+
+    // A drawable frame hands the image to the compositor and returns; the
+    // waiting is the presentation engine's, which is the whole point of the two
+    // semaphores. An off-screen frame is rendered to be read, and Texture::read
+    // is only valid once what drew the texture has finished - so the wait is
+    // the present's counterpart rather than an extra cost.
+    if (impl->drawable != nullptr)
+        impl->present(submitted);
+    else if (impl->offscreen)
         context.waitIdle();
 }
 
@@ -397,7 +480,16 @@ void Frame::flush()
     // Withdrawn before the submit, exactly as ~Frame withdraws it: an upload
     // must never be handed a command buffer that is about to be ended.
     impl->close();
-    context.submit(impl->commands);
+
+    // The acquire goes on this submission and on no later one. The
+    // render-finished semaphore does not: it belongs to the *last* submission
+    // of the frame, which by definition is not this one, or the present would
+    // wait for a picture that is only half drawn.
+    auto sync = SubmitSync {};
+    sync.wait = impl->pendingWait;
+    impl->pendingWait = VK_NULL_HANDLE;
+
+    context.submit(impl->commands, sync);
 
     // The timer is not told, and needs no telling: its opening timestamp and
     // the pool reset are already on the queue, and the closing one goes onto

@@ -61,6 +61,7 @@ struct LoopSource
     int fd = -1;
     short events = 0;
     Callback callback;
+    Callback prepare;
 };
 
 struct LoopState
@@ -90,6 +91,27 @@ void drainPending(LoopState& loop)
     }
     for (auto& cb: pending)
         cb();
+}
+
+// Runs every source's prepare callback, before the poll set is built rather
+// than after, so a prepare that registers or drops a source is reflected in
+// the very wait it precedes. Copied out from under the lock for the same
+// reason dispatchReadySources does it: a prepare may touch the source list,
+// including its own entry.
+void runSourcePrepares(LoopState& loop)
+{
+    auto prepares = Vector<Callback> {};
+
+    {
+        auto lock = std::lock_guard(loop.sourceMutex);
+
+        for (const auto& source: loop.sources)
+            if (source.prepare)
+                prepares.add(source.prepare);
+    }
+
+    for (auto& prepare: prepares)
+        prepare();
 }
 
 // The waker first, then every registered source. Rebuilt before each wait
@@ -149,6 +171,8 @@ void EventLoop::run()
 
     while (loop.running)
     {
+        runSourcePrepares(loop);
+
         auto fds = buildPollSet(loop);
         auto r = waitForLoopActivity(fds, -1);
 
@@ -184,6 +208,8 @@ bool EventLoop::runFor(Time::MS timeout)
         }
 
         auto remaining = deadline.remaining().count;
+
+        runSourcePrepares(loop);
 
         auto fds = buildPollSet(loop);
         auto r = waitForLoopActivity(fds, (int) remaining);
@@ -225,7 +251,7 @@ void EventLoop::call(Callback func)
     loop.waker.wake();
 }
 
-void addLoopSource(int fd, short events, Callback callback)
+void addLoopSource(int fd, short events, Callback callback, Callback prepare)
 {
     auto& loop = getLoop();
 
@@ -235,12 +261,18 @@ void addLoopSource(int fd, short events, Callback callback)
         loop.sources.removeIndexesMatching([fd](const LoopSource& source)
                                            { return source.fd == fd; });
 
-        loop.sources.add(LoopSource {fd, events, std::move(callback)});
+        loop.sources.add(
+            LoopSource {fd, events, std::move(callback), std::move(prepare)});
     }
 
     // The pump may already be blocked in poll() over a set this descriptor is
     // not in yet, so nothing else would make it rebuild.
     loop.waker.wake();
+}
+
+void addLoopSource(int fd, short events, Callback callback)
+{
+    addLoopSource(fd, events, std::move(callback), Callback {});
 }
 
 void removeLoopSource(int fd)

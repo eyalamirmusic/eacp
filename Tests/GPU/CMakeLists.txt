@@ -92,6 +92,15 @@ if (APPLE)
     list(APPEND gpu_test_sources TextureInteropTests.mm)
 endif ()
 
+# The one file here that needs a display: a GPUView presenting through a Vulkan
+# swapchain onto a Wayland surface. Every case self-skips without a compositor
+# (and fails instead under EACP_REQUIRE_DISPLAY=1), so it is safe on the
+# headless lane - it is Linux-only because a swapchain over a wl_surface is, not
+# because the other backends lack the feature.
+if (LINUX)
+    list(APPEND gpu_test_sources PresentTests-Linux.cpp)
+endif ()
+
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through
 # SpriteRenderer: the y-axis contract it pins is between Rect and the things
 # that draw it, so it cannot be checked without one of them. SpriteBatchTests

@@ -34,13 +34,17 @@ is compiled by glslang inside the suite, so an emitter regression fails on macOS
 and Windows CI rather than waiting for a Vulkan device. See the table in `README.md`. CI
 builds and tests macOS, Windows (x64 and ARM64, MSVC and clang-cl) and Linux
 (GCC, Clang, and a Clang lane with `EACP_LINUX_GRAPHICS=ON` running the Vulkan
-backend on Mesa's lavapipe), and builds iOS for the simulator.
+backend on Mesa's lavapipe, with the tests inside a headless Weston session so
+windows and swapchains are real), and builds iOS for the simulator.
 
 Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
 `ResEmbed` and, behind `EACP_BUILD_SPIRV`, `glslang`; a Linux graphics build adds
 `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator` (`CMake/FindVulkanBackend.cmake`,
 one `eacp-vulkan` target, fetched on no other platform). Plus libcurl on Linux,
-which backs the HTTP client there. Nothing links `libvulkan`: `volkInitialize()`
+which backs the HTTP client there, and — for a Linux graphics build — the
+Wayland client library, `wayland-protocols` with `wayland-scanner`, xkbcommon
+and libdecor, found by pkg-config (`CMake/FindWayland.cmake`, one
+`eacp-wayland` target holding the generated protocol code). Nothing links `libvulkan`: `volkInitialize()`
 opens it by name at runtime, so a machine with no driver builds the same binary
 and reports `Device::isValid()` false.
 
@@ -112,33 +116,56 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
 
 - `EACP_LINUX_GRAPHICS` (default `OFF`): turns `EACP_HAS_DRAW` and
   `EACP_HAS_GPU` on for Linux; `EACP_HAS_TEXT` stays off there until the
-  FreeType backend lands. What it builds today is a headless `eacp-graphics` —
-  the portable view tree with `View-Linux.cpp` under it, windows with no surface
-  (`Window-Linux.cpp`), a timer-paced `DisplayLink`, and stubs for the display,
-  image codecs, menus, tray, keyboard state and system appearance — plus the
-  Vulkan backend under it (`GPU/Vulkan/`), which draws off-screen: `Device`,
-  `Buffer`, `ShaderLibrary`, `ComputePipeline`, `ComputePass`, `CommandBuffer`,
-  `GpuTimestamps`, `Texture`, `RenderPipeline`, `RenderPass` and the off-screen
-  `Frame` are real, and `GPUView::renderNativeContent` renders into an
-  off-screen target and reads it back. Only the surface is missing: the
-  swapchain half of `GPUView` and the drawable `Frame` constructor report
-  themselves invalid until the Wayland window lands (stage 4). No 2D `Context`,
-  so `Font`, `TextMetrics`, `TextInput`, `EmbeddedView` and the retained layer
-  classes are left out of the Linux source list rather than stubbed; `Path` is
-  there as recorded geometry only (`Primitives/Path-Linux.h`). Every GPU test
-  but the Metal-only `TextureInteropTests.mm` runs there on lavapipe.
+  FreeType backend lands. What it builds is a Wayland `eacp-graphics` — one
+  process-wide connection (`Window/WaylandDisplay-Linux.cpp`: registry,
+  outputs, libdecor context, the surface-to-window map, and the loop source
+  that pumps it through `Threads::addLoopSource` with a pre-poll flush), a
+  `Window` that is a `wl_surface` under a libdecor frame with a
+  viewport-stretched shm buffer behind the content (`Window-Linux.cpp`), the
+  portable view tree with a `wl_subsurface` for every view that asks for one
+  (`View-Linux.cpp` implementing the `ViewSurface` contract in
+  `View-Linux.h`), seat input translated through xkbcommon into the portable
+  hit-tester with pointer-constraints for mouse lock
+  (`Window/WaylandInput-Linux.cpp`), the evdev-to-`KeyCode` table
+  (`Graphics/Keyboard-Linux.h`), `Display` from the first output, a
+  `DisplayLink` paced at the output's refresh rate, and stubs for image codecs,
+  menus, tray and system appearance — plus the Vulkan backend under it
+  (`GPU/Vulkan/`): everything from `Device` to `RenderPass` is real, the
+  drawable `Frame` presents a swapchain image, and `GPUView-Linux.cpp` owns the
+  swapchain over the view's subsurface (`VK_KHR_wayland_surface`; mailbox or
+  FIFO; frames in flight on the context timeline; rebuilt on resize and
+  `OUT_OF_DATE`; continuous mode paced by `wl_surface.frame` callbacks), with
+  the off-screen `renderNativeContent` path unchanged beside it. The GPU module
+  knows Wayland as two opaque pointers and neither links nor includes it.
+  Under `EACP_HEADLESS=1` or with no `WAYLAND_DISPLAY` to reach, a window is
+  built with no surface, exactly the headless backend this grew out of. Device
+  loss is terminal (no `VkDevice` rebuild; `onDeviceRestored` never fires). No
+  2D `Context`, so `Font`, `TextMetrics`, `TextInput`, `EmbeddedView` and the
+  retained layer classes are left out of the Linux source list rather than
+  stubbed; `Path` is there as recorded geometry only
+  (`Primitives/Path-Linux.h`). Every GPU test but the Metal-only
+  `TextureInteropTests.mm` runs there on lavapipe.
 
 ```bash
 docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
       -v "$PWD":/workspace eacp-ci-linux \
       ci-build -DEACP_LINUX_GRAPHICS=ON -DEACP_UNITY_BUILD=OFF
+
+docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
+      -v "$PWD":/workspace eacp-ci-linux \
+      with-weston ctest --test-dir build-ci-linux --output-on-failure
 ```
 
   `EACP_VK_SOFTWARE=1` prefers a CPU device (Mesa's lavapipe), mirroring
   `EACP_D3D12_WARP`; `EACP_REQUIRE_GPU=1` makes `GPUTests` fail rather than
   self-skip when no device came up; `EACP_VK_VALIDATION=1` turns on
-  `VK_LAYER_KHRONOS_validation` with a debug-utils messenger that logs. See
-  `Lib/eacp/GPU/README.md`.
+  `VK_LAYER_KHRONOS_validation` with a debug-utils messenger that logs. The
+  second command is how the window and present tests (`WaylandWindowTests`,
+  `GPUTests`' `Present` cases) run for real: `Scripts/with-weston` (also
+  `with-weston` in the image) wraps a command in a headless Weston session,
+  and `EACP_REQUIRE_DISPLAY=1` makes those tests fail rather than self-skip
+  without a compositor. Weston's headless backend has no seat, so input is
+  never exercised there. See `Lib/eacp/GPU/README.md`.
 
 - `EACP_WEBVIEW_DEV` (default `OFF`): skips the Vite production build and
   resource embedding for webview apps. The UI is served from the Vite dev
@@ -200,7 +227,10 @@ matching `APPLE`/`IOS`/`WIN32` branch.
 - `addLoopSource(fd, events, cb)` / `removeLoopSource(fd)`
   (`Threads/EventLoop-Linux.h`, Linux only): a pollable descriptor joining the
   loop's own `poll()` set, so a Wayland or xcb connection can be pumped by
-  eacp's loop without `eacp-core` linking the library that owns it
+  eacp's loop without `eacp-core` linking the library that owns it; the
+  four-argument overload adds a `prepare` callback run before every `poll()`,
+  which is where the Wayland connection flushes its requests and dispatches
+  events another reader left queued
 
 **Network/** - HTTP and WebSocket abstraction
 - `Request`/`Response` structs with `httpRequest()` function (NSURLSession backed)
@@ -254,8 +284,9 @@ matching `APPLE`/`IOS`/`WIN32` branch.
 
 macOS: Foundation, Cocoa, CoreVideo, CoreGraphics, CoreText, Metal.
 Windows: Direct2D, DirectWrite, D3D11/D3D12, DXGI, DirectComposition, WinHTTP.
-Linux: pthreads, libcurl, and — behind `EACP_LINUX_GRAPHICS` — the Vulkan
-loader, opened with `dlopen` rather than linked.
+Linux: pthreads, libcurl, and — behind `EACP_LINUX_GRAPHICS` — wayland-client,
+wayland-cursor, xkbcommon and libdecor, plus the Vulkan loader, opened with
+`dlopen` rather than linked.
 
 ## Code Style
 

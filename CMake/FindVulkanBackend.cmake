@@ -96,8 +96,16 @@ if (NOT TARGET eacp-vulkan)
     # The two VMA switches are the volk recipe: no link-time Vulkan symbols to
     # find (there are none), and the rest of the table fetched through the
     # vkGetInstanceProcAddr / vkGetDeviceProcAddr pair VulkanShared hands it.
+    # VK_USE_PLATFORM_WAYLAND_KHR is PUBLIC for the same reason and one more:
+    # volk.c has to see it too, or vkCreateWaylandSurfaceKHR is missing from the
+    # dispatch table the backend calls it through. It drags in no dependency -
+    # vulkan_wayland.h forward-declares `struct wl_display` and
+    # `struct wl_surface` and includes no Wayland header at all - so eacp-gpu
+    # creates a surface over the two opaque pointers Graphics/View/View-Linux.h
+    # hands it without linking or including libwayland.
     target_compile_definitions(eacp-vulkan PUBLIC
             VK_NO_PROTOTYPES
+            VK_USE_PLATFORM_WAYLAND_KHR
             VMA_STATIC_VULKAN_FUNCTIONS=0
             VMA_DYNAMIC_VULKAN_FUNCTIONS=1
             VMA_VULKAN_VERSION=1003000)

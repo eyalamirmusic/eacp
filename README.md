@@ -80,22 +80,28 @@ shipping one.
 | `Camera` / `CameraView` — capture devices and frames | ✅ | ✅ | ✅ | — |
 | `Video` / `VideoView` — screen capture, encode, playback | ✅ | ✅ | — | — |
 
-🚧 on Linux is `-DEACP_LINUX_GRAPHICS=ON`, which builds two things. A headless
-`eacp-graphics`: the view tree, hit-testing and input routing, windows that hold
-a title, a frame and a content view but put nothing on a screen, and honest
-stubs for the display, image codecs, menus, keyboard state and the tray. There
-is no 2D drawing context and no `Font` there yet — `Path` exists, but only as
-recorded geometry — so `Context`, `TextInput` and the retained layer classes
-are simply absent rather than stubbed. And a Vulkan backend under it that
-draws off-screen: `Device`, `Buffer`, `ShaderLibrary`, `ComputePipeline`,
-`ComputePass`, `CommandBuffer`, `GpuTimestamps`, `Texture`, `RenderPipeline`,
-`RenderPass` and the off-screen `Frame` are real, and `GPUView` renders into an
-off-screen target and reads it back, which is the path every pixel test rides.
-Only the surface is missing: the swapchain half of `GPUView` and the drawable
-`Frame` constructor report themselves invalid rather than pretending, until the
-Wayland window lands. It is off by default; what it is for is the staged
-rollout, and it links and passes its tests — all of `Tests/GPU` on Mesa's
-lavapipe — on a machine with no display server at all.
+🚧 on Linux is `-DEACP_LINUX_GRAPHICS=ON`, which builds two things. A Wayland
+`eacp-graphics`: a `Window` is a `wl_surface` with an xdg-shell toplevel
+decorated by libdecor, the view tree, hit-testing and input routing are the
+portable ones with the seat's pointer and keyboard translated into them through
+xkbcommon, a `GPUView` gets a `wl_subsurface` of its own kept at its bounds and
+scaled by the compositor's fractional scale, `Display` reports the first output,
+mouse lock goes through pointer-constraints, and the display's connection is
+pumped by eacp's own event loop. What a window cannot do there is what the
+protocol has no words for — a position, a raise, an icon — and the file says so
+where it matters. There is still no 2D drawing context and no `Font` — `Path`
+exists, but only as recorded geometry — so `Context`, `TextInput`, menus, the
+tray, image codecs and the retained layer classes are absent or honest stubs.
+And a Vulkan backend under it: everything from `Device` to `RenderPass` is real,
+the drawable `Frame` renders into a swapchain image and presents it, and
+`GPUView` owns that swapchain — mailbox or FIFO, frames in flight, rebuilt on
+resize and `OUT_OF_DATE`, with continuous rendering paced by the compositor's
+frame callbacks rather than a clock — beside the off-screen render-and-read-back
+path every pixel test rides. Under `EACP_HEADLESS=1`, or with no compositor to
+reach, every window is built and never shown and every GPU test still runs on
+Mesa's lavapipe with no display server at all; the window and present tests run
+for real under a headless Weston. It is off by default while the FreeType half
+is still to come.
 
 The top-level `CMakeLists.txt` decides this once, in five capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
@@ -123,15 +129,20 @@ the test. `-DEACP_BUILD_SPIRV=OFF` skips it and the checks with it. And
 web view, checked by `ScriptHostTests`.
 
 `-DEACP_LINUX_GRAPHICS=ON` is the switch the Linux graphics backend is being
-built behind, stage by stage; the Wayland and FreeType halves are not there yet,
-so `EACP_HAS_TEXT` stays off on Linux whatever it says. Pass
-`-DEACP_BUILD_GRAPHICS=OFF` to build the portable half on any platform. The
-headless build is what CI runs, and what the `Dockerfile` reproduces:
+built behind, stage by stage; the FreeType half is not there yet, so
+`EACP_HAS_TEXT` stays off on Linux whatever it says. Pass
+`-DEACP_BUILD_GRAPHICS=OFF` to build the portable half on any platform. CI
+builds headless and then runs the suite inside a headless Weston session, and
+the `Dockerfile` reproduces both:
 
 ```bash
 docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
     -v "$PWD":/workspace eacp-ci-linux \
     ci-build -DEACP_LINUX_GRAPHICS=ON -DEACP_UNITY_BUILD=OFF
+
+docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
+    -v "$PWD":/workspace eacp-ci-linux \
+    with-weston ctest --test-dir build-ci-linux --output-on-failure
 ```
 
 The Vulkan half needs no new build dependency: the headers, `volk` and the
@@ -139,12 +150,18 @@ allocator are fetched by CPM, and the loader is opened by name at runtime, so
 all a machine needs to run it is a driver — `mesa-vulkan-drivers` is enough, and
 its software rasterizer is what CI uses. `EACP_VK_SOFTWARE=1` asks for that
 device by preference; `EACP_REQUIRE_GPU=1` turns "no device" from a suite that
-silently skips into a suite that fails.
+silently skips into a suite that fails. The Wayland half is found the way
+libcurl is, by pkg-config against the machine's own libraries: `libwayland-dev
+wayland-protocols libwayland-bin libxkbcommon-dev libdecor-0-dev pkg-config` on
+Debian/Ubuntu, and `weston` to run the window tests without a desktop
+(`Scripts/with-weston`, which is also `with-weston` in the image).
+`EACP_REQUIRE_DISPLAY=1` does for the compositor what `EACP_REQUIRE_GPU=1` does
+for the device.
 
 CI builds every configuration in that matrix and runs the test suite on macOS
 (universal), Windows x64 and ARM64 (MSVC and clang-cl) and Linux (GCC, Clang,
-and a Clang lane with the graphics backend on lavapipe); iOS is built for the
-simulator. macOS is the most exercised of them, and Android is not supported.
+and a Clang lane with the graphics backend on lavapipe under a headless
+Weston); iOS is built for the simulator. macOS is the most exercised of them, and Android is not supported.
 
 The HTTP client is one API over three backends — NSURLSession on Apple
 platforms, WinHTTP on Windows, libcurl on Linux — so a Linux build needs
