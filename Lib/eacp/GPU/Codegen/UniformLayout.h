@@ -113,4 +113,46 @@ inline int std140PackedOffset(int cursor, ValueType type)
 {
     return alignUp(cursor, uniformAlignment(type));
 }
+
+// How many bytes the CPU block occupies: the fields packed by the rules above,
+// the whole rounded up to the widest field's alignment. It is what
+// ShaderUploadVisitor::finish arrives at one field at a time, written out here
+// so a caller holding only the field types can ask without running the walk.
+inline int uniformBlockSize(const Vector<ValueType>& types)
+{
+    auto cursor = 0;
+    auto blockAlignment = 1;
+
+    for (auto type: types)
+    {
+        cursor = alignUp(cursor, uniformAlignment(type)) + uniformSlotStride(type);
+
+        if (uniformAlignment(type) > blockAlignment)
+            blockAlignment = uniformAlignment(type);
+    }
+
+    return alignUp(cursor, blockAlignment);
+}
+
+// What std140 makes of the same block, which is the one thing about it the CPU
+// layout does not already answer. A uniform block's base alignment there is its
+// widest member's rounded up to sixteen, where the CPU stops at the widest
+// member's own: a block of two floats is eight bytes on the CPU and sixteen in
+// a descriptor.
+//
+// The Vulkan backend needs this number rather than the CPU one. A
+// UNIFORM_BUFFER_DYNAMIC range shorter than the block the shader declares is a
+// validation error, and what the shader declares is the std140 size - so the
+// range is sized with this and the extra bytes are simply never read. No field
+// moves: std140PackedOffset agrees with the CPU walk for every type the EDSL
+// lets across the boundary (see above), so this is a tail pad and nothing more.
+//
+// The constant is named so the Vulkan constant ring, which sees only the byte
+// count the CPU walk produced, rounds with the same number rather than its own.
+constexpr int std140BlockAlignment = 16;
+
+inline int std140BlockSize(const Vector<ValueType>& types)
+{
+    return alignUp(uniformBlockSize(types), std140BlockAlignment);
+}
 } // namespace eacp::GPU

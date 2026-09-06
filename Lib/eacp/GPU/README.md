@@ -233,6 +233,14 @@ Send a `Float` and compare it; send a `Float4x4`. `Int` and the integer vectors
 *are* uniforms — both languages give a signed integer four bytes and pack it
 where they pack a float.
 
+`ShaderBuilder::varying<T>()` refuses one type for a different reason: a `Bool`
+varying. GLSL allows no boolean stage input or output, and no `flat` qualifier
+changes that, so there is no source the emitter could print that would compile.
+Carry an `Int` across and test it, or carry the comparison's operands and
+compare in the fragment stage. An `Int` varying, or an integer vector, crosses
+uninterpolated — the emitter writes `flat`, `nointerpolation` or `[[flat]]` for
+it on its own, since every dialect requires that of an integer.
+
 ## Pipeline state
 
 `prepare(sampleCount)` covers the common settings positionally. Everything else
@@ -900,3 +908,75 @@ The D3D12 backend is less exercised than the Metal one. Notes worth having:
   frame pays for hundreds of copy commands on one and none on the other. What
   buys it is the rule `StreamingBuffers` already keeps: no arena is written
   while a frame that drew from it can still be on the GPU
+
+## Linux
+
+The Vulkan backend is half built. What is there is compute: `Device`, `Buffer`,
+`ShaderLibrary`, `ComputePipeline`, `ComputePass`, `CommandBuffer` and
+`GpuTimestamps` are real, and everything that draws — `Texture`,
+`RenderPipeline`, `RenderPass`, `Frame`, `GPUView` — is a placeholder that
+reports itself invalid. That is deliberate: a `Texture` that answered
+`isValid()` with nothing behind it would turn every gap into a wrong picture or
+a hung device instead of a "no" the caller can act on. It is behind
+`-DEACP_LINUX_GRAPHICS=ON` and off by default.
+
+Notes worth having:
+
+- **Nothing links the loader.** `volkInitialize()` opens `libvulkan.so.1` by
+  name at runtime, so the build needs no Vulkan package and the same binary runs
+  on a machine with no driver — `Device::isValid()` is false there, which is
+  what every GPU test already self-skips on. The headers, `volk` and
+  VulkanMemoryAllocator are CPM-fetched (`CMake/FindVulkanBackend.cmake`) and
+  fetched on no other platform.
+- **Vulkan 1.3 core is the floor**, plus five features asked for by name:
+  `timelineSemaphore`, `synchronization2`, `dynamicRendering`,
+  `descriptorBindingPartiallyBound` and `shaderStorageImageWriteWithoutFormat`
+  (the emitter declares a written texture as a `writeonly image2D` with no
+  format qualifier). A device missing one is not used, rather than used until it
+  fails.
+- **eacp ships its own shader compiler here**, which it does on neither other
+  backend: GLSL 450 through glslang into SPIR-V, at a fixed ~2 MB per binary and
+  a one-time ~90 ms symbol-table build that `VulkanShared` pays at device
+  creation so it never lands in a frame.
+- **Memory is sub-allocated by VMA**, not one allocation per buffer:
+  `maxMemoryAllocationCount` is commonly 4096, so the committed-resource model
+  D3D12 uses would run a scene out of allocations long before it ran out of
+  memory.
+- **A second `Device` shares the queue.** A D3D12 command queue is created on
+  demand; a `VkQueue` comes out of a family with a driver-decided count, and
+  lavapipe offers one. So the queue lives in `VulkanShared` behind a mutex, and
+  what keeps two Devices independent is everything else — their own command
+  pools, timeline semaphores, upload arenas, constant rings and descriptor
+  pools. `nativeQueue()` is therefore the same handle for every Device here.
+- **Every recording ends with a global memory barrier.** Consecutive submissions
+  on a queue execute in order but are not automatically visible to one another,
+  and one barrier per submit is a rounding error against the dozens a frame
+  would otherwise need. It is what makes the per-recording use tracking in
+  `transitionForUse` correct, and it is the analogue of D3D12 buffers decaying
+  to `COMMON` after every `ExecuteCommandLists`.
+- **A compute texture slot has one binding number and two possible descriptor
+  types.** The binding map (`Codegen/ShaderBindings.h`) gives slot *i* binding
+  `textureRegisterBase + i` whether the kernel samples it or writes it, matching
+  the Metal indices; Vulkan gives a binding exactly one type. Until there is a
+  `Texture` to bind, the shared layout reserves the range as combined image
+  samplers and a module that declares anything in it is refused a pipeline —
+  `ComputePipeline::isValid()` false, and a log line saying why — rather than
+  dispatched against a descriptor nothing wrote.
+
+### Running it
+
+```bash
+cmake -G Ninja -B build -DEACP_LINUX_GRAPHICS=ON
+EACP_REQUIRE_GPU=1 EACP_VK_SOFTWARE=1 ctest --test-dir build
+```
+
+| Variable | What it does |
+| --- | --- |
+| `EACP_VK_SOFTWARE=1` | Prefers a `PHYSICAL_DEVICE_TYPE_CPU` device — Mesa's lavapipe. The mirror of `EACP_D3D12_WARP`, and for the same reason: a conformant reference implementation is how you tell your bug from the driver's. It inverts the preference order rather than filtering, so a machine whose only device is a real GPU still gets one. |
+| `EACP_REQUIRE_GPU=1` | Makes `GPUTests` fail when no device came up. Every other GPU test self-skips without one and ctest scores that as a pass, so a lane whose driver was never installed reports a full green suite that ran nothing; `DevicePresenceTests` is the one case that does not skip, and it prints the device's name either way. |
+| `EACP_VK_VALIDATION=1` | Enables `VK_LAYER_KHRONOS_validation` with a debug-utils messenger that logs warnings and errors through `LOG`. Off by default — the layer costs several times the driver's own time per call. |
+
+CI runs the suite on lavapipe with all three set and no display server. The
+lavapipe ICD manifest is named per architecture (`lvp_icd.x86_64.json` on an
+x86-64 runner, `lvp_icd.json` in an arm64 container), so nothing sets
+`VK_DRIVER_FILES` — the loader finds it from the ICD directory.

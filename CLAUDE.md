@@ -33,11 +33,16 @@ source the codegen tests emit — and every hand-written GLSL twin in `GPUTests`
 is compiled by glslang inside the suite, so an emitter regression fails on macOS
 and Windows CI rather than waiting for a Vulkan device. See the table in `README.md`. CI
 builds and tests macOS, Windows (x64 and ARM64, MSVC and clang-cl) and Linux
-(GCC and Clang), and builds iOS for the simulator.
+(GCC, Clang, and a Clang lane with `EACP_LINUX_GRAPHICS=ON` running the Vulkan
+backend on Mesa's lavapipe), and builds iOS for the simulator.
 
 Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
-`ResEmbed` and, behind `EACP_BUILD_SPIRV`, `glslang` — plus libcurl on Linux,
-which backs the HTTP client there.
+`ResEmbed` and, behind `EACP_BUILD_SPIRV`, `glslang`; a Linux graphics build adds
+`Vulkan-Headers`, `volk` and `VulkanMemoryAllocator` (`CMake/FindVulkanBackend.cmake`,
+one `eacp-vulkan` target, fetched on no other platform). Plus libcurl on Linux,
+which backs the HTTP client there. Nothing links `libvulkan`: `volkInitialize()`
+opens it by name at runtime, so a machine with no driver builds the same binary
+and reports `Device::isValid()` false.
 
 ## Build Commands
 
@@ -105,20 +110,33 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
   a 4-core CI runner). Off skips the fetch and the target; consumers test
   `if (TARGET eacp-spirv)`.
 
-- `EACP_LINUX_GRAPHICS` (default `OFF`): turns `EACP_HAS_DRAW` on for Linux, and
-  only that — `EACP_HAS_GPU` and `EACP_HAS_TEXT` stay off there until the Vulkan
-  and FreeType backends land. What it builds today is a headless
-  `eacp-graphics`: the portable view tree with `View-Linux.cpp` under it, windows
-  with no surface (`Window-Linux.cpp`), a timer-paced `DisplayLink`, and stubs
-  for the display, image codecs, menus, tray and system appearance. No 2D
-  `Context`, so `Font`, `Path`, `TextMetrics`, `TextInput`, `EmbeddedView` and
-  the retained layer classes are left out of the Linux source list rather than
-  stubbed. `GraphicsTests` runs 104 cases there.
+- `EACP_LINUX_GRAPHICS` (default `OFF`): turns `EACP_HAS_DRAW` and
+  `EACP_HAS_GPU` on for Linux; `EACP_HAS_TEXT` stays off there until the
+  FreeType backend lands. What it builds today is a headless `eacp-graphics` —
+  the portable view tree with `View-Linux.cpp` under it, windows with no surface
+  (`Window-Linux.cpp`), a timer-paced `DisplayLink`, and stubs for the display,
+  image codecs, menus, tray, keyboard state and system appearance — plus the
+  compute half of the Vulkan backend under it (`GPU/Vulkan/`): `Device`,
+  `Buffer`, `ShaderLibrary`, `ComputePipeline`, `ComputePass`, `CommandBuffer`
+  and `GpuTimestamps` are real, and `Texture`, `RenderPipeline`, `RenderPass`,
+  `Frame` and `GPUView` are placeholders that report themselves invalid until
+  the render half lands. No 2D `Context`, so `Font`, `TextMetrics`,
+  `TextInput`, `EmbeddedView` and the retained layer classes are left out of the
+  Linux source list rather than stubbed; `Path` is there as recorded geometry
+  only (`Primitives/Path-Linux.h`). `GraphicsTests` runs 118 cases there,
+  `GPUTests` 21 and `GPUWidgetsTests` 53.
 
 ```bash
-docker run --rm -e EACP_HEADLESS=1 -v "$PWD":/workspace eacp-ci-linux \
+docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
+      -v "$PWD":/workspace eacp-ci-linux \
       ci-build -DEACP_LINUX_GRAPHICS=ON -DEACP_UNITY_BUILD=OFF
 ```
+
+  `EACP_VK_SOFTWARE=1` prefers a CPU device (Mesa's lavapipe), mirroring
+  `EACP_D3D12_WARP`; `EACP_REQUIRE_GPU=1` makes `GPUTests` fail rather than
+  self-skip when no device came up; `EACP_VK_VALIDATION=1` turns on
+  `VK_LAYER_KHRONOS_validation` with a debug-utils messenger that logs. See
+  `Lib/eacp/GPU/README.md`.
 
 - `EACP_WEBVIEW_DEV` (default `OFF`): skips the Vite production build and
   resource embedding for webview apps. The UI is served from the Vite dev
@@ -234,7 +252,8 @@ matching `APPLE`/`IOS`/`WIN32` branch.
 
 macOS: Foundation, Cocoa, CoreVideo, CoreGraphics, CoreText, Metal.
 Windows: Direct2D, DirectWrite, D3D11/D3D12, DXGI, DirectComposition, WinHTTP.
-Linux: pthreads and libcurl.
+Linux: pthreads, libcurl, and — behind `EACP_LINUX_GRAPHICS` — the Vulkan
+loader, opened with `dlopen` rather than linked.
 
 ## Code Style
 

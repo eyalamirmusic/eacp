@@ -60,9 +60,22 @@ public:
         return value;
     }
 
+    // A value the vertex stage computes and the fragment stage reads. An
+    // integer one crosses uninterpolated, which the emitter says for you.
+    //
+    // A Bool cannot cross at all: GLSL refuses a boolean stage input or output
+    // outright - there is nothing for the rasteriser to interpolate and no flat
+    // qualifier that changes that - so no source the emitter could print would
+    // compile. Carry the comparison's operands across and compare in the
+    // fragment stage, or carry an Int and test it.
     template <typename T>
     T varying(const T& vertexValue)
     {
+        static_assert(!isBoolean(ValueTypeOf<T>::value),
+                      "Bool cannot be a varying: GLSL allows no boolean stage "
+                      "input or output. Carry an Int and test it, or compare in "
+                      "the fragment stage.");
+
         auto value = T {};
         value.graph = &graphData;
         value.node = graphData.addVarying(ValueTypeOf<T>::value, vertexValue.node);

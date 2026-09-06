@@ -48,6 +48,16 @@ std::string floatLiteral(float value)
     return text;
 }
 
+// Whether a varying of this type crosses the interface as-is rather than
+// interpolated. There is nothing to interpolate between two integers, and none
+// of the three dialects picks for you: GLSL rejects a non-flat integer stage
+// input outright, HLSL wants nointerpolation and MSL wants [[flat]]. A float
+// varying takes none of the three and prints exactly as it always has.
+bool isFlatVarying(ValueType type)
+{
+    return isSignedInteger(type) || type == ValueType::UInt;
+}
+
 // The three semantics below belong to the two dialects that pass a stage's I/O
 // through a struct. GLSL declares each attribute and each varying as its own
 // global behind a layout(location = N) qualifier, and writes the position to
@@ -64,8 +74,14 @@ std::string attributeSemantic(Backend backend, int index)
     return " : TEXCOORD" + std::to_string(index);
 }
 
-std::string varyingSemantic(Backend backend, int index)
+// Metal is the one of the three that hangs the flat qualifier off the member
+// rather than putting it in front of the type, so it rides here beside the
+// semantic; the other two go through flatQualifier below.
+std::string varyingSemantic(Backend backend, int index, ValueType type)
 {
+    if (backend == Backend::Metal)
+        return isFlatVarying(type) ? " [[flat]]" : std::string {};
+
     if (backend != Backend::DirectX)
         return {};
 
@@ -83,12 +99,44 @@ std::string positionSemantic(Backend backend)
     return " : SV_Position";
 }
 
+// The other two dialects' spelling of the same thing, in front of the type.
+std::string flatQualifier(Backend backend, ValueType type)
+{
+    if (backend == Backend::Metal || !isFlatVarying(type))
+        return {};
+
+    return backend == Backend::Vulkan ? "flat " : "nointerpolation ";
+}
+
 // The one qualifier every GLSL stage input and output carries. Attribute i and
 // varying i take location i, which is what the Vulkan vertex-input state and
 // the vertex/fragment interface match on.
 std::string locationLayout(int index)
 {
     return "layout(location = " + std::to_string(index) + ") ";
+}
+
+// How a stage names one piece of the I/O it is given. MSL and HLSL pass a
+// struct, so both are members of the parameter every stage calls `input`; GLSL
+// has no struct - `input` and `output` are reserved words there and could not
+// have named one anyway - and reads each out of a global. The globals are
+// spelled attrN and varyN rather than aN and vN: those two are already taken
+// there by a constant array and by a mutable local, which on the other two are
+// told apart by the `input.` in front.
+std::string attributeName(Backend backend, int slot)
+{
+    if (backend == Backend::Vulkan)
+        return "attr" + std::to_string(slot);
+
+    return "input.a" + std::to_string(slot);
+}
+
+std::string varyingName(Backend backend, int index)
+{
+    if (backend == Backend::Vulkan)
+        return "vary" + std::to_string(index);
+
+    return "input.v" + std::to_string(index);
 }
 
 // Call nodes carry the canonical (MSL) builtin name; the few each other dialect
@@ -252,6 +300,15 @@ std::string hlslSamplerName(const TextureSampling& sampling)
 // what children and outputs go through, so shared subtrees collapse to a name.
 struct ExprPrinter
 {
+    // Which varying carries vertex attribute `slot` into this stage, -1 when
+    // the stage reads the attribute itself. Empty outside the fragment stage,
+    // where an attribute is exactly what it says it is - see
+    // PromotedAttributes.
+    int carryingVarying(int slot) const
+    {
+        return slot < attributeVaryings.size() ? attributeVaryings[slot] : -1;
+    }
+
     std::string ref(int node) const
     {
         if (locals[node] >= 0)
@@ -266,23 +323,23 @@ struct ExprPrinter
 
         switch (expr.kind)
         {
-            // A stage's I/O is a struct member on the two dialects that pass one
-            // and a global on GLSL, where `input` and `output` are reserved
-            // words and could not have named the struct anyway. The globals are
-            // spelled attrN and varyN rather than aN and vN: those two are
-            // already taken there by a constant array and by a mutable local,
-            // which on MSL and HLSL are told apart by the `input.` in front.
+            // A stage's I/O, spelled by the two helpers above. The one thing
+            // the printer decides here is which of them an attribute read
+            // becomes: only the vertex stage is handed the attributes, so a
+            // fragment-stage read of one is a read of the varying carrying it
+            // across.
             case ExprKind::Input:
-                if (backend == Backend::Vulkan)
-                    return "attr" + std::to_string(expr.index);
+            {
+                auto carrier = carryingVarying(expr.index);
 
-                return "input.a" + std::to_string(expr.index);
+                if (carrier >= 0)
+                    return varyingName(backend, carrier);
+
+                return attributeName(backend, expr.index);
+            }
 
             case ExprKind::Varying:
-                if (backend == Backend::Vulkan)
-                    return "vary" + std::to_string(expr.index);
-
-                return "input.v" + std::to_string(expr.index);
+                return varyingName(backend, expr.index);
 
             case ExprKind::Uniform:
                 return "uniforms.u" + std::to_string(expr.index);
@@ -580,6 +637,7 @@ struct ExprPrinter
     const ShaderGraph& graph;
     Backend backend;
     const Vector<int>& locals; // node id -> local index, -1 = inline
+    Vector<int> attributeVaryings; // attribute slot -> varying, -1 = read direct
 };
 
 // Operation nodes are worth naming when evaluated more than once; leaf reads
@@ -857,8 +915,10 @@ bool readsStale(const ShaderGraph& graph,
 // since the header is re-evaluated after the body has run.
 struct StageEmitter
 {
-    StageEmitter(const ShaderGraph& graphToUse, Backend backend)
-        : printer {graphToUse, backend, locals}
+    StageEmitter(const ShaderGraph& graphToUse,
+                 Backend backend,
+                 Vector<int> attributeVaryings = {})
+        : printer {graphToUse, backend, locals, std::move(attributeVaryings)}
         , visited(graphToUse.nodeCount())
     {
         locals.resize(graphToUse.nodeCount(), -1);
@@ -1361,6 +1421,125 @@ Vector<int> fragmentStageRoots(const ShaderGraph& graph)
 
     collectStatementRoots(graph, ShaderGraph::rootBlock, roots);
     return roots;
+}
+
+// The Input nodes a run of fragment-stage expressions reaches, marked by node
+// id. A Varying is the stage boundary exactly as it is for the uniform walk
+// above; an array element is followed because the array is declared inside the
+// stage that subscripts it, so what an element reads the stage reads.
+void collectAttributeReads(const ShaderGraph& graph,
+                           int node,
+                           Vector<char>& reached,
+                           VisitSet& seen)
+{
+    if (node < 0 || !seen.visit(node))
+        return;
+
+    const auto& expr = graph.expr(node);
+
+    if (expr.kind == ExprKind::Varying)
+        return;
+
+    if (expr.kind == ExprKind::Input)
+        reached[node] = 1;
+
+    if (expr.kind == ExprKind::ArrayRead)
+        for (auto element: graph.arrays()[expr.index].elements)
+            collectAttributeReads(graph, element, reached, seen);
+
+    for (auto argument: expr.args)
+        collectAttributeReads(graph, argument, reached, seen);
+}
+
+// Which declared varying already carries the value of `source`, -1 when none
+// does. A shader that wrote the varying itself gets that one rather than a
+// second copy of the same attribute beside it.
+int varyingCarrying(const ShaderGraph& graph, int source)
+{
+    for (auto i = 0; i < graph.varyings().size(); ++i)
+        if (graph.varyings()[i].sourceNode == source)
+            return i;
+
+    return -1;
+}
+
+// The vertex attributes the fragment stage reads. Only the vertex stage is
+// given them: MSL and HLSL hand the fragment stage a VertexOut, which has no
+// attribute members at all, and the GLSL fragment block declares nothing the
+// vertex block did not write. So an attribute read there names an identifier
+// the stage does not have, in all three dialects, and every such read is
+// promoted here - the vertex stage writes the attribute into a varying, the
+// fragment stage reads it back, which is what the shader would have said had it
+// declared the varying itself.
+//
+// varyingOf is what the fragment printer looks a read up in. carried is the
+// attribute each *implicit* varying takes, appended after the graph's own so no
+// declared location moves. A shader that promotes nothing leaves both empty and
+// every dialect prints exactly what it printed before.
+struct PromotedAttributes
+{
+    Vector<int> varyingOf; // attribute slot -> varying index, -1 = not read
+    Vector<int> carried; // implicit varying order -> attribute slot
+};
+
+PromotedAttributes promotedAttributes(const ShaderGraph& graph)
+{
+    auto promoted = PromotedAttributes {};
+    promoted.varyingOf.resize(graph.inputs().size(), -1);
+
+    auto reached = Vector<char> {};
+    reached.resize(graph.nodeCount(), 0);
+
+    auto seen = VisitSet {graph.nodeCount()};
+
+    for (auto root: fragmentStageRoots(graph))
+        collectAttributeReads(graph, root, reached, seen);
+
+    // Ascending node order, so the implicit varyings come out in the order the
+    // attributes were declared however the fragment expression reached them.
+    for (auto node = 0; node < graph.nodeCount(); ++node)
+    {
+        if (reached[node] == 0)
+            continue;
+
+        auto slot = graph.expr(node).index;
+        auto carrier = varyingCarrying(graph, node);
+
+        if (carrier < 0)
+        {
+            carrier = graph.varyings().size() + promoted.carried.size();
+            promoted.carried.add(slot);
+        }
+
+        promoted.varyingOf[slot] = carrier;
+    }
+
+    return promoted;
+}
+
+// The vertex-to-fragment interface as both stages declare it: the varyings the
+// graph holds, then one per promoted attribute. A declared varying is written
+// from its source expression; a promoted one straight from the attribute, which
+// is the whole of what promotion is.
+struct StageVarying
+{
+    ValueType type = ValueType::Float;
+    int sourceNode = -1;
+    int attribute = -1;
+};
+
+Vector<StageVarying> stageVaryings(const ShaderGraph& graph,
+                                   const PromotedAttributes& promoted)
+{
+    auto slots = Vector<StageVarying> {};
+
+    for (const auto& varying: graph.varyings())
+        slots.add(StageVarying {varying.type, varying.sourceNode, -1});
+
+    for (auto attribute: promoted.carried)
+        slots.add(StageVarying {graph.inputs()[attribute], -1, attribute});
+
+    return slots;
 }
 
 // Which storage-buffer slots a run of expressions subscripts. A render stage
@@ -1934,6 +2113,12 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     auto source = std::string {};
     auto glsl = backend == Backend::Vulkan;
 
+    // What the two stages pass between them, which is not quite what the graph
+    // recorded: an attribute the fragment stage read gets a varying whether the
+    // shader asked for one or not. See PromotedAttributes.
+    auto promoted = promotedAttributes(graph);
+    auto varyings = stageVaryings(graph, promoted);
+
     if (backend == Backend::Metal)
         source += "#include <metal_stdlib>\nusing namespace metal;\n\n";
 
@@ -1957,10 +2142,11 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         source += "};\n\nstruct VertexOut\n{\n";
         source += "    float4 position" + positionSemantic(backend) + ";\n";
 
-        for (auto i = 0; i < graph.varyings().size(); ++i)
-            source +=
-                "    " + std::string(typeName(backend, graph.varyings()[i].type))
-                + " v" + std::to_string(i) + varyingSemantic(backend, i) + ";\n";
+        for (auto i = 0; i < varyings.size(); ++i)
+            source += "    " + flatQualifier(backend, varyings[i].type)
+                      + std::string(typeName(backend, varyings[i].type)) + " v"
+                      + std::to_string(i)
+                      + varyingSemantic(backend, i, varyings[i].type) + ";\n";
 
         source += "};\n\n";
     }
@@ -2068,9 +2254,9 @@ std::string emit(const ShaderGraph& graph, Backend backend)
                       + std::string(typeName(backend, graph.inputs()[i])) + " attr"
                       + std::to_string(i) + ";\n";
 
-        for (auto i = 0; i < graph.varyings().size(); ++i)
-            source += locationLayout(i) + "out "
-                      + std::string(typeName(backend, graph.varyings()[i].type))
+        for (auto i = 0; i < varyings.size(); ++i)
+            source += locationLayout(i) + flatQualifier(backend, varyings[i].type)
+                      + "out " + std::string(typeName(backend, varyings[i].type))
                       + " vary" + std::to_string(i) + ";\n";
 
         source += "\nvoid main()\n{\n";
@@ -2088,6 +2274,16 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     source += vertexStage.declareArrays(vertexRoots, "    ");
     source += vertexStage.defineFor(vertexRoots, "    ");
 
+    // What the vertex stage writes into a varying: the expression the shader
+    // gave it, or - for a promoted one - the attribute itself.
+    auto varyingValue = [&](const StageVarying& varying)
+    {
+        if (varying.sourceNode >= 0)
+            return vertexStage.printer.ref(varying.sourceNode);
+
+        return attributeName(backend, varying.attribute);
+    };
+
     // GLSL writes the clip position to gl_Position and each varying to the
     // global it declared; `output` is a reserved word there and there is no
     // struct to fill anyway. Clip y is left exactly as the graph computed it:
@@ -2098,10 +2294,9 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         source +=
             "    gl_Position = " + vertexStage.printer.ref(graph.position()) + ";\n";
 
-        for (auto i = 0; i < graph.varyings().size(); ++i)
+        for (auto i = 0; i < varyings.size(); ++i)
             source += "    vary" + std::to_string(i) + " = "
-                      + vertexStage.printer.ref(graph.varyings()[i].sourceNode)
-                      + ";\n";
+                      + varyingValue(varyings[i]) + ";\n";
 
         source += "}\n#endif\n\n";
     }
@@ -2111,10 +2306,9 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         source += "    output.position = "
                   + vertexStage.printer.ref(graph.position()) + ";\n";
 
-        for (auto i = 0; i < graph.varyings().size(); ++i)
+        for (auto i = 0; i < varyings.size(); ++i)
             source += "    output.v" + std::to_string(i) + " = "
-                      + vertexStage.printer.ref(graph.varyings()[i].sourceNode)
-                      + ";\n";
+                      + varyingValue(varyings[i]) + ";\n";
 
         source += "    return output;\n}\n\n";
     }
@@ -2157,9 +2351,9 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         // declared output rather than the function's return.
         source += "#ifdef EACP_FRAGMENT\n";
 
-        for (auto i = 0; i < graph.varyings().size(); ++i)
-            source += locationLayout(i) + "in "
-                      + std::string(typeName(backend, graph.varyings()[i].type))
+        for (auto i = 0; i < varyings.size(); ++i)
+            source += locationLayout(i) + flatQualifier(backend, varyings[i].type)
+                      + "in " + std::string(typeName(backend, varyings[i].type))
                       + " vary" + std::to_string(i) + ";\n";
 
         source += locationLayout(0) + "out vec4 fragColor;\n";
@@ -2172,7 +2366,7 @@ std::string emit(const ShaderGraph& graph, Backend backend)
 
     // The shader's statements run first - they are what the fragment expression
     // then reads a mutable local out of - and the colour is planned after them.
-    auto fragmentStage = StageEmitter {graph, backend};
+    auto fragmentStage = StageEmitter {graph, backend, promoted.varyingOf};
 
     source += fragmentStage.declareArrays(stageRoots, "    ");
     source += fragmentStage.emitBlock(ShaderGraph::rootBlock, "    ");

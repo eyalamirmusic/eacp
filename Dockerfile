@@ -23,9 +23,11 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG CMAKE_VERSION=3.31.6
 
 # Mirrors the apt install line in build.yml plus build-essential
-# (gcc/g++/make), gdb for debugging, and ca-certificates/curl/git for
-# CMake FetchContent. CMake itself comes from Kitware to match the
-# version GH Actions ships.
+# (gcc/g++/make), gdb for debugging, ca-certificates/curl/git for
+# CMake FetchContent, and Mesa's lavapipe (mesa-vulkan-drivers) with the
+# Vulkan loader, tools and validation layers so the Vulkan backend's tests
+# run headless on a software device, as the Windows lane runs on WARP.
+# CMake itself comes from Kitware to match the version GH Actions ships.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -37,8 +39,12 @@ RUN apt-get update \
         gdb \
         git \
         libcurl4-openssl-dev \
+        libvulkan1 \
+        mesa-vulkan-drivers \
         ninja-build \
         rsync \
+        vulkan-tools \
+        vulkan-validationlayers \
     && rm -rf /var/lib/apt/lists/* \
     && ARCH="$(uname -m)" \
     && curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${ARCH}.tar.gz" \

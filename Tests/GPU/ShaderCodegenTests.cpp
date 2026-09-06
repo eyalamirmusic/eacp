@@ -252,6 +252,138 @@ auto tCodegenGlslStagePartition = test("GPU/codegenGlslStagePartition") = []
     expectGlslCompiles(builder.graph());
 };
 
+// Only the vertex stage is handed the vertex attributes. A fragment expression
+// that reads one anyway is promoted to a varying - the vertex stage writes the
+// attribute into it, the fragment stage reads it back - which is what the
+// shader would have said had it declared the varying itself. Without that every
+// dialect names an identifier the stage does not have: `input.a0` off a
+// VertexOut with no such member on MSL and HLSL, `attr0` outside the block that
+// declares it on GLSL.
+auto tCodegenPromotedAttribute = test("GPU/codegenPromotedAttributeVarying") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto tint = builder.vertexInput<Float3>();
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(float4(tint, position.x()));
+
+    for (const auto& dialect: everyDialect(builder.graph()))
+    {
+        auto fragment =
+            dialect.source.substr(dialect.source.find(dialect.fragmentStage()));
+
+        // Promoted in declaration order, whatever order the fragment expression
+        // reached them in: attribute 0 takes varying 0, attribute 1 varying 1.
+        check(contains(fragment,
+                       "(" + dialect.varying(1) + ", (" + dialect.varying(0)
+                           + ").x)"));
+
+        // And nothing past the stage boundary names an attribute, which is the
+        // whole of what this fixes.
+        check(!contains(fragment, dialect.attribute(0)));
+        check(!contains(fragment, dialect.attribute(1)));
+    }
+
+    // The declaration and the write, dialect by dialect.
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "    float2 v0;\n    float3 v1;\n"));
+    check(contains(metal, "    output.v0 = input.a0;\n    output.v1 = input.a1;\n"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl,
+                   "    float2 v0 : TEXCOORD0;\n"
+                   "    float3 v1 : TEXCOORD1;\n"));
+    check(contains(hlsl, "    output.v0 = input.a0;\n    output.v1 = input.a1;\n"));
+
+    auto glsl = emitGlsl(builder.graph());
+    check(contains(glsl,
+                   "layout(location = 0) out vec2 vary0;\n"
+                   "layout(location = 1) out vec3 vary1;\n"));
+    check(contains(glsl,
+                   "layout(location = 0) in vec2 vary0;\n"
+                   "layout(location = 1) in vec3 vary1;\n"));
+    check(contains(glsl, "    vary0 = attr0;\n    vary1 = attr1;\n"));
+
+    expectGlslCompiles(builder.graph());
+};
+
+// A promoted varying is only ever one the shader did not already write. An
+// attribute a declared varying already carries is read through that one, and
+// the implicit varyings take the locations after every declared one - so
+// reading an attribute from the fragment stage never moves a location the
+// vertex/fragment interface already matched on.
+auto tCodegenPromotedAttributeReuse =
+    test("GPU/codegenPromotedAttributeReusesVarying") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto uv = builder.vertexInput<Float2>();
+    auto declared = builder.varying(uv);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    // uv is read as the attribute rather than through `declared`; position has
+    // no varying at all.
+    builder.fragment(float4(uv, position.x(), declared.y()));
+
+    auto glsl = emitGlsl(builder.graph());
+
+    // Two varyings, not three: the declared one carrying uv, and one promoted
+    // for position after it.
+    check(contains(glsl,
+                   "layout(location = 0) out vec2 vary0;\n"
+                   "layout(location = 1) out vec2 vary1;\n"));
+    check(!contains(glsl, "vary2"));
+    check(contains(glsl, "    vary0 = attr1;\n    vary1 = attr0;\n"));
+    check(contains(glsl, "    fragColor = vec4(vary0, (vary1).x, (vary0).y);\n"));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "    float2 v0;\n    float2 v1;\n"));
+    check(!contains(metal, "output.v2"));
+    check(contains(metal, "    output.v0 = input.a1;\n    output.v1 = input.a0;\n"));
+
+    check(contains(emitHlsl(builder.graph()),
+                   "    float2 v0 : TEXCOORD0;\n"
+                   "    float2 v1 : TEXCOORD1;\n"));
+
+    expectGlslCompiles(builder.graph());
+};
+
+// There is nothing to interpolate between two integers, and none of the three
+// dialects picks for you: GLSL rejects a non-flat integer stage input outright,
+// HLSL wants nointerpolation and MSL wants [[flat]]. A float varying carries
+// none of the three.
+auto tCodegenFlatIntegerVarying = test("GPU/codegenFlatIntegerVarying") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto tile = builder.varying(toInt(position.x() * 8.0f));
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+    builder.fragment(float4(toFloat(tile) * 0.125f, carried, 1.0f));
+
+    auto metal = emitMetal(builder.graph());
+    check(contains(metal, "    int v0 [[flat]];\n"));
+    check(contains(metal, "    float2 v1;\n"));
+
+    auto hlsl = emitHlsl(builder.graph());
+    check(contains(hlsl, "    nointerpolation int v0 : TEXCOORD0;\n"));
+    check(contains(hlsl, "    float2 v1 : TEXCOORD1;\n"));
+
+    auto glsl = emitGlsl(builder.graph());
+    check(contains(glsl, "layout(location = 0) flat out int vary0;\n"));
+    check(contains(glsl, "layout(location = 0) flat in int vary0;\n"));
+    check(contains(glsl, "layout(location = 1) out vec2 vary1;\n"));
+    check(!contains(glsl, "flat out vec2"));
+
+    expectGlslCompiles(builder.graph());
+};
+
 // A kernel has one entry point, so it carries no macro at all - and its
 // thread-group shape is a layout qualifier on the input rather than an
 // attribute on the function.
@@ -515,6 +647,55 @@ auto tCodegenStd140Padding = test("GPU/codegenGlslStd140Padding") = []
     expectGlslCompiles(builder.graph());
 };
 
+// Where the two layouts disagree about the block rather than about a field:
+// std140 gives a uniform block a base alignment of sixteen, where the CPU stops
+// at its widest member's. Every field stays where it was - this is a tail pad -
+// but the Vulkan backend has to size its UNIFORM_BUFFER_DYNAMIC range with the
+// rounded number, a range shorter than the block the shader declares being a
+// validation error.
+auto tCodegenStd140BlockSize = test("GPU/codegenGlslStd140BlockSize") = []
+{
+    auto typesOf = [](std::initializer_list<ValueType> list)
+    {
+        auto types = Vector<ValueType> {};
+
+        for (auto type: list)
+            types.add(type);
+
+        return types;
+    };
+
+    // Two scalars: the CPU block ends at eight, std140 rounds it to sixteen.
+    // This is the shape the rounding exists for.
+    check(uniformBlockSize(typesOf({ValueType::Float, ValueType::Float})) == 8);
+    check(std140BlockSize(typesOf({ValueType::Float, ValueType::Float})) == 16);
+
+    // A vec2 after a scalar ends on the boundary already, so both agree.
+    check(uniformBlockSize(typesOf({ValueType::Float, ValueType::Float2})) == 16);
+    check(std140BlockSize(typesOf({ValueType::Float, ValueType::Float2})) == 16);
+
+    // A vec3 takes a full sixteen either side of the boundary, so the scalar
+    // after it ends the block at twenty and both round the same way - the CPU
+    // to its widest member's sixteen, std140 to its own.
+    check(uniformBlockSize(typesOf({ValueType::Float3, ValueType::Float})) == 32);
+    check(std140BlockSize(typesOf({ValueType::Float3, ValueType::Float})) == 32);
+
+    check(uniformBlockSize(typesOf({ValueType::Float4x4, ValueType::Float})) == 80);
+    check(std140BlockSize(typesOf({ValueType::Float4x4, ValueType::Float})) == 80);
+
+    // A shader with no uniforms declares no block, and neither size invents one.
+    check(uniformBlockSize(Vector<ValueType> {}) == 0);
+    check(std140BlockSize(Vector<ValueType> {}) == 0);
+
+    // And the CPU size is what the field walk already arrives at: the last
+    // field's end, rounded up to the widest field's alignment.
+    auto types = typesOf({ValueType::Float2, ValueType::Float4});
+    auto offsets = uniformOffsets(types);
+    check(offsets[1] == 16);
+    check(uniformBlockSize(types) == 32);
+    check(std140BlockSize(types) == 32);
+};
+
 // A float2 after a float packs at 4 in HLSL but at 8 on the CPU side, so it
 // pads by one scalar; vector-only blocks land identically under both rule sets
 // and stay pad-free.
@@ -552,12 +733,10 @@ auto tCodegenCbufferPaddingFloat2 = test("GPU/codegenHlslCbufferPaddingFloat2") 
     check(!contains(emitHlsl(vectors.graph()), "pad"));
     check(!contains(emitGlsl(vectors.graph()), "pad"));
 
-    // Only the second graph is compiled: the first reads a vertex attribute
-    // from the fragment stage without a varying, which every emitter turns into
-    // a read of a name that stage does not have - `input.a0` off a VertexOut on
-    // MSL and HLSL, `attr0` outside its #ifdef here. The block layout above is
-    // what this case is about, and it is unaffected; the missing promotion is
-    // an EDSL gap rather than a dialect one, so pinning it would pin the bug.
+    // The first graph reads a vertex attribute from the fragment stage with no
+    // varying between them; the emitter promotes it to one, so both compile.
+    // See codegenPromotedAttributeVarying.
+    expectGlslCompiles(builder.graph());
     expectGlslCompiles(vectors.graph());
 };
 
@@ -578,10 +757,7 @@ auto tCodegenOperatorSugar = test("GPU/codegenOperatorSugar") = []
     check(contains(metal, " * 2.0)"));
     check(contains(metal, "(1.0 - (input.a0).x)"));
 
-    // No compile check: the fragment stage here reads a vertex attribute with
-    // no varying between them, which no emitter promotes, so all three dialects
-    // name an identifier that stage does not have. The sugar this test is about
-    // is in the vertex expression above.
+    expectGlslCompiles(builder.graph());
 };
 
 // Negating a negative constant emits nested parentheses, not a pre-decrement:

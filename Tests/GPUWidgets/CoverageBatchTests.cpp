@@ -218,6 +218,13 @@ Difference compare(const Vector<float>& batched,
 // rasterization.
 void checkEachMatchesAlone(Vector<Entry>& entries, const GPU::Texture& target)
 {
+    // Nothing was rasterized into a texture that does not exist, and holding a
+    // read-back of nothing against a solo rasterization of nothing checks
+    // nothing. Self-skips on the object the comparison needs, exactly as the
+    // probe does - see CoverageProbe.h.
+    if (!target.isValid())
+        return;
+
     for (auto i = 0; i < entries.size(); ++i)
     {
         const auto& entry = entries[i];
@@ -289,6 +296,9 @@ auto tFillRulesDoNotCross = test("CoverageBatch/eachPathKeepsItsOwnFillRule") = 
 
     auto batch = CoverageBatch {};
     auto target = rasterizeTogether(entries, batch);
+
+    if (!target.isValid())
+        return;
 
     // And the two really are different pictures, so the check above could have
     // failed. The centre is the hole under even-odd and solid under non-zero.
