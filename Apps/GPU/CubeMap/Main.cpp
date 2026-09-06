@@ -7,7 +7,6 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <vector>
 
 // Cube textures: a sky and a mirror ball, which are the two things six square
 // faces sampled by a direction are for.
@@ -145,15 +144,15 @@ std::uint32_t packColor(Vec3 color, float brightness)
 // top - the same layout every 2D texture here is uploaded in, six times over.
 // There is no per-face call and no per-face offset to get wrong, which is the
 // whole ergonomics of it: assemble the block, hand it over.
-std::vector<std::uint32_t> buildSkyPixels()
+Vector<std::uint32_t> buildSkyPixels()
 {
-    auto pixels = std::vector<std::uint32_t> {};
+    auto pixels = Vector<std::uint32_t> {};
     pixels.reserve(6 * faceSize * faceSize);
 
     for (const auto& face: skyFaces)
         for (auto y = 0; y < faceSize; ++y)
             for (auto x = 0; x < faceSize; ++x)
-                pixels.push_back(packColor(face.color, faceBrightness(x, y)));
+                pixels.add(packColor(face.color, faceBrightness(x, y)));
 
     return pixels;
 }
@@ -186,8 +185,8 @@ struct Vertex
 
 struct Mesh
 {
-    std::vector<Vertex> vertices;
-    std::vector<std::uint32_t> indices;
+    Vector<Vertex> vertices;
+    Vector<std::uint32_t> indices;
 };
 
 // A UV sphere: rings of latitude, segments of longitude, two triangles per
@@ -213,7 +212,7 @@ Mesh buildSphere(float radius, int rings, int segments)
                                 std::cos(polar),
                                 std::sin(polar) * std::sin(azimuth)};
 
-            mesh.vertices.push_back({normal * radius, normal});
+            mesh.vertices.add(Vertex {normal * radius, normal});
         }
     }
 
@@ -225,7 +224,7 @@ Mesh buildSphere(float radius, int rings, int segments)
             auto c = b + 1;
             auto d = a + 1;
 
-            mesh.indices.insert(mesh.indices.end(), {a, d, c, a, c, b});
+            mesh.indices.add({a, d, c, a, c, b});
         }
 
     return mesh;
@@ -370,9 +369,8 @@ struct CubeMapView final : GPUView
         skyShader.sky = sky;
         skyShader.prepare(skyPipeline());
 
-        mirrorShader.setVertices(sphere.vertices.data(),
-                                 (int) sphere.vertices.size());
-        mirrorShader.setIndices(sphere.indices.data(), (int) sphere.indices.size());
+        mirrorShader.setVertices(sphere.vertices.data(), sphere.vertices.size());
+        mirrorShader.setIndices(sphere.indices.data(), sphere.indices.size());
         mirrorShader.sky = sky;
         mirrorShader.prepare(mirrorPipeline());
 

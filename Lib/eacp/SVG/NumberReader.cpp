@@ -23,12 +23,12 @@ bool isNumberStart(char c)
 
 bool NumberReader::atEnd() const
 {
-    return pos >= src.size();
+    return pos >= (int) src.size();
 }
 
 char NumberReader::peek() const
 {
-    return src[pos];
+    return src[(size_t) pos];
 }
 
 void NumberReader::skipWhitespaceAndCommas()
@@ -48,7 +48,7 @@ bool NumberReader::readFlag()
     skipWhitespaceAndCommas();
 
     if (!atEnd() && (peek() == '0' || peek() == '1'))
-        return src[pos++] == '1';
+        return src[(size_t) pos++] == '1';
 
     // Not what the grammar allows, but a document that writes "0.0" where a flag
     // belongs means false by it, and refusing to read the number would put every
@@ -87,7 +87,8 @@ float NumberReader::readFloat()
     if (pos == start)
         return 0.f;
 
-    return std::stof(std::string(src.substr(start, pos - start)));
+    return std::stof(
+        std::string(src.substr((size_t) start, (size_t) (pos - start))));
 }
 
 } // namespace eacp::SVG

@@ -30,7 +30,7 @@ public:
         Invalid
     };
 
-    State feed(const char* data, std::size_t length);
+    State feed(const char* data, int length);
     Request& request() { return parsed; }
 
 private:
@@ -41,8 +41,8 @@ private:
 
     std::string buffer;
     Request parsed;
-    std::size_t bodyStart = 0;
-    std::size_t bodyExpected = 0;
+    int bodyStart = 0;
+    int bodyExpected = 0;
     bool headersParsed = false;
 };
 

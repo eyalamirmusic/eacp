@@ -3,8 +3,6 @@
 
 #include "TeapotData.h"
 
-#include <vector>
-
 using namespace eacp;
 using namespace GPU;
 using namespace Maths;

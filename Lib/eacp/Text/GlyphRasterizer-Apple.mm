@@ -10,7 +10,6 @@
 #include <cmath>
 #include <map>
 #include <optional>
-#include <vector>
 
 // CoreText rasterizer and shaper, shared by macOS and iOS — CoreText and
 // CoreGraphics are present on both, so nothing here is macOS-specific.
@@ -289,8 +288,8 @@ int weightDistance(int wanted, int have)
 // glyph's string index maps back to an offset in the text the caller gave.
 struct Utf16Text
 {
-    std::vector<UniChar> units;
-    std::vector<int> byteOf;
+    Vector<UniChar> units;
+    Vector<int> byteOf;
 };
 
 Utf16Text toUtf16(std::string_view text)
@@ -299,29 +298,29 @@ Utf16Text toUtf16(std::string_view text)
     result.units.reserve(text.size());
     result.byteOf.reserve(text.size() + 1);
 
-    auto index = std::size_t {0};
+    auto index = 0;
 
-    while (index < text.size())
+    while (index < (int) text.size())
     {
         const auto start = index;
         const auto codepoint = decodeUtf8(text, index);
 
         if (codepoint <= 0xFFFF)
         {
-            result.units.push_back((UniChar) codepoint);
-            result.byteOf.push_back((int) start);
+            result.units.add((UniChar) codepoint);
+            result.byteOf.add(start);
         }
         else
         {
             const auto value = codepoint - 0x10000;
-            result.units.push_back((UniChar) (0xD800 + (value >> 10)));
-            result.units.push_back((UniChar) (0xDC00 + (value & 0x3FF)));
-            result.byteOf.push_back((int) start);
-            result.byteOf.push_back((int) start);
+            result.units.add((UniChar) (0xD800 + (value >> 10)));
+            result.units.add((UniChar) (0xDC00 + (value & 0x3FF)));
+            result.byteOf.add(start);
+            result.byteOf.add(start);
         }
     }
 
-    result.byteOf.push_back((int) text.size());
+    result.byteOf.add((int) text.size());
 
     return result;
 }
@@ -442,7 +441,7 @@ struct GlyphRasterizer::Native
                 }
             }
 
-            familyFaces.push_back(std::move(face));
+            familyFaces.add(std::move(face));
         }
     }
 
@@ -556,16 +555,16 @@ struct GlyphRasterizer::Native
         if (runFont == nullptr || CFEqual(runFont, requested))
             return 0;
 
-        for (auto index = std::size_t {0}; index < fallbacks.size(); ++index)
+        for (auto index = 0; index < fallbacks.size(); ++index)
             if (CFEqual(fallbacks[index].get(), runFont))
-                return (int) index + 1;
+                return index + 1;
 
         if (fallbacks.size() >= 255)
             return 0;
 
-        fallbacks.emplace_back((CTFontRef) CFRetain(runFont));
+        fallbacks.create((CTFontRef) CFRetain(runFont));
 
-        return (int) fallbacks.size();
+        return fallbacks.size();
     }
 
     CTFontRef fontOf(GlyphKey key, const FontVariant& variant) const
@@ -573,9 +572,12 @@ struct GlyphRasterizer::Native
         if (key.font == 0)
             return fontFor(variant);
 
-        const auto index = (std::size_t) key.font - 1;
+        const auto index = key.font - 1;
 
-        return index < fallbacks.size() ? fallbacks[index].get() : nullptr;
+        if (index < 0 || index >= fallbacks.size())
+            return nullptr;
+
+        return fallbacks[index].get();
     }
 
     ShapedRun shape(std::string_view text, const FontVariant& variant) const
@@ -619,9 +621,9 @@ struct GlyphRasterizer::Native
             if (count <= 0)
                 continue;
 
-            auto glyphs = std::vector<CGGlyph>((std::size_t) count);
-            auto positions = std::vector<CGPoint>((std::size_t) count);
-            auto indices = std::vector<CFIndex>((std::size_t) count);
+            auto glyphs = Vector<CGGlyph>((int) count);
+            auto positions = Vector<CGPoint>((int) count);
+            auto indices = Vector<CFIndex>((int) count);
 
             CTRunGetGlyphs(run, CFRangeMake(0, 0), glyphs.data());
             CTRunGetPositions(run, CFRangeMake(0, 0), positions.data());
@@ -631,10 +633,10 @@ struct GlyphRasterizer::Native
                                                             kCTFontAttributeName);
             const auto fontIndex = fontIndexOf(runFont, font);
 
-            for (auto i = std::size_t {0}; i < glyphs.size(); ++i)
+            for (auto i = 0; i < glyphs.size(); ++i)
             {
-                const auto unit = std::clamp(
-                    (std::size_t) indices[i], std::size_t {0}, utf16.byteOf.size() - 1);
+                const auto unit =
+                    std::clamp((int) indices[i], 0, utf16.byteOf.size() - 1);
 
                 result.glyphs.add({{glyphs[i], fontIndex},
                                    (float) positions[i].x,
@@ -694,8 +696,8 @@ struct GlyphRasterizer::Native
         result.bearingX = (float) left;
         result.bearingY = (float) top;
 
-        const auto stride = (std::size_t) result.width * bytesPerPixel(result.format);
-        result.pixels.assign(stride * (std::size_t) result.height, 0);
+        const auto stride = result.width * bytesPerPixel(result.format);
+        result.pixels.assign(stride * result.height, std::uint8_t {0});
 
         CFRef<CGColorSpaceRef> space(colored ? CGColorSpaceCreateDeviceRGB() : nullptr);
 
@@ -706,7 +708,7 @@ struct GlyphRasterizer::Native
             (std::size_t) result.width,
             (std::size_t) result.height,
             8,
-            stride,
+            (std::size_t) stride,
             colored ? space.get() : nullptr,
             colored ? kCGImageAlphaPremultipliedLast : kCGImageAlphaOnly));
 
@@ -747,7 +749,7 @@ struct GlyphRasterizer::Native
         {
             // The atlas stores straight alpha so a colour glyph can be blended
             // like any other; CoreGraphics hands back premultiplied.
-            for (std::size_t i = 0; i + 3 < result.pixels.size(); i += 4)
+            for (auto i = 0; i + 3 < result.pixels.size(); i += 4)
             {
                 const auto alpha = result.pixels[i + 3];
 
@@ -765,9 +767,9 @@ struct GlyphRasterizer::Native
 
     FontRequest request;
     CFRef<CTFontRef> base;
-    std::vector<FamilyFace> familyFaces;
+    Vector<FamilyFace> familyFaces;
     mutable std::map<int, CFRef<CTFontRef>> variants;
-    mutable std::vector<CFRef<CTFontRef>> fallbacks;
+    mutable Vector<CFRef<CTFontRef>> fallbacks;
     bool valid = false;
     std::string resolved;
 };
@@ -817,7 +819,7 @@ GlyphBitmap GlyphRasterizer::rasterize(char32_t codepoint, FontStyle style) cons
     const auto length = encodeUtf8(codepoint, encoded);
 
     const auto variant = variantOf(style);
-    const auto run = impl->shape({encoded, length}, variant);
+    const auto run = impl->shape({encoded, (std::size_t) length}, variant);
 
     if (run.glyphs.empty())
         return {};
@@ -849,9 +851,9 @@ bool faceResolves(const std::string& postScriptName)
 }
 } // namespace
 
-std::optional<RegisteredFont> registerMemoryFont(const void* data, std::size_t size)
+std::optional<RegisteredFont> registerMemoryFont(const void* data, int size)
 {
-    if (data == nullptr || size == 0)
+    if (data == nullptr || size <= 0)
         return std::nullopt;
 
     CFRef<CFDataRef> copied(CFDataCreate(nullptr, (const UInt8*) data, (CFIndex) size));

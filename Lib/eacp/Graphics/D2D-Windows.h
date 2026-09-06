@@ -34,7 +34,7 @@ struct RegisteredFontNames
 // copied). The Windows half of eacp::Text::registerMemoryFont. Nothing when
 // the bytes are not a usable font.
 std::optional<RegisteredFontNames> registerMemoryFontData(const void* data,
-                                                          std::size_t size);
+                                                          int size);
 
 // Resolves `name` the way CTFontCreateWithName does — as a family name, then a
 // PostScript or full face name — so the one name a caller ships works on both

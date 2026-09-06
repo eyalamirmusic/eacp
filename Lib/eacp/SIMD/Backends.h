@@ -13,9 +13,7 @@
 namespace eacp::simd::backends
 {
 
-void swapRedBlue_scalar(const std::uint8_t* in,
-                        std::uint8_t* out,
-                        std::size_t pixelCount);
+void swapRedBlue_scalar(const std::uint8_t* in, std::uint8_t* out, int pixelCount);
 
 void resizeBilinear_scalar(const std::uint8_t* src,
                            int srcWidth,
@@ -33,9 +31,7 @@ void warpAffineInverse_scalar(const std::uint8_t* src,
                               int dstHeight);
 
 #if defined(__x86_64__) || defined(_M_X64)
-void swapRedBlue_sse2(const std::uint8_t* in,
-                      std::uint8_t* out,
-                      std::size_t pixelCount);
+void swapRedBlue_sse2(const std::uint8_t* in, std::uint8_t* out, int pixelCount);
 void resizeBilinear_sse2(const std::uint8_t* src,
                          int srcWidth,
                          int srcHeight,
@@ -50,14 +46,10 @@ void warpAffineInverse_sse2(const std::uint8_t* src,
                             int dstWidth,
                             int dstHeight);
 #if defined(EACP_SIMD_HAS_AVX2)
-void swapRedBlue_avx2(const std::uint8_t* in,
-                      std::uint8_t* out,
-                      std::size_t pixelCount);
+void swapRedBlue_avx2(const std::uint8_t* in, std::uint8_t* out, int pixelCount);
 #endif
 #elif defined(__aarch64__) || defined(_M_ARM64)
-void swapRedBlue_neon(const std::uint8_t* in,
-                      std::uint8_t* out,
-                      std::size_t pixelCount);
+void swapRedBlue_neon(const std::uint8_t* in, std::uint8_t* out, int pixelCount);
 void resizeBilinear_neon(const std::uint8_t* src,
                          int srcWidth,
                          int srcHeight,

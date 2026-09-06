@@ -11,7 +11,7 @@ namespace eacp::simd
 namespace
 {
 
-using SwapFn = void (*)(const std::uint8_t*, std::uint8_t*, std::size_t);
+using SwapFn = void (*)(const std::uint8_t*, std::uint8_t*, int);
 
 SwapFn pickSwapRedBlue() noexcept
 {
@@ -61,14 +61,14 @@ WarpFn pickWarpAffineInverse() noexcept
 
 } // namespace
 
-void swapRedBlue(const std::uint8_t* in, std::uint8_t* out, std::size_t pixelCount)
+void swapRedBlue(const std::uint8_t* in, std::uint8_t* out, int pixelCount)
 {
     static const SwapFn fn = pickSwapRedBlue();
     fn(in, out, pixelCount);
 }
 
 void convertBgraToRgba(const std::uint8_t* src,
-                       std::size_t srcBytesPerRow,
+                       int srcBytesPerRow,
                        std::uint8_t* dst,
                        int width,
                        int height)
@@ -76,22 +76,21 @@ void convertBgraToRgba(const std::uint8_t* src,
     if (src == nullptr || dst == nullptr || width <= 0 || height <= 0)
         return;
 
-    const auto rowPixels = static_cast<std::size_t>(width);
-    const auto tightRowBytes = rowPixels * 4;
+    const auto tightRowBytes = width * 4;
 
     // Tightly-packed frames swap in a single pass; padded rows go one by one.
     // Either way the per-pixel work runs through the dispatched swapRedBlue, and
     // this whole routine is compiled at the SIMD module's forced optimization.
     if (srcBytesPerRow == tightRowBytes)
     {
-        swapRedBlue(src, dst, rowPixels * static_cast<std::size_t>(height));
+        swapRedBlue(src, dst, width * height);
     }
     else
     {
         for (auto y = 0; y < height; ++y)
-            swapRedBlue(src + static_cast<std::size_t>(y) * srcBytesPerRow,
-                        dst + static_cast<std::size_t>(y) * tightRowBytes,
-                        rowPixels);
+            swapRedBlue(src + static_cast<std::ptrdiff_t>(y) * srcBytesPerRow,
+                        dst + static_cast<std::ptrdiff_t>(y) * tightRowBytes,
+                        width);
     }
 }
 

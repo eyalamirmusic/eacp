@@ -4,7 +4,6 @@
 #include <cmath>
 #include <cstring>
 #include <string>
-#include <vector>
 
 // Stencil shadow volumes: the algorithm the stencil buffer exists for, and the
 // one a Doom-3-era renderer is built out of.
@@ -112,9 +111,9 @@ struct CubeEdge
     int endB = 0;
 };
 
-std::vector<CubeEdge> buildCubeEdges()
+Vector<CubeEdge> buildCubeEdges()
 {
-    auto edges = std::vector<CubeEdge> {};
+    auto edges = Vector<CubeEdge> {};
 
     for (auto face = 0; face < 6; ++face)
         for (auto corner = 0; corner < 4; ++corner)
@@ -136,7 +135,7 @@ std::vector<CubeEdge> buildCubeEdges()
                 continue;
             }
 
-            edges.push_back({face, start, end, -1, 0, 0});
+            edges.add(CubeEdge {face, start, end, -1, 0, 0});
         }
 
     return edges;
@@ -244,9 +243,9 @@ struct StencilShadowsView final : GPUView
     StencilShadowsView()
         : edges(buildCubeEdges())
         , sceneBuffer(Device::shared().makeBuffer(
-              nullptr, sceneVertexCount * sizeof(SceneVertex)))
+              nullptr, sceneVertexCount * (int) sizeof(SceneVertex)))
         , volumeBuffer(Device::shared().makeBuffer(
-              nullptr, maxVolumeVertices * sizeof(VolumeVertex)))
+              nullptr, maxVolumeVertices * (int) sizeof(VolumeVertex)))
     {
         // Multisampling would feather the shadow's edge, and the edge is the
         // thing being demonstrated. One sample keeps the boundary exactly where
@@ -392,24 +391,20 @@ struct StencilShadowsView final : GPUView
         }
     }
 
-    void appendSceneQuad(std::vector<SceneVertex>& out,
-                         Vec3 a,
-                         Vec3 b,
-                         Vec3 c,
-                         Vec3 d,
-                         Vec3 normal) const
+    void appendSceneQuad(
+        Vector<SceneVertex>& out, Vec3 a, Vec3 b, Vec3 c, Vec3 d, Vec3 normal) const
     {
-        out.push_back({a, normal});
-        out.push_back({b, normal});
-        out.push_back({c, normal});
-        out.push_back({a, normal});
-        out.push_back({c, normal});
-        out.push_back({d, normal});
+        out.add(SceneVertex {a, normal});
+        out.add(SceneVertex {b, normal});
+        out.add(SceneVertex {c, normal});
+        out.add(SceneVertex {a, normal});
+        out.add(SceneVertex {c, normal});
+        out.add(SceneVertex {d, normal});
     }
 
     void updateSceneBuffer()
     {
-        auto vertices = std::vector<SceneVertex> {};
+        auto vertices = Vector<SceneVertex> {};
         vertices.reserve(sceneVertexCount);
 
         constexpr auto up = Vec3 {0.f, 1.f, 0.f};
@@ -429,7 +424,8 @@ struct StencilShadowsView final : GPUView
                             corners[cubeFaces[face][3]],
                             faceNormals[face]);
 
-        sceneBuffer.update(vertices.data(), vertices.size() * sizeof(SceneVertex));
+        sceneBuffer.update(vertices.data(),
+                           vertices.size() * (int) sizeof(SceneVertex));
     }
 
     Vec3 extrude(Vec3 point) const
@@ -437,14 +433,12 @@ struct StencilShadowsView final : GPUView
         return point + normalize(point - lightPosition) * extrusionLength;
     }
 
-    void appendVolumeTriangle(std::vector<VolumeVertex>& out,
-                              Vec3 a,
-                              Vec3 b,
-                              Vec3 c) const
+    void
+        appendVolumeTriangle(Vector<VolumeVertex>& out, Vec3 a, Vec3 b, Vec3 c) const
     {
-        out.push_back({a});
-        out.push_back({b});
-        out.push_back({c});
+        out.add(VolumeVertex {a});
+        out.add(VolumeVertex {b});
+        out.add(VolumeVertex {c});
     }
 
     // The closed solid the cube hides: the faces that see the light as its near
@@ -456,7 +450,7 @@ struct StencilShadowsView final : GPUView
     // silhouette is exactly the edges whose two faces disagree.
     void updateVolumeBuffer()
     {
-        auto vertices = std::vector<VolumeVertex> {};
+        auto vertices = Vector<VolumeVertex> {};
         vertices.reserve(maxVolumeVertices);
 
         for (auto face = 0; face < 6; ++face)
@@ -498,11 +492,11 @@ struct StencilShadowsView final : GPUView
             appendVolumeTriangle(vertices, start, endFar, end);
         }
 
-        volumeVertexCount = (int) vertices.size();
+        volumeVertexCount = vertices.size();
 
         if (volumeVertexCount > 0)
             volumeBuffer.update(vertices.data(),
-                                vertices.size() * sizeof(VolumeVertex));
+                                vertices.size() * (int) sizeof(VolumeVertex));
     }
 
     Camera cameraFor(float aspect) const
@@ -619,7 +613,7 @@ struct StencilShadowsView final : GPUView
 
     static constexpr float radiansPerSecond = 0.55f;
 
-    std::vector<CubeEdge> edges;
+    Vector<CubeEdge> edges;
     Buffer sceneBuffer;
     Buffer volumeBuffer;
 

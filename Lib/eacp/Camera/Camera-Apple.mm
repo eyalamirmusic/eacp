@@ -82,7 +82,7 @@ struct LatestFrame
 
         auto width = (int) CVPixelBufferGetWidth(buffer);
         auto height = (int) CVPixelBufferGetHeight(buffer);
-        auto stride = CVPixelBufferGetBytesPerRow(buffer);
+        auto stride = (int) CVPixelBufferGetBytesPerRow(buffer);
         const auto* base = (const std::uint8_t*) CVPixelBufferGetBaseAddress(buffer);
 
         out.width = width;
@@ -90,12 +90,12 @@ struct LatestFrame
         out.format = PixelFormat::BGRA8;
         out.data.resize(width * height * 4);
 
-        auto rowBytes = (std::size_t) width * 4;
+        auto rowBytes = width * 4;
 
         for (auto y = 0; y < height; ++y)
-            std::memcpy(out.data.data() + (std::size_t) y * rowBytes,
-                        base + (std::size_t) y * stride,
-                        rowBytes);
+            std::memcpy(out.data.data() + y * rowBytes,
+                        base + y * stride,
+                        (std::size_t) rowBytes);
 
         CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
         CFRelease(buffer);
@@ -174,7 +174,7 @@ void cameraDelegateCaptureOutput(id self,
 
     auto width = (int) CVPixelBufferGetWidth(pixelBuffer);
     auto height = (int) CVPixelBufferGetHeight(pixelBuffer);
-    auto bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer);
+    auto bytesPerRow = (int) CVPixelBufferGetBytesPerRow(pixelBuffer);
     auto base = (const std::uint8_t*) CVPixelBufferGetBaseAddress(pixelBuffer);
 
     auto presentation = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);

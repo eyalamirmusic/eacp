@@ -28,7 +28,7 @@ constexpr auto headerHeight = 44.f;
 
 Random randomGen {};
 
-std::size_t nextRandom(std::size_t min, std::size_t max)
+int nextRandom(int min, int max)
 {
     return randomGen.get(min, max);
 }
@@ -325,7 +325,7 @@ struct Board final : UI::Component
             auto data =
                 makeCard(getRandomElement(titles), getRandomElement(descriptions));
 
-            columns()[(int) nextRandom(0, 2)]->addCard(data);
+            columns()[nextRandom(0, 2)]->addCard(data);
         }
 
         repaint();

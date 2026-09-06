@@ -32,12 +32,12 @@ constexpr auto alignment = StreamingBuffers::alignment;
 // The payload is never read back, so its contents do not matter - but its
 // length does: write() copies the byte count it is given, exactly as
 // Buffer::update does, so a short source and a long count reads off the end.
-BufferRange writeOnce(StreamingBuffers& buffers, std::size_t bytes = 128)
+BufferRange writeOnce(StreamingBuffers& buffers, int bytes = 128)
 {
     static auto payload = Vector<std::byte> {};
 
-    if (payload.size() < (int) bytes)
-        payload.resize((int) bytes);
+    if (payload.size() < bytes)
+        payload.resize(bytes);
 
     return buffers.write(payload.data(), bytes);
 }
@@ -129,7 +129,8 @@ auto tRecyclesWithTheRightPeriod = test("StreamingBuffers/recyclesWithPeriod") =
 // earlier flush's draw is still queued in the command buffer when the next one
 // is written. With an arena the flushes share one buffer and must not share
 // any of its bytes.
-auto tSeveralWritesInOneFrame = test("StreamingBuffers/writesInOneFrameAreDisjoint") = []
+auto tSeveralWritesInOneFrame =
+    test("StreamingBuffers/writesInOneFrameAreDisjoint") = []
 {
     auto buffers = StreamingBuffers {BufferUsage::Vertex};
 
@@ -318,13 +319,13 @@ auto tManyShuffledWritesAllocateNothing =
     // Two thousand sizes between 64 bytes and 8 KB, fixed by a small linear
     // congruential generator so the test is the same test every run.
     constexpr auto writesPerFrame = 2000;
-    auto sizes = Vector<std::size_t> {};
+    auto sizes = Vector<int> {};
     auto seed = std::uint32_t {12345};
 
     for (auto i = 0; i < writesPerFrame; ++i)
     {
         seed = seed * 1664525u + 1013904223u;
-        sizes.add(64 + (seed >> 8) % (8 * 1024 - 64));
+        sizes.add(64 + (int) ((seed >> 8) % (8 * 1024 - 64)));
     }
 
     auto streamFrame = [&](int rotation)
@@ -387,7 +388,7 @@ auto tOneLongFrameGrowsBytesNotBuffers =
     nextFrame();
 
     constexpr auto writes = 5000;
-    constexpr auto bytesPerWrite = std::size_t {300};
+    constexpr auto bytesPerWrite = 300;
 
     auto last = BufferRange {};
 

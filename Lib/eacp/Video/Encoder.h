@@ -5,7 +5,6 @@
 #include <eacp/Core/Threads/Async.h>
 #include <eacp/Graphics/Image/Image.h>
 
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -25,15 +24,15 @@ inline void compositeOverBlackBGRA(const Graphics::Image& image,
                                    std::uint8_t* dst,
                                    int width,
                                    int height,
-                                   std::size_t dstStride)
+                                   int dstStride)
 {
     const auto* src = image.pixels().data();
-    auto srcStride = static_cast<std::size_t>(image.width()) * 4;
+    auto srcStride = image.width() * 4;
 
     for (auto y = 0; y < height; ++y)
     {
-        const auto* s = src + static_cast<std::size_t>(y) * srcStride;
-        auto* d = dst + static_cast<std::size_t>(y) * dstStride;
+        const auto* s = src + y * srcStride;
+        auto* d = dst + y * dstStride;
 
         for (auto x = 0; x < width; ++x)
         {

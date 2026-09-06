@@ -43,7 +43,7 @@ void closeMappingFile(MappingFile& file)
     file = {};
 }
 
-std::size_t mappingGranularity()
+int mappingGranularity()
 {
     static const auto pageSize = []
     {
@@ -52,8 +52,7 @@ std::size_t mappingGranularity()
         // sysconf answers -1 when it cannot tell. 4KB is the page size
         // everywhere this runs, and any multiple of the real one is a legal
         // mmap offset regardless.
-        return reported > 0 ? static_cast<std::size_t>(reported)
-                            : std::size_t {4096};
+        return reported > 0 ? static_cast<int>(reported) : 4096;
     }();
 
     return pageSize;

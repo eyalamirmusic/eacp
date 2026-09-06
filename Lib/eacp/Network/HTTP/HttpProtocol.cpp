@@ -8,6 +8,10 @@ namespace eacp::HTTP
 namespace
 {
 
+// A body past this cannot be indexed with int offsets, so a Content-Length
+// beyond it is clamped rather than believed.
+constexpr auto largestBody = std::int64_t {0x7FFFFFFF};
+
 const char* reasonPhraseForStatus(int code)
 {
     switch (code)
@@ -152,9 +156,9 @@ std::string serializeResponse(const Response& response)
     return out.str();
 }
 
-RequestParser::State RequestParser::feed(const char* data, std::size_t length)
+RequestParser::State RequestParser::feed(const char* data, int length)
 {
-    buffer.append(data, length);
+    buffer.append(data, (std::size_t) length);
 
     if (!headersParsed)
     {
@@ -188,7 +192,7 @@ RequestParser::State RequestParser::tryParseHeaders()
     parseQueryParamsFromUrl(parsed);
     parseHeaderLines(headerSection, parsed);
 
-    bodyStart = headerEnd + 4;
+    bodyStart = (int) headerEnd + 4;
     headersParsed = true;
     readContentLengthFromHeaders();
 
@@ -204,7 +208,10 @@ void RequestParser::readContentLengthFromHeaders()
 
     try
     {
-        bodyExpected = (std::size_t) std::stoul(contentLength);
+        auto declared = std::stoll(contentLength);
+        bodyExpected = declared > 0
+                           ? (int) (declared < largestBody ? declared : largestBody)
+                           : 0;
     }
     catch (...)
     {
@@ -213,7 +220,7 @@ void RequestParser::readContentLengthFromHeaders()
 
 bool RequestParser::isBodyComplete() const
 {
-    return buffer.size() - bodyStart >= bodyExpected;
+    return (int) buffer.size() - bodyStart >= bodyExpected;
 }
 
 RequestParser::State RequestParser::finishIfBodyComplete()
@@ -221,7 +228,7 @@ RequestParser::State RequestParser::finishIfBodyComplete()
     if (!isBodyComplete())
         return State::NeedMore;
 
-    parsed.body = buffer.substr(bodyStart, bodyExpected);
+    parsed.body = buffer.substr((std::size_t) bodyStart, (std::size_t) bodyExpected);
     return State::Ready;
 }
 

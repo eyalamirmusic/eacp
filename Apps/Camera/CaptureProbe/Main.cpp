@@ -35,13 +35,13 @@ std::uint64_t checksum(const Cameras::CameraFrame& frame)
         return 0;
 
     auto sum = std::uint64_t {0};
-    auto rowLength = (std::size_t) frame.width() * 4;
+    auto rowLength = frame.width() * 4;
 
     for (auto y = 0; y < frame.height(); ++y)
     {
-        const auto* row = data + (std::size_t) y * frame.bytesPerRow();
+        const auto* row = data + y * frame.bytesPerRow();
 
-        for (std::size_t i = 0; i < rowLength; ++i)
+        for (auto i = 0; i < rowLength; ++i)
             sum += row[i];
     }
 
@@ -73,7 +73,7 @@ void captureFrames(const Cameras::CameraDevice& device)
 
             if (n <= 10)
                 std::printf(
-                    "  frame %2d: %dx%d  stride=%zu  t=%.3fs  checksum=%llu\n",
+                    "  frame %2d: %dx%d  stride=%d  t=%.3fs  checksum=%llu\n",
                     n,
                     frame.width(),
                     frame.height(),

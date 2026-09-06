@@ -4,7 +4,6 @@
 #include <eacp/Video/SyntheticClip.h>
 
 #include <cmath>
-#include <span>
 #include <string>
 #include <utility>
 
@@ -36,9 +35,7 @@ using Bytes = Vector<std::uint8_t>;
 
 bool parseBytes(Video::Mp4Demuxer& demuxer, const Bytes& bytes)
 {
-    auto span = std::span<const std::uint8_t> {
-        bytes.data(), static_cast<std::size_t>(bytes.size())};
-    return demuxer.parse(span);
+    return demuxer.parse(bytes);
 }
 
 void appendBE16(Bytes& out, std::uint16_t value)
@@ -463,7 +460,7 @@ bool sampleContentMatches(const Video::Mp4Demuxer& demuxer)
     {
         auto bytes = demuxer.sampleBytes(i);
 
-        if (bytes.size() != demuxer.samples()[i].byteRange.length)
+        if ((std::uint64_t) bytes.size() != demuxer.samples()[i].byteRange.length)
             return false;
 
         for (auto byte: bytes)
@@ -553,8 +550,8 @@ auto tSampleRangesInsideFile = test("Mp4Demuxer/sampleRangesInsideFile") = []
     {
         auto& range = demuxer.samples()[i].byteRange;
         check(!range.empty());
-        check(range.end() <= fileSize);
-        check(demuxer.sampleBytes(i).size() == range.length);
+        check(range.end() <= (std::uint64_t) fileSize);
+        check((std::uint64_t) demuxer.sampleBytes(i).size() == range.length);
     }
 
     auto first = demuxer.sampleBytes(0);
@@ -563,7 +560,7 @@ auto tSampleRangesInsideFile = test("Mp4Demuxer/sampleRangesInsideFile") = []
     auto nalLength =
         std::uint64_t {first[0]} << 24 | first[1] << 16 | first[2] << 8 | first[3];
     check(nalLength > 0);
-    check(nalLength + 4 <= first.size());
+    check(nalLength + 4 <= (std::uint64_t) first.size());
 };
 
 // ---- Against hand-built structures, where every byte is pinned ----
@@ -817,8 +814,7 @@ auto tTruncationSweep = test("Mp4Demuxer/survivesTruncationEverywhere") = []
 
     for (auto length = 0; length < bytes.size(); ++length)
     {
-        auto prefix = std::span<const std::uint8_t> {
-            bytes.data(), static_cast<std::size_t>(length)};
+        auto prefix = Span<const std::uint8_t> {bytes.data(), length};
         anyPrefixParsed = demuxer.parse(prefix) || anyPrefixParsed;
     }
 

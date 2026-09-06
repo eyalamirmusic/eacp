@@ -9,8 +9,8 @@ struct TextMetrics
 {
     static float measureWidth(const std::string& text, const Font& font);
     static float
-        getOffsetForIndex(const std::string& text, size_t index, const Font& font);
-    static size_t
+        getOffsetForIndex(const std::string& text, int index, const Font& font);
+    static int
         getIndexForOffset(const std::string& text, float xOffset, const Font& font);
     static float getLineHeight(const Font& font);
     static float getAscent(const Font& font);

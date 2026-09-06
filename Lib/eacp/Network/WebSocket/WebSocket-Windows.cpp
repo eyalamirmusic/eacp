@@ -28,9 +28,9 @@ namespace
 {
 
 constexpr auto webSocketSwitchingProtocols = 101;
-constexpr auto webSocketReceiveChunkSize = std::size_t {64 * 1024};
-constexpr auto webSocketErrorTextLength = std::size_t {512};
-constexpr auto webSocketMaxCloseReasonLength = std::size_t {123};
+constexpr auto webSocketReceiveChunkSize = 64 * 1024;
+constexpr auto webSocketErrorTextLength = 512;
+constexpr auto webSocketMaxCloseReasonLength = 123;
 constexpr auto webSocketDefaultTimeoutMilliseconds = std::int64_t {30000};
 constexpr auto webSocketKeepAliveMilliseconds = DWORD {30000};
 
@@ -454,7 +454,7 @@ private:
 
     void receiveLoop()
     {
-        auto buffer = std::string(webSocketReceiveChunkSize, '\0');
+        auto buffer = std::string((std::size_t) webSocketReceiveChunkSize, '\0');
         auto payload = std::string();
 
         while (!tearingDown.load())
@@ -490,7 +490,9 @@ private:
                 return;
             }
 
-            if (payload.size() + read > options.maxMessageSize)
+            auto assembled = (std::int64_t) payload.size() + (std::int64_t) read;
+
+            if (assembled > options.maxMessageSize)
             {
                 reportOversizedMessage(socket);
                 return;
@@ -575,7 +577,7 @@ private:
 
     void shutdown(HINTERNET socket, USHORT status, const std::string& reason)
     {
-        auto text = reason.substr(0, webSocketMaxCloseReasonLength);
+        auto text = reason.substr(0, (std::size_t) webSocketMaxCloseReasonLength);
         auto length = static_cast<DWORD>(text.size());
 
         auto lock = std::scoped_lock(sendMutex);

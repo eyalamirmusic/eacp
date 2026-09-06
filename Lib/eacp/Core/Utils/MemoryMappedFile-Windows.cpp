@@ -46,14 +46,14 @@ void closeMappingFile(MappingFile& file)
     file = {};
 }
 
-std::size_t mappingGranularity()
+int mappingGranularity()
 {
     static const auto granularity = []
     {
         auto info = SYSTEM_INFO {};
         ::GetSystemInfo(&info);
 
-        return static_cast<std::size_t>(info.dwAllocationGranularity);
+        return static_cast<int>(info.dwAllocationGranularity);
     }();
 
     return granularity;

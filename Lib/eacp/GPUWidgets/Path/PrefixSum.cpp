@@ -19,9 +19,9 @@ int groupsFor(int count)
 // Grown when a batch needs more than the last one did, and never uploaded: the
 // scan writes every element it reads, so what these hold on the way in is
 // nobody's business.
-void ensureRoom(std::optional<GPU::Buffer>& buffer, int count)
+void ensureElementRoom(std::optional<GPU::Buffer>& buffer, int count)
 {
-    auto bytes = sizeof(std::uint32_t) * (std::size_t) std::max(1, count);
+    auto bytes = (int) sizeof(std::uint32_t) * std::max(1, count);
 
     if (!buffer.has_value() || buffer->size() < bytes)
         buffer.emplace(
@@ -49,10 +49,10 @@ void PrefixSum::run(GPU::ComputePass& pass,
         auto& level = levels[levelCount];
         level.count = size;
         level.groups = groupsFor(size);
-        ensureRoom(level.totals, level.groups);
+        ensureElementRoom(level.totals, level.groups);
 
         if (levelCount > 0)
-            ensureRoom(level.offsets, size);
+            ensureElementRoom(level.offsets, size);
 
         ++levelCount;
 

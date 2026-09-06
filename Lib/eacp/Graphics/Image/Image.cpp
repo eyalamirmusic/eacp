@@ -67,8 +67,8 @@ ImageData readFileBytes(const FilePath& path, std::string& error)
     }
 
     auto bytes = ImageData(static_cast<int>(size));
-    auto got = file.read(0, {bytes.data(), static_cast<std::size_t>(bytes.size())});
-    if (got != size)
+    auto got = file.read(0, bytes);
+    if (static_cast<std::uint64_t>(got) != size)
     {
         error = "failed to read '" + path.str() + "'";
         return {};
@@ -234,7 +234,7 @@ void Image::save(const FilePath& path) const
 void Image::save(const FilePath& path, ImageFormat format, float quality) const
 {
     auto bytes = encode(format, quality);
-    Files::writeFile(path, {bytes.data(), static_cast<std::size_t>(bytes.size())});
+    Files::writeFile(path, bytes);
 }
 
 bool Image::equals(const Image& other) const

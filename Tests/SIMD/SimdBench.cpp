@@ -28,7 +28,7 @@ namespace
 using Pixels = EA::Vector<std::uint8_t>;
 using Floats = EA::Vector<float>;
 using ResizeFn = void (*)(const std::uint8_t*, int, int, std::uint8_t*, int, int);
-using SwapFn = void (*)(const std::uint8_t*, std::uint8_t*, std::size_t);
+using SwapFn = void (*)(const std::uint8_t*, std::uint8_t*, int);
 using WarpFn =
     void (*)(const std::uint8_t*, int, int, const float*, std::uint8_t*, int, int);
 
@@ -102,39 +102,39 @@ void report(
 }
 
 // Non-vectorized scalar references for the array primitives.
-void scalarAdd(const float* a, const float* b, float* out, std::size_t n)
+void scalarAdd(const float* a, const float* b, float* out, int n)
 {
     EACP_NO_VECTORIZE
-    for (std::size_t i = 0; i < n; ++i)
+    for (int i = 0; i < n; ++i)
         out[i] = a[i] + b[i];
 }
 
-void scalarSubtract(const float* a, const float* b, float* out, std::size_t n)
+void scalarSubtract(const float* a, const float* b, float* out, int n)
 {
     EACP_NO_VECTORIZE
-    for (std::size_t i = 0; i < n; ++i)
+    for (int i = 0; i < n; ++i)
         out[i] = a[i] - b[i];
 }
 
-void scalarMultiply(const float* a, const float* b, float* out, std::size_t n)
+void scalarMultiply(const float* a, const float* b, float* out, int n)
 {
     EACP_NO_VECTORIZE
-    for (std::size_t i = 0; i < n; ++i)
+    for (int i = 0; i < n; ++i)
         out[i] = a[i] * b[i];
 }
 
-void scalarMultiplyByScalar(const float* a, float s, float* out, std::size_t n)
+void scalarMultiplyByScalar(const float* a, float s, float* out, int n)
 {
     EACP_NO_VECTORIZE
-    for (std::size_t i = 0; i < n; ++i)
+    for (int i = 0; i < n; ++i)
         out[i] = a[i] * s;
 }
 
 void scalarMultiplyAdd(
-    const float* a, const float* b, const float* c, float* out, std::size_t n)
+    const float* a, const float* b, const float* c, float* out, int n)
 {
     EACP_NO_VECTORIZE
-    for (std::size_t i = 0; i < n; ++i)
+    for (int i = 0; i < n; ++i)
         out[i] = a[i] * b[i] + c[i];
 }
 
@@ -263,7 +263,7 @@ void benchSwap(long long pixels)
 {
     auto src = makeBuffer(static_cast<int>(pixels) * 4);
     auto dst = Pixels(static_cast<int>(pixels) * 4);
-    const auto count = static_cast<std::size_t>(pixels);
+    const auto count = static_cast<int>(pixels);
     const int iters =
         static_cast<int>(std::max<long long>(20, 400'000'000LL / pixels));
 
@@ -313,7 +313,6 @@ void benchArrayOps(int count)
     auto b = makeFloats(count, 23, 1);
     auto c = makeFloats(count, 5, 1);
     auto out = Floats(count);
-    const auto n = static_cast<std::size_t>(count);
     const int iters = std::max(20, 400'000'000 / count);
 
     std::printf("  %d elements:\n", count);
@@ -334,25 +333,27 @@ void benchArrayOps(int count)
 
     row(
         "add",
-        [&] { scalarAdd(a.data(), b.data(), out.data(), n); },
-        [&] { eacp::simd::add(a.data(), b.data(), out.data(), n); });
+        [&] { scalarAdd(a.data(), b.data(), out.data(), count); },
+        [&] { eacp::simd::add(a.data(), b.data(), out.data(), count); });
     row(
         "subtract",
-        [&] { scalarSubtract(a.data(), b.data(), out.data(), n); },
-        [&] { eacp::simd::subtract(a.data(), b.data(), out.data(), n); });
+        [&] { scalarSubtract(a.data(), b.data(), out.data(), count); },
+        [&] { eacp::simd::subtract(a.data(), b.data(), out.data(), count); });
     row(
         "multiply",
-        [&] { scalarMultiply(a.data(), b.data(), out.data(), n); },
-        [&] { eacp::simd::multiply(a.data(), b.data(), out.data(), n); });
+        [&] { scalarMultiply(a.data(), b.data(), out.data(), count); },
+        [&] { eacp::simd::multiply(a.data(), b.data(), out.data(), count); });
     row(
         "multiplyByScalar",
-        [&] { scalarMultiplyByScalar(a.data(), 3.f, out.data(), n); },
-        [&] { eacp::simd::multiplyByScalar(a.data(), 3.f, out.data(), n); });
+        [&] { scalarMultiplyByScalar(a.data(), 3.f, out.data(), count); },
+        [&] { eacp::simd::multiplyByScalar(a.data(), 3.f, out.data(), count); });
     row(
         "multiplyAdd",
-        [&] { scalarMultiplyAdd(a.data(), b.data(), c.data(), out.data(), n); },
+        [&] { scalarMultiplyAdd(a.data(), b.data(), c.data(), out.data(), count); },
         [&]
-        { eacp::simd::multiplyAdd(a.data(), b.data(), c.data(), out.data(), n); });
+        {
+            eacp::simd::multiplyAdd(a.data(), b.data(), c.data(), out.data(), count);
+        });
 }
 } // namespace
 

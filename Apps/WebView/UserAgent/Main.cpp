@@ -1,7 +1,5 @@
 #include <eacp/WebView/WebView.h>
 
-#include <array>
-
 using namespace eacp;
 using namespace Graphics;
 
@@ -29,7 +27,7 @@ struct Preset
     const char* userAgent;
 };
 
-constexpr auto presets = std::array {
+constexpr auto presets = Array {
     Preset {"Platform default", ""},
     Preset {"Safari 17 (macOS)",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
@@ -127,7 +125,7 @@ struct DemoRoot final : View
 {
     DemoRoot()
     {
-        for (auto i = 0; i < (int) presets.size(); ++i)
+        for (auto i = 0; i < presets.size(); ++i)
         {
             presetButtons[i].setText(presets[i].name);
             presetButtons[i].onClick = [this, i] { selectPreset(i); };
@@ -183,7 +181,7 @@ private:
 
     void updateButtons()
     {
-        for (auto i = 0; i < (int) presets.size(); ++i)
+        for (auto i = 0; i < presets.size(); ++i)
             presetButtons[i].setSelected(i == presetIndex);
 
         inlineButton.setText(loadDeclinedPopupsInline ? "Inline load: ON"

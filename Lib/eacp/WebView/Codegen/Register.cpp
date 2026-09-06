@@ -28,14 +28,13 @@ using Miro::TypeExport::registerFormat;
 // know about events, so it leaves them empty for downstream resolvers).
 // EventEntry is a Miro::EventInfo alias, so both sides feed the same
 // formatter signature.
-std::span<const eacp::Graphics::EventEntry>
+EA::Span<const eacp::Graphics::EventEntry>
     eventsFor(const Miro::TypeExport::Context& ctx)
 {
     if (!ctx.events.empty())
         return ctx.events;
 
-    auto& global = eacp::Graphics::Detail::eventRegistry();
-    return {global.data(), static_cast<std::size_t>(global.size())};
+    return eacp::Graphics::Detail::eventRegistry();
 }
 
 [[maybe_unused]] const auto hooksFormat = registerFormat(Format {

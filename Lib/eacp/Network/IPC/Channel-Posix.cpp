@@ -222,24 +222,24 @@ NativeChannel
     }
 }
 
-std::size_t channelSend(NativeChannel channel, const char* data, std::size_t length)
+int channelSend(NativeChannel channel, const char* data, int length)
 {
-    auto sent = ::send((int) channel, data, length, sendFlags());
+    auto sent = ::send((int) channel, data, (std::size_t) length, sendFlags());
 
     if (sent < 0)
         fail("cannot send on channel");
 
-    return (std::size_t) sent;
+    return (int) sent;
 }
 
-std::size_t channelReceive(NativeChannel channel, char* buffer, std::size_t length)
+int channelReceive(NativeChannel channel, char* buffer, int length)
 {
-    auto received = ::recv((int) channel, buffer, length, 0);
+    auto received = ::recv((int) channel, buffer, (std::size_t) length, 0);
 
     if (received < 0)
         fail("cannot receive on channel");
 
-    return (std::size_t) received;
+    return (int) received;
 }
 
 void channelCancel(NativeChannel channel) noexcept

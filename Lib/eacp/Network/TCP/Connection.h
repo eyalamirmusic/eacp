@@ -79,7 +79,7 @@ public:
     // Returns whatever a single read yields, up to maxBytes (draining any
     // bytes already buffered by receiveUntil first). An empty string means
     // the peer closed the stream cleanly.
-    std::string receive(std::size_t maxBytes = 4096);
+    std::string receive(int maxBytes = 4096);
 
 private:
     Connection();

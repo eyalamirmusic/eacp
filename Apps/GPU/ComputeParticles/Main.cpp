@@ -39,7 +39,7 @@ struct Particle
 constexpr int floatsPerParticle = (int) (sizeof(Particle) / sizeof(float));
 static_assert(floatsPerParticle == 4, "the kernel reads state with read4");
 
-constexpr auto stateBytes = sizeof(Particle) * (std::size_t) particleCount;
+constexpr auto stateBytes = (int) sizeof(Particle) * particleCount;
 
 // The quad every particle is drawn as: two triangles of corners in [-1, 1],
 // scaled to the particle radius by the vertex shader. One instance per

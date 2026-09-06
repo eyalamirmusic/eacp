@@ -37,16 +37,17 @@ void ensureWinsockInitialized()
 
 void sendAll(SOCKET fd, const std::string& payload)
 {
-    auto sent = std::size_t {0};
+    auto total = (int) payload.size();
+    auto sent = 0;
 
-    while (sent < payload.size())
+    while (sent < total)
     {
-        auto n = ::send(fd, payload.data() + sent, (int) (payload.size() - sent), 0);
+        auto n = ::send(fd, payload.data() + sent, total - sent, 0);
 
         if (n <= 0)
             break;
 
-        sent += (std::size_t) n;
+        sent += (int) n;
     }
 }
 
@@ -257,7 +258,7 @@ void Server::Impl::handleConnection(SOCKET fd,
             return;
         }
 
-        auto state = parser.feed(buf, (std::size_t) n);
+        auto state = parser.feed(buf, (int) n);
 
         if (state == RequestParser::State::Invalid)
         {

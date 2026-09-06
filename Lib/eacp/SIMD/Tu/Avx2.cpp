@@ -20,9 +20,7 @@ namespace eacp::simd::backends
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((target("avx2,fma")))
 #endif
-void swapRedBlue_avx2(const std::uint8_t* in,
-                      std::uint8_t* out,
-                      std::size_t pixelCount)
+void swapRedBlue_avx2(const std::uint8_t* in, std::uint8_t* out, int pixelCount)
 {
     kernels::swapRedBlueImpl<backend::Avx2>(in, out, pixelCount);
 }

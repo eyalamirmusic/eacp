@@ -9,7 +9,6 @@
 #include <atomic>
 #include <mutex>
 #include <thread>
-#include <vector>
 
 namespace eacp::WebSocket
 {
@@ -24,15 +23,15 @@ constexpr auto webSocketServerSlice = Time::MS {200};
 // request may hold a thread of its own.
 constexpr auto webSocketServerHandshakeTimeout = Time::MS {10000};
 
-constexpr auto webSocketServerReadChunk = std::size_t {65536};
+constexpr auto webSocketServerReadChunk = 65536;
 constexpr auto webSocketServerMaxRequestLines = 100;
 
 // §5.5's cap on a control frame's payload, less the two bytes of the code.
-constexpr auto webSocketServerMaxCloseReason = std::size_t {123};
+constexpr auto webSocketServerMaxCloseReason = 123;
 
 // A frame header at its longest - two bytes, eight of length, four of mask -
 // which is the slack a limit on the message has to leave the framing itself.
-constexpr auto webSocketServerFrameHeader = std::size_t {14};
+constexpr auto webSocketServerFrameHeader = 14;
 
 TCP::Timeouts webSocketServerTimeouts()
 {
@@ -45,9 +44,9 @@ std::string webSocketServerBadRequest()
            "Connection: close\r\n\r\n";
 }
 
-std::vector<std::string> webSocketServerCommaList(std::string_view text)
+Vector<std::string> webSocketServerCommaList(std::string_view text)
 {
-    auto items = std::vector<std::string>();
+    auto items = Vector<std::string>();
 
     while (!text.empty())
     {
@@ -55,7 +54,7 @@ std::vector<std::string> webSocketServerCommaList(std::string_view text)
         auto piece = Strings::trim(text.substr(0, comma));
 
         if (!piece.empty())
-            items.push_back(std::move(piece));
+            items.add(std::move(piece));
 
         if (comma == std::string_view::npos)
             break;
@@ -95,13 +94,14 @@ std::string webSocketServerHandshakeResponse(const std::string& key,
 
 Protocol::Frame webSocketServerCloseFrame(int code, std::string_view reason)
 {
-    auto fits = reason.size() < webSocketServerMaxCloseReason
-                    ? reason.size()
+    auto length = (int) reason.size();
+    auto fits = length < webSocketServerMaxCloseReason
+                    ? length
                     : webSocketServerMaxCloseReason;
 
     return {Protocol::Opcode::close,
             true,
-            Protocol::encodeClose(code, reason.substr(0, fits))};
+            Protocol::encodeClose(code, reason.substr(0, (std::size_t) fits))};
 }
 
 // The upgrade request as the server reads it, header names lowercased the way
@@ -444,7 +444,10 @@ private:
 
             // A frame whose declared length alone is past the limit is caught
             // here, before the bytes behind it are ever waited for.
-            if (buffer.size() > options.maxMessageSize + webSocketServerFrameHeader)
+            auto declared =
+                (std::int64_t) options.maxMessageSize + webSocketServerFrameHeader;
+
+            if ((std::int64_t) buffer.size() > declared)
                 return closeWith(1009, "message too big");
 
             if (auto settled = drainFrames(buffer); settled.has_value())
@@ -472,7 +475,7 @@ private:
             if (!decoded.has_value())
                 return std::nullopt;
 
-            buffer.erase(0, decoded->consumed);
+            buffer.erase(0, (std::size_t) decoded->consumed);
 
             if (auto settled = handleFrame(decoded->frame); settled.has_value())
                 return settled;
@@ -510,7 +513,10 @@ private:
 
     std::optional<CloseStatus> collect(const Protocol::Frame& frame)
     {
-        if (assembly.size() + frame.payload.size() > options.maxMessageSize)
+        auto assembled =
+            (std::int64_t) assembly.size() + (std::int64_t) frame.payload.size();
+
+        if (assembled > options.maxMessageSize)
             return closeWith(1009, "message too big");
 
         assembly += frame.payload;
@@ -676,10 +682,10 @@ struct Server::Impl
         return listener.has_value() ? listener->port() : 0;
     }
 
-    std::size_t clientCount() const
+    int clientCount() const
     {
         auto lock = std::scoped_lock(clientsMutex);
-        auto count = std::size_t {0};
+        auto count = 0;
 
         for (const auto& [id, client]: clients)
             if (client->isConnected())
@@ -841,7 +847,7 @@ std::uint16_t Server::boundPort() const
     return impl->boundPort();
 }
 
-std::size_t Server::clientCount() const
+int Server::clientCount() const
 {
     return impl->clientCount();
 }

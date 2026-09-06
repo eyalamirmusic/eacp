@@ -95,7 +95,7 @@ Buffer makeZeroed(int elements)
 
     return Buffer {Device::shared(),
                    zeros.data(),
-                   sizeof(std::uint32_t) * (std::size_t) elements,
+                   (int) sizeof(std::uint32_t) * elements,
                    BufferUsage::Storage};
 }
 
@@ -103,7 +103,7 @@ Vector<float> readFloats(const Buffer& buffer, int elements)
 {
     auto values = Vector<float> {};
     values.resize(elements);
-    buffer.read(values.data(), sizeof(float) * (std::size_t) elements);
+    buffer.read(values.data(), (int) sizeof(float) * elements);
     return values;
 }
 } // namespace

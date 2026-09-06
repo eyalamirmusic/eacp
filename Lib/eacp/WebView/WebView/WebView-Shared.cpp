@@ -172,9 +172,9 @@ std::string percentDecode(std::string_view encoded)
     auto out = std::string {};
     out.reserve(encoded.size());
 
-    for (auto i = std::size_t {0}; i < encoded.size(); ++i)
+    for (auto i = 0; i < (int) encoded.size(); ++i)
     {
-        if (encoded[i] == '%' && i + 2 < encoded.size())
+        if (encoded[i] == '%' && i + 2 < (int) encoded.size())
         {
             auto hi = hexDigit(encoded[i + 1]);
             auto lo = hexDigit(encoded[i + 2]);
@@ -337,14 +337,14 @@ std::string fileURLToPath(std::string_view url)
 FileProvider fromResEmbed(std::string category)
 {
     return [category = std::move(category)](
-               std::string_view path) -> std::optional<std::span<const std::uint8_t>>
+               std::string_view path) -> std::optional<ByteView>
     {
         auto view = ResEmbed::get(std::string(path), category);
 
         if (!view)
             return std::nullopt;
 
-        return std::span<const std::uint8_t> {view.data(), view.size()};
+        return ByteView {view.data(), view.getSize()};
     };
 }
 
@@ -379,7 +379,7 @@ StreamingProvider
             mimeForFile ? mimeForFile(pathStr) : mimeForPath(pathStr);
         response.size = file->size();
         response.read = [file](RangeSize offset, ByteSpan out)
-        { return file->read(offset, out); };
+        { return (int) file->read(offset, out); };
         return response;
     };
 }

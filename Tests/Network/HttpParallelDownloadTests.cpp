@@ -37,11 +37,11 @@ std::string readFile(const std::string& path)
     return ss.str();
 }
 
-std::string makePayload(std::size_t size)
+std::string makePayload(int size)
 {
     auto out = std::string();
-    out.reserve(size);
-    for (auto i = std::size_t {0}; i < size; ++i)
+    out.reserve((std::size_t) size);
+    for (auto i = 0; i < size; ++i)
         out.push_back((char) ('A' + (i % 26)));
     return out;
 }

@@ -7,7 +7,7 @@
 
 // Header-only, buffer-level conveniences over the raw float-array primitives in
 // SIMD.h. Anything contiguous with data()/size() qualifies (EA::Vector,
-// std::vector, std::span, std::array, ...), so call sites can write
+// EA::Array, EA::Span, std::vector, ...), so call sites can write
 // `multiply(buffer, gain)` instead of spelling out pointers and counts.
 //
 // Every helper is elementwise and in place on its first argument. When the
@@ -19,7 +19,7 @@ namespace eacp::simd
 template <typename B>
 concept FloatBuffer = requires(const B& b) {
     { b.data() } -> std::convertible_to<const float*>;
-    { b.size() } -> std::convertible_to<std::size_t>;
+    { b.size() } -> std::convertible_to<int>;
 };
 
 template <typename B>
@@ -28,9 +28,9 @@ concept MutableFloatBuffer = FloatBuffer<B> && requires(B& b) {
 };
 
 template <FloatBuffer... Buffers>
-std::size_t commonCount(const Buffers&... buffers)
+int commonCount(const Buffers&... buffers)
 {
-    return std::min({static_cast<std::size_t>(buffers.size())...});
+    return std::min({(int) buffers.size()...});
 }
 
 // dst[i] += src[i]
@@ -58,8 +58,7 @@ void multiply(Dst& dst, const Src& src)
 template <MutableFloatBuffer Dst>
 void multiply(Dst& dst, float value)
 {
-    multiplyByScalar(
-        dst.data(), value, dst.data(), static_cast<std::size_t>(dst.size()));
+    multiplyByScalar(dst.data(), value, dst.data(), (int) dst.size());
 }
 
 // dst[i] += a[i] * b[i]
@@ -87,14 +86,14 @@ void lerp(Dst& dst, const Target& target, float t)
 template <FloatBuffer Src>
 double sumOfSquares(const Src& src)
 {
-    return sumOfSquares(src.data(), static_cast<std::size_t>(src.size()));
+    return sumOfSquares(src.data(), (int) src.size());
 }
 
 // max(|src[i]|)
 template <FloatBuffer Src>
 float peakAbs(const Src& src)
 {
-    return peakAbs(src.data(), static_cast<std::size_t>(src.size()));
+    return peakAbs(src.data(), (int) src.size());
 }
 
 } // namespace eacp::simd

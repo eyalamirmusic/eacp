@@ -1,9 +1,8 @@
 #include "Common.h"
 #include <eacp/Network/WebSocket/Protocol.h>
 
-#include <vector>
-
 using namespace nano;
+using eacp::Vector;
 using eacp::WebSocket::CloseStatus;
 using eacp::WebSocket::Protocol::acceptKeyFor;
 using eacp::WebSocket::Protocol::decode;
@@ -16,22 +15,22 @@ using eacp::WebSocket::Protocol::Opcode;
 
 namespace
 {
-std::string protocolPayloadOf(std::size_t size)
+std::string protocolPayloadOf(int size)
 {
-    auto payload = std::string(size, '\0');
+    auto payload = std::string((std::size_t) size, '\0');
 
-    for (auto i = std::size_t {0}; i < size; ++i)
-        payload[i] = (char) (i % 251);
+    for (auto i = 0; i < size; ++i)
+        payload[(std::size_t) i] = (char) (i % 251);
 
     return payload;
 }
 
-std::vector<std::size_t> protocolPayloadSizes()
+Vector<int> protocolPayloadSizes()
 {
     return {0, 1, 125, 126, 127, 65535, 65536, 200000};
 }
 
-std::vector<Opcode> protocolOpcodes()
+Vector<Opcode> protocolOpcodes()
 {
     return {Opcode::continuation,
             Opcode::text,
@@ -51,7 +50,7 @@ bool protocolRoundTrips(const Frame& frame, bool masked)
     auto wire = encode(frame, masked);
     auto decoded = decode(wire);
 
-    return decoded.has_value() && decoded->consumed == wire.size()
+    return decoded.has_value() && decoded->consumed == (int) wire.size()
            && decoded->frame.opcode == frame.opcode
            && decoded->frame.fin == frame.fin
            && decoded->frame.payload == frame.payload;
@@ -147,20 +146,21 @@ auto tTruncatedNeverThrows =
 {
     auto ok = true;
 
-    for (auto size: std::vector<std::size_t> {0, 125, 126, 65536})
+    for (auto size: Vector<int> {0, 125, 126, 65536})
     {
         for (auto masked: {false, true})
         {
             auto wire =
                 encode({Opcode::binary, true, protocolPayloadOf(size)}, masked);
 
-            for (auto prefix = std::size_t {0}; prefix < wire.size(); ++prefix)
+            for (auto prefix = 0; prefix < (int) wire.size(); ++prefix)
             {
                 auto decoded = std::optional<eacp::WebSocket::Protocol::Decoded>();
 
                 try
                 {
-                    decoded = decode(std::string_view(wire).substr(0, prefix));
+                    decoded = decode(
+                        std::string_view(wire).substr(0, (std::size_t) prefix));
                 }
                 catch (const Error&)
                 {
@@ -184,10 +184,10 @@ auto tTrailingBytesAreLeft =
     auto decoded = decode(first + second);
 
     check(decoded.has_value());
-    check(decoded->consumed == first.size());
+    check(decoded->consumed == (int) first.size());
     check(decoded->frame.payload == "one");
 
-    auto next = decode((first + second).substr(decoded->consumed));
+    auto next = decode((first + second).substr((std::size_t) decoded->consumed));
 
     check(next.has_value());
     check(next->frame.payload == "two");

@@ -233,7 +233,7 @@ private:
 
     struct Page
     {
-        std::vector<std::uint8_t> pixels;
+        Vector<std::uint8_t> pixels;
         std::optional<GPU::Texture> texture;
 
         // Bounding box of everything written since the last commit. Uploading

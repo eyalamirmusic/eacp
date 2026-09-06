@@ -33,10 +33,10 @@ float TextMetrics::measureWidth(const std::string& text, const Font& font)
 }
 
 float TextMetrics::getOffsetForIndex(const std::string& text,
-                                     size_t index,
+                                     int index,
                                      const Font& font)
 {
-    if (text.empty() || index == 0)
+    if (text.empty() || index <= 0)
         return 0.f;
 
     CTFontRef ctFont = (CTFontRef) font.getHandle();
@@ -60,9 +60,9 @@ float TextMetrics::getOffsetForIndex(const std::string& text,
     return (float) offset;
 }
 
-size_t TextMetrics::getIndexForOffset(const std::string& text,
-                                      float xOffset,
-                                      const Font& font)
+int TextMetrics::getIndexForOffset(const std::string& text,
+                                   float xOffset,
+                                   const Font& font)
 {
     if (text.empty())
         return 0;
@@ -88,9 +88,9 @@ size_t TextMetrics::getIndexForOffset(const std::string& text,
         CTLineGetStringIndexForPosition(line, CGPointMake(xOffset, 0.f));
 
     if (index == kCFNotFound)
-        return text.length();
+        return (int) text.length();
 
-    return (size_t) index;
+    return (int) index;
 }
 
 float TextMetrics::getLineHeight(const Font& font)

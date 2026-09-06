@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <thread>
-#include <vector>
 
 using namespace nano;
 using eacp::Threads::callAsync;
@@ -116,12 +115,12 @@ auto tCallAfterOrdersManyDeadlines =
     test("EventLoop/callAfter/ordersManyPendingDeadlines") = []
 {
     constexpr auto count = 64;
-    auto order = std::vector<int>();
+    auto order = EA::Vector<int>();
 
     for (auto i = count; i > 0; --i)
         callAfter(eacp::Time::MS {i}, [&, i] { order.push_back(i); });
 
-    auto ok = runEventLoopUntil([&] { return (int) order.size() == count; },
+    auto ok = runEventLoopUntil([&] { return order.size() == count; },
                                 eacp::Time::MS {5000});
 
     check(ok);

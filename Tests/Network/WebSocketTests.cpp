@@ -2,9 +2,9 @@
 #include "WebSocketTestServer.h"
 
 #include <memory>
-#include <vector>
 
 using namespace nano;
+using eacp::Vector;
 using eacp::Threads::runEventLoopUntil;
 using eacp::Time::MS;
 using eacp::WebSocket::Callbacks;
@@ -74,8 +74,8 @@ struct WebSocketRecord
     std::string protocol;
     std::string error;
     CloseStatus close;
-    std::vector<Message> messages;
-    std::vector<std::string> order;
+    Vector<Message> messages;
+    Vector<std::string> order;
     bool offMessageThread = false;
 };
 
@@ -214,9 +214,7 @@ auto tTextEcho = test("WebSocket/echoesTextAndKeepsTheOrderOfABurst") = []
     auto inOrder = true;
 
     for (auto i = 0; i < burst; ++i)
-        inOrder =
-            inOrder
-            && record.messages[(std::size_t) i + 1].data == "m" + std::to_string(i);
+        inOrder = inOrder && record.messages[i + 1].data == "m" + std::to_string(i);
 
     check(inOrder);
     check(!record.offMessageThread);

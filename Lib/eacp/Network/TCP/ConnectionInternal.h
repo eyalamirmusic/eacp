@@ -26,11 +26,11 @@ void socketClose(NativeSocket socket) noexcept;
 
 // Writes once, returning the number of bytes accepted (always > 0). Throws
 // TCP::Error on timeout or failure.
-std::size_t socketSend(NativeSocket socket, const char* data, std::size_t length);
+int socketSend(NativeSocket socket, const char* data, int length);
 
 // Reads once into buffer, returning the byte count; 0 means the peer closed
 // the stream cleanly. Throws TCP::Error on timeout or failure.
-std::size_t socketReceive(NativeSocket socket, char* buffer, std::size_t length);
+int socketReceive(NativeSocket socket, char* buffer, int length);
 
 // Opens a listening socket on port (0 picks an ephemeral one), writing the
 // actually-bound port back to boundPort. Throws TCP::Error on failure.

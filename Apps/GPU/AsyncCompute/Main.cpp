@@ -24,7 +24,7 @@ namespace
 // nothing to overlap with work that finishes before the CPU gets going - and
 // that a wrong answer shows up as more than one bad element.
 constexpr int elementCount = 1 << 23;
-constexpr auto elementBytes = sizeof(float) * (std::size_t) elementCount;
+constexpr auto elementBytes = (int) sizeof(float) * elementCount;
 
 // Iterations of the stand-in CPU work below. Sized so the CPU side outlasts the
 // dispatch in an optimised build as well as a debug one: when the GPU finishes

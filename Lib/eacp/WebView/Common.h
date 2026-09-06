@@ -13,6 +13,5 @@
 
 #include <cctype>
 #include <cstdio>
-#include <span>
 #include <stdexcept>
 #include <unordered_map>

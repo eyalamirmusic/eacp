@@ -44,7 +44,7 @@ struct Neon
         }
 
         uint32x4_t v;
-        static constexpr std::size_t lanes = 4;
+        static constexpr int lanes = 4;
     };
 
     // The four channels of one RGBA pixel held as floats (128-bit).
