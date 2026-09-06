@@ -1,4 +1,6 @@
 #include "Common.h"
+#include <filesystem>
+#include <fstream>
 #include <thread>
 #include <vector>
 #include <algorithm>
@@ -39,7 +41,7 @@ void performExchange(Server& server, const Request& clientRequest, Exchange& out
             worker = std::thread(
                 [&]
                 {
-                    out.clientResponse = eacp::HTTP::httpRequest(clientRequest);
+                    out.clientResponse = clientRequest.perform();
                     callAsync([] { stopEventLoop(); });
                 });
         });
@@ -973,4 +975,84 @@ auto tAddRouteRegistersCustomMethod =
     check(ex.received.type == "PATCH");
     check(ex.clientResponse.statusCode == 200);
     check(ex.clientResponse.content == "patched");
+};
+
+// Discord's shape: a payload_json form field beside file parts, one of them
+// rendered in memory rather than read off disk.
+auto tHandlerReceivesInMemoryFilePart =
+    test("HttpServer/multipartCarriesInMemoryFileBytes") = []
+{
+    auto server = Server();
+    auto ex = Exchange();
+
+    check(server.listen(0,
+                        [&](const Request& req)
+                        {
+                            ex.received = req;
+                            ex.handlerCalled = true;
+                            auto res = Response();
+                            res.statusCode = 200;
+                            return res;
+                        }));
+
+    auto req = Request(baseUrl(server.boundPort()) + "/upload");
+    req.addFormField("payload_json", "{\"content\":\"hi\"}");
+    req.addFileBytes("files[0]", "chart.png", "\x89PNG rendered bytes", "image/png");
+
+    performExchange(server, req, ex);
+
+    check(ex.completed);
+    check(ex.handlerCalled);
+    check(ex.received.type == "POST");
+
+    auto contentType = ex.received.getHeader("Content-Type");
+    check(contentType.find("multipart/form-data; boundary=") == 0);
+
+    const auto& body = ex.received.body;
+    check(body.find("name=\"payload_json\"") != std::string::npos);
+    check(body.find("{\"content\":\"hi\"}") != std::string::npos);
+    check(body.find("name=\"files[0]\"; filename=\"chart.png\"")
+          != std::string::npos);
+    check(body.find("Content-Type: image/png") != std::string::npos);
+    check(body.find("\x89PNG rendered bytes") != std::string::npos);
+};
+
+// A file part that names a path still reads it at send time, so the two kinds
+// of part travel side by side in one body.
+auto tHandlerReceivesFilePartFromDisk =
+    test("HttpServer/multipartReadsFilePartFromDisk") = []
+{
+    auto path = (std::filesystem::temp_directory_path() / "eacp-multipart-part.txt")
+                    .string();
+    {
+        auto out = std::ofstream {path, std::ios::binary};
+        out << "bytes off disk";
+    }
+
+    auto server = Server();
+    auto ex = Exchange();
+
+    check(server.listen(0,
+                        [&](const Request& req)
+                        {
+                            ex.received = req;
+                            ex.handlerCalled = true;
+                            return Response();
+                        }));
+
+    auto req = Request(baseUrl(server.boundPort()) + "/upload");
+    req.addFileField("files[0]", path, "text/plain");
+    req.addFileBytes("files[1]", "memo.txt", "bytes from memory", "text/plain");
+
+    performExchange(server, req, ex);
+    std::filesystem::remove(path);
+
+    check(ex.completed);
+    check(ex.handlerCalled);
+
+    const auto& body = ex.received.body;
+    check(body.find("filename=\"eacp-multipart-part.txt\"") != std::string::npos);
+    check(body.find("bytes off disk") != std::string::npos);
+    check(body.find("filename=\"memo.txt\"") != std::string::npos);
+    check(body.find("bytes from memory") != std::string::npos);
 };

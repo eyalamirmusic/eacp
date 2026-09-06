@@ -200,8 +200,14 @@ NativeSocket
     if (sock == INVALID_SOCKET)
         throwLastError("socket");
 
+    // Winsock's SO_REUSEADDR lets a second socket bind a port another is
+    // listening on, so a busy port would not refuse us the way it does on
+    // POSIX. SO_EXCLUSIVEADDRUSE is the Windows spelling of that: exclusive
+    // while bound, and a port whose old connections are in TIME_WAIT stays
+    // bindable without either option here.
     auto yes = 1;
-    ::setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*) &yes, sizeof(yes));
+    ::setsockopt(
+        sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*) &yes, sizeof(yes));
 
     auto addr = sockaddr_in {};
     addr.sin_family = AF_INET;

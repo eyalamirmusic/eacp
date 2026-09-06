@@ -17,13 +17,13 @@ namespace eacp::Threads
 // Callers wanting frame-accurate ticks should use DisplayLink, as before.
 struct Timer::Native
 {
-    Native(const Callback& cbToUse, int intervalHz)
+    Native(const Callback& cbToUse, double intervalSec)
         : cb(cbToUse)
     {
         assertMainThread();
-        assert(intervalHz > 0 && "Timer interval must be positive");
+        assert(intervalSec > 0 && "Timer interval must be positive");
 
-        auto periodMs = static_cast<UINT>(1000.0 / intervalHz);
+        auto periodMs = static_cast<UINT>(intervalSec * 1000.0);
 
         if (periodMs == 0)
             periodMs = 1;
@@ -73,9 +73,15 @@ private:
     UINT_PTR id = 0;
 };
 
+Timer::Timer(const Callback& cbToUse, Time::MS interval)
+    : callback(cbToUse)
+    , impl(cbToUse, (double) interval.count / 1000.0)
+{
+}
+
 Timer::Timer(const Callback& cbToUse, int intervalHz)
     : callback(cbToUse)
-    , impl(cbToUse, intervalHz)
+    , impl(cbToUse, 1.0 / (double) intervalHz)
 {
 }
 

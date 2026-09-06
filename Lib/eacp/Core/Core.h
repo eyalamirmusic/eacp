@@ -9,6 +9,7 @@
 #include "Plugins/PluginExport.h"
 #include "Process/Process.h"
 #include "Threads/Timer.h"
+#include "Utils/Base64.h"
 #include "Utils/Broadcaster.h"
 #include "Utils/File.h"
 #include "Utils/Files.h"

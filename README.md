@@ -4,7 +4,9 @@ A cross-platform C++20 framework that abstracts native OS primitives behind a
 single, modern API. eacp lets you write desktop and mobile applications once
 and have them target the platform's first-class primitives directly. The heavy
 lifting stays with the OS: there is no bundled renderer, no bundled widget
-toolkit and no VM.
+toolkit and no VM. That reaches the GPU too: a shader is a C++ struct, emitted
+as Metal and HLSL from one source, and the pipeline around it is one API over
+both backends.
 
 ## What it abstracts
 
@@ -30,8 +32,11 @@ them, so apps inherit the look, feel, and performance of the host OS:
 - **WebView** — embed a system web view (WKWebView on Apple, WebView2 on
   Windows) with support for popups and new-window requests.
 - **Networking** — an `HTTP::Request` / `HTTP::Response` API plus an
-  `HTTPServer`, TCP sockets, IPC channels and an RPC layer over both. Backed by
-  NSURLSession on Apple platforms, WinHTTP on Windows and libcurl on Linux.
+  `HTTPServer`, a `WebSocket::Connection` client and `WebSocket::Server`, TCP
+  sockets, IPC channels and an RPC layer over both — `Apps/Network/WebSocketDemo`
+  runs both WebSocket ends in one process. Backed by NSURLSession and
+  Network.framework on Apple platforms, WinHTTP on Windows and libcurl on
+  Linux.
 - **SVG** — parsing and rendering of SVG documents into the graphics layer.
 - **Processes & plugins** — launch a child process with args, env and working
   directory, feed its stdin and capture its output (`eacp::Processes`), and load
@@ -65,7 +70,7 @@ shipping one.
 | Module | macOS | Windows | iOS | Linux |
 | --- | :---: | :---: | :---: | :---: |
 | `Core` — lifecycle, event loops, timers, processes, plugins, files | ✅ | ✅ | ✅ | ✅ |
-| `Network` — HTTP client and server, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ |
+| `Network` — HTTP client and server, WebSocket client, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ |
 | `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ |
 | `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | — |
 | `GPU` / `GPUWidgets` — Metal, D3D12 and the shader EDSL | ✅ | ✅ | ✅ | — |
@@ -96,23 +101,27 @@ A minimal console app with a recurring timer:
 ```cpp
 #include <eacp/Core/Core.h>
 
+using namespace eacp;
+
 struct App
 {
     void update()
     {
-        eacp::LOG(numTimes);
-        if (++numTimes == 4)
-            eacp::Apps::quit();
+        LOG(numTimes);
+
+        numTimes++;
+
+        if (numTimes == 4)
+            Apps::quit();
     }
 
     int numTimes = 0;
-    eacp::Threads::Timer timer {[&] { update(); }, 1};
+    Threads::Timer timer {[&] { update(); }, 1};
 };
 
 int main()
 {
-    eacp::Apps::run<App>();
-    return 0;
+    return Apps::run<App>();
 }
 ```
 
@@ -138,8 +147,7 @@ struct MyApp
 
 int main()
 {
-    eacp::Apps::run<MyApp>();
-    return 0;
+    return eacp::Apps::run<MyApp>();
 }
 ```
 
@@ -156,6 +164,102 @@ auto res = req.perform();
 More examples live under [`Apps/`](Apps), grouped by the module they exercise:
 `Console`, `Network`, `Graphics`, `GPU`, `UI`, `SVG`, `WebView`, `Camera`,
 `Video`, `Plugins` and `Mixed`.
+
+## Shaders in C++
+
+There is no shader string anywhere in an eacp app. A shader is a struct that
+derives from `ShaderProgram`; `define()` records a graph of typed value handles,
+and the emitters turn that one graph into Metal Shading Language for macOS and
+iOS and into HLSL for Direct3D 12 on Windows. Vertex inputs are pulled straight
+out of the CPU vertex struct, so that struct _is_ the vertex layout; uniforms
+and textures are typed members assigned by name, and `Maths::Vec2` crosses to
+the GPU packed exactly as the `float2` it registers as.
+
+```cpp
+#include <eacp/GPU/GPU.h>
+
+using namespace eacp;
+using namespace GPU;
+
+struct Vertex
+{
+    Maths::Vec2 position;
+    Maths::Vec2 uv;
+};
+
+struct Waves final : ShaderProgram
+{
+    Waves() { compile(); }
+
+    void define() override
+    {
+        auto position = vertexInput(&Vertex::position);
+        auto uv = varying(vertexInput(&Vertex::uv));
+
+        auto ripple = 0.5f + 0.5f * sin(uv.x() * 8.f + time);
+
+        setPosition(float4(position, 0.f, 1.f));
+        auto texel = sample(image, uv);
+        setFragment(texel * float4(ripple, uv.y(), 1.f, 1.f));
+    }
+
+    Uniform<Float> time;
+    Uniform<Texture2D> image;
+
+    EACP_SHADER(time, image)
+};
+```
+
+The view that draws it is as portable as the shader. `setVertices` uploads the
+typed vertex array, `prepare` takes a `RenderPipelineDescriptor` — sample
+count, depth test and write, blend equation, cull mode, winding — and builds
+the pipeline state from it, and `pass.draw(shader)` binds the pipeline, the
+vertices, the uniform block and every assigned texture:
+
+```cpp
+struct WavesView final : GPUView
+{
+    WavesView()
+        : image(loadTexture())
+    {
+        shader.setVertices(quad);
+        shader.prepare({.sampleCount = sampleCount(),
+                        .blendMode = BlendMode::AlphaBlend});
+        shader.image = image;
+        setContinuous(true);
+    }
+
+    void update(Threads::FrameTime time) override
+    {
+        elapsed += static_cast<float>(time.delta);
+    }
+
+    void render(Frame& frame) override
+    {
+        shader.time = elapsed;
+
+        auto pass = frame.beginPass({});
+        pass.draw(shader);
+    }
+
+    Texture image;
+    Waves shader;
+    float elapsed = 0.f;
+};
+```
+
+Render targets, depth and multisampling, and compute passes all sit on the same
+`Frame`, ordered for you, with no fences to write.
+
+The EDSL covers the `Float`, `Int`, `UInt` and `Bool` families and the
+matrices, every swizzle, the intrinsic set spelled the way MSL and HLSL spell
+it, `var` / `select` / `ifThen` / `loop`, 2D, cube and depth textures, storage
+buffers readable from either stage, instancing, and compute — `ComputeProgram`
+is the same struct shape, with atomics, threadgroup memory, barriers and a
+dispatch the GPU sized. What the two backends cannot pack the same way — a
+`Bool` or a `Float3x3` uniform — is a `static_assert` rather than a footnote.
+[`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md) is the full account, and
+`Apps/GPU` has a worked example of every piece.
 
 ## Building
 
@@ -206,7 +310,7 @@ own — take `Network` without pulling in `GPU`.
 Lib/eacp/
   Core/       App lifecycle, threading, processes, plugins, files, vector maths,
               ObjC/CF interop
-  Network/    HTTP client and server, TCP, IPC, RPC
+  Network/    HTTP client and server, WebSocket client, TCP, IPC, RPC
   SIMD/       Portable SIMD kernels with runtime backend dispatch
   Graphics/   Windows, views, widgets, menus, drawing primitives
   GPU/        Metal / D3D12: device, buffers, textures, pipelines, passes, and

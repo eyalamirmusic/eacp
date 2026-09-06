@@ -134,10 +134,10 @@ Point onCircle(const Point& centre, float radius, float angle)
             centre.y + std::sin(angle) * radius};
 }
 
-// UI::Knob's indicator: an arc and a pointer as two contours of one path, wound
-// the same way round. The shape the component tier actually draws, and the one
-// whose two contours overlap - so it is also where a lost segment shows as a
-// seam through the join rather than as a nick in an outline.
+// A rotary indicator of the ring-and-pointer kind: an arc and a pointer as two
+// contours of one path, wound the same way round. The one shape here whose two
+// contours overlap - so it is also where a lost segment shows as a seam through
+// the join rather than as a nick in an outline.
 Path knobIndicator(float size, float value)
 {
     auto centre = Point {size * 0.5f, size * 0.5f};
@@ -324,9 +324,8 @@ auto tStarRules = test("PathRasterizer/selfIntersectingStarMatchesUnbinned") = [
     expectMatchesReference(path, 2.f, FillRule::EvenOdd);
 };
 
-// The component tier's own shape, at the sizes a knob is actually laid out at -
-// which is also the resize case, since a re-laid-out knob rebuilds its mask from
-// scratch at the new size.
+// At the sizes a knob is actually laid out at - which is also the resize case,
+// since a re-laid-out knob rebuilds its mask from scratch at the new size.
 auto tKnobSizes = test("PathRasterizer/knobIndicatorMatchesUnbinnedAtEverySize") = []
 {
     for (auto size: {18.f, 24.f, 33.f, 40.f, 57.f, 64.f, 96.f, 129.f})

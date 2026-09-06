@@ -24,6 +24,12 @@ add_subdirectory(Shadows)
 # quad is drawn rather than where the content was.
 add_subdirectory(Transforms)
 
+# The stock widgets under one tab bar: every callback of every control written
+# into a log beside them, so a gesture is one start and one end around the
+# values it produced -- and a list of ten thousand rows that is one component,
+# because a row is something a model paints rather than something the tree holds.
+add_subdirectory(WidgetGallery)
+
 # An SVG document drawn twice in one window: native shape layers on the left,
 # the component tier's coverage masks on the right, for comparing the two on
 # screen and for reading what a real document costs the atlas.
