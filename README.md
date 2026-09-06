@@ -101,22 +101,27 @@ A minimal console app with a recurring timer:
 ```cpp
 #include <eacp/Core/Core.h>
 
+using namespace eacp;
+
 struct App
 {
     void update()
     {
-        eacp::LOG(numTimes);
-        if (++numTimes == 4)
-            eacp::Apps::quit();
+        LOG(numTimes);
+
+        numTimes++;
+
+        if (numTimes == 4)
+            Apps::quit();
     }
 
     int numTimes = 0;
-    eacp::Threads::Timer timer {[&] { update(); }, 1};
+    Threads::Timer timer {[&] { update(); }, 1};
 };
 
 int main()
 {
-    return eacp::Apps::run<App>();
+    return Apps::run<App>();
 }
 ```
 
