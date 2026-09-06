@@ -172,12 +172,12 @@ constexpr int bytesPerPixel(TextureFormat format)
 // A level's row pitch when it is tightly packed: bytes per row of texels, or
 // bytes per row of *blocks* for a compressed format, where one row covers four
 // rows of texels.
-constexpr std::size_t levelBytesPerRow(TextureFormat format, int width)
+constexpr int levelBytesPerRow(TextureFormat format, int width)
 {
     if (isCompressedFormat(format))
-        return (std::size_t) ((width + 3) / 4) * (std::size_t) bytesPerBlock(format);
+        return ((width + 3) / 4) * bytesPerBlock(format);
 
-    return (std::size_t) width * (std::size_t) bytesPerPixel(format);
+    return width * bytesPerPixel(format);
 }
 
 // How many rows of that pitch a level holds: its height in texels, or in blocks
@@ -190,9 +190,9 @@ constexpr int levelRows(TextureFormat format, int height)
 // One level of a texture this size, tightly packed - and the unit every layout
 // in this header is written in: a whole 2D texture, one face of a cube, one
 // level of a chain the caller supplied.
-constexpr std::size_t levelBytes(TextureFormat format, int width, int height)
+constexpr int levelBytes(TextureFormat format, int width, int height)
 {
-    return levelBytesPerRow(format, width) * (std::size_t) levelRows(format, height);
+    return levelBytesPerRow(format, width) * levelRows(format, height);
 }
 
 constexpr bool isFloatFormat(TextureFormat format)
@@ -561,7 +561,7 @@ public:
     // packed by definition, so a stride there is a number that can only be
     // wrong; a nonzero one is a no-op rather than an upload at a pitch nothing
     // means.
-    void update(const void* pixels, std::size_t bytesPerRow = 0);
+    void update(const void* pixels, int bytesPerRow = 0);
 
     // Re-uploads one sub-rectangle, leaving the rest of the texture untouched.
     //
@@ -592,7 +592,7 @@ public:
     // uploaded a glyph at a time as it is rasterized.
     void update(const Graphics::Rect& region,
                 const void* pixels,
-                std::size_t bytesPerRow = 0);
+                int bytesPerRow = 0);
 
     // Copies the texture's pixels back to the CPU — update()'s mirror, and the
     // only way what the GPU produced becomes bytes a program can look at: a
@@ -625,10 +625,8 @@ public:
     // would need a decoder here - while the things this exists for, a screenshot
     // and a test's assertion, read a render target, which a compressed texture
     // cannot be.
-    void read(void* dst, std::size_t bytesPerRow = 0) const;
-    void read(const Graphics::Rect& region,
-              void* dst,
-              std::size_t bytesPerRow = 0) const;
+    void read(void* dst, int bytesPerRow = 0) const;
+    void read(const Graphics::Rect& region, void* dst, int bytesPerRow = 0) const;
 
     // Opaque native handles for cross-translation-unit use by the render pass.
     // There is no sampler handle: the render pass gets that from the sampling

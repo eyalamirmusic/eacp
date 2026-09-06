@@ -1,6 +1,5 @@
 #include "Messenger.h"
 
-#include <array>
 #include <cstdint>
 #include <mutex>
 #include <thread>
@@ -19,38 +18,39 @@ constexpr auto interruptRetry = Time::MS {5};
 // A frame is a 32-bit little-endian byte count, then that many bytes. The
 // prefix is what frees payloads to carry anything - newlines, NULs, whole
 // files.
-constexpr auto headerSize = std::size_t {4};
+constexpr auto headerSize = 4;
 
 // Refuses lengths no honest peer would send, so a framing bug surfaces as
 // an error instead of a gigabyte allocation.
-constexpr auto maxMessageSize = std::size_t {1} << 30;
+constexpr auto maxMessageSize = 1 << 30;
 
-Array<char, headerSize> encodeHeader(std::size_t size)
+Array<char, headerSize> encodeHeader(int size)
 {
     auto header = Array<char, headerSize> {};
 
-    for (auto index = 0; index < (int) headerSize; ++index)
+    for (auto index = 0; index < headerSize; ++index)
         header[index] = (char) ((size >> (index * 8)) & 0xff);
 
     return header;
 }
 
-std::size_t decodeLength(const std::string& header)
+std::uint32_t decodeLength(const std::string& header)
 {
     auto size = std::uint32_t {0};
 
-    for (auto index = std::size_t {0}; index < headerSize; ++index)
-        size |= (std::uint32_t) (unsigned char) header[index] << (index * 8);
+    for (auto index = 0; index < headerSize; ++index)
+        size |= (std::uint32_t) (unsigned char) header[(std::size_t) index]
+                << (index * 8);
 
     return size;
 }
 
 // Fills result with exactly count bytes, sized once and written in place;
 // false means the stream ended first, leaving what did arrive in result.
-bool receiveExactly(Channel& channel, std::size_t count, std::string& result)
+bool receiveExactly(Channel& channel, int count, std::string& result)
 {
-    result.resize(count);
-    auto received = std::size_t {0};
+    result.resize((std::size_t) count);
+    auto received = 0;
 
     while (received < count)
     {
@@ -58,7 +58,7 @@ bool receiveExactly(Channel& channel, std::size_t count, std::string& result)
 
         if (chunk == 0)
         {
-            result.resize(received);
+            result.resize((std::size_t) received);
             return false;
         }
 
@@ -84,12 +84,12 @@ std::optional<std::string> receiveFrame(Channel& channel)
 
     auto length = decodeLength(header);
 
-    if (length > maxMessageSize)
+    if (length > (std::uint32_t) maxMessageSize)
         throw Error("peer sent an implausible message length");
 
     auto message = std::string {};
 
-    if (!receiveExactly(channel, length, message))
+    if (!receiveExactly(channel, (int) length, message))
         throw Error("peer closed the channel mid-message");
 
     return message;
@@ -169,7 +169,7 @@ bool Messenger::isConnected() const
 
 void Messenger::send(const std::string& message)
 {
-    if (message.size() > maxMessageSize)
+    if (message.size() > (std::size_t) maxMessageSize)
         throw Error("message is too large to frame");
 
     auto guard = std::lock_guard {impl->mutex};
@@ -181,8 +181,8 @@ void Messenger::send(const std::string& message)
     {
         // Header and payload go out as two writes so framing never copies
         // the payload - the mutex keeps them adjacent on the stream.
-        auto header = encodeHeader(message.size());
-        impl->channel->send({header.data(), headerSize});
+        auto header = encodeHeader((int) message.size());
+        impl->channel->send({header.data(), (std::size_t) headerSize});
         impl->channel->send(message);
     }
     catch (const Error&)

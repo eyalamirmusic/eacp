@@ -186,5 +186,5 @@ struct RegisteredFont
 // caller's buffer need not outlive the call. Nothing when the data is not a
 // usable font. Registering the same face twice reports it as it was, since a
 // page reloaded registers its fonts again.
-std::optional<RegisteredFont> registerMemoryFont(const void* data, std::size_t size);
+std::optional<RegisteredFont> registerMemoryFont(const void* data, int size);
 } // namespace eacp::Text

@@ -5,7 +5,6 @@
 #include <cstdlib>
 #include <mutex>
 #include <thread>
-#include <vector>
 
 #include <spawn.h>
 #include <sys/wait.h>
@@ -130,12 +129,13 @@ struct Process::Native
         if (inputFd < 0)
             return false;
 
-        auto total = std::size_t {0};
+        auto total = 0;
+        const auto size = (int) data.size();
 
-        while (total < data.size())
+        while (total < size)
         {
             auto written =
-                ::write(inputFd, data.data() + total, data.size() - total);
+                ::write(inputFd, data.data() + total, (std::size_t) (size - total));
 
             if (written < 0)
             {
@@ -145,7 +145,7 @@ struct Process::Native
                 return false;
             }
 
-            total += (std::size_t) written;
+            total += (int) written;
         }
 
         return true;

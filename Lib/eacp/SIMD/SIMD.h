@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 
 // eacp-simd: a small, self-contained portable SIMD layer.
@@ -17,7 +16,7 @@ namespace eacp::simd
 // Swap the red and blue channels of `pixelCount` tightly-packed 8-bit RGBA
 // pixels (RGBA <-> BGRA), writing to `out`. `in` and `out` may be equal
 // (in place) but must not otherwise overlap.
-void swapRedBlue(const std::uint8_t* in, std::uint8_t* out, std::size_t pixelCount);
+void swapRedBlue(const std::uint8_t* in, std::uint8_t* out, int pixelCount);
 
 // Convert a BGRA8 camera frame to tightly-packed RGBA8 in one pass: swap
 // red/blue and drop any trailing row padding. `src` rows are `srcBytesPerRow`
@@ -25,7 +24,7 @@ void swapRedBlue(const std::uint8_t* in, std::uint8_t* out, std::size_t pixelCou
 // lives in the SIMD module so its per-byte work is always built at the platform
 // optimization maximum, independent of the (possibly unoptimized) caller.
 void convertBgraToRgba(const std::uint8_t* src,
-                       std::size_t srcBytesPerRow,
+                       int srcBytesPerRow,
                        std::uint8_t* dst,
                        int width,
                        int height);
@@ -71,28 +70,27 @@ void mirroredCrop(const std::uint8_t* src,
 // at any vector width and on every build.
 
 // out[i] = a[i] + b[i]
-void add(const float* a, const float* b, float* out, std::size_t count);
+void add(const float* a, const float* b, float* out, int count);
 
 // out[i] = a[i] - b[i]
-void subtract(const float* a, const float* b, float* out, std::size_t count);
+void subtract(const float* a, const float* b, float* out, int count);
 
 // out[i] = a[i] * b[i]
-void multiply(const float* a, const float* b, float* out, std::size_t count);
+void multiply(const float* a, const float* b, float* out, int count);
 
 // out[i] = a[i] * scalar
-void multiplyByScalar(const float* a, float scalar, float* out, std::size_t count);
+void multiplyByScalar(const float* a, float scalar, float* out, int count);
 
 // out[i] = a[i] * b[i] + c[i]
 void multiplyAdd(
-    const float* a, const float* b, const float* c, float* out, std::size_t count);
+    const float* a, const float* b, const float* c, float* out, int count);
 
 // out[i] = a[i] * b + c[i] -- the axpy shape; with out == c it accumulates a
 // scaled array in place (out[i] += a[i] * b).
-void multiplyAdd(
-    const float* a, float b, const float* c, float* out, std::size_t count);
+void multiplyAdd(const float* a, float b, const float* c, float* out, int count);
 
 // out[i] = a[i] + t * (b[i] - a[i])
-void lerp(const float* a, const float* b, float t, float* out, std::size_t count);
+void lerp(const float* a, const float* b, float t, float* out, int count);
 
 // --- Float-array reductions ---
 //
@@ -103,10 +101,10 @@ void lerp(const float* a, const float* b, float t, float* out, std::size_t count
 // bit-equal to a naive sequential loop over the same data.
 
 // Returns sum(a[i]^2), accumulated in double for precision. 0.0 when count == 0.
-double sumOfSquares(const float* a, std::size_t count);
+double sumOfSquares(const float* a, int count);
 
 // Returns max(|a[i]|), 0.f when count == 0. Max is order-independent, so this
 // one matches a sequential loop exactly.
-float peakAbs(const float* a, std::size_t count);
+float peakAbs(const float* a, int count);
 
 } // namespace eacp::simd

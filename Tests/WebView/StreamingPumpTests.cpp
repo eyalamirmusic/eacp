@@ -47,15 +47,15 @@ StreamingProvider testProvider()
         resource.mimeType =
             isData ? "application/octet-stream" : "text/html; charset=utf-8";
         resource.size = payload->size();
-        resource.read = [payload](RangeSize offset, ByteSpan out) -> std::size_t
+        resource.read = [payload](RangeSize offset, ByteSpan out) -> int
         {
             if (offset >= payload->size())
                 return 0;
 
             auto available = payload->size() - static_cast<std::size_t>(offset);
-            auto count = std::min(out.size(), available);
+            auto count = std::min(static_cast<std::size_t>(out.size()), available);
             std::memcpy(out.data(), payload->data() + offset, count);
-            return count;
+            return (int) count;
         };
         return resource;
     };

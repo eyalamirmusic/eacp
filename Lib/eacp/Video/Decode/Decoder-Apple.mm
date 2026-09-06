@@ -123,7 +123,7 @@ struct AppleDecoder final : Decoder
         auto frameInfo = FrameInfo {};
         frameInfo.width = (int) CVPixelBufferGetWidth(pixelBuffer);
         frameInfo.height = (int) CVPixelBufferGetHeight(pixelBuffer);
-        frameInfo.bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer);
+        frameInfo.bytesPerRow = (int) CVPixelBufferGetBytesPerRow(pixelBuffer);
         frameInfo.seconds = secondsOf(CMSampleBufferGetPresentationTimeStamp(sample));
         frameInfo.duration = secondsOf(CMSampleBufferGetOutputDuration(sample));
 
@@ -241,7 +241,7 @@ Graphics::Image nativeBufferToImage(void* buffer)
 
     auto width = (int) CVPixelBufferGetWidth(pixelBuffer);
     auto height = (int) CVPixelBufferGetHeight(pixelBuffer);
-    auto stride = CVPixelBufferGetBytesPerRow(pixelBuffer);
+    auto stride = (int) CVPixelBufferGetBytesPerRow(pixelBuffer);
     const auto* base = (const std::uint8_t*) CVPixelBufferGetBaseAddress(pixelBuffer);
 
     auto image = Graphics::Image {};
@@ -252,7 +252,7 @@ Graphics::Image nativeBufferToImage(void* buffer)
 
         for (auto y = 0; y < height; ++y)
         {
-            const auto* row = base + (std::size_t) y * stride;
+            const auto* row = base + y * stride;
 
             for (auto x = 0; x < width; ++x)
                 image.set(x,

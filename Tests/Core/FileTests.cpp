@@ -1,8 +1,6 @@
 #include "Common.h"
-#include <array>
 #include <filesystem>
 #include <fstream>
-#include <span>
 
 using namespace nano;
 using eacp::File;
@@ -74,7 +72,7 @@ auto tSeekBackAndForth = test("File/seekBackAndForth") = []
         check(file.read(6, buffer) == 4);
         check(buffer[0] == '6' && buffer[3] == '9');
 
-        check(file.read(0, std::span<std::uint8_t> {buffer.data(), 2}) == 2);
+        check(file.read(0, eacp::Span<std::uint8_t> {buffer.data(), 2}) == 2);
         check(buffer[0] == '0' && buffer[1] == '1');
     }
 

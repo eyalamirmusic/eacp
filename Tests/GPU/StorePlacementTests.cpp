@@ -81,7 +81,7 @@ Buffer makeFilled(int elements, float value)
 
     return Buffer {Device::shared(),
                    initial.data(),
-                   sizeof(float) * (std::size_t) elements,
+                   (int) sizeof(float) * elements,
                    BufferUsage::Storage};
 }
 
@@ -89,7 +89,7 @@ Vector<float> readBack(const Buffer& buffer, int elements)
 {
     auto values = Vector<float> {};
     values.resize(elements);
-    buffer.read(values.data(), sizeof(float) * (std::size_t) elements);
+    buffer.read(values.data(), (int) sizeof(float) * elements);
     return values;
 }
 

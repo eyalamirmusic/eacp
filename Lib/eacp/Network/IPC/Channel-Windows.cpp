@@ -5,8 +5,6 @@
 
 #include <aclapi.h>
 
-#include <algorithm>
-
 namespace eacp::IPC::detail
 {
 namespace
@@ -281,15 +279,15 @@ NativeChannel channelAccept(NativeChannel& listener,
     return connected;
 }
 
-std::size_t channelSend(NativeChannel channel, const char* data, std::size_t length)
+int channelSend(NativeChannel channel, const char* data, int length)
 {
     auto pipe = (HANDLE) channel;
-    auto toWrite = (DWORD) std::min<std::size_t>(length, MAXDWORD);
+    auto toWrite = (DWORD) length;
     auto operation = Operation {};
     auto written = DWORD {0};
 
     if (::WriteFile(pipe, data, toWrite, &written, operation.get()) != 0)
-        return written;
+        return (int) written;
 
     auto reason = ::GetLastError();
 
@@ -299,23 +297,23 @@ std::size_t channelSend(NativeChannel channel, const char* data, std::size_t len
     if (!completed(pipe, operation, written, reason))
         fail("cannot send on channel", reason);
 
-    return written;
+    return (int) written;
 }
 
-std::size_t channelReceive(NativeChannel channel, char* buffer, std::size_t length)
+int channelReceive(NativeChannel channel, char* buffer, int length)
 {
     auto pipe = (HANDLE) channel;
-    auto toRead = (DWORD) std::min<std::size_t>(length, MAXDWORD);
+    auto toRead = (DWORD) length;
     auto operation = Operation {};
     auto received = DWORD {0};
 
     if (::ReadFile(pipe, buffer, toRead, &received, operation.get()) != 0)
-        return received;
+        return (int) received;
 
     auto reason = ::GetLastError();
 
     if (reason == ERROR_IO_PENDING && completed(pipe, operation, received, reason))
-        return received;
+        return (int) received;
 
     if (endOfStream(reason))
         return 0;

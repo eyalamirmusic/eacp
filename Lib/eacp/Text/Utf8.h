@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <string_view>
 
 // UTF-8 in and out, for the seams of this module that speak codepoints: the
@@ -10,7 +9,7 @@ namespace eacp::Text
 {
 // Writes `codepoint` as UTF-8 into `into`, which holds at least four bytes,
 // and returns how many it used.
-inline std::size_t encodeUtf8(char32_t codepoint, char* into)
+inline int encodeUtf8(char32_t codepoint, char* into)
 {
     if (codepoint < 0x80)
     {
@@ -43,7 +42,7 @@ inline std::size_t encodeUtf8(char32_t codepoint, char* into)
 // Decodes one UTF-8 sequence starting at `index`, advancing it past what was
 // consumed. Malformed bytes yield U+FFFD and advance by one, so a bad byte
 // costs one replacement glyph rather than desynchronising the rest of the line.
-inline char32_t decodeUtf8(std::string_view text, std::size_t& index)
+inline char32_t decodeUtf8(std::string_view text, int& index)
 {
     const auto lead = static_cast<unsigned char>(text[index]);
 
@@ -54,7 +53,7 @@ inline char32_t decodeUtf8(std::string_view text, std::size_t& index)
                                    : lead < 0xF8 ? 3
                                                  : -1;
 
-    if (continuationBytes < 0 || index + continuationBytes >= text.size())
+    if (continuationBytes < 0 || index + continuationBytes >= (int) text.size())
     {
         ++index;
         return 0xFFFD;

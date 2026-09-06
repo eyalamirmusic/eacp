@@ -42,8 +42,8 @@ int FrameStream::depthWithinBudget(const VideoInfo& info,
                                    const StreamOptions& options)
 {
     auto requested = std::max(1, options.queueDepth);
-    auto frameBytes = (std::size_t) std::max(0, info.width)
-                      * (std::size_t) std::max(0, info.height) * 4u;
+    auto frameBytes =
+        (std::int64_t) std::max(0, info.width) * std::max(0, info.height) * 4;
 
     if (frameBytes == 0 || options.maxQueueBytes == 0)
         return requested;

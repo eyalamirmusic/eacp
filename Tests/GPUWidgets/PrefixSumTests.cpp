@@ -50,7 +50,7 @@ struct Result
 Result scanOnGpu(const Vector<std::uint32_t>& counts)
 {
     auto result = Result {};
-    auto bytes = sizeof(std::uint32_t) * (std::size_t) counts.size();
+    auto bytes = (int) sizeof(std::uint32_t) * counts.size();
 
     auto source = GPU::Buffer {
         GPU::Device::shared(), counts.data(), bytes, GPU::BufferUsage::Storage};

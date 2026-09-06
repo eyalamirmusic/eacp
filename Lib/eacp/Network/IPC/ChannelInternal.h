@@ -46,11 +46,11 @@ NativeChannel channelAccept(NativeChannel& listener,
 
 // Writes once, returning the number of bytes accepted (always > 0). Throws
 // IPC::Error on failure, including a peer that is gone.
-std::size_t channelSend(NativeChannel channel, const char* data, std::size_t length);
+int channelSend(NativeChannel channel, const char* data, int length);
 
 // Reads once into buffer, returning the byte count; 0 means the peer closed
 // the stream cleanly. Throws IPC::Error on failure.
-std::size_t channelReceive(NativeChannel channel, char* buffer, std::size_t length);
+int channelReceive(NativeChannel channel, char* buffer, int length);
 
 // Wakes I/O blocked on channel from another thread; a woken receive reports
 // a clean end of stream. POSIX shuts the socket down, which is permanent -

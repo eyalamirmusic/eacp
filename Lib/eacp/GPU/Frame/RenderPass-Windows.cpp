@@ -172,7 +172,8 @@ void RenderPass::setVertexBuffer(const BufferRange& range, int index)
 
     auto* data = static_cast<D3D12BufferData*>(range.buffer->nativeBuffer());
 
-    if (data == nullptr || data->resource == nullptr || range.offset >= data->size)
+    if (data == nullptr || data->resource == nullptr
+        || (UINT64) range.offset >= data->size)
         return;
 
     auto& commands = *impl->encoder->commands;
@@ -183,8 +184,9 @@ void RenderPass::setVertexBuffer(const BufferRange& range, int index)
     // offset and the size comes down by it, so the view still ends where the
     // buffer does and vertex zero is the byte at the offset.
     D3D12_VERTEX_BUFFER_VIEW view = {};
-    view.BufferLocation = data->resource->GetGPUVirtualAddress() + range.offset;
-    view.SizeInBytes = static_cast<UINT>(data->size - range.offset);
+    view.BufferLocation =
+        data->resource->GetGPUVirtualAddress() + (UINT64) range.offset;
+    view.SizeInBytes = static_cast<UINT>(data->size - (UINT64) range.offset);
     view.StrideInBytes = strideForSlot(impl->encoder->strides, index);
 
     commands.list->IASetVertexBuffers(static_cast<UINT>(index), 1, &view);
@@ -289,26 +291,28 @@ void RenderPass::setFragmentStorageBuffer(const Buffer& buffer, int slot)
                                                          address);
 }
 
-void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
+void RenderPass::setVertexBytes(const void* data, int bytes, int slot)
 {
     if (!impl->encoder || slot < 0 || slot >= maxUniformSlots)
         return;
 
     auto& commands = *impl->encoder->commands;
-    auto address = commands.context->uploadConstants(commands, data, bytes);
+    auto address =
+        commands.context->uploadConstants(commands, data, (std::size_t) bytes);
 
     if (address != 0)
         commands.list->SetGraphicsRootConstantBufferView(renderVertexCBVParam(slot),
                                                          address);
 }
 
-void RenderPass::setFragmentBytes(const void* data, std::size_t bytes, int slot)
+void RenderPass::setFragmentBytes(const void* data, int bytes, int slot)
 {
     if (!impl->encoder || slot < 0 || slot >= maxUniformSlots)
         return;
 
     auto& commands = *impl->encoder->commands;
-    auto address = commands.context->uploadConstants(commands, data, bytes);
+    auto address =
+        commands.context->uploadConstants(commands, data, (std::size_t) bytes);
 
     if (address != 0)
         commands.list->SetGraphicsRootConstantBufferView(renderPixelCBVParam(slot),
@@ -355,14 +359,16 @@ bool bindIndexRange(CommandContext& commands,
 
     auto* data = static_cast<D3D12BufferData*>(indices.buffer->nativeBuffer());
 
-    if (data == nullptr || data->resource == nullptr || indices.offset >= data->size)
+    if (data == nullptr || data->resource == nullptr
+        || (UINT64) indices.offset >= data->size)
         return false;
 
     transitionForUse(commands, *data, D3D12_RESOURCE_STATE_INDEX_BUFFER);
 
     D3D12_INDEX_BUFFER_VIEW view = {};
-    view.BufferLocation = data->resource->GetGPUVirtualAddress() + indices.offset;
-    view.SizeInBytes = static_cast<UINT>(data->size - indices.offset);
+    view.BufferLocation =
+        data->resource->GetGPUVirtualAddress() + (UINT64) indices.offset;
+    view.SizeInBytes = static_cast<UINT>(data->size - (UINT64) indices.offset);
     view.Format =
         format == IndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
 

@@ -120,7 +120,7 @@ struct InspectorContent final : UI::Component
         setWantsKeyboardFocus(true);
         setInterceptsMouseClicks(true);
 
-        rows.push_back("Press any key. Cmd+C copies this log, Cmd+V pastes.");
+        rows.add("Press any key. Cmd+C copies this log, Cmd+V pastes.");
     }
 
     // Returning true on everything, which is exactly right here and worth saying
@@ -169,10 +169,10 @@ struct InspectorContent final : UI::Component
 
     void add(std::string row)
     {
-        rows.push_back(std::move(row));
+        rows.add(std::move(row));
 
-        while ((int) rows.size() > maxRows)
-            rows.erase(rows.begin());
+        while (rows.size() > maxRows)
+            rows.removeAt(0);
 
         repaint();
     }
@@ -201,7 +201,7 @@ struct InspectorContent final : UI::Component
         }
     }
 
-    std::vector<std::string> rows;
+    Vector<std::string> rows;
 };
 
 struct InspectorHost final : UI::ComponentHost

@@ -47,7 +47,7 @@ struct Sse2
         }
 
         __m128i v;
-        static constexpr std::size_t lanes = 4;
+        static constexpr int lanes = 4;
     };
 
     // The four channels of one RGBA pixel held as floats (128-bit).

@@ -386,7 +386,7 @@ void handleClosePath(PathType& path, PathState& state)
 
 char readCommandChar(NumberReader& reader, char lastCommand)
 {
-    auto c = reader.src[reader.pos];
+    auto c = reader.src[(size_t) reader.pos];
     if (std::isalpha(static_cast<unsigned char>(c)))
     {
         reader.pos++;

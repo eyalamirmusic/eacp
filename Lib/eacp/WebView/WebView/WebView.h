@@ -8,8 +8,8 @@ namespace eacp::Graphics
 {
 // Owning byte buffer and non-owning views used across the resource API.
 using Bytes = Vector<std::uint8_t>;
-using ByteSpan = std::span<std::uint8_t>;
-using ByteView = std::span<const std::uint8_t>;
+using ByteSpan = Span<std::uint8_t>;
+using ByteView = Span<const std::uint8_t>;
 
 // Byte offsets / lengths into a resource, and a half-open byte range.
 using RangeSize = std::uint64_t;
@@ -32,7 +32,7 @@ using FileProvider = std::function<std::optional<ByteView>(std::string_view path
 // handler calls it repeatedly with monotonically advancing offsets, and may
 // call it off the main thread -- so it must be safe to run on a background
 // queue.
-using ResourceReader = std::function<std::size_t(RangeSize offset, ByteSpan out)>;
+using ResourceReader = std::function<int(RangeSize offset, ByteSpan out)>;
 
 // A resource served in chunks rather than as one in-memory blob. The provider
 // reports the MIME type and the full `size`; the handler owns Range parsing,
@@ -285,9 +285,8 @@ public:
     // environment-creation failure later.
     static bool isRuntimeAvailable();
 
-    void addScriptMessageHandler(
-        const std::string& name,
-        const MessageFunc& handler) override;
+    void addScriptMessageHandler(const std::string& name,
+                                 const MessageFunc& handler) override;
     void removeScriptMessageHandler(const std::string& name) override;
 
     void addUserScript(const std::string& source,

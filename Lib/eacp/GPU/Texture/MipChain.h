@@ -43,10 +43,9 @@ constexpr int mipExtent(int extent, int level)
 //
 // constexpr, as the two above are, so that a caller with a size known at compile
 // time can size a buffer with it rather than a magic number.
-constexpr std::size_t
-    mipChainBytes(TextureFormat format, int width, int height, int levels)
+constexpr int mipChainBytes(TextureFormat format, int width, int height, int levels)
 {
-    auto total = std::size_t {0};
+    auto total = 0;
 
     for (auto level = 0; level < levels; ++level)
         total +=
@@ -116,5 +115,5 @@ MipChain buildMipChain(const void* pixels,
                        int width,
                        int height,
                        TextureFormat format,
-                       std::size_t bytesPerRow = 0);
+                       int bytesPerRow = 0);
 } // namespace eacp::GPU

@@ -33,7 +33,7 @@ struct StreamOptions
     // That costs around 630 MB while an 8K file is open and proportionally
     // nothing below it: 1080p reaches the requested depth on 40 MB either way.
     // Lower it if a soft memory ceiling matters more than smoothness.
-    std::size_t maxQueueBytes = 512u * 1024u * 1024u;
+    int maxQueueBytes = 512 * 1024 * 1024;
 };
 
 // A decoded-frame stream: a Decoder, the thread that runs it ahead of the

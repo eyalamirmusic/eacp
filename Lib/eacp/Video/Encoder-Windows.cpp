@@ -265,8 +265,7 @@ void WindowsEncoder::appendImage(const Graphics::Image& image, double ptsSeconds
     if (FAILED(buffer->Lock(&data, &maxLength, nullptr)))
         return;
 
-    compositeOverBlackBGRA(
-        image, data, width, height, static_cast<std::size_t>(width) * 4);
+    compositeOverBlackBGRA(image, data, width, height, width * 4);
 
     buffer->Unlock();
     buffer->SetCurrentLength(sizeInBytes);
@@ -277,7 +276,7 @@ void WindowsEncoder::appendImage(const Graphics::Image& image, double ptsSeconds
 void WindowsEncoder::appendBGRA(const std::uint8_t* rows,
                                 int sourceWidth,
                                 int sourceHeight,
-                                std::size_t stride,
+                                int stride,
                                 double ptsSeconds)
 {
     // The Screen tier's frames arrive on a thread pool thread MF has never
@@ -287,7 +286,7 @@ void WindowsEncoder::appendBGRA(const std::uint8_t* rows,
     if (!writer || rows == nullptr)
         return;
 
-    auto destinationStride = static_cast<std::size_t>(width) * 4;
+    auto destinationStride = width * 4;
     auto sizeInBytes = static_cast<DWORD>(destinationStride * height);
 
     ComPtr<IMFMediaBuffer> buffer;
@@ -308,9 +307,9 @@ void WindowsEncoder::appendBGRA(const std::uint8_t* rows,
         std::memset(data, 0, sizeInBytes);
 
     for (auto y = 0; y < copyHeight; ++y)
-        std::memcpy(data + static_cast<std::size_t>(y) * destinationStride,
-                    rows + static_cast<std::size_t>(y) * stride,
-                    static_cast<std::size_t>(copyWidth) * 4);
+        std::memcpy(data + y * destinationStride,
+                    rows + y * stride,
+                    (std::size_t) (copyWidth * 4));
 
     buffer->Unlock();
     buffer->SetCurrentLength(sizeInBytes);

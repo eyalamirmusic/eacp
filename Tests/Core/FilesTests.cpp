@@ -6,7 +6,6 @@
 #include <new>
 #include <filesystem>
 #include <fstream>
-#include <span>
 #include <thread>
 
 using namespace nano;
@@ -40,13 +39,13 @@ void writeAtomically(const std::filesystem::path& path, std::string_view content
 {
     eacp::Files::writeFileAtomically(
         FilePath {path},
-        std::span {reinterpret_cast<const std::uint8_t*>(contents.data()),
-                   contents.size()});
+        eacp::Span {reinterpret_cast<const std::uint8_t*>(contents.data()),
+                    (int) contents.size()});
 }
 
-std::size_t entryCount(const std::filesystem::path& dir)
+int entryCount(const std::filesystem::path& dir)
 {
-    auto count = std::size_t {0};
+    auto count = 0;
 
     for (const auto& entry: std::filesystem::directory_iterator {dir})
     {
@@ -201,14 +200,14 @@ auto tReadAllocatesAboutTheFileSize =
 
     // Large enough that a doubling buffer reallocates many times, so the
     // difference is structural rather than a fixed overhead.
-    const auto size = std::size_t {2 * 1024 * 1024};
-    write(path, std::string(size, 'x'));
+    const auto size = 2 * 1024 * 1024;
+    write(path, std::string((std::size_t) size, 'x'));
 
     auto counter = AllocationCount {};
     const auto contents = read(path);
     const auto bytes = counter.bytes();
 
-    check(contents.size() == size);
+    check((int) contents.size() == size);
     check(bytes < size * 2);
 };
 

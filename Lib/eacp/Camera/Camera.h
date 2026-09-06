@@ -65,7 +65,7 @@ public:
     CameraFrame(int width,
                 int height,
                 PixelFormat format,
-                std::size_t bytesPerRow,
+                int bytesPerRow,
                 double timestampSeconds,
                 const std::uint8_t* data,
                 void* nativeBuffer);
@@ -73,7 +73,7 @@ public:
     int width() const { return frameWidth; }
     int height() const { return frameHeight; }
     PixelFormat format() const { return pixelFormat; }
-    std::size_t bytesPerRow() const { return rowBytes; }
+    int bytesPerRow() const { return rowBytes; }
     double timestampSeconds() const { return timestamp; }
 
     // The raw pixel bytes (BGRA for PixelFormat::BGRA8), rows bytesPerRow apart
@@ -100,7 +100,7 @@ private:
     int frameWidth = 0;
     int frameHeight = 0;
     PixelFormat pixelFormat = PixelFormat::BGRA8;
-    std::size_t rowBytes = 0;
+    int rowBytes = 0;
     double timestamp = 0.0;
     const std::uint8_t* pixels = nullptr;
     void* buffer = nullptr;

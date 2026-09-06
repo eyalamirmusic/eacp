@@ -142,24 +142,24 @@ void copyPlanes(const std::uint8_t* source,
                 int height,
                 Vector<std::uint8_t>& out)
 {
-    auto rowBytes = static_cast<std::size_t>(width);
+    auto rowBytes = width;
     auto chromaRows = height / 2;
 
-    out.resize((int) framePixelBytes(FramePixelFormat::NV12, width, height));
+    out.resize(framePixelBytes(FramePixelFormat::NV12, width, height));
 
-    auto copyRows = [&](std::ptrdiff_t sourceRow, std::size_t destRow, int rows)
+    auto copyRows = [&](int sourceRow, int destRow, int rows)
     {
         for (auto y = 0; y < rows; ++y)
         {
             const auto* from =
                 source + (sourceRow + y) * static_cast<std::ptrdiff_t>(stride);
             std::memcpy(
-                out.data() + (destRow + (std::size_t) y) * rowBytes, from, rowBytes);
+                out.data() + (destRow + y) * rowBytes, from, (std::size_t) rowBytes);
         }
     };
 
     copyRows(0, 0, height);
-    copyRows(height, (std::size_t) height, chromaRows);
+    copyRows(height, height, chromaRows);
 }
 } // namespace
 
@@ -491,7 +491,7 @@ private:
         frameInfo.width = videoInfo.width;
         frameInfo.height = videoInfo.height;
         frameInfo.format = FramePixelFormat::NV12;
-        frameInfo.bytesPerRow = static_cast<std::size_t>(videoInfo.width);
+        frameInfo.bytesPerRow = videoInfo.width;
         frameInfo.yuvMatrix = yuvMatrix;
         frameInfo.fullRangeYuv = fullRangeYuv;
         frameInfo.seconds = seconds;

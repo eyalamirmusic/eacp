@@ -16,8 +16,8 @@ public:
     void setText(const std::string& text);
     std::string getText() const;
 
-    void setCursorPosition(size_t position);
-    size_t getCursorPosition() const;
+    void setCursorPosition(int position);
+    int getCursorPosition() const;
 
     void setPlaceholder(const std::string& placeholder);
 
@@ -45,7 +45,7 @@ private:
 
     std::string text;
     std::string placeholder;
-    size_t cursorIndex = 0;
+    int cursorIndex = 0;
     Font font;
     float padding = 8.f;
     Color textColor {0.f, 0.f, 0.f};

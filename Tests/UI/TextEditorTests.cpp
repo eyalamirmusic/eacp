@@ -3,7 +3,6 @@
 #include <NanoTest/NanoTest.h>
 
 #include <string>
-#include <vector>
 
 // What an editor does to its own string, which is the half that has nothing to
 // do with drawing.
@@ -351,7 +350,8 @@ auto tLosingFocusDropsTheSelection =
     check(harness.editor.getText() == "abc");
 };
 
-auto tPasswordMask = test("TextEditor/aPasswordFieldKeepsTheTextAndDrawsTheMask") = []
+auto tPasswordMask =
+    test("TextEditor/aPasswordFieldKeepsTheTextAndDrawsTheMask") = []
 {
     auto harness = Harness {};
 
@@ -388,8 +388,8 @@ auto tPasswordMask = test("TextEditor/aPasswordFieldKeepsTheTextAndDrawsTheMask"
     auto allTheSame = true;
 
     for (const auto& glyph: glyphs)
-        allTheSame = allTheSame && glyph.key == glyphs[0].key
-                     && glyph.face == glyphs[0].face;
+        allTheSame =
+            allTheSame && glyph.key == glyphs[0].key && glyph.face == glyphs[0].face;
 
     check(allTheSame, "and every one is the mask, not the letters typed");
 };
@@ -424,9 +424,9 @@ auto tFrameless = test("TextEditor/anEditorWithoutAFrameDrawsOnlyItsText") = []
 auto tFocusIsReported = test("TextEditor/takingAndLosingTheKeyboardIsReported") = []
 {
     auto harness = Harness {};
-    auto reported = std::vector<bool> {};
+    auto reported = Vector<int> {};
 
-    harness.editor.onFocusChange = [&](bool focused) { reported.push_back(focused); };
+    harness.editor.onFocusChange = [&](bool focused) { reported.add(focused); };
 
     harness.editor.giveAwayKeyboardFocus();
     harness.editor.grabKeyboardFocus();

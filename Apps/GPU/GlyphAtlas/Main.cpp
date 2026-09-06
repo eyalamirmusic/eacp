@@ -4,7 +4,6 @@
 
 #include <optional>
 #include <string>
-#include <vector>
 
 // Text drawn from a glyph atlas: rasterize on demand, cache, upload only what
 // changed, then draw each glyph as a textured quad.
@@ -169,7 +168,7 @@ struct AtlasTextView final : GPU::GPUView
         if (event.keyCode == Graphics::KeyCode::Delete)
         {
             // Trim a whole UTF-8 sequence, not a byte.
-            while (typed.size() > prefixLength)
+            while ((int) typed.size() > prefixLength)
             {
                 const auto last = (unsigned char) typed.back();
                 typed.pop_back();
@@ -277,8 +276,8 @@ struct AtlasTextView final : GPU::GPUView
     int proportionalFace = 0;
     float builtAtScale = 0.f;
 
-    std::vector<Line> lines;
-    std::size_t prefixLength = std::string("Type to add glyphs: ").size();
+    Vector<Line> lines;
+    int prefixLength = (int) std::string("Type to add glyphs: ").size();
 };
 
 Graphics::WindowOptions windowOptions()

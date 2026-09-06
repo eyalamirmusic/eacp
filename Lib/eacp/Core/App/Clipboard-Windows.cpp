@@ -8,7 +8,6 @@
 
 #include <cstring>
 #include <cwchar>
-#include <vector>
 
 namespace eacp::Clipboard
 {
@@ -104,8 +103,8 @@ bool copyFiles(const Vector<std::string>& paths)
     if (paths.empty())
         return false;
 
-    auto widePaths = std::vector<std::wstring> {};
-    auto pathChars = std::size_t {1};
+    auto widePaths = Vector<std::wstring> {};
+    auto pathChars = 1;
 
     for (const auto& path: paths)
     {
@@ -114,14 +113,14 @@ bool copyFiles(const Vector<std::string>& paths)
         if (wide.empty())
             continue;
 
-        pathChars += wide.size() + 1;
+        pathChars += (int) wide.size() + 1;
         widePaths.push_back(std::move(wide));
     }
 
     if (widePaths.empty())
         return false;
 
-    auto bytes = sizeof(DROPFILES) + pathChars * sizeof(wchar_t);
+    auto bytes = sizeof(DROPFILES) + (std::size_t) pathChars * sizeof(wchar_t);
     auto handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes);
     if (!handle)
         return false;

@@ -3,8 +3,6 @@
 #include "Common.h"
 #include "FilePath.h"
 
-#include <span>
-
 namespace eacp
 {
 // A read-only view of a file's bytes, placed in the address space rather than
@@ -49,7 +47,9 @@ public:
     // bytes at the very end of one, succeeds and yields an empty span: both
     // platforms reject a zero-length mapping, so that case is answered here
     // rather than turned into a failure every caller has to special-case.
-    std::span<const std::uint8_t> bytes() const;
+    // A file is the one thing a view is routinely too large to count in an
+    // int, so the size is the full size_t, as is bytes().getSize().
+    Span<const std::uint8_t> bytes() const;
     std::string_view text() const;
 
     std::size_t size() const;

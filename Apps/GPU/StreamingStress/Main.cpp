@@ -8,7 +8,6 @@
 #include <cstdio>
 #include <cstring>
 #include <numeric>
-#include <vector>
 
 // GPU::StreamingBuffers under the load it was rebuilt for: a renderer that
 // streams every draw's geometry, per draw, every frame.
@@ -193,8 +192,8 @@ Graphics::Color colorFor(int id)
 // pulsed by its own id so the picture is obviously live. The vectors are the
 // caller's and are cleared rather than rebuilt - two thousand of these happen
 // per frame, and a malloc each would be what the profile showed.
-void buildMesh(std::vector<MeshVertex>& vertices,
-               std::vector<std::uint32_t>& indices,
+void buildMesh(Vector<MeshVertex>& vertices,
+               Vector<std::uint32_t>& indices,
                const Layout& layout,
                int id,
                float time)
@@ -209,21 +208,22 @@ void buildMesh(std::vector<MeshVertex>& vertices,
 
     vertices.clear();
     indices.clear();
-    vertices.push_back({{centre.x, centre.y}, {color.r, color.g, color.b}});
+    vertices.add(MeshVertex {{centre.x, centre.y}, {color.r, color.g, color.b}});
 
     for (auto side = 0; side < sides; ++side)
     {
         const auto angle = spin + (float) side * (2.f * pi / (float) sides);
-        vertices.push_back({{centre.x + std::cos(angle) * radius,
-                             centre.y + std::sin(angle) * radius},
-                            {color.r * 0.34f, color.g * 0.34f, color.b * 0.34f}});
+        vertices.add(
+            MeshVertex {{centre.x + std::cos(angle) * radius,
+                         centre.y + std::sin(angle) * radius},
+                        {color.r * 0.34f, color.g * 0.34f, color.b * 0.34f}});
     }
 
     for (auto side = 0; side < sides; ++side)
     {
-        indices.push_back(0);
-        indices.push_back((std::uint32_t) (1 + side));
-        indices.push_back((std::uint32_t) (1 + (side + 1) % sides));
+        indices.add(0);
+        indices.add((std::uint32_t) (1 + side));
+        indices.add((std::uint32_t) (1 + (side + 1) % sides));
     }
 }
 
@@ -285,12 +285,12 @@ struct StreamingStressView final : GPUView
     // pipeline and the uniform block, which bind() puts in place for the first
     // draw and the rest inherit - re-binding a pipeline two thousand times
     // would be its own benchmark.
-    std::size_t drawMeshes(RenderPass& pass, const Layout& layout, int count)
+    int drawMeshes(RenderPass& pass, const Layout& layout, int count)
     {
         const auto stride = (std::int64_t) strideFor(count, frameCounter);
         const auto rotation = (std::int64_t) (frameCounter % (std::uint64_t) count);
 
-        auto streamed = std::size_t {0};
+        auto streamed = 0;
 
         for (auto slot = 0; slot < count; ++slot)
         {
@@ -299,8 +299,9 @@ struct StreamingStressView final : GPUView
 
             buildMesh(vertexScratch, indexScratch, layout, id, elapsed);
 
-            const auto vertexBytes = vertexScratch.size() * sizeof(MeshVertex);
-            const auto indexBytes = indexScratch.size() * sizeof(std::uint32_t);
+            const auto vertexBytes = vertexScratch.size() * (int) sizeof(MeshVertex);
+            const auto indexBytes =
+                indexScratch.size() * (int) sizeof(std::uint32_t);
 
             const auto vertexRange =
                 vertices.write(vertexScratch.data(), vertexBytes);
@@ -311,7 +312,7 @@ struct StreamingStressView final : GPUView
             else
                 pass.setVertexBuffer(vertexRange);
 
-            pass.drawIndexed(indexRange, (int) indexScratch.size());
+            pass.drawIndexed(indexRange, indexScratch.size());
 
             streamed += vertexBytes + indexBytes;
         }
@@ -341,7 +342,7 @@ struct StreamingStressView final : GPUView
         // column has something to report.
         descriptor.label = "meshes";
 
-        auto streamed = std::size_t {0};
+        auto streamed = 0;
 
         {
             auto pass = frame.beginPass(descriptor);
@@ -399,8 +400,8 @@ struct StreamingStressView final : GPUView
     StreamingBuffers vertices;
     StreamingBuffers indices;
 
-    std::vector<MeshVertex> vertexScratch;
-    std::vector<std::uint32_t> indexScratch;
+    Vector<MeshVertex> vertexScratch;
+    Vector<std::uint32_t> indexScratch;
 
     int baseCount = defaultMeshCount;
 
@@ -417,7 +418,7 @@ struct StreamingStressView final : GPUView
     bool printStats = false;
 
     int lastDraws = 0;
-    std::size_t lastStreamed = 0;
+    int lastStreamed = 0;
     Layout lastLayout {};
 
     double cpuSeconds = 0.0;
@@ -518,7 +519,7 @@ int runCheck()
     auto view = StreamingStressView {};
     view.setBounds({0.f, 0.f, (float) checkSize, (float) checkSize});
 
-    auto records = std::vector<FrameRecord> {};
+    auto records = Vector<FrameRecord> {};
     auto image = Graphics::Image {};
 
     records.reserve(checkFrames);
@@ -542,11 +543,11 @@ int runCheck()
             return 1;
         }
 
-        records.push_back(
-            {view.lastDraws,
-             (double) view.lastStreamed / 1024.0,
-             Device::shared().buffersCreated() - before,
-             view.vertices.bufferCount() + view.indices.bufferCount()});
+        records.add(
+            FrameRecord {view.lastDraws,
+                         (double) view.lastStreamed / 1024.0,
+                         Device::shared().buffersCreated() - before,
+                         view.vertices.bufferCount() + view.indices.bufferCount()});
     }
 
     std::printf(
@@ -560,9 +561,9 @@ int runCheck()
 
     std::printf("frame   draws   streamed KB   buffers created   arenas alive\n");
 
-    for (auto frame = 0; frame < (int) records.size(); ++frame)
+    for (auto frame = 0; frame < records.size(); ++frame)
     {
-        const auto& record = records[(std::size_t) frame];
+        const auto& record = records[frame];
 
         std::printf("%5d   %5d   %11.1f   %15d   %12d%s\n",
                     frame,
@@ -576,14 +577,13 @@ int runCheck()
     auto failures = 0;
 
     std::printf("\nnothing allocated on a steady frame\n");
-    for (auto frame = 0; frame < (int) records.size(); ++frame)
+    for (auto frame = 0; frame < records.size(); ++frame)
     {
-        if (!isSteadyFrame(frame) || records[(std::size_t) frame].created == 0)
+        if (!isSteadyFrame(frame) || records[frame].created == 0)
             continue;
 
-        std::printf("  frame %d created %d buffers\n",
-                    frame,
-                    records[(std::size_t) frame].created);
+        std::printf(
+            "  frame %d created %d buffers\n", frame, records[frame].created);
         ++failures;
     }
 

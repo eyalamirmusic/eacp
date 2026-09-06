@@ -2,6 +2,8 @@
 #include <eacp/SIMD/Ops.h>
 
 #include <NanoTest/NanoTest.h>
+#include <ea_data_structures/Structures/Array.h>
+#include <ea_data_structures/Structures/Span.h>
 #include <ea_data_structures/ea_data_structures.h>
 
 using namespace nano;
@@ -9,17 +11,16 @@ using namespace nano;
 namespace
 {
 using Pixels = EA::Vector<std::uint8_t>;
-using SwapFn = void (*)(const std::uint8_t*, std::uint8_t*, std::size_t);
+using SwapFn = void (*)(const std::uint8_t*, std::uint8_t*, int);
 using ResizeFn = void (*)(const std::uint8_t*, int, int, std::uint8_t*, int, int);
 
 // Pixel counts chosen to straddle every backend's lane width (SSE2/NEON = 4,
 // AVX2 = 8): zero, sub-lane, exact multiples, and odd remainders.
-constexpr std::size_t kSwapSizes[] = {
-    0, 1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 64, 1000};
+constexpr int kSwapSizes[] = {0, 1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 64, 1000};
 
-Pixels makePixels(std::size_t pixelCount)
+Pixels makePixels(int pixelCount)
 {
-    auto data = Pixels(static_cast<int>(pixelCount) * 4);
+    auto data = Pixels(pixelCount * 4);
     for (int i = 0; i < data.size(); ++i)
         data[i] = static_cast<std::uint8_t>((i * 37 + 11) & 0xFF);
     return data;
@@ -346,7 +347,7 @@ auto tArraySumOfSquaresMatchesReference =
         auto partial = 0.0;
         for (int i = 0; i < count; ++i)
             partial += (double) a[i] * (double) a[i];
-        check(eacp::simd::sumOfSquares(a.data(), (std::size_t) count) == partial);
+        check(eacp::simd::sumOfSquares(a.data(), count) == partial);
     }
 };
 
@@ -423,4 +424,37 @@ auto tOpsHelpersStopAtShortestBuffer =
     eacp::simd::add(dst, shorter);
     for (int i = 0; i < kArrayCount; ++i)
         check(dst[i] == (i < kArrayCount / 2 ? a[i] + 1.f : a[i]));
+};
+
+// Ops.h's concepts are container-agnostic: EA::Array (fixed size), EA::Span
+// (a view, mutable and const) and a Span's subviews all satisfy them, and the
+// int sizes they report drive the primitives directly.
+auto tOpsHelpersAcceptArraysAndSpans =
+    test("SIMD/opsHelpersAcceptArraysAndSpans") = []
+{
+    auto gains = EA::Array<float, 4> {1.f, 2.f, 3.f, 4.f};
+    const auto factors = EA::Array<float, 4> {2.f, 2.f, 4.f, 4.f};
+    eacp::simd::multiply(gains, factors);
+    check(gains[0] == 2.f);
+    check(gains[1] == 4.f);
+    check(gains[2] == 12.f);
+    check(gains[3] == 16.f);
+    check(eacp::simd::peakAbs(gains) == 16.f);
+
+    auto storage = ramp(17, 1);
+    const auto original = storage;
+    const auto whole = EA::Span<float> {storage};
+    check(eacp::simd::peakAbs(whole) == eacp::simd::peakAbs(storage));
+    check(eacp::simd::sumOfSquares(EA::Span<const float> {storage})
+          == eacp::simd::sumOfSquares(storage));
+
+    // A subview bounds the work: only its own prefix of the buffer changes.
+    auto head = whole.first(8);
+    eacp::simd::multiply(head, 2.f);
+    for (int i = 0; i < storage.size(); ++i)
+        check(storage[i] == (i < 8 ? original[i] * 2.f : original[i]));
+
+    eacp::simd::subtract(storage, EA::Span<const float> {head});
+    for (int i = 0; i < storage.size(); ++i)
+        check(storage[i] == (i < 8 ? 0.f : original[i]));
 };

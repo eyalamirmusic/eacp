@@ -1,10 +1,11 @@
 #include "../D2D-Windows.h"
 
+#include <eacp/Core/Utils/Containers.h>
+
 #include <dwrite_3.h>
 
 #include <mutex>
 #include <string>
-#include <vector>
 
 // The shared font collection — the Windows stand-in for CoreText's process-wide
 // registry. CTFontManagerRegisterGraphicsFont makes an embedded font visible to
@@ -125,10 +126,8 @@ ComPtr<IDWriteFontFace3> faceOf(IDWriteFactory5* factory,
 {
     auto reference = ComPtr<IDWriteFontFaceReference>();
 
-    if (FAILED(factory->CreateFontFaceReference(file.Get(),
-                                                0,
-                                                DWRITE_FONT_SIMULATIONS_NONE,
-                                                reference.GetAddressOf()))
+    if (FAILED(factory->CreateFontFaceReference(
+            file.Get(), 0, DWRITE_FONT_SIMULATIONS_NONE, reference.GetAddressOf()))
         || !reference)
         return {};
 
@@ -182,11 +181,11 @@ public:
         return current;
     }
 
-    std::optional<RegisteredFontNames> add(const void* data, std::size_t size)
+    std::optional<RegisteredFontNames> add(const void* data, int size)
     {
         auto* factory = memoryFontFactory();
 
-        if (factory == nullptr || data == nullptr || size == 0)
+        if (factory == nullptr || data == nullptr || size <= 0)
             return std::nullopt;
 
         const auto lock = std::lock_guard {mutex};
@@ -216,7 +215,7 @@ public:
         if (names.postScriptName.empty())
             return std::nullopt;
 
-        files.push_back(file);
+        files.add(file);
 
         if (!rebuild(factory))
             return std::nullopt;
@@ -271,7 +270,7 @@ private:
 
     std::mutex mutex;
     ComPtr<IDWriteInMemoryFontFileLoader> loader;
-    std::vector<ComPtr<IDWriteFontFile>> files;
+    Vector<ComPtr<IDWriteFontFile>> files;
     ComPtr<IDWriteFontCollection> current;
 };
 
@@ -287,8 +286,7 @@ ComPtr<IDWriteFontCollection> getFontCollection()
     return fontRegistry().collection();
 }
 
-std::optional<RegisteredFontNames> registerMemoryFontData(const void* data,
-                                                          std::size_t size)
+std::optional<RegisteredFontNames> registerMemoryFontData(const void* data, int size)
 {
     return fontRegistry().add(data, size);
 }

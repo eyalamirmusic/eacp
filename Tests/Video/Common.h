@@ -43,7 +43,7 @@ struct FakeDecoder final : Video::Decoder
         auto frameInfo = Video::FrameInfo {};
         frameInfo.width = width;
         frameInfo.height = height;
-        frameInfo.bytesPerRow = (std::size_t) width * 4;
+        frameInfo.bytesPerRow = width * 4;
         frameInfo.seconds = nextIndex / frameRate;
         frameInfo.duration = 1.0 / frameRate;
 

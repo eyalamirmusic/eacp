@@ -21,7 +21,7 @@ int groupsFor(int count)
 // nobody's business.
 void ensureRoom(std::optional<GPU::Buffer>& buffer, int count)
 {
-    auto bytes = sizeof(std::uint32_t) * (std::size_t) std::max(1, count);
+    auto bytes = (int) sizeof(std::uint32_t) * std::max(1, count);
 
     if (!buffer.has_value() || buffer->size() < bytes)
         buffer.emplace(

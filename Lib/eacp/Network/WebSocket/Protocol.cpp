@@ -2,7 +2,6 @@
 
 #include <eacp/Core/Utils/Base64.h>
 
-#include <array>
 #include <random>
 
 namespace eacp::WebSocket::Protocol
@@ -17,9 +16,9 @@ std::uint32_t webSocketRotateLeft(std::uint32_t value, int bits)
     return (value << bits) | (value >> (32 - bits));
 }
 
-std::uint8_t webSocketByteAt(std::string_view bytes, std::size_t index)
+std::uint8_t webSocketByteAt(std::string_view bytes, int index)
 {
-    return (std::uint8_t) bytes[index];
+    return (std::uint8_t) bytes[(std::size_t) index];
 }
 
 void webSocketAppendBigEndian(std::string& out, std::uint64_t value, int bytes)
@@ -67,16 +66,16 @@ WebSocketSha1Round
 // eacp needs and a crypto dependency would cost more than sixty lines.
 std::string webSocketSha1(std::string_view input)
 {
-    auto hash = std::array<std::uint32_t, 5> {
+    auto hash = Array<std::uint32_t, 5> {
         0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0};
 
     auto message = webSocketPadForSha1(input);
 
-    for (auto chunk = std::size_t {0}; chunk < message.size(); chunk += 64)
+    for (auto chunk = 0; chunk < (int) message.size(); chunk += 64)
     {
-        auto schedule = std::array<std::uint32_t, 80> {};
+        auto schedule = Array<std::uint32_t, 80> {};
 
-        for (auto i = std::size_t {0}; i < 16; ++i)
+        for (auto i = 0; i < 16; ++i)
         {
             auto at = chunk + i * 4;
             schedule[i] = ((std::uint32_t) webSocketByteAt(message, at) << 24)
@@ -85,7 +84,7 @@ std::string webSocketSha1(std::string_view input)
                           | (std::uint32_t) webSocketByteAt(message, at + 3);
         }
 
-        for (auto i = std::size_t {16}; i < schedule.size(); ++i)
+        for (auto i = 16; i < schedule.size(); ++i)
             schedule[i] =
                 webSocketRotateLeft(schedule[i - 3] ^ schedule[i - 8]
                                         ^ schedule[i - 14] ^ schedule[i - 16],
@@ -101,7 +100,7 @@ std::string webSocketSha1(std::string_view input)
         {
             auto round = webSocketSha1Round(step, b, c, d);
             auto next = webSocketRotateLeft(a, 5) + round.mix + e + round.constant
-                        + schedule[(std::size_t) step];
+                        + schedule[step];
 
             e = d;
             d = c;
@@ -125,12 +124,12 @@ std::string webSocketSha1(std::string_view input)
     return digest;
 }
 
-std::array<std::uint8_t, 4> webSocketRandomMask()
+Array<std::uint8_t, 4> webSocketRandomMask()
 {
     static thread_local auto engine = std::mt19937(std::random_device {}());
     auto bytes = std::uniform_int_distribution<int>(0, 255);
 
-    auto key = std::array<std::uint8_t, 4> {};
+    auto key = Array<std::uint8_t, 4> {};
 
     for (auto& byte: key)
         byte = (std::uint8_t) bytes(engine);
@@ -166,19 +165,17 @@ Opcode webSocketOpcodeFrom(std::uint8_t bits)
     throw Error("Unknown WebSocket opcode");
 }
 
-std::uint64_t webSocketReadBigEndian(std::string_view buffer,
-                                     std::size_t at,
-                                     std::size_t bytes)
+std::uint64_t webSocketReadBigEndian(std::string_view buffer, int at, int bytes)
 {
     auto value = std::uint64_t {0};
 
-    for (auto i = std::size_t {0}; i < bytes; ++i)
+    for (auto i = 0; i < bytes; ++i)
         value = (value << 8) | webSocketByteAt(buffer, at + i);
 
     return value;
 }
 
-void webSocketAppendLength(std::string& out, std::size_t size, std::uint8_t maskBit)
+void webSocketAppendLength(std::string& out, int size, std::uint8_t maskBit)
 {
     if (size < 126)
     {
@@ -211,7 +208,7 @@ std::string encode(const Frame& frame, bool masked)
 
     out.push_back((char) ((frame.fin ? 0x80 : 0x00) | (std::uint8_t) frame.opcode));
 
-    webSocketAppendLength(out, frame.payload.size(), masked ? 0x80 : 0x00);
+    webSocketAppendLength(out, (int) frame.payload.size(), masked ? 0x80 : 0x00);
 
     if (!masked)
     {
@@ -224,7 +221,7 @@ std::string encode(const Frame& frame, bool masked)
     for (auto byte: key)
         out.push_back((char) byte);
 
-    for (auto i = std::size_t {0}; i < frame.payload.size(); ++i)
+    for (auto i = 0; i < (int) frame.payload.size(); ++i)
         out.push_back((char) (webSocketByteAt(frame.payload, i) ^ key[i % 4]));
 
     return out;
@@ -256,13 +253,13 @@ std::optional<Decoded> decode(std::string_view buffer)
     }
 
     auto length = (std::uint64_t) lengthCode;
-    auto header = std::size_t {2};
+    auto header = 2;
 
     if (lengthCode == 126)
     {
         header = 4;
 
-        if (buffer.size() < header)
+        if (buffer.size() < (std::size_t) header)
             return std::nullopt;
 
         length = webSocketReadBigEndian(buffer, 2, 2);
@@ -271,7 +268,7 @@ std::optional<Decoded> decode(std::string_view buffer)
     {
         header = 10;
 
-        if (buffer.size() < header)
+        if (buffer.size() < (std::size_t) header)
             return std::nullopt;
 
         length = webSocketReadBigEndian(buffer, 2, 8);
@@ -280,30 +277,31 @@ std::optional<Decoded> decode(std::string_view buffer)
             throw Error("Frame length with its high bit set");
     }
 
-    auto key = std::array<std::uint8_t, 4> {};
+    auto key = Array<std::uint8_t, 4> {};
 
     if (masked)
     {
-        if (buffer.size() < header + 4)
+        if (buffer.size() < (std::size_t) (header + 4))
             return std::nullopt;
 
-        for (auto i = std::size_t {0}; i < key.size(); ++i)
+        for (auto i = 0; i < key.size(); ++i)
             key[i] = webSocketByteAt(buffer, header + i);
 
         header += 4;
     }
 
-    if (length > buffer.size() - header)
+    if (length > buffer.size() - (std::size_t) header)
         return std::nullopt;
 
     auto decoded = Decoded();
-    decoded.consumed = header + (std::size_t) length;
+    decoded.consumed = header + (int) length;
     decoded.frame.opcode = opcode;
     decoded.frame.fin = fin;
-    decoded.frame.payload = std::string(buffer.substr(header, (std::size_t) length));
+    decoded.frame.payload =
+        std::string(buffer.substr((std::size_t) header, (std::size_t) length));
 
     if (masked)
-        for (auto i = std::size_t {0}; i < decoded.frame.payload.size(); ++i)
+        for (auto i = 0; i < (int) decoded.frame.payload.size(); ++i)
             decoded.frame.payload[i] =
                 (char) (webSocketByteAt(decoded.frame.payload, i) ^ key[i % 4]);
 

@@ -19,7 +19,7 @@ namespace
 void bgraToImage(const std::uint8_t* data,
                  int width,
                  int height,
-                 std::size_t bytesPerRow,
+                 int bytesPerRow,
                  Graphics::Image& out)
 {
     auto* dst = out.prepareForOverwrite(width, height);
@@ -33,7 +33,7 @@ void bgraToImage(const std::uint8_t* data,
 CameraFrame::CameraFrame(int width,
                          int height,
                          PixelFormat format,
-                         std::size_t bytesPerRow,
+                         int bytesPerRow,
                          double timestampSeconds,
                          const std::uint8_t* data,
                          void* nativeBuffer)

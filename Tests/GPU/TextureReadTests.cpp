@@ -151,7 +151,7 @@ struct ReadBackView final : GPUView
 // The pixel at (x, y) of a read-back RGBA8 image, as four bytes.
 const unsigned char* pixelAt(const unsigned char* pixels, int x, int y)
 {
-    return pixels + ((std::size_t) y * targetSize + (std::size_t) x) * 4;
+    return pixels + (y * targetSize + x) * 4;
 }
 } // namespace
 
@@ -214,7 +214,7 @@ auto tReadHonoursRegionAndStride = test("TextureRead/honoursRegionAndStride") = 
     read.fill(0xab);
 
     // Two rows of two texels, starting one in and one down.
-    texture.read({1.f, 1.f, 2.f, 2.f}, read.data(), (std::size_t) stride);
+    texture.read({1.f, 1.f, 2.f, 2.f}, read.data(), stride);
 
     check(read[0] == (unsigned char) (targetSize + 1));
     check(read[4] == (unsigned char) (targetSize + 2));

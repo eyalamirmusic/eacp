@@ -768,7 +768,7 @@ auto tCompressedSuppliedChain = test("Compressed/aSuppliedChainMinifies") = []
     constexpr auto levels = 5; // 16, 8, 4, 2, 1
 
     auto bytes = Vector<std::uint8_t> {};
-    bytes.resize((int) mipChainBytes(TextureFormat::BC1RGBA, size, size, levels));
+    bytes.resize(mipChainBytes(TextureFormat::BC1RGBA, size, size, levels));
 
     constexpr std::uint16_t green565 = 0x07E0;
 

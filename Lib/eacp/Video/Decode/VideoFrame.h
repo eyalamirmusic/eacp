@@ -24,9 +24,9 @@ enum class FramePixelFormat
 };
 
 // Bytes one frame of this size and format occupies, tightly packed.
-constexpr std::size_t framePixelBytes(FramePixelFormat format, int width, int height)
+constexpr int framePixelBytes(FramePixelFormat format, int width, int height)
 {
-    auto pixels = (std::size_t) width * (std::size_t) height;
+    auto pixels = width * height;
     return format == FramePixelFormat::NV12 ? pixels + pixels / 2 : pixels * 4;
 }
 
@@ -111,7 +111,7 @@ struct FrameInfo
     // Distance between rows, which may exceed width * 4 on a padded buffer.
     // Only meaningful for the CPU path; the zero-copy path reads it from the
     // platform buffer.
-    std::size_t bytesPerRow = 0;
+    int bytesPerRow = 0;
 
     FramePixelFormat format = FramePixelFormat::BGRA8;
 
@@ -188,7 +188,7 @@ public:
     int height() const { return info().height; }
     double seconds() const { return info().seconds; }
     double duration() const { return info().duration; }
-    std::size_t bytesPerRow() const { return info().bytesPerRow; }
+    int bytesPerRow() const { return info().bytesPerRow; }
     FramePixelFormat format() const { return info().format; }
 
     YuvTransform yuvTransform() const
@@ -238,7 +238,7 @@ public:
         if (base == nullptr)
             return nullptr;
 
-        return base + bytesPerRow() * (std::size_t) height();
+        return base + bytesPerRow() * height();
     }
 
 private:

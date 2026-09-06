@@ -82,7 +82,7 @@ std::string readFile(const FilePath& path)
     return contents;
 }
 
-void writeFile(const FilePath& path, std::span<const std::uint8_t> bytes)
+void writeFile(const FilePath& path, Span<const std::uint8_t> bytes)
 {
     auto fsPath = toStdPath(path);
 
@@ -100,7 +100,7 @@ void writeFile(const FilePath& path, std::span<const std::uint8_t> bytes)
         throw std::runtime_error("cannot write '" + path.str() + "'");
 }
 
-void writeFileAtomically(const FilePath& path, std::span<const std::uint8_t> bytes)
+void writeFileAtomically(const FilePath& path, Span<const std::uint8_t> bytes)
 {
     auto fsPath = toStdPath(path);
 

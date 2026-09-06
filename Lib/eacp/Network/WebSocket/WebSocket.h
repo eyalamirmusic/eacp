@@ -42,7 +42,7 @@ struct Options
     Vector<std::string> protocols;
     Time::MS connectTimeout {15000};
     Time::MS closeTimeout {5000};
-    std::size_t maxMessageSize = 64 * 1024 * 1024;
+    int maxMessageSize = 64 * 1024 * 1024;
 };
 
 // Every callback runs on the message thread, none inside a Connection call

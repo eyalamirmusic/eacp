@@ -14,9 +14,7 @@
 namespace eacp::simd::backends
 {
 
-void swapRedBlue_sse2(const std::uint8_t* in,
-                      std::uint8_t* out,
-                      std::size_t pixelCount)
+void swapRedBlue_sse2(const std::uint8_t* in, std::uint8_t* out, int pixelCount)
 {
     kernels::swapRedBlueImpl<backend::Sse2>(in, out, pixelCount);
 }
@@ -53,9 +51,7 @@ void warpAffineInverse_sse2(const std::uint8_t* src,
 namespace eacp::simd::backends
 {
 
-void swapRedBlue_neon(const std::uint8_t* in,
-                      std::uint8_t* out,
-                      std::size_t pixelCount)
+void swapRedBlue_neon(const std::uint8_t* in, std::uint8_t* out, int pixelCount)
 {
     kernels::swapRedBlueImpl<backend::Neon>(in, out, pixelCount);
 }

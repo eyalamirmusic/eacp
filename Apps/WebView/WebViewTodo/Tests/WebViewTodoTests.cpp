@@ -2,8 +2,6 @@
 
 #include <eacp/WebView/Test/TestApp.h>
 
-#include <vector>
-
 using namespace eacp::WebView::Test;
 
 using nano::check;
@@ -148,9 +146,9 @@ auto tQueryAllReturnsEveryItem =
     auto items = driver().queryAll(itemSelector);
     check(items.size() == 3);
 
-    auto texts = std::vector<std::string> {};
+    auto texts = EA::Vector<std::string> {};
     for (auto& item: items)
-        texts.push_back(item.find(textSelector).text());
+        texts.add(item.find(textSelector).text());
 
     check(texts[0] == "Try editing me (double-click)");
     check(texts[1] == "Toggle a checkbox");
@@ -255,7 +253,7 @@ namespace
 struct RenderedTodos
 {
     int count = 0;
-    std::vector<std::string> texts;
+    EA::Vector<std::string> texts;
 
     MIRO_REFLECT(count, texts)
 };

@@ -240,7 +240,7 @@ void AppleEncoder::appendImage(const Graphics::Image& image, double ptsSeconds)
     CVPixelBufferLockBaseAddress(buffer, 0);
 
     auto* dst = static_cast<std::uint8_t*>(CVPixelBufferGetBaseAddress(buffer));
-    auto dstStride = CVPixelBufferGetBytesPerRow(buffer);
+    auto dstStride = (int) CVPixelBufferGetBytesPerRow(buffer);
     compositeOverBlackBGRA(image, dst, width, height, dstStride);
 
     CVPixelBufferUnlockBaseAddress(buffer, 0);

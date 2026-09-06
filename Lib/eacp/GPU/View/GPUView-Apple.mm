@@ -433,8 +433,8 @@ Graphics::Image GPUView::renderNativeContent(float scale)
         // BGRA8 premultiplied (how Core Animation composites the Metal layer) ->
         // straight-alpha RGBA (what Image holds).
         auto* src = (const std::uint8_t*) readback.contents;
-        auto count = (std::size_t) pixelWidth * pixelHeight;
-        for (std::size_t i = 0; i < count; ++i)
+        auto count = (int) (pixelWidth * pixelHeight);
+        for (auto i = 0; i < count; ++i)
         {
             auto b = src[i * 4 + 0];
             auto g = src[i * 4 + 1];

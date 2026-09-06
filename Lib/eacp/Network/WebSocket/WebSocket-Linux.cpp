@@ -21,7 +21,6 @@
 #endif
 
 #if EACP_WEBSOCKET_HAS_CURL_WS
-#include <array>
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
@@ -72,8 +71,8 @@ bool webSocketStartsWith(std::string_view line, std::string_view lowercaseName)
     if (line.size() < lowercaseName.size())
         return false;
 
-    for (auto i = std::size_t {0}; i < lowercaseName.size(); ++i)
-        if (webSocketLower(line[i]) != lowercaseName[i])
+    for (auto i = 0; i < (int) lowercaseName.size(); ++i)
+        if (webSocketLower(line[(std::size_t) i]) != lowercaseName[(std::size_t) i])
             return false;
 
     return true;
@@ -203,7 +202,7 @@ struct WebSocketOutbound
 {
     std::string payload;
     unsigned int flags = CURLWS_TEXT;
-    std::size_t offset = 0;
+    int offset = 0;
 };
 
 // One worker thread owns the easy handle for the connection's whole life: a
@@ -451,6 +450,8 @@ private:
     {
         auto& item = *pending;
 
+        auto total = (int) item.payload.size();
+
         for (;;)
         {
             auto sent = std::size_t {0};
@@ -460,7 +461,7 @@ private:
 
             auto result = curl_ws_send(handle,
                                        item.payload.data() + item.offset,
-                                       item.payload.size() - item.offset,
+                                       (std::size_t) (total - item.offset),
                                        &sent,
                                        0,
                                        flags);
@@ -468,9 +469,9 @@ private:
             if (result != CURLE_OK)
                 return result;
 
-            item.offset += sent;
+            item.offset += (int) sent;
 
-            if (item.offset >= item.payload.size())
+            if (item.offset >= total)
                 return CURLE_OK;
         }
     }
@@ -563,9 +564,12 @@ private:
         }
 
         auto left =
-            meta.bytesleft > 0 ? (std::size_t) meta.bytesleft : std::size_t {0};
+            meta.bytesleft > 0 ? (std::int64_t) meta.bytesleft : std::int64_t {0};
 
-        if (messagePayload.size() + chunk.size() + left > maxMessageSize)
+        auto assembled = (std::int64_t) messagePayload.size()
+                         + (std::int64_t) chunk.size() + left;
+
+        if (assembled > maxMessageSize)
             return rejectOversized();
 
         messagePayload.append(chunk);
@@ -606,7 +610,8 @@ private:
         }
 
         auto deadline = Time::Deadline {Time::MS {controlSendTimeoutMs}};
-        auto offset = std::size_t {0};
+        auto total = (int) payload.size();
+        auto offset = 0;
 
         while (!stopRequested.load())
         {
@@ -616,16 +621,16 @@ private:
 
             auto result = curl_ws_send(handle,
                                        payload.data() + offset,
-                                       payload.size() - offset,
+                                       (std::size_t) (total - offset),
                                        &sent,
                                        0,
                                        frameFlags);
 
             if (result == CURLE_OK)
             {
-                offset += sent;
+                offset += (int) sent;
 
-                if (offset >= payload.size())
+                if (offset >= total)
                     return;
 
                 continue;
@@ -656,8 +661,8 @@ private:
         auto socket = CURL_SOCKET_BAD;
         curl_easy_getinfo(handle, CURLINFO_ACTIVESOCKET, &socket);
 
-        auto fds = std::array<pollfd, 2> {};
-        auto count = nfds_t {0};
+        auto fds = Array<pollfd, 2> {};
+        auto count = 0;
 
         if (socket != CURL_SOCKET_BAD)
         {
@@ -679,7 +684,7 @@ private:
             return;
         }
 
-        ::poll(fds.data(), count, timeoutMs);
+        ::poll(fds.data(), (nfds_t) count, timeoutMs);
         wake.drain();
     }
 
@@ -720,7 +725,7 @@ private:
 
     std::shared_ptr<Sink> sink;
     std::string url;
-    std::size_t maxMessageSize = 0;
+    int maxMessageSize = 0;
 
     CURL* handle = nullptr;
     CURLM* multi = nullptr;
