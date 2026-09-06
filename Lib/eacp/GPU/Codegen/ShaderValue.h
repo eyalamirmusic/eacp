@@ -577,8 +577,9 @@ T readBufferVector(
 // Storage buffers of float elements, declared by a compute kernel. Like
 // Texture2D they are slot-identified rather than expression nodes: an input's
 // one operation is the indexed read, an output's is the store recorded via
-// ShaderBuilder::write. Bind the matching GPU::Buffer at the same slot
-// (ComputePass::setInputBuffer / setOutputBuffer).
+// ShaderBuilder::write. Bind the matching GPU::Buffer, or a BufferRange over
+// part of one, at the same slot (ComputePass::setInputBuffer /
+// setOutputBuffer). Index zero is the buffer's first element, or the range's.
 struct InputBuffer
 {
     Float operator[](const UInt& index) const
@@ -639,6 +640,7 @@ struct InputBuffer
     // in halves, readHalf2 in the words that hold two of them. Declared here
     // and defined further down, since they are spelled in terms of asUInt and
     // unpackHalf2, neither of which exists yet at this point in the header.
+    // Both fetch a whole word, so the buffer needs a whole number of them.
     Float readHalf(const UInt& index) const;
     Float readHalf(unsigned index) const;
     Float2 readHalf2(const UInt& index) const;

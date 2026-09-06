@@ -17,6 +17,8 @@ public:
     Pimpl(const Pimpl& other) = delete;
     Pimpl(Pimpl&& other) noexcept = default;
 
+    Pimpl& operator=(Pimpl&&) noexcept = default;
+
     T* get() { return ptr.get(); }
     const T* get() const { return ptr.get(); }
 
