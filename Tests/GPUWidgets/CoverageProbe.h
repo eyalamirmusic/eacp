@@ -60,7 +60,13 @@ inline Vector<float>
 {
     auto values = Vector<float> {};
 
-    if (!GPU::Device::shared().isValid() || width <= 0 || height <= 0)
+    // The texture is checked as well as the device: a backend without one
+    // (Linux until the render half lands) hands back a Texture that reports
+    // itself invalid, and reading a mask out of it would produce a picture of
+    // zeroes that a comparison takes for a wrong answer rather than for a
+    // missing one. Empty is what every caller here already tests for.
+    if (!GPU::Device::shared().isValid() || !texture.isValid() || width <= 0
+        || height <= 0)
         return values;
 
     auto bytes = sizeof(float) * (std::size_t) (width * height);
@@ -120,6 +126,12 @@ inline Vector<float> rasterize(PathRasterizer& rasterizer,
         auto pass = commands.beginCompute();
         rasterizer.dispatch(pass);
     }
+
+    // The dispatch is what builds the mask texture, so this is the first moment
+    // it can be asked about - and where a backend has no textures it is invalid
+    // and nothing was written. Same reason as readRegion above.
+    if (!rasterizer.getCoverage().isValid())
+        return coverage;
 
     {
         auto& reader = maskReader();

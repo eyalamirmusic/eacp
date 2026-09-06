@@ -29,19 +29,21 @@ if (NOT EACP_HAS_GPU)
     return ()
 endif ()
 
+# Everything here runs on every backend, which on Linux means the compute and
+# buffer half of the Vulkan backend and nothing else - no Texture, no
+# RenderPipeline, no Frame. A file joins this list when every case in it either
+# needs none of those or self-skips on the object it needs; the rest are in the
+# APPLE OR WIN32 list below, each with the reason it is there.
 set(gpu_test_sources
         AtomicTests.cpp
         BufferRangeTests.cpp
-        GPUSmokeTests.cpp
+        DevicePresenceTests.cpp
         IndirectDispatchTests.cpp
-        MultiDeviceTests.cpp
         PackedHalfTests.cpp
-        ShaderCompileTests.cpp
         SharedMemoryTests.cpp
         StorePlacementTests.cpp
         StreamingBufferTests.cpp
-        TestMain.cpp
-        TextureUpdateTests.cpp)
+        TestMain.cpp)
 
 # The zero-copy CVPixelBuffer wrap test is Metal-only Objective-C++.
 if (APPLE)
@@ -54,7 +56,29 @@ endif ()
 # observable, so the only way to check one is to draw through it and read the
 # pixels back.
 if (APPLE OR WIN32)
+    # Four of these are here because of the Linux render half rather than
+    # because of a snapshot, and each names what has to arrive before it moves
+    # back to the list above:
+    #
+    #   GPUSmokeTests      builds a RenderPipeline and a Texture and asserts
+    #                      both are valid - needs Texture and RenderPipeline.
+    #   ShaderCompileTests every case compiles a generated source into a
+    #                      RenderPipeline - needs RenderPipeline.
+    #   TextureUpdateTests re-uploads into a Texture and asserts it stays valid
+    #                      and sized - needs Texture.
+    #   MultiDeviceTests   asserts two Devices have two queues. Vulkan hands
+    #                      queues out of a family with a driver-decided count,
+    #                      and lavapipe offers one, so two Devices there share
+    #                      the VkQueue and the pointers are equal. Everything
+    #                      else the file pins - independent pools, a Device on a
+    #                      worker thread, the shared Device staying with the
+    #                      main one - already holds on Vulkan; only that one
+    #                      assertion cannot, and only on a single-queue device.
     list(APPEND gpu_test_sources
+            GPUSmokeTests.cpp
+            ShaderCompileTests.cpp
+            TextureUpdateTests.cpp
+            MultiDeviceTests.cpp
             GPUSnapshotTests.cpp
             ScissorTests.cpp
             BaseVertexTests.cpp

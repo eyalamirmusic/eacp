@@ -10,11 +10,6 @@ namespace
 {
 using Graphics::Point;
 
-bool contains(const std::string& haystack, const std::string& needle)
-{
-    return haystack.find(needle) != std::string::npos;
-}
-
 float triangleArea(const Point& a, const Point& b, const Point& c)
 {
     return std::abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) * 0.5f;
@@ -235,28 +230,6 @@ auto tVertexColorLayout = test("GPUWidgets/vertexColorShaderLayout") = []
     check(layout.stride == (int) sizeof(GradientVertex));
 };
 
-// The vertex-colour shader's generated source compiles through the platform shader
-// compiler. Self-skips without a GPU device.
-auto tVertexColorCompiles = test("GPUWidgets/vertexColorShaderCompiles") = []
-{
-    auto& device = GPU::Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto shader = VertexColorShader {};
-
-    auto library = device.makeShaderLibrary(shader.source());
-    check(library.isValid());
-
-    auto descriptor = GPU::RenderPipelineDescriptor {};
-    descriptor.library = &library;
-    descriptor.vertexLayout = shader.vertexLayout();
-
-    auto pipeline = device.makeRenderPipeline(descriptor);
-    check(pipeline.isValid());
-};
-
 // The fill shader's vertex layout is a single float2 position derived from the
 // FillVertex struct, so it cannot drift from the upload type. Device-free.
 auto tFillLayout = test("GPUWidgets/fillShaderLayout") = []
@@ -271,47 +244,10 @@ auto tFillLayout = test("GPUWidgets/fillShaderLayout") = []
     check(layout.stride == (int) (sizeof(float) * 2));
 };
 
-// The generated source carries the viewport + colour uniform block, and the
-// colour is read directly by the fragment stage - no varying needed now that
-// the uniform block binds to both stages. Backend-agnostic substring checks.
-// Pure string generation.
-auto tFillCodegen = test("GPUWidgets/fillShaderCodegen") = []
-{
-    auto shader = PathFillShader {};
-    const auto& source = shader.source().source;
-
-    check(contains(source, "struct Uniforms"));
-    check(contains(source, "float2 u0")); // viewport
-    check(contains(source, "float4 u1")); // colour
-    check(contains(source, "return uniforms.u1;")); // read per-fragment
-    check(!contains(source, "v0")); // no varying in between
-
-    check(shader.source().vertexEntry == "vertexMain");
-    check(shader.source().fragmentEntry == "fragmentMain");
-};
-
-// The real generated source compiles through the platform shader compiler and a
-// pipeline builds from its layout. Self-skips on hosts without a GPU device
-// (matches the GPU module's codegenCompiles test).
-auto tFillCompiles = test("GPUWidgets/fillShaderCompiles") = []
-{
-    auto& device = GPU::Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto shader = PathFillShader {};
-
-    auto library = device.makeShaderLibrary(shader.source());
-    check(library.isValid());
-
-    auto descriptor = GPU::RenderPipelineDescriptor {};
-    descriptor.library = &library;
-    descriptor.vertexLayout = shader.vertexLayout();
-
-    auto pipeline = device.makeRenderPipeline(descriptor);
-    check(pipeline.isValid());
-};
+// The two shader cases that were here - the generated source read as a string,
+// and the render pipelines built from it - are in ShaderPipelineTests.cpp, which
+// is built only where a render pipeline can be. What is left in this file is
+// portable and runs on every backend.
 
 // The rect a turned rect is inside, which is what a scissor, a texture size or
 // a damaged area is asked for -- a rotated rectangle not being one.

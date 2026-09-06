@@ -45,23 +45,84 @@ unchanged at 1494).
 - HiDPI seam for stage 4: `Graphics::notifyBackingScaleChanged(View&)` in
   `View/View-Linux.h`; nothing calls it yet.
 
+**Stage 2 — landed 2026-09-05** (verified: Linux with `EACP_LINUX_GRAPHICS=ON`
+757 tests under GCC, Clang and `EACP_CI_BUILD` unity+PCH, and zero validation
+messages under `EACP_VK_VALIDATION=1`; option off 565; macOS 1586, which is the
+tree's 1581 plus the device-presence case and four codegen cases).
+
+- The Vulkan compute half. `GPU/Vulkan/VulkanContext.h` + `VulkanTypes.h` +
+  `VulkanContext-Linux.cpp` split process-wide `VulkanShared` (loader,
+  instance, physical-device selection against a named 1.3 feature floor,
+  `VkDevice`, queue, VMA allocator, compute descriptor-set and pipeline layouts
+  built from `Codegen/ShaderBindings.h`) from per-`Device` `VulkanContext`
+  (command-pool ring, timeline semaphore, `openRecording`, upload arena,
+  constant ring, staging/readback pools, per-recording descriptor pools,
+  deferred release stamped at submit). Real: `Device`, `Buffer`,
+  `ShaderLibrary`, `ComputePipeline`, `ComputePass`, `CommandBuffer`,
+  `GpuTimestamps`. Honest placeholders reporting invalid: `Texture`,
+  `RenderPipeline`, `RenderPass`, `Frame`, `GPUView`.
+- Dependencies: `CMake/FindVulkanBackend.cmake` CPM-fetches Vulkan-Headers and
+  volk (`vulkan-sdk-1.4.313.0`, matching tags) and VMA `v3.4.0` into one
+  `eacp-vulkan` target with `VK_NO_PROTOTYPES`; nothing links `libvulkan`
+  (`${CMAKE_DL_LIBS}` only), and macOS/Windows fetch none of it.
+- Gate: `EACP_HAS_GPU` is now on for `LINUX AND EACP_LINUX_GRAPHICS`, so
+  `eacp-gpu`, `eacp-gpuwidgets`, `eacp-sprites`, `Apps/GPU` and their tests
+  build there. `EACP_HAS_TEXT` still gates the `Apps/GPU` examples that paint a
+  2D overlay (Blending, Instancing, StencilShadows, CubeMap, DepthSampling,
+  PathQuality, PathStroke).
+- `EACP_VK_SOFTWARE`, `EACP_REQUIRE_GPU` and `EACP_VK_VALIDATION`; a
+  `Linux Clang Graphics` CI lane on lavapipe with `vulkaninfo --summary` before
+  the build; `Tests/GPU/DevicePresenceTests.cpp` is the non-skipping "a device
+  was obtained" assertion.
+- Moved out of the portable test lists, each awaiting the render half:
+  `GPUSmokeTests` and `TextureUpdateTests` (need `Texture`),
+  `ShaderCompileTests` (needs `RenderPipeline`), `MultiDeviceTests` (asserts two
+  Devices have two queues; lavapipe has one), and three cases carved out of
+  `Tests/GPUWidgets/PathTests.cpp` into `ShaderPipelineTests.cpp`. Everything
+  else in `Tests/GPUWidgets` stayed by self-skipping on the mask `Texture`
+  instead of on the device.
+- A `Graphics/Keyboard-Linux.cpp` stub, without which `Apps/GPU/Maze` did not
+  link.
+- The stage-1 emitter follow-ups, in all three dialects: a fragment read of a
+  vertex input with no varying is promoted to an implicit varying appended
+  after the declared ones (both compile-check exclusions are gone); integer
+  varyings are emitted `flat`/`nointerpolation`/`[[flat]]`, which glslang
+  requires; a `Bool` varying is refused by `static_assert`, GLSL having no
+  boolean stage I/O; GLSL `%` on signed integers takes the truncating form MSL
+  and HLSL use. `UniformLayout.h` gained `uniformBlockSize`/`std140BlockSize`,
+  and `std140BlockAlignment` is the one constant the Vulkan constant ring
+  rounds with. The §3.2 pitfall list was audited: every entry is handled and
+  pinned by a codegen test. `GPUCodegenTests` 66 → 70.
+- `Primitives/Path-Linux.cpp`: `Graphics::Path` on Linux as recorded geometry
+  (`PathGeometry` in `Path-Linux.h`: move/line/quad/cubic/close, rects,
+  rounded rects and ellipses decomposed into cubics, the radius clamped by
+  `clampedCornerRadius`). `RoundedRectTests` now runs everywhere and
+  `PathTests-Linux` pins the record; `GraphicsTests` is 118 cases on Linux.
+
 Follow-ups found on the way, not yet done:
 
-- Emitter gap in all three dialects: a fragment stage reading a vertex input
-  with no varying between them emits a name the stage does not have
-  (`GPU/codegenOperatorSugar`, first graph of
-  `GPU/codegenHlslCbufferPaddingFloat2` are excluded from the compile check).
-  Fix by auto-promoting such reads to a varying.
-- std140 rounds a block to 16 bytes where the CPU pads to the widest member;
-  the Vulkan `UNIFORM_BUFFER_DYNAMIC` range must be sized with that in mind.
-- Written textures are declared `writeonly image2D` with no format qualifier,
-  so the Vulkan device must enable `shaderStorageImageWriteWithoutFormat`.
 - The `maxTextureSlots` move out of `D3D12Types.h` is unverified on a Windows
   compiler until CI runs.
-- A geometry-only `Primitives/Path-Linux.cpp` (~80 lines) would bring
-  `RoundedRectTests` and the `Apps/Plugins` examples to Linux.
-- Stage 2 flips `EACP_HAS_GPU` to include Linux; the Docker image and the CI
-  lane then need `mesa-vulkan-drivers` (lavapipe) and `EACP_HEADLESS=1`.
+- `GPUWidgets/fillShaderCodegen` checks the generated source against the MSL and
+  HLSL spellings (`struct Uniforms`, `return uniforms.u1;`). It is now built
+  only on Apple/Windows; a GLSL arm belongs beside the emitter's own tests.
+- Stage 3 must decide a compute texture binding's descriptor type per module -
+  the binding map gives a slot one number whether it is sampled or written, and
+  Vulkan gives a binding one type. Until then `ComputePipeline` refuses a kernel
+  that declares a texture, which is why `Apps/GPU/PathBench` reports submission
+  time rather than rasterization time on Linux.
+- The render descriptor-set layout, the four `VkSampler`s and
+  `Device::nativeSampler` are all still unwritten: a GLSL texture binding is a
+  combined image sampler, so the sampler travels with the image in the
+  descriptor write rather than being bound on its own.
+- `GpuTimestamps-Linux.cpp` is real but unexercised: `FrameTimer::beginRecording`
+  and `endFrame` are driven by `Frame`, which is a placeholder.
+- The 53 `GPUWidgetsTests` cases on Linux are vacuous for rasterization: the
+  coverage comparisons self-skip on the mask `Texture`, which is a placeholder,
+  and `DevicePresenceTests` proves a device, not a texture. Stage 3 should add
+  the mirror assertion under `EACP_REQUIRE_GPU=1` - that
+  `PathRasterizer::getCoverage().isValid()` - so a `Texture` path that stays
+  invalid cannot report green.
 
 ## 1. Headline findings
 
@@ -221,7 +282,7 @@ swapchain **is** the `wl_surface`'s buffer queue, so there is no attach step.
 | `Graphics/Keyboard-Linux.cpp` (new) | table, ~250 lines | xkb keysym ↔ `KeyCode` (`Keyboard.h:12-129`). |
 | `Helpers/DisplayLink-Linux.cpp` (new) | real, ~120 lines | Thread + `clock_nanosleep` at the output's refresh rate posting via `callAsync` — the `DisplayLink-Windows.cpp:99-101` fallback. Upgrade to `wl_surface.frame` later (per-surface, so needs a `DisplayLink(View&, cb)` overload or `GPUView` driving it directly). |
 | `Window/Display-Linux.cpp`, `Image-Linux.cpp`, `Menu-Linux.cpp`, `TrayIcon-Linux.cpp`, `SystemAppearance-Linux.cpp` (new) | stubs | iOS is the precedent for honest no-ops (`Menu-iOS.mm`, `TrayIcon-iOS.mm`); `Display.h:37-39` documents a 1280×800@1 fallback; `Image.h:42-46` documents codec failure. Every `Native` must still be a complete type (`Pimpl` is `make_shared`). |
-| `Widgets/TextInput.cpp`, `Layers/*`, `GraphicsContextImpl`, `Font`, `Path`, `TextMetrics`, `GraphicUtils`, `EmbeddedView`, `ImageConversion` | **removed from the Linux source list** | They pull in the 2D text stack. `TextInput` is client-drawn on every platform anyway; IME is the real gap. |
+| `Widgets/TextInput.cpp`, `Layers/*`, `GraphicsContextImpl`, `Font`, `TextMetrics`, `GraphicUtils`, `EmbeddedView`, `ImageConversion` | **removed from the Linux source list** | They pull in the 2D text stack. `TextInput` is client-drawn on every platform anyway; IME is the real gap. `Path` has since gained a geometry-only Linux half (`Path-Linux.cpp`, stage 2). |
 | `Core/Threads/EventLoop-Linux.cpp` | Core change, ~20 lines + an API | `poll(fds, n, timeout)` over `{wakerFd, displayFd}` with Wayland's prepare-read protocol around it. Propose `Threads::addLoopSource(int fd, short events, Callback)` so `eacp-core` never links libwayland. `Timer-Linux.cpp` (one thread per timer) can migrate to `timerfd` later. |
 | `Core/App/App-Linux.cpp:30-33` | fix | `openExternalURL` is `assert(false)`; make it `fork/exec xdg-open`. |
 

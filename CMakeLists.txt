@@ -36,12 +36,14 @@ option(EACP_BUILD_GRAPHICS "Build the Graphics, SVG and WebView modules" ON)
 option(EACP_BUILD_WEBVIEW "Build the WebView module" ON)
 option(EACP_CI_BUILD "Mirror the exact flag set used by CI builds" OFF)
 
-# Partly implemented. What it turns on today is a headless eacp-graphics: views,
-# windows with no surface, and the portable model around them. The Vulkan and
-# Wayland halves arrive over the later stages of the plan, so EACP_HAS_GPU and
-# EACP_HAS_TEXT below stay off on Linux whatever this says.
+# Partly implemented. What it turns on today is a headless eacp-graphics -
+# views, windows with no surface, and the portable model around them - and the
+# compute half of the Vulkan backend under it: buffers, kernels, command
+# buffers and timestamps, with the render half still stubbed. The Wayland and
+# FreeType halves arrive over the later stages of the plan, so EACP_HAS_TEXT
+# below stays off on Linux whatever this says.
 option(EACP_LINUX_GRAPHICS
-        "Build the Linux graphics backend (headless Graphics so far)"
+        "Build the Linux graphics backend (headless Graphics, Vulkan compute)"
         OFF)
 
 if (EACP_CI_BUILD)
@@ -79,7 +81,9 @@ endif ()
 # The three drawing variables are nested rather than one predicate because Linux
 # reaches them one at a time: headless Graphics first, then Vulkan, then
 # FreeType/HarfBuzz. Apple and Windows have all three, so their target sets are
-# whatever EACP_HAS_DRAW was already.
+# whatever EACP_HAS_DRAW was already. Linux is now at the second: the Vulkan
+# backend's compute and buffer half is there, so EACP_HAS_GPU follows
+# EACP_LINUX_GRAPHICS, and EACP_HAS_TEXT is the one still waiting.
 #
 # Everything device-free stays out of them: the shader codegen library and the
 # WebView page bridge build on every platform.
@@ -91,7 +95,7 @@ endif ()
 
 set(EACP_HAS_GPU OFF)
 
-if (EACP_HAS_DRAW AND (APPLE OR WIN32))
+if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR (LINUX AND EACP_LINUX_GRAPHICS)))
     set(EACP_HAS_GPU ON)
 endif ()
 

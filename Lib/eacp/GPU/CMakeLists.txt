@@ -102,6 +102,40 @@ elseif (WIN32)
             d3dcompiler
             windowsapp
             runtimeobject)
+else ()
+    # The Vulkan backend. Compute, buffers, command buffers and timestamps are
+    # real; Texture, RenderPipeline, RenderPass, Frame and GPUView are honest
+    # placeholders that report themselves invalid until the render half lands
+    # (stage 3 of plan.md). Each of those files says so at the top.
+    if (NOT TARGET eacp-spirv)
+        message(FATAL_ERROR
+                "EACP_LINUX_GRAPHICS needs the SPIR-V compiler: the Vulkan "
+                "backend has no shader compiler in the OS and builds every "
+                "pipeline from GLSL through glslang. Configure with "
+                "-DEACP_BUILD_SPIRV=ON.")
+    endif ()
+
+    find_package(VulkanBackend REQUIRED)
+
+    target_sources(eacp-gpu PRIVATE
+            Buffer/Buffer-Linux.cpp
+            CommandBuffer/CommandBuffer-Linux.cpp
+            Device/Device-Linux.cpp
+            Frame/ComputePass-Linux.cpp
+            Frame/Frame-Linux.cpp
+            Frame/RenderPass-Linux.cpp
+            Pipeline/ComputePipeline-Linux.cpp
+            Pipeline/RenderPipeline-Linux.cpp
+            Shader/ShaderLibrary-Linux.cpp
+            Texture/Texture-Linux.cpp
+            Timing/GpuTimestamps-Linux.cpp
+            View/GPUView-Linux.cpp
+            Vulkan/VulkanContext-Linux.cpp)
+
+    # Both PRIVATE. Vulkan stops at this library - nothing above eacp-gpu names
+    # a VkDevice - and glslang reaches only the backend, so an app that links
+    # eacp-gpu gets the shader compiler's code and none of its headers.
+    target_link_libraries(eacp-gpu PRIVATE eacp-vulkan eacp-spirv)
 endif ()
 
 set_default_target_setting(eacp-gpu)

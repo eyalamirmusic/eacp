@@ -17,6 +17,10 @@
 # the Win32 calls it supports cannot be tested from a Mac, but they are a thin
 # shell around this, and the ordering agreement between the two walks is where
 # the real risk is.
+#
+# The rounded-rect radius contract (RoundedRectTests): a corner bigger than the
+# rect it rounds is out of contract for every path builder, so the radius is
+# fitted before it leaves eacp.
 set(graphics_test_sources
         ColorTests.cpp
         CursorTests.cpp
@@ -26,23 +30,36 @@ set(graphics_test_sources
         MenuCommandsTests.cpp
         MenuTests.cpp
         RectTests.cpp
+        RoundedRectTests.cpp
         ScrollWheelTests.cpp
         TestMain.cpp
         ViewVisibilityTests.cpp
         ViewWindowTests.cpp
         WindowTests.cpp)
 
-# The three that need something the Linux build deliberately does not have.
+# The two that need something the Linux build deliberately does not have.
 # ImageTests round-trips PNG and JPEG through the platform codec, which is
-# ImageIO or WIC and has no Linux counterpart. RenderToImageTests reads back
-# pixels a 2D Context painted, and RoundedRectTests builds a Path. Listed
-# rather than left to self-skip: a suite that skips every case reports as a
-# pass, which is exactly the silent green the plan warns about.
+# ImageIO or WIC and has no Linux counterpart; RenderToImageTests reads back
+# pixels a 2D Context painted. Listed rather than left to self-skip: a suite
+# that skips every case reports as a pass, which is exactly the silent green
+# the plan warns about.
+#
+# RoundedRectTests used to be here too. It only needs clampedCornerRadius and a
+# Path to build the shape into, and Path-Linux.cpp gives it both, so it runs
+# everywhere now.
 if (APPLE OR WIN32)
     list(APPEND graphics_test_sources
             ImageTests.cpp
-            RenderToImageTests.cpp
-            RoundedRectTests.cpp)
+            RenderToImageTests.cpp)
+endif ()
+
+# What a Path holds on Linux, which is the only place it is a record of
+# commands rather than a CGPath or an ID2D1PathGeometry. The portable half is
+# RoundedRectTests above; this pins the points the builders actually emit,
+# because getHandle() is a promise to a tessellator that has not been written
+# yet and nothing else would notice a curve going the wrong way round.
+if (LINUX)
+    list(APPEND graphics_test_sources PathTests-Linux.cpp)
 endif ()
 
 # The macOS-only halves of the cursor, menu and scroll-wheel suites. Each

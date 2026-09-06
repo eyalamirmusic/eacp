@@ -12,9 +12,10 @@ target_sources(eacp-graphics PRIVATE
 
 # Portable C++ that nonetheless stands on the 2D drawing stack: the retained
 # shape/text layers, the views that wrap one, and the text field drawn out of
-# them. Linux has no Context, no Font and no Path yet (plan stage 6 decides
-# whether it ever gets a 2D backend or draws this tier through the GPU coverage
-# rasterizer instead), so these are left out there rather than stubbed.
+# them. Linux has no Context and no Font yet - it has a Path, but only as
+# geometry (plan stage 6 decides whether it ever gets a 2D backend or draws
+# this tier through the GPU coverage rasterizer instead), so these are left out
+# there rather than stubbed.
 if (APPLE OR WIN32)
     target_sources(eacp-graphics PRIVATE
             Layers/LayerViews.cpp
@@ -117,16 +118,22 @@ elseif (WIN32)
 elseif (UNIX)
     # Headless: a view tree, windows with no surface, and honest stubs for
     # everything that needs a compositor, a codec or a desktop environment.
-    # There is no 2D context here, so nothing that draws is in the list —
-    # Font, Path, TextMetrics, GraphicUtils, ImageConversion, EmbeddedView and
+    # There is no 2D context here, so nothing that rasterizes is in the list —
+    # Font, TextMetrics, GraphicUtils, ImageConversion, EmbeddedView and
     # GraphicsContextImpl have no Linux half and no caller that needs one.
+    #
+    # Path is the exception, because a path is geometry rather than pixels:
+    # Path-Linux.cpp records the commands and hands the record out through
+    # getHandle(), which is all a tessellator or a later 2D backend needs.
     target_sources(eacp-graphics PRIVATE
+            Graphics/Keyboard-Linux.cpp
             Helpers/DisplayLink-Linux.cpp
             Helpers/SystemAppearance-Linux.cpp
             HotKey/GlobalHotKey-Linux.cpp
             Image/Image-Linux.cpp
             Layers/Layer-Linux.cpp
             Menu/Menu-Linux.cpp
+            Primitives/Path-Linux.cpp
             Tray/TrayIcon-Linux.cpp
             View/View-Linux.cpp
             Window/Display-Linux.cpp

@@ -73,21 +73,26 @@ shipping one.
 | `Network` — HTTP client and server, WebSocket client, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ |
 | `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ |
 | `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | 🚧 |
-| `GPU` / `GPUWidgets` — Metal, D3D12 and the shader EDSL | ✅ | ✅ | ✅ | — |
+| `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan and the shader EDSL | ✅ | ✅ | ✅ | 🚧 |
 | `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | — |
 | `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | — |
 | `WebView` — WKWebView and WebView2 | ✅ | ✅ | ✅ | — |
 | `Camera` / `CameraView` — capture devices and frames | ✅ | ✅ | ✅ | — |
 | `Video` / `VideoView` — screen capture, encode, playback | ✅ | ✅ | — | — |
 
-🚧 on Linux is `-DEACP_LINUX_GRAPHICS=ON`, which builds a headless
+🚧 on Linux is `-DEACP_LINUX_GRAPHICS=ON`, which builds two things. A headless
 `eacp-graphics`: the view tree, hit-testing and input routing, windows that hold
 a title, a frame and a content view but put nothing on a screen, and honest
-stubs for the display, image codecs, menus and the tray. There is no 2D drawing
-context, no `Font` and no `Path` there yet, so `Context`, `TextInput` and the
-retained layer classes are simply absent rather than stubbed. It is off by
-default; what it is for is the staged rollout, and it links and passes its
-tests on a machine with no display server at all.
+stubs for the display, image codecs, menus, keyboard state and the tray. There
+is no 2D drawing context and no `Font` there yet — `Path` exists, but only as
+recorded geometry — so `Context`, `TextInput` and the retained layer classes
+are simply absent rather than stubbed. And the compute half of a Vulkan backend
+under it: `Device`, `Buffer`, `ShaderLibrary`, `ComputePipeline`,
+`ComputePass`, `CommandBuffer` and `GpuTimestamps` are real, while `Texture`,
+`RenderPipeline`, `RenderPass`, `Frame` and `GPUView` are placeholders that
+report themselves invalid rather than pretending. It is off by default; what it
+is for is the staged rollout, and it links and passes its tests on a machine
+with no display server at all.
 
 The top-level `CMakeLists.txt` decides this once, in five capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
@@ -97,7 +102,7 @@ arrives at them one stage at a time; Apple and Windows have all three:
 | Variable | On when | Gates |
 | --- | --- | --- |
 | `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows or Linux with `EACP_LINUX_GRAPHICS` | `Graphics`, and `Tests/Graphics` |
-| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple or Windows | `GPU`, `GPUWidgets`, `Sprites`, their tests and `Apps/GPU` |
+| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows or Linux with `EACP_LINUX_GRAPHICS` | `GPU`, `GPUWidgets`, `Sprites`, their tests and `Apps/GPU` |
 | `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple or Windows | `Text`, `UI`, `SVG`, their tests, and the examples that draw text |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
@@ -115,20 +120,28 @@ the test. `-DEACP_BUILD_SPIRV=OFF` skips it and the checks with it. And
 web view, checked by `ScriptHostTests`.
 
 `-DEACP_LINUX_GRAPHICS=ON` is the switch the Linux graphics backend is being
-built behind, stage by stage; the Vulkan and Wayland halves are not there yet,
-so `EACP_HAS_GPU` and `EACP_HAS_TEXT` stay off on Linux whatever it says. Pass
+built behind, stage by stage; the Wayland and FreeType halves are not there yet,
+so `EACP_HAS_TEXT` stays off on Linux whatever it says. Pass
 `-DEACP_BUILD_GRAPHICS=OFF` to build the portable half on any platform. The
-headless build is what CI will run, and what the `Dockerfile` reproduces:
+headless build is what CI runs, and what the `Dockerfile` reproduces:
 
 ```bash
-docker run --rm -e EACP_HEADLESS=1 -v "$PWD":/workspace eacp-ci-linux \
+docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
+    -v "$PWD":/workspace eacp-ci-linux \
     ci-build -DEACP_LINUX_GRAPHICS=ON -DEACP_UNITY_BUILD=OFF
 ```
 
+The Vulkan half needs no new build dependency: the headers, `volk` and the
+allocator are fetched by CPM, and the loader is opened by name at runtime, so
+all a machine needs to run it is a driver — `mesa-vulkan-drivers` is enough, and
+its software rasterizer is what CI uses. `EACP_VK_SOFTWARE=1` asks for that
+device by preference; `EACP_REQUIRE_GPU=1` turns "no device" from a suite that
+silently skips into a suite that fails.
+
 CI builds every configuration in that matrix and runs the test suite on macOS
-(universal), Windows x64 and ARM64 (MSVC and clang-cl) and Linux (GCC and
-Clang); iOS is built for the simulator. macOS is the most exercised of them,
-and Android is not supported.
+(universal), Windows x64 and ARM64 (MSVC and clang-cl) and Linux (GCC, Clang,
+and a Clang lane with the graphics backend on lavapipe); iOS is built for the
+simulator. macOS is the most exercised of them, and Android is not supported.
 
 The HTTP client is one API over three backends — NSURLSession on Apple
 platforms, WinHTTP on Windows, libcurl on Linux — so a Linux build needs
