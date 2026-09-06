@@ -116,15 +116,19 @@ elseif (WIN32)
             shell32
             windowscodecs)
 elseif (UNIX)
-    # Headless: a view tree, windows with no surface, and honest stubs for
-    # everything that needs a compositor, a codec or a desktop environment.
-    # There is no 2D context here, so nothing that rasterizes is in the list —
-    # Font, TextMetrics, GraphicUtils, ImageConversion, EmbeddedView and
-    # GraphicsContextImpl have no Linux half and no caller that needs one.
+    # Wayland, plus honest stubs for everything that needs a codec or a desktop
+    # environment. There is no 2D context here, so nothing that rasterizes is in
+    # the list — Font, TextMetrics, GraphicUtils, ImageConversion, EmbeddedView
+    # and GraphicsContextImpl have no Linux half and no caller that needs one.
     #
     # Path is the exception, because a path is geometry rather than pixels:
     # Path-Linux.cpp records the commands and hands the record out through
     # getHandle(), which is all a tessellator or a later 2D backend needs.
+    #
+    # Everything still degrades to the headless backend this grew out of: under
+    # EACP_HEADLESS, and on a machine whose environment names no compositor,
+    # waylandDisplay() is null, a Window is built with no surface, and every
+    # query answers exactly as it did before any of this existed.
     target_sources(eacp-graphics PRIVATE
             Graphics/Keyboard-Linux.cpp
             Helpers/DisplayLink-Linux.cpp
@@ -137,7 +141,16 @@ elseif (UNIX)
             Tray/TrayIcon-Linux.cpp
             View/View-Linux.cpp
             Window/Display-Linux.cpp
+            Window/WaylandDisplay-Linux.cpp
+            Window/WaylandInput-Linux.cpp
             Window/Window-Linux.cpp)
+
+    # PRIVATE, which is the whole point of the seam: eacp-wayland carries the
+    # generated protocol code and the four system libraries, and nothing above
+    # eacp-graphics ever sees a Wayland header. The GPU module reaches the
+    # surface through the two forward-declared pointers in View/View-Linux.h.
+    include(FindWayland)
+    target_link_libraries(eacp-graphics PRIVATE eacp-wayland)
 endif ()
 
 set_default_target_setting(eacp-graphics)

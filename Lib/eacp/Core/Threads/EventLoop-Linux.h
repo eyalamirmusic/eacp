@@ -26,5 +26,25 @@ namespace eacp::Threads
 // Linux-only, and deliberately in a header no other platform includes: macOS
 // and Windows have run loops that already accept native sources of their own.
 void addLoopSource(int fd, short events, Callback callback);
+
+// The same, with a second callback run on the loop thread immediately before
+// every poll(2) — before the poll set is even built, so a prepare that adds or
+// removes sources is honoured on that same turn.
+//
+// What needs it is a connection whose traffic does not all travel over the
+// descriptor at the moment the loop looks. A Wayland client writes its
+// requests into libwayland's own output buffer, and they reach the compositor
+// only at wl_display_flush — so a loop that blocks in poll() without flushing
+// first is waiting for a reply to a request it has not sent. The mirror case
+// is inbound: another thread reading the same connection (Mesa's Vulkan WSI
+// does exactly that from inside present) leaves events queued in memory with
+// nothing left on the fd, and poll() then sleeps over a queue that is already
+// full.
+//
+// Both are fixed by a few lines that have to run before the wait rather than
+// after it, which is the one place a readable-descriptor callback cannot
+// reach. Sources registered without a prepare behave exactly as before.
+void addLoopSource(int fd, short events, Callback callback, Callback prepare);
+
 void removeLoopSource(int fd);
 } // namespace eacp::Threads

@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Runs a command inside a headless Weston session, so a test that needs a
+# compositor - a Window with a real surface, a GPUView presenting through a
+# swapchain - runs on a machine with no display at all. Weston's headless
+# backend repaints at 60 Hz and sends frame callbacks like a real one; it has
+# no seat, so nothing under it can receive input.
+#
+#   Scripts/with-weston ctest --test-dir build --output-on-failure
+#
+# EACP_HEADLESS is deliberately not set here: a test binary that wants to open
+# windows runs with it unset (or 0), and EACP_REQUIRE_DISPLAY=1 makes such a
+# test fail rather than self-skip when no compositor is found. The same script
+# is what the CI graphics lane and the Docker image (`with-weston`) run.
+set -euo pipefail
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/eacp-xdg-runtime}"
+mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+export WAYLAND_DISPLAY=eacp-weston-0
+
+log="${EACP_WESTON_LOG:-/tmp/weston.log}"
+
+weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 \
+    --width=1280 --height=800 --log="$log" &
+pid=$!
+trap 'kill $pid 2>/dev/null || true' EXIT
+
+for _ in $(seq 1 100); do
+    [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && break
+    sleep 0.1
+done
+
+if [ ! -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; then
+    echo "with-weston: weston did not come up" >&2
+    cat "$log" >&2
+    exit 1
+fi
+
+"$@"

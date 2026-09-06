@@ -21,9 +21,10 @@ jobs:
           - name: Linux Clang
             os: ubuntu-latest
             cmake-flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++'
-          # The Linux graphics backend: headless Graphics and the Vulkan
-          # compute half, run on Mesa's lavapipe. The two lanes above keep
-          # proving that the option off still builds.
+          # The Linux graphics backend: Wayland windows and the Vulkan
+          # backend, built against the Wayland development packages and run
+          # on Mesa's lavapipe under a headless Weston session. The two lanes
+          # above keep proving that the option off still builds.
           - name: Linux Clang Graphics
             os: ubuntu-latest
             vulkan: true
@@ -68,12 +69,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build libcurl4-openssl-dev clang
 
-      # The loader and Mesa's software rasterizer. Nothing links either: volk
-      # opens libvulkan.so.1 by name at runtime, so this is a runtime
-      # dependency of the lane rather than a build dependency of the project.
-      - name: Install the Vulkan runtime
+      # The loader and Mesa's software rasterizer - nothing links either: volk
+      # opens libvulkan.so.1 by name at runtime, so those are runtime
+      # dependencies of the lane rather than build dependencies of the project.
+      # The Wayland half is different: libwayland-client, xkbcommon and libdecor
+      # are linked, wayland-scanner generates the protocol bindings at build
+      # time, and Weston is the compositor the tests open their windows on.
+      - name: Install the Linux graphics dependencies
         if: matrix.vulkan
-        run: sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
+        run: >
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
+          libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev
+          libdecor-0-dev pkg-config weston
 
       # Before the build, not before the test. NanoTest discovers cases by
       # running every test binary with --list-tests at build time, so a lane
@@ -101,7 +108,21 @@ jobs:
         run: cmake --build build
 
       - name: Test
+        if: ${{ !matrix.vulkan }}
         run: ctest --test-dir build --output-on-failure -j 4
+
+      # Inside a headless Weston session, with headless mode off so windows
+      # really open: the Wayland window tests and the swapchain present tests
+      # run for real, and EACP_REQUIRE_DISPLAY turns their self-skip into a
+      # failure so a lane whose compositor never came up cannot report green.
+      # The build above still ran headless, which is what NanoTest's build-time
+      # test discovery wants.
+      - name: Test under Weston
+        if: matrix.vulkan
+        env:
+          EACP_HEADLESS: '0'
+          EACP_REQUIRE_DISPLAY: '1'
+        run: Scripts/with-weston ctest --test-dir build --output-on-failure -j 4
 
   build-ios:
     name: iOS Simulator

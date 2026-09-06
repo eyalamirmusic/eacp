@@ -27,7 +27,11 @@ ARG CMAKE_VERSION=3.31.6
 # CMake FetchContent, and Mesa's lavapipe (mesa-vulkan-drivers) with the
 # Vulkan loader, tools and validation layers so the Vulkan backend's tests
 # run headless on a software device, as the Windows lane runs on WARP.
-# CMake itself comes from Kitware to match the version GH Actions ships.
+# The Wayland half of the graphics backend needs libwayland-client, the
+# protocol XML and wayland-scanner, xkbcommon and libdecor to build, and
+# Weston's headless backend gives the tests a compositor to open windows on
+# (see with-weston below). CMake itself comes from Kitware to match the
+# version GH Actions ships.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -39,12 +43,19 @@ RUN apt-get update \
         gdb \
         git \
         libcurl4-openssl-dev \
+        libdecor-0-dev \
         libvulkan1 \
+        libwayland-bin \
+        libwayland-dev \
+        libxkbcommon-dev \
         mesa-vulkan-drivers \
         ninja-build \
+        pkg-config \
         rsync \
         vulkan-tools \
         vulkan-validationlayers \
+        wayland-protocols \
+        weston \
     && rm -rf /var/lib/apt/lists/* \
     && ARCH="$(uname -m)" \
     && curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${ARCH}.tar.gz" \
@@ -67,6 +78,19 @@ RUN printf '%s\n' \
     'ctest --test-dir build-ci-linux --output-on-failure' \
     > /usr/local/bin/ci-build \
     && chmod +x /usr/local/bin/ci-build
+
+# Runs a command inside a headless Weston session, so a test that needs a
+# compositor - a Window with a real surface, a GPUView presenting through a
+# swapchain - runs on a machine with no display at all. The same script the
+# CI graphics lane runs, copied out of the tree so it is on PATH here:
+#
+#   docker run --rm -v "$PWD":/workspace eacp-ci-linux \
+#       with-weston ctest --test-dir build-ci-linux --output-on-failure
+#
+# EACP_HEADLESS is deliberately not set by the script: a test binary that
+# wants to open windows runs with it unset (or 0), and EACP_REQUIRE_DISPLAY=1
+# makes such a test fail rather than self-skip when no compositor is found.
+COPY Scripts/with-weston /usr/local/bin/with-weston
 
 WORKDIR /workspace
 

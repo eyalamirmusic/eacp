@@ -47,7 +47,280 @@ bool supportsStorageImage(VkFormat format)
     return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
            != 0;
 }
+
+// One image and up to two of its views, handed to the context rather than
+// destroyed on the spot: a texture is routinely replaced mid-frame, and a
+// swapchain is routinely rebuilt mid-frame, and in both cases the command
+// buffer still recording names the old handles.
+//
+// A null image releases nothing, which is what makes every caller below a
+// straight-line list rather than a chain of tests.
+void retireImage(VulkanContext& context,
+                 VkImage image,
+                 VmaAllocation allocation,
+                 VkImageView first,
+                 VkImageView second)
+{
+    if (image == VK_NULL_HANDLE)
+        return;
+
+    context.deferRelease(
+        [allocator = context.getAllocator(),
+         device = context.getDevice(),
+         image,
+         allocation,
+         first,
+         second]
+        {
+            for (auto view: {first, second})
+                if (view != VK_NULL_HANDLE)
+                    vkDestroyImageView(device, view, nullptr);
+
+            // A swapchain image comes with no allocation of its own and is
+            // destroyed with the swapchain, so only the views above are this
+            // backend's to free.
+            if (allocation != nullptr)
+                vmaDestroyImage(allocator, image, allocation);
+        });
+}
+
+// The depth image both companions are made of - the attachment at the target's
+// sample count, and the single-sampled twin it resolves into.
+bool makeDepthImage(VulkanContext& context,
+                    const VulkanTextureData& data,
+                    bool sampleable,
+                    int samples,
+                    VkImage& image,
+                    VmaAllocation& allocation)
+{
+    VkImageCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    info.imageType = VK_IMAGE_TYPE_2D;
+    info.format = data.depthFormat;
+    info.extent = {static_cast<std::uint32_t>(data.width),
+                   static_cast<std::uint32_t>(data.height),
+                   1};
+    info.mipLevels = 1;
+    info.arrayLayers = 1;
+    info.samples = toVkSampleCount(samples);
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    if (sampleable)
+        info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+
+    VmaAllocationCreateInfo allocationInfo = {};
+    allocationInfo.usage = VMA_MEMORY_USAGE_AUTO;
+
+    return vmaCreateImage(context.getAllocator(),
+                          &info,
+                          &allocationInfo,
+                          &image,
+                          &allocation,
+                          nullptr)
+           == VK_SUCCESS;
+}
 } // namespace
+
+VkImageView makeVulkanImageView(VkDevice device,
+                                VkImage image,
+                                VkFormat viewFormat,
+                                VkImageViewType type,
+                                VkImageAspectFlags aspect,
+                                int levels,
+                                int layers)
+{
+    VkImageViewCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    info.image = image;
+    info.viewType = type;
+    info.format = viewFormat;
+    info.subresourceRange.aspectMask = aspect;
+    info.subresourceRange.levelCount = static_cast<std::uint32_t>(levels);
+    info.subresourceRange.layerCount = static_cast<std::uint32_t>(layers);
+
+    auto view = VkImageView {VK_NULL_HANDLE};
+
+    if (vkCreateImageView(device, &info, nullptr, &view) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+
+    return view;
+}
+
+// The multisampled image a pass into this target actually renders into, and
+// which resolves into the target at the end of every pass - so what a shader
+// samples, what read() reads and what the compositor is handed is always the
+// resolved picture.
+//
+// The samples are kept rather than discarded (no TRANSIENT_ATTACHMENT), for the
+// reason DepthAction::Resume exists: a second pass into the same target has to
+// find the samples the first one wrote, and a transient attachment is allowed to
+// throw them away the moment the resolve is done.
+bool createVulkanMultisampleCompanion(VulkanContext& context,
+                                      VulkanTextureData& data)
+{
+    VkImageCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    info.imageType = VK_IMAGE_TYPE_2D;
+    info.format = data.format;
+    info.extent = {static_cast<std::uint32_t>(data.width),
+                   static_cast<std::uint32_t>(data.height),
+                   1};
+    info.mipLevels = 1;
+    info.arrayLayers = 1;
+    info.samples = toVkSampleCount(data.sampleCount);
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VmaAllocationCreateInfo allocationInfo = {};
+    allocationInfo.usage = VMA_MEMORY_USAGE_AUTO;
+
+    if (vmaCreateImage(context.getAllocator(),
+                       &info,
+                       &allocationInfo,
+                       &data.msaaImage,
+                       &data.msaaAllocation,
+                       nullptr)
+        != VK_SUCCESS)
+    {
+        data.msaaImage = VK_NULL_HANDLE;
+        return false;
+    }
+
+    data.msaaView = makeVulkanImageView(context.getDevice(),
+                                        data.msaaImage,
+                                        data.format,
+                                        VK_IMAGE_VIEW_TYPE_2D,
+                                        VK_IMAGE_ASPECT_COLOR_BIT,
+                                        1,
+                                        1);
+
+    return data.msaaView != VK_NULL_HANDLE;
+}
+
+// The depth buffer a pass into this target attaches, at the target's own sample
+// count - both APIs require every attachment of one pass to agree on it - and,
+// where a shader is going to read the depth, the single-sampled twin the
+// attachment resolves into.
+//
+// **The resolve is the driver's own here**, VK_RESOLVE_MODE_SAMPLE_ZERO_BIT
+// through the depth attachment's resolve fields, which is exactly what Metal's
+// depth resolve does - so the two backends hand a shader the same value, and
+// this one needs neither D3D12's RESOLVE_MODE_MAX nor the shader fallback its
+// drivers made necessary.
+void createVulkanDepthCompanion(VulkanContext& context,
+                                VulkanTextureData& data,
+                                bool withStencil,
+                                bool sampleable)
+{
+    data.depthHasStencil = withStencil;
+    data.depthFormat = depthAttachmentFormat(withStencil);
+
+    const auto multisampled = data.sampleCount > 1;
+
+    // On a multisampled target the buffer a shader reads is the resolve below,
+    // not the attachment, so the attachment pays nothing for sampleableDepth
+    // there.
+    if (!makeDepthImage(context,
+                        data,
+                        sampleable && !multisampled,
+                        data.sampleCount,
+                        data.depthImage,
+                        data.depthAllocation))
+    {
+        data.depthImage = VK_NULL_HANDLE;
+        return;
+    }
+
+    data.depthAttachmentView = makeVulkanImageView(context.getDevice(),
+                                                   data.depthImage,
+                                                   data.depthFormat,
+                                                   VK_IMAGE_VIEW_TYPE_2D,
+                                                   depthAspectMask(withStencil),
+                                                   1,
+                                                   1);
+
+    if (data.depthAttachmentView == VK_NULL_HANDLE || !sampleable)
+        return;
+
+    if (multisampled)
+    {
+        if (!makeDepthImage(context,
+                            data,
+                            true,
+                            1,
+                            data.resolvedDepthImage,
+                            data.resolvedDepthAllocation))
+        {
+            data.resolvedDepthImage = VK_NULL_HANDLE;
+            return;
+        }
+
+        data.resolvedDepthAttachmentView =
+            makeVulkanImageView(context.getDevice(),
+                                data.resolvedDepthImage,
+                                data.depthFormat,
+                                VK_IMAGE_VIEW_TYPE_2D,
+                                depthAspectMask(withStencil),
+                                1,
+                                1);
+
+        if (data.resolvedDepthAttachmentView == VK_NULL_HANDLE)
+            return;
+    }
+
+    // Depth alone, whatever the buffer carries: Vulkan refuses a sampled view
+    // over two aspects, and a shader eacp generates reads the depth.
+    data.depthReadView = makeVulkanImageView(context.getDevice(),
+                                             data.sampledDepthImage(),
+                                             data.depthFormat,
+                                             VK_IMAGE_VIEW_TYPE_2D,
+                                             VK_IMAGE_ASPECT_DEPTH_BIT,
+                                             1,
+                                             1);
+}
+
+void releaseVulkanCompanions(VulkanContext& context, VulkanTextureData& data)
+{
+    retireImage(
+        context, data.msaaImage, data.msaaAllocation, data.msaaView, VK_NULL_HANDLE);
+
+    // The read view goes with whichever image it was made over, which is the
+    // resolve when there is one and the attachment otherwise.
+    const auto readsTheResolve = data.resolvedDepthImage != VK_NULL_HANDLE;
+
+    retireImage(context,
+                data.depthImage,
+                data.depthAllocation,
+                data.depthAttachmentView,
+                readsTheResolve ? VK_NULL_HANDLE : data.depthReadView);
+    retireImage(context,
+                data.resolvedDepthImage,
+                data.resolvedDepthAllocation,
+                data.resolvedDepthAttachmentView,
+                readsTheResolve ? data.depthReadView : VK_NULL_HANDLE);
+
+    data.msaaImage = VK_NULL_HANDLE;
+    data.msaaAllocation = nullptr;
+    data.msaaView = VK_NULL_HANDLE;
+    data.msaaUse = {};
+
+    data.depthImage = VK_NULL_HANDLE;
+    data.depthAllocation = nullptr;
+    data.depthAttachmentView = VK_NULL_HANDLE;
+    data.depthUse = {};
+
+    data.resolvedDepthImage = VK_NULL_HANDLE;
+    data.resolvedDepthAllocation = nullptr;
+    data.resolvedDepthAttachmentView = VK_NULL_HANDLE;
+    data.resolvedDepthUse = {};
+
+    data.depthReadView = VK_NULL_HANDLE;
+}
 
 struct Texture::Native
 {
@@ -81,7 +354,7 @@ struct Texture::Native
         // Created after the texture and refused with it: a pass rendering into
         // the single-sampled image where a multisampled one was asked for would
         // silently be a different pass.
-        if (data.sampleCount > 1 && !createMultisampleTarget())
+        if (data.sampleCount > 1 && !createVulkanMultisampleCompanion(context, data))
         {
             release();
             return;
@@ -94,7 +367,8 @@ struct Texture::Native
         if (descriptor.renderTarget
             && (descriptor.depth || descriptor.stencil
                 || descriptor.sampleableDepth))
-            createDepthBuffer(descriptor.stencil, descriptor.sampleableDepth);
+            createVulkanDepthCompanion(
+                context, data, descriptor.stencil, descriptor.sampleableDepth);
     }
 
     // Zero-copy wrapping of a platform pixel buffer has nothing to wrap on
@@ -273,22 +547,8 @@ struct Texture::Native
                          int levels,
                          int layers)
     {
-        VkImageViewCreateInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        info.image = image;
-        info.viewType = type;
-        info.format = viewFormat;
-        info.subresourceRange.aspectMask = aspect;
-        info.subresourceRange.levelCount = static_cast<std::uint32_t>(levels);
-        info.subresourceRange.layerCount = static_cast<std::uint32_t>(layers);
-
-        auto view = VkImageView {VK_NULL_HANDLE};
-
-        if (vkCreateImageView(context.getDevice(), &info, nullptr, &view)
-            != VK_SUCCESS)
-            return VK_NULL_HANDLE;
-
-        return view;
+        return makeVulkanImageView(
+            context.getDevice(), image, viewFormat, type, aspect, levels, layers);
     }
 
     // **The view is what makes a cube a cube**, the image underneath being a
@@ -337,213 +597,26 @@ struct Texture::Native
         return true;
     }
 
-    // The multisampled image a pass into this target actually renders into, and
-    // which resolves into the texture at the end of every pass - so what a
-    // shader samples, and what read() reads, is always the resolved picture.
-    //
-    // The samples are kept rather than discarded (no TRANSIENT_ATTACHMENT), for
-    // the reason DepthAction::Resume exists: a second pass into the same target
-    // has to find the samples the first one wrote, and a transient attachment
-    // is allowed to throw them away the moment the resolve is done.
-    bool createMultisampleTarget()
-    {
-        VkImageCreateInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        info.imageType = VK_IMAGE_TYPE_2D;
-        info.format = data.format;
-        info.extent = {static_cast<std::uint32_t>(data.width),
-                       static_cast<std::uint32_t>(data.height),
-                       1};
-        info.mipLevels = 1;
-        info.arrayLayers = 1;
-        info.samples = toVkSampleCount(data.sampleCount);
-        info.tiling = VK_IMAGE_TILING_OPTIMAL;
-        info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-        VmaAllocationCreateInfo allocationInfo = {};
-        allocationInfo.usage = VMA_MEMORY_USAGE_AUTO;
-
-        if (vmaCreateImage(context.getAllocator(),
-                           &info,
-                           &allocationInfo,
-                           &data.msaaImage,
-                           &data.msaaAllocation,
-                           nullptr)
-            != VK_SUCCESS)
-        {
-            data.msaaImage = VK_NULL_HANDLE;
-            return false;
-        }
-
-        data.msaaView = makeView(data.msaaImage,
-                                 data.format,
-                                 VK_IMAGE_VIEW_TYPE_2D,
-                                 VK_IMAGE_ASPECT_COLOR_BIT,
-                                 1,
-                                 1);
-
-        return data.msaaView != VK_NULL_HANDLE;
-    }
-
-    bool makeDepthImage(bool sampleable,
-                        int samples,
-                        VkImage& image,
-                        VmaAllocation& allocation)
-    {
-        VkImageCreateInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        info.imageType = VK_IMAGE_TYPE_2D;
-        info.format = data.depthFormat;
-        info.extent = {static_cast<std::uint32_t>(data.width),
-                       static_cast<std::uint32_t>(data.height),
-                       1};
-        info.mipLevels = 1;
-        info.arrayLayers = 1;
-        info.samples = toVkSampleCount(samples);
-        info.tiling = VK_IMAGE_TILING_OPTIMAL;
-        info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-        if (sampleable)
-            info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
-
-        VmaAllocationCreateInfo allocationInfo = {};
-        allocationInfo.usage = VMA_MEMORY_USAGE_AUTO;
-
-        return vmaCreateImage(context.getAllocator(),
-                              &info,
-                              &allocationInfo,
-                              &image,
-                              &allocation,
-                              nullptr)
-               == VK_SUCCESS;
-    }
-
-    // The depth buffer a pass into this target attaches, at the target's own
-    // sample count - both APIs require every attachment of one pass to agree on
-    // it - and, where a shader is going to read the depth, the single-sampled
-    // twin the attachment resolves into.
-    //
-    // **The resolve is the driver's own here**, VK_RESOLVE_MODE_SAMPLE_ZERO_BIT
-    // through the depth attachment's resolve fields, which is exactly what
-    // Metal's depth resolve does - so the two backends hand a shader the same
-    // value, and this one needs neither D3D12's RESOLVE_MODE_MAX nor the shader
-    // fallback its drivers made necessary.
-    void createDepthBuffer(bool withStencil, bool sampleable)
-    {
-        data.depthHasStencil = withStencil;
-        data.depthFormat = depthAttachmentFormat(withStencil);
-
-        const auto multisampled = data.sampleCount > 1;
-
-        // On a multisampled target the buffer a shader reads is the resolve
-        // below, not the attachment, so the attachment pays nothing for
-        // sampleableDepth there.
-        if (!makeDepthImage(sampleable && !multisampled,
-                            data.sampleCount,
-                            data.depthImage,
-                            data.depthAllocation))
-        {
-            data.depthImage = VK_NULL_HANDLE;
-            return;
-        }
-
-        data.depthAttachmentView = makeView(data.depthImage,
-                                            data.depthFormat,
-                                            VK_IMAGE_VIEW_TYPE_2D,
-                                            depthAspectMask(withStencil),
-                                            1,
-                                            1);
-
-        if (data.depthAttachmentView == VK_NULL_HANDLE || !sampleable)
-            return;
-
-        if (multisampled)
-        {
-            if (!makeDepthImage(
-                    true, 1, data.resolvedDepthImage, data.resolvedDepthAllocation))
-            {
-                data.resolvedDepthImage = VK_NULL_HANDLE;
-                return;
-            }
-
-            data.resolvedDepthAttachmentView = makeView(data.resolvedDepthImage,
-                                                        data.depthFormat,
-                                                        VK_IMAGE_VIEW_TYPE_2D,
-                                                        depthAspectMask(withStencil),
-                                                        1,
-                                                        1);
-
-            if (data.resolvedDepthAttachmentView == VK_NULL_HANDLE)
-                return;
-        }
-
-        // Depth alone, whatever the buffer carries: Vulkan refuses a sampled
-        // view over two aspects, and a shader eacp generates reads the depth.
-        data.depthReadView = makeView(data.sampledDepthImage(),
-                                      data.depthFormat,
-                                      VK_IMAGE_VIEW_TYPE_2D,
-                                      VK_IMAGE_ASPECT_DEPTH_BIT,
-                                      1,
-                                      1);
-    }
-
     // Handed to the context rather than destroyed here, on the same terms as a
     // buffer: a texture is routinely replaced mid-frame and the command buffer
     // still recording names the old handles.
     void release()
     {
-        const auto retire = [this](VkImage image,
-                                   VmaAllocation allocation,
-                                   VkImageView first,
-                                   VkImageView second)
-        {
-            if (image == VK_NULL_HANDLE)
-                return;
-
-            context.deferRelease(
-                [allocator = context.getAllocator(),
-                 device = context.getDevice(),
-                 image,
-                 allocation,
-                 first,
-                 second]
-                {
-                    for (auto view: {first, second})
-                        if (view != VK_NULL_HANDLE)
-                            vkDestroyImageView(device, view, nullptr);
-
-                    vmaDestroyImage(allocator, image, allocation);
-                });
-        };
-
         // The colour image owns three views, so it goes twice - the storage one
         // is null on everything that is not a kernel output, and a null view is
         // skipped rather than destroyed.
-        retire(data.image, data.allocation, data.sampledView, data.attachmentView);
+        retireImage(context,
+                    data.image,
+                    data.allocation,
+                    data.sampledView,
+                    data.attachmentView);
 
         if (data.storageView != VK_NULL_HANDLE)
             context.deferRelease(
                 [device = context.getDevice(), view = data.storageView]
                 { vkDestroyImageView(device, view, nullptr); });
 
-        retire(data.msaaImage, data.msaaAllocation, data.msaaView, VK_NULL_HANDLE);
-
-        // The read view goes with whichever image it was made over, which is
-        // the resolve when there is one and the attachment otherwise.
-        const auto readsTheResolve = data.resolvedDepthImage != VK_NULL_HANDLE;
-
-        retire(data.depthImage,
-               data.depthAllocation,
-               data.depthAttachmentView,
-               readsTheResolve ? VK_NULL_HANDLE : data.depthReadView);
-        retire(data.resolvedDepthImage,
-               data.resolvedDepthAllocation,
-               data.resolvedDepthAttachmentView,
-               readsTheResolve ? data.depthReadView : VK_NULL_HANDLE);
+        releaseVulkanCompanions(context, data);
 
         data = {};
     }

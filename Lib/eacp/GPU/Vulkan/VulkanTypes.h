@@ -210,6 +210,36 @@ inline constexpr auto imageColorAttachment = ImageUse {
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
     VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT};
 
+// Where a swapchain image rests once a pass has finished with it, which is the
+// layout vkQueuePresentKHR requires and nowhere else. Nothing reads or writes
+// the image between the pass and the present - the presentation engine's own
+// access is ordered by the render-finished semaphore rather than by a barrier -
+// so the access mask is empty, and the stage is the one the frame's last write
+// happens at, which is what makes it legal as a destination.
+//
+// A presentable target answers this from restingUse(), so RenderPass::end puts
+// the image where the present wants it with the line it already had.
+inline constexpr auto imagePresent =
+    ImageUse {VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+              VK_ACCESS_2_NONE};
+
+// What a freshly acquired swapchain image is treated as, stamped onto its
+// tracked use before each frame. The layout is UNDEFINED because that is what
+// the contents are worth - vkAcquireNextImageKHR promises nothing about them,
+// and a frame that does not clear is drawing over garbage on every backend -
+// and transitioning *from* UNDEFINED is what lets the driver discard rather
+// than move the old picture.
+//
+// The stage is not NONE, and that is the load-bearing part: the barrier the
+// first pass records names it as its source, so the transition is ordered
+// behind the acquire semaphore, which is waited on at exactly this stage. With
+// NONE there the barrier could legally run before the image was free.
+inline constexpr auto imageAcquired =
+    ImageUse {VK_IMAGE_LAYOUT_UNDEFINED,
+              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+              VK_ACCESS_2_NONE};
+
 // The depth twin of the above, on both fragment-test stages because the depth
 // write can happen at either.
 inline constexpr auto imageDepthAttachment =
@@ -340,6 +370,16 @@ struct VulkanTextureData
     // sampled view's type, the layer each upload lands on, and nothing else.
     bool cube = false;
 
+    // A swapchain image rather than a texture: the VkImage belongs to the
+    // VkSwapchainKHR and is destroyed with it, only `attachmentView` and the
+    // companions below are this backend's to free, and nothing samples it -
+    // which is why there is no sampledView here and why isValid() has to say so.
+    //
+    // What it changes for a pass is one thing: restingUse() answers
+    // imagePresent, so the image leaves every pass in PRESENT_SRC_KHR and
+    // vkQueuePresentKHR needs no barrier of its own. See GPUView-Linux.cpp.
+    bool presentable = false;
+
     // How many samples a pass into this target takes: 1 unless msaaImage is
     // there, and then the count it and the depth companion were created at.
     int sampleCount = 1;
@@ -409,9 +449,16 @@ struct VulkanTextureData
     // what hasSampleableDepth() answers.
     VkImageView depthReadView = VK_NULL_HANDLE;
 
+    // A texture is valid once it has an image something can sample; a swapchain
+    // image is valid once it has an image a pass can attach, there being no
+    // sampled view for one and nothing that would read it through one.
     bool isValid() const
     {
-        return image != VK_NULL_HANDLE && sampledView != VK_NULL_HANDLE;
+        if (image == VK_NULL_HANDLE)
+            return false;
+
+        return presentable ? attachmentView != VK_NULL_HANDLE
+                           : sampledView != VK_NULL_HANDLE;
     }
 
     bool isRenderTarget() const { return attachmentView != VK_NULL_HANDLE; }
@@ -446,11 +493,16 @@ struct VulkanTextureData
                                                     : depthImage;
     }
 
-    // Where the colour image rests between passes. GENERAL for a texture a
-    // kernel writes, because a sampler reads GENERAL too and the round trip
-    // would buy nothing; SHADER_READ_ONLY_OPTIMAL for every other.
+    // Where the colour image rests between passes. PRESENT_SRC_KHR for a
+    // swapchain image, so the frame's last pass leaves it ready to be presented
+    // and nothing after the pass has to move it; GENERAL for a texture a kernel
+    // writes, because a sampler reads GENERAL too and the round trip would buy
+    // nothing; SHADER_READ_ONLY_OPTIMAL for every other.
     const ImageUse& restingUse() const
     {
+        if (presentable)
+            return imagePresent;
+
         return isComputeWritable() ? imageStorage : imageSampled;
     }
 
@@ -463,6 +515,44 @@ struct VulkanTextureData
         return hasSampleableDepth() && !isMultisampled() ? imageDepthSampled
                                                          : imageDepthAttachment;
     }
+};
+
+// What Frame(Device&, void* drawable, void*, void*) is handed on this backend -
+// the Vulkan sibling of D3D12Drawable, and the whole of what a frame needs to
+// render into a swapchain image and hand it back to the compositor.
+//
+// The msaaTexture and depthTexture arguments of that constructor stay null
+// here, exactly as they do on the off-screen path: a multisampled or depth-
+// tested swapchain frame finds both companions on `target`, which is the same
+// VulkanTextureData shape a render-target Texture has and the reason
+// Frame::beginPassOn has one body rather than two.
+//
+// Nothing here is owned by the frame. GPUView-Linux.cpp owns the swapchain, the
+// images, the views and both semaphores, and the frame only borrows them for
+// its lifetime - which is why this is passed by pointer and read back after the
+// frame has been destroyed, `presentResult` being the one field the frame
+// writes.
+struct VulkanDrawable
+{
+    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+
+    // Which of the swapchain's images vkAcquireNextImageKHR handed over, and
+    // the description of it a pass renders through.
+    std::uint32_t imageIndex = 0;
+    VulkanTextureData* target = nullptr;
+
+    // Signalled by the presentation engine when the image is free, waited on by
+    // the frame's first submission; signalled by the frame's last submission,
+    // waited on by the present. See SubmitSync.
+    VkSemaphore acquired = VK_NULL_HANDLE;
+    VkSemaphore renderFinished = VK_NULL_HANDLE;
+
+    // What vkQueuePresentKHR answered, written by ~Frame and read by the view
+    // afterwards: OUT_OF_DATE or SUBOPTIMAL means the swapchain no longer fits
+    // the surface and has to be rebuilt, DEVICE_LOST means there is nothing
+    // left to rebuild it on. VK_NOT_READY marks a frame that never presented at
+    // all, so a caller cannot mistake "nothing happened" for success.
+    VkResult presentResult = VK_NOT_READY;
 };
 
 // The four transitions the images of one texture take, each remembering its own
@@ -508,6 +598,49 @@ inline void transitionResolvedDepthForUse(VkCommandBuffer commandBuffer,
                        data.resolvedDepthUse,
                        target);
 }
+
+// One image view, in the shape every caller here wants it: over `image`, of
+// `viewFormat`, covering `levels` levels and `layers` layers from the first of
+// each. Null on failure, which every caller already tests for.
+VkImageView makeVulkanImageView(VkDevice device,
+                                VkImage image,
+                                VkFormat viewFormat,
+                                VkImageViewType type,
+                                VkImageAspectFlags aspect,
+                                int levels,
+                                int layers);
+
+// The two companions a colour render target grows beside itself, created from
+// the width, height, format and sampleCount already on `data` and written back
+// into it.
+//
+// Shared by the two things that have a colour target - a Texture created with
+// renderTarget, and a swapchain image a GPUView presents - because the images
+// are identical: the same multisampled colour buffer the pass draws into and
+// resolves out of, and the same depth buffer at the target's own sample count.
+// The alternative was the swapchain half growing a second copy of both, which
+// is precisely the pair of functions a target created two different ways must
+// not have.
+//
+// createVulkanMultisampleCompanion answers false when the image or its view
+// could not be made, and the caller refuses the whole target: a pass rendering
+// into the single-sampled image where a multisampled one was asked for would
+// silently be a different pass. createVulkanDepthCompanion answers nothing,
+// because a target without the depth buffer it asked for can still be drawn
+// into - hasDepth() says so and every pass already branches on it.
+bool createVulkanMultisampleCompanion(VulkanContext& context,
+                                      VulkanTextureData& data);
+
+void createVulkanDepthCompanion(VulkanContext& context,
+                                VulkanTextureData& data,
+                                bool withStencil,
+                                bool sampleable);
+
+// Hands both companions, and the depth resolve where there is one, to the
+// context's deferred-release list and clears their handles - the release half
+// of the two above, so a swapchain rebuilding its companions frees them the way
+// a Texture does rather than destroying images a command buffer may still name.
+void releaseVulkanCompanions(VulkanContext& context, VulkanTextureData& data);
 
 // What one shader declares in the texture range of its descriptor set: which
 // slots are there at all, and the descriptor type each of them needs.

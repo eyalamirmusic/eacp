@@ -103,11 +103,14 @@ elseif (WIN32)
             windowsapp
             runtimeobject)
 else ()
-    # The Vulkan backend, compute and render halves both. What is left for
-    # stage 4 of plan.md is the surface: GPUView has its off-screen snapshot and
-    # no swapchain, so paint() and renderNow() do nothing, and Frame's drawable
-    # constructor is still a placeholder where its off-screen one is real. Both
-    # files say so at the top.
+    # The Vulkan backend: compute, render, and the surface. GPUView-Linux.cpp
+    # makes a VkSurfaceKHR over the wl_display and wl_surface the window backend
+    # reports through Graphics/View/View-Linux.h, and presents through a
+    # swapchain; Frame's drawable constructor submits with the acquire and
+    # render-finished semaphores and presents where its off-screen one waits.
+    # Nothing here links or includes libwayland - the two pointers are opaque,
+    # and VK_USE_PLATFORM_WAYLAND_KHR in CMake/FindVulkanBackend.cmake is the
+    # whole of what makes them usable.
     if (NOT TARGET eacp-spirv)
         message(FATAL_ERROR
                 "EACP_LINUX_GRAPHICS needs the SPIR-V compiler: the Vulkan "

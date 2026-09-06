@@ -132,6 +132,23 @@ bool hasInstanceExtension(const char* name)
     return false;
 }
 
+bool hasDeviceExtension(VkPhysicalDevice candidate, const char* name)
+{
+    auto count = std::uint32_t {0};
+    vkEnumerateDeviceExtensionProperties(candidate, nullptr, &count, nullptr);
+
+    auto extensions = Vector<VkExtensionProperties> {};
+    extensions.resize(static_cast<int>(count));
+    vkEnumerateDeviceExtensionProperties(
+        candidate, nullptr, &count, extensions.data());
+
+    for (const auto& extension: extensions)
+        if (std::strcmp(extension.extensionName, name) == 0)
+            return true;
+
+    return false;
+}
+
 VKAPI_ATTR VkBool32 VKAPI_CALL
     vulkanDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT,
                         VkDebugUtilsMessageTypeFlagsEXT,
@@ -609,6 +626,20 @@ bool VulkanShared::createInstance()
             extensions.add(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
+    // Window-system integration, asked for rather than required: a headless ICD
+    // offers neither, and the whole off-screen half of this backend - which is
+    // every GPU test - works without them. Both or neither, a wayland surface
+    // being an extension of the surface extension.
+    const auto surfaceOffered =
+        hasInstanceExtension(VK_KHR_SURFACE_EXTENSION_NAME)
+        && hasInstanceExtension(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+
+    if (surfaceOffered)
+    {
+        extensions.add(VK_KHR_SURFACE_EXTENSION_NAME);
+        extensions.add(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+    }
+
     VkInstanceCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     info.pApplicationInfo = &application;
@@ -619,6 +650,8 @@ bool VulkanShared::createInstance()
 
     if (vkCreateInstance(&info, nullptr, &instance) != VK_SUCCESS)
         return false;
+
+    surfaceExtensionsEnabled = surfaceOffered;
 
     volkLoadInstanceOnly(instance);
     return true;
@@ -746,17 +779,35 @@ bool VulkanShared::createDevice()
     enabled.pNext = &features12;
     enabled.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
 
+    // The swapchain, on the same terms as the instance's surface extensions:
+    // asked for where it is offered, and simply absent otherwise. A device with
+    // no swapchain still runs every off-screen frame, so this is never a reason
+    // to refuse one - GPUView finds supportsPresentation() false and stays on
+    // the off-screen path.
+    auto extensions = Vector<const char*> {};
+
+    const auto swapchainOffered =
+        surfaceExtensionsEnabled
+        && hasDeviceExtension(physicalDevice, VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+
+    if (swapchainOffered)
+        extensions.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+
     VkDeviceCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     info.pNext = &enabled;
     info.queueCreateInfoCount = 1;
     info.pQueueCreateInfos = &queueInfo;
+    info.enabledExtensionCount = static_cast<std::uint32_t>(extensions.size());
+    info.ppEnabledExtensionNames = extensions.data();
 
     if (vkCreateDevice(physicalDevice, &info, nullptr, &device) != VK_SUCCESS)
     {
         device = VK_NULL_HANDLE;
         return false;
     }
+
+    presentationSupported = swapchainOffered;
 
     // One device in the process, so the device-level dispatch table can be the
     // global one volk loads here rather than a table per device.
@@ -1077,7 +1128,7 @@ CommandContext* VulkanContext::acquire()
     return commands;
 }
 
-std::uint64_t VulkanContext::submit(CommandContext* commands)
+std::uint64_t VulkanContext::submit(CommandContext* commands, const SubmitSync& sync)
 {
     assertOwningThread();
 
@@ -1123,18 +1174,53 @@ std::uint64_t VulkanContext::submit(CommandContext* commands)
     bufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
     bufferInfo.commandBuffer = commands->buffer;
 
-    VkSemaphoreSubmitInfo signal = {};
-    signal.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-    signal.semaphore = timeline;
-    signal.value = value;
-    signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    // The timeline first and the frame's "picture finished" binary semaphore
+    // second, where there is one. Two entries rather than two submissions: one
+    // vkQueueSubmit2 may signal any number of semaphores, and every Device waits
+    // on the timeline whatever the swapchain does with the other.
+    VkSemaphoreSubmitInfo signals[2] = {};
+    signals[0].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+    signals[0].semaphore = timeline;
+    signals[0].value = value;
+    signals[0].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+
+    auto signalCount = std::uint32_t {1};
+
+    if (sync.signal != VK_NULL_HANDLE)
+    {
+        signals[signalCount].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        signals[signalCount].semaphore = sync.signal;
+        signals[signalCount].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        ++signalCount;
+    }
+
+    // The acquire, waited on at COLOR_ATTACHMENT_OUTPUT: the image is not free
+    // until the presentation engine says so, and that is the first stage that
+    // touches it. Everything ahead of it - vertex fetch, the vertex shader - is
+    // free to run while the wait is outstanding, which is the whole reason the
+    // stage is named rather than waiting at the top of the pipe.
+    //
+    // The layout transition the frame's first pass records into the image is
+    // ordered by the same wait: it names COLOR_ATTACHMENT_OUTPUT as its source
+    // stage (imageAcquired in VulkanTypes.h), so a barrier that would otherwise
+    // be free to run at the top of the pipe cannot overtake the acquire.
+    VkSemaphoreSubmitInfo wait = {};
+    wait.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+    wait.semaphore = sync.wait;
+    wait.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
 
     VkSubmitInfo2 submitInfo = {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
     submitInfo.commandBufferInfoCount = 1;
     submitInfo.pCommandBufferInfos = &bufferInfo;
-    submitInfo.signalSemaphoreInfoCount = 1;
-    submitInfo.pSignalSemaphoreInfos = &signal;
+    submitInfo.signalSemaphoreInfoCount = signalCount;
+    submitInfo.pSignalSemaphoreInfos = signals;
+
+    if (sync.wait != VK_NULL_HANDLE)
+    {
+        submitInfo.waitSemaphoreInfoCount = 1;
+        submitInfo.pWaitSemaphoreInfos = &wait;
+    }
 
     {
         // The queue is the one thing a Device does not own (see the note in

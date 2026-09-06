@@ -147,6 +147,47 @@ auto tSourceCallbackCanPumpTheLoop =
     check(nestedRan);
 };
 
+// The prepare callback, which is the half of a source that runs before the
+// pump sleeps rather than after it wakes.
+//
+// A Wayland connection needs it because its outgoing requests sit in
+// libwayland's own buffer until something flushes them, so a loop that blocks
+// in poll() without flushing is waiting for a reply to a request the
+// compositor never saw. The property that pins it is exactly that ordering:
+// nothing else here writes to the pipe, so the pump waking at all proves the
+// prepare ran on the near side of poll().
+auto tPrepareRunsBeforeThePollThatWakes =
+    test("EventLoopSource/prepareRunsBeforeThePollThatWakes") = []
+{
+    auto pipe = SourcePipe {};
+    auto prepares = 0;
+    auto calls = 0;
+
+    addLoopSource(
+        pipe.readFd(),
+        POLLIN,
+        [&]
+        {
+            ++calls;
+            pipe.drain();
+        },
+        [&]
+        {
+            // Once only: a prepare poking on every turn would spin the loop
+            // and prove nothing about ordering.
+            if (prepares++ == 0)
+                pipe.poke();
+        });
+
+    auto woke = runEventLoopUntil([&] { return calls > 0; }, eacp::Time::MS {2000});
+
+    removeLoopSource(pipe.readFd());
+
+    check(woke);
+    check(calls == 1);
+    check(prepares > 0);
+};
+
 // Re-registering the same descriptor replaces what was there, so a caller
 // swapping its handler does not end up with the old one still installed.
 auto tReAddingReplacesTheCallback =

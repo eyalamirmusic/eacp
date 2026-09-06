@@ -171,13 +171,6 @@ Follow-ups found on the way, not yet done:
   `VulkanRenderPipeline::depth`/`stencil` instead.
 - `wrapPixelBuffer` is invalid on Linux, as on Windows, there being no capture
   backend to produce one.
-- Stage 4 needs from `Frame`: the drawable constructor calling
-  `Device::beginFrame()` and `beginTiming()`, a `VulkanTextureData` describing
-  the acquired swapchain image, acquire/present semaphores on
-  `VulkanContext::submit` (it takes none today), a present instead of
-  `waitIdle` in `~Frame`, and `PRESENT_SRC_KHR` rather than the resting layout
-  as the one line in `RenderPass::end` that assumes the target is sampleable
-  afterwards. `Graphics::notifyBackingScaleChanged` is still called by nothing.
 - GCC warns `-Wclass-memaccess` four times at `Codegen/ShaderProgram.h:260`,
   a `memcpy` into an `EA::Array` that develop's `std::array` conversion
   introduced; only the Linux graphics lane compiles that TU, clang and MSVC are
@@ -186,6 +179,105 @@ Follow-ups found on the way, not yet done:
   int-sized interfaces landed, and all three backends test `!= 0` before
   casting to an unsigned pitch. Worth one guard across all three.
 - D6 is still open: `EACP_LINUX_GRAPHICS` stays `OFF` by default until decided.
+
+**Stage 4 — landed 2026-09-06** (verified: Linux with `EACP_LINUX_GRAPHICS=ON`
+1017 tests headless under GCC with zero validation messages under
+`EACP_VK_VALIDATION=1`, and the same 1017 inside a headless Weston session with
+`EACP_REQUIRE_DISPLAY=1` — the 8 `Present` cases and the 9 `WaylandWindowTests`
+cases running for real, `GPUTests` 259 and `WaylandWindowTests` 9 under
+validation with zero messages; `EACP_CI_BUILD` unity+PCH under Clang 1017; option off
+568; macOS unchanged at 1506.)
+
+- Written as two parallel slices meeting at one contract header,
+  `Graphics/View/View-Linux.h`: a `ViewSurface` record per presenting view —
+  opaque `wl_display*`/`wl_surface*`, pixel size and scale, and the
+  `onAvailable`/`onLost`/`onResized`/`onRepaint`/`onFrameDone` hooks plus
+  `requestFrameCallback` — obtained with `requestViewSurface(View&)`. The GPU
+  module knows Wayland as those two forward-declared pointers
+  (`vulkan_wayland.h` needs no more) and neither links nor includes it.
+- The Wayland half of `eacp-graphics`. `Window/WaylandDisplay-Linux.{h,cpp}`:
+  one connection per process, every registry global optional, outputs, the
+  libdecor context, a surface-to-owner map, shm buffers, and the loop source —
+  pumped through a new four-argument `Threads::addLoopSource(fd, events, cb,
+  prepare)` whose `prepare` runs before every `poll()` to flush requests and
+  dispatch what Mesa's WSI left queued (`Tests/Core/EventLoopSourceTests-Linux`
+  pins the ordering). `Window-Linux.cpp`: `wl_surface` + libdecor frame,
+  configure → constraints → `resized`, a viewport-stretched 1×1 shm background
+  with an opaque region, hide as unmap, `wp_fractional_scale_v1` with
+  `preferred_buffer_scale` and the output's integer scale as fallbacks,
+  activation from keyboard focus. `View-Linux.cpp`: a desynchronised
+  `wl_subsurface` per presenting view, created when the view is in a mapped
+  window and effectively visible and torn down (`onLost` first) when any of
+  that stops, positioned by a parent commit, sized by `wp_viewport` or
+  `set_buffer_scale`, `repaint()` coalesced into `onRepaint`, frame callbacks
+  relayed. `Window/WaylandInput-Linux.{h,cpp}`: seat, frame-grouped pointer
+  with click counting and wheel, xkbcommon keyboard with repeat, cursor theme,
+  pointer lock + relative pointer for `setMouseLocked`. `Keyboard-Linux.{h,cpp}`:
+  the evdev ↔ `KeyCode` table and polled state; `Display-Linux.cpp` from the
+  first `wl_output`; `DisplayLink-Linux.cpp` paced at the output's refresh rate.
+  `CMake/FindWayland.cmake`: pkg-config for wayland-client, wayland-cursor,
+  xkbcommon and libdecor-0, `wayland-scanner` over six protocol XMLs into one
+  `eacp-wayland` target, linked PRIVATE.
+- The swapchain half of the Vulkan backend. `VulkanShared` enables
+  `VK_KHR_surface` + `VK_KHR_wayland_surface` and `VK_KHR_swapchain` where
+  offered (`supportsPresentation()`; `VK_USE_PLATFORM_WAYLAND_KHR` on
+  `eacp-vulkan` so volk loads the entry points); `VulkanContext::submit` takes a
+  `SubmitSync` pair of binary semaphores beside the timeline; a `presentable`
+  `VulkanTextureData` rests at `PRESENT_SRC_KHR` so `RenderPass::end` is
+  untouched, and `imageAcquired` sources the first barrier at the colour-output
+  stage so it orders behind the acquire; `VulkanDrawable` is what the drawable
+  `Frame` receives, and `~Frame` submits with the semaphores and presents with
+  no wait. `GPUView-Linux.cpp`: surface and swapchain over the view's record
+  (`B8G8R8A8_UNORM`, mailbox else FIFO, opaque alpha, `minImageCount + 1`,
+  `framesInFlight` clamped, one acquire semaphore per slot and one
+  render-finished per image, CPU throttle on the context timeline, bounded
+  acquire timeout), rebuilt on `onResized`/`OUT_OF_DATE`/`SUBOPTIMAL`/`NOT_READY`,
+  `onRepaint` and `renderNow` as the on-demand path, continuous mode paced by
+  `onFrameDone` with `setMaxFps` as a divider plus a cap timer, companions
+  shared with `Texture` through `createVulkanMultisampleCompanion` /
+  `createVulkanDepthCompanion` / `releaseVulkanCompanions`. A frame whose
+  `render()` opens no pass still leaves the image presentable.
+- Tests: `Tests/Graphics/WaylandWindowTests-Linux.cpp` (own `main`, not
+  headless: configure, sizes, `ViewSurface` availability/loss/resize, frame
+  callback round trip, `primaryDisplay()`), `KeyCodeTests-Linux.cpp`,
+  `Tests/GPU/PresentTests-Linux.cpp` (continuous frames, `renderNow`/`repaint`,
+  subview resize reaching the swapchain, hide/show, snapshot while presenting,
+  teardown and a second window; one case runs headless). All self-skip without
+  a compositor and fail instead under `EACP_REQUIRE_DISPLAY=1`.
+- Infrastructure: `Scripts/with-weston` runs a command inside a headless
+  Weston session; the `Dockerfile` installs the Wayland toolchain and Weston
+  and copies the script in as `with-weston`; the CI graphics lane installs the
+  same packages and runs ctest under it with `EACP_HEADLESS=0` and
+  `EACP_REQUIRE_DISPLAY=1`.
+
+Follow-ups found on the way, not yet done:
+
+- Input has no compositor coverage: Weston's headless backend advertises no
+  `wl_seat`, so `WaylandInput-Linux.cpp` never executes on CI; the table and
+  the routing are unit-tested, the translation between them is not.
+- Device loss is terminal: `VK_ERROR_DEVICE_LOST` tears the swapchain down and
+  stops; there is no `VkDevice` rebuild and `onDeviceRestored` never fires.
+- `setMaxFps` in continuous mode needs a cap timer beside the frame callbacks,
+  because a skipped tick presents nothing and so earns no next callback; the
+  cleaner shape is a `requestFrameCallback()` that commits on its own when
+  nothing else will.
+- A surface offering neither `B8G8R8A8_UNORM` nor `SRGB_NONLINEAR` gets its
+  first format while `RenderPipelineDescriptor::colorFormat` defaults to
+  `BGRA8Unorm`; no such surface has been seen.
+- A compositor disconnect mid-session does not fire `onLost`; the connection is
+  never closed, so the only teardown paths today are window and view
+  destruction, which do.
+- Not expressible on Wayland and documented rather than faked: window
+  position (`getPosition`/`setPosition` keep the app's value), `toFront`
+  (maps, cannot raise), per-window icon, `showInactive`, `alwaysOnTop`,
+  `visibleOnAllWorkspaces`, `ignoresMouseEvents`, `cornerRadius`; aspect
+  ratio is width-driven because libdecor's configure carries no resize edge;
+  non-precise wheel deltas are reported in lines, as `View.h` documents,
+  where Windows reports `WHEEL_DELTA` units.
+- Weston 13 headless offers no `wp_fractional_scale_manager_v1` and no
+  `zxdg_decoration_manager_v1`, so CI exercises the integer-scale path and
+  libdecor's built-in fallback plugin only.
+- Stages 5 and 6 still stand as written below; D6 remains the user's.
 
 ## 1. Headline findings
 
