@@ -364,6 +364,20 @@ public:
         graphData.addStore(buffer.slot, (base + 3u).node, value.w().node);
     }
 
+    // Two values narrowed to fp16 and stored in the single float slot that
+    // holds them both - the store InputBuffer::readHalf2 reads back, and the
+    // index is in those slots rather than in halves for the same reason.
+    //
+    // Named rather than another write() overload because the value type does
+    // not say it: a Float2 already means two consecutive floats here, and this
+    // means one.
+    void writeHalf2(const OutputBuffer& buffer,
+                    const UInt& index,
+                    const Float2& value)
+    {
+        write(buffer, index, asFloat(packHalf2(value)));
+    }
+
     // One element of an atomic buffer, set outright rather than added to. It
     // completes the trio - add, load, store - and it is what a kernel computing
     // a *dispatch size* needs: the threadgroup count an indirect dispatch reads

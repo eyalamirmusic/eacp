@@ -47,6 +47,7 @@ set(gpu_test_sources
         BackingScaleTests.cpp
         BaseVertexTests.cpp
         BlendStateTests.cpp
+        BufferAccessTests.cpp
         BufferRangeTests.cpp
         CompressedTextureTests.cpp
         CoordinateSpaceTests.cpp
@@ -61,6 +62,7 @@ set(gpu_test_sources
         GPUSmokeTests.cpp
         GPUSnapshotTests.cpp
         IndirectDispatchTests.cpp
+        IntrinsicTests.cpp
         MipmapTests.cpp
         MultiDeviceTests.cpp
         MultisampledTargetTests.cpp

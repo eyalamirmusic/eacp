@@ -2960,6 +2960,89 @@ auto tCodegenGlslAtomics = test("GPU/codegenGlslAtomics") = []
     expectGlslCompiles(builder.graph());
 };
 
+// The intrinsics that arrived after the GLSL dialect did, three the language
+// has and three it does not. sinh, cosh and tanh go out as themselves; erf and
+// erfc take the polynomial helper the other two dialects also carry, spelled
+// in vec2/3/4; and log10, a builtin in MSL and HLSL, is the one call GLSL has
+// no name for, so on this dialect alone it is renamed to a helper the table
+// defines - and on the other two it stays the builtin with no helper at all.
+auto tCodegenGlslIntrinsicHelpers = test("GPU/codegenGlslIntrinsicHelpers") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+    auto x = input[i];
+    auto v = input.read4(i);
+
+    builder.write(output,
+                  i,
+                  erf(x) + erfc(x) + log10(x) + sinh(x) + cosh(x) + tanh(x)
+                      + erf(v).x() + erfc(v).y() + log10(v).z());
+
+    const auto& graph = builder.graph();
+    auto glsl = emitGlsl(graph);
+
+    check(contains(glsl, "float eacpErf(float x)"));
+    check(contains(glsl, "vec4 eacpErf(vec4 x)"));
+    check(contains(glsl, "float eacpErfc(float x)"));
+    check(contains(glsl, "vec4 eacpErfc(vec4 x)"));
+    check(contains(glsl, "float eacpLog10(float x)"));
+    check(contains(glsl, "vec4 eacpLog10(vec4 x)"));
+    check(contains(glsl, "eacpLog10("));
+    check(contains(glsl, "sinh("));
+    check(contains(glsl, "cosh("));
+    check(contains(glsl, "tanh("));
+
+    // Nothing of the other two dialects reaches the GLSL: no float2/3/4 in a
+    // helper body, and no call to the builtin GLSL lacks. The helper's own
+    // name has a capital L, so the second check is only about the builtin.
+    check(!contains(glsl, "float2"));
+    check(!contains(glsl, "float4"));
+    check(!contains(glsl, "log10("));
+
+    check(!contains(emitMetal(graph), "eacpLog10"));
+    check(!contains(emitHlsl(graph), "eacpLog10"));
+    check(contains(emitMetal(graph), "log10("));
+    check(contains(emitHlsl(graph), "log10("));
+
+    expectGlslCompiles(graph);
+};
+
+// The fp16 storage helpers in GLSL: unpackHalf2x16 and packHalf2x16 do in one
+// builtin what MSL spells as a bitcast through half2 and HLSL as f16tof32 and
+// f32tof16, and as_type<float> is uintBitsToFloat.
+auto tCodegenGlslHalfHelpers = test("GPU/codegenGlslHalfHelpers") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto weights = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    builder.write(output, i, weights.readHalf(i));
+    builder.write(output, i + 1u, asFloat(packHalf2(weights.readHalf2(i))));
+    builder.writeHalf2(output, i + 2u, weights.readHalf2(i + 1u));
+
+    const auto& graph = builder.graph();
+    auto glsl = emitGlsl(graph);
+
+    check(contains(glsl, "float eacpReadHalf(uint bits, uint parity)"));
+    check(contains(glsl, "unpackHalf2x16(bits >> (16u * parity)).x"));
+    check(contains(glsl, "vec2 eacpUnpackHalf2(uint bits)"));
+    check(contains(glsl, "uint eacpPackHalf2(vec2 values)"));
+    check(contains(glsl, "packHalf2x16(values)"));
+    check(contains(glsl, "uintBitsToFloat("));
+    check(contains(glsl, "floatBitsToUint("));
+
+    check(!contains(glsl, "as_type"));
+    check(!contains(glsl, "f16tof32"));
+    check(!contains(glsl, "float2"));
+
+    expectGlslCompiles(graph);
+};
+
 // A depth slot is where GLSL breaks the rule the other two keep: a sampler2D
 // over a depth image hands back four channels whatever the image holds, so the
 // call has to take the first one to be the single float the EDSL's handle says
